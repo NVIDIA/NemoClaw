@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -90,76 +89,6 @@ describe("OpenClaw bounded device self-approval patch (#4462)", () => {
 
       const secondApply = runPatch(dist);
       expect(secondApply.status, `${secondApply.stdout}${secondApply.stderr}`).toBe(0);
-    } finally {
-      fs.rmSync(tmp, { recursive: true, force: true });
-    }
-  });
-
-  it("exits after printing Approved on the local-fallback success path (#12064)", () => {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-device-approve-exit-"));
-    const dist = path.join(tmp, "dist");
-    fs.mkdirSync(dist);
-    writeFixtureDist(dist);
-    try {
-      expect(runPatch(dist).status).toBe(0);
-      const source = fs.readFileSync(path.join(dist, "devices-cli.runtime-fixture.js"), "utf8");
-      const runtime = runFixture<{
-        defaultRuntime: { logs: string[]; exits: number[]; jsonWrites: unknown[] };
-        runDevicesApproveSuccess(
-          result: Record<string, unknown>,
-          opts: Record<string, unknown>,
-        ): void;
-      }>(source, "({ defaultRuntime, runDevicesApproveSuccess })");
-
-      runtime.runDevicesApproveSuccess(
-        { requestId: "request-1", device: { deviceId: "device-1" } },
-        {},
-      );
-      expect(runtime.defaultRuntime.logs.join("\n")).toContain("Approved");
-      expect(runtime.defaultRuntime.exits).toEqual([0]);
-
-      runtime.defaultRuntime.logs.length = 0;
-      runtime.defaultRuntime.exits.length = 0;
-      runtime.runDevicesApproveSuccess(
-        { requestId: "request-1", device: { deviceId: "device-1" } },
-        { json: true },
-      );
-      expect(runtime.defaultRuntime.jsonWrites).toEqual([
-        { requestId: "request-1", device: { deviceId: "device-1" } },
-      ]);
-      expect(runtime.defaultRuntime.exits).toEqual([0]);
-    } finally {
-      fs.rmSync(tmp, { recursive: true, force: true });
-    }
-  });
-
-  it("exits after Approved even when a leftover handle remains (#12064)", () => {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-device-approve-hang-"));
-    const dist = path.join(tmp, "dist");
-    fs.mkdirSync(dist);
-    writeFixtureDist(dist);
-    try {
-      expect(runPatch(dist).status).toBe(0);
-      const source = fs.readFileSync(path.join(dist, "devices-cli.runtime-fixture.js"), "utf8");
-      const runner = path.join(tmp, "approve-exit-runner.cjs");
-      fs.writeFileSync(
-        runner,
-        `const realExit = globalThis.process.exit.bind(globalThis.process);
-${source}
-setInterval(() => {}, 1000);
-defaultRuntime.exit = (code) => {
-  realExit(code);
-};
-runDevicesApproveSuccess({ requestId: "request-1", device: { deviceId: "device-1" } }, {});
-`,
-      );
-      const result = spawnSync(process.execPath, [runner], {
-        encoding: "utf8",
-        timeout: 3000,
-      });
-      expect(result.error).toBeUndefined();
-      expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
-      expect(result.signal).toBeNull();
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }

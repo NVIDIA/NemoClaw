@@ -201,6 +201,9 @@ const descriptorFiles = new Map();
 const descriptorReads = [];
 const process = {
   env: {},
+  stdout: globalThis.process?.stdout ?? {
+    write(_chunk, callback) { callback?.(); }
+  },
   getBuiltinModule(name) {
     if (name !== "node:fs") throw new Error("unexpected builtin module");
     return {

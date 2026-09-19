@@ -37,8 +37,8 @@
  * On the local-fallback approve path, a failed gateway connect can leave
  * handles open. OpenClaw then prints Approved and returns without exiting, so
  * `openclaw devices approve` hangs and `nemoclaw connect` waits with it
- * (#12064). Force `defaultRuntime.exit(0)` after a successful approve until
- * upstream closes those handles or exits after Approved.
+ * (#12064). Drain stdout and force `defaultRuntime.exit(0)` after a successful
+ * approve until upstream closes those handles or exits after Approved.
  *
  * Remove this patch when upstream OpenClaw supports same-device, operator-only
  * scope approval through the gateway using the already-approved pairing scope
@@ -394,16 +394,23 @@ const CLI_APPROVE_EXIT_TARGET = [
   "}",
 ].join("\n");
 const CLI_APPROVE_EXIT_REPLACEMENT = [
+  "\tconst exitAfterDevicesApproveOutput = () => {",
+  "\t\ttry {",
+  '\t\t\tprocess.stdout.write("", () => defaultRuntime.exit(0));',
+  "\t\t} catch {",
+  "\t\t\tdefaultRuntime.exit(0);",
+  "\t\t}",
+  `\t}; // ${CLI_APPROVE_EXIT_MARKER} (#12064)`,
   "\tif (opts.json) {",
   "\t\tdefaultRuntime.writeJson(result);",
-  `\t\tdefaultRuntime.exit(0); // ${CLI_APPROVE_EXIT_MARKER} (#12064)`,
+  "\t\texitAfterDevicesApproveOutput();",
   "\t\treturn;",
   "\t}",
   "\tconst resultRequestId = result?.requestId;",
   '\tconst approvedRequestId = typeof resultRequestId === "string" && resultRequestId.trim().length > 0 ? resultRequestId : resolvedRequestId;',
   "\tconst deviceId = result?.device?.deviceId;",
   '\tdefaultRuntime.log(`${theme.success("Approved")} ${theme.command(deviceId ?? "ok")} ${theme.muted(`(${approvedRequestId})`)}`);',
-  `\tdefaultRuntime.exit(0); // ${CLI_APPROVE_EXIT_MARKER} (#12064)`,
+  "\texitAfterDevicesApproveOutput();",
   "}",
 ].join("\n");
 

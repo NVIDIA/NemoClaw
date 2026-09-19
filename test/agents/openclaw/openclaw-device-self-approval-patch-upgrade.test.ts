@@ -103,16 +103,23 @@ describe("OpenClaw device self-approval patch upgrades (#4462)", () => {
       expect(runPatch(dist).status).toBe(0);
       const file = path.join(dist, "devices-cli.runtime-fixture.js");
       const current = [
+        "\tconst exitAfterDevicesApproveOutput = () => {",
+        "\t\ttry {",
+        '\t\t\tprocess.stdout.write("", () => defaultRuntime.exit(0));',
+        "\t\t} catch {",
+        "\t\t\tdefaultRuntime.exit(0);",
+        "\t\t}",
+        "\t}; // nemoclaw: exit after devices approve so leftover gateway handles cannot hang (#12064)",
         "\tif (opts.json) {",
         "\t\tdefaultRuntime.writeJson(result);",
-        "\t\tdefaultRuntime.exit(0); // nemoclaw: exit after devices approve so leftover gateway handles cannot hang (#12064)",
+        "\t\texitAfterDevicesApproveOutput();",
         "\t\treturn;",
         "\t}",
         "\tconst resultRequestId = result?.requestId;",
         '\tconst approvedRequestId = typeof resultRequestId === "string" && resultRequestId.trim().length > 0 ? resultRequestId : resolvedRequestId;',
         "\tconst deviceId = result?.device?.deviceId;",
         '\tdefaultRuntime.log(`${theme.success("Approved")} ${theme.command(deviceId ?? "ok")} ${theme.muted(`(${approvedRequestId})`)}`);',
-        "\tdefaultRuntime.exit(0); // nemoclaw: exit after devices approve so leftover gateway handles cannot hang (#12064)",
+        "\texitAfterDevicesApproveOutput();",
         "}",
       ].join("\n");
       const legacy = [
