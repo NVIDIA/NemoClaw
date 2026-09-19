@@ -196,6 +196,8 @@ Use these details when your first-run path needs more control.
     ```
 
     This path does not inspect, start, or use a host Ollama process.
+    Leave port `11434` free on `127.0.0.1` and on the Portable host-gateway listener IP.
+    A host Ollama service or leftover Portable container on those published addresses fails inference create before the Portable Ollama runner starts.
     It does not use the default Docker runtime.
     Before the provider-selection step completes, NemoClaw creates the receipt-owned runner, sends one validation request for the selected model, and confirms that the model is loaded.
     NemoClaw records the provider selection only after those checks pass.
