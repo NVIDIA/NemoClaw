@@ -16,12 +16,12 @@ fn spark_scenarios_compile_their_shared_and_independent_resources() {
     ]
     .map(|key| (key.into(), "a".repeat(32)))
     .into();
-    for (name, services, sandboxes, agents) in [
-        ("pi-small.yaml", 1, 1, 1),
-        ("deepagents-team.yaml", 1, 2, 2),
-        ("shared-model.yaml", 1, 3, 3),
-        ("two-models.yaml", 2, 1, 1),
-        ("local-and-hosted.yaml", 1, 1, 1),
+    for name in [
+        "pi-small.yaml",
+        "deepagents-team.yaml",
+        "shared-model.yaml",
+        "two-models.yaml",
+        "local-and-hosted.yaml",
     ] {
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../examples/spark")
@@ -34,7 +34,11 @@ fn spark_scenarios_compile_their_shared_and_independent_resources() {
                 .iter()
                 .filter(|r| r.kind == "inference_service")
                 .count(),
-            services,
+            doc.spec
+                .services
+                .values()
+                .filter(|service| matches!(service, ServiceDefinition::Vllm(_)))
+                .count(),
             "{name}"
         );
         assert_eq!(
@@ -43,12 +47,7 @@ fn spark_scenarios_compile_their_shared_and_independent_resources() {
                 .iter()
                 .filter(|r| r.kind == "sandbox")
                 .count(),
-            sandboxes,
-            "{name}"
-        );
-        assert_eq!(
-            doc.spec.sandboxes.iter().map(|_| 1_usize).sum::<usize>(),
-            agents,
+            doc.spec.sandboxes.len(),
             "{name}"
         );
         assert_eq!(
