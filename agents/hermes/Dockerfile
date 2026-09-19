@@ -641,6 +641,7 @@ ARG NEMOCLAW_HERMES_BACKUP_SOURCE_SHA256=b0838c1f2e120d8f97076c6321297077edc1f15
 # Hermes v0.20.6 drops explicit auxiliary output limits on custom endpoints.
 # Preserve those limits on NemoClaw's managed inference route so session-title
 # generation cannot occupy Ollama's only inference slot until the context fills.
+# hadolint ignore=DL3064
 ARG NEMOCLAW_HERMES_AUXILIARY_TOKEN_LIMIT_PATCHER_SHA256=d04ffc133e115caddd6a1243979e317a512a4ffd8b259ec2b053a5057c26ba93
 # hadolint ignore=DL4006
 RUN printf '%s  %s\n' \
@@ -1363,11 +1364,16 @@ RUN test "$(stat -c '%U:%G %a' /sandbox/.hermes/runtime)" = "gateway:sandbox 277
         /sandbox/.hermes/skills
 
 # Pin config hash at build time for config and environment integrity verification at startup.
-RUN mkdir -p /etc/nemoclaw \
+RUN install -d -o root -g root -m 0755 /etc/nemoclaw \
     && sha256sum /sandbox/.hermes/config.yaml /sandbox/.hermes/.env \
     > /etc/nemoclaw/hermes.config-hash \
-    && chown root:root /etc/nemoclaw/hermes.config-hash \
-    && chmod 444 /etc/nemoclaw/hermes.config-hash
+    && touch /etc/nemoclaw/hermes-mcp-transaction.lock \
+    && chown root:root \
+        /etc/nemoclaw/hermes.config-hash \
+        /etc/nemoclaw/hermes-mcp-transaction.lock \
+    && chmod 444 \
+        /etc/nemoclaw/hermes.config-hash \
+        /etc/nemoclaw/hermes-mcp-transaction.lock
 
 # Publish the mutable in-tree compatibility hash used by runtime checks.
 RUN cp /etc/nemoclaw/hermes.config-hash /sandbox/.hermes/.config-hash \
@@ -1461,6 +1467,7 @@ RUN check_metadata() { \
     && check_absent /sandbox/.nemoclaw/hermes-cron-restore-drain.json \
     && check_absent /sandbox/.nemoclaw/hermes-cron-restore-release-recovery.json \
     && check_metadata /sandbox/.nemoclaw 'root:root 1755' \
+    && check_metadata /etc/nemoclaw/hermes-mcp-transaction.lock 'root:root 444' \
     && check_metadata /opt/hermes/plugins/nemoclaw 'root:root 755' \
     && check_metadata /opt/hermes/plugins/nemoclaw/__init__.py 'root:root 444' \
     && check_metadata /scripts/lib/bundled-npm-package.mts 'root:root 444' \
