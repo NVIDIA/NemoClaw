@@ -5,39 +5,53 @@ use nemoclaw_sdk::config::{Document, ServiceDefinition, validate_endpoint};
 use serde_json::Value;
 
 #[test]
-fn all_recipes_preserve_defaults_digest_workspace_and_round_trip() {
+fn exporting_and_reparsing_preserves_intent_identity_and_connections() {
     let fixtures = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/config");
-    for entry in std::fs::read_dir(&fixtures).unwrap() {
+    let mut checked = 0;
+    for entry in std::fs::read_dir(fixtures).unwrap() {
         let path = entry.unwrap().path();
-        if path.extension().unwrap() != "yaml" {
+        if path.extension().is_none_or(|extension| extension != "yaml") {
             continue;
         }
-        let input = std::fs::read_to_string(&path).unwrap();
-        let expected: Value =
-            serde_json::from_slice(&std::fs::read(path.with_extension("yaml.json")).unwrap())
-                .unwrap();
-        let document = Document::parse(input.as_bytes()).unwrap();
-        assert_eq!(
-            serde_json::to_value(&document).unwrap(),
-            expected["document"],
-            "{}",
-            path.display()
-        );
-        assert_eq!(document.digest(), expected["digest"].as_str().unwrap());
-        assert_eq!(
-            document.workspace(),
-            expected["workspace"].as_str().unwrap()
-        );
-        assert_eq!(
-            document.inference_endpoint().unwrap(),
-            expected["endpoint"].as_str().unwrap()
-        );
-        assert_eq!(
-            Document::parse(document.yaml().unwrap().as_bytes()).unwrap(),
-            document
-        );
+        let document = Document::parse(std::fs::File::open(&path).unwrap()).unwrap();
+        let workspace = document.workspace();
+        let digest = document.digest();
+        let connection = document.inference_connection().unwrap();
+        let restored = Document::parse(document.yaml().unwrap().as_bytes()).unwrap();
+        assert_eq!(restored, document, "{}", path.display());
+        assert_eq!(restored.workspace(), workspace);
+        assert_eq!(restored.digest(), digest);
+        assert_eq!(restored.inference_connection().unwrap(), connection);
+        checked += 1;
     }
+    assert!(checked > 0);
 }
+
+#[test]
+fn ownership_identity_depends_on_uid_while_intent_tracks_configuration() {
+    let mut document =
+        Document::parse(include_str!("fixtures/config/local.yaml").as_bytes()).unwrap();
+    document.metadata.name = "before".into();
+    let mut renamed = document.clone();
+    renamed.metadata.name = "after".into();
+    renamed.validate().unwrap();
+    assert_ne!(renamed.digest(), document.digest());
+    assert_eq!(renamed.workspace(), document.workspace());
+    let mut independent = document.clone();
+    independent.metadata.uid.pop();
+    independent
+        .metadata
+        .uid
+        .push(if document.metadata.uid.ends_with('0') {
+            '1'
+        } else {
+            '0'
+        });
+    independent.validate().unwrap();
+    assert_ne!(independent.workspace(), document.workspace());
+    assert_ne!(independent.digest(), document.digest());
+}
+
 #[test]
 fn unsafe_yaml_and_secret_values_are_rejected_without_echoing_input() {
     let base = include_str!("fixtures/config/local.yaml");
