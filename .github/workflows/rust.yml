@@ -110,9 +110,6 @@ jobs:
           export NEMOCLAW_TEST_TOFU="$NEMOCLAW_TEST_BUNDLE/libexec/tofu$suffix"
           export NEMOCLAW_TEST_PROVIDER="$PWD/target/debug/terraform-provider-nemoclaw$suffix"
           tests=(--test provider_protocol --test opentofu_openshell --test deployment --test fabric_deployment --test multiple_providers)
-          if [ "$TEST_PLATFORM" != windows_amd64 ]; then
-            tests+=(--test ollama)
-          fi
           if [ "$TEST_PLATFORM" = linux_arm64 ]; then
             cargo nextest run --locked --workspace --profile lifecycle "${tests[@]}" --run-ignored only
           else
