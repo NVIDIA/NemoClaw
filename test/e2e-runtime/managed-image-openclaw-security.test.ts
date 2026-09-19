@@ -650,8 +650,12 @@ test.runIf(RUN_MANAGED_IMAGE_SECURITY)(
         '{ sed -n "/^resolve_mutable_config_normalizer() {$/,/^}$/p" /usr/local/bin/nemoclaw-start; sed -n "/^normalize_mutable_config_perms() {$/,/^}$/p" /usr/local/bin/nemoclaw-start; sed -n "/^recover_openclaw_config_if_empty() {$/,/^}$/p" /usr/local/bin/nemoclaw-start; } >/tmp/normalize.sh',
         "source /tmp/normalize.sh",
         "/usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- sh -c 'printf baseline > /sandbox/.openclaw/openclaw.json.nemoclaw-baseline; chmod 600 /sandbox/.openclaw/openclaw.json.nemoclaw-baseline; : > /sandbox/.openclaw/openclaw.json; chmod 600 /sandbox/.openclaw/openclaw.json /sandbox/.openclaw/.config-hash; chmod 700 /sandbox/.openclaw'",
+        "printf 'DAC_RECOVERY_PHASE=normalize-start\\n' >&2",
         "normalize_mutable_config_perms",
+        "printf 'DAC_RECOVERY_PHASE=normalize-complete\\n' >&2",
+        "printf 'DAC_RECOVERY_PHASE=recover-start\\n' >&2",
         "recover_openclaw_config_if_empty",
+        "printf 'DAC_RECOVERY_PHASE=recover-complete\\n' >&2",
         '[ "$(stat -c \'%a %U:%G\' /sandbox/.openclaw)" = "2770 sandbox:sandbox" ]',
         '[ "$(stat -c \'%a %U:%G\' /sandbox/.openclaw/openclaw.json)" = "660 sandbox:sandbox" ]',
         '[ "$(stat -c \'%a %U:%G\' /sandbox/.openclaw/.config-hash)" = "660 sandbox:sandbox" ]',
@@ -660,6 +664,7 @@ test.runIf(RUN_MANAGED_IMAGE_SECURITY)(
       ].join("\n"),
       "managed-image-openclaw-dac-recovery",
       ["--cap-drop=CAP_DAC_OVERRIDE"],
+      CONFIG_RECOVERY_TIMEOUT_MS,
     );
 
     await runContainer(
