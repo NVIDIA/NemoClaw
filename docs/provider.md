@@ -13,6 +13,12 @@ OpenTofu owns graph execution and resource state.
 The SDK retains desired intent, validates plans, coordinates runtime stages, and checks ownership and durable identity.
 The provider adapts resource operations to shared backend contracts.
 
+Before planning, the SDK checks configuration, locks state, and validates retained intent and local bindings.
+OpenTofu refresh and provider planning perform environmental checks; the SDK does not run a separate environmental preflight.
+The SDK then checks the saved plan against its ownership and recovery rules before authorizing changes.
+A runtime replacement requires its established process identity and a matching, unchanged storage binding in the refreshed plan.
+The refreshed gateway running state determines whether the OpenShell stage can be planned or must wait for gateway creation or recovery.
+
 The [provider implementation](../crates/nemoclaw-provider/src/provider.rs) currently defines these resource groups:
 
 | Group | Resource kinds |
@@ -39,7 +45,7 @@ The earlier runtime graph omits this data source so managed gateway creation can
 Unknown data-source inputs defer the read until their dependencies resolve.
 
 OpenTofu can retain known data-source results in a saved plan.
-The SDK therefore checks gateway compatibility again immediately before applying deployment changes, while retaining its existing preflight check.
+The SDK therefore checks gateway compatibility again immediately before applying deployment changes.
 Observed data never becomes a durable resource binding, and teardown omits the capability gate so a version or driver mismatch alone does not prevent cleanup.
 
 [Gateway protocol tests](../crates/nemoclaw-e2e/tests/opentofu_openshell.rs) cover incompatible and incomplete observations, unchanged state after failures, and deferred reads.
@@ -57,7 +63,10 @@ Unknown configuration values defer dependent checks until OpenTofu resolves them
 Numeric profile and dedicated-hardware requirement mismatches report required and observed values; raw host output and credentials are omitted.
 
 Saved-plan application repeats provider planning, and the runtime backend also checks capacity before creating or starting a stopped service.
-The SDK's deployment preflight and pre-start checks enforce available-memory and disk requirements; provider planning permits replacements while the old process still holds its memory.
+For bound services, planning also checks retained model manifests and files and their remaining disk requirements.
+Missing model metadata defers artifact resolution and download-space checks to apply.
+Immediately before runtime apply, the SDK reobserves service identities, startup memory, artifacts, and disk space, including on unchanged apply.
+Provider planning permits replacements while the old process still holds its memory; the backend checks startup headroom again before starting the replacement.
 Available memory can change after a plan; the resident memory guard remains active after startup.
 Destroy planning does not require available GPU capacity.
 
@@ -74,7 +83,7 @@ Each service process has a blocking precondition that reports required and obser
 Validation runs offline, unknown inputs defer observation, and each host read is bounded to 30 seconds.
 A failed or incomplete observation stops planning without changing resource bindings.
 Planning checks total capacity so running processes do not count twice or prevent replacement planning.
-The SDK retains combined startup checks and reads total capacity again before runtime apply because saved plans can cache data-source results.
+The SDK rechecks combined startup budgets and total capacity immediately before runtime apply because saved plans can cache data-source results.
 Capacity observations do not become durable resource bindings, and teardown omits these checks.
 
 [Accounting tests](../crates/nemoclaw-sdk/src/services/capacity/tests.rs) cover shared reserves, running allocations, mixed installers, and dedicated GPU utilization.
