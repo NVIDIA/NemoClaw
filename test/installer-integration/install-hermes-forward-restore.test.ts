@@ -142,11 +142,18 @@ function expectRecovery(h: ReturnType<typeof fixture>): void {
 }
 
 function seedInactiveLegacyWatcher(h: ReturnType<typeof fixture>): void {
+  const completed = spawnSync(process.execPath, ["-e", "process.exit(0)"], {
+    encoding: "utf8",
+    env: h.env,
+  });
+  expect(completed.status, completed.stderr).toBe(0);
+  expect(Number.isSafeInteger(completed.pid)).toBe(true);
+  expect(processExists(completed.pid)).toBe(false);
   const runtimeState = path.join(h.state, "state");
   fs.mkdirSync(runtimeState, { recursive: true });
   fs.writeFileSync(
     path.join(runtimeState, "hermes-created-by-onboard-8647.forward.pid"),
-    "999999\n",
+    `${String(completed.pid)}\n`,
   );
 }
 
