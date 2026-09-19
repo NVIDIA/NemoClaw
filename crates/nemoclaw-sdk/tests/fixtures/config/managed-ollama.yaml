@@ -16,7 +16,6 @@ spec:
   services:
     ollama-server:
       kind: ollama
-      management: managed
       hardware: {profile: dgx-spark}
       runtime:
         provider: docker

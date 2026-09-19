@@ -125,9 +125,7 @@ impl Document {
                 gateway.engine.is_empty()
                     && gateway.image.is_empty()
                     && gateway.image_pull_policy.is_none()
-                    && gateway.network_cidr.is_empty()
-                    && gateway.network.is_none()
-                    && gateway.storage.is_none(),
+                    && gateway.network_cidr.is_empty(),
                 "external gateway cannot declare managed runtime settings",
             )?;
         }
@@ -288,17 +286,6 @@ impl Gateway {
 impl Document {
     fn validate_provider(&self, provider: &InferenceProvider) -> Result<(), ConfigError> {
         let managed = crate::services::validate_provider(self, provider)?;
-        let management = if managed {
-            Management::Managed
-        } else {
-            Management::External
-        };
-        require(
-            provider
-                .management
-                .is_none_or(|declared| declared == management),
-            "inference management must match serviceRef (managed) or endpoint (external)",
-        )?;
         require(
             SLUG.is_match(&provider.name)
                 && constraints::PROVIDERS.contains(&provider.provider.as_str()),

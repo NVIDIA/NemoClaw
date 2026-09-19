@@ -175,48 +175,29 @@ Registry credential configuration is unchanged: NemoClaw does not supply credent
 
 ## Resource Ownership
 
-Ownership declarations are optional except for the existing `gateway.management` field.
-Existing YAML keeps its current behavior when the new fields are omitted.
-Adding an equivalent declaration leaves the compiled resources and runtime specifications unchanged; export preserves the declaration after a successful apply.
+Ownership follows the configuration form; do not repeat it on services, models, storage, networks, or inference providers.
+Only `gateway.management` selects a lifecycle mode.
 
-`managed` means NemoClaw manages the resource's lifecycle under its existing retention policy.
-`external` means NemoClaw uses the resource without managing its lifecycle or administrative configuration.
-Using an external service still sends requests to it; attaching a container to an external network does not transfer ownership of that network.
-An external inference server still has a deployment-owned OpenShell provider registration, which destroy removes.
+| Configuration | What NemoClaw manages |
+|---|---|
+| `gateway.management: managed` | The gateway, its network, and credential storage |
+| `gateway.management: external` | No gateway infrastructure |
+| `spec.services.<name>` with `kind: vllm` or `ollama` | The service container, model installation, and persistent storage |
+| `spec.services.<name>` with `kind: ollamaProxy` | The proxy and its credential storage, not its upstream daemon or model |
+| Inference provider with `serviceRef` | An OpenShell registration using the named service's connection |
+| Inference provider with `endpoint` | An OpenShell registration using an externally operated server |
+| `sandboxes[].network.proxy` | No proxy infrastructure; this is an existing HTTP proxy connection |
 
-Paths below are relative to `spec`:
+Every declared service is installed, even without an inference provider referring to it.
+Every selected inference provider has a deployment-owned OpenShell registration; destroy removes that registration without deleting an external server.
+Managed model and credential storage survive destroy.
+Ownership checks still verify the deployment UID, generation, durable resource identity, and configuration before mutation.
+No configuration form authorizes adoption of an existing unbound resource.
 
-| Object | Ownership when omitted | Accepted declaration |
-|---|---|---|
-| `inferenceProviders[]` | Managed with `serviceRef`; external with `endpoint` | `management: managed` or `external`, matching that form |
-| `services.<name>` | Managed vLLM server, Ollama server, or Ollama proxy | `management: managed` |
-| `gateway.storage`, `services.<name>.storage` for vLLM or Ollama | Managed storage | `{management: managed}` |
-| `gateway.network`, `services.<name>.placement.network` for vLLM or Ollama | Managed network, configured by the existing sibling CIDR setting | `{management: managed}` |
-| `services.<name>.model` for vLLM | Managed model download and preparation | `management: managed` alongside repository and revision |
-| `services.<name>.model` for Ollama | Managed installation of the selected registry model | `management: managed` alongside its name and digest |
-| `services.<name>.upstream.model` for an Ollama proxy | Existing external model installation | `management: external` alongside its digest |
-| `sandboxes[].network.proxy` | Existing external HTTP proxy | `management: external` alongside host and port |
-
-External gateways cannot declare managed storage or networks.
-The declarations do not grant permissions, change retention, adopt existing resources, or enable new lifecycle modes.
-External model installations are supported through `upstream.model` on a service with `kind: ollamaProxy`.
-External volumes, managed Ollama networks, and managed general-purpose HTTP egress proxies are rejected.
-
-For example, explicit ownership declarations can accompany an Ollama service's immutable model selection:
-
-```yaml
-storage:
-  management: managed
-model:
-  management: managed
-  name: qwen3:0.6b
-  digest: 7df6b6e09427a769808717c0a93cadc4ae99ed4eb8bf5ca557c90846becea435
-```
-
-Set `model.name` to the selected model tag and use that same tag on the inference route.
-Run `nemoclaw plan` with the same state directory to verify that adding declarations proposes no resource changes, then apply and export using the commands above.
-Finish any interrupted apply with its original YAML before changing declarations.
-Ownership checks and failure handling still apply, and managed model storage still survives destroy.
+The former optional `management` annotations and ownership-only `storage`/`network` objects are rejected.
+For a new deployment, omit those fields and use a fresh UID and state directory.
+Retained intent containing them is not migrated by editing input YAML; keep the original bundle and state for recovery or teardown of that deployment.
+Do not edit or delete its state to bypass this rejection.
 
 ## Editor Schema Assistance
 

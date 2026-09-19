@@ -19,8 +19,6 @@ pub use execution::*;
 pub use interfaces::*;
 mod image_pull_policy;
 pub use image_pull_policy::ImagePullPolicy;
-mod management;
-pub use management::*;
 mod network;
 pub use network::*;
 #[doc(hidden)]
@@ -276,6 +274,12 @@ pub(crate) fn bridge_address(cidr: &str) -> Result<String, ConfigError> {
     Ok(std::net::Ipv4Addr::from(address).to_string())
 }
 impl Gateway {
+    pub(crate) fn runtime_settings(&self) -> Self {
+        let mut settings = self.clone();
+        // Acquisition policy is a mutable provider attribute, not container identity.
+        settings.image_pull_policy = None;
+        settings
+    }
     /// Resolve the first address after the configured network address.
     ///
     /// # Errors

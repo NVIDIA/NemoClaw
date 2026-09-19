@@ -4,7 +4,8 @@
 // schemas/network-policy.schema.json and src/lib/config/model.ts (Apache-2.0).
 // 2026-09-15: represented the export fields as strict Rust types, added explicit
 // preset selection, and delegated policy semantics to pinned openshell-policy.
-// 2026-09-19: removed the main-branch Landlock spelling translation.
+// 2026-09-19: removed the main-branch Landlock spelling translation and the
+// redundant external-proxy ownership annotation.
 use super::{ConfigError, Network};
 use openshell_core::proto;
 use serde::{Deserialize, Serialize};
@@ -18,14 +19,10 @@ pub struct ExplicitPolicySelection {
     pub explicit: ExplicitPolicy,
 }
 
-/// Agent HTTP proxy, reachable from inside the sandbox. Credentials and URL syntax are excluded.
+/// Existing agent HTTP proxy, reachable from inside the sandbox. NemoClaw does not manage it. Credentials and URL syntax are excluded.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Proxy {
-    /// Optional external ownership declaration. Omission means external; NemoClaw does not create this proxy.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[schemars(with = "super::ExternalManagement")]
-    pub management: Option<super::ExternalManagement>,
     /// Proxy hostname or IPv4 address, without scheme, path, or credentials.
     pub host: String,
     /// Proxy TCP port, from 1 through 65535.

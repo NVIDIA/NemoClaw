@@ -294,7 +294,6 @@ Use the printed immutable image reference below, choose an available private pro
 services:
   local:
     kind: ollamaProxy
-    management: managed
     runtime:
       provider: docker
       engine: unix:///var/run/docker.sock
@@ -303,7 +302,6 @@ services:
     upstream:
       endpoint: http://127.0.0.1:11434/v1
       model:
-        management: external
         name: qwen3:4b
         digest: REPLACE_WITH_MODEL_DIGEST
 inferenceProviders:
@@ -316,7 +314,7 @@ The service's `upstream.endpoint` identifies the external daemon; its `endpoint`
 The route's model must match `upstream.model.name`, including its tag, such as `qwen3:4b`.
 The proxy uses the host network and checks that the daemon has no listener on a non-loopback address.
 Do not declare `endpoint` or `credential` on this provider; the referenced service supplies its connection and generated credential.
-Both ownership declarations in this example are optional and preserve these same lifecycle choices when omitted.
+The service declaration manages only the proxy; its upstream daemon and model remain external.
 
 The proxy generates a private bearer key in its owned credential volume and reuses it after restart or recreation.
 NemoClaw reads that key through the verified container identity when registering the OpenShell provider.

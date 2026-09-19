@@ -1,5 +1,5 @@
 {
-  "digest": "bc52f6707a9de369333e4e8460ecf4b54d6ab00d602a53c63d4c261317cb5416",
+  "digest": "c038dd5b0f5fefc6745f9b04289ddaf535a134a3b6326e37add71a17ecf61921",
   "document": {
     "apiVersion": "nemoclaw.nvidia.com/v1alpha1",
     "kind": "NemoClawConfig",
@@ -59,7 +59,6 @@
             "profile": "dgx-spark"
           },
           "kind": "ollama",
-          "management": "managed",
           "memory": {
             "consecutiveSamples": 5,
             "freeGateGiB": 12,

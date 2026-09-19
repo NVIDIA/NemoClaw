@@ -100,3 +100,25 @@ fn legacy_intent_is_rejected_without_rewriting_recovery_state() {
     assert!(store.load().is_err());
     assert_eq!(std::fs::read(path).unwrap(), bytes);
 }
+
+#[test]
+fn removed_ownership_annotations_preserve_intent_and_resource_bindings_for_recovery() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Store::open(dir.path()).unwrap();
+    let document = crate::config::Document::parse(
+        include_str!("../../tests/fixtures/config/local.yaml").as_bytes(),
+    )
+    .unwrap();
+    let record = Record::new(document).unwrap();
+    let mut old = serde_json::to_value(&record).unwrap();
+    old["document"]["spec"]["inferenceProviders"][0]["management"] = serde_json::json!("external");
+    let bytes = serde_json::to_vec(&old).unwrap();
+    let intent = dir.path().join("intent.json");
+    let state = dir.path().join("terraform.tfstate");
+    let binding = br#"{"resources":[{"type":"nemoclaw_workspace","name":"deployment","instances":[{"attributes":{"id":"owned"}}]}]}"#;
+    std::fs::write(&intent, &bytes).unwrap();
+    std::fs::write(&state, binding).unwrap();
+    assert!(store.load().is_err());
+    assert_eq!(std::fs::read(intent).unwrap(), bytes);
+    assert_eq!(std::fs::read(state).unwrap(), binding);
+}

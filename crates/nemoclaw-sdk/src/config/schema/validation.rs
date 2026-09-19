@@ -256,7 +256,7 @@ pub(super) fn constrain(root: &mut Value) {
         {"title": "External gateway", "required": ["endpoint"], "properties": {
             "management": {"const": "external"}, "endpoint": {"pattern": "^https?://"},
             "engine": {"const": ""}, "image": {"const": ""}, "networkCIDR": {"const": ""}
-        }, "allOf": [forbid(&["network", "storage", "imagePullPolicy"])]}
+        }, "allOf": [forbid(&["imagePullPolicy"])]}
     ]);
     gateway["if"] = at("endpoint", json!({"pattern": "^http:"}), true);
     gateway["then"] = forbid(&["credential", "tls"]);
@@ -271,8 +271,9 @@ pub(super) fn constrain(root: &mut Value) {
     property(provider, "provider", json!({"enum": c::PROVIDERS}));
     property(provider, "serviceRef", json!({"pattern": c::SLUG}));
     provider["if"] = json!({"required": ["serviceRef"]});
-    provider["then"] = json!({"properties": {"provider":{"const":"openai"},"endpoint": {"const": ""},"management":{"const":"managed"}}, "allOf": [forbid(&["credential"])]});
-    provider["else"] = json!({"required": ["endpoint"], "properties": {"endpoint": {"pattern": "^https?://"},"management":{"const":"external"}}});
+    provider["then"] = json!({"properties": {"provider":{"const":"openai"},"endpoint": {"const": ""}}, "allOf": [forbid(&["credential"])]});
+    provider["else"] =
+        json!({"required": ["endpoint"], "properties": {"endpoint": {"pattern": "^https?://"}}});
     provider["allOf"] = json!([
         {"if": at("endpoint", json!({"pattern": "^http:"}), true), "then": forbid(&["credential"])}
     ]);
@@ -291,12 +292,6 @@ pub(super) fn constrain(root: &mut Value) {
         "image",
         json!({"pattern":c::IMAGE}),
     );
-    if let Some(network) = defs.get_mut("NetworkReference") {
-        network["anyOf"][0]["pattern"] = json!(c::SLUG);
-    }
-    if let Some(network) = defs.get_mut("ExternalNetwork") {
-        property(network, "name", json!({"pattern": c::SLUG}));
-    }
     property(
         &mut defs["OpenClawDashboard"],
         "port",

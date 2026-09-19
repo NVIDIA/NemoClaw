@@ -12,7 +12,6 @@ fn input() -> Value {
     provider["serviceRef"] = json!("ollama-auth");
     value["spec"]["services"] = json!({"ollama-auth": {
         "kind":"ollamaProxy",
-        "management":"managed",
         "runtime":{"provider":"docker","engine":"unix:///var/run/docker.sock",
             "image":format!("nc-ollama-proxy@sha256:{}","a".repeat(64))},
         "endpoint":"http://172.20.0.1:11435/v1",
@@ -114,6 +113,16 @@ fn proxy_rejects_unpinned_models_nonlocal_daemons_and_ambiguous_ownership() {
         let mut value = input();
         value["spec"]["inferenceProviders"][0][field] = bad;
         assert!(Document::parse(value.to_string().as_bytes()).is_err());
+    }
+    let schema = jsonschema::validator_for(&input_schema()).unwrap();
+    for (path, ownership) in [
+        ("/spec/services/ollama-auth", "managed"),
+        ("/spec/services/ollama-auth/upstream/model", "external"),
+    ] {
+        let mut value = input();
+        value.pointer_mut(path).unwrap()["management"] = json!(ownership);
+        assert!(Document::parse(value.to_string().as_bytes()).is_err());
+        assert!(!schema.is_valid(&value));
     }
     let mut value = input();
     value["spec"]["services"]["ollama-auth"]["upstream"]["model"]["digest"] = json!("latest");

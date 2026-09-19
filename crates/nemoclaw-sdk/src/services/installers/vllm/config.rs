@@ -4,10 +4,7 @@
 //! vLLM-specific YAML input owned by the vLLM installer.
 
 use super::{ServiceContainer, ServiceHardware, constraints};
-use crate::{
-    config::{ManagedManagement, ManagedResource},
-    services::ServiceRuntime,
-};
+use crate::services::ServiceRuntime;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -28,14 +25,6 @@ pub struct Service {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(with = "ServiceAuthentication")]
     pub authentication: Option<ServiceAuthentication>,
-    /// Optional ownership declaration for model storage. Omission means managed; existing retention behavior is unchanged.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[schemars(with = "ManagedResource")]
-    pub storage: Option<ManagedResource>,
-    /// Optional managed ownership declaration. Omission means managed.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[schemars(with = "ManagedManagement")]
-    pub management: Option<ManagedManagement>,
     /// Docker runner and immutable NemoClaw vLLM runtime image.
     pub runtime: ServiceRuntime,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -75,10 +64,6 @@ pub enum ServiceAuthentication {
 #[serde(default, deny_unknown_fields)]
 /// Immutable model identity used for snapshot resolution and storage.
 pub struct Model {
-    /// Optional ownership declaration for downloading and preparing this model installation. Omission means managed.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[schemars(with = "ManagedManagement")]
-    pub management: Option<ManagedManagement>,
     /// Public Hugging Face owner/repository name.
     pub repository: String,
     /// Full lowercase 40-hex commit revision; branches and tags are rejected.
@@ -185,10 +170,6 @@ fn is_zero(value: &i64) -> bool {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 /// Execution host and Docker network for a remote model service.
 pub struct ServicePlacement {
-    /// Optional ownership declaration for the network configured by networkCIDR. Omission means managed.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[schemars(with = "ManagedResource")]
-    pub network: Option<ManagedResource>,
     /// Canonical private IPv4 /24 on the selected Docker engine.
     pub network_cidr: String,
 }
@@ -269,12 +250,6 @@ impl Service {
     pub(crate) fn runtime_settings(&self) -> Self {
         let mut settings = self.clone();
         settings.runtime.image_pull_policy = None;
-        settings.management = None;
-        settings.storage = None;
-        settings.model.management = None;
-        if let Some(placement) = &mut settings.placement {
-            placement.network = None;
-        }
         settings
     }
 }

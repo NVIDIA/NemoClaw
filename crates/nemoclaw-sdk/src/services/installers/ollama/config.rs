@@ -5,10 +5,7 @@ use super::super::vllm::{
     ServicePublication,
 };
 use crate::{
-    config::{
-        ConfigError, ExternalManagement, InferenceApi, InferenceProvider, ManagedManagement,
-        constraints, validate_endpoint,
-    },
+    config::{ConfigError, InferenceApi, InferenceProvider, constraints, validate_endpoint},
     services::ServiceRuntime,
 };
 use serde::{Deserialize, Serialize};
@@ -26,14 +23,6 @@ pub struct ManagedOllama {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(with = "ServiceContainer")]
     pub container: Option<ServiceContainer>,
-    /// Optional model-volume ownership declaration. Omission means managed; the volume survives destroy.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[schemars(with = "crate::config::ManagedResource")]
-    pub storage: Option<crate::config::ManagedResource>,
-    /// Optional ownership declaration for the Ollama daemon container. Omission means managed.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[schemars(with = "crate::config::ManagedManagement")]
-    pub management: Option<crate::config::ManagedManagement>,
     /// Docker runner and pinned NemoClaw Ollama runtime image.
     pub runtime: ServiceRuntime,
     /// Optional remote Docker placement. Requires publication.
@@ -59,10 +48,6 @@ pub struct ManagedOllama {
 #[serde(default, deny_unknown_fields)]
 /// One immutable Ollama registry model installation.
 pub struct OllamaModel {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[schemars(with = "crate::config::ManagedManagement")]
-    /// Optional ownership declaration; omission means managed.
-    pub management: Option<crate::config::ManagedManagement>,
     /// Public library model name including its tag.
     pub name: String,
     /// Lowercase SHA-256 of the registry manifest selected for that tag.
@@ -159,12 +144,6 @@ impl ManagedOllama {
     pub(crate) fn runtime_settings(&self) -> Self {
         let mut settings = self.clone();
         settings.runtime.image_pull_policy = None;
-        settings.management = None;
-        settings.storage = None;
-        settings.model.management = None;
-        if let Some(placement) = &mut settings.placement {
-            placement.network = None;
-        }
         settings
     }
 
@@ -221,10 +200,6 @@ impl ManagedOllama {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 /// Managed authenticated proxy for an external, loopback-only Ollama daemon and installed model.
 pub struct OllamaProxy {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[schemars(default, with = "ManagedManagement")]
-    /// Optional ownership declaration; omission means managed.
-    pub management: Option<ManagedManagement>,
     /// Docker runner and immutable NemoClaw proxy image. The external daemon runs on this same Linux host.
     pub runtime: ServiceRuntime,
     /// Private or loopback HTTP IPv4:port/v1 published by the proxy and reachable by OpenShell.
@@ -245,10 +220,6 @@ pub struct ExternalOllama {
 #[serde(deny_unknown_fields)]
 /// Existing Ollama model installation, independently owned outside the deployment.
 pub struct ExternalOllamaModel {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[schemars(default, with = "ExternalManagement")]
-    /// Optional ownership declaration; omission means external.
-    pub management: Option<ExternalManagement>,
     #[schemars(regex(pattern = "^[a-f0-9]{64}$"))]
     /// Lowercase 64-character model digest reported by Ollama's /api/tags API.
     pub digest: String,
