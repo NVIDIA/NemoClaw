@@ -21,7 +21,7 @@ pub(crate) struct Cli {
     #[arg(long, global = true, default_value = ".nemoclaw")]
     pub(crate) state_dir: PathBuf,
     /// Verified runtime bundle (defaults to the installed bundle).
-    #[arg(long = "bundle", alias = "bundle-dir", global = true)]
+    #[arg(long = "bundle", global = true)]
     pub(crate) bundle_dir: Option<PathBuf>,
     /// Report operation timings on standard error.
     #[arg(long, short, global = true)]
