@@ -48,3 +48,32 @@ export function formatFailedBackupItems(
     .map((item) => (reasons?.[item] ? `${item} (${reasons[item]})` : item))
     .join(", ");
 }
+
+/**
+ * Map an absolute pre-backup audit path onto a backup-relative directory.
+ * Rejects undeclared tops, traversal, and absolute leftovers.
+ */
+export function relativeFailedBackupDir(
+  absPath: string,
+  dirPrefix: string,
+  existingDirs: readonly string[],
+): string | null {
+  if (!absPath || absPath.includes("\0")) return null;
+  const relative =
+    dirPrefix && absPath.startsWith(dirPrefix) ? absPath.slice(dirPrefix.length) : absPath;
+  if (
+    !relative ||
+    relative.startsWith("/") ||
+    relative.includes("\\") ||
+    relative === "." ||
+    relative === ".." ||
+    relative.startsWith("../") ||
+    relative.includes("/../") ||
+    relative.endsWith("/..")
+  ) {
+    return null;
+  }
+  const slash = relative.indexOf("/");
+  const topLevel = slash === -1 ? relative : relative.slice(0, slash);
+  return existingDirs.includes(topLevel) ? relative : null;
+}

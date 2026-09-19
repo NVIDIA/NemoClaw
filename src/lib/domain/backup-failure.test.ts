@@ -8,6 +8,7 @@ import {
   BACKUP_FAILURE_TAR_READ_ERROR,
   classifyFailedDirsFromTarStderr,
   formatFailedBackupItems,
+  relativeFailedBackupDir,
 } from "./backup-failure";
 
 describe("backup failure diagnostics", () => {
@@ -38,5 +39,29 @@ describe("backup failure diagnostics", () => {
     expect(formatFailedBackupItems(["memories", "settings.json"], undefined)).toBe(
       "memories, settings.json",
     );
+  });
+
+  it("maps an unreadable audit path onto its declared backup directory", () => {
+    expect(
+      relativeFailedBackupDir("/sandbox/.openclaw/workspace/restricted", "/sandbox/.openclaw/", [
+        "agents",
+        "workspace",
+      ]),
+    ).toBe("workspace/restricted");
+    expect(
+      relativeFailedBackupDir("/sandbox/.openclaw/workspace", "/sandbox/.openclaw/", ["workspace"]),
+    ).toBe("workspace");
+  });
+
+  it("rejects undeclared or unsafe unreadable audit paths", () => {
+    expect(
+      relativeFailedBackupDir("/sandbox/.openclaw/../etc", "/sandbox/.openclaw/", ["workspace"]),
+    ).toBeNull();
+    expect(
+      relativeFailedBackupDir("/sandbox/.openclaw/identity/tokens", "/sandbox/.openclaw/", [
+        "workspace",
+      ]),
+    ).toBeNull();
+    expect(relativeFailedBackupDir("/etc/shadow", "/sandbox/.openclaw/", ["workspace"])).toBeNull();
   });
 });
