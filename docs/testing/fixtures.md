@@ -24,6 +24,17 @@ On Unix, they also run the production provider against a local Docker API fixtur
 They create no Docker, OpenShell, or inference resources.
 The fixture provider is not a production bundle component.
 
+On Unix with `python3` on `PATH`, run from the repository root to test combined service capacity through the production provider and an isolated SSH simulator:
+
+```sh
+NEMOCLAW_TEST_TOFU=/absolute/path/to/tofu \
+NEMOCLAW_TEST_PROVIDER=/absolute/path/to/terraform-provider-nemoclaw \
+  cargo test -p nemoclaw-e2e --test service_capacity -- --ignored
+```
+
+This fixture checks shared-host overcommit, deferred reads, preserved state after failed observations, and cleanup without capacity checks.
+It uses a built-in OpenTofu resource to exercise the generated precondition and does not create model processes or download artifacts.
+
 Test the runtime bundle and live serving backend separately.
 
 Test the production provider's full OpenShell resource graph against the local gRPC fixture:

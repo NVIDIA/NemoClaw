@@ -59,9 +59,27 @@ Numeric profile and dedicated-hardware requirement mismatches report required an
 Saved-plan application repeats provider planning, and the runtime backend also checks capacity before creating or starting a stopped service.
 The SDK's deployment preflight and pre-start checks enforce available-memory and disk requirements; provider planning permits replacements while the old process still holds its memory.
 Available memory can change after a plan; the resident memory guard remains active after startup.
-The SDK retains combined-budget checks for services sharing an engine, and destroy planning does not require available GPU capacity.
+Destroy planning does not require available GPU capacity.
 
 [Provider validation tests](../crates/nemoclaw-provider/tests/validation.rs), [host observation fixtures](../crates/nemoclaw-sdk/src/managed/planning_tests.rs), and [OpenTofu protocol tests](../crates/nemoclaw-e2e/tests/provider_protocol.rs) cover these boundaries without live GPU resources.
+
+## Combined Service Capacity
+
+The runtime graph groups managed vLLM and Ollama services by execution engine and reads one `nemoclaw_service_capacity` data source per group.
+The source takes the engine and compiled service specifications and reports `required_bytes`, `observed_bytes`, and `compatible`.
+It reuses the SDK's combined-budget accounting: unified memory includes the largest host reserve once; dedicated GPU budgets use observed VRAM, including utilization-based allocations.
+Services sharing an engine must use the same memory architecture.
+Each service process has a blocking precondition that reports required and observed bytes when the group exceeds total capacity.
+
+Validation runs offline, unknown inputs defer observation, and each host read is bounded to 30 seconds.
+A failed or incomplete observation stops planning without changing resource bindings.
+Planning checks total capacity so running processes do not count twice or prevent replacement planning.
+The SDK retains combined startup checks and reads total capacity again before runtime apply because saved plans can cache data-source results.
+Capacity observations do not become durable resource bindings, and teardown omits these checks.
+
+[Accounting tests](../crates/nemoclaw-sdk/src/services/capacity/tests.rs) cover shared reserves, running allocations, mixed installers, and dedicated GPU utilization.
+[Production provider fixtures](../crates/nemoclaw-e2e/tests/service_capacity.rs) cover overcommit, deferred reads, unchanged state after observation failures, and cleanup without capacity observation.
+See [fixture prerequisites and commands](testing/fixtures.md#opentofu-and-bundle-lifecycle).
 
 ## Network and Image Validation
 
