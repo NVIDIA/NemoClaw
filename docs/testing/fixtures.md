@@ -80,7 +80,8 @@ It creates its own proxy container and credential volume, checks key retention a
 It does not qualify managed gateway or sandbox deployment, CLI export, actual Ollama execution, or inference.
 
 Authenticated OpenShell, stalled exec streams, and launch compatibility run in the default workspace suite.
-`agent_compatibility` checks the ten Fabric launch contracts against retained fixtures.
+`agent_compatibility` checks passive launch mode, caller identity, harness selection, and default policy restrictions without frozen launch snapshots.
+The separately scheduled Fabric lifecycle cases and installed-adapter image tests exercise the supported harnesses.
 The `tls` test generates certificates and verifies both trust directions and bearer references through a real TLS connection.
 
 The native CI matrix builds and executes bundles on Linux ARM64/x64, macOS ARM64/x64, and Windows x64.
