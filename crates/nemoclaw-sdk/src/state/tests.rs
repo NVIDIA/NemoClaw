@@ -180,3 +180,26 @@ fn capacity_data_is_discarded_without_accepting_foreign_or_duplicate_state_insta
         assert!(bindings(directory.path()).is_err(), "{field}");
     }
 }
+
+#[test]
+fn docker_state_keeps_native_ids_and_discards_local_image_observations() {
+    let directory = tempfile::tempdir().unwrap();
+    let state = serde_json::json!({"resources":[
+        {"type":"docker_container","name":"inference_service_model","instances":[{"attributes":{"id":"container-id","name":"managed-model","labels":[]}}]},
+        {"type":"docker_network","name":"network_owned","instances":[{"attributes":{"id":"network-id"}}]},
+        {"type":"docker_image","name":"image_owned","instances":[{"attributes":{"id":"image-id"}}]},
+        {"mode":"data","type":"docker_image","name":"image_local","instances":[{"attributes":{"id":"local-image-id","name":"model@sha256:abc"}}]}
+    ]});
+    std::fs::write(
+        directory.path().join("terraform.tfstate"),
+        state.to_string(),
+    )
+    .unwrap();
+    let bindings = super::bindings(directory.path()).unwrap();
+    assert_eq!(bindings.len(), 3);
+    assert_eq!(
+        bindings["docker_container.inference_service_model"].id,
+        "container-id"
+    );
+    assert!(bindings.values().all(|binding| binding.spec.is_empty()));
+}

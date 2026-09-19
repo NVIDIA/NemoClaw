@@ -207,6 +207,8 @@ pub(crate) fn bindings(directory: &Path) -> Result<BTreeMap<String, StateBinding
                         crate::docker::Engine::validate_endpoint(engine).is_ok()
                             && resource.name == crate::services::capacity::observation_name(engine)
                     })
+            } else if resource.r#type == "docker_image" {
+                resource.name.starts_with("image_")
             } else {
                 false
             };

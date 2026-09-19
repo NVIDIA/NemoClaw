@@ -361,3 +361,38 @@ fn runtime_capacity_plans_accept_only_declared_read_observations_and_teardown_de
         );
     }
 }
+
+#[test]
+fn disposable_docker_compute_reconciles_while_durable_storage_does_not_recreate() {
+    let compute = "docker_container.inference_service_model";
+    let allowed = [(compute.into(), Row::new())].into();
+    let bound = [(
+        compute.into(),
+        StateBinding {
+            id: "old-container".into(),
+            spec: String::new(),
+        },
+    )]
+    .into();
+    for actions in [
+        json!(["create"]),
+        json!(["delete", "create"]),
+        json!(["create", "delete"]),
+        json!(["delete"]),
+    ] {
+        let plan: Plan = serde_json::from_value(json!({"resource_changes":[{"address":compute,"change":{"actions":actions,"before":{"id":"old-container"}}}]})).unwrap();
+        assert_eq!(check_plan(&plan, &allowed, &bound).unwrap().len(), 1);
+    }
+    let storage = "nemoclaw_inference_storage.model";
+    let allowed = [(storage.into(), Row::new())].into();
+    let bound = [(
+        storage.into(),
+        StateBinding {
+            id: "daemon/data/created".into(),
+            spec: String::new(),
+        },
+    )]
+    .into();
+    let plan: Plan = serde_json::from_value(json!({"resource_changes":[{"address":storage,"change":{"actions":["create"],"before":null}}]})).unwrap();
+    assert!(check_plan(&plan, &allowed, &bound).is_err());
+}

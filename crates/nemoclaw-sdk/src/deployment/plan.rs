@@ -31,7 +31,9 @@ pub(super) fn observation(
         }
         return Ok(false);
     }
-    let expected = (gateway && change.address == crate::compile::GATEWAY_CAPABILITIES_ADDRESS)
+    let expected = (change.address.starts_with("data.docker_image.")
+        && allowed.contains_key(&change.address))
+        || (gateway && change.address == crate::compile::GATEWAY_CAPABILITIES_ADDRESS)
         || crate::services::capacity::groups(
             allowed.iter().map(|(address, row)| (address.as_str(), row)),
         )?
@@ -68,6 +70,12 @@ fn identity(change: &ResourceChange, expected: &Row, binding: &StateBinding) -> 
     }
     Ok(())
 }
+pub(super) fn disposable(address: &str) -> bool {
+    ["docker_container.", "docker_network.", "docker_image."]
+        .iter()
+        .any(|prefix| address.starts_with(prefix))
+}
+
 pub(super) fn check_plan(
     plan: &Plan,
     allowed: &BTreeMap<String, Row>,
@@ -78,6 +86,38 @@ pub(super) fn check_plan(
     let mut observations = BTreeSet::new();
     for change in &plan.resource_changes {
         if observation(change, &mut observations, allowed, true, false)? {
+            continue;
+        }
+        if disposable(&change.address) {
+            if (!allowed.contains_key(&change.address) && !bindings.contains_key(&change.address))
+                || !seen.insert(&change.address)
+                || !matches!(
+                    change
+                        .change
+                        .actions
+                        .iter()
+                        .map(String::as_str)
+                        .collect::<Vec<_>>()
+                        .as_slice(),
+                    ["no-op"]
+                        | ["create"]
+                        | ["update"]
+                        | ["delete"]
+                        | ["delete", "create"]
+                        | ["create", "delete"]
+                )
+                || (!allowed.contains_key(&change.address) && change.change.actions != ["delete"])
+            {
+                return Err(Error::Conflict(
+                    "plan contains invalid or undeclared disposable compute",
+                ));
+            }
+            if change.change.actions != ["no-op"] {
+                changes.push(Change {
+                    resource: change.address.clone(),
+                    actions: change.change.actions.clone(),
+                });
+            }
             continue;
         }
         let expected = allowed
@@ -106,7 +146,11 @@ pub(super) fn check_plan(
             });
         }
     }
-    if seen.len() != allowed.len() {
+    if allowed
+        .keys()
+        .filter(|address| !address.starts_with("data."))
+        .any(|address| !seen.contains(address))
+    {
         return Err(Error::Conflict("plan omitted a required resource"));
     }
     Ok(changes)
@@ -161,7 +205,9 @@ pub(super) fn check_destroy_plan(
                 "destroy plan contains a duplicate resource",
             ));
         }
-        identity(change, expected, binding)?;
+        if !disposable(&change.address) {
+            identity(change, expected, binding)?;
+        }
         let action = if retained.contains(&change.address) {
             "no-op"
         } else {
