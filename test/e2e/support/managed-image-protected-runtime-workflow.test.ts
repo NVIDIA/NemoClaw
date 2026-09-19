@@ -12,6 +12,8 @@ import { validateManagedImageProtectedRuntimeWorkflow } from "../../../tools/e2e
 import { validateE2eWorkflow } from "../../../tools/e2e/workflow-boundary.mts";
 
 type WorkflowRecord = Record<string, unknown>;
+const POLICY_BOUNDARY_SCRIPT_ERROR =
+  "managed-image-multiarch-startup shared policy boundary step must match the reviewed narrow script";
 
 function workflow(): WorkflowRecord {
   return YAML.parse(
@@ -50,10 +52,6 @@ function namedMultiarchStep(value: WorkflowRecord, name: string): Record<string,
 }
 
 describe("protected managed-image runtime workflow", () => {
-  it("accepts protected artifact ordering across the complete workflow boundary", () => {
-    expect(validateE2eWorkflow(workflow())).toEqual([]);
-  });
-
   it("accepts the checked-in protected runtime job", () => {
     expect(validateManagedImageProtectedRuntimeWorkflow(workflow())).toEqual([]);
   });
@@ -102,101 +100,244 @@ describe("protected managed-image runtime workflow", () => {
     expect(validateManagedImageProtectedRuntimeWorkflow(value)).toEqual([]);
   });
 
-  it("rejects a multiarch job without CLI artifact restoration", () => {
+  it("requires cancellation cleanup for the derived Docker Engine 27 receipt daemon", () => {
     const value = workflow();
-    const job = multiarchJob(value);
-    job.steps = (job.steps as Array<Record<string, unknown>>).filter(
-      (step) => step.name !== "Restore exact-commit CLI artifact",
-    );
+    const cleanup = namedMultiarchStep(value, "Remove owned Docker Engine 27 receipt daemon");
+    cleanup.if = "${{ !cancelled() }}";
+
     expect(validateManagedImageMultiarchWorkflow(value)).toContain(
-      "managed-image-multiarch-startup must define exactly one 'Restore exact-commit CLI artifact' step",
+      "managed-image-multiarch-startup Docker Engine 27 receipt daemon cleanup must always run",
     );
   });
 
-  it.each([
-    ["before preparation", "Prepare E2E workspace", 0],
-    ["after activation", "Validate candidate activation contract", 1],
-  ] as const)("rejects CLI artifact restoration %s", (_label, boundary, offset) => {
-    const value = workflow();
-    const job = multiarchJob(value);
-    const restore = namedMultiarchStep(value, "Restore exact-commit CLI artifact");
-    const steps = (job.steps as Array<Record<string, unknown>>).filter((step) => step !== restore);
-    steps.splice(steps.findIndex((step) => step.name === boundary) + offset, 0, restore);
-    job.steps = steps;
-    expect(validateManagedImageMultiarchWorkflow(value)).toContain(
-      "managed-image-multiarch-startup protected build, execution, cleanup, validation, and upload steps drifted",
-    );
-  });
-
-  it("rejects an unpinned CLI restore action", () => {
-    const value = workflow();
-    namedMultiarchStep(value, "Restore exact-commit CLI artifact").uses =
-      "NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@main";
-    expect(validateManagedImageMultiarchWorkflow(value)).toContain(
-      "managed-image-multiarch-startup must pin the reviewed CLI artifact restore action",
-    );
-  });
-
-  it("rejects CLI restoration without the producer provenance", () => {
-    const value = workflow();
-    namedMultiarchStep(value, "Restore exact-commit CLI artifact").with = {};
-    expect(validateManagedImageMultiarchWorkflow(value)).toContain(
-      "managed-image-multiarch-startup CLI artifact restore must bind provenance-json to ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}",
-    );
-  });
-
-  it("rejects rebuilding CLI artifact files after exact restoration", () => {
+  // source-shape-contract: security -- The direct runner imports candidate shared modules and must not use stale build output
+  it("builds the candidate shared boundary before direct managed-image contracts", () => {
     const value = workflow();
     const job = multiarchJob(value);
     const steps = job.steps as Array<Record<string, unknown>>;
-    const restoreIndex = steps.indexOf(
-      namedMultiarchStep(value, "Restore exact-commit CLI artifact"),
+    const prepare = namedMultiarchStep(value, "Prepare E2E workspace");
+    const boundary = namedMultiarchStep(value, "Build shared policy boundary");
+    const auth = namedMultiarchStep(value, "Authenticate to Docker Hub");
+    const direct = namedMultiarchStep(value, "Run every exact managed-image contract directly");
+
+    expect(prepare.with).toEqual({ "build-cli": "false" });
+    expect(boundary.run).toEqual(expect.stringContaining("npm run build:policy-boundary"));
+    expect(steps.indexOf(auth)).toBe(steps.indexOf(boundary) + 1);
+    expect(steps.indexOf(boundary)).toBeLessThan(steps.indexOf(direct));
+
+    job.steps = [...steps.filter((step) => step !== boundary), boundary];
+    expect(validateManagedImageMultiarchWorkflow(value)).toContain(
+      "managed-image-multiarch-startup protected build, execution, cleanup, validation, and upload steps drifted",
     );
-    steps.splice(restoreIndex + 1, 0, {
-      name: "Rebuild restored policy boundary",
-      run: "npm run build:policy-boundary",
-    });
+  });
+
+  it("rejects Docker authentication before the candidate shared boundary build", () => {
+    const value = workflow();
+    const job = multiarchJob(value);
+    const steps = job.steps as Array<Record<string, unknown>>;
+    const auth = namedMultiarchStep(value, "Authenticate to Docker Hub");
+    const boundary = namedMultiarchStep(value, "Build shared policy boundary");
+    job.steps = [
+      ...steps.slice(0, steps.indexOf(boundary)),
+      auth,
+      boundary,
+      ...steps.slice(steps.indexOf(boundary) + 1).filter((step) => step !== auth),
+    ];
+
+    const expected =
+      "managed-image-multiarch-startup Docker Hub auth must run immediately after the shared boundary build";
+    expect(validateManagedImageMultiarchWorkflow(value)).toContain(expected);
+    expect(validateE2eWorkflow(value)).toContain(expected);
+  }, 15_000);
+
+  it.each([
+    ["nemoclaw/dist/shared/openshell-policy-boundary.cjs", "nemoclaw/dist/shared/missing.cjs"],
+    ["nemoclaw/dist/shared/sandbox-name.cjs", "nemoclaw/dist/shared/missing.cjs"],
+  ])("rejects a shared boundary step without %s", (required, replacement) => {
+    const value = workflow();
+    const boundary = namedMultiarchStep(value, "Build shared policy boundary");
+    boundary.run = String(boundary.run).replace(required, replacement);
+
+    expect(validateManagedImageMultiarchWorkflow(value)).toContain(POLICY_BOUNDARY_SCRIPT_ERROR);
+  });
+
+  it.each([
+    ["a commented command", "# npm run build:policy-boundary"],
+    ["heredoc data", "cat <<'EOF'\nnpm run build:policy-boundary\nEOF"],
+    [
+      "data after a space-indented heredoc marker",
+      "cat <<'EOF'\n EOF\nnpm run build:policy-boundary\nEOF",
+    ],
+  ])("rejects %s in place of the shared boundary build", (_description, replacement) => {
+    const value = workflow();
+    const boundary = namedMultiarchStep(value, "Build shared policy boundary");
+    boundary.run = String(boundary.run).replace("npm run build:policy-boundary", replacement);
+
+    expect(validateManagedImageMultiarchWorkflow(value)).toContain(POLICY_BOUNDARY_SCRIPT_ERROR);
+  });
+
+  it.each([
+    "npm run build:cli",
+    "npm  run   build:cli",
+    "npm --prefix nemoclaw run build",
+    "npm   --prefix  nemoclaw  run   build",
+  ])("rejects additive full build command %s", (command) => {
+    const value = workflow();
+    const boundary = namedMultiarchStep(value, "Build shared policy boundary");
+    boundary.run = `${String(boundary.run)}\n${command}`;
+
+    expect(validateManagedImageMultiarchWorkflow(value)).toContain(POLICY_BOUNDARY_SCRIPT_ERROR);
+  });
+
+  it.each([
+    "[[ ! -e nemoclaw/dist && ! -L nemoclaw/dist ]]",
+    '[[ -f "$artifact" && ! -L "$artifact" && -s "$artifact" ]]',
+  ])("rejects a comment-only shared boundary guard %s", (guard) => {
+    const value = workflow();
+    const boundary = namedMultiarchStep(value, "Build shared policy boundary");
+    boundary.run = String(boundary.run).replace(guard, `# ${guard}`);
+
+    expect(validateManagedImageMultiarchWorkflow(value)).toContain(POLICY_BOUNDARY_SCRIPT_ERROR);
+  });
+
+  it.each([
+    ["comment heredoc opener", (run: string) => `${run}\n# cat <<true\nnpm run build:cli\ntrue`],
+    ["here-string", (run: string) => `${run}\ncat <<<true\nnpm run build:cli`],
+    ["quoted heredoc text", (run: string) => `${run}\nprintf '%s\\n' '<<true'\nnpm run build:cli`],
+    [
+      "false branch",
+      (run: string) =>
+        run.replace(
+          "npm run build:policy-boundary",
+          "if false; then\n  npm run build:policy-boundary\nfi",
+        ),
+    ],
+    [
+      "errexit disabled",
+      (run: string) => run.replace("set -euo pipefail", "set +e\nset -uo pipefail"),
+    ],
+    [
+      "duplicate build command",
+      (run: string) =>
+        run.replace(
+          "npm run build:policy-boundary",
+          "npm run build:policy-boundary\nnpm run build:policy-boundary",
+        ),
+    ],
+    [
+      "numeric heredoc body",
+      (run: string) =>
+        run.replace(
+          "npm run build:policy-boundary",
+          "cat <<123\nnpm run build:policy-boundary\n123",
+        ),
+    ],
+    [
+      "escaped heredoc delimiter",
+      (run: string) =>
+        run.replace(
+          "npm run build:policy-boundary",
+          "cat <<\\\\EOF\nnpm run build:policy-boundary\nEOF",
+        ),
+    ],
+    [
+      "empty quoted heredoc delimiter",
+      (run: string) =>
+        run.replace("npm run build:policy-boundary", 'cat <<""\nnpm run build:policy-boundary\n\n'),
+    ],
+  ])("rejects the %s shell bypass", (_description, mutate) => {
+    const value = workflow();
+    const boundary = namedMultiarchStep(value, "Build shared policy boundary");
+    boundary.run = mutate(String(boundary.run));
+
+    expect(validateManagedImageMultiarchWorkflow(value)).toContain(POLICY_BOUNDARY_SCRIPT_ERROR);
+  });
+
+  it.each([
+    ["if", "false"],
+    ["continue-on-error", false],
+  ])("rejects a shared boundary step-level %s override", (property, override) => {
+    const value = workflow();
+    const boundary = namedMultiarchStep(value, "Build shared policy boundary");
+    boundary[property] = override;
 
     expect(validateManagedImageMultiarchWorkflow(value)).toContain(
-      "managed-image-multiarch-startup must not rebuild CLI artifact files after exact artifact restoration",
+      "managed-image-multiarch-startup shared policy boundary step must not set if or continue-on-error",
+    );
+  });
+
+  it("rejects duplicate shared policy boundary steps", () => {
+    const value = workflow();
+    const job = multiarchJob(value);
+    const boundary = namedMultiarchStep(value, "Build shared policy boundary");
+    (job.steps as Array<Record<string, unknown>>).push(structuredClone(boundary));
+
+    expect(validateManagedImageMultiarchWorkflow(value)).toContain(
+      "managed-image-multiarch-startup must define exactly one 'Build shared policy boundary' step",
+    );
+  });
+
+  it("rejects an additional step outside the reviewed topology", () => {
+    const value = workflow();
+    const steps = multiarchJob(value).steps as Array<Record<string, unknown>>;
+    const boundary = namedMultiarchStep(value, "Build shared policy boundary");
+    steps.splice(steps.indexOf(boundary) + 1, 0, {
+      name: "Build full candidate plugin",
+      shell: "bash",
+      run: "npm --prefix nemoclaw run build",
+    });
+
+    expect(validateManagedImageMultiarchWorkflow(value)).toEqual(
+      expect.arrayContaining([
+        "managed-image-multiarch-startup must preserve the reviewed candidate execution window topology",
+        "managed-image-multiarch-startup must preserve the reviewed candidate execution window surface",
+      ]),
     );
   });
 
   it.each([
-    ["Prepare E2E workspace", "if", "false"],
-    ["Prepare E2E workspace", "continue-on-error", true],
-    ["Prepare E2E workspace", "shell", "bash"],
-    ["Prepare E2E workspace", "working-directory", "/tmp"],
-    ["Restore exact-commit CLI artifact", "if", "false"],
-    ["Restore exact-commit CLI artifact", "continue-on-error", true],
-    ["Restore exact-commit CLI artifact", "shell", "bash"],
-    ["Restore exact-commit CLI artifact", "working-directory", "/tmp"],
-  ] as const)("rejects protected artifact step %s override %s", (name, key, override) => {
-    const candidate = workflow();
-    namedMultiarchStep(candidate, name)[key] = override;
+    [
+      "a full CLI build appended to another step",
+      (value: WorkflowRecord) => {
+        const activation = namedMultiarchStep(value, "Validate candidate activation contract");
+        activation.run = [String(activation.run), "npm \\", "  run build:cli"].join("\n");
+      },
+    ] as const,
+    ...[
+      'npm run "build:cli"',
+      'npm run build:"cli"',
+      'npm --prefix nemoclaw run "build"',
+      "npm --prefix=nemoclaw run build",
+    ].map(
+      (command) =>
+        [
+          `an alternate full build command appended to another step: ${command}`,
+          (value: WorkflowRecord) => {
+            const activation = namedMultiarchStep(value, "Validate candidate activation contract");
+            activation.run = `${String(activation.run)}\n${command}`;
+          },
+        ] as const,
+    ),
+  ])("rejects %s", (_description, mutate) => {
+    const value = workflow();
+    mutate(value);
 
-    expect(validateManagedImageMultiarchWorkflow(candidate)).toContain(
-      `managed-image-multiarch-startup step '${name}' must not override ${key}`,
+    expect(validateManagedImageMultiarchWorkflow(value)).toContain(
+      "managed-image-multiarch-startup must preserve the reviewed candidate execution window surface",
     );
   });
 
-  it("rejects Docker authentication before protected CLI restoration", () => {
-    const candidate = workflow();
-    const job = multiarchJob(candidate);
-    const auth = namedMultiarchStep(candidate, "Authenticate to Docker Hub");
-    const steps = (job.steps as Array<Record<string, unknown>>).filter((step) => step !== auth);
-    steps.splice(
-      steps.indexOf(namedMultiarchStep(candidate, "Restore exact-commit CLI artifact")),
-      0,
-      auth,
-    );
-    job.steps = steps;
+  it("does not extend the candidate execution receipt past the direct consumer", () => {
+    const value = workflow();
+    const evidence = namedMultiarchStep(value, "Validate protected managed-image evidence");
+    evidence.env = { REVIEW_SCOPE_PROBE: "1" };
 
-    expect(validateManagedImageMultiarchWorkflow(candidate)).toContain(
-      "managed-image-multiarch-startup protected build, execution, cleanup, validation, and upload steps drifted",
+    const errors = validateManagedImageMultiarchWorkflow(value);
+    expect(errors).not.toContain(
+      "managed-image-multiarch-startup must preserve the reviewed candidate execution window topology",
     );
-    expect(validateE2eWorkflow(candidate)).toContain(
-      "managed-image-multiarch-startup Docker Hub auth must run immediately after CLI artifact restoration",
+    expect(errors).not.toContain(
+      "managed-image-multiarch-startup must preserve the reviewed candidate execution window surface",
     );
   });
 

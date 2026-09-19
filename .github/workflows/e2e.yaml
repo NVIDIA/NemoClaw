@@ -4335,18 +4335,6 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
 
-      - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@afffe9cdedd168bfd7116c53846ddffe32eadd4c
-        with:
-          build-cli: "false"
-
-      - name: Restore exact-commit CLI artifact
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@4e9f579183477b984c009cce0f47a1361e5eddef
-        with:
-          provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
-
-      - *dockerhub-auth
-
       - name: Set up protected managed-image Buildx
         uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
         with:
@@ -4354,6 +4342,31 @@ jobs:
           buildkitd-config-inline: |
             [registry."localhost:5000"]
               http = true
+
+      - name: Prepare E2E workspace
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@afffe9cdedd168bfd7116c53846ddffe32eadd4c
+        with:
+          build-cli: "false"
+
+      - name: Build shared policy boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ ! -e nemoclaw/dist && ! -L nemoclaw/dist ]] || {
+            echo "::error::Shared policy boundary output exists before the candidate build" >&2
+            exit 1
+          }
+          npm run build:policy-boundary
+          for artifact in \
+            nemoclaw/dist/shared/openshell-policy-boundary.cjs \
+            nemoclaw/dist/shared/sandbox-name.cjs; do
+            [[ -f "$artifact" && ! -L "$artifact" && -s "$artifact" ]] || {
+              echo "::error::Shared policy boundary artifact is missing or invalid: $artifact" >&2
+              exit 1
+            }
+          done
+
+      - *dockerhub-auth
 
       - name: Validate candidate activation contract
         env:
@@ -4606,6 +4619,17 @@ jobs:
         shell: bash
         run: >-
           npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/managed-image-multiarch-startup.test.ts
+
+      - name: Remove owned Docker Engine 27 receipt daemon
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --import tsx scripts/checks/docker-engine-27-receipt-transfer-e2e.ts \
+            --cleanup-only \
+            --run-id "$GITHUB_RUN_ID" \
+            --run-attempt "$GITHUB_RUN_ATTEMPT" \
+            --platform "$NEMOCLAW_PROTECTED_MANAGED_IMAGE_PLATFORM"
 
       - name: Validate OpenClaw managed-image security boundary
         shell: bash

@@ -1686,33 +1686,37 @@ function validateDockerHubAuthBoundary(errors: string[], jobs: WorkflowRecord): 
       return stringValue(step.uses).startsWith("actions/checkout@") ? [index] : [];
     });
     const checkoutIndex = checkoutIndexes[0] ?? -1;
-    const protectedArtifactStep =
+    const protectedCacheDownloadIndex =
       jobName === "managed-image-protected-runtime"
-        ? "Download exact protected runtime build cache"
-        : jobName === "managed-image-multiarch-startup"
-          ? "Restore exact-commit CLI artifact"
-          : null;
-    const protectedArtifactIndex = workflowSteps.findIndex(
-      (step) => step.name === protectedArtifactStep,
-    );
+        ? workflowSteps.findIndex(
+            (step) => step.name === "Download exact protected runtime build cache",
+          )
+        : -1;
+    const sharedBoundaryBuildIndex =
+      jobName === "managed-image-multiarch-startup"
+        ? workflowSteps.findIndex((step) => step.name === "Build shared policy boundary")
+        : -1;
     const authIndex = workflowSteps.indexOf(auth);
     const cleanupIndex = workflowSteps.indexOf(cleanup);
     const expectedAuthIndex =
       jobName === "hermes-gpu-startup"
         ? checkoutIndex + 3
-        : protectedArtifactStep
-          ? protectedArtifactIndex + 1
-          : checkoutIndex + 1;
+        : jobName === "managed-image-protected-runtime"
+          ? protectedCacheDownloadIndex + 1
+          : jobName === "managed-image-multiarch-startup"
+            ? sharedBoundaryBuildIndex + 1
+            : checkoutIndex + 1;
     if (
       checkoutIndex < 0 ||
-      (protectedArtifactStep && protectedArtifactIndex < 0) ||
+      (jobName === "managed-image-protected-runtime" && protectedCacheDownloadIndex < 0) ||
+      (jobName === "managed-image-multiarch-startup" && sharedBoundaryBuildIndex < 0) ||
       authIndex !== expectedAuthIndex
     ) {
       errors.push(
         jobName === "managed-image-protected-runtime"
           ? `${jobName} Docker Hub auth must run immediately after the protected cache download`
           : jobName === "managed-image-multiarch-startup"
-            ? `${jobName} Docker Hub auth must run immediately after CLI artifact restoration`
+            ? `${jobName} Docker Hub auth must run immediately after the shared boundary build`
             : `${jobName} Docker Hub auth must run immediately after checkout`,
       );
     }

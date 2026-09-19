@@ -224,16 +224,15 @@ export function validatePrepareE2eInvocations(workflow: WorkflowRecord): string[
       errors.push(`${jobName} must check out the repository before prepare-e2e`);
     }
     const authIndex = jobSteps.findIndex((step) => step.name === "Authenticate to Docker Hub");
-    const preparesBeforeAuth = jobName === "managed-image-multiarch-startup";
+    // The protected multiarch job intentionally installs with --ignore-scripts,
+    // builds its candidate boundary, and only then receives Docker credentials.
+    // Its exact post-build auth position is owned by the managed-image validator.
     if (
+      jobName !== "managed-image-multiarch-startup" &&
       authIndex >= 0 &&
-      (preparesBeforeAuth ? prepareIndex >= authIndex : prepareIndex <= authIndex)
+      prepareIndex <= authIndex
     ) {
-      errors.push(
-        preparesBeforeAuth
-          ? `${jobName} must prepare the workspace before Docker Hub authentication`
-          : `${jobName} must authenticate to Docker Hub before prepare-e2e`,
-      );
+      errors.push(`${jobName} must authenticate to Docker Hub before prepare-e2e`);
     }
   }
 
