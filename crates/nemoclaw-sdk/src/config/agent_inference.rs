@@ -320,12 +320,13 @@ impl Document {
     fn runtime_model(
         &self,
         harness: &str,
-        provider: &InferenceProvider,
+        selected: &super::providers::SelectedProvider<'_>,
         route: &Route,
     ) -> Result<RuntimeModel, ConfigError> {
+        let provider = selected.definition;
         let connection = self.provider_connection(provider)?;
         let profile = crate::openshell::inference_profile(
-            &self.provider_key(provider),
+            &selected.key,
             &connection.endpoint,
             &provider.provider,
             crate::services::provider_authenticated(self, provider)?,
@@ -333,7 +334,7 @@ impl Document {
         .map_err(|_| ConfigError::new("invalid native inference profile"))?;
         Ok(RuntimeModel {
             pi: (harness == "pi").then(|| route.overrides.clone()),
-            provider: self.provider_key(provider),
+            provider: selected.key.clone(),
             connection: RuntimeConnection {
                 provider: provider.provider.clone(),
                 model: (harness != "pi").then(|| route.overrides.model.clone()),
@@ -355,15 +356,16 @@ impl Document {
     ) -> Result<SandboxRuntimeSettings, ConfigError> {
         let harness = self.sandbox_harness(sandbox)?;
         let agent = &sandbox.agent;
-        let (inference, scope) = self.scoped_inference(agent)?;
+        let selection = self.scoped_inference(sandbox)?;
+        let inference = selection.inference;
         let models: std::collections::BTreeMap<_, _> = inference
             .routes
             .iter()
             .map(|route| {
-                let provider = self.route_provider(route, scope)?;
+                let provider = self.route_provider(route, &selection)?;
                 Ok((
                     route.name.clone(),
-                    self.runtime_model(&harness.kind, provider, route)?,
+                    self.runtime_model(&harness.kind, &provider, route)?,
                 ))
             })
             .collect::<Result<_, ConfigError>>()?;
@@ -410,6 +412,39 @@ impl Document {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn runtime_resolution_uses_the_supplied_sandbox_scope_not_its_memory_address() {
+        for scope in ["deployment", "sandbox", "inline"] {
+            let mut document = Document::parse(
+                include_bytes!("../../../../examples/fabric-openclaw.yaml").as_slice(),
+            )
+            .unwrap();
+            if scope == "sandbox" {
+                document.spec.sandboxes[0].inference_providers =
+                    std::mem::take(&mut document.spec.inference_providers);
+            }
+            if scope == "inline" {
+                let provider = document.spec.inference_providers.remove(0);
+                let route = &mut document.spec.sandboxes[0]
+                    .agent
+                    .inference
+                    .as_mut()
+                    .unwrap()
+                    .routes[0];
+                route.provider_ref = None;
+                route.provider = Some(provider);
+            }
+            let sandbox = document.spec.sandboxes[0].clone();
+            let expected = document
+                .sandbox_runtime_settings(&document.spec.sandboxes[0])
+                .unwrap();
+            assert_eq!(
+                document.sandbox_runtime_settings(&sandbox).unwrap(),
+                expected
+            );
+        }
+    }
 
     #[test]
     fn mismatched_runtime_settings_identify_the_agents_default_model() {

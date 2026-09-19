@@ -89,7 +89,7 @@ fn fixed_hosted_openclaw_answers_project_to_parser_accepted_intent() {
             "policy must retain {path} as read-only"
         );
     }
-    let route = &document.agent_inference(&sandbox.agent).unwrap().routes[0];
+    let route = &document.sandbox_inference(sandbox).unwrap().routes[0];
     assert_eq!(route.provider_ref.as_deref(), Some("hosted-nvidia-prod"));
     assert_eq!(route.overrides.model, "nvidia/nemotron-3-super-120b-a12b");
 }
@@ -287,7 +287,7 @@ fn representable_scenarios_share_one_parser_validated_table() {
         assert_eq!(sandbox.runtime.provider, "docker");
         let agent = &sandbox.agent;
         assert_eq!(agent.name, direct_answers.agent_name);
-        let route = &reparsed.agent_inference(agent).unwrap().routes[0];
+        let route = &reparsed.sandbox_inference(sandbox).unwrap().routes[0];
         assert_eq!(route.provider_ref.as_deref(), Some(provider.name.as_str()));
         assert_eq!(route.overrides.model, direct_answers.model);
         let policy = &sandbox.network.policy.as_ref().unwrap().explicit;

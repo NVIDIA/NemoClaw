@@ -98,7 +98,7 @@ impl Draft {
             .inference_provider()
             .map_err(|_| diagnostic("document", "editing requires one selected provider"))?;
         let inference = document
-            .agent_inference(agent)
+            .sandbox_inference(sandbox)
             .map_err(|_| diagnostic("document", "editing requires inline agent inference"))?;
         let [route] = inference.routes.as_slice() else {
             return Err(diagnostic(

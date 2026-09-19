@@ -207,13 +207,14 @@ impl Document {
             )?;
 
             require(
-                self.agent_inference(agent)?.routes.len() == 1
+                self.sandbox_inference(sandbox)?.routes.len() == 1
                     || matches!(harness.kind.as_str(), "openclaw" | "pi"),
                 "multiple model choices require OpenClaw or Pi",
             )?;
-            for route in &self.agent_inference(agent)?.routes {
-                let (_, scope) = self.scoped_inference(agent)?;
-                let provider = self.route_provider(route, scope)?;
+            let inference = self.scoped_inference(sandbox)?;
+            for route in &inference.inference.routes {
+                let selected = self.route_provider(route, &inference)?;
+                let provider = selected.definition;
                 require(
                     harness.kind != "pi" || provider.api.is_none(),
                     "Pi selects its API through model metadata; omit provider api",

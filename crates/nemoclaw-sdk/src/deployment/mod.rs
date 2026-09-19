@@ -245,12 +245,12 @@ impl Deployment {
                 }
                 if let Ok(previous) = record.document.sandbox(&sandbox.name)
                     && document
-                        .agent_inference(&sandbox.agent)?
+                        .sandbox_inference(sandbox)?
                         .default_route()?
                         .overrides
                         != record
                             .document
-                            .agent_inference(&previous.agent)?
+                            .sandbox_inference(previous)?
                             .default_route()?
                             .overrides
                 {
@@ -288,7 +288,7 @@ impl Deployment {
                     "pi_model_config".into(),
                     serde_json::to_string(
                         &document
-                            .agent_inference(&definition.agent)?
+                            .sandbox_inference(definition)?
                             .default_route()?
                             .overrides,
                     )
@@ -338,7 +338,7 @@ impl Deployment {
             (self.progress)(Progress::Readiness);
             self.timed("sandbox.ready", async {
                 if document.sandbox_harness(definition)?.kind == "pi" {
-                    sandbox.insert("pi_model_config".into(), serde_json::to_string(&document.agent_inference(&definition.agent)?.default_route()?.overrides)
+                    sandbox.insert("pi_model_config".into(), serde_json::to_string(&document.sandbox_inference(definition)?.default_route()?.overrides)
                         .map_err(|_| Error::State("cannot encode Pi model configuration"))?);
                     tokio::select! {()=cancel.cancelled()=>return Err(Error::Cancelled),result=client.configure_pi(&sandbox, false)=>result?}
                 }

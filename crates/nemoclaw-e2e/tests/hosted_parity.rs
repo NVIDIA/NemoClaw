@@ -116,9 +116,8 @@ fn hosted_openclaw_scenario_rejects_legacy_export_and_preserves_authored_intent(
             "raw export policy must grant the v1 runtime root {runtime_root}"
         );
     }
-    let agent = &sandbox.agent;
     assert_eq!(v1.sandbox_harness(sandbox).unwrap().kind, "openclaw");
-    let inference = v1.agent_inference(agent).unwrap();
+    let inference = v1.sandbox_inference(sandbox).unwrap();
     assert_eq!(
         inference.routes[0].provider_ref.as_deref(),
         Some(provider.name.as_str())
