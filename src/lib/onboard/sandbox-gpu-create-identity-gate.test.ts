@@ -601,12 +601,10 @@ describe("created sandbox identity gate", () => {
     patch.ensureApplied.mockImplementation(() => events.push("ensure-applied"));
     mocks.createDockerGpuSandboxCreatePatch.mockReturnValue(patch);
     mocks.streamSandboxCreate.mockImplementation(async (_command, args, _env, options) => {
-      events.push("create-started");
       nonce = createAttemptNonce(args);
       expect(options.readyCheck?.()).toBe(false);
       await options.onPoll?.();
-      expect(input.verifyCreatedSandboxBeforeEffects).not.toHaveBeenCalled();
-      expect(patch.maybeApplyDuringCreate).not.toHaveBeenCalled();
+      await options.onPoll?.();
       await options.onPoll?.();
       expect(input.verifyCreatedSandboxBeforeEffects).not.toHaveBeenCalled();
       expect(patch.maybeApplyDuringCreate).not.toHaveBeenCalled();
@@ -616,6 +614,7 @@ describe("created sandbox identity gate", () => {
       return { status: 0, output: "Created sandbox: alpha", sawProgress: true };
     });
     const deps = createGpuFlowDeps();
+    let listAttempts = 0;
     let selectorAttempts = 0;
     const failTransientSelectorRead = (): never => {
       throw new Error("Command failed with status 1");
@@ -632,8 +631,9 @@ describe("created sandbox identity gate", () => {
           : sandboxListJson("alpha-sandbox-id", {
               [NEMOCLAW_CREATE_ATTEMPT_LABEL]: nonce,
             });
+    const observeList = (): string => (++listAttempts <= 2 ? "No sandboxes found." : "alpha Ready");
     vi.mocked(deps.runCaptureOpenshell).mockImplementation((args) =>
-      !args.includes("--selector") ? "alpha Ready" : observeSelector(),
+      !args.includes("--selector") ? observeList() : observeSelector(),
     );
 
     await expect(runSandboxGpuCreateFlow(input, deps)).resolves.toMatchObject({

@@ -21,7 +21,7 @@ import {
 
 export type SandboxGpuCreateFailureStage = "create" | "readiness" | "gpu-proof";
 
-export { getSandboxFailurePhase, isSandboxReady };
+export { getSandboxFailurePhase, hasSandboxListEntry, isSandboxReady };
 
 export type SandboxGpuCreateAttemptSuccess<T> = {
   ok: true;

@@ -646,6 +646,12 @@ export function createSandboxGpuCreateAttemptRunner(
     const verifyAndPatchCompatibilityDuringCreate = async (): Promise<void> => {
       if (!compatibility || !deferPostCreateEffects || !createAttemptNonce) return;
       if (!createdSandboxVerified) {
+        const list = deps.runCaptureOpenshell(["sandbox", "list", "-g", input.gatewayName], {
+          ignoreError: true,
+          killProcessTreeOnTimeout: true,
+          timeout: SANDBOX_READY_PROBE_TIMEOUT_MS,
+        });
+        if (!sandboxGpuCreateAttempt.hasSandboxListEntry(list, input.sandboxName)) return;
         const observation = observeCreatedOpenShellSandboxId(
           {
             sandboxName: input.sandboxName,
