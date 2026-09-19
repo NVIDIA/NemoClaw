@@ -44,6 +44,21 @@ The SDK retains combined-budget checks for services sharing an engine, and destr
 
 [Provider validation tests](../crates/nemoclaw-provider/tests/validation.rs), [host observation fixtures](../crates/nemoclaw-sdk/src/managed/planning_tests.rs), and [OpenTofu protocol tests](../crates/nemoclaw-e2e/tests/provider_protocol.rs) cover these boundaries without live GPU resources.
 
+## Network and Image Validation
+
+During planning, managed gateway, vLLM, and Ollama resources check existing network ownership and configuration through the SDK.
+Resources that create a network also check for overlapping subnets when that network is absent.
+A service's absent shared gateway network is deferred because a dependency can create it during the same apply; the runtime backend still requires it before creating the service.
+
+Planning inspects locally available runtime images for Linux OS, architecture compatibility, and required service labels without pulling images.
+A missing image stops planning when the effective `imagePullPolicy` is `Never`; `IfNotPresent` and `Always` allow acquisition during apply.
+An incompatible local image or failed network or image observation stops planning.
+These checks use the selected execution engine and repeat during saved-plan application; image acquisition and network creation retain their own checks immediately before use.
+
+[SDK planning fixtures](../crates/nemoclaw-sdk/src/managed/planning_tests.rs) cover gateway and local and remote service checks.
+The [production provider protocol fixture](../crates/nemoclaw-e2e/tests/provider_protocol.rs) verifies that changed gateway prerequisites stop saved-plan application without engine mutations.
+See [integration-test instructions](testing/fixtures.md#opentofu-and-bundle-lifecycle) for prerequisites and commands.
+
 ## Packaging and Qualification
 
 Follow [bundle building](build.md) for matched CLI, SDK contract, provider, schema, and OpenTofu versions.

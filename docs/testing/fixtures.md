@@ -10,23 +10,25 @@ Complete the [build prerequisites](../build.md) first.
 ## OpenTofu and Bundle Lifecycle
 
 The private `nemoclaw-e2e` crate runs the actual provider protocol through OpenTofu 1.12.6.
-Supply an absolute executable path explicitly:
+Build the production provider and supply absolute executable paths explicitly:
 
 ```sh
+cargo build -p nemoclaw-provider --bin terraform-provider-nemoclaw
 NEMOCLAW_TEST_TOFU=/absolute/path/to/tofu \
+NEMOCLAW_TEST_PROVIDER=/absolute/path/to/terraform-provider-nemoclaw \
   cargo test -p nemoclaw-e2e --test provider_protocol -- --ignored
 ```
 
 These tests launch a fixture provider built by that crate and use temporary files.
+On Unix, they also run the production provider against a local Docker API fixture to check network and image planning, including prerequisite changes before saved-plan application.
 They create no Docker, OpenShell, or inference resources.
 The fixture provider is not a production bundle component.
 
 Test the runtime bundle and live serving backend separately.
 
-Build the production provider and test its full OpenShell resource graph against the local gRPC fixture:
+Test the production provider's full OpenShell resource graph against the local gRPC fixture:
 
 ```sh
-cargo build -p nemoclaw-provider --bin terraform-provider-nemoclaw
 NEMOCLAW_TEST_TOFU=/absolute/path/to/tofu \
 NEMOCLAW_TEST_PROVIDER=/absolute/path/to/terraform-provider-nemoclaw \
   cargo test -p nemoclaw-e2e --test opentofu_openshell -- --ignored
