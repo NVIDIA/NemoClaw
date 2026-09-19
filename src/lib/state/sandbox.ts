@@ -1634,6 +1634,50 @@ function recordUnreadableAuditDirs(
   }
 }
 
+function collectPreBackupAuditViolations(
+  entries: readonly PreBackupAuditEntry[],
+  dirPrefix: string,
+  existingDirs: readonly string[],
+  failedDirs: string[],
+  failedDirReasons: Record<string, string>,
+): string[] {
+  const whitelisted: string[] = [];
+  const hardLinked: string[] = [];
+  const unreadable: PreBackupAuditEntry[] = [];
+  const violations: string[] = [];
+  const rows = { whitelisted, hardLinked, violation: violations };
+  for (const entry of entries) {
+    const kind = classifyPreBackupAuditEntry(entry, dirPrefix);
+    if (kind === "unreadable") {
+      unreadable.push(entry);
+      continue;
+    }
+    // JSON escapes embedded controls before the entry reaches logs or
+    // the user-facing rejection detail.
+    rows[kind].push(JSON.stringify(entry));
+  }
+  if (unreadable.length > 0) {
+    recordUnreadableAuditDirs(unreadable, dirPrefix, existingDirs, failedDirs, failedDirReasons);
+    _log(
+      `Pre-backup audit found ${unreadable.length} unreadable directories: ${unreadable
+        .slice(0, 5)
+        .map(([, absPath]) => JSON.stringify(absPath))
+        .join("; ")}`,
+    );
+  }
+  if (whitelisted.length > 0) {
+    _log(
+      `Pre-backup audit whitelisted ${whitelisted.length} entries (image npm symlinks): ${whitelisted.slice(0, 5).join("; ")}`,
+    );
+  }
+  if (hardLinked.length > 0) {
+    _log(
+      `Pre-backup audit accepted ${hardLinked.length} multiply-linked regular files (archived as plain files): ${hardLinked.slice(0, 5).join("; ")}`,
+    );
+  }
+  return violations;
+}
+
 /** @visibleForTesting */
 export function buildPreBackupAuditFindCommand(targetDir: string): string {
   return (
@@ -1929,63 +1973,27 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
             error: "Pre-backup audit rejected malformed output",
           };
         }
-        if (allEntries.length > 0) {
-          const whitelisted: string[] = [];
-          const hardLinked: string[] = [];
-          const unreadable: PreBackupAuditEntry[] = [];
-          const violations: string[] = [];
-          const dirPrefix = `${dir}/`;
-          const rows = { whitelisted, hardLinked, violation: violations };
-          for (const entry of allEntries) {
-            const kind = classifyPreBackupAuditEntry(entry, dirPrefix);
-            if (kind === "unreadable") {
-              unreadable.push(entry);
-              continue;
-            }
-            // JSON escapes embedded controls before the entry reaches logs or
-            // the user-facing rejection detail.
-            rows[kind].push(JSON.stringify(entry));
-          }
-          if (unreadable.length > 0) {
-            recordUnreadableAuditDirs(
-              unreadable,
-              dirPrefix,
-              existingDirs,
-              failedDirs,
-              failedDirReasons,
-            );
-            _log(
-              `Pre-backup audit found ${unreadable.length} unreadable directories: ${unreadable
-                .slice(0, 5)
-                .map(([, absPath]) => JSON.stringify(absPath))
-                .join("; ")}`,
-            );
-          }
-          if (whitelisted.length > 0) {
-            _log(
-              `Pre-backup audit whitelisted ${whitelisted.length} entries (image npm symlinks): ${whitelisted.slice(0, 5).join("; ")}`,
-            );
-          }
-          if (hardLinked.length > 0) {
-            _log(
-              `Pre-backup audit accepted ${hardLinked.length} multiply-linked regular files (archived as plain files): ${hardLinked.slice(0, 5).join("; ")}`,
-            );
-          }
-          if (violations.length > 0) {
-            // Non-whitelisted symlinks / special files — reject
-            _log(
-              `SECURITY: Pre-backup audit found ${violations.length} unsafe entries: ${violations.slice(0, 5).join("; ")}`,
-            );
-            return {
-              success: false,
-              manifest,
-              backedUpDirs,
-              failedDirs: [...existingDirs],
-              backedUpFiles,
-              failedFiles: stateFiles.map((f) => f.path),
-              error: `Pre-backup audit rejected: symlinks or special files found in state dirs: ${violations.slice(0, 3).join("; ")}`,
-            };
-          }
+        const violations = collectPreBackupAuditViolations(
+          allEntries,
+          `${dir}/`,
+          existingDirs,
+          failedDirs,
+          failedDirReasons,
+        );
+        if (violations.length > 0) {
+          // Non-whitelisted symlinks / special files — reject
+          _log(
+            `SECURITY: Pre-backup audit found ${violations.length} unsafe entries: ${violations.slice(0, 5).join("; ")}`,
+          );
+          return {
+            success: false,
+            manifest,
+            backedUpDirs,
+            failedDirs: [...existingDirs],
+            backedUpFiles,
+            failedFiles: stateFiles.map((f) => f.path),
+            error: `Pre-backup audit rejected: symlinks or special files found in state dirs: ${violations.slice(0, 3).join("; ")}`,
+          };
         }
         _log("Pre-backup audit passed — no unsafe symlinks or special files found");
 
