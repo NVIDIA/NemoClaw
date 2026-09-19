@@ -7,6 +7,26 @@ The SDK turns a deployment document into checked OpenTofu operations and preserv
 The [accepted scope](scope.md) governs implementation changes.
 The explanations below describe the current boundaries; the later findings retain intermediate results and their limits.
 
+## Configuration Authoring
+
+The CLI uses [nemoclaw-authoring](../../crates/nemoclaw-authoring/src/lib.rs) to turn onboarding answers into desired-state YAML.
+This unpublished library owns authoring presets, draft edits, stable draft identity, structured reviews, and field diagnostics.
+The CLI is its current consumer; the crate boundary keeps terminal and argument-handling dependencies out of the authoring model so other frontends can use it.
+Both prompted answers and command-line overrides use the same projection and SDK parser.
+The SDK remains the authority for configuration validity and deployment behavior.
+
+The authoring library exposes its supported combinations but does not discover runtime capabilities or claim to cover every SDK configuration.
+Draft edits currently change deployment, sandbox, agent, and provider names, the model, and the credential environment-variable name.
+The current edit methods cannot change harness, runtime, inference type, or API choices.
+Rejected edits leave the previous answers intact.
+Reopening YAML requires the authoring model to reproduce the parsed document; it rejects unsupported customizations and does not preserve comments or formatting.
+The [public API tests](../../crates/nemoclaw-authoring/tests/public_api.rs) check these boundaries and compare default YAML against the pre-extraction output with a fixed UID.
+
+The CLI owns prompts, review rendering, file I/O, credential acquisition, and apply confirmation.
+Authoring retains credential environment-variable names, not credential values, and never calls deployment operations.
+Planning, apply, ownership checks, and recovery remain in the SDK.
+The library still depends on the SDK; this separation does not remove the SDK's build dependencies.
+
 ## Why the SDK Owns the Operation
 
 An application and a CLI user need the same answer to an interrupted apply: which resources exist, who owns them, and what can resume?
