@@ -18,10 +18,7 @@ spec:
       kind: vllm
       hardware:
         profile: dgx-spark
-      runtime:
-        provider: docker
-        engine: unix:///var/run/docker.sock
-        image: nc-prototype-vllm@sha256:a08d7d6542a20cff9a7f5303e100f71a121d241d0e33fc3be5da6ad6d3bc0c31
+      image: nc-prototype-vllm@sha256:a08d7d6542a20cff9a7f5303e100f71a121d241d0e33fc3be5da6ad6d3bc0c31
       authentication: bearer
       model:
         repository: Qwen/Qwen3-4B
@@ -46,10 +43,7 @@ spec:
       kind: vllm
       hardware:
         profile: dgx-spark
-      runtime:
-        provider: docker
-        engine: unix:///var/run/docker.sock
-        image: nc-prototype-vllm@sha256:a08d7d6542a20cff9a7f5303e100f71a121d241d0e33fc3be5da6ad6d3bc0c31
+      image: nc-prototype-vllm@sha256:a08d7d6542a20cff9a7f5303e100f71a121d241d0e33fc3be5da6ad6d3bc0c31
       authentication: bearer
       model:
         repository: nvidia/Qwen3.6-27B-NVFP4

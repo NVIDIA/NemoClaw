@@ -1,5 +1,5 @@
 {
-  "digest": "bc52f6707a9de369333e4e8460ecf4b54d6ab00d602a53c63d4c261317cb5416",
+  "digest": "2e2e963ad17bae48c84d44a4865cb96b1e0c7541df2074074cd7beae89b08033",
   "document": {
     "apiVersion": "nemoclaw.nvidia.com/v1alpha1",
     "kind": "NemoClawConfig",
@@ -58,6 +58,7 @@
           "hardware": {
             "profile": "dgx-spark"
           },
+          "image": "nc-prototype-ollama@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
           "kind": "ollama",
           "management": "managed",
           "memory": {
@@ -71,11 +72,6 @@
           "model": {
             "digest": "7df6b6e09427a769808717c0a93cadc4ae99ed4eb8bf5ca557c90846becea435",
             "name": "qwen3:0.6b"
-          },
-          "runtime": {
-            "engine": "unix:///var/run/docker.sock",
-            "image": "nc-prototype-ollama@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-            "provider": "docker"
           },
           "serving": {
             "contextTokens": 8192,

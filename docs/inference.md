@@ -86,7 +86,7 @@ The current tests establish configuration, compilation, API attachment, and drif
 | NemoClaw should run Ollama on a declared NVIDIA GPU | Declare a service with `kind: ollama`, hardware requirements, a pinned runtime image, a model name and digest, memory, and serving settings | [Managed Ollama](#run-managed-ollama) |
 | Ollama and its model already run locally and must remain external | Declare a service with `kind: ollamaProxy` to manage an authenticated proxy for one installed model digest | [Proxy configuration](#use-external-ollama-through-a-managed-proxy) |
 | NemoClaw should download and serve a pinned public model with vLLM | Declare a service with `kind: vllm`, the runtime image, repository revision, capacity, and serving settings; see [managed models](models.md) | [Generic vLLM](../examples/spark/vllm.yaml) |
-| The Docker daemon running a managed service is reached through SSH | Set `runtime.engine` to the SSH endpoint, then declare `placement` and a private `publication` endpoint on the named service; follow [remote service](remote-service.md) | [Remote vLLM](../examples/spark/remote-vllm.yaml) |
+| The Docker daemon running a managed service is reached through SSH | Set `placement.engine` to the SSH endpoint, then declare the private network and `publication` endpoint on the named service; follow [remote service](remote-service.md) | [Remote vLLM](../examples/spark/remote-vllm.yaml) |
 | The model requires preparation tools or runtime patches | Package reviewed tools in an immutable image and declare an [inline recipe](recipes.md) | [Inline Qwen3.8 recipe](../examples/spark/spark-inline.yaml) |
 
 Service ownership does not depend on the harness; the service must support the [request API](#choose-the-request-api) selected by that harness.
@@ -177,7 +177,7 @@ cargo run -p nemoclaw-build -- runtime runtimes/ollama-amd64/build.json
 ```
 
 Each command builds and loads a local image and retains its OCI archive under `.build/ollama` or `.build/ollama-amd64`.
-Use the immutable image digest from that build in `spec.services.<name>.runtime.image` and make the image available on the selected engine.
+Use the immutable image digest from that build in `spec.services.<name>.image` and make the image available on the selected engine.
 The example image digest is a placeholder; a bare upstream `ollama/ollama` image lacks the required supervisor.
 The [ARM64 notice](../runtimes/ollama/NOTICE.md) and [AMD64 notice](../runtimes/ollama-amd64/NOTICE.md) identify the pinned upstream image and retained sources.
 
@@ -192,10 +192,7 @@ services:
   qwen:
     kind: ollama
     hardware: {profile: dgx-spark}
-    runtime:
-      provider: docker
-      engine: unix:///var/run/docker.sock
-      image: nc-prototype-ollama@sha256:REPLACE_WITH_RUNTIME_DIGEST
+    image: nc-prototype-ollama@sha256:REPLACE_WITH_RUNTIME_DIGEST
     model:
       name: qwen3:0.6b
       digest: 7df6b6e09427a769808717c0a93cadc4ae99ed4eb8bf5ca557c90846becea435
@@ -295,10 +292,7 @@ services:
   local:
     kind: ollamaProxy
     management: managed
-    runtime:
-      provider: docker
-      engine: unix:///var/run/docker.sock
-      image: nc-fabric@sha256:REPLACE_WITH_IMAGE_DIGEST
+    image: nc-fabric@sha256:REPLACE_WITH_IMAGE_DIGEST
     endpoint: http://172.20.0.1:11435/v1
     upstream:
       endpoint: http://127.0.0.1:11434/v1
@@ -446,7 +440,7 @@ Choose the budget for the phase that failed; extending an agent turn does not ex
 These are phase limits, not a promised total duration for apply.
 Other bounded observations can fail earlier, and request or transport failures are not automatically retried as mutations.
 The old onboarding timeout environment variables are not configuration inputs for these SDK paths.
-Use the [field reference](reference/configuration.md), [probe implementation](../crates/nemoclaw-sdk/src/openshell/probes.rs), [deployment readiness](../crates/nemoclaw-sdk/src/deployment/runtime.rs), and [recipe runner](../crates/nemoclaw-runtime/src/services/installers/vllm/inline_recipe.rs) for the current boundaries.
+Use the [field reference](reference/configuration.md), [probe implementation](../crates/nemoclaw-sdk/src/openshell/probes.rs), [deployment readiness](../crates/nemoclaw-sdk/src/deployment/runtime.rs), and [recipe runner](../crates/nemoclaw-sdk/src/services/installers/vllm/runtime/inline_recipe.rs) for the current boundaries.
 For a stopped managed service, inspect its [retained status](models.md#diagnose-and-recover-a-stopped-runtime) before choosing recovery.
 
 ## Verify the Result

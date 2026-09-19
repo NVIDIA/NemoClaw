@@ -1,16 +1,17 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::supervisor::{self, Monitors};
-use nemoclaw_sdk::{
-    CancellationToken, Error,
-    services::installers::ollama::{ManagedOllama, policy},
-};
+mod authentication;
+mod hardware;
+mod inline_recipe;
+mod process;
+mod recipe;
+
+use crate::services::runtime::supervisor::{self, Monitors};
+use crate::{CancellationToken, Error, services::installers::vllm::Service};
 use process_wrap::tokio::{KillOnDrop, ProcessGroup};
 use std::{fs, io::Write, path::Path, time::Duration};
-
 const ROOT: &str = "/data";
-
 pub(crate) fn report(phase: &str, detail: &str, pid: u32) -> Result<(), Error> {
     let updated = time::OffsetDateTime::now_utc()
         .format(&time::format_description::well_known::Rfc3339)
@@ -24,14 +25,13 @@ pub(crate) fn report(phase: &str, detail: &str, pid: u32) -> Result<(), Error> {
     file.persist(Path::new(ROOT).join("status.json"))
         .map_err(|_| Error::State("cannot commit runtime status"))?;
     fs::File::open(ROOT)
-        .and_then(|directory| directory.sync_all())
+        .and_then(|f| f.sync_all())
         .map_err(|_| Error::State("cannot sync runtime status directory"))?;
     eprintln!("{phase}: {detail}");
     Ok(())
 }
-
-pub(crate) async fn run(
-    service: &ManagedOllama,
+pub(in crate::services) async fn run(
+    spec: &Service,
     cancel: &CancellationToken,
     trip: &CancellationToken,
 ) -> Result<(), Error> {
@@ -47,59 +47,63 @@ pub(crate) async fn run(
     lock.try_lock().map_err(|_| {
         Error::Conflict("persistent storage already has a writer or locking failed")
     })?;
-    let result = run_owned(service, cancel, trip).await;
+    let result = run_owned(spec, cancel, trip).await;
     if let Err(error) = &result {
+        // Only the holder of the persistent writer lock may publish status.
         let _ = report("stopped", &error.to_string(), 0);
     }
     result
 }
-
 async fn run_owned(
-    service: &ManagedOllama,
+    spec: &Service,
     cancel: &CancellationToken,
     trip: &CancellationToken,
 ) -> Result<(), Error> {
-    let model = super::recipe::prepare(service, Path::new(ROOT), cancel).await?;
+    let credential = spec
+        .authentication
+        .map(|_| authentication::load(Path::new(ROOT)))
+        .transpose()?;
+    let prepared = recipe::prepare(spec, Path::new(ROOT), cancel).await?;
     if trip.is_cancelled() {
         return Err(Error::Conflict(
             "memory protection tripped by operator; explicit apply required",
         ));
     }
-    let capacity = super::hardware::before_start(service, cancel).await?;
-    let (mut command, readiness) = super::process::launch(service, &model, &capacity)?;
+    let capacity = hardware::before_start(spec, cancel).await?;
+    let (mut command, readiness) = process::launch(
+        spec,
+        &prepared,
+        crate::services::installers::vllm::hardware_capacity::serving_memory(spec, &capacity)?,
+        credential,
+    )?;
     command.wrap(KillOnDrop).wrap(ProcessGroup::leader());
     let mut child = command
         .spawn()
-        .map_err(|_| Error::State("Ollama process could not start"))?;
+        .map_err(|_| Error::State("inference process could not start"))?;
     if let Err(error) = report(
         "loading",
-        "waiting for Ollama readiness",
+        "waiting for inference readiness",
         child.id().unwrap_or(0),
     ) {
         supervisor::terminate(child.as_mut()).await;
         return Err(error);
     }
     let (samples_tx, samples) = tokio::sync::mpsc::channel(1);
-    let failures = samples_tx.clone();
     let sampler = tokio::spawn(async move {
         let mut interval = tokio::time::interval(Duration::from_secs(1));
         loop {
             interval.tick().await;
-            if samples_tx.send(super::hardware::memory()).await.is_err() {
+            if samples_tx.send(hardware::memory()).await.is_err() {
                 break;
             }
         }
     });
     let (ready_tx, ready) = tokio::sync::mpsc::channel(1);
-    let health = tokio::spawn(async move {
-        if let Err(error) = super::process::wait_ready(readiness, ready_tx).await {
-            let _ = failures.send(Err(error)).await;
-        }
-    });
+    let health = tokio::spawn(async move { process::wait_ready(readiness, ready_tx).await });
     let result = supervisor::supervise(
         supervisor::Policy {
-            startup_timeout: Duration::from_secs(service.serving.startup_timeout_seconds as u64),
-            protection: policy::protection(service)?,
+            startup_timeout: Duration::from_secs(spec.serving.startup_timeout_seconds as u64),
+            protection: crate::hardware::ProtectionPolicy::for_service(spec)?,
         },
         child.as_mut(),
         Monitors {

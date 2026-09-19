@@ -15,6 +15,7 @@ pub(crate) fn constrain(defs: &mut serde_json::Map<String, Value>) {
         .iter_mut()
         .find(|variant| variant["properties"]["kind"]["const"] == "vllm")
         .expect("vLLM service variant");
+    property(service, "image", json!({"pattern":constraints::IMAGE}));
     service["allOf"] = json!([
         {"oneOf":[{"required":["hardware"]},{"required":["recipe"]}]},
         {"if":{"required":["hardware"]},"then":forbid(&["recipe"])},
@@ -52,6 +53,11 @@ pub(crate) fn constrain(defs: &mut serde_json::Map<String, Value>) {
         &mut defs["Model"],
         "revision",
         json!({"pattern": c::REVISION}),
+    );
+    property(
+        &mut defs["ServicePlacement"],
+        "engine",
+        json!({"pattern": "^ssh://"}),
     );
     property(
         &mut defs["ServicePlacement"],

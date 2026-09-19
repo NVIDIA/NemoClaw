@@ -141,9 +141,9 @@ Use [sandbox policy and proxy configuration](sandbox-network.md) to replace the 
 
 ## Control Container Image Downloads
 
-Set `imagePullPolicy` beside `image` under `spec.gateway` or `spec.services.<name>.runtime`.
+Set `imagePullPolicy` beside `image` under `spec.gateway` or `spec.services.<name>`.
 The service setting applies to `kind: vllm`, `ollama`, and `ollamaProxy`.
-The setting controls image acquisition on that container's engine, including an SSH Docker engine selected by the service's `runtime.engine`.
+The setting controls image acquisition on that container's engine, including an SSH Docker engine selected by the service's `placement.engine`.
 Images still require immutable SHA-256 references.
 
 | Policy | Before container creation or restart |
@@ -152,9 +152,9 @@ Images still require immutable SHA-256 references.
 | `IfNotPresent` | Use the cached image, or pull it when absent |
 | `Never` | Use the cached image; fail when it is absent |
 
-Omission preserves existing behavior: `IfNotPresent` for the gateway, Ollama, and Ollama proxy; `Never` for a vLLM service.
+Omission preserves existing behavior: `IfNotPresent` for the gateway and Ollama proxy; `Never` for Ollama and vLLM services.
 Locally built images can use `Never` without requiring a registry copy.
-For a published vLLM runtime, add this field under `spec.services.<name>.runtime`, alongside its existing `provider`, `engine`, and `image` settings:
+For a managed service, add this field beside its `image` setting:
 
 ```yaml
 imagePullPolicy: IfNotPresent

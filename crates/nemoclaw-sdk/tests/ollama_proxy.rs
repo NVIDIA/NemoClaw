@@ -13,8 +13,7 @@ fn input() -> Value {
     value["spec"]["services"] = json!({"ollama-auth": {
         "kind":"ollamaProxy",
         "management":"managed",
-        "runtime":{"provider":"docker","engine":"unix:///var/run/docker.sock",
-            "image":format!("nc-ollama-proxy@sha256:{}","a".repeat(64))},
+        "image":format!("nc-ollama-proxy@sha256:{}","a".repeat(64)),
         "endpoint":"http://172.20.0.1:11435/v1",
         "upstream":{"endpoint":"http://127.0.0.1:11434/v1",
             "model":{"name":"qwen3:0.6b","digest":"a".repeat(64)}}
@@ -30,7 +29,7 @@ fn proxy_pull_policy_preserves_credentials_and_other_resource_settings() {
     let original = Document::parse(value.to_string().as_bytes()).unwrap();
     let before = compile(&original, &gens, "0.1.0").unwrap();
     for policy in ["Always", "IfNotPresent", "Never"] {
-        value["spec"]["services"]["ollama-auth"]["runtime"]["imagePullPolicy"] = json!(policy);
+        value["spec"]["services"]["ollama-auth"]["imagePullPolicy"] = json!(policy);
         assert!(
             jsonschema::validator_for(&input_schema())
                 .unwrap()

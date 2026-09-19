@@ -4,10 +4,7 @@
 //! vLLM-specific YAML input owned by the vLLM installer.
 
 use super::{ServiceContainer, ServiceHardware, constraints};
-use crate::{
-    config::{ManagedManagement, ManagedResource},
-    services::ServiceRuntime,
-};
+use crate::config::{ImagePullPolicy, ManagedManagement, ManagedResource};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -36,8 +33,16 @@ pub struct Service {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(with = "ManagedManagement")]
     pub management: Option<ManagedManagement>,
-    /// Docker runner and immutable NemoClaw vLLM runtime image.
-    pub runtime: ServiceRuntime,
+    /// Immutable runtime image containing vLLM, the NemoClaw supervisor, and any declared recipe tools.
+    pub image: String,
+    /// Image acquisition before container creation. Omission means Never.
+    #[serde(
+        rename = "imagePullPolicy",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[schemars(default, with = "ImagePullPolicy")]
+    pub image_pull_policy: Option<ImagePullPolicy>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(default, with = "Box<super::recipes::inline::InlineRecipe>")]
     /// Inline preparation and serving contract supplied by the pinned runtime image. Required without hardware; excludes hardware.
@@ -189,6 +194,8 @@ pub struct ServicePlacement {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(with = "ManagedResource")]
     pub network: Option<ManagedResource>,
+    /// SSH Docker endpoint used for an explicitly placed service.
+    pub engine: String,
     /// Canonical private IPv4 /24 on the selected Docker engine.
     pub network_cidr: String,
 }
@@ -268,7 +275,7 @@ impl Service {
 
     pub(crate) fn runtime_settings(&self) -> Self {
         let mut settings = self.clone();
-        settings.runtime.image_pull_policy = None;
+        settings.image_pull_policy = None;
         settings.management = None;
         settings.storage = None;
         settings.model.management = None;

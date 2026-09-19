@@ -18,10 +18,7 @@ spec:
       kind: vllm
       hardware:
         profile: dgx-spark
-      runtime:
-        provider: docker
-        engine: unix:///var/run/docker.sock
-        image: nc-prototype-vllm@sha256:e3f95d68664394c97ed9ea31f55f2183a5f1b6f07a61ffa15177f5dcacdb8b5e
+      image: nc-prototype-vllm@sha256:e3f95d68664394c97ed9ea31f55f2183a5f1b6f07a61ffa15177f5dcacdb8b5e
       model:
         repository: Qwen/Qwen3-4B
         revision: 1cfa9a7208912126459214e8b04321603b3df60c

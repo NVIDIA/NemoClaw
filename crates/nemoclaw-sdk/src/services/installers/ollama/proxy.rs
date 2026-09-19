@@ -26,8 +26,8 @@ pub fn specification(
             .get("ollama")
             .ok_or(Error::State("missing proxy generation"))?
             .clone(),
-        image: proxy.runtime.image.clone(),
-        image_pull_policy: proxy.runtime.image_pull_policy,
+        image: proxy.image.clone(),
+        image_pull_policy: proxy.image_pull_policy,
         network: "host".into(),
         bind_address: proxy
             .endpoint
@@ -88,7 +88,7 @@ pub fn targets(
         ("upstream", settings.upstream.clone()),
         ("model", settings.model.clone()),
         ("digest", settings.digest.clone()),
-        ("engine", proxy.runtime.engine.clone()),
+        ("engine", document.spec.gateway.engine.clone()),
     ]
     .into_iter()
     .map(|(k, v)| (k.into(), v))

@@ -156,7 +156,7 @@ This build exports `.build/qwen38/runtime.tar` and loads `nc-prototype-qwen38:sp
 Its Dockerfile applies pinned patches and retains original and modified sources.
 Use [the inline recipe guide](recipes.md) to declare preparation and serving requirements.
 
-Use the immutable OCI manifest digest in the build output for `spec.services.<name>.runtime.image`.
+Use the immutable OCI manifest digest in the build output for `spec.services.<name>.image`.
 Do not substitute a mutable tag or a digest copied from another build.
 If the selected daemon is remote, load the archive into that daemon before apply; a local image is not available there automatically.
 

@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-use nemoclaw_sdk::Error;
+use crate::Error;
 use std::path::Path;
 
 // The caller holds the volume writer lock throughout initialization and use.

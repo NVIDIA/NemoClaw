@@ -128,10 +128,10 @@ async fn spark_image_change_plans_and_applies_replacement() {
 
     let previous = deployment.export(&cancel).await.unwrap();
     let mut comparison = document.clone();
-    let old_image = vllm(&previous).runtime.image.clone();
-    let new_image = vllm(&comparison).runtime.image.clone();
+    let old_image = vllm(&previous).image.clone();
+    let new_image = vllm(&comparison).image.clone();
     assert_ne!(new_image, old_image);
-    vllm_mut(&mut comparison).runtime.image = old_image;
+    vllm_mut(&mut comparison).image = old_image;
     assert_eq!(
         comparison, previous,
         "only the inference image pin may change"

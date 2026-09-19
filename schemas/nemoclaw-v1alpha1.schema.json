@@ -2835,6 +2835,15 @@
               "$ref": "#/$defs/ServiceHardware",
               "description": "Explicit supported GPU or system profile."
             },
+            "image": {
+              "description": "Immutable runtime image containing Ollama and the NemoClaw supervisor.",
+              "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:/-]*@sha256:[a-f0-9]{64}$",
+              "type": "string"
+            },
+            "imagePullPolicy": {
+              "$ref": "#/$defs/ImagePullPolicy",
+              "description": "Image acquisition before container creation. Omission means Never."
+            },
             "kind": {
               "const": "ollama",
               "description": "Supported installer selected by this service definition.",
@@ -2860,10 +2869,6 @@
               "$ref": "#/$defs/ServicePublication",
               "description": "Private inference address for an explicitly placed service."
             },
-            "runtime": {
-              "$ref": "#/$defs/ServiceRuntime",
-              "description": "Docker runner and pinned NemoClaw Ollama runtime image."
-            },
             "serving": {
               "$ref": "#/$defs/OllamaServing",
               "description": "Ollama serving limits."
@@ -2876,7 +2881,7 @@
           "required": [
             "kind",
             "hardware",
-            "runtime",
+            "image",
             "model"
           ],
           "type": "object"
@@ -2889,6 +2894,15 @@
               "description": "Private or loopback HTTP IPv4:port/v1 published by the proxy and reachable by OpenShell.",
               "type": "string"
             },
+            "image": {
+              "description": "Immutable NemoClaw proxy image. The external daemon runs on the managed gateway host.",
+              "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:/-]*@sha256:[a-f0-9]{64}$",
+              "type": "string"
+            },
+            "imagePullPolicy": {
+              "$ref": "#/$defs/ImagePullPolicy",
+              "description": "Image acquisition before container creation. Omission means IfNotPresent."
+            },
             "kind": {
               "const": "ollamaProxy",
               "description": "Supported installer selected by this service definition.",
@@ -2898,10 +2912,6 @@
               "$ref": "#/$defs/ManagedManagement",
               "description": "Optional ownership declaration; omission means managed."
             },
-            "runtime": {
-              "$ref": "#/$defs/ServiceRuntime",
-              "description": "Docker runner and immutable NemoClaw proxy image. The external daemon runs on this same Linux host."
-            },
             "upstream": {
               "$ref": "#/$defs/ExternalOllama",
               "description": "External loopback-only daemon and already-installed model."
@@ -2909,7 +2919,7 @@
           },
           "required": [
             "kind",
-            "runtime",
+            "image",
             "endpoint",
             "upstream"
           ],
@@ -3125,6 +3135,15 @@
               "description": "Explicit hardware contract: a named GPU or system profile, or dedicated GPU requirements for Linux AMD64. Required without an inline recipe; excludes recipe.",
               "x-nemoclaw-required": "Without recipe"
             },
+            "image": {
+              "description": "Immutable runtime image containing vLLM, the NemoClaw supervisor, and any declared recipe tools.",
+              "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:/-]*@sha256:[a-f0-9]{64}$",
+              "type": "string"
+            },
+            "imagePullPolicy": {
+              "$ref": "#/$defs/ImagePullPolicy",
+              "description": "Image acquisition before container creation. Omission means Never."
+            },
             "kind": {
               "const": "vllm",
               "description": "Supported installer selected by this service definition.",
@@ -3157,10 +3176,6 @@
               "description": "Inline preparation and serving contract supplied by the pinned runtime image. Required without hardware; excludes hardware.",
               "x-nemoclaw-required": "Without hardware"
             },
-            "runtime": {
-              "$ref": "#/$defs/ServiceRuntime",
-              "description": "Docker runner and immutable NemoClaw vLLM runtime image."
-            },
             "serving": {
               "$ref": "#/$defs/Serving",
               "description": "Service limits. Omission selects the SDK defaults; recipe serving settings select recipe-specific parsers and execution options."
@@ -3172,7 +3187,7 @@
           },
           "required": [
             "kind",
-            "runtime",
+            "image",
             "model"
           ],
           "then": {
@@ -3297,6 +3312,11 @@
       "additionalProperties": false,
       "description": "Execution host and Docker network for a remote model service.",
       "properties": {
+        "engine": {
+          "description": "SSH Docker endpoint used for an explicitly placed service.",
+          "pattern": "^ssh://",
+          "type": "string"
+        },
         "network": {
           "$ref": "#/$defs/ManagedResource",
           "description": "Optional ownership declaration for the network configured by networkCIDR. Omission means managed."
@@ -3308,6 +3328,7 @@
         }
       },
       "required": [
+        "engine",
         "networkCidr"
       ],
       "type": "object"
@@ -3329,37 +3350,6 @@
       "required": [
         "endpoint",
         "bindAddress"
-      ],
-      "type": "object"
-    },
-    "ServiceRuntime": {
-      "additionalProperties": false,
-      "description": "Container runner and immutable image used by a managed service installer.",
-      "properties": {
-        "engine": {
-          "description": "Explicit Docker endpoint used to install, observe, and remove the service.",
-          "pattern": "^(unix:///|ssh://)",
-          "type": "string"
-        },
-        "image": {
-          "description": "Immutable image reference used by the package installer.",
-          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:/-]*@sha256:[a-f0-9]{64}$",
-          "type": "string"
-        },
-        "imagePullPolicy": {
-          "$ref": "#/$defs/ImagePullPolicy",
-          "description": "Image acquisition before container creation. The selected installer defines the omitted default."
-        },
-        "provider": {
-          "const": "docker",
-          "description": "Supported container runner. The initial service contract uses Docker.",
-          "type": "string"
-        }
-      },
-      "required": [
-        "provider",
-        "engine",
-        "image"
       ],
       "type": "object"
     },

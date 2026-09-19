@@ -458,7 +458,7 @@ mod tests {
         let (mut record, bindings) = runtime_state();
         update_service(
             record.document.spec.services.get_mut("qwen").unwrap(),
-            "/runtime/image",
+            "/image",
             |image| *image = serde_json::json!(format!("local@sha256:{}", "a".repeat(64))),
         );
         let expected = teardown_expected(&record, &bindings, true).unwrap();

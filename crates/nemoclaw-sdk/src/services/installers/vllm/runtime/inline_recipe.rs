@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-use nemoclaw_sdk::{
+use crate::{
     CancellationToken, Error,
     services::installers::vllm::recipes::{
         inline::InlineRecipe,
@@ -17,7 +17,7 @@ impl PackagedRecipe<'_> {
         for tool in [&self.0.preparation, &self.0.verification] {
             let path = Path::new(&tool.executable);
             if !std::fs::symlink_metadata(path).is_ok_and(|m| m.is_file())
-                || nemoclaw_sdk::bundle::hash_file(path)? != tool.sha256
+                || crate::bundle::hash_file(path)? != tool.sha256
             {
                 return Err(Error::Conflict(
                     "recipe executable does not match its declared digest",
@@ -105,7 +105,7 @@ impl Runner for PackagedRecipe<'_> {
             ()=cancel.cancelled()=>Err(Error::Cancelled),
             result=tokio::time::timeout(Duration::from_secs(8*3600),work)=>match result {Ok(result)=>result,Err(_)=>Err(Error::State("recipe execution exceeded budget; staged data retained"))},
         };
-        crate::supervisor::terminate(child.as_mut()).await;
+        crate::services::runtime::supervisor::terminate(child.as_mut()).await;
         result
     }
 }
@@ -116,12 +116,11 @@ mod tests {
     use std::os::unix::fs::PermissionsExt;
     #[tokio::test]
     async fn pinned_executable_receives_structured_input_and_tampering_stops_execution() {
-        let d = nemoclaw_sdk::config::Document::parse(
-            include_bytes!("../../../../../../examples/spark/spark-inline.yaml").as_slice(),
+        let d = crate::config::Document::parse(
+            include_bytes!("../../../../../../../examples/spark/spark-inline.yaml").as_slice(),
         )
         .unwrap();
-        let nemoclaw_sdk::services::ServiceDefinition::Vllm(service) = &d.spec.services["qwen"]
-        else {
+        let crate::services::ServiceDefinition::Vllm(service) = &d.spec.services["qwen"] else {
             panic!("expected vLLM service");
         };
         let mut recipe = service.recipe.clone().unwrap();
@@ -130,7 +129,7 @@ mod tests {
         std::fs::write(&executable, b"#!/bin/sh\ncat\n").unwrap();
         std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o700)).unwrap();
         recipe.preparation.executable = executable.to_str().unwrap().into();
-        recipe.preparation.sha256 = nemoclaw_sdk::bundle::hash_file(&executable).unwrap();
+        recipe.preparation.sha256 = crate::bundle::hash_file(&executable).unwrap();
         recipe.verification = recipe.preparation.clone();
         recipe.licenses = vec![executable.to_str().unwrap().into()];
         recipe.source_notices = recipe.licenses.clone();

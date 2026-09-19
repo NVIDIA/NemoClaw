@@ -10,9 +10,10 @@ pub(crate) mod authentication;
 mod contract;
 pub mod installers;
 mod registry;
+#[cfg(target_os = "linux")]
+mod runtime;
 
 pub(crate) use contract::InstallStage;
-pub use contract::ServiceRuntime;
 pub use installers::ollama::{
     ExternalOllama, ExternalOllamaModel, ManagedOllama, OllamaMemory, OllamaModel, OllamaProxy,
     OllamaServing,
@@ -28,3 +29,15 @@ pub(crate) use registry::{
     install_plans, provider_authenticated, remove_plans, required_storage_address, resolve,
     resource_label, validate, validate_provider, validate_route,
 };
+
+/// Run the package implementation encoded in `NEMOCLAW_RUNTIME_SPEC`.
+///
+/// The executable remains package-neutral; installer dispatch and behavior are
+/// owned entirely by this service component.
+#[cfg(target_os = "linux")]
+pub async fn run_runtime(
+    cancel: &crate::CancellationToken,
+    trip: &crate::CancellationToken,
+) -> Result<(), crate::Error> {
+    runtime::run(cancel, trip).await
+}

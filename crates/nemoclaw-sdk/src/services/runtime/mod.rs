@@ -1,10 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-mod ollama;
-mod vllm;
+//! Package-neutral runtime entry point. Package dispatch remains inside the
+//! service component alongside each installer's implementation.
 
-use nemoclaw_sdk::{CancellationToken, Error};
+pub(super) mod supervisor;
+
+use crate::{CancellationToken, Error};
 
 pub(super) async fn run(cancel: &CancellationToken, trip: &CancellationToken) -> Result<(), Error> {
     let text = match std::env::var("NEMOCLAW_RUNTIME_SPEC") {
@@ -16,18 +18,18 @@ pub(super) async fn run(cancel: &CancellationToken, trip: &CancellationToken) ->
             return Err(Error::State("runtime specification is not UTF-8"));
         }
     };
-    let definition: nemoclaw_sdk::services::ServiceDefinition = serde_json::from_str(&text)
+    let definition: super::ServiceDefinition = serde_json::from_str(&text)
         .map_err(|_| Error::State("invalid pinned runtime specification"))?;
     match definition {
-        nemoclaw_sdk::services::ServiceDefinition::Ollama(service) => {
+        super::ServiceDefinition::Ollama(service) => {
             service.validate()?;
-            ollama::run(&service, cancel, trip).await
+            super::installers::ollama::runtime::run(&service, cancel, trip).await
         }
-        nemoclaw_sdk::services::ServiceDefinition::Vllm(service) => {
+        super::ServiceDefinition::Vllm(service) => {
             service.validate()?;
-            vllm::run(&service, cancel, trip).await
+            super::installers::vllm::runtime::run(&service, cancel, trip).await
         }
-        nemoclaw_sdk::services::ServiceDefinition::OllamaProxy(_) => Err(Error::State(
+        super::ServiceDefinition::OllamaProxy(_) => Err(Error::State(
             "proxy service cannot use the managed runtime entry point",
         )),
     }

@@ -1,8 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-use super::runtime::report;
-use nemoclaw_sdk::{
+use super::report;
+use crate::{
     CancellationToken, Error,
     services::installers::ollama::{ManagedOllama, model_source},
     snapshot,

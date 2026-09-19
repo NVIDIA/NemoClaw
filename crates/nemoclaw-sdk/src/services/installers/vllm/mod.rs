@@ -4,6 +4,8 @@
 mod config;
 mod constraints;
 mod hardware_profile;
+#[cfg(target_os = "linux")]
+pub(in crate::services) mod runtime;
 mod service_hardware;
 use crate::Error;
 pub use config::{
@@ -55,7 +57,7 @@ use crate::{
     compile::{Generations, Target},
     config::{ConfigError, Document},
     managed::{Process, Spec, Storage},
-    services::contract::{InstallPlan, Installer, RemovePlan, validate_runtime},
+    services::contract::{InstallPlan, Installer, RemovePlan, validate_image},
     state::StateBinding,
 };
 use std::{collections::BTreeMap, time::Duration};
@@ -90,18 +92,18 @@ fn private(ip: std::net::IpAddr) -> bool {
 impl Service {
     pub fn validate(&self) -> Result<(), ConfigError> {
         use crate::config::validation::require;
-        validate_runtime(&self.runtime)?;
+        validate_image(&self.image)?;
         require(
             self.placement.is_some() == self.publication.is_some(),
             "service placement and publication must be declared together",
         )?;
         if let (Some(placement), Some(publication)) = (&self.placement, &self.publication) {
             require(
-                self.runtime.engine.starts_with("ssh://"),
+                placement.engine.starts_with("ssh://"),
                 "explicit service placement requires SSH Docker",
             )?;
             require(
-                crate::docker::Engine::validate_endpoint(&self.runtime.engine).is_ok(),
+                crate::docker::Engine::validate_endpoint(&placement.engine).is_ok(),
                 "invalid service engine",
             )?;
             let network: ipnet::Ipv4Net = placement
@@ -130,12 +132,6 @@ impl Service {
                     && endpoint.path() == "/v1",
                 "service publication must match its private bind address, serving port and /v1 path",
             )?;
-        } else {
-            require(
-                self.runtime.engine.starts_with("unix:///")
-                    && crate::docker::Engine::validate_endpoint(&self.runtime.engine).is_ok(),
-                "local vLLM service requires a Unix Docker socket",
-            )?;
         }
         validation::validate(self)
     }
@@ -160,7 +156,6 @@ fn targets(
     let mut runtime_service = service.runtime_settings();
     runtime_service.placement = None;
     runtime_service.publication = None;
-    runtime_service.runtime.engine = "unix:///var/run/docker.sock".into();
     let mut image_labels = service
         .recipe
         .as_ref()
@@ -185,8 +180,13 @@ fn targets(
     )?;
     let architecture = service.architecture()?.to_owned();
     let process = Process {
-        engine: service.runtime.engine.clone(),
-        image: service.runtime.image.clone(),
+        engine: service
+            .placement
+            .as_ref()
+            .map_or(document.spec.gateway.engine.clone(), |placement| {
+                placement.engine.clone()
+            }),
+        image: service.image.clone(),
         network_cidr,
         create_network: service.placement.is_some(),
         architecture,
@@ -216,7 +216,7 @@ fn targets(
     };
     let spec = Spec {
         layout: 0,
-        compute_driver: service.runtime.provider.clone(),
+        compute_driver: "docker".into(),
         kind: SERVICE_KIND.into(),
         name: format!("{}-inference-{name}", document.workspace()),
         owner: document.metadata.uid.clone(),
@@ -241,7 +241,7 @@ fn targets(
     ] {
         let mut values = crate::backend::Row::from([("spec".into(), encoded)]);
         if kind == SERVICE_KIND
-            && let Some(policy) = service.runtime.image_pull_policy
+            && let Some(policy) = service.image_pull_policy
         {
             values.insert("image_pull_policy".into(), policy.as_str().into());
         }

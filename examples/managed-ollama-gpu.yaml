@@ -18,11 +18,8 @@ spec:
     qwen:
       kind: ollama
       hardware: {profile: dgx-spark}
-      runtime:
-        provider: docker
-        engine: unix:///var/run/docker.sock
-        # Replace with the digest of your locally built runtimes/ollama image.
-        image: nc-prototype-ollama@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+      # Replace with the digest of your locally built runtimes/ollama image.
+      image: nc-prototype-ollama@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
       model:
         name: qwen3:0.6b
         digest: 7df6b6e09427a769808717c0a93cadc4ae99ed4eb8bf5ca557c90846becea435

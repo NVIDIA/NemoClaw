@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 use super::recipe::PreparedModel;
-use nemoclaw_sdk::{Error, services::installers::vllm::Service};
+use crate::{Error, services::installers::vllm::Service};
 use process_wrap::tokio::CommandWrap;
 use std::{process::Stdio, time::Duration};
 /// Backend-owned probe location. The shared supervisor owns the loading deadline.
@@ -90,17 +90,17 @@ mod tests {
     #[tokio::test]
     async fn bearer_key_reaches_only_the_backend_child_and_authenticated_readiness() {
         let root = tempfile::tempdir().unwrap();
-        let mut document = nemoclaw_sdk::config::Document::parse(
-            include_str!("../../../../../nemoclaw-sdk/tests/fixtures/config/spark.yaml").as_bytes(),
+        let mut document = crate::config::Document::parse(
+            include_str!("../../../../../tests/fixtures/config/spark.yaml").as_bytes(),
         )
         .unwrap();
-        let nemoclaw_sdk::services::ServiceDefinition::Vllm(mut service) =
+        let crate::services::ServiceDefinition::Vllm(mut service) =
             document.spec.services.remove("qwen").unwrap()
         else {
             panic!("expected vLLM service");
         };
         service.authentication =
-            Some(nemoclaw_sdk::services::installers::vllm::ServiceAuthentication::Bearer);
+            Some(crate::services::installers::vllm::ServiceAuthentication::Bearer);
         let key = super::super::authentication::load(root.path()).unwrap();
         let bin = root.path().join("bin");
         std::fs::create_dir_all(&bin).unwrap();
@@ -130,11 +130,11 @@ mod tests {
             ]
             .into(),
         };
-        assert!(launch(&service, &prepared, 121 * nemoclaw_sdk::hardware::GIB, None).is_err());
+        assert!(launch(&service, &prepared, 121 * crate::hardware::GIB, None).is_err());
         let (mut command, mut readiness) = launch(
             &service,
             &prepared,
-            121 * nemoclaw_sdk::hardware::GIB,
+            121 * crate::hardware::GIB,
             Some(key.clone()),
         )
         .unwrap();

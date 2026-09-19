@@ -41,48 +41,46 @@ spec:
       management: managed
   services:
     nemotron:
-        kind: vllm
+      kind: vllm
+      management: managed
+      authentication: bearer
+      # Build runtimes/vllm-amd64/build.json on the model host and select its immutable digest.
+      image: nc-prototype-vllm-amd64@sha256:0000000000000000000000000000000000000000000000000000000000000000
+      placement:
+        engine: ssh://gpu-box
+        networkCidr: 172.30.119.0/24
+        network:
+          management: managed
+      publication:
+        endpoint: http://10.0.0.8:18898/v1
+        bindAddress: 10.0.0.8
+      storage:
         management: managed
-        authentication: bearer
-        runtime:
-          provider: docker
-          engine: ssh://gpu-box
-        # Build runtimes/vllm-amd64/build.json on the model host and select its immutable digest.
-          image: nc-prototype-vllm-amd64@sha256:0000000000000000000000000000000000000000000000000000000000000000
-        placement:
-          networkCidr: 172.30.119.0/24
-          network:
-            management: managed
-        publication:
-          endpoint: http://10.0.0.8:18898/v1
-          bindAddress: 10.0.0.8
-        storage:
-          management: managed
-        hardware:
-          architecture: amd64
-          minComputeCapability: 90
-          minGpuMemoryBytes: 96000000000
-          minDriverMajor: 580
-        container:
-          ipc: host
-          sharedMemoryGiB: 32
-        model:
-          management: managed
-          repository: nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4
-          revision: 0dcd680e5585c791728c83342b311d0a0026dbeb
-        serving:
-          modelName: nvidia-nemotron-3.5-lightning-30b-a3b-nvfp4
-          toolParser: qwen3_coder
-          reasoningParser: nemotron_v3
-          mambaBackend: flashinfer
-          enforceEager: false
-          port: 18898
-          contextTokens: 65536
-          maxSequences: 1
-          batchTokens: 4096
-          startupTimeoutSeconds: 1800
-        memory:
-          gpuMemoryUtilization: 0.75
+      hardware:
+        architecture: amd64
+        minComputeCapability: 90
+        minGpuMemoryBytes: 96000000000
+        minDriverMajor: 580
+      container:
+        ipc: host
+        sharedMemoryGiB: 32
+      model:
+        management: managed
+        repository: nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4
+        revision: 0dcd680e5585c791728c83342b311d0a0026dbeb
+      serving:
+        modelName: nvidia-nemotron-3.5-lightning-30b-a3b-nvfp4
+        toolParser: qwen3_coder
+        reasoningParser: nemotron_v3
+        mambaBackend: flashinfer
+        enforceEager: false
+        port: 18898
+        contextTokens: 65536
+        maxSequences: 1
+        batchTokens: 4096
+        startupTimeoutSeconds: 1800
+      memory:
+        gpuMemoryUtilization: 0.75
   inferenceProviders:
     - name: nemotron
       management: managed

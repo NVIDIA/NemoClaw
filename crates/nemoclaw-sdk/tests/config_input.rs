@@ -148,7 +148,7 @@ fn service_image_error_identifies_the_required_digest_pin() {
     let original = input("spark/spark-inline.yaml");
     for image in ["local/runtime:latest", "local/runtime@sha256:short"] {
         let mut value = original.clone();
-        value["spec"]["services"]["qwen"]["runtime"]["image"] = json!(image);
+        value["spec"]["services"]["qwen"]["image"] = json!(image);
         assert_eq!(
             parse(&value).unwrap_err().to_string(),
             "service image must be pinned by a SHA-256 digest"

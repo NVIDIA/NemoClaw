@@ -276,21 +276,6 @@ pub(super) fn constrain(root: &mut Value) {
     provider["allOf"] = json!([
         {"if": at("endpoint", json!({"pattern": "^http:"}), true), "then": forbid(&["credential"])}
     ]);
-    property(
-        &mut defs["ServiceRuntime"],
-        "provider",
-        json!({"const":"docker"}),
-    );
-    property(
-        &mut defs["ServiceRuntime"],
-        "engine",
-        json!({"pattern":"^(unix:///|ssh://)"}),
-    );
-    property(
-        &mut defs["ServiceRuntime"],
-        "image",
-        json!({"pattern":c::IMAGE}),
-    );
     if let Some(network) = defs.get_mut("NetworkReference") {
         network["anyOf"][0]["pattern"] = json!(c::SLUG);
     }

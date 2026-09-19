@@ -108,13 +108,13 @@ async fn lifecycle(harness: &str, authenticated: bool) {
     let mut value = serde_json::to_value(document).unwrap();
     let check_pulls = harness == "openclaw" && !authenticated;
     if check_pulls {
-        value["spec"]["services"]["qwen"]["runtime"]["imagePullPolicy"] = json!("IfNotPresent");
+        value["spec"]["services"]["qwen"]["imagePullPolicy"] = json!("IfNotPresent");
     }
     value["spec"]["sandboxes"][0]["harness"]["kind"] = harness.into();
     value["spec"]["gateway"] = json!({"management":"external","endpoint":gateway.endpoint});
     value["spec"]["sandboxes"][0]["runtime"]["provider"] = json!("podman");
-    value["spec"]["services"]["qwen"]["runtime"]["engine"] = json!("ssh://operator@gpu-box");
-    value["spec"]["services"]["qwen"]["placement"] = json!({"networkCidr":"172.30.119.0/24"});
+    value["spec"]["services"]["qwen"]["placement"] =
+        json!({"engine":"ssh://operator@gpu-box","networkCidr":"172.30.119.0/24"});
     value["spec"]["services"]["qwen"]["publication"] =
         json!({"endpoint":"http://10.0.0.8:18888/v1","bindAddress":"10.0.0.8"});
     if authenticated {
@@ -207,7 +207,7 @@ async fn lifecycle(harness: &str, authenticated: bool) {
         let before = read(root, "engine.json");
         assert_eq!(before["pulls"], 1);
         let mut changed = read(root, "config.yaml");
-        changed["spec"]["services"]["qwen"]["runtime"]["imagePullPolicy"] = json!("Always");
+        changed["spec"]["services"]["qwen"]["imagePullPolicy"] = json!("Always");
         save(root, "config.yaml", &changed);
         run(root, &bundle, "plan", "config.yaml", true).await;
         run(root, &bundle, "apply", "config.yaml", true).await;
@@ -235,7 +235,7 @@ async fn lifecycle(harness: &str, authenticated: bool) {
             panic!("expected vllm")
         };
         assert_eq!(
-            service.runtime.image_pull_policy,
+            service.image_pull_policy,
             Some(nemoclaw_sdk::config::ImagePullPolicy::Always)
         );
     }
@@ -308,7 +308,7 @@ async fn lifecycle(harness: &str, authenticated: bool) {
     );
     if check_pulls {
         let mut changed = read(root, "config.yaml");
-        changed["spec"]["services"]["qwen"]["runtime"]
+        changed["spec"]["services"]["qwen"]
             .as_object_mut()
             .unwrap()
             .remove("imagePullPolicy");

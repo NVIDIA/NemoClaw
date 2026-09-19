@@ -1,11 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 #[cfg(target_os = "linux")]
-mod services;
-#[cfg(target_os = "linux")]
-mod supervisor;
-
-#[cfg(target_os = "linux")]
 #[tokio::main]
 async fn main() -> std::process::ExitCode {
     use nemoclaw_sdk::{CancellationToken, Error};
@@ -22,7 +17,7 @@ async fn main() -> std::process::ExitCode {
     }.await;
     let result = async {
         let _signals = signals?;
-        services::run(&cancel, &trip).await
+        nemoclaw_sdk::services::run_runtime(&cancel, &trip).await
     }
     .await;
     if let Err(error) = result {
