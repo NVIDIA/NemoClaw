@@ -17,16 +17,20 @@ struct State {
     deletes: usize,
 }
 #[tokio::test]
-async fn ollama_reconciles_lost_create_and_refuses_recreation_after_observation_failure() {
-    let mut spec = ServiceSpec {
-        proxy: None,
+async fn proxy_reconciles_lost_create_and_refuses_recreation_after_observation_failure() {
+    let mut spec = ProxySpec {
+        settings: super::ProxySettings {
+            upstream: "http://127.0.0.1:11434/v1".into(),
+            endpoint: "http://127.0.0.1:11435/v1".into(),
+            model: "fixture:latest".into(),
+            digest: "a".repeat(64),
+        },
         image_pull_policy: None,
-        name: "nc-0123456789abcdef-ollama".into(),
+        name: "nc-0123456789abcdef-ollama-proxy-fixture".into(),
         owner: "302ff5e1-088d-42ce-959f-4ff4c3570c13".into(),
         generation: "b".repeat(32),
         image: format!("ollama/ollama@sha256:{}", "a".repeat(64)),
-        network: "openshell-docker".into(),
-        bind_address: "127.0.0.1:11434".into(),
+        bind_address: "127.0.0.1:11435".into(),
     };
     let state = Arc::new(Mutex::new(State {
         lost_create: true,
@@ -45,7 +49,7 @@ async fn ollama_reconciles_lost_create_and_refuses_recreation_after_observation_
             ("POST","/volumes/create")=>{let r:Value=serde_json::from_slice(&request.body).unwrap();let v=json!({"Name":r["Name"],"Labels":r["Labels"],"Driver":"local","Scope":"local","Options":{},"CreatedAt":"created","Mountpoint":"/var/lib/docker/volumes/models/_data"});state.volume=Some(v.clone());(201,v)},
             ("POST",path) if path.starts_with("/containers/create")=>{
                 state.creates+=1;let r:Value=serde_json::from_slice(&request.body).unwrap();
-                state.container=Some(json!({"Id":"container","Name":format!("/{}",want.name),"Config":r,"HostConfig":r["HostConfig"],"State":{"Running":false},"Mounts":[{"Type":"volume","Name":want.volume(),"Destination":"/root/.ollama","RW":true}]}));
+                state.container=Some(json!({"Id":"container","Name":format!("/{}",want.name),"Config":r,"HostConfig":r["HostConfig"],"State":{"Running":false},"Mounts":[{"Type":"volume","Name":want.volume(),"Destination":"/data","RW":true}]}));
                 if std::mem::take(&mut state.lost_create) {return None;} (201,json!({"Id":"container","Warnings":[]}))
             },
             ("POST","/containers/container/start")=>{state.starts+=1;state.container.as_mut().unwrap()["State"]["Running"]=json!(true);(204,json!({}))},
@@ -55,20 +59,20 @@ async fn ollama_reconciles_lost_create_and_refuses_recreation_after_observation_
     }).await;
     let engine = Engine::connect(&fixture.endpoint).unwrap();
     spec.image_pull_policy = Some(crate::config::ImagePullPolicy::Never);
-    assert!(engine.ensure_ollama(&spec, "").await.is_err());
+    assert!(engine.ensure_ollama_proxy(&spec, "").await.is_err());
     assert_eq!(state.lock().unwrap().pulls, 0);
     assert_eq!(state.lock().unwrap().creates, 0);
     assert!(state.lock().unwrap().volume.is_none());
     spec.image_pull_policy = None;
-    assert!(engine.ensure_ollama(&spec, "").await.is_err());
-    let established = engine.ensure_ollama(&spec, "").await.unwrap();
+    assert!(engine.ensure_ollama_proxy(&spec, "").await.is_err());
+    let established = engine.ensure_ollama_proxy(&spec, "").await.unwrap();
     assert_eq!(state.lock().unwrap().pulls, 1);
     spec.image_pull_policy = Some(crate::config::ImagePullPolicy::Always);
     assert_eq!(established.id, "engine/container/created");
     assert!(established.running);
     assert_eq!(
         engine
-            .ensure_ollama(&spec, &established.id)
+            .ensure_ollama_proxy(&spec, &established.id)
             .await
             .unwrap()
             .id,
@@ -80,68 +84,64 @@ async fn ollama_reconciles_lost_create_and_refuses_recreation_after_observation_
         "running container must not pull"
     );
     state.lock().unwrap().container.as_mut().unwrap()["State"]["Running"] = json!(false);
-    engine.ensure_ollama(&spec, &established.id).await.unwrap();
+    engine
+        .ensure_ollama_proxy(&spec, &established.id)
+        .await
+        .unwrap();
     assert_eq!(state.lock().unwrap().pulls, 2, "restart must apply Always");
     use crate::backend::Backend;
-    let backend = crate::services::installers::ollama::OllamaBackend::new(engine.clone());
+    let backend = crate::services::installers::ollama::ProxyBackend::new(engine.clone());
     let row = [
         ("id", established.id.as_str()),
         ("name", spec.name.as_str()),
         ("owner", spec.owner.as_str()),
         ("generation", spec.generation.as_str()),
         ("image", spec.image.as_str()),
-        ("network", spec.network.as_str()),
+        ("upstream", spec.settings.upstream.as_str()),
+        ("model", spec.settings.model.as_str()),
+        ("digest", spec.settings.digest.as_str()),
         ("bind_address", spec.bind_address.as_str()),
         ("running", "true"),
     ]
     .into_iter()
     .map(|(k, v)| (k.into(), v.into()))
     .collect();
-    assert_eq!(
-        backend.read("ollama", &row, false).await.unwrap(),
-        Some(row.clone())
-    );
-
-    state.lock().unwrap().container.as_mut().unwrap()["State"]["Running"] = json!(false);
-    let model = [
-        ("id".into(), format!("{}/model", established.id)),
-        ("service_id".into(), established.id.clone()),
-        ("endpoint".into(), "http://127.0.0.1:11434/v1".into()),
-        ("model".into(), "qwen:small".into()),
-    ]
-    .into();
-    assert!(
-        matches!(backend.read("ollama_model", &model, false).await, Err(ObservationError::Backend(message)) if message.contains("stopped"))
-    );
-    assert!(
-        backend
-            .ensure("ollama_model", &model)
-            .await
-            .error()
-            .is_some()
-    );
-    state.lock().unwrap().container.as_mut().unwrap()["State"]["Running"] = json!(true);
     state.lock().unwrap().fail_read = true;
-    assert!(backend.read("ollama", &row, false).await.is_err());
-    let failed = backend.ensure("ollama", &row).await;
-    assert!(failed.error().is_some());
-    assert!(failed.state().is_none());
-    assert!(engine.ensure_ollama(&spec, &established.id).await.is_err());
+    assert!(backend.read("ollama_proxy", &row, false).await.is_err());
+    assert!(
+        engine
+            .ensure_ollama_proxy(&spec, &established.id)
+            .await
+            .is_err()
+    );
     state.lock().unwrap().fail_read = false;
     let volume_before = state.lock().unwrap().volume.clone();
-    assert!(backend.remove("ollama", &row, false).await.is_err());
-    backend.remove("ollama", &row, true).await.unwrap();
+    assert!(backend.remove("ollama_proxy", &row, false).await.is_err());
+    backend.remove("ollama_proxy", &row, true).await.unwrap();
     assert!(state.lock().unwrap().container.is_none());
     assert_eq!(state.lock().unwrap().volume, volume_before);
     assert_eq!(state.lock().unwrap().deletes, 1);
-    assert_eq!(backend.read("ollama", &row, true).await.unwrap(), None);
+    assert_eq!(
+        backend.read("ollama_proxy", &row, true).await.unwrap(),
+        None
+    );
     // Explicit post-destroy apply can reuse the retained volume.
-    let restored = engine.ensure_ollama(&spec, "").await.unwrap();
+    let restored = engine.ensure_ollama_proxy(&spec, "").await.unwrap();
     assert_eq!(restored.id, established.id);
     state.lock().unwrap().volume.as_mut().unwrap()["CreatedAt"] = json!("replaced");
-    assert!(engine.ensure_ollama(&spec, &established.id).await.is_err());
+    assert!(
+        engine
+            .ensure_ollama_proxy(&spec, &established.id)
+            .await
+            .is_err()
+    );
     state.lock().unwrap().container = None;
-    assert!(engine.ensure_ollama(&spec, &established.id).await.is_err());
+    assert!(
+        engine
+            .ensure_ollama_proxy(&spec, &established.id)
+            .await
+            .is_err()
+    );
     let state = state.lock().unwrap();
     assert_eq!(state.creates, 2);
     assert_eq!(state.starts, 3);

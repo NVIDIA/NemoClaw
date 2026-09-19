@@ -19,8 +19,7 @@ pub struct Models {
     http: reqwest::Client,
 }
 impl Models {
-    /// The caller must verify the owned Docker parent before using its
-    /// unauthenticated model API. Redirects and environment proxies are disabled.
+    /// Read an external Ollama inventory without redirects or environment proxies.
     pub fn new(endpoint: &str) -> Result<Self, Error> {
         let url =
             url::Url::parse(endpoint).map_err(|_| Error::Conflict("invalid Ollama endpoint"))?;
@@ -49,20 +48,13 @@ impl Models {
             http,
         })
     }
-    async fn request(
-        &self,
-        method: reqwest::Method,
-        path: &str,
-        body: Option<Vec<u8>>,
-    ) -> Result<reqwest::Response, Error> {
-        let mut request = self
+    async fn inventory(&self) -> Result<reqwest::Response, Error> {
+        let response = self
             .http
-            .request(method, format!("{}{path}", self.endpoint))
-            .header(reqwest::header::CONTENT_TYPE, "application/json");
-        if let Some(body) = body {
-            request = request.body(body);
-        }
-        let response = request.send().await.map_err(|error| transport(&error))?;
+            .get(format!("{}/api/tags", self.endpoint))
+            .send()
+            .await
+            .map_err(|error| transport(&error))?;
         match response.status() {
             reqwest::StatusCode::OK => Ok(response),
             reqwest::StatusCode::UNAUTHORIZED => Err(ObservationError::Authentication.into()),
@@ -90,9 +82,7 @@ impl Models {
     }
     pub async fn read(&self, name: &str) -> Result<Option<Model>, Error> {
         let work = async {
-            let mut response = self
-                .request(reqwest::Method::GET, "/api/tags", None)
-                .await?;
+            let mut response = self.inventory().await?;
             let mut bytes = Vec::new();
             while let Some(chunk) = response.chunk().await.map_err(|error| transport(&error))? {
                 if bytes.len() + chunk.len() > 1 << 20 {
@@ -127,102 +117,8 @@ impl Models {
             .await
             .map_err(|_| ObservationError::Transport)?
     }
-    /// Pull only after a complete inventory confirms absence. Never retry a
-    /// mutation in this call; an interrupted stream requires explicit reapply.
-    pub async fn ensure(&self, name: &str) -> Result<Model, Error> {
-        if let Some(model) = self.read(name).await? {
-            return Ok(model);
-        }
-        #[derive(Serialize)]
-        struct Pull<'a> {
-            model: &'a str,
-            stream: bool,
-        }
-        let body = serde_json::to_vec(&Pull {
-            model: name,
-            stream: true,
-        })
-        .expect("pull request");
-        let mut progress = crate::download::Reporter::new(name);
-        let mut response = self
-            .request(reqwest::Method::POST, "/api/pull", Some(body))
-            .await?;
-        let mut line = Vec::new();
-        let mut complete = false;
-        while let Some(chunk) = response.chunk().await.map_err(|error| transport(&error))? {
-            for byte in chunk {
-                if byte == b'\n' {
-                    event(&line, &mut complete, &mut progress)?;
-                    line.clear();
-                } else {
-                    if line.len() >= 1 << 20 {
-                        return Err(Error::State(
-                            "Ollama pull event exceeds limit; retained artifacts require reconciliation",
-                        ));
-                    }
-                    line.push(byte);
-                }
-            }
-        }
-        if !line.is_empty() {
-            event(&line, &mut complete, &mut progress)?;
-        }
-        if !complete {
-            return Err(Error::Conflict(
-                "Ollama pull interrupted; retain storage and reapply the same configuration",
-            ));
-        }
-        let model = self.read(name).await?.ok_or(Error::Conflict(
-            "Ollama pull claimed success without a confirmed model",
-        ))?;
-        progress.complete();
-        Ok(model)
-    }
 }
-fn event(
-    line: &[u8],
-    complete: &mut bool,
-    progress: &mut crate::download::Reporter,
-) -> Result<(), Error> {
-    use crate::{ByteProgress, DownloadPhase};
-    #[derive(Deserialize)]
-    struct Event {
-        #[serde(default)]
-        status: String,
-        #[serde(default)]
-        error: String,
-        // Optional progress fields do not change whether the pull succeeds.
-        #[serde(default)]
-        digest: serde_json::Value,
-        #[serde(default)]
-        completed: serde_json::Value,
-        #[serde(default)]
-        total: serde_json::Value,
-    }
-    let event: Event = serde_json::from_slice(line)
-        .map_err(|_| Error::State("Ollama pull response is incomplete"))?;
-    if *complete || event.status.is_empty() || !event.error.is_empty() {
-        return Err(Error::Conflict(
-            "Ollama pull response is invalid or failed; retained artifacts require reconciliation",
-        ));
-    }
-    *complete = event.status == "success";
-    if event.status.starts_with("pulling ") {
-        if let Some(layer) = crate::download::layer_id(event.digest.as_str()) {
-            progress.report(
-                Some(layer),
-                DownloadPhase::Downloading,
-                event.completed.as_u64().map(|completed| ByteProgress {
-                    completed,
-                    total: event.total.as_u64().filter(|total| *total > 0),
-                }),
-            );
-        }
-    } else if event.status == "verifying sha256 digest" {
-        progress.report(None, DownloadPhase::Verifying, None);
-    }
-    Ok(())
-}
+
 fn transport(error: &reqwest::Error) -> Error {
     let mut source: Option<&(dyn std::error::Error + 'static)> = Some(error);
     while let Some(cause) = source {

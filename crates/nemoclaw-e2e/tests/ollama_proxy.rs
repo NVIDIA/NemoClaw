@@ -87,7 +87,7 @@ async fn external_ollama_proxy_lifecycle_retains_key_and_never_manages_daemon_or
     let cancel = CancellationToken::new();
     let plan = deployment.plan(&document, &cancel).await.unwrap();
     assert_eq!(plan.changes.len(), 7);
-    let name = format!("{}-ollama-proxy", document.workspace());
+    let name = format!("{}-ollama-proxy-ollama-auth", document.workspace());
     let engine = Engine::connect("unix:///var/run/docker.sock").unwrap();
     assert!(engine.container(&name).await.unwrap().is_none());
     deployment.apply(&document, &cancel).await.unwrap();

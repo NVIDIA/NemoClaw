@@ -53,51 +53,13 @@ async fn only_complete_inventory_can_confirm_model_absence() {
         "{\"models\":[{\"name\":\"other\",\"digest\":\"bad\",\"size\":1}]}",
     ] {
         let (client, requests, task) = server(vec![(200, body.into())]).await;
-        assert!(client.ensure("fixture:latest").await.is_err());
+        assert!(client.read("fixture:latest").await.is_err());
         task.await.unwrap();
         assert_eq!(requests.lock().unwrap().len(), 1);
     }
     let (client, _, task) = server(vec![(200, "{\"models\":[]}".into())]).await;
     assert_eq!(client.read("fixture:latest").await.unwrap(), None);
     task.await.unwrap();
-}
-#[tokio::test]
-async fn pull_requires_success_and_reconciliation_before_returning_model_identity() {
-    let inventory = serde_json::json!({"models":[model()]}).to_string();
-    let (client, requests, task) = server(vec![
-        (200, "{\"models\":[]}".into()),
-        (
-            200,
-            "{\"status\":\"downloading\"}\n{\"status\":\"success\"}\n".into(),
-        ),
-        (200, inventory.clone()),
-        (200, inventory),
-    ])
-    .await;
-    assert_eq!(client.ensure("fixture:latest").await.unwrap(), model());
-    assert_eq!(client.ensure("fixture:latest").await.unwrap(), model());
-    task.await.unwrap();
-    let requests = requests.lock().unwrap();
-    assert_eq!(
-        requests.iter().filter(|r| r.starts_with("POST ")).count(),
-        1
-    );
-    assert!(requests[1].ends_with("{\"model\":\"fixture:latest\",\"stream\":true}"));
-}
-#[tokio::test]
-async fn partial_or_ambiguous_pull_is_not_retried_or_claimed_successful() {
-    for events in [
-        "{\"status\":\"downloading\"}\n",
-        "{\"status\":\"success\"}\n{\"status\":\"downloading\"}\n",
-        "{\"error\":\"secret-sentinel\"}\n",
-    ] {
-        let (client, requests, task) =
-            server(vec![(200, "{\"models\":[]}".into()), (200, events.into())]).await;
-        let error = client.ensure("fixture:latest").await.unwrap_err();
-        assert!(!error.to_string().contains("secret-sentinel"));
-        task.await.unwrap();
-        assert_eq!(requests.lock().unwrap().len(), 2);
-    }
 }
 #[tokio::test]
 async fn rejected_inventory_is_failure_even_for_http_not_found() {
@@ -107,6 +69,20 @@ async fn rejected_inventory_is_failure_even_for_http_not_found() {
         assert!(!error.to_string().contains("secret-sentinel"));
         task.await.unwrap();
     }
+}
+
+#[tokio::test]
+async fn external_model_observation_only_reads_inventory() {
+    let (client, requests, task) = server(vec![(
+        200,
+        serde_json::json!({"models":[model()]}).to_string(),
+    )])
+    .await;
+    assert_eq!(client.read("fixture:latest").await.unwrap(), Some(model()));
+    task.await.unwrap();
+    let requests = requests.lock().unwrap();
+    assert_eq!(requests.len(), 1);
+    assert!(requests[0].starts_with("GET /api/tags "));
 }
 
 #[tokio::test]
@@ -147,49 +123,5 @@ async fn readiness_waits_for_connection_refused_startup_but_never_retries_invent
         assert!(client.ready("fixture:latest").await.is_err());
         task.await.unwrap();
         assert_eq!(requests.lock().unwrap().len(), 1);
-    }
-}
-
-#[tokio::test]
-async fn model_download_reports_bytes_and_only_completes_after_inventory_verification() {
-    use crate::{ByteProgress, DownloadPhase, Progress, with_download_progress};
-    for verified in [false, true] {
-        let (client, _, task) = server(vec![
-            (200, "{\"models\":[]}".into()),
-            (200, "{\"status\":\"pulling abcdef\",\"digest\":\"sha256:abcdef\",\"completed\":50,\"total\":100}\n{\"status\":\"success\"}\n".into()),
-            (200, if verified { serde_json::json!({"models":[model()]}).to_string() } else { "{\"models\":[]}".into() }),
-        ]).await;
-        let events = Arc::new(Mutex::new(Vec::new()));
-        let seen = events.clone();
-        let result = with_download_progress(
-            "ollama_model.chat".into(),
-            Arc::new(move |event| {
-                if let Progress::Download(event) = event {
-                    seen.lock().unwrap().push(event);
-                }
-            }),
-            client.ensure("fixture:latest"),
-        )
-        .await;
-        task.await.unwrap();
-        assert_eq!(result.is_ok(), verified);
-        let events = events.lock().unwrap();
-        assert!(
-            events
-                .iter()
-                .any(|event| event.phase == DownloadPhase::Downloading
-                    && event.bytes
-                        == Some(ByteProgress {
-                            completed: 50,
-                            total: Some(100)
-                        })
-                    && event.layer.as_deref() == Some("sha256:abcdef"))
-        );
-        assert_eq!(
-            events
-                .iter()
-                .any(|event| event.phase == DownloadPhase::Complete && event.layer.is_none()),
-            verified
-        );
     }
 }

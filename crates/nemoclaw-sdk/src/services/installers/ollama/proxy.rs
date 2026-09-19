@@ -16,36 +16,36 @@ pub fn supports(kind: &str) -> bool {
 }
 pub fn specification(
     document: &Document,
+    service_name: &str,
     proxy: &OllamaProxy,
     generations: &Generations,
-) -> Result<ServiceSpec, Error> {
-    let spec = ServiceSpec {
-        name: format!("{}-ollama-proxy", document.workspace()),
+) -> Result<ProxySpec, Error> {
+    let spec = ProxySpec {
+        name: format!("{}-ollama-proxy-{service_name}", document.workspace()),
         owner: document.metadata.uid.clone(),
         generation: generations
-            .get("ollama")
+            .get(PROXY)
             .ok_or(Error::State("missing proxy generation"))?
             .clone(),
         image: proxy.runtime.image.clone(),
         image_pull_policy: proxy.runtime.image_pull_policy,
-        network: "host".into(),
         bind_address: proxy
             .endpoint
             .strip_prefix("http://")
             .and_then(|s| s.strip_suffix("/v1"))
             .ok_or(Error::State("invalid proxy endpoint"))?
             .into(),
-        proxy: Some(ProxySettings {
+        settings: ProxySettings {
             upstream: proxy.upstream.endpoint.clone(),
             endpoint: proxy.endpoint.clone(),
             model: proxy.upstream.model.name.clone(),
             digest: proxy.upstream.model.digest.clone(),
-        }),
+        },
     };
     spec.validate()?;
     Ok(spec)
 }
-pub fn row_spec(row: &Row) -> Result<ServiceSpec, Error> {
+pub fn row_spec(row: &Row) -> Result<ProxySpec, Error> {
     let get = |name: &str| {
         row.get(name)
             .filter(|s| !s.is_empty())
@@ -53,19 +53,18 @@ pub fn row_spec(row: &Row) -> Result<ServiceSpec, Error> {
             .ok_or(Error::State("incomplete proxy resource"))
     };
     let binding = get("bind_address")?;
-    let spec = ServiceSpec {
+    let spec = ProxySpec {
         name: get("name")?,
         owner: get("owner")?,
         generation: get("generation")?,
         image: get("image")?,
         image_pull_policy: crate::config::ImagePullPolicy::from_row(row)?,
-        network: "host".into(),
-        proxy: Some(ProxySettings {
+        settings: ProxySettings {
             upstream: get("upstream")?,
             endpoint: format!("http://{binding}/v1"),
             model: get("model")?,
             digest: get("digest")?,
-        }),
+        },
         bind_address: binding,
     };
     spec.validate()?;
@@ -77,8 +76,8 @@ pub fn targets(
     proxy: &OllamaProxy,
     generations: &Generations,
 ) -> Result<Vec<Target>, Error> {
-    let spec = specification(document, proxy, generations)?;
-    let settings = spec.proxy.as_ref().unwrap();
+    let spec = specification(document, service_name, proxy, generations)?;
+    let settings = &spec.settings;
     let mut common: Row = [
         ("name", spec.name.clone()),
         ("owner", spec.owner.clone()),
@@ -123,7 +122,7 @@ pub async fn verify_model(settings: &ProxySettings) -> Result<(), Error> {
     }
     Ok(())
 }
-impl OllamaBackend {
+impl ProxyBackend {
     pub(super) async fn proxy_read(
         &self,
         kind: &str,
@@ -131,18 +130,19 @@ impl OllamaBackend {
         apply: bool,
         removing: bool,
     ) -> Result<Option<Row>, Error> {
+        if !supports(kind) {
+            return Err(ObservationError::Query.into());
+        }
         let spec = row_spec(row)?;
         let id = row.get("id").map(String::as_str).unwrap_or("");
         let mut result = row.clone();
         if kind == MODEL {
             if !removing {
-                verify_model(spec.proxy.as_ref().unwrap()).await?;
+                verify_model(&spec.settings).await?;
             }
             let expected = format!(
                 "{}/{}/{}",
-                spec.owner,
-                spec.generation,
-                spec.proxy.as_ref().unwrap().digest
+                spec.owner, spec.generation, spec.settings.digest
             );
             if !id.is_empty() && id != expected {
                 return Err(ObservationError::BindingMismatch.into());
@@ -152,9 +152,9 @@ impl OllamaBackend {
         }
         if kind == STORAGE {
             let observed = if apply {
-                Some(self.engine.ensure_ollama_storage(&spec, id).await?)
+                Some(self.engine.ensure_ollama_proxy_storage(&spec, id).await?)
             } else {
-                self.engine.observe_ollama_storage(&spec, id).await?
+                self.engine.observe_ollama_proxy_storage(&spec, id).await?
             };
             return Ok(observed.map(|id| {
                 result.insert("id".into(), id);
@@ -165,12 +165,12 @@ impl OllamaBackend {
             return Err(ObservationError::Query.into());
         }
         let service = if removing {
-            self.engine.observe_ollama_removal(&spec, id).await?
+            self.engine.observe_ollama_proxy_removal(&spec, id).await?
         } else if apply {
-            verify_model(spec.proxy.as_ref().unwrap()).await?;
-            Some(self.engine.ensure_ollama(&spec, id).await?)
+            verify_model(&spec.settings).await?;
+            Some(self.engine.ensure_ollama_proxy(&spec, id).await?)
         } else {
-            match self.engine.observe_ollama(&spec, id).await {
+            match self.engine.observe_ollama_proxy(&spec, id).await {
                 Err(Error::PartialRuntime) if id.is_empty() => None,
                 other => other?,
             }
@@ -210,11 +210,14 @@ impl OllamaBackend {
             self.proxy_read(kind, row, false, true).await?;
             return Ok(());
         }
+        if !supports(kind) {
+            return Err(ObservationError::Query.into());
+        }
         let spec = row_spec(row)?;
         let id = row
             .get("id")
             .filter(|s| !s.is_empty())
             .ok_or(Error::State("missing proxy identity"))?;
-        self.engine.remove_ollama(&spec, id).await
+        self.engine.remove_ollama_proxy(&spec, id).await
     }
 }
