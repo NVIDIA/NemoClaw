@@ -652,7 +652,8 @@ Required DGX Station reconciliation still passes host admission before onboardin
 For any registered-sandbox upgrade that you prepare manually, use the current prepared NemoClaw CLI to require every backup and retire all registered legacy forwards before you retire the old gateway:
 
 ```bash
-NEMOCLAW_REQUIRE_ALL_SANDBOX_BACKUPS=1 $$nemoclaw backup-all --retire-legacy-forwards
+retire_legacy_forwards_flag=--retire-legacy-forwards
+NEMOCLAW_REQUIRE_ALL_SANDBOX_BACKUPS=1 $$nemoclaw backup-all "$retire_legacy_forwards_flag"
 ```
 
 Set `NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1` only after that command succeeds and reports a complete result, then retire the old gateway.
