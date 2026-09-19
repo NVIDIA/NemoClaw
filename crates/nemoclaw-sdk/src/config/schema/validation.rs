@@ -291,12 +291,12 @@ pub(super) fn constrain(root: &mut Value) {
         "image",
         json!({"pattern":c::IMAGE}),
     );
-    defs["NetworkReference"]["anyOf"][0]["pattern"] = json!(c::SLUG);
-    property(
-        &mut defs["ExternalNetwork"],
-        "name",
-        json!({"pattern": c::SLUG}),
-    );
+    if let Some(network) = defs.get_mut("NetworkReference") {
+        network["anyOf"][0]["pattern"] = json!(c::SLUG);
+    }
+    if let Some(network) = defs.get_mut("ExternalNetwork") {
+        property(network, "name", json!({"pattern": c::SLUG}));
+    }
     property(
         &mut defs["OpenClawDashboard"],
         "port",

@@ -96,13 +96,6 @@ fn decode(bytes: &[u8]) -> Result<HostObservation, Error> {
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
-    use crate::services::{
-        ServiceDefinition,
-        installers::vllm::{
-            HardwareProfile, ServiceHardware,
-            hardware_capacity::{check_capacity, serving_memory},
-        },
-    };
     #[test]
     fn unified_memory_requires_observed_compute_capability_independently_of_vram() {
         let mut value = serde_json::json!({
@@ -111,31 +104,22 @@ mod tests {
             "gpu":"NVIDIA GB10, 580.0\n", "processes":"", "disk_free":1000000000000_u64,
             "compute_capability":"12.1\n", "gpu_memory":"[N/A], [N/A]\n"
         });
-        let doc = crate::config::Document::parse(
-            include_bytes!("../../../../examples/spark/vllm.yaml").as_slice(),
-        )
-        .unwrap();
-        let ServiceDefinition::Vllm(service) = &doc.spec.services["qwen"] else {
-            panic!("expected vllm")
-        };
         let observation = decode(&serde_json::to_vec(&value).unwrap()).unwrap();
-        check_capacity(service, &observation.capacity, true, 0, 0).unwrap();
+        assert_eq!(observation.capacity.architecture, "arm64");
+        assert_eq!(observation.capacity.compute_capability, 121);
         assert!(observation.capacity.gpu_memory.is_none());
-        assert_eq!(
-            serving_memory(service, &observation.capacity).unwrap(),
-            observation.capacity.total
-        );
-        // Reported counters do not change the declared unified-memory accounting.
         value["gpu_memory"] = "1024, 512\n".into();
         let observation = decode(&serde_json::to_vec(&value).unwrap()).unwrap();
-        check_capacity(service, &observation.capacity, true, 0, 0).unwrap();
         assert_eq!(
-            serving_memory(service, &observation.capacity).unwrap(),
-            observation.capacity.total
+            observation.capacity.gpu_memory,
+            Some(super::super::GpuMemory {
+                total: super::super::GIB,
+                free: super::super::GIB / 2,
+            })
         );
         value["compute_capability"] = "12.0\n".into();
         let observation = decode(&serde_json::to_vec(&value).unwrap()).unwrap();
-        assert!(check_capacity(service, &observation.capacity, true, 0, 0).is_err());
+        assert_eq!(observation.capacity.compute_capability, 120);
         for invalid in ["", "[N/A]", "12.10", "12", "12.1\n12.1", "unknown"] {
             value["compute_capability"] = invalid.into();
             assert!(
@@ -172,20 +156,7 @@ mod tests {
         let capacity = decode(&serde_json::to_vec(&value).unwrap())
             .unwrap()
             .capacity;
-        let mut doc = crate::config::Document::parse(
-            include_bytes!("../../../../examples/spark/vllm.yaml").as_slice(),
-        )
-        .unwrap();
-        let ServiceDefinition::Vllm(service) = doc.spec.services.get_mut("qwen").unwrap() else {
-            panic!("expected vllm")
-        };
-        service.hardware = Some(ServiceHardware::Profile {
-            profile: HardwareProfile::Gb300,
-            architecture: None,
-            min_gpu_memory_bytes: None,
-        });
-        assert!(check_capacity(service, &capacity, true, 0, 0).is_err());
-        assert!(serving_memory(service, &capacity).is_err());
+        assert!(capacity.gpu_memory.is_none());
         for missing in [
             serde_json::Value::Null,
             serde_json::json!("[N/A], [N/A], 10.3"),

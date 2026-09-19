@@ -8,6 +8,7 @@ Set its `model.repository` and an exact 40-character commit in `model.revision`.
 Select it from an inference provider with `serviceRef: <name>`.
 The fields below belong to that named service.
 There is no repository allowlist.
+For Ollama registry models, use [managed Ollama](inference.md#run-managed-ollama); it shares the `service` hardware, placement, memory, and lifecycle contract described here.
 
 ## Choose a Model and Capacity
 

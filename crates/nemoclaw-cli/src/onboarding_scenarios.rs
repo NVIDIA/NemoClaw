@@ -1,15 +1,15 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::authoring::{
-    Answers, ApiChoice, AuthoredDocument, Capabilities, DirectInputs, HarnessChoice, Session,
+use nemoclaw_authoring::{
+    AnswerOverrides, Answers, ApiChoice, AuthoredDocument, Capabilities, HarnessChoice, Session,
 };
 use nemoclaw_sdk::config::{Document, MAX_DOCUMENT_BYTES};
 use serde_json::{Value, json};
 
 #[test]
 fn default_onboarding_authors_openclaw_with_hosted_nvidia() {
-    let authored = author_onboarding(DirectInputs::default());
+    let authored = author_onboarding(AnswerOverrides::default());
     let reparsed = Document::parse(authored.yaml().as_bytes()).unwrap();
     let desired = normalized(&reparsed);
     assert!(authored.yaml().len() as u64 <= MAX_DOCUMENT_BYTES);
@@ -40,11 +40,11 @@ fn default_onboarding_authors_openclaw_with_hosted_nvidia() {
 
 #[test]
 fn onboarding_authors_openclaw_with_the_responses_api() {
-    let authored = author_onboarding(DirectInputs {
+    let authored = author_onboarding(AnswerOverrides {
         deployment_name: Some("openclaw-responses".into()),
         api: Some(ApiChoice::OpenAiResponses),
         credential_env: Some("NVIDIA_RESPONSES_API_KEY".into()),
-        ..DirectInputs::default()
+        ..AnswerOverrides::default()
     });
     let document = Document::parse(authored.yaml().as_bytes()).unwrap();
     let desired = normalized(&document);
@@ -62,10 +62,10 @@ fn onboarding_authors_openclaw_with_the_responses_api() {
 
 #[test]
 fn onboarding_authors_hermes_with_hosted_nvidia() {
-    let authored = author_onboarding(DirectInputs {
+    let authored = author_onboarding(AnswerOverrides {
         deployment_name: Some("hermes-nvidia-hosted".into()),
         harness: Some(HarnessChoice::Hermes),
-        ..DirectInputs::default()
+        ..AnswerOverrides::default()
     });
     let document = Document::parse(authored.yaml().as_bytes()).unwrap();
     let desired = normalized(&document);
@@ -462,12 +462,12 @@ fn messaging_channels_are_not_supported_yet() {
 
 const UID: &str = "12345678-1234-4234-9234-123456789abc";
 
-fn author_onboarding(inputs: DirectInputs) -> AuthoredDocument {
+fn author_onboarding(inputs: AnswerOverrides) -> AuthoredDocument {
     Session::with_uid(UID)
         .unwrap()
         .project(
             &Capabilities::available(),
-            &Answers::from_direct(Answers::onboarding_defaults(), inputs),
+            &Answers::onboarding_defaults().with_overrides(inputs),
         )
         .unwrap()
 }
@@ -482,7 +482,11 @@ struct DesiredState {
 
 impl DesiredState {
     fn from_onboarding() -> Self {
-        Self::from_yaml(author_onboarding(DirectInputs::default()).yaml().as_bytes())
+        Self::from_yaml(
+            author_onboarding(AnswerOverrides::default())
+                .yaml()
+                .as_bytes(),
+        )
     }
 
     fn from_yaml(yaml: &[u8]) -> Self {

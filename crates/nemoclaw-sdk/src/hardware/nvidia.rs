@@ -102,7 +102,7 @@ pub fn framebuffer_memory(text: &str) -> Result<Option<super::GpuMemory>, Error>
     Ok(Some(super::GpuMemory { total, free }))
 }
 
-#[cfg(any(unix, test))]
+#[cfg(unix)]
 pub(super) fn apply_observations(
     capacity: &mut super::Capacity,
     gpu: &str,

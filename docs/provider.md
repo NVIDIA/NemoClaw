@@ -18,8 +18,9 @@ The [provider implementation](../crates/nemoclaw-provider/src/provider.rs) curre
 | Group | Resource kinds |
 |---|---|
 | OpenShell deployment | `workspace`, `provider`, `provider_profile`, `route`, `sandbox` |
-| Managed gateway and model service | `managed_gateway`, `gateway_storage`, `inference_service`, `inference_storage` |
-| Managed Ollama | `ollama`, `ollama_storage`, `ollama_model` |
+| Managed gateway | `managed_gateway`, `gateway_storage` |
+| Managed vLLM | `inference_service`, `inference_storage` |
+| Managed Ollama | `ollama_service`, `ollama_service_storage` |
 | External Ollama with managed proxy | `ollama_proxy`, `ollama_proxy_storage`, `ollama_external_model` |
 
 The existence of these resources does not establish a supported standalone HCL workflow.

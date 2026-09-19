@@ -167,8 +167,14 @@ fn fabric_protocol_and_managed_ollama_constraints_survive_the_port() {
     let base = include_str!("fixtures/config/managed-ollama.yaml");
     for (from, to) in [
         ("unix:///var/run/docker.sock", "tcp://127.0.0.1:2375"),
-        ("172.20.0.1:11436", "0.0.0.0:11436"),
-        ("172.20.0.1:11436", "172.20.0.1"),
+        (
+            "nc-prototype-ollama@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "ollama/ollama:latest",
+        ),
+        (
+            "7df6b6e09427a769808717c0a93cadc4ae99ed4eb8bf5ca557c90846becea435",
+            "7DF6B6E09427A769808717C0A93CADC4AE99ED4EB8BF5CA557C90846BECEA435",
+        ),
         ("qwen3:0.6b", "qwen3"),
     ] {
         assert!(Document::parse(base.replace(from, to).as_bytes()).is_err());

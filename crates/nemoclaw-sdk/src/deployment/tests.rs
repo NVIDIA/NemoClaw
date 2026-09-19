@@ -188,17 +188,17 @@ async fn managed_gateway_plan_apply_noop_destroy_and_recovery_use_real_opentofu(
 }
 
 #[test]
-fn ollama_plan_accounts_for_storage_service_and_model_and_never_recreates_bound_model_data() {
+fn ollama_runtime_plan_accounts_for_retained_storage_and_never_recreates_a_bound_service() {
     let document =
         Document::parse(include_str!("../../tests/fixtures/config/managed-ollama.yaml").as_bytes())
             .unwrap();
     let record = Record::new(document.clone()).unwrap();
-    let expected = allowed(&compile::targets(&document, &record.generations).unwrap());
-    assert_eq!(expected.len(), 7);
+    let expected = allowed(&compile::runtime_targets(&document, &record.generations).unwrap());
+    assert_eq!(expected.len(), 4);
     let bindings = [(
-        "nemoclaw_ollama_model.ollama-server".into(),
+        "nemoclaw_ollama_service.ollama-server".into(),
         StateBinding {
-            id: "engine/container/created/model".into(),
+            id: "engine/container/created/network".into(),
             ..Default::default()
         },
     )]

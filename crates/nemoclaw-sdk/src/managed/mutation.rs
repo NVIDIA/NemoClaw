@@ -36,7 +36,7 @@ impl CapacityCheck for HostCapacity {
         spec: &Spec,
         observed: Option<&RuntimeObservation>,
     ) -> Result<(), Error> {
-        engine.check_capacity(spec, observed).await
+        crate::services::check_process_capacity(engine, spec, observed).await
     }
 }
 impl Engine {

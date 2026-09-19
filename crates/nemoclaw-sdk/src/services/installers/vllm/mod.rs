@@ -13,7 +13,7 @@ pub use hardware_profile::HardwareProfile;
 pub(crate) use hardware_profile::MemoryArchitecture;
 pub use service_hardware::{DedicatedHardware, ServiceContainer, ServiceHardware, ServiceIpc};
 pub(crate) mod arguments;
-mod artifacts;
+pub(crate) mod artifacts;
 pub use artifacts::RuntimeStatus;
 pub(crate) mod capacity;
 pub mod hardware_capacity;
@@ -70,8 +70,12 @@ pub(crate) fn configured_service(spec: &Spec) -> Result<Service, Error> {
         .as_ref()
         .map(|process| process.configuration.as_str())
         .ok_or(Error::Conflict("vLLM runtime has no service configuration"))?;
-    let service: Service = serde_json::from_str(configuration)
-        .map_err(|_| Error::Conflict("vLLM runtime configuration is invalid"))?;
+    let service = match serde_json::from_str::<crate::services::ServiceDefinition>(configuration) {
+        Ok(crate::services::ServiceDefinition::Vllm(service)) => *service,
+        Ok(_) => return Err(Error::Conflict("runtime configuration is not vLLM")),
+        Err(_) => serde_json::from_str::<Service>(configuration)
+            .map_err(|_| Error::Conflict("vLLM runtime configuration is invalid"))?,
+    };
     service.validate()?;
     Ok(service)
 }
@@ -189,8 +193,10 @@ fn targets(
         image_labels,
         pull_image: false,
         image_pull_policy: None,
-        configuration: serde_json::to_string(&runtime_service)
-            .map_err(|_| Error::State("cannot serialize service runtime configuration"))?,
+        configuration: serde_json::to_string(&crate::services::ServiceDefinition::Vllm(Box::new(
+            runtime_service,
+        )))
+        .map_err(|_| Error::State("cannot serialize service runtime configuration"))?,
         entrypoint: vec!["/usr/local/bin/nemoclaw-runtime".into()],
         command: Vec::new(),
         mount_target: "/data".into(),

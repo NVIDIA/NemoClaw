@@ -117,7 +117,7 @@ impl Engine {
         verify_stat(file, &stat)
     }
 }
-pub(super) fn verify_stat(
+pub(crate) fn verify_stat(
     file: &VerifiedFile,
     stat: &bollard::container::PathStatResponse,
 ) -> Result<(), Error> {

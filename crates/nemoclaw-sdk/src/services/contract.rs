@@ -38,7 +38,7 @@ pub struct ServiceRuntime {
     #[serde(rename = "image")]
     /// Immutable image reference used by the package installer.
     pub image: String,
-    /// Image acquisition before create or restart. Omission means Never for vLLM and IfNotPresent for Ollama and its proxy.
+    /// Image acquisition before container creation. The selected installer defines the omitted default.
     #[serde(
         rename = "imagePullPolicy",
         default,

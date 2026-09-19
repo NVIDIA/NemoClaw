@@ -11,6 +11,7 @@ fn generations() -> Generations {
         "provider",
         "sandbox",
         "ollama",
+        "ollama_service",
         "managed_gateway",
         "inference_service",
     ]
@@ -131,32 +132,28 @@ fn managed_inference_remains_owned_when_the_default_uses_a_hosted_provider() {
 }
 
 #[test]
-fn managed_ollama_keeps_its_model_and_provider_dependency_with_an_external_default() {
+fn managed_ollama_installs_while_an_external_provider_is_the_default() {
     let value: Value =
         serde_saphyr::from_str(include_str!("../../../examples/managed-ollama.yaml")).unwrap();
-    let model =
-        value["spec"]["sandboxes"][0]["agent"]["inference"]["routes"][0]["overrides"]["model"]
-            .clone();
     let local_name = value["spec"]["inferenceProviders"][0]["name"]
         .as_str()
         .unwrap()
         .to_owned();
     let doc = Document::parse(hosted(value).to_string().as_bytes()).unwrap();
-    let graph = compile(&doc, &generations(), "0.1.0").unwrap();
-    assert_eq!(
-        graph["resource"]["nemoclaw_ollama_model"]["ollama-server"]["model"],
-        model
+    let runtime = runtime_targets(&doc, &generations()).unwrap();
+    assert!(
+        runtime
+            .iter()
+            .any(|target| target.address == "nemoclaw_ollama_service.ollama-server")
     );
+    let graph = compile(&doc, &generations(), "0.1.0").unwrap();
     let dependencies =
         graph["resource"]["nemoclaw_provider"][format!("inference_{local_name}")]["depends_on"]
             .as_array()
             .unwrap();
-    assert!(dependencies.contains(&json!("nemoclaw_ollama_model.ollama-server")));
-    assert!(
-        !graph["resource"]["nemoclaw_provider"]["inference_hosted"]["depends_on"]
-            .as_array()
-            .unwrap()
-            .contains(&json!("nemoclaw_ollama_model.ollama-server"))
+    assert_eq!(
+        dependencies,
+        &[json!("nemoclaw_provider_profile.inference_local")]
     );
 }
 
@@ -168,7 +165,7 @@ fn multiple_selected_ollama_installers_have_independent_resources_and_dependenci
     other["name"] = json!("other");
     other["serviceRef"] = json!("other");
     let mut other_service = value["spec"]["services"]["ollama-server"].clone();
-    other_service["endpoint"] = json!("http://172.20.0.1:11437/v1");
+    other_service["serving"]["port"] = json!(18999);
     value["spec"]["services"]["other"] = other_service;
     value["spec"]["inferenceProviders"]
         .as_array_mut()
@@ -181,16 +178,19 @@ fn multiple_selected_ollama_installers_have_independent_resources_and_dependenci
     route["providerRef"] = json!("other");
     inference["routes"].as_array_mut().unwrap().push(route);
     let document = Document::parse(value.to_string().as_bytes()).unwrap();
-    let graph = compile(&document, &generations(), "0.1.0").unwrap();
-    for (provider, service) in [("local", "ollama-server"), ("other", "other")] {
-        assert!(graph["resource"]["nemoclaw_ollama"][service].is_object());
-        assert!(graph["resource"]["nemoclaw_ollama_storage"][service].is_object());
-        assert!(graph["resource"]["nemoclaw_ollama_model"][service].is_object());
+    let runtime = runtime_targets(&document, &generations()).unwrap();
+    let graph = nemoclaw_sdk::compile::compile_runtime(&document, &generations(), "0.1.0").unwrap();
+    for service in ["ollama-server", "other"] {
         assert!(
-            graph["resource"]["nemoclaw_provider"][format!("inference_{provider}")]["depends_on"]
+            runtime
+                .iter()
+                .any(|target| target.address == format!("nemoclaw_ollama_service.{service}"))
+        );
+        assert!(
+            graph["resource"]["nemoclaw_ollama_service"][service]["depends_on"]
                 .as_array()
                 .unwrap()
-                .contains(&json!(format!("nemoclaw_ollama_model.{service}")))
+                .contains(&json!(format!("nemoclaw_ollama_service_storage.{service}")))
         );
     }
 }

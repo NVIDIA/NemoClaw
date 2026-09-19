@@ -13,13 +13,11 @@ fn parse(value: &Value) -> Result<Document, nemoclaw_sdk::config::ConfigError> {
     Document::parse(value.to_string().as_bytes())
 }
 #[test]
-fn explicit_external_dependencies_preserve_the_resource_graph() {
+fn explicit_external_proxy_ownership_preserves_the_resource_graph() {
     let mut legacy = input();
     legacy["spec"]["sandboxes"][0]["network"]["proxy"] =
         json!({"host":"proxy.internal","port":3128});
     let mut explicit = legacy.clone();
-    explicit["spec"]["services"]["ollama-server"]["network"] =
-        json!({"management":"external","name":"nc-prototype-slice"});
     explicit["spec"]["sandboxes"][0]["network"]["proxy"]["management"] = json!("external");
     let document = parse(&explicit).expect("external dependencies must parse");
     assert!(
@@ -106,14 +104,15 @@ fn managed_dependencies_are_optional_and_do_not_replace_existing_resources() {
         assert!(parse(&invalid).is_err(), "{path}");
         assert!(!schema.is_valid(&invalid), "{path}");
     }
-    let mut external_gateway = input();
+    let mut external_gateway: Value =
+        serde_saphyr::from_str(include_str!("../../../examples/fabric-openclaw.yaml")).unwrap();
     external_gateway["spec"]["gateway"]["storage"] = json!({"management":"managed"});
     assert!(parse(&external_gateway).is_err());
     assert!(!schema.is_valid(&external_gateway));
 }
 
 #[test]
-fn ollama_storage_and_model_management_preserve_existing_lifecycle() {
+fn ollama_storage_and_model_management_preserve_existing_resource_plan() {
     let legacy = input();
     let mut explicit = legacy.clone();
     let ollama = &mut explicit["spec"]["services"]["ollama-server"];

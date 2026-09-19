@@ -353,15 +353,6 @@ impl Deployment {
                         "managed runtime is absent; no YAML exported",
                     ))?;
             }
-            crate::services::check_running(
-                &record.document,
-                &record.generations,
-                crate::services::InstallStage::Runtime,
-                &self.engines,
-                &bindings,
-                cancel,
-            )
-            .await?;
             Ok(())
         };
         tokio::select! {()=cancel.cancelled()=>Err(Error::Cancelled),result=work=>result}

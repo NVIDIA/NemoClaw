@@ -34,24 +34,24 @@ pub(crate) async fn supervise(
         tokio::select! {
             ()=cancel.cancelled()=>break Err(Error::Conflict("runtime stopped by operator; persistent data retained")),
             ()=monitors.trip.cancelled()=>break Err(Error::Conflict("memory protection tripped by operator; explicit apply required")),
-            _=child.wait()=>break Err(Error::Conflict("inference process exited; inspect retained logs and explicitly reapply")),
+            _=child.wait()=>break Err(Error::Conflict("managed service process exited; inspect retained logs and explicitly reapply")),
             Some(true)=monitors.ready.recv()=>{
                 ready=true;
-                if let Err(error)=(monitors.report)("ready","inference health confirmed",child.id().unwrap_or(0)) {break Err(error);}
+                if let Err(error)=(monitors.report)("ready","managed service readiness confirmed",child.id().unwrap_or(0)) {break Err(error);}
             },
-            ()=tokio::time::sleep_until(deadline),if !ready=>break Err(Error::Conflict("inference loading exceeded startup budget; data retained")),
+            ()=tokio::time::sleep_until(deadline),if !ready=>break Err(Error::Conflict("managed service loading exceeded startup budget; data retained")),
             sample=monitors.samples.recv()=>{
                 match sample {
                     Some(Ok(memory)) if !watch.sample(memory.available,memory.free)=>{},
                     Some(Ok(memory))=>break Err(Error::Execution {
                         operation: "memory protection".into(),
-                        diagnostic: format!("host memory pressure stopped inference: available={} free={}; explicit apply required", memory.available, memory.free),
+                        diagnostic: format!("host memory pressure stopped the managed service: available={} free={}; explicit apply required", memory.available, memory.free),
                     }),
                     Some(Err(error))=>break Err(Error::Execution {
                         operation: "memory protection".into(),
-                        diagnostic: format!("memory observation failed: {error}; inference stopped; explicit apply required"),
+                        diagnostic: format!("memory observation failed: {error}; managed service stopped; explicit apply required"),
                     }),
-                    None=>break Err(Error::Conflict("memory sample stream closed; inference stopped; explicit apply required")),
+                    None=>break Err(Error::Conflict("memory sample stream closed; managed service stopped; explicit apply required")),
                 }
             }
         }

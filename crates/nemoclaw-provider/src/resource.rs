@@ -394,8 +394,8 @@ mod tests {
         }
         let row = Row::from([("model".into(), "llama3:latest".into())]);
         assert_eq!(
-            download_resource("ollama_model", &row),
-            "ollama_model.llama3:latest"
+            download_resource("model_snapshot", &row),
+            "model_snapshot.llama3:latest"
         );
     }
 }

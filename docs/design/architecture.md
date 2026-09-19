@@ -7,6 +7,26 @@ The SDK turns a deployment document into checked OpenTofu operations and preserv
 The [accepted scope](scope.md) governs implementation changes.
 The explanations below describe the current boundaries; the later findings retain intermediate results and their limits.
 
+## Configuration Authoring
+
+The CLI uses [nemoclaw-authoring](../../crates/nemoclaw-authoring/src/lib.rs) to turn onboarding answers into desired-state YAML.
+This unpublished library owns authoring presets, draft edits, stable draft identity, structured reviews, and field diagnostics.
+The CLI is its current consumer; the crate boundary keeps terminal and argument-handling dependencies out of the authoring model so other frontends can use it.
+Both prompted answers and command-line overrides use the same projection and SDK parser.
+The SDK remains the authority for configuration validity and deployment behavior.
+
+The authoring library exposes its supported combinations but does not discover runtime capabilities or claim to cover every SDK configuration.
+Draft edits currently change deployment, sandbox, agent, and provider names, the model, and the credential environment-variable name.
+The current edit methods cannot change harness, runtime, inference type, or API choices.
+Rejected edits leave the previous answers intact.
+Reopening YAML requires the authoring model to reproduce the parsed document; it rejects unsupported customizations and does not preserve comments or formatting.
+The [public API tests](../../crates/nemoclaw-authoring/tests/public_api.rs) check these boundaries and compare default YAML against the pre-extraction output with a fixed UID.
+
+The CLI owns prompts, review rendering, file I/O, credential acquisition, and apply confirmation.
+Authoring retains credential environment-variable names, not credential values, and never calls deployment operations.
+Planning, apply, ownership checks, and recovery remain in the SDK.
+The library still depends on the SDK; this separation does not remove the SDK's build dependencies.
+
 ## Why the SDK Owns the Operation
 
 An application and a CLI user need the same answer to an interrupted apply: which resources exist, who owns them, and what can resume?
@@ -106,9 +126,9 @@ It checks both saved plans before deletion and records when the OpenShell stage 
 That saved progress lets an interrupted destroy continue even after the gateway becomes unavailable.
 The [managed orchestration commit](https://github.com/NVIDIA/NemoClaw/commit/b18e282837) records the failure cases behind this order.
 
-Ollama has a related dependency: a stopped service cannot return authoritative model inventory.
-Its [recovery stage](https://github.com/NVIDIA/NemoClaw/commit/ca2ece58e8) repairs the verified service, waits for the API, and then requests a complete plan.
-It does not treat unavailable inventory as an empty model list.
+Managed services use one installer contract: install, a bounded post-install readiness check, and remove.
+Apply completes the installer-owned resource graph before it runs the readiness check once.
+A stopped service remains bound, and an explicit apply can reconcile it without a package-specific recovery operation or an automatic restart loop.
 
 ## Why Storage Has Its Own Binding
 
@@ -189,17 +209,12 @@ An independent offline rebuild from another extraction directory produced an ide
 The archive must include OpenShell protobuf inputs omitted by Cargo vendoring, and the build must use that exact vendor layout to avoid dependency-path differences.
 Source packaging and dependency maintenance count toward the architecture's cost.
 
-Ollama recovery separates the service from its storage.
-`nemoclaw_ollama_storage.models` now tracks persistent storage independently; the existing service and model addresses remain unchanged.
-Existing deployments must apply once to establish the independently verified storage binding before destroy.
-Storage still uses the original labels and configuration digest, so this change does not establish image or network migration semantics.
+Managed Ollama uses the same service-installer boundary and retained-storage model as managed vLLM.
+Package-specific model download, runtime arguments, and bounded readiness checks stay in the Ollama installer.
+Deployment orchestration consumes only the installer plan and the resolved provider connection.
 
-Only startup connection refusal is polled, within the existing 30-second budget; authentication, transport and partial-inventory failures stop the operation.
-No refresh is disabled and no stale inventory is substituted.
-The ordinary provider refresh and export remain strict when the service is stopped.
-
-Destroy retains the volume resource and its data, releases the model installation binding, and removes the verified container after dependent OpenShell resources.
-Its model-binding check verifies the parent and storage rather than asserting current model inventory: no model bytes are deleted.
+Destroy retains the volume resource and its data, then removes the verified container after dependent OpenShell resources.
+The Ollama installer verifies the retained storage relationship without deleting model bytes.
 A missing container is confirmed only after checking the bound engine and retained storage identity.
 
 A lost deletion response leaves state for explicit reconciliation.

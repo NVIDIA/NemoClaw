@@ -164,6 +164,7 @@ fn inline_managed_providers_reuse_named_service_runtime_and_defaults() {
             "provider",
             "sandbox",
             "ollama",
+            "ollama_service",
             "managed_gateway",
             "inference_service",
         ]

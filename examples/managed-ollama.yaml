@@ -9,20 +9,27 @@ metadata:
   uid: 87d485ad-fba7-4197-9eaa-aa97cc97446b
 spec:
   gateway:
-    management: external
+    management: managed
     endpoint: http://127.0.0.1:17671
+    engine: unix:///var/run/docker.sock
+    image: ghcr.io/nvidia/openshell/gateway@sha256:ec2b0efea84fff198e888e97c85befb9c908acde92e8256f9b527877ed182d66
+    networkCIDR: 172.20.0.0/24
   services:
     ollama-server:
       kind: ollama
       management: managed
+      hardware: {profile: dgx-spark}
       runtime:
         provider: docker
         engine: unix:///var/run/docker.sock
-        image: ollama/ollama@sha256:684d8674b4315fa18f4f0e973a118ec2652ed96f67563277839985175858e0ba
-      endpoint: http://172.20.0.1:11436/v1
-      network: nc-prototype-slice
+        image: nc-prototype-ollama@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
       model:
         name: qwen3:0.6b
+        digest: 7df6b6e09427a769808717c0a93cadc4ae99ed4eb8bf5ca557c90846becea435
+      serving:
+        contextTokens: 8192
+      memory:
+        gpuMemoryGiB: 16
   inferenceProviders:
     - name: local
       provider: openai

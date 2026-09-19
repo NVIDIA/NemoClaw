@@ -14,7 +14,8 @@ mod registry;
 pub(crate) use contract::InstallStage;
 pub use contract::ServiceRuntime;
 pub use installers::ollama::{
-    ExternalOllama, ExternalOllamaModel, ManagedOllama, OllamaModel, OllamaProxy,
+    ExternalOllama, ExternalOllamaModel, ManagedOllama, OllamaMemory, OllamaModel, OllamaProxy,
+    OllamaServing,
 };
 pub(crate) use registry::InstallPlans;
 pub use registry::{
@@ -22,8 +23,8 @@ pub use registry::{
     resource_behavior, resource_schemas,
 };
 pub(crate) use registry::{
-    check_combined_capacity, check_running, check_runtime_capacity, constrain_schema,
-    credential_source_json, defaults, generation_kinds, has_runtime, install_plans,
-    provider_authenticated, remove_plans, required_storage_address, resolve, resource_label,
-    validate, validate_provider, validate_route,
+    check_combined_capacity, check_process_capacity, check_running, check_runtime_capacity,
+    constrain_schema, credential_source_json, defaults, generation_kinds, has_runtime,
+    install_plans, provider_authenticated, remove_plans, required_storage_address, resolve,
+    resource_label, validate, validate_provider, validate_route,
 };

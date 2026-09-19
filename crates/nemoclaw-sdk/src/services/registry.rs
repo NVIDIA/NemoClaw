@@ -60,8 +60,8 @@ pub struct ResourceSchema {
     pub mutable: &'static [&'static str],
 }
 
-pub fn resource_schemas() -> [ResourceSchema; 8] {
-    [
+pub fn resource_schemas() -> Vec<ResourceSchema> {
+    vec![
         ResourceSchema {
             kind: "ollama_proxy_storage",
             fields: &[
@@ -112,38 +112,14 @@ pub fn resource_schemas() -> [ResourceSchema; 8] {
             mutable: &["image_pull_policy"],
         },
         ResourceSchema {
-            kind: "ollama_storage",
-            fields: &[
-                "name",
-                "owner",
-                "generation",
-                "engine",
-                "image",
-                "image_pull_policy",
-                "network",
-                "bind_address",
-            ],
-            mutable: &["image_pull_policy"],
-        },
-        ResourceSchema {
-            kind: "ollama",
-            fields: &[
-                "name",
-                "owner",
-                "generation",
-                "engine",
-                "image",
-                "image_pull_policy",
-                "network",
-                "bind_address",
-                "running",
-            ],
+            kind: installers::ollama::SERVICE_KIND,
+            fields: &["spec", "running", "image_pull_policy"],
             mutable: &["running", "image_pull_policy"],
         },
         ResourceSchema {
-            kind: "ollama_model",
-            fields: &["engine", "service_id", "endpoint", "model"],
-            mutable: &["model"],
+            kind: installers::ollama::STORAGE_KIND,
+            fields: &["spec"],
+            mutable: &[],
         },
         ResourceSchema {
             kind: installers::vllm::SERVICE_KIND,
@@ -160,17 +136,26 @@ pub fn resource_schemas() -> [ResourceSchema; 8] {
 
 pub fn resource_behavior(kind: &str) -> ResourceBehavior {
     ResourceBehavior {
-        computed_digest: kind == "ollama_model",
-        observed_running: kind == installers::vllm::SERVICE_KIND,
-        retained_storage: kind == installers::vllm::STORAGE_KIND,
-        runtime_process: kind == installers::vllm::SERVICE_KIND,
+        computed_digest: false,
+        observed_running: matches!(
+            kind,
+            installers::ollama::SERVICE_KIND | installers::vllm::SERVICE_KIND
+        ),
+        retained_storage: matches!(
+            kind,
+            installers::ollama::STORAGE_KIND | installers::vllm::STORAGE_KIND
+        ),
+        runtime_process: matches!(
+            kind,
+            installers::ollama::SERVICE_KIND | installers::vllm::SERVICE_KIND
+        ),
     }
 }
 
 pub(crate) fn resource_label(kind: &str) -> Option<&'static str> {
     match kind {
         installers::vllm::SERVICE_KIND => Some("inference service"),
-        "ollama" => Some("Ollama service"),
+        installers::ollama::SERVICE_KIND => Some("Ollama service"),
         "ollama_proxy" => Some("Ollama proxy"),
         _ => None,
     }
@@ -203,8 +188,8 @@ trait InferenceCapability {
 impl ServiceDefinition {
     fn stage(&self) -> InstallStage {
         match self {
-            Self::Ollama(_) | Self::OllamaProxy(_) => InstallStage::Deployment,
-            Self::Vllm(_) => InstallStage::Runtime,
+            Self::Ollama(_) | Self::Vllm(_) => InstallStage::Runtime,
+            Self::OllamaProxy(_) => InstallStage::Deployment,
         }
     }
 
@@ -223,36 +208,60 @@ impl ServiceDefinition {
     }
 
     fn validate_installation(&self, gateway: &Gateway) -> Result<(), ConfigError> {
-        if let Self::Vllm(service) = self {
-            crate::config::validation::require(
-                (gateway.management == "managed"
-                    && service.placement.is_none()
-                    && service.runtime.engine == gateway.engine)
-                    || service.placement.is_some(),
-                "vLLM requires the managed gateway Docker engine or explicit placement",
-            )?;
-        }
+        let (placement, engine, package) = match self {
+            Self::Ollama(service) => (
+                service.placement.is_some(),
+                service.runtime.engine.as_str(),
+                "Ollama",
+            ),
+            Self::Vllm(service) => (
+                service.placement.is_some(),
+                service.runtime.engine.as_str(),
+                "vLLM",
+            ),
+            Self::OllamaProxy(_) => return Ok(()),
+        };
+        crate::config::validation::require(
+            (gateway.management == "managed" && !placement && engine == gateway.engine)
+                || placement,
+            if package == "Ollama" {
+                "Ollama requires the managed gateway Docker engine or explicit placement"
+            } else {
+                "vLLM requires the managed gateway Docker engine or explicit placement"
+            },
+        )?;
         Ok(())
     }
 
     fn allocation(&self, gateway: &Gateway) -> Result<Option<NetworkAllocation>, ConfigError> {
-        let Self::Vllm(service) = self else {
-            return Ok(None);
+        let (engine, placement, publication, port) = match self {
+            Self::Ollama(service) => (
+                &service.runtime.engine,
+                &service.placement,
+                &service.publication,
+                service.serving.port,
+            ),
+            Self::Vllm(service) => (
+                &service.runtime.engine,
+                &service.placement,
+                &service.publication,
+                service.serving.port,
+            ),
+            Self::OllamaProxy(_) => return Ok(None),
         };
         Ok(Some(NetworkAllocation {
-            engine: service.runtime.engine.clone(),
-            network_cidr: service
-                .placement
+            engine: engine.clone(),
+            network_cidr: placement
                 .as_ref()
                 .map_or(gateway.network_cidr.as_str(), |placement| {
                     placement.network_cidr.as_str()
                 })
                 .into(),
-            bind_address: service.publication.as_ref().map_or_else(
+            bind_address: publication.as_ref().map_or_else(
                 || gateway.bridge(),
                 |publication| Ok(publication.bind_address.clone()),
             )?,
-            port: service.serving.port,
+            port,
         }))
     }
 
@@ -325,10 +334,17 @@ impl InferenceCapability for ServiceDefinition {
     fn resolve(&self, document: &Document, name: &str) -> Result<ResolvedInference, ConfigError> {
         Ok(match self {
             ServiceDefinition::Ollama(service) => ResolvedInference {
-                endpoint: service.endpoint.clone(),
+                endpoint: match &service.publication {
+                    Some(publication) => publication.endpoint.clone(),
+                    None => format!(
+                        "http://{}:{}/v1",
+                        document.spec.gateway.bridge()?,
+                        service.serving.port
+                    ),
+                },
                 served_model: service.model.name.clone(),
                 requires_authentication: false,
-                resource_dependencies: vec![format!("nemoclaw_ollama_model.{name}")],
+                resource_dependencies: Vec::new(),
             },
             ServiceDefinition::OllamaProxy(service) => ResolvedInference {
                 endpoint: service.endpoint.clone(),
@@ -360,7 +376,11 @@ impl InferenceCapability for ServiceDefinition {
         model: &str,
     ) -> Result<(), ConfigError> {
         match self {
-            ServiceDefinition::Ollama(_) => Ok(()),
+            ServiceDefinition::Ollama(_) => crate::config::validation::require(
+                provider.api.is_none()
+                    || provider.api == Some(crate::config::InferenceApi::OpenaiCompletions),
+                "managed Ollama requires the OpenAI Completions API",
+            ),
             ServiceDefinition::OllamaProxy(service) => service.validate(provider, model, harness),
             ServiceDefinition::Vllm(service) => crate::config::validation::require(
                 sandbox_runtime == "docker" || service.placement.is_some(),
@@ -396,7 +416,10 @@ struct NetworkAllocation {
 
 pub(crate) fn defaults(definition: &mut ServiceDefinition) {
     let runtime = match definition {
-        ServiceDefinition::Ollama(service) => &mut service.runtime,
+        ServiceDefinition::Ollama(service) => {
+            service.defaults();
+            &mut service.runtime
+        }
         ServiceDefinition::OllamaProxy(service) => &mut service.runtime,
         ServiceDefinition::Vllm(service) => {
             service.defaults();
@@ -590,7 +613,10 @@ pub(crate) fn generation_kinds(document: &Document) -> Result<Vec<&'static str>,
     let mut kinds = BTreeSet::new();
     for definition in document.spec.services.values() {
         match definition {
-            ServiceDefinition::Ollama(_) | ServiceDefinition::OllamaProxy(_) => {
+            ServiceDefinition::Ollama(_) => {
+                kinds.insert(installers::ollama::SERVICE_KIND);
+            }
+            ServiceDefinition::OllamaProxy(_) => {
                 kinds.insert("ollama");
             }
             ServiceDefinition::Vllm(_) => {
@@ -625,12 +651,32 @@ pub(crate) fn required_storage_address(
         .find_map(|(candidate, storage)| (candidate == process).then_some(storage)))
 }
 
-/// Opaque vLLM capacity input retained by the registry between per-runtime and
-/// combined-engine checks. Generic deployment code never inspects its package.
+/// Opaque installer capacity input retained between per-runtime and combined-engine checks.
 pub(crate) struct RuntimeCapacity {
     engine: String,
-    service: installers::vllm::Service,
+    service: CapacityService,
     starting: bool,
+}
+
+enum CapacityService {
+    Ollama(ManagedOllama),
+    Vllm(installers::vllm::Service),
+}
+
+pub(crate) async fn check_process_capacity(
+    engine: &crate::docker::Engine,
+    spec: &crate::managed::Spec,
+    observed: Option<&crate::managed::RuntimeObservation>,
+) -> Result<(), crate::Error> {
+    match spec.kind.as_str() {
+        installers::vllm::SERVICE_KIND => engine.check_capacity(spec, observed).await,
+        installers::ollama::SERVICE_KIND => {
+            installers::ollama::capacity::check(engine, spec, observed).await
+        }
+        _ => Err(crate::Error::Conflict(
+            "managed process kind has no registered capacity check",
+        )),
+    }
 }
 
 pub(crate) async fn check_runtime_capacity(
@@ -638,11 +684,16 @@ pub(crate) async fn check_runtime_capacity(
     spec: &crate::managed::Spec,
     observed: Option<&crate::managed::RuntimeObservation>,
 ) -> Result<Option<RuntimeCapacity>, crate::Error> {
-    if spec.kind != installers::vllm::SERVICE_KIND {
-        return Ok(None);
-    }
-    let service = installers::vllm::configured_service(spec)?;
-    engine.check_capacity(spec, observed).await?;
+    let service = match spec.kind.as_str() {
+        installers::vllm::SERVICE_KIND => {
+            CapacityService::Vllm(installers::vllm::configured_service(spec)?)
+        }
+        installers::ollama::SERVICE_KIND => {
+            CapacityService::Ollama(installers::ollama::configured_service(spec)?)
+        }
+        _ => return Ok(None),
+    };
+    check_process_capacity(engine, spec, observed).await?;
     Ok(Some(RuntimeCapacity {
         engine: spec.engine().into(),
         service,
@@ -654,7 +705,7 @@ pub(crate) async fn check_combined_capacity(
     connections: &crate::docker::Connections,
     checks: Vec<RuntimeCapacity>,
 ) -> Result<(), crate::Error> {
-    let mut grouped: BTreeMap<String, Vec<(installers::vllm::Service, bool)>> = BTreeMap::new();
+    let mut grouped: BTreeMap<String, Vec<(CapacityService, bool)>> = BTreeMap::new();
     for check in checks {
         grouped
             .entry(check.engine)
@@ -674,11 +725,85 @@ pub(crate) async fn check_combined_capacity(
         .map_err(|_| crate::Error::State("combined capacity observation timed out"))??;
         let info = engine.info().await?;
         let capacity = host.for_engine(info.id.as_deref().unwrap_or(""))?;
-        let services: Vec<_> = services
-            .iter()
-            .map(|(service, starting)| (service, *starting))
-            .collect();
-        installers::vllm::hardware_capacity::check_service_budgets(&services, &capacity)?;
+        let mut total_budget = 0_u64;
+        let mut new_budget = 0_u64;
+        let mut reserve = 0_u64;
+        let mut startup = 0_u64;
+        let mut architecture = None;
+        for (service, starting) in &services {
+            let (kind, budget, host_reserve, headroom) = match service {
+                CapacityService::Ollama(service) => {
+                    installers::ollama::hardware_capacity::check_memory(
+                        service, &capacity, *starting,
+                    )?;
+                    (
+                        service.memory_architecture()?,
+                        installers::ollama::hardware_capacity::budget(service, &capacity)?,
+                        service.memory.host_reserve_gib as u64 * crate::hardware::GIB,
+                        20 * crate::hardware::GIB,
+                    )
+                }
+                CapacityService::Vllm(service) => {
+                    installers::vllm::hardware_capacity::check_memory(
+                        service, &capacity, *starting,
+                    )?;
+                    let total =
+                        installers::vllm::hardware_capacity::serving_memory(service, &capacity)?;
+                    let budget = service
+                        .memory
+                        .gpu_memory_utilization
+                        .as_ref()
+                        .and_then(serde_json::Number::as_f64)
+                        .map_or(service.gpu_bytes()?, |ratio| {
+                            (total as f64 * ratio).floor() as u64
+                        });
+                    let headroom = service.recipe.as_ref().map_or(20, |recipe| {
+                        recipe
+                            .resources
+                            .startup_headroom_gi_b
+                            .max(recipe.resources.preparation_memory_gi_b)
+                    }) * crate::hardware::GIB;
+                    (
+                        service.memory_architecture()?,
+                        budget,
+                        service.memory.host_reserve_gib as u64 * crate::hardware::GIB,
+                        headroom,
+                    )
+                }
+            };
+            if architecture.is_some_and(|expected| expected != kind) {
+                return Err(crate::Error::Conflict(
+                    "services sharing an engine must use the same GPU memory contract",
+                ));
+            }
+            architecture = Some(kind);
+            total_budget = total_budget
+                .checked_add(budget)
+                .ok_or(crate::Error::State("combined GPU budget overflow"))?;
+            reserve = reserve.max(host_reserve);
+            if *starting {
+                new_budget = new_budget
+                    .checked_add(budget)
+                    .ok_or(crate::Error::State("combined GPU budget overflow"))?;
+                startup = startup
+                    .checked_add(headroom)
+                    .ok_or(crate::Error::State("combined startup budget overflow"))?;
+            }
+        }
+        let fits = if architecture == Some(installers::vllm::MemoryArchitecture::Dedicated) {
+            capacity
+                .gpu_memory
+                .as_ref()
+                .is_some_and(|gpu| total_budget <= gpu.total && new_budget <= gpu.free)
+                && (new_budget == 0 || reserve + startup <= capacity.available)
+        } else {
+            total_budget + reserve <= capacity.total && new_budget + startup <= capacity.available
+        };
+        if !fits {
+            return Err(crate::Error::Conflict(
+                "combined service budgets exceed available GPU or host startup memory",
+            ));
+        }
     }
     Ok(())
 }
@@ -716,18 +841,30 @@ impl<'a> BackendRegistry<'a> {
         kind: &str,
         row: &Row,
     ) -> Result<Option<RegisteredBackend>, ObservationError> {
-        if matches!(
+        let managed_service = if matches!(
             kind,
             installers::vllm::SERVICE_KIND | installers::vllm::STORAGE_KIND
         ) {
+            Some((
+                installers::vllm::SERVICE_KIND,
+                installers::vllm::STORAGE_KIND,
+            ))
+        } else if matches!(
+            kind,
+            installers::ollama::SERVICE_KIND | installers::ollama::STORAGE_KIND
+        ) {
+            Some((
+                installers::ollama::SERVICE_KIND,
+                installers::ollama::STORAGE_KIND,
+            ))
+        } else {
+            None
+        };
+        if let Some((process_kind, storage_kind)) = managed_service {
             let engine = crate::managed::runtime_engine(self.connections, kind, row)
                 .map_err(|_| ObservationError::Backend("engine connection unavailable"))?;
             return Ok(Some(RegisteredBackend(Box::new(
-                crate::managed::ManagedBackend::service(
-                    engine,
-                    installers::vllm::SERVICE_KIND,
-                    installers::vllm::STORAGE_KIND,
-                ),
+                crate::managed::ManagedBackend::service(engine, process_kind, storage_kind),
             ))));
         }
         if crate::managed::ManagedBackend::supports(kind) {

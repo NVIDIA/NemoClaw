@@ -1,14 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::{
-    authoring::{
-        Answers, AuthoredDocument, Capabilities, CompletionBoundary, DirectInputs, Draft,
-        IdentityEdits, InferenceEdits, InteractiveInputs, Session,
-    },
-    credentials,
-    deployment::create as deployment,
-    io::write_output,
+use crate::{credentials, deployment::create as deployment, io::write_output};
+use nemoclaw_authoring::{
+    AnswerOverrides, Answers, AuthoredDocument, Capabilities, CompletionBoundary, Draft,
+    IdentityEdits, InferenceEdits, Review, Session,
 };
 use nemoclaw_sdk::{CancellationToken, Error, OperationResult, config::Document};
 use std::{future::Future, path::PathBuf};
@@ -170,18 +166,15 @@ async fn author<R: tokio::io::AsyncBufRead + Unpin>(
     let capabilities = Capabilities::available();
     let defaults = Answers::onboarding_defaults();
     if non_interactive {
-        let answers = Answers::from_direct(
-            defaults,
-            DirectInputs {
-                deployment_name: name,
-                sandbox_name: sandbox,
-                agent_name: agent,
-                provider_name: provider,
-                model,
-                credential_env,
-                ..DirectInputs::default()
-            },
-        );
+        let answers = defaults.with_overrides(AnswerOverrides {
+            deployment_name: name,
+            sandbox_name: sandbox,
+            agent_name: agent,
+            provider_name: provider,
+            model,
+            credential_env,
+            ..AnswerOverrides::default()
+        });
         let authored = Session::new()?.project(&capabilities, &answers)?;
         return Ok(Some(authored));
     }
@@ -232,7 +225,7 @@ async fn author<R: tokio::io::AsyncBufRead + Unpin>(
             cancel,
         )
         .await?;
-        let answers = Answers::from_interactive(InteractiveInputs {
+        let answers = Answers {
             deployment_name,
             sandbox_name,
             agent_name,
@@ -243,13 +236,13 @@ async fn author<R: tokio::io::AsyncBufRead + Unpin>(
             provider_name,
             model,
             credential_env,
-        });
+        };
         Draft::new(Session::new()?, answers)
     };
 
     loop {
         let review = draft.review(&capabilities)?;
-        eprintln!("Review authored configuration:\n{}", review.render());
+        eprintln!("Review authored configuration:\n{}", render_review(&review));
         let action = value_or_prompt(
             None,
             "Accept [a], edit inference [i], edit identity [d], inspect YAML [y], or exit [x]",
@@ -310,6 +303,27 @@ async fn author<R: tokio::io::AsyncBufRead + Unpin>(
             _ => eprintln!("Choose a, i, d, y, or x."),
         }
     }
+}
+
+fn render_review(review: &Review) -> String {
+    use nemoclaw_sdk::config::InferenceApi;
+    let api = match review.api() {
+        InferenceApi::OpenaiCompletions => "openai-completions",
+        InferenceApi::OpenaiResponses => "openai-responses",
+        InferenceApi::AnthropicMessages => "anthropic-messages",
+    };
+    format!(
+        "Deployment: {}\nUID: {}\nSandbox: {}\nHarness: {}\nAgent: {}\nProvider: {}\nAPI: {}\nModel: {}\nCredential references: {}\n",
+        review.deployment_name(),
+        review.uid(),
+        review.sandbox_name(),
+        review.harness_kind(),
+        review.agent_name(),
+        review.provider_name(),
+        api,
+        review.model(),
+        review.credential_references().join(", ")
+    )
 }
 
 async fn value_or_prompt<R: tokio::io::AsyncBufRead + Unpin>(

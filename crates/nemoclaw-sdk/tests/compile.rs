@@ -13,6 +13,7 @@ fn image_pull_policy_reaches_the_engine_without_changing_runtime_identity() {
         ("provider", "provider-generation"),
         ("sandbox", "sandbox-generation"),
         ("ollama", "ollama-generation"),
+        ("ollama_service", "ollama-generation"),
         ("managed_gateway", "gateway-generation"),
         ("inference_service", "inference-generation"),
     ]
@@ -53,27 +54,22 @@ fn image_pull_policy_reaches_the_engine_without_changing_runtime_identity() {
 
     let mut document =
         Document::parse(include_str!("fixtures/config/managed-ollama.yaml").as_bytes()).unwrap();
-    let before = compile(&document, &generations, "0.1.0").unwrap();
+    let before = compile_runtime(&document, &generations, "0.1.0").unwrap();
     let nemoclaw_sdk::services::ServiceDefinition::Ollama(service) =
         document.spec.services.values_mut().next().unwrap()
     else {
         panic!("expected ollama")
     };
     service.runtime.image_pull_policy = Some(ImagePullPolicy::Never);
-    let mut after = compile(&document, &generations, "0.1.0").unwrap();
-    for (kind, name) in [
-        ("nemoclaw_ollama", "ollama-server"),
-        ("nemoclaw_ollama_storage", "ollama-server"),
-    ] {
-        assert_eq!(
-            after["resource"][kind][name]
-                .as_object_mut()
-                .unwrap()
-                .remove("image_pull_policy")
-                .unwrap(),
-            "Never"
-        );
-    }
+    let mut after = compile_runtime(&document, &generations, "0.1.0").unwrap();
+    assert_eq!(
+        after["resource"]["nemoclaw_ollama_service"]["ollama-server"]
+            .as_object_mut()
+            .unwrap()
+            .remove("image_pull_policy")
+            .unwrap(),
+        "Never"
+    );
     assert_eq!(after, before);
 }
 
@@ -85,6 +81,7 @@ fn reference_graphs_preserve_addresses_dependencies_and_provider_configuration()
         ("provider", "provider-generation"),
         ("sandbox", "sandbox-generation"),
         ("ollama", "ollama-generation"),
+        ("ollama_service", "ollama-generation"),
         ("managed_gateway", "gateway-generation"),
         ("inference_service", "inference-generation"),
     ]

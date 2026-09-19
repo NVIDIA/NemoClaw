@@ -434,25 +434,6 @@
         }
       ]
     },
-    "ExternalNetwork": {
-      "additionalProperties": false,
-      "description": "Identify a network owned outside this deployment.",
-      "properties": {
-        "management": {
-          "$ref": "#/$defs/ExternalManagement",
-          "description": "Optional external ownership declaration. Omission means external."
-        },
-        "name": {
-          "description": "Existing network name on the service Docker engine.",
-          "pattern": "^[a-z][a-z0-9-]{0,39}$",
-          "type": "string"
-        }
-      },
-      "required": [
-        "name"
-      ],
-      "type": "object"
-    },
     "ExternalOllama": {
       "additionalProperties": false,
       "description": "External Ollama daemon observed by the managed proxy installer.",
@@ -1631,37 +1612,210 @@
       },
       "type": "object"
     },
-    "NetworkReference": {
-      "anyOf": [
-        {
-          "description": "Existing network name; equivalent to management: external.",
-          "pattern": "^[a-z][a-z0-9-]{0,39}$",
-          "type": "string"
+    "OllamaMemory": {
+      "additionalProperties": false,
+      "description": "Ollama GPU budget and host memory protection.",
+      "properties": {
+        "consecutiveSamples": {
+          "anyOf": [
+            {
+              "const": 0
+            },
+            {
+              "maximum": 5,
+              "minimum": 1
+            }
+          ],
+          "default": 5,
+          "description": "Consecutive low-memory samples before stopping the owned process.",
+          "format": "int64",
+          "type": "integer",
+          "x-nemoclaw-default-rule": "Omitted or zero selects the default."
         },
-        {
-          "$ref": "#/$defs/ExternalNetwork",
-          "description": "Explicit external network reference."
+        "freeGateGiB": {
+          "anyOf": [
+            {
+              "const": 0
+            },
+            {
+              "maximum": 24,
+              "minimum": 6
+            }
+          ],
+          "default": 12,
+          "description": "Available-memory gate for the free-memory threshold.",
+          "format": "int64",
+          "type": "integer",
+          "x-nemoclaw-default-rule": "Omitted or zero selects the default."
+        },
+        "gpuMemoryGiB": {
+          "anyOf": [
+            {
+              "const": 0
+            },
+            {
+              "maximum": 96,
+              "minimum": 0
+            }
+          ],
+          "default": 0,
+          "description": "Fixed serving budget in GiB when utilization is omitted. Omission or zero selects 16 GiB.",
+          "format": "int64",
+          "type": "integer",
+          "x-nemoclaw-default-rule": "Omitted or zero stays zero in the document. Without gpuMemoryUtilization, the installer uses 16 GiB."
+        },
+        "gpuMemoryUtilization": {
+          "description": "Optional fraction of observed dedicated GPU memory.",
+          "format": "double",
+          "maximum": 0.95,
+          "minimum": 0.05,
+          "type": "number"
+        },
+        "hostReserveGiB": {
+          "anyOf": [
+            {
+              "const": 0
+            },
+            {
+              "maximum": 64,
+              "minimum": 28
+            }
+          ],
+          "default": 32,
+          "description": "Host memory reserve excluded from serving.",
+          "format": "int64",
+          "type": "integer",
+          "x-nemoclaw-default-rule": "Omitted or zero selects the default."
+        },
+        "minAvailableGiB": {
+          "anyOf": [
+            {
+              "const": 0
+            },
+            {
+              "maximum": 16,
+              "minimum": 6
+            }
+          ],
+          "default": 8,
+          "description": "Available-memory threshold used by the bounded runtime watchdog.",
+          "format": "int64",
+          "type": "integer",
+          "x-nemoclaw-default-rule": "Omitted or zero selects the default."
+        },
+        "minFreeGiB": {
+          "anyOf": [
+            {
+              "const": 0
+            },
+            {
+              "maximum": 8,
+              "minimum": 2
+            }
+          ],
+          "default": 3,
+          "description": "Free-memory threshold used below freeGateGiB.",
+          "format": "int64",
+          "type": "integer",
+          "x-nemoclaw-default-rule": "Omitted or zero selects the default."
         }
-      ],
-      "description": "An existing container network on the selected engine. NemoClaw attaches its container but does not create or delete the network."
+      },
+      "type": "object"
     },
     "OllamaModel": {
       "additionalProperties": false,
-      "description": "One managed Ollama model installation.",
+      "description": "One immutable Ollama registry model installation.",
       "properties": {
+        "digest": {
+          "description": "Lowercase SHA-256 of the registry manifest selected for that tag.",
+          "pattern": "^[a-f0-9]{64}$",
+          "type": "string"
+        },
         "management": {
           "$ref": "#/$defs/ManagedManagement",
           "description": "Optional ownership declaration; omission means managed."
         },
         "name": {
-          "description": "Explicit Ollama model name including its tag.",
+          "description": "Public library model name including its tag.",
           "pattern": "^[a-z0-9][a-z0-9._-]*:[a-z0-9][a-z0-9._-]*$",
           "type": "string"
         }
       },
       "required": [
-        "name"
+        "name",
+        "digest"
       ],
+      "type": "object"
+    },
+    "OllamaServing": {
+      "additionalProperties": false,
+      "description": "Native Ollama serving controls supported by the managed installer.",
+      "properties": {
+        "contextTokens": {
+          "anyOf": [
+            {
+              "const": 0
+            },
+            {
+              "maximum": 65536,
+              "minimum": 8192
+            }
+          ],
+          "default": 32768,
+          "description": "Maximum model context length.",
+          "format": "int64",
+          "type": "integer",
+          "x-nemoclaw-default-rule": "Omitted or zero selects the default."
+        },
+        "maxSequences": {
+          "anyOf": [
+            {
+              "const": 0
+            },
+            {
+              "maximum": 2,
+              "minimum": 1
+            }
+          ],
+          "default": 1,
+          "description": "Maximum concurrent sequences.",
+          "format": "int64",
+          "type": "integer",
+          "x-nemoclaw-default-rule": "Omitted or zero selects the default."
+        },
+        "port": {
+          "anyOf": [
+            {
+              "const": 0
+            },
+            {
+              "maximum": 65535,
+              "minimum": 1024
+            }
+          ],
+          "default": 18888,
+          "description": "Inference listening port.",
+          "format": "int64",
+          "type": "integer",
+          "x-nemoclaw-default-rule": "Omitted or zero selects the default."
+        },
+        "startupTimeoutSeconds": {
+          "anyOf": [
+            {
+              "const": 0
+            },
+            {
+              "maximum": 3600,
+              "minimum": 60
+            }
+          ],
+          "default": 1800,
+          "description": "Seconds allowed for model loading and readiness.",
+          "format": "int64",
+          "type": "integer",
+          "x-nemoclaw-default-rule": "Omitted or zero selects the default."
+        }
+      },
       "type": "object"
     },
     "OpenClawDashboard": {
@@ -2599,11 +2753,87 @@
       "oneOf": [
         {
           "additionalProperties": false,
+          "allOf": [
+            {
+              "if": {
+                "properties": {
+                  "memory": {
+                    "properties": {
+                      "gpuMemoryUtilization": {}
+                    },
+                    "required": [
+                      "gpuMemoryUtilization"
+                    ]
+                  }
+                },
+                "required": [
+                  "memory"
+                ]
+              },
+              "then": {
+                "allOf": [
+                  {
+                    "properties": {
+                      "hardware": {
+                        "properties": {
+                          "minGpuMemoryBytes": {}
+                        },
+                        "required": [
+                          "minGpuMemoryBytes"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "hardware"
+                    ]
+                  },
+                  {
+                    "properties": {
+                      "hardware": {
+                        "properties": {
+                          "profile": {
+                            "not": {
+                              "enum": [
+                                "dgx-spark"
+                              ]
+                            }
+                          }
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "properties": {
+                      "memory": {
+                        "properties": {
+                          "gpuMemoryGiB": {
+                            "const": 0
+                          }
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          ],
+          "dependentRequired": {
+            "placement": [
+              "publication"
+            ],
+            "publication": [
+              "placement"
+            ]
+          },
           "description": "Managed Ollama daemon and selected model.",
           "properties": {
-            "endpoint": {
-              "description": "Private or loopback HTTP IPv4:port/v1 published by the managed daemon.",
-              "type": "string"
+            "container": {
+              "$ref": "#/$defs/ServiceContainer",
+              "description": "Optional IPC and shared-memory settings for the runtime container."
+            },
+            "hardware": {
+              "$ref": "#/$defs/ServiceHardware",
+              "description": "Explicit supported GPU or system profile."
             },
             "kind": {
               "const": "ollama",
@@ -2614,17 +2844,29 @@
               "$ref": "#/$defs/ManagedManagement",
               "description": "Optional ownership declaration for the Ollama daemon container. Omission means managed."
             },
+            "memory": {
+              "$ref": "#/$defs/OllamaMemory",
+              "description": "GPU budget and resident memory-protection thresholds."
+            },
             "model": {
               "$ref": "#/$defs/OllamaModel",
-              "description": "Selected model installed and verified by the Ollama installer."
+              "description": "Selected immutable Ollama registry model."
             },
-            "network": {
-              "$ref": "#/$defs/NetworkReference",
-              "description": "Name of the existing Docker network."
+            "placement": {
+              "$ref": "#/$defs/ServicePlacement",
+              "description": "Optional remote Docker placement. Requires publication."
+            },
+            "publication": {
+              "$ref": "#/$defs/ServicePublication",
+              "description": "Private inference address for an explicitly placed service."
             },
             "runtime": {
               "$ref": "#/$defs/ServiceRuntime",
-              "description": "Docker runner and pinned ollama/ollama image."
+              "description": "Docker runner and pinned NemoClaw Ollama runtime image."
+            },
+            "serving": {
+              "$ref": "#/$defs/OllamaServing",
+              "description": "Ollama serving limits."
             },
             "storage": {
               "$ref": "#/$defs/ManagedResource",
@@ -2633,9 +2875,8 @@
           },
           "required": [
             "kind",
+            "hardware",
             "runtime",
-            "endpoint",
-            "network",
             "model"
           ],
           "type": "object"
@@ -3107,7 +3348,7 @@
         },
         "imagePullPolicy": {
           "$ref": "#/$defs/ImagePullPolicy",
-          "description": "Image acquisition before create or restart. Omission means Never for vLLM and IfNotPresent for Ollama and its proxy."
+          "description": "Image acquisition before container creation. The selected installer defines the omitted default."
         },
         "provider": {
           "const": "docker",

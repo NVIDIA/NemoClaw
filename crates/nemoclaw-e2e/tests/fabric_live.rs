@@ -174,8 +174,8 @@ async fn fabric_native_access_and_reconciliation_preserve_the_hosted_runtime() {
     let provider = document.inference_provider().unwrap();
     let agent = &document.spec.sandboxes[0].agent;
     assert_eq!(document.spec.gateway.management, "external");
-    // Ollama recovery/destroy is fixture-qualified separately; this live target
-    // has not qualified its complete agent lifecycle.
+    // Managed-service installation is qualified separately; this live target
+    // exercises only an external inference provider.
     assert!(provider.service_ref.is_none());
     fs::create_dir_all(&directory).unwrap();
     let deployment = Deployment::new(&directory, &bundle);

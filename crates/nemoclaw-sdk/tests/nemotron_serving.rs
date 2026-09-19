@@ -192,8 +192,11 @@ fn native_container_contract_and_remote_example_preserve_declared_settings() {
     let container = serde_json::to_value(spec.container("/data").unwrap()).unwrap();
     assert_eq!(container["HostConfig"]["IpcMode"], "host");
     assert_eq!(container["HostConfig"]["ShmSize"], 32 * GIB);
-    let runtime_service: Service =
+    let runtime_definition: ServiceDefinition =
         serde_json::from_str(spec.runtime_configuration().unwrap()).unwrap();
+    let ServiceDefinition::Vllm(runtime_service) = runtime_definition else {
+        panic!("expected vLLM runtime configuration");
+    };
     assert_eq!(
         runtime_service
             .hardware

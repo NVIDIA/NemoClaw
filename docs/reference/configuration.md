@@ -320,27 +320,11 @@ Guide: [Resource ownership](../usage.md#resource-ownership).
 Paths:
 
 - `spec.sandboxes[].network.proxy.management`
-- `spec.services.{key}.network.management`
 - `spec.services.{key}.upstream.model.management`
 
 Accepted input: string.
 
 Constraints: `"external"`.
-
-## ExternalNetwork
-
-Identify a network owned outside this deployment.
-
-Guide: [Resource ownership](../usage.md#resource-ownership).
-
-Paths:
-
-- `spec.services.{key}.network`
-
-| Field | Input type | Required | Default | Description and constraints |
-|---|---|---|---|---|
-| `management` | [ExternalManagement](#externalmanagement) | No | — | Optional external ownership declaration. Omission means external. |
-| `name` | string | Yes | — | Existing network name on the service Docker engine. Constraints: pattern `^[a-z][a-z0-9-]{0,39}$`. |
 
 ## ExternalOllama
 
@@ -788,23 +772,29 @@ Paths:
 | `proxy` | [Proxy](#proxy) | No | — | HTTP proxy address used by the agent process. Does not create a proxy or change gateway networking. |
 | `tier` | string | No | `"isolated"` | Isolated policy preset. Omit when declaring policy.explicit; omission without policy selects isolated. Constraints: `""` or `"isolated"`. Omitted or empty selects isolated only without policy.explicit. |
 
-## NetworkReference
+## OllamaMemory
 
-An existing container network on the selected engine. NemoClaw attaches its container but does not create or delete the network.
+Ollama GPU budget and host memory protection.
 
-Guide: [Resource ownership](../usage.md#resource-ownership).
+Guide: [Configuration and credentials](../usage.md#configuration-and-credentials).
 
 Paths:
 
-- `spec.services.{key}.network`
+- `spec.services.{key}.memory`
 
-Accepted input: string or [ExternalNetwork](#externalnetwork).
-
-Constraints: pattern `^[a-z][a-z0-9-]{0,39}$`.
+| Field | Input type | Required | Default | Description and constraints |
+|---|---|---|---|---|
+| `consecutiveSamples` | integer | No | `5` | Consecutive low-memory samples before stopping the owned process. Constraints: `0` or minimum 1; maximum 5. Omitted or zero selects the default. |
+| `freeGateGiB` | integer | No | `12` | Available-memory gate for the free-memory threshold. Constraints: `0` or minimum 6; maximum 24. Omitted or zero selects the default. |
+| `gpuMemoryGiB` | integer | No | `0` | Fixed serving budget in GiB when utilization is omitted. Omission or zero selects 16 GiB. Constraints: `0` or minimum 0; maximum 96. Omitted or zero stays zero in the document. Without gpuMemoryUtilization, the installer uses 16 GiB. |
+| `gpuMemoryUtilization` | number | No | — | Optional fraction of observed dedicated GPU memory. Constraints: minimum 0.05; maximum 0.95. |
+| `hostReserveGiB` | integer | No | `32` | Host memory reserve excluded from serving. Constraints: `0` or minimum 28; maximum 64. Omitted or zero selects the default. |
+| `minAvailableGiB` | integer | No | `8` | Available-memory threshold used by the bounded runtime watchdog. Constraints: `0` or minimum 6; maximum 16. Omitted or zero selects the default. |
+| `minFreeGiB` | integer | No | `3` | Free-memory threshold used below freeGateGiB. Constraints: `0` or minimum 2; maximum 8. Omitted or zero selects the default. |
 
 ## OllamaModel
 
-One managed Ollama model installation.
+One immutable Ollama registry model installation.
 
 Guide: [Configuration and credentials](../usage.md#configuration-and-credentials).
 
@@ -814,8 +804,26 @@ Paths:
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
+| `digest` | string | Yes | — | Lowercase SHA-256 of the registry manifest selected for that tag. Constraints: pattern `^[a-f0-9]{64}$`. |
 | `management` | [ManagedManagement](#managedmanagement) | No | — | Optional ownership declaration; omission means managed. |
-| `name` | string | Yes | — | Explicit Ollama model name including its tag. Constraints: pattern `^[a-z0-9][a-z0-9._-]*:[a-z0-9][a-z0-9._-]*$`. |
+| `name` | string | Yes | — | Public library model name including its tag. Constraints: pattern `^[a-z0-9][a-z0-9._-]*:[a-z0-9][a-z0-9._-]*$`. |
+
+## OllamaServing
+
+Native Ollama serving controls supported by the managed installer.
+
+Guide: [Configuration and credentials](../usage.md#configuration-and-credentials).
+
+Paths:
+
+- `spec.services.{key}.serving`
+
+| Field | Input type | Required | Default | Description and constraints |
+|---|---|---|---|---|
+| `contextTokens` | integer | No | `32768` | Maximum model context length. Constraints: `0` or minimum 8192; maximum 65536. Omitted or zero selects the default. |
+| `maxSequences` | integer | No | `1` | Maximum concurrent sequences. Constraints: `0` or minimum 1; maximum 2. Omitted or zero selects the default. |
+| `port` | integer | No | `18888` | Inference listening port. Constraints: `0` or minimum 1024; maximum 65535. Omitted or zero selects the default. |
+| `startupTimeoutSeconds` | integer | No | `1800` | Seconds allowed for model loading and readiness. Constraints: `0` or minimum 60; maximum 3600. Omitted or zero selects the default. |
 
 ## OpenClawDashboard
 
@@ -1290,12 +1298,16 @@ Managed Ollama daemon and selected model.
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
-| `endpoint` | string | Yes | — | Private or loopback HTTP IPv4:port/v1 published by the managed daemon. |
+| `container` | [ServiceContainer](#servicecontainer) | No | — | Optional IPC and shared-memory settings for the runtime container. |
+| `hardware` | [ServiceHardware](#servicehardware) | Yes | — | Explicit supported GPU or system profile. |
 | `kind` | string | Yes | — | Supported installer selected by this service definition. Constraints: `"ollama"`. |
 | `management` | [ManagedManagement](#managedmanagement) | No | — | Optional ownership declaration for the Ollama daemon container. Omission means managed. |
-| `model` | [OllamaModel](#ollamamodel) | Yes | — | Selected model installed and verified by the Ollama installer. |
-| `network` | [NetworkReference](#networkreference) | Yes | — | Name of the existing Docker network. |
-| `runtime` | [ServiceRuntime](#serviceruntime) | Yes | — | Docker runner and pinned ollama/ollama image. |
+| `memory` | [OllamaMemory](#ollamamemory) | No | — | GPU budget and resident memory-protection thresholds. |
+| `model` | [OllamaModel](#ollamamodel) | Yes | — | Selected immutable Ollama registry model. |
+| `placement` | [ServicePlacement](#serviceplacement) | No | — | Optional remote Docker placement. Requires publication. |
+| `publication` | [ServicePublication](#servicepublication) | No | — | Private inference address for an explicitly placed service. |
+| `runtime` | [ServiceRuntime](#serviceruntime) | Yes | — | Docker runner and pinned NemoClaw Ollama runtime image. |
+| `serving` | [OllamaServing](#ollamaserving) | No | — | Ollama serving limits. |
 | `storage` | [ManagedResource](#managedresource) | No | — | Optional model-volume ownership declaration. Omission means managed; the volume survives destroy. |
 
 ### Alternative 2
@@ -1413,7 +1425,7 @@ Paths:
 |---|---|---|---|---|
 | `engine` | string | Yes | — | Explicit Docker endpoint used to install, observe, and remove the service. Constraints: pattern `^(unix:///\|ssh://)`. |
 | `image` | string | Yes | — | Immutable image reference used by the package installer. Constraints: pattern `^[a-zA-Z0-9][a-zA-Z0-9._:/-]*@sha256:[a-f0-9]{64}$`. |
-| `imagePullPolicy` | [ImagePullPolicy](#imagepullpolicy) | No | — | Image acquisition before create or restart. Omission means Never for vLLM and IfNotPresent for Ollama and its proxy. |
+| `imagePullPolicy` | [ImagePullPolicy](#imagepullpolicy) | No | — | Image acquisition before container creation. The selected installer defines the omitted default. |
 | `provider` | string | Yes | — | Supported container runner. The initial service contract uses Docker. Constraints: `"docker"`. |
 
 ## Serving
