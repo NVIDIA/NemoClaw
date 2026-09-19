@@ -115,6 +115,90 @@ function fixture(initial: ReadonlyMap<number, OpenShellForwardObservation["state
 }
 
 describe("Hermes Portable typed forward recovery", () => {
+  it("starts independent missing forwards concurrently", async () => {
+    const test = fixture(new Map());
+    const original = test.startForward.getMockImplementation()!;
+    let releaseFirst!: () => void;
+    let releaseSecond!: () => void;
+    const first = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    const second = new Promise<void>((resolve) => {
+      releaseSecond = resolve;
+    });
+    test.startForward
+      .mockImplementationOnce(async (request) => {
+        await first;
+        return original(request);
+      })
+      .mockImplementationOnce(async (request) => {
+        await second;
+        return original(request);
+      });
+
+    const recovery = prepareHermesPortableLaunchForwards(test.input);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(test.startForward).toHaveBeenCalledTimes(2);
+    releaseFirst();
+    releaseSecond();
+
+    await expect(recovery.then((prepared) => prepared.release())).resolves.toEqual({
+      kind: "restored",
+      restoredPorts: [18_789, 8_642],
+    });
+  });
+
+  it("waits for every concurrent start before rolling back a failed batch", async () => {
+    const test = fixture(new Map());
+    let releaseSecond!: () => void;
+    const second = new Promise<void>((resolve) => {
+      releaseSecond = resolve;
+    });
+    const cleanup = vi.fn(async () => ({ state: "released" }) as const);
+    test.startForward
+      .mockResolvedValueOnce({
+        state: "failed",
+        forward: forward(18_789),
+        effect: "none",
+        error: { kind: "command", message: "The OpenShell forward command failed." },
+      })
+      .mockImplementationOnce(async ({ forward: target }) => {
+        await second;
+        return { state: "started", forward: target, cleanup };
+      });
+
+    const recovery = prepareHermesPortableLaunchForwards(test.input);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(test.startForward).toHaveBeenCalledTimes(2);
+    expect(cleanup).not.toHaveBeenCalled();
+    releaseSecond();
+
+    await expect(recovery).rejects.toMatchObject({ failure: "recovery-failed" });
+    expect(cleanup).toHaveBeenCalledOnce();
+  });
+
+  it("does not hide unproved cleanup behind another concurrent failure", async () => {
+    const test = fixture(new Map());
+    test.startForward
+      .mockResolvedValueOnce({
+        state: "failed",
+        forward: forward(18_789),
+        effect: "none",
+        error: { kind: "command", message: "The OpenShell forward command failed." },
+      })
+      .mockResolvedValueOnce({
+        state: "cleanup_uncertain",
+        forward: forward(8_642),
+        effect: "possible",
+        error: { kind: "cleanup", message: "NemoClaw could not prove OpenShell forward cleanup." },
+      });
+
+    await expect(prepareHermesPortableLaunchForwards(test.input)).rejects.toMatchObject({
+      failure: "restoration-unproved",
+      context: { cause: "forward-mutation-failed", operation: "start", port: 8_642 },
+    });
+  });
+
   it("verifies an already-owned forward set without a mutation", async () => {
     const test = fixture(
       new Map([
