@@ -53,6 +53,24 @@ describe("backup failure diagnostics", () => {
     ).toBe("workspace");
   });
 
+  it("maps an unreadable path under a nested declared directory", () => {
+    expect(
+      relativeFailedBackupDir("/sandbox/.openclaw/agents/main/restricted", "/sandbox/.openclaw/", [
+        "agents/main",
+      ]),
+    ).toBe("agents/main/restricted");
+    expect(
+      relativeFailedBackupDir("/sandbox/.openclaw/agents/main", "/sandbox/.openclaw/", [
+        "agents/main",
+      ]),
+    ).toBe("agents/main");
+    expect(
+      relativeFailedBackupDir("/sandbox/.openclaw/agents/maintenance", "/sandbox/.openclaw/", [
+        "agents/main",
+      ]),
+    ).toBeNull();
+  });
+
   it("rejects undeclared or unsafe unreadable audit paths", () => {
     expect(
       relativeFailedBackupDir("/sandbox/.openclaw/../etc", "/sandbox/.openclaw/", ["workspace"]),

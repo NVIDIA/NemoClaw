@@ -51,7 +51,8 @@ export function formatFailedBackupItems(
 
 /**
  * Map an absolute pre-backup audit path onto a backup-relative directory.
- * Rejects undeclared tops, traversal, and absolute leftovers.
+ * Accepts a path only when it equals a declared directory or is nested under
+ * one at a path boundary. Rejects undeclared paths, traversal, and absolute leftovers.
  */
 export function relativeFailedBackupDir(
   absPath: string,
@@ -73,7 +74,8 @@ export function relativeFailedBackupDir(
   ) {
     return null;
   }
-  const slash = relative.indexOf("/");
-  const topLevel = slash === -1 ? relative : relative.slice(0, slash);
-  return existingDirs.includes(topLevel) ? relative : null;
+  const declared = existingDirs.some(
+    (dirName) => relative === dirName || relative.startsWith(`${dirName}/`),
+  );
+  return declared ? relative : null;
 }
