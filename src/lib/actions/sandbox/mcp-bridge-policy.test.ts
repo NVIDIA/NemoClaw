@@ -13,6 +13,7 @@ import {
   buildMcpBridgePolicyYaml,
   MCP_BRIDGE_ALLOWED_METHODS,
   MCP_BRIDGE_POLICY_MAX_BODY_BYTES,
+  MCP_BRIDGE_PROBE_BINARIES,
   removeGeneratedPolicy,
 } from "./mcp-bridge-policy";
 import { buildMcpBridgeProviderName } from "./mcp-bridge-validation";
@@ -221,7 +222,33 @@ describe("generated MCP policy", () => {
       "/usr/local/bin/openclaw",
       "/usr/local/bin/node",
       "/usr/bin/node",
+      ...MCP_BRIDGE_PROBE_BINARIES.map(({ path }) => path),
     ]);
+  });
+
+  it("includes the credential-resolution probe binaries so mcp add does not deny its own CONNECT (#12065)", () => {
+    const probePaths = MCP_BRIDGE_PROBE_BINARIES.map(({ path }) => path);
+    expect(probePaths).toEqual(["/usr/bin/curl", "/usr/local/bin/curl"]);
+
+    const render = (adapter: "openclaw-config" | "hermes-config" | "deepagents-config") =>
+      YAML.parse(
+        buildMcpBridgePolicyYaml(
+          "github",
+          "https://api.githubcopilot.com/mcp/",
+          adapter,
+          { addresses: ["8.8.8.8"] },
+          "alpha-mcp-github",
+        ),
+      ) as {
+        network_policies: Record<string, { binaries: Array<{ path: string }> }>;
+      };
+
+    for (const adapter of ["openclaw-config", "hermes-config", "deepagents-config"] as const) {
+      const binaries = render(adapter).network_policies.mcp_bridge_github.binaries.map(
+        ({ path }) => path,
+      );
+      expect(binaries, adapter).toEqual(expect.arrayContaining(probePaths));
+    }
   });
 
   it.each(["openclaw-config", "hermes-config", "deepagents-config"] as const)(
@@ -334,10 +361,19 @@ describe("generated MCP policy", () => {
     expect(mcporter.endpoints[0]).not.toHaveProperty("tls");
     expect(
       render("hermes-config").network_policies.mcp_bridge_srv.binaries.map((b) => b.path),
-    ).toEqual(["/usr/local/bin/hermes", "/usr/bin/python3*", "/opt/hermes/.venv/bin/python*"]);
+    ).toEqual([
+      "/usr/local/bin/hermes",
+      "/usr/bin/python3*",
+      "/opt/hermes/.venv/bin/python*",
+      ...MCP_BRIDGE_PROBE_BINARIES.map(({ path }) => path),
+    ]);
     expect(
       render("deepagents-config").network_policies.mcp_bridge_srv.binaries.map((b) => b.path),
-    ).toEqual(["/usr/local/bin/dcode", "/opt/venv/bin/python3*"]);
+    ).toEqual([
+      "/usr/local/bin/dcode",
+      "/opt/venv/bin/python3*",
+      ...MCP_BRIDGE_PROBE_BINARIES.map(({ path }) => path),
+    ]);
   });
 
   it("uses stable collision-resistant provider names with a length guard", () => {
