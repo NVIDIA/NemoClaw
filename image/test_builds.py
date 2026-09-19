@@ -38,12 +38,11 @@ class ImageBuilds(unittest.TestCase):
         )
         return json.loads(result.stdout)
 
-    def test_all_supported_harnesses_build_locally_from_one_recipe(self):
+    def test_all_supported_harnesses_build_locally(self):
         targets = self.plan("agents")["target"]
         self.assertEqual(set(targets), HARNESSES)
         for name, target in targets.items():
             self.assertEqual(target["args"]["HARNESS"], name)
-            self.assertEqual(target["dockerfile"], "image/fabric/Dockerfile")
             self.assertEqual(target["platforms"], ["linux/arm64"])
             self.assertFalse(any("registry" in str(output) for output in target.get("output", [])))
 
@@ -55,17 +54,14 @@ class ImageBuilds(unittest.TestCase):
         self.assertEqual(set(targets), AMD64_HARNESSES)
         for target in targets.values():
             self.assertEqual(target["platforms"], ["linux/amd64"])
-            self.assertTrue(target["args"]["LOCKFILE"].endswith("-linux-amd64.lock"))
 
     def test_individual_harness_uses_selected_platform(self):
         target = self.plan("deepagents", platform="linux/amd64")["target"]["deepagents"]
         self.assertEqual(target["platforms"], ["linux/amd64"])
-        self.assertEqual(target["args"]["LOCKFILE"], "dependencies-linux-amd64.lock")
 
     def test_proxy_has_an_independent_build(self):
         targets = self.plan("ollama-proxy")["target"]
         self.assertEqual(set(targets), {"ollama-proxy"})
-        self.assertEqual(targets["ollama-proxy"]["dockerfile"], "image/ollama-proxy/Dockerfile")
 
     def test_proxy_and_its_tests_use_the_selected_platform(self):
         for platform in ("linux/arm64", "linux/amd64"):

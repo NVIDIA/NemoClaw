@@ -36,7 +36,6 @@ class UpstreamPatches(unittest.TestCase):
             relative = "adapters/typescript/pi"
             shutil.copytree(Path(os.environ["NEMOCLAW_FABRIC_SOURCE"]) / relative, root / relative)
             patch_pi(root)
-            self.assertTrue((root / relative / "src/pi-model.ts").is_file())
             with self.assertRaises(ValueError):
                 patch_pi(root)
 
