@@ -13,7 +13,7 @@ fn image_pull_policy_does_not_change_container_configuration() {
             crate::config::ImagePullPolicy::Never,
         ] {
             spec.gateway.image_pull_policy = Some(policy);
-            if let Some(service) = &mut spec.service {
+            if let Some(service) = &mut spec.process {
                 service.image_pull_policy = Some(policy);
             }
             assert_eq!(
@@ -57,33 +57,35 @@ fn invalid_placement_network_does_not_panic() {
         serde_json::from_str(include_str!("reference.json")).unwrap();
     let mut value: serde_json::Value =
         serde_json::from_str(fixtures[1]["spec"].as_str().unwrap()).unwrap();
-    value["service"]["placement"] = json!({"engine":"ssh://host","networkCidr":"invalid"});
+    value["process"]["engine"] = json!("ssh://host");
+    value["process"]["network_cidr"] = json!("invalid");
     let spec: Spec = serde_json::from_value(value).unwrap();
     assert!(spec.bridge().is_err());
 }
 #[test]
-fn runtime_service_handles_a_gateway_without_panicking() {
+fn runtime_configuration_handles_a_gateway_without_panicking() {
     let fixtures: Vec<serde_json::Value> =
         serde_json::from_str(include_str!("reference.json")).unwrap();
     let spec: Spec = serde_json::from_str(fixtures[0]["spec"].as_str().unwrap()).unwrap();
-    assert!(spec.service.is_none());
-    assert!(matches!(spec.runtime_service(), Err(Error::Conflict(_))));
+    assert!(spec.process.is_none());
+    assert!(matches!(
+        spec.runtime_configuration(),
+        Err(Error::Conflict(_))
+    ));
 }
 
 #[test]
-fn runtime_service_rejects_invalid_specs_and_preserves_valid_service_fields() {
+fn runtime_configuration_rejects_invalid_specs_and_preserves_opaque_input() {
     let fixtures: Vec<serde_json::Value> =
         serde_json::from_str(include_str!("reference.json")).unwrap();
     let mut spec: Spec = serde_json::from_str(fixtures[1]["spec"].as_str().unwrap()).unwrap();
-    let mut expected = spec.service.clone().unwrap();
-    expected.placement = None;
-    expected.publication = None;
-    assert_eq!(spec.runtime_service().unwrap(), expected);
-    spec.service = None;
-    assert!(spec.runtime_service().is_err());
-    spec.service = Some(expected);
+    let expected = spec.process.as_ref().unwrap().configuration.clone();
+    assert_eq!(spec.runtime_configuration().unwrap(), expected);
+    let process = spec.process.take().unwrap();
+    assert!(spec.runtime_configuration().is_err());
+    spec.process = Some(process);
     spec.generation.clear();
-    assert!(spec.runtime_service().is_err());
+    assert!(spec.runtime_configuration().is_err());
 }
 
 #[test]

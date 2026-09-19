@@ -78,8 +78,7 @@ fn hosted_openclaw_scenario_rejects_legacy_export_and_preserves_authored_intent(
         provider.credential.as_ref().unwrap().env,
         "NVIDIA_INFERENCE_API_KEY"
     );
-    assert!(provider.service.is_none());
-    assert!(provider.ollama.is_none());
+    assert!(provider.service_ref.is_none());
 
     let sandbox = &v1.spec.sandboxes[0];
     assert_eq!(

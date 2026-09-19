@@ -107,7 +107,7 @@ mod tests {
     fn downloads_show_layer_percentages_and_handle_unknown_totals() {
         use nemoclaw_sdk::{ByteProgress, DownloadPhase, DownloadProgress};
         let mut download = DownloadProgress {
-            resource: "ollama_model.chat".into(),
+            resource: "model_snapshot.chat".into(),
             artifact: "llama3:latest".into(),
             layer: Some("sha256:abc".into()),
             phase: DownloadPhase::Downloading,
@@ -118,19 +118,19 @@ mod tests {
         };
         assert_eq!(
             render(Progress::Download(download.clone()), false).unwrap(),
-            "ollama_model.chat: downloading llama3:latest [sha256:abc] 50% (50 B / 100 B)"
+            "model_snapshot.chat: downloading llama3:latest [sha256:abc] 50% (50 B / 100 B)"
         );
         download.bytes.as_mut().unwrap().total = Some(0);
         assert_eq!(
             render(Progress::Download(download.clone()), false).unwrap(),
-            "ollama_model.chat: downloading llama3:latest [sha256:abc] 50 B"
+            "model_snapshot.chat: downloading llama3:latest [sha256:abc] 50 B"
         );
         download.layer = None;
         download.phase = DownloadPhase::Complete;
         download.bytes = None;
         assert_eq!(
             render(Progress::Download(download), false).unwrap(),
-            "ollama_model.chat: downloaded llama3:latest"
+            "model_snapshot.chat: downloaded llama3:latest"
         );
     }
 

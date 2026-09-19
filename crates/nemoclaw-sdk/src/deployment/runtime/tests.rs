@@ -4,6 +4,16 @@
 use super::*;
 use crate::docker::{Connections, fixture::Fixture};
 
+const GATEWAY: &str = "nemoclaw_managed_gateway.runtime";
+
+fn context() -> (Document, crate::compile::Generations) {
+    let document =
+        Document::parse(include_bytes!("../../../../../examples/spark/vllm.yaml").as_slice())
+            .unwrap();
+    let generations = Record::new(document.clone()).unwrap().generations;
+    (document, generations)
+}
+
 fn gateway_targets() -> (Spec, Vec<Target>) {
     let fixtures: Vec<Value> =
         serde_json::from_str(include_str!("../../managed/reference.json")).unwrap();
@@ -26,6 +36,7 @@ fn gateway_targets() -> (Spec, Vec<Target>) {
 
 #[tokio::test]
 async fn runtime_validation_rejects_overlapping_subnets_without_mutating_engine() {
+    let (document, generations) = context();
     for subnet in ["172.30.161.0/24", "172.30.0.0/16", "172.30.161.128/25"] {
         let (spec, targets) = gateway_targets();
         let fixture = absent_runtime(
@@ -34,7 +45,14 @@ async fn runtime_validation_rejects_overlapping_subnets_without_mutating_engine(
         )
         .await;
         let engines = Connections::fixed([fixture.engine_for(spec.engine())]).unwrap();
-        let result = validate_runtime_environment(&engines, &targets, &BTreeMap::new()).await;
+        let result = validate_runtime_environment(
+            &engines,
+            &document,
+            &generations,
+            &targets,
+            &BTreeMap::new(),
+        )
+        .await;
         assert!(
             matches!(
                 result,
@@ -68,6 +86,7 @@ async fn absent_runtime(status: u16, networks: Value) -> Fixture {
 
 #[tokio::test]
 async fn runtime_validation_allows_disjoint_networks_and_propagates_inventory_failure() {
+    let (document, generations) = context();
     let (spec, targets) = gateway_targets();
     for networks in [
         json!([]),
@@ -80,15 +99,28 @@ async fn runtime_validation_allows_disjoint_networks_and_propagates_inventory_fa
         let fixture = absent_runtime(200, networks).await;
         let engines = Connections::fixed([fixture.engine_for(spec.engine())]).unwrap();
         assert!(
-            validate_runtime_environment(&engines, &targets, &BTreeMap::new())
-                .await
-                .is_ok()
+            validate_runtime_environment(
+                &engines,
+                &document,
+                &generations,
+                &targets,
+                &BTreeMap::new(),
+            )
+            .await
+            .is_ok()
         );
     }
     let fixture = absent_runtime(403, json!({"message":"denied"})).await;
     let engines = Connections::fixed([fixture.engine_for(spec.engine())]).unwrap();
     assert!(matches!(
-        validate_runtime_environment(&engines, &targets, &BTreeMap::new()).await,
+        validate_runtime_environment(
+            &engines,
+            &document,
+            &generations,
+            &targets,
+            &BTreeMap::new(),
+        )
+        .await,
         Err(Error::Observation(ObservationError::Permission))
     ));
 }
@@ -109,7 +141,14 @@ async fn runtime_validation_checks_the_remote_service_network_on_its_selected_en
     // No local engine is supplied: this must observe the SSH-selected engine.
     let engines = Connections::fixed([fixture.engine_for("ssh://gpu-box")]).unwrap();
     assert!(matches!(
-        validate_runtime_environment(&engines, &targets, &BTreeMap::new()).await,
+        validate_runtime_environment(
+            &engines,
+            &document,
+            &record.generations,
+            &targets,
+            &BTreeMap::new(),
+        )
+        .await,
         Err(Error::Conflict(
             "managed gateway subnet overlaps an existing Docker network"
         ))

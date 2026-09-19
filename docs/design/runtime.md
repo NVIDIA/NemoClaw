@@ -17,7 +17,7 @@ Keeping those decisions separate lets an ordinary fixture process exercise the s
 The [supervisor extraction](https://github.com/NVIDIA/NemoClaw/commit/4fee9768e2) removed its need for a complete DGX Spark service configuration.
 The [module separation](https://github.com/NVIDIA/NemoClaw/commit/8d998e02d2) then assigned artifact preparation, hardware rules, and backend behavior to their respective owners.
 An inline recipe supplies model-specific tools; vLLM is the serving backend.
-Direct hardware checks use recipe-declared compatibility or an explicit `service.hardware` contract for ordinary models.
+Direct hardware checks use recipe-declared compatibility or an explicit `spec.services.<name>.hardware` contract for ordinary models.
 Every named profile validates GPU family and observed compute capability independently of memory accounting.
 The catalog declares unified or dedicated memory: unified profiles budget host RAM with a reserve, while dedicated profiles require GPU total/free counters and check host RAM separately.
 Both collectors preserve unsupported framebuffer counters without guessing a memory architecture; failed queries or incomplete observations stop the operation.
@@ -100,7 +100,7 @@ Within the existing crates:
 | Launch arguments and readiness probe | Backend modules |
 
 The recipe selects a qualified backend/hardware combination.
-The existing YAML backend identifier remains unchanged for compatibility; this refactor does not add supported combinations or an arbitrary launch-argument mechanism.
+The named service selects its installer with `kind: vllm`; this does not add supported combinations or an arbitrary launch-argument mechanism.
 A new hardware profile or backend normally adds a module and records test results for the new configuration.
 
 A crate is justified by a dependency or deployment boundary, not a new GPU name.

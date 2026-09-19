@@ -59,8 +59,7 @@ Use the existing [source-build procedure](build.md) for the documented developme
 | External gateway and inference | Existing reachable services, gateway authentication, a compatible inference API/model, and an immutable sandbox image; see [usage](usage.md) and [inference](inference.md) |
 | Fabric agent image | Deep Agents and OpenClaw use a native Linux ARM64 or AMD64 Docker builder with Buildx; other agent targets use ARM64; see [image prerequisites](inference.md#build-an-image-with-the-configuration-interface) |
 | Managed vLLM | Matching runtime image, pinned model revision, and storage/capacity for the selected hardware contract; see [managed models](models.md) and [AMD64 Nemotron configuration](models.md#configure-nemotron-on-an-amd64-gpu-host) |
-| Managed Ollama `service` | Matching supervisor image, pinned model digest, one NVIDIA GPU, and the same hardware/placement/capacity contract as vLLM; see [managed Ollama](inference.md#run-managed-ollama) |
-| Legacy CPU-only Ollama | Local Unix engine socket, existing network, private endpoint, and CPU-sized model; see [legacy Ollama](inference.md#legacy-cpu-only-ollama) |
+| Managed Ollama | Matching runtime image, pinned model digest, one NVIDIA GPU, and the same hardware/placement/capacity contract as vLLM; see [managed Ollama](inference.md#run-managed-ollama) |
 | Managed rootless Podman gateway | Local Linux API socket, reported `pasta` networking, a private IPv4 default-route interface, and images in the selected Podman store; see [Podman setup](usage.md#use-a-managed-podman-gateway) |
 | External Ollama with managed proxy | Local Linux Docker host, loopback-only daemon, installed model digest, and a reachable private proxy endpoint; see [proxy setup](inference.md#use-external-ollama-through-a-managed-proxy) |
 | SSH-managed model service | Trusted noninteractive SSH access and the documented model-host tools; see [remote service](remote-service.md) |

@@ -38,14 +38,11 @@ impl Record {
     pub fn new(document: Document) -> Result<Self, Error> {
         document.validate()?;
         let mut generations = Generations::new();
-        for kind in [
-            "workspace",
-            "provider",
-            "sandbox",
-            "ollama",
-            "managed_gateway",
-            "inference_service",
-        ] {
+        let mut kinds = vec!["workspace", "provider", "sandbox", "managed_gateway"];
+        kinds.extend(crate::services::generation_kinds(&document)?);
+        kinds.sort_unstable();
+        kinds.dedup();
+        for kind in kinds {
             let mut random = [0_u8; 16];
             getrandom::fill(&mut random)
                 .map_err(|_| Error::State("cannot generate resource identities"))?;
@@ -68,12 +65,20 @@ impl Record {
                 "deployment predates named multi-sandbox resources; retain state and use the original NemoClaw version for recovery or teardown",
             ));
         }
+        let service_generations_valid = crate::services::generation_kinds(&self.document)
+            .is_ok_and(|kinds| {
+                kinds.iter().all(|kind| {
+                    self.generations
+                        .get(*kind)
+                        .is_some_and(|value| !value.is_empty())
+                })
+            });
         if self.document.validate().is_err()
             || self.digest != self.document.digest()
-            || ![3, 4, 6].contains(&self.generations.len())
             || ["workspace", "provider", "sandbox"]
                 .iter()
                 .any(|kind| self.generations.get(*kind).is_none_or(String::is_empty))
+            || !service_generations_valid
         {
             return Err(Error::State(
                 "deployment intent record is invalid; retain it for recovery",

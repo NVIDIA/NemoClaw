@@ -10,40 +10,44 @@ spec:
   gateway:
     management: external
     endpoint: http://127.0.0.1:17697
+  services:
+    qwen:
+      kind: vllm
+      hardware:
+        profile: dgx-spark
+      runtime:
+        provider: docker
+        engine: ssh://gpu-box
+        image: nc-prototype-vllm@sha256:0913eec1d921a129e4c02e64bfe199a5a0e23269ba429c4022809b8d038bb46e
+      placement:
+        networkCidr: 172.30.119.0/24
+      publication:
+        endpoint: http://10.0.0.8:18898/v1
+        bindAddress: 10.0.0.8
+      model:
+        repository: Qwen/Qwen3-4B
+        revision: 1cfa9a7208912126459214e8b04321603b3df60c
+      serving:
+        toolParser: hermes
+        reasoningParser: qwen3
+        port: 18898
+        contextTokens: 32768
+        maxSequences: 1
+        batchTokens: 1024
+        speculativeTokens: 0
+        startupTimeoutSeconds: 1800
+      memory:
+        gpuMemoryGiB: 20
+        hostReserveGiB: 32
+        kvCacheGiB: 6
+        minAvailableGiB: 8
+        minFreeGiB: 3
+        freeGateGiB: 12
+        consecutiveSamples: 5
   inferenceProviders:
     - name: qwen
       provider: openai
-      service:
-        placement:
-          engine: ssh://gpu-box
-          networkCidr: 172.30.119.0/24
-        publication:
-          endpoint: http://10.0.0.8:18898/v1
-          bindAddress: 10.0.0.8
-        backend: vllm
-        hardware:
-          profile: dgx-spark
-        image: nc-prototype-vllm@sha256:0913eec1d921a129e4c02e64bfe199a5a0e23269ba429c4022809b8d038bb46e
-        model:
-          repository: Qwen/Qwen3-4B
-          revision: 1cfa9a7208912126459214e8b04321603b3df60c
-        serving:
-          toolParser: hermes
-          reasoningParser: qwen3
-          port: 18898
-          contextTokens: 32768
-          maxSequences: 1
-          batchTokens: 1024
-          speculativeTokens: 0
-          startupTimeoutSeconds: 1800
-        memory:
-          gpuMemoryGiB: 20
-          hostReserveGiB: 32
-          kvCacheGiB: 6
-          minAvailableGiB: 8
-          minFreeGiB: 3
-          freeGateGiB: 12
-          consecutiveSamples: 5
+      serviceRef: qwen
   sandboxes:
     - name: assistant
       runtime:

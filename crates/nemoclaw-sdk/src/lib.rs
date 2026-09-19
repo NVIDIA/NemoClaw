@@ -115,6 +115,8 @@ mod error;
 mod health;
 pub use health::{RuntimeHealth, SandboxHealth};
 pub mod openshell;
+#[doc(hidden)]
+pub mod services;
 mod state;
 pub use error::Error;
 pub mod bundle;
@@ -125,18 +127,11 @@ pub use deployment::{Change, Deployment, OperationResult, Outcome, Progress, Ste
 
 pub mod snapshot;
 
-pub mod ollama;
-
 pub mod docker;
 
 pub mod managed;
 
 pub mod hardware;
-
-pub mod backends;
-pub mod recipes;
-
-mod inference_auth;
 
 mod tofu_ui;
 
@@ -145,5 +140,3 @@ pub use download::{
     ByteProgress, DownloadPhase, DownloadProgress, with_download_progress,
     with_provider_download_progress,
 };
-
-pub mod model_source;

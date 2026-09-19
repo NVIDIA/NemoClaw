@@ -36,7 +36,7 @@ fn identity(repository: &str, revision: &str) -> Result<(), Error> {
     .validate()
 }
 impl Client {
-    pub(super) async fn bounded(&self, url: reqwest::Url, limit: usize) -> Result<Vec<u8>, Error> {
+    pub(crate) async fn bounded(&self, url: reqwest::Url, limit: usize) -> Result<Vec<u8>, Error> {
         let mut response = self
             .http
             .get(url)

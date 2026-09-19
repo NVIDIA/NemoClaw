@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum Management {
-    /// The deployment manages the declared service or Ollama daemon.
+    /// The deployment manages the declared service.
     Managed,
     /// The deployment uses the endpoint without managing its server.
     External,
@@ -46,22 +46,6 @@ impl super::Gateway {
         settings
     }
 }
-impl super::Service {
-    pub(crate) fn runtime_settings(&self) -> Self {
-        // Ownership declarations select the already-implemented lifecycle. Keep
-        // the established process specification and its ownership labels stable.
-        let mut settings = self.clone();
-        settings.image_pull_policy = None;
-        settings.management = None;
-        settings.storage = None;
-        settings.model.management = None;
-        if let Some(placement) = &mut settings.placement {
-            placement.network = None;
-        }
-        settings
-    }
-}
-
 /// An existing container network on the selected engine. NemoClaw attaches its container but does not create or delete the network.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(untagged)]
@@ -79,7 +63,7 @@ pub struct ExternalNetwork {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(with = "ExternalManagement")]
     pub management: Option<ExternalManagement>,
-    /// Existing network name on the Ollama Docker engine.
+    /// Existing network name on the service Docker engine.
     pub name: String,
 }
 impl Default for NetworkReference {

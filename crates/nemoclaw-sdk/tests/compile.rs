@@ -13,6 +13,7 @@ fn image_pull_policy_reaches_the_engine_without_changing_runtime_identity() {
         ("provider", "provider-generation"),
         ("sandbox", "sandbox-generation"),
         ("ollama", "ollama-generation"),
+        ("ollama_service", "ollama-generation"),
         ("managed_gateway", "gateway-generation"),
         ("inference_service", "inference-generation"),
     ]
@@ -22,11 +23,12 @@ fn image_pull_policy_reaches_the_engine_without_changing_runtime_identity() {
         Document::parse(include_str!("fixtures/config/spark.yaml").as_bytes()).unwrap();
     let before = compile_runtime(&document, &generations, "0.1.0").unwrap();
     document.spec.gateway.image_pull_policy = Some(ImagePullPolicy::Always);
-    document.spec.inference_providers[0]
-        .service
-        .as_mut()
-        .unwrap()
-        .image_pull_policy = Some(ImagePullPolicy::IfNotPresent);
+    let nemoclaw_sdk::services::ServiceDefinition::Vllm(service) =
+        document.spec.services.values_mut().next().unwrap()
+    else {
+        panic!("expected vllm")
+    };
+    service.runtime.image_pull_policy = Some(ImagePullPolicy::IfNotPresent);
     let mut after = compile_runtime(&document, &generations, "0.1.0").unwrap();
     for (kind, expected) in [
         ("nemoclaw_managed_gateway", "Always"),
@@ -52,26 +54,22 @@ fn image_pull_policy_reaches_the_engine_without_changing_runtime_identity() {
 
     let mut document =
         Document::parse(include_str!("fixtures/config/managed-ollama.yaml").as_bytes()).unwrap();
-    let before = compile(&document, &generations, "0.1.0").unwrap();
-    document.spec.inference_providers[0]
-        .ollama
-        .as_mut()
-        .unwrap()
-        .image_pull_policy = Some(ImagePullPolicy::Never);
-    let mut after = compile(&document, &generations, "0.1.0").unwrap();
-    for (kind, name) in [
-        ("nemoclaw_ollama", "service"),
-        ("nemoclaw_ollama_storage", "models"),
-    ] {
-        assert_eq!(
-            after["resource"][kind][name]
-                .as_object_mut()
-                .unwrap()
-                .remove("image_pull_policy")
-                .unwrap(),
-            "Never"
-        );
-    }
+    let before = compile_runtime(&document, &generations, "0.1.0").unwrap();
+    let nemoclaw_sdk::services::ServiceDefinition::Ollama(service) =
+        document.spec.services.values_mut().next().unwrap()
+    else {
+        panic!("expected ollama")
+    };
+    service.runtime.image_pull_policy = Some(ImagePullPolicy::Never);
+    let mut after = compile_runtime(&document, &generations, "0.1.0").unwrap();
+    assert_eq!(
+        after["resource"]["nemoclaw_ollama_service"]["ollama-server"]
+            .as_object_mut()
+            .unwrap()
+            .remove("image_pull_policy")
+            .unwrap(),
+        "Never"
+    );
     assert_eq!(after, before);
 }
 
@@ -83,6 +81,7 @@ fn reference_graphs_preserve_addresses_dependencies_and_provider_configuration()
         ("provider", "provider-generation"),
         ("sandbox", "sandbox-generation"),
         ("ollama", "ollama-generation"),
+        ("ollama_service", "ollama-generation"),
         ("managed_gateway", "gateway-generation"),
         ("inference_service", "inference-generation"),
     ]
@@ -93,8 +92,10 @@ fn reference_graphs_preserve_addresses_dependencies_and_provider_configuration()
         let path = entry.unwrap().path();
         let input = fs::read(root.join("config").join(path.file_stem().unwrap())).unwrap();
         let document = Document::parse(input.as_slice()).unwrap();
-        let expected: Value = serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
-        assert_eq!(compile(&document, &generations, "0.1.0").unwrap(), expected);
+        let expected: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        let actual = compile(&document, &generations, "0.1.0")
+            .unwrap_or_else(|error| panic!("{}: {error}", path.display()));
+        assert_eq!(actual, expected, "{}", path.display());
     }
     let document = Document::parse(include_str!("fixtures/config/local.yaml").as_bytes()).unwrap();
     assert!(compile(&document, &BTreeMap::new(), "0.1.0").is_err());

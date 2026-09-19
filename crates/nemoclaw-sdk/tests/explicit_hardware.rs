@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 use nemoclaw_sdk::{
     config::{Document, schema::input_schema},
-    hardware::{Capacity, GIB, check_capacity},
+    hardware::{Capacity, GIB},
+    services::{ServiceDefinition, installers::vllm::hardware_capacity::check_capacity},
 };
 use serde_json::{Value, json};
 
@@ -13,7 +14,7 @@ fn input() -> Value {
 #[test]
 fn inference_requires_an_explicit_hardware_or_recipe_contract() {
     let mut value = input();
-    value["spec"]["inferenceProviders"][0]["service"]
+    value["spec"]["services"]["qwen"]
         .as_object_mut()
         .unwrap()
         .remove("hardware");
@@ -28,7 +29,7 @@ fn inference_requires_an_explicit_hardware_or_recipe_contract() {
 #[test]
 fn explicit_spark_profile_preserves_its_hardware_and_memory_requirements() {
     let mut value = input();
-    value["spec"]["inferenceProviders"][0]["service"]["hardware"] = json!({"profile": "dgx-spark"});
+    value["spec"]["services"]["qwen"]["hardware"] = json!({"profile": "dgx-spark"});
     let doc = Document::parse(value.to_string().as_bytes()).unwrap();
     assert!(
         jsonschema::validator_for(&input_schema())
@@ -39,7 +40,9 @@ fn explicit_spark_profile_preserves_its_hardware_and_memory_requirements() {
         Document::parse(doc.yaml().unwrap().as_bytes()).unwrap(),
         doc
     );
-    let service = doc.spec.inference_providers[0].service.as_ref().unwrap();
+    let ServiceDefinition::Vllm(service) = &doc.spec.services["qwen"] else {
+        panic!("expected vllm")
+    };
     let capacity = Capacity {
         architecture: "arm64".into(),
         gpu: "NVIDIA GB10".into(),
@@ -78,12 +81,12 @@ fn spark_profile_rejects_unknown_ambiguous_and_dedicated_memory_settings() {
         json!({"profile": "dgx-spark", "unexpected": true}),
     ] {
         let mut value = input();
-        value["spec"]["inferenceProviders"][0]["service"]["hardware"] = hardware;
+        value["spec"]["services"]["qwen"]["hardware"] = hardware;
         assert!(Document::parse(value.to_string().as_bytes()).is_err());
         assert!(!schema.is_valid(&value));
     }
     let mut value = input();
-    let service = &mut value["spec"]["inferenceProviders"][0]["service"];
+    let service = &mut value["spec"]["services"]["qwen"];
     service["hardware"] = json!({"profile": "dgx-spark"});
     service["memory"] = json!({"gpuMemoryUtilization": 0.75});
     assert!(Document::parse(value.to_string().as_bytes()).is_err());
@@ -91,7 +94,7 @@ fn spark_profile_rejects_unknown_ambiguous_and_dedicated_memory_settings() {
 
     let mut value: Value =
         serde_saphyr::from_str(include_str!("../../../examples/spark/spark-inline.yaml")).unwrap();
-    value["spec"]["inferenceProviders"][0]["service"]["hardware"] = json!({"profile": "dgx-spark"});
+    value["spec"]["services"]["qwen"]["hardware"] = json!({"profile": "dgx-spark"});
     assert!(Document::parse(value.to_string().as_bytes()).is_err());
     assert!(!schema.is_valid(&value));
 }

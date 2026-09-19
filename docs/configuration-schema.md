@@ -25,7 +25,7 @@ Complete the [build prerequisites](build.md).
 From the repository root:
 
 1. Add a parser/schema test for the accepted or rejected input in [config_schema.rs](../crates/nemoclaw-sdk/tests/config_schema.rs).
-2. Change the [configuration types](../crates/nemoclaw-sdk/src/config/types.rs), [inline recipe types](../crates/nemoclaw-sdk/src/recipes/inline.rs), or their shared constraints.
+2. Change the [configuration types](../crates/nemoclaw-sdk/src/config/types.rs), [service configuration types](../crates/nemoclaw-sdk/src/services/installers/vllm/config.rs), [inline recipe types](../crates/nemoclaw-sdk/src/services/installers/vllm/recipes/inline.rs), or their shared constraints.
 3. Describe the field beside its Rust declaration, including units and conditional behavior.
 4. If needed, update the [conditional schema rules](../crates/nemoclaw-sdk/src/config/schema/validation.rs).
 5. Regenerate the artifacts:

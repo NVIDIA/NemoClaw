@@ -50,12 +50,12 @@ The fixture returns protocol responses; it does not establish live agent inferen
 
 ## Ollama and Platform Fixtures
 
-Managed Ollama's deterministic bundle test uses local Docker and model HTTP fixtures, not live containers or model downloads.
-It covers stopped-service recovery, failed startup, legacy storage-binding upgrade, failed observation, volume replacement, lost deletion responses, and destroy/reapply without another model pull:
+Managed Ollama's deterministic SDK tests use local registry, capacity, configuration, and runtime-plan fixtures, not live containers or model downloads.
+They cover immutable model resolution, bounded readiness, retained storage, service references, independent installer resources, and provider connection resolution:
 
 ```sh
-NEMOCLAW_TEST_BUNDLE=/absolute/path/to/bundle \
-  cargo test -p nemoclaw-e2e --test ollama -- --ignored
+cargo test -p nemoclaw-sdk services::installers::ollama
+cargo test -p nemoclaw-sdk --test service_references --test multiple_providers
 ```
 
 Authenticated OpenShell, stalled exec streams, and launch compatibility run in the default workspace suite.

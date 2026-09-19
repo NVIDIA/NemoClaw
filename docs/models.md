@@ -3,8 +3,10 @@
 
 # Select a Managed Model
 
-Use `service.backend: vllm` for a public Hugging Face model that the pinned vLLM image can load natively.
-Set `service.model.repository` and an exact 40-character commit in `service.model.revision`.
+Declare a named service under `spec.services` with `kind: vllm` for a public Hugging Face model that the pinned vLLM image can load natively.
+Set its `model.repository` and an exact 40-character commit in `model.revision`.
+Select it from an inference provider with `serviceRef: <name>`.
+The fields below belong to that named service.
 There is no repository allowlist.
 For Ollama registry models, use [managed Ollama](inference.md#run-managed-ollama); it shares the `service` hardware, placement, memory, and lifecycle contract described here.
 
@@ -47,18 +49,18 @@ Gated repositories, custom remote-code models, GGUF, and nested checkpoint layou
 `memory.gpuMemoryGiB` budgets the model, runtime and KV cache together; its default is 16 GiB.
 `kvCacheGiB` is part of that budget.
 Capacity checks reject snapshots whose weights cannot fit the declared budget.
-Declare exactly one of `service.hardware` or `service.recipe`; there is no implicit hardware profile.
+Declare exactly one of `hardware` or `recipe`; there is no implicit hardware profile.
 For ordinary models on DGX Spark, select the existing Linux ARM64 contract explicitly:
 
 ```yaml
-# Under service:
+# Under spec.services.<name>:
 hardware:
   profile: dgx-spark
 ```
 
 This profile requires one NVIDIA GB10 with observed compute capability at least 12.1, at least 118 GiB host RAM, and driver major 580 or newer.
 For other hardware, select a [named profile](#choose-a-hardware-profile) or declare [dedicated GPU requirements](#configure-nemotron-on-an-amd64-gpu-host).
-An inline recipe supplies its own compatibility requirements and excludes `service.hardware`.
+An inline recipe supplies its own compatibility requirements and excludes `hardware`.
 
 Older YAML that omitted both fields or used `profile: spark` is rejected; use `profile: dgx-spark` when preserving that configuration's hardware contract.
 Retained intent is not migrated by editing input YAML; keep the matching previous bundle for existing deployments' export or teardown.
@@ -96,7 +98,7 @@ Model changes replace the inference process while preserving its storage volume 
 Failed observation stops planning; failed startup retains the established container and model data.
 A watchdog stop requires [explicit recovery](#diagnose-and-recover-a-stopped-runtime).
 
-For models requiring preparation or patches, keep `backend: vllm` and declare an [inline recipe](recipes.md).
+For models requiring preparation or patches, keep `kind: vllm` and declare an [inline recipe](recipes.md).
 Package the recipe’s tools in the pinned runtime image.
 There are no built-in model-specific backends.
 
@@ -127,7 +129,7 @@ There are no `spark`, `gb100`, or B100/B200/B300 profile names.
 For example, declare an H100 on an AMD64 host and a fixed serving budget:
 
 ```yaml
-# Under service:
+# Under spec.services.<name>:
 hardware:
   profile: h100
   architecture: amd64
@@ -157,7 +159,7 @@ Set `hardware.minGpuMemoryBytes` to require more.
 This field is required with fractional allocation so snapshot validation has a declared minimum:
 
 ```yaml
-# Under service:
+# Under spec.services.<name>:
 hardware:
   profile: h100
   architecture: amd64
@@ -172,7 +174,7 @@ Omit fixed GPU and KV-cache budgets in fractional mode.
 Unified-memory profiles reject both `minGpuMemoryBytes` and fractional allocation and retain host-memory reserve checks.
 All profiles retain the resident host-memory watchdog.
 
-The [profile catalog](../crates/nemoclaw-sdk/src/config/hardware_profile.rs) uses NVIDIA's [compute-capability table](https://developer.nvidia.com/cuda/gpus) and current [DGX Station specification](https://www.nvidia.com/en-us/products/workstations/dgx-station/), checked on 2026-09-18.
+The [profile catalog](../crates/nemoclaw-sdk/src/services/installers/vllm/hardware_profile.rs) uses NVIDIA's [compute-capability table](https://developer.nvidia.com/cuda/gpus) and current [DGX Station specification](https://www.nvidia.com/en-us/products/workstations/dgx-station/), checked on 2026-09-18.
 [Profile tests](../crates/nemoclaw-sdk/tests/hardware_profiles.rs) cover schema/parser agreement, GPU-family mismatches, architecture selection, and memory checks using fixtures.
 Live model/image qualification on the newly named hardware remains **TBD**; profile acceptance does not establish successful inference or support for every GPU SKU, quantization format, or host architecture.
 
@@ -191,11 +193,11 @@ From any directory, set the engine socket and container name for this deployment
 
 ```sh
 model_engine=unix:///var/run/docker.sock
-model_container=REPLACE_WITH_WORKSPACE-inference
+model_container=REPLACE_WITH_WORKSPACE-inference-SERVICE_NAME
 docker --host "$model_engine" inspect "$model_container" --format '{{.Id}} {{json .Config.Labels}}'
 ```
 
-Replace the socket when your selected daemon uses another path, and use the [UID-derived workspace](interfaces.md#select-the-gateway-and-workspace) in the container name.
+Replace the socket when your selected daemon uses another path, and use the [UID-derived workspace](interfaces.md#select-the-gateway-and-workspace) and the service name in the container name.
 Confirm the `nemoclaw.nvidia.com/uid` label matches your YAML before collecting its output.
 This name/label check helps select diagnostics; it does not replace the SDK's generation and durable-identity checks or authorize manual mutation.
 
@@ -225,13 +227,13 @@ Successful recovery must pass configuration and service readiness checks.
 Verify a native agent reply separately using [inference verification](inference.md#verify-the-result).
 No recovery step requires deleting manifests, keys, volumes, or ownership bindings.
 
-The [runtime reporter](../crates/nemoclaw-runtime/src/runtime.rs), [supervisor](../crates/nemoclaw-runtime/src/supervisor.rs), and [SDK status reader](../crates/nemoclaw-sdk/src/managed/artifacts.rs) define these diagnostics and failure boundaries.
+The [runtime reporter](../crates/nemoclaw-runtime/src/services/installers/vllm/runtime.rs), [supervisor](../crates/nemoclaw-runtime/src/supervisor.rs), and [SDK artifact reader](../crates/nemoclaw-sdk/src/services/installers/vllm/artifacts.rs) define these diagnostics and failure boundaries.
 
 ## Configure Nemotron on an AMD64 GPU Host
 
 [The Nemotron example](../examples/nemotron-amd64.yaml) declares the pinned NVIDIA Nemotron 3.5 Lightning 30B-A3B NVFP4 model, served name, native parsers, 65,536-token context, one sequence, and 4,096-token batch.
 Its source pins and adaptation are recorded in the [AMD64 runtime notice](../runtimes/vllm-amd64/NOTICE.md).
-It uses ordinary `backend: vllm` serving with no preparation recipe.
+It uses ordinary `kind: vllm` serving with no preparation recipe.
 
 The example requires an existing OpenShell gateway and a Linux AMD64 Docker host reached through SSH.
 That host must expose exactly one NVIDIA GPU with compute capability at least 9.0, at least 96,000,000,000 bytes of dedicated GPU memory, and driver major 580 or newer.
@@ -239,7 +241,7 @@ Follow the [SSH placement prerequisites](remote-service.md), build the [AMD64 ru
 Replace the zero image digest, SSH alias, gateway endpoint, private publication address, and deployment UID before applying.
 Build a compatible OpenClaw sandbox image using the [Fabric image procedure](inference.md#build-an-image-with-the-configuration-interface), replace `sandboxes[].image.ref` with its immutable digest, and load that image into the gateway's Podman daemon.
 
-`service.hardware` declares the dedicated-GPU requirements.
+`hardware` declares the dedicated-GPU requirements.
 `memory.gpuMemoryUtilization: 0.75` allocates a fraction of the observed GPU memory and leaves KV-cache sizing to vLLM.
 Omit `gpuMemoryGiB` and `kvCacheGiB` in this mode; nonzero fixed budgets are rejected.
 The SDK checks snapshot weight size against the fraction of the declared minimum GPU memory and checks startup allocation against the observed total and free GPU memory.

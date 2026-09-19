@@ -1,5 +1,5 @@
 {
-  "digest": "6d128baa1fff86d5d31782be54e133db3f6329da835db747411c0140147efbbb",
+  "digest": "bc52f6707a9de369333e4e8460ecf4b54d6ab00d602a53c63d4c261317cb5416",
   "document": {
     "apiVersion": "nemoclaw.nvidia.com/v1alpha1",
     "kind": "NemoClawConfig",
@@ -10,18 +10,16 @@
     "spec": {
       "gateway": {
         "endpoint": "http://127.0.0.1:17671",
-        "management": "external"
+        "engine": "unix:///var/run/docker.sock",
+        "image": "ghcr.io/nvidia/openshell/gateway@sha256:ec2b0efea84fff198e888e97c85befb9c908acde92e8256f9b527877ed182d66",
+        "management": "managed",
+        "networkCIDR": "172.20.0.0/24"
       },
       "inferenceProviders": [
         {
-          "endpoint": "http://172.20.0.1:11436/v1",
           "name": "local",
-          "ollama": {
-            "engine": "unix:///var/run/docker.sock",
-            "image": "ollama/ollama@sha256:684d8674b4315fa18f4f0e973a118ec2652ed96f67563277839985175858e0ba",
-            "network": "nc-prototype-slice"
-          },
-          "provider": "openai"
+          "provider": "openai",
+          "serviceRef": "ollama-server"
         }
       ],
       "sandboxes": [
@@ -54,9 +52,41 @@
             "provider": "docker"
           }
         }
-      ]
+      ],
+      "services": {
+        "ollama-server": {
+          "hardware": {
+            "profile": "dgx-spark"
+          },
+          "kind": "ollama",
+          "management": "managed",
+          "memory": {
+            "consecutiveSamples": 5,
+            "freeGateGiB": 12,
+            "gpuMemoryGiB": 16,
+            "hostReserveGiB": 32,
+            "minAvailableGiB": 8,
+            "minFreeGiB": 3
+          },
+          "model": {
+            "digest": "7df6b6e09427a769808717c0a93cadc4ae99ed4eb8bf5ca557c90846becea435",
+            "name": "qwen3:0.6b"
+          },
+          "runtime": {
+            "engine": "unix:///var/run/docker.sock",
+            "image": "nc-prototype-ollama@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "provider": "docker"
+          },
+          "serving": {
+            "contextTokens": 8192,
+            "maxSequences": 1,
+            "port": 18888,
+            "startupTimeoutSeconds": 1800
+          }
+        }
+      }
     }
   },
-  "endpoint": "http://172.20.0.1:11436/v1",
+  "endpoint": "http://172.20.0.1:18888/v1",
   "workspace": "nc-8bb56695710753e3"
 }

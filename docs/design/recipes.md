@@ -51,7 +51,7 @@ flowchart TD
 For example, a preparation tool can finish writing a file and then return malformed verification output.
 The file remains a candidate; it does not become an accepted preparation merely because it exists.
 The [verification failure tests](https://github.com/NVIDIA/NemoClaw/commit/d14bd994bf) cover malformed output, duplicate paths, traversal, oversized output, and wrong hashes.
-The current [preparation lifecycle](../../crates/nemoclaw-sdk/src/recipes/preparation.rs) performs the final checks and directory rename.
+The current [preparation lifecycle](../../crates/nemoclaw-sdk/src/services/installers/vllm/recipes/preparation.rs) performs the final checks and directory rename.
 
 An explicit cache import follows the same rule.
 It offers old files to the new verifier as candidates; it does not transfer trust from an old output manifest.

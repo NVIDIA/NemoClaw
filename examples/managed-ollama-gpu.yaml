@@ -14,15 +14,15 @@ spec:
     engine: unix:///var/run/docker.sock
     image: ghcr.io/nvidia/openshell/gateway@sha256:ec2b0efea84fff198e888e97c85befb9c908acde92e8256f9b527877ed182d66
     networkCIDR: 172.30.110.0/24
-  inferenceProviders:
-  - name: qwen
-    provider: openai
-    api: openai-completions
-    service:
-      backend: ollama
+  services:
+    qwen:
+      kind: ollama
       hardware: {profile: dgx-spark}
-      # Replace with the digest of your locally built runtimes/ollama image.
-      image: nc-prototype-ollama@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+      runtime:
+        provider: docker
+        engine: unix:///var/run/docker.sock
+        # Replace with the digest of your locally built runtimes/ollama image.
+        image: nc-prototype-ollama@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
       model:
         name: qwen3:0.6b
         digest: 7df6b6e09427a769808717c0a93cadc4ae99ed4eb8bf5ca557c90846becea435
@@ -31,6 +31,11 @@ spec:
         maxSequences: 1
       memory:
         gpuMemoryGiB: 16
+  inferenceProviders:
+  - name: qwen
+    provider: openai
+    api: openai-completions
+    serviceRef: qwen
   sandboxes:
   - name: assistant
     image:

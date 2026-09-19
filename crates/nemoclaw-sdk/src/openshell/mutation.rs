@@ -68,7 +68,7 @@ impl OpenShell {
             if !value(want, "credential_env").is_empty() {
                 return Err(ObservationError::BindingMismatch);
             }
-            crate::inference_auth::Source::parse(
+            crate::services::authentication::Source::parse(
                 source,
                 value(want, "owner"),
                 value(want, "endpoint"),

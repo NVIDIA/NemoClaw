@@ -30,8 +30,8 @@ pub enum Error {
     },
     #[error("operation interrupted; retain state and reapply the same configuration")]
     Cancelled,
-    #[error("Ollama connection refused; model inventory is unknown")]
-    OllamaStarting,
+    #[error("managed service connection refused; inventory is unknown")]
+    ServiceStarting,
     #[error("managed container is absent but owned persistent resources remain")]
     PartialRuntime,
 }

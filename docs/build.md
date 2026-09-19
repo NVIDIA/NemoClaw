@@ -156,7 +156,7 @@ This build exports `.build/qwen38/runtime.tar` and loads `nc-prototype-qwen38:sp
 Its Dockerfile applies pinned patches and retains original and modified sources.
 Use [the inline recipe guide](recipes.md) to declare preparation and serving requirements.
 
-Use the immutable OCI manifest digest in the build output for `service.image`.
+Use the immutable OCI manifest digest in the build output for `spec.services.<name>.runtime.image`.
 Do not substitute a mutable tag or a digest copied from another build.
 If the selected daemon is remote, load the archive into that daemon before apply; a local image is not available there automatically.
 
@@ -175,6 +175,6 @@ Generated bundles, build inputs, and images are ignored by Git.
 Model snapshots and prepared data belong to the deployment’s persistent volume, outside the build context.
 
 The image contains `nemoclaw-runtime`.
-The inline recipe supplies preparation and verification tools; `backend: vllm` selects serving behavior.
+The inline recipe supplies preparation and verification tools; `kind: vllm` selects the service installer and serving behavior.
 Managed containers use `/usr/local/bin/nemoclaw-runtime` and `NEMOCLAW_RUNTIME_SPEC`.
 The former `nemoclaw-spark` entrypoint and `NEMOCLAW_SPARK_SPEC` environment alias are no longer accepted.

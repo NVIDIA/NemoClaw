@@ -4,7 +4,7 @@
 #[path = "observation_tests.rs"]
 mod tests;
 
-use super::{GATEWAY_KIND, GENERATION_LABEL, OWNER_LABEL, SERVICE_KIND, Spec};
+use super::{GATEWAY_KIND, GENERATION_LABEL, OWNER_LABEL, Spec};
 use crate::{Error, ObservationError, docker::Engine};
 use bollard::models::{ContainerInspectResponse, NetworkInspect, Volume};
 use serde_json::{Value, json};
@@ -228,8 +228,10 @@ pub(crate) fn verify_container(
     {
         return Err(Error::Conflict("managed runtime restart policy drifted"));
     }
-    if spec.kind == SERVICE_KIND && host.shm_size != expected_host.shm_size {
-        return Err(Error::Conflict("inference shared memory policy drifted"));
+    if spec.process.is_some() && host.shm_size != expected_host.shm_size {
+        return Err(Error::Conflict(
+            "managed service shared memory policy drifted",
+        ));
     }
     let mut expected_env = environment(image_env);
     expected_env.extend(environment(expected.env.as_deref()));
@@ -286,7 +288,7 @@ impl Engine {
             let network = self.network(&spec.network()).await?;
             if container.is_none()
                 && volume.is_none()
-                && (spec.kind == SERVICE_KIND || network.is_none())
+                && (spec.process.is_some() || network.is_none())
             {
                 return if id.is_empty() {
                     Ok(None)
@@ -325,7 +327,7 @@ impl Engine {
                 )
                 .await?
                 .ok_or(ObservationError::Incomplete)?;
-            spec.validate_image_authentication(&image)?;
+            spec.validate_process_image(&image)?;
             let image_config = image.config.as_ref().ok_or(ObservationError::Incomplete)?;
             let image_id = image
                 .id

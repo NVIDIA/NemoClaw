@@ -434,22 +434,22 @@
         }
       ]
     },
-    "ExternalNetwork": {
+    "ExternalOllama": {
       "additionalProperties": false,
-      "description": "Identify a network owned outside this deployment.",
+      "description": "External Ollama daemon observed by the managed proxy installer.",
       "properties": {
-        "management": {
-          "$ref": "#/$defs/ExternalManagement",
-          "description": "Optional external ownership declaration. Omission means external."
-        },
-        "name": {
-          "description": "Existing network name on the Ollama Docker engine.",
-          "pattern": "^[a-z][a-z0-9-]{0,39}$",
+        "endpoint": {
+          "description": "Loopback-only Ollama HTTP endpoint ending in /v1.",
           "type": "string"
+        },
+        "model": {
+          "$ref": "#/$defs/ExternalOllamaModel",
+          "description": "Existing model verified before the proxy starts."
         }
       },
       "required": [
-        "name"
+        "endpoint",
+        "model"
       ],
       "type": "object"
     },
@@ -465,10 +465,16 @@
         "management": {
           "$ref": "#/$defs/ExternalManagement",
           "description": "Optional ownership declaration; omission means external."
+        },
+        "name": {
+          "description": "Installed Ollama model name including its tag.",
+          "pattern": "^[a-z0-9][a-z0-9._-]*:[a-z0-9][a-z0-9._-]*$",
+          "type": "string"
         }
       },
       "required": [
-        "digest"
+        "digest",
+        "name"
       ],
       "type": "object"
     },
@@ -1095,36 +1101,6 @@
       "additionalProperties": false,
       "allOf": [
         {
-          "else": {
-            "properties": {
-              "management": {
-                "const": "external"
-              }
-            }
-          },
-          "if": {
-            "anyOf": [
-              {
-                "required": [
-                  "service"
-                ]
-              },
-              {
-                "required": [
-                  "ollama"
-                ]
-              }
-            ]
-          },
-          "then": {
-            "properties": {
-              "management": {
-                "const": "managed"
-              }
-            }
-          }
-        },
-        {
           "if": {
             "properties": {
               "endpoint": {
@@ -1146,80 +1122,16 @@
               ]
             }
           }
-        },
-        {
-          "if": {
-            "required": [
-              "ollama"
-            ]
-          },
-          "then": {
-            "allOf": [
-              {
-                "not": {
-                  "anyOf": [
-                    {
-                      "required": [
-                        "credential"
-                      ]
-                    }
-                  ]
-                }
-              }
-            ],
-            "properties": {
-              "endpoint": {
-                "pattern": "^http://.+:[0-9]+/v1$"
-              }
-            }
-          }
-        },
-        {
-          "if": {
-            "required": [
-              "ollamaProxy"
-            ]
-          },
-          "then": {
-            "allOf": [
-              {
-                "not": {
-                  "anyOf": [
-                    {
-                      "required": [
-                        "ollama"
-                      ]
-                    },
-                    {
-                      "required": [
-                        "service"
-                      ]
-                    },
-                    {
-                      "required": [
-                        "credential"
-                      ]
-                    }
-                  ]
-                }
-              }
-            ],
-            "properties": {
-              "management": {
-                "const": "external"
-              },
-              "provider": {
-                "const": "openai"
-              }
-            }
-          }
         }
       ],
-      "description": "Choose endpoint for external inference or service for managed vLLM/Ollama. The older endpoint plus ollama form retains its separate CPU-only lifecycle.",
+      "description": "Choose an endpoint for external inference or serviceRef for a managed service.",
       "else": {
         "properties": {
           "endpoint": {
             "pattern": "^https?://"
+          },
+          "management": {
+            "const": "external"
           }
         },
         "required": [
@@ -1228,7 +1140,7 @@
       },
       "if": {
         "required": [
-          "service"
+          "serviceRef"
         ]
       },
       "properties": {
@@ -1238,29 +1150,21 @@
         },
         "credential": {
           "$ref": "#/$defs/Credential",
-          "description": "Optional API credential reference for an external HTTPS endpoint. Excluded by service and ollama."
+          "description": "Optional API credential reference for an external HTTPS endpoint. Excluded by serviceRef."
         },
         "endpoint": {
-          "description": "Inference HTTP(S) URL. Required without service; omit or leave empty with service. HTTP requires a literal private or loopback address.",
+          "description": "Inference HTTP(S) URL owned outside the deployment. Required without serviceRef and excluded with serviceRef.",
           "type": "string",
-          "x-nemoclaw-required": "Without service"
+          "x-nemoclaw-required": "Without serviceRef"
         },
         "management": {
           "$ref": "#/$defs/Management",
-          "description": "Optional server ownership. Omission means managed with service or ollama, external with endpoint alone. The OpenShell provider registration remains deployment-owned in either mode."
+          "description": "Optional server ownership. Omission means managed with serviceRef and external with endpoint. The OpenShell provider registration remains deployment-owned in either mode."
         },
         "name": {
           "description": "Provider name referenced by model choices.",
           "pattern": "^[a-z][a-z0-9-]{0,39}$",
           "type": "string"
-        },
-        "ollama": {
-          "$ref": "#/$defs/ManagedOllama",
-          "description": "Legacy CPU-only Ollama lifecycle through a local Unix Docker socket and existing network. Requires an explicit private or loopback IP:port/v1 HTTP endpoint. New GPU deployments use service.backend: ollama."
-        },
-        "ollamaProxy": {
-          "$ref": "#/$defs/OllamaProxy",
-          "description": "Manage an authenticated proxy while leaving the endpoint's Ollama daemon and installed model external."
         },
         "provider": {
           "description": "OpenShell provider implementation. Must match the selected API family.",
@@ -1270,9 +1174,10 @@
           ],
           "type": "string"
         },
-        "service": {
-          "$ref": "#/$defs/Service",
-          "description": "Manage the selected inference backend from a pinned runtime image and model. Excludes ollama and credential; endpoint must be omitted or empty."
+        "serviceRef": {
+          "description": "Name of a managed service in spec.services. Excludes endpoint and credential.",
+          "pattern": "^[a-z][a-z0-9-]{0,39}$",
+          "type": "string"
         }
       },
       "required": [
@@ -1288,16 +1193,6 @@
                   "required": [
                     "credential"
                   ]
-                },
-                {
-                  "required": [
-                    "ollama"
-                  ]
-                },
-                {
-                  "required": [
-                    "ollamaProxy"
-                  ]
                 }
               ]
             }
@@ -1306,6 +1201,12 @@
         "properties": {
           "endpoint": {
             "const": ""
+          },
+          "management": {
+            "const": "managed"
+          },
+          "provider": {
+            "const": "openai"
           }
         }
       },
@@ -1419,48 +1320,6 @@
         }
       ]
     },
-    "ManagedOllama": {
-      "additionalProperties": false,
-      "description": "Managed Ollama uses a pinned image, an existing Docker network, and an explicit model:tag on the route.",
-      "properties": {
-        "engine": {
-          "description": "Local Unix Docker socket URL.",
-          "pattern": "^unix:///",
-          "type": "string"
-        },
-        "image": {
-          "description": "Immutable ollama/ollama image reference.",
-          "pattern": "^ollama/ollama@sha256:[a-f0-9]{64}$",
-          "type": "string"
-        },
-        "imagePullPolicy": {
-          "$ref": "#/$defs/ImagePullPolicy",
-          "description": "Image acquisition before container creation or restart. Omission means IfNotPresent; changing this does not restart a running container."
-        },
-        "management": {
-          "$ref": "#/$defs/ManagedManagement",
-          "description": "Optional ownership declaration for the Ollama daemon container. Omission means managed."
-        },
-        "model": {
-          "$ref": "#/$defs/ManagedResource",
-          "description": "Optional ownership declaration for installing the route model. Omission means managed; this does not change the selected model."
-        },
-        "network": {
-          "$ref": "#/$defs/NetworkReference",
-          "description": "Name of the existing Docker network."
-        },
-        "storage": {
-          "$ref": "#/$defs/ManagedResource",
-          "description": "Optional model-volume ownership declaration. Omission means managed; the volume survives destroy."
-        }
-      },
-      "required": [
-        "engine",
-        "image",
-        "network"
-      ],
-      "type": "object"
-    },
     "ManagedResource": {
       "additionalProperties": false,
       "description": "Explicit ownership for a dependency whose creation settings remain on its parent. Only managed ownership is implemented.",
@@ -1480,7 +1339,7 @@
       "oneOf": [
         {
           "const": "managed",
-          "description": "The deployment manages the declared service or Ollama daemon.",
+          "description": "The deployment manages the declared service.",
           "type": "string"
         },
         {
@@ -1586,13 +1445,13 @@
             }
           ],
           "default": 12,
-          "description": "Check minFreeGiB only when available memory is below this threshold in GiB. Must be at least minAvailableGiB after defaults.",
+          "description": "Available-memory gate in GiB for minFreeGiB. Must be at least minAvailableGiB after defaults.",
           "format": "int64",
           "type": "integer",
           "x-nemoclaw-default-rule": "Omitted or zero selects the default."
         },
         "gpuMemoryGiB": {
-          "description": "Total GPU budget in GiB without a recipe. Omitted or zero uses 16 GiB unless gpuMemoryUtilization supplies the budget. Ollama checks loaded memory at startup and while serving; this is not an allocator quota. Recipes supply their own byte budget.",
+          "description": "Total GPU budget in GiB without a recipe. Must be omitted or zero with a recipe, which supplies its own byte budget.",
           "format": "int64",
           "maximum": 96,
           "minimum": 0,
@@ -1600,7 +1459,7 @@
           "x-nemoclaw-default-rule": "Omitted or zero stays zero in the document. Without a recipe or gpuMemoryUtilization, the backend uses 16 GiB. A recipe supplies resources.gpuMemoryBytes; gpuMemoryUtilization requires zero here."
         },
         "gpuMemoryUtilization": {
-          "description": "Optional fraction of observed dedicated GPU memory, from 0.05 through 0.95. Requires explicit hardware.minGpuMemoryBytes. Excludes unified-memory profiles, recipe, fixed gpuMemoryGiB and explicit KV-cache allocation. The backend sizes its cache natively.",
+          "description": "Optional fraction of observed dedicated GPU memory, from 0.05 through 0.95. Requires hardware with explicit minGpuMemoryBytes, including dedicated-memory named profiles. Excludes unified-memory profiles, recipe, fixed gpuMemoryGiB and explicit KV-cache allocation; vLLM sizes its cache natively.",
           "format": "double",
           "maximum": 0.95,
           "minimum": 0.05,
@@ -1624,11 +1483,11 @@
         },
         "kvCacheGiB": {
           "default": 8,
-          "description": "KV cache allocation in GiB for ordinary vLLM. Omitted or zero defaults to 8 except with gpuMemoryUtilization. Ollama requires omission or zero and uses native cache allocation. Recipe serving does not emit this flag.",
+          "description": "KV cache allocation in GiB for ordinary vLLM. Omitted or zero defaults to 8, except gpuMemoryUtilization requires zero and lets vLLM allocate its cache. Recipe serving does not emit this flag.",
           "format": "int64",
           "minimum": 0,
           "type": "integer",
-          "x-nemoclaw-default-rule": "Omitted or zero selects 8 GiB for vLLM except with gpuMemoryUtilization. Ollama requires zero and uses native cache allocation."
+          "x-nemoclaw-default-rule": "Omitted or zero selects 8 GiB, except gpuMemoryUtilization keeps zero and lets vLLM allocate its cache."
         },
         "minAvailableGiB": {
           "anyOf": [
@@ -1689,87 +1548,27 @@
     "Model": {
       "additionalProperties": false,
       "description": "Immutable model identity used for snapshot resolution and storage.",
-      "oneOf": [
-        {
-          "allOf": [
-            {
-              "not": {
-                "anyOf": [
-                  {
-                    "required": [
-                      "name"
-                    ]
-                  },
-                  {
-                    "required": [
-                      "digest"
-                    ]
-                  }
-                ]
-              }
-            }
-          ],
-          "required": [
-            "repository",
-            "revision"
-          ]
-        },
-        {
-          "allOf": [
-            {
-              "not": {
-                "anyOf": [
-                  {
-                    "required": [
-                      "repository"
-                    ]
-                  },
-                  {
-                    "required": [
-                      "revision"
-                    ]
-                  }
-                ]
-              }
-            }
-          ],
-          "required": [
-            "name",
-            "digest"
-          ]
-        }
-      ],
       "properties": {
-        "digest": {
-          "description": "Lowercase 64-hex SHA-256 of the Ollama registry manifest. Required for Ollama; excluded by vLLM. Changing a registry tag cannot change this selected identity.",
-          "pattern": "^[a-f0-9]{64}$",
-          "type": "string",
-          "x-nemoclaw-required": "For backend ollama"
-        },
         "management": {
           "$ref": "#/$defs/ManagedManagement",
           "description": "Optional ownership declaration for downloading and preparing this model installation. Omission means managed."
         },
-        "name": {
-          "description": "Ollama public library model:tag, paired with its immutable manifest digest. Required for Ollama; excluded by vLLM.",
-          "pattern": "^[a-z0-9][a-z0-9._-]*:[a-z0-9][a-z0-9._-]*$",
-          "type": "string",
-          "x-nemoclaw-required": "For backend ollama"
-        },
         "repository": {
-          "description": "Public Hugging Face owner/repository name. Required for vLLM; excluded by Ollama.",
+          "description": "Public Hugging Face owner/repository name.",
           "maxLength": 200,
           "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]*/[a-zA-Z0-9][a-zA-Z0-9._-]*$",
-          "type": "string",
-          "x-nemoclaw-required": "For backend vllm"
+          "type": "string"
         },
         "revision": {
-          "description": "Full lowercase 40-hex Hugging Face commit. Required for vLLM; excluded by Ollama.",
+          "description": "Full lowercase 40-hex commit revision; branches and tags are rejected.",
           "pattern": "^[a-f0-9]{40}$",
-          "type": "string",
-          "x-nemoclaw-required": "For backend vllm"
+          "type": "string"
         }
       },
+      "required": [
+        "repository",
+        "revision"
+      ],
       "type": "object"
     },
     "Network": {
@@ -1813,57 +1612,210 @@
       },
       "type": "object"
     },
-    "NetworkReference": {
-      "anyOf": [
-        {
-          "description": "Existing network name; equivalent to management: external.",
-          "pattern": "^[a-z][a-z0-9-]{0,39}$",
-          "type": "string"
-        },
-        {
-          "$ref": "#/$defs/ExternalNetwork",
-          "description": "Explicit external network reference."
-        }
-      ],
-      "description": "An existing container network on the selected engine. NemoClaw attaches its container but does not create or delete the network."
-    },
-    "OllamaProxy": {
+    "OllamaMemory": {
       "additionalProperties": false,
-      "description": "Managed authenticated proxy for an external, loopback-only Ollama daemon and installed model.",
+      "description": "Ollama GPU budget and host memory protection.",
       "properties": {
-        "endpoint": {
-          "description": "Private or loopback HTTP IPv4:port/v1 published by the proxy and reachable by OpenShell.",
-          "type": "string"
+        "consecutiveSamples": {
+          "anyOf": [
+            {
+              "const": 0
+            },
+            {
+              "maximum": 5,
+              "minimum": 1
+            }
+          ],
+          "default": 5,
+          "description": "Consecutive low-memory samples before stopping the owned process.",
+          "format": "int64",
+          "type": "integer",
+          "x-nemoclaw-default-rule": "Omitted or zero selects the default."
         },
-        "engine": {
-          "description": "Local Unix Docker socket. The external daemon runs on this same Linux host.",
-          "pattern": "^unix:///",
-          "type": "string"
+        "freeGateGiB": {
+          "anyOf": [
+            {
+              "const": 0
+            },
+            {
+              "maximum": 24,
+              "minimum": 6
+            }
+          ],
+          "default": 12,
+          "description": "Available-memory gate for the free-memory threshold.",
+          "format": "int64",
+          "type": "integer",
+          "x-nemoclaw-default-rule": "Omitted or zero selects the default."
         },
-        "image": {
-          "description": "Immutable NemoClaw Ollama proxy image built locally.",
-          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:/-]*@sha256:[a-f0-9]{64}$",
-          "type": "string"
+        "gpuMemoryGiB": {
+          "anyOf": [
+            {
+              "const": 0
+            },
+            {
+              "maximum": 96,
+              "minimum": 0
+            }
+          ],
+          "default": 0,
+          "description": "Fixed serving budget in GiB when utilization is omitted. Omission or zero selects 16 GiB.",
+          "format": "int64",
+          "type": "integer",
+          "x-nemoclaw-default-rule": "Omitted or zero stays zero in the document. Without gpuMemoryUtilization, the installer uses 16 GiB."
         },
-        "imagePullPolicy": {
-          "$ref": "#/$defs/ImagePullPolicy",
-          "description": "Image acquisition before container creation or restart. Omission means IfNotPresent; changing this does not restart a running container."
+        "gpuMemoryUtilization": {
+          "description": "Optional fraction of observed dedicated GPU memory.",
+          "format": "double",
+          "maximum": 0.95,
+          "minimum": 0.05,
+          "type": "number"
+        },
+        "hostReserveGiB": {
+          "anyOf": [
+            {
+              "const": 0
+            },
+            {
+              "maximum": 64,
+              "minimum": 28
+            }
+          ],
+          "default": 32,
+          "description": "Host memory reserve excluded from serving.",
+          "format": "int64",
+          "type": "integer",
+          "x-nemoclaw-default-rule": "Omitted or zero selects the default."
+        },
+        "minAvailableGiB": {
+          "anyOf": [
+            {
+              "const": 0
+            },
+            {
+              "maximum": 16,
+              "minimum": 6
+            }
+          ],
+          "default": 8,
+          "description": "Available-memory threshold used by the bounded runtime watchdog.",
+          "format": "int64",
+          "type": "integer",
+          "x-nemoclaw-default-rule": "Omitted or zero selects the default."
+        },
+        "minFreeGiB": {
+          "anyOf": [
+            {
+              "const": 0
+            },
+            {
+              "maximum": 8,
+              "minimum": 2
+            }
+          ],
+          "default": 3,
+          "description": "Free-memory threshold used below freeGateGiB.",
+          "format": "int64",
+          "type": "integer",
+          "x-nemoclaw-default-rule": "Omitted or zero selects the default."
+        }
+      },
+      "type": "object"
+    },
+    "OllamaModel": {
+      "additionalProperties": false,
+      "description": "One immutable Ollama registry model installation.",
+      "properties": {
+        "digest": {
+          "description": "Lowercase SHA-256 of the registry manifest selected for that tag.",
+          "pattern": "^[a-f0-9]{64}$",
+          "type": "string"
         },
         "management": {
           "$ref": "#/$defs/ManagedManagement",
           "description": "Optional ownership declaration; omission means managed."
         },
-        "model": {
-          "$ref": "#/$defs/ExternalOllamaModel",
-          "description": "Digest of the already-installed route model. NemoClaw never installs or deletes it."
+        "name": {
+          "description": "Public library model name including its tag.",
+          "pattern": "^[a-z0-9][a-z0-9._-]*:[a-z0-9][a-z0-9._-]*$",
+          "type": "string"
         }
       },
       "required": [
-        "engine",
-        "image",
-        "endpoint",
-        "model"
+        "name",
+        "digest"
       ],
+      "type": "object"
+    },
+    "OllamaServing": {
+      "additionalProperties": false,
+      "description": "Native Ollama serving controls supported by the managed installer.",
+      "properties": {
+        "contextTokens": {
+          "anyOf": [
+            {
+              "const": 0
+            },
+            {
+              "maximum": 65536,
+              "minimum": 8192
+            }
+          ],
+          "default": 32768,
+          "description": "Maximum model context length.",
+          "format": "int64",
+          "type": "integer",
+          "x-nemoclaw-default-rule": "Omitted or zero selects the default."
+        },
+        "maxSequences": {
+          "anyOf": [
+            {
+              "const": 0
+            },
+            {
+              "maximum": 2,
+              "minimum": 1
+            }
+          ],
+          "default": 1,
+          "description": "Maximum concurrent sequences.",
+          "format": "int64",
+          "type": "integer",
+          "x-nemoclaw-default-rule": "Omitted or zero selects the default."
+        },
+        "port": {
+          "anyOf": [
+            {
+              "const": 0
+            },
+            {
+              "maximum": 65535,
+              "minimum": 1024
+            }
+          ],
+          "default": 18888,
+          "description": "Inference listening port.",
+          "format": "int64",
+          "type": "integer",
+          "x-nemoclaw-default-rule": "Omitted or zero selects the default."
+        },
+        "startupTimeoutSeconds": {
+          "anyOf": [
+            {
+              "const": 0
+            },
+            {
+              "maximum": 3600,
+              "minimum": 60
+            }
+          ],
+          "default": 1800,
+          "description": "Seconds allowed for model loading and readiness.",
+          "format": "int64",
+          "type": "integer",
+          "x-nemoclaw-default-rule": "Omitted or zero selects the default."
+        }
+      },
       "type": "object"
     },
     "OpenClawDashboard": {
@@ -2771,437 +2723,6 @@
       ],
       "type": "string"
     },
-    "Service": {
-      "additionalProperties": false,
-      "allOf": [
-        {
-          "oneOf": [
-            {
-              "required": [
-                "hardware"
-              ]
-            },
-            {
-              "required": [
-                "recipe"
-              ]
-            }
-          ]
-        },
-        {
-          "if": {
-            "required": [
-              "hardware"
-            ]
-          },
-          "then": {
-            "not": {
-              "anyOf": [
-                {
-                  "required": [
-                    "recipe"
-                  ]
-                }
-              ]
-            }
-          }
-        },
-        {
-          "if": {
-            "properties": {
-              "memory": {
-                "properties": {
-                  "gpuMemoryUtilization": {}
-                },
-                "required": [
-                  "gpuMemoryUtilization"
-                ]
-              }
-            },
-            "required": [
-              "memory"
-            ]
-          },
-          "then": {
-            "allOf": [
-              {
-                "properties": {
-                  "hardware": {
-                    "properties": {
-                      "minGpuMemoryBytes": {}
-                    },
-                    "required": [
-                      "minGpuMemoryBytes"
-                    ]
-                  }
-                },
-                "required": [
-                  "hardware"
-                ]
-              },
-              {
-                "properties": {
-                  "hardware": {
-                    "properties": {
-                      "profile": {
-                        "not": {
-                          "enum": [
-                            "dgx-spark"
-                          ]
-                        }
-                      }
-                    }
-                  }
-                }
-              },
-              {
-                "not": {
-                  "anyOf": [
-                    {
-                      "required": [
-                        "recipe"
-                      ]
-                    }
-                  ]
-                }
-              },
-              {
-                "properties": {
-                  "memory": {
-                    "properties": {
-                      "gpuMemoryGiB": {
-                        "const": 0
-                      }
-                    }
-                  }
-                }
-              },
-              {
-                "properties": {
-                  "memory": {
-                    "properties": {
-                      "kvCacheGiB": {
-                        "const": 0
-                      }
-                    }
-                  }
-                }
-              }
-            ],
-            "required": [
-              "hardware"
-            ]
-          }
-        },
-        {
-          "if": {
-            "required": [
-              "recipe"
-            ]
-          },
-          "then": {
-            "allOf": [
-              {
-                "properties": {
-                  "serving": {
-                    "properties": {
-                      "modelName": {
-                        "const": ""
-                      }
-                    }
-                  }
-                }
-              },
-              {
-                "properties": {
-                  "serving": {
-                    "properties": {
-                      "mambaBackend": {
-                        "const": ""
-                      }
-                    }
-                  }
-                }
-              },
-              {
-                "properties": {
-                  "serving": {
-                    "not": {
-                      "anyOf": [
-                        {
-                          "required": [
-                            "enforceEager"
-                          ]
-                        }
-                      ]
-                    }
-                  }
-                }
-              }
-            ]
-          }
-        },
-        {
-          "else": {
-            "properties": {
-              "model": {
-                "required": [
-                  "repository",
-                  "revision"
-                ]
-              }
-            },
-            "required": [
-              "model"
-            ]
-          },
-          "if": {
-            "properties": {
-              "backend": {
-                "const": "ollama"
-              }
-            },
-            "required": [
-              "backend"
-            ]
-          },
-          "then": {
-            "allOf": [
-              {
-                "not": {
-                  "anyOf": [
-                    {
-                      "required": [
-                        "recipe"
-                      ]
-                    },
-                    {
-                      "required": [
-                        "authentication"
-                      ]
-                    }
-                  ]
-                }
-              },
-              {
-                "properties": {
-                  "model": {
-                    "required": [
-                      "name",
-                      "digest"
-                    ]
-                  }
-                },
-                "required": [
-                  "model"
-                ]
-              },
-              {
-                "properties": {
-                  "serving": {
-                    "not": {
-                      "anyOf": [
-                        {
-                          "required": [
-                            "enforceEager"
-                          ]
-                        }
-                      ]
-                    }
-                  }
-                }
-              },
-              {
-                "properties": {
-                  "serving": {
-                    "properties": {
-                      "modelName": {
-                        "const": ""
-                      }
-                    }
-                  }
-                }
-              },
-              {
-                "properties": {
-                  "serving": {
-                    "properties": {
-                      "toolParser": {
-                        "const": ""
-                      }
-                    }
-                  }
-                }
-              },
-              {
-                "properties": {
-                  "serving": {
-                    "properties": {
-                      "reasoningParser": {
-                        "const": ""
-                      }
-                    }
-                  }
-                }
-              },
-              {
-                "properties": {
-                  "serving": {
-                    "properties": {
-                      "mambaBackend": {
-                        "const": ""
-                      }
-                    }
-                  }
-                }
-              },
-              {
-                "properties": {
-                  "serving": {
-                    "properties": {
-                      "batchTokens": {
-                        "const": 0
-                      }
-                    }
-                  }
-                }
-              },
-              {
-                "properties": {
-                  "serving": {
-                    "properties": {
-                      "speculativeTokens": {
-                        "const": 0
-                      }
-                    }
-                  }
-                }
-              },
-              {
-                "properties": {
-                  "memory": {
-                    "properties": {
-                      "kvCacheGiB": {
-                        "const": 0
-                      }
-                    }
-                  }
-                }
-              }
-            ]
-          }
-        }
-      ],
-      "dependentRequired": {
-        "placement": [
-          "publication"
-        ],
-        "publication": [
-          "placement"
-        ]
-      },
-      "description": "Managed inference service. Backend adapters share hardware checks, placement, storage, and supervision. Explicit placement and publication must appear together.",
-      "else": {
-        "properties": {
-          "serving": {
-            "properties": {
-              "speculativeTokens": {
-                "const": 0
-              }
-            }
-          }
-        }
-      },
-      "if": {
-        "required": [
-          "recipe"
-        ]
-      },
-      "properties": {
-        "authentication": {
-          "$ref": "#/$defs/ServiceAuthentication",
-          "description": "Optional native vLLM bearer authentication. The runtime generates and retains the key; omission preserves unauthenticated serving. Ollama rejects this setting."
-        },
-        "backend": {
-          "description": "Managed inference backend: vllm or ollama. Backend-specific settings are validated before planning.",
-          "enum": [
-            "vllm",
-            "ollama"
-          ],
-          "type": "string"
-        },
-        "container": {
-          "$ref": "#/$defs/ServiceContainer",
-          "description": "Optional managed container IPC and shared-memory settings. Omission uses private IPC and 8 GiB of shared memory."
-        },
-        "hardware": {
-          "$ref": "#/$defs/ServiceHardware",
-          "description": "Explicit hardware contract: a named GPU or system profile, or dedicated GPU requirements for Linux AMD64. Required without an inline recipe; excludes recipe.",
-          "x-nemoclaw-required": "Without recipe"
-        },
-        "image": {
-          "description": "Immutable runtime image containing the selected server, the NemoClaw supervisor, and any declared recipe tools. A bare upstream server image is insufficient.",
-          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:/-]*@sha256:[a-f0-9]{64}$",
-          "type": "string"
-        },
-        "imagePullPolicy": {
-          "$ref": "#/$defs/ImagePullPolicy",
-          "description": "Image acquisition before container creation or restart. Omission means Never; changing this does not restart a running container."
-        },
-        "management": {
-          "$ref": "#/$defs/ManagedManagement",
-          "description": "Optional managed ownership declaration. Omission means managed."
-        },
-        "memory": {
-          "$ref": "#/$defs/Memory",
-          "description": "GPU budget and resident watchdog thresholds. Omission selects the SDK defaults."
-        },
-        "model": {
-          "$ref": "#/$defs/Model",
-          "description": "Pinned model identity. vLLM uses repository/revision; Ollama uses name/digest."
-        },
-        "placement": {
-          "$ref": "#/$defs/ServicePlacement",
-          "description": "SSH Docker placement. Required with an external gateway or Podman sandbox; requires publication.",
-          "x-nemoclaw-required": "With external gateway or Podman; paired with publication"
-        },
-        "publication": {
-          "$ref": "#/$defs/ServicePublication",
-          "description": "Private inference address reachable by OpenShell. Required with placement.",
-          "x-nemoclaw-required": "With placement"
-        },
-        "recipe": {
-          "$ref": "#/$defs/InlineRecipe",
-          "description": "Inline preparation and serving contract supplied by the pinned runtime image. Required without hardware; excludes hardware.",
-          "x-nemoclaw-required": "Without hardware"
-        },
-        "serving": {
-          "$ref": "#/$defs/Serving",
-          "description": "Service limits. Omission selects the SDK defaults; recipe serving settings select recipe-specific parsers and execution options."
-        },
-        "storage": {
-          "$ref": "#/$defs/ManagedResource",
-          "description": "Optional ownership declaration for model storage. Omission means managed; existing retention behavior is unchanged."
-        }
-      },
-      "required": [
-        "backend",
-        "image",
-        "model"
-      ],
-      "then": {
-        "properties": {
-          "memory": {
-            "properties": {
-              "gpuMemoryGiB": {
-                "const": 0
-              }
-            }
-          }
-        }
-      },
-      "type": "object"
-    },
     "ServiceAuthentication": {
       "description": "Generated bearer authentication for a managed inference service.",
       "enum": [
@@ -3226,6 +2747,448 @@
         }
       },
       "type": "object"
+    },
+    "ServiceDefinition": {
+      "description": "One explicitly supported managed container package.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "allOf": [
+            {
+              "if": {
+                "properties": {
+                  "memory": {
+                    "properties": {
+                      "gpuMemoryUtilization": {}
+                    },
+                    "required": [
+                      "gpuMemoryUtilization"
+                    ]
+                  }
+                },
+                "required": [
+                  "memory"
+                ]
+              },
+              "then": {
+                "allOf": [
+                  {
+                    "properties": {
+                      "hardware": {
+                        "properties": {
+                          "minGpuMemoryBytes": {}
+                        },
+                        "required": [
+                          "minGpuMemoryBytes"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "hardware"
+                    ]
+                  },
+                  {
+                    "properties": {
+                      "hardware": {
+                        "properties": {
+                          "profile": {
+                            "not": {
+                              "enum": [
+                                "dgx-spark"
+                              ]
+                            }
+                          }
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "properties": {
+                      "memory": {
+                        "properties": {
+                          "gpuMemoryGiB": {
+                            "const": 0
+                          }
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          ],
+          "dependentRequired": {
+            "placement": [
+              "publication"
+            ],
+            "publication": [
+              "placement"
+            ]
+          },
+          "description": "Managed Ollama daemon and selected model.",
+          "properties": {
+            "container": {
+              "$ref": "#/$defs/ServiceContainer",
+              "description": "Optional IPC and shared-memory settings for the runtime container."
+            },
+            "hardware": {
+              "$ref": "#/$defs/ServiceHardware",
+              "description": "Explicit supported GPU or system profile."
+            },
+            "kind": {
+              "const": "ollama",
+              "description": "Supported installer selected by this service definition.",
+              "type": "string"
+            },
+            "management": {
+              "$ref": "#/$defs/ManagedManagement",
+              "description": "Optional ownership declaration for the Ollama daemon container. Omission means managed."
+            },
+            "memory": {
+              "$ref": "#/$defs/OllamaMemory",
+              "description": "GPU budget and resident memory-protection thresholds."
+            },
+            "model": {
+              "$ref": "#/$defs/OllamaModel",
+              "description": "Selected immutable Ollama registry model."
+            },
+            "placement": {
+              "$ref": "#/$defs/ServicePlacement",
+              "description": "Optional remote Docker placement. Requires publication."
+            },
+            "publication": {
+              "$ref": "#/$defs/ServicePublication",
+              "description": "Private inference address for an explicitly placed service."
+            },
+            "runtime": {
+              "$ref": "#/$defs/ServiceRuntime",
+              "description": "Docker runner and pinned NemoClaw Ollama runtime image."
+            },
+            "serving": {
+              "$ref": "#/$defs/OllamaServing",
+              "description": "Ollama serving limits."
+            },
+            "storage": {
+              "$ref": "#/$defs/ManagedResource",
+              "description": "Optional model-volume ownership declaration. Omission means managed; the volume survives destroy."
+            }
+          },
+          "required": [
+            "kind",
+            "hardware",
+            "runtime",
+            "model"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Managed authentication proxy for an external Ollama daemon and model.",
+          "properties": {
+            "endpoint": {
+              "description": "Private or loopback HTTP IPv4:port/v1 published by the proxy and reachable by OpenShell.",
+              "type": "string"
+            },
+            "kind": {
+              "const": "ollamaProxy",
+              "description": "Supported installer selected by this service definition.",
+              "type": "string"
+            },
+            "management": {
+              "$ref": "#/$defs/ManagedManagement",
+              "description": "Optional ownership declaration; omission means managed."
+            },
+            "runtime": {
+              "$ref": "#/$defs/ServiceRuntime",
+              "description": "Docker runner and immutable NemoClaw proxy image. The external daemon runs on this same Linux host."
+            },
+            "upstream": {
+              "$ref": "#/$defs/ExternalOllama",
+              "description": "External loopback-only daemon and already-installed model."
+            }
+          },
+          "required": [
+            "kind",
+            "runtime",
+            "endpoint",
+            "upstream"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "allOf": [
+            {
+              "oneOf": [
+                {
+                  "required": [
+                    "hardware"
+                  ]
+                },
+                {
+                  "required": [
+                    "recipe"
+                  ]
+                }
+              ]
+            },
+            {
+              "if": {
+                "required": [
+                  "hardware"
+                ]
+              },
+              "then": {
+                "not": {
+                  "anyOf": [
+                    {
+                      "required": [
+                        "recipe"
+                      ]
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              "if": {
+                "properties": {
+                  "memory": {
+                    "properties": {
+                      "gpuMemoryUtilization": {}
+                    },
+                    "required": [
+                      "gpuMemoryUtilization"
+                    ]
+                  }
+                },
+                "required": [
+                  "memory"
+                ]
+              },
+              "then": {
+                "allOf": [
+                  {
+                    "properties": {
+                      "hardware": {
+                        "properties": {
+                          "minGpuMemoryBytes": {}
+                        },
+                        "required": [
+                          "minGpuMemoryBytes"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "hardware"
+                    ]
+                  },
+                  {
+                    "properties": {
+                      "hardware": {
+                        "properties": {
+                          "profile": {
+                            "not": {
+                              "enum": [
+                                "dgx-spark"
+                              ]
+                            }
+                          }
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "not": {
+                      "anyOf": [
+                        {
+                          "required": [
+                            "recipe"
+                          ]
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "properties": {
+                      "memory": {
+                        "properties": {
+                          "gpuMemoryGiB": {
+                            "const": 0
+                          }
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "properties": {
+                      "memory": {
+                        "properties": {
+                          "kvCacheGiB": {
+                            "const": 0
+                          }
+                        }
+                      }
+                    }
+                  }
+                ],
+                "required": [
+                  "hardware"
+                ]
+              }
+            },
+            {
+              "if": {
+                "required": [
+                  "recipe"
+                ]
+              },
+              "then": {
+                "allOf": [
+                  {
+                    "properties": {
+                      "serving": {
+                        "properties": {
+                          "modelName": {
+                            "const": ""
+                          }
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "properties": {
+                      "serving": {
+                        "properties": {
+                          "mambaBackend": {
+                            "const": ""
+                          }
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "properties": {
+                      "serving": {
+                        "not": {
+                          "anyOf": [
+                            {
+                              "required": [
+                                "enforceEager"
+                              ]
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          ],
+          "dependentRequired": {
+            "placement": [
+              "publication"
+            ],
+            "publication": [
+              "placement"
+            ]
+          },
+          "description": "Managed vLLM runtime and immutable model snapshot.",
+          "else": {
+            "properties": {
+              "serving": {
+                "properties": {
+                  "speculativeTokens": {
+                    "const": 0
+                  }
+                }
+              }
+            }
+          },
+          "if": {
+            "required": [
+              "recipe"
+            ]
+          },
+          "properties": {
+            "authentication": {
+              "$ref": "#/$defs/ServiceAuthentication",
+              "description": "Optional native bearer authentication. The runtime generates and retains the key; omission preserves unauthenticated serving."
+            },
+            "container": {
+              "$ref": "#/$defs/ServiceContainer",
+              "description": "Optional managed container IPC and shared-memory settings. Omission uses private IPC and 8 GiB of shared memory."
+            },
+            "hardware": {
+              "$ref": "#/$defs/ServiceHardware",
+              "description": "Explicit hardware contract: a named GPU or system profile, or dedicated GPU requirements for Linux AMD64. Required without an inline recipe; excludes recipe.",
+              "x-nemoclaw-required": "Without recipe"
+            },
+            "kind": {
+              "const": "vllm",
+              "description": "Supported installer selected by this service definition.",
+              "type": "string"
+            },
+            "management": {
+              "$ref": "#/$defs/ManagedManagement",
+              "description": "Optional managed ownership declaration. Omission means managed."
+            },
+            "memory": {
+              "$ref": "#/$defs/Memory",
+              "description": "GPU budget and resident watchdog thresholds. Omission selects the SDK defaults."
+            },
+            "model": {
+              "$ref": "#/$defs/Model",
+              "description": "Public Hugging Face repository and immutable commit."
+            },
+            "placement": {
+              "$ref": "#/$defs/ServicePlacement",
+              "description": "SSH Docker placement. Required with an external gateway or Podman sandbox; requires publication.",
+              "x-nemoclaw-required": "With external gateway or Podman; paired with publication"
+            },
+            "publication": {
+              "$ref": "#/$defs/ServicePublication",
+              "description": "Private inference address reachable by OpenShell. Required with placement.",
+              "x-nemoclaw-required": "With placement"
+            },
+            "recipe": {
+              "$ref": "#/$defs/InlineRecipe",
+              "description": "Inline preparation and serving contract supplied by the pinned runtime image. Required without hardware; excludes hardware.",
+              "x-nemoclaw-required": "Without hardware"
+            },
+            "runtime": {
+              "$ref": "#/$defs/ServiceRuntime",
+              "description": "Docker runner and immutable NemoClaw vLLM runtime image."
+            },
+            "serving": {
+              "$ref": "#/$defs/Serving",
+              "description": "Service limits. Omission selects the SDK defaults; recipe serving settings select recipe-specific parsers and execution options."
+            },
+            "storage": {
+              "$ref": "#/$defs/ManagedResource",
+              "description": "Optional ownership declaration for model storage. Omission means managed; existing retention behavior is unchanged."
+            }
+          },
+          "required": [
+            "kind",
+            "runtime",
+            "model"
+          ],
+          "then": {
+            "properties": {
+              "memory": {
+                "properties": {
+                  "gpuMemoryGiB": {
+                    "const": 0
+                  }
+                }
+              }
+            }
+          },
+          "type": "object"
+        }
+      ]
     },
     "ServiceHardware": {
       "anyOf": [
@@ -3334,11 +3297,6 @@
       "additionalProperties": false,
       "description": "Execution host and Docker network for a remote model service.",
       "properties": {
-        "engine": {
-          "description": "SSH Docker endpoint, for example ssh://gpu-box.",
-          "pattern": "^ssh://",
-          "type": "string"
-        },
         "network": {
           "$ref": "#/$defs/ManagedResource",
           "description": "Optional ownership declaration for the network configured by networkCIDR. Omission means managed."
@@ -3350,7 +3308,6 @@
         }
       },
       "required": [
-        "engine",
         "networkCidr"
       ],
       "type": "object"
@@ -3375,6 +3332,37 @@
       ],
       "type": "object"
     },
+    "ServiceRuntime": {
+      "additionalProperties": false,
+      "description": "Container runner and immutable image used by a managed service installer.",
+      "properties": {
+        "engine": {
+          "description": "Explicit Docker endpoint used to install, observe, and remove the service.",
+          "pattern": "^(unix:///|ssh://)",
+          "type": "string"
+        },
+        "image": {
+          "description": "Immutable image reference used by the package installer.",
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:/-]*@sha256:[a-f0-9]{64}$",
+          "type": "string"
+        },
+        "imagePullPolicy": {
+          "$ref": "#/$defs/ImagePullPolicy",
+          "description": "Image acquisition before container creation. The selected installer defines the omitted default."
+        },
+        "provider": {
+          "const": "docker",
+          "description": "Supported container runner. The initial service contract uses Docker.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "provider",
+        "engine",
+        "image"
+      ],
+      "type": "object"
+    },
     "Serving": {
       "additionalProperties": false,
       "description": "Limits apply with or without a recipe. Recipe serving settings replace the ordinary service parser settings.",
@@ -3390,10 +3378,10 @@
             }
           ],
           "default": 1024,
-          "description": "Maximum tokens in a scheduled vLLM batch. Ollama requires omission or zero and does not expose this control.",
+          "description": "Maximum tokens in a scheduled batch.",
           "format": "int64",
           "type": "integer",
-          "x-nemoclaw-default-rule": "Omitted or zero selects 1024 for vLLM. Ollama requires zero and uses native batching."
+          "x-nemoclaw-default-rule": "Omitted or zero selects the default."
         },
         "contextTokens": {
           "anyOf": [
@@ -3450,7 +3438,7 @@
             }
           ],
           "default": "",
-          "description": "Optional vLLM model alias without a recipe. Omission uses the repository. Ollama requires omission and serves model.name; routes must match the advertised name.",
+          "description": "Optional advertised model name without a recipe. Omission uses the model repository; routes must match the advertised name.",
           "type": "string"
         },
         "port": {
@@ -3638,7 +3626,7 @@
     },
     "Spec": {
       "additionalProperties": false,
-      "description": "The configuration requires one to 32 named sandboxes and at least one selected inference provider. At most one selected provider may have managed inference dependencies.",
+      "description": "The configuration requires one to 32 named sandboxes and at least one selected inference provider. Managed packages declared under services are installed independently of their consumers.",
       "properties": {
         "gateway": {
           "$ref": "#/$defs/Gateway",
@@ -3689,6 +3677,16 @@
           "maxItems": 32,
           "minItems": 1,
           "type": "array"
+        },
+        "services": {
+          "additionalProperties": {
+            "$ref": "#/$defs/ServiceDefinition"
+          },
+          "description": "Named managed container services to install, verify once, and remove during destroy. Inference providers may consume their connection through serviceRef.",
+          "propertyNames": {
+            "pattern": "^[a-z][a-z0-9-]{0,39}$"
+          },
+          "type": "object"
         }
       },
       "required": [
@@ -4031,125 +4029,6 @@
                   }
                 }
               }
-            }
-          },
-          {
-            "if": {
-              "allOf": [
-                {
-                  "properties": {
-                    "spec": {
-                      "properties": {
-                        "inferenceProviders": {
-                          "items": {
-                            "properties": {
-                              "service": {}
-                            },
-                            "required": [
-                              "service"
-                            ]
-                          }
-                        }
-                      },
-                      "required": [
-                        "inferenceProviders"
-                      ]
-                    }
-                  },
-                  "required": [
-                    "spec"
-                  ]
-                },
-                {
-                  "anyOf": [
-                    {
-                      "properties": {
-                        "spec": {
-                          "properties": {
-                            "gateway": {
-                              "properties": {
-                                "management": {
-                                  "const": "external"
-                                }
-                              },
-                              "required": [
-                                "management"
-                              ]
-                            }
-                          },
-                          "required": [
-                            "gateway"
-                          ]
-                        }
-                      },
-                      "required": [
-                        "spec"
-                      ]
-                    },
-                    {
-                      "properties": {
-                        "spec": {
-                          "properties": {
-                            "sandboxes": {
-                              "items": {
-                                "properties": {
-                                  "runtime": {
-                                    "properties": {
-                                      "provider": {
-                                        "const": "podman"
-                                      }
-                                    },
-                                    "required": [
-                                      "provider"
-                                    ]
-                                  }
-                                },
-                                "required": [
-                                  "runtime"
-                                ]
-                              }
-                            }
-                          },
-                          "required": [
-                            "sandboxes"
-                          ]
-                        }
-                      },
-                      "required": [
-                        "spec"
-                      ]
-                    }
-                  ]
-                }
-              ]
-            },
-            "then": {
-              "properties": {
-                "spec": {
-                  "properties": {
-                    "inferenceProviders": {
-                      "items": {
-                        "properties": {
-                          "service": {
-                            "required": [
-                              "placement"
-                            ]
-                          }
-                        },
-                        "required": [
-                          "service"
-                        ]
-                      }
-                    }
-                  },
-                  "required": [
-                    "inferenceProviders"
-                  ]
-                }
-              },
-              "required": [
-                "spec"
-              ]
             }
           },
           {
@@ -4681,19 +4560,7 @@
                               },
                               {
                                 "required": [
-                                  "ollamaProxy"
-                                ]
-                              },
-                              {
-                                "properties": {
-                                  "service": {
-                                    "required": [
-                                      "authentication"
-                                    ]
-                                  }
-                                },
-                                "required": [
-                                  "service"
+                                  "serviceRef"
                                 ]
                               }
                             ]
@@ -4771,67 +4638,6 @@
                                                 ]
                                               }
                                             ]
-                                          }
-                                        }
-                                      }
-                                    }
-                                  }
-                                }
-                              }
-                            }
-                          }
-                        }
-                      }
-                    }
-                  }
-                }
-              }
-            }
-          },
-          {
-            "if": {
-              "properties": {
-                "spec": {
-                  "properties": {
-                    "inferenceProviders": {
-                      "items": {
-                        "properties": {
-                          "ollama": {}
-                        },
-                        "required": [
-                          "ollama"
-                        ]
-                      }
-                    }
-                  },
-                  "required": [
-                    "inferenceProviders"
-                  ]
-                }
-              },
-              "required": [
-                "spec"
-              ]
-            },
-            "then": {
-              "properties": {
-                "spec": {
-                  "properties": {
-                    "sandboxes": {
-                      "items": {
-                        "properties": {
-                          "agent": {
-                            "properties": {
-                              "inference": {
-                                "properties": {
-                                  "routes": {
-                                    "items": {
-                                      "properties": {
-                                        "overrides": {
-                                          "properties": {
-                                            "model": {
-                                              "pattern": "^[a-z0-9][a-z0-9._-]*:[a-z0-9][a-z0-9._-]*$"
-                                            }
                                           }
                                         }
                                       }
@@ -5036,143 +4842,6 @@
                   }
                 }
               }
-            }
-          },
-          {
-            "if": {
-              "allOf": [
-                {
-                  "properties": {
-                    "spec": {
-                      "properties": {
-                        "sandboxes": {
-                          "items": {
-                            "properties": {
-                              "inferenceProviders": {
-                                "items": {
-                                  "properties": {
-                                    "service": {}
-                                  },
-                                  "required": [
-                                    "service"
-                                  ]
-                                }
-                              }
-                            },
-                            "required": [
-                              "inferenceProviders"
-                            ]
-                          }
-                        }
-                      },
-                      "required": [
-                        "sandboxes"
-                      ]
-                    }
-                  },
-                  "required": [
-                    "spec"
-                  ]
-                },
-                {
-                  "anyOf": [
-                    {
-                      "properties": {
-                        "spec": {
-                          "properties": {
-                            "gateway": {
-                              "properties": {
-                                "management": {
-                                  "const": "external"
-                                }
-                              },
-                              "required": [
-                                "management"
-                              ]
-                            }
-                          },
-                          "required": [
-                            "gateway"
-                          ]
-                        }
-                      },
-                      "required": [
-                        "spec"
-                      ]
-                    },
-                    {
-                      "properties": {
-                        "spec": {
-                          "properties": {
-                            "sandboxes": {
-                              "items": {
-                                "properties": {
-                                  "runtime": {
-                                    "properties": {
-                                      "provider": {
-                                        "const": "podman"
-                                      }
-                                    },
-                                    "required": [
-                                      "provider"
-                                    ]
-                                  }
-                                },
-                                "required": [
-                                  "runtime"
-                                ]
-                              }
-                            }
-                          },
-                          "required": [
-                            "sandboxes"
-                          ]
-                        }
-                      },
-                      "required": [
-                        "spec"
-                      ]
-                    }
-                  ]
-                }
-              ]
-            },
-            "then": {
-              "properties": {
-                "spec": {
-                  "properties": {
-                    "sandboxes": {
-                      "items": {
-                        "properties": {
-                          "inferenceProviders": {
-                            "items": {
-                              "properties": {
-                                "service": {
-                                  "required": [
-                                    "placement"
-                                  ]
-                                }
-                              },
-                              "required": [
-                                "service"
-                              ]
-                            }
-                          }
-                        },
-                        "required": [
-                          "inferenceProviders"
-                        ]
-                      }
-                    }
-                  },
-                  "required": [
-                    "sandboxes"
-                  ]
-                }
-              },
-              "required": [
-                "spec"
-              ]
             }
           },
           {
@@ -5755,19 +5424,7 @@
                                     },
                                     {
                                       "required": [
-                                        "ollamaProxy"
-                                      ]
-                                    },
-                                    {
-                                      "properties": {
-                                        "service": {
-                                          "required": [
-                                            "authentication"
-                                          ]
-                                        }
-                                      },
-                                      "required": [
-                                        "service"
+                                        "serviceRef"
                                       ]
                                     }
                                   ]
@@ -5851,76 +5508,6 @@
                                                 ]
                                               }
                                             ]
-                                          }
-                                        }
-                                      }
-                                    }
-                                  }
-                                }
-                              }
-                            }
-                          }
-                        }
-                      }
-                    }
-                  }
-                }
-              }
-            }
-          },
-          {
-            "if": {
-              "properties": {
-                "spec": {
-                  "properties": {
-                    "sandboxes": {
-                      "items": {
-                        "properties": {
-                          "inferenceProviders": {
-                            "items": {
-                              "properties": {
-                                "ollama": {}
-                              },
-                              "required": [
-                                "ollama"
-                              ]
-                            }
-                          }
-                        },
-                        "required": [
-                          "inferenceProviders"
-                        ]
-                      }
-                    }
-                  },
-                  "required": [
-                    "sandboxes"
-                  ]
-                }
-              },
-              "required": [
-                "spec"
-              ]
-            },
-            "then": {
-              "properties": {
-                "spec": {
-                  "properties": {
-                    "sandboxes": {
-                      "items": {
-                        "properties": {
-                          "agent": {
-                            "properties": {
-                              "inference": {
-                                "properties": {
-                                  "routes": {
-                                    "items": {
-                                      "properties": {
-                                        "overrides": {
-                                          "properties": {
-                                            "model": {
-                                              "pattern": "^[a-z0-9][a-z0-9._-]*:[a-z0-9][a-z0-9._-]*$"
-                                            }
                                           }
                                         }
                                       }
@@ -6095,185 +5682,6 @@
                   }
                 }
               }
-            }
-          },
-          {
-            "if": {
-              "allOf": [
-                {
-                  "properties": {
-                    "spec": {
-                      "properties": {
-                        "sandboxes": {
-                          "items": {
-                            "properties": {
-                              "agent": {
-                                "properties": {
-                                  "inference": {
-                                    "properties": {
-                                      "routes": {
-                                        "items": {
-                                          "properties": {
-                                            "provider": {
-                                              "properties": {
-                                                "service": {}
-                                              },
-                                              "required": [
-                                                "service"
-                                              ]
-                                            }
-                                          },
-                                          "required": [
-                                            "provider"
-                                          ]
-                                        }
-                                      }
-                                    },
-                                    "required": [
-                                      "routes"
-                                    ]
-                                  }
-                                },
-                                "required": [
-                                  "inference"
-                                ]
-                              }
-                            },
-                            "required": [
-                              "agent"
-                            ]
-                          }
-                        }
-                      },
-                      "required": [
-                        "sandboxes"
-                      ]
-                    }
-                  },
-                  "required": [
-                    "spec"
-                  ]
-                },
-                {
-                  "anyOf": [
-                    {
-                      "properties": {
-                        "spec": {
-                          "properties": {
-                            "gateway": {
-                              "properties": {
-                                "management": {
-                                  "const": "external"
-                                }
-                              },
-                              "required": [
-                                "management"
-                              ]
-                            }
-                          },
-                          "required": [
-                            "gateway"
-                          ]
-                        }
-                      },
-                      "required": [
-                        "spec"
-                      ]
-                    },
-                    {
-                      "properties": {
-                        "spec": {
-                          "properties": {
-                            "sandboxes": {
-                              "items": {
-                                "properties": {
-                                  "runtime": {
-                                    "properties": {
-                                      "provider": {
-                                        "const": "podman"
-                                      }
-                                    },
-                                    "required": [
-                                      "provider"
-                                    ]
-                                  }
-                                },
-                                "required": [
-                                  "runtime"
-                                ]
-                              }
-                            }
-                          },
-                          "required": [
-                            "sandboxes"
-                          ]
-                        }
-                      },
-                      "required": [
-                        "spec"
-                      ]
-                    }
-                  ]
-                }
-              ]
-            },
-            "then": {
-              "properties": {
-                "spec": {
-                  "properties": {
-                    "sandboxes": {
-                      "items": {
-                        "properties": {
-                          "agent": {
-                            "properties": {
-                              "inference": {
-                                "properties": {
-                                  "routes": {
-                                    "items": {
-                                      "properties": {
-                                        "provider": {
-                                          "properties": {
-                                            "service": {
-                                              "required": [
-                                                "placement"
-                                              ]
-                                            }
-                                          },
-                                          "required": [
-                                            "service"
-                                          ]
-                                        }
-                                      },
-                                      "required": [
-                                        "provider"
-                                      ]
-                                    }
-                                  }
-                                },
-                                "required": [
-                                  "routes"
-                                ]
-                              }
-                            },
-                            "required": [
-                              "inference"
-                            ]
-                          }
-                        },
-                        "required": [
-                          "agent"
-                        ]
-                      }
-                    }
-                  },
-                  "required": [
-                    "sandboxes"
-                  ]
-                }
-              },
-              "required": [
-                "spec"
-              ]
             }
           },
           {
@@ -6964,19 +6372,7 @@
                                                 },
                                                 {
                                                   "required": [
-                                                    "ollamaProxy"
-                                                  ]
-                                                },
-                                                {
-                                                  "properties": {
-                                                    "service": {
-                                                      "required": [
-                                                        "authentication"
-                                                      ]
-                                                    }
-                                                  },
-                                                  "required": [
-                                                    "service"
+                                                    "serviceRef"
                                                   ]
                                                 }
                                               ]
@@ -7091,97 +6487,6 @@
                 }
               }
             }
-          },
-          {
-            "if": {
-              "properties": {
-                "spec": {
-                  "properties": {
-                    "sandboxes": {
-                      "items": {
-                        "properties": {
-                          "agent": {
-                            "properties": {
-                              "inference": {
-                                "properties": {
-                                  "routes": {
-                                    "items": {
-                                      "properties": {
-                                        "provider": {
-                                          "properties": {
-                                            "ollama": {}
-                                          },
-                                          "required": [
-                                            "ollama"
-                                          ]
-                                        }
-                                      },
-                                      "required": [
-                                        "provider"
-                                      ]
-                                    }
-                                  }
-                                },
-                                "required": [
-                                  "routes"
-                                ]
-                              }
-                            },
-                            "required": [
-                              "inference"
-                            ]
-                          }
-                        },
-                        "required": [
-                          "agent"
-                        ]
-                      }
-                    }
-                  },
-                  "required": [
-                    "sandboxes"
-                  ]
-                }
-              },
-              "required": [
-                "spec"
-              ]
-            },
-            "then": {
-              "properties": {
-                "spec": {
-                  "properties": {
-                    "sandboxes": {
-                      "items": {
-                        "properties": {
-                          "agent": {
-                            "properties": {
-                              "inference": {
-                                "properties": {
-                                  "routes": {
-                                    "items": {
-                                      "properties": {
-                                        "overrides": {
-                                          "properties": {
-                                            "model": {
-                                              "pattern": "^[a-z0-9][a-z0-9._-]*:[a-z0-9][a-z0-9._-]*$"
-                                            }
-                                          }
-                                        }
-                                      }
-                                    }
-                                  }
-                                }
-                              }
-                            }
-                          }
-                        }
-                      }
-                    }
-                  }
-                }
-              }
-            }
           }
         ]
       }
@@ -7224,9 +6529,9 @@
     "The parser checks uniquely named model choices with an explicit default for multiple choices, multiple choices for OpenClaw and Pi, and the OpenClaw disclosure mode; omitted disclosure means progressive.",
     "The parser resolves integrationRefs only from enclosing deployment or sandbox definitions, rejects name shadowing and incompatible agent grants, and permits at most one attached Brave search definition per sandbox. Agent-inline definitions attach directly; unused enclosing definitions grant no access.",
     "The parser requires exactly one sandbox harness or harnessRef, resolves visible harnesses without shadowing, and rejects agent-level harness selection. Each sandbox requires one agent and hosts one Fabric runtime using the sandbox-selected implementation. Shared definitions reuse configuration across sandboxes.",
-    "The parser permits non-default reasoningEffort values only on the initial default choice. Managed Ollama and its proxy currently manage one selected model; vLLM choices must match its served model.",
+    "The parser permits non-default reasoningEffort values only on the initial default choice. Managed inference services may constrain routes to their declared served model.",
     "The parser resolves inferenceRef from enclosing inferences, preserves declaration scope for nested provider references, and rejects missing names, shadowing, and inline/reference ambiguity.",
-    "The parser resolves providerRef from enclosing inferenceProviders, rejects shadowing, conflicting selected names, more than 32 selected providers, and more than one selected provider with managed Ollama or proxy dependencies, and compares route models and authentication with the selected provider. With multiple named definitions, provider/agent compatibility is a parser check. Unselected definitions create no resources. Snapshot identity must match the service model.",
+    "The parser resolves providerRef from enclosing inferenceProviders, rejects shadowing, conflicting selected names, more than 32 selected providers, incompatible managed-service combinations, and compares route models and authentication with the selected provider. With multiple named definitions, provider/agent compatibility is a parser check. Unselected definitions create no resources. Snapshot identity must match the service model.",
     "The parser checks memory threshold ordering and GPU/KV budget relationships; recipe path safety, byte-length limits, environment-map conflicts, snapshot file uniqueness, directory conflicts, and total-size overflow.",
     "Schema validation does not observe hardware, image labels, model weights, credentials, ownership, connectivity, or inference readiness. Those checks run during the relevant SDK operation."
   ]

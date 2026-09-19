@@ -42,13 +42,10 @@ impl ResourceAdapter {
             )
     }
     fn computed_digest(&self) -> bool {
-        self.definition.kind == "ollama_model"
+        self.definition.computed_digest
     }
     fn observed_running(&self) -> bool {
-        matches!(
-            self.definition.kind,
-            "managed_gateway" | "inference_service"
-        )
+        self.definition.observed_running
     }
     fn row(&self, state: &State, creating: bool) -> Result<Row, ObservationError> {
         state
@@ -397,8 +394,8 @@ mod tests {
         }
         let row = Row::from([("model".into(), "llama3:latest".into())]);
         assert_eq!(
-            download_resource("ollama_model", &row),
-            "ollama_model.llama3:latest"
+            download_resource("model_snapshot", &row),
+            "model_snapshot.llama3:latest"
         );
     }
 }

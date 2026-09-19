@@ -2,7 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 #![cfg(unix)]
 use nemoclaw_e2e::openshell::Fixture;
-use nemoclaw_sdk::{config::Document, recipes::huggingface};
+use nemoclaw_sdk::{
+    config::{Document, ServiceDefinition},
+    services::installers::vllm::recipes::huggingface,
+};
 use serde_json::{Value, json};
 use std::{
     fs,
@@ -105,23 +108,24 @@ async fn lifecycle(harness: &str, authenticated: bool) {
     let mut value = serde_json::to_value(document).unwrap();
     let check_pulls = harness == "openclaw" && !authenticated;
     if check_pulls {
-        value["spec"]["inferenceProviders"][0]["service"]["imagePullPolicy"] =
-            json!("IfNotPresent");
+        value["spec"]["services"]["qwen"]["runtime"]["imagePullPolicy"] = json!("IfNotPresent");
     }
     value["spec"]["sandboxes"][0]["harness"]["kind"] = harness.into();
     value["spec"]["gateway"] = json!({"management":"external","endpoint":gateway.endpoint});
     value["spec"]["sandboxes"][0]["runtime"]["provider"] = json!("podman");
-    value["spec"]["inferenceProviders"][0]["service"]["placement"] =
-        json!({"engine":"ssh://operator@gpu-box","networkCidr":"172.30.119.0/24"});
-    value["spec"]["inferenceProviders"][0]["service"]["publication"] =
+    value["spec"]["services"]["qwen"]["runtime"]["engine"] = json!("ssh://operator@gpu-box");
+    value["spec"]["services"]["qwen"]["placement"] = json!({"networkCidr":"172.30.119.0/24"});
+    value["spec"]["services"]["qwen"]["publication"] =
         json!({"endpoint":"http://10.0.0.8:18888/v1","bindAddress":"10.0.0.8"});
     if authenticated {
-        value["spec"]["inferenceProviders"][0]["service"]["authentication"] = "bearer".into();
+        value["spec"]["services"]["qwen"]["authentication"] = "bearer".into();
         value["spec"]["sandboxes"][0]["agent"]["auth"] = json!({"method":"api-key"});
     }
     save(root, "config.yaml", &value);
     let parsed = Document::parse(serde_json::to_vec(&value).unwrap().as_slice()).unwrap();
-    let service = parsed.spec.inference_providers[0].service.as_ref().unwrap();
+    let ServiceDefinition::Vllm(service) = &parsed.spec.services["qwen"] else {
+        panic!("expected vLLM service");
+    };
     let recipe = service.recipe.as_ref().unwrap();
     let manifest = recipe.snapshot.as_ref().unwrap();
     let model = huggingface::directory(service);
@@ -148,11 +152,11 @@ async fn lifecycle(harness: &str, authenticated: bool) {
     files[format!("/data/{model}/{}", huggingface::MANIFEST_FILE)] = json!({"version":1,"repository":manifest.repository,"revision":manifest.revision,"files":downloaded_files});
     files["/data/status.json"] =
         json!({"phase":"ready","detail":"","updated":"2026-09-15T00:00:00Z","pid":42});
-    let service = &value["spec"]["inferenceProviders"][0]["service"];
+    let service = &value["spec"]["services"]["qwen"];
     save(
         root,
         "fixture.json",
-        &json!({"files":files,"stats":stats,"image":{"Id":"sha256:runtime","Architecture":"arm64","Os":"linux","Config":{"Env":[],"Labels":{"org.nemoclaw.recipe.protocol":"v1","org.nemoclaw.inference.authentication":"bearer-v1","org.nemoclaw.backend":service["backend"],"org.nemoclaw.model":service["model"]["revision"]}}}}),
+        &json!({"files":files,"stats":stats,"image":{"Id":"sha256:runtime","Architecture":"arm64","Os":"linux","Config":{"Env":[],"Labels":{"org.nemoclaw.recipe.protocol":"v1","org.nemoclaw.inference.authentication":"bearer-v1","org.nemoclaw.backend":"vllm","org.nemoclaw.model":service["model"]["revision"]}}}}),
     );
     save(
         root,
@@ -203,7 +207,7 @@ async fn lifecycle(harness: &str, authenticated: bool) {
         let before = read(root, "engine.json");
         assert_eq!(before["pulls"], 1);
         let mut changed = read(root, "config.yaml");
-        changed["spec"]["inferenceProviders"][0]["service"]["imagePullPolicy"] = json!("Always");
+        changed["spec"]["services"]["qwen"]["runtime"]["imagePullPolicy"] = json!("Always");
         save(root, "config.yaml", &changed);
         run(root, &bundle, "plan", "config.yaml", true).await;
         run(root, &bundle, "apply", "config.yaml", true).await;
@@ -227,12 +231,11 @@ async fn lifecycle(harness: &str, authenticated: bool) {
     assert!(!String::from_utf8_lossy(&exported).contains(&bearer));
     if check_pulls {
         let document = Document::parse(exported.as_slice()).unwrap();
+        let ServiceDefinition::Vllm(service) = &document.spec.services["qwen"] else {
+            panic!("expected vllm")
+        };
         assert_eq!(
-            document.spec.inference_providers[0]
-                .service
-                .as_ref()
-                .unwrap()
-                .image_pull_policy,
+            service.runtime.image_pull_policy,
             Some(nemoclaw_sdk::config::ImagePullPolicy::Always)
         );
     }
@@ -305,7 +308,7 @@ async fn lifecycle(harness: &str, authenticated: bool) {
     );
     if check_pulls {
         let mut changed = read(root, "config.yaml");
-        changed["spec"]["inferenceProviders"][0]["service"]
+        changed["spec"]["services"]["qwen"]["runtime"]
             .as_object_mut()
             .unwrap()
             .remove("imagePullPolicy");

@@ -2,14 +2,18 @@
 // SPDX-License-Identifier: Apache-2.0
 use nemoclaw_sdk::{
     config::{Document, schema::input_schema},
-    hardware::{Capacity, GIB, GpuMemory, check_capacity, serving_memory},
+    hardware::{Capacity, GIB, GpuMemory},
+    services::{
+        ServiceDefinition,
+        installers::vllm::hardware_capacity::{check_capacity, serving_memory},
+    },
 };
 use serde_json::{Value, json};
 
 fn input(hardware: Value) -> Value {
     let mut value: Value =
         serde_saphyr::from_str(include_str!("../../../examples/spark/vllm.yaml")).unwrap();
-    value["spec"]["inferenceProviders"][0]["service"]["hardware"] = hardware;
+    value["spec"]["services"]["qwen"]["hardware"] = hardware;
     value
 }
 
@@ -58,7 +62,9 @@ fn profiles_validate_gpu_identity_and_keep_hbm_separate_from_host_ram() {
                 Document::parse(doc.yaml().unwrap().as_bytes()).unwrap(),
                 doc
             );
-            let service = doc.spec.inference_providers[0].service.as_ref().unwrap();
+            let ServiceDefinition::Vllm(service) = &doc.spec.services["qwen"] else {
+                panic!("expected vllm")
+            };
             // Fixture capacity, not a datasheet assertion about this GPU model.
             let capacity = Capacity {
                 architecture: (*architecture).into(),
@@ -146,15 +152,15 @@ fn profile_schema_requires_gpu_host_architecture_and_rejects_ambiguous_names() {
 fn fractional_profile_budgets_require_an_explicit_minimum_memory() {
     let schema = jsonschema::validator_for(&input_schema()).unwrap();
     let mut value = input(json!({"profile":"h100", "architecture":"amd64"}));
-    value["spec"]["inferenceProviders"][0]["service"]["memory"] =
-        json!({"gpuMemoryUtilization": 0.75});
+    value["spec"]["services"]["qwen"]["memory"] = json!({"gpuMemoryUtilization": 0.75});
     assert!(Document::parse(value.to_string().as_bytes()).is_err());
     assert!(!schema.is_valid(&value));
-    value["spec"]["inferenceProviders"][0]["service"]["hardware"]["minGpuMemoryBytes"] =
-        json!(64 * GIB);
+    value["spec"]["services"]["qwen"]["hardware"]["minGpuMemoryBytes"] = json!(64 * GIB);
     let doc = Document::parse(value.to_string().as_bytes()).unwrap();
     assert!(schema.is_valid(&value));
-    let service = doc.spec.inference_providers[0].service.as_ref().unwrap();
+    let ServiceDefinition::Vllm(service) = &doc.spec.services["qwen"] else {
+        panic!("expected vllm")
+    };
     assert_eq!(service.gpu_bytes().unwrap(), 48 * GIB);
     let args = service.arguments("/data/model", 80 * GIB).unwrap();
     assert!(
@@ -174,7 +180,9 @@ fn similar_gpu_names_cannot_satisfy_a_different_profile() {
     ] {
         let value = input(json!({"profile":profile,"architecture":"amd64"}));
         let doc = Document::parse(value.to_string().as_bytes()).unwrap();
-        let service = doc.spec.inference_providers[0].service.as_ref().unwrap();
+        let ServiceDefinition::Vllm(service) = &doc.spec.services["qwen"] else {
+            panic!("expected vllm")
+        };
         let capacity = Capacity {
             architecture: "amd64".into(),
             gpu: format!("NVIDIA {other}"),

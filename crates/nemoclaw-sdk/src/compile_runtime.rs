@@ -3,13 +3,26 @@
 use super::*;
 use crate::{
     Error,
-    managed::{GATEWAY_KIND, GATEWAY_STORAGE_KIND, SERVICE_KIND, STORAGE_KIND, Spec, Storage},
+    managed::{GATEWAY_KIND, GATEWAY_STORAGE_KIND, Spec},
 };
 pub fn runtime_targets(
     document: &Document,
     generations: &Generations,
 ) -> Result<Vec<Target>, Error> {
     document.validate()?;
+    let service_plans = service_plans(
+        document,
+        generations,
+        crate::services::InstallStage::Runtime,
+    )?;
+    runtime_targets_with_plans(document, generations, &service_plans)
+}
+
+fn runtime_targets_with_plans(
+    document: &Document,
+    generations: &Generations,
+    service_plans: &crate::services::InstallPlans,
+) -> Result<Vec<Target>, Error> {
     if !document.has_runtime() {
         return Ok(Vec::new());
     }
@@ -21,7 +34,7 @@ pub fn runtime_targets(
         owner: document.metadata.uid.clone(),
         generation: generation(generations, GATEWAY_KIND)?.into(),
         gateway: document.spec.gateway.runtime_settings(),
-        service: None,
+        process: None,
     };
     let mut storage = gateway.clone();
     storage.layout = 0;
@@ -44,48 +57,7 @@ pub fn runtime_targets(
     } else {
         Vec::new()
     };
-    for provider in document.selected_inference_providers()? {
-        let Some(service) = provider.service.as_ref() else {
-            continue;
-        };
-        let key = document.provider_key(provider);
-        let spec = Spec {
-            layout: 0,
-            compute_driver: "docker".into(),
-            kind: SERVICE_KIND.into(),
-            name: format!("{}-inference-{key}", document.workspace()),
-            owner: document.metadata.uid.clone(),
-            generation: generation(generations, SERVICE_KIND)?.into(),
-            gateway: if service.placement.is_some() {
-                Default::default()
-            } else {
-                document.spec.gateway.runtime_settings()
-            },
-            service: Some(service.runtime_settings()),
-        };
-        let storage = Storage {
-            name: format!("{}-data", spec.name),
-            owner: spec.owner.clone(),
-            generation: spec.generation.clone(),
-            engine: spec.engine().to_owned(),
-        };
-        for (kind, spec) in [
-            (STORAGE_KIND, storage.json()?),
-            (SERVICE_KIND, spec.json()?),
-        ] {
-            let mut values = Row::from([("spec".into(), spec)]);
-            if kind == SERVICE_KIND
-                && let Some(policy) = service.image_pull_policy
-            {
-                values.insert("image_pull_policy".into(), policy.as_str().into());
-            }
-            result.push(Target {
-                kind: kind.into(),
-                address: format!("nemoclaw_{kind}.inference_{key}"),
-                values,
-            });
-        }
-    }
+    result.extend(service_plans.targets().cloned());
     Ok(result)
 }
 pub fn compile_runtime(
@@ -93,32 +65,30 @@ pub fn compile_runtime(
     generations: &Generations,
     version: &str,
 ) -> Result<Value, Error> {
-    let mut graph = compile(document, generations, version)?;
+    document.validate()?;
+    let service_plans = service_plans(
+        document,
+        generations,
+        crate::services::InstallStage::Runtime,
+    )?;
+    let mut graph = compile_with_plans(document, generations, version, &service_plans)?;
     graph["resource"] = json!({});
-    for target in runtime_targets(document, generations)? {
+    for target in runtime_targets_with_plans(document, generations, &service_plans)? {
         let mut attrs =
             json!({"spec":target.values["spec"].replace("${", "$${").replace("%{", "%%{")});
         if let Some(policy) = target.values.get("image_pull_policy") {
             attrs["image_pull_policy"] = json!(policy);
         }
-        match target.kind.as_str() {
-            GATEWAY_STORAGE_KIND | STORAGE_KIND => {
-                attrs["lifecycle"] = json!({"prevent_destroy":true})
-            }
-            GATEWAY_KIND => attrs["depends_on"] = json!(["nemoclaw_gateway_storage.runtime"]),
-            SERVICE_KIND => {
-                let spec: Spec = serde_json::from_str(&target.values["spec"])
-                    .map_err(|_| Error::State("invalid compiled runtime"))?;
-                let logical = target.address.split_once('.').unwrap().1;
-                let mut dependencies = vec![format!("nemoclaw_inference_storage.{logical}")];
-                if document.spec.gateway.management == "managed"
-                    && spec.service.as_ref().is_some_and(|s| s.placement.is_none())
-                {
-                    dependencies.insert(0, "nemoclaw_managed_gateway.runtime".into());
-                }
-                attrs["depends_on"] = json!(dependencies);
-            }
-            _ => unreachable!(),
+        if target.kind == GATEWAY_STORAGE_KIND
+            || crate::services::resource_behavior(&target.kind).retained_storage
+        {
+            attrs["lifecycle"] = json!({"prevent_destroy":true});
+        }
+        if target.kind == GATEWAY_KIND {
+            attrs["depends_on"] = json!(["nemoclaw_gateway_storage.runtime"]);
+        }
+        if let Some(dependencies) = service_plans.dependencies(&target.address) {
+            attrs["depends_on"] = json!(dependencies);
         }
         let (kind, logical) = target.address.split_once('.').unwrap();
         graph["resource"][kind][logical] = attrs;

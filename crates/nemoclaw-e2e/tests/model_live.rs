@@ -2,8 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 #![cfg(target_os = "linux")]
 use nemoclaw_sdk::{
-    CancellationToken, Deployment, config::Document, docker::Engine, managed::Spec,
-    recipes::huggingface,
+    CancellationToken, Deployment,
+    config::{Document, ServiceDefinition},
+    docker::Engine,
+    managed::Spec,
+    services::installers::vllm::recipes::huggingface,
 };
 use serde_json::Value;
 use std::{
@@ -75,11 +78,13 @@ async fn exercise(fresh: bool) {
     let directory = explicit("NEMOCLAW_LIVE_MODEL_STATE");
     let deployment = Deployment::new(&directory, &explicit("NEMOCLAW_TEST_BUNDLE"));
     let cancel = CancellationToken::new();
-    let desired = document.spec.inference_providers[0]
-        .service
+    let service_name = document.spec.inference_providers[0]
+        .service_ref
         .as_ref()
         .unwrap();
-    assert_eq!(desired.backend, "vllm");
+    let ServiceDefinition::Vllm(desired) = &document.spec.services[service_name] else {
+        panic!("expected vLLM service");
+    };
     let planned = deployment.plan(&document, &cancel).await.unwrap();
     if fresh {
         assert!(!planned.changes.is_empty());

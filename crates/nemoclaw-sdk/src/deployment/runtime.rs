@@ -7,18 +7,10 @@ mod tests;
 use super::*;
 use crate::{
     ObservationError,
-    managed::{GATEWAY_KIND, GATEWAY_STORAGE_KIND, SERVICE_KIND, STORAGE_KIND, Spec, Storage},
+    managed::{GATEWAY_KIND, GATEWAY_STORAGE_KIND, Spec, Storage},
 };
 use std::time::Duration;
 const GATEWAY_STORAGE: &str = "nemoclaw_gateway_storage.runtime";
-fn model_storage(address: &str) -> String {
-    address.replacen(
-        "nemoclaw_inference_service.",
-        "nemoclaw_inference_storage.",
-        1,
-    )
-}
-const GATEWAY: &str = "nemoclaw_managed_gateway.runtime";
 pub(super) fn check_runtime_plan(
     plan: &Plan,
     allowed: &BTreeMap<String, Row>,
@@ -36,10 +28,7 @@ pub(super) fn check_runtime_plan(
             "runtime plan contains an undeclared resource",
         ))?;
         if change.change.actions == ["delete", "create"] {
-            if !(change.address == GATEWAY
-                || change.address.starts_with("nemoclaw_inference_service."))
-                || !replacements.contains(&change.address)
-            {
+            if !replacements.contains(&change.address) {
                 return Err(Error::Conflict(
                     "runtime replacement requires verified retained storage",
                 ));
@@ -104,6 +93,8 @@ struct RuntimeValidation {
 }
 async fn validate_runtime_environment(
     engines: &crate::docker::Connections,
+    document: &Document,
+    generations: &crate::compile::Generations,
     targets: &[Target],
     bindings: &BTreeMap<String, StateBinding>,
 ) -> Result<RuntimeValidation, Error> {
@@ -122,10 +113,10 @@ async fn validate_runtime_environment(
     }
     let mut retained = BTreeSet::new();
     // Storage must be observed before authorizing any process replacement.
-    for target in targets
-        .iter()
-        .filter(|target| matches!(target.kind.as_str(), STORAGE_KIND | GATEWAY_STORAGE_KIND))
-    {
+    for target in targets.iter().filter(|target| {
+        target.kind == GATEWAY_STORAGE_KIND
+            || crate::services::resource_behavior(&target.kind).retained_storage
+    }) {
         let engine = crate::managed::runtime_engine(engines, &target.kind, &target.values)?;
         let id = bindings
             .get(&target.address)
@@ -138,7 +129,7 @@ async fn validate_runtime_environment(
                 "bound storage specification differs from retained intent",
             ));
         }
-        let observed = if target.kind == STORAGE_KIND {
+        let observed = if crate::services::resource_behavior(&target.kind).retained_storage {
             let spec: Storage = serde_json::from_str(&target.values["spec"])
                 .map_err(|_| Error::State("invalid compiled storage"))?;
             spec.observe(&engine, id).await?
@@ -154,11 +145,11 @@ async fn validate_runtime_environment(
             retained.insert(target.address.clone());
         }
     }
-    let mut service_budgets: BTreeMap<String, Vec<(Spec, bool)>> = BTreeMap::new();
-    for target in targets
-        .iter()
-        .filter(|target| matches!(target.kind.as_str(), GATEWAY_KIND | SERVICE_KIND))
-    {
+    let mut service_budgets = Vec::new();
+    for target in targets.iter().filter(|target| {
+        target.kind == GATEWAY_KIND
+            || crate::services::resource_behavior(&target.kind).runtime_process
+    }) {
         let want: Spec = serde_json::from_str(&target.values["spec"])
             .map_err(|_| Error::State("invalid compiled runtime"))?;
         let engine = crate::managed::runtime_engine(engines, &target.kind, &target.values)?;
@@ -176,49 +167,32 @@ async fn validate_runtime_environment(
             Err(Error::PartialRuntime) if id.is_empty() => None,
             other => other?,
         };
-        if want.kind == GATEWAY_KIND || want.service.as_ref().is_some_and(|s| s.placement.is_some())
+        if want.kind == GATEWAY_KIND
+            || want
+                .process
+                .as_ref()
+                .is_some_and(|process| process.create_network)
         {
             engine.checked_network(&want).await?;
         }
         if want.kind == GATEWAY_KIND {
             result.gateway_running = observed.as_ref().is_some_and(|o| o.running);
         }
-        if want.service.is_some() {
-            engine.check_capacity(&want, observed.as_ref()).await?;
-            service_budgets
-                .entry(want.engine().to_owned())
-                .or_default()
-                .push((want.clone(), observed.as_ref().is_none_or(|o| !o.running)));
-        }
-        if old != want
-            && retained.contains(&if want.kind == GATEWAY_KIND {
-                GATEWAY_STORAGE.to_owned()
-            } else {
-                model_storage(&target.address)
-            })
+        if let Some(check) =
+            crate::services::check_runtime_capacity(&engine, &want, observed.as_ref()).await?
         {
+            service_budgets.push(check);
+        }
+        let storage = if want.kind == GATEWAY_KIND {
+            Some(GATEWAY_STORAGE.to_owned())
+        } else {
+            crate::services::required_storage_address(document, generations, &target.address)?
+        };
+        if old != want && storage.is_some_and(|address| retained.contains(&address)) {
             result.replacements.insert(target.address.clone());
         }
     }
-    for (endpoint, specs) in service_budgets {
-        if specs.len() < 2 {
-            continue;
-        }
-        let engine = engines.resolve(&endpoint)?;
-        let host = tokio::time::timeout(
-            Duration::from_secs(30),
-            engine.host_observer.observe(&engine),
-        )
-        .await
-        .map_err(|_| Error::State("combined capacity observation timed out"))??;
-        let info = engine.info().await?;
-        let capacity = host.for_engine(info.id.as_deref().unwrap_or(""))?;
-        let services: Vec<_> = specs
-            .iter()
-            .map(|(spec, starting)| (spec.service.as_ref().unwrap(), *starting))
-            .collect();
-        crate::hardware::check_service_budgets(&services, &capacity)?;
-    }
+    crate::services::check_combined_capacity(engines, service_budgets).await?;
     Ok(result)
 }
 impl Deployment {
@@ -234,18 +208,16 @@ impl Deployment {
         if !document.has_runtime() {
             return Ok((Vec::new(), false));
         }
-        for kind in [GATEWAY_KIND, SERVICE_KIND] {
-            if record.generations.get(kind).is_none_or(String::is_empty) {
-                let generated = Record::new(document.clone())?;
-                record
-                    .generations
-                    .insert(kind.into(), generated.generations[kind].clone());
+        let generated = Record::new(document.clone())?;
+        for (kind, generation) in generated.generations {
+            if record.generations.get(&kind).is_none_or(String::is_empty) {
+                record.generations.insert(kind, generation);
             }
         }
         let stage = Store::open(&store.directory.join("runtime"))?;
         let bindings = stage.bindings()?;
         let targets = compile::runtime_targets(document, &record.generations)?;
-        let mut checked = tokio::select! {()=cancel.cancelled()=>return Err(Error::Cancelled),result=validate_runtime_environment(&self.engines,&targets,&bindings)=>result?};
+        let mut checked = tokio::select! {()=cancel.cancelled()=>return Err(Error::Cancelled),result=validate_runtime_environment(&self.engines,document,&record.generations,&targets,&bindings)=>result?};
         if document.spec.gateway.management == "external" {
             checked.gateway_running = true;
         }
@@ -300,14 +272,14 @@ impl Deployment {
         .await?;
         record.pending = false;
         store.save(record)?;
-        self.wait_runtime(document, &targets, &stage, cancel)
+        self.wait_runtime(document, &record.generations, &stage, cancel)
             .await?;
         Ok((changes, false))
     }
     async fn wait_runtime(
         &self,
         document: &Document,
-        targets: &[Target],
+        generations: &crate::compile::Generations,
         stage: &Store,
         cancel: &CancellationToken,
     ) -> Result<(), Error> {
@@ -331,41 +303,16 @@ impl Deployment {
             };
             tokio::select! {()=cancel.cancelled()=>return Err(Error::Cancelled),result=tokio::time::timeout(Duration::from_secs(90),gateway)=>result.map_err(|_|Error::State("managed gateway readiness failed; identity and data retained"))??};
             let bindings = stage.bindings()?;
-            let inference = async {
-                for target in targets.iter().filter(|t| t.kind == SERVICE_KIND) {
-                    let engine =
-                        crate::managed::runtime_engine(&self.engines, &target.kind, &target.values)?;
-                    let spec: Spec = serde_json::from_str(&target.values["spec"])
-                        .map_err(|_| Error::State("invalid runtime specification"))?;
-                    let binding = bindings.get(&target.address).ok_or(Error::State(
-                        "inference runtime has no established identity",
-                    ))?;
-                    loop {
-                        let observed = engine
-                            .observe_runtime(&spec, &binding.id)
-                            .await?
-                            .ok_or(Error::State("inference runtime is unobservable"))?;
-                        if !observed.running {
-                            return Err(Error::State(
-                                "inference runtime stopped; inspect logs and explicitly reapply; identity and model data retained",
-                            ));
-                        }
-                        let status = engine.runtime_status(&observed).await?;
-                        if status.phase == "ready" {
-                            engine.verify_artifacts(&observed).await?;
-                            break;
-                        }
-                        if status.phase == "stopped" {
-                            return Err(Error::State(
-                                "inference runtime protection stopped the service; explicit recovery required",
-                            ));
-                        }
-                        tokio::time::sleep(Duration::from_secs(5)).await;
-                    }
-                }
+            crate::services::check_running(
+                document,
+                generations,
+                crate::services::InstallStage::Runtime,
+                &self.engines,
+                &bindings,
+                cancel,
+            )
+            .await?;
             Ok(())
-            };
-            tokio::select! {()=cancel.cancelled()=>Err(Error::Cancelled),result=tokio::time::timeout(Duration::from_secs(9*3600),inference)=>result.map_err(|_|Error::State("runtime readiness timed out; container, watchdog and data remain owned"))?}
         }).await
     }
     pub(super) async fn export_runtime(
@@ -387,8 +334,6 @@ impl Deployment {
         }
         let work = async {
             for target in targets {
-                let engine =
-                    crate::managed::runtime_engine(&self.engines, &target.kind, &target.values)?;
                 let binding = bindings.get(&target.address).ok_or(Error::Conflict(
                     "export requires established runtime identity",
                 ))?;
@@ -399,21 +344,14 @@ impl Deployment {
                 }
                 let mut row = target.values.clone();
                 row.insert("id".into(), binding.id.clone());
-                crate::managed::ManagedBackend::new(engine.clone())
+                crate::services::BackendRegistry::new(&self.engines)
+                    .resolve(&target.kind, &row)?
+                    .ok_or(Error::State("runtime backend is unavailable"))?
                     .read(&target.kind, &row, false)
                     .await?
                     .ok_or(Error::Conflict(
                         "managed runtime is absent; no YAML exported",
                     ))?;
-                if target.kind == SERVICE_KIND {
-                    let spec: Spec = serde_json::from_str(&binding.spec)
-                        .map_err(|_| Error::State("invalid runtime binding"))?;
-                    let observed = engine
-                        .observe_runtime(&spec, &binding.id)
-                        .await?
-                        .ok_or(Error::State("runtime unobservable"))?;
-                    engine.verify_artifacts(&observed).await?;
-                }
             }
             Ok(())
         };

@@ -6,64 +6,6 @@ use nemoclaw_sdk::{
 };
 use serde_json::json;
 #[test]
-fn ollama_compiles_into_the_shared_supervised_gpu_service_and_retained_storage() {
-    let mut value: serde_json::Value =
-        serde_saphyr::from_str(include_str!("fixtures/config/spark.yaml")).unwrap();
-    let s = &mut value["spec"]["inferenceProviders"][0]["service"];
-    s.as_object_mut().unwrap().remove("recipe");
-    s["backend"] = json!("ollama");
-    s["hardware"] = json!({"profile":"dgx-spark"});
-    s["model"] = json!({"name":"qwen3:0.6b","digest":"a".repeat(64)});
-    s["serving"] = json!({"contextTokens":8192});
-    s["memory"] = json!({"gpuMemoryGiB":16});
-    value["spec"]["sandboxes"][0]["agent"]["inference"]["routes"][0]["overrides"]["model"] =
-        json!("qwen3:0.6b");
-    let document = Document::parse(value.to_string().as_bytes()).unwrap();
-    let generations: Generations = [
-        "workspace",
-        "provider",
-        "sandbox",
-        "managed_gateway",
-        "inference_service",
-    ]
-    .into_iter()
-    .map(|k| (k.into(), "b".repeat(32)))
-    .collect();
-    let graph = compile_runtime(&document, &generations, "0.1.0").unwrap();
-    let resources = &graph["resource"];
-    assert!(resources.get("nemoclaw_ollama").is_none());
-    assert_eq!(
-        resources["nemoclaw_inference_storage"]["inference_qwen"]["lifecycle"]["prevent_destroy"],
-        true
-    );
-    let spec: nemoclaw_sdk::managed::Spec = serde_json::from_str(
-        resources["nemoclaw_inference_service"]["inference_qwen"]["spec"]
-            .as_str()
-            .unwrap(),
-    )
-    .unwrap();
-    let launch = serde_json::to_value(spec.container("/data").unwrap()).unwrap();
-    assert_eq!(
-        launch["Entrypoint"],
-        json!(["/usr/local/bin/nemoclaw-runtime"])
-    );
-    assert_eq!(
-        launch["HostConfig"]["DeviceRequests"][0]["Capabilities"],
-        json!([["gpu"]])
-    );
-    assert_eq!(launch["HostConfig"]["RestartPolicy"]["Name"], "no");
-    assert!(
-        launch["Env"][0]
-            .as_str()
-            .unwrap()
-            .contains("NEMOCLAW_RUNTIME_SPEC=")
-    );
-    assert_eq!(
-        document.inference_connection().unwrap().endpoint,
-        "http://172.30.110.1:18888/v1"
-    );
-}
-#[test]
 fn managed_graph_separates_retained_storage_from_replaceable_processes() {
     let document =
         Document::parse(include_bytes!("fixtures/config/spark.yaml").as_slice()).unwrap();
@@ -134,9 +76,9 @@ fn remote_service_is_independent_of_the_external_sandbox_gateway() {
     let mut value = serde_json::to_value(document).unwrap();
     value["spec"]["gateway"] = json!({"management":"external","endpoint":"http://127.0.0.1:17670"});
     value["spec"]["sandboxes"][0]["runtime"]["provider"] = json!("podman");
-    value["spec"]["inferenceProviders"][0]["service"]["placement"] =
-        json!({"engine":"ssh://operator@gpu-box","networkCidr":"172.30.119.0/24"});
-    value["spec"]["inferenceProviders"][0]["service"]["publication"] =
+    value["spec"]["services"]["qwen"]["runtime"]["engine"] = json!("ssh://operator@gpu-box");
+    value["spec"]["services"]["qwen"]["placement"] = json!({"networkCidr":"172.30.119.0/24"});
+    value["spec"]["services"]["qwen"]["publication"] =
         json!({"endpoint":"http://10.0.0.8:18888/v1","bindAddress":"10.0.0.8"});
     let bytes = serde_json::to_vec(&value).unwrap();
     let document = Document::parse(bytes.as_slice()).unwrap();
@@ -184,7 +126,7 @@ fn remote_service_is_independent_of_the_external_sandbox_gateway() {
     );
     for field in ["placement", "publication"] {
         let mut invalid = value.clone();
-        invalid["spec"]["inferenceProviders"][0]["service"]
+        invalid["spec"]["services"]["qwen"]
             .as_object_mut()
             .unwrap()
             .remove(field);
@@ -192,13 +134,11 @@ fn remote_service_is_independent_of_the_external_sandbox_gateway() {
     }
     for cidr in ["172.30.119.8/24", "10.0.0.0/24"] {
         let mut invalid = value.clone();
-        invalid["spec"]["inferenceProviders"][0]["service"]["placement"]["networkCidr"] =
-            json!(cidr);
+        invalid["spec"]["services"]["qwen"]["placement"]["networkCidr"] = json!(cidr);
         assert!(Document::parse(serde_json::to_vec(&invalid).unwrap().as_slice()).is_err());
     }
     let mut invalid = value.clone();
-    invalid["spec"]["inferenceProviders"][0]["service"]["publication"]["bindAddress"] =
-        json!("0.0.0.0");
+    invalid["spec"]["services"]["qwen"]["publication"]["bindAddress"] = json!("0.0.0.0");
     assert!(Document::parse(serde_json::to_vec(&invalid).unwrap().as_slice()).is_err());
 }
 

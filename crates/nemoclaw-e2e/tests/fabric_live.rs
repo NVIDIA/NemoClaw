@@ -174,9 +174,9 @@ async fn fabric_native_access_and_reconciliation_preserve_the_hosted_runtime() {
     let provider = document.inference_provider().unwrap();
     let agent = &document.spec.sandboxes[0].agent;
     assert_eq!(document.spec.gateway.management, "external");
-    // Ollama recovery/destroy is fixture-qualified separately; this live target
-    // has not qualified its complete agent lifecycle.
-    assert!(provider.ollama.is_none());
+    // Managed-service installation is qualified separately; this live target
+    // exercises only an external inference provider.
+    assert!(provider.service_ref.is_none());
     fs::create_dir_all(&directory).unwrap();
     let deployment = Deployment::new(&directory, &bundle);
     let cancel = CancellationToken::new();
@@ -289,11 +289,9 @@ fn uses_independent_openclaw_inference(document: &Document) -> bool {
             .selected_inference_providers()
             .is_ok_and(|providers| {
                 providers.len() == 1
-                    && providers.iter().all(|provider| {
-                        provider.service.is_none()
-                            && provider.ollama.is_none()
-                            && provider.ollama_proxy.is_none()
-                    })
+                    && providers
+                        .iter()
+                        .all(|provider| provider.service_ref.is_none())
             })
 }
 

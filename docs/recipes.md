@@ -5,7 +5,7 @@
 
 An [ordinary vLLM service](../examples/spark/vllm.yaml) needs a pinned image and model snapshot.
 Use [the ordinary vLLM image build](build.md#build-a-runtime-image).
-When the model needs preparation or serving features supplied by its runtime image, declare `service.recipe` instead of `service.hardware`.
+When the model needs preparation or serving features supplied by its runtime image, declare `recipe` instead of `hardware` under `spec.services.<name>`.
 The recipe supplies the hardware compatibility requirements; declaring both fields is rejected.
 
 The CLI does not load recipe code.
@@ -18,7 +18,7 @@ Model storage must use the [current manifest format](models.md#retained-model-fi
 
 The build loads the image locally without publishing it.
 Its model-specific adapters, model manifest, and semantic verifier live in `runtimes/qwen38`, outside the generic execution path.
-All vLLM services use `backend: vllm`.
+All vLLM services use `kind: vllm`.
 Model-specific backend names and the built-in recipe registry have been removed.
 
 ## Declaration

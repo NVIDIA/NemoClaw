@@ -33,35 +33,6 @@ struct State {
 }
 
 #[tokio::test]
-async fn missing_service_hardware_is_rejected_before_acquiring_an_image() {
-    let fixtures: Vec<Value> = serde_json::from_str(include_str!("reference.json")).unwrap();
-    let mut spec: Spec = serde_json::from_str(fixtures[1]["spec"].as_str().unwrap()).unwrap();
-    spec.service.as_mut().unwrap().recipe = None;
-    let requests = Arc::new(Mutex::new(0));
-    let seen = requests.clone();
-    let fixture = Fixture::start(move |_| {
-        *seen.lock().unwrap() += 1;
-        Some((
-            200,
-            serde_json::to_vec(&json!({
-                "Id": "sha256:runtime", "Architecture": "arm64", "Os": "linux",
-                "Config": {"Labels": {"org.nemoclaw.backend": "vllm"}}
-            }))
-            .unwrap(),
-        ))
-    })
-    .await;
-    assert!(
-        fixture
-            .engine_for(spec.engine())
-            .ensure_image(&spec)
-            .await
-            .is_err()
-    );
-    assert_eq!(*requests.lock().unwrap(), 0);
-}
-
-#[tokio::test]
 async fn image_pull_policy_controls_registry_requests_and_requires_a_local_image() {
     for service in [false, true] {
         for policy in ["default", "Always", "IfNotPresent", "Never"] {
@@ -69,20 +40,24 @@ async fn image_pull_policy_controls_registry_requests_and_requires_a_local_image
                 for pull_fails in [false, true] {
                     let fixtures: Vec<Value> =
                         serde_json::from_str(include_str!("reference.json")).unwrap();
-                    let mut value: Value = serde_json::from_str(
+                    let value: Value = serde_json::from_str(
                         fixtures[usize::from(service)]["spec"].as_str().unwrap(),
                     )
                     .unwrap();
+                    let mut spec: Spec = serde_json::from_value(value).unwrap();
                     if policy != "default" {
-                        value[if service { "service" } else { "gateway" }]["imagePullPolicy"] =
-                            json!(policy);
+                        let policy = serde_json::from_value(json!(policy)).unwrap();
+                        if let Some(process) = &mut spec.process {
+                            process.image_pull_policy = Some(policy);
+                        } else {
+                            spec.gateway.image_pull_policy = Some(policy);
+                        }
                     }
                     let policy = if policy == "default" {
                         if service { "Never" } else { "IfNotPresent" }
                     } else {
                         policy
                     };
-                    let spec: Spec = serde_json::from_value(value).unwrap();
                     let state = Arc::new(Mutex::new((present, 0)));
                     let shared = state.clone();
                     let fixture = Fixture::start(move |request| {
@@ -271,34 +246,10 @@ async fn managed_gateway_rejects_an_image_for_a_different_engine_architecture() 
 
 #[tokio::test]
 async fn failed_startup_and_explicit_recovery_keep_container_and_storage_identity() {
-    for backend in ["vllm", "ollama"] {
-        startup_recovery(backend).await;
-    }
-}
-async fn startup_recovery(backend: &str) {
     let fixtures: Vec<Value> = serde_json::from_str(include_str!("reference.json")).unwrap();
     let data = &fixtures[1];
-    let mut spec: Spec = serde_json::from_str(data["spec"].as_str().unwrap()).unwrap();
-    if backend == "ollama" {
-        let service = spec.service.as_mut().unwrap();
-        service.backend = "ollama".into();
-        service.recipe = None;
-        service.hardware = Some(crate::config::ServiceHardware::Profile {
-            profile: crate::config::HardwareProfile::DgxSpark,
-            architecture: None,
-            min_gpu_memory_bytes: None,
-        });
-        service.model = crate::config::Model {
-            name: "qwen3:0.6b".into(),
-            digest: "a".repeat(64),
-            ..Default::default()
-        };
-        service.serving = crate::config::Serving::default();
-        service.memory = crate::config::Memory::default();
-        service.defaults();
-    }
-    let launch = serde_json::to_value(spec.container("/data").unwrap()).unwrap();
-    let container = json!({"Id":"container","Name":format!("/{}",spec.name),"Image":"sha256:runtime","Config":launch,"HostConfig":launch["HostConfig"],"State":{"Running":false,"StartedAt":"2026-09-14T00:00:00Z"},"Mounts":[{"Type":"volume","Name":spec.volume(),"Destination":"/data","RW":true}]});
+    let spec: Spec = serde_json::from_str(data["spec"].as_str().unwrap()).unwrap();
+    let container = json!({"Id":"container","Name":format!("/{}",spec.name),"Image":"sha256:runtime","Config":data["config"],"HostConfig":data["hostConfig"],"State":{"Running":false,"StartedAt":"2026-09-14T00:00:00Z"},"Mounts":[{"Type":"volume","Name":spec.volume(),"Destination":"/data","RW":true}]});
     let volume = json!({"Name":spec.volume(),"Driver":"local","Scope":"local","Mountpoint":"/var/lib/docker/volumes/fixture/_data","CreatedAt":"2026-09-14T00:00:00Z","Labels":spec.labels().unwrap(),"Options":{}});
     let network = json!({"Id":"network","Name":spec.network(),"Driver":"bridge","Internal":false,"EnableIPv6":false,"Labels":{super::super::OWNER_LABEL:spec.owner},"IPAM":{"Driver":"default","Config":[{"Subnet":spec.gateway.network_cidr,"Gateway":spec.gateway.bridge().unwrap()}]}});
     let state = Arc::new(Mutex::new(State {
@@ -309,13 +260,13 @@ async fn startup_recovery(backend: &str) {
         ..Default::default()
     }));
     let shared = state.clone();
-    let service = spec.service.clone().unwrap();
+    let required_labels = spec.process.as_ref().unwrap().image_labels.clone();
     let template = container.clone();
     let fixture=Fixture::start(move |request|{
         let mut state=shared.lock().unwrap();
         let (status,value)=match (request.method.as_str(),request.path.split('?').next().unwrap()) {
             ("GET","/info")=>(200,json!({"ID":"engine","DockerRootDir":"/var/lib/docker"})),
-            ("GET",path) if path.starts_with("/images/")=>(200,json!({"Id":"sha256:runtime","Architecture":"arm64","Os":"linux","Config":{"Env":[],"Labels":{"org.nemoclaw.recipe.protocol":"v1","org.nemoclaw.backend":service.backend,"org.nemoclaw.model":service.model.revision}}})),
+            ("GET",path) if path.starts_with("/images/")=>(200,json!({"Id":"sha256:runtime","Architecture":"arm64","Os":"linux","Config":{"Env":[],"Labels":required_labels.clone()}})),
             ("GET",path) if path.starts_with("/networks/")=>(200,state.network.clone()),
             ("GET",path) if path.starts_with("/volumes/")=>state.volume.clone().map(|v|(200,v)).unwrap_or((404,json!({"message":"missing"}))),
             ("GET",path) if path.starts_with("/containers/")=>state.container.clone().map(|v|(200,v)).unwrap_or((404,json!({"message":"missing"}))),

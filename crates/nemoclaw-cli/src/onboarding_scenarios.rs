@@ -225,7 +225,10 @@ fn managed_ollama_should_work() {
     let yaml = include_bytes!("../../../examples/managed-ollama.yaml");
     let document = Document::parse(yaml.as_slice()).unwrap();
     let desired = normalized(&document);
-    assert!(desired["spec"]["inferenceProviders"][0]["ollama"].is_object());
+    let service = desired["spec"]["inferenceProviders"][0]["serviceRef"]
+        .as_str()
+        .unwrap();
+    assert_eq!(desired["spec"]["services"][service]["kind"], "ollama");
 }
 
 #[test]
@@ -233,12 +236,12 @@ fn managed_vllm_should_work() {
     let yaml = include_bytes!("../../../examples/nemotron-amd64.yaml");
     let document = Document::parse(yaml.as_slice()).unwrap();
     let desired = normalized(&document);
+    let service = desired["spec"]["inferenceProviders"][0]["serviceRef"]
+        .as_str()
+        .unwrap();
+    assert_eq!(desired["spec"]["services"][service]["kind"], "vllm");
     assert_eq!(
-        desired["spec"]["inferenceProviders"][0]["service"]["backend"],
-        "vllm"
-    );
-    assert_eq!(
-        desired["spec"]["inferenceProviders"][0]["service"]["hardware"]["minComputeCapability"],
+        desired["spec"]["services"][service]["hardware"]["minComputeCapability"],
         90
     );
 }
@@ -249,12 +252,15 @@ fn external_ollama_proxy_should_work() {
         .external_ollama_proxy();
     let document = Document::parse(desired.yaml().as_bytes()).unwrap();
     let desired = normalized(&document);
+    let service = desired["spec"]["inferenceProviders"][0]["serviceRef"]
+        .as_str()
+        .unwrap();
     assert_eq!(
-        desired["spec"]["inferenceProviders"][0]["endpoint"],
+        desired["spec"]["services"][service]["upstream"]["endpoint"],
         "http://127.0.0.1:11434/v1"
     );
     assert_eq!(
-        desired["spec"]["inferenceProviders"][0]["ollamaProxy"]["endpoint"],
+        desired["spec"]["services"][service]["endpoint"],
         "http://172.20.0.1:11435/v1"
     );
 }
@@ -518,7 +524,11 @@ impl DesiredState {
     }
 
     fn service_backend(mut self, backend: &str) -> Self {
-        self.value["spec"]["inferenceProviders"][0]["service"]["backend"] = json!(backend);
+        let service = self.value["spec"]["inferenceProviders"][0]["serviceRef"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        self.value["spec"]["services"][service]["kind"] = json!(backend);
         self
     }
 
@@ -582,15 +592,20 @@ impl DesiredState {
     }
 
     fn external_ollama_proxy(mut self) -> Self {
-        let provider = &mut self.value["spec"]["inferenceProviders"][0];
-        provider.as_object_mut().unwrap().remove("ollama");
-        provider["management"] = json!("external");
-        provider["endpoint"] = json!("http://127.0.0.1:11434/v1");
-        provider["ollamaProxy"] = json!({
-            "engine": "unix:///var/run/docker.sock",
-            "image": format!("nc-ollama-proxy@sha256:{}", "a".repeat(64)),
+        let service = &mut self.value["spec"]["services"]["ollama-server"];
+        let model = service["model"]["name"].clone();
+        *service = json!({
+            "kind": "ollamaProxy",
+            "runtime": {
+                "provider": "docker",
+                "engine": "unix:///var/run/docker.sock",
+                "image": format!("nc-ollama-proxy@sha256:{}", "a".repeat(64)),
+            },
             "endpoint": "http://172.20.0.1:11435/v1",
-            "model": {"digest": "a".repeat(64)}
+            "upstream": {
+                "endpoint": "http://127.0.0.1:11434/v1",
+                "model": {"name": model, "digest": "a".repeat(64)},
+            }
         });
         self
     }

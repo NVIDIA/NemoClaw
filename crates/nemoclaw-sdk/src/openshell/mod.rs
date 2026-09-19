@@ -130,7 +130,7 @@ fn provider_row(
         if !credential.is_empty() {
             return Err(ObservationError::BindingMismatch);
         }
-        crate::inference_auth::Source::parse(&source, &row["owner"], endpoint)?;
+        crate::services::authentication::Source::parse(&source, &row["owner"], endpoint)?;
     }
     row.insert("credential_source".into(), source);
     row.insert("endpoint".into(), endpoint.clone());

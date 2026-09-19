@@ -5,7 +5,8 @@
 
 Use an inline definition for one consumer, or a named definition with references to share it.
 Both forms use the same configuration type, defaults, and validation.
-A shared definition becomes active only when a consumer selects it.
+A shared inference, provider, harness, or integration definition becomes active only when a consumer selects it.
+Managed services have a separate rule: every entry in `spec.services` is installed and checked, even without a consumer.
 
 `nemoclaw onboard` generates and saves a validated configuration file before resolving credentials, planning, or applying.
 `nemoclaw onboard --generate-only` stops after saving the file; the generated file and an equivalent hand-authored file use the same `plan` and `apply` implementation.
@@ -25,7 +26,7 @@ Equal settings do not make two definitions the same object: reuse requires refer
 There is no implicit attachment, override precedence, or merging.
 YAML anchors, aliases, and merge keys are disabled.
 
-Unused enclosing definitions are retained and validated, but create no runtime resources, access grants, or credential-resolution requirements.
+Unused enclosing inference, provider, harness, and integration definitions are retained and validated, but create no runtime resources, access grants, or credential-resolution requirements.
 Selecting an object does not bypass that object's harness, service, credential, or runtime constraints.
 Export preserves the declaration scope and inline/reference form, alongside defaults and supported observed updates.
 Moving a definition does not authorize replacing an existing resource; normal identity and lifecycle checks still apply.
@@ -36,7 +37,7 @@ Paths below are relative to `spec`; `agent` is inside `sandboxes[]` and `routes[
 
 | Family | Enclosing definitions | Consumer selection | Current runtime limit |
 |---|---|---|---|
-| Inference provider | `inferenceProviders[]` or `sandboxes[].inferenceProviders[]`, each with a `name` | Route `provider` or `providerRef` | Up to 32 selected providers; multiple vLLM services, at most one managed Ollama or Ollama proxy |
+| Inference provider | `inferenceProviders[]` or `sandboxes[].inferenceProviders[]`, each with a `name` | Route `provider` or `providerRef` | Up to 32 selected providers; each uses an external endpoint or references a named service |
 | Inference | `inferences.<name>` or `sandboxes[].inferences.<name>` | Agent `inference` or `inferenceRef` | OpenClaw and Pi support named choices with an explicit default; other harnesses require one choice |
 | Harness | `harnesses.<name>` or `sandboxes[].harnesses.<name>` | Sandbox `harness` or `harnessRef` | Exactly one configuration and one agent per sandbox |
 | Integration | `integrations.<name>` or `sandboxes[].integrations.<name>` | Agent `integrations.<name>` and/or `integrationRefs` | Only Brave `webSearch` is implemented; one attached search definition per sandbox |
@@ -180,7 +181,7 @@ No single active configuration exercises every schema branch:
 | Alternative | Example or guide | Why separate |
 |---|---|---|
 | Inline provider or integration | [Inline provider](../examples/inline-inference.yaml), [inline integration](agents.md#brave-web-search) | A consumer cannot both inline and reference the same definition |
-| Managed Ollama or an existing endpoint | [Managed Ollama](../examples/managed-ollama.yaml), [external endpoint](../examples/inference-tuning.yaml) | Each provider selects one service mode; managed Ollama and its proxy still require a singleton lifecycle |
+| Managed Ollama or an existing endpoint | [Managed Ollama](../examples/managed-ollama.yaml), [external endpoint](../examples/inference-tuning.yaml) | Each provider selects one service connection; see the [Ollama deployment limits](inference.md#combine-local-and-hosted-providers) |
 | Existing Ollama through an authenticated proxy | [Proxy guide](inference.md#use-external-ollama-through-a-managed-proxy) | Alternative provider mode to managed vLLM |
 | Hermes authentication, interfaces, or Relay | [Authentication](../examples/hermes-auth.yaml), [interfaces](../examples/hermes-interfaces.yaml), [Relay](agents.md#hermes-relay-tracing) | Explicit Hermes interfaces can include Relay tracing |
 | Pi model metadata | [Pi example](../examples/fabric-pi.yaml) | Specific to Pi; other harnesses reject it |
@@ -194,8 +195,10 @@ Unselected definitions do not exercise another provider's runtime.
 
 An image `ref` selects an external immutable artifact, and `credential.env` selects a caller-supplied environment variable.
 These are not references to application definitions in this document, and inline credential values remain forbidden.
-Service, model, recipe, policy, and gateway settings remain nested configuration.
-Only the families in the table above support shared application definitions.
+Model, recipe, policy, and gateway settings remain nested configuration.
+Managed services are named definitions under `spec.services`; providers select them with `serviceRef` instead of `endpoint` and `credential`.
+Services have no inline provider form or sandbox-local scope, and every declared service participates in apply and destroy.
+Use [service configuration](inference.md#choose-a-service-mode) for the available installers and lifecycle limits.
 
 The [field reference](reference/configuration.md) lists exact shapes and constraints.
 Editor schema checks cover structure and conditional forms; the SDK parser also resolves names and checks selected-provider compatibility when multiple named definitions exist.

@@ -103,5 +103,5 @@ Provider authentication references do not implement that older identity workflow
 
 ## Implementation and Tests
 
-The [policy validator](../crates/nemoclaw-sdk/src/config/network.rs), [credential handling](../crates/nemoclaw-sdk/src/inference_auth.rs), [runtime authentication](../crates/nemoclaw-runtime/src/authentication.rs), and [managed-auth tests](../crates/nemoclaw-sdk/tests/managed_auth.rs) implement parts of these controls.
+The [policy validator](../crates/nemoclaw-sdk/src/config/network.rs), [credential handling](../crates/nemoclaw-sdk/src/services/authentication.rs), [runtime authentication](../crates/nemoclaw-runtime/src/services/installers/vllm/authentication.rs), and [managed-auth tests](../crates/nemoclaw-sdk/tests/managed_auth.rs) implement parts of these controls.
 Use [retained validation records](validation/README.md) for their tested environments and limits.

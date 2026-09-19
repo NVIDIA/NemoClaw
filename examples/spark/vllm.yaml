@@ -13,34 +13,39 @@ spec:
     engine: unix:///var/run/docker.sock
     image: ghcr.io/nvidia/openshell/gateway@sha256:ec2b0efea84fff198e888e97c85befb9c908acde92e8256f9b527877ed182d66
     networkCIDR: 172.30.121.0/24
+  services:
+    qwen:
+      kind: vllm
+      hardware:
+        profile: dgx-spark
+      runtime:
+        provider: docker
+        engine: unix:///var/run/docker.sock
+        image: nc-prototype-vllm@sha256:e3f95d68664394c97ed9ea31f55f2183a5f1b6f07a61ffa15177f5dcacdb8b5e
+      model:
+        repository: Qwen/Qwen3-4B
+        revision: 1cfa9a7208912126459214e8b04321603b3df60c
+      serving:
+        toolParser: hermes
+        reasoningParser: qwen3
+        port: 18898
+        contextTokens: 32768
+        maxSequences: 1
+        batchTokens: 1024
+        speculativeTokens: 0
+        startupTimeoutSeconds: 1800
+      memory:
+        gpuMemoryGiB: 20
+        hostReserveGiB: 32
+        kvCacheGiB: 6
+        minAvailableGiB: 8
+        minFreeGiB: 3
+        freeGateGiB: 12
+        consecutiveSamples: 5
   inferenceProviders:
     - name: qwen
       provider: openai
-      service:
-        backend: vllm
-        hardware:
-          profile: dgx-spark
-        image: nc-prototype-vllm@sha256:e3f95d68664394c97ed9ea31f55f2183a5f1b6f07a61ffa15177f5dcacdb8b5e
-        model:
-          repository: Qwen/Qwen3-4B
-          revision: 1cfa9a7208912126459214e8b04321603b3df60c
-        serving:
-          toolParser: hermes
-          reasoningParser: qwen3
-          port: 18898
-          contextTokens: 32768
-          maxSequences: 1
-          batchTokens: 1024
-          speculativeTokens: 0
-          startupTimeoutSeconds: 1800
-        memory:
-          gpuMemoryGiB: 20
-          hostReserveGiB: 32
-          kvCacheGiB: 6
-          minAvailableGiB: 8
-          minFreeGiB: 3
-          freeGateGiB: 12
-          consecutiveSamples: 5
+      serviceRef: qwen
   sandboxes:
     - name: assistant
       runtime:

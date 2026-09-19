@@ -13,15 +13,16 @@ spec:
     management: managed
     endpoint: http://127.0.0.1:17805
     networkCIDR: 172.30.165.0/24
-  inferenceProviders:
-  - name: local
-    provider: openai
-    service:
-      backend: vllm
+  services:
+    local:
+      kind: vllm
       hardware:
         profile: dgx-spark
+      runtime:
+        provider: docker
+        engine: unix:///var/run/docker.sock
+        image: nc-prototype-vllm@sha256:a08d7d6542a20cff9a7f5303e100f71a121d241d0e33fc3be5da6ad6d3bc0c31
       authentication: bearer
-      image: nc-prototype-vllm@sha256:a08d7d6542a20cff9a7f5303e100f71a121d241d0e33fc3be5da6ad6d3bc0c31
       model:
         repository: nvidia/Qwen3.8-27B-NVFP4
         revision: 482ca0f3832238542f8f5295dde86b5f22711d80
@@ -41,6 +42,10 @@ spec:
         minFreeGiB: 3
         freeGateGiB: 12
         consecutiveSamples: 5
+  inferenceProviders:
+  - name: local
+    provider: openai
+    serviceRef: local
   - name: hosted
     provider: openai
     endpoint: https://hosted.example/v1

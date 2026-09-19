@@ -1,13 +1,23 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-use nemoclaw_sdk::config::Document;
+use nemoclaw_sdk::{
+    config::{Document, ServiceDefinition},
+    services::installers::vllm::Service,
+};
+
+fn service(document: &Document) -> &Service {
+    let ServiceDefinition::Vllm(service) = &document.spec.services["qwen"] else {
+        panic!("expected vLLM service");
+    };
+    service
+}
 
 fn example() -> serde_json::Value {
-    let mut value: serde_json::Value =
-        serde_json::from_str(include_str!("fixtures/config/spark.yaml.json")).unwrap();
-    let mut value = value["document"].take();
-    let service = &mut value["spec"]["inferenceProviders"][0]["service"];
-    service["backend"] = "vllm".into();
+    let mut value = serde_json::to_value(
+        Document::parse(include_str!("fixtures/config/spark.yaml").as_bytes()).unwrap(),
+    )
+    .unwrap();
+    let service = &mut value["spec"]["services"]["qwen"];
     service["recipe"] = serde_json::json!({
         "apiVersion":"nemoclaw.nvidia.com/recipe/v1",
         "compatibility":{"architecture":"arm64","gpu":"NVIDIA GB10","minDriverMajor":580,"minHostMemoryGiB":118,"imageLabels":{"org.nemoclaw.feature.example":"1","org.nemoclaw.recipe.protocol":"v1"}},
@@ -31,8 +41,7 @@ fn inline_recipe_round_trips_without_a_builtin_model_identifier() {
     );
     for path in ["../escape", "/opt/recipe/../escape", "sh -c bad"] {
         let mut invalid = value.clone();
-        invalid["spec"]["inferenceProviders"][0]["service"]["recipe"]["preparation"]["executable"] =
-            path.into();
+        invalid["spec"]["services"]["qwen"]["recipe"]["preparation"]["executable"] = path.into();
         assert!(Document::parse(serde_json::to_vec(&invalid).unwrap().as_slice()).is_err());
     }
 }
@@ -41,7 +50,7 @@ fn inline_recipe_round_trips_without_a_builtin_model_identifier() {
 async fn preparation_recovers_staging_reuses_output_and_rejects_changed_data() {
     use nemoclaw_sdk::{
         CancellationToken, Error,
-        recipes::preparation::{self, Action, Request, Runner},
+        services::installers::vllm::recipes::preparation::{self, Action, Request, Runner},
     };
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     struct Fixture {
@@ -72,7 +81,7 @@ async fn preparation_recovers_staging_reuses_output_and_rejects_changed_data() {
         }
     }
     let d = Document::parse(serde_json::to_vec(&example()).unwrap().as_slice()).unwrap();
-    let service = d.spec.inference_providers[0].service.as_ref().unwrap();
+    let service = service(&d);
     let root = tempfile::tempdir().unwrap();
     let runner = Fixture {
         fail: AtomicBool::new(true),
@@ -117,10 +126,7 @@ async fn preparation_recovers_staging_reuses_output_and_rejects_changed_data() {
 #[test]
 fn preparation_keys_track_model_and_tool_identity() {
     let document = Document::parse(serde_json::to_vec(&example()).unwrap().as_slice()).unwrap();
-    let mut service = document.spec.inference_providers[0]
-        .service
-        .clone()
-        .unwrap();
+    let mut service = service(&document).clone();
     let original = service.clone();
     let key = service.recipe.as_ref().unwrap().key(&service);
     service.model.repository = "another/model".into();
@@ -134,7 +140,7 @@ fn preparation_keys_track_model_and_tool_identity() {
 async fn failed_verification_never_publishes_an_output_manifest() {
     use nemoclaw_sdk::{
         CancellationToken, Error,
-        recipes::preparation::{self, Action, Request, Runner},
+        services::installers::vllm::recipes::preparation::{self, Action, Request, Runner},
     };
     struct InvalidVerification(Vec<u8>);
     #[async_trait::async_trait]
@@ -156,10 +162,7 @@ async fn failed_verification_never_publishes_an_output_manifest() {
         }
     }
     let document = Document::parse(serde_json::to_vec(&example()).unwrap().as_slice()).unwrap();
-    let service = document.spec.inference_providers[0]
-        .service
-        .as_ref()
-        .unwrap();
+    let service = service(&document);
     let file = serde_json::json!({"name":"packed","size":12,"sha256":"a".repeat(64)});
     for verification in [
         b"not JSON".to_vec(),
@@ -207,9 +210,9 @@ fn model_specific_backend_names_are_rejected() {
             .unwrap(),
     )
     .unwrap();
-    let service = &mut document["spec"]["inferenceProviders"][0]["service"];
+    let service = &mut document["spec"]["services"]["qwen"];
     service.as_object_mut().unwrap().remove("recipe");
-    service["backend"] = "vllm-qwen38-spark-v1".into();
+    service["kind"] = "vllm-qwen38-spark-v1".into();
     assert!(Document::parse(serde_json::to_vec(&document).unwrap().as_slice()).is_err());
 }
 
@@ -217,7 +220,7 @@ fn model_specific_backend_names_are_rejected() {
 async fn published_directory_without_an_output_manifest_is_not_rebuilt() {
     use nemoclaw_sdk::{
         CancellationToken, Error,
-        recipes::preparation::{self, Action, Request, Runner},
+        services::installers::vllm::recipes::preparation::{self, Action, Request, Runner},
     };
     struct NoTools;
     #[async_trait::async_trait]
@@ -232,10 +235,7 @@ async fn published_directory_without_an_output_manifest_is_not_rebuilt() {
         }
     }
     let document = Document::parse(serde_json::to_vec(&example()).unwrap().as_slice()).unwrap();
-    let service = document.spec.inference_providers[0]
-        .service
-        .as_ref()
-        .unwrap();
+    let service = service(&document);
     let root = tempfile::tempdir().unwrap();
     let published = root
         .path()

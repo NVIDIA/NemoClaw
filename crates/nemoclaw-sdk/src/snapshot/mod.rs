@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 mod hub;
 mod manifest;
-pub(crate) mod registry;
 pub use manifest::{MANIFEST_FILE, ModelFile, ModelManifest};
 #[cfg(test)]
 mod tests;
@@ -213,16 +212,41 @@ impl Client {
             resume_attempts: 4,
         })
     }
-    /// The registry adapter uses the same checksummed, resumable file lifecycle.
-    pub fn ollama() -> Result<Self, Error> {
+    /// An OCI-style registry adapter uses the same checksummed, resumable file lifecycle.
+    pub(crate) fn registry(origin: &str) -> Result<Self, Error> {
         let mut client = Self::new()?;
-        client.base_url = "https://registry.ollama.ai".into();
+        let url = reqwest::Url::parse(origin).map_err(|_| failure("invalid registry origin"))?;
+        if url.scheme() != "https" || url.host_str().is_none() || url.path() != "/" {
+            return Err(failure("invalid registry origin"));
+        }
+        client.base_url = origin.trim_end_matches('/').into();
         client.registry = true;
         Ok(client)
     }
     fn file_url(&self, manifest: &Manifest, file: &File) -> Result<reqwest::Url, Error> {
         if self.registry {
-            return self.registry_file_url(manifest, file);
+            manifest.validate()?;
+            let mut url = reqwest::Url::parse(&self.base_url)
+                .map_err(|_| failure("invalid registry origin"))?;
+            let mut path = url
+                .path_segments_mut()
+                .map_err(|_| failure("invalid registry origin"))?;
+            path.push("v2").extend(manifest.repository.split('/'));
+            if file.name == format!("blobs/sha256-{}", file.sha256) {
+                path.extend(["blobs", &format!("sha256:{}", file.sha256)]);
+            } else if file.sha256 == manifest.revision {
+                let reference = file
+                    .name
+                    .rsplit_once('/')
+                    .map(|(_, reference)| reference)
+                    .filter(|reference| !reference.is_empty())
+                    .ok_or(failure("invalid registry manifest path"))?;
+                path.extend(["manifests", reference]);
+            } else {
+                return Err(failure("invalid registry snapshot path"));
+            }
+            drop(path);
+            return Ok(url);
         }
         let mut url =
             reqwest::Url::parse(&self.base_url).map_err(|_| failure("invalid model origin"))?;
@@ -233,6 +257,35 @@ impl Client {
             .push(&manifest.revision)
             .extend(file.name.split('/'));
         Ok(url)
+    }
+
+    pub(crate) async fn registry_manifest(
+        &self,
+        repository: &str,
+        reference: &str,
+        limit: usize,
+    ) -> Result<Vec<u8>, Error> {
+        if !self.registry {
+            return Err(failure("registry metadata requires a registry client"));
+        }
+        let mut url =
+            reqwest::Url::parse(&self.base_url).map_err(|_| failure("invalid registry origin"))?;
+        url.path_segments_mut()
+            .map_err(|_| failure("invalid registry origin"))?
+            .push("v2")
+            .extend(repository.split('/'))
+            .extend(["manifests", reference]);
+        self.bounded(url, limit).await
+    }
+
+    pub(crate) async fn registry_file(
+        &self,
+        manifest: &Manifest,
+        file: &File,
+        limit: usize,
+    ) -> Result<Vec<u8>, Error> {
+        let url = self.file_url(manifest, file)?;
+        self.bounded(url, limit).await
     }
     /// Only explicit apply calls ensure. Interrupted body streams get at most
     /// four attempts with 1/2/4 second delays. Other failures never retry.

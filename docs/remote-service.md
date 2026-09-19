@@ -6,14 +6,15 @@
 [remote-vllm.yaml](../examples/spark/remote-vllm.yaml) manages a Docker inference service through SSH while an existing native OpenShell gateway owns Podman sandboxes.
 The pinned OpenShell Podman supervisor currently has a [TLS initialization bug](https://github.com/NVIDIA/OpenShell/issues/3427) that blocks provider traffic.
 Use an existing Docker gateway with `runtime.provider: docker` to exercise SSH inference while that Podman issue remains open.
-`service.placement` selects the SSH engine and its private Docker network.
-`service.publication` declares the private host address and inference URL that OpenShell can reach.
+Declare the service under `spec.services.<name>` and select it from an inference provider with `serviceRef`.
+Its `runtime.engine` selects the SSH Docker endpoint; `placement` selects its private Docker network.
+Its `publication` declares the private host address and inference URL that OpenShell can reach.
 Existing `providerRef` routes remain unchanged.
 No engine registry or per-sandbox placement override is required.
 
 Replace the example SSH alias, gateway endpoint, and private publication address with your hosts.
 Publication currently requires a private IPv4 address, the service's port and `/v1` path.
-It uses private HTTP; enable [managed bearer authentication](inference.md#authenticate-a-managed-vllm-service) with `service.authentication: bearer`.
+It uses private HTTP; enable [managed bearer authentication](inference.md#authenticate-a-managed-vllm-service) with `authentication: bearer` on the service.
 Omission preserves unauthenticated serving.
 
 The remote host must satisfy its service's hardware contract and have Docker, Python 3 and `nvidia-smi`.
