@@ -276,6 +276,8 @@ pub fn compile(
     compile_with_plans(document, generations, version, &service_plans)
 }
 
+pub(crate) const GATEWAY_CAPABILITIES_ADDRESS: &str = "data.nemoclaw_gateway_capabilities.current";
+
 pub(super) fn compile_with_plans(
     document: &Document,
     generations: &Generations,
@@ -347,7 +349,10 @@ pub(super) fn compile_with_plans(
         {
             attributes["depends_on"] = json!(["nemoclaw_provider_profile.web_search"]);
         }
-        attributes["lifecycle"] = json!({"prevent_destroy":true});
+        attributes["lifecycle"] = json!({"prevent_destroy":true, "precondition":[{
+            "condition":format!("${{{GATEWAY_CAPABILITIES_ADDRESS}.compatible}}"),
+            "error_message":"Gateway version or compute driver does not satisfy the configuration."
+        }]});
         let (kind, name) = target
             .address
             .split_once('.')
@@ -358,9 +363,17 @@ pub(super) fn compile_with_plans(
             .entry(kind)
             .or_insert_with(|| json!({}))[name] = attributes;
     }
-    Ok(
-        json!({"terraform":{"required_version":format!("= {OPENTOFU_VERSION}"),"required_providers":{"nemoclaw":{"source":PROVIDER_ADDRESS,"version":format!("= {version}")}}},"provider":{"nemoclaw":provider},"resource":resources}),
-    )
+    let drivers: std::collections::BTreeSet<_> = document
+        .spec
+        .sandboxes
+        .iter()
+        .map(|sandbox| &sandbox.runtime.provider)
+        .collect();
+    Ok(json!({
+        "terraform":{"required_version":format!("= {OPENTOFU_VERSION}"),"required_providers":{"nemoclaw":{"source":PROVIDER_ADDRESS,"version":format!("= {version}")}}},
+        "provider":{"nemoclaw":provider}, "resource":resources,
+        "data":{"nemoclaw_gateway_capabilities":{"current":{"required_compute_drivers":drivers}}}
+    }))
 }
 
 #[path = "compile_runtime.rs"]

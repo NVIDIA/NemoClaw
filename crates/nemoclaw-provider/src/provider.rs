@@ -19,7 +19,7 @@ use std::{
     },
 };
 use tf_provider::{
-    Diagnostics, DynamicResource, Provider,
+    Diagnostics, DynamicDataSource, DynamicResource, Provider,
     schema::{Attribute, AttributeConstraint, AttributeType, Block, Schema},
     value::{Value, ValueEmpty},
 };
@@ -40,9 +40,9 @@ fn text(value: Value<String>) -> String {
     }
 }
 #[derive(Default)]
-struct ConfiguredBackend(RwLock<Option<OpenShell>>, Connections);
+pub(crate) struct ConfiguredBackend(RwLock<Option<OpenShell>>, Connections);
 impl ConfiguredBackend {
-    fn client(&self) -> Result<OpenShell, ObservationError> {
+    pub(crate) fn client(&self) -> Result<OpenShell, ObservationError> {
         self.0
             .read()
             .map_err(|_| ObservationError::Query)?
@@ -107,6 +107,16 @@ pub struct NemoClawProvider {
 impl Provider for NemoClawProvider {
     type Config<'a> = ProviderConfig;
     type MetaState<'a> = ValueEmpty;
+    fn get_data_sources(
+        &self,
+        _: &mut Diagnostics,
+    ) -> Option<HashMap<String, Box<dyn DynamicDataSource>>> {
+        Some(HashMap::from([(
+            "gateway_capabilities".into(),
+            Box::new(crate::gateway::GatewayDataSource(self.backend.clone()))
+                as Box<dyn DynamicDataSource>,
+        )]))
+    }
     fn schema(&self, _: &mut Diagnostics) -> Option<Schema> {
         let mut attributes = HashMap::new();
         for name in [

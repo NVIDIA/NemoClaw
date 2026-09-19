@@ -85,5 +85,6 @@ pub fn plan_update(
 mod resource;
 pub use nemoclaw_sdk::backend::{Backend, Mutation, Row};
 pub use resource::ResourceAdapter;
+mod gateway;
 mod provider;
 pub use provider::NemoClawProvider;

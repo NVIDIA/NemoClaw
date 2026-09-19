@@ -251,6 +251,8 @@ fn teardown_graph(
     retained: &BTreeSet<String>,
 ) -> Result<Value, Error> {
     let mut graph = compile::compile(&record.document, &record.generations, version)?;
+    // Teardown must remain available when gateway capabilities have changed.
+    graph.as_object_mut().unwrap().remove("data");
     graph["provider"]["nemoclaw"]["destroy"] = json!(true);
     graph["resource"] = json!({});
     for address in retained {

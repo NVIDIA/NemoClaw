@@ -72,6 +72,8 @@ pub fn compile_runtime(
         crate::services::InstallStage::Runtime,
     )?;
     let mut graph = compile_with_plans(document, generations, version, &service_plans)?;
+    // The runtime stage bootstraps the gateway before deployment observations.
+    graph.as_object_mut().unwrap().remove("data");
     graph["resource"] = json!({});
     for target in runtime_targets_with_plans(document, generations, &service_plans)? {
         let mut attrs =

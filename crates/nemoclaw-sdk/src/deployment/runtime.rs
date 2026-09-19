@@ -48,6 +48,7 @@ pub(super) fn check_runtime_plan(
                 actions: change.change.actions.clone(),
             });
             ordinary.resource_changes.push(plan::ResourceChange {
+                mode: change.mode.clone(),
                 address: change.address.clone(),
                 change: plan::PlannedChange {
                     actions: vec!["no-op".into()],
@@ -56,6 +57,7 @@ pub(super) fn check_runtime_plan(
             });
         } else {
             ordinary.resource_changes.push(plan::ResourceChange {
+                mode: change.mode.clone(),
                 address: change.address.clone(),
                 change: plan::PlannedChange {
                     actions: change.change.actions.clone(),

@@ -34,6 +34,8 @@ NEMOCLAW_TEST_PROVIDER=/absolute/path/to/terraform-provider-nemoclaw \
   cargo test -p nemoclaw-e2e --test opentofu_openshell -- --ignored
 ```
 
+These tests also check gateway version and driver preconditions, failed observations without resource changes, and data-source reads deferred until bootstrap inputs become known.
+
 The SDK/CLI lifecycle tests require a verified native bundle (manifest plus CLI, OpenTofu, and production provider).
 They use only the local gRPC fixture:
 
@@ -47,6 +49,7 @@ Each Fabric harness is an independent ignored test with its own temporary state 
 To test one harness, append its test name, for example `-- --ignored harness_codex`; to run all harnesses with CI's concurrency bound, use `-- --ignored --test-threads=2`.
 
 These tests cover shared SDK/CLI state, interrupted creation, unchanged apply, readiness failure without replacement, failed observation without state loss, export/reapply, interrupted destroy, and retained workspace recovery.
+The `gateway_change_between_plan_and_apply_preserves_resources_and_allows_teardown` fixture changes the gateway driver after planning to verify the SDK's fresh pre-apply check, recovery, and teardown after capability drift.
 The multiple-provider fixture also verifies two independent deployments, each sandbox’s selected provider attachments, export/reapply, and drift in one deployment without changes to the other.
 The fixture returns protocol responses; it does not establish live agent inference.
 

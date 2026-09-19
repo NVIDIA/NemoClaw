@@ -26,6 +26,25 @@ The [provider implementation](../crates/nemoclaw-provider/src/provider.rs) curre
 The existence of these resources does not establish a supported standalone HCL workflow.
 Do not edit SDK-generated graphs or share a deployment state directory between independently managed workflows.
 
+## Gateway Capabilities
+
+The SDK's deployment graph reads `data.nemoclaw_gateway_capabilities.current` through the provider's configured OpenShell connection.
+The data source takes the required compute drivers and reports the observed gateway version, driver names and aliases, and whether they satisfy the SDK's compatibility contract.
+Compatibility requires the pinned OpenShell version and exactly one initialized driver that matches every required driver name.
+Missing metadata, authentication failures, and transport failures stop the observation.
+The read is bounded to 30 seconds and does not modify the gateway.
+
+Every deployment resource has a blocking precondition on the compatibility result.
+The earlier runtime graph omits this data source so managed gateway creation can finish before the deployment graph queries it.
+Unknown data-source inputs defer the read until their dependencies resolve.
+
+OpenTofu can retain known data-source results in a saved plan.
+The SDK therefore checks gateway compatibility again immediately before applying deployment changes, while retaining its existing preflight check.
+Observed data never becomes a durable resource binding, and teardown omits the capability gate so a version or driver mismatch alone does not prevent cleanup.
+
+[Gateway protocol tests](../crates/nemoclaw-e2e/tests/opentofu_openshell.rs) cover incompatible and incomplete observations, unchanged state after failures, and deferred reads.
+[Deployment fixtures](../crates/nemoclaw-e2e/tests/deployment.rs) cover a gateway change between plan and apply and subsequent recovery and teardown.
+
 ## Hardware Validation
 
 The provider validates known managed resource specifications through the SDK during OpenTofu configuration validation, without contacting an execution host.

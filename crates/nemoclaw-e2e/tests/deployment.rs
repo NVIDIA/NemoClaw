@@ -6,6 +6,59 @@ use nemoclaw_sdk::{CancellationToken, Deployment, Outcome, config::Document};
 use std::{fs, path::PathBuf, process::Command};
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires explicit verified NEMOCLAW_TEST_BUNDLE; isolated gateway fixture"]
+async fn gateway_change_between_plan_and_apply_preserves_resources_and_allows_teardown() {
+    let bundle = PathBuf::from(std::env::var_os("NEMOCLAW_TEST_BUNDLE").unwrap());
+    let directory = tempfile::tempdir().unwrap();
+    let fixture = Fixture::start().await;
+    let mut document = Document::parse(
+        include_str!("../../nemoclaw-sdk/tests/fixtures/config/local.yaml").as_bytes(),
+    )
+    .unwrap();
+    document.spec.gateway.endpoint = fixture.endpoint.clone();
+    let cancel = CancellationToken::new();
+    let deployment = Deployment::new(directory.path(), &bundle);
+    deployment.apply(&document, &cancel).await.unwrap();
+    let prior = fs::read(directory.path().join("terraform.tfstate")).unwrap();
+    let effects = fixture.state.lock().unwrap().effects;
+    let state = fixture.state.clone();
+    let guarded = Deployment::new(directory.path(), &bundle).with_progress(std::sync::Arc::new(
+        move |event| {
+            if event == nemoclaw_sdk::Progress::Applying {
+                state.lock().unwrap().driver = Some("podman".into());
+            }
+        },
+    ));
+    let error = guarded.apply(&document, &cancel).await.unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("gateway version or compute driver"),
+        "{error}"
+    );
+    assert_eq!(fixture.state.lock().unwrap().effects, effects);
+    assert_eq!(
+        fs::read(directory.path().join("terraform.tfstate")).unwrap(),
+        prior
+    );
+    // Resume the same intent after restoring compatibility, then verify that
+    // capability drift alone cannot prevent explicit teardown.
+    fixture.state.lock().unwrap().driver = None;
+    assert!(
+        deployment
+            .apply(&document, &cancel)
+            .await
+            .unwrap()
+            .changes
+            .is_empty()
+    );
+    fixture.state.lock().unwrap().driver = Some("podman".into());
+    deployment.destroy(&cancel).await.unwrap();
+    assert_eq!(fixture.state.lock().unwrap().workspaces.len(), 1);
+    assert!(fixture.state.lock().unwrap().sandboxes.is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires explicit verified NEMOCLAW_TEST_BUNDLE"]
 async fn interrupted_create_requires_original_intent_and_destroy_allows_recreation() {
     let bundle = PathBuf::from(std::env::var_os("NEMOCLAW_TEST_BUNDLE").unwrap());

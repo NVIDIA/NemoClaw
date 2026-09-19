@@ -160,7 +160,7 @@ pub(crate) fn bindings(directory: &Path) -> Result<BTreeMap<String, StateBinding
         index_key: serde_json::Value,
         #[serde(default)]
         deposed: serde_json::Value,
-        attributes: StateBinding,
+        attributes: serde_json::Value,
     }
     #[derive(Deserialize)]
     struct Resource {
@@ -179,11 +179,9 @@ pub(crate) fn bindings(directory: &Path) -> Result<BTreeMap<String, StateBinding
     let state: State = serde_json::from_slice(&bytes)
         .map_err(|_| Error::State("OpenTofu state is unreadable; retain it for recovery"))?;
     let mut bindings = BTreeMap::new();
+    let mut gateway_observed = false;
     for resource in state.resources {
-        if resource.instances.len() != 1
-            || resource.module.is_some()
-            || resource.mode.as_ref().is_some_and(|mode| mode != "managed")
-        {
+        if resource.instances.len() != 1 || resource.module.is_some() {
             return Err(Error::State("unexpected resource instances in state"));
         }
         let instance = resource
@@ -194,9 +192,24 @@ pub(crate) fn bindings(directory: &Path) -> Result<BTreeMap<String, StateBinding
         let address = format!("{}.{}", resource.r#type, resource.name);
         if !instance.index_key.is_null()
             || !instance.deposed.is_null()
-            || instance.attributes.id.is_empty()
-            || bindings.insert(address, instance.attributes).is_some()
+            || !instance.attributes.is_object()
         {
+            return Err(Error::State("unexpected resource instances in state"));
+        }
+        if resource.mode.as_deref() == Some("data")
+            && format!("data.{address}") == crate::compile::GATEWAY_CAPABILITIES_ADDRESS
+        {
+            if std::mem::replace(&mut gateway_observed, true) {
+                return Err(Error::State("duplicate gateway observation in state"));
+            }
+            continue;
+        }
+        if resource.mode.as_ref().is_some_and(|mode| mode != "managed") {
+            return Err(Error::State("unexpected resource instances in state"));
+        }
+        let attributes: StateBinding = serde_json::from_value(instance.attributes)
+            .map_err(|_| Error::State("OpenTofu state is unreadable; retain it for recovery"))?;
+        if attributes.id.is_empty() || bindings.insert(address, attributes).is_some() {
             return Err(Error::State("duplicate or unbound resource in state"));
         }
     }
