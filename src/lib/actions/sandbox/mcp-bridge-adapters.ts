@@ -48,8 +48,10 @@ export {
   buildHermesMcpProbeCommand,
   buildHermesMcpReconcileCommand,
   buildHermesMcpRegisterCommand,
+  beginHermesMcpReloadFinalityDeadline,
   HermesMcpReloadRelayLossError,
   inspectHermesMcpReloadFinality,
+  type HermesMcpReloadFinalityDeadline,
   type HermesMcpReloadFinalityInspection,
 } from "./mcp-bridge-adapter-hermes";
 export {
@@ -73,6 +75,7 @@ export async function inspectAgentAdapterRegistration(
   entry: McpSourceEntry,
   runtimeSelection: McpProviderInspectionRuntimeSelection,
   credentialRevision?: McpAttachedCredentialRevision,
+  timeoutMs?: number,
 ): Promise<AdapterRegistrationInspection> {
   switch (adapter) {
     case "openclaw-config":
@@ -83,6 +86,7 @@ export async function inspectAgentAdapterRegistration(
         entry,
         runtimeSelection,
         credentialRevision,
+        timeoutMs,
       );
     case "deepagents-config":
       return await inspectDeepAgentsAdapterRegistration(sandboxName, entry, runtimeSelection);
@@ -230,33 +234,58 @@ export async function observeStableMcpCredentialRevision(
   runtimeSelection: McpProviderInspectionRuntimeSelection,
   timeoutSeconds: number,
   expectedRevision?: McpAttachedCredentialRevision,
+  deadline?: { readonly deadlineMs: number; readonly now: () => number },
 ): Promise<McpAttachedCredentialRevision> {
   let candidateRevision: McpAttachedCredentialRevision | undefined;
   let stableObservations = 0;
   let observedRevision: McpAttachedCredentialRevision | undefined;
-  const stable = await waitForMcpBridgeConditionAsync(
-    async () => {
-      const observation = await observeMcpCredentialRevision(sandboxName, entry, runtimeSelection);
-      if (observation === "absent" || observation === "canonical") {
-        throw mcpAdapterCredentialRevisionUnavailableError(entry.server);
-      }
-      if (expectedRevision !== undefined && observation !== expectedRevision) {
-        throw mcpAdapterCredentialRevisionUnstableError(entry.server);
-      }
-      if (candidateRevision !== observation) {
-        candidateRevision = observation;
-        stableObservations = 1;
-        return false;
-      }
-      stableObservations += 1;
-      if (stableObservations < STABLE_CREDENTIAL_REVISION_OBSERVATIONS) return false;
-      observedRevision = observation;
-      return true;
-    },
-    Number.isFinite(timeoutSeconds) && timeoutSeconds > 0 ? timeoutSeconds : 30,
-    1_000,
-  );
-  if (!stable || observedRevision === undefined) {
+  const observationTimeoutMs = (): number | undefined => {
+    if (!deadline) return undefined;
+    const remainingMs = Math.floor(deadline.deadlineMs - deadline.now());
+    if (remainingMs <= 0) throw mcpAdapterCredentialRevisionUnstableError(entry.server);
+    return remainingMs;
+  };
+  const observeStableRevision = async (): Promise<boolean> => {
+    const observation = await observeMcpCredentialRevision(
+      sandboxName,
+      entry,
+      runtimeSelection,
+      observationTimeoutMs(),
+    );
+    if (observation === "absent" || observation === "canonical") {
+      throw mcpAdapterCredentialRevisionUnavailableError(entry.server);
+    }
+    if (expectedRevision !== undefined && observation !== expectedRevision) {
+      throw mcpAdapterCredentialRevisionUnstableError(entry.server);
+    }
+    if (candidateRevision !== observation) {
+      candidateRevision = observation;
+      stableObservations = 1;
+      return false;
+    }
+    stableObservations += 1;
+    if (stableObservations < STABLE_CREDENTIAL_REVISION_OBSERVATIONS) return false;
+    observedRevision = observation;
+    return true;
+  };
+  const stable = deadline
+    ? await waitForMcpBridgeConditionAsync(observeStableRevision, {
+        backoffFactor: 1,
+        deadlineMs: deadline.deadlineMs,
+        initialIntervalMs: 1_000,
+        maxIntervalMs: 1_000,
+        now: deadline.now,
+      })
+    : await waitForMcpBridgeConditionAsync(
+        observeStableRevision,
+        Number.isFinite(timeoutSeconds) && timeoutSeconds > 0 ? timeoutSeconds : 30,
+        1_000,
+      );
+  if (
+    !stable ||
+    observedRevision === undefined ||
+    (deadline !== undefined && deadline.now() >= deadline.deadlineMs)
+  ) {
     throw mcpAdapterCredentialRevisionUnstableError(entry.server);
   }
   return observedRevision;

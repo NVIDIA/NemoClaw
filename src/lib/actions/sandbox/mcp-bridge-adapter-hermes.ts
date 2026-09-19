@@ -35,6 +35,8 @@ const HERMES_MCP_RECONCILE_TIMEOUT_SECONDS = HERMES_MCP_EXEC_TIMEOUT_SECONDS + 3
 const HERMES_MCP_RECONCILE_TRANSPORT_MARGIN_MS = 25_000;
 const HERMES_MCP_RECONCILE_TRANSPORT_TIMEOUT_MS =
   HERMES_MCP_RECONCILE_TIMEOUT_SECONDS * 1_000 + HERMES_MCP_RECONCILE_TRANSPORT_MARGIN_MS;
+const HERMES_MCP_RECONCILE_PROOF_RESERVE_SECONDS = 30;
+const HERMES_MCP_RECONCILE_PROOF_RESERVE_MS = HERMES_MCP_RECONCILE_PROOF_RESERVE_SECONDS * 1_000;
 const HERMES_RELOAD_RELAY_LOSS = `Error: x code: 'The service is currently unavailable', message: "exec relay closed before the command reported an exit status"`;
 
 export class HermesMcpReloadRelayLossError extends McpBridgeError {
@@ -52,6 +54,38 @@ export class HermesMcpReloadRelayLossError extends McpBridgeError {
 export type HermesMcpReloadFinalityInspection =
   | { state: "committed" | "absent" }
   | { state: "unknown"; detail: string };
+
+export interface HermesMcpReloadFinalityDeadline {
+  readonly deadlineMs: number;
+  readonly readinessDeadlineMs: number;
+}
+
+/**
+ * Bind mutation, same-identity readiness, and read-only finality to one deadline.
+ * Readiness may consume the mutation owner's 620-second bound, leaving thirty
+ * seconds for proof and the existing transport margin.
+ */
+export function beginHermesMcpReloadFinalityDeadline(): HermesMcpReloadFinalityDeadline {
+  const startedAtMs = performance.now();
+  const deadlineMs = startedAtMs + HERMES_MCP_RECONCILE_TRANSPORT_TIMEOUT_MS;
+  return {
+    deadlineMs,
+    readinessDeadlineMs:
+      deadlineMs - HERMES_MCP_RECONCILE_PROOF_RESERVE_MS - HERMES_MCP_RECONCILE_TRANSPORT_MARGIN_MS,
+  };
+}
+
+function remainingFinalityTransportMs(deadline: HermesMcpReloadFinalityDeadline): number {
+  const remaining = deadline.deadlineMs - performance.now();
+  return Number.isFinite(remaining) ? Math.max(0, Math.floor(remaining)) : 0;
+}
+
+function remainingFinalityRemoteSeconds(remainingTransportMs: number): number {
+  return Math.min(
+    HERMES_MCP_RECONCILE_TIMEOUT_SECONDS,
+    Math.floor((remainingTransportMs - HERMES_MCP_RECONCILE_TRANSPORT_MARGIN_MS) / 1_000),
+  );
+}
 
 function normalizeHermesReloadDiagnostic(value: string): string {
   return value
@@ -197,25 +231,31 @@ export function inspectHermesMcpReloadFinality(
   entry: McpSourceEntry,
   credentialRevision: McpAttachedCredentialRevision,
   runtimeSelection: McpProviderInspectionRuntimeSelection,
+  deadline?: HermesMcpReloadFinalityDeadline,
 ): HermesMcpReloadFinalityInspection {
-  const startedAtMs = performance.now();
+  const activeDeadline = deadline ?? beginHermesMcpReloadFinalityDeadline();
+  const initialTransportMs = deadline
+    ? remainingFinalityTransportMs(activeDeadline)
+    : HERMES_MCP_RECONCILE_TRANSPORT_TIMEOUT_MS;
+  const initialRemoteSeconds = remainingFinalityRemoteSeconds(initialTransportMs);
+  if (initialRemoteSeconds < HERMES_MCP_RECONCILE_PROOF_RESERVE_SECONDS) {
+    return {
+      state: "unknown",
+      detail: "Hermes MCP reconciliation exhausted its finality deadline.",
+    };
+  }
   const committed = inspectHermesMcpReconcileState(
     sandboxName,
     entry,
     credentialRevision,
     "committed",
     runtimeSelection,
+    initialRemoteSeconds,
+    initialTransportMs,
   );
   if (committed.state === "committed") return committed;
-  const remainingTransportMs = Math.max(
-    0,
-    HERMES_MCP_RECONCILE_TRANSPORT_TIMEOUT_MS -
-      Math.ceil(Math.max(0, performance.now() - startedAtMs)),
-  );
-  const remainingRemoteSeconds = Math.min(
-    HERMES_MCP_RECONCILE_TIMEOUT_SECONDS,
-    Math.floor((remainingTransportMs - HERMES_MCP_RECONCILE_TRANSPORT_MARGIN_MS) / 1_000),
-  );
+  const remainingTransportMs = remainingFinalityTransportMs(activeDeadline);
+  const remainingRemoteSeconds = remainingFinalityRemoteSeconds(remainingTransportMs);
   if (remainingRemoteSeconds <= 0) {
     return {
       state: "unknown",
@@ -243,12 +283,14 @@ export async function inspectHermesAdapterRegistration(
   entry: McpSourceEntry,
   runtimeSelection: McpProviderInspectionRuntimeSelection,
   credentialRevision?: McpAttachedCredentialRevision,
+  timeoutMs?: number,
 ): Promise<AdapterRegistrationInspection> {
   return await inspectAdapterRegistrationCommand(
     sandboxName,
     entry,
     buildHermesMcpStatusCommand(entry, credentialRevision),
     runtimeSelection,
+    timeoutMs,
   );
 }
 

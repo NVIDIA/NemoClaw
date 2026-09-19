@@ -66,6 +66,7 @@ import {
   buildDeepAgentsMcpStatusCommand,
   buildHermesMcpStatusCommand,
   HermesMcpReloadRelayLossError,
+  inspectAgentAdapterRegistration,
   inspectHermesMcpReloadFinality,
   observeStableMcpCredentialRevision,
   registerAgentAdapter,
@@ -247,6 +248,25 @@ describe("Hermes MCP reload finality", () => {
     mocks.getSandbox.mockReset().mockReturnValue(sandbox);
   });
 
+  it("forwards a caller deadline to the adapter inspection transport", async () => {
+    mocks.executeSandboxCommand.mockReturnValue(registered);
+
+    await inspectAgentAdapterRegistration(
+      "alpha",
+      "hermes-config",
+      baseEntry,
+      runtimeSelection,
+      undefined,
+      4_321,
+    );
+
+    expect(mocks.executeSandboxCommand).toHaveBeenLastCalledWith(
+      "alpha",
+      buildHermesMcpStatusCommand(baseEntry),
+      { runtimeSelection, timeout: 4_321 },
+    );
+  });
+
   it("classifies only the exact status-1 reload relay loss and retains its credential revision", async () => {
     mocks.runOpenshellProviderCommand.mockReturnValue({
       status: 1,
@@ -396,9 +416,12 @@ describe("Hermes MCP reload finality", () => {
         stderr: "",
       });
 
-    expect(inspectHermesMcpReloadFinality("alpha", baseEntry, "v12", runtimeSelection)).toEqual({
-      state: "absent",
-    });
+    expect(
+      inspectHermesMcpReloadFinality("alpha", baseEntry, "v12", runtimeSelection, {
+        deadlineMs: 676_000,
+        readinessDeadlineMs: 621_000,
+      }),
+    ).toEqual({ state: "absent" });
     const [args, options] = mocks.runOpenshellProviderCommand.mock.calls[1] ?? [];
     expect(args).toEqual(expect.arrayContaining(["--timeout", "639", "reconcile"]));
     expect(options).toMatchObject({ timeout: 664_999 });
@@ -417,11 +440,52 @@ describe("Hermes MCP reload finality", () => {
       stderr: "reconciliation timed out",
     });
 
-    expect(inspectHermesMcpReloadFinality("alpha", baseEntry, "v12", runtimeSelection)).toEqual({
+    expect(
+      inspectHermesMcpReloadFinality("alpha", baseEntry, "v12", runtimeSelection, {
+        deadlineMs: 676_000,
+        readinessDeadlineMs: 621_000,
+      }),
+    ).toEqual({
       state: "unknown",
       detail: "Hermes MCP reconciliation exhausted its finality deadline.",
     });
     expect(mocks.runOpenshellProviderCommand).toHaveBeenCalledOnce();
+    now.mockRestore();
+  });
+
+  it("does not start reconciliation without the reserved thirty-second proof budget", () => {
+    const now = vi.spyOn(performance, "now").mockReturnValue(621_001);
+
+    expect(
+      inspectHermesMcpReloadFinality("alpha", baseEntry, "v12", runtimeSelection, {
+        deadlineMs: 676_000,
+        readinessDeadlineMs: 621_000,
+      }),
+    ).toEqual({
+      state: "unknown",
+      detail: "Hermes MCP reconciliation exhausted its finality deadline.",
+    });
+    expect(mocks.runOpenshellProviderCommand).not.toHaveBeenCalled();
+    now.mockRestore();
+  });
+
+  it("uses the exact proof reserve at the readiness boundary", () => {
+    const now = vi.spyOn(performance, "now").mockReturnValue(621_000);
+    mocks.runOpenshellProviderCommand.mockReturnValue({
+      status: 0,
+      stdout: '{"ok":true,"state":"committed"}\n',
+      stderr: "",
+    });
+
+    expect(
+      inspectHermesMcpReloadFinality("alpha", baseEntry, "v12", runtimeSelection, {
+        deadlineMs: 676_000,
+        readinessDeadlineMs: 621_000,
+      }),
+    ).toEqual({ state: "committed" });
+    const [args, options] = mocks.runOpenshellProviderCommand.mock.calls[0] ?? [];
+    expect(args).toEqual(expect.arrayContaining(["--timeout", "30", "reconcile"]));
+    expect(options).toMatchObject({ timeout: 55_000 });
     now.mockRestore();
   });
 
@@ -826,6 +890,31 @@ describe("MCP adapter credential revision reconciliation failures", () => {
       observeStableMcpCredentialRevision("alpha", baseEntry, runtimeSelection, 30, "v7"),
     ).rejects.toThrow("credential revision did not stabilize");
     expect(mocks.observeMcpCredentialRevision).toHaveBeenCalledTimes(3);
+  });
+
+  it("bounds every stable revision observation by the shared finality deadline", async () => {
+    mocks.observeMcpCredentialRevision.mockResolvedValue("v7");
+    const now = vi.fn(() => 10_000);
+
+    await expect(
+      observeStableMcpCredentialRevision("alpha", baseEntry, runtimeSelection, 30, "v7", {
+        deadlineMs: 40_000,
+        now,
+      }),
+    ).resolves.toBe("v7");
+
+    expect(mocks.waitForMcpBridgeConditionAsync).toHaveBeenCalledWith(
+      expect.any(Function),
+      expect.objectContaining({ deadlineMs: 40_000, now }),
+    );
+    expect(mocks.observeMcpCredentialRevision).toHaveBeenCalledTimes(3);
+    expect(mocks.observeMcpCredentialRevision).toHaveBeenNthCalledWith(
+      1,
+      "alpha",
+      baseEntry,
+      runtimeSelection,
+      30_000,
+    );
   });
 
   it("fails closed when both bounded registrations advance the revision", async () => {

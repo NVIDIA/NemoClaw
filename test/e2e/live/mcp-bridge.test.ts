@@ -98,6 +98,7 @@ import {
 } from "./mcp-provider-rewrite-probe.ts";
 import { assertRawOpenShellAllowedIpsRebindingDenied } from "./openshell-allowed-ips-rebinding.ts";
 import { prepareExactMainMcpProof } from "./openshell-exact-main-mcp-proof.ts";
+import { pausePortableHostLockOwner } from "../support/mcp-bridge-portable-lock-barrier.ts";
 const OPENCLAW_SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-mcp-bridge";
 const HERMES_SANDBOX_NAME = process.env.NEMOCLAW_MCP_HERMES_SANDBOX_NAME ?? "e2e-mcp-hermes";
 const DEEPAGENTS_SANDBOX_NAME = process.env.NEMOCLAW_MCP_DEEPAGENTS_SANDBOX_NAME ?? "e2e-mcp-dcode";
@@ -232,14 +233,26 @@ async function assertConcurrentAddSerialized(
       // Keep callers alive through the existing bounded restart and reload.
       timeoutMs: MCP_MUTATION_TIMEOUT_MS[options.expectedAdapter],
     });
-  const attempts = await Promise.all(
-    ["first", "second"].map((attempt) =>
-      add(`${options.artifactPrefix}-mcp-concurrent-add-${attempt}`),
-    ),
-  );
-  const successful = attempts.filter((result) => result.exitCode === 0);
-  const rejected = attempts.filter((result) => result.exitCode !== 0);
-  expect(successful).toHaveLength(1);
+  const firstAttempt = add(`${options.artifactPrefix}-mcp-concurrent-add-first`);
+  const secondAttempt = (async () => {
+    const barrier = await pausePortableHostLockOwner({
+      commandArgs: args,
+      commandPath: host.commandPath,
+      homeDir: process.env.HOME ?? os.homedir(),
+    });
+    try {
+      cleanup.add(`resume ${options.artifactPrefix} concurrent MCP add lock owner`, () =>
+        barrier.resume(),
+      );
+      return await add(`${options.artifactPrefix}-mcp-concurrent-add-second`);
+    } finally {
+      await barrier.resume();
+    }
+  })();
+  const [first, second] = await Promise.all([firstAttempt, secondAttempt]);
+  expect(first.exitCode).toBe(0);
+  const successful = [first];
+  const rejected = [second];
   const statusObservation = await readConcurrentMcpStatusAndConfirmHermesRegistration({
     clients: { artifacts, host, sandbox },
     committedAddResult: successful[0]!,

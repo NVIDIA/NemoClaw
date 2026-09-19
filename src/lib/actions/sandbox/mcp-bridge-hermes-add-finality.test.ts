@@ -16,6 +16,7 @@ const mocks = vi.hoisted(() => {
     registerFailure: "relay" as "generic" | "relay",
     revision: "v7",
     useRealAdapterFlow: false,
+    readinessAttemptLimit: 12,
   };
   return {
     applyGeneratedPolicy: vi.fn(),
@@ -31,13 +32,15 @@ const mocks = vi.hoisted(() => {
     runOpenshellProviderCommand: vi.fn(),
     state,
     unregisterAgentAdapter: vi.fn(),
-    waitForMcpBridgeConditionAsync: vi.fn(async (condition: () => Promise<boolean>) => {
-      let matched = false;
-      for (let attempt = 0; attempt < 12 && !matched; attempt += 1) {
-        matched = await condition();
-      }
-      return matched;
-    }),
+    waitForMcpBridgeConditionAsync: vi.fn(
+      async (condition: () => Promise<boolean>, _options?: unknown) => {
+        let matched = false;
+        for (let attempt = 0; attempt < state.readinessAttemptLimit && !matched; attempt += 1) {
+          matched = await condition();
+        }
+        return matched;
+      },
+    ),
   };
 });
 
@@ -208,6 +211,8 @@ vi.mock("./mcp-bridge-validation", async (importOriginal) => ({
 
 import { HermesMcpReloadRelayLossError } from "./mcp-bridge-adapters";
 import { addMcpBridge } from "./mcp-bridge-add-restart";
+import { inspectMcpProvider, inspectMcpProviderAttachments } from "./mcp-bridge-provider";
+import * as policies from "../../policy";
 
 async function runAdd(): Promise<void> {
   await addMcpBridge("alpha", {
@@ -232,6 +237,7 @@ describe("Hermes MCP add reload finality", () => {
       registerFailure: "relay",
       revision: "v7",
       useRealAdapterFlow: false,
+      readinessAttemptLimit: 12,
     });
     process.env.GITHUB_TOKEN = "host-only-secret";
     delete process.env.NEMOCLAW_TRUSTED_PRIVATE_HOSTS;
@@ -256,6 +262,46 @@ describe("Hermes MCP add reload finality", () => {
     );
     mocks.observeMcpCredentialRevision.mockImplementation(() => mocks.state.revision);
     mocks.observeStableMcpCredentialRevision.mockImplementation(async () => mocks.state.revision);
+    vi.mocked(inspectMcpProvider)
+      .mockReset()
+      .mockImplementation(async () =>
+        mocks.state.provider
+          ? {
+              credentialKeys: ["GITHUB_TOKEN"],
+              exists: true,
+              id: mocks.state.providerIdentityChanged
+                ? "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
+                : "11111111-2222-4333-8444-555555555555",
+              resourceVersion: 7,
+              type: "nemoclaw-mcp-v1",
+            }
+          : {
+              credentialKeys: null,
+              exists: false,
+              id: null,
+              resourceVersion: null,
+              type: null,
+            },
+      );
+    vi.mocked(inspectMcpProviderAttachments)
+      .mockReset()
+      .mockImplementation(async () => ({
+        attachments: mocks.state.attachment
+          ? [
+              {
+                credentialKeys: ["GITHUB_TOKEN"],
+                name: "alpha-mcp-github",
+                providerId: "11111111-2222-4333-8444-555555555555",
+              },
+            ]
+          : [],
+      }));
+    vi.mocked(policies.getPresetContentGatewayState)
+      .mockReset()
+      .mockImplementation(async (_sandbox: string, content: string) => {
+        const requested = content.includes("credential_binding") ? "bound" : "capability";
+        return mocks.state.policy === requested ? "match" : "absent";
+      });
     mocks.runOpenshellProviderCommand.mockReset();
     let identityObservations = 0;
     mocks.observeSandboxOnGateway.mockImplementation(() => {
@@ -308,6 +354,181 @@ describe("Hermes MCP add reload finality", () => {
     expect(mocks.unregisterAgentAdapter).not.toHaveBeenCalled();
     expect(mocks.removeGeneratedPolicy).not.toHaveBeenCalled();
     expect(mocks.detachProvider).not.toHaveBeenCalled();
+  });
+
+  it("uses one fake-clock deadline when readiness takes longer than thirty seconds", async () => {
+    let nowMs = 1_000;
+    const now = vi.spyOn(performance, "now").mockImplementation(() => nowMs);
+    mocks.state.readinessDelayObservations = 31;
+    mocks.state.readinessAttemptLimit = 40;
+    mocks.waitForMcpBridgeConditionAsync.mockImplementationOnce(
+      async (condition: () => Promise<boolean>, optionsValue?: unknown) => {
+        const options = optionsValue as { deadlineMs: number; now: () => number };
+        expect(options.deadlineMs).toBe(621_000);
+        expect(options.now()).toBe(nowMs);
+        const attempt = async (remaining: number): Promise<boolean> =>
+          remaining <= 0 || nowMs >= options.deadlineMs
+            ? false
+            : (await condition())
+              ? true
+              : ((nowMs += 1_000), attempt(remaining - 1));
+        return attempt(40);
+      },
+    );
+
+    await expect(runAdd()).resolves.toBeUndefined();
+
+    expect(nowMs).toBeGreaterThan(31_000);
+    expect(mocks.observeSandboxOnGateway.mock.calls[1]?.[3]).toBe(620_000);
+    expect(mocks.inspectHermesMcpReloadFinality).toHaveBeenCalledWith(
+      "alpha",
+      expect.objectContaining({ server: "github" }),
+      "v7",
+      expect.any(Object),
+      { deadlineMs: 676_000, readinessDeadlineMs: 621_000 },
+    );
+    expect(mocks.unregisterAgentAdapter).not.toHaveBeenCalled();
+    expect(mocks.removeGeneratedPolicy).not.toHaveBeenCalled();
+    expect(mocks.detachProvider).not.toHaveBeenCalled();
+    now.mockRestore();
+  });
+
+  it("returns unknown without cleanup when external proof crosses the finality deadline", async () => {
+    let nowMs = 1_000;
+    const now = vi.spyOn(performance, "now").mockImplementation(() => nowMs);
+    mocks.inspectAgentAdapterRegistration.mockImplementation((...args: unknown[]) => {
+      nowMs = args[5] === undefined ? nowMs : 676_000;
+      return { state: mocks.state.adapter ? "registered" : "absent" };
+    });
+
+    try {
+      await expect(runAdd()).rejects.toThrow(/outcome.*unknown.*did not roll back or repeat/iu);
+
+      expect(
+        mocks.inspectAgentAdapterRegistration.mock.calls.filter((args) => args[5] !== undefined),
+      ).toHaveLength(1);
+      expect(
+        vi.mocked(inspectMcpProvider).mock.calls.filter((args) => args[3] !== undefined),
+      ).toHaveLength(0);
+      expect(
+        vi
+          .mocked(policies.getPresetContentGatewayState)
+          .mock.calls.filter((args) => args[4] !== undefined),
+      ).toHaveLength(0);
+      expect(
+        vi.mocked(inspectMcpProviderAttachments).mock.calls.filter((args) => args[3] !== undefined),
+      ).toHaveLength(0);
+      expect(mocks.observeStableMcpCredentialRevision).not.toHaveBeenCalled();
+      expect(mocks.observeSandboxOnGateway).toHaveBeenCalledTimes(2);
+      expect(mocks.unregisterAgentAdapter).not.toHaveBeenCalled();
+      expect(mocks.removeGeneratedPolicy).not.toHaveBeenCalled();
+      expect(mocks.detachProvider).not.toHaveBeenCalled();
+    } finally {
+      now.mockRestore();
+    }
+  });
+
+  it("decreases the shared timeout across every external recovery transport", async () => {
+    let nowMs = 1_000;
+    const now = vi.spyOn(performance, "now").mockImplementation(() => nowMs);
+    mocks.inspectAgentAdapterRegistration.mockImplementation((...args: unknown[]) => {
+      nowMs += args[5] === undefined ? 0 : 1_000;
+      return { state: mocks.state.adapter ? "registered" : "absent" };
+    });
+    vi.mocked(inspectMcpProvider).mockImplementation(async (...args: unknown[]) => {
+      nowMs += args[3] === undefined ? 0 : 1_000;
+      return mocks.state.provider
+        ? {
+            credentialKeys: ["GITHUB_TOKEN"],
+            exists: true,
+            id: "11111111-2222-4333-8444-555555555555",
+            resourceVersion: 7,
+            type: "nemoclaw-mcp-v1",
+          }
+        : {
+            credentialKeys: null,
+            exists: false,
+            id: null,
+            resourceVersion: null,
+            type: null,
+          };
+    });
+    vi.mocked(policies.getPresetContentGatewayState).mockImplementation(
+      async (_sandbox: string, content: string, ...args: unknown[]) => {
+        nowMs += args[2] === undefined ? 0 : 1_000;
+        const requested = content.includes("credential_binding") ? "bound" : "capability";
+        return mocks.state.policy === requested ? "match" : "absent";
+      },
+    );
+    vi.mocked(inspectMcpProviderAttachments).mockImplementation(async (...args: unknown[]) => {
+      nowMs += args[3] === undefined ? 0 : 1_000;
+      return {
+        attachments: mocks.state.attachment
+          ? [
+              {
+                credentialKeys: ["GITHUB_TOKEN"],
+                name: "alpha-mcp-github",
+                providerId: "11111111-2222-4333-8444-555555555555",
+              },
+            ]
+          : [],
+      };
+    });
+
+    try {
+      await expect(runAdd()).resolves.toBeUndefined();
+
+      expect(
+        mocks.inspectAgentAdapterRegistration.mock.calls.find((args) => args[5] !== undefined)?.[5],
+      ).toBe(675_000);
+      expect(
+        vi.mocked(inspectMcpProvider).mock.calls.find((args) => args[3] !== undefined)?.[3],
+      ).toBe(674_000);
+      expect(
+        vi
+          .mocked(policies.getPresetContentGatewayState)
+          .mock.calls.find((args) => args[4] !== undefined)?.[4],
+      ).toBe(673_000);
+      expect(
+        vi
+          .mocked(inspectMcpProviderAttachments)
+          .mock.calls.find((args) => args[3] !== undefined)?.[3],
+      ).toBe(672_000);
+      expect(mocks.observeSandboxOnGateway.mock.calls.at(-1)?.[3]).toBe(671_000);
+      expect(mocks.unregisterAgentAdapter).not.toHaveBeenCalled();
+      expect(mocks.removeGeneratedPolicy).not.toHaveBeenCalled();
+      expect(mocks.detachProvider).not.toHaveBeenCalled();
+    } finally {
+      now.mockRestore();
+    }
+  });
+
+  it("returns unknown without cleanup when credential stability crosses the finality deadline", async () => {
+    let nowMs = 1_000;
+    const now = vi.spyOn(performance, "now").mockImplementation(() => nowMs);
+    mocks.observeStableMcpCredentialRevision.mockImplementation(async () => {
+      nowMs = 676_000;
+      return "v7";
+    });
+
+    try {
+      await expect(runAdd()).rejects.toThrow(/outcome.*unknown.*did not roll back or repeat/iu);
+
+      expect(mocks.observeStableMcpCredentialRevision).toHaveBeenCalledWith(
+        "alpha",
+        expect.objectContaining({ server: "github" }),
+        expect.any(Object),
+        30,
+        "v7",
+        expect.objectContaining({ deadlineMs: 676_000 }),
+      );
+      expect(mocks.observeSandboxOnGateway).toHaveBeenCalledTimes(2);
+      expect(mocks.unregisterAgentAdapter).not.toHaveBeenCalled();
+      expect(mocks.removeGeneratedPolicy).not.toHaveBeenCalled();
+      expect(mocks.detachProvider).not.toHaveBeenCalled();
+    } finally {
+      now.mockRestore();
+    }
   });
 
   it("hands the exact relay loss to the real adapter finality inspection", async () => {
@@ -388,7 +609,19 @@ describe("Hermes MCP add reload finality", () => {
     ["the sandbox identity changes", () => (mocks.state.identityChanged = true)],
     [
       "the same sandbox identity does not return ready",
-      () => (mocks.state.readinessDelayObservations = 20),
+      () => (mocks.state.readinessDelayObservations = 1_000),
+    ],
+    [
+      "the readiness observation throws",
+      () =>
+        mocks.observeSandboxOnGateway
+          .mockImplementationOnce(() => ({
+            liveIdentityFingerprint: "a".repeat(64),
+            state: "ready",
+          }))
+          .mockImplementationOnce(() => {
+            throw new Error("readiness observation failed");
+          }),
     ],
     ["the credential revision changes", () => (mocks.state.revision = "v8")],
     [

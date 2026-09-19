@@ -14,7 +14,9 @@ import type { McpSourceEntry } from "./mcp-bridge-contracts";
 import { withMcpCredentialOwnershipLock } from "../../state/mcp-lifecycle-lock/credential-ownership";
 import {
   assertAgentMcpMutationRuntimeCapability,
+  beginHermesMcpReloadFinalityDeadline,
   HermesMcpReloadRelayLossError,
+  type HermesMcpReloadFinalityDeadline,
   type HermesMcpReloadFinalityInspection,
   inspectAgentAdapterRegistration,
   inspectHermesMcpReloadFinality,
@@ -82,8 +84,6 @@ import {
   validateSandboxName,
 } from "./mcp-bridge-validation";
 import { waitForMcpBridgeConditionAsync } from "./mcp-bridge/timing";
-
-const HERMES_MCP_RECONCILE_READY_TIMEOUT_SECONDS = 30;
 
 function sameMcpAddIntent(existing: McpSourceEntry, requested: McpSourceEntry): boolean {
   return (
@@ -207,10 +207,43 @@ type McpAddRecovery = {
   resuming: boolean;
 };
 
+function remainingHermesMcpFinalityMs(deadlineMs: number): number {
+  const remainingMs = deadlineMs - performance.now();
+  if (!Number.isFinite(remainingMs) || remainingMs <= 0) {
+    throw new McpBridgeError("Hermes MCP reconciliation exhausted its finality deadline.");
+  }
+  return Math.max(1, Math.floor(remainingMs));
+}
+
+async function runHermesMcpFinalityProofWithinDeadline<T>(
+  deadline: HermesMcpReloadFinalityDeadline,
+  operation: () => Promise<T>,
+): Promise<T> {
+  // This boundary is intentionally limited to read-only proof. A transport
+  // that settles after the timer cannot mutate state or authorize cleanup.
+  const remainingMs = remainingHermesMcpFinalityMs(deadline.deadlineMs);
+  let timeout: NodeJS.Timeout | undefined;
+  const expired = new Promise<never>((_resolve, reject) => {
+    timeout = setTimeout(
+      () =>
+        reject(new McpBridgeError("Hermes MCP reconciliation exhausted its finality deadline.")),
+      remainingMs,
+    );
+  });
+  try {
+    const result = await Promise.race([Promise.resolve().then(operation), expired]);
+    remainingHermesMcpFinalityMs(deadline.deadlineMs);
+    return result;
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
+}
+
 function observeHermesMcpAddSandboxIdentity(
   sandboxName: string,
   sandbox: ReturnType<typeof getSandboxOrThrow>,
   runtimeSelection: ReturnType<typeof getMcpProviderInspectionRuntimeSelection>,
+  timeoutMs?: number,
 ): string {
   if (
     !sandbox.gatewayName ||
@@ -230,6 +263,7 @@ function observeHermesMcpAddSandboxIdentity(
     },
     undefined,
     runtimeSelection,
+    timeoutMs,
   );
   if (
     observation.state !== "ready" ||
@@ -247,6 +281,7 @@ async function waitForHermesMcpAddSandboxIdentity(
   sandbox: ReturnType<typeof getSandboxOrThrow>,
   baselineIdentity: string,
   runtimeSelection: ReturnType<typeof getMcpProviderInspectionRuntimeSelection>,
+  deadline: HermesMcpReloadFinalityDeadline,
 ): Promise<string> {
   let readyIdentity: string | undefined;
   const ready = await waitForMcpBridgeConditionAsync(
@@ -268,6 +303,7 @@ async function waitForHermesMcpAddSandboxIdentity(
         },
         undefined,
         runtimeSelection,
+        remainingHermesMcpFinalityMs(deadline.readinessDeadlineMs),
       );
       if (
         observation.state === "missing" ||
@@ -281,8 +317,13 @@ async function waitForHermesMcpAddSandboxIdentity(
       readyIdentity = observation.liveIdentityFingerprint;
       return true;
     },
-    HERMES_MCP_RECONCILE_READY_TIMEOUT_SECONDS,
-    1_000,
+    {
+      backoffFactor: 1,
+      deadlineMs: deadline.readinessDeadlineMs,
+      initialIntervalMs: 1_000,
+      maxIntervalMs: 1_000,
+      now: performance.now.bind(performance),
+    },
   );
   if (!ready || !readyIdentity) {
     throw new McpBridgeError(
@@ -298,12 +339,15 @@ async function inspectMcpAddRecovery(
   entry: McpSourceEntry,
   target: McpBridgeTargetValidation,
   providerRuntimeSelection: ReturnType<typeof getMcpProviderInspectionRuntimeSelection>,
+  deadline?: HermesMcpReloadFinalityDeadline,
 ): Promise<McpAddRecovery> {
   const adapterInspection = await inspectAgentAdapterRegistration(
     sandboxName,
     adapter,
     entry,
     providerRuntimeSelection,
+    undefined,
+    deadline ? remainingHermesMcpFinalityMs(deadline.deadlineMs) : undefined,
   );
   if (adapterInspection.state !== "absent" && adapterInspection.state !== "registered") {
     const detail =
@@ -315,7 +359,12 @@ async function inspectMcpAddRecovery(
     );
   }
 
-  const providerInspection = await inspectMcpProvider(entry.providerName, providerRuntimeSelection);
+  const providerInspection = await inspectMcpProvider(
+    entry.providerName,
+    providerRuntimeSelection,
+    undefined,
+    deadline ? remainingHermesMcpFinalityMs(deadline.deadlineMs) : undefined,
+  );
   if (providerInspection.exists === null) {
     throw new McpBridgeError(
       `MCP add recovery for '${entry.server}' could not inspect provider '${entry.providerName}': ${providerInspection.error ?? "provider inspection failed"}. No source was changed.`,
@@ -351,6 +400,7 @@ async function inspectMcpAddRecovery(
     boundPolicyContent,
     undefined,
     providerRuntimeSelection,
+    deadline ? remainingHermesMcpFinalityMs(deadline.deadlineMs) : undefined,
   );
   let policyState: McpAddRecovery["policyState"];
   if (boundPolicyState === "match") {
@@ -363,6 +413,7 @@ async function inspectMcpAddRecovery(
       buildMcpBridgeCapabilityPolicyYaml(entry.server, entry.url, adapter, target, entry.denyTools),
       undefined,
       providerRuntimeSelection,
+      deadline ? remainingHermesMcpFinalityMs(deadline.deadlineMs) : undefined,
     );
     if (capabilityPolicyState !== "match") {
       throw new McpBridgeError(
@@ -375,6 +426,8 @@ async function inspectMcpAddRecovery(
   const attachmentInspection = await inspectMcpProviderAttachments(
     sandboxName,
     providerRuntimeSelection,
+    undefined,
+    deadline ? remainingHermesMcpFinalityMs(deadline.deadlineMs) : undefined,
   );
   if (!attachmentInspection.attachments) {
     throw new McpBridgeError(
@@ -425,6 +478,7 @@ async function reconcileHermesMcpAddAfterRelayLoss(
   baselineIdentity: string,
   relayLoss: HermesMcpReloadRelayLossError,
   providerRuntimeSelection: ReturnType<typeof getMcpProviderInspectionRuntimeSelection>,
+  deadline: HermesMcpReloadFinalityDeadline,
 ): Promise<HermesMcpReloadFinalityInspection> {
   try {
     await waitForHermesMcpAddSandboxIdentity(
@@ -432,21 +486,26 @@ async function reconcileHermesMcpAddAfterRelayLoss(
       sandbox,
       baselineIdentity,
       providerRuntimeSelection,
+      deadline,
     );
     const nativeFinality = inspectHermesMcpReloadFinality(
       sandboxName,
       entry,
       relayLoss.credentialRevision,
       providerRuntimeSelection,
+      deadline,
     );
     if (nativeFinality.state === "unknown") return nativeFinality;
 
-    const recovery = await inspectMcpAddRecovery(
-      sandboxName,
-      "hermes-config",
-      entry,
-      target,
-      providerRuntimeSelection,
+    const recovery = await runHermesMcpFinalityProofWithinDeadline(deadline, () =>
+      inspectMcpAddRecovery(
+        sandboxName,
+        "hermes-config",
+        entry,
+        target,
+        providerRuntimeSelection,
+        deadline,
+      ),
     );
     const exactExternalState =
       recovery.entry.providerId === entry.providerId &&
@@ -459,12 +518,15 @@ async function reconcileHermesMcpAddAfterRelayLoss(
       };
     }
 
-    const stableRevision = await observeStableMcpCredentialRevision(
-      sandboxName,
-      entry,
-      providerRuntimeSelection,
-      30,
-      relayLoss.credentialRevision,
+    const stableRevision = await runHermesMcpFinalityProofWithinDeadline(deadline, () =>
+      observeStableMcpCredentialRevision(
+        sandboxName,
+        entry,
+        providerRuntimeSelection,
+        30,
+        relayLoss.credentialRevision,
+        { deadlineMs: deadline.deadlineMs, now: performance.now.bind(performance) },
+      ),
     );
     if (stableRevision !== relayLoss.credentialRevision) {
       return {
@@ -491,7 +553,9 @@ async function reconcileHermesMcpAddAfterRelayLoss(
       sandboxName,
       sandbox,
       providerRuntimeSelection,
+      remainingHermesMcpFinalityMs(deadline.deadlineMs),
     );
+    remainingHermesMcpFinalityMs(deadline.deadlineMs);
     if (finalIdentity !== baselineIdentity) {
       return {
         state: "unknown",
@@ -912,6 +976,8 @@ async function addMcpBridgeUnlocked(
         ? observeHermesMcpAddSandboxIdentity(sandboxName, sandbox, providerRuntimeSelection)
         : undefined;
     adapterMutationAttempted = true;
+    const hermesFinalityDeadline =
+      adapter === "hermes-config" ? beginHermesMcpReloadFinalityDeadline() : undefined;
     try {
       await registerAgentAdapterAtCurrentCredentialRevision(
         sandboxName,
@@ -930,7 +996,8 @@ async function addMcpBridgeUnlocked(
       if (
         !(error instanceof HermesMcpReloadRelayLossError) ||
         adapter !== "hermes-config" ||
-        !hermesMutationIdentity
+        !hermesMutationIdentity ||
+        !hermesFinalityDeadline
       ) {
         throw error;
       }
@@ -942,6 +1009,7 @@ async function addMcpBridgeUnlocked(
         hermesMutationIdentity,
         error,
         providerRuntimeSelection,
+        hermesFinalityDeadline,
       );
       if (finality.state === "unknown") {
         rollbackAuthorized = false;
