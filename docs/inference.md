@@ -270,7 +270,9 @@ Changing an existing service to enable authentication follows the normal runtime
 
 ## Use External Ollama through a Managed Proxy
 
-Use this mode when Ollama and the route's model are already installed on the local Linux Docker host.
+Use this mode with a managed local Docker gateway, with Ollama and the route's model already installed on that same Linux host.
+Set `gateway.management: managed` and select `runtime.provider: docker` for every sandbox; the proxy inherits `gateway.engine`.
+External gateways, Podman gateways, and an independently selected proxy engine are not accepted.
 Ollama must listen only on a loopback address.
 NemoClaw observes its model inventory and never installs, stops, or deletes the daemon or model.
 OpenClaw, Hermes, Deep Agents, and Pi can use this proxy with `openai-completions`.
@@ -309,6 +311,10 @@ The route's model must match `upstream.model.name`, including its tag, such as `
 The proxy uses the host network and checks that the daemon has no listener on a non-loopback address.
 Do not declare `endpoint` or `credential` on this provider; the referenced service supplies its connection and generated credential.
 The service declaration manages only the proxy; its upstream daemon and model remain external.
+
+This deliberately removes the former external-gateway proxy topology and the per-service `runtime` wrapper.
+For an existing deployment using either form, retain its original bundle and state for recovery or teardown; editing input YAML does not migrate saved intent.
+Create a new deployment with a fresh UID and state directory for the managed-gateway topology.
 
 The proxy generates a private bearer key in its owned credential volume and reuses it after restart or recreation.
 NemoClaw reads that key through the verified container identity when registering the OpenShell provider.
