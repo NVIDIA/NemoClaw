@@ -119,15 +119,15 @@ async function retainStrictPreUpgradePolicy(
   return result;
 }
 
-function returnStartedSandboxToStopped(
+async function returnStartedSandboxToStopped(
   sandboxName: string,
   startedForBackup: StartedForBackup,
-): Error | null {
+): Promise<Error | null> {
   const failureDetail =
     "could not return its container to the stopped state; the container was left running";
   const failureMessage = `Backup cleanup failed for '${sandboxName}': ${failureDetail}.`;
   try {
-    if (returnSandboxContainerToStopped(startedForBackup)) {
+    if (await returnSandboxContainerToStopped(startedForBackup)) {
       console.log(`  ${D}Returned '${sandboxName}' to its stopped state.${R}`);
       return null;
     }
@@ -154,7 +154,7 @@ async function backupSandboxWithinMutationLock(
       enteredTransactionLock = true;
       enforceRemovedImmutabilityMigrationBoundary(sandboxName, { allowStateRecord: true });
       const startedForBackup = shouldStartStoppedContainer
-        ? startStoppedSandboxContainerForBackup(sandboxName)
+        ? await startStoppedSandboxContainerForBackup(sandboxName)
         : null;
       if (shouldStartStoppedContainer && !startedForBackup) {
         return {
@@ -186,7 +186,7 @@ async function backupSandboxWithinMutationLock(
         }
       } finally {
         if (startedForBackup) {
-          stoppedContainerCleanupError = returnStartedSandboxToStopped(
+          stoppedContainerCleanupError = await returnStartedSandboxToStopped(
             sandboxName,
             startedForBackup,
           );
