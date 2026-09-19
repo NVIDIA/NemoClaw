@@ -842,6 +842,9 @@ test(
       restartGateway: async () => {
         await lifecycle.restartGatewayRuntime({ sandboxName: SANDBOX_NAME });
         await lifecycle.waitForGatewayConnected();
+        await lifecycle.waitForSandboxReadyAfterGatewayRestart(SANDBOX_NAME, {
+          artifactNamePrefix: "hermes-acp-post-gateway-restart-ready",
+        });
       },
       sandbox,
       sandboxName: SANDBOX_NAME,

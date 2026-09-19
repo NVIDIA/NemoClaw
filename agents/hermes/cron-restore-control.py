@@ -482,6 +482,7 @@ def _prepare_gateway_recovery_runtime_root(runtime_root: Path) -> None:
     try:
         runtime_root.mkdir(mode=0o755)
     except FileExistsError:
+        # A prior controller invocation may have created this directory; revalidate its descriptor below.
         pass
     except OSError as error:
         raise ControlError("Hermes gateway recovery runtime is unavailable") from error

@@ -703,7 +703,7 @@ async function qualifyAgent(
   enterGatewayRestartPhase(progress, agent);
   await lifecycle.restartGatewayRuntime({ delayMs: 2_000, sandboxName });
   await lifecycle.waitForGatewayConnected({ attempts: 60, intervalMs: 5_000 });
-  await lifecycle.assertSandboxReadyAfterGatewayRestart(sandboxName, {
+  await lifecycle.waitForSandboxReadyAfterGatewayRestart(sandboxName, {
     artifactNamePrefix: `${agent}-post-restart-ready`,
     env,
   });
