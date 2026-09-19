@@ -57,6 +57,17 @@ function endpointPath(url: URL): string {
   return url.pathname || "/";
 }
 
+/**
+ * Connecting binaries used by the in-sandbox credential-resolution probe.
+ * That probe issues HTTPS CONNECT through curl; OpenShell attributes the
+ * tunnel to `/proc/<pid>/exe` of the socket owner. Adapter runtimes remain
+ * ancestors, but omitting curl makes `mcp add` deny the probe it just armed.
+ */
+export const MCP_BRIDGE_PROBE_BINARIES = [
+  { path: "/usr/bin/curl" },
+  { path: "/usr/local/bin/curl" },
+] as const;
+
 function binariesForAdapter(adapter: AgentMcpAdapter): Array<{ path: string }> {
   switch (adapter) {
     case "openclaw-config":
@@ -66,6 +77,7 @@ function binariesForAdapter(adapter: AgentMcpAdapter): Array<{ path: string }> {
         // policy to /proc/<pid>/exe and ancestors, not spoofable argv paths.
         { path: "/usr/local/bin/node" },
         { path: "/usr/bin/node" },
+        ...MCP_BRIDGE_PROBE_BINARIES,
       ];
     case "hermes-config":
       return [
@@ -74,9 +86,14 @@ function binariesForAdapter(adapter: AgentMcpAdapter): Array<{ path: string }> {
         // interpreter to the system Python binary after the wrapper execs it.
         { path: "/usr/bin/python3*" },
         { path: "/opt/hermes/.venv/bin/python*" },
+        ...MCP_BRIDGE_PROBE_BINARIES,
       ];
     case "deepagents-config":
-      return [{ path: "/usr/local/bin/dcode" }, { path: "/opt/venv/bin/python3*" }];
+      return [
+        { path: "/usr/local/bin/dcode" },
+        { path: "/opt/venv/bin/python3*" },
+        ...MCP_BRIDGE_PROBE_BINARIES,
+      ];
   }
 }
 

@@ -25,6 +25,7 @@ export {
   buildMcpBridgePolicyYaml,
   MCP_BRIDGE_ALLOWED_METHODS,
   MCP_BRIDGE_POLICY_MAX_BODY_BYTES,
+  MCP_BRIDGE_PROBE_BINARIES,
 } from "./mcp-bridge-policy-render";
 
 export async function applyGeneratedPolicy(
