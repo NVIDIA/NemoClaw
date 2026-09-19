@@ -40,6 +40,7 @@ export async function withHermesCredentialEnvReconciliationLock<T>(
 }
 
 export function createHermesCredentialEnvReconciliationRuntime(
+  gatewayName: string,
   runOpenshell: MessagingOpenShellRunner,
   revalidateSandboxIdentity: (operation: string) => void,
 ) {
@@ -54,7 +55,12 @@ export function createHermesCredentialEnvReconciliationRuntime(
         },
       }),
     restartGateway: async (sandboxName: string, revalidate: (operation: string) => void) => {
-      return restartHermesSandboxThroughOpenShell(sandboxName, runOpenshell, revalidate);
+      return restartHermesSandboxThroughOpenShell(
+        sandboxName,
+        gatewayName,
+        runOpenshell,
+        revalidate,
+      );
     },
     waitForGateway: async (sandboxName: string, revalidate: (operation: string) => void) => {
       revalidate(`checking Hermes gateway health for sandbox '${sandboxName}'`);

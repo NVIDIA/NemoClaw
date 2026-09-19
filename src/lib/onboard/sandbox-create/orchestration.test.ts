@@ -43,7 +43,11 @@ describe("created Hermes credential environment reconciliation", () => {
     const wait = vi
       .spyOn(processRecovery, "waitForRecoveredSandboxGateway")
       .mockResolvedValueOnce(true);
-    const runtime = createHermesCredentialEnvReconciliationRuntime(vi.fn() as never, vi.fn());
+    const runtime = createHermesCredentialEnvReconciliationRuntime(
+      "nemoclaw-19080",
+      vi.fn() as never,
+      vi.fn(),
+    );
 
     await expect(runtime.waitForGateway("alpha", vi.fn())).resolves.toBe(true);
 
@@ -61,7 +65,11 @@ describe("created Hermes credential environment reconciliation", () => {
       events.push(args.join(" "));
       return { status: 0, stdout: "", stderr: "" };
     });
-    const runtime = createHermesCredentialEnvReconciliationRuntime(runOpenshell, vi.fn());
+    const runtime = createHermesCredentialEnvReconciliationRuntime(
+      "nemoclaw-19080",
+      runOpenshell,
+      vi.fn(),
+    );
 
     await expect(
       runtime.restartGateway("alpha", (operation) => events.push(`identity:${operation}`)),
@@ -69,23 +77,31 @@ describe("created Hermes credential environment reconciliation", () => {
 
     expect(events).toEqual([
       "identity:stopping Hermes sandbox 'alpha'",
-      "sandbox stop alpha",
+      "sandbox stop --gateway nemoclaw-19080 alpha",
       "identity:confirming Hermes sandbox 'alpha' after OpenShell stop",
       "identity:starting Hermes sandbox 'alpha'",
-      "sandbox start alpha",
+      "sandbox start --gateway nemoclaw-19080 alpha",
       "identity:confirming Hermes sandbox 'alpha' after OpenShell start",
     ]);
     expect(runOpenshell).toHaveBeenCalledTimes(2);
-    expect(runOpenshell).toHaveBeenNthCalledWith(1, ["sandbox", "stop", "alpha"], {
-      ignoreError: true,
-      suppressOutput: true,
-      timeout: 210000,
-    });
+    expect(runOpenshell).toHaveBeenNthCalledWith(
+      1,
+      ["sandbox", "stop", "--gateway", "nemoclaw-19080", "alpha"],
+      {
+        ignoreError: true,
+        suppressOutput: true,
+        timeout: 210000,
+      },
+    );
   });
 
   it("does not start when OpenShell cannot stop the sandbox", async () => {
     const runOpenshell = vi.fn(() => ({ status: 1, stdout: "", stderr: "stop failed" }));
-    const runtime = createHermesCredentialEnvReconciliationRuntime(runOpenshell, vi.fn());
+    const runtime = createHermesCredentialEnvReconciliationRuntime(
+      "nemoclaw-19080",
+      runOpenshell,
+      vi.fn(),
+    );
 
     await expect(runtime.restartGateway("alpha", vi.fn())).resolves.toEqual({
       status: 1,

@@ -128,6 +128,60 @@ describe("restartSandboxGateway native lifecycle", () => {
     expect(deps.waitForRecoveredSandboxGateway).not.toHaveBeenCalled();
   });
 
+  it("preserves a Hermes start failure and stops before health or forward recovery", async () => {
+    silenceConsole();
+    const fingerprint = "a".repeat(64);
+    const entry = {
+      name: "hermes-box",
+      agent: "hermes",
+      gatewayName: "nemoclaw-19080",
+      lifecycleGeneration: "generation-1",
+      lifecycleLiveIdentityFingerprint: fingerprint,
+    };
+    const runOpenshell = vi
+      .fn()
+      .mockReturnValueOnce({ status: 0, stdout: "stopped", stderr: "" })
+      .mockReturnValueOnce({ status: 1, stdout: "", stderr: "start failed" });
+    const revalidate = createHermesSandboxIdentityRevalidator({
+      sandboxName: entry.name,
+      getSandbox: () => entry,
+      inspectLiveIdentity: () => fingerprint,
+    });
+    const deps = baseDeps({
+      getSessionAgent: () => ({ name: "hermes", displayName: "Hermes Agent" }),
+      getSandbox: () => entry,
+      restartHermesSandbox: vi.fn(async (sandboxName: string) =>
+        restartHermesSandboxThroughOpenShell(
+          sandboxName,
+          entry.gatewayName,
+          runOpenshell,
+          revalidate,
+        ),
+      ),
+    });
+
+    await expect(restartSandboxGateway("hermes-box", { quiet: true, deps })).resolves.toMatchObject(
+      {
+        ok: false,
+        failureLayer: "native agent command",
+        detail: "start failed",
+      },
+    );
+    expect(runOpenshell).toHaveBeenNthCalledWith(
+      1,
+      ["sandbox", "stop", "--gateway", "nemoclaw-19080", "hermes-box"],
+      expect.any(Object),
+    );
+    expect(runOpenshell).toHaveBeenNthCalledWith(
+      2,
+      ["sandbox", "start", "--gateway", "nemoclaw-19080", "hermes-box"],
+      expect.any(Object),
+    );
+    expect(deps.waitForRecoveredSandboxGateway).not.toHaveBeenCalled();
+    expect(deps.ensureSandboxPortForward).not.toHaveBeenCalled();
+    expect(deps.recoverMessagingHostForward).not.toHaveBeenCalled();
+  });
+
   it("converts a rejected Hermes identity check into a typed failure", async () => {
     silenceConsole();
     const deps = baseDeps({
@@ -171,7 +225,12 @@ describe("restartSandboxGateway native lifecycle", () => {
       getSessionAgent: () => ({ name: "hermes", displayName: "Hermes Agent" }),
       getSandbox: () => entry,
       restartHermesSandbox: vi.fn(async (sandboxName: string) =>
-        restartHermesSandboxThroughOpenShell(sandboxName, runOpenshell, revalidate),
+        restartHermesSandboxThroughOpenShell(
+          sandboxName,
+          entry.gatewayName,
+          runOpenshell,
+          revalidate,
+        ),
       ),
     });
 
@@ -182,11 +241,11 @@ describe("restartSandboxGateway native lifecycle", () => {
         "Sandbox 'hermes-box' live identity changed before confirming Hermes sandbox 'hermes-box' after OpenShell stop.",
     });
     expect(runOpenshell).toHaveBeenCalledExactlyOnceWith(
-      ["sandbox", "stop", "hermes-box"],
+      ["sandbox", "stop", "--gateway", "nemoclaw", "hermes-box"],
       expect.any(Object),
     );
     expect(runOpenshell).not.toHaveBeenCalledWith(
-      ["sandbox", "start", "hermes-box"],
+      ["sandbox", "start", "--gateway", "nemoclaw", "hermes-box"],
       expect.any(Object),
     );
     expect(deps.waitForRecoveredSandboxGateway).not.toHaveBeenCalled();

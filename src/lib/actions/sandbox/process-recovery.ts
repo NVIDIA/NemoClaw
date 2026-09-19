@@ -57,6 +57,7 @@ import {
   recoverDeclaredAgentForwardPorts,
   recoverHermesPortableLaunchForwards,
   recoverMessagingHostForward,
+  resolveSandboxGatewayName,
   resolveSandboxDashboardPort,
   resolveSandboxHealthProbeUrl,
   nonOwnedForwardListenerRefusal,
@@ -1849,6 +1850,11 @@ export async function restartSandboxGateway(
             runtimeSelection ? { runtimeSelection } : { localDockerFallbackPolicy: "read-only" },
           ),
         restartHermesSandbox: async (name) => {
+          const registered = registry.getSandbox(name);
+          const gatewayName = registered ? resolveSandboxGatewayName(registered) : null;
+          if (!gatewayName) {
+            throw new Error(`Sandbox '${name}' has no verified OpenShell gateway owner.`);
+          }
           const revalidate = createCliHermesSandboxIdentityRevalidator({
             sandboxName: name,
             getSandbox: registry.getSandbox,
@@ -1856,6 +1862,7 @@ export async function restartSandboxGateway(
           });
           return restartHermesSandboxThroughOpenShell(
             name,
+            gatewayName,
             (args, options = {}) =>
               captureOpenshell(
                 [...args],

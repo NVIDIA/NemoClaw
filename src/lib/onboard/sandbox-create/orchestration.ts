@@ -3307,6 +3307,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
                   plan: plannedMessagingState?.plan ?? null,
                 },
                 createHermesCredentialEnvReconciliationRuntime(
+                  GATEWAY_NAME,
                   (args, options) => runOpenshell([...args], options),
                   revalidateRegisteredSandbox,
                 ),

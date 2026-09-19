@@ -62,6 +62,7 @@ export function createHermesSandboxIdentityRevalidator(input: {
 
 export function restartHermesSandboxThroughOpenShell(
   sandboxName: string,
+  gatewayName: string,
   runOpenshell: MessagingOpenShellRunner,
   revalidateSandboxIdentity: (operation: string) => void,
 ): HermesSandboxLifecycleResult {
@@ -69,7 +70,7 @@ export function restartHermesSandboxThroughOpenShell(
     revalidateSandboxIdentity(
       `${action === "stop" ? "stopping" : "starting"} Hermes sandbox '${sandboxName}'`,
     );
-    const result = runOpenshell(["sandbox", action, sandboxName], {
+    const result = runOpenshell(["sandbox", action, "--gateway", gatewayName, sandboxName], {
       ignoreError: true,
       suppressOutput: true,
       timeout: 210000,

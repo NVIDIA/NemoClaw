@@ -4,6 +4,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  createHermesCredentialEnvReconciliationRuntime,
   createRegisteredHermesSandboxIdentityRevalidator,
   withHermesCredentialEnvReconciliationLock,
 } from "../../actions/sandbox/runtime/hermes-lifecycle";
@@ -77,5 +78,25 @@ describe("post-registration Hermes credential reconciliation", () => {
       ),
     ).rejects.toThrow(/live identity changed/u);
     expect(effects).toEqual([]);
+  });
+
+  it("preserves a start failure after OpenShell stops the sandbox", async () => {
+    const runOpenshell = vi
+      .fn()
+      .mockReturnValueOnce({ status: 0, stdout: "stopped", stderr: "" })
+      .mockReturnValueOnce({ status: 1, stdout: "", stderr: "start failed" });
+    const runtime = createHermesCredentialEnvReconciliationRuntime(
+      "nemoclaw-19080",
+      runOpenshell,
+      vi.fn(),
+    );
+
+    await expect(runtime.restartGateway("alpha", vi.fn())).resolves.toEqual({
+      status: 1,
+      stdout: "",
+      stderr: "start failed",
+    });
+
+    expect(runOpenshell).toHaveBeenCalledTimes(2);
   });
 });
