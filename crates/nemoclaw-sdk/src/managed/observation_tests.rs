@@ -537,7 +537,14 @@ async fn retired_gateway_process_layouts_fail_before_engine_access() {
 async fn authenticated_vllm_readiness_rechecks_key_permissions() {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     for valid in [false, true] {
+        let directory = tempfile::tempdir().unwrap();
+        let socket = directory.path().join("docker.sock");
+        let listener = tokio::net::UnixListener::bind(&socket).unwrap();
         let source = include_str!("../../tests/fixtures/config/spark.yaml")
+            .replace(
+                "unix:///var/run/docker.sock",
+                &format!("unix://{}", socket.display()),
+            )
             .replace("kind: vllm", "kind: vllm\n      authentication: bearer");
         let document = crate::config::Document::parse(source.as_bytes()).unwrap();
         let generations = [("inference_service".into(), "a".repeat(32))].into();
@@ -552,9 +559,6 @@ async fn authenticated_vllm_readiness_rechecks_key_permissions() {
             .find(|t| t.kind == "inference_service")
             .unwrap();
         let spec: Spec = serde_json::from_str(&target.values["spec"]).unwrap();
-        let directory = tempfile::tempdir().unwrap();
-        let socket = directory.path().join("docker.sock");
-        let listener = tokio::net::UnixListener::bind(&socket).unwrap();
         let container = serde_json::to_vec(&json!({"Id":"provider-container","Name":format!("/{}", spec.name),"State":{"Running":true,"StartedAt":"2026-09-15T00:00:00Z"}})).unwrap();
         let status = crate::docker::archive(&[(
             "status.json",
@@ -600,10 +604,7 @@ async fn authenticated_vllm_readiness_rechecks_key_permissions() {
                 stream.write_all(&body).await.unwrap();
             }
         });
-        let mut engine = Engine::connect(spec.engine()).unwrap();
-        engine.api = Engine::connect(&format!("unix://{}", socket.display()))
-            .unwrap()
-            .api;
+        let engine = Engine::connect(spec.engine()).unwrap();
         let connections = crate::docker::Connections::fixed([engine]).unwrap();
         let bindings = [(
             crate::docker_compute::address(&target.address),

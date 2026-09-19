@@ -59,16 +59,22 @@ fn production_capacity_data_blocks_overcommit_defers_unknowns_and_preserves_stat
     .map(|kind| (kind.into(), "a".repeat(32)))
     .into();
     let compiled = compile::compile_runtime(&document, &generations, "0.1.0").unwrap();
-    // Exercise the generated condition with a built-in consumer: capacity reads
-    // never create model processes, pull artifacts, or contact a live gateway.
-    let condition = compiled["resource"]["nemoclaw_inference_service"]
-        .as_object()
+    assert!(compiled["data"]["nemoclaw_service_capacity"].is_null());
+    // Capacity is opt-in. Exercise the production data source with an explicit
+    // consumer without creating model processes or contacting a live gateway.
+    let specs: Vec<_> = compile::runtime_targets(&document, &generations)
         .unwrap()
-        .values()
-        .next()
-        .unwrap()["lifecycle"]
-        .clone();
-    let mut graph = json!({"terraform":{"required_version":"= 1.12.6", "required_providers":{"nemoclaw":{"source":"registry.opentofu.org/nvidia/nemoclaw"}}}, "provider":{"nemoclaw":{"endpoint":"http://127.0.0.1:1"}}, "data":compiled["data"], "resource":{"terraform_data":{"consumer":{"input":"capacity checked", "lifecycle":condition}}}});
+        .into_iter()
+        .filter(|target| target.kind == "inference_service")
+        .map(|target| target.values["spec"].clone())
+        .collect();
+    assert_eq!(specs.len(), 2);
+    let capacity = "data.nemoclaw_service_capacity.selected";
+    let condition = json!({"precondition":[{
+        "condition":format!("${{{capacity}.compatible}}"),
+        "error_message":format!("Combined service memory requires ${{{capacity}.required_bytes}} bytes; observed ${{{capacity}.observed_bytes}} bytes.")
+    }]});
+    let mut graph = json!({"terraform":{"required_version":"= 1.12.6", "required_providers":{"nemoclaw":{"source":"registry.opentofu.org/nvidia/nemoclaw"}}}, "provider":{"nemoclaw":{"endpoint":"http://127.0.0.1:1"}}, "data":{"nemoclaw_service_capacity":{"selected":{"engine":"ssh://operator@gpu-box","specs":specs}}}, "resource":{"terraform_data":{"consumer":{"input":"capacity checked", "lifecycle":condition}}}});
     let write_graph =
         |graph: &Value| fs::write(root.join("main.tf.json"), graph.to_string()).unwrap();
     let control = |value: Value| fs::write(root.join("control.json"), value.to_string()).unwrap();
@@ -113,8 +119,8 @@ fn production_capacity_data_blocks_overcommit_defers_unknowns_and_preserves_stat
     );
     assert!(!root.join("terraform.tfstate").exists());
     control(json!({"total_capacity_gib":192, "low_capacity":true}));
-    // Low free memory must not block replacement planning. The SDK checks
-    // transient startup demand separately immediately around actual startup.
+    // This optional observation checks total capacity, not transient free
+    // memory. The hosted runtime checks headroom when it starts.
     run(&["apply", "-auto-approve", "-input=false"], true);
     let prior = fs::read(root.join("terraform.tfstate")).unwrap();
     for failure in [
