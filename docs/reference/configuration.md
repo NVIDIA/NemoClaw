@@ -614,7 +614,7 @@ Constraints: `"openai-completions"` or `"openai-responses"` or `"anthropic-messa
 
 ## InferenceProvider
 
-Choose endpoint for external inference, endpoint plus ollama for managed Ollama, or service for managed vLLM.
+Choose endpoint for external inference or service for managed vLLM/Ollama. The older endpoint plus ollama form retains its separate CPU-only lifecycle.
 
 Guide: [Inference configuration](../inference.md).
 
@@ -633,10 +633,10 @@ Paths:
 | `endpoint` | string | Without service | — | Inference HTTP(S) URL. Required without service; omit or leave empty with service. HTTP requires a literal private or loopback address. |
 | `management` | [Management](#management) | No | — | Optional server ownership. Omission means managed with service or ollama, external with endpoint alone. The OpenShell provider registration remains deployment-owned in either mode. |
 | `name` | string | Yes | — | Provider name referenced by model choices. Constraints: pattern `^[a-z][a-z0-9-]{0,39}$`. |
-| `ollama` | [ManagedOllama](#managedollama) | No | — | Manage Ollama through a local Unix Docker socket and an existing network. Requires an explicit private or loopback IP:port/v1 HTTP endpoint. |
+| `ollama` | [ManagedOllama](#managedollama) | No | — | Legacy CPU-only Ollama lifecycle through a local Unix Docker socket and existing network. Requires an explicit private or loopback IP:port/v1 HTTP endpoint. New GPU deployments use service.backend: ollama. |
 | `ollamaProxy` | [OllamaProxy](#ollamaproxy) | No | — | Manage an authenticated proxy while leaving the endpoint's Ollama daemon and installed model external. |
 | `provider` | string | Yes | — | OpenShell provider implementation. Must match the selected API family. Constraints: `"openai"` or `"anthropic"`. |
-| `service` | [Service](#service) | No | — | Manage vLLM from a pinned runtime image and model. Excludes ollama and credential; endpoint must be omitted or empty. |
+| `service` | [Service](#service) | No | — | Manage the selected inference backend from a pinned runtime image and model. Excludes ollama and credential; endpoint must be omitted or empty. |
 
 ## InlineRecipe
 
@@ -860,10 +860,10 @@ Paths:
 |---|---|---|---|---|
 | `consecutiveSamples` | integer | No | `5` | Consecutive low-memory samples before the watchdog stops the owned process. Constraints: `0` or minimum 1; maximum 5. Omitted or zero selects the default. |
 | `freeGateGiB` | integer | No | `12` | Check minFreeGiB only when available memory is below this threshold in GiB. Must be at least minAvailableGiB after defaults. Constraints: `0` or minimum 6; maximum 24. Omitted or zero selects the default. |
-| `gpuMemoryGiB` | integer | No | — | Total GPU budget in GiB without a recipe. Must be omitted or zero with a recipe, which supplies its own byte budget. Constraints: minimum 0; maximum 96. Omitted or zero stays zero in the document. Without a recipe or gpuMemoryUtilization, the backend uses 16 GiB. A recipe supplies resources.gpuMemoryBytes; gpuMemoryUtilization requires zero here. |
-| `gpuMemoryUtilization` | number | No | — | Optional fraction of observed dedicated GPU memory, from 0.05 through 0.95. Requires service.hardware with explicit minGpuMemoryBytes, including dedicated-memory named profiles. Excludes unified-memory profiles, recipe, fixed gpuMemoryGiB and explicit KV-cache allocation; vLLM sizes its cache natively. Constraints: minimum 0.05; maximum 0.95. |
+| `gpuMemoryGiB` | integer | No | — | Total GPU budget in GiB without a recipe. Omitted or zero uses 16 GiB unless gpuMemoryUtilization supplies the budget. Ollama checks loaded memory at startup and while serving; this is not an allocator quota. Recipes supply their own byte budget. Constraints: minimum 0; maximum 96. Omitted or zero stays zero in the document. Without a recipe or gpuMemoryUtilization, the backend uses 16 GiB. A recipe supplies resources.gpuMemoryBytes; gpuMemoryUtilization requires zero here. |
+| `gpuMemoryUtilization` | number | No | — | Optional fraction of observed dedicated GPU memory, from 0.05 through 0.95. Requires explicit hardware.minGpuMemoryBytes. Excludes unified-memory profiles, recipe, fixed gpuMemoryGiB and explicit KV-cache allocation. The backend sizes its cache natively. Constraints: minimum 0.05; maximum 0.95. |
 | `hostReserveGiB` | integer | No | `32` | Host memory reserve in GiB excluded from the serving budget. Constraints: `0` or minimum 28; maximum 64. Omitted or zero selects the default. |
-| `kvCacheGiB` | integer | No | `8` | KV cache allocation in GiB for ordinary vLLM. Omitted or zero defaults to 8, except gpuMemoryUtilization requires zero and lets vLLM allocate its cache. Recipe serving does not emit this flag. Constraints: minimum 0. Omitted or zero selects 8 GiB, except gpuMemoryUtilization keeps zero and lets vLLM allocate its cache. |
+| `kvCacheGiB` | integer | No | `8` | KV cache allocation in GiB for ordinary vLLM. Omitted or zero defaults to 8 except with gpuMemoryUtilization. Ollama requires omission or zero and uses native cache allocation. Recipe serving does not emit this flag. Constraints: minimum 0. Omitted or zero selects 8 GiB for vLLM except with gpuMemoryUtilization. Ollama requires zero and uses native cache allocation. |
 | `minAvailableGiB` | integer | No | `8` | Available-memory threshold in GiB that contributes a low-memory sample. Constraints: `0` or minimum 6; maximum 16. Omitted or zero selects the default. |
 | `minFreeGiB` | integer | No | `3` | Free-memory threshold in GiB, used when available memory is below freeGateGiB. Constraints: `0` or minimum 2; maximum 8. Omitted or zero selects the default. |
 
@@ -898,9 +898,11 @@ Paths:
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
+| `digest` | string | For backend ollama | — | Lowercase 64-hex SHA-256 of the Ollama registry manifest. Required for Ollama; excluded by vLLM. Changing a registry tag cannot change this selected identity. Constraints: pattern `^[a-f0-9]{64}$`. |
 | `management` | [ManagedManagement](#managedmanagement) | No | — | Optional ownership declaration for downloading and preparing this model installation. Omission means managed. |
-| `repository` | string | Yes | — | Public Hugging Face owner/repository name. Constraints: pattern `^[a-zA-Z0-9][a-zA-Z0-9._-]*/[a-zA-Z0-9][a-zA-Z0-9._-]*$`; maximum characters 200. |
-| `revision` | string | Yes | — | Full lowercase 40-hex commit revision; branches and tags are rejected. Constraints: pattern `^[a-f0-9]{40}$`. |
+| `name` | string | For backend ollama | — | Ollama public library model:tag, paired with its immutable manifest digest. Required for Ollama; excluded by vLLM. Constraints: pattern `^[a-z0-9][a-z0-9._-]*:[a-z0-9][a-z0-9._-]*$`. |
+| `repository` | string | For backend vllm | — | Public Hugging Face owner/repository name. Required for vLLM; excluded by Ollama. Constraints: pattern `^[a-zA-Z0-9][a-zA-Z0-9._-]*/[a-zA-Z0-9][a-zA-Z0-9._-]*$`; maximum characters 200. |
+| `revision` | string | For backend vllm | — | Full lowercase 40-hex Hugging Face commit. Required for vLLM; excluded by Ollama. Constraints: pattern `^[a-f0-9]{40}$`. |
 
 ## Network
 
@@ -1394,7 +1396,7 @@ Constraints: `"brave"`.
 
 ## Service
 
-Managed vLLM service. Explicit placement and publication must appear together.
+Managed inference service. Backend adapters share hardware checks, placement, storage, and supervision. Explicit placement and publication must appear together.
 
 Guide: [Managed models](../models.md).
 
@@ -1408,15 +1410,15 @@ Paths:
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
-| `authentication` | [ServiceAuthentication](#serviceauthentication) | No | — | Optional native bearer authentication. The runtime generates and retains the key; omission preserves unauthenticated serving. |
-| `backend` | string | Yes | — | Managed inference backend. Constraints: `"vllm"`. |
+| `authentication` | [ServiceAuthentication](#serviceauthentication) | No | — | Optional native vLLM bearer authentication. The runtime generates and retains the key; omission preserves unauthenticated serving. Ollama rejects this setting. |
+| `backend` | string | Yes | — | Managed inference backend: vllm or ollama. Backend-specific settings are validated before planning. Constraints: `"vllm"` or `"ollama"`. |
 | `container` | [ServiceContainer](#servicecontainer) | No | — | Optional managed container IPC and shared-memory settings. Omission uses private IPC and 8 GiB of shared memory. |
 | `hardware` | [ServiceHardware](#servicehardware) | Without recipe | — | Explicit hardware contract: a named GPU or system profile, or dedicated GPU requirements for Linux AMD64. Required without an inline recipe; excludes recipe. |
-| `image` | string | Yes | — | Immutable runtime image containing vLLM, the supervisor, and any declared recipe tools. Constraints: pattern `^[a-zA-Z0-9][a-zA-Z0-9._:/-]*@sha256:[a-f0-9]{64}$`. |
+| `image` | string | Yes | — | Immutable runtime image containing the selected server, the NemoClaw supervisor, and any declared recipe tools. A bare upstream server image is insufficient. Constraints: pattern `^[a-zA-Z0-9][a-zA-Z0-9._:/-]*@sha256:[a-f0-9]{64}$`. |
 | `imagePullPolicy` | [ImagePullPolicy](#imagepullpolicy) | No | — | Image acquisition before container creation or restart. Omission means Never; changing this does not restart a running container. |
 | `management` | [ManagedManagement](#managedmanagement) | No | — | Optional managed ownership declaration. Omission means managed. |
 | `memory` | [Memory](#memory) | No | — | GPU budget and resident watchdog thresholds. Omission selects the SDK defaults. |
-| `model` | [Model](#model) | Yes | — | Public Hugging Face repository and immutable commit. |
+| `model` | [Model](#model) | Yes | — | Pinned model identity. vLLM uses repository/revision; Ollama uses name/digest. |
 | `placement` | [ServicePlacement](#serviceplacement) | With external gateway or Podman; paired with publication | — | SSH Docker placement. Required with an external gateway or Podman sandbox; requires publication. |
 | `publication` | [ServicePublication](#servicepublication) | With placement | — | Private inference address reachable by OpenShell. Required with placement. |
 | `recipe` | [InlineRecipe](#inlinerecipe) | Without hardware | — | Inline preparation and serving contract supplied by the pinned runtime image. Required without hardware; excludes hardware. |
@@ -1560,12 +1562,12 @@ Paths:
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
-| `batchTokens` | integer | No | `1024` | Maximum tokens in a scheduled batch. Constraints: `0` or minimum 512; maximum 4096. Omitted or zero selects the default. |
+| `batchTokens` | integer | No | `1024` | Maximum tokens in a scheduled vLLM batch. Ollama requires omission or zero and does not expose this control. Constraints: `0` or minimum 512; maximum 4096. Omitted or zero selects 1024 for vLLM. Ollama requires zero and uses native batching. |
 | `contextTokens` | integer | No | `32768` | Maximum model context length in tokens. Constraints: `0` or minimum 8192; maximum 65536. Omitted or zero selects the default. |
 | `enforceEager` | boolean | No | — | Without a recipe, omission or true enables eager execution; false leaves compilation and CUDA graphs at vLLM's native defaults. |
 | `mambaBackend` | string | No | `""` | Native Mamba backend without a recipe. Empty uses vLLM's default; flashinfer selects the pinned image's FlashInfer backend. Constraints: `""` or `"flashinfer"`. |
 | `maxSequences` | integer | No | `1` | Maximum concurrent sequences. Constraints: `0` or minimum 1; maximum 2. Omitted or zero selects the default. |
-| `modelName` | string | No | `""` | Optional advertised model name without a recipe. Omission uses the model repository; routes must match the advertised name. Constraints: `""` or pattern `^[a-zA-Z0-9][a-zA-Z0-9._:/-]{0,199}$`. |
+| `modelName` | string | No | `""` | Optional vLLM model alias without a recipe. Omission uses the repository. Ollama requires omission and serves model.name; routes must match the advertised name. Constraints: `""` or pattern `^[a-zA-Z0-9][a-zA-Z0-9._:/-]{0,199}$`. |
 | `port` | integer | No | `18888` | Inference listening port. Explicit publication must use this port. Constraints: `0` or minimum 1024; maximum 65535. Omitted or zero selects the default. |
 | `reasoningParser` | string | No | `""` | Native vLLM reasoning parser used when no recipe is declared. Empty omits the parser flag. Constraints: `""` or `"qwen3"` or `"deepseek_r1"` or `"nemotron_v3"`. |
 | `speculativeTokens` | integer | No | `0` | MTP speculative tokens. Must be zero without a recipe. Constraints: minimum 0; maximum 3. |

@@ -29,6 +29,43 @@ fn agrees(validator: &jsonschema::Validator, value: &Value, accepted: bool) {
 }
 
 #[test]
+fn ollama_uses_the_shared_service_contract_and_rejects_unsupported_settings() {
+    let validator = jsonschema::validator_for(&input_schema()).unwrap();
+    let mut value: Value =
+        serde_saphyr::from_str(include_str!("fixtures/config/spark.yaml")).unwrap();
+    let service = &mut value["spec"]["inferenceProviders"][0]["service"];
+    service.as_object_mut().unwrap().remove("recipe");
+    service["backend"] = json!("ollama");
+    service["hardware"] = json!({"profile":"dgx-spark"});
+    service["model"] = json!({"name":"qwen3:0.6b","digest":"a".repeat(64)});
+    service["serving"] = json!({"contextTokens":8192,"maxSequences":1});
+    service["memory"] = json!({"gpuMemoryGiB":16});
+    value["spec"]["sandboxes"][0]["agent"]["inference"]["routes"][0]["overrides"]["model"] =
+        json!("qwen3:0.6b");
+    agrees(&validator, &value, true);
+    let document = Document::parse(value.to_string().as_bytes()).unwrap();
+    assert!(document.has_runtime());
+    let exported = serde_json::to_value(&document).unwrap();
+    agrees(&validator, &exported, true);
+    for (field, setting) in [
+        ("authentication", json!("bearer")),
+        ("serving", json!({"toolParser":"hermes"})),
+        ("serving", json!({"enforceEager":true})),
+        ("serving", json!({"batchTokens":1024})),
+        ("memory", json!({"kvCacheGiB":8})),
+        ("model", json!({"name":"qwen3:latest"})),
+        (
+            "model",
+            json!({"repository":"owner/model","revision":"b".repeat(40)}),
+        ),
+    ] {
+        let mut invalid = value.clone();
+        invalid["spec"]["inferenceProviders"][0]["service"][field] = setting;
+        agrees(&validator, &invalid, false);
+    }
+}
+
+#[test]
 fn image_pull_policy_accepts_only_supported_values_on_managed_containers() {
     let validator = jsonschema::validator_for(&input_schema()).unwrap();
     for (file, path) in [

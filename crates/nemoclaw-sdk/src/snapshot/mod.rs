@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 mod hub;
 mod manifest;
+pub(crate) mod registry;
 pub use manifest::{MANIFEST_FILE, ModelFile, ModelManifest};
 #[cfg(test)]
 mod tests;
@@ -61,7 +62,7 @@ impl Manifest {
                 .repository
                 .split('/')
                 .any(|part| part == "." || part == "..")
-            || !regex::Regex::new(r"^[a-f0-9]{40}$")
+            || !regex::Regex::new(r"^(?:[a-f0-9]{40}|[a-f0-9]{64})$")
                 .unwrap()
                 .is_match(&self.revision)
             || self.files.is_empty()
@@ -171,6 +172,7 @@ fn check_verified(directory: &Path, file: &File, expected_modified: u64) -> Resu
 
 pub struct Client {
     base_url: String,
+    registry: bool,
     http: reqwest::Client,
     resume_attempts: usize,
 }
@@ -206,9 +208,31 @@ impl Client {
             .map_err(|_| failure("cannot initialize model transport"))?;
         Ok(Self {
             base_url: "https://huggingface.co".into(),
+            registry: false,
             http,
             resume_attempts: 4,
         })
+    }
+    /// The registry adapter uses the same checksummed, resumable file lifecycle.
+    pub fn ollama() -> Result<Self, Error> {
+        let mut client = Self::new()?;
+        client.base_url = "https://registry.ollama.ai".into();
+        client.registry = true;
+        Ok(client)
+    }
+    fn file_url(&self, manifest: &Manifest, file: &File) -> Result<reqwest::Url, Error> {
+        if self.registry {
+            return self.registry_file_url(manifest, file);
+        }
+        let mut url =
+            reqwest::Url::parse(&self.base_url).map_err(|_| failure("invalid model origin"))?;
+        url.path_segments_mut()
+            .map_err(|_| failure("invalid model origin"))?
+            .extend(manifest.repository.split('/'))
+            .push("resolve")
+            .push(&manifest.revision)
+            .extend(file.name.split('/'));
+        Ok(url)
     }
     /// Only explicit apply calls ensure. Interrupted body streams get at most
     /// four attempts with 1/2/4 second delays. Other failures never retry.
@@ -343,14 +367,7 @@ impl Client {
             return Err(failure("partial snapshot exceeds pinned size").into());
         }
         if offset < want.size {
-            let mut url =
-                reqwest::Url::parse(&self.base_url).map_err(|_| failure("invalid model origin"))?;
-            url.path_segments_mut()
-                .map_err(|_| failure("invalid model origin"))?
-                .extend(manifest.repository.split('/'))
-                .push("resolve")
-                .push(&manifest.revision)
-                .extend(want.name.split('/'));
+            let url = self.file_url(manifest, want)?;
             let mut request = self.http.get(url);
             if offset > 0 {
                 request = request.header(reqwest::header::RANGE, format!("bytes={offset}-"));

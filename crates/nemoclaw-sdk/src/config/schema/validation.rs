@@ -425,7 +425,7 @@ pub(super) fn constrain(root: &mut Value) {
 
 fn service_constraints(defs: &mut serde_json::Map<String, Value>) {
     let service = &mut defs["Service"];
-    property(service, "backend", json!({"const": c::BACKEND}));
+    property(service, "backend", json!({"enum": [c::BACKEND, "ollama"]}));
     property(service, "image", json!({"pattern": c::IMAGE}));
     service["allOf"] = json!([
         {"oneOf":[{"required":["hardware"]},{"required":["recipe"]}]},
@@ -433,11 +433,39 @@ fn service_constraints(defs: &mut serde_json::Map<String, Value>) {
         {"if":at("memory/gpuMemoryUtilization",json!({}),true),"then":{"required":["hardware"],"allOf":[at("hardware/minGpuMemoryBytes",json!({}),true),at("hardware/profile",json!({"not":{"enum":crate::config::HardwareProfile::UNIFIED_MEMORY}}),false),forbid(&["recipe"]),at("memory/gpuMemoryGiB",json!({"const":0}),false),at("memory/kvCacheGiB",json!({"const":0}),false)]}},
         {"if":{"required":["recipe"]},"then":{"allOf":[at("serving/modelName",json!({"const":""}),false),at("serving/mambaBackend",json!({"const":""}),false),at("serving",forbid(&["enforceEager"]),false)]}}
     ]);
+    service["allOf"].as_array_mut().unwrap().push(json!({
+        "if":at("backend",json!({"const":"ollama"}),true),
+        "then":{"allOf":[forbid(&["recipe","authentication"]),
+            at("model",json!({"required":["name","digest"]}),true),
+            at("serving",forbid(&["enforceEager"]),false),
+            at("serving/modelName",json!({"const":""}),false),
+            at("serving/toolParser",json!({"const":""}),false),
+            at("serving/reasoningParser",json!({"const":""}),false),
+            at("serving/mambaBackend",json!({"const":""}),false),
+            at("serving/batchTokens",json!({"const":0}),false),
+            at("serving/speculativeTokens",json!({"const":0}),false),
+            at("memory/kvCacheGiB",json!({"const":0}),false)]},
+        "else":at("model",json!({"required":["repository","revision"]}),true)
+    }));
     service["dependentRequired"] =
         json!({"placement": ["publication"], "publication": ["placement"]});
     service["if"] = json!({"required": ["recipe"]});
     service["then"] = at("memory/gpuMemoryGiB", json!({"const": 0}), false);
     service["else"] = at("serving/speculativeTokens", json!({"const": 0}), false);
+    defs["Model"]["oneOf"] = json!([
+        {"required":["repository","revision"],"allOf":[forbid(&["name","digest"])]},
+        {"required":["name","digest"],"allOf":[forbid(&["repository","revision"])]}
+    ]);
+    property(
+        &mut defs["Model"],
+        "name",
+        json!({"pattern":c::OLLAMA_MODEL}),
+    );
+    property(
+        &mut defs["Model"],
+        "digest",
+        json!({"pattern":"^[a-f0-9]{64}$"}),
+    );
     for variant in defs["ServiceHardware"]["anyOf"].as_array_mut().unwrap() {
         if variant["properties"].get("profile").is_none() {
             continue;
@@ -490,6 +518,9 @@ fn service_constraints(defs: &mut serde_json::Map<String, Value>) {
     ] {
         integer(serving, field, rule);
     }
+    serving["properties"]["batchTokens"]["x-nemoclaw-default-rule"] = json!(
+        "Omitted or zero selects 1024 for vLLM. Ollama requires zero and uses native batching."
+    );
     property(
         serving,
         "speculativeTokens",
@@ -574,7 +605,7 @@ fn service_constraints(defs: &mut serde_json::Map<String, Value>) {
         .remove("anyOf");
     defs["Memory"]["properties"]["kvCacheGiB"]["minimum"] = json!(0);
     defs["Memory"]["properties"]["kvCacheGiB"]["x-nemoclaw-default-rule"] = json!(
-        "Omitted or zero selects 8 GiB, except gpuMemoryUtilization keeps zero and lets vLLM allocate its cache."
+        "Omitted or zero selects 8 GiB for vLLM except with gpuMemoryUtilization. Ollama requires zero and uses native cache allocation."
     );
     defs["Memory"]["allOf"] = json!([
         {"if":{"required":["gpuMemoryUtilization"]},"then":{"properties":{"kvCacheGiB":{"const":0},"gpuMemoryGiB":{"const":0}}},"else":{"properties":{"kvCacheGiB":{"anyOf":[{"const":0},{"minimum":c::KV_CACHE.min,"maximum":c::KV_CACHE.max}]}}}}

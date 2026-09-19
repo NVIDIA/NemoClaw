@@ -8,16 +8,48 @@ use std::{process::Stdio, time::Duration};
 pub(crate) struct Readiness {
     url: String,
     credential: Option<String>,
+    ollama: Option<(Service, u64)>,
 }
 pub(crate) fn launch(
     service: &Service,
     prepared: &PreparedModel,
     total_memory: u64,
+    free_gpu_memory: Option<u64>,
     credential: Option<String>,
 ) -> Result<(CommandWrap, Readiness), Error> {
     if service.authentication.is_some() != credential.is_some() {
         return Err(Error::State(
             "managed authentication credential is missing or unexpected",
+        ));
+    }
+    if service.backend == "ollama" {
+        let directory = prepared
+            .model
+            .to_str()
+            .ok_or(Error::State("invalid model storage path"))?;
+        let environment = nemoclaw_sdk::backends::ollama::environment(
+            service,
+            directory,
+            total_memory,
+            free_gpu_memory,
+        )?;
+        let command = CommandWrap::with_new("/bin/ollama", |cmd| {
+            cmd.arg("serve")
+                .envs(environment)
+                .stdin(Stdio::null())
+                .stdout(Stdio::inherit())
+                .stderr(Stdio::inherit());
+        });
+        return Ok((
+            command,
+            Readiness {
+                url: format!("http://127.0.0.1:{}", service.serving.port),
+                credential: None,
+                ollama: Some((
+                    service.clone(),
+                    nemoclaw_sdk::backends::ollama::budget(service, total_memory)?,
+                )),
+            },
         ));
     }
     let arguments = service.arguments(
@@ -51,6 +83,7 @@ pub(crate) fn launch(
                 }
             ),
             credential,
+            ollama: None,
         },
     ))
 }
@@ -58,6 +91,25 @@ pub(crate) async fn wait_ready(
     readiness: Readiness,
     ready: tokio::sync::mpsc::Sender<bool>,
 ) -> Result<(), Error> {
+    if let Some((service, budget)) = &readiness.ollama {
+        let client = reqwest::Client::builder()
+            .no_proxy()
+            .connect_timeout(Duration::from_secs(2))
+            .timeout(Duration::from_secs(
+                service.serving.startup_timeout_seconds as u64,
+            ))
+            .redirect(reqwest::redirect::Policy::none())
+            .retry(reqwest::retry::never())
+            .build()
+            .map_err(|_| Error::State("cannot initialize Ollama readiness transport"))?;
+        crate::ollama::load(&client, &readiness.url, service).await?;
+        crate::ollama::check(&client, &readiness.url, service, *budget).await?;
+        let _ = ready.send(true).await;
+        loop {
+            tokio::time::sleep(Duration::from_secs(1)).await;
+            crate::ollama::check(&client, &readiness.url, service, *budget).await?;
+        }
+    }
     let client = reqwest::Client::builder()
         .no_proxy()
         .timeout(Duration::from_secs(1))
@@ -117,11 +169,21 @@ mod tests {
             ]
             .into(),
         };
-        assert!(launch(&service, &prepared, 121 * nemoclaw_sdk::hardware::GIB, None).is_err());
+        assert!(
+            launch(
+                &service,
+                &prepared,
+                121 * nemoclaw_sdk::hardware::GIB,
+                None,
+                None
+            )
+            .is_err()
+        );
         let (mut command, mut readiness) = launch(
             &service,
             &prepared,
             121 * nemoclaw_sdk::hardware::GIB,
+            None,
             Some(key.clone()),
         )
         .unwrap();
@@ -171,6 +233,7 @@ mod tests {
             Readiness {
                 url,
                 credential: None,
+                ollama: None,
             },
             ready_tx,
         ));

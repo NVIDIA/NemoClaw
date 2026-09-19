@@ -128,6 +128,15 @@ fn combined_budgets_reject_overcommit_and_do_not_count_running_allocations_twice
     });
     service.memory.gpu_memory_gib = 20;
     service.memory.kv_cache_gib = 6;
+    let mut ollama = service.clone();
+    ollama.backend = "ollama".into();
+    ollama.model = crate::config::Model {
+        name: "qwen3:0.6b".into(),
+        digest: "a".repeat(64),
+        ..Default::default()
+    };
+    ollama.serving.batch_tokens = 0;
+    ollama.memory.kv_cache_gib = 0;
     let mut capacity = Capacity {
         architecture: "arm64".into(),
         gpu: "NVIDIA GB10".into(),
@@ -137,10 +146,10 @@ fn combined_budgets_reject_overcommit_and_do_not_count_running_allocations_twice
         available: 100 * GIB,
         ..Default::default()
     };
-    check_service_budgets(&[(&service, true), (&service, true)], &capacity).unwrap();
+    check_service_budgets(&[(&service, true), (&ollama, true)], &capacity).unwrap();
     capacity.available = 65 * GIB;
-    assert!(check_service_budgets(&[(&service, true), (&service, true)], &capacity).is_err());
-    check_service_budgets(&[(&service, false), (&service, true)], &capacity).unwrap();
+    assert!(check_service_budgets(&[(&service, true), (&ollama, true)], &capacity).is_err());
+    check_service_budgets(&[(&service, false), (&ollama, true)], &capacity).unwrap();
     capacity.total = 65 * GIB;
-    assert!(check_service_budgets(&[(&service, false), (&service, false)], &capacity).is_err());
+    assert!(check_service_budgets(&[(&service, false), (&ollama, false)], &capacity).is_err());
 }

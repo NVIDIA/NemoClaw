@@ -67,6 +67,7 @@ async fn run_owned(
         spec,
         &prepared,
         nemoclaw_sdk::hardware::serving_memory(spec, &capacity)?,
+        capacity.gpu_memory.as_ref().map(|gpu| gpu.free),
         credential,
     )?;
     command.wrap(KillOnDrop).wrap(ProcessGroup::leader());
@@ -82,6 +83,7 @@ async fn run_owned(
         return Err(error);
     }
     let (samples_tx, samples) = tokio::sync::mpsc::channel(1);
+    let failures = samples_tx.clone();
     let sampler = tokio::spawn(async move {
         let mut interval = tokio::time::interval(Duration::from_secs(1));
         loop {
@@ -92,7 +94,11 @@ async fn run_owned(
         }
     });
     let (ready_tx, ready) = tokio::sync::mpsc::channel(1);
-    let health = tokio::spawn(async move { crate::backend::wait_ready(readiness, ready_tx).await });
+    let health = tokio::spawn(async move {
+        if let Err(error) = crate::backend::wait_ready(readiness, ready_tx).await {
+            let _ = failures.send(Err(error)).await;
+        }
+    });
     let result = supervisor::supervise(
         supervisor::Policy {
             startup_timeout: Duration::from_secs(spec.serving.startup_timeout_seconds as u64),

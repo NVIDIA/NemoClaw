@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Serving-engine launch behavior; model and hardware qualification belongs to recipes.
 use crate::{Error, config::Service};
+pub mod ollama;
 pub(crate) mod validation;
 pub(crate) mod vllm;
 impl Service {
@@ -26,6 +27,9 @@ impl Service {
     }
     pub fn arguments(&self, model_directory: &str, total: u64) -> Result<Vec<String>, Error> {
         self.validate()?;
+        if self.backend != "vllm" {
+            return Err(Error::Conflict("this backend does not use vLLM arguments"));
+        }
         vllm::arguments(self, model_directory, total)
     }
 }

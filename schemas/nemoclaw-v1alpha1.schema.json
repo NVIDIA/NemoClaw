@@ -1215,7 +1215,7 @@
           }
         }
       ],
-      "description": "Choose endpoint for external inference, endpoint plus ollama for managed Ollama, or service for managed vLLM.",
+      "description": "Choose endpoint for external inference or service for managed vLLM/Ollama. The older endpoint plus ollama form retains its separate CPU-only lifecycle.",
       "else": {
         "properties": {
           "endpoint": {
@@ -1256,7 +1256,7 @@
         },
         "ollama": {
           "$ref": "#/$defs/ManagedOllama",
-          "description": "Manage Ollama through a local Unix Docker socket and an existing network. Requires an explicit private or loopback IP:port/v1 HTTP endpoint."
+          "description": "Legacy CPU-only Ollama lifecycle through a local Unix Docker socket and existing network. Requires an explicit private or loopback IP:port/v1 HTTP endpoint. New GPU deployments use service.backend: ollama."
         },
         "ollamaProxy": {
           "$ref": "#/$defs/OllamaProxy",
@@ -1272,7 +1272,7 @@
         },
         "service": {
           "$ref": "#/$defs/Service",
-          "description": "Manage vLLM from a pinned runtime image and model. Excludes ollama and credential; endpoint must be omitted or empty."
+          "description": "Manage the selected inference backend from a pinned runtime image and model. Excludes ollama and credential; endpoint must be omitted or empty."
         }
       },
       "required": [
@@ -1592,7 +1592,7 @@
           "x-nemoclaw-default-rule": "Omitted or zero selects the default."
         },
         "gpuMemoryGiB": {
-          "description": "Total GPU budget in GiB without a recipe. Must be omitted or zero with a recipe, which supplies its own byte budget.",
+          "description": "Total GPU budget in GiB without a recipe. Omitted or zero uses 16 GiB unless gpuMemoryUtilization supplies the budget. Ollama checks loaded memory at startup and while serving; this is not an allocator quota. Recipes supply their own byte budget.",
           "format": "int64",
           "maximum": 96,
           "minimum": 0,
@@ -1600,7 +1600,7 @@
           "x-nemoclaw-default-rule": "Omitted or zero stays zero in the document. Without a recipe or gpuMemoryUtilization, the backend uses 16 GiB. A recipe supplies resources.gpuMemoryBytes; gpuMemoryUtilization requires zero here."
         },
         "gpuMemoryUtilization": {
-          "description": "Optional fraction of observed dedicated GPU memory, from 0.05 through 0.95. Requires service.hardware with explicit minGpuMemoryBytes, including dedicated-memory named profiles. Excludes unified-memory profiles, recipe, fixed gpuMemoryGiB and explicit KV-cache allocation; vLLM sizes its cache natively.",
+          "description": "Optional fraction of observed dedicated GPU memory, from 0.05 through 0.95. Requires explicit hardware.minGpuMemoryBytes. Excludes unified-memory profiles, recipe, fixed gpuMemoryGiB and explicit KV-cache allocation. The backend sizes its cache natively.",
           "format": "double",
           "maximum": 0.95,
           "minimum": 0.05,
@@ -1624,11 +1624,11 @@
         },
         "kvCacheGiB": {
           "default": 8,
-          "description": "KV cache allocation in GiB for ordinary vLLM. Omitted or zero defaults to 8, except gpuMemoryUtilization requires zero and lets vLLM allocate its cache. Recipe serving does not emit this flag.",
+          "description": "KV cache allocation in GiB for ordinary vLLM. Omitted or zero defaults to 8 except with gpuMemoryUtilization. Ollama requires omission or zero and uses native cache allocation. Recipe serving does not emit this flag.",
           "format": "int64",
           "minimum": 0,
           "type": "integer",
-          "x-nemoclaw-default-rule": "Omitted or zero selects 8 GiB, except gpuMemoryUtilization keeps zero and lets vLLM allocate its cache."
+          "x-nemoclaw-default-rule": "Omitted or zero selects 8 GiB for vLLM except with gpuMemoryUtilization. Ollama requires zero and uses native cache allocation."
         },
         "minAvailableGiB": {
           "anyOf": [
@@ -1689,27 +1689,87 @@
     "Model": {
       "additionalProperties": false,
       "description": "Immutable model identity used for snapshot resolution and storage.",
+      "oneOf": [
+        {
+          "allOf": [
+            {
+              "not": {
+                "anyOf": [
+                  {
+                    "required": [
+                      "name"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "digest"
+                    ]
+                  }
+                ]
+              }
+            }
+          ],
+          "required": [
+            "repository",
+            "revision"
+          ]
+        },
+        {
+          "allOf": [
+            {
+              "not": {
+                "anyOf": [
+                  {
+                    "required": [
+                      "repository"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "revision"
+                    ]
+                  }
+                ]
+              }
+            }
+          ],
+          "required": [
+            "name",
+            "digest"
+          ]
+        }
+      ],
       "properties": {
+        "digest": {
+          "description": "Lowercase 64-hex SHA-256 of the Ollama registry manifest. Required for Ollama; excluded by vLLM. Changing a registry tag cannot change this selected identity.",
+          "pattern": "^[a-f0-9]{64}$",
+          "type": "string",
+          "x-nemoclaw-required": "For backend ollama"
+        },
         "management": {
           "$ref": "#/$defs/ManagedManagement",
           "description": "Optional ownership declaration for downloading and preparing this model installation. Omission means managed."
         },
+        "name": {
+          "description": "Ollama public library model:tag, paired with its immutable manifest digest. Required for Ollama; excluded by vLLM.",
+          "pattern": "^[a-z0-9][a-z0-9._-]*:[a-z0-9][a-z0-9._-]*$",
+          "type": "string",
+          "x-nemoclaw-required": "For backend ollama"
+        },
         "repository": {
-          "description": "Public Hugging Face owner/repository name.",
+          "description": "Public Hugging Face owner/repository name. Required for vLLM; excluded by Ollama.",
           "maxLength": 200,
           "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]*/[a-zA-Z0-9][a-zA-Z0-9._-]*$",
-          "type": "string"
+          "type": "string",
+          "x-nemoclaw-required": "For backend vllm"
         },
         "revision": {
-          "description": "Full lowercase 40-hex commit revision; branches and tags are rejected.",
+          "description": "Full lowercase 40-hex Hugging Face commit. Required for vLLM; excluded by Ollama.",
           "pattern": "^[a-f0-9]{40}$",
-          "type": "string"
+          "type": "string",
+          "x-nemoclaw-required": "For backend vllm"
         }
       },
-      "required": [
-        "repository",
-        "revision"
-      ],
       "type": "object"
     },
     "Network": {
@@ -2880,6 +2940,156 @@
               }
             ]
           }
+        },
+        {
+          "else": {
+            "properties": {
+              "model": {
+                "required": [
+                  "repository",
+                  "revision"
+                ]
+              }
+            },
+            "required": [
+              "model"
+            ]
+          },
+          "if": {
+            "properties": {
+              "backend": {
+                "const": "ollama"
+              }
+            },
+            "required": [
+              "backend"
+            ]
+          },
+          "then": {
+            "allOf": [
+              {
+                "not": {
+                  "anyOf": [
+                    {
+                      "required": [
+                        "recipe"
+                      ]
+                    },
+                    {
+                      "required": [
+                        "authentication"
+                      ]
+                    }
+                  ]
+                }
+              },
+              {
+                "properties": {
+                  "model": {
+                    "required": [
+                      "name",
+                      "digest"
+                    ]
+                  }
+                },
+                "required": [
+                  "model"
+                ]
+              },
+              {
+                "properties": {
+                  "serving": {
+                    "not": {
+                      "anyOf": [
+                        {
+                          "required": [
+                            "enforceEager"
+                          ]
+                        }
+                      ]
+                    }
+                  }
+                }
+              },
+              {
+                "properties": {
+                  "serving": {
+                    "properties": {
+                      "modelName": {
+                        "const": ""
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "properties": {
+                  "serving": {
+                    "properties": {
+                      "toolParser": {
+                        "const": ""
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "properties": {
+                  "serving": {
+                    "properties": {
+                      "reasoningParser": {
+                        "const": ""
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "properties": {
+                  "serving": {
+                    "properties": {
+                      "mambaBackend": {
+                        "const": ""
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "properties": {
+                  "serving": {
+                    "properties": {
+                      "batchTokens": {
+                        "const": 0
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "properties": {
+                  "serving": {
+                    "properties": {
+                      "speculativeTokens": {
+                        "const": 0
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "properties": {
+                  "memory": {
+                    "properties": {
+                      "kvCacheGiB": {
+                        "const": 0
+                      }
+                    }
+                  }
+                }
+              }
+            ]
+          }
         }
       ],
       "dependentRequired": {
@@ -2890,7 +3100,7 @@
           "placement"
         ]
       },
-      "description": "Managed vLLM service. Explicit placement and publication must appear together.",
+      "description": "Managed inference service. Backend adapters share hardware checks, placement, storage, and supervision. Explicit placement and publication must appear together.",
       "else": {
         "properties": {
           "serving": {
@@ -2910,11 +3120,14 @@
       "properties": {
         "authentication": {
           "$ref": "#/$defs/ServiceAuthentication",
-          "description": "Optional native bearer authentication. The runtime generates and retains the key; omission preserves unauthenticated serving."
+          "description": "Optional native vLLM bearer authentication. The runtime generates and retains the key; omission preserves unauthenticated serving. Ollama rejects this setting."
         },
         "backend": {
-          "const": "vllm",
-          "description": "Managed inference backend.",
+          "description": "Managed inference backend: vllm or ollama. Backend-specific settings are validated before planning.",
+          "enum": [
+            "vllm",
+            "ollama"
+          ],
           "type": "string"
         },
         "container": {
@@ -2927,7 +3140,7 @@
           "x-nemoclaw-required": "Without recipe"
         },
         "image": {
-          "description": "Immutable runtime image containing vLLM, the supervisor, and any declared recipe tools.",
+          "description": "Immutable runtime image containing the selected server, the NemoClaw supervisor, and any declared recipe tools. A bare upstream server image is insufficient.",
           "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:/-]*@sha256:[a-f0-9]{64}$",
           "type": "string"
         },
@@ -2945,7 +3158,7 @@
         },
         "model": {
           "$ref": "#/$defs/Model",
-          "description": "Public Hugging Face repository and immutable commit."
+          "description": "Pinned model identity. vLLM uses repository/revision; Ollama uses name/digest."
         },
         "placement": {
           "$ref": "#/$defs/ServicePlacement",
@@ -3177,10 +3390,10 @@
             }
           ],
           "default": 1024,
-          "description": "Maximum tokens in a scheduled batch.",
+          "description": "Maximum tokens in a scheduled vLLM batch. Ollama requires omission or zero and does not expose this control.",
           "format": "int64",
           "type": "integer",
-          "x-nemoclaw-default-rule": "Omitted or zero selects the default."
+          "x-nemoclaw-default-rule": "Omitted or zero selects 1024 for vLLM. Ollama requires zero and uses native batching."
         },
         "contextTokens": {
           "anyOf": [
@@ -3237,7 +3450,7 @@
             }
           ],
           "default": "",
-          "description": "Optional advertised model name without a recipe. Omission uses the model repository; routes must match the advertised name.",
+          "description": "Optional vLLM model alias without a recipe. Omission uses the repository. Ollama requires omission and serves model.name; routes must match the advertised name.",
           "type": "string"
         },
         "port": {

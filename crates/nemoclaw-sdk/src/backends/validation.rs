@@ -25,10 +25,18 @@ pub(crate) fn gpu_bytes(service: &Service) -> u64 {
         * GIB
 }
 pub fn validate(service: &Service) -> Result<(), ConfigError> {
+    if service.backend == "ollama" {
+        return super::ollama::validate(service);
+    }
     if service.backend != c::BACKEND {
         return Err(ConfigError::new("unsupported inference backend"));
     }
     service.validate_hardware()?;
+    if !service.model.name.is_empty() || !service.model.digest.is_empty() {
+        return Err(ConfigError::new(
+            "vLLM requires a Hugging Face model, not an Ollama identity",
+        ));
+    }
     crate::recipes::huggingface::validate_model(service)?;
     if let Some(recipe) = &service.recipe {
         recipe.validate(service)?;
@@ -60,6 +68,13 @@ pub fn validate(service: &Service) -> Result<(), ConfigError> {
         ));
     }
     crate::hardware::validate_memory(&service.memory)?;
+    if service.memory.gpu_memory_utilization.is_none()
+        && !c::KV_CACHE.contains(service.memory.kv_cache_gib)
+    {
+        return Err(ConfigError::new(
+            "vLLM requires a bounded KV cache allocation",
+        ));
+    }
     if service.recipe.is_some() {
         return Ok(());
     }

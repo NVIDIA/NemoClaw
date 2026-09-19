@@ -36,7 +36,7 @@ fn identity(repository: &str, revision: &str) -> Result<(), Error> {
     .validate()
 }
 impl Client {
-    async fn bounded(&self, url: reqwest::Url, limit: usize) -> Result<Vec<u8>, Error> {
+    pub(super) async fn bounded(&self, url: reqwest::Url, limit: usize) -> Result<Vec<u8>, Error> {
         let mut response = self
             .http
             .get(url)
@@ -65,6 +65,9 @@ impl Client {
     /// missing safetensors and incorrect Git/LFS identities all fail closed.
     pub async fn resolve(&self, repository: &str, revision: &str) -> Result<Manifest, Error> {
         identity(repository, revision)?;
+        if revision.len() != 40 || self.registry {
+            return Err(failure("Hugging Face requires a commit snapshot client"));
+        }
         let work = async {
             let mut url =
                 reqwest::Url::parse(&self.base_url).map_err(|_| failure("invalid model origin"))?;
@@ -192,6 +195,7 @@ mod tests {
         let client = Client {
             base_url: format!("http://{}", listener.local_addr().unwrap()),
             http: reqwest::Client::new(),
+            registry: false,
             resume_attempts: 1,
         };
         let seen = requests.clone();

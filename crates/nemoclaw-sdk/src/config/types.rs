@@ -149,7 +149,7 @@ pub struct Gateway {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[schemars(!default)]
 #[serde(default, deny_unknown_fields)]
-/// Choose endpoint for external inference, endpoint plus ollama for managed Ollama, or service for managed vLLM.
+/// Choose endpoint for external inference or service for managed vLLM/Ollama. The older endpoint plus ollama form retains its separate CPU-only lifecycle.
 pub struct InferenceProvider {
     #[serde(
         rename = "ollamaProxy",
@@ -184,11 +184,11 @@ pub struct InferenceProvider {
     pub credential: Option<Credential>,
     #[serde(rename = "ollama", skip_serializing_if = "Option::is_none")]
     #[schemars(default, with = "ManagedOllama")]
-    /// Manage Ollama through a local Unix Docker socket and an existing network. Requires an explicit private or loopback IP:port/v1 HTTP endpoint.
+    /// Legacy CPU-only Ollama lifecycle through a local Unix Docker socket and existing network. Requires an explicit private or loopback IP:port/v1 HTTP endpoint. New GPU deployments use service.backend: ollama.
     pub ollama: Option<ManagedOllama>,
     #[serde(rename = "service", skip_serializing_if = "Option::is_none")]
     #[schemars(default, with = "Service")]
-    /// Manage vLLM from a pinned runtime image and model. Excludes ollama and credential; endpoint must be omitted or empty.
+    /// Manage the selected inference backend from a pinned runtime image and model. Excludes ollama and credential; endpoint must be omitted or empty.
     pub service: Option<Service>,
 }
 
@@ -428,7 +428,7 @@ pub struct Overrides {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[schemars(!default)]
 #[serde(default, deny_unknown_fields)]
-/// Managed vLLM service. Explicit placement and publication must appear together.
+/// Managed inference service. Backend adapters share hardware checks, placement, storage, and supervision. Explicit placement and publication must appear together.
 pub struct Service {
     /// Explicit hardware contract: a named GPU or system profile, or dedicated GPU requirements for Linux AMD64. Required without an inline recipe; excludes recipe.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -439,7 +439,7 @@ pub struct Service {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(with = "super::ServiceContainer")]
     pub container: Option<super::ServiceContainer>,
-    /// Optional native bearer authentication. The runtime generates and retains the key; omission preserves unauthenticated serving.
+    /// Optional native vLLM bearer authentication. The runtime generates and retains the key; omission preserves unauthenticated serving. Ollama rejects this setting.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(with = "ServiceAuthentication")]
     pub authentication: Option<ServiceAuthentication>,
@@ -467,10 +467,10 @@ pub struct Service {
     #[schemars(extend("x-nemoclaw-required" = "With placement"))]
     pub publication: Option<ServicePublication>,
     #[serde(rename = "backend")]
-    /// Managed inference backend.
+    /// Managed inference backend: vllm or ollama. Backend-specific settings are validated before planning.
     pub backend: String,
     #[serde(rename = "image")]
-    /// Immutable runtime image containing vLLM, the supervisor, and any declared recipe tools.
+    /// Immutable runtime image containing the selected server, the NemoClaw supervisor, and any declared recipe tools. A bare upstream server image is insufficient.
     pub image: String,
     #[serde(
         rename = "imagePullPolicy",
@@ -481,7 +481,7 @@ pub struct Service {
     /// Image acquisition before container creation or restart. Omission means Never; changing this does not restart a running container.
     pub image_pull_policy: Option<super::ImagePullPolicy>,
     #[serde(rename = "model")]
-    /// Public Hugging Face repository and immutable commit.
+    /// Pinned model identity. vLLM uses repository/revision; Ollama uses name/digest.
     pub model: Model,
     #[serde(rename = "serving")]
     #[schemars(default)]
@@ -509,12 +509,26 @@ pub struct Model {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(with = "super::ManagedManagement")]
     pub management: Option<super::ManagedManagement>,
-    #[serde(rename = "repository")]
-    /// Public Hugging Face owner/repository name.
+    #[serde(rename = "repository", skip_serializing_if = "String::is_empty")]
+    #[schemars(default)]
+    #[schemars(extend("x-nemoclaw-required" = "For backend vllm"))]
+    /// Public Hugging Face owner/repository name. Required for vLLM; excluded by Ollama.
     pub repository: String,
-    #[serde(rename = "revision")]
-    /// Full lowercase 40-hex commit revision; branches and tags are rejected.
+    #[serde(rename = "revision", skip_serializing_if = "String::is_empty")]
+    #[schemars(default)]
+    #[schemars(extend("x-nemoclaw-required" = "For backend vllm"))]
+    /// Full lowercase 40-hex Hugging Face commit. Required for vLLM; excluded by Ollama.
     pub revision: String,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    #[schemars(default)]
+    #[schemars(extend("x-nemoclaw-required" = "For backend ollama"))]
+    /// Ollama public library model:tag, paired with its immutable manifest digest. Required for Ollama; excluded by vLLM.
+    pub name: String,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    #[schemars(default)]
+    #[schemars(extend("x-nemoclaw-required" = "For backend ollama"))]
+    /// Lowercase 64-hex SHA-256 of the Ollama registry manifest. Required for Ollama; excluded by vLLM. Changing a registry tag cannot change this selected identity.
+    pub digest: String,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -522,7 +536,7 @@ pub struct Model {
 #[serde(default, deny_unknown_fields)]
 /// Limits apply with or without a recipe. Recipe serving settings replace the ordinary service parser settings.
 pub struct Serving {
-    /// Optional advertised model name without a recipe. Omission uses the model repository; routes must match the advertised name.
+    /// Optional vLLM model alias without a recipe. Omission uses the repository. Ollama requires omission and serves model.name; routes must match the advertised name.
     #[serde(rename = "modelName", skip_serializing_if = "String::is_empty")]
     #[schemars(default)]
     pub model_name: String,
@@ -556,7 +570,7 @@ pub struct Serving {
     pub max_sequences: i64,
     #[serde(rename = "batchTokens")]
     #[schemars(default)]
-    /// Maximum tokens in a scheduled batch.
+    /// Maximum tokens in a scheduled vLLM batch. Ollama requires omission or zero and does not expose this control.
     pub batch_tokens: i64,
     #[serde(rename = "speculativeTokens")]
     #[schemars(default)]
@@ -573,7 +587,7 @@ pub struct Serving {
 #[serde(default, deny_unknown_fields)]
 /// Resident watchdog thresholds are validated before runtime creation. The parser also checks relationships between thresholds.
 pub struct Memory {
-    /// Optional fraction of observed dedicated GPU memory, from 0.05 through 0.95. Requires service.hardware with explicit minGpuMemoryBytes, including dedicated-memory named profiles. Excludes unified-memory profiles, recipe, fixed gpuMemoryGiB and explicit KV-cache allocation; vLLM sizes its cache natively.
+    /// Optional fraction of observed dedicated GPU memory, from 0.05 through 0.95. Requires explicit hardware.minGpuMemoryBytes. Excludes unified-memory profiles, recipe, fixed gpuMemoryGiB and explicit KV-cache allocation. The backend sizes its cache natively.
     #[serde(
         rename = "gpuMemoryUtilization",
         skip_serializing_if = "Option::is_none"
@@ -582,7 +596,7 @@ pub struct Memory {
     pub gpu_memory_utilization: Option<serde_json::Number>,
     #[serde(rename = "gpuMemoryGiB", skip_serializing_if = "is_zero")]
     #[schemars(default)]
-    /// Total GPU budget in GiB without a recipe. Must be omitted or zero with a recipe, which supplies its own byte budget.
+    /// Total GPU budget in GiB without a recipe. Omitted or zero uses 16 GiB unless gpuMemoryUtilization supplies the budget. Ollama checks loaded memory at startup and while serving; this is not an allocator quota. Recipes supply their own byte budget.
     pub gpu_memory_gib: i64,
     #[serde(rename = "hostReserveGiB")]
     #[schemars(default)]
@@ -590,7 +604,7 @@ pub struct Memory {
     pub host_reserve_gib: i64,
     #[serde(rename = "kvCacheGiB")]
     #[schemars(default)]
-    /// KV cache allocation in GiB for ordinary vLLM. Omitted or zero defaults to 8, except gpuMemoryUtilization requires zero and lets vLLM allocate its cache. Recipe serving does not emit this flag.
+    /// KV cache allocation in GiB for ordinary vLLM. Omitted or zero defaults to 8 except with gpuMemoryUtilization. Ollama requires omission or zero and uses native cache allocation. Recipe serving does not emit this flag.
     pub kv_cache_gib: i64,
     #[serde(rename = "minAvailableGiB")]
     #[schemars(default)]

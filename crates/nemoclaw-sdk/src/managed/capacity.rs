@@ -23,14 +23,11 @@ impl Engine {
                 let host = self.host_observer.observe(self).await?;
                 let info = self.info().await?;
                 let capacity = host.for_engine(info.id.as_deref().unwrap_or(""))?;
-                let directory = crate::recipes::huggingface::directory(service);
+                let directory = crate::model_source::directory(service);
                 let cached = if let Some(observed) = observed {
                     self.read_file(
                         &observed.container_id,
-                        &format!(
-                            "/data/{directory}/{}",
-                            crate::recipes::huggingface::MANIFEST_FILE
-                        ),
+                        &format!("/data/{directory}/{}", crate::model_source::MANIFEST_FILE),
                         4 << 20,
                     )
                     .await?
@@ -39,12 +36,27 @@ impl Engine {
                 };
                 let cached = cached
                     .as_deref()
-                    .map(|bytes| crate::recipes::huggingface::decode_manifest(service, bytes))
+                    .map(|bytes| crate::model_source::decode_manifest(service, bytes))
                     .transpose()?;
                 let manifest = match &cached {
                     Some(local) => local.snapshot(),
-                    None => crate::recipes::huggingface::resolve_manifest(service).await?,
+                    None => crate::model_source::resolve_manifest(service).await?,
                 };
+                if service.backend == "ollama" && cached.is_some() {
+                    let native = self
+                        .read_file(
+                            &observed.unwrap().container_id,
+                            &format!(
+                                "/data/{directory}/{}",
+                                crate::model_source::native_manifest_path(service)?
+                            ),
+                            1 << 20,
+                        )
+                        .await?;
+                    if let Some(bytes) = native {
+                        crate::model_source::validate_native_manifest(service, &manifest, &bytes)?;
+                    }
+                }
                 let mut download = manifest.bytes()?;
                 let preparation = service
                     .recipe

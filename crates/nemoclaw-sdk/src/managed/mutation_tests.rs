@@ -271,10 +271,34 @@ async fn managed_gateway_rejects_an_image_for_a_different_engine_architecture() 
 
 #[tokio::test]
 async fn failed_startup_and_explicit_recovery_keep_container_and_storage_identity() {
+    for backend in ["vllm", "ollama"] {
+        startup_recovery(backend).await;
+    }
+}
+async fn startup_recovery(backend: &str) {
     let fixtures: Vec<Value> = serde_json::from_str(include_str!("reference.json")).unwrap();
     let data = &fixtures[1];
-    let spec: Spec = serde_json::from_str(data["spec"].as_str().unwrap()).unwrap();
-    let container = json!({"Id":"container","Name":format!("/{}",spec.name),"Image":"sha256:runtime","Config":data["config"],"HostConfig":data["hostConfig"],"State":{"Running":false,"StartedAt":"2026-09-14T00:00:00Z"},"Mounts":[{"Type":"volume","Name":spec.volume(),"Destination":"/data","RW":true}]});
+    let mut spec: Spec = serde_json::from_str(data["spec"].as_str().unwrap()).unwrap();
+    if backend == "ollama" {
+        let service = spec.service.as_mut().unwrap();
+        service.backend = "ollama".into();
+        service.recipe = None;
+        service.hardware = Some(crate::config::ServiceHardware::Profile {
+            profile: crate::config::HardwareProfile::DgxSpark,
+            architecture: None,
+            min_gpu_memory_bytes: None,
+        });
+        service.model = crate::config::Model {
+            name: "qwen3:0.6b".into(),
+            digest: "a".repeat(64),
+            ..Default::default()
+        };
+        service.serving = crate::config::Serving::default();
+        service.memory = crate::config::Memory::default();
+        service.defaults();
+    }
+    let launch = serde_json::to_value(spec.container("/data").unwrap()).unwrap();
+    let container = json!({"Id":"container","Name":format!("/{}",spec.name),"Image":"sha256:runtime","Config":launch,"HostConfig":launch["HostConfig"],"State":{"Running":false,"StartedAt":"2026-09-14T00:00:00Z"},"Mounts":[{"Type":"volume","Name":spec.volume(),"Destination":"/data","RW":true}]});
     let volume = json!({"Name":spec.volume(),"Driver":"local","Scope":"local","Mountpoint":"/var/lib/docker/volumes/fixture/_data","CreatedAt":"2026-09-14T00:00:00Z","Labels":spec.labels().unwrap(),"Options":{}});
     let network = json!({"Id":"network","Name":spec.network(),"Driver":"bridge","Internal":false,"EnableIPv6":false,"Labels":{super::super::OWNER_LABEL:spec.owner},"IPAM":{"Driver":"default","Config":[{"Subnet":spec.gateway.network_cidr,"Gateway":spec.gateway.bridge().unwrap()}]}});
     let state = Arc::new(Mutex::new(State {

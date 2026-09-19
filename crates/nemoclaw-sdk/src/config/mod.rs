@@ -289,6 +289,9 @@ impl Gateway {
 }
 impl Service {
     pub fn served_model(&self) -> &str {
+        if self.backend == "ollama" {
+            return &self.model.name;
+        }
         if let Some(recipe) = &self.recipe {
             return &recipe.serving.model_name;
         }
@@ -312,7 +315,11 @@ impl Service {
             ),
             (
                 &mut self.serving.batch_tokens,
-                constraints::BATCH_TOKENS.default,
+                if self.backend == "ollama" {
+                    0
+                } else {
+                    constraints::BATCH_TOKENS.default
+                },
             ),
             (
                 &mut self.serving.startup_timeout_seconds,
@@ -324,7 +331,7 @@ impl Service {
             ),
             (
                 &mut self.memory.kv_cache_gib,
-                if self.memory.gpu_memory_utilization.is_some() {
+                if self.memory.gpu_memory_utilization.is_some() || self.backend == "ollama" {
                     0
                 } else {
                     constraints::KV_CACHE.default

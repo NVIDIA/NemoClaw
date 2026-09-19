@@ -15,25 +15,25 @@ pub(crate) async fn prepare(
     root: &Path,
     cancel: &CancellationToken,
 ) -> Result<PreparedModel, Error> {
-    use nemoclaw_sdk::recipes::huggingface as hf;
+    use nemoclaw_sdk::model_source;
     if let Some(recipe) = &service.recipe {
         crate::inline_recipe::PackagedRecipe(recipe).validate_files()?;
     }
 
-    let model = snapshot::directory(root, &hf::directory(service))?;
+    let model = snapshot::directory(root, &model_source::directory(service))?;
     let manifest = match snapshot::ModelManifest::read(&model)? {
         Some(manifest) => {
             let expected = manifest.snapshot();
-            hf::validate_manifest(service, &expected)?;
+            model_source::validate_manifest(service, &expected)?;
             expected
         }
         None => {
             report("downloading", "resolving selected immutable model", 0)?;
-            tokio::select! { ()=cancel.cancelled()=>return Err(Error::Cancelled), m=hf::resolve_manifest(service)=>m? }
+            tokio::select! { ()=cancel.cancelled()=>return Err(Error::Cancelled), m=model_source::resolve_manifest(service)=>m? }
         }
     };
     report("downloading", "verifying selected model snapshot", 0)?;
-    let client = snapshot::Client::new()?;
+    let client = model_source::client(service)?;
     tokio::time::timeout(
         Duration::from_secs(8 * 3600),
         client.ensure(&model, &manifest, cancel, &|file| {
@@ -42,6 +42,16 @@ pub(crate) async fn prepare(
     )
     .await
     .map_err(|_| Error::State("model download exceeded budget; partial data retained"))??;
+    if service.backend == "ollama" {
+        let native = std::fs::read(model.join(model_source::native_manifest_path(service)?))
+            .map_err(|_| Error::State("Ollama native manifest is unobservable"))?;
+        model_source::validate_native_manifest(service, &manifest, &native)?;
+        model_source::validate_ollama_parameters(&model, &native)?;
+        return Ok(PreparedModel {
+            model,
+            environment: Default::default(),
+        });
+    }
     let mut environment: std::collections::BTreeMap<String, std::ffi::OsString> = [
         ("HF_HUB_OFFLINE", "1"),
         ("TRANSFORMERS_OFFLINE", "1"),

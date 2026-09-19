@@ -9,6 +9,8 @@ mod hardware;
 #[cfg(target_os = "linux")]
 mod inline_recipe;
 #[cfg(target_os = "linux")]
+mod ollama;
+#[cfg(target_os = "linux")]
 mod recipe;
 #[cfg(target_os = "linux")]
 mod runtime;

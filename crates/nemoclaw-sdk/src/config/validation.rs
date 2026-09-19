@@ -265,6 +265,16 @@ impl Document {
                             == (provider.provider == "anthropic"),
                     "API must match the provider implementation and be supported by the harness",
                 )?;
+                if provider
+                    .service
+                    .as_ref()
+                    .is_some_and(|service| service.backend == "ollama")
+                {
+                    require(
+                        provider.provider == "openai" && api == InferenceApi::OpenaiCompletions,
+                        "managed Ollama requires the OpenAI Completions API",
+                    )?;
+                }
                 if agent.auth.is_some() {
                     require(
                         harness.kind == "hermes"

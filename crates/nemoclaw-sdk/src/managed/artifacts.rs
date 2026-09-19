@@ -65,16 +65,34 @@ impl Engine {
             if service.authentication.is_some() {
                 crate::inference_auth::read_key(self, &observed.container_id).await?;
             }
-            let model = format!("/data/{}", crate::recipes::huggingface::directory(service));
+            let model = format!("/data/{}", crate::model_source::directory(service));
             let bytes = self
                 .read_file(
                     &observed.container_id,
-                    &format!("{model}/{}", crate::recipes::huggingface::MANIFEST_FILE),
+                    &format!("{model}/{}", crate::model_source::MANIFEST_FILE),
                     4 << 20,
                 )
                 .await?
                 .ok_or(Error::State("selected model manifest is unobservable"))?;
-            let manifest = crate::recipes::huggingface::decode_manifest(service, &bytes)?;
+            let manifest = crate::model_source::decode_manifest(service, &bytes)?;
+            if service.backend == "ollama" {
+                let native = self
+                    .read_file(
+                        &observed.container_id,
+                        &format!(
+                            "{model}/{}",
+                            crate::model_source::native_manifest_path(service)?
+                        ),
+                        1 << 20,
+                    )
+                    .await?
+                    .ok_or(Error::State("Ollama native manifest is unobservable"))?;
+                crate::model_source::validate_native_manifest(
+                    service,
+                    &manifest.snapshot(),
+                    &native,
+                )?;
+            }
             for file in &manifest.verified_files()? {
                 self.verify_artifact_file(&observed.container_id, &model, file)
                     .await?;

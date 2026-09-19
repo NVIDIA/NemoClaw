@@ -168,7 +168,7 @@ impl Engine {
             }
             if labels.get("org.nemoclaw.backend") != Some(&service.backend) {
                 return Err(Error::Conflict(
-                    "image does not contain the pinned Spark backend",
+                    "image does not contain the selected inference backend",
                 ));
             }
         }
