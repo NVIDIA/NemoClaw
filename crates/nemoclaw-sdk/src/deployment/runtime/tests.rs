@@ -129,3 +129,35 @@ fn unbound_gateway_is_deferred_and_retained_intent_is_checked_locally() {
     bindings.insert("undeclared".into(), StateBinding::default());
     assert!(runtime_bindings(&targets, &bindings).is_err());
 }
+
+#[test]
+fn native_compute_binding_does_not_require_a_nemoclaw_spec_or_replacement_authorization() {
+    let target = Target {
+        kind: "inference_service".into(),
+        address: "docker_container.inference_service_model".into(),
+        values: Row::new(),
+    };
+    let bindings = BTreeMap::from([(
+        target.address.clone(),
+        StateBinding {
+            id: "prior-container".into(),
+            spec: String::new(),
+        },
+    )]);
+    let expected = runtime_bindings(&[target.clone()], &bindings).unwrap();
+    let plan: Plan = serde_json::from_value(json!({"resource_changes":[{"address": target.address, "change":{"actions":["delete","create"],"before":{"id":"prior-container"}}}]})).unwrap();
+    assert_eq!(
+        check_runtime_plan(&plan, &expected, &bindings, &BTreeSet::new())
+            .unwrap()
+            .len(),
+        1
+    );
+    let removed = runtime_bindings(&[], &bindings).unwrap();
+    let plan: Plan = serde_json::from_value(json!({"resource_changes":[{"address": target.address, "change":{"actions":["delete"],"before":{"id":"prior-container"}}}]})).unwrap();
+    assert_eq!(
+        check_runtime_plan(&plan, &removed, &bindings, &BTreeSet::new())
+            .unwrap()
+            .len(),
+        1
+    );
+}

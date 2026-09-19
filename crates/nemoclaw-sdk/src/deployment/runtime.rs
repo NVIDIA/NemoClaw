@@ -28,6 +28,17 @@ pub(super) fn check_runtime_plan(
         if !seen.insert(&change.address) {
             return Err(Error::Conflict("runtime plan duplicated a resource"));
         }
+        if plan::disposable(&change.address) {
+            ordinary.resource_changes.push(plan::ResourceChange {
+                mode: change.mode.clone(),
+                address: change.address.clone(),
+                change: plan::PlannedChange {
+                    actions: change.change.actions.clone(),
+                    before: change.change.before.clone(),
+                },
+            });
+            continue;
+        }
         let expected = allowed.get(&change.address).ok_or(Error::Conflict(
             "runtime plan contains an undeclared resource",
         ))?;
@@ -104,12 +115,18 @@ fn runtime_bindings(
     bindings: &BTreeMap<String, StateBinding>,
 ) -> Result<BTreeMap<String, Row>, Error> {
     let mut expected = allowed(targets);
-    if bindings.keys().any(|key| !expected.contains_key(key)) {
+    if bindings
+        .keys()
+        .any(|key| !expected.contains_key(key) && !plan::disposable(key))
+    {
         return Err(Error::Conflict(
             "ordinary apply cannot remove a managed runtime",
         ));
     }
     for target in targets {
+        if plan::disposable(&target.address) || target.address.starts_with("data.") {
+            continue;
+        }
         if target.kind == GATEWAY_KIND
             || crate::services::resource_behavior(&target.kind).runtime_process
         {
@@ -163,8 +180,9 @@ fn runtime_observations(
         .map(|target| target.address.clone())
         .collect();
     for target in targets.iter().filter(|target| {
-        target.kind == GATEWAY_KIND
-            || crate::services::resource_behavior(&target.kind).runtime_process
+        !plan::disposable(&target.address)
+            && (target.kind == GATEWAY_KIND
+                || crate::services::resource_behavior(&target.kind).runtime_process)
     }) {
         if target.kind == GATEWAY_KIND {
             result.gateway_running = plan.resource_changes.iter().any(|change| {
