@@ -168,12 +168,12 @@ export type InstallerLegacyForwardRetirementSummary = Readonly<{
 }>;
 
 function registeredLegacyForwardIdentities(
+  sandboxName: string,
   sandbox: NonNullable<ReturnType<typeof registry.getSandbox>>,
   registeredAgent: SandboxPortAgent,
   runtime: OpenShellForwardRuntimeAuthority,
   resolvePort: typeof resolveSandboxDashboardPort,
 ): OpenShellForwardIdentity[] {
-  const sandboxName = sandbox.name;
   const primaryPort = resolvePort(sandboxName, { getSandbox: () => sandbox });
   const hermesDashboardPort =
     sandbox.hermesDashboardEnabled === true && isValidPort(sandbox.hermesDashboardPort)
@@ -332,6 +332,7 @@ export async function retireRegisteredLegacyDashboardForwards(
     const gatewayName = resolveSandboxGatewayName(sandbox);
     const { authority, runtime } = resolveRuntime(gatewayName);
     const forwards = registeredLegacyForwardIdentities(
+      sandboxName,
       sandbox,
       registeredAgent,
       runtime,
@@ -351,6 +352,7 @@ export async function retireRegisteredLegacyDashboardForwards(
         !sameForwardIdentities(
           forwards,
           registeredLegacyForwardIdentities(
+            sandboxName,
             current,
             currentAgent,
             currentRuntime.runtime,
@@ -483,6 +485,7 @@ export async function teardownSandboxDashboardForward(
       gatewayName,
     );
     const forwards = registeredLegacyForwardIdentities(
+      sandboxName,
       sandbox,
       registeredAgent,
       runtime,
