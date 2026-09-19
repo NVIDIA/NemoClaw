@@ -1442,7 +1442,9 @@ NemoClaw does not signal, authorize, or respawn an agent-owned process.
 <AgentOnly variant="hermes">
 
 For Hermes, the entrypoint supervisor also owns the dashboard process, internal API relay, dashboard relay, and gateway log stream.
-The managed nonroot supervisor continuously repairs those processes, stops an alive but deaf gateway after four consecutive failed health checks, and stops relaunch for the current supervisor instance after five unexpected exits or failed replacement candidates within 60 seconds.
+The managed nonroot supervisor continuously repairs those processes and stops an alive but deaf gateway after four consecutive failed health checks.
+If the gateway requests a service-managed restart with status 75 five times within 60 seconds, the supervisor stops before a sixth launch.
+Clean exits and status 79 wait for authenticated recovery, while other exit statuses fail immediately.
 If the Hermes restart closes the OpenShell exec relay before it returns status, NemoClaw waits for the selected sandbox control plane to become ready again.
 
 </AgentOnly>

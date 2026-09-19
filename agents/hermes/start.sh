@@ -2951,6 +2951,8 @@ launch_hermes_gateway_current_user() {
 # transaction restores its cron gate. Other failures propagate to OpenShell.
 readonly HERMES_SERVICE_RESTART_STATUS=75
 readonly HERMES_GATEWAY_RECOVERY_STATUS=79
+readonly HERMES_SERVICE_RESTART_MAX=5
+readonly HERMES_SERVICE_RESTART_WINDOW_SECONDS=60
 readonly HERMES_GATEWAY_RECOVERY_REQUESTER_EXIT_ATTEMPTS=30
 readonly HERMES_GATEWAY_RECOVERY_TRANSPORT_SETTLE_SECONDS=1
 
@@ -3114,7 +3116,8 @@ relaunch_hermes_gateway_current_user() {
 }
 
 supervise_hermes_service_restarts_current_user() {
-  local gateway_status=0
+  local gateway_status=0 restart_time
+  local -a service_restart_times=()
 
   while :; do
     gateway_status=0
@@ -3123,6 +3126,16 @@ supervise_hermes_service_restarts_current_user() {
       || [ "$gateway_status" -eq "$HERMES_GATEWAY_RECOVERY_STATUS" ]; then
       wait_for_hermes_gateway_recovery_request || return $?
     elif [ "$gateway_status" -eq "$HERMES_SERVICE_RESTART_STATUS" ]; then
+      restart_time="$SECONDS"
+      while [ "${#service_restart_times[@]}" -gt 0 ] \
+        && [ "$((restart_time - service_restart_times[0]))" -gt "$HERMES_SERVICE_RESTART_WINDOW_SECONDS" ]; do
+        service_restart_times=("${service_restart_times[@]:1}")
+      done
+      service_restart_times+=("$restart_time")
+      if [ "${#service_restart_times[@]}" -ge "$HERMES_SERVICE_RESTART_MAX" ]; then
+        echo "[CRITICAL] Hermes gateway pid ${GATEWAY_PID} start identity ${GATEWAY_PID_START_IDENTITY:-unknown} requested ${HERMES_SERVICE_RESTART_MAX} service-managed restarts within ${HERMES_SERVICE_RESTART_WINDOW_SECONDS} seconds; relaunch is stopped for this supervisor instance; run 'nemoclaw <name> stop' followed by 'nemoclaw <name> start' to reset the supervisor, then inspect gateway logs if restart requests recur" >&2
+        return 1
+      fi
       echo "[gateway] Hermes requested a service-managed restart; relaunching under the existing OpenShell entrypoint" >&2
     else
       return "$gateway_status"

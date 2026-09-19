@@ -11,12 +11,15 @@ import { extractShellFunction } from "../../support/hermes-shell-harness";
 const START_SCRIPT = path.join(import.meta.dirname, "../../..", "agents", "hermes", "start.sh");
 const source = fs.readFileSync(START_SCRIPT, "utf8");
 
-function runSupervisor(firstExit: number, finalExit: number) {
+function runSupervisor(firstExit: number, finalExit: number, repeatedFirstExits = 1) {
   const script = [
     "set -uo pipefail",
     "readonly HERMES_SERVICE_RESTART_STATUS=75",
     "readonly HERMES_GATEWAY_RECOVERY_STATUS=79",
+    "readonly HERMES_SERVICE_RESTART_MAX=5",
+    "readonly HERMES_SERVICE_RESTART_WINDOW_SECONDS=60",
     "GATEWAY_PID=100",
+    'GATEWAY_PID_START_IDENTITY="start-100"',
     "wait_count=0",
     "launch_count=0",
     "mark_count=0",
@@ -27,9 +30,10 @@ function runSupervisor(firstExit: number, finalExit: number) {
     "recovery_count=0",
     `first_exit=${firstExit}`,
     `final_exit=${finalExit}`,
-    'wait() { wait_count=$((wait_count + 1)); if [ "$wait_count" -eq 1 ]; then return "$first_exit"; fi; return "$final_exit"; }',
+    `repeated_first_exits=${repeatedFirstExits}`,
+    'wait() { wait_count=$((wait_count + 1)); if [ "$wait_count" -le "$repeated_first_exits" ]; then return "$first_exit"; fi; return "$final_exit"; }',
     "mark_hermes_gateway_stopped() { mark_count=$((mark_count + 1)); }",
-    "launch_hermes_gateway_current_user() { launch_count=$((launch_count + 1)); GATEWAY_PID=$((GATEWAY_PID + 1)); }",
+    'launch_hermes_gateway_current_user() { launch_count=$((launch_count + 1)); GATEWAY_PID=$((GATEWAY_PID + 1)); GATEWAY_PID_START_IDENTITY="start-$GATEWAY_PID"; }',
     "wait_for_hermes_gateway_internal() { ready_count=$((ready_count + 1)); }",
     "ensure_hermes_supervised_auxiliaries() { auxiliary_count=$((auxiliary_count + 1)); }",
     "finalize_tirith_marker_retry() { finalize_count=$((finalize_count + 1)); }",
@@ -243,6 +247,20 @@ describe("Hermes native service restart supervision", () => {
       "status=9 waits=2 launches=1 marks=1 ready=1 auxiliaries=1 finalize=1 refresh=1 recoveries=0 gateway=101",
     );
     expect(result.stderr).toContain("Hermes requested a service-managed restart");
+  });
+
+  it("stops after five service-managed restart requests within 60 seconds without launching a sixth gateway", () => {
+    const result = runSupervisor(75, 9, 5);
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout.trim()).toBe(
+      "status=1 waits=5 launches=4 marks=4 ready=4 auxiliaries=4 finalize=4 refresh=4 recoveries=0 gateway=104",
+    );
+    expect(result.stderr).toContain("Hermes gateway pid 104 start identity start-104");
+    expect(result.stderr).toContain("5 service-managed restarts within 60 seconds");
+    expect(result.stderr).toContain("nemoclaw <name> stop");
+    expect(result.stderr).toContain("nemoclaw <name> start");
+    expect(result.stderr).toContain("reset the supervisor");
   });
 
   it("holds a clean exit until gated host recovery requests a relaunch", () => {
