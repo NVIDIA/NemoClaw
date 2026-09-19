@@ -1189,7 +1189,9 @@ describe("sandbox create identity checks", () => {
       revalidate: (sandboxIsLive) => events.push(sandboxIsLive ? "identity" : "preflight"),
       create: async (verifyCreatedSandbox) => {
         events.push("create");
-        await verifyCreatedSandbox({ sandboxName: "alpha" });
+        await verifyCreatedSandbox({ sandboxName: "alpha" }, () => {
+          events.push("pre-effects-cutover");
+        });
         return "complete";
       },
       runVerifiedCreateEffects: async () => {
@@ -1221,6 +1223,7 @@ describe("sandbox create identity checks", () => {
       "identity",
       "checkpoint",
       "checkpoint-revalidate",
+      "pre-effects-cutover",
       "provider-effects",
       "identity",
       "identity",

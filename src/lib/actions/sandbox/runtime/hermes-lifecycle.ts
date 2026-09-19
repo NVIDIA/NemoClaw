@@ -4,6 +4,7 @@
 import { MessagingSetupApplier } from "../../../messaging/applier/setup-applier";
 import type { MessagingOpenShellRunner } from "../../../messaging/applier/types";
 import type { SandboxMessagingPlan } from "../../../messaging/manifest";
+import { isExpectedHermesRestartRelayClose } from "../gateway-restart";
 import * as processRecovery from "../process-recovery";
 
 export function createHermesCredentialEnvReconciliationRuntime(
@@ -28,7 +29,9 @@ export function createHermesCredentialEnvReconciliationRuntime(
         210000,
       );
       revalidate(`confirming Hermes gateway restart for sandbox '${sandboxName}'`);
-      return result;
+      return isExpectedHermesRestartRelayClose(result) && result
+        ? { ...result, status: 0 }
+        : result;
     },
     waitForGateway: async (sandboxName: string, revalidate: (operation: string) => void) => {
       revalidate(`checking Hermes gateway health for sandbox '${sandboxName}'`);

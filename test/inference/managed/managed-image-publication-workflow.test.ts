@@ -78,6 +78,13 @@ function managedPrActivation(workflow: Workflow): Job {
   );
 }
 
+function managedPrPodmanActivation(workflow: Workflow): Job {
+  return required(
+    workflow.jobs?.["pr-managed-podman-activation"],
+    "managed-image workflow is missing its exact rootless Podman activation gate",
+  );
+}
+
 describe("complete managed-image publication workflow", () => {
   it("restricts npm audit cache publication to trusted callers (#11028)", () => {
     const action = readAction("ci-reviewed-npm-audit") as ReturnType<typeof readAction> & {
@@ -572,6 +579,10 @@ describe("complete managed-image publication workflow", () => {
       step(managedPrActivation(workflow), "Download exact published all-agent contracts").with
         ?.pattern,
     ).toBe("managed-pr-contract-${{ github.run_id }}-*");
+    expect(
+      step(managedPrPodmanActivation(workflow), "Download exact published all-agent contracts").with
+        ?.pattern,
+    ).toBe("managed-pr-contract-${{ github.run_id }}-*");
     expect(contract.env?.RELEASE).toBe("${{ steps.release.outputs.value }}");
     const contractSource = required(contract.run, "PR managed image contract is missing");
     expect(contractSource).toContain(".[0].RootFS.Layers | length");
@@ -747,10 +758,11 @@ describe("complete managed-image publication workflow", () => {
     const workflow = readWorkflow("managed-images.yaml");
     const activation = managedPrActivation(workflow);
     const steps = activation.steps ?? [];
-
     expect(workflow.on?.pull_request?.paths).toEqual(
       expect.arrayContaining([
+        "src/lib/actions/sandbox/**",
         "src/lib/onboard/**",
+        "src/lib/adapters/openshell/**",
         "test/e2e/fixtures/gateway-runtime-start.ts",
         "test/e2e/fixtures/phases/lifecycle.ts",
         "test/e2e/live/managed-image-activation-e2e*.ts",
@@ -777,7 +789,7 @@ describe("complete managed-image publication workflow", () => {
       "${{ github.event.pull_request.head.sha }}",
     );
     expect(step(activation, "Assemble exact all-agent activation catalog").run).toMatch(
-      /npm ci --ignore-scripts --no-audit --no-fund[\s\S]*pr-managed-image-publication\.mts assemble[\s\S]*"\$CANDIDATE_SHA"[\s\S]*"\$\{contracts\[@\]\}"/u,
+      /openshell-sdk-install\.mts prepare[\s\S]*npm ci --ignore-scripts --no-audit --no-fund --@nvidia:registry=https:\/\/npm\.pkg\.github\.com[\s\S]*openshell-sdk-install\.mts check[\s\S]*pr-managed-image-publication\.mts assemble[\s\S]*"\$CANDIDATE_SHA"[\s\S]*"\$\{contracts\[@\]\}"/u,
     );
     expect(step(activation, "Build exact candidate CLI").run).toContain("npm run build:cli");
     expect(step(activation, "Install OpenShell CLI").run).toContain("scripts/install-openshell.sh");
@@ -786,7 +798,6 @@ describe("complete managed-image publication workflow", () => {
     expect(run).toContain("test/e2e/live/managed-image-activation-e2e.test.ts");
     expect(steps.map(({ name }) => name)).toContain("Upload managed runtime activation evidence");
   });
-
   it("leaves MCP qualification to the normal E2E workflow (#11828)", () => {
     const workflow = readWorkflow("managed-images.yaml");
     const stableMcp = required(

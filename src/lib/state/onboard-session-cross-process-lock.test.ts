@@ -253,6 +253,7 @@ describe("cross-process onboard lock", () => {
   });
 
   it("reports the live holder identity when a competing write is blocked by lock contention (#11052)", async () => {
+    const holderStartedAt = new Date().toISOString();
     const childScript = `
       const fs = require("node:fs");
       const path = require("node:path");
@@ -261,7 +262,7 @@ describe("cross-process onboard lock", () => {
       const fd = fs.openSync(lockFile, "wx", 0o600);
       fs.writeSync(fd, JSON.stringify({
         pid: process.pid,
-        startedAt: "2026-01-02T03:04:05.000Z",
+        startedAt: ${JSON.stringify(holderStartedAt)},
         command: "separate nemoclaw onboard process",
       }));
       process.stdout.write("locked\\\\n");
@@ -278,7 +279,7 @@ describe("cross-process onboard lock", () => {
         "Cannot update onboarding recovery while another onboarding run owns the lock.",
       );
       expect(contend).toThrow(`Lock holder PID: ${String(child.pid)}.`);
-      expect(contend).toThrow("Started: 2026-01-02T03:04:05.000Z.");
+      expect(contend).toThrow(`Started: ${holderStartedAt}.`);
       expect(contend).toThrow("Lock holder command: separate nemoclaw onboard process.");
       expect(contend).toThrow("Wait for the other run to finish, then rerun.");
     } finally {
