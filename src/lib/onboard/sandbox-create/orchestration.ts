@@ -1725,6 +1725,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
           isRecreateSandbox(createIntent?.recreate),
           inspectSandboxForCreate,
           createIntent?.toolDisclosure ?? null,
+          provider,
         );
     const observabilityDrift = observabilityPolicy.hasRegisteredDcodeObservabilityDrift(
       liveExists,

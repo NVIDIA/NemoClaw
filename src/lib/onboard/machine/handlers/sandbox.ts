@@ -40,7 +40,7 @@ import type {
 } from "../../../state/onboard-session";
 import { type SandboxEntry, type SandboxRemovalReceipt } from "../../../state/registry";
 import { getSandboxEntryInference } from "../../../state/registry-entry-view";
-import { toolDisclosureOrDefault } from "../../../tool-disclosure";
+import { resolveSessionToolDisclosureForRoute } from "../../../tool-disclosure";
 import {
   recordCheckpointEffectGroup,
   recordCheckpointMessaging,
@@ -1837,7 +1837,10 @@ class SandboxStateFlow<
       resolved,
       recreate: requiresSandboxRecreation(decision, this.options.recreateSandbox(false)),
       ...apfCreateIntentFields(this.options.apfInterceptorRequested === true),
-      toolDisclosure: toolDisclosureOrDefault(state.session?.toolDisclosure),
+      toolDisclosure: resolveSessionToolDisclosureForRoute(
+        state.session?.toolDisclosure,
+        this.options.provider,
+      ),
       observabilityEnabled: state.session?.observabilityEnabled === true,
       ...(reuseRegisteredCredentials ? { reuseRegisteredCredentials: true as const } : {}),
       ...(this.options.endpointUrl ? { endpointUrl: this.options.endpointUrl } : {}),
