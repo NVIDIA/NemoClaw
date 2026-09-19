@@ -144,7 +144,7 @@ fn native_compute_binding_does_not_require_a_nemoclaw_spec_or_replacement_author
             spec: String::new(),
         },
     )]);
-    let expected = runtime_bindings(&[target.clone()], &bindings).unwrap();
+    let expected = runtime_bindings(std::slice::from_ref(&target), &bindings).unwrap();
     let plan: Plan = serde_json::from_value(json!({"resource_changes":[{"address": target.address, "change":{"actions":["delete","create"],"before":{"id":"prior-container"}}}]})).unwrap();
     assert_eq!(
         check_runtime_plan(&plan, &expected, &bindings, &BTreeSet::new())
@@ -160,4 +160,45 @@ fn native_compute_binding_does_not_require_a_nemoclaw_spec_or_replacement_author
             .len(),
         1
     );
+}
+
+#[tokio::test]
+async fn removing_the_last_runtime_cannot_orphan_retained_state() {
+    let directory = tempfile::tempdir().unwrap();
+    let store = Store::open(directory.path()).unwrap();
+    let stage = directory.path().join("runtime");
+    fs::create_dir(&stage).unwrap();
+    let state = stage.join("terraform.tfstate");
+    let bytes = serde_json::to_vec(&json!({"resources":[{"type":"nemoclaw_inference_storage","name":"model","instances":[{"attributes":{"id":"daemon/volume/created","spec":"retained"}}]}]})).unwrap();
+    fs::write(&state, &bytes).unwrap();
+    let (document, _) = context();
+    let mut record = Record::new(document).unwrap();
+    let desired =
+        Document::parse(include_bytes!("../../../tests/fixtures/config/local.yaml").as_slice())
+            .unwrap();
+    assert!(!desired.has_runtime());
+    let bundle = Bundle {
+        directory: directory.path().into(),
+        manifest: crate::bundle::Manifest {
+            version: "unused".into(),
+            rust: "unused".into(),
+            opentofu: "unused".into(),
+            files: BTreeMap::new(),
+        },
+    };
+    let deployment = Deployment::new(directory.path(), directory.path());
+    assert!(
+        deployment
+            .runtime_stage(
+                &bundle,
+                &store,
+                &desired,
+                &mut record,
+                true,
+                &CancellationToken::new()
+            )
+            .await
+            .is_err()
+    );
+    assert_eq!(fs::read(state).unwrap(), bytes);
 }

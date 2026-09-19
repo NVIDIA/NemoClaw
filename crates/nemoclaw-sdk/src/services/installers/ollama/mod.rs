@@ -407,6 +407,36 @@ async fn check_targets(
 ) -> Result<(), Error> {
     let check = async {
         for target in targets {
+            if target.kind == proxy::PROXY {
+                let binding = bindings
+                    .get(&crate::docker_compute::address(&target.address))
+                    .ok_or(Error::State("proxy has no established provider identity"))?;
+                let engine = connections.resolve(&target.values["engine"])?;
+                let observed = engine
+                    .container(&binding.id)
+                    .await?
+                    .ok_or(Error::State("proxy runtime is absent"))?;
+                if observed.id.as_deref() != Some(binding.id.as_str())
+                    || observed
+                        .name
+                        .as_deref()
+                        .map(|name| name.trim_start_matches('/'))
+                        != Some(target.values["name"].as_str())
+                {
+                    return Err(crate::ObservationError::BindingMismatch.into());
+                }
+                if !observed
+                    .state
+                    .and_then(|state| state.running)
+                    .unwrap_or(false)
+                {
+                    return Err(Error::State(
+                        "proxy runtime is not running; explicitly reapply",
+                    ));
+                }
+                crate::services::authentication::read_key(&engine, &binding.id).await?;
+                continue;
+            }
             let mut row = target.values;
             row.insert(
                 "id".into(),
@@ -467,13 +497,13 @@ impl Installer for ManagedOllama {
         let spec: Spec = serde_json::from_str(&target.values["spec"])
             .map_err(|_| Error::State("invalid Ollama runtime specification"))?;
         let binding = bindings
-            .get(&target.address)
+            .get(&crate::docker_compute::address(&target.address))
             .ok_or(Error::State("Ollama has no established identity"))?;
         let engine = crate::managed::runtime_engine(connections, &target.kind, &target.values)?;
         let check = async {
             loop {
                 let observed = engine
-                    .observe_runtime(&spec, &binding.id)
+                    .observe_service(&spec, &binding.id)
                     .await?
                     .ok_or(Error::State("Ollama runtime is unobservable"))?;
                 if !observed.running {
@@ -483,7 +513,6 @@ impl Installer for ManagedOllama {
                 }
                 let status = artifacts::runtime_status(&engine, &observed).await?;
                 if status.phase == "ready" {
-                    artifacts::verify(&engine, &observed).await?;
                     return Ok(());
                 }
                 if status.phase == "stopped" {
@@ -571,11 +600,16 @@ impl OllamaProxy {
         name: &str,
         generations: &Generations,
     ) -> Result<String, Error> {
-        let mut spec = proxy::specification(document, name, self, generations)?;
-        spec.image_pull_policy = None;
+        let spec = proxy::specification(document, name, self, generations)?;
         Ok(crate::services::authentication::Source::OllamaProxy {
-            engine: self.engine(document).into(),
-            spec: Box::new(spec),
+            storage: crate::managed::Storage {
+                name: spec.volume(),
+                owner: spec.owner.clone(),
+                generation: spec.generation.clone(),
+                engine: self.engine(document).into(),
+            },
+            container: spec.name.clone(),
+            endpoint: spec.settings.endpoint.clone(),
         }
         .json()?)
     }

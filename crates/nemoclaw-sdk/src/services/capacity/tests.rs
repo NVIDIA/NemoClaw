@@ -55,11 +55,11 @@ fn combined_accounting_preserves_running_allocations_and_counts_host_reserve_onc
     host.available = 0;
     let observed = account(&services, &host).unwrap();
     assert_eq!(observed.total.required_bytes, (20 + 32 + 32) * GIB);
-    assert!(observed.total.compatible() && observed.startup_fits);
+    assert!(observed.total.compatible());
     services[0].1 = true;
     assert!(account(&services, &host).is_err());
     host.available = 50 * GIB;
-    assert!(account(&services, &host).unwrap().startup_fits);
+    assert!(account(&services, &host).unwrap().total.compatible());
     services[1].1 = true;
     assert!(account(&services, &host).is_err());
     for (service, starting) in &mut services {

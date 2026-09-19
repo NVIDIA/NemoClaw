@@ -71,9 +71,7 @@ fn identity(change: &ResourceChange, expected: &Row, binding: &StateBinding) -> 
     Ok(())
 }
 pub(super) fn disposable(address: &str) -> bool {
-    ["docker_container.", "docker_network.", "docker_image."]
-        .iter()
-        .any(|prefix| address.starts_with(prefix))
+    crate::docker_compute::is_disposable(address)
 }
 
 pub(super) fn check_plan(

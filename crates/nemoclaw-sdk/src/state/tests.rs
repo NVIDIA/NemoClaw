@@ -119,7 +119,7 @@ fn legacy_intent_is_rejected_without_rewriting_recovery_state() {
     )
     .unwrap();
     let mut record = Record::new(document).unwrap();
-    record.version = 2;
+    record.version = 3;
     let bytes = serde_json::to_vec(&record).unwrap();
     let path = dir.path().join("intent.json");
     std::fs::write(&path, &bytes).unwrap();

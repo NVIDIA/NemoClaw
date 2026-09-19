@@ -2748,7 +2748,7 @@
             },
             "imagePullPolicy": {
               "$ref": "#/$defs/ImagePullPolicy",
-              "description": "Image acquisition before container creation. Omission means Never.",
+              "description": "Image acquisition before container creation. Omission means IfNotPresent.",
               "enum": [
                 "IfNotPresent",
                 "Never"
@@ -3049,7 +3049,7 @@
             },
             "imagePullPolicy": {
               "$ref": "#/$defs/ImagePullPolicy",
-              "description": "Image acquisition before container creation. Omission means Never.",
+              "description": "Image acquisition before container creation. Omission means IfNotPresent.",
               "enum": [
                 "IfNotPresent",
                 "Never"

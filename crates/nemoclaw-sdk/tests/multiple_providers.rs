@@ -144,7 +144,7 @@ fn managed_ollama_installs_while_an_external_provider_is_the_default() {
     assert!(
         runtime
             .iter()
-            .any(|target| target.address == "nemoclaw_ollama_service.ollama-server")
+            .any(|target| target.address == "docker_container.ollama_service_ollama-server")
     );
     let graph = compile(&doc, &generations(), "0.1.0").unwrap();
     let dependencies =
@@ -182,12 +182,12 @@ fn multiple_selected_ollama_installers_have_independent_resources_and_dependenci
     let graph = nemoclaw_sdk::compile::compile_runtime(&document, &generations(), "0.1.0").unwrap();
     for service in ["ollama-server", "other"] {
         assert!(
-            runtime
-                .iter()
-                .any(|target| target.address == format!("nemoclaw_ollama_service.{service}"))
+            runtime.iter().any(
+                |target| target.address == format!("docker_container.ollama_service_{service}")
+            )
         );
         assert!(
-            graph["resource"]["nemoclaw_ollama_service"][service]["depends_on"]
+            graph["resource"]["docker_container"][format!("ollama_service_{service}")]["depends_on"]
                 .as_array()
                 .unwrap()
                 .contains(&json!(format!("nemoclaw_ollama_service_storage.{service}")))
@@ -231,7 +231,7 @@ fn managed_services_have_independent_storage_credentials_and_dependencies() {
     let graph = nemoclaw_sdk::compile::compile_runtime(&doc, &generations(), "0.1.0").unwrap();
     let rows = targets(&doc, &generations()).unwrap();
     for name in [&first, "other"] {
-        let address = format!("nemoclaw_inference_service.inference_{name}");
+        let address = format!("docker_container.inference_service_inference_{name}");
         let service = runtime.iter().find(|t| t.address == address).unwrap();
         let spec: Value = serde_json::from_str(&service.values["spec"]).unwrap();
         let credentials: Value = serde_json::from_str(
@@ -242,9 +242,16 @@ fn managed_services_have_independent_storage_credentials_and_dependencies() {
                 .values["credential_source"],
         )
         .unwrap();
-        assert_eq!(credentials["spec"], spec);
-        let dependencies = graph["resource"]["nemoclaw_inference_service"]
-            [format!("inference_{name}")]["depends_on"]
+        assert_eq!(credentials["container"], spec["name"]);
+        assert_eq!(credentials["storage"]["Owner"], spec["owner"]);
+        assert_eq!(credentials["storage"]["Generation"], spec["generation"]);
+        assert_eq!(
+            credentials["storage"]["Name"],
+            format!("{}-data", spec["name"].as_str().unwrap())
+        );
+        assert!(credentials.get("spec").is_none());
+        let dependencies = graph["resource"]["docker_container"]
+            [format!("inference_service_inference_{name}")]["depends_on"]
             .as_array()
             .unwrap();
         assert!(dependencies.contains(&json!(format!(

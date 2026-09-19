@@ -39,10 +39,13 @@ fn bearer_auth_compiles_a_managed_credential_reference_without_a_secret() {
     assert_eq!(profile.values["authenticated"], "true");
     let source: Value = serde_json::from_str(&provider.values["credential_source"]).unwrap();
     assert_eq!(source["kind"], "managedService");
-    assert_eq!(source["spec"]["owner"], doc.metadata.uid);
-    let configuration: Value =
-        serde_json::from_str(source["spec"]["process"]["configuration"].as_str().unwrap()).unwrap();
-    assert_eq!(configuration["authentication"], "bearer");
+    assert_eq!(source["storage"]["Owner"], doc.metadata.uid);
+    assert_eq!(source["endpoint"], provider.values["endpoint"]);
+    assert_eq!(
+        source["container"],
+        format!("{}-inference-qwen", doc.workspace())
+    );
+    assert!(source.get("spec").is_none());
     assert!(provider.values["credential_env"].is_empty());
     assert!(doc.credential_names().is_empty());
     assert_eq!(
@@ -59,7 +62,7 @@ fn bearer_auth_compiles_a_managed_credential_reference_without_a_secret() {
 }
 
 #[test]
-fn generated_credential_and_runtime_specs_preserve_literal_recipe_environment() {
+fn runtime_preserves_literal_recipe_environment_without_copying_it_into_credentials() {
     let mut input: Value =
         serde_saphyr::from_str(include_str!("fixtures/config/spark.yaml")).unwrap();
     input["spec"]["services"]["qwen"]["authentication"] = json!("bearer");
@@ -77,15 +80,22 @@ fn generated_credential_and_runtime_specs_preserve_literal_recipe_environment() 
     .into();
     let graph = compile::compile(&doc, &generations, "0.1.0").unwrap();
     let runtime = compile::compile_runtime(&doc, &generations, "0.1.0").unwrap();
-    for value in [
-        &graph["resource"]["nemoclaw_provider"]["inference_qwen"]["credential_source"],
-        &runtime["resource"]["nemoclaw_inference_service"]["inference_qwen"]["spec"],
-    ] {
-        assert!(
-            value
-                .as_str()
-                .unwrap()
-                .contains("$${literal.value} %%{if untouched}")
-        );
-    }
+    let credential = graph["resource"]["nemoclaw_provider"]["inference_qwen"]["credential_source"]
+        .as_str()
+        .unwrap();
+    assert!(!credential.contains("VLLM_LITERAL"));
+    let environment =
+        runtime["resource"]["docker_container"]["inference_service_inference_qwen"]["env"]
+            .as_array()
+            .unwrap();
+    let value = environment
+        .iter()
+        .find(|value| value.as_str().unwrap().contains("VLLM_LITERAL"))
+        .unwrap();
+    assert!(
+        value
+            .as_str()
+            .unwrap()
+            .contains("$${literal.value} %%{if untouched}")
+    );
 }

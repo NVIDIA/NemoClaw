@@ -284,7 +284,7 @@ pub(crate) fn configure(graph: &mut Value, raw: &[Target]) -> Result<(), Error> 
 mod tests {
     use super::*;
     use crate::{
-        compile::{Generations, compile_runtime, runtime_targets},
+        compile::{Generations, runtime_graph},
         config::Document,
     };
     #[test]
@@ -301,7 +301,7 @@ mod tests {
         ]
         .map(|kind| (kind.into(), "b".repeat(32)))
         .into();
-        let mut raw = runtime_targets(&document, &generations).unwrap();
+        let (mut graph, mut raw) = runtime_graph(&document, &generations, "0.1.0").unwrap();
         for target in raw
             .iter_mut()
             .filter(|target| target.kind == "inference_service")
@@ -310,7 +310,6 @@ mod tests {
                 .values
                 .insert("image_pull_policy".into(), "Never".into());
         }
-        let mut graph = compile_runtime(&document, &generations, "0.1.0").unwrap();
         // Capacity gating is removed by the compiler activation; it is not a
         // Docker-provider responsibility.
         graph.as_object_mut().unwrap().remove("data");
@@ -368,7 +367,7 @@ mod tests {
         ]
         .map(|kind| (kind.into(), "b".repeat(32)))
         .into();
-        let raw = runtime_targets(&document, &generations).unwrap();
+        let (_, raw) = runtime_graph(&document, &generations, "0.1.0").unwrap();
         let mut service = raw
             .into_iter()
             .find(|target| target.kind == "inference_service")
@@ -394,7 +393,7 @@ mod tests {
         ]
         .map(|kind| (kind.into(), "b".repeat(32)))
         .into();
-        let mut raw = runtime_targets(&document, &generations).unwrap();
+        let (_, mut raw) = runtime_graph(&document, &generations, "0.1.0").unwrap();
         let service = raw
             .iter_mut()
             .find(|target| target.kind == "inference_service")
@@ -423,7 +422,7 @@ mod tests {
         ]
         .map(|kind| (kind.into(), "b".repeat(32)))
         .into();
-        let mut raw = runtime_targets(&document, &generations).unwrap();
+        let (mut graph, mut raw) = runtime_graph(&document, &generations, "0.1.0").unwrap();
         for target in raw
             .iter_mut()
             .filter(|target| target.kind == "inference_service")
@@ -454,7 +453,6 @@ mod tests {
                 .count(),
             1
         );
-        let mut graph = compile_runtime(&document, &generations, "0.1.0").unwrap();
         configure(&mut graph, &raw).unwrap();
         let image = graph["resource"]["docker_image"]
             .as_object()

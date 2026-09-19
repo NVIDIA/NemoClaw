@@ -1,19 +1,36 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-use crate::{Error, ObservationError, docker::Engine, services::installers::ollama::ProxySpec};
+use crate::{Error, ObservationError, docker::Engine};
 use serde::{Deserialize, Serialize};
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) enum Source {
     OllamaProxy {
-        engine: String,
-        spec: Box<ProxySpec>,
+        storage: crate::managed::Storage,
+        container: String,
+        endpoint: String,
     },
     ManagedService {
-        spec: Box<crate::managed::Spec>,
+        storage: crate::managed::Storage,
+        container: String,
+        endpoint: String,
     },
 }
 impl Source {
+    fn fields(&self) -> (&crate::managed::Storage, &str, &str) {
+        match self {
+            Self::OllamaProxy {
+                storage,
+                container,
+                endpoint,
+            }
+            | Self::ManagedService {
+                storage,
+                container,
+                endpoint,
+            } => (storage, container, endpoint),
+        }
+    }
     pub(crate) fn json(&self) -> Result<String, crate::config::ConfigError> {
         let source = serde_json::to_string(self).expect("typed credential source");
         crate::openshell::credential_metadata::pack(&source).map_err(|_| {
@@ -26,59 +43,55 @@ impl Source {
 
     pub fn parse(value: &str, owner: &str, endpoint: &str) -> Result<Self, ObservationError> {
         let source: Self = serde_json::from_str(value).map_err(|_| ObservationError::Incomplete)?;
-        match &source {
-            Self::OllamaProxy { engine, spec }
-                if engine.starts_with("unix:///")
-                    && Engine::validate_endpoint(engine).is_ok()
-                    && spec.validate().is_ok()
-                    && spec.owner == owner
-                    && spec.settings.endpoint == endpoint => {}
-            Self::ManagedService { spec }
-                if spec.validate().is_ok()
-                    && spec.owner == owner
-                    && super::installers::vllm::configured_service(spec).is_ok_and(|service| {
-                        service.authentication.is_some()
-                            // Runtime configuration omits placement. The process
-                            // binding retains the address actually published by Docker.
-                            && spec.process.as_ref().is_some_and(|process| {
-                                i64::from(process.port) == service.serving.port
-                                    && endpoint == format!("http://{}:{}/v1", process.bind_address, process.port)
-                            })
-                    }) => {}
-            _ => return Err(ObservationError::BindingMismatch),
+        use sha2::{Digest, Sha256};
+        let (storage, container, published) = source.fields();
+        let prefix = format!(
+            "nc-{}-",
+            Sha256::digest(owner.as_bytes())[..8]
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect::<String>()
+        );
+        let (kind, suffix, local) = match source {
+            Self::OllamaProxy { .. } => ("ollama-proxy-", "auth", true),
+            Self::ManagedService { .. } => ("inference-", "data", false),
+        };
+        let namespace = format!("{prefix}{kind}");
+        let name = container.strip_prefix(&namespace);
+        let address = published
+            .strip_prefix("http://")
+            .and_then(|s| s.strip_suffix("/v1"))
+            .and_then(|s| s.parse::<std::net::SocketAddr>().ok());
+        let private = address.is_some_and(|address| {
+            address.port() != 0
+                && match address.ip() {
+                    std::net::IpAddr::V4(ip) => ip.is_private() || ip.is_loopback(),
+                    std::net::IpAddr::V6(ip) => local && (ip.is_unique_local() || ip.is_loopback()),
+                }
+        });
+        if storage.validate().is_err()
+            || storage.owner != owner
+            || published != endpoint
+            || !private
+            || (local && !storage.engine.starts_with("unix:///"))
+            || !name.is_some_and(|name| {
+                regex::Regex::new(r"^[a-z][a-z0-9-]*$")
+                    .unwrap()
+                    .is_match(name)
+            })
+            || storage.name != format!("{container}-{suffix}")
+        {
+            return Err(ObservationError::BindingMismatch);
         }
         Ok(source)
     }
     async fn container_id(&self, engine: &Engine) -> Result<String, Error> {
-        let (name, volume) = match self {
-            Self::ManagedService { spec } => {
-                spec.validate()?;
-                let storage = crate::managed::Storage {
-                    name: spec.volume(),
-                    owner: spec.owner.clone(),
-                    generation: spec.generation.clone(),
-                    engine: spec.engine().into(),
-                };
-                storage
-                    .observe(engine, "")
-                    .await?
-                    .ok_or(Error::Conflict("credential storage is absent"))?;
-                (spec.name.as_str(), spec.volume())
-            }
-            Self::OllamaProxy {
-                engine: endpoint,
-                spec,
-            } => {
-                if engine.endpoint() != endpoint {
-                    return Err(ObservationError::BindingMismatch.into());
-                }
-                engine
-                    .observe_ollama_proxy_storage(spec, "")
-                    .await?
-                    .ok_or(Error::Conflict("credential storage is absent"))?;
-                (spec.name.as_str(), spec.volume())
-            }
-        };
+        let (storage, name, _) = self.fields();
+        storage
+            .observe(engine, "")
+            .await?
+            .ok_or(Error::Conflict("credential storage is absent"))?;
+        let volume = &storage.name;
         let container = engine
             .container(name)
             .await?
@@ -119,15 +132,11 @@ impl Source {
     }
     pub async fn resolve(&self) -> Result<String, ObservationError> {
         let work = async {
+            let engine = Engine::connect(&self.fields().0.engine)?;
+            let id = self.container_id(&engine).await?;
             match self {
-                Self::ManagedService { spec } => {
-                    let engine = Engine::connect(spec.engine())?;
-                    read_key(&engine, &self.container_id(&engine).await?).await
-                }
-                Self::OllamaProxy { engine, .. } => {
-                    let engine = Engine::connect(engine)?;
-                    read_key(&engine, &self.container_id(&engine).await?).await
-                }
+                Self::ManagedService { .. } => read_key(&engine, &id).await,
+                Self::OllamaProxy { .. } => read_proxy_key(&engine, &id).await,
             }
         };
         work.await.map_err(|_| ObservationError::Authentication)
@@ -162,119 +171,11 @@ pub(crate) async fn read_key(engine: &Engine, id: &str) -> Result<String, Error>
     String::from_utf8(bytes).map_err(|_| Error::State("managed inference credential is invalid"))
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn remote_credential_source_uses_the_published_process_endpoint() {
-        let mut document = crate::config::Document::parse(
-            include_bytes!("../../../../examples/spark/remote-vllm.yaml").as_slice(),
-        )
-        .unwrap();
-        let crate::services::ServiceDefinition::Vllm(service) =
-            document.spec.services.get_mut("qwen").unwrap()
-        else {
-            panic!("vLLM example");
-        };
-        service.authentication =
-            Some(crate::services::installers::vllm::ServiceAuthentication::Bearer);
-        let generations = [
-            "workspace",
-            "provider",
-            "sandbox",
-            "managed_gateway",
-            "inference_service",
-        ]
-        .map(|kind| (kind.into(), "a".repeat(32)))
-        .into();
-        let targets = crate::compile::targets(&document, &generations).unwrap();
-        let provider = &targets
-            .iter()
-            .find(|target| target.kind == "provider")
-            .unwrap()
-            .values;
-        let source = &provider["credential_source"];
-        Source::parse(source, &document.metadata.uid, &provider["endpoint"]).unwrap();
-        assert!(Source::parse(source, "foreign", &provider["endpoint"]).is_err());
-        let Source::ManagedService { spec } = serde_json::from_str(source).unwrap() else {
-            panic!("managed credential");
-        };
-        let bridge_endpoint = format!(
-            "http://{}:{}/v1",
-            spec.bridge().unwrap(),
-            spec.process.as_ref().unwrap().port
-        );
-        assert_ne!(bridge_endpoint, provider["endpoint"]);
-        assert!(Source::parse(source, &document.metadata.uid, &bridge_endpoint).is_err());
-    }
-
-    #[test]
-    fn credential_source_rejects_wrong_owner_endpoint_and_unsupported_image() {
-        let fixtures: Vec<serde_json::Value> =
-            serde_json::from_str(include_str!("../managed/reference.json")).unwrap();
-        let mut spec: Box<crate::managed::Spec> =
-            serde_json::from_str(fixtures[1]["spec"].as_str().unwrap()).unwrap();
-        let mut service = crate::services::installers::vllm::configured_service(&spec).unwrap();
-        service.authentication =
-            Some(crate::services::installers::vllm::ServiceAuthentication::Bearer);
-        spec.process.as_mut().unwrap().configuration = serde_json::to_string(&service).unwrap();
-        spec.process.as_mut().unwrap().image_labels.insert(
-            "org.nemoclaw.inference.authentication".into(),
-            "bearer-v1".into(),
-        );
-        let endpoint = format!(
-            "http://{}:{}/v1",
-            spec.bridge().unwrap(),
-            service.serving.port
-        );
-        let source = serde_json::to_string(&Source::ManagedService { spec: spec.clone() }).unwrap();
-        Source::parse(&source, &spec.owner, &endpoint).unwrap();
-        assert!(Source::parse(&source, "foreign", &endpoint).is_err());
-        assert!(Source::parse(&source, &spec.owner, "http://192.168.1.1:8080/v1").is_err());
-        let mut image: bollard::models::ImageInspect = serde_json::from_value(
-            serde_json::json!({"Id":"sha256:image","Architecture":"arm64","Os":"linux","Config":{"Labels":{}}}),
-        )
-        .unwrap();
-        assert!(spec.validate_process_image(&image).is_err());
-        image
-            .config
-            .as_mut()
-            .unwrap()
-            .labels
-            .as_mut()
-            .unwrap()
-            .insert(
-                "org.nemoclaw.inference.authentication".into(),
-                "bearer-v1".into(),
-            );
-        image
-            .config
-            .as_mut()
-            .unwrap()
-            .labels
-            .as_mut()
-            .unwrap()
-            .insert("org.nemoclaw.recipe.protocol".into(), "v1".into());
-        image
-            .config
-            .as_mut()
-            .unwrap()
-            .labels
-            .as_mut()
-            .unwrap()
-            .insert("org.nemoclaw.backend".into(), "vllm".into());
-        spec.validate_process_image(&image).unwrap();
-        service.authentication = None;
-        spec.process.as_mut().unwrap().configuration = serde_json::to_string(&service).unwrap();
-        let source = serde_json::to_string(&Source::ManagedService { spec: spec.clone() }).unwrap();
-        assert!(Source::parse(&source, &spec.owner, &endpoint).is_err());
-    }
-}
-
 #[cfg(all(test, unix))]
 mod credential_boundary_tests {
     use super::*;
     use crate::docker::fixture::Fixture;
+    use crate::services::installers::ollama::ProxySpec;
     use serde_json::json;
     use std::sync::{Arc, Mutex};
     #[tokio::test]
@@ -319,8 +220,14 @@ mod credential_boundary_tests {
         })
         .await;
         let source = Source::OllamaProxy {
-            engine: fixture.endpoint.clone(),
-            spec: Box::new(spec),
+            storage: crate::managed::Storage {
+                name: spec.volume(),
+                owner: spec.owner.clone(),
+                generation: spec.generation.clone(),
+                engine: fixture.endpoint.clone(),
+            },
+            container: spec.name.clone(),
+            endpoint: spec.settings.endpoint.clone(),
         };
         let engine = Engine::connect(&fixture.endpoint).unwrap();
         assert_eq!(
@@ -333,5 +240,162 @@ mod credential_boundary_tests {
             json!("302ff5e1-088d-42ce-959f-4ff4c3570c13");
         container.lock().unwrap()["Mounts"][0]["Name"] = json!("other-data");
         assert!(source.container_id(&engine).await.is_err());
+    }
+}
+
+async fn read_proxy_key(engine: &Engine, id: &str) -> Result<String, Error> {
+    let work = async {
+        loop {
+            match read_key(engine, id).await {
+                Err(error @ Error::State("managed inference credential is missing")) => {
+                    // Initial startup may not have created the key yet. An
+                    // initialized volume must never recover by replacing it.
+                    if engine.stat_file(id, "/data/initialized").await?.is_some()
+                        || !engine
+                            .container(id)
+                            .await?
+                            .and_then(|container| container.state)
+                            .and_then(|state| state.running)
+                            .unwrap_or(false)
+                    {
+                        return Err(error);
+                    }
+                    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                }
+                result => return result,
+            }
+        }
+    };
+    tokio::time::timeout(std::time::Duration::from_secs(30), work)
+        .await
+        .map_err(|_| {
+            Error::State("proxy credential readiness timed out; identity and storage retained")
+        })?
+}
+#[cfg(all(test, unix))]
+#[path = "authentication_wait_tests.rs"]
+mod wait_tests;
+
+#[cfg(test)]
+mod durable_source_tests {
+    use super::*;
+    use serde_json::{Value, json};
+    fn document(proxy: bool) -> crate::config::Document {
+        let text = if proxy {
+            include_str!("../../tests/fixtures/config/managed-ollama.yaml")
+        } else {
+            include_str!("../../tests/fixtures/config/spark.yaml")
+        };
+        let mut value: Value = serde_saphyr::from_str(text).unwrap();
+        if proxy {
+            value["spec"]["inferenceProviders"][0]["serviceRef"] = json!("ollama-auth");
+            value["spec"]["services"] = json!({"ollama-auth":{"kind":"ollamaProxy","image":format!("proxy@sha256:{}","a".repeat(64)),"endpoint":"http://172.20.0.1:11435/v1","upstream":{"endpoint":"http://127.0.0.1:11434/v1","model":{"name":"qwen3:0.6b","digest":"a".repeat(64)}}}});
+        } else {
+            value["spec"]["services"]["qwen"]["authentication"] = json!("bearer");
+        }
+        crate::config::Document::parse(value.to_string().as_bytes()).unwrap()
+    }
+    fn provider(document: &crate::config::Document) -> crate::backend::Row {
+        let generations = [
+            "workspace",
+            "provider",
+            "sandbox",
+            "managed_gateway",
+            "inference_service",
+            "ollama_proxy",
+        ]
+        .map(|kind| (kind.into(), "a".repeat(32)))
+        .into();
+        crate::compile::targets(document, &generations)
+            .unwrap()
+            .into_iter()
+            .find(|target| target.kind == "provider")
+            .unwrap()
+            .values
+    }
+    #[test]
+    fn remote_source_retains_published_endpoint_without_compute_configuration() {
+        let mut document = crate::config::Document::parse(
+            include_bytes!("../../../../examples/spark/remote-vllm.yaml").as_slice(),
+        )
+        .unwrap();
+        let crate::services::ServiceDefinition::Vllm(service) =
+            document.spec.services.get_mut("qwen").unwrap()
+        else {
+            panic!("vLLM example")
+        };
+        service.authentication =
+            Some(crate::services::installers::vllm::ServiceAuthentication::Bearer);
+        let row = provider(&document);
+        let source = Source::parse(
+            &row["credential_source"],
+            &document.metadata.uid,
+            &row["endpoint"],
+        )
+        .unwrap();
+        assert!(source.fields().0.engine.starts_with("ssh://"));
+        assert_eq!(source.fields().2, row["endpoint"]);
+        assert!(!row["credential_source"].contains("sha256:"));
+    }
+    #[test]
+    fn authenticated_image_replacement_preserves_registration_source() {
+        for proxy in [false, true] {
+            let original = document(proxy);
+            let before = provider(&original);
+            let mut value = serde_json::to_value(&original).unwrap();
+            let name = if proxy { "ollama-auth" } else { "qwen" };
+            value["spec"]["services"][name]["image"] =
+                json!(format!("replacement@sha256:{}", "b".repeat(64)));
+            let changed = crate::config::Document::parse(value.to_string().as_bytes()).unwrap();
+            let after = provider(&changed);
+            assert_eq!(
+                before["credential_source"], after["credential_source"],
+                "disposable image changes must not change durable registration identity"
+            );
+            Source::parse(
+                &after["credential_source"],
+                &changed.metadata.uid,
+                &after["endpoint"],
+            )
+            .unwrap();
+        }
+    }
+    #[test]
+    fn durable_source_rejects_namespace_endpoint_and_unknown_fields() {
+        for proxy in [false, true] {
+            let document = document(proxy);
+            let row = provider(&document);
+            let text = &row["credential_source"];
+            Source::parse(text, &document.metadata.uid, &row["endpoint"]).unwrap();
+            assert!(Source::parse(text, "foreign", &row["endpoint"]).is_err());
+            assert!(
+                Source::parse(text, &document.metadata.uid, "http://127.0.0.1:1234/v1").is_err()
+            );
+            let original: Value = serde_json::from_str(text).unwrap();
+            for field in ["container", "endpoint", "unknown"] {
+                let mut changed = original.clone();
+                changed[field] = json!("foreign");
+                assert!(
+                    Source::parse(
+                        &changed.to_string(),
+                        &document.metadata.uid,
+                        &row["endpoint"]
+                    )
+                    .is_err()
+                );
+            }
+            for field in ["Name", "Owner", "Generation", "Engine"] {
+                let mut changed = original.clone();
+                changed["storage"][field] = json!("foreign");
+                assert!(
+                    Source::parse(
+                        &changed.to_string(),
+                        &document.metadata.uid,
+                        &row["endpoint"]
+                    )
+                    .is_err()
+                );
+            }
+        }
     }
 }

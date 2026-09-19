@@ -64,19 +64,8 @@ pub fn resource_schemas() -> Vec<ResourceSchema> {
     vec![
         ResourceSchema {
             kind: "ollama_proxy_storage",
-            fields: &[
-                "name",
-                "owner",
-                "generation",
-                "engine",
-                "image",
-                "image_pull_policy",
-                "bind_address",
-                "upstream",
-                "model",
-                "digest",
-            ],
-            mutable: &["image_pull_policy"],
+            fields: &["name", "owner", "generation", "engine"],
+            mutable: &[],
         },
         ResourceSchema {
             kind: "ollama_proxy",
@@ -102,14 +91,11 @@ pub fn resource_schemas() -> Vec<ResourceSchema> {
                 "owner",
                 "generation",
                 "engine",
-                "image",
-                "image_pull_policy",
-                "bind_address",
                 "upstream",
                 "model",
                 "digest",
             ],
-            mutable: &["image_pull_policy"],
+            mutable: &[],
         },
         ResourceSchema {
             kind: installers::ollama::SERVICE_KIND,
@@ -647,7 +633,10 @@ pub(crate) fn required_storage_address(
     Ok(remove_plans(document, generations)?
         .into_iter()
         .flat_map(|plan| plan.required_storage)
-        .find_map(|(candidate, storage)| (candidate == process).then_some(storage)))
+        .find_map(|(candidate, storage)| {
+            (candidate == process || crate::docker_compute::address(&candidate) == process)
+                .then_some(storage)
+        }))
 }
 
 pub(crate) async fn check_running(

@@ -118,6 +118,109 @@ async fn service_readiness_observes_only_the_provider_container_identity() {
     );
     assert!(engine.observe_service(&spec, "").await.is_err());
 }
+
+#[tokio::test]
+async fn managed_installers_accept_current_runtime_readiness_without_collecting_model_files() {
+    for source in [
+        include_str!("../../tests/fixtures/config/spark.yaml"),
+        include_str!("../../tests/fixtures/config/managed-ollama.yaml"),
+    ] {
+        let document = crate::config::Document::parse(source.as_bytes()).unwrap();
+        let generations: crate::compile::Generations = ["inference_service", "ollama_service"]
+            .map(|kind| (kind.into(), "a".repeat(32)))
+            .into();
+        let plans = crate::services::install_plans(
+            &document,
+            &generations,
+            crate::services::InstallStage::Runtime,
+        )
+        .unwrap();
+        let target = plans
+            .targets()
+            .find(|target| matches!(target.kind.as_str(), "inference_service" | "ollama_service"))
+            .unwrap();
+        let spec: Spec = serde_json::from_str(&target.values["spec"]).unwrap();
+        let name = spec.name.clone();
+        let status = Arc::new(Mutex::new(
+            json!({"phase":"ready","updated":"2026-09-15T00:00:01Z","detail":"","pid":42}),
+        ));
+        let shared = status.clone();
+        let fixture = Fixture::start(move |request| {
+            assert_eq!(request.method, "GET");
+            if request.path == "/containers/provider-container/json" {
+                return Some((
+                    200,
+                    serde_json::to_vec(
+                        &json!({"Id":"provider-container","Name":format!("/{name}"),
+                    "State":{"Running":true,"StartedAt":"2026-09-15T00:00:00Z"}}),
+                    )
+                    .unwrap(),
+                ));
+            }
+            assert!(
+                request
+                    .path
+                    .starts_with("/containers/provider-container/archive?")
+                    && request.path.contains("status.json"),
+                "runtime owns model startup and artifact readiness, unexpected collector: {}",
+                request.path
+            );
+            Some((
+                200,
+                crate::docker::archive(&[(
+                    "status.json",
+                    &serde_json::to_vec(&*shared.lock().unwrap()).unwrap(),
+                    0o600,
+                )])
+                .unwrap(),
+            ))
+        })
+        .await;
+        let connections =
+            crate::docker::Connections::fixed([fixture.engine_for(spec.engine())]).unwrap();
+        let bindings = BTreeMap::from([(
+            crate::docker_compute::address(&target.address),
+            crate::state::StateBinding {
+                id: "provider-container".into(),
+                spec: String::new(),
+            },
+        )]);
+        assert!(
+            crate::services::required_storage_address(
+                &document,
+                &generations,
+                &crate::docker_compute::address(&target.address),
+            )
+            .unwrap()
+            .is_some(),
+            "provider compute must retain its independent storage dependency"
+        );
+        let cancel = crate::CancellationToken::new();
+        crate::services::check_running(
+            &document,
+            &generations,
+            crate::services::InstallStage::Runtime,
+            &connections,
+            &bindings,
+            &cancel,
+        )
+        .await
+        .unwrap();
+        status.lock().unwrap()["phase"] = json!("stopped");
+        assert!(
+            crate::services::check_running(
+                &document,
+                &generations,
+                crate::services::InstallStage::Runtime,
+                &connections,
+                &bindings,
+                &cancel
+            )
+            .await
+            .is_err()
+        );
+    }
+}
 #[tokio::test]
 async fn runtime_observation_preserves_identity_and_fails_closed_on_drift_or_partial_results() {
     let (spec, container, volume, network) = reference();
@@ -385,5 +488,103 @@ async fn retired_gateway_process_layouts_fail_before_engine_access() {
         assert!(engine.replace_runtime(&spec, "engine/bound").await.is_err());
         assert!(engine.remove_runtime(&spec, "engine/bound").await.is_err());
         assert_eq!(requests.load(std::sync::atomic::Ordering::SeqCst), 0);
+    }
+}
+
+#[tokio::test]
+async fn authenticated_vllm_readiness_rechecks_key_permissions() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    for valid in [false, true] {
+        let source = include_str!("../../tests/fixtures/config/spark.yaml")
+            .replace("kind: vllm", "kind: vllm\n      authentication: bearer");
+        let document = crate::config::Document::parse(source.as_bytes()).unwrap();
+        let generations = [("inference_service".into(), "a".repeat(32))].into();
+        let plans = crate::services::install_plans(
+            &document,
+            &generations,
+            crate::services::InstallStage::Runtime,
+        )
+        .unwrap();
+        let target = plans
+            .targets()
+            .find(|t| t.kind == "inference_service")
+            .unwrap();
+        let spec: Spec = serde_json::from_str(&target.values["spec"]).unwrap();
+        let directory = tempfile::tempdir().unwrap();
+        let socket = directory.path().join("docker.sock");
+        let listener = tokio::net::UnixListener::bind(&socket).unwrap();
+        let container = serde_json::to_vec(&json!({"Id":"provider-container","Name":format!("/{}", spec.name),"State":{"Running":true,"StartedAt":"2026-09-15T00:00:00Z"}})).unwrap();
+        let status = crate::docker::archive(&[(
+            "status.json",
+            br#"{"phase":"ready","updated":"2026-09-15T00:00:01Z","detail":"","pid":42}"#,
+            0o600,
+        )])
+        .unwrap();
+        let metadata = if valid {
+            "eyJuYW1lIjogImluZmVyZW5jZS1rZXkiLCAic2l6ZSI6IDY0LCAibW9kZSI6IDM4NCwgIm10aW1lIjogIjIwMjYtMDktMTlUMDA6MDA6MDBaIiwgImxpbmtUYXJnZXQiOiAiIn0="
+        } else {
+            "eyJuYW1lIjogImluZmVyZW5jZS1rZXkiLCAic2l6ZSI6IDY0LCAibW9kZSI6IDQyMCwgIm10aW1lIjogIjIwMjYtMDktMTlUMDA6MDA6MDBaIiwgImxpbmtUYXJnZXQiOiAiIn0="
+        };
+        let server = tokio::spawn(async move {
+            loop {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                let mut request = Vec::new();
+                while !request.ends_with(b"\r\n\r\n") {
+                    request.push(stream.read_u8().await.unwrap());
+                }
+                let request = String::from_utf8(request).unwrap();
+                let (body, header) = if request
+                    .starts_with("GET /containers/provider-container/json")
+                {
+                    (container.clone(), String::new())
+                } else if request.contains("status.json") {
+                    (status.clone(), String::new())
+                } else if request.starts_with("HEAD ") && request.contains("inference-key") {
+                    (
+                        vec![],
+                        format!("X-Docker-Container-Path-Stat: {metadata}\r\n"),
+                    )
+                } else {
+                    assert!(
+                        request.starts_with("GET ") && request.contains("inference-key"),
+                        "{request}"
+                    );
+                    (
+                        crate::docker::archive(&[("inference-key", &[b'a'; 64], 0o600)]).unwrap(),
+                        String::new(),
+                    )
+                };
+                stream.write_all(format!("HTTP/1.1 200 OK\r\n{header}Content-Length: {}\r\nConnection: close\r\n\r\n",body.len()).as_bytes()).await.unwrap();
+                stream.write_all(&body).await.unwrap();
+            }
+        });
+        let mut engine = Engine::connect(spec.engine()).unwrap();
+        engine.api = Engine::connect(&format!("unix://{}", socket.display()))
+            .unwrap()
+            .api;
+        let connections = crate::docker::Connections::fixed([engine]).unwrap();
+        let bindings = [(
+            crate::docker_compute::address(&target.address),
+            crate::state::StateBinding {
+                id: "provider-container".into(),
+                spec: String::new(),
+            },
+        )]
+        .into();
+        let result = crate::services::check_running(
+            &document,
+            &generations,
+            crate::services::InstallStage::Runtime,
+            &connections,
+            &bindings,
+            &crate::CancellationToken::new(),
+        )
+        .await;
+        server.abort();
+        assert_eq!(
+            result.is_ok(),
+            valid,
+            "credential mode must be checked even when runtime is ready: {result:?}"
+        );
     }
 }

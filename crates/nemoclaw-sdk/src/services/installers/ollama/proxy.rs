@@ -101,6 +101,12 @@ pub fn targets(
             let mut values = common.clone();
             if kind == PROXY {
                 values.insert("running".into(), "true".into());
+            } else {
+                values.retain(|key, _| {
+                    matches!(key.as_str(), "name" | "owner" | "generation" | "engine")
+                        || (kind == MODEL
+                            && matches!(key.as_str(), "upstream" | "model" | "digest"))
+                });
             }
             Target {
                 kind: kind.into(),
@@ -122,6 +128,54 @@ pub async fn verify_model(settings: &ProxySettings) -> Result<(), Error> {
     }
     Ok(())
 }
+fn auxiliary_storage(row: &Row) -> Result<crate::managed::Storage, Error> {
+    let get = |field| {
+        row.get(field)
+            .filter(|value| !value.is_empty())
+            .cloned()
+            .ok_or(ObservationError::Incomplete)
+    };
+    let storage = crate::managed::Storage {
+        name: format!("{}-auth", get("name")?),
+        owner: get("owner")?,
+        generation: get("generation")?,
+        engine: get("engine")?,
+    };
+    storage.validate()?;
+    Ok(storage)
+}
+fn model_settings(row: &Row) -> Result<ProxySettings, Error> {
+    let get = |field| {
+        row.get(field)
+            .filter(|value| !value.is_empty())
+            .cloned()
+            .ok_or(ObservationError::Incomplete)
+    };
+    let settings = ProxySettings {
+        upstream: get("upstream")?,
+        model: get("model")?,
+        digest: get("digest")?,
+        endpoint: String::new(),
+    };
+    Models::new(&settings.upstream)?;
+    let upstream = url::Url::parse(&settings.upstream).map_err(|_| ObservationError::Incomplete)?;
+    if upstream.port().is_none()
+        || !match upstream.host() {
+            Some(url::Host::Ipv4(ip)) => ip.is_loopback(),
+            Some(url::Host::Ipv6(ip)) => ip.is_loopback(),
+            _ => false,
+        }
+        || !regex::Regex::new(super::MODEL_PATTERN)
+            .unwrap()
+            .is_match(&settings.model)
+        || !regex::Regex::new("^[a-f0-9]{64}$")
+            .unwrap()
+            .is_match(&settings.digest)
+    {
+        return Err(Error::Conflict("invalid external Ollama model observation"));
+    }
+    Ok(settings)
+}
 impl ProxyBackend {
     pub(super) async fn proxy_read(
         &self,
@@ -133,16 +187,17 @@ impl ProxyBackend {
         if !supports(kind) {
             return Err(ObservationError::Query.into());
         }
-        let spec = row_spec(row)?;
         let id = row.get("id").map(String::as_str).unwrap_or("");
         let mut result = row.clone();
         if kind == MODEL {
+            let storage = auxiliary_storage(row)?;
+            let settings = model_settings(row)?;
             if !removing {
-                verify_model(&spec.settings).await?;
+                verify_model(&settings).await?;
             }
             let expected = format!(
                 "{}/{}/{}",
-                spec.owner, spec.generation, spec.settings.digest
+                storage.owner, storage.generation, settings.digest
             );
             if !id.is_empty() && id != expected {
                 return Err(ObservationError::BindingMismatch.into());
@@ -151,10 +206,11 @@ impl ProxyBackend {
             return Ok(Some(result));
         }
         if kind == STORAGE {
+            let storage = auxiliary_storage(row)?;
             let observed = if apply {
-                Some(self.engine.ensure_ollama_proxy_storage(&spec, id).await?)
+                Some(storage.ensure(&self.engine, id).await?)
             } else {
-                self.engine.observe_ollama_proxy_storage(&spec, id).await?
+                storage.observe(&self.engine, id).await?
             };
             return Ok(observed.map(|id| {
                 result.insert("id".into(), id);
@@ -164,6 +220,7 @@ impl ProxyBackend {
         if kind != PROXY {
             return Err(ObservationError::Query.into());
         }
+        let spec = row_spec(row)?;
         let service = if removing {
             self.engine.observe_ollama_proxy_removal(&spec, id).await?
         } else if apply {

@@ -159,5 +159,4 @@ pub use download::{
     with_provider_download_progress,
 };
 
-#[cfg(test)]
 mod docker_compute;

@@ -214,6 +214,12 @@ impl Deployment {
         cancel: &CancellationToken,
     ) -> Result<(Vec<Change>, bool), Error> {
         if !document.has_runtime() {
+            let directory = store.directory.join("runtime");
+            if directory.exists() && !Store::open(&directory)?.bindings()?.is_empty() {
+                return Err(Error::Conflict(
+                    "runtime state still contains retained resources; destroy the saved deployment before removing its final runtime",
+                ));
+            }
             return Ok((Vec::new(), false));
         }
         let generated = Record::new(document.clone())?;
@@ -255,11 +261,6 @@ impl Deployment {
             store.save(record)?;
             return Ok((changes, !checked.gateway_running));
         }
-        // Saved data-source values may be cached in the plan. Reobserve the
-        // desired budgets before mutation, including unchanged apply. A rejected
-        // startup has not begun an apply and must not lock in unfinished intent.
-        let desired = allowed(&targets);
-        tokio::select! {()=cancel.cancelled()=>return Err(Error::Cancelled),result=crate::services::capacity::recheck(&self.engines,&desired,&checked.expected,&bindings)=>result?}
         record.document = document.clone();
         record.digest = document.digest();
         record.pending = true;
@@ -339,16 +340,28 @@ impl Deployment {
         let stage = Store::open(&store.directory.join("runtime"))?;
         let bindings = stage.bindings()?;
         let targets = compile::runtime_targets(&record.document, &record.generations)?;
-        if bindings.len() != targets.len() {
+        if bindings.len()
+            != targets
+                .iter()
+                .filter(|target| !target.address.starts_with("data."))
+                .count()
+        {
             return Err(Error::Conflict(
                 "export requires all managed runtime bindings",
             ));
         }
         let work = async {
             for target in targets {
+                if target.address.starts_with("data.") {
+                    continue;
+                }
                 let binding = bindings.get(&target.address).ok_or(Error::Conflict(
                     "export requires established runtime identity",
                 ))?;
+                if plan::disposable(&target.address) {
+                    self.export_compute(&target, binding).await?;
+                    continue;
+                }
                 if binding.spec != target.values["spec"] {
                     return Err(Error::Conflict(
                         "runtime state differs from intent; no YAML exported",

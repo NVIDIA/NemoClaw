@@ -27,7 +27,7 @@ pub struct Service {
     pub authentication: Option<ServiceAuthentication>,
     /// Immutable runtime image containing vLLM, the NemoClaw supervisor, and any declared recipe tools.
     pub image: String,
-    /// Image acquisition before container creation. Omission means Never.
+    /// Image acquisition before container creation. Omission means IfNotPresent.
     #[serde(
         rename = "imagePullPolicy",
         default,

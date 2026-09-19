@@ -15,7 +15,11 @@ pub fn runtime_targets(
         generations,
         crate::services::InstallStage::Runtime,
     )?;
-    runtime_targets_with_plans(document, generations, &service_plans)
+    crate::docker_compute::targets(&runtime_targets_with_plans(
+        document,
+        generations,
+        &service_plans,
+    )?)
 }
 
 fn runtime_targets_with_plans(
@@ -60,11 +64,11 @@ fn runtime_targets_with_plans(
     result.extend(service_plans.targets().cloned());
     Ok(result)
 }
-pub fn compile_runtime(
+pub(crate) fn runtime_graph(
     document: &Document,
     generations: &Generations,
     version: &str,
-) -> Result<Value, Error> {
+) -> Result<(Value, Vec<Target>), Error> {
     document.validate()?;
     let service_plans = service_plans(
         document,
@@ -76,18 +80,7 @@ pub fn compile_runtime(
     graph.as_object_mut().unwrap().remove("data");
     graph["resource"] = json!({});
     let targets = runtime_targets_with_plans(document, generations, &service_plans)?;
-    for (engine, specs) in crate::services::capacity::groups(
-        targets
-            .iter()
-            .map(|target| (target.address.as_str(), &target.values)),
-    )? {
-        let name = crate::services::capacity::observation_name(&engine);
-        graph["data"]["nemoclaw_service_capacity"][name] = json!({
-            "engine":engine.replace("${", "$${").replace("%{", "%%{"),
-            "specs":specs.iter().map(|spec| spec.replace("${", "$${").replace("%{", "%%{")).collect::<Vec<_>>()
-        });
-    }
-    for target in targets {
+    for target in &targets {
         let mut attrs =
             json!({"spec":target.values["spec"].replace("${", "$${").replace("%{", "%%{")});
         if let Some(policy) = target.values.get("image_pull_policy") {
@@ -104,17 +97,18 @@ pub fn compile_runtime(
         if let Some(dependencies) = service_plans.dependencies(&target.address) {
             attrs["depends_on"] = json!(dependencies);
         }
-        if crate::services::resource_behavior(&target.kind).runtime_process {
-            let spec: Spec = serde_json::from_str(&target.values["spec"])
-                .map_err(|_| Error::State("invalid compiled runtime"))?;
-            let address = crate::services::capacity::observation_address(spec.engine());
-            attrs["lifecycle"]["precondition"] = json!([{
-                "condition":format!("${{{address}.compatible}}"),
-                "error_message":format!("Combined service memory requires ${{{address}.required_bytes}} bytes; observed ${{{address}.observed_bytes}} bytes.")
-            }]);
-        }
         let (kind, logical) = target.address.split_once('.').unwrap();
         graph["resource"][kind][logical] = attrs;
     }
+    Ok((graph, targets))
+}
+
+pub fn compile_runtime(
+    document: &Document,
+    generations: &Generations,
+    version: &str,
+) -> Result<Value, Error> {
+    let (mut graph, targets) = runtime_graph(document, generations, version)?;
+    crate::docker_compute::configure(&mut graph, &targets)?;
     Ok(graph)
 }

@@ -41,7 +41,10 @@ fn gateway_capabilities_gate_deployment_but_do_not_query_during_bootstrap() {
 
 #[test]
 fn image_pull_policy_reaches_the_engine_without_changing_runtime_identity() {
-    use nemoclaw_sdk::{compile::compile_runtime, config::ImagePullPolicy};
+    use nemoclaw_sdk::{
+        compile::{compile_runtime, runtime_targets},
+        config::ImagePullPolicy,
+    };
     let generations = [
         ("workspace", "workspace-generation"),
         ("provider", "provider-generation"),
@@ -63,11 +66,19 @@ fn image_pull_policy_reaches_the_engine_without_changing_runtime_identity() {
         panic!("expected vllm")
     };
     service.image_pull_policy = Some(ImagePullPolicy::IfNotPresent);
+    assert_eq!(
+        runtime_targets(&document, &generations)
+            .unwrap()
+            .iter()
+            .find(|target| target.kind == "inference_service")
+            .unwrap()
+            .values["image_pull_policy"],
+        "IfNotPresent"
+    );
     let mut after = compile_runtime(&document, &generations, "0.1.0").unwrap();
     for (kind, expected) in [
         ("nemoclaw_managed_gateway", "Always"),
         ("nemoclaw_gateway_storage", "Always"),
-        ("nemoclaw_inference_service", "IfNotPresent"),
     ] {
         for resource in after["resource"][kind]
             .as_object_mut()
@@ -95,16 +106,32 @@ fn image_pull_policy_reaches_the_engine_without_changing_runtime_identity() {
         panic!("expected ollama")
     };
     service.image_pull_policy = Some(ImagePullPolicy::Never);
-    let mut after = compile_runtime(&document, &generations, "0.1.0").unwrap();
-    assert_eq!(
-        after["resource"]["nemoclaw_ollama_service"]["ollama-server"]
-            .as_object_mut()
+    let after = compile_runtime(&document, &generations, "0.1.0").unwrap();
+    assert!(after["resource"].get("docker_image").is_none());
+    assert_eq!(after["data"]["docker_image"].as_object().unwrap().len(), 1);
+    let mut before_container =
+        before["resource"]["docker_container"]["ollama_service_ollama-server"].clone();
+    let mut after_container =
+        after["resource"]["docker_container"]["ollama_service_ollama-server"].clone();
+    assert!(
+        before_container["image"]
+            .as_str()
             .unwrap()
-            .remove("image_pull_policy")
-            .unwrap(),
-        "Never"
+            .starts_with("${docker_image.")
     );
-    assert_eq!(after, before);
+    assert!(
+        after_container["image"]
+            .as_str()
+            .unwrap()
+            .starts_with("${data.docker_image.")
+    );
+    before_container.as_object_mut().unwrap().remove("image");
+    after_container.as_object_mut().unwrap().remove("image");
+    assert_eq!(before_container, after_container);
+    assert_eq!(
+        before["resource"]["nemoclaw_ollama_service_storage"],
+        after["resource"]["nemoclaw_ollama_service_storage"]
+    );
 }
 
 fn ownership_generations() -> BTreeMap<String, String> {

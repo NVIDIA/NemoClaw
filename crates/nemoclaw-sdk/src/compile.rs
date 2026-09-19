@@ -43,7 +43,8 @@ pub fn targets(document: &Document, generations: &Generations) -> Result<Vec<Tar
         generations,
         crate::services::InstallStage::Deployment,
     )?;
-    targets_with_plans(document, generations, &service_plans)
+    crate::docker_compute::targets(&targets_with_plans(document, generations, &service_plans)?)
+        .map_err(|_| ConfigError::new("invalid Docker compute plan"))
 }
 
 fn targets_with_plans(
@@ -273,7 +274,11 @@ pub fn compile(
         generations,
         crate::services::InstallStage::Deployment,
     )?;
-    compile_with_plans(document, generations, version, &service_plans)
+    let mut graph = compile_with_plans(document, generations, version, &service_plans)?;
+    let raw = targets_with_plans(document, generations, &service_plans)?;
+    crate::docker_compute::configure(&mut graph, &raw)
+        .map_err(|_| ConfigError::new("invalid Docker compute graph"))?;
+    Ok(graph)
 }
 
 pub(crate) const GATEWAY_CAPABILITIES_ADDRESS: &str = "data.nemoclaw_gateway_capabilities.current";
@@ -379,3 +384,6 @@ pub(super) fn compile_with_plans(
 #[path = "compile_runtime.rs"]
 mod runtime;
 pub use runtime::{compile_runtime, runtime_targets};
+
+#[cfg(test)]
+pub(crate) use runtime::runtime_graph;

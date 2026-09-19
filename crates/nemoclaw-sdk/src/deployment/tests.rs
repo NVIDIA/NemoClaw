@@ -230,23 +230,30 @@ async fn managed_gateway_plan_apply_noop_destroy_and_recovery_use_real_opentofu(
 }
 
 #[test]
-fn ollama_runtime_plan_accounts_for_retained_storage_and_never_recreates_a_bound_service() {
+fn ollama_runtime_plan_recreates_compute_but_never_recreates_bound_storage() {
     let document =
         Document::parse(include_str!("../../tests/fixtures/config/managed-ollama.yaml").as_bytes())
             .unwrap();
     let record = Record::new(document.clone()).unwrap();
     let expected = allowed(&compile::runtime_targets(&document, &record.generations).unwrap());
-    assert_eq!(expected.len(), 4);
-    let bindings = [(
-        "nemoclaw_ollama_service.ollama-server".into(),
+    assert_eq!(expected.len(), 5);
+    let mut bindings = BTreeMap::from([(
+        "docker_container.ollama_service_ollama-server".into(),
         StateBinding {
-            id: "engine/container/created/network".into(),
+            id: "container".into(),
             ..Default::default()
         },
-    )]
-    .into();
+    )]);
     let changes: Vec<_> = expected.iter().map(|(address,row)| json!({"address":address,"change":{"actions":["create"],"before":row}})).collect();
     let plan: Plan = serde_json::from_value(json!({"resource_changes":changes})).unwrap();
+    assert!(check_plan(&plan, &expected, &bindings).is_ok());
+    bindings.insert(
+        "nemoclaw_ollama_service_storage.ollama-server".into(),
+        StateBinding {
+            id: "engine/volume/created".into(),
+            spec: expected["nemoclaw_ollama_service_storage.ollama-server"]["spec"].clone(),
+        },
+    );
     assert!(check_plan(&plan, &expected, &bindings).is_err());
     assert!(check_plan(&plan, &expected, &BTreeMap::new()).is_ok());
 }
@@ -323,14 +330,15 @@ fn destroy_drift_errors_distinguish_undeclared_resources_from_missing_saved_ids(
 }
 
 #[test]
-fn runtime_capacity_plans_accept_only_declared_read_observations_and_teardown_deletions() {
+fn runtime_plans_accept_only_declared_local_image_observations_and_teardown_deletions() {
     let document =
         Document::parse(include_bytes!("../../../../examples/spark/two-models.yaml").as_slice())
             .unwrap();
     let record = Record::new(document.clone()).unwrap();
     let targets = compile::runtime_targets(&document, &record.generations).unwrap();
-    let allowed = allowed(&targets);
-    let address = crate::services::capacity::observation_address(&document.spec.gateway.engine);
+    let mut allowed = allowed(&targets);
+    let address = "data.docker_image.image_local".to_string();
+    allowed.insert(address.clone(), Row::new());
     let resources: Vec<_> = targets.iter().map(|target| json!({"mode":"managed", "address":target.address, "change":{"actions":["create"]}})).collect();
     for (action, duplicate, valid) in [
         ("read", false, true),
@@ -352,7 +360,7 @@ fn runtime_capacity_plans_accept_only_declared_read_observations_and_teardown_de
             valid
         );
     }
-    let foreign = crate::services::capacity::observation_address("ssh://other");
+    let foreign = crate::services::capacity::observation_address(&document.spec.gateway.engine);
     for (address, valid) in [(address.as_str(), true), (foreign.as_str(), false)] {
         let plan: Plan = serde_json::from_value(json!({"resource_changes":[{"mode":"data", "address":address, "change":{"actions":["delete"]}}]})).unwrap();
         assert_eq!(

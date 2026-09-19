@@ -24,7 +24,7 @@ pub struct ManagedOllama {
     pub container: Option<ServiceContainer>,
     /// Immutable runtime image containing Ollama and the NemoClaw supervisor.
     pub image: String,
-    /// Image acquisition before container creation. Omission means Never.
+    /// Image acquisition before container creation. Omission means IfNotPresent.
     #[serde(
         rename = "imagePullPolicy",
         default,

@@ -1,8 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-use super::model_source;
-use crate::{Error, docker::Engine, managed::RuntimeObservation, snapshot::VerifiedFile};
+use crate::{Error, docker::Engine, managed::RuntimeObservation};
 use serde::Deserialize;
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 
@@ -50,53 +49,4 @@ pub(crate) async fn runtime_status(
         return Err(Error::State("unknown Ollama runtime status"));
     }
     Ok(status)
-}
-
-pub(crate) async fn verify(engine: &Engine, observed: &RuntimeObservation) -> Result<(), Error> {
-    let work = async {
-        let service = super::configured_service(&observed.spec)?;
-        let model = format!("/data/{}", model_source::directory(&service));
-        let bytes = engine
-            .read_file(
-                &observed.container_id,
-                &format!("{model}/{}", model_source::MANIFEST_FILE),
-                4 << 20,
-            )
-            .await?
-            .ok_or(Error::State(
-                "selected Ollama model manifest is unobservable",
-            ))?;
-        let manifest = model_source::decode_manifest(&service, &bytes)?;
-        let native = engine
-            .read_file(
-                &observed.container_id,
-                &format!("{model}/{}", model_source::native_manifest_path(&service)?),
-                1 << 20,
-            )
-            .await?
-            .ok_or(Error::State("Ollama native manifest is unobservable"))?;
-        model_source::validate_native_manifest(&service, &manifest.snapshot(), &native)?;
-        for file in &manifest.verified_files()? {
-            verify_file(engine, &observed.container_id, &model, file).await?;
-        }
-        Ok(())
-    };
-    tokio::time::timeout(std::time::Duration::from_secs(30), work)
-        .await
-        .map_err(|_| Error::State("Ollama artifact observation timed out"))?
-}
-
-async fn verify_file(
-    engine: &Engine,
-    id: &str,
-    directory: &str,
-    file: &VerifiedFile,
-) -> Result<(), Error> {
-    let stat = engine
-        .stat_file(id, &format!("{directory}/{}", file.file.name))
-        .await?
-        .ok_or(Error::State(
-            "verified Ollama artifact is unobservable; runtime absence is unconfirmed",
-        ))?;
-    super::super::vllm::artifacts::verify_stat(file, &stat)
 }

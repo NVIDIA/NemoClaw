@@ -292,13 +292,13 @@ impl Installer for Service {
         let spec: Spec = serde_json::from_str(&target.values["spec"])
             .map_err(|_| Error::State("invalid vLLM runtime specification"))?;
         let binding = bindings
-            .get(&target.address)
+            .get(&crate::docker_compute::address(&target.address))
             .ok_or(Error::State("vLLM has no established identity"))?;
         let engine = crate::managed::runtime_engine(connections, &target.kind, &target.values)?;
         let check = async {
             loop {
                 let observed = engine
-                    .observe_runtime(&spec, &binding.id)
+                    .observe_service(&spec, &binding.id)
                     .await?
                     .ok_or(Error::State("vLLM runtime is unobservable"))?;
                 if !observed.running {
@@ -308,7 +308,10 @@ impl Installer for Service {
                 }
                 let status = engine.runtime_status(&observed).await?;
                 if status.phase == "ready" {
-                    engine.verify_artifacts(&observed).await?;
+                    if self.authentication.is_some() {
+                        crate::services::authentication::read_key(&engine, &observed.container_id)
+                            .await?;
+                    }
                     return Ok(());
                 }
                 if status.phase == "stopped" {
@@ -353,7 +356,20 @@ impl Service {
         let (_, spec) = targets(document, name, self, generations)?;
         Ok(Some(
             crate::services::authentication::Source::ManagedService {
-                spec: Box::new(spec),
+                storage: crate::managed::Storage {
+                    name: spec.volume(),
+                    owner: spec.owner.clone(),
+                    generation: spec.generation.clone(),
+                    engine: spec.engine().into(),
+                },
+                container: spec.name.clone(),
+                endpoint: {
+                    let process = spec
+                        .process
+                        .as_ref()
+                        .ok_or(Error::State("missing service process"))?;
+                    format!("http://{}:{}/v1", process.bind_address, process.port)
+                },
             }
             .json()?,
         ))

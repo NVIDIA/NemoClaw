@@ -33,12 +33,12 @@ fn declared_services_install_once_and_service_ref_selects_the_inference_connecti
     assert!(
         runtime
             .iter()
-            .any(|target| target.address == "nemoclaw_ollama_service.ollama-server")
+            .any(|target| target.address == "docker_container.ollama_service_ollama-server")
     );
     assert!(
         runtime
             .iter()
-            .any(|target| target.address == "nemoclaw_ollama_service.unused")
+            .any(|target| target.address == "docker_container.ollama_service_unused")
     );
     let graph = compile(&document, &generations, "0.1.0").unwrap();
     assert_eq!(

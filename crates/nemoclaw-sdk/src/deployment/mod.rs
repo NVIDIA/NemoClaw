@@ -218,10 +218,10 @@ impl Deployment {
         let bindings = store.bindings()?;
         let targets = compile::targets(&document, &record.generations)?;
         let allowed = allowed(&targets);
-        if bindings
-            .iter()
-            .any(|(address, binding)| !allowed.contains_key(address) || !binding.spec.is_empty())
-        {
+        if bindings.iter().any(|(address, binding)| {
+            (!allowed.contains_key(address) && !plan::disposable(address))
+                || !binding.spec.is_empty()
+        }) {
             return Err(Error::Conflict(
                 "undeclared resource binding in deployment state",
             ));

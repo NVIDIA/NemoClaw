@@ -7,7 +7,7 @@ use nemoclaw_sdk::{
 use serde_json::json;
 
 #[test]
-fn runtime_capacity_groups_services_by_engine_and_gates_their_processes() {
+fn multiple_services_share_image_acquisition_without_custom_capacity_gates() {
     let document =
         Document::parse(include_bytes!("../../../examples/spark/two-models.yaml").as_slice())
             .unwrap();
@@ -18,48 +18,23 @@ fn runtime_capacity_groups_services_by_engine_and_gates_their_processes() {
         "managed_gateway",
         "inference_service",
     ]
-    .into_iter()
     .map(|kind| (kind.into(), "b".repeat(32)))
-    .collect();
+    .into();
     let graph = compile_runtime(&document, &generations, "0.1.0").unwrap();
-    let groups = graph["data"]["nemoclaw_service_capacity"]
-        .as_object()
-        .expect("capacity observations");
-    assert_eq!(groups.len(), 1);
-    let (name, observation) = groups.iter().next().unwrap();
-    assert_eq!(observation["specs"].as_array().unwrap().len(), 2);
-    for attrs in graph["resource"]["nemoclaw_inference_service"]
-        .as_object()
-        .unwrap()
-        .values()
-    {
-        assert_eq!(
-            attrs["lifecycle"]["precondition"][0]["condition"],
-            format!("${{data.nemoclaw_service_capacity.{name}.compatible}}")
-        );
-    }
+    assert!(graph["data"].get("nemoclaw_service_capacity").is_none());
     assert!(graph["data"].get("nemoclaw_gateway_capabilities").is_none());
-    let mut document = serde_json::to_value(document).unwrap();
-    let service = document["spec"]["services"]
-        .as_object_mut()
-        .unwrap()
-        .values_mut()
-        .next()
-        .unwrap();
-    service["placement"] =
-        json!({"engine":"ssh://operator@gpu-box", "networkCidr":"172.30.119.0/24"});
-    service["publication"] = json!({"endpoint":format!("http://10.0.0.8:{}/v1", service["serving"]["port"]), "bindAddress":"10.0.0.8"});
-    let document = Document::parse(serde_json::to_vec(&document).unwrap().as_slice()).unwrap();
-    let graph = compile_runtime(&document, &generations, "0.1.0").unwrap();
-    let groups = graph["data"]["nemoclaw_service_capacity"]
-        .as_object()
-        .unwrap();
-    assert_eq!(groups.len(), 2);
-    assert!(
-        groups
-            .values()
-            .all(|group| group["specs"].as_array().unwrap().len() == 1)
+    let containers = graph["resource"]["docker_container"].as_object().unwrap();
+    assert_eq!(containers.len(), 2);
+    assert_eq!(
+        graph["resource"]["docker_image"].as_object().unwrap().len(),
+        1
     );
+    for attrs in containers.values() {
+        assert!(attrs.get("lifecycle").is_none());
+        assert_eq!(attrs["gpus"], "all");
+        assert!(attrs["memory"].as_i64().unwrap() > 0);
+        assert_eq!(attrs["memory"], attrs["memory_swap"]);
+    }
 }
 #[test]
 fn managed_graph_separates_retained_storage_from_replaceable_processes() {
@@ -77,8 +52,8 @@ fn managed_graph_separates_retained_storage_from_replaceable_processes() {
     .collect();
     let graph = compile_runtime(&document, &generations, "0.1.0").unwrap();
     let targets = runtime_targets(&document, &generations).unwrap();
-    assert_eq!(targets.len(), 4);
-    assert_eq!(graph["resource"].as_object().unwrap().len(), 4);
+    assert_eq!(targets.len(), 5);
+    assert_eq!(graph["resource"].as_object().unwrap().len(), 5);
     for kind in ["gateway_storage", "inference_storage"] {
         assert_eq!(
             graph["resource"][format!("nemoclaw_{kind}")][if kind == "gateway_storage" {
@@ -94,13 +69,16 @@ fn managed_graph_separates_retained_storage_from_replaceable_processes() {
         json!(["nemoclaw_gateway_storage.runtime"])
     );
     assert_eq!(
-        graph["resource"]["nemoclaw_inference_service"]["inference_qwen"]["depends_on"],
+        graph["resource"]["docker_container"]["inference_service_inference_qwen"]["depends_on"],
         json!([
             "nemoclaw_managed_gateway.runtime",
             "nemoclaw_inference_storage.inference_qwen"
         ])
     );
-    for target in targets {
+    for target in targets
+        .into_iter()
+        .filter(|target| target.address.starts_with("nemoclaw_"))
+    {
         let attrs = &graph["resource"][format!("nemoclaw_{}", target.kind)]
             [target.address.split_once('.').unwrap().1];
         assert_eq!(attrs["spec"], target.values["spec"]);
@@ -149,11 +127,22 @@ fn remote_service_is_independent_of_the_external_sandbox_gateway() {
     .map(|k| (k.into(), "b".repeat(32)))
     .collect();
     let graph = compile_runtime(&document, &generations, "0.1.0").unwrap();
-    assert_eq!(runtime_targets(&document, &generations).unwrap().len(), 2);
+    assert_eq!(runtime_targets(&document, &generations).unwrap().len(), 4);
     assert!(graph["resource"].get("nemoclaw_managed_gateway").is_none());
     assert_eq!(
-        graph["resource"]["nemoclaw_inference_service"]["inference_qwen"]["depends_on"],
-        json!(["nemoclaw_inference_storage.inference_qwen"])
+        graph["resource"]["docker_container"]["inference_service_inference_qwen"]["depends_on"],
+        json!([
+            "nemoclaw_inference_storage.inference_qwen",
+            format!(
+                "docker_network.{}",
+                graph["resource"]["docker_network"]
+                    .as_object()
+                    .unwrap()
+                    .keys()
+                    .next()
+                    .unwrap()
+            )
+        ])
     );
     assert_eq!(
         document.inference_endpoint().unwrap(),
@@ -208,4 +197,40 @@ fn remote_example_parses_with_pinned_model_and_runtime() {
         document.inference_endpoint().unwrap(),
         "http://10.0.0.8:18898/v1"
     );
+}
+
+#[test]
+fn docker_provider_owns_disposable_compute_and_image_acquisition() {
+    let document =
+        Document::parse(include_bytes!("fixtures/config/spark.yaml").as_slice()).unwrap();
+    let generations = [
+        "workspace",
+        "provider",
+        "sandbox",
+        "managed_gateway",
+        "inference_service",
+    ]
+    .map(|kind| (kind.into(), "b".repeat(32)))
+    .into();
+    let graph = compile_runtime(&document, &generations, "0.1.0").unwrap();
+    assert!(
+        graph["resource"]
+            .get("nemoclaw_inference_service")
+            .is_none()
+    );
+    let container = &graph["resource"]["docker_container"]["inference_service_inference_qwen"];
+    assert_eq!(container["gpus"], "all");
+    assert!(
+        container["image"]
+            .as_str()
+            .unwrap()
+            .starts_with("${docker_image.")
+    );
+    assert!(graph["data"].get("nemoclaw_service_capacity").is_none());
+    assert!(container.get("lifecycle").is_none());
+    let targets = runtime_targets(&document, &generations).unwrap();
+    assert!(targets.iter().any(|target| target.address
+        == "docker_container.inference_service_inference_qwen"
+        && target.kind == "inference_service"));
+    assert!(targets.iter().any(|target| target.kind == "docker_image"));
 }

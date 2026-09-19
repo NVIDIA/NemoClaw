@@ -128,6 +128,7 @@ impl Deployment {
             &expected,
             &bindings,
             &retained,
+            runtime,
         )?;
         self.prepare(bundle, store, &graph)?;
         self.tofu(
@@ -191,12 +192,16 @@ fn teardown_expected(
             "destroy requires the retained workspace binding",
         ));
     }
-    let expected = allowed(&targets);
+    let mut expected = allowed(&targets);
     for (address, binding) in bindings {
+        if plan::disposable(address) {
+            expected.entry(address.clone()).or_default();
+            continue;
+        }
         let want = expected.get(address).ok_or(Error::Conflict(
             "destroy encountered an undeclared resource binding",
         ))?;
-        if runtime && want["spec"] != binding.spec {
+        if runtime && !plan::disposable(address) && want["spec"] != binding.spec {
             return Err(Error::Conflict(
                 "destroy storage configuration disagrees with retained intent",
             ));
@@ -235,6 +240,9 @@ fn bind_teardown_processes(
         }
         let want: Spec = serde_json::from_str(&target.values["spec"])
             .map_err(|_| Error::State("invalid runtime intent"))?;
+        if plan::disposable(&target.address) {
+            continue;
+        }
         target.values.insert(
             "spec".into(),
             bound_spec(&want, bindings.get(&target.address))?.json()?,
@@ -249,8 +257,13 @@ fn teardown_graph(
     expected: &BTreeMap<String, Row>,
     bindings: &BTreeMap<String, StateBinding>,
     retained: &BTreeSet<String>,
+    runtime: bool,
 ) -> Result<Value, Error> {
-    let mut graph = compile::compile(&record.document, &record.generations, version)?;
+    let mut graph = if runtime {
+        compile::compile_runtime(&record.document, &record.generations, version)?
+    } else {
+        compile::compile(&record.document, &record.generations, version)?
+    };
     // Teardown must remain available when gateway capabilities or host capacity change.
     graph.as_object_mut().unwrap().remove("data");
     graph["provider"]["nemoclaw"]["destroy"] = json!(true);
@@ -283,7 +296,9 @@ fn validate_teardown_state(
         .into_iter()
         .flat_map(|plan| plan.required_storage)
     {
-        if bindings.contains_key(&service) && !bindings.contains_key(&storage) {
+        if bindings.contains_key(&crate::docker_compute::address(&service))
+            && !bindings.contains_key(&storage)
+        {
             return Err(Error::Conflict(
                 "apply once to establish independent service storage binding before destroy",
             ));
@@ -333,12 +348,17 @@ mod tests {
         let bindings = compile::runtime_targets(&record.document, &record.generations)
             .unwrap()
             .into_iter()
+            .filter(|target| !target.address.starts_with("data."))
             .map(|target| {
                 (
                     target.address.clone(),
                     StateBinding {
                         id: format!("id-{}", target.address),
-                        spec: target.values["spec"].clone(),
+                        spec: if plan::disposable(&target.address) {
+                            String::new()
+                        } else {
+                            target.values.get("spec").cloned().unwrap_or_default()
+                        },
                     },
                 )
             })
@@ -401,12 +421,17 @@ mod tests {
             compile::runtime_targets(&record.document, &record.generations)
                 .unwrap()
                 .into_iter()
+                .filter(|target| !target.address.starts_with("data."))
                 .map(|target| {
                     (
                         target.address.clone(),
                         StateBinding {
                             id: format!("id-{}", target.address),
-                            spec: target.values["spec"].clone(),
+                            spec: if plan::disposable(&target.address) {
+                                String::new()
+                            } else {
+                                target.values.get("spec").cloned().unwrap_or_default()
+                            },
                         },
                     )
                 })
@@ -424,7 +449,8 @@ mod tests {
             .unwrap()
             .0
             .to_owned();
-        let graph = teardown_graph(&record, "0.1.0", &expected, &bindings, &retained).unwrap();
+        let graph =
+            teardown_graph(&record, "0.1.0", &expected, &bindings, &retained, true).unwrap();
         assert_eq!(
             graph["resource"][&storage_kind].as_object().unwrap().len(),
             2
@@ -466,9 +492,11 @@ mod tests {
         let expected = teardown_expected(&record, &bindings, true).unwrap();
         let process = service_process(&record);
         let retained_storage = service_storage(&record);
-        assert_eq!(expected[&process]["spec"], bindings[&process].spec);
+        assert!(bindings[&process].spec.is_empty());
+        assert!(!expected[&process]["spec"].is_empty());
         let retained = retained_addresses(&record, &bindings, true).unwrap();
-        let graph = teardown_graph(&record, "0.1.0", &expected, &bindings, &retained).unwrap();
+        let graph =
+            teardown_graph(&record, "0.1.0", &expected, &bindings, &retained, true).unwrap();
         assert!(graph.get("data").is_none());
         assert_eq!(graph["provider"]["nemoclaw"]["destroy"], true);
         assert_eq!(graph["resource"].as_object().unwrap().len(), 2);
@@ -495,11 +523,11 @@ mod tests {
         let retained_storage = service_storage(&record);
         changed_storage.get_mut(&retained_storage).unwrap().spec = "{}".into();
         assert!(teardown_expected(&record, &changed_storage, true).is_err());
-        let mut changed_owner = bindings;
-        let binding = changed_owner.get_mut(&service_process(&record)).unwrap();
-        let mut spec: Spec = serde_json::from_str(&binding.spec).unwrap();
-        spec.generation = "a".repeat(32);
-        binding.spec = spec.json().unwrap();
-        assert!(teardown_expected(&record, &changed_owner, true).is_err());
+        let mut changed_compute = bindings;
+        changed_compute
+            .get_mut(&service_process(&record))
+            .unwrap()
+            .id = "replacement-provider-id".into();
+        assert!(teardown_expected(&record, &changed_compute, true).is_ok());
     }
 }

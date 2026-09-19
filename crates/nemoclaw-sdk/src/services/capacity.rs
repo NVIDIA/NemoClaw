@@ -131,61 +131,21 @@ pub(crate) fn groups<'a>(
     }
     Ok(groups)
 }
-/// Recheck volatile startup prerequisites immediately before graph mutation.
-pub(crate) async fn recheck(
-    connections: &Connections,
-    desired: &BTreeMap<String, Row>,
-    expected: &BTreeMap<String, Row>,
-    bindings: &BTreeMap<String, crate::state::StateBinding>,
-) -> Result<(), Error> {
-    let mut checks = Vec::new();
-    for (address, row) in desired {
-        let kind = address
-            .split_once('.')
-            .map(|(kind, _)| kind.trim_start_matches("nemoclaw_"))
-            .unwrap_or("");
-        if !super::resource_behavior(kind).runtime_process {
-            continue;
-        }
-        let want: Spec = serde_json::from_str(&row["spec"])
-            .map_err(|_| Error::State("invalid capacity specification"))?;
-        let old: Spec = serde_json::from_str(&expected[address]["spec"])
-            .map_err(|_| Error::State("invalid bound capacity specification"))?;
-        let engine = crate::managed::service_engine(connections, want.engine())?;
-        let id = bindings
-            .get(address)
-            .map(|binding| binding.id.as_str())
-            .unwrap_or("");
-        let observed = match engine.observe_runtime(&old, id).await {
-            Err(Error::PartialRuntime) if id.is_empty() => None,
-            other => other?,
-        };
-        if let Some(check) = check_runtime_capacity(&engine, &want, observed.as_ref()).await? {
-            checks.push(check);
-        }
-    }
-    check_combined_capacity(connections, checks).await
-}
-
 struct Accounting {
     total: ServiceCapacity,
-    startup_fits: bool,
 }
 fn account(services: &[(CapacityService, bool)], capacity: &Capacity) -> Result<Accounting, Error> {
     let mut total_budget = 0_u64;
-    let mut new_budget = 0_u64;
     let mut reserve = 0_u64;
-    let mut startup = 0_u64;
     let mut architecture = None;
     for (service, starting) in services {
-        let (kind, budget, host_reserve, headroom) = match service {
+        let (kind, budget, host_reserve) = match service {
             CapacityService::Ollama(service) => {
                 installers::ollama::hardware_capacity::check_memory(service, capacity, *starting)?;
                 (
                     service.memory_architecture()?,
                     installers::ollama::hardware_capacity::budget(service, capacity)?,
                     service.memory.host_reserve_gib as u64 * crate::hardware::GIB,
-                    20 * crate::hardware::GIB,
                 )
             }
             CapacityService::Vllm(service) => {
@@ -199,17 +159,10 @@ fn account(services: &[(CapacityService, bool)], capacity: &Capacity) -> Result<
                     .map_or(service.gpu_bytes()?, |ratio| {
                         (total as f64 * ratio).floor() as u64
                     });
-                let headroom = service.recipe.as_ref().map_or(20, |recipe| {
-                    recipe
-                        .resources
-                        .startup_headroom_gi_b
-                        .max(recipe.resources.preparation_memory_gi_b)
-                }) * crate::hardware::GIB;
                 (
                     service.memory_architecture()?,
                     budget,
                     service.memory.host_reserve_gib as u64 * crate::hardware::GIB,
-                    headroom,
                 )
             }
         };
@@ -223,14 +176,6 @@ fn account(services: &[(CapacityService, bool)], capacity: &Capacity) -> Result<
             .checked_add(budget)
             .ok_or(crate::Error::State("combined GPU budget overflow"))?;
         reserve = reserve.max(host_reserve);
-        if *starting {
-            new_budget = new_budget
-                .checked_add(budget)
-                .ok_or(crate::Error::State("combined GPU budget overflow"))?;
-            startup = startup
-                .checked_add(headroom)
-                .ok_or(crate::Error::State("combined startup budget overflow"))?;
-        }
     }
     let dedicated = architecture == Some(installers::vllm::MemoryArchitecture::Dedicated);
     let total = ServiceCapacity {
@@ -251,28 +196,7 @@ fn account(services: &[(CapacityService, bool)], capacity: &Capacity) -> Result<
             capacity.total
         },
     };
-    let startup_fits = if dedicated {
-        new_budget <= capacity.gpu_memory.as_ref().unwrap().free
-            && (new_budget == 0
-                || reserve
-                    .checked_add(startup)
-                    .is_some_and(|required| required <= capacity.available))
-    } else {
-        new_budget
-            .checked_add(startup)
-            .is_some_and(|required| required <= capacity.available)
-    };
-    Ok(Accounting {
-        total,
-        startup_fits,
-    })
-}
-
-/// Opaque installer capacity input retained between per-runtime and combined-engine checks.
-pub(crate) struct RuntimeCapacity {
-    engine: String,
-    service: CapacityService,
-    starting: bool,
+    Ok(Accounting { total })
 }
 
 enum CapacityService {
@@ -339,62 +263,6 @@ pub(crate) async fn check_process_plan(
         }
         _ => Err(Error::Conflict("runtime has no hardware contract")),
     }
-}
-
-pub(crate) async fn check_runtime_capacity(
-    engine: &crate::docker::Engine,
-    spec: &crate::managed::Spec,
-    observed: Option<&crate::managed::RuntimeObservation>,
-) -> Result<Option<RuntimeCapacity>, crate::Error> {
-    let service = match spec.kind.as_str() {
-        installers::vllm::SERVICE_KIND => {
-            CapacityService::Vllm(installers::vllm::configured_service(spec)?)
-        }
-        installers::ollama::SERVICE_KIND => {
-            CapacityService::Ollama(installers::ollama::configured_service(spec)?)
-        }
-        _ => return Ok(None),
-    };
-    check_process_capacity(engine, spec, observed).await?;
-    Ok(Some(RuntimeCapacity {
-        engine: spec.engine().into(),
-        service,
-        starting: observed.is_none_or(|runtime| !runtime.running),
-    }))
-}
-
-pub(crate) async fn check_combined_capacity(
-    connections: &crate::docker::Connections,
-    checks: Vec<RuntimeCapacity>,
-) -> Result<(), crate::Error> {
-    let mut grouped: BTreeMap<String, Vec<(CapacityService, bool)>> = BTreeMap::new();
-    for check in checks {
-        grouped
-            .entry(check.engine)
-            .or_default()
-            .push((check.service, check.starting));
-    }
-    for (endpoint, services) in grouped {
-        if services.len() < 2 {
-            continue;
-        }
-        let engine = crate::managed::service_engine(connections, &endpoint)?;
-        let capacity = tokio::time::timeout(std::time::Duration::from_secs(30), async {
-            let host = engine.host_observer.observe(&engine).await?;
-            let info = engine.info().await?;
-            host.for_engine(info.id.as_deref().unwrap_or(""))
-        })
-        .await
-        .map_err(|_| Error::State("combined capacity observation timed out"))??;
-        let accounting = account(&services, &capacity)?;
-        accounting.total.require()?;
-        if !accounting.startup_fits {
-            return Err(crate::Error::Conflict(
-                "combined service budgets exceed available GPU or host startup memory",
-            ));
-        }
-    }
-    Ok(())
 }
 
 #[cfg(all(test, unix))]
