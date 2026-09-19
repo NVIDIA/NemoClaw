@@ -408,6 +408,11 @@
     },
     {
       "file": "test/e2e/support/managed-image-protected-runtime-workflow.test.ts",
+      "test": "builds the candidate shared boundary before direct managed-image contracts",
+      "category": "security"
+    },
+    {
+      "file": "test/e2e/support/managed-image-protected-runtime-workflow.test.ts",
       "test": "binds a correlation identity for main pushes without an input",
       "category": "compatibility"
     },
