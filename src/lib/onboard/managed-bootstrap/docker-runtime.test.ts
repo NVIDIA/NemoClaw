@@ -473,6 +473,39 @@ describe("Docker managed-bootstrap GPU probe image", () => {
     );
   });
 
+  it("keeps the caller Docker configuration for the WSL pre-pull when a non-default DOCKER_CONTEXT selects a Docker Desktop credential store (#11533)", async () => {
+    const { dependencies, dockerRun } = gpuModeDependencies();
+    const seed = authority("openclaw");
+    const dockerConfig = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-docker-runtime-config-"));
+    temporaryStateRoots.push(dockerConfig);
+    fs.writeFileSync(
+      path.join(dockerConfig, "config.json"),
+      JSON.stringify({ credsStore: "desktop.exe" }),
+    );
+    const input: ManagedBootstrapRuntimeCreateLifecycleInput = {
+      ...compatibilityLifecycleInput(seed, dependencies),
+      dockerClientEnv: {
+        DOCKER_CONFIG: dockerConfig,
+        DOCKER_CONTEXT: "qa-explicit-host",
+        WSL_DISTRO_NAME: "Ubuntu",
+      },
+    };
+    sandboxCreateMocks.isDockerDesktopWslRuntime.mockReturnValue(true);
+    dockerAdapterMocks.imageInspect.mockReturnValue({ status: 1 });
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    await runCompatibilityCreate(input, seed);
+
+    const pullEnv = dockerAdapterMocks.pullWithProgressWatchdog.mock.calls[0]?.[1]?.env;
+    expect(pullEnv?.DOCKER_CONFIG).toBe(dockerConfig);
+    expect(pullEnv?.DOCKER_CONTEXT).toBe("qa-explicit-host");
+    expect(pullEnv).not.toHaveProperty("DOCKER_HOST");
+    expect(dockerRun.mock.calls[0]?.[1]?.env).toEqual(
+      expect.objectContaining({ DOCKER_CONFIG: dockerConfig, DOCKER_CONTEXT: "qa-explicit-host" }),
+    );
+    expect(log.mock.calls.flat().join("\n")).not.toContain("credential-free");
+  });
+
   it("skips the pull when the exact WSL sandbox image is already local", async () => {
     const { dependencies, dockerRun } = gpuModeDependencies();
     const seed = authority("openclaw");
