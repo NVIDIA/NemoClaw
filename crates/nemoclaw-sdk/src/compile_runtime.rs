@@ -75,7 +75,19 @@ pub fn compile_runtime(
     // The runtime stage bootstraps the gateway before deployment observations.
     graph.as_object_mut().unwrap().remove("data");
     graph["resource"] = json!({});
-    for target in runtime_targets_with_plans(document, generations, &service_plans)? {
+    let targets = runtime_targets_with_plans(document, generations, &service_plans)?;
+    for (engine, specs) in crate::services::capacity::groups(
+        targets
+            .iter()
+            .map(|target| (target.address.as_str(), &target.values)),
+    )? {
+        let name = crate::services::capacity::observation_name(&engine);
+        graph["data"]["nemoclaw_service_capacity"][name] = json!({
+            "engine":engine.replace("${", "$${").replace("%{", "%%{"),
+            "specs":specs.iter().map(|spec| spec.replace("${", "$${").replace("%{", "%%{")).collect::<Vec<_>>()
+        });
+    }
+    for target in targets {
         let mut attrs =
             json!({"spec":target.values["spec"].replace("${", "$${").replace("%{", "%%{")});
         if let Some(policy) = target.values.get("image_pull_policy") {
@@ -91,6 +103,15 @@ pub fn compile_runtime(
         }
         if let Some(dependencies) = service_plans.dependencies(&target.address) {
             attrs["depends_on"] = json!(dependencies);
+        }
+        if crate::services::resource_behavior(&target.kind).runtime_process {
+            let spec: Spec = serde_json::from_str(&target.values["spec"])
+                .map_err(|_| Error::State("invalid compiled runtime"))?;
+            let address = crate::services::capacity::observation_address(spec.engine());
+            attrs["lifecycle"]["precondition"] = json!([{
+                "condition":format!("${{{address}.compatible}}"),
+                "error_message":format!("Combined service memory requires ${{{address}.required_bytes}} bytes; observed ${{{address}.observed_bytes}} bytes.")
+            }]);
         }
         let (kind, logical) = target.address.split_once('.').unwrap();
         graph["resource"][kind][logical] = attrs;

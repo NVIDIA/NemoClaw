@@ -251,7 +251,7 @@ fn teardown_graph(
     retained: &BTreeSet<String>,
 ) -> Result<Value, Error> {
     let mut graph = compile::compile(&record.document, &record.generations, version)?;
-    // Teardown must remain available when gateway capabilities have changed.
+    // Teardown must remain available when gateway capabilities or host capacity change.
     graph.as_object_mut().unwrap().remove("data");
     graph["provider"]["nemoclaw"]["destroy"] = json!(true);
     graph["resource"] = json!({});
@@ -469,6 +469,7 @@ mod tests {
         assert_eq!(expected[&process]["spec"], bindings[&process].spec);
         let retained = retained_addresses(&record, &bindings, true).unwrap();
         let graph = teardown_graph(&record, "0.1.0", &expected, &bindings, &retained).unwrap();
+        assert!(graph.get("data").is_none());
         assert_eq!(graph["provider"]["nemoclaw"]["destroy"], true);
         assert_eq!(graph["resource"].as_object().unwrap().len(), 2);
         for address in [GATEWAY_STORAGE, retained_storage.as_str()] {

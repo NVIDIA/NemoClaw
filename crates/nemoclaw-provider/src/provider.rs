@@ -42,6 +42,9 @@ fn text(value: Value<String>) -> String {
 #[derive(Default)]
 pub(crate) struct ConfiguredBackend(RwLock<Option<OpenShell>>, Connections);
 impl ConfiguredBackend {
+    pub(crate) fn connections(&self) -> &Connections {
+        &self.1
+    }
     pub(crate) fn client(&self) -> Result<OpenShell, ObservationError> {
         self.0
             .read()
@@ -111,11 +114,18 @@ impl Provider for NemoClawProvider {
         &self,
         _: &mut Diagnostics,
     ) -> Option<HashMap<String, Box<dyn DynamicDataSource>>> {
-        Some(HashMap::from([(
-            "gateway_capabilities".into(),
-            Box::new(crate::gateway::GatewayDataSource(self.backend.clone()))
-                as Box<dyn DynamicDataSource>,
-        )]))
+        Some(HashMap::from([
+            (
+                "service_capacity".into(),
+                Box::new(crate::capacity::CapacityDataSource(self.backend.clone()))
+                    as Box<dyn DynamicDataSource>,
+            ),
+            (
+                "gateway_capabilities".into(),
+                Box::new(crate::gateway::GatewayDataSource(self.backend.clone()))
+                    as Box<dyn DynamicDataSource>,
+            ),
+        ]))
     }
     fn schema(&self, _: &mut Diagnostics) -> Option<Schema> {
         let mut attributes = HashMap::new();

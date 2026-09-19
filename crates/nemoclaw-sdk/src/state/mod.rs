@@ -179,7 +179,7 @@ pub(crate) fn bindings(directory: &Path) -> Result<BTreeMap<String, StateBinding
     let state: State = serde_json::from_slice(&bytes)
         .map_err(|_| Error::State("OpenTofu state is unreadable; retain it for recovery"))?;
     let mut bindings = BTreeMap::new();
-    let mut gateway_observed = false;
+    let mut observations = std::collections::BTreeSet::new();
     for resource in state.resources {
         if resource.instances.len() != 1 || resource.module.is_some() {
             return Err(Error::State("unexpected resource instances in state"));
@@ -196,11 +196,22 @@ pub(crate) fn bindings(directory: &Path) -> Result<BTreeMap<String, StateBinding
         {
             return Err(Error::State("unexpected resource instances in state"));
         }
-        if resource.mode.as_deref() == Some("data")
-            && format!("data.{address}") == crate::compile::GATEWAY_CAPABILITIES_ADDRESS
-        {
-            if std::mem::replace(&mut gateway_observed, true) {
-                return Err(Error::State("duplicate gateway observation in state"));
+        if resource.mode.as_deref() == Some("data") {
+            let known = if format!("data.{address}") == crate::compile::GATEWAY_CAPABILITIES_ADDRESS
+            {
+                true
+            } else if resource.r#type == "nemoclaw_service_capacity" {
+                instance.attributes["engine"]
+                    .as_str()
+                    .is_some_and(|engine| {
+                        crate::docker::Engine::validate_endpoint(engine).is_ok()
+                            && resource.name == crate::services::capacity::observation_name(engine)
+                    })
+            } else {
+                false
+            };
+            if !known || !observations.insert(address) {
+                return Err(Error::State("unexpected or duplicate observation in state"));
             }
             continue;
         }

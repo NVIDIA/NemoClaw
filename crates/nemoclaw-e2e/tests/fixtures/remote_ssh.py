@@ -19,9 +19,12 @@ if control.get("transport_failure"):
 if "python3" in sys.argv:
     if control.get("capacity_failure"):
         sys.exit(1)
-    memory = "MemTotal: 134217728 kB\nMemAvailable: 125829120 kB\nMemFree: 115343360 kB\n"
+    with (root / "capacity_reads").open("a") as reads:
+        reads.write("read\n")
+    total = control.get("total_capacity_gib", 128) * 1024 * 1024
+    memory = f"MemTotal: {total} kB\nMemAvailable: 125829120 kB\nMemFree: 115343360 kB\n"
     if control.get("low_capacity"):
-        memory = "MemTotal: 134217728 kB\nMemAvailable: 1048576 kB\nMemFree: 1048576 kB\n"
+        memory = f"MemTotal: {total} kB\nMemAvailable: 1048576 kB\nMemFree: 1048576 kB\n"
     print(json.dumps({"daemon": control.get("daemon", "remote-engine"), "architecture": "aarch64",
         "memory": memory, "compute_capability": "12.1\n", "gpu_memory": "[N/A], [N/A]\n",
         "gpu": "NVIDIA GB10, 580.0\n", "processes": "", "disk_free": 2**40}))

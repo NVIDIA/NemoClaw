@@ -16,9 +16,11 @@ pub(super) struct ResourceChange {
     pub address: String,
     pub change: PlannedChange,
 }
-fn gateway_observation(
+pub(super) fn observation(
     change: &ResourceChange,
-    seen: &mut bool,
+    seen: &mut BTreeSet<String>,
+    allowed: &BTreeMap<String, Row>,
+    gateway: bool,
     destroying: bool,
 ) -> Result<bool, Error> {
     if change.mode.as_deref() != Some("data") {
@@ -29,15 +31,19 @@ fn gateway_observation(
         }
         return Ok(false);
     }
-    if change.address != crate::compile::GATEWAY_CAPABILITIES_ADDRESS
-        || std::mem::replace(seen, true)
+    let expected = (gateway && change.address == crate::compile::GATEWAY_CAPABILITIES_ADDRESS)
+        || crate::services::capacity::groups(
+            allowed.iter().map(|(address, row)| (address.as_str(), row)),
+        )?
+        .keys()
+        .any(|engine| change.address == crate::services::capacity::observation_address(engine));
+    if !expected
+        || !seen.insert(change.address.clone())
         || !(change.change.actions == ["no-op"]
             || (!destroying && change.change.actions == ["read"])
             || (destroying && change.change.actions == ["delete"]))
     {
-        return Err(Error::Conflict(
-            "plan contains an unexpected gateway observation",
-        ));
+        return Err(Error::Conflict("plan contains an unexpected observation"));
     }
     Ok(true)
 }
@@ -69,9 +75,9 @@ pub(super) fn check_plan(
 ) -> Result<Vec<Change>, Error> {
     let mut seen = BTreeSet::new();
     let mut changes = Vec::new();
-    let mut gateway_seen = false;
+    let mut observations = BTreeSet::new();
     for change in &plan.resource_changes {
-        if gateway_observation(change, &mut gateway_seen, false)? {
+        if observation(change, &mut observations, allowed, true, false)? {
             continue;
         }
         let expected = allowed
@@ -114,9 +120,9 @@ pub(super) fn check_destroy_plan(
     let mut absent = BTreeSet::new();
     let mut seen = BTreeSet::new();
     let mut changes = Vec::new();
-    let mut gateway_seen = false;
+    let mut observations = BTreeSet::new();
     for drift in &plan.resource_drift {
-        if gateway_observation(drift, &mut gateway_seen, true)? {
+        if observation(drift, &mut observations, allowed, true, true)? {
             continue;
         }
         if !allowed.contains_key(&drift.address) {
@@ -139,9 +145,9 @@ pub(super) fn check_destroy_plan(
             ));
         }
     }
-    let mut gateway_seen = false;
+    let mut observations = BTreeSet::new();
     for change in &plan.resource_changes {
-        if gateway_observation(change, &mut gateway_seen, true)? {
+        if observation(change, &mut observations, allowed, true, true)? {
             continue;
         }
         let expected = allowed.get(&change.address).ok_or(Error::Conflict(

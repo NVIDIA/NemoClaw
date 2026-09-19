@@ -5,6 +5,33 @@ use nemoclaw_provider::NemoClawProvider;
 use tf_provider::{Diagnostics, Provider};
 
 #[test]
+fn service_capacity_is_exposed_as_read_only_data() {
+    use tf_provider::schema::AttributeConstraint;
+    let mut diagnostics = Diagnostics::default();
+    let sources = NemoClawProvider::default()
+        .get_data_sources(&mut diagnostics)
+        .unwrap();
+    let schema = sources
+        .get("service_capacity")
+        .expect("combined capacity data source")
+        .schema(&mut diagnostics)
+        .unwrap();
+    for field in ["engine", "specs"] {
+        assert!(matches!(
+            schema.block.attributes[field].constraint,
+            AttributeConstraint::Required
+        ));
+    }
+    for field in ["required_bytes", "observed_bytes", "compatible"] {
+        assert!(matches!(
+            schema.block.attributes[field].constraint,
+            AttributeConstraint::Computed
+        ));
+    }
+    assert!(diagnostics.errors.is_empty());
+}
+
+#[test]
 fn gateway_capabilities_are_exposed_as_read_only_data() {
     use tf_provider::schema::AttributeConstraint;
     let mut diagnostics = Diagnostics::default();

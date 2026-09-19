@@ -8,6 +8,7 @@ pub use storage::*;
 mod observation;
 pub use observation::*;
 mod backend;
+pub(crate) use backend::service_engine;
 mod gateway_storage;
 mod keys;
 mod mutation;

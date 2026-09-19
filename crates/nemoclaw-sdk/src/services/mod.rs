@@ -7,7 +7,12 @@
 //! bindings, package dispatch, readiness checks, and destroy policy remain here.
 
 pub(crate) mod authentication;
+pub(crate) mod capacity;
 mod contract;
+pub use capacity::{ServiceCapacity, observe_service_capacity, validate_capacity_specs};
+pub(crate) use capacity::{
+    check_combined_capacity, check_process_capacity, check_runtime_capacity,
+};
 pub mod installers;
 mod registry;
 #[cfg(target_os = "linux")]
@@ -27,10 +32,9 @@ pub use registry::{
     resource_behavior, resource_schemas,
 };
 pub(crate) use registry::{
-    check_combined_capacity, check_process_capacity, check_running, check_runtime_capacity,
-    constrain_schema, credential_source_json, defaults, generation_kinds, has_runtime,
-    install_plans, provider_authenticated, remove_plans, required_storage_address, resolve,
-    resource_label, validate, validate_provider, validate_route,
+    check_running, constrain_schema, credential_source_json, defaults, generation_kinds,
+    has_runtime, install_plans, provider_authenticated, remove_plans, required_storage_address,
+    resolve, resource_label, validate, validate_provider, validate_route,
 };
 
 /// Run the package implementation encoded in `NEMOCLAW_RUNTIME_SPEC`.

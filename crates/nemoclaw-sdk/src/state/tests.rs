@@ -148,3 +148,35 @@ fn removed_ownership_annotations_preserve_intent_and_resource_bindings_for_recov
     assert_eq!(std::fs::read(intent).unwrap(), bytes);
     assert_eq!(std::fs::read(state).unwrap(), binding);
 }
+
+#[test]
+fn capacity_data_is_discarded_without_accepting_foreign_or_duplicate_state_instances() {
+    let directory = tempfile::tempdir().unwrap();
+    let name = crate::services::capacity::observation_name("ssh://gpu-box");
+    let data = serde_json::json!({"mode":"data", "type":"nemoclaw_service_capacity", "name":name, "instances":[{"attributes":{"engine":"ssh://gpu-box", "compatible":true}}]});
+    let managed = serde_json::json!({"mode":"managed", "type":"nemoclaw_workspace", "name":"deployment", "instances":[{"attributes":{"id":"physical"}}]});
+    let write = |resources| {
+        std::fs::write(
+            directory.path().join("terraform.tfstate"),
+            serde_json::json!({"resources":resources}).to_string(),
+        )
+        .unwrap()
+    };
+    write(serde_json::json!([data, managed]));
+    assert_eq!(bindings(directory.path()).unwrap().len(), 1);
+    write(serde_json::json!([data, data, managed]));
+    assert!(bindings(directory.path()).is_err());
+    for field in ["name", "type", "module", "engine", "index", "deposed"] {
+        let mut invalid = data.clone();
+        match field {
+            "engine" => {
+                invalid["instances"][0]["attributes"]["engine"] = serde_json::json!("ssh://other")
+            }
+            "index" => invalid["instances"][0]["index_key"] = serde_json::json!(0),
+            "deposed" => invalid["instances"][0]["deposed"] = serde_json::json!("prior"),
+            _ => invalid[field] = serde_json::json!("foreign"),
+        }
+        write(serde_json::json!([invalid, managed]));
+        assert!(bindings(directory.path()).is_err(), "{field}");
+    }
+}

@@ -314,12 +314,25 @@ pub fn runtime_engine(
     kind: &str,
     row: &Row,
 ) -> Result<Engine, Error> {
-    let engine = connections.resolve(&connection_endpoint(kind, row)?)?;
+    let endpoint = connection_endpoint(kind, row)?;
     let service = row
         .get("spec")
         .and_then(|encoded| serde_json::from_str::<Spec>(encoded).ok())
         .is_some_and(|spec| spec.process.is_some());
-    if service && engine.endpoint().starts_with("ssh://") && !engine.host_observer_explicit {
+    if service {
+        service_engine(connections, &endpoint)
+    } else {
+        connections.resolve(&endpoint)
+    }
+}
+
+/// Apply the same explicit host-observer selection to resource and group checks.
+pub(crate) fn service_engine(
+    connections: &crate::docker::Connections,
+    endpoint: &str,
+) -> Result<Engine, Error> {
+    let engine = connections.resolve(endpoint)?;
+    if engine.endpoint().starts_with("ssh://") && !engine.host_observer_explicit {
         return Ok(engine.with_host_observer(std::sync::Arc::new(crate::hardware::SshHost)));
     }
     Ok(engine)

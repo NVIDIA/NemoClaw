@@ -20,7 +20,11 @@ pub(super) fn check_runtime_plan(
     let mut ordinary = Plan::default();
     let mut changes = Vec::new();
     let mut seen = BTreeSet::new();
+    let mut observations = BTreeSet::new();
     for change in &plan.resource_changes {
+        if plan::observation(change, &mut observations, allowed, false, false)? {
+            continue;
+        }
         if !seen.insert(&change.address) {
             return Err(Error::Conflict("runtime plan duplicated a resource"));
         }
@@ -258,6 +262,10 @@ impl Deployment {
         record.destroy_runtime = false;
         record.plan_digest = crate::bundle::hash_file(&stage.directory.join("apply.plan"))?;
         store.save(record)?;
+        // Saved data-source values may be cached in the plan. Reobserve the
+        // desired budgets before any runtime apply, including unchanged apply.
+        let desired = allowed(&targets);
+        tokio::select! {()=cancel.cancelled()=>return Err(Error::Cancelled),result=crate::services::capacity::recheck(&self.engines,&desired)=>result?}
         self.tofu(
             bundle,
             &stage,

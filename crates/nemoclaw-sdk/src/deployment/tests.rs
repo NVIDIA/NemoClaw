@@ -321,3 +321,43 @@ fn destroy_drift_errors_distinguish_undeclared_resources_from_missing_saved_ids(
     );
     assert!(check_destroy_plan(&plan, &allowed, &bindings, &retained).is_ok());
 }
+
+#[test]
+fn runtime_capacity_plans_accept_only_declared_read_observations_and_teardown_deletions() {
+    let document =
+        Document::parse(include_bytes!("../../../../examples/spark/two-models.yaml").as_slice())
+            .unwrap();
+    let record = Record::new(document.clone()).unwrap();
+    let targets = compile::runtime_targets(&document, &record.generations).unwrap();
+    let allowed = allowed(&targets);
+    let address = crate::services::capacity::observation_address(&document.spec.gateway.engine);
+    let resources: Vec<_> = targets.iter().map(|target| json!({"mode":"managed", "address":target.address, "change":{"actions":["create"]}})).collect();
+    for (action, duplicate, valid) in [
+        ("read", false, true),
+        ("no-op", false, true),
+        ("read", true, false),
+        ("delete", false, false),
+        ("create", false, false),
+    ] {
+        let observation = json!({"mode":"data", "address":address, "change":{"actions":[action]}});
+        let mut changes = resources.clone();
+        changes.push(observation.clone());
+        if duplicate {
+            changes.push(observation);
+        }
+        let plan: Plan = serde_json::from_value(json!({"resource_changes":changes})).unwrap();
+        assert_eq!(
+            runtime::check_runtime_plan(&plan, &allowed, &BTreeMap::new(), &BTreeSet::new())
+                .is_ok(),
+            valid
+        );
+    }
+    let foreign = crate::services::capacity::observation_address("ssh://other");
+    for (address, valid) in [(address.as_str(), true), (foreign.as_str(), false)] {
+        let plan: Plan = serde_json::from_value(json!({"resource_changes":[{"mode":"data", "address":address, "change":{"actions":["delete"]}}]})).unwrap();
+        assert_eq!(
+            check_destroy_plan(&plan, &allowed, &BTreeMap::new(), &BTreeSet::new()).is_ok(),
+            valid
+        );
+    }
+}

@@ -5,6 +5,62 @@ use nemoclaw_sdk::{
     config::Document,
 };
 use serde_json::json;
+
+#[test]
+fn runtime_capacity_groups_services_by_engine_and_gates_their_processes() {
+    let document =
+        Document::parse(include_bytes!("../../../examples/spark/two-models.yaml").as_slice())
+            .unwrap();
+    let generations: Generations = [
+        "workspace",
+        "provider",
+        "sandbox",
+        "managed_gateway",
+        "inference_service",
+    ]
+    .into_iter()
+    .map(|kind| (kind.into(), "b".repeat(32)))
+    .collect();
+    let graph = compile_runtime(&document, &generations, "0.1.0").unwrap();
+    let groups = graph["data"]["nemoclaw_service_capacity"]
+        .as_object()
+        .expect("capacity observations");
+    assert_eq!(groups.len(), 1);
+    let (name, observation) = groups.iter().next().unwrap();
+    assert_eq!(observation["specs"].as_array().unwrap().len(), 2);
+    for attrs in graph["resource"]["nemoclaw_inference_service"]
+        .as_object()
+        .unwrap()
+        .values()
+    {
+        assert_eq!(
+            attrs["lifecycle"]["precondition"][0]["condition"],
+            format!("${{data.nemoclaw_service_capacity.{name}.compatible}}")
+        );
+    }
+    assert!(graph["data"].get("nemoclaw_gateway_capabilities").is_none());
+    let mut document = serde_json::to_value(document).unwrap();
+    let service = document["spec"]["services"]
+        .as_object_mut()
+        .unwrap()
+        .values_mut()
+        .next()
+        .unwrap();
+    service["placement"] =
+        json!({"engine":"ssh://operator@gpu-box", "networkCidr":"172.30.119.0/24"});
+    service["publication"] = json!({"endpoint":format!("http://10.0.0.8:{}/v1", service["serving"]["port"]), "bindAddress":"10.0.0.8"});
+    let document = Document::parse(serde_json::to_vec(&document).unwrap().as_slice()).unwrap();
+    let graph = compile_runtime(&document, &generations, "0.1.0").unwrap();
+    let groups = graph["data"]["nemoclaw_service_capacity"]
+        .as_object()
+        .unwrap();
+    assert_eq!(groups.len(), 2);
+    assert!(
+        groups
+            .values()
+            .all(|group| group["specs"].as_array().unwrap().len() == 1)
+    );
+}
 #[test]
 fn managed_graph_separates_retained_storage_from_replaceable_processes() {
     let document =

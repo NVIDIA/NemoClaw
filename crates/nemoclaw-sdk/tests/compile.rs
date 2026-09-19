@@ -33,7 +33,9 @@ fn gateway_capabilities_gate_deployment_but_do_not_query_during_bootstrap() {
     }
     let bootstrap = compile_runtime(&document, &generations, "0.1.0").unwrap();
     assert!(
-        bootstrap.get("data").is_none(),
+        bootstrap["data"]
+            .get("nemoclaw_gateway_capabilities")
+            .is_none(),
         "bootstrap must not require an already running gateway"
     );
 }
