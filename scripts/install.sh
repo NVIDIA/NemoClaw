@@ -2427,6 +2427,9 @@ maybe_install_openshell_during_install() {
     info "Deferring OpenShell CLI installation until after pre-upgrade backup."
     return 0
   fi
+  # A present OpenShell must report a usable version before install-openshell.sh
+  # can replace it. The deferred path keeps this check for after backup.
+  require_reportable_openshell_version
   if [[ "$mode" == "if-missing" ]] && command_exists openshell; then
     if [[ "$platform" == "Darwin" ]] && command -v brew >/dev/null 2>&1 \
       && ! macos_openshell_homebrew_gateway_service_installed; then

@@ -846,9 +846,12 @@ validate_explicit_component_override sandbox "${NEMOCLAW_OPENSHELL_SANDBOX_BIN:-
 ACTIVE_OPENSHELL_BIN=""
 if command -v openshell >/dev/null 2>&1; then
   ACTIVE_OPENSHELL_BIN="$(command -v openshell 2>/dev/null || true)"
-  INSTALLED_VERSION_OUTPUT="$(openshell --version 2>&1 || true)"
+  INSTALLED_VERSION_STATUS=0
+  INSTALLED_VERSION_OUTPUT="$(openshell --version 2>&1)" || INSTALLED_VERSION_STATUS=$?
   INSTALLED_VERSION="$(printf '%s\n' "$INSTALLED_VERSION_OUTPUT" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)"
-  [ -n "$INSTALLED_VERSION" ] || INSTALLED_VERSION="0.0.0"
+  if [ "$INSTALLED_VERSION_STATUS" -ne 0 ] || [ -z "$INSTALLED_VERSION" ]; then
+    fail "OpenShell is present on PATH but could not report its version. Refusing to install over an undeterminable OpenShell version. Remove the broken binary, then rerun."
+  fi
   if printf '%s\n' "$INSTALLED_VERSION_OUTPUT" | grep -qi 'dev'; then
     warn "OpenShell development builds are unsupported — reinstalling exact stable OpenShell ${PIN_VERSION}..."
   elif version_gte "$INSTALLED_VERSION" "$MIN_VERSION"; then

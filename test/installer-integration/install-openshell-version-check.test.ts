@@ -1287,6 +1287,58 @@ exit 0`,
     expect(result.stderr).toContain("NEMOCLAW_OPENSHELL_CHANNEL must be one of: stable, auto");
   });
 
+  it.each([
+    {
+      body: "#!/usr/bin/env bash\nexit 1\n",
+      name: "exits non-zero",
+    },
+    {
+      body: '#!/usr/bin/env bash\n[ "$1" = "--version" ] && echo "not-a-version"\nexit 0\n',
+      name: "prints a non-semver string",
+    },
+    {
+      body: '#!/usr/bin/env bash\n[ "$1" = "--version" ] && echo "openshell 0.0.85"\nexit 1\n',
+      name: "prints a version and exits non-zero",
+    },
+  ])(
+    "refuses a present OpenShell that $name instead of treating it as 0.0.0 (#12060)",
+    ({ body }) => {
+      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openshell-unreportable-"));
+      try {
+        const fakeBin = path.join(tmp, "bin");
+        fs.mkdirSync(fakeBin);
+        writeExecutable(path.join(fakeBin, "openshell"), body);
+        writeExecutable(
+          path.join(fakeBin, "curl"),
+          `#!/usr/bin/env bash
+echo "curl stub: $*" >&2
+exit 1`,
+        );
+        writeExecutable(
+          path.join(fakeBin, "gh"),
+          `#!/usr/bin/env bash
+exit 1`,
+        );
+
+        const result = spawnSync("bash", [SCRIPT], {
+          env: {
+            ...process.env,
+            NEMOCLAW_OPENSHELL_CHANNEL: "stable",
+            PATH: `${fakeBin}:/usr/bin:/bin`,
+          },
+          encoding: "utf8",
+        });
+
+        expect(result.status, `${result.stdout}\n${result.stderr}`).not.toBe(0);
+        expect(result.stderr + result.stdout).toContain("could not report its version");
+        expect(result.stdout).not.toMatch(/below minimum/);
+        expect(result.stdout).not.toContain("Installing OpenShell from release");
+      } finally {
+        fs.rmSync(tmp, { recursive: true, force: true });
+      }
+    },
+  );
+
   it("proceeds to install when openshell is not present", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openshell-noop-"));
     try {

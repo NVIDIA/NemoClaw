@@ -462,6 +462,54 @@ require_reportable_openshell_version`,
     expect(openshellBody).toBe(versionPrintingBrokenOpenshell);
   });
 
+  async function runOrdinaryOpenshellInstallGate(
+    openshellBody: string | null,
+    extraEnv: Record<string, string> = {},
+  ) {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-ordinary-openshell-gate-"));
+    const bin = path.join(tmp, "bin");
+    const sourceRoot = path.join(tmp, "source");
+    const spinLog = path.join(tmp, "spin.log");
+    fs.mkdirSync(bin, { recursive: true });
+    fs.mkdirSync(path.join(sourceRoot, "scripts"), { recursive: true });
+    writeExecutable(
+      path.join(sourceRoot, "scripts", "install-openshell.sh"),
+      "#!/usr/bin/env bash\nprintf 'install-openshell-invoked\\n'\nexit 0\n",
+    );
+    if (openshellBody !== null) {
+      writeExecutable(path.join(bin, "openshell"), openshellBody);
+    }
+
+    const childEnv: NodeJS.ProcessEnv = {
+      ...process.env,
+      HOME: path.join(tmp, "home"),
+      PATH: `${bin}:${path.dirname(process.execPath)}:/usr/bin:/bin`,
+      ...extraEnv,
+    };
+    if (!("NEMOCLAW_DEFER_OPENSHELL_INSTALL" in extraEnv)) {
+      delete childEnv.NEMOCLAW_DEFER_OPENSHELL_INSTALL;
+    }
+
+    const result = await runCommand(
+      "bash",
+      [
+        "-c",
+        `source "${INSTALLER_PAYLOAD}" >/dev/null 2>&1
+NEMOCLAW_SOURCE_ROOT="${sourceRoot}"
+spin() { printf '%s\\n' "$*" >>"${spinLog}"; }
+prefer_user_local_openshell() { :; }
+install_nemoclaw_openshell_gateway_user_service() { :; }
+maybe_install_openshell_during_install force`,
+      ],
+      { encoding: "utf-8", env: childEnv },
+    );
+
+    return {
+      result,
+      spinLog: fs.existsSync(spinLog) ? fs.readFileSync(spinLog, "utf-8") : "",
+    };
+  }
+
   it.skipIf(process.platform !== "linux")(
     "fails closed before onboarding when a present openshell cannot report its version (#7300)",
     async () => {
@@ -484,6 +532,45 @@ require_reportable_openshell_version`,
       expect(result.stderr + result.stdout).toContain("could not report its version");
     },
   );
+
+  it.each([
+    {
+      body: "#!/usr/bin/env bash\nexit 1\n",
+      name: "exits non-zero",
+    },
+    {
+      body: '#!/usr/bin/env bash\n[ "$1" = "--version" ] && echo "not-a-version"\nexit 0\n',
+      name: "prints a non-semver string",
+    },
+  ])(
+    "fails closed on the ordinary install path when a present OpenShell $name (#12060)",
+    async ({ body }) => {
+      const { result, spinLog } = await runOrdinaryOpenshellInstallGate(body);
+
+      expect(result.status, result.stdout + result.stderr).not.toBe(0);
+      expect(result.stderr + result.stdout).toContain("could not report its version");
+      expect(result.stderr + result.stdout).not.toContain("below minimum");
+      expect(spinLog).toBe("");
+    },
+  );
+
+  it("defers OpenShell install without failing closed when NEMOCLAW_DEFER_OPENSHELL_INSTALL is set (#12060)", async () => {
+    const { result, spinLog } = await runOrdinaryOpenshellInstallGate(brokenOpenshell, {
+      NEMOCLAW_DEFER_OPENSHELL_INSTALL: "1",
+    });
+
+    expect(result.status, result.stdout + result.stderr).toBe(0);
+    expect(result.stdout).toContain("Deferring OpenShell CLI installation");
+    expect(result.stderr + result.stdout).not.toContain("could not report its version");
+    expect(spinLog).toBe("");
+  });
+
+  it("installs OpenShell on the ordinary path when no binary is present (#12060)", async () => {
+    const { result, spinLog } = await runOrdinaryOpenshellInstallGate(null);
+
+    expect(result.status, result.stdout + result.stderr).toBe(0);
+    expect(spinLog).toContain("install-openshell.sh");
+  });
 
   it.skipIf(process.platform !== "linux")(
     "passes when the present openshell reports a version (#7300)",
