@@ -2748,7 +2748,11 @@
             },
             "imagePullPolicy": {
               "$ref": "#/$defs/ImagePullPolicy",
-              "description": "Image acquisition before container creation. Omission means Never."
+              "description": "Image acquisition before container creation. Omission means Never.",
+              "enum": [
+                "IfNotPresent",
+                "Never"
+              ]
             },
             "kind": {
               "const": "ollama",
@@ -2799,7 +2803,11 @@
             },
             "imagePullPolicy": {
               "$ref": "#/$defs/ImagePullPolicy",
-              "description": "Image acquisition before container creation. Omission means IfNotPresent."
+              "description": "Image acquisition before container creation. Omission means IfNotPresent.",
+              "enum": [
+                "IfNotPresent",
+                "Never"
+              ]
             },
             "kind": {
               "const": "ollamaProxy",
@@ -3036,7 +3044,11 @@
             },
             "imagePullPolicy": {
               "$ref": "#/$defs/ImagePullPolicy",
-              "description": "Image acquisition before container creation. Omission means Never."
+              "description": "Image acquisition before container creation. Omission means Never.",
+              "enum": [
+                "IfNotPresent",
+                "Never"
+              ]
             },
             "kind": {
               "const": "vllm",

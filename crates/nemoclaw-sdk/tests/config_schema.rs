@@ -59,8 +59,18 @@ fn image_pull_policy_accepts_only_supported_values_on_managed_containers() {
         for policy in ["Always", "IfNotPresent", "Never", "always", ""] {
             let mut value = input(file);
             value.pointer_mut(path).unwrap()["imagePullPolicy"] = json!(policy);
-            let accepted = matches!(policy, "Always" | "IfNotPresent" | "Never");
+            let accepted = matches!(policy, "IfNotPresent" | "Never")
+                || policy == "Always" && path == "/spec/gateway";
             agrees(&validator, &value, accepted);
+            if policy == "Always" && path != "/spec/gateway" {
+                let error = Document::parse(value.to_string().as_bytes())
+                    .unwrap_err()
+                    .to_string();
+                assert!(
+                    error.contains("IfNotPresent") && error.contains("Never"),
+                    "{error}"
+                );
+            }
             if accepted {
                 let document = Document::parse(value.to_string().as_bytes()).unwrap();
                 let exported = document.yaml().unwrap();

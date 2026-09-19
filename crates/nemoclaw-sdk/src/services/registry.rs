@@ -164,6 +164,13 @@ pub(crate) fn resource_label(kind: &str) -> Option<&'static str> {
 pub(crate) fn constrain_schema(defs: &mut serde_json::Map<String, serde_json::Value>) {
     installers::ollama::constrain_schema(defs);
     installers::vllm::schema::constrain(defs);
+    for service in defs["ServiceDefinition"]["oneOf"].as_array_mut().unwrap() {
+        crate::config::schema::validation::property(
+            service,
+            "imagePullPolicy",
+            serde_json::json!({"enum":["IfNotPresent", "Never"]}),
+        );
+    }
 }
 
 trait InferenceCapability {

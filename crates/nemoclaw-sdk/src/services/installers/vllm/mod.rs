@@ -93,6 +93,7 @@ impl Service {
     pub fn validate(&self) -> Result<(), ConfigError> {
         use crate::config::validation::require;
         validate_image(&self.image)?;
+        crate::config::ImagePullPolicy::validate_service(self.image_pull_policy)?;
         require(
             self.placement.is_some() == self.publication.is_some(),
             "service placement and publication must be declared together",

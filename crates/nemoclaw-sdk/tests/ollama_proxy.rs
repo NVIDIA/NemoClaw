@@ -27,7 +27,7 @@ fn proxy_pull_policy_preserves_credentials_and_other_resource_settings() {
     let mut value = input();
     let original = Document::parse(value.to_string().as_bytes()).unwrap();
     let before = compile(&original, &gens, "0.1.0").unwrap();
-    for policy in ["Always", "IfNotPresent", "Never"] {
+    for policy in ["IfNotPresent", "Never"] {
         value["spec"]["services"]["ollama-auth"]["imagePullPolicy"] = json!(policy);
         assert!(
             jsonschema::validator_for(&input_schema())
@@ -56,6 +56,24 @@ fn proxy_pull_policy_preserves_credentials_and_other_resource_settings() {
         }
         assert_eq!(after, before);
     }
+}
+
+#[test]
+fn proxy_rejects_always_pull_with_supported_alternatives() {
+    let mut value = input();
+    value["spec"]["services"]["ollama-auth"]["imagePullPolicy"] = json!("Always");
+    let error = Document::parse(value.to_string().as_bytes())
+        .unwrap_err()
+        .to_string();
+    assert!(
+        error.contains("IfNotPresent") && error.contains("Never"),
+        "{error}"
+    );
+    assert!(
+        !jsonschema::validator_for(&input_schema())
+            .unwrap()
+            .is_valid(&value)
+    );
 }
 #[test]
 fn external_ollama_compiles_only_proxy_and_external_model_observation() {

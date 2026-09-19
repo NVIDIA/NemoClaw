@@ -134,6 +134,7 @@ impl ManagedOllama {
     pub fn validate(&self) -> Result<(), crate::config::ConfigError> {
         use crate::config::validation::require;
         validate_image(&self.image)?;
+        crate::config::ImagePullPolicy::validate_service(self.image_pull_policy)?;
         require(
             self.placement.is_some() == self.publication.is_some(),
             "Ollama placement and publication must be declared together",
@@ -244,6 +245,7 @@ impl OllamaProxy {
     pub(crate) fn validate_definition(&self) -> Result<(), crate::config::ConfigError> {
         use crate::config::validation::require;
         validate_image(&self.image)?;
+        crate::config::ImagePullPolicy::validate_service(self.image_pull_policy)?;
         crate::config::validate_endpoint(&self.endpoint, false)?;
         crate::config::validate_endpoint(&self.upstream.endpoint, false)?;
         let upstream = Url::parse(&self.upstream.endpoint)
