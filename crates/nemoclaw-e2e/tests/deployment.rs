@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-use nemoclaw_e2e::openshell::Fixture;
+use nemoclaw_e2e::{assert_same_deployment_state, openshell::Fixture};
 use nemoclaw_sdk::{CancellationToken, Deployment, Outcome, config::Document};
 use std::{fs, path::PathBuf, process::Command};
 
@@ -728,7 +728,7 @@ async fn readiness_and_observation_failures_retain_bindings_and_recover_without_
         .unwrap_err()
         .to_string();
     assert!(error.contains("ControlSupervisorExited"), "{error}");
-    assert_eq!(fs::read(&state_path).unwrap(), established);
+    assert_same_deployment_state(&fs::read(&state_path).unwrap(), &established);
     assert_eq!(fixture.state.lock().unwrap().effects, effects);
     assert!(fixture.state.lock().unwrap().exec_calls.is_empty());
     for sandbox in fixture.state.lock().unwrap().sandboxes.values_mut() {
@@ -742,12 +742,13 @@ async fn readiness_and_observation_failures_retain_bindings_and_recover_without_
             .changes
             .is_empty()
     );
-    assert_eq!(fs::read(&state_path).unwrap(), established);
+    let recovered = fs::read(&state_path).unwrap();
+    assert_same_deployment_state(&recovered, &established);
     fixture.state.lock().unwrap().fail_read = Some(("provider", tonic::Code::Unavailable));
     assert!(deployment.export(&cancel).await.is_err());
     assert!(deployment.plan(&document, &cancel).await.is_err());
     assert!(deployment.apply(&document, &cancel).await.is_err());
-    assert_eq!(fs::read(&state_path).unwrap(), established);
+    assert_eq!(fs::read(&state_path).unwrap(), recovered);
     assert_eq!(fixture.state.lock().unwrap().effects, effects);
     fixture.state.lock().unwrap().fail_read = None;
     fixture.state.lock().unwrap().exec_truncated = true;
@@ -863,7 +864,7 @@ async fn apply_preserves_bindings_without_generating_inference() {
             .changes
             .is_empty()
     );
-    assert_eq!(fs::read(&state_path).unwrap(), bound);
+    assert_same_deployment_state(&fs::read(&state_path).unwrap(), &bound);
     assert_eq!(fixture.state.lock().unwrap().effects, effects);
     assert_eq!(deployment.export(&cancel).await.unwrap(), document);
     assert!(
@@ -944,9 +945,9 @@ async fn apply_health_failure_retains_resources_and_unchanged_apply_checks_again
             .all(|cmd| cmd.last().unwrap() != "health")
     );
     assert!(deployment.apply(&document, &cancel).await.is_err());
-    assert_eq!(
-        fs::read(directory.path().join("terraform.tfstate")).unwrap(),
-        before
+    assert_same_deployment_state(
+        &fs::read(directory.path().join("terraform.tfstate")).unwrap(),
+        &before,
     );
     let input = directory.path().join("deployment.yaml");
     fs::write(&input, document.yaml().unwrap()).unwrap();
