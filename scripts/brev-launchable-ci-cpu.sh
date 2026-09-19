@@ -13,6 +13,12 @@
 #   3. OpenShell CLI binary (pinned release)
 #   4. NemoClaw repo cloned with npm deps installed and TS plugin built
 #
+# What this does NOT install (intentionally):
+#   - code-server (not needed for automated CI)
+#   - VS Code themes/extensions
+#   - NVIDIA Container Toolkit (see brev-launchable-ci-gpu.sh for GPU flavor)
+#   - Ollama / vLLM
+#
 # Readiness detection:
 #   Writes /var/run/nemoclaw-launchable-ready when complete.
 #   Also writes "=== Ready ===" to /tmp/launch-plugin.log for backward compat.
@@ -94,31 +100,19 @@ NEMOCLAW_CLONE_DIR="${NEMOCLAW_CLONE_DIR:-${TARGET_HOME}/NemoClaw}"
 retry() {
   local max_attempts="$1" sleep_sec="$2" desc="$3"
   shift 3
-  local attempt=1 command_status=0
+  local attempt=1
   while true; do
     if "$@"; then
       return 0
-    else
-      command_status=$?
     fi
     if ((attempt >= max_attempts)); then
       warn "Failed after $max_attempts attempts: $desc"
-      return "$command_status"
+      return 1
     fi
     info "Retry $attempt/$max_attempts for: $desc (sleeping ${sleep_sec}s)"
     sleep "$sleep_sec"
     ((attempt++))
   done
-}
-
-print_sanitized_npm_debug_log() {
-  local npm_cache log_file
-  npm_cache="$(npm config get cache 2>/dev/null || true)"
-  [ -n "$npm_cache" ] || npm_cache="${HOME}/.npm"
-  log_file="$(find "$npm_cache/_logs" -maxdepth 1 -type f -name '*-debug-0.log' -print 2>/dev/null | LC_ALL=C sort | tail -1 || true)"
-  [ -n "$log_file" ] && [ -r "$log_file" ] || return 0
-  warn "Sanitized npm debug log (last 128 KiB):"
-  node scripts/lib/sanitize-npm-debug-log.mts "$log_file" || warn "npm log sanitization failed"
 }
 
 # Wait for apt locks.
@@ -330,16 +324,9 @@ info "Installing npm dependencies..."
 cd "$NEMOCLAW_CLONE_DIR"
 reviewed_npm_tmp="$(mktemp -d)"
 trap 'rm -rf "$reviewed_npm_tmp"' EXIT
-reviewed_npm_status=0
-retry 3 5 "install reviewed npm" \
-  sudo env -u NODE_AUTH_TOKEN -u NPM_TOKEN -u NPM_CONFIG__AUTH_TOKEN \
+sudo env -u NODE_AUTH_TOKEN -u NPM_TOKEN -u NPM_CONFIG__AUTH_TOKEN \
   RUNNER_TEMP="$reviewed_npm_tmp" \
-  bash .github/actions/setup-reviewed-npm/verify-and-install-npm.sh ci/reviewed-npm-audit.json \
-  || reviewed_npm_status=$?
-if [ "$reviewed_npm_status" -ne 0 ]; then
-  print_sanitized_npm_debug_log
-  exit "$reviewed_npm_status"
-fi
+  bash .github/actions/setup-reviewed-npm/verify-and-install-npm.sh ci/reviewed-npm-audit.json
 rm -rf "$reviewed_npm_tmp"
 trap - EXIT
 [[ "$(npm --version)" == "12.0.2" ]] || fail "Reviewed npm 12.0.2 installation failed"
