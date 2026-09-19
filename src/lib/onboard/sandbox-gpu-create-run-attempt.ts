@@ -637,6 +637,40 @@ export function createSandboxGpuCreateAttemptRunner(
       }
       return sandboxId;
     };
+    let createdSandboxVerified = false;
+    let compatibilityCreatePollError: unknown = null;
+    const verifyAndPatchCompatibilityDuringCreate = async (): Promise<void> => {
+      if (!compatibility || !deferPostCreateEffects || !createAttemptNonce) return;
+      if (!createdSandboxVerified) {
+        const observation = observeCreatedOpenShellSandboxId(
+          {
+            sandboxName: input.sandboxName,
+            gatewayName: input.gatewayName,
+            createAttemptNonce,
+            runCaptureOpenshell: captureSandboxReadiness,
+          },
+          SANDBOX_READY_PROBE_TIMEOUT_MS,
+        );
+        if (observation.state === "invalid") {
+          throw new Error(
+            `OpenShell did not return the exact created identity for sandbox '${input.sandboxName}'. Diagnostic class: ${observation.diagnostic}.`,
+          );
+        }
+        if (observation.sandboxId === null) return;
+        if (readyCheckCreatedSandboxId && observation.sandboxId !== readyCheckCreatedSandboxId) {
+          throw new Error("OpenShell create-attempt identity changed during initial cutover.");
+        }
+        readyCheckCreatedSandboxId = observation.sandboxId;
+        const sandboxId = settleCreatedIdentity();
+        waitForCreatedSandboxPublication(sandboxId);
+        await verifyCreatedSandboxBeforeEffects(sandboxId, createAttemptNonce, route, input);
+        createdSandboxVerified = true;
+      }
+      if (runtimePatch.replacementRuntimeId?.()) return;
+      revalidatePostCreateEffect(`apply runtime patch for sandbox '${input.sandboxName}'`);
+      runtimePatch.maybeApplyDuringCreate();
+      await runtimePatch.exitOnPatchError();
+    };
     const streamCreate = async () => {
       const createResult = await streamSandboxCreateWithPublicImageCredentialIsolation(
         input.managedImage === true,
@@ -652,6 +686,14 @@ export function createSandboxGpuCreateAttemptRunner(
                 timeout: SANDBOX_READY_PROBE_TIMEOUT_MS,
               });
               const ready = sandboxGpuCreateAttempt.isSandboxReady(list, input.sandboxName);
+              if (
+                ready &&
+                compatibility &&
+                deferPostCreateEffects &&
+                (!createdSandboxVerified || !runtimePatch.replacementRuntimeId?.())
+              ) {
+                return false;
+              }
               if (!ready || !createAttemptNonce) return ready;
               const observation = observeCreatedOpenShellSandboxId(
                 {
@@ -682,7 +724,18 @@ export function createSandboxGpuCreateAttemptRunner(
               return true;
             },
             ...(deferPostCreateEffects
-              ? {}
+              ? compatibility
+                ? {
+                    onPoll: async () => {
+                      try {
+                        await verifyAndPatchCompatibilityDuringCreate();
+                      } catch (error) {
+                        compatibilityCreatePollError = error;
+                        throw error;
+                      }
+                    },
+                  }
+                : {}
               : {
                   onPoll: () => {
                     if (!deferRestartSafeCutover) void runtimePatch.maybeApplyDuringCreate();
@@ -702,6 +755,7 @@ export function createSandboxGpuCreateAttemptRunner(
                 : undefined,
           }),
       );
+      if (compatibilityCreatePollError !== null) throw compatibilityCreatePollError;
       if (createResult.readyTerminationTimedOut) {
         if (createAttemptNonce) {
           persistIdentitySettlementRecovery(
@@ -720,7 +774,6 @@ export function createSandboxGpuCreateAttemptRunner(
     };
     let createResult: Awaited<ReturnType<typeof streamSandboxCreate>> | null = null;
     let resumedSandboxId: string | null = null;
-    let createdSandboxVerified = false;
     const failAfterCreatedSandboxVerification = (message: string, status: number): never => {
       if (createdSandboxVerified) throw new Error(message);
       return process.exit(status);

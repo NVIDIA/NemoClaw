@@ -127,7 +127,7 @@ export function createGpuFlowDeps(
 export function createGpuPatchFixture() {
   return {
     maybeApplyDuringCreate: vi.fn(),
-    replacementRuntimeId: vi.fn(() => null),
+    replacementRuntimeId: vi.fn<() => string | null>(() => null),
     createFailureMessage: vi.fn(() => null),
     exitOnPatchError: vi.fn(),
     rollbackManagedStartupAfterCreateFailure: vi.fn(),

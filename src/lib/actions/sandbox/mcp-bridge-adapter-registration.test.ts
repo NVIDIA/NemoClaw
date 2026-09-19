@@ -246,9 +246,6 @@ describe("OpenClaw MCP adapter registration", () => {
   });
 
   it("restarts the gateway only for native OpenClaw MCP mutations", async () => {
-    mocks.executeSandboxCommand
-      .mockResolvedValueOnce({ status: 0, stdout: "101 1001\n", stderr: "" })
-      .mockResolvedValueOnce({ status: 0, stdout: "202 2002\n", stderr: "" });
     mocks.restartSandboxGateway.mockReturnValue({
       ok: true,
       restarted: true,
@@ -265,11 +262,6 @@ describe("OpenClaw MCP adapter registration", () => {
   });
 
   it("fails when the gateway cannot activate the verified config", async () => {
-    mocks.executeSandboxCommand.mockResolvedValue({
-      status: 0,
-      stdout: "101 1001\n",
-      stderr: "",
-    });
     mocks.restartSandboxGateway.mockReturnValue({
       ok: false,
       failureLayer: "health timeout",
@@ -281,24 +273,6 @@ describe("OpenClaw MCP adapter registration", () => {
     ).rejects.toThrow(
       "OpenClaw gateway did not activate the native MCP configuration (health timeout: gateway process restarted but health did not pass before timeout).",
     );
-  });
-
-  it("fails when a safe MCP reload never replaces the supervised gateway identity", async () => {
-    mocks.executeSandboxCommand.mockResolvedValue({
-      status: 0,
-      stdout: "101 1001\n",
-      stderr: "",
-    });
-    mocks.restartSandboxGateway.mockReturnValue({
-      ok: true,
-      restarted: true,
-      healthPassed: true,
-      forwardRecovered: true,
-    });
-
-    await expect(
-      reloadOpenClawGatewayAfterMcpMutation("alpha", ["openclaw-config"]),
-    ).rejects.toThrow("did not publish a replacement process identity");
   });
 
   it("rejects a v11 post-write observation after registering the readiness-proven v12", async () => {

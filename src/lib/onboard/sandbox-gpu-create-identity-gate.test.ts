@@ -577,6 +577,58 @@ describe("created sandbox identity gate", () => {
     expect(deps.sleep).not.toHaveBeenCalled();
   });
 
+  it("applies a compatibility cutover after exact identity verification and before create returns (#11905)", async () => {
+    const events: string[] = [];
+    let nonce = "";
+    let replacementRuntimeId: string | null = null;
+    const input = createGpuFlowInput();
+    input.gpuRoutePlan = "compatibility-only";
+    input.initialGpuRoute = "compatibility";
+    input.persistRetainedSandboxRecovery = vi.fn(() => true);
+    input.verifyCreatedSandboxBeforeEffects = vi.fn(async () => {
+      events.push("verify-created");
+      expect(replacementRuntimeId).toBeNull();
+    });
+    input.revalidateVerifiedSandboxBeforeEffect = vi.fn((operation) =>
+      events.push(`revalidate:${operation}`),
+    );
+    const patch = createGpuPatchFixture();
+    patch.replacementRuntimeId.mockImplementation(() => replacementRuntimeId);
+    patch.maybeApplyDuringCreate.mockImplementation(() => {
+      events.push("compatibility-cutover");
+      replacementRuntimeId = "b".repeat(64);
+    });
+    patch.ensureApplied.mockImplementation(() => events.push("ensure-applied"));
+    mocks.createDockerGpuSandboxCreatePatch.mockReturnValue(patch);
+    mocks.streamSandboxCreate.mockImplementation(async (_command, args, _env, options) => {
+      events.push("create-started");
+      nonce = createAttemptNonce(args);
+      expect(options.readyCheck?.()).toBe(false);
+      await options.onPoll?.();
+      expect(options.readyCheck?.()).toBe(true);
+      events.push("create-complete");
+      return { status: 0, output: "Created sandbox: alpha", sawProgress: true };
+    });
+    const deps = createGpuFlowDeps();
+    vi.mocked(deps.runCaptureOpenshell).mockImplementation((args) =>
+      args.includes("--selector")
+        ? sandboxListJson("alpha-sandbox-id", {
+            [NEMOCLAW_CREATE_ATTEMPT_LABEL]: nonce,
+          })
+        : "alpha Ready",
+    );
+
+    await expect(runSandboxGpuCreateFlow(input, deps)).resolves.toMatchObject({
+      route: "compatibility",
+    });
+
+    expect(input.verifyCreatedSandboxBeforeEffects).toHaveBeenCalledOnce();
+    expect(patch.maybeApplyDuringCreate).toHaveBeenCalledOnce();
+    expect(events.indexOf("verify-created")).toBeLessThan(events.indexOf("compatibility-cutover"));
+    expect(events.indexOf("compatibility-cutover")).toBeLessThan(events.indexOf("create-complete"));
+    expect(events).toContain("ensure-applied");
+  });
+
   it("returns false and blocks effects when the create-attempt selector returns no sandbox ID (#10769)", async () => {
     const input = noGpuInput();
     input.verifyCreatedSandboxBeforeEffects = vi.fn();
