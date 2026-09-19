@@ -84,11 +84,13 @@ retry_exhausted = module.decide_exit_code(
     {"failed": True, "completed": False, "error": "429 Too Many Requests"},
     "API call failed after 3 retries: 429 Too Many Requests",
 )
+partial = module.decide_exit_code({"partial": True, "completed": False}, "partial response")
 delivered = module.decide_exit_code({"failed": False, "completed": True}, "56")
 empty_unflagged = module.decide_exit_code({}, "")
 
 print(json.dumps({
     "retry_exhausted": retry_exhausted,
+    "partial": partial,
     "delivered": delivered,
     "empty_unflagged": empty_unflagged,
 }))
@@ -101,12 +103,14 @@ print(json.dumps({
     expect(probeResult.status, probeResult.stderr).toBe(0);
     const observed = JSON.parse(probeResult.stdout) as {
       retry_exhausted: number;
+      partial: number;
       delivered: number;
       empty_unflagged: number;
     };
     // Before this patch, a failed run whose own error text became the
     // response fell through to exit 0 (NVIDIA/NemoClaw#11848).
     expect(observed.retry_exhausted).not.toBe(0);
+    expect(observed.partial).toBe(2);
     expect(observed.delivered).toBe(0);
     expect(observed.empty_unflagged).toBe(1);
   });
