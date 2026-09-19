@@ -89,52 +89,138 @@ fn runtime_configuration_rejects_invalid_specs_and_preserves_opaque_input() {
 }
 
 #[test]
-fn runtime_specs_preserve_ownership_and_explicit_launch_contracts() {
+fn runtime_identity_survives_serialization_but_tracks_changed_configuration() {
     let fixtures: Vec<serde_json::Value> =
         serde_json::from_str(include_str!("reference.json")).unwrap();
     for fixture in fixtures {
-        let source = fixture["spec"].as_str().unwrap();
-        let spec: Spec = serde_json::from_str(source).unwrap();
-        spec.validate().unwrap();
-        assert_eq!(spec.json().unwrap(), source);
-        assert_eq!(
-            serde_json::to_value(spec.labels().unwrap()).unwrap(),
-            fixture["labels"]
-        );
-        let create = serde_json::to_value(
-            spec.container("/var/lib/docker/volumes/fixture/_data")
-                .unwrap(),
-        )
-        .unwrap();
-        for key in ["Image", "User", "Entrypoint", "Cmd", "Env", "Labels"] {
-            assert_eq!(create[key], fixture["config"][key], "{key}");
+        let spec: Spec = serde_json::from_str(fixture["spec"].as_str().unwrap()).unwrap();
+        let restored: Spec = serde_json::from_str(&spec.json().unwrap()).unwrap();
+        assert_eq!(restored, spec);
+        let labels = spec.labels().unwrap();
+        assert_eq!(labels[OWNER_LABEL], spec.owner);
+        assert_eq!(labels[GENERATION_LABEL], spec.generation);
+        assert_eq!(restored.labels().unwrap(), labels);
+        let mut changed = spec.clone();
+        if let Some(process) = &mut changed.process {
+            let last = if process.image.ends_with('0') {
+                '1'
+            } else {
+                '0'
+            };
+            process.image.pop();
+            process.image.push(last);
+        } else {
+            let current = url::Url::parse(&spec.gateway.endpoint)
+                .unwrap()
+                .port()
+                .unwrap();
+            let port = if current == 19001 { 19002 } else { 19001 };
+            changed.gateway.endpoint = format!("http://127.0.0.1:{port}");
         }
-        for key in [
-            "NetworkMode",
-            "CapDrop",
-            "SecurityOpt",
-            "RestartPolicy",
-            "Mounts",
-            "PortBindings",
-            "Memory",
-            "MemorySwap",
-            "DeviceRequests",
-            "Ulimits",
-            "ShmSize",
-            "LogConfig",
-        ] {
-            assert_eq!(
-                without_null_members(create["HostConfig"][key].clone()),
-                without_null_members(fixture["hostConfig"][key].clone()),
-                "{key}"
-            );
-        }
+        changed.validate().unwrap();
+        assert_ne!(changed.labels().unwrap()[SPEC_LABEL], labels[SPEC_LABEL]);
         assert_eq!(
-            spec.gateway_config("/var/lib/docker/volumes/fixture/_data"),
-            fixture["gatewayConfig"].as_str().unwrap()
+            changed.volume(),
+            spec.volume(),
+            "process changes must not select new storage"
         );
+        assert_eq!(changed.network(), spec.network());
     }
 }
+
+#[test]
+fn runtime_launch_preserves_declared_bindings_limits_and_isolation() {
+    let fixtures: Vec<serde_json::Value> =
+        serde_json::from_str(include_str!("reference.json")).unwrap();
+    for fixture in fixtures {
+        let spec: Spec = serde_json::from_str(fixture["spec"].as_str().unwrap()).unwrap();
+        let launch = spec.container("/owned-data").unwrap();
+        assert_eq!(launch.image.as_deref(), Some(spec.image()));
+        assert_eq!(launch.labels.as_ref().unwrap()[OWNER_LABEL], spec.owner);
+        assert_eq!(
+            launch.labels.as_ref().unwrap()[GENERATION_LABEL],
+            spec.generation
+        );
+        let host = launch.host_config.unwrap();
+        assert!(!host.privileged.unwrap_or(false));
+        assert!(host.cap_add.as_ref().is_none_or(Vec::is_empty));
+        assert!(
+            host.cap_drop
+                .as_ref()
+                .unwrap()
+                .iter()
+                .any(|cap| cap == "ALL")
+        );
+        assert!(
+            host.security_opt
+                .as_ref()
+                .unwrap()
+                .iter()
+                .any(|opt| opt == "no-new-privileges")
+        );
+        assert!(
+            host.restart_policy
+                .as_ref()
+                .and_then(|policy| policy.name)
+                .is_none_or(|name| name.to_string() == "no")
+        );
+        let mounts = host.mounts.as_ref().unwrap();
+        let storage = mounts
+            .iter()
+            .find(|mount| mount.source.as_deref() == Some(&spec.volume()))
+            .unwrap();
+        if let Some(process) = &spec.process {
+            assert_eq!(launch.entrypoint.as_ref(), Some(&process.entrypoint));
+            assert_eq!(launch.cmd.as_ref(), Some(&process.command));
+            assert!(
+                launch
+                    .env
+                    .as_ref()
+                    .unwrap()
+                    .contains(&format!("NEMOCLAW_RUNTIME_SPEC={}", process.configuration))
+            );
+            assert_eq!(
+                storage.target.as_deref(),
+                Some(process.mount_target.as_str())
+            );
+            assert_eq!(host.network_mode.as_deref(), Some(spec.network().as_str()));
+            let requests_gpu = host.device_requests.as_ref().is_some_and(|requests| {
+                requests.iter().any(|request| {
+                    request.capabilities.as_ref().is_some_and(|groups| {
+                        groups
+                            .iter()
+                            .any(|group| group.iter().any(|capability| capability == "gpu"))
+                    })
+                })
+            });
+            assert_eq!(requests_gpu, process.gpu);
+            assert_eq!(host.ipc_mode.as_deref() == Some("host"), process.host_ipc);
+            assert_eq!(host.memory, Some(process.memory_bytes as i64));
+            assert_eq!(host.memory_swap, host.memory);
+            assert_eq!(host.shm_size, Some(process.shared_memory_bytes as i64));
+            let bindings = host.port_bindings.as_ref().unwrap()[&format!("{}/tcp", process.port)]
+                .as_ref()
+                .unwrap();
+            assert!(bindings.iter().any(|binding| binding.host_ip.as_deref()
+                == Some(process.bind_address.as_str())
+                && binding.host_port.as_deref() == Some(process.port.to_string().as_str())));
+        } else {
+            assert_eq!(storage.target.as_deref(), Some("/owned-data"));
+            assert_eq!(host.network_mode.as_deref(), Some("host"));
+            assert!(mounts.iter().any(|mount| mount.source.as_deref()
+                == spec.gateway.engine.strip_prefix("unix://")
+                && mount.target.as_deref() == Some("/var/run/docker.sock")));
+            assert!(
+                launch
+                    .env
+                    .as_ref()
+                    .unwrap()
+                    .contains(&"OPENSHELL_DB_URL=sqlite:/owned-data/gateway.db".into())
+            );
+        }
+    }
+}
+
 #[test]
 fn managed_specs_reject_missing_ownership_or_unknown_runtime_layout() {
     let fixtures: Vec<serde_json::Value> =
@@ -155,26 +241,6 @@ fn managed_specs_reject_missing_ownership_or_unknown_runtime_layout() {
                 .is_err()
         );
     }
-}
-
-// Docker treats absent and null optional device maps equivalently.
-// Preserve every non-null launch value.
-fn without_null_members(mut value: serde_json::Value) -> serde_json::Value {
-    match &mut value {
-        serde_json::Value::Object(map) => {
-            map.retain(|_, value| !value.is_null());
-            for value in map.values_mut() {
-                *value = without_null_members(value.take());
-            }
-        }
-        serde_json::Value::Array(values) => {
-            for value in values {
-                *value = without_null_members(value.take());
-            }
-        }
-        _ => {}
-    }
-    value
 }
 
 #[test]
