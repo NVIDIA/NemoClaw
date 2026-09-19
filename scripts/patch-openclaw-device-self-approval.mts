@@ -34,10 +34,16 @@
  * pre-convergence transition separately from a cold clone, which has no paired
  * record and must not select stored device authentication.
  *
+ * On the local-fallback approve path, a failed gateway connect can leave
+ * handles open. OpenClaw then prints Approved and returns without exiting, so
+ * `openclaw devices approve` hangs and `nemoclaw connect` waits with it
+ * (#12064). Force `defaultRuntime.exit(0)` after a successful approve until
+ * upstream closes those handles or exits after Approved.
+ *
  * Remove this patch when upstream OpenClaw supports same-device, operator-only
  * scope approval through the gateway using the already-approved pairing scope
  * and publishes the pending/paired transition atomically or with equivalent
- * durable restart recovery.
+ * durable restart recovery, and when `devices approve` exits after Approved.
  */
 
 import fs from "node:fs";
@@ -56,6 +62,8 @@ const CLI_LIST_MARKER = "nemoclaw: preflight bounded stored device auth before l
 const CLI_SETTLEMENT_LIST_MARKER = "nemoclaw: use stored device auth for pairing settlement list";
 const CLI_BOOTSTRAP_AUTH_STORE_MARKER = "nemoclaw: persist canonical CLI bootstrap credential";
 const CLI_PAIRED_TOKEN_MARKER = "nemoclaw: preflight bounded paired token before live pairing list";
+const CLI_APPROVE_EXIT_MARKER =
+  "nemoclaw: exit after devices approve so leftover gateway handles cannot hang";
 const CALL_FORCE_IDENTITY_MARKER = "nemoclaw: force device identity for loopback pairing bootstrap";
 const CALL_STORED_IDENTITY_MARKER =
   "nemoclaw: retain stored CLI device identity for loopback shared-token scope enforcement";
@@ -372,6 +380,44 @@ function replaceExactlyOnce(
     };
   }
   return { source: source.replace(needle, replacement) };
+}
+
+const CLI_APPROVE_EXIT_TARGET = [
+  "\tif (opts.json) {",
+  "\t\tdefaultRuntime.writeJson(result);",
+  "\t\treturn;",
+  "\t}",
+  "\tconst resultRequestId = result?.requestId;",
+  '\tconst approvedRequestId = typeof resultRequestId === "string" && resultRequestId.trim().length > 0 ? resultRequestId : resolvedRequestId;',
+  "\tconst deviceId = result?.device?.deviceId;",
+  '\tdefaultRuntime.log(`${theme.success("Approved")} ${theme.command(deviceId ?? "ok")} ${theme.muted(`(${approvedRequestId})`)}`);',
+  "}",
+].join("\n");
+const CLI_APPROVE_EXIT_REPLACEMENT = [
+  "\tif (opts.json) {",
+  "\t\tdefaultRuntime.writeJson(result);",
+  `\t\tdefaultRuntime.exit(0); // ${CLI_APPROVE_EXIT_MARKER} (#12064)`,
+  "\t\treturn;",
+  "\t}",
+  "\tconst resultRequestId = result?.requestId;",
+  '\tconst approvedRequestId = typeof resultRequestId === "string" && resultRequestId.trim().length > 0 ? resultRequestId : resolvedRequestId;',
+  "\tconst deviceId = result?.device?.deviceId;",
+  '\tdefaultRuntime.log(`${theme.success("Approved")} ${theme.command(deviceId ?? "ok")} ${theme.muted(`(${approvedRequestId})`)}`);',
+  `\tdefaultRuntime.exit(0); // ${CLI_APPROVE_EXIT_MARKER} (#12064)`,
+  "}",
+].join("\n");
+
+function applyDevicesApproveExitPatch(source: string, file: string): ReplacementResult {
+  if (source.includes(CLI_APPROVE_EXIT_MARKER)) {
+    return { source };
+  }
+  return replaceExactlyOnce(
+    source,
+    CLI_APPROVE_EXIT_TARGET,
+    CLI_APPROVE_EXIT_REPLACEMENT,
+    "devices CLI approve success exit target",
+    file,
+  );
 }
 
 const CLI_TARGET = [
@@ -1635,7 +1681,10 @@ function patchCurrentDevicesCli(source: string, file: string): PatchResult {
     result = replaceExactlyOnce(result.source, target, replacement, label, file);
     if (result.error) return { source, status: "no-match", error: result.error };
   }
-  return { source: result.source, status: "would-apply" };
+  result = applyDevicesApproveExitPatch(result.source, file);
+  return result.error
+    ? { source, status: "no-match", error: result.error }
+    : { source: result.source, status: "would-apply" };
 }
 
 function patchCurrentPairingState(source: string, file: string): PatchResult {
@@ -1898,6 +1947,12 @@ const BASE_FILE_SPECS: FileSpec[] = [
             upgradedSource = result.source;
             changed = true;
           }
+          if (!upgradedSource.includes(CLI_APPROVE_EXIT_MARKER)) {
+            const result = applyDevicesApproveExitPatch(upgradedSource, file);
+            if (result.error) return { source, status: "no-match", error: result.error };
+            upgradedSource = result.source;
+            changed = true;
+          }
           return {
             source: upgradedSource,
             status: changed ? "would-apply" : "already-applied",
@@ -1990,6 +2045,8 @@ const BASE_FILE_SPECS: FileSpec[] = [
         "devices CLI stored-auth fail-closed retry target",
         file,
       );
+      if (result.error) return { source, status: "no-match", error: result.error };
+      result = applyDevicesApproveExitPatch(result.source, file);
       return result.error
         ? { source, status: "no-match", error: result.error }
         : { source: result.source, status: "would-apply" };

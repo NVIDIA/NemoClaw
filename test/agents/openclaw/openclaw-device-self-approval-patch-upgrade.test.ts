@@ -94,6 +94,50 @@ describe("OpenClaw device self-approval patch upgrades (#4462)", () => {
     }
   });
 
+  it("adds process exit after devices approve on an earlier patched runtime (#12064)", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-device-approve-exit-upgrade-"));
+    const dist = path.join(tmp, "dist");
+    fs.mkdirSync(dist);
+    writeFixtureDist(dist);
+    try {
+      expect(runPatch(dist).status).toBe(0);
+      const file = path.join(dist, "devices-cli.runtime-fixture.js");
+      const current = [
+        "\tif (opts.json) {",
+        "\t\tdefaultRuntime.writeJson(result);",
+        "\t\tdefaultRuntime.exit(0); // nemoclaw: exit after devices approve so leftover gateway handles cannot hang (#12064)",
+        "\t\treturn;",
+        "\t}",
+        "\tconst resultRequestId = result?.requestId;",
+        '\tconst approvedRequestId = typeof resultRequestId === "string" && resultRequestId.trim().length > 0 ? resultRequestId : resolvedRequestId;',
+        "\tconst deviceId = result?.device?.deviceId;",
+        '\tdefaultRuntime.log(`${theme.success("Approved")} ${theme.command(deviceId ?? "ok")} ${theme.muted(`(${approvedRequestId})`)}`);',
+        "\tdefaultRuntime.exit(0); // nemoclaw: exit after devices approve so leftover gateway handles cannot hang (#12064)",
+        "}",
+      ].join("\n");
+      const legacy = [
+        "\tif (opts.json) {",
+        "\t\tdefaultRuntime.writeJson(result);",
+        "\t\treturn;",
+        "\t}",
+        "\tconst resultRequestId = result?.requestId;",
+        '\tconst approvedRequestId = typeof resultRequestId === "string" && resultRequestId.trim().length > 0 ? resultRequestId : resolvedRequestId;',
+        "\tconst deviceId = result?.device?.deviceId;",
+        '\tdefaultRuntime.log(`${theme.success("Approved")} ${theme.command(deviceId ?? "ok")} ${theme.muted(`(${approvedRequestId})`)}`);',
+        "}",
+      ].join("\n");
+      const source = fs.readFileSync(file, "utf8");
+      expect(source).toContain(current);
+      fs.writeFileSync(file, source.replace(current, legacy));
+
+      expect(runPatch(dist).status).toBe(0);
+      expect(fs.readFileSync(file, "utf8")).toContain(current);
+      expect(runPatch(dist).status).toBe(0);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("adds watcher deferral to an earlier patched current gateway runtime (#9844)", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-device-defer-upgrade-"));
     const dist = path.join(tmp, "dist");
