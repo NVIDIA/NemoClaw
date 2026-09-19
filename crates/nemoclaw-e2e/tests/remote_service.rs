@@ -272,7 +272,12 @@ async fn lifecycle(harness: &str, authenticated: bool) {
             save(root, "fixture.json", &changed);
             run(root, &bundle, "plan", "config.yaml", false).await;
             run(root, &bundle, "apply", "config.yaml", false).await;
-            run(root, &bundle, "export", "", false).await;
+            // Export reports configuration; artifact health is checked by plan/apply.
+            let exported = run(root, &bundle, "export", "", true).await;
+            assert_eq!(
+                Document::parse(exported.as_slice()).unwrap(),
+                Document::parse(fs::read(root.join("export.yaml")).unwrap().as_slice()).unwrap()
+            );
             assert_eq!(
                 fs::read(root.join("deployment/runtime/terraform.tfstate")).unwrap(),
                 state
@@ -286,7 +291,9 @@ async fn lifecycle(harness: &str, authenticated: bool) {
         let mut corrupt = original.clone();
         corrupt["stats"]["/data/inference-key"]["mode"] = json!(420);
         save(root, "fixture.json", &corrupt);
-        run(root, &bundle, "export", "", false).await;
+        // Export does not load the generated credential. Apply must reject an insecure key.
+        run(root, &bundle, "export", "", true).await;
+        run(root, &bundle, "apply", "config.yaml", false).await;
         assert_eq!(
             fs::read(root.join("deployment/runtime/terraform.tfstate")).unwrap(),
             state
