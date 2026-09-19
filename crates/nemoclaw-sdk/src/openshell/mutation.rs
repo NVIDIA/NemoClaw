@@ -230,6 +230,28 @@ impl OpenShell {
 }
 #[async_trait]
 impl Backend for OpenShell {
+    async fn plan(
+        &self,
+        kind: &str,
+        desired: &Row,
+        prior: Option<&Row>,
+    ) -> Result<(), crate::Error> {
+        // Bound resources were refreshed by OpenTofu. New resources still need
+        // an ownership check: their names may already exist in the gateway.
+        if prior.is_none()
+            && let Some(observed) = self
+                .observe(
+                    kind,
+                    value(desired, "workspace"),
+                    value(desired, "name"),
+                    false,
+                )
+                .await?
+        {
+            verify_identity(desired, &observed)?;
+        }
+        Ok(())
+    }
     async fn read(
         &self,
         kind: &str,
@@ -244,6 +266,27 @@ impl Backend for OpenShell {
                 removing,
             )
             .await?;
+        if kind == "sandbox"
+            && !removing
+            && let Some(row) = &observed
+        {
+            verify_identity(prior, row)?;
+            self.check_sandbox_phase(row)
+                .await
+                .map_err(|error| match error {
+                    crate::Error::Observation(error) => error,
+                    crate::Error::SandboxStartup {
+                        phase,
+                        reason,
+                        exit_code,
+                    } => ObservationError::SandboxStartup {
+                        phase,
+                        reason,
+                        exit_code: exit_code.parse().ok(),
+                    },
+                    _ => ObservationError::Query,
+                })?;
+        }
         if kind == "sandbox"
             && !removing
             && let Some(row) = &observed

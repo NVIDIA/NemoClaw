@@ -227,7 +227,6 @@ impl Deployment {
             ));
         }
         (self.progress)(Progress::Validating);
-        tokio::select! {()=cancel.cancelled()=>return Err(Error::Cancelled),result=self.validate_deployment_resources(&client,&document,&targets,&bindings)=>result?}
         self.prepare(
             &bundle,
             &store,
@@ -379,44 +378,6 @@ impl Deployment {
         store.save(&record)?;
         result.outcome = Outcome::Succeeded;
         Ok(result)
-    }
-    async fn validate_deployment_resources(
-        &self,
-        client: &OpenShell,
-        document: &Document,
-        targets: &[Target],
-        bindings: &BTreeMap<String, StateBinding>,
-    ) -> Result<(), Error> {
-        validate_gateway(client, document).await?;
-        for target in targets {
-            let mut expected = target.values.clone();
-            if let Some(binding) = bindings.get(&target.address) {
-                expected.insert("id".into(), binding.id.clone());
-                if target.kind == "sandbox" {
-                    // A terminal sandbox cannot answer native configuration
-                    // checks. Report its verified lifecycle failure first.
-                    client.check_sandbox_phase(&expected).await?;
-                }
-            }
-            let observed = if let Some(backend) =
-                crate::services::BackendRegistry::new(&self.engines)
-                    .resolve(&target.kind, &expected)?
-            {
-                backend.read(&target.kind, &expected, false).await?
-            } else {
-                client.read(&target.kind, &expected, false).await?
-            };
-            match observed {
-                Some(observed) => verify_identity(&expected, &observed)?,
-                None if bindings.contains_key(&target.address) => {
-                    return Err(Error::Conflict(
-                        "managed resource disappeared; automatic replacement is forbidden",
-                    ));
-                }
-                None => {}
-            }
-        }
-        Ok(())
     }
     fn prepare(&self, bundle: &Bundle, store: &Store, graph: &Value) -> Result<(), Error> {
         for entry in fs::read_dir(&store.directory)

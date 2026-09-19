@@ -71,11 +71,25 @@ pub enum ObservationError {
     /// A fixed, non-secret diagnostic from an owning backend.
     Backend(&'static str),
     Hardware(crate::hardware::HardwareDiagnostic),
+    SandboxStartup {
+        phase: &'static str,
+        reason: &'static str,
+        exit_code: Option<i32>,
+    },
 }
 
 impl fmt::Display for ObservationError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::SandboxStartup {
+                phase,
+                reason,
+                exit_code,
+            } => write!(
+                f,
+                "sandbox unavailable: {phase}, reason {reason}, exit code {}; resources retained",
+                exit_code.map_or_else(|| "unknown".into(), |code| code.to_string())
+            ),
             Self::Hardware(diagnostic) => diagnostic.fmt(f),
             Self::Backend(message) => f.write_str(message),
             Self::Authentication => f.write_str("observation authentication failed"),

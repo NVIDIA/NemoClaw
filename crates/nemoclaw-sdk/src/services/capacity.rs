@@ -131,16 +131,40 @@ pub(crate) fn groups<'a>(
     }
     Ok(groups)
 }
+/// Recheck volatile startup prerequisites immediately before graph mutation.
 pub(crate) async fn recheck(
     connections: &Connections,
-    rows: &BTreeMap<String, Row>,
+    desired: &BTreeMap<String, Row>,
+    expected: &BTreeMap<String, Row>,
+    bindings: &BTreeMap<String, crate::state::StateBinding>,
 ) -> Result<(), Error> {
-    for (engine, specs) in groups(rows.iter().map(|(address, row)| (address.as_str(), row)))? {
-        observe_service_capacity(connections, &engine, &specs)
-            .await?
-            .require()?;
+    let mut checks = Vec::new();
+    for (address, row) in desired {
+        let kind = address
+            .split_once('.')
+            .map(|(kind, _)| kind.trim_start_matches("nemoclaw_"))
+            .unwrap_or("");
+        if !super::resource_behavior(kind).runtime_process {
+            continue;
+        }
+        let want: Spec = serde_json::from_str(&row["spec"])
+            .map_err(|_| Error::State("invalid capacity specification"))?;
+        let old: Spec = serde_json::from_str(&expected[address]["spec"])
+            .map_err(|_| Error::State("invalid bound capacity specification"))?;
+        let engine = crate::managed::service_engine(connections, want.engine())?;
+        let id = bindings
+            .get(address)
+            .map(|binding| binding.id.as_str())
+            .unwrap_or("");
+        let observed = match engine.observe_runtime(&old, id).await {
+            Err(Error::PartialRuntime) if id.is_empty() => None,
+            other => other?,
+        };
+        if let Some(check) = check_runtime_capacity(&engine, &want, observed.as_ref()).await? {
+            checks.push(check);
+        }
     }
-    Ok(())
+    check_combined_capacity(connections, checks).await
 }
 
 struct Accounting {
@@ -256,6 +280,19 @@ enum CapacityService {
     Vllm(installers::vllm::Service),
 }
 
+/// Planning inspects existing model data; apply also resolves missing artifacts
+/// and requires free memory for a process that must start.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CapacityCheck {
+    Plan,
+    Apply { starting: bool },
+}
+impl CapacityCheck {
+    pub(crate) fn starting(self) -> bool {
+        matches!(self, Self::Apply { starting: true })
+    }
+}
+
 pub(crate) async fn check_process_capacity(
     engine: &crate::docker::Engine,
     spec: &crate::managed::Spec,
@@ -269,6 +306,38 @@ pub(crate) async fn check_process_capacity(
         _ => Err(crate::Error::Conflict(
             "managed process kind has no registered capacity check",
         )),
+    }
+}
+
+/// Planning checks retained artifacts without counting allocated memory as new demand.
+pub(crate) async fn check_process_plan(
+    engine: &crate::docker::Engine,
+    spec: &Spec,
+    binding: &str,
+) -> Result<(), Error> {
+    // Resource refresh already verified this engine/container/volume/network
+    // identity. Use its container to inspect retained model metadata.
+    let parts: Vec<_> = binding.split('/').collect();
+    if parts.len() != 4 || parts.iter().any(|part| part.is_empty()) {
+        return Err(crate::ObservationError::Incomplete.into());
+    }
+    let container_id = parts[1];
+    match spec.kind.as_str() {
+        installers::vllm::SERVICE_KIND => {
+            engine
+                .check_capacity_phase(spec, Some(container_id), CapacityCheck::Plan)
+                .await
+        }
+        installers::ollama::SERVICE_KIND => {
+            installers::ollama::capacity::check_phase(
+                engine,
+                spec,
+                Some(container_id),
+                CapacityCheck::Plan,
+            )
+            .await
+        }
+        _ => Err(Error::Conflict("runtime has no hardware contract")),
     }
 }
 

@@ -128,6 +128,14 @@ fn diagnostic(error: &Error) -> ObservationError {
 impl Backend for ManagedBackend {
     async fn plan(&self, kind: &str, desired: &Row, prior: Option<&Row>) -> Result<(), Error> {
         if kind != GATEWAY_KIND && self.process_kind != Some(kind) {
+            if prior.is_none() {
+                match self.observe(kind, desired, false, false).await {
+                    Err(Error::PartialRuntime) => {}
+                    other => {
+                        other?;
+                    }
+                }
+            }
             return Ok(());
         }
         let encoded = desired.get("spec").ok_or(ObservationError::Incomplete)?;
@@ -149,9 +157,33 @@ impl Backend for ManagedBackend {
             return Err(ObservationError::Incomplete.into());
         }
         if self.process_kind == Some(kind) {
-            crate::services::check_resource_hardware(&self.engine, &want).await?;
+            if let Some(prior) = prior {
+                crate::services::capacity::check_process_plan(&self.engine, &want, &prior["id"])
+                    .await?;
+            } else {
+                crate::services::check_resource_hardware(&self.engine, &want).await?;
+            }
         }
+
         let work = async {
+            if prior.is_none()
+                && let Some(container) = self.engine.managed_container(&want, &want.name).await?
+            {
+                // Core also sends a null prior when planning replacement. Check
+                // ownership here without comparing the old process configuration.
+                super::observation::verify_labels(
+                    &[
+                        (super::OWNER_LABEL.into(), want.owner.clone()),
+                        (super::GENERATION_LABEL.into(), want.generation.clone()),
+                    ]
+                    .into(),
+                    container
+                        .config
+                        .as_ref()
+                        .and_then(|config| config.labels.as_ref())
+                        .ok_or(ObservationError::Incomplete)?,
+                )?;
+            }
             self.engine.check_planned_network(&want).await?;
             self.engine.check_planned_image(&want).await
         };

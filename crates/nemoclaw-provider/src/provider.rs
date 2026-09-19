@@ -62,9 +62,9 @@ impl Backend for ConfiguredBackend {
         prior: Option<&Row>,
     ) -> Result<(), nemoclaw_sdk::Error> {
         if let Some(backend) = BackendRegistry::new(&self.1).resolve(kind, desired)? {
-            backend.plan(kind, desired, prior).await?;
+            return backend.plan(kind, desired, prior).await;
         }
-        Ok(())
+        self.client()?.plan(kind, desired, prior).await
     }
 
     async fn read(

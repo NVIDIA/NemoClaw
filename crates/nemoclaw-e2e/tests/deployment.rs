@@ -7,6 +7,29 @@ use std::{fs, path::PathBuf, process::Command};
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires explicit verified NEMOCLAW_TEST_BUNDLE; isolated gateway fixture"]
+async fn incompatible_gateway_is_reported_by_opentofu_plan_without_sdk_preflight() {
+    let bundle = PathBuf::from(std::env::var_os("NEMOCLAW_TEST_BUNDLE").unwrap());
+    let directory = tempfile::tempdir().unwrap();
+    let fixture = Fixture::start().await;
+    let mut document = Document::parse(
+        include_str!("../../nemoclaw-sdk/tests/fixtures/config/local.yaml").as_bytes(),
+    )
+    .unwrap();
+    document.spec.gateway.endpoint = fixture.endpoint.clone();
+    fixture.state.lock().unwrap().driver = Some("podman".into());
+    let error = Deployment::new(directory.path(), &bundle)
+        .plan(&document, &CancellationToken::new())
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(&error, nemoclaw_sdk::Error::Execution { operation, .. } if operation == "plan"),
+        "{error}"
+    );
+    assert_eq!(fixture.state.lock().unwrap().effects, 0);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires explicit verified NEMOCLAW_TEST_BUNDLE; isolated gateway fixture"]
 async fn gateway_change_between_plan_and_apply_preserves_resources_and_allows_teardown() {
     let bundle = PathBuf::from(std::env::var_os("NEMOCLAW_TEST_BUNDLE").unwrap());
     let directory = tempfile::tempdir().unwrap();

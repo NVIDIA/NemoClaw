@@ -4,12 +4,28 @@ use crate::{
     Error,
     docker::Engine,
     managed::{RuntimeObservation, Spec},
+    services::capacity::CapacityCheck,
 };
 impl Engine {
     pub async fn check_capacity(
         &self,
         spec: &Spec,
         observed: Option<&RuntimeObservation>,
+    ) -> Result<(), Error> {
+        self.check_capacity_phase(
+            spec,
+            observed.map(|runtime| runtime.container_id.as_str()),
+            CapacityCheck::Apply {
+                starting: observed.is_none_or(|runtime| !runtime.running),
+            },
+        )
+        .await
+    }
+    pub(crate) async fn check_capacity_phase(
+        &self,
+        spec: &Spec,
+        container_id: Option<&str>,
+        phase: CapacityCheck,
     ) -> Result<(), Error> {
         spec.validate()?;
         if self.endpoint() != spec.engine() {
@@ -23,15 +39,11 @@ impl Engine {
                 let host = self.host_observer.observe(self).await?;
                 let info = self.info().await?;
                 let capacity = host.for_engine(info.id.as_deref().unwrap_or(""))?;
-                super::hardware_capacity::check_memory(
-                    &service,
-                    &capacity,
-                    observed.is_none_or(|runtime| !runtime.running),
-                )?;
+                super::hardware_capacity::check_memory(&service, &capacity, phase.starting())?;
                 let directory = super::recipes::huggingface::directory(&service);
-                let cached = if let Some(observed) = observed {
+                let cached = if let Some(container_id) = container_id {
                     self.read_file(
-                        &observed.container_id,
+                        container_id,
                         &format!(
                             "/data/{directory}/{}",
                             super::recipes::huggingface::MANIFEST_FILE
@@ -42,6 +54,9 @@ impl Engine {
                 } else {
                     None
                 };
+                if phase == CapacityCheck::Plan && cached.is_none() {
+                    return Ok(());
+                }
                 let cached = cached
                     .as_deref()
                     .map(|bytes| super::recipes::huggingface::decode_manifest(&service, bytes))
@@ -55,14 +70,14 @@ impl Engine {
                     .recipe
                     .as_ref()
                     .map_or(0, |r| r.resources.prepared_bytes);
-                if let Some(observed) = observed {
+                if let Some(container_id) = container_id {
                     for (index, file) in manifest.files.into_iter().enumerate() {
                         let base = format!("/data/{directory}/{}", file.name);
                         if let Some(modified) = cached
                             .as_ref()
                             .and_then(|local| local.files[index].modified)
                         {
-                            let stat = self.stat_file(&observed.container_id, &base).await?.ok_or(
+                            let stat = self.stat_file(container_id, &base).await?.ok_or(
                                 Error::Conflict(
                                     "verified model file is missing; retained for inspection",
                                 ),
@@ -79,7 +94,7 @@ impl Engine {
                         }
                         for suffix in ["", ".nemoclaw-partial"] {
                             if let Some(stat) = self
-                                .stat_file(&observed.container_id, &format!("{base}{suffix}"))
+                                .stat_file(container_id, &format!("{base}{suffix}"))
                                 .await?
                             {
                                 if !regular_stat(&stat)
@@ -96,12 +111,7 @@ impl Engine {
                         }
                     }
                 }
-                service.check_capacity(
-                    &capacity,
-                    observed.is_none_or(|observed| !observed.running),
-                    download,
-                    preparation,
-                )
+                service.check_capacity(&capacity, phase.starting(), download, preparation)
             };
             tokio::time::timeout(std::time::Duration::from_secs(150), work)
                 .await

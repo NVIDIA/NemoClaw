@@ -9,10 +9,8 @@
 pub(crate) mod authentication;
 pub(crate) mod capacity;
 mod contract;
+pub(crate) use capacity::check_process_capacity;
 pub use capacity::{ServiceCapacity, observe_service_capacity, validate_capacity_specs};
-pub(crate) use capacity::{
-    check_combined_capacity, check_process_capacity, check_runtime_capacity,
-};
 pub mod installers;
 mod registry;
 #[cfg(target_os = "linux")]

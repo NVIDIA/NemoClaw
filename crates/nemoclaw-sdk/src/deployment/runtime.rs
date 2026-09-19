@@ -7,7 +7,7 @@ mod tests;
 use super::*;
 use crate::{
     ObservationError,
-    managed::{GATEWAY_KIND, GATEWAY_STORAGE_KIND, Spec, Storage},
+    managed::{GATEWAY_KIND, GATEWAY_STORAGE_KIND, Spec},
 };
 use std::time::Duration;
 const GATEWAY_STORAGE: &str = "nemoclaw_gateway_storage.runtime";
@@ -97,110 +97,94 @@ struct RuntimeValidation {
     replacements: BTreeSet<String>,
     gateway_running: bool,
 }
-async fn validate_runtime_environment(
-    engines: &crate::docker::Connections,
-    document: &Document,
-    generations: &crate::compile::Generations,
+// Binding validation is local. Live identity and running state come from the
+// provider refresh in the saved plan, never from a separate SDK preflight.
+fn runtime_bindings(
     targets: &[Target],
     bindings: &BTreeMap<String, StateBinding>,
-) -> Result<RuntimeValidation, Error> {
-    let mut result = RuntimeValidation {
-        expected: allowed(targets),
-        replacements: BTreeSet::new(),
-        gateway_running: false,
-    };
-    if bindings
-        .keys()
-        .any(|key| !result.expected.contains_key(key))
-    {
+) -> Result<BTreeMap<String, Row>, Error> {
+    let mut expected = allowed(targets);
+    if bindings.keys().any(|key| !expected.contains_key(key)) {
         return Err(Error::Conflict(
             "ordinary apply cannot remove a managed runtime",
         ));
     }
-    let mut retained = BTreeSet::new();
-    // Storage must be observed before authorizing any process replacement.
-    for target in targets.iter().filter(|target| {
-        target.kind == GATEWAY_STORAGE_KIND
-            || crate::services::resource_behavior(&target.kind).retained_storage
-    }) {
-        let engine = crate::managed::runtime_engine(engines, &target.kind, &target.values)?;
-        let id = bindings
+    for target in targets {
+        if target.kind == GATEWAY_KIND
+            || crate::services::resource_behavior(&target.kind).runtime_process
+        {
+            let want: Spec = serde_json::from_str(&target.values["spec"])
+                .map_err(|_| Error::State("invalid compiled runtime"))?;
+            let old = bound_spec(&want, bindings.get(&target.address))?;
+            expected
+                .get_mut(&target.address)
+                .unwrap()
+                .insert("spec".into(), old.json()?);
+        } else if bindings
             .get(&target.address)
-            .map(|b| b.id.as_str())
-            .unwrap_or("");
-        if let Some(binding) = bindings.get(&target.address)
-            && binding.spec != target.values["spec"]
+            .is_some_and(|binding| binding.spec != target.values["spec"])
         {
             return Err(Error::Conflict(
                 "bound storage specification differs from retained intent",
             ));
         }
-        let observed = if crate::services::resource_behavior(&target.kind).retained_storage {
-            let spec: Storage = serde_json::from_str(&target.values["spec"])
-                .map_err(|_| Error::State("invalid compiled storage"))?;
-            spec.observe(&engine, id).await?
-        } else {
-            let spec: Spec = serde_json::from_str(&target.values["spec"])
-                .map_err(|_| Error::State("invalid compiled gateway storage"))?;
-            match engine.gateway_storage(&spec, id, false).await {
-                Err(Error::PartialRuntime) if id.is_empty() => None,
-                other => other?,
-            }
-        };
-        if observed.is_some() {
-            retained.insert(target.address.clone());
-        }
     }
-    let mut service_budgets = Vec::new();
+    Ok(expected)
+}
+fn runtime_observations(
+    document: &Document,
+    generations: &crate::compile::Generations,
+    targets: &[Target],
+    bindings: &BTreeMap<String, StateBinding>,
+    plan: &Plan,
+) -> Result<RuntimeValidation, Error> {
+    let mut result = RuntimeValidation {
+        expected: runtime_bindings(targets, bindings)?,
+        replacements: BTreeSet::new(),
+        gateway_running: document.spec.gateway.management == "external",
+    };
+    let retained: BTreeSet<_> = targets
+        .iter()
+        .filter(|target| {
+            target.kind == GATEWAY_STORAGE_KIND
+                || crate::services::resource_behavior(&target.kind).retained_storage
+        })
+        .filter(|target| {
+            bindings.get(&target.address).is_some_and(|binding| {
+                plan.resource_changes.iter().any(|change| {
+                    change.address == target.address
+                        && change.mode.as_deref() != Some("data")
+                        && change.change.actions == ["no-op"]
+                        && change.change.before["id"] == binding.id
+                        && change.change.before["spec"] == binding.spec
+                })
+            })
+        })
+        .map(|target| target.address.clone())
+        .collect();
     for target in targets.iter().filter(|target| {
         target.kind == GATEWAY_KIND
             || crate::services::resource_behavior(&target.kind).runtime_process
     }) {
-        let want: Spec = serde_json::from_str(&target.values["spec"])
-            .map_err(|_| Error::State("invalid compiled runtime"))?;
-        let engine = crate::managed::runtime_engine(engines, &target.kind, &target.values)?;
-        let old = bound_spec(&want, bindings.get(&target.address))?;
-        result
-            .expected
-            .get_mut(&target.address)
-            .unwrap()
-            .insert("spec".into(), old.json()?);
-        let id = bindings
-            .get(&target.address)
-            .map(|b| b.id.as_str())
-            .unwrap_or("");
-        let observed = match engine.observe_runtime(&old, id).await {
-            Err(Error::PartialRuntime) if id.is_empty() => None,
-            other => other?,
-        };
-        if want.kind == GATEWAY_KIND
-            || want
-                .process
-                .as_ref()
-                .is_some_and(|process| process.create_network)
-        {
-            engine.checked_network(&want).await?;
+        if target.kind == GATEWAY_KIND {
+            result.gateway_running = plan.resource_changes.iter().any(|change| {
+                change.address == target.address && change.change.before["running"] == "true"
+            });
         }
-        if want.kind == GATEWAY_KIND {
-            result.gateway_running = observed.as_ref().is_some_and(|o| o.running);
-        }
-        if let Some(check) =
-            crate::services::check_runtime_capacity(&engine, &want, observed.as_ref()).await?
-        {
-            service_budgets.push(check);
-        }
-        let storage = if want.kind == GATEWAY_KIND {
+        let storage = if target.kind == GATEWAY_KIND {
             Some(GATEWAY_STORAGE.to_owned())
         } else {
             crate::services::required_storage_address(document, generations, &target.address)?
         };
-        if old != want && storage.is_some_and(|address| retained.contains(&address)) {
+        if result.expected[&target.address]["spec"] != target.values["spec"]
+            && storage.is_some_and(|address| retained.contains(&address))
+        {
             result.replacements.insert(target.address.clone());
         }
     }
-    crate::services::check_combined_capacity(engines, service_budgets).await?;
     Ok(result)
 }
+
 impl Deployment {
     pub(super) async fn runtime_stage(
         &self,
@@ -223,10 +207,7 @@ impl Deployment {
         let stage = Store::open(&store.directory.join("runtime"))?;
         let bindings = stage.bindings()?;
         let targets = compile::runtime_targets(document, &record.generations)?;
-        let mut checked = tokio::select! {()=cancel.cancelled()=>return Err(Error::Cancelled),result=validate_runtime_environment(&self.engines,document,&record.generations,&targets,&bindings)=>result?};
-        if document.spec.gateway.management == "external" {
-            checked.gateway_running = true;
-        }
+        runtime_bindings(&targets, &bindings)?;
         self.prepare(
             bundle,
             &stage,
@@ -243,6 +224,8 @@ impl Deployment {
         let plan = self
             .saved_plan(bundle, &stage, document, "apply.plan", cancel)
             .await?;
+        let checked =
+            runtime_observations(document, &record.generations, &targets, &bindings, &plan)?;
         let changes =
             check_runtime_plan(&plan, &checked.expected, &bindings, &checked.replacements)?;
         if !apply {
@@ -254,6 +237,11 @@ impl Deployment {
             store.save(record)?;
             return Ok((changes, !checked.gateway_running));
         }
+        // Saved data-source values may be cached in the plan. Reobserve the
+        // desired budgets before mutation, including unchanged apply. A rejected
+        // startup has not begun an apply and must not lock in unfinished intent.
+        let desired = allowed(&targets);
+        tokio::select! {()=cancel.cancelled()=>return Err(Error::Cancelled),result=crate::services::capacity::recheck(&self.engines,&desired,&checked.expected,&bindings)=>result?}
         record.document = document.clone();
         record.digest = document.digest();
         record.pending = true;
@@ -262,10 +250,6 @@ impl Deployment {
         record.destroy_runtime = false;
         record.plan_digest = crate::bundle::hash_file(&stage.directory.join("apply.plan"))?;
         store.save(record)?;
-        // Saved data-source values may be cached in the plan. Reobserve the
-        // desired budgets before any runtime apply, including unchanged apply.
-        let desired = allowed(&targets);
-        tokio::select! {()=cancel.cancelled()=>return Err(Error::Cancelled),result=crate::services::capacity::recheck(&self.engines,&desired)=>result?}
         self.tofu(
             bundle,
             &stage,

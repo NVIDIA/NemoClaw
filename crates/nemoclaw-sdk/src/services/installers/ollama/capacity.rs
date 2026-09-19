@@ -6,12 +6,30 @@ use crate::{
     Error,
     docker::Engine,
     managed::{RuntimeObservation, Spec},
+    services::capacity::CapacityCheck,
 };
 
 pub(crate) async fn check(
     engine: &Engine,
     spec: &Spec,
     observed: Option<&RuntimeObservation>,
+) -> Result<(), Error> {
+    check_phase(
+        engine,
+        spec,
+        observed.map(|runtime| runtime.container_id.as_str()),
+        CapacityCheck::Apply {
+            starting: observed.is_none_or(|runtime| !runtime.running),
+        },
+    )
+    .await
+}
+
+pub(crate) async fn check_phase(
+    engine: &Engine,
+    spec: &Spec,
+    container_id: Option<&str>,
+    phase: CapacityCheck,
 ) -> Result<(), Error> {
     spec.validate()?;
     if engine.endpoint() != spec.engine() {
@@ -20,99 +38,93 @@ pub(crate) async fn check(
         ));
     }
     let service = super::configured_service(spec)?;
-    let work = async {
-        let host = engine.host_observer.observe(engine).await?;
-        let info = engine.info().await?;
-        let capacity = host.for_engine(info.id.as_deref().unwrap_or(""))?;
-        hardware_capacity::check_memory(
-            &service,
-            &capacity,
-            observed.is_none_or(|runtime| !runtime.running),
-        )?;
-        let directory = model_source::directory(&service);
-        let cached = if let Some(observed) = observed {
-            engine
-                .read_file(
-                    &observed.container_id,
-                    &format!("/data/{directory}/{}", model_source::MANIFEST_FILE),
-                    4 << 20,
-                )
-                .await?
-        } else {
-            None
-        };
-        let cached = cached
-            .as_deref()
-            .map(|bytes| model_source::decode_manifest(&service, bytes))
-            .transpose()?;
-        let manifest = match &cached {
-            Some(local) => local.snapshot(),
-            None => model_source::resolve_manifest(&service).await?,
-        };
-        if let (Some(observed), Some(_)) = (observed, &cached)
-            && let Some(native) = engine
-                .read_file(
-                    &observed.container_id,
-                    &format!(
-                        "/data/{directory}/{}",
-                        model_source::native_manifest_path(&service)?
-                    ),
-                    1 << 20,
-                )
-                .await?
-        {
-            model_source::validate_native_manifest(&service, &manifest, &native)?;
-        }
-        let mut download = manifest.bytes()?;
-        if let Some(observed) = observed {
-            for (index, file) in manifest.files.iter().enumerate() {
-                let base = format!("/data/{directory}/{}", file.name);
-                if let Some(modified) = cached
-                    .as_ref()
-                    .and_then(|local| local.files[index].modified)
-                {
-                    let stat = engine
-                        .stat_file(&observed.container_id, &base)
-                        .await?
-                        .ok_or(Error::Conflict(
-                            "verified Ollama model file is missing; retained for inspection",
-                        ))?;
-                    super::super::vllm::artifacts::verify_stat(
-                        &crate::snapshot::VerifiedFile {
-                            file: file.clone(),
-                            modified,
-                        },
-                        &stat,
-                    )?;
-                    download -= file.size;
-                    continue;
-                }
-                for suffix in ["", ".nemoclaw-partial"] {
-                    if let Some(stat) = engine
-                        .stat_file(&observed.container_id, &format!("{base}{suffix}"))
-                        .await?
+    let work =
+        async {
+            let host = engine.host_observer.observe(engine).await?;
+            let info = engine.info().await?;
+            let capacity = host.for_engine(info.id.as_deref().unwrap_or(""))?;
+            hardware_capacity::check_memory(&service, &capacity, phase.starting())?;
+            let directory = model_source::directory(&service);
+            let cached = if let Some(container_id) = container_id {
+                engine
+                    .read_file(
+                        container_id,
+                        &format!("/data/{directory}/{}", model_source::MANIFEST_FILE),
+                        4 << 20,
+                    )
+                    .await?
+            } else {
+                None
+            };
+            if phase == CapacityCheck::Plan && cached.is_none() {
+                return Ok(());
+            }
+            let cached = cached
+                .as_deref()
+                .map(|bytes| model_source::decode_manifest(&service, bytes))
+                .transpose()?;
+            let manifest = match &cached {
+                Some(local) => local.snapshot(),
+                None => model_source::resolve_manifest(&service).await?,
+            };
+            if let (Some(container_id), Some(_)) = (container_id, &cached)
+                && let Some(native) = engine
+                    .read_file(
+                        container_id,
+                        &format!(
+                            "/data/{directory}/{}",
+                            model_source::native_manifest_path(&service)?
+                        ),
+                        1 << 20,
+                    )
+                    .await?
+            {
+                model_source::validate_native_manifest(&service, &manifest, &native)?;
+            }
+            let mut download = manifest.bytes()?;
+            if let Some(container_id) = container_id {
+                for (index, file) in manifest.files.iter().enumerate() {
+                    let base = format!("/data/{directory}/{}", file.name);
+                    if let Some(modified) = cached
+                        .as_ref()
+                        .and_then(|local| local.files[index].modified)
                     {
-                        if !super::super::vllm::capacity::regular_stat(&stat)
-                            || stat.size < 0
-                            || stat.size as u64 > file.size
+                        let stat = engine.stat_file(container_id, &base).await?.ok_or(
+                            Error::Conflict(
+                                "verified Ollama model file is missing; retained for inspection",
+                            ),
+                        )?;
+                        super::super::vllm::artifacts::verify_stat(
+                            &crate::snapshot::VerifiedFile {
+                                file: file.clone(),
+                                modified,
+                            },
+                            &stat,
+                        )?;
+                        download -= file.size;
+                        continue;
+                    }
+                    for suffix in ["", ".nemoclaw-partial"] {
+                        if let Some(stat) = engine
+                            .stat_file(container_id, &format!("{base}{suffix}"))
+                            .await?
                         {
-                            return Err(Error::Conflict(
-                                "retained Ollama download progress is corrupt",
-                            ));
+                            if !super::super::vllm::capacity::regular_stat(&stat)
+                                || stat.size < 0
+                                || stat.size as u64 > file.size
+                            {
+                                return Err(Error::Conflict(
+                                    "retained Ollama download progress is corrupt",
+                                ));
+                            }
+                            download -= stat.size as u64;
+                            break;
                         }
-                        download -= stat.size as u64;
-                        break;
                     }
                 }
             }
-        }
-        hardware_capacity::check_capacity(
-            &service,
-            &capacity,
-            observed.is_none_or(|runtime| !runtime.running),
-            download,
-        )
-    };
+            hardware_capacity::check_capacity(&service, &capacity, phase.starting(), download)
+        };
     tokio::time::timeout(std::time::Duration::from_secs(150), work)
         .await
         .map_err(|_| Error::State("Ollama host capacity observation timed out"))?

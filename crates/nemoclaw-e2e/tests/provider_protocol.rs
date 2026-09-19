@@ -241,6 +241,7 @@ async fn production_provider_rechecks_network_and_image_prerequisites_before_sav
                 json!([{"IPAM":{"Config":[{"Subnet":"172.30.121.0/24"}]}}])
             } else { json!([]) }),
             path if path.starts_with("/networks/") => (404, json!({})),
+            path if path.starts_with("/containers/") => (404, json!({})),
             path if path.starts_with("/images/") => {
                 if mode == "missing-image" {
                     (404, json!({}))

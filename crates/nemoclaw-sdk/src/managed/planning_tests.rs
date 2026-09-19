@@ -216,6 +216,7 @@ async fn planning_fixture(network: (u16, Value), inventory: Value, image: (u16, 
             "/networks" => (200, inventory.clone()),
             path if path.starts_with("/networks/") => network.clone(),
             path if path.starts_with("/images/") => image.clone(),
+            path if path.starts_with("/containers/") => (404, json!({"message":"absent"})),
             _ => panic!("unexpected planning observation {}", request.path),
         };
         Some((response.0, serde_json::to_vec(&response.1).unwrap()))
@@ -238,7 +239,10 @@ async fn plan_runtime(
         ("image_pull_policy".into(), policy.into()),
     ]);
     let mut prior = desired.clone();
-    prior.insert("id".into(), "retained-runtime".into());
+    prior.insert(
+        "id".into(),
+        "selected-engine/container/created/network".into(),
+    );
     BackendRegistry::new(&connections)
         .resolve(&spec.kind, &desired)
         .unwrap()

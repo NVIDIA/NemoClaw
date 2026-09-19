@@ -30,6 +30,12 @@ fn diagnostic(error: &Error) -> ObservationError {
 }
 #[async_trait::async_trait]
 impl Backend for ProxyBackend {
+    async fn plan(&self, kind: &str, desired: &Row, prior: Option<&Row>) -> Result<(), Error> {
+        if prior.is_none() {
+            self.proxy_read(kind, desired, false, false).await?;
+        }
+        Ok(())
+    }
     async fn read(
         &self,
         kind: &str,

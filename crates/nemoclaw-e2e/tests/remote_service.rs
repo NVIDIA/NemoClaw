@@ -27,6 +27,9 @@ async fn run(root: &Path, bundle: &Path, command: &str, file: &str, success: boo
         .arg("--state-dir")
         .arg(root.join("deployment"))
         .arg(command);
+    if command == "plan" {
+        process.args(["-o", "json"]);
+    }
     if !file.is_empty() {
         process.arg(root.join(file));
     }
@@ -167,8 +170,10 @@ async fn lifecycle(harness: &str, authenticated: bool) {
     run(root, &bundle, "plan", "config.yaml", false).await;
     assert_eq!(read(root, "engine.json")["effects"], 0);
     save(root, "control.json", &json!({"low_capacity":true}));
-    run(root, &bundle, "plan", "config.yaml", false).await;
+    run(root, &bundle, "plan", "config.yaml", true).await;
+    run(root, &bundle, "apply", "config.yaml", false).await;
     assert_eq!(read(root, "engine.json")["effects"], 0);
+    assert_eq!(read(root, "deployment/intent.json")["pending"], false);
     save(root, "control.json", &json!({}));
     run(root, &bundle, "plan", "config.yaml", true).await;
     assert_eq!(read(root, "engine.json")["effects"], 0);
@@ -242,6 +247,29 @@ async fn lifecycle(harness: &str, authenticated: bool) {
     fs::write(root.join("export.yaml"), exported).unwrap();
     run(root, &bundle, "apply", "export.yaml", true).await;
     assert_eq!(read(root, "engine.json"), stable);
+    if harness == "openclaw" && !authenticated {
+        let original = read(root, "config.yaml");
+        let mut changed = original.clone();
+        changed["spec"]["services"]["qwen"]["image"] =
+            json!(format!("runtime@sha256:{}", "f".repeat(64)));
+        save(root, "config.yaml", &changed);
+        let output = run(root, &bundle, "plan", "config.yaml", true).await;
+        let plan: Value = serde_json::from_slice(&output).unwrap();
+        assert!(
+            plan["changes"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|change| { change["actions"] == json!(["delete", "create"]) }),
+            "{plan}"
+        );
+        assert_eq!(read(root, "engine.json"), stable);
+        assert_eq!(
+            fs::read(root.join("deployment/runtime/terraform.tfstate")).unwrap(),
+            state
+        );
+        save(root, "config.yaml", &original);
+    }
     for control in [
         json!({"transport_failure":true}),
         json!({"daemon":"other-engine"}),
