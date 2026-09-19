@@ -239,6 +239,7 @@ esac
           "python3",
           [
             "-I",
+            "-S",
             "-c",
             `import runpy, sys
 site_packages, script, *arguments = sys.argv[1:]
