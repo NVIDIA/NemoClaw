@@ -7,6 +7,7 @@
 // recovery implementation.
 export {
   checkAndRecoverSandboxProcesses,
+  isSandboxGatewayHttpReachableForStatus,
   isSandboxGatewayRunningForStatus,
   resolveGatewayRecoveryWaitSeconds,
   waitForStartedHermesGatewayProcess,

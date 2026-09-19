@@ -112,11 +112,11 @@ Use `gateway restart` when you intentionally need a supported Hermes gateway to 
 $$nemoclaw <sandbox-name> gateway restart
 ```
 
-The restart command asks the topology-specific controller to stop the tracked gateway child, wait for the entrypoint to launch a replacement, and prove listener and HTTP health. The host then checks or recovers host-side dashboard, messaging, and agent forwards.
+The restart command first runs the Hermes gateway wrapper as a non-mutating secret-boundary preflight. It then revalidates the registered sandbox and its live identity, targets the sandbox's recorded OpenShell gateway, and asks OpenShell to stop and start the complete sandbox. NemoClaw rechecks native gateway health before it recovers dashboard, messaging, and agent forwards. An identity change, an OpenShell lifecycle failure, or failed health proof stops the operation before forward recovery.
 
 For Hermes, the entrypoint supervisor owns the gateway, dashboard process, internal API relay, dashboard relay, and gateway log stream.
 The nonroot managed supervisor repairs those processes continuously and stops an alive but deaf gateway after four consecutive failed health checks.
-Five unexpected gateway exits or failed replacement candidates within 60 seconds stop relaunch for the current supervisor instance. Host-authorized exits do not consume this crash budget.
+Five unexpected gateway exits or failed replacement candidates within 60 seconds stop relaunch for the current supervisor instance. OpenShell sandbox stop and start reset the supervisor instance instead of authorizing an in-container gateway-child exit.
 Correct the reported failure, then run `$$nemoclaw <sandbox-name> stop` and `$$nemoclaw <sandbox-name> start` to reset the supervisor.
 Rebuild only if the sandbox still cannot start.
 

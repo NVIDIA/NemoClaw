@@ -43,7 +43,11 @@ describe("created Hermes credential environment reconciliation", () => {
     const wait = vi
       .spyOn(processRecovery, "waitForRecoveredSandboxGateway")
       .mockResolvedValueOnce(true);
-    const runtime = createHermesCredentialEnvReconciliationRuntime(vi.fn() as never, vi.fn());
+    const runtime = createHermesCredentialEnvReconciliationRuntime(
+      "nemoclaw-19080",
+      vi.fn() as never,
+      vi.fn(),
+    );
 
     await expect(runtime.waitForGateway("alpha", vi.fn())).resolves.toBe(true);
 
@@ -55,26 +59,57 @@ describe("created Hermes credential environment reconciliation", () => {
     wait.mockRestore();
   });
 
-  it("revalidates identity after the secret boundary and before native restart", async () => {
+  it("restarts through OpenShell with an identity gate around each lifecycle mutation", async () => {
     const events: string[] = [];
-    const execute = vi
-      .spyOn(processRecovery, "executeSandboxExecCommand")
-      .mockImplementation(async (_sandboxName, command) => {
-        events.push(command === "hermes gateway restart" ? "restart" : "unexpected");
-        return { status: 0, stdout: "", stderr: "" };
-      });
-    const runtime = createHermesCredentialEnvReconciliationRuntime(vi.fn() as never, vi.fn());
+    const runOpenshell = vi.fn((args: readonly string[]) => {
+      events.push(args.join(" "));
+      return { status: 0, stdout: "", stderr: "" };
+    });
+    const runtime = createHermesCredentialEnvReconciliationRuntime(
+      "nemoclaw-19080",
+      runOpenshell,
+      vi.fn(),
+    );
 
     await expect(
       runtime.restartGateway("alpha", (operation) => events.push(`identity:${operation}`)),
     ).resolves.toEqual({ status: 0, stdout: "", stderr: "" });
 
     expect(events).toEqual([
-      "identity:restarting Hermes gateway for sandbox 'alpha'",
-      "restart",
-      "identity:confirming Hermes gateway restart for sandbox 'alpha'",
+      "identity:stopping Hermes sandbox 'alpha'",
+      "sandbox stop --gateway nemoclaw-19080 alpha",
+      "identity:confirming Hermes sandbox 'alpha' after OpenShell stop",
+      "identity:starting Hermes sandbox 'alpha'",
+      "sandbox start --gateway nemoclaw-19080 alpha",
+      "identity:confirming Hermes sandbox 'alpha' after OpenShell start",
     ]);
-    execute.mockRestore();
+    expect(runOpenshell).toHaveBeenCalledTimes(2);
+    expect(runOpenshell).toHaveBeenNthCalledWith(
+      1,
+      ["sandbox", "stop", "--gateway", "nemoclaw-19080", "alpha"],
+      {
+        ignoreError: true,
+        suppressOutput: true,
+        timeout: 210000,
+      },
+    );
+  });
+
+  it("does not start when OpenShell cannot stop the sandbox", async () => {
+    const runOpenshell = vi.fn(() => ({ status: 1, stdout: "", stderr: "stop failed" }));
+    const runtime = createHermesCredentialEnvReconciliationRuntime(
+      "nemoclaw-19080",
+      runOpenshell,
+      vi.fn(),
+    );
+
+    await expect(runtime.restartGateway("alpha", vi.fn())).resolves.toEqual({
+      status: 1,
+      stdout: "",
+      stderr: "stop failed",
+    });
+
+    expect(runOpenshell).toHaveBeenCalledOnce();
   });
 
   it("finalizes sandbox registration before reconciling credentials (#9833)", async () => {
@@ -200,7 +235,7 @@ describe("created Hermes credential environment reconciliation", () => {
         },
         recordRecovery,
       ),
-    ).rejects.toThrow("native Hermes restart failed");
+    ).rejects.toThrow("OpenShell sandbox restart failed");
     expect(recordRecovery).toHaveBeenCalledOnce();
   });
 });

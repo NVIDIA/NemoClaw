@@ -12,7 +12,7 @@ skill:
   priority: 20
 agent-variants: ["openclaw", "hermes"]
 ---
-Built-in OpenClaw and Hermes images support two direct-container lifecycle topologies for `recover` and `gateway restart`.
+Built-in OpenClaw images support two direct-container lifecycle topologies for `recover` and `gateway restart`.
 
 | Topology | Process ownership | Lifecycle and trust boundary |
 |---|---|---|
@@ -26,8 +26,12 @@ Lock acquisition, gateway termination, and replacement health share one recovery
 If lock acquisition reaches that deadline, the controller returns `SUPERVISOR_BUSY` without publishing an expected-exit marker.
 
 <AgentOnly variant="hermes">
-Hermes configuration remains mutable in both topologies.
-Before a restart, the supervisor validates the secret boundary and records one stable config snapshot in its transaction metadata.
+Hermes configuration remains mutable. Before a forced restart, NemoClaw runs the Hermes gateway wrapper as a non-mutating preflight so the existing secret-boundary checks can reject unsafe configuration before any lifecycle mutation.
+It then targets the OpenShell gateway recorded for the sandbox, revalidates the registered and live sandbox identity around each lifecycle step, and asks OpenShell to stop and start the complete sandbox. After OpenShell starts it, NemoClaw proves native gateway health and repairs the sandbox's declared host forwards.
+
+The OpenShell stop and start RPCs currently identify a sandbox by mutable name rather than durable sandbox ID. NemoClaw must fail closed when it cannot bind those mutations to the verified live identity; an identity change is never authorization to operate on the replacement.
+
+Before gateway launch, the supervisor validates the secret boundary and records one stable config snapshot in its transaction metadata.
 The native `mcp_servers` content in that snapshot remains authoritative, including direct edits. No separate host-side MCP registry or intended/applied marker participates in restart eligibility.
 
 The direct root-entrypoint topology keeps the integrity metadata under root ownership while it seals a restart transaction.
@@ -40,7 +44,7 @@ Remove it only after the minimum supported OpenShell provides a root-owned lifec
 
 ## Verify Recovery Health
 
-For built-in OpenClaw and Hermes controllers, a successful `recover` or `gateway restart` response supplies the initial authenticated gateway-health proof.
+For the built-in OpenClaw controller, a successful `recover` or `gateway restart` response supplies the initial authenticated gateway-health proof.
 After the settle window, NemoClaw sends one read-only authenticated `probe` through the same controller before it declares success.
 
 The controller rechecks the managed child, listener, HTTP health, and required auxiliary processes from inside the gateway network namespace without restarting the gateway.
@@ -49,16 +53,16 @@ A failed managed probe cannot be overridden by an outer-namespace HTTP response.
 Custom agents that recover through an SSH script do not use this controller probe and continue to poll ordinary gateway health.
 
 <AgentOnly variant="hermes">
-The nonroot Hermes supervisor continuously repairs the gateway, API relay, dashboard, dashboard relay, and gateway log stream.
+For Hermes, OpenShell sandbox start is followed by a native gateway-health probe before forward recovery or success is reported.
+The newly started nonroot Hermes supervisor continuously repairs the gateway, API relay, dashboard, dashboard relay, and gateway log stream.
 Four consecutive gateway health failures trigger recovery of the observed gateway child.
 
 Five unexpected gateway exits or failed replacement candidates within 60 seconds stop relaunch for the current supervisor instance.
-An authenticated host action authorizes one exit bound to the gateway process ID and kernel start identity while the root controller process remains live, so deliberate `gateway restart` and controller-driven replacement do not consume that crash budget.
+Hermes host restart does not authorize or signal one gateway-child exit: OpenShell stops and starts the complete sandbox, which replaces the supervisor instance and resets that instance's crash budget.
 
 Correct the reported process or health failure, then stop and start the sandbox to reset the supervisor.
 Rebuild only if the sandbox still cannot start.
 
-The authorization records host intent for that exit; it does not claim that the host signal was the only possible cause of process termination in the shared-UID topology.
 After the in-sandbox processes are healthy, the host repairs only the host-side OpenShell forwards.
 </AgentOnly>
 
