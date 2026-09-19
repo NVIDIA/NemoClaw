@@ -83,23 +83,6 @@ describe("restartSandboxGateway native lifecycle", () => {
     );
   });
 
-  it("waits for the OpenClaw replacement when a config mutation must reach the new gateway", async () => {
-    silenceConsole();
-    const deps = baseDeps();
-    const result = await restartSandboxGateway("alpha", {
-      quiet: true,
-      deps,
-      openClawRestartMode: "replacement",
-    });
-
-    expect(result).toMatchObject({ ok: true, restarted: true, healthPassed: true });
-    expect(deps.executeSandboxExecCommand).toHaveBeenCalledWith(
-      "alpha",
-      "env -u OPENCLAW_HOME -u OPENCLAW_STATE_DIR -u OPENCLAW_CONFIG_PATH openclaw gateway restart --json",
-      210000,
-    );
-  });
-
   it("asks Hermes to restart its gateway", async () => {
     silenceConsole();
     const deps = baseDeps({

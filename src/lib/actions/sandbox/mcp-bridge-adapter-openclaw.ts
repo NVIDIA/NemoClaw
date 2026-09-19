@@ -26,11 +26,33 @@ import type { McpProviderInspectionRuntimeSelection } from "./mcp-bridge-provide
 import type { McpAttachedCredentialRevision } from "./mcp-bridge-provider-readiness";
 import { getAgentConfigDir } from "./mcp-bridge-state";
 import { executeSandboxCommand, restartSandboxGateway } from "./process-recovery";
+import { waitForMcpBridgeConditionAsync } from "./mcp-bridge/timing";
 
 export const MCPORTER_VERSION = "0.7.3";
 const OPENCLAW_NATIVE_MCP_PLUGIN_ID = "bundle-mcp";
 const OPENCLAW_NATIVE_MCP_TRANSPORT = "streamable-http";
 export { OPENCLAW_MCP_CONFIG_DIR } from "./mcp-bridge-adapter-status";
+
+const OPENCLAW_GATEWAY_PID_RECORD = "/tmp/nemoclaw-gateway.pid";
+const OPENCLAW_GATEWAY_REPLACEMENT_TIMEOUT_SECONDS = 90;
+
+async function readOpenClawGatewayProcessIdentity(sandboxName: string): Promise<string | null> {
+  const result = await executeSandboxCommand(
+    sandboxName,
+    [
+      "set -eu",
+      `record=${JSON.stringify(OPENCLAW_GATEWAY_PID_RECORD)}`,
+      '[ -f "$record" ] && [ ! -L "$record" ] || exit 1',
+      'IFS=" " read -r pid identity extra <"$record"',
+      'case "$pid" in ""|0|1|*[!0-9]*) exit 1 ;; esac',
+      '[ -n "$identity" ] && [ -z "${extra:-}" ] || exit 1',
+      'printf "%s %s\\n" "$pid" "$identity"',
+    ].join("\n"),
+  );
+  if (!result || result.status !== 0 || result.stderr.trim() !== "") return null;
+  const identity = result.stdout.trim();
+  return /^[1-9][0-9]* [^\s]+$/u.test(identity) ? identity : null;
+}
 
 /** Resolve the OpenClaw agent configuration directory. */
 function openClawConfigRootForEntry(entry: McpSourceEntry): string {
@@ -196,14 +218,31 @@ export async function registerOpenClawAdapter(
 
 /** Make a verified config mutation visible to the long-lived OpenClaw gateway. */
 export async function reloadOpenClawGatewayAfterMcpMutation(sandboxName: string): Promise<void> {
-  const result = await restartSandboxGateway(sandboxName, {
-    quiet: true,
-    openClawRestartMode: "replacement",
-  });
-  if (result.ok) return;
-  throw new McpBridgeError(
-    `OpenClaw gateway did not activate the native MCP configuration (${result.failureLayer}: ${result.detail}).`,
+  const previousIdentity = await readOpenClawGatewayProcessIdentity(sandboxName);
+  if (!previousIdentity) {
+    throw new McpBridgeError(
+      "OpenClaw gateway process identity was unavailable before native MCP reload.",
+    );
+  }
+  const result = await restartSandboxGateway(sandboxName, { quiet: true });
+  if (!result.ok) {
+    throw new McpBridgeError(
+      `OpenClaw gateway did not activate the native MCP configuration (${result.failureLayer}: ${result.detail}).`,
+    );
+  }
+  const replaced = await waitForMcpBridgeConditionAsync(
+    async () => {
+      const currentIdentity = await readOpenClawGatewayProcessIdentity(sandboxName);
+      return currentIdentity !== null && currentIdentity !== previousIdentity;
+    },
+    OPENCLAW_GATEWAY_REPLACEMENT_TIMEOUT_SECONDS,
+    1_000,
   );
+  if (!replaced) {
+    throw new McpBridgeError(
+      "OpenClaw gateway acknowledged native MCP reload but did not publish a replacement process identity.",
+    );
+  }
 }
 
 export function unregisterOpenClawAdapter(

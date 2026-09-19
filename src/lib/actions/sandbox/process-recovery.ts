@@ -1830,17 +1830,11 @@ async function recoverSandboxProcesses(
 
 export async function restartSandboxGateway(
   sandboxName: string,
-  {
-    quiet = false,
-    deps = {},
-    runtimeSelection,
-    openClawRestartMode = "safe-request",
-  }: RestartSandboxGatewayOptions = {},
+  { quiet = false, deps = {}, runtimeSelection }: RestartSandboxGatewayOptions = {},
 ): Promise<GatewayRestartResult> {
   return withSandboxLifecycleLock(sandboxName, () =>
     restartSandboxGatewayWithDeps(sandboxName, {
       quiet,
-      openClawRestartMode,
       deps: {
         getSessionAgent: agentRuntime.getSessionAgent,
         getSandbox: registry.getSandbox,
