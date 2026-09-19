@@ -40,7 +40,8 @@ OpenClaw and Pi support up to 32 routes per inference definition.
 Other harnesses keep one choice.
 For OpenClaw, `reasoningEffort` sets the agent's initial default reasoning level; other choices must omit it or use `default`.
 Native reasoning changes remain a harness operation.
-Managed Ollama and its proxy currently manage one selected model; vLLM choices must use its declared served model.
+Each managed `service` serves one pinned model; routes must use its declared served model.
+The legacy `ollama` form and its external proxy also select one model.
 Additional models can use external providers alongside that managed provider.
 Changing OpenClaw model choices changes the sandbox launch specification and requires a fresh deployment.
 For Pi, see [model selection and updates](agents.md#pi-model-selection).
@@ -65,11 +66,13 @@ Each agent runs in its own sandbox; its model-selection policy does not further 
 Use separate deployments when you need independent teardown.
 NemoClaw observes the full attachment set and rejects missing or unexpected attachments.
 
-Multiple selected providers can each own a vLLM service, with independent storage and separate generated credentials when `service.authentication: bearer` is configured.
+Multiple selected providers can each own a vLLM or Ollama `service`, with independent retained storage.
+vLLM additionally supports separate generated credentials through `service.authentication: bearer`.
 Services on the same engine require distinct publication addresses and the same managed network CIDR.
 Plan checks their combined GPU budgets and startup memory; the runtime rechecks available memory before starting inference and keeps its memory watchdog active.
 An existing GPU process alone does not reject startup when measured capacity is sufficient.
-Managed Ollama and Ollama proxies still share a singleton lifecycle: at most one selected provider may use either mode.
+The legacy `ollama` form and `ollamaProxy` still share a singleton lifecycle: at most one selected provider may use either form.
+This restriction does not apply to `service.backend: ollama`.
 Multiple sandboxes can share any selected provider.
 Managed vLLM resource identities now include the provider identity; use a fresh deployment and the previous bundle for export or teardown of older singleton state.
 The current tests establish configuration, compilation, API attachment, and drift behavior against fixtures; live multi-provider qualification remains separate.
@@ -79,10 +82,11 @@ The current tests establish configuration, compilation, API attachment, and drif
 | Situation | Configuration and owning guide | Example to adapt |
 |---|---|---|
 | You already operate a compatible endpoint or have a hosted API | External `endpoint`, matching `provider`/`api`, and a credential reference when required | [OpenClaw external endpoint](../examples/inference-tuning.yaml), [Hermes authentication](../examples/hermes-auth.yaml) |
-| NemoClaw should run Ollama and manage its model lifecycle | Declare `ollama`, a local engine, an existing Docker network, a pinned image, and a reachable private endpoint | [Managed Ollama](#run-managed-ollama) |
+| NemoClaw should run Ollama on a declared NVIDIA GPU | Declare `service.backend: ollama` with hardware, pinned runtime image, model name/digest, memory, and serving settings | [Managed Ollama](#run-managed-ollama) |
+| You maintain a deployment using the older CPU-only Ollama contract | Keep its `ollama`, local engine, existing network, and private endpoint | [Legacy Ollama](#legacy-cpu-only-ollama) |
 | Ollama and its model already run locally and must remain external | Declare `ollamaProxy` to manage an authenticated proxy for one installed model digest | [Proxy configuration](#use-external-ollama-through-a-managed-proxy) |
 | NemoClaw should download and serve a pinned public model with vLLM | Declare `service` with the runtime image, repository revision, capacity, and serving settings; see [managed models](models.md) | [Generic vLLM](../examples/spark/vllm.yaml) |
-| The Docker daemon running vLLM is reached through SSH | Select explicit `service.placement` and a private `service.publication` endpoint; follow [remote service](remote-service.md) | [Remote vLLM](../examples/spark/remote-vllm.yaml) |
+| The Docker daemon running a managed service is reached through SSH | Select explicit `service.placement` and a private `service.publication` endpoint; follow [remote service](remote-service.md) | [Remote vLLM](../examples/spark/remote-vllm.yaml) |
 | The model requires preparation tools or runtime patches | Package reviewed tools in an immutable image and declare an [inline recipe](recipes.md) | [Inline Qwen3.8 recipe](../examples/spark/spark-inline.yaml) |
 
 Service ownership does not depend on the harness; the service must support the [request API](#choose-the-request-api) selected by that harness.
@@ -155,6 +159,90 @@ See [deployment recovery](usage.md) for the operation workflow.
 
 ## Run Managed Ollama
 
+Use `service.backend: ollama` to run Ollama through the same hardware checks, Docker placement, retained storage, and resident supervisor as vLLM.
+The [GPU example](../examples/managed-ollama-gpu.yaml) selects DGX Spark and a pinned public Qwen3 model.
+Before applying, choose a fresh deployment UID and state directory, a current agent image, and a hardware profile matching the inference host.
+The inference host needs Linux, Docker with NVIDIA container GPU access, one observable NVIDIA GPU, and enough host/GPU memory and disk for the declared budget.
+Use the [hardware profile reference](models.md#choose-a-hardware-profile) for other GPU families and explicit CPU architecture.
+Local placement uses the managed gateway's Docker engine; [SSH placement](remote-service.md) uses the same `placement` and `publication` fields as vLLM.
+
+Build the supervisor image from this checkout using the [runtime build prerequisites](build.md#build-a-runtime-image).
+From the repository root, select the command matching the build host:
+
+```sh
+# Linux ARM64:
+cargo run -p nemoclaw-build -- runtime runtimes/ollama/build.json
+# Linux AMD64:
+cargo run -p nemoclaw-build -- runtime runtimes/ollama-amd64/build.json
+```
+
+Each command builds and loads a local image and retains its OCI archive under `.build/ollama` or `.build/ollama-amd64`.
+Use the immutable image digest from that build in `service.image` and make the image available on the selected inference engine.
+The example image digest is a placeholder; a bare upstream `ollama/ollama` image lacks the required supervisor.
+The [ARM64 notice](../runtimes/ollama/NOTICE.md) and [AMD64 notice](../runtimes/ollama-amd64/NOTICE.md) identify the pinned upstream image and retained sources.
+
+The provider uses `provider: openai` and `api: openai-completions`; Pi requires omission of `api` and compatible native model metadata.
+Omit the provider's `endpoint`, `credential`, and legacy `ollama` block when declaring `service`.
+The service publishes its private `/v1` endpoint through the shared placement contract.
+Ollama has no native bearer authentication in this adapter; restrict access through the host's existing network controls.
+
+```yaml
+# Under an inference provider:
+service:
+  backend: ollama
+  hardware: {profile: dgx-spark}
+  image: nc-prototype-ollama@sha256:REPLACE_WITH_RUNTIME_DIGEST
+  model:
+    name: qwen3:0.6b
+    digest: 7df6b6e09427a769808717c0a93cadc4ae99ed4eb8bf5ca557c90846becea435
+  serving:
+    contextTokens: 8192
+    maxSequences: 1
+  memory:
+    gpuMemoryGiB: 16
+```
+
+Set the route's `overrides.model` to the same `model.name`.
+The model digest is the SHA-256 of the registry manifest, not the GPU runtime image or an individual weight blob.
+For a different public library model, obtain and inspect its registry manifest and license before pinning its digest.
+The resolver accepts exactly one model layer plus optional template, license, parameters, and system layers.
+Projector and adapter layers, private registries, and non-library names are rejected.
+Model parameters may supply sampling defaults; resource overrides such as `num_ctx` or `num_gpu` are rejected so they cannot override the service limits.
+For example, these commands download only Qwen3 metadata into the current directory:
+
+```sh
+curl --fail --silent --show-error https://registry.ollama.ai/v2/library/qwen3/manifests/0.6b -o ollama-model-manifest.json
+sha256sum ollama-model-manifest.json
+```
+
+Without a cached snapshot, plan resolves the manifest and parameter metadata and rejects a tag whose manifest differs from `model.digest`.
+It checks hardware compatibility, remaining disk, declared GPU/host budgets, and combined budgets of vLLM and Ollama services sharing the engine.
+The Ollama weight-size check is a lower bound: all snapshot bytes plus 2 GiB must fit the declared GPU budget.
+Plan does not load the model or establish that its context and native KV cache will fit.
+
+Apply downloads and verifies the native registry manifest and each blob using the shared resumable snapshot path.
+It then starts Ollama under the resident supervisor, checks the selected digest, and sends a load-only request without a prompt or generated response.
+Readiness requires Ollama to report the selected model fully on GPU, within the configured memory budget, and with the requested context length.
+The runtime continues checking those observations while serving and stops its owned process group on failure or host memory pressure.
+These checks are observations and protective shutdowns, not a hard GPU allocator quota; a model may exceed its budget during loading before the check stops it.
+CPU offload is rejected; multi-GPU execution and CPU-only execution are not part of this shared adapter yet.
+
+Ollama sizes its KV cache and batching natively.
+Nonzero `kvCacheGiB` or `batchTokens`, vLLM parser/compilation settings, inline recipes, model aliases, and native bearer authentication are rejected.
+Context and concurrency use the common `serving.contextTokens` and `serving.maxSequences` fields.
+A dedicated-memory profile can use the common `gpuMemoryUtilization` setting with an explicit minimum GPU memory requirement.
+
+Use the ordinary [plan/apply/export workflow](usage.md) with the adapted complete example.
+A failed startup retains the container identity, model volume, and status for inspection; correct the failure and explicitly reapply.
+Destroy removes owned runtime resources and retains the model volume.
+Verified cached snapshots can be reused without querying a subsequently changed registry tag.
+There is no automatic migration or adoption of storage from the older `ollama` resource form; use a fresh deployment and retain the old bundle/state for its teardown.
+
+Configuration, registry download, startup protocol, memory checks, and shared recovery are covered by deterministic fixtures.
+Live image builds, GPU inference, tools, and agent responses with this new adapter remain **TBD**; earlier CPU Ollama results do not qualify it.
+
+### Legacy CPU-only Ollama
+
 Use the [managed Ollama example](../examples/managed-ollama.yaml) with a harness using OpenAI Completions.
 Before planning, select your own deployment UID, current agent image, immutable `ollama/ollama@sha256:...` image, and route model including its tag.
 This backend uses a local Docker engine and an existing network that supports published container ports.
@@ -165,7 +253,7 @@ The endpoint must be an explicit private or loopback IP URL ending in `/v1`, rea
 The endpoint has no generated bearer credential or TLS in this mode; restrict access through the host's existing network controls.
 Do not add `service`, `ollamaProxy`, or a provider `credential` to this declaration.
 The current container contract requests no GPU devices.
-Use a CPU-sized model for this path; GPU acceleration in this managed contract remains **TBD**.
+Use a CPU-sized model for this legacy path; use the shared `service` form above for the new GPU adapter.
 For an independently operated GPU-enabled Ollama daemon, evaluate the separate [external proxy path](#use-external-ollama-through-a-managed-proxy).
 
 Apply can pull the image and model, creates an owned model volume and container, and checks readiness without generation.
@@ -181,7 +269,7 @@ nemoclaw export --state-dir .local/ollama --output observed.yaml
 Inspect the plan before applying and use the export only after it succeeds.
 The SDK pulls a model through `/api/pull` only after a complete `/api/tags` inventory confirms it is absent.
 Ollama model tags are mutable; NemoClaw records the observed digest in model state, but this does not turn the requested tag into an immutable pin.
-The generic vLLM backend instead requires an immutable repository revision before download.
+The shared `service` form requires an immutable model identity before download.
 Successful apply establishes the configuration and readiness checks described under [verification](#verify-the-result); verify a native reply separately.
 
 If the owned container is stopped, apply can start it and then inspect its model inventory.
@@ -372,8 +460,8 @@ Choose the budget for the phase that failed; extending an agent turn does not ex
 | Phase | Current budget and setting |
 |---|---|
 | OpenClaw agent turn and native provider request | Selected harness's `execution.timeoutSeconds`; defaults to 600 seconds; see [execution defaults](agents.md#openclaw-execution-settings) |
-| Managed vLLM backend loading | `service.serving.startupTimeoutSeconds`; omitted or zero selects 1,800 seconds; explicit values 60–3,600 |
-| Managed vLLM readiness from the SDK, including model preparation | Fixed 9-hour wait; expiration leaves the owned container, watchdog, and data in place |
+| Managed `service` backend loading | `service.serving.startupTimeoutSeconds`; omitted or zero selects 1,800 seconds; explicit values 60–3,600 |
+| Managed `service` readiness from the SDK, including model preparation | Fixed 9-hour wait; expiration leaves the owned container, watchdog, and data in place |
 | Each packaged recipe preparation or verification execution | Fixed 8-hour limit; staged data remains after failure |
 | Managed gateway readiness | Fixed 90-second wait |
 | Sandbox/agent readiness | Fixed 120-second wait |
@@ -425,7 +513,7 @@ Use [inline recipes](recipes.md) for declared model preparation and [SSH placeme
 | Separate physical inference host | **TBD** — requires qualification beyond the retained same-host two-daemon result |
 | Vendor-specific catalog selection and validation | **TBD** — compatible API selection does not implement the earlier onboarding catalogs |
 | End-to-end hosted-provider guides for NVIDIA, OpenAI, Anthropic, Gemini, OpenRouter, and Nous | **TBD** — qualify the specific endpoint, API, harness, and model before promising compatibility |
-| Gated model repositories, custom remote-code models, GGUF, and nested checkpoints in the generic managed backend | **TBD** — outside the current [managed-model contract](models.md) |
+| Gated repositories, custom remote-code models, GGUF in vLLM, and nested Hugging Face checkpoints | **TBD** — outside the current [managed-model contract](models.md) |
 
 These gaps do not prevent use of a separately verified external endpoint with an accepted API.
 They do prevent treating an old provider or platform guide as verification of the current implementation.

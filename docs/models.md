@@ -6,6 +6,7 @@
 Use `service.backend: vllm` for a public Hugging Face model that the pinned vLLM image can load natively.
 Set `service.model.repository` and an exact 40-character commit in `service.model.revision`.
 There is no repository allowlist.
+For Ollama registry models, use [managed Ollama](inference.md#run-managed-ollama); it shares the `service` hardware, placement, memory, and lifecycle contract described here.
 
 ## Choose a Model and Capacity
 
