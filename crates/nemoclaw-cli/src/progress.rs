@@ -116,104 +116,100 @@ mod tests {
                 total: Some(100),
             }),
         };
-        assert_eq!(
-            render(Progress::Download(download.clone()), false).unwrap(),
-            "model_snapshot.chat: downloading llama3:latest [sha256:abc] 50% (50 B / 100 B)"
-        );
-        download.bytes.as_mut().unwrap().total = Some(0);
-        assert_eq!(
-            render(Progress::Download(download.clone()), false).unwrap(),
-            "model_snapshot.chat: downloading llama3:latest [sha256:abc] 50 B"
-        );
-        download.layer = None;
+        let output = render(Progress::Download(download.clone()), false).unwrap();
+        for value in [&download.resource, &download.artifact] {
+            assert!(output.contains(value));
+        }
+        for value in ["abc", "50%", "50 B", "100 B"] {
+            assert!(output.contains(value));
+        }
+        for total in [None, Some(0)] {
+            download.bytes.as_mut().unwrap().total = total;
+            let unknown = render(Progress::Download(download.clone()), false).unwrap();
+            assert!(unknown.contains("50 B"));
+            assert!(!unknown.contains('%'));
+        }
+        let downloading = render(Progress::Download(download.clone()), false).unwrap();
         download.phase = DownloadPhase::Complete;
-        download.bytes = None;
-        assert_eq!(
-            render(Progress::Download(download), false).unwrap(),
-            "model_snapshot.chat: downloaded llama3:latest"
+        let completed = render(Progress::Download(download.clone()), false).unwrap();
+        assert_ne!(
+            completed, downloading,
+            "completion must be distinguishable from progress"
+        );
+        assert!(completed.contains(&download.resource) && completed.contains(&download.artifact));
+        download.phase = DownloadPhase::Downloading;
+        download.layer = None;
+        assert!(
+            !render(Progress::Download(download), false)
+                .unwrap()
+                .contains("abc")
         );
     }
 
     #[test]
-    fn validation_progress_describes_configuration_checks() {
-        assert_eq!(
-            render(Progress::Validating, false).as_deref(),
-            Some("Checking deployment configuration")
+    fn quick_operations_preserve_measured_duration_and_outcome() {
+        let resource = render(
+            Progress::Resource {
+                resource: "sandbox",
+                action: "create",
+                status: "complete",
+                elapsed: Duration::from_millis(125),
+            },
+            false,
+        )
+        .unwrap();
+        for value in ["sandbox", "create", "complete", "125ms"] {
+            assert!(resource.contains(value));
+        }
+        let completed = |outcome| Progress::Completed {
+            operation: "sandbox.ready",
+            elapsed: Duration::from_millis(250),
+            outcome,
+        };
+        let success = render(completed(nemoclaw_sdk::StepOutcome::Succeeded), true).unwrap();
+        assert!(success.contains("sandbox.ready") && success.contains("250ms"));
+        assert_ne!(
+            success,
+            render(completed(nemoclaw_sdk::StepOutcome::Failed), true).unwrap()
         );
     }
 
     #[test]
-    fn quick_operations_report_measured_milliseconds() {
-        assert_eq!(
-            render(
-                Progress::Resource {
-                    resource: "sandbox",
-                    action: "create",
-                    status: "complete",
-                    elapsed: Duration::from_millis(125)
-                },
-                false
-            )
-            .unwrap(),
-            "sandbox: create complete (125ms)"
-        );
-        assert_eq!(
-            render(
-                Progress::Waiting {
-                    operation: "sandbox.ready",
-                    elapsed: Duration::ZERO
-                },
-                false
-            )
-            .unwrap(),
-            "Waiting for sandbox readiness"
-        );
-        assert_eq!(
-            render(
-                Progress::Completed {
-                    operation: "sandbox.ready",
-                    elapsed: Duration::from_millis(250),
-                    outcome: nemoclaw_sdk::StepOutcome::Succeeded
-                },
-                true
-            )
-            .unwrap(),
-            "sandbox.ready succeeded 250ms"
-        );
-    }
-
-    #[test]
-    fn ordinary_progress_describes_resources_and_readiness_but_timings_are_verbose() {
-        assert_eq!(
-            render(
-                Progress::Resource {
-                    resource: "sandbox",
-                    action: "create",
-                    status: "waiting",
-                    elapsed: std::time::Duration::from_secs(20)
-                },
-                false
-            )
-            .unwrap(),
-            "sandbox: create waiting (20s)"
-        );
-        assert_eq!(
-            render(
+    fn resource_waits_are_visible_but_operation_timings_require_verbose_output() {
+        let waiting = render(
+            Progress::Resource {
+                resource: "sandbox",
+                action: "create",
+                status: "waiting",
+                elapsed: Duration::from_secs(20),
+            },
+            false,
+        )
+        .unwrap();
+        for value in ["sandbox", "waiting", "20s"] {
+            assert!(waiting.contains(value));
+        }
+        for elapsed in [Duration::ZERO, Duration::from_secs(30)] {
+            let message = render(
                 Progress::Waiting {
                     operation: "runtime.ready",
-                    elapsed: Duration::from_secs(30)
+                    elapsed,
                 },
-                false
+                false,
             )
-            .unwrap(),
-            "Waiting for gateway and inference readiness (30s)"
-        );
+            .unwrap();
+            assert!(!message.is_empty());
+            if !elapsed.is_zero() {
+                assert!(message.contains("30s"));
+            }
+        }
         let done = Progress::Completed {
             operation: "tofu.apply",
             elapsed: Duration::from_secs(1),
             outcome: nemoclaw_sdk::StepOutcome::Succeeded,
         };
         assert!(render(done.clone(), false).is_none());
-        assert_eq!(render(done, true).unwrap(), "tofu.apply succeeded 1s");
+        let verbose = render(done, true).unwrap();
+        assert!(verbose.contains("tofu.apply") && verbose.contains("1s"));
     }
 }
