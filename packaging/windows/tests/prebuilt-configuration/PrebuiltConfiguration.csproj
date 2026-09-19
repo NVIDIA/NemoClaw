@@ -1,0 +1,18 @@
+<!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../../bootstrapper/NativeSetupOperations.cs" Link="NativeSetupOperations.cs" />
+    <Compile Include="../../bootstrapper/NativeSetupConfiguration.cs" Link="NativeSetupConfiguration.cs" />
+    <Compile Include="../../bootstrapper/NativeSetupOptions.cs" Link="NativeSetupOptions.cs" />
+    <Compile Include="../../bootstrapper/NativeExpressSetup.cs" Link="NativeExpressSetup.cs" />
+    <EmbeddedResource Include="../../runtime/native-inference-manifest.json" LogicalName="Nvidia.NemoClaw.NativeInferenceManifest.json" />
+  </ItemGroup>
+</Project>
