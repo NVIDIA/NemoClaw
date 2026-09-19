@@ -207,6 +207,24 @@ fn runtime_launch_preserves_declared_bindings_limits_and_isolation() {
         } else {
             assert_eq!(storage.target.as_deref(), Some("/owned-data"));
             assert_eq!(host.network_mode.as_deref(), Some("host"));
+            let command = launch.cmd.as_ref().unwrap();
+            let bind = command
+                .windows(2)
+                .find(|pair| pair[0] == "--bind-address")
+                .unwrap()[1]
+                .parse::<std::net::IpAddr>()
+                .unwrap();
+            assert!(
+                bind.is_loopback(),
+                "managed gateway must not expose its unauthenticated API"
+            );
+            let port = command.windows(2).find(|pair| pair[0] == "--port").unwrap()[1]
+                .parse::<u16>()
+                .unwrap();
+            assert_eq!(
+                Some(port),
+                url::Url::parse(&spec.gateway.endpoint).unwrap().port()
+            );
             assert!(mounts.iter().any(|mount| mount.source.as_deref()
                 == spec.gateway.engine.strip_prefix("unix://")
                 && mount.target.as_deref() == Some("/var/run/docker.sock")));

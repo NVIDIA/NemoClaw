@@ -61,7 +61,8 @@ fn default_policy_denies_undeclared_egress_and_keeps_programs_read_only() {
             !filesystem
                 .read_write
                 .iter()
-                .any(|grant| std::path::Path::new(protected).starts_with(grant)),
+                .any(|grant| std::path::Path::new(protected).starts_with(grant)
+                    || std::path::Path::new(grant).starts_with(protected)),
             "writable program directory: {protected}"
         );
     }

@@ -102,9 +102,18 @@ mod tests {
         );
         assert!(serde_json::from_str::<Value>(&output).is_err());
         for change in result["changes"].as_array().unwrap() {
-            assert!(output.contains(change["resource"].as_str().unwrap()));
+            let resource = change["resource"].as_str().unwrap();
+            let row = output
+                .lines()
+                .find(|line| line.contains(resource))
+                .expect("resource action row");
+            let mut cursor = 0;
             for action in change["actions"].as_array().unwrap() {
-                assert!(output.contains(action.as_str().unwrap()));
+                let action = action.as_str().unwrap();
+                let position = row[cursor..]
+                    .find(action)
+                    .expect("action must belong to this resource");
+                cursor += position + action.len();
             }
         }
         assert!(output.contains(result["deferred"][0].as_str().unwrap()));
