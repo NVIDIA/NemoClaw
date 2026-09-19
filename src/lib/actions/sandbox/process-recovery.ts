@@ -1846,8 +1846,39 @@ export async function restartSandboxGateway(
             timeout,
             runtimeSelection ? { runtimeSelection } : { localDockerFallbackPolicy: "read-only" },
           ),
-        waitForSandboxControlPlaneReady: (name) =>
-          waitForRecreatedSandboxOpenShellReady(name, { runtimeSelection }),
+        restartHermesSandbox: async (name) => {
+          const expected = registry.getSandbox(name);
+          const revalidate = () => {
+            const current = registry.getSandbox(name);
+            if (
+              !expected ||
+              !current ||
+              current.name !== expected.name ||
+              current.agent !== expected.agent ||
+              current.lifecycleGeneration !== expected.lifecycleGeneration
+            ) {
+              throw new Error(`Sandbox '${name}' identity changed during Hermes restart.`);
+            }
+          };
+          const run = (action: "stop" | "start") => {
+            revalidate();
+            const result = captureOpenshell(
+              ["sandbox", action, name],
+              withSelectedOpenShellCommandOptions(
+                { ignoreError: true, includeStreams: true, timeout: 210000 },
+                runtimeSelection,
+              ),
+            );
+            revalidate();
+            return {
+              status: typeof result.status === "number" ? result.status : 1,
+              stdout: result.stdout ?? result.output ?? "",
+              stderr: result.stderr ?? "",
+            };
+          };
+          const stopped = run("stop");
+          return stopped.status === 0 ? run("start") : stopped;
+        },
         waitForRecoveredSandboxGateway: (name, options) =>
           waitForRecoveredSandboxGateway(name, {
             ...options,
