@@ -652,6 +652,17 @@ export function createSandboxGpuCreateAttemptRunner(
           SANDBOX_READY_PROBE_TIMEOUT_MS,
         );
         if (observation.state === "invalid") {
+          if (
+            observation.diagnostic === "selector-execution-timeout" ||
+            observation.diagnostic === "selector-execution-nonzero" ||
+            observation.diagnostic === "selector-execution-resource-unavailable"
+          ) {
+            // The create client can temporarily hold OpenShell's read path
+            // while it builds or publishes the sandbox. Identity remains
+            // unavailable, so no mutation is authorized; retry on the next
+            // bounded create poll.
+            return;
+          }
           throw new Error(
             `OpenShell did not return the exact created identity for sandbox '${input.sandboxName}'. Diagnostic class: ${observation.diagnostic}.`,
           );

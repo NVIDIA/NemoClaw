@@ -605,17 +605,26 @@ describe("created sandbox identity gate", () => {
       nonce = createAttemptNonce(args);
       expect(options.readyCheck?.()).toBe(false);
       await options.onPoll?.();
+      expect(input.verifyCreatedSandboxBeforeEffects).not.toHaveBeenCalled();
+      expect(patch.maybeApplyDuringCreate).not.toHaveBeenCalled();
+      await options.onPoll?.();
       expect(options.readyCheck?.()).toBe(true);
       events.push("create-complete");
       return { status: 0, output: "Created sandbox: alpha", sawProgress: true };
     });
     const deps = createGpuFlowDeps();
+    let selectorAttempts = 0;
+    const failTransientSelectorRead = (): never => {
+      throw new Error("Command failed with status 1");
+    };
     vi.mocked(deps.runCaptureOpenshell).mockImplementation((args) =>
-      args.includes("--selector")
-        ? sandboxListJson("alpha-sandbox-id", {
-            [NEMOCLAW_CREATE_ATTEMPT_LABEL]: nonce,
-          })
-        : "alpha Ready",
+      !args.includes("--selector")
+        ? "alpha Ready"
+        : ++selectorAttempts === 1
+          ? failTransientSelectorRead()
+          : sandboxListJson("alpha-sandbox-id", {
+              [NEMOCLAW_CREATE_ATTEMPT_LABEL]: nonce,
+            }),
     );
 
     await expect(runSandboxGpuCreateFlow(input, deps)).resolves.toMatchObject({
