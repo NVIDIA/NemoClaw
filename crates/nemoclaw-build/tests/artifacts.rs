@@ -224,3 +224,67 @@ fn runtime_artifacts_require_an_explicit_platform() {
     let input = br#"{"name":"fixture","image":"local/fixture:test","sourceDateEpoch":1234,"files":["Dockerfile"],"downloads":{}}"#;
     assert!(nemoclaw_build::RuntimeArtifact::parse(input).is_err());
 }
+
+#[test]
+fn every_bundle_platform_pins_the_docker_provider_archive() {
+    let pins: serde_json::Value =
+        serde_json::from_str(include_str!("../../../versions.json")).unwrap();
+    let version = pins["dockerProvider"]
+        .as_str()
+        .expect("Docker provider pin");
+    for (platform, artifacts) in pins["platforms"].as_object().unwrap() {
+        assert_eq!(
+            artifacts["dockerProvider"]["url"],
+            format!(
+                "https://github.com/kreuzwerker/terraform-provider-docker/releases/download/v{version}/terraform-provider-docker_{version}_{platform}.zip"
+            )
+        );
+        let checksum = artifacts["dockerProvider"]["sha256"].as_str().unwrap();
+        assert_eq!(checksum.len(), 64);
+        assert!(checksum.bytes().all(|byte| byte.is_ascii_hexdigit()));
+    }
+}
+
+#[test]
+fn docker_provider_bundle_retains_the_verified_binary_and_license() {
+    let mut zip = zip::ZipWriter::new(Cursor::new(Vec::new()));
+    for (name, bytes) in [
+        ("terraform-provider-docker_v4.6.0", "binary"),
+        ("LICENSE", "upstream MPL license"),
+    ] {
+        zip.start_file(name, zip::write::SimpleFileOptions::default())
+            .unwrap();
+        zip.write_all(bytes.as_bytes()).unwrap();
+    }
+    let bytes = zip.finish().unwrap().into_inner();
+    let root = tempfile::tempdir().unwrap();
+    let files =
+        nemoclaw_build::docker_provider::install(root.path(), &bytes, "4.6.0", "linux_arm64")
+            .unwrap();
+    let binary = "providers/registry.opentofu.org/kreuzwerker/docker/4.6.0/linux_arm64/terraform-provider-docker_v4.6.0";
+    assert_eq!(std::fs::read(root.path().join(binary)).unwrap(), b"binary");
+    assert_eq!(
+        std::fs::read(root.path().join("licenses/docker-provider-LICENSE")).unwrap(),
+        b"upstream MPL license"
+    );
+    assert_eq!(files.len(), 2);
+    for (path, hash) in files {
+        assert_eq!(
+            hash,
+            nemoclaw_sdk::bundle::hash_file(&root.path().join(path)).unwrap()
+        );
+    }
+    assert!(
+        nemoclaw_build::docker_provider::install(
+            root.path(),
+            &archive("terraform-provider-docker_v4.6.0", b"binary"),
+            "4.6.0",
+            "linux_arm64"
+        )
+        .is_err()
+    );
+    assert!(
+        nemoclaw_build::docker_provider::install(root.path(), &bytes, "4.5.0", "linux_arm64")
+            .is_err()
+    );
+}
