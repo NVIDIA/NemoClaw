@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 use super::*;
 use serde_json::json;
+mod image;
 fn vendor_files(directory: &Path, root: &Path, files: &mut Vec<(String, PathBuf)>) -> Result<()> {
     for entry in fs::read_dir(directory)? {
         let entry = entry?;
@@ -24,6 +25,7 @@ pub(super) async fn build_runtime(pins: &Pins, manifest: &Path) -> Result<()> {
     let version = nemoclaw_build::source_version(&sources()?);
     let recipe = nemoclaw_build::RuntimeArtifact::parse(&fs::read(manifest)?)?;
     recipe.require_native_host(&bundle::platform()?)?;
+    image::require_containerd(Path::new("docker"))?;
     let inputs = manifest.parent().ok_or("artifact directory missing")?;
     let root = PathBuf::from(".build").join(&recipe.name);
     let root = root.as_path();
@@ -80,23 +82,8 @@ pub(super) async fn build_runtime(pins: &Pins, manifest: &Path) -> Result<()> {
     )?;
     nemoclaw_build::verify_source_version(&version, &sources()?)?;
     let output = root.join("runtime.tar");
-    run(Command::new("docker")
-        .args([
-            "buildx",
-            "build",
-            "--provenance=false",
-            &format!("--platform={}", recipe.platform.replace('_', "/")),
-            "--output",
-        ])
-        .arg(format!(
-            "type=oci,dest={},rewrite-timestamp=true",
-            output.display()
-        ))
-        .arg("--build-arg")
-        .arg(format!("SOURCE_DATE_EPOCH={}", recipe.source_date_epoch))
-        .args(["-t", &recipe.image])
-        .arg(&context))?;
-    run(Command::new("docker").args(["load", "-i"]).arg(output))?;
+    let reference = image::export_and_load(Path::new("docker"), &recipe, &context, &output)?;
+    println!("Runtime image loaded: {reference}");
     Ok(())
 }
 
