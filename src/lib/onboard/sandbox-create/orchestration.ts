@@ -485,12 +485,13 @@ export function allowsNotReadyCreatedSandboxReconciliation(input: {
   readonly acceptedCheckpoint: PendingSandboxCreateIdentity | null;
 }): boolean {
   const checkpoint = input.currentCheckpoint ?? input.acceptedCheckpoint;
-  if (
-    checkpoint?.exactFinalHandoffCommitStarted === true ||
-    input.createRoute === "compatibility"
-  ) {
-    return checkpoint?.exactFinalHandoffCommitStarted === true;
-  }
+  // Compatibility applies one exact, reversible initial runtime cutover after
+  // OpenShell publishes the nonce-owned sandbox but before that replacement
+  // can settle Ready. Reconciliation stays bound to the captured fingerprint;
+  // final registration uses allowsNotReadyCreatedSandboxRevalidation and still
+  // requires the durable handoff acknowledgement.
+  if (input.createRoute === "compatibility") return true;
+  if (checkpoint?.exactFinalHandoffCommitStarted === true) return true;
   return input.managedBootstrapCreateFinished;
 }
 

@@ -63,11 +63,27 @@ import { runSandboxGpuCreateFlow } from "../sandbox-gpu-create-flow";
 import { createCreatedSandboxLifecycle } from "../sandbox-recreate-transaction";
 import { fingerprintSandboxRecreateValue } from "../sandbox-recreate-transaction";
 import {
+  allowsNotReadyCreatedSandboxReconciliation,
+  allowsNotReadyCreatedSandboxRevalidation,
   createFinalHandoffCheckpointPersistence,
   createOnboardCreatedSandboxRegistrationWithManagedLifecycle,
   prepareResumedFinalHandoffCheckpoint,
 } from "./orchestration";
 import { resolveLegacyCompatibilityFinalHandoffRuntime } from "./identity-boundary";
+
+describe("compatibility create reconciliation", () => {
+  it("allows same-identity NotReady reconciliation before cutover but withholds publication (#11905)", () => {
+    const input = {
+      managedBootstrapCreateFinished: false,
+      createRoute: "compatibility" as const,
+      currentCheckpoint: null,
+      acceptedCheckpoint: null,
+    };
+
+    expect(allowsNotReadyCreatedSandboxReconciliation(input)).toBe(true);
+    expect(allowsNotReadyCreatedSandboxRevalidation(input)).toBe(false);
+  });
+});
 
 beforeEach(() => setupGpuFlowMocks(mocks));
 afterEach(resetGpuFlowMocks);
