@@ -98,6 +98,7 @@ import {
   requalifyPortableAgentSandboxAuthority,
   recoverPortableDemoSandboxLifecycleForConnect,
   isTerminalSandboxPhase,
+  sandboxPhaseNeedsLifecycleStart,
   TERMINAL_SANDBOX_PHASES,
   requireHermesPortableActiveLifecycleAuthority,
   startStoppedSandboxContainerForProbeRecovery,
@@ -2278,6 +2279,7 @@ async function runConnectEntryPreflight(
         livePhase &&
         livePhase !== "Ready" &&
         livePhase !== "Running" &&
+        !sandboxPhaseNeedsLifecycleStart(livePhase) &&
         !isTerminalSandboxPhase(livePhase) &&
         isDockerRuntimeDown(sandboxName)
       ) {

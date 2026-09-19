@@ -26,7 +26,7 @@ import {
   sandboxPhaseNeedsLifecycleStart,
   TERMINAL_SANDBOX_PHASES,
 } from "../../state/gateway";
-export { isTerminalSandboxPhase, TERMINAL_SANDBOX_PHASES };
+export { isTerminalSandboxPhase, sandboxPhaseNeedsLifecycleStart, TERMINAL_SANDBOX_PHASES };
 import { selectNamedGateway, selectSandboxOwningGateway } from "./gateway-select";
 import {
   gatewayNamePattern,
@@ -1097,6 +1097,7 @@ export async function ensureLiveSandboxOrExit(
       phase &&
       phase !== "Ready" &&
       phase !== "Running" &&
+      !sandboxPhaseNeedsLifecycleStart(phase) &&
       !isTerminalSandboxPhase(phase) &&
       isDockerRuntimeDown(sandboxName)
     ) {
