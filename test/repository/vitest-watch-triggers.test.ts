@@ -28,12 +28,10 @@ const E2E_WORKFLOW_CONTRACTS = [
   "test/e2e/support/mcp-workflow-boundary.test.ts",
   "test/e2e/support/mcp-workflow-compatibility.test.ts",
   "test/e2e/support/native-runtime-qualification-producer-workflow.test.ts",
-  "test/e2e/support/openclaw-plugin-runtime-exdev-workflow-boundary.test.ts",
   "test/e2e/support/onboard-timeout-contract.test.ts",
   "test/e2e/support/openshell-gateway-auth-contract-workflow-boundary.test.ts",
   "test/e2e/support/openshell-gateway-upgrade-workflow-boundary.test.ts",
   "test/e2e/support/prepare-e2e-workflow-boundary.test.ts",
-  "test/e2e/support/runner-pressure-workflow-boundary.test.ts",
   "test/e2e/support/security-posture-workflow-boundary.test.ts",
   "test/e2e/support/shared-e2e-workflow-boundary.test.ts",
   "test/e2e/support/staging-brev-launchable-identity-workflow-boundary.test.ts",
@@ -122,7 +120,6 @@ describe("Vitest opaque-input watch triggers", () => {
         "test/onboarding/onboard-fresh-create-identity.test.ts",
         "test/onboarding/onboard-installer-restore-intent.test.ts",
         "test/onboarding/onboard-managed-image-buildless-e2e.test.ts",
-        "test/onboarding/onboard-mcp-observability-redirect.test.ts",
         "test/onboarding/onboard-messaging.test.ts",
         "test/onboarding/onboard-prepared-build-context.test.ts",
         "test/onboarding/onboard-reservation-recreate.test.ts",
@@ -203,6 +200,7 @@ describe("Vitest opaque-input watch triggers", () => {
       "test/e2e/support/managed-image-protected-runtime-workflow.test.ts",
     ]);
     expect(triggeredBy("Dockerfile")).toEqual([
+      "test/generation/providerless-agent-config.test.ts",
       "src/lib/onboard/managed-startup-profile.test.ts",
       "src/lib/sandbox/optimized-build-context-copy-sources.test.ts",
       "test/mcp/mcp-tool-discovery-image-contract.test.ts",
@@ -219,6 +217,7 @@ describe("Vitest opaque-input watch triggers", () => {
       "test/onboarding/effective-policy-contracts.test.ts",
     ]);
     expect(triggeredBy("agents/hermes/Dockerfile")).toEqual([
+      "test/generation/providerless-agent-config.test.ts",
       "src/lib/onboard/experimental/hermes-portable-build-context.test.ts",
       "src/lib/onboard/managed-startup-profile.test.ts",
       "test/agents/hermes/hermes-mcp-runtime-capability.test.ts",
@@ -379,6 +378,11 @@ describe("Vitest opaque-input watch triggers", () => {
     expect(triggeredBy(".agents/skills/nemoclaw-maintainer-cut-release-tag/SKILL.md")).toEqual([
       "test/automation/releases/release-post-tag-follow-through.test.ts",
     ]);
+    expect(
+      triggeredBy(
+        ".agents/skills/nemoclaw-maintainer-cut-release-tag/references/cut-and-follow-through.md",
+      ),
+    ).toEqual(["test/automation/releases/release-post-tag-follow-through.test.ts"]);
     expect(triggeredBy(".agents/skills/nemoclaw-maintainer-evening/SKILL.md")).toEqual([
       "test/automation/releases/release-post-tag-follow-through.test.ts",
     ]);

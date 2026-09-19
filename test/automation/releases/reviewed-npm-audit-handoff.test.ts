@@ -14,12 +14,15 @@ import { emitAuditReceipt } from "../../../scripts/audit-reviewed-npm-graph.mts"
 import { prepareReviewedNpmBootstrap } from "../../support/reviewed-npm-bootstrap";
 
 const REPO_ROOT = path.join(import.meta.dirname, "../../..");
-const TRUSTED_WORKFLOWS = [
-  "e2e.yaml",
-  "managed-images.yaml",
-  "openshell-sdk-package-pr.yaml",
-  "pr.yaml",
-];
+const NPM_INTEGRITY =
+  "sha512-uIXokLlBj6FpNUTQX1PmT5pz7BlIN9QlixX+zdaSNHsd0qUXsbDLr50xzY6Sw7cJVr0uzHKDOle0swmPW/p5Qw==";
+const REVIEWED_NPM_IDENTITY = {
+  npmArchiveSha256: "5dbb86c71d07a1957f2e90734092dd6a58bdcd9ebc2d8d41ca1c6e6a21d364e1",
+  npmIntegrity: NPM_INTEGRITY,
+  npmVersion: "12.0.2",
+  registryOrigin: "https://registry.npmjs.org/",
+} as const;
+const TRUSTED_WORKFLOWS = ["e2e.yaml", "managed-images.yaml", "main.yaml", "pr.yaml"];
 
 type Workflow = {
   readonly jobs?: Readonly<
@@ -152,6 +155,16 @@ describe("npm audit handoff", () => {
     const exceptionPolicy = '{"schemaVersion":1,"exceptions":[]}\n';
     const rawReport =
       '{"vulnerabilities":{},"metadata":{"vulnerabilities":{"info":0,"low":0,"moderate":0,"high":0,"critical":0}}}\n';
+    const lockedGraphs = [
+      {
+        id: "temporary-graph",
+        integrity: "sha512-fixture",
+        label: "temporary graph fixture",
+        lockSha256: createHash("sha256").update(packageLock).digest("hex"),
+        packageSpec: "temporary-graph@1.0.0",
+        tarballUrl: "https://registry.npmjs.org/temporary-graph/-/temporary-graph-1.0.0.tgz",
+      },
+    ];
     try {
       fs.writeFileSync(packageJsonFile, packageJson);
       fs.writeFileSync(packageLockFile, packageLock);
@@ -160,9 +173,8 @@ describe("npm audit handoff", () => {
       fs.writeFileSync(
         auditConfigFile,
         JSON.stringify({
-          npmArchiveSha256: "0".repeat(64),
-          npmIntegrity: `sha512-${Buffer.alloc(64).toString("base64")}`,
-          npmVersion: "10.9.4",
+          ...REVIEWED_NPM_IDENTITY,
+          lockedGraphs,
         }),
       );
       fs.writeFileSync(
@@ -172,11 +184,7 @@ describe("npm audit handoff", () => {
       const receiptFile = emitAuditReceipt({
         artifactDirectory: root,
         graphId: "temporary-graph",
-        reviewedNpmIdentity: {
-          npmArchiveSha256: "0".repeat(64),
-          npmIntegrity: `sha512-${Buffer.alloc(64).toString("base64")}`,
-          npmVersion: "10.9.4",
-        },
+        reviewedNpmIdentity: REVIEWED_NPM_IDENTITY,
         packageJsonFile,
         packageLockFile,
         preserveInputs: true,
@@ -235,9 +243,9 @@ describe("npm audit handoff", () => {
       fs.writeFileSync(
         auditConfigFile,
         JSON.stringify({
-          npmArchiveSha256: "0".repeat(64),
-          npmIntegrity: `sha512-${Buffer.alloc(64).toString("base64")}`,
+          ...REVIEWED_NPM_IDENTITY,
           npmVersion: "11.18.0",
+          lockedGraphs,
         }),
       );
       const rejected = spawnSync(process.execPath, verifierArgs, { encoding: "utf8" });
@@ -270,6 +278,9 @@ describe("npm audit handoff", () => {
       npmVersion: auditConfig.npmVersion as string,
     };
     const acceptedAdvisory = "GHSA-aaaa-bbbb-cccc";
+    const activeExceptionExpiry = new Date(Date.now() + 24 * 60 * 60 * 1000)
+      .toISOString()
+      .slice(0, 10);
     const rawReport = `${JSON.stringify({
       auditReportVersion: 2,
       vulnerabilities: {
@@ -336,7 +347,7 @@ describe("npm audit handoff", () => {
               advisory: acceptedAdvisory,
               compensatingControls: ["The vulnerable input is rejected before use."],
               decision: "temporary-risk-acceptance",
-              expires: "2026-09-16",
+              expires: activeExceptionExpiry,
               graph: "mcporter-runtime",
               installedVersion: "1.0.0",
               owner: "security-maintainers",
@@ -407,8 +418,6 @@ describe("npm audit handoff", () => {
         "https://registry.yarnpkg.com",
         "--threshold",
         "high",
-        "--legacy-audit",
-        "true",
         "--result",
         trustedPolicyResult,
       ];

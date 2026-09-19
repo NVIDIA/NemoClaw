@@ -78,9 +78,12 @@ async function runUninstallPlanWithBackup(options: UninstallRunOptions, deps: Un
 }
 
 function okWithKnownGatewayList(command: string, args: readonly string[]): RunResult {
-  return command === "openshell" && args[0] === "gateway" && args[1] === "list"
-    ? ok(JSON.stringify([{ name: "nemoclaw" }]))
-    : ok();
+  const outputs: Record<string, string> = {
+    "openshell gateway list": JSON.stringify([
+      { name: "nemoclaw", endpoint: "https://127.0.0.1:8080", active: true },
+    ]),
+  };
+  return ok(outputs[[command, ...args.slice(0, 2)].join(" ")] ?? "");
 }
 
 function sharedOpenShellTeardownWasCalled(
@@ -454,16 +457,16 @@ describe("portable runtime cleanup in the uninstall run plan", testTimeoutOption
       )();
     });
     const runPortableCleanup = vi.fn(
-      (
+      async (
         _input: PortableRuntimeCleanupInput,
         continueAfterSandboxRemoval: (
           removed: number,
           sandboxNames: readonly string[],
           gatewayName: string,
-        ) => boolean,
+        ) => boolean | Promise<boolean>,
       ) => {
         order.push("exact-sandbox");
-        expect(continueAfterSandboxRemoval(1, ["alpha"], "nemoclaw")).toBe(true);
+        expect(await continueAfterSandboxRemoval(1, ["alpha"], "nemoclaw")).toBe(true);
         order.push("exact-shared");
         return {
           registryRemoved: true,
@@ -584,15 +587,15 @@ describe("portable runtime cleanup in the uninstall run plan", testTimeoutOption
       )(),
     );
     const runPortableCleanup = vi.fn(
-      (
+      async (
         _input: PortableRuntimeCleanupInput,
         continueAfterSandboxRemoval: (
           removedCount: number,
           sandboxNames: readonly string[],
           gatewayName: string,
-        ) => boolean,
+        ) => boolean | Promise<boolean>,
       ) => {
-        expect(continueAfterSandboxRemoval(2, ["alpha", "beta"], "nemoclaw")).toBe(true);
+        expect(await continueAfterSandboxRemoval(2, ["alpha", "beta"], "nemoclaw")).toBe(true);
         return {
           registryRemoved: true,
           sandboxContainersRemoved: 2,
@@ -681,15 +684,15 @@ describe("portable runtime cleanup in the uninstall run plan", testTimeoutOption
       )(),
     );
     const runPortableCleanup = vi.fn(
-      (
+      async (
         _input: PortableRuntimeCleanupInput,
         continueAfterSandboxRemoval: (
           removed: number,
           sandboxNames: readonly string[],
           gatewayName: string,
-        ) => boolean,
+        ) => boolean | Promise<boolean>,
       ) => {
-        expect(continueAfterSandboxRemoval(1, ["alpha"], "nemoclaw")).toBe(true);
+        expect(await continueAfterSandboxRemoval(1, ["alpha"], "nemoclaw")).toBe(true);
         return {
           registryRemoved: true,
           sandboxContainersRemoved: 1,
@@ -739,6 +742,7 @@ describe("portable runtime cleanup in the uninstall run plan", testTimeoutOption
     "%s after a scoped delete uses bounded exact-name verification (#9189)",
     async (_case, absentAttempt, expectedExit, expectedSleeps) => {
       let getCalls = 0;
+      const logs: string[] = [];
       const sleep = vi.fn();
       const runHandlers = new Map<string, () => RunResult>([
         ["openshell status -g nemoclaw", () => ok("Status: Connected\nGateway: nemoclaw\n")],
@@ -759,15 +763,15 @@ describe("portable runtime cleanup in the uninstall run plan", testTimeoutOption
         )(),
       );
       const runPortableCleanup = vi.fn(
-        (
+        async (
           _input: PortableRuntimeCleanupInput,
           continueAfterSandboxRemoval: (
             removed: number,
             sandboxNames: readonly string[],
             gatewayName: string,
-          ) => boolean,
+          ) => boolean | Promise<boolean>,
         ) =>
-          continueAfterSandboxRemoval(1, ["alpha"], "nemoclaw")
+          (await continueAfterSandboxRemoval(1, ["alpha"], "nemoclaw"))
             ? { registryRemoved: true, sandboxContainersRemoved: 1, selectorsRemoved: [] }
             : null,
       );
@@ -780,7 +784,7 @@ describe("portable runtime cleanup in the uninstall run plan", testTimeoutOption
           existsSync: () => false,
           hasPortableRuntimeCleanup: () => true,
           isTty: false,
-          log: vi.fn(),
+          log: (line) => logs.push(line),
           rmSync: vi.fn(),
           run,
           runDocker: vi.fn(() => ok()),
@@ -793,6 +797,7 @@ describe("portable runtime cleanup in the uninstall run plan", testTimeoutOption
       expect(getCalls).toBe(expectedExit === 0 ? absentAttempt : 5);
       expect(sleep).toHaveBeenCalledTimes(expectedSleeps);
       expect(runPortableCleanup).toHaveBeenCalledOnce();
+      expect(logs.includes("Deleted OpenShell sandbox 'alpha'")).toBe(expectedExit === 0);
     },
   );
 
@@ -869,15 +874,15 @@ describe("portable runtime cleanup in the uninstall run plan", testTimeoutOption
         )(),
       );
       const runPortableCleanup = vi.fn(
-        (
+        async (
           _input: PortableRuntimeCleanupInput,
           continueAfterSandboxRemoval: (
             removed: number,
             sandboxNames: readonly string[],
             gatewayName: string,
-          ) => boolean,
+          ) => boolean | Promise<boolean>,
         ) => {
-          const continued = continueAfterSandboxRemoval(1, ["alpha"], "nemoclaw");
+          const continued = await continueAfterSandboxRemoval(1, ["alpha"], "nemoclaw");
           const finishSharedCleanup = () => {
             Object.assign(portableEvidence, {
               config: false,
@@ -1050,10 +1055,10 @@ describe("portable runtime cleanup in the uninstall run plan", testTimeoutOption
         runLocalModelRuntimeCleanup: runModelCleanup,
         runPortableRuntimeCleanupTransaction: async (input, continueAfterSandboxRemoval) =>
           await runPortableRuntimeCleanupTransaction(input, continueAfterSandboxRemoval, {
-            withRegistryLock: (_registryFile, operation) => {
+            withRegistryLock: async (_registryFile, operation) => {
               !stagedObserved && expect(fs.existsSync(stage)).toBe(true);
               stagedObserved = true;
-              return operation();
+              return await operation();
             },
           }),
       };
@@ -1089,15 +1094,15 @@ describe("portable runtime cleanup in the uninstall run plan", testTimeoutOption
     const errors: string[] = [];
     const removed: string[] = [];
     const runPortableCleanup = vi.fn(
-      (
+      async (
         _input: PortableRuntimeCleanupInput,
         continueAfterSandboxRemoval: (
           removed: number,
           sandboxNames: readonly string[],
           gatewayName: string,
-        ) => boolean,
+        ) => boolean | Promise<boolean>,
       ) => {
-        continueAfterSandboxRemoval(1, ["alpha"], "nemoclaw");
+        await continueAfterSandboxRemoval(1, ["alpha"], "nemoclaw");
         throw new Error(
           "Portable lifecycle or registry state changed during exact uninstall cleanup",
         );
@@ -1214,7 +1219,7 @@ describe("portable runtime cleanup in the uninstall run plan", testTimeoutOption
     fs.mkdirSync(path.dirname(config), { mode: 0o700, recursive: true });
     fs.writeFileSync(config, "[engine]\n", { mode: 0o600 });
     const detectPortable = vi.fn(hasPortableRuntimeCleanup);
-    const runPortableCleanup = vi.fn(() => ({
+    const runPortableCleanup = vi.fn(async () => ({
       registryRemoved: true,
       sandboxContainersRemoved: 1,
       selectorsRemoved: [],
@@ -1236,7 +1241,20 @@ describe("portable runtime cleanup in the uninstall run plan", testTimeoutOption
             ["pgrep", "lsof"].includes(command)
               ? notFound()
               : command === "openshell" && args.join(" ") === "gateway list -o json"
-                ? ok(JSON.stringify([{ name: "nemoclaw" }, { name: "nemoclaw-9000" }]))
+                ? ok(
+                    JSON.stringify([
+                      {
+                        name: "nemoclaw",
+                        endpoint: "https://127.0.0.1:8080",
+                        active: true,
+                      },
+                      {
+                        name: "nemoclaw-9000",
+                        endpoint: "https://127.0.0.1:9000",
+                        active: false,
+                      },
+                    ]),
+                  )
                 : ok(),
           runDocker: () => ok(""),
           runPortableRuntimeCleanupTransaction: runPortableCleanup,
@@ -1255,7 +1273,7 @@ describe("portable runtime cleanup in the uninstall run plan", testTimeoutOption
 
   it("leaves keep-openshell and external-supervisor flows unchanged (#9189)", async () => {
     const hasPortable = vi.fn(() => true);
-    const runPortableCleanup = vi.fn(() => ({
+    const runPortableCleanup = vi.fn(async () => ({
       registryRemoved: true,
       sandboxContainersRemoved: 1,
       selectorsRemoved: [],

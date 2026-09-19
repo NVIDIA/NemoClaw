@@ -21,6 +21,7 @@ import {
   collectGitHubReviewContext,
   MAX_PREPARED_GITHUB_CONTEXT_BYTES,
   readPreparedGitHubContext,
+  selectFollowUpReview,
   serializePreparedGitHubContext,
 } from "../../../tools/pr-review-advisor/github-context.mts";
 import {
@@ -309,8 +310,8 @@ describe("PR review advisor specialist lifecycle", () => {
   it.each([
     { failedStage: "configure", expectedDownload: false },
     { failedStage: "create", expectedDownload: false },
-    { failedStage: "run", expectedDownload: false },
-    { failedStage: "execution", expectedDownload: false },
+    { failedStage: "run", expectedDownload: true },
+    { failedStage: "execution", expectedDownload: true },
     { failedStage: "download", expectedDownload: true },
     { failedStage: "validate", expectedDownload: true },
   ])(
@@ -571,14 +572,20 @@ describe("PR review advisor OpenShell wrapper", () => {
     expect(child.stderr).toBe("");
   });
 
-  it("permits only the pinned image login files required by stable OpenShell exec", () => {
-    const policy = YAML.parse(
+  it("permits only the pinned image login files in managed review policies (#10947)", () => {
+    const advisorPolicy = YAML.parse(
       fs.readFileSync("tools/pr-review-advisor/openshell-policy.yaml", "utf8"),
     ) as {
       filesystem_policy: { read_only: string[]; read_write: string[] };
     };
+    const postMergePolicy = YAML.parse(
+      fs.readFileSync("tools/post-merge-docs/review-policy.yaml", "utf8"),
+    ) as {
+      filesystem_policy: { read_only: string[]; read_write: string[] };
+    };
+    const loginFiles = ["/sandbox/.bashrc", "/sandbox/.profile"];
 
-    expect(policy.filesystem_policy).toEqual({
+    expect(advisorPolicy.filesystem_policy).toEqual({
       include_workdir: false,
       read_only: [
         "/usr/bin",
@@ -594,6 +601,12 @@ describe("PR review advisor OpenShell wrapper", () => {
       ],
       read_write: ["/dev", "/sandbox/pr-review-advisor-runtime"],
     });
+    expect(
+      advisorPolicy.filesystem_policy.read_only.filter((entry) => entry.startsWith("/sandbox/.")),
+    ).toEqual(loginFiles);
+    expect(
+      postMergePolicy.filesystem_policy.read_only.filter((entry) => entry.startsWith("/sandbox/.")),
+    ).toEqual(loginFiles);
   });
 
   it.each([
@@ -724,6 +737,76 @@ describe("PR review advisor OpenShell wrapper", () => {
     expect(Buffer.byteLength(serializePreparedGitHubContext(context), "utf8")).toBeLessThanOrEqual(
       MAX_PREPARED_GITHUB_CONTEXT_BYTES,
     );
+  });
+
+  it("selects the latest trusted human review on a prior commit as the follow-up contract", () => {
+    const currentHead = "c".repeat(40);
+    const selected = selectFollowUpReview(
+      [
+        {
+          id: 10,
+          state: "CHANGES_REQUESTED",
+          commit_id: "a".repeat(40),
+          submitted_at: "2026-09-14T10:00:00Z",
+          author_association: "MEMBER",
+          user: { login: "maintainer", type: "User" },
+          body: "Preserve the remote result when cleanup fails.",
+        },
+        {
+          id: 11,
+          state: "CHANGES_REQUESTED",
+          commit_id: "b".repeat(40),
+          submitted_at: "2026-09-14T11:00:00Z",
+          author_association: "NONE",
+          user: { login: "coderabbitai[bot]", type: "Bot" },
+          body: "Untrusted bot review.",
+        },
+        {
+          id: 12,
+          state: "APPROVED",
+          commit_id: currentHead,
+          submitted_at: "2026-09-14T12:00:00Z",
+          author_association: "MEMBER",
+          user: { login: "maintainer", type: "User" },
+        },
+        {
+          id: 13,
+          state: "APPROVED",
+          commit_id: "d".repeat(40),
+          submitted_at: "2026-09-14T13:00:00Z",
+          author_association: "MEMBER",
+          user: { login: "different-maintainer", type: "User" },
+        },
+      ],
+      [
+        {
+          pull_request_review_id: 10,
+          path: "src/lib/transport.ts",
+          line: null,
+          original_line: 42,
+          body: "Keep both outcomes.",
+        },
+      ],
+      currentHead,
+      "maintainer",
+    );
+
+    expect(selected).toEqual({
+      reviewId: 10,
+      reviewedHeadSha: "a".repeat(40),
+      state: "CHANGES_REQUESTED",
+      submittedAt: "2026-09-14T10:00:00Z",
+      reviewer: "maintainer",
+      authorAssociation: "MEMBER",
+      body: "Preserve the remote result when cleanup fails.",
+      inlineComments: [
+        {
+          path: "src/lib/transport.ts",
+          line: 42,
+          body: "Keep both outcomes.",
+        },
+      ],
+    });
   });
 
   it("bounds large overlap path sets before serializing sandbox context", async () => {
@@ -964,6 +1047,74 @@ describe("PR review advisor OpenShell wrapper", () => {
     fs.chmodSync(diffPath, 0o600);
   });
 
+  it("prepares an exact follow-up delta from the trusted reviewed commit", async () => {
+    const env = advisorEnvironment();
+    const workdir = env.ADVISOR_WORKDIR as string;
+    fs.rmSync(path.join(workdir, ".git"), { recursive: true });
+    execFileSync("git", ["init", "--quiet"], { cwd: workdir });
+    const commit = (message: string) =>
+      execFileSync(
+        "git",
+        [
+          "-c",
+          "user.name=PR Review Advisor",
+          "-c",
+          "user.email=advisor@example.invalid",
+          "commit",
+          "--quiet",
+          "-m",
+          message,
+        ],
+        { cwd: workdir },
+      );
+    fs.writeFileSync(path.join(workdir, "reviewed.txt"), "base\n");
+    execFileSync("git", ["add", "reviewed.txt"], { cwd: workdir });
+    commit("test: add base content");
+    const reviewedHeadSha = execFileSync("git", ["rev-parse", "HEAD"], {
+      cwd: workdir,
+      encoding: "utf8",
+    }).trim();
+    fs.writeFileSync(path.join(workdir, "reviewed.txt"), "fixed\n");
+    execFileSync("git", ["add", "reviewed.txt"], { cwd: workdir });
+    commit("fix: address review contract");
+    env.BASE_REF = "HEAD~1";
+    env.HEAD_REF = "HEAD";
+    env.PR_REVIEW_ADVISOR_INTEREST = "security";
+    const binaries = path.join(temporaryDirectory(), "binaries");
+    fs.mkdirSync(binaries);
+    fs.writeFileSync(path.join(binaries, "rg"), "rg", { mode: 0o755 });
+    fs.writeFileSync(path.join(binaries, "fdfind"), "fdfind", { mode: 0o755 });
+
+    await prepareAdvisorSandboxInputs(env, {
+      collectContext: async () => ({
+        repo: "NVIDIA/NemoClaw",
+        prNumber: 7542,
+        followUpReview: {
+          reviewId: 10,
+          reviewedHeadSha,
+          state: "CHANGES_REQUESTED",
+          submittedAt: "2026-09-14T10:00:00Z",
+          reviewer: "maintainer",
+          authorAssociation: "MEMBER",
+          body: "Fix the regression.",
+          inlineComments: [],
+        },
+      }),
+      resolveExecutable: (name) => path.join(binaries, name),
+    });
+
+    const contextRoot = path.join(env.RUNNER_TEMP as string, "pr-review-advisor-context");
+    expect(
+      fs.readFileSync(path.join(contextRoot, "specialist", "follow-up-diff.patch"), "utf8"),
+    ).toContain("+fixed");
+    expect(
+      JSON.parse(fs.readFileSync(path.join(contextRoot, "github-context.json"), "utf8")),
+    ).toMatchObject({ followUpReview: { reviewedHeadSha } });
+    fs.chmodSync(path.join(contextRoot, "specialist"), 0o700);
+    fs.chmodSync(path.join(contextRoot, "specialist", "diff.patch"), 0o600);
+    fs.chmodSync(path.join(contextRoot, "specialist", "follow-up-diff.patch"), 0o600);
+  });
+
   it("requires repository metadata before placing immutable-boundary proof files", async () => {
     const env = advisorEnvironment();
     fs.rmSync(path.join(env.ADVISOR_WORKDIR as string, ".git"), {
@@ -1116,6 +1267,14 @@ describe("PR review advisor OpenShell wrapper", () => {
     createAdvisorSandbox(env, tools);
     await runAdvisorSandboxAsync(env, tools).completion;
     downloadAdvisorArtifacts(env, tools);
+    const downloadOptions = vi
+      .mocked(tools.run)
+      .mock.calls.find(
+        ([command, args]) =>
+          command === "openshell" && args[0] === "sandbox" && args[1] === "download",
+      )?.[2];
+    expect(downloadOptions?.timeout).toBe(60_000);
+    expect(downloadOptions?.killSignal).toBe("SIGKILL");
     deleteAdvisorSandbox(env, tools);
 
     const calls = vi.mocked(tools.run).mock.calls;
@@ -1227,6 +1386,18 @@ describe("PR review advisor OpenShell wrapper", () => {
         "HEAD",
       ]),
     );
+    expect(runArgs).not.toContain("--no-login-shell");
+    const commandBoundaryIndex = runArgs.indexOf("--");
+    expect(runArgs.slice(commandBoundaryIndex)).toEqual([
+      "--",
+      "/usr/bin/node",
+      "--no-warnings",
+      "/advisor/tools/pr-review-advisor/run-specialist.mts",
+      "--base",
+      "target/base",
+      "--head",
+      "HEAD",
+    ]);
     expect(runArgs.join("\n")).not.toContain("github-host-secret");
     expect(runArgs.join("\n")).not.toContain("model-host-secret");
     expect(runArgs.join("\n")).not.toContain("advisor-host-secret");

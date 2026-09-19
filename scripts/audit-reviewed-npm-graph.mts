@@ -22,7 +22,7 @@ import {
   type ReviewedNpmIdentity,
   NPM_AUDIT_REGISTRY,
   assertExceptionGraphs,
-  parseReviewedNpmIdentity,
+  parseReviewedNpmIdentityConfig,
   readAuditExceptionRegistry,
   runReviewedNpmAudit,
   type Severity,
@@ -34,20 +34,21 @@ type ReviewedPackage = Readonly<{
   packageSpec: string;
   tarballUrl: string;
 }>;
+type LockedGraphIdentity = ReviewedPackage & Readonly<{ lockSha256: string }>;
 type SourceRegistryPackage = ReviewedPackage & Readonly<{ artifactName: string }>;
 type PackageWithoutIntegrity = Readonly<{
   label: string;
   packageSpec: string;
   tarballUrl: string;
 }>;
-type LockedGraph = ReviewedPackage &
+type LockedGraph = LockedGraphIdentity &
   Readonly<{
     directory: string;
     id: string;
     inputValidation?: "wechat-runtime";
     installMode?: "legacy-peer-deps";
     lockSha256: string;
-    replacementLockSha256?: string;
+    replacement?: LockedGraphIdentity;
     severityThreshold?: Severity;
     signatureAudit?: "retry-download-failures";
   }>;
@@ -112,6 +113,23 @@ function isSourceRegistryPackage(value: unknown): value is SourceRegistryPackage
     candidate.integrity.length > 0 &&
     typeof candidate.tarballUrl === "string" &&
     candidate.tarballUrl.length > 0
+  );
+}
+
+function isLockedGraphIdentity(value: unknown): value is LockedGraphIdentity {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const candidate = value as Partial<LockedGraphIdentity>;
+  return (
+    typeof candidate.label === "string" &&
+    candidate.label.length > 0 &&
+    typeof candidate.packageSpec === "string" &&
+    EXACT_NPM_PACKAGE_SPEC.test(candidate.packageSpec) &&
+    typeof candidate.integrity === "string" &&
+    candidate.integrity.length > 0 &&
+    typeof candidate.tarballUrl === "string" &&
+    candidate.tarballUrl.length > 0 &&
+    typeof candidate.lockSha256 === "string" &&
+    /^[0-9a-f]{64}$/.test(candidate.lockSha256)
   );
 }
 
@@ -192,7 +210,7 @@ function run(command: string, args: readonly string[], cwd: string) {
 
 export function parseAuditConfig(contents: string): AuditConfig {
   const parsed = JSON.parse(contents) as AuditConfig;
-  const reviewedNpmIdentity = parseReviewedNpmIdentity(parsed);
+  const reviewedNpmIdentity = parseReviewedNpmIdentityConfig(contents);
   if (
     parsed.schemaVersion !== 2 ||
     !SEVERITIES.includes(parsed.severityThreshold) ||
@@ -201,8 +219,6 @@ export function parseAuditConfig(contents: string): AuditConfig {
     parsed.archiveTarVersion !== "7.5.21" ||
     typeof parsed.exceptionFile !== "string" ||
     !parsed.exceptionFile ||
-    typeof parsed.registryOrigin !== "string" ||
-    !parsed.registryOrigin ||
     !Array.isArray(parsed.archivePackages) ||
     !Array.isArray(parsed.lockedGraphs) ||
     !Array.isArray(parsed.sourceNestedShrinkwrapPackages) ||
@@ -254,10 +270,12 @@ export function parseAuditConfig(contents: string): AuditConfig {
           (graph.installMode !== undefined ||
             graph.severityThreshold !== undefined ||
             graph.signatureAudit !== undefined)) ||
-        (graph.replacementLockSha256 !== undefined &&
-          (typeof graph.replacementLockSha256 !== "string" ||
-            !/^[0-9a-f]{64}$/.test(graph.replacementLockSha256) ||
-            graph.replacementLockSha256 === graph.lockSha256)),
+        (graph.replacement !== undefined &&
+          (!isLockedGraphIdentity(graph.replacement) ||
+            exactPackageName(graph.replacement.packageSpec) !==
+              exactPackageName(graph.packageSpec) ||
+            graph.replacement.packageSpec === graph.packageSpec ||
+            graph.replacement.lockSha256 === graph.lockSha256)),
     ) ||
     new Set(parsed.lockedGraphs.map(({ id }) => id)).size !== parsed.lockedGraphs.length
   ) {
@@ -282,6 +300,25 @@ export function reviewedArchiveGraphManifest(archiveTarVersion: unknown) {
   } as const;
 }
 
+export function stageReviewedArchiveForInstall(
+  graphDirectory: string,
+  archivePath: string,
+  index: number,
+): string {
+  if (!Number.isSafeInteger(index) || index < 0) {
+    throw new Error("reviewed archive install index must be a non-negative integer");
+  }
+  const filename = path.basename(archivePath);
+  if (!filename.endsWith(".tgz") || filename === ".tgz") {
+    throw new Error(`reviewed archive install filename is invalid: ${filename}`);
+  }
+  const relativeArchivePath = path.join("reviewed-archives", `${index}-${filename}`);
+  const archiveDirectory = path.join(graphDirectory, "reviewed-archives");
+  fs.mkdirSync(archiveDirectory, { recursive: true });
+  fs.copyFileSync(archivePath, path.join(graphDirectory, relativeArchivePath));
+  return `.${path.sep}${relativeArchivePath}`;
+}
+
 function materializeArchiveGraph(
   packages: readonly ReviewedPackage[],
   tempRoot: string,
@@ -293,7 +330,7 @@ function materializeArchiveGraph(
     path.join(graphDirectory, "package.json"),
     `${JSON.stringify(reviewedArchiveGraphManifest(archiveTarVersion), null, 2)}\n`,
   );
-  const archives = packages.map((reviewed) => {
+  const archives = packages.map((reviewed, index) => {
     const archive = packReviewedNpmArchive({
       expectedIntegrity: reviewed.integrity,
       label: reviewed.label,
@@ -301,22 +338,16 @@ function materializeArchiveGraph(
       tarballUrl: reviewed.tarballUrl,
       tempDirectory: tempRoot,
     });
-    return remediateReviewedOpenClawPluginArchive({
+    const remediated = remediateReviewedOpenClawPluginArchive({
       archivePath: archive.archivePath,
       packageSpec: reviewed.packageSpec,
       workingDirectory: archive.rootDirectory,
     });
+    return stageReviewedArchiveForInstall(graphDirectory, remediated.archivePath, index);
   });
   run(
     "npm",
-    [
-      "install",
-      "--ignore-scripts",
-      "--omit=dev",
-      "--no-audit",
-      "--no-fund",
-      ...archives.map((archive) => archive.archivePath),
-    ],
+    ["install", "--ignore-scripts", "--omit=dev", "--no-audit", "--no-fund", ...archives],
     graphDirectory,
   );
   return graphDirectory;
@@ -376,7 +407,7 @@ function materializeLockedGraph(
   graph: LockedGraph,
   tempRoot: string,
   registryOrigin: string,
-): string {
+): Readonly<{ directory: string; identity: LockedGraphIdentity }> {
   const sourcePackage = targetRepositoryPath(
     path.join(graph.directory, "package.json"),
     `${graph.label} package manifest`,
@@ -399,20 +430,16 @@ function materializeLockedGraph(
     }
     validateWechatRuntimeInputs(sourcePackage, sourceLock, registryOrigin);
   }
-  const expectedLockSha256 = selectReviewedLockSha256(
-    sourceLock,
-    graph.lockSha256,
-    graph.replacementLockSha256,
-    graph.label,
-  );
+  const reviewedIdentity = selectReviewedLockedGraphIdentity(sourceLock, graph);
+  const expectedLockSha256 = reviewedIdentity.lockSha256;
   verifyReviewedNpmLock({
-    expectedIntegrity: graph.integrity,
+    expectedIntegrity: reviewedIdentity.integrity,
     expectedLockSha256,
-    label: graph.label,
+    label: reviewedIdentity.label,
     lockfilePath: sourceLock,
-    packageSpec: graph.packageSpec,
+    packageSpec: reviewedIdentity.packageSpec,
     registryOrigin,
-    tarballUrl: graph.tarballUrl,
+    tarballUrl: reviewedIdentity.tarballUrl,
   });
   const destination = path.join(tempRoot, `locked-${path.basename(graph.directory)}`);
   fs.mkdirSync(destination);
@@ -421,8 +448,35 @@ function materializeLockedGraph(
   const installArgs = ["ci", "--ignore-scripts", "--omit=dev", "--no-audit", "--no-fund"];
   if (graph.installMode === "legacy-peer-deps") installArgs.push("--legacy-peer-deps");
   run("npm", installArgs, destination);
-  verifyMaterializedLockedGraph({ destination, expectedLockSha256, label: graph.label });
-  return destination;
+  verifyMaterializedLockedGraph({
+    destination,
+    expectedLockSha256,
+    label: reviewedIdentity.label,
+  });
+  return { directory: destination, identity: reviewedIdentity };
+}
+
+export function selectReviewedLockedGraphIdentity(
+  lockfilePath: string,
+  graph: LockedGraph,
+): LockedGraphIdentity {
+  const actual = createHash("sha256").update(fs.readFileSync(lockfilePath)).digest("hex");
+  if (actual === graph.lockSha256) {
+    return {
+      integrity: graph.integrity,
+      label: graph.label,
+      lockSha256: actual,
+      packageSpec: graph.packageSpec,
+      tarballUrl: graph.tarballUrl,
+    };
+  }
+  if (actual === graph.replacement?.lockSha256) return graph.replacement;
+  const reviewedDigests = [graph.lockSha256, graph.replacement?.lockSha256].filter(
+    (digest): digest is string => digest !== undefined,
+  );
+  throw new Error(
+    `${graph.label} lock SHA-256 mismatch\nExpected one of: ${reviewedDigests.join(", ")}\nActual:          ${actual}`,
+  );
 }
 
 export function verifyMaterializedLockedGraph({
@@ -442,23 +496,6 @@ export function verifyMaterializedLockedGraph({
     lockfilePath,
     omitDev: true,
   });
-}
-
-export function selectReviewedLockSha256(
-  lockfilePath: string,
-  lockSha256: string,
-  replacementLockSha256: string | undefined,
-  label: string,
-): string {
-  const actual = createHash("sha256").update(fs.readFileSync(lockfilePath)).digest("hex");
-  const reviewedDigests =
-    replacementLockSha256 === undefined ? [lockSha256] : [lockSha256, replacementLockSha256];
-  if (!reviewedDigests.includes(actual)) {
-    throw new Error(
-      `${label} lock SHA-256 mismatch\nExpected one of: ${reviewedDigests.join(", ")}\nActual:          ${actual}`,
-    );
-  }
-  return actual;
 }
 
 function readJsonObject(file: string, label: string): Record<string, any> {
@@ -544,12 +581,19 @@ export function normalizeOpenClawSignatureAlias(directory: string): void {
     version,
   } = OPENCLAW_DOMEXCEPTION_ALIAS;
   const lockfile = path.join(directory, "package-lock.json");
+  assertRegularFile(lockfile, "OpenClaw signature-audit lock");
+  const lock = readJsonObject(lockfile, "OpenClaw signature-audit lock");
+  if (typeof lock.packages !== "object" || lock.packages === null || Array.isArray(lock.packages)) {
+    throw new Error("OpenClaw signature-audit alias lock identity drifted");
+  }
+  const packages = lock.packages as Record<string, any>;
+  if (!packages[aliasPackagePath]) return;
+
   const aliasDirectory = path.join(directory, aliasPackagePath);
   const actualDirectory = path.join(directory, actualPackagePath);
   const aliasManifestFile = path.join(aliasDirectory, "package.json");
   const requesterManifestFile = path.join(directory, requesterPackagePath, "package.json");
   for (const [file, label] of [
-    [lockfile, "OpenClaw signature-audit lock"],
     [aliasManifestFile, "OpenClaw aliased package manifest"],
     [requesterManifestFile, "OpenClaw alias requester manifest"],
   ] as const) {
@@ -559,8 +603,6 @@ export function normalizeOpenClawSignatureAlias(directory: string): void {
     throw new Error(`OpenClaw signature-audit destination already exists: ${actualPackagePath}`);
   }
 
-  const lock = readJsonObject(lockfile, "OpenClaw signature-audit lock");
-  const packages = lock.packages as Record<string, any> | undefined;
   const aliasEntry = packages?.[aliasPackagePath];
   const requesterEntry = packages?.[requesterPackagePath];
   if (
@@ -602,7 +644,11 @@ export function normalizeOpenClawSignatureAlias(directory: string): void {
   fs.writeFileSync(requesterManifestFile, `${JSON.stringify(requesterManifest, null, 2)}\n`);
 }
 
-type CommandResult = Readonly<{ status: number | null; stdout: string; stderr: string }>;
+type CommandResult = Readonly<{
+  status: number | null;
+  stdout: string;
+  stderr: string;
+}>;
 
 export function verifySignaturesWithReviewedRetry(
   directory: string,
@@ -614,7 +660,11 @@ export function verifySignaturesWithReviewedRetry(
       env: { ...process.env, NPM_CONFIG_UPDATE_NOTIFIER: "false" },
     });
     if (result.error) throw result.error;
-    return { status: result.status, stderr: result.stderr, stdout: result.stdout };
+    return {
+      status: result.status,
+      stderr: result.stderr,
+      stdout: result.stdout,
+    };
   },
 ): void {
   const evidence: string[] = [];
@@ -659,7 +709,7 @@ function makeTreeOwnerWritable(root: string): void {
 }
 
 function verifyWechatInstallCacheBoundary(
-  graph: LockedGraph,
+  identity: LockedGraphIdentity,
   tempRoot: string,
   registryOrigin: string,
 ): void {
@@ -675,7 +725,7 @@ function verifyWechatInstallCacheBoundary(
     NPM_CONFIG_REGISTRY: registryOrigin,
     NPM_CONFIG_USERCONFIG: "/dev/null",
   };
-  const cache = spawnSync("npm", ["cache", "add", graph.packageSpec], {
+  const cache = spawnSync("npm", ["cache", "add", identity.packageSpec], {
     encoding: "utf-8",
     env,
     stdio: ["ignore", "pipe", "pipe"],
@@ -694,11 +744,15 @@ function verifyWechatInstallCacheBoundary(
     fs.cpSync(trustedCache, installCache, { recursive: true, force: true });
     makeTreeOwnerWritable(installCache);
     packReviewedNpmArchive({
-      env: { ...env, NPM_CONFIG_CACHE: installCache, NPM_CONFIG_OFFLINE: "true" },
-      expectedIntegrity: graph.integrity,
-      label: graph.label,
-      packageSpec: graph.packageSpec,
-      tarballUrl: graph.tarballUrl,
+      env: {
+        ...env,
+        NPM_CONFIG_CACHE: installCache,
+        NPM_CONFIG_OFFLINE: "true",
+      },
+      expectedIntegrity: identity.integrity,
+      label: identity.label,
+      packageSpec: identity.packageSpec,
+      tarballUrl: identity.tarballUrl,
       tempDirectory: packDirectory,
     });
     assertTreeReadOnly(trustedCache);
@@ -715,18 +769,18 @@ function auditLockedGraph(
   exceptionFile: string,
   artifactDirectory: string,
 ) {
-  const directory = materializeLockedGraph(graph, tempRoot, config.registryOrigin);
+  const { directory, identity } = materializeLockedGraph(graph, tempRoot, config.registryOrigin);
   const result = runReviewedNpmAudit({
     cacheFile: graphCacheFile(graph.id),
     directory,
     exceptionFile,
     graph: graph.id,
-    provenance: {
-      label: graph.label,
-      nodeVersion: process.version,
-      npmVersion: config.npmVersion,
-      packageSpecs: [graph.packageSpec],
-    },
+    provenance: lockedGraphAuditProvenance(
+      identity,
+      process.version,
+      config.npmVersion,
+      config.npmIntegrity,
+    ),
     reviewedNpmIdentity: config,
     reportFile: path.join(artifactDirectory, `locked-graph-${index + 1}.json`),
     resultFile: path.join(artifactDirectory, `${graph.id}.policy.json`),
@@ -745,9 +799,24 @@ function auditLockedGraph(
     run("npm", NPM_AUDIT_SIGNATURE_ARGV, directory);
   }
   if (graph.inputValidation === "wechat-runtime") {
-    verifyWechatInstallCacheBoundary(graph, tempRoot, config.registryOrigin);
+    verifyWechatInstallCacheBoundary(identity, tempRoot, config.registryOrigin);
   }
-  return result;
+  return { identity, result };
+}
+
+function lockedGraphAuditProvenance(
+  identity: LockedGraphIdentity,
+  nodeVersion: string,
+  npmVersion: string,
+  npmIntegrity: string,
+) {
+  return {
+    label: identity.label,
+    nodeVersion,
+    npmIntegrity,
+    npmVersion,
+    packageSpecs: [identity.packageSpec],
+  };
 }
 
 function auditSourceGraph(
@@ -805,6 +874,7 @@ export function auditMaterializedSourceGraph(
     provenance: {
       label: SOURCE_GRAPH.label,
       nodeVersion: process.version,
+      npmIntegrity: options.reviewedNpmIdentity.npmIntegrity,
       npmVersion: options.reviewedNpmIdentity.npmVersion,
       packageSpecs: [options.packageSpec],
     },
@@ -824,6 +894,7 @@ export function auditMaterializedSourceGraph(
 export function emitAuditReceipt(
   options: Readonly<{
     artifactDirectory: string;
+    expectedLockSha256?: string;
     graphId: string;
     reviewedNpmIdentity: ReviewedNpmIdentity;
     packageJsonFile: string;
@@ -849,6 +920,13 @@ export function emitAuditReceipt(
   if (typeof createdAt !== "string") {
     throw new Error(`${options.graphId} audit provenance lacks evidence creation time`);
   }
+  const packageLock = fs.readFileSync(options.packageLockFile);
+  if (
+    options.expectedLockSha256 !== undefined &&
+    createHash("sha256").update(packageLock).digest("hex") !== options.expectedLockSha256
+  ) {
+    throw new Error(`${options.graphId} receipt lock does not match its reviewed identity`);
+  }
   const receipt = createAuditReceipt({
     acceptedAdvisoryIds: options.result.acceptedAdvisories,
     createdAt: new Date(createdAt),
@@ -859,7 +937,7 @@ export function emitAuditReceipt(
     graphId: options.graphId,
     reviewedNpmIdentity: options.reviewedNpmIdentity,
     packageJson: fs.readFileSync(options.packageJsonFile),
-    packageLock: fs.readFileSync(options.packageLockFile),
+    packageLock,
     rawResponse: fs.readFileSync(options.rawReportFile),
     registryOrigin: options.registryOrigin,
     severityThreshold: options.threshold,
@@ -878,7 +956,9 @@ export function emitAuditReceipt(
       fs.chmodSync(destination, 0o600);
     }
   }
-  fs.writeFileSync(receiptFile, canonicalAuditReceipt(receipt), { mode: 0o600 });
+  fs.writeFileSync(receiptFile, canonicalAuditReceipt(receipt), {
+    mode: 0o600,
+  });
   return receiptFile;
 }
 
@@ -937,6 +1017,7 @@ function main(): void {
       provenance: {
         label: "reviewed archive graph",
         nodeVersion: process.version,
+        npmIntegrity: config.npmIntegrity,
         npmVersion,
         packageSpecs: config.archivePackages.map((reviewed) => reviewed.packageSpec),
       },
@@ -946,16 +1027,16 @@ function main(): void {
       threshold: config.severityThreshold,
       throwOnBlock: false,
     });
-    const lockedResults = config.lockedGraphs.map((graph, index) =>
+    const lockedAudits = config.lockedGraphs.map((graph, index) =>
       auditLockedGraph(graph, index, config, tempRoot, exceptionFile, artifactDirectory),
     );
     const reports = [
       { label: SOURCE_GRAPH.label, result: sourceResult },
       { label: "reviewed archive graph", result: archiveResult },
       ...config.lockedGraphs.map((graph, index) => ({
-        label: graph.label,
+        label: lockedAudits[index]!.identity.label,
         threshold: graph.severityThreshold ?? config.severityThreshold,
-        result: lockedResults[index]!,
+        result: lockedAudits[index]!.result,
       })),
     ];
     assertReviewedAuditReportsPass(reports, config.severityThreshold);
@@ -986,6 +1067,7 @@ function main(): void {
     config.lockedGraphs.forEach((graph, index) => {
       emitAuditReceipt({
         artifactDirectory,
+        expectedLockSha256: lockedAudits[index]!.identity.lockSha256,
         graphId: graph.id,
         reviewedNpmIdentity: config,
         packageJsonFile: targetRepositoryPath(
@@ -998,7 +1080,7 @@ function main(): void {
         ),
         rawReportFile: path.join(artifactDirectory, `locked-graph-${index + 1}.json`),
         registryOrigin: NPM_AUDIT_REGISTRY,
-        result: lockedResults[index]!,
+        result: lockedAudits[index]!.result,
         threshold: graph.severityThreshold ?? config.severityThreshold,
       });
     });
@@ -1020,11 +1102,28 @@ function isMainModule(): boolean {
   return fs.realpathSync.native(fileURLToPath(import.meta.url)) === invokedPath;
 }
 
+function fatalAuditDiagnostic(error: unknown): string {
+  const message = error instanceof Error ? error.message : "";
+  if (message.startsWith("npm audit requires npm ")) {
+    return "Reviewed npm audit requires its configured npm version.";
+  }
+  if (message.includes(" npm pack failed")) {
+    return "Reviewed npm audit could not pack a reviewed archive.";
+  }
+  if (message.includes("refuses target-controlled npm config")) {
+    return "Reviewed npm audit refused target-controlled npm configuration.";
+  }
+  if (message.includes("locked package must resolve from the reviewed npm registry origin")) {
+    return "Reviewed npm audit rejected a package outside the reviewed npm registry.";
+  }
+  return "Reviewed npm audit failed.";
+}
+
 if (isMainModule()) {
   try {
     main();
   } catch (error) {
-    console.error(error instanceof Error ? error.message : String(error));
+    console.error(fatalAuditDiagnostic(error));
     process.exit(1);
   }
 }

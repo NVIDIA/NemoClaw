@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -61,7 +60,6 @@ import { onboardChildRuntimeSource } from "../helpers/onboard-child-runtime.js";
 import { testTimeout } from "../helpers/timeouts";
 import {
   createWindowsHostOllamaRunCapture,
-  requireFailedProviderResolution,
   requirePresent,
   requireSelectedProviderResolution,
   restoreProcessEnvValue,
@@ -3127,7 +3125,7 @@ done
 if echo "$auth" | grep -q 'nvapi-good' && echo "$url" | grep -q '/responses$'; then
   body='{"id":"resp_123"}'
   status="200"
-elif echo "$auth" | grep -q 'nvapi-good' && echo "$url" | grep -q '/chat/completions$' && echo "$data" | grep -q '"temperature":1' && echo "$data" | grep -q '"top_p":0.95' && echo "$data" | grep -q '"enable_thinking":false'; then
+elif echo "$auth" | grep -q 'nvapi-good' && echo "$url" | grep -q '/chat/completions$' && echo "$data" | grep -q '"temperature":1' && echo "$data" | grep -q '"top_p":0.95' && echo "$data" | grep -q '"reasoning_effort":"none"'; then
   body='{"id":"chatcmpl-123"}'
   status="200"
 fi
@@ -4081,6 +4079,10 @@ if (args[0] === "inference" && args[1] === "set") {
   fs.writeFileSync(stateFile, JSON.stringify(state));
   process.exit(0);
 }
+if (args[0] === "inference" && args[1] === "get") {
+  process.stdout.write("Gateway inference:\\n  Provider: compatible-endpoint\\n  Model: qwen3.6:35b\\n");
+  process.exit(0);
+}
 if (args[0] === "provider" && args[1] === "profile" && args.includes("export")) { process.stdout.write(JSON.stringify({ id: "openai", credentials: [], endpoints: [], binaries: [], inference_capable: true })); process.exit(0); }
 if (args[0] === "provider" && args[1] === "get") { process.stderr.write("provider 'compatible-endpoint' not found"); process.exit(1); } // Force provider creation.
 process.exit(0);
@@ -4090,15 +4092,6 @@ process.exit(0);
 
     const script = String.raw`
 ${onboardChildRuntimeSource}
-const runner = require(${runnerPath});
-// Mock runCapture before onboard.js is required so the destructured reference picks up the mock.
-runner.runCapture = (cmd) => {
-  const args = Array.isArray(cmd) ? cmd : [];
-  if (args[1] === "inference" && args[2] === "get") {
-    return "Gateway inference:\n  Provider: compatible-endpoint\n  Model: qwen3.6:35b\n";
-  }
-  return "";
-};
 process.env.COMPATIBLE_API_KEY = "test-key";
 const { setupInference } = require(${onboardPath});
 (async () => {

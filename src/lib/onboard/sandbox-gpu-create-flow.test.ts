@@ -97,11 +97,7 @@ import type {
 } from "./runtime-provider/contract";
 import { createRuntimeProviderBundleRegistry } from "./runtime-provider/registry";
 import { prepareSandboxCreateLaunch } from "./sandbox-create-launch";
-import {
-  runSandboxGpuCreateFlow,
-  type SandboxGpuCreateFlowDeps,
-  type SandboxGpuCreateFlowInput,
-} from "./sandbox-gpu-create-flow";
+import { runSandboxGpuCreateFlow, type SandboxGpuCreateFlowInput } from "./sandbox-gpu-create-flow";
 
 const {
   READY_CHECK_OPTIONS,
@@ -547,7 +543,7 @@ describe("runSandboxGpuCreateFlow proof authorization", () => {
       { expectedContainerId: replacementContainerId },
     );
     expect(deps.runOpenshell).toHaveBeenCalledWith(
-      ["sandbox", "delete", "alpha"],
+      ["sandbox", "delete", "-g", "nemoclaw", "alpha"],
       expect.objectContaining({ suppressOutput: true }),
     );
   });

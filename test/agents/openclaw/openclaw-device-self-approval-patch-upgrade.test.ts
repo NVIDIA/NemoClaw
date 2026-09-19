@@ -4,6 +4,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import vm from "node:vm";
 
 import { describe, expect, it } from "vitest";
 
@@ -11,6 +12,7 @@ import {
   openPatchedPairingFixture,
   runPatch,
   selfApprovalTransactionSnapshots as transactionSnapshots,
+  writeCurrentGatewayCallFixtureDist,
   writeFixtureDist,
 } from "../../helpers/openclaw-device-self-approval-patch-harness";
 
@@ -32,6 +34,36 @@ function legacyTransactionJournal(
 }
 
 describe("OpenClaw device self-approval patch upgrades (#4462)", () => {
+  it("fails closed when the current gateway callsite cannot receive device-auth scope", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-device-callsite-drift-"));
+    const dist = path.join(tmp, "dist");
+    fs.mkdirSync(dist);
+    writeCurrentGatewayCallFixtureDist(dist);
+    try {
+      const file = path.join(dist, "call-current-fixture.js");
+      const source = fs.readFileSync(file, "utf8");
+      const callsite = [
+        "function gatewayClientOptions(opts, password, authMode) {",
+        '\tconst deviceAuthScope = "operator.pairing";',
+        "\treturn shouldOmitDeviceIdentityForGatewayCall({",
+        "\t\topts,",
+        "\t\tauthMode,",
+        "\t\tpassword,",
+        '\t\tallowAuthNone: opts.requireLocalBackendSharedAuth === true && authMode === "none"',
+        "\t});",
+        "}",
+      ].join("\n");
+      expect(source).toContain(callsite);
+      fs.writeFileSync(file, source.replace(callsite, ""));
+
+      const apply = runPatch(dist);
+      expect(apply.status).not.toBe(0);
+      expect(`${apply.stdout}${apply.stderr}`).toContain("gateway call device-auth scope target");
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("adds pairing-only stored auth to an earlier patched settlement list (#9844)", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-device-list-upgrade-"));
     const dist = path.join(tmp, "dist");
@@ -56,6 +88,73 @@ describe("OpenClaw device self-approval patch upgrades (#4462)", () => {
 
       expect(runPatch(dist).status).toBe(0);
       expect(fs.readFileSync(file, "utf8")).toContain(current);
+      expect(runPatch(dist).status).toBe(0);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("adds watcher deferral to an earlier patched current gateway runtime (#9844)", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-device-defer-upgrade-"));
+    const dist = path.join(tmp, "dist");
+    fs.mkdirSync(dist);
+    writeCurrentGatewayCallFixtureDist(dist);
+    try {
+      expect(runPatch(dist).status).toBe(0);
+      const file = path.join(dist, "message-handler-fixture.js");
+      const source = fs.readFileSync(file, "utf8");
+      const start = source.indexOf("\t\t\tconst nemoclawExistingScopes");
+      const marker = source.indexOf(
+        "nemoclaw: defer bounded silent CLI scope upgrade to pairing watcher",
+        start,
+      );
+      const end = source.indexOf("\n", marker);
+      expect(start).toBeGreaterThanOrEqual(0);
+      expect(marker).toBeGreaterThan(start);
+      expect(end).toBeGreaterThan(marker);
+      fs.writeFileSync(
+        file,
+        `${source.slice(0, start)}\t\t\tconst inlineApprovalAttempted = trustedProxyApprovalScopes !== null || pairing.request.silent === true;${source.slice(end)}`,
+      );
+
+      const upgrade = runPatch(dist);
+      expect(upgrade.status, `${upgrade.stdout}${upgrade.stderr}`).toBe(0);
+      const upgraded = fs.readFileSync(file, "utf8");
+      expect(
+        upgraded.match(/nemoclaw: defer bounded silent CLI scope upgrade to pairing watcher/gu),
+      ).toHaveLength(1);
+      expect(
+        upgraded.match(/nemoclaw: route bounded CLI device-token scope upgrade into pairing/gu),
+      ).toHaveLength(1);
+      expect(upgraded).not.toContain(
+        "const inlineApprovalAttempted = trustedProxyApprovalScopes !== null || pairing.request.silent === true;",
+      );
+      const decideInlineApproval = vm.runInNewContext(
+        `${upgraded}\nshouldAttemptInlineApproval`,
+      ) as (input: Record<string, unknown>) => boolean;
+      const boundedUpgrade = {
+        authMethod: "device-token",
+        connectParams: { client: { id: "cli", mode: "cli" } },
+        devicePublicKey: "public-key-1",
+        existingPairedDevice: {
+          publicKey: "public-key-1",
+          scopes: ["operator.pairing"],
+        },
+        pairing: { request: { isRepair: true, silent: true } },
+        plan: { allowSilentLocalPairing: true },
+        reason: "scope-upgrade",
+        role: "operator",
+        scopes: ["operator.write"],
+        trustedProxyApprovalScopes: null,
+      };
+      expect(decideInlineApproval(boundedUpgrade)).toBe(false);
+      expect(
+        decideInlineApproval({
+          ...boundedUpgrade,
+          existingPairedDevice: { publicKey: "different", scopes: ["operator.pairing"] },
+        }),
+      ).toBe(true);
+      expect(decideInlineApproval({ ...boundedUpgrade, scopes: ["operator.admin"] })).toBe(true);
       expect(runPatch(dist).status).toBe(0);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });

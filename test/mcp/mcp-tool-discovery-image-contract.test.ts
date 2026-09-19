@@ -13,10 +13,6 @@ import { expectManagedToolDiscoveryRuntimeImageContract } from "../support/manag
 
 const repoRoot = path.join(import.meta.dirname, "../..");
 const runtimeRoot = "/usr/local/lib/nemoclaw/mcp-tool-discovery-runtime";
-const managedStartupRuntimeBundle = "managed-startup-image-runtime.bundle";
-const reviewedRuntimeHashOverrides: Readonly<Record<string, string>> = {
-  [managedStartupRuntimeBundle]: "9b72064623c7c58ae1ccf01dba8979362f2b77e86d3659338dba5a1c7280771b",
-};
 const dockerfiles = [
   "Dockerfile",
   "agents/hermes/Dockerfile",
@@ -187,7 +183,10 @@ describe("MCP tool discovery image contract", () => {
       );
       const integrity = `sha512-${crypto.createHash("sha512").update(seed).digest("base64")}`;
       const matches = (
-        Object.values(lock.packages) as Array<{ integrity?: string; resolved?: string }>
+        Object.values(lock.packages) as Array<{
+          integrity?: string;
+          resolved?: string;
+        }>
       ).filter(
         (entry) =>
           entry.integrity === integrity &&
@@ -215,7 +214,7 @@ describe("MCP tool discovery image contract", () => {
   // source-shape-contract: security -- Exact reviewed runtime digests reject substituted executable and license artifacts before managed image construction.
   it.each([
     {
-      expectedHash: "0c07b731d2f32a9419605bae4f84329c8d7440528eed2ac6dbcd5835724961e9",
+      expectedHash: "b636367343f48e681eae468abaac40bab8890bfec96e8e4f566cff5e5a8a226c",
       relativePath: "managed-startup-image-runtime.bundle",
     },
     {
@@ -239,9 +238,7 @@ describe("MCP tool discovery image contract", () => {
       .createHash("sha256")
       .update(fs.readFileSync(path.join(bundleRoot, relativePath)))
       .digest("hex");
-    expect(actualHash, relativePath).toBe(
-      reviewedRuntimeHashOverrides[relativePath] ?? expectedHash,
-    );
+    expect(actualHash, relativePath).toBe(expectedHash);
   });
 
   it("executes the reviewed MCP discovery runtime artifact", () => {
@@ -258,7 +255,9 @@ describe("MCP tool discovery image contract", () => {
         path.join(bundleRoot, "mcp-tool-discovery/mcp-tool-discovery.bundle"),
         executablePath,
       );
-      const discoveryResult = spawnSync(process.execPath, [executablePath], { encoding: "utf8" });
+      const discoveryResult = spawnSync(process.execPath, [executablePath], {
+        encoding: "utf8",
+      });
       expect(discoveryResult).toMatchObject({ status: 0, stderr: "" });
       expect(JSON.parse(discoveryResult.stdout)).toEqual({
         protocol: 2,
@@ -345,7 +344,9 @@ describe("MCP tool discovery image contract", () => {
         })}\n`,
         { mode: 0o444 },
       );
-      fs.writeFileSync(runtimeEnvironmentFile, runtimeEnvironment, { mode: 0o444 });
+      fs.writeFileSync(runtimeEnvironmentFile, runtimeEnvironment, {
+        mode: 0o444,
+      });
       const reviewedAgentRegistry = '["openclaw","hermes","langchain-deepagents-code","pi"]';
       const staleAgentRegistry = '["openclaw","hermes","langchain-deepagents-code"]';
       const reviewedBundle = fs.readFileSync(bundlePath, "utf8");

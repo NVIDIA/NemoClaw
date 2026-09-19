@@ -56,7 +56,6 @@ import {
   isLocalProviderProbeOutputHealthy,
   isOllamaRunnerCrash,
   LOCAL_INFERENCE_SANDBOX_HOST_URL_ENV,
-  OLLAMA_HOST_DOCKER_INTERNAL,
   OLLAMA_LOCALHOST,
   parseOllamaList,
   probeLocalProviderHealth,

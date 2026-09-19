@@ -154,7 +154,16 @@ vi.mock("../../adapters/openshell/runtime", () => ({
   captureOpenshell: captureOpenshellMock,
   captureResolvedOpenshell: captureOpenshellMock,
   getOpenshellBinary: vi.fn(() => "openshell"),
-  runOpenshell: vi.fn(() => ({ status: 0, output: "" })),
+  runOpenshell: vi.fn((args: string[]) =>
+    args.join(" ") === "sandbox get -g nemoclaw beta"
+      ? {
+          status: 1,
+          stdout: "",
+          stderr:
+            "Error: code: 'Some requested entity was not found', message: \"sandbox not found\"",
+        }
+      : { status: 0, stdout: "", stderr: "" },
+  ),
 }));
 vi.mock("../../adapters/openshell/sandbox-policy-cli", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../adapters/openshell/sandbox-policy-cli")>()),
@@ -169,9 +178,6 @@ vi.mock("../../credentials/store", () => ({
   getCredential: vi.fn(() => null),
   prompt: vi.fn(),
   saveCredential: vi.fn(),
-}));
-vi.mock("../../domain/sandbox/destroy", () => ({
-  getSandboxDeleteOutcome: vi.fn(() => ({ alreadyGone: false, gatewayUnreachable: false })),
 }));
 vi.mock("../../inference/gateway-route-compatibility", () => ({
   checkGatewayRouteCompatibility: vi.fn(() => ({ ok: true })),

@@ -25,6 +25,7 @@ import {
 } from "../fixtures/managed-image-receipt.ts";
 import { ArtifactSink } from "../fixtures/artifacts.ts";
 import { HostCliClient } from "../fixtures/clients/host.ts";
+import { CleanupRegistry } from "../fixtures/cleanup.ts";
 import { SecretStore } from "../fixtures/secrets.ts";
 import { DEEPAGENTS_FRESH_REONBOARD_CHECK } from "../live/cloud-experimental-check-list.ts";
 import { runE2eCloudExperimentalChecks } from "../live/cloud-experimental-checks.ts";
@@ -205,6 +206,7 @@ describe("stock E2E managed-image receipt assertion", () => {
             [DEEPAGENTS_FRESH_REONBOARD_CHECK],
             {
               artifacts: new ArtifactSink(path.join(home, "artifacts")),
+              cleanup: new CleanupRegistry(),
               host: new HostCliClient({ run }),
               secrets: new SecretStore({}, (note) => {
                 throw new Error(note);

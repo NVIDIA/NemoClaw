@@ -25,12 +25,6 @@ type AutoLabelWorkflow = {
   jobs: Record<string, WorkflowJob>;
 };
 
-type ReleaseLatestWorkflow = {
-  concurrency?: { "cancel-in-progress"?: boolean; group?: string };
-  permissions?: Record<string, string>;
-  jobs: Record<string, WorkflowJob>;
-};
-
 type ComparisonStatus = "ahead" | "behind" | "diverged" | "identical";
 
 type TagFixture = {
@@ -43,17 +37,11 @@ type TagFixture = {
 };
 
 const WORKFLOW_PATH = ".github/workflows/label-merged-pr-release-target.yaml";
-const RELEASE_WORKFLOW_PATH = ".github/workflows/release-latest-tag.yaml";
 const MERGE_SHA = "f".repeat(40);
 const workflow = readYaml<AutoLabelWorkflow>(WORKFLOW_PATH);
 const job = workflow.jobs["label-release-target"];
 const actionStep = job.steps?.find((step) => step.name === "Apply release target to merged PRs");
 const script = actionStep?.with?.script;
-const releaseWorkflow = readYaml<ReleaseLatestWorkflow>(RELEASE_WORKFLOW_PATH);
-const releaseJob = releaseWorkflow.jobs["update-latest"];
-const retirementStep = releaseJob.steps?.find(
-  (step) => step.name === "Retire the released target label",
-);
 
 function sha(index: number): string {
   return index.toString(16).padStart(40, "0");

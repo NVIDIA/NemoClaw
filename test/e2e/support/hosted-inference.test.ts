@@ -188,15 +188,26 @@ printf 'modelFn=%s\n' "$(nemoclaw_e2e_hosted_inference_model)"
 }
 
 describe("hosted inference E2E config", () => {
-  it("accepts canonical OpenShell credential references", () => {
-    const pattern = hostedInferenceCredentialReferencePattern("E2E_ACCESS_TOKEN");
-    const stableRevision = `s${"a".repeat(64)}`;
+  it.each(["E2E_ACCESS_TOKEN", "ENTRA_ACCESS_TOKEN"])(
+    "accepts OpenShell references bound to %s",
+    (credentialKey) => {
+      const pattern = hostedInferenceCredentialReferencePattern(credentialKey);
+      const stableRevision = `s${"a".repeat(64)}`;
 
-    expect("openshell:resolve:env:E2E_ACCESS_TOKEN").toMatch(pattern);
-    expect("openshell:resolve:env:v42_E2E_ACCESS_TOKEN").toMatch(pattern);
-    expect(`openshell:resolve:env:${stableRevision}_E2E_ACCESS_TOKEN`).toMatch(pattern);
-    expect("openshell:resolve:env:v123456789012345678901_E2E_ACCESS_TOKEN").not.toMatch(pattern);
-    expect(`openshell:resolve:env:s${"a".repeat(63)}_E2E_ACCESS_TOKEN`).not.toMatch(pattern);
+      expect(`openshell:resolve:env:${credentialKey}`).toMatch(pattern);
+      expect(`openshell:resolve:env:v42_${credentialKey}`).toMatch(pattern);
+      expect(`openshell:resolve:env:${stableRevision}_${credentialKey}`).toMatch(pattern);
+      expect(`openshell:resolve:env:v123456789012345678901_${credentialKey}`).not.toMatch(pattern);
+      expect(`openshell:resolve:env:s${"a".repeat(63)}_${credentialKey}`).not.toMatch(pattern);
+      expect(`openshell:resolve:env:s${"a".repeat(65)}_${credentialKey}`).not.toMatch(pattern);
+      expect(`openshell:resolve:env:s${"A".repeat(64)}_${credentialKey}`).not.toMatch(pattern);
+      expect(`openshell:resolve:env:${stableRevision}_OTHER_ACCESS_TOKEN`).not.toMatch(pattern);
+      expect(`openshell:resolve:env:${stableRevision}_${credentialKey}suffix`).not.toMatch(pattern);
+      expect("e2e-runtime-identity-access-token-v2").not.toMatch(pattern);
+    },
+  );
+
+  it("rejects an invalid credential environment name", () => {
     expect(() => hostedInferenceCredentialReferencePattern("E2E-ACCESS-TOKEN")).toThrow(
       /invalid hosted inference credential environment name/u,
     );
@@ -649,6 +660,10 @@ printf '{"data":[]}'
       requestCanaryMarker: "EXPECTED_REQUEST_CANARY",
       requireAuth: true,
       responseText: "RESP_OK",
+      toolCallOnCanary: {
+        name: "sessions_spawn",
+        arguments: '{"task":"Reply with PONG"}',
+      },
     });
 
     try {
@@ -681,7 +696,21 @@ printf '{"data":[]}'
       });
       expect(chat.status).toBe(200);
       expect(await chat.json()).toMatchObject({
-        choices: [{ message: { content: "CHAT_OK" } }],
+        choices: [
+          {
+            finish_reason: "tool_calls",
+            message: {
+              tool_calls: [
+                {
+                  function: {
+                    name: "sessions_spawn",
+                    arguments: '{"task":"Reply with PONG"}',
+                  },
+                },
+              ],
+            },
+          },
+        ],
       });
 
       const responses = await fetch(`${fake.baseUrl}/responses`, {

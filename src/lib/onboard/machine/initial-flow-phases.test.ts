@@ -102,7 +102,7 @@ function completeStep(): Session["steps"][string] {
 }
 
 describe("initial onboard flow phases", () => {
-  it("does not run managed gateway selection for an external owner (#7411)", () => {
+  it("does not run managed gateway selection for an external owner (#7411)", async () => {
     const owner = resolveGatewayOwner({
       gatewayName: "nemoclaw",
       gatewayPort: 31818,
@@ -122,7 +122,7 @@ describe("initial onboard flow phases", () => {
     });
     const getManagedReuseState = vi.fn(() => "healthy" as const);
 
-    expect(getInitialGatewayReuseStateForOwner(owner, getManagedReuseState)).toBe("missing");
+    expect(await getInitialGatewayReuseStateForOwner(owner, getManagedReuseState)).toBe("missing");
     expect(getManagedReuseState).not.toHaveBeenCalled();
   });
 
@@ -210,6 +210,7 @@ describe("initial onboard flow phases", () => {
         stopAllDashboardForwards: vi.fn(),
         reconcileGatewayGpuReuseForGpuIntent: (options) => options.gatewayReuseState,
         isLinuxDockerDriverGatewayEnabled: () => false,
+        verifyReusableDockerDriverGatewaySandboxReachability: vi.fn(),
         retireLegacyGatewayForDockerDriverUpgrade: vi.fn(),
         destroyGatewayRuntimeForGpuReuse: () => true,
         skippedStepMessage: vi.fn(),
@@ -546,6 +547,7 @@ describe("initial onboard flow phases", () => {
           return options.gatewayReuseState;
         }),
         isLinuxDockerDriverGatewayEnabled: vi.fn(() => false),
+        verifyReusableDockerDriverGatewaySandboxReachability: vi.fn(),
         retireLegacyGatewayForDockerDriverUpgrade: vi.fn(),
         destroyGatewayRuntimeForGpuReuse: vi.fn(() => true),
         skippedStepMessage: vi.fn(() => {

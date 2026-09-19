@@ -73,7 +73,7 @@ async function finalizeMigration(
       toSessionUpdates: (updates) => updates,
       removeLegacyCredentialsFile,
       cleanupStaleHostFiles: () => undefined,
-      checkAndRecoverSandboxProcesses: async () => undefined,
+      checkAndRecoverSandboxProcesses: async () => true,
       settleOrdinaryOpenClawPairing: async () => ({ kind: "settled" }),
       ordinaryOpenClawPairingIncompleteMessage: () =>
         "OpenClaw onboarding is incomplete; resume onboarding.",
@@ -88,7 +88,7 @@ async function finalizeMigration(
       isDeploymentHealthy: () => true,
       reportDeploymentReadiness: () => undefined,
       verifyWebSearchInsideSandbox: async () => true,
-      printDashboard: () => undefined,
+      printDashboard: async () => undefined,
       error: () => undefined,
       log: () => undefined,
     },

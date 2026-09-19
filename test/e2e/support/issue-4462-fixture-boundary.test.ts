@@ -2,11 +2,17 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawnSync } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
 import { ISSUE_4462_PAIRING_SEED_PY } from "../fixtures/issue-4462-pairing-seed.ts";
-import { ISSUE_4462_SCOPE_UPGRADE_PHASES } from "../live/issue-4462-admin-approval-helper.ts";
+import {
+  adminApprovalConnectScript,
+  ISSUE_4462_SCOPE_UPGRADE_PHASES,
+} from "../live/issue-4462-admin-approval-helper.ts";
 
 const BEHAVIOR_HARNESS_PY = String.raw`
 import base64
@@ -171,6 +177,29 @@ print('ISSUE_4462_FIXTURE_BEHAVIOR_OK')
 `;
 
 describe("scope-upgrade approval live fixture", () => {
+  it("refuses removed private gateway aliases at the connect-shell boundary", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-4462-connect-"));
+    const cli = path.join(root, "nemoclaw");
+    fs.writeFileSync(cli, "#!/bin/sh\nexec /bin/bash -s\n", { mode: 0o755 });
+    try {
+      const result = spawnSync("bash", ["-c", adminApprovalConnectScript(cli, "alpha", "cron")], {
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          NEMOCLAW_OPENCLAW_GATEWAY_URL: "ws://10.200.0.2:18789",
+          NEMOCLAW_OPENCLAW_ALLOW_INSECURE_PRIVATE_WS: "1",
+          OPENCLAW_GATEWAY_PORT: "18789",
+          OPENCLAW_GATEWAY_TOKEN: "test-token",
+        },
+      });
+
+      expect(result.status).toBe(22);
+      expect(result.stderr).toContain("PRIVATE_GATEWAY_ALIAS_LEAK");
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("executes ordered publication and rejects unsafe concurrent requests", () => {
     const result = spawnSync("python3", ["-"], {
       encoding: "utf8",

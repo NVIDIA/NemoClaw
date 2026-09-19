@@ -3,6 +3,7 @@
 
 import { describe, expect, it, vi } from "vitest";
 import { listChannels } from "../sandbox/channels";
+import { createBuiltInMessagingHookRegistry } from "../messaging/hooks";
 import {
   prepareSandboxMessagingPreflight,
   type SandboxMessagingPreflightDeps,
@@ -160,6 +161,25 @@ describe("prepareSandboxMessagingPreflight", () => {
         disabledChannels: ["telegram"],
       }),
     );
+  });
+
+  it("passes the hook registry separately without replacing the sandbox registry", async () => {
+    const guard = vi.fn<
+      NonNullable<SandboxMessagingPreflightDeps["enforceMessagingChannelConflicts"]>
+    >(async () => undefined);
+    const preEnableHookRegistry = createBuiltInMessagingHookRegistry();
+    const deps = {
+      ...createDeps({
+        readMessagingPlanFromEnv: () => createPlan(),
+        enforceMessagingChannelConflicts: guard,
+      }),
+      preEnableHookRegistry,
+    };
+
+    await prepareSandboxMessagingPreflight(baseInput, deps);
+
+    expect(guard.mock.calls[0]?.[0].registry).toBe(deps.registry);
+    expect(guard.mock.calls[0]?.[0].preEnableHookRegistry).toBe(preEnableHookRegistry);
   });
 
   it("ignores stale env plans for a different sandbox", async () => {
