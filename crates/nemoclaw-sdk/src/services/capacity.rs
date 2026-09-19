@@ -217,53 +217,5 @@ impl CapacityCheck {
     }
 }
 
-pub(crate) async fn check_process_capacity(
-    engine: &crate::docker::Engine,
-    spec: &crate::managed::Spec,
-    observed: Option<&crate::managed::RuntimeObservation>,
-) -> Result<(), crate::Error> {
-    match spec.kind.as_str() {
-        installers::vllm::SERVICE_KIND => engine.check_capacity(spec, observed).await,
-        installers::ollama::SERVICE_KIND => {
-            installers::ollama::capacity::check(engine, spec, observed).await
-        }
-        _ => Err(crate::Error::Conflict(
-            "managed process kind has no registered capacity check",
-        )),
-    }
-}
-
-/// Planning checks retained artifacts without counting allocated memory as new demand.
-pub(crate) async fn check_process_plan(
-    engine: &crate::docker::Engine,
-    spec: &Spec,
-    binding: &str,
-) -> Result<(), Error> {
-    // Resource refresh already verified this engine/container/volume/network
-    // identity. Use its container to inspect retained model metadata.
-    let parts: Vec<_> = binding.split('/').collect();
-    if parts.len() != 4 || parts.iter().any(|part| part.is_empty()) {
-        return Err(crate::ObservationError::Incomplete.into());
-    }
-    let container_id = parts[1];
-    match spec.kind.as_str() {
-        installers::vllm::SERVICE_KIND => {
-            engine
-                .check_capacity_phase(spec, Some(container_id), CapacityCheck::Plan)
-                .await
-        }
-        installers::ollama::SERVICE_KIND => {
-            installers::ollama::capacity::check_phase(
-                engine,
-                spec,
-                Some(container_id),
-                CapacityCheck::Plan,
-            )
-            .await
-        }
-        _ => Err(Error::Conflict("runtime has no hardware contract")),
-    }
-}
-
 #[cfg(all(test, unix))]
 mod tests;

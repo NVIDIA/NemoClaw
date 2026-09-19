@@ -11,7 +11,6 @@ pub use config::{
 mod models;
 pub use models::*;
 mod artifacts;
-pub(crate) mod capacity;
 #[doc(hidden)]
 pub mod hardware_capacity;
 #[doc(hidden)]

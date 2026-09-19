@@ -4,22 +4,6 @@ use super::*;
 use crate::docker::fixture::Fixture;
 use serde_json::{Value, json};
 use std::sync::{Arc, Mutex};
-struct CapacityResult(bool);
-#[async_trait::async_trait]
-impl CapacityCheck for CapacityResult {
-    async fn check(
-        &self,
-        _: &Engine,
-        _: &Spec,
-        _: Option<&RuntimeObservation>,
-    ) -> Result<(), Error> {
-        if self.0 {
-            Ok(())
-        } else {
-            Err(Error::Conflict("fixture capacity rejection"))
-        }
-    }
-}
 #[derive(Default)]
 struct State {
     container: Option<Value>,
@@ -34,33 +18,26 @@ struct State {
 
 #[tokio::test]
 async fn image_pull_policy_controls_registry_requests_and_requires_a_local_image() {
-    for service in [false, true] {
-        for policy in ["default", "Always", "IfNotPresent", "Never"] {
-            for present in [false, true] {
-                for pull_fails in [false, true] {
-                    let fixtures: Vec<Value> =
-                        serde_json::from_str(include_str!("reference.json")).unwrap();
-                    let value: Value = serde_json::from_str(
-                        fixtures[usize::from(service)]["spec"].as_str().unwrap(),
-                    )
-                    .unwrap();
-                    let mut spec: Spec = serde_json::from_value(value).unwrap();
-                    if policy != "default" {
-                        let policy = serde_json::from_value(json!(policy)).unwrap();
-                        if let Some(process) = &mut spec.process {
-                            process.image_pull_policy = Some(policy);
-                        } else {
-                            spec.gateway.image_pull_policy = Some(policy);
-                        }
-                    }
-                    let policy = if policy == "default" {
-                        if service { "Never" } else { "IfNotPresent" }
-                    } else {
-                        policy
-                    };
-                    let state = Arc::new(Mutex::new((present, 0)));
-                    let shared = state.clone();
-                    let fixture = Fixture::start(move |request| {
+    for policy in ["default", "Always", "IfNotPresent", "Never"] {
+        for present in [false, true] {
+            for pull_fails in [false, true] {
+                let fixtures: Vec<Value> =
+                    serde_json::from_str(include_str!("reference.json")).unwrap();
+                let value: Value =
+                    serde_json::from_str(fixtures[0]["spec"].as_str().unwrap()).unwrap();
+                let mut spec: Spec = serde_json::from_value(value).unwrap();
+                if policy != "default" {
+                    spec.gateway.image_pull_policy =
+                        Some(serde_json::from_value(json!(policy)).unwrap());
+                }
+                let policy = if policy == "default" {
+                    "IfNotPresent"
+                } else {
+                    policy
+                };
+                let state = Arc::new(Mutex::new((present, 0)));
+                let shared = state.clone();
+                let fixture = Fixture::start(move |request| {
                         let mut state = shared.lock().unwrap();
                         let path = request.path.split('?').next().unwrap();
                         let (code, body) = match (request.method.as_str(), path) {
@@ -91,19 +68,18 @@ async fn image_pull_policy_controls_registry_requests_and_requires_a_local_image
                         };
                         Some((code, serde_json::to_vec(&body).unwrap()))
                     }).await;
-                    let result = fixture.engine_for(spec.engine()).ensure_image(&spec).await;
-                    let pulls = policy == "Always" || (policy == "IfNotPresent" && !present);
-                    assert_eq!(
-                        state.lock().unwrap().1,
-                        usize::from(pulls),
-                        "{policy}, present={present}"
-                    );
-                    assert_eq!(
-                        result.is_ok(),
-                        (present || pulls) && !(pulls && pull_fails),
-                        "{policy}, present={present}, pull_fails={pull_fails}: {result:?}"
-                    );
-                }
+                let result = fixture.engine_for(spec.engine()).ensure_image(&spec).await;
+                let pulls = policy == "Always" || (policy == "IfNotPresent" && !present);
+                assert_eq!(
+                    state.lock().unwrap().1,
+                    usize::from(pulls),
+                    "{policy}, present={present}"
+                );
+                assert_eq!(
+                    result.is_ok(),
+                    (present || pulls) && !(pulls && pull_fails),
+                    "{policy}, present={present}, pull_fails={pull_fails}: {result:?}"
+                );
             }
         }
     }
@@ -245,13 +221,13 @@ async fn managed_gateway_rejects_an_image_for_a_different_engine_architecture() 
 }
 
 #[tokio::test]
-async fn failed_startup_and_explicit_recovery_keep_container_and_storage_identity() {
+async fn gateway_failed_startup_and_explicit_recovery_keep_container_and_storage_identity() {
     let fixtures: Vec<Value> = serde_json::from_str(include_str!("reference.json")).unwrap();
-    let data = &fixtures[1];
+    let data = &fixtures[0];
     let spec: Spec = serde_json::from_str(data["spec"].as_str().unwrap()).unwrap();
-    let container = json!({"Id":"container","Name":format!("/{}",spec.name),"Image":"sha256:runtime","Config":data["config"],"HostConfig":data["hostConfig"],"State":{"Running":false,"StartedAt":"2026-09-14T00:00:00Z"},"Mounts":[{"Type":"volume","Name":spec.volume(),"Destination":"/data","RW":true}]});
+    let container = json!({"Id":"container","Name":format!("/{}",spec.name),"Image":"sha256:runtime","Config":data["config"],"HostConfig":data["hostConfig"],"State":{"Running":false,"StartedAt":"2026-09-14T00:00:00Z"},"Mounts":[{"Type":"volume","Name":spec.volume(),"Destination":"/var/lib/docker/volumes/fixture/_data","RW":true},{"Type":"bind","Source":"/var/run/docker.sock","Destination":"/var/run/docker.sock","RW":true}]});
     let volume = json!({"Name":spec.volume(),"Driver":"local","Scope":"local","Mountpoint":"/var/lib/docker/volumes/fixture/_data","CreatedAt":"2026-09-14T00:00:00Z","Labels":spec.labels().unwrap(),"Options":{}});
-    let network = json!({"Id":"network","Name":spec.network(),"Driver":"bridge","Internal":false,"EnableIPv6":false,"Labels":{super::super::OWNER_LABEL:spec.owner},"IPAM":{"Driver":"default","Config":[{"Subnet":spec.gateway.network_cidr,"Gateway":spec.gateway.bridge().unwrap()}]}});
+    let network = json!({"Id":"network","Name":spec.network(),"Driver":"bridge","Internal":false,"EnableIPv6":false,"Labels":spec.labels().unwrap(),"IPAM":{"Driver":"default","Config":[{"Subnet":spec.gateway.network_cidr,"Gateway":spec.gateway.bridge().unwrap()}]}});
     let state = Arc::new(Mutex::new(State {
         container: Some(container.clone()),
         volume: Some(volume),
@@ -260,12 +236,26 @@ async fn failed_startup_and_explicit_recovery_keep_container_and_storage_identit
         ..Default::default()
     }));
     let shared = state.clone();
-    let required_labels = spec.process.as_ref().unwrap().image_labels.clone();
+    let required_labels = std::collections::HashMap::<String, String>::new();
     let template = container.clone();
+    let gateway_config = spec.gateway_config("/var/lib/docker/volumes/fixture/_data");
     let fixture=Fixture::start(move |request|{
         let mut state=shared.lock().unwrap();
+        if request.path.contains("/archive?") {
+            let url = url::Url::parse(&format!("http://fixture{}", request.path)).unwrap();
+            let path = url.query_pairs().find(|(key, _)| key == "path").unwrap().1.into_owned();
+            let bytes = if path.ends_with("gateway.toml") { gateway_config.as_bytes().to_vec() }
+                else if path.ends_with("public.pem") { b"public".to_vec() }
+                else if path.ends_with("key-encryption-key.bin") { vec![7; 32] }
+                else { panic!("unexpected archive {path}") };
+            let mut archive = tar::Builder::new(Vec::new());
+            let mut header = tar::Header::new_gnu();
+            header.set_size(bytes.len() as u64); header.set_mode(0o600); header.set_cksum();
+            archive.append_data(&mut header, "file", bytes.as_slice()).unwrap();
+            return Some((200, archive.into_inner().unwrap()));
+        }
         let (status,value)=match (request.method.as_str(),request.path.split('?').next().unwrap()) {
-            ("GET","/info")=>(200,json!({"ID":"engine","DockerRootDir":"/var/lib/docker"})),
+            ("GET","/info")=>(200,json!({"ID":"engine","DockerRootDir":"/var/lib/docker","Architecture":"aarch64"})),
             ("GET",path) if path.starts_with("/images/")=>(200,json!({"Id":"sha256:runtime","Architecture":"arm64","Os":"linux","Config":{"Env":[],"Labels":required_labels.clone()}})),
             ("GET",path) if path.starts_with("/networks/")=>(200,state.network.clone()),
             ("GET",path) if path.starts_with("/volumes/")=>state.volume.clone().map(|v|(200,v)).unwrap_or((404,json!({"message":"missing"}))),
@@ -282,54 +272,25 @@ async fn failed_startup_and_explicit_recovery_keep_container_and_storage_identit
         };Some((status,if status==204 {Vec::new()} else {serde_json::to_vec(&value).unwrap()}))
     }).await;
     let engine = fixture.engine_for(&spec.gateway.engine);
-    assert!(
-        engine
-            .ensure_runtime_checked(&spec, "", &CapacityResult(false))
-            .await
-            .is_err()
-    );
-    assert_eq!(state.lock().unwrap().starts, 0);
-    let first = engine
-        .ensure_runtime_checked(&spec, "", &CapacityResult(true))
-        .await
-        .unwrap();
+    let first = engine.ensure_gateway(&spec, "").await.unwrap();
     assert!(!first.running);
     assert_eq!(state.lock().unwrap().starts, 1);
-    engine.observe_runtime(&spec, &first.id).await.unwrap();
+    engine.observe_gateway(&spec, &first.id).await.unwrap();
     assert_eq!(state.lock().unwrap().starts, 1);
     state.lock().unwrap().exit_on_start = false;
-    let recovered = engine
-        .ensure_runtime_checked(&spec, &first.id, &CapacityResult(true))
-        .await
-        .unwrap();
+    let recovered = engine.ensure_gateway(&spec, &first.id).await.unwrap();
     assert!(recovered.running);
     assert_eq!(recovered.id, first.id);
-    engine
-        .ensure_runtime_checked(&spec, &first.id, &CapacityResult(false))
-        .await
-        .unwrap();
+    engine.ensure_gateway(&spec, &first.id).await.unwrap();
     assert_eq!(state.lock().unwrap().starts, 2);
-    engine.remove_runtime(&spec, &first.id).await.unwrap();
-    engine.remove_runtime(&spec, &first.id).await.unwrap();
+    engine.remove_gateway(&spec, &first.id).await.unwrap();
+    engine.remove_gateway(&spec, &first.id).await.unwrap();
     assert_eq!(state.lock().unwrap().removes, 1);
     assert!(state.lock().unwrap().volume.is_some());
-    assert!(
-        engine
-            .ensure_runtime_checked(&spec, &first.id, &CapacityResult(true))
-            .await
-            .is_err()
-    );
+    assert!(engine.ensure_gateway(&spec, &first.id).await.is_err());
     state.lock().unwrap().lose_create = true;
-    assert!(
-        engine
-            .ensure_runtime_checked(&spec, "", &CapacityResult(true))
-            .await
-            .is_err()
-    );
-    let recreated = engine
-        .ensure_runtime_checked(&spec, "", &CapacityResult(true))
-        .await
-        .unwrap();
+    assert!(engine.ensure_gateway(&spec, "").await.is_err());
+    let recreated = engine.ensure_gateway(&spec, "").await.unwrap();
     assert!(recreated.running);
     assert!(recreated.id.contains("/replacement/"));
     assert_eq!(state.lock().unwrap().creates, 1);

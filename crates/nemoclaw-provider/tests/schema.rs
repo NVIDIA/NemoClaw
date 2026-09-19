@@ -66,13 +66,19 @@ fn production_provider_exposes_the_existing_openshell_resource_addresses() {
         "provider_profile",
         "sandbox",
         "managed_gateway",
-        "inference_service",
         "gateway_storage",
         "inference_storage",
     ] {
         assert!(resources.contains_key(name));
     }
-    assert!(!resources.contains_key("route"));
+    for removed in [
+        "route",
+        "inference_service",
+        "ollama_service",
+        "ollama_proxy",
+    ] {
+        assert!(!resources.contains_key(removed));
+    }
     let profile = resources["provider_profile"]
         .schema(&mut diagnostics)
         .unwrap();

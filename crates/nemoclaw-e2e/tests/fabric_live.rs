@@ -77,6 +77,9 @@ fn bindings(directory: &Path) -> (Value, Row) {
     let mut sandbox = None;
     let resources = state["resources"].as_array().unwrap();
     for resource in resources {
+        if resource["mode"] == "data" {
+            continue;
+        }
         let instances = resource["instances"].as_array().unwrap();
         assert_eq!(instances.len(), 1);
         let attributes = &instances[0]["attributes"];
@@ -107,6 +110,9 @@ fn managed_bindings(directory: &Path) -> Value {
     let state: Value = serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
     let mut result = serde_json::Map::new();
     for resource in state["resources"].as_array().unwrap() {
+        if resource["mode"] == "data" {
+            continue;
+        }
         assert_eq!(resource["instances"].as_array().unwrap().len(), 1);
         result.insert(
             format!(

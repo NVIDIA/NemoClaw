@@ -7,23 +7,6 @@ use crate::{
     hardware::{Capacity, GIB, at_least},
 };
 
-pub(crate) fn check_capacity(
-    service: &ManagedOllama,
-    capacity: &Capacity,
-    starting: bool,
-    download_remaining: u64,
-) -> Result<(), Error> {
-    let disk = download_remaining
-        .checked_add(16 * GIB)
-        .ok_or(Error::State("invalid remaining Ollama storage capacity"))?;
-    if capacity.disk_free < disk {
-        return Err(Error::Conflict(
-            "insufficient disk for the pinned Ollama model and 16 GiB working reserve",
-        ));
-    }
-    check_memory(service, capacity, starting)
-}
-
 pub fn check_memory(
     service: &ManagedOllama,
     capacity: &Capacity,

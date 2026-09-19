@@ -217,47 +217,9 @@ impl ProxyBackend {
                 result
             }));
         }
-        if kind != PROXY {
-            return Err(ObservationError::Query.into());
-        }
-        let spec = row_spec(row)?;
-        let service = if removing {
-            self.engine.observe_ollama_proxy_removal(&spec, id).await?
-        } else if apply {
-            verify_model(&spec.settings).await?;
-            Some(self.engine.ensure_ollama_proxy(&spec, id).await?)
-        } else {
-            match self.engine.observe_ollama_proxy(&spec, id).await {
-                Err(Error::PartialRuntime) if id.is_empty() => None,
-                other => other?,
-            }
-        };
-        if let Some(service) = &service
-            && service.running
-            && !removing
-        {
-            let container = service
-                .id
-                .split('/')
-                .nth(1)
-                .ok_or(Error::State("invalid proxy identity"))?;
-            let deadline = std::time::Instant::now()
-                + std::time::Duration::from_secs(if apply { 30 } else { 0 });
-            loop {
-                match crate::services::authentication::read_key(&self.engine, container).await {
-                    Ok(_) => break,
-                    Err(_) if apply && std::time::Instant::now() < deadline => {
-                        tokio::time::sleep(std::time::Duration::from_millis(100)).await
-                    }
-                    Err(error) => return Err(error),
-                }
-            }
-        }
-        Ok(service.map(|service| {
-            result.insert("id".into(), service.id);
-            result.insert("running".into(), service.running.to_string());
-            result
-        }))
+        Err(Error::State(
+            "proxy lifecycle belongs to the Docker provider",
+        ))
     }
     pub(super) async fn proxy_remove(&self, kind: &str, row: &Row) -> Result<(), Error> {
         if kind == STORAGE {
@@ -270,11 +232,8 @@ impl ProxyBackend {
         if !supports(kind) {
             return Err(ObservationError::Query.into());
         }
-        let spec = row_spec(row)?;
-        let id = row
-            .get("id")
-            .filter(|s| !s.is_empty())
-            .ok_or(Error::State("missing proxy identity"))?;
-        self.engine.remove_ollama_proxy(&spec, id).await
+        Err(Error::State(
+            "proxy lifecycle belongs to the Docker provider",
+        ))
     }
 }

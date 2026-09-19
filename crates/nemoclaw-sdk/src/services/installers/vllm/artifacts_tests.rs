@@ -69,6 +69,8 @@ async fn runtime_status_requires_complete_current_data_and_never_mutates() {
     assert!(engine.runtime_status(&o).await.is_err());
 }
 
+use super::super::capacity::verify_stat;
+use crate::snapshot::VerifiedFile;
 #[test]
 fn artifact_manifests_require_matching_identity_and_unchanged_regular_files() {
     let service = crate::services::installers::vllm::configured_service(&observed().spec).unwrap();
@@ -170,37 +172,4 @@ fn artifact_manifests_require_matching_identity_and_unchanged_regular_files() {
         )
         .is_err()
     );
-}
-#[tokio::test]
-async fn unavailable_artifacts_are_errors_not_runtime_absence() {
-    for code in [404, 401, 403, 500] {
-        let fixture = Fixture::start(move |request| {
-            assert_eq!(request.method, "GET");
-            Some((code, b"{}".to_vec()))
-        })
-        .await;
-        for generic in [false, true] {
-            let mut observation = observed();
-            if generic {
-                let mut service =
-                    crate::services::installers::vllm::configured_service(&observation.spec)
-                        .unwrap();
-                service.recipe = None;
-                service.hardware = Some(
-                    serde_json::from_value(serde_json::json!({"profile":"dgx-spark"})).unwrap(),
-                );
-                service.model.repository = "owner/model".into();
-                service.model.revision = "a".repeat(40);
-                observation.spec.process.as_mut().unwrap().configuration =
-                    serde_json::to_string(&service).unwrap();
-            }
-            assert!(
-                Engine::connect(&fixture.endpoint)
-                    .unwrap()
-                    .verify_artifacts(&observation)
-                    .await
-                    .is_err()
-            );
-        }
-    }
 }

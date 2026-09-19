@@ -82,7 +82,7 @@ impl Engine {
                                     "verified model file is missing; retained for inspection",
                                 ),
                             )?;
-                            super::artifacts::verify_stat(
+                            verify_stat(
                                 &crate::snapshot::VerifiedFile {
                                     file: file.clone(),
                                     modified,
@@ -123,4 +123,33 @@ pub(crate) fn regular_stat(stat: &bollard::container::PathStatResponse) -> bool 
     const GO_MODE_TYPE: u32 =
         (1 << 31) | (1 << 27) | (1 << 26) | (1 << 25) | (1 << 24) | (1 << 21) | (1 << 19);
     stat.file_mode & GO_MODE_TYPE == 0 && stat.link_target.is_empty()
+}
+
+pub(super) fn verify_stat(
+    file: &crate::snapshot::VerifiedFile,
+    stat: &bollard::container::PathStatResponse,
+) -> Result<(), Error> {
+    let modified = time::OffsetDateTime::parse(
+        stat.modification_time.as_deref().unwrap_or(""),
+        &time::format_description::well_known::Rfc3339,
+    )
+    .map_err(|_| Error::State("runtime observation timestamp is incomplete"))?
+    .unix_timestamp_nanos();
+    if file.file.size == 0
+        || file.file.sha256.len() != 64
+        || !file
+            .file
+            .sha256
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+        || !regular_stat(stat)
+        || stat.size <= 0
+        || stat.size as u64 != file.file.size
+        || modified != i128::from(file.modified)
+    {
+        return Err(Error::Conflict(
+            "verified artifact changed; retained for inspection",
+        ));
+    }
+    Ok(())
 }

@@ -1,173 +1,26 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-use super::*;
-use crate::docker::fixture::Fixture;
-use serde_json::{Value, json};
-use std::sync::{Arc, Mutex};
-#[derive(Default)]
-struct State {
-    volume: Option<Value>,
-    container: Option<Value>,
-    lost_create: bool,
-    fail_read: bool,
-    creates: usize,
-    pulls: usize,
-    image_present: bool,
-    starts: usize,
-    deletes: usize,
-}
-#[tokio::test]
-async fn proxy_reconciles_lost_create_and_refuses_recreation_after_observation_failure() {
-    let mut spec = ProxySpec {
-        settings: super::ProxySettings {
-            upstream: "http://127.0.0.1:11434/v1".into(),
-            endpoint: "http://127.0.0.1:11435/v1".into(),
-            model: "fixture:latest".into(),
-            digest: "a".repeat(64),
-        },
-        image_pull_policy: None,
-        name: "nc-0123456789abcdef-ollama-proxy-fixture".into(),
-        owner: "302ff5e1-088d-42ce-959f-4ff4c3570c13".into(),
-        generation: "b".repeat(32),
-        image: format!("ollama/ollama@sha256:{}", "a".repeat(64)),
-        bind_address: "127.0.0.1:11435".into(),
-    };
-    let state = Arc::new(Mutex::new(State {
-        lost_create: true,
-        ..Default::default()
-    }));
-    let shared = state.clone();
-    let want = spec.clone();
-    let fixture=Fixture::start(move |request| {
-        let mut state=shared.lock().unwrap();
-        let (code,value)=match (request.method.as_str(),request.path.as_str()) {
-            ("GET","/info")=>(200,json!({"ID":"engine"})),
-            ("GET",path) if path.starts_with("/images/")=>if state.image_present {(200,json!({"Id":"image"}))} else {(404,json!({}))},
-            ("POST",path) if path.starts_with("/images/create?")=>{state.pulls+=1;state.image_present=true;(200,json!({"status":"complete"}))},
-            ("GET",path) if path.starts_with("/containers/")=>if state.fail_read {(503,json!({}))} else {state.container.clone().map(|v|(200,v)).unwrap_or((404,json!({})))},
-            ("GET",path) if path.starts_with("/volumes/")=>state.volume.clone().map(|v|(200,v)).unwrap_or((404,json!({}))),
-            ("POST","/volumes/create")=>{let r:Value=serde_json::from_slice(&request.body).unwrap();let v=json!({"Name":r["Name"],"Labels":r["Labels"],"Driver":"local","Scope":"local","Options":{},"CreatedAt":"created","Mountpoint":"/var/lib/docker/volumes/models/_data"});state.volume=Some(v.clone());(201,v)},
-            ("POST",path) if path.starts_with("/containers/create")=>{
-                state.creates+=1;let r:Value=serde_json::from_slice(&request.body).unwrap();
-                state.container=Some(json!({"Id":"container","Name":format!("/{}",want.name),"Config":r,"HostConfig":r["HostConfig"],"State":{"Running":false},"Mounts":[{"Type":"volume","Name":want.volume(),"Destination":"/data","RW":true}]}));
-                if std::mem::take(&mut state.lost_create) {return None;} (201,json!({"Id":"container","Warnings":[]}))
-            },
-            ("POST","/containers/container/start")=>{state.starts+=1;state.container.as_mut().unwrap()["State"]["Running"]=json!(true);(204,json!({}))},
-            ("DELETE",p) if p.starts_with("/containers/container?")=>{state.deletes+=1;state.container=None;(204,json!({}))},
-            _=>panic!("unexpected engine effect {} {}",request.method,request.path),
-        };Some((code,serde_json::to_vec(&value).unwrap()))
-    }).await;
-    let engine = Engine::connect(&fixture.endpoint).unwrap();
-    spec.image_pull_policy = Some(crate::config::ImagePullPolicy::Never);
-    assert!(engine.ensure_ollama_proxy(&spec, "").await.is_err());
-    assert_eq!(state.lock().unwrap().pulls, 0);
-    assert_eq!(state.lock().unwrap().creates, 0);
-    assert!(state.lock().unwrap().volume.is_none());
-    spec.image_pull_policy = None;
-    assert!(engine.ensure_ollama_proxy(&spec, "").await.is_err());
-    let established = engine.ensure_ollama_proxy(&spec, "").await.unwrap();
-    assert_eq!(state.lock().unwrap().pulls, 1);
-    spec.image_pull_policy = Some(crate::config::ImagePullPolicy::Always);
-    assert_eq!(established.id, "engine/container/created");
-    assert!(established.running);
-    assert_eq!(
-        engine
-            .ensure_ollama_proxy(&spec, &established.id)
-            .await
-            .unwrap()
-            .id,
-        established.id
-    );
-    assert_eq!(
-        state.lock().unwrap().pulls,
-        1,
-        "running container must not pull"
-    );
-    state.lock().unwrap().container.as_mut().unwrap()["State"]["Running"] = json!(false);
-    engine
-        .ensure_ollama_proxy(&spec, &established.id)
-        .await
-        .unwrap();
-    assert_eq!(state.lock().unwrap().pulls, 2, "restart must apply Always");
-    use crate::backend::Backend;
-    let backend = crate::services::installers::ollama::ProxyBackend::new(engine.clone());
-    let row = [
-        ("id", established.id.as_str()),
-        ("name", spec.name.as_str()),
-        ("owner", spec.owner.as_str()),
-        ("generation", spec.generation.as_str()),
-        ("image", spec.image.as_str()),
-        ("upstream", spec.settings.upstream.as_str()),
-        ("model", spec.settings.model.as_str()),
-        ("digest", spec.settings.digest.as_str()),
-        ("bind_address", spec.bind_address.as_str()),
-        ("running", "true"),
-    ]
-    .into_iter()
-    .map(|(k, v)| (k.into(), v.into()))
-    .collect();
-    state.lock().unwrap().fail_read = true;
-    assert!(backend.read("ollama_proxy", &row, false).await.is_err());
-    assert!(
-        engine
-            .ensure_ollama_proxy(&spec, &established.id)
-            .await
-            .is_err()
-    );
-    state.lock().unwrap().fail_read = false;
-    let volume_before = state.lock().unwrap().volume.clone();
-    assert!(backend.remove("ollama_proxy", &row, false).await.is_err());
-    backend.remove("ollama_proxy", &row, true).await.unwrap();
-    assert!(state.lock().unwrap().container.is_none());
-    assert_eq!(state.lock().unwrap().volume, volume_before);
-    assert_eq!(state.lock().unwrap().deletes, 1);
-    assert_eq!(
-        backend.read("ollama_proxy", &row, true).await.unwrap(),
-        None
-    );
-    // Explicit post-destroy apply can reuse the retained volume.
-    let restored = engine.ensure_ollama_proxy(&spec, "").await.unwrap();
-    assert_eq!(restored.id, established.id);
-    state.lock().unwrap().volume.as_mut().unwrap()["CreatedAt"] = json!("replaced");
-    assert!(
-        engine
-            .ensure_ollama_proxy(&spec, &established.id)
-            .await
-            .is_err()
-    );
-    state.lock().unwrap().container = None;
-    assert!(
-        engine
-            .ensure_ollama_proxy(&spec, &established.id)
-            .await
-            .is_err()
-    );
-    let state = state.lock().unwrap();
-    assert_eq!(state.creates, 2);
-    assert_eq!(state.starts, 3);
-}
+use crate::{
+    ObservationError,
+    backend::{Backend, Row},
+    docker::{Engine, fixture::Fixture},
+    managed::Storage,
+};
+use serde_json::json;
 
 #[tokio::test]
 async fn proxy_compute_changes_preserve_bound_credential_storage() {
-    let mut spec = ProxySpec {
-        settings: ProxySettings {
-            upstream: "http://127.0.0.1:11434/v1".into(),
-            endpoint: "http://127.0.0.1:11435/v1".into(),
-            model: "fixture:latest".into(),
-            digest: "a".repeat(64),
-        },
-        image_pull_policy: None,
-        name: "nc-0123456789abcdef-ollama-proxy-fixture".into(),
+    let storage = Storage {
+        name: "nc-0123456789abcdef-ollama-proxy-fixture-auth".into(),
         owner: "302ff5e1-088d-42ce-959f-4ff4c3570c13".into(),
         generation: "b".repeat(32),
-        image: format!("proxy@sha256:{}", "a".repeat(64)),
-        bind_address: "127.0.0.1:11435".into(),
+        engine: String::new(),
     };
-    let volume = json!({"Name":spec.volume(),"Labels":spec.labels().unwrap(),"Driver":"local","Scope":"local","Options":{},"CreatedAt":"created","Mountpoint":"/var/lib/docker/volumes/auth/_data"});
+    let volume = json!({"Name":storage.name,"Labels":{crate::managed::OWNER_LABEL:storage.owner,crate::managed::GENERATION_LABEL:storage.generation},"Driver":"local","Scope":"local","Options":{},"CreatedAt":"created","Mountpoint":"/var/lib/docker/volumes/auth/_data"});
     let fixture = Fixture::start(move |request| {
         assert_eq!(
             request.method, "GET",
-            "credential volume must not be recreated"
+            "credential storage must not be recreated"
         );
         let response = if request.path == "/info" {
             json!({"ID":"engine"})
@@ -177,27 +30,62 @@ async fn proxy_compute_changes_preserve_bound_credential_storage() {
         Some((200, serde_json::to_vec(&response).unwrap()))
     })
     .await;
-    let engine = Engine::connect(&fixture.endpoint).unwrap();
-    let binding = engine
-        .observe_ollama_proxy_storage(&spec, "")
+    let backend = super::super::ProxyBackend::new(Engine::connect(&fixture.endpoint).unwrap());
+    // Durable auxiliary rows no longer depend on image, model, or port settings.
+    let mut row: Row = [
+        (
+            "name".into(),
+            "nc-0123456789abcdef-ollama-proxy-fixture".into(),
+        ),
+        ("owner".into(), storage.owner),
+        ("generation".into(), storage.generation),
+        ("engine".into(), fixture.endpoint.clone()),
+    ]
+    .into();
+    let observed = backend
+        .read("ollama_proxy_storage", &row, false)
         .await
         .unwrap()
         .unwrap();
-    spec.image = format!("proxy@sha256:{}", "c".repeat(64));
-    spec.bind_address = "127.0.0.1:11436".into();
-    spec.settings.endpoint = "http://127.0.0.1:11436/v1".into();
     assert_eq!(
-        engine
-            .ensure_ollama_proxy_storage(&spec, &binding)
-            .await
-            .unwrap(),
-        binding
+        observed["id"],
+        "engine/nc-0123456789abcdef-ollama-proxy-fixture-auth/created"
     );
-    spec.generation = "d".repeat(32);
+    let mutation = backend.ensure("ollama_proxy_storage", &observed).await;
+    assert_eq!(mutation.error(), None);
+    assert_eq!(mutation.state(), Some(&observed));
+    row = observed;
+    row.insert("generation".into(), "d".repeat(32));
     assert!(
-        engine
-            .ensure_ollama_proxy_storage(&spec, &binding)
+        backend
+            .ensure("ollama_proxy_storage", &row)
             .await
-            .is_err()
+            .error()
+            .is_some()
+    );
+}
+
+#[tokio::test]
+async fn obsolete_proxy_backend_rejects_compute_without_engine_effects() {
+    let fixture = Fixture::start(|request| {
+        panic!(
+            "unexpected engine effect {} {}",
+            request.method, request.path
+        )
+    })
+    .await;
+    let backend = super::super::ProxyBackend::new(Engine::connect(&fixture.endpoint).unwrap());
+    let expected = ObservationError::Backend("proxy lifecycle belongs to the Docker provider");
+    assert_eq!(
+        backend.ensure("ollama_proxy", &Row::new()).await.error(),
+        Some(expected)
+    );
+    assert_eq!(
+        backend.read("ollama_proxy", &Row::new(), false).await,
+        Err(expected)
+    );
+    assert_eq!(
+        backend.remove("ollama_proxy", &Row::new(), true).await,
+        Err(expected)
     );
 }

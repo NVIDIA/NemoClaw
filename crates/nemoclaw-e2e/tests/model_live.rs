@@ -21,6 +21,9 @@ fn bindings(directory: &Path) -> BTreeMap<String, String> {
         let state: Value =
             serde_json::from_slice(&fs::read(directory.join(stage)).unwrap()).unwrap();
         for resource in state["resources"].as_array().unwrap() {
+            if resource["mode"] == "data" {
+                continue;
+            }
             let address = format!(
                 "{}.{}",
                 resource["type"].as_str().unwrap(),
@@ -42,20 +45,17 @@ fn bindings(directory: &Path) -> BTreeMap<String, String> {
     result
 }
 fn service(directory: &Path) -> (Spec, String) {
-    let state: Value =
-        serde_json::from_slice(&fs::read(directory.join("runtime/terraform.tfstate")).unwrap())
-            .unwrap();
-    let resource = state["resources"]
-        .as_array()
-        .unwrap()
+    let intent: Value =
+        serde_json::from_slice(&fs::read(directory.join("intent.json")).unwrap()).unwrap();
+    let document: Document = serde_json::from_value(intent["document"].clone()).unwrap();
+    let generations = serde_json::from_value(intent["generations"].clone()).unwrap();
+    let targets = nemoclaw_sdk::compile::runtime_targets(&document, &generations).unwrap();
+    let target = targets
         .iter()
-        .find(|r| r["type"] == "nemoclaw_inference_service")
+        .find(|target| target.kind == "inference_service")
         .unwrap();
-    let attrs = &resource["instances"][0]["attributes"];
-    (
-        serde_json::from_str(attrs["spec"].as_str().unwrap()).unwrap(),
-        attrs["id"].as_str().unwrap().into(),
-    )
+    let spec = serde_json::from_str(&target.values["spec"]).unwrap();
+    (spec, bindings(directory)[&target.address].clone())
 }
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires explicit NEMOCLAW_LIVE_MODEL_CONFIG, NEMOCLAW_LIVE_MODEL_STATE, NEMOCLAW_TEST_BUNDLE; owns and destroys this experiment only"]
@@ -91,7 +91,9 @@ async fn exercise(fresh: bool) {
         // A first plan must not leave any actual resource binding.
         if let Ok(bytes) = fs::read(directory.join("runtime/terraform.tfstate")) {
             let state: Value = serde_json::from_slice(&bytes).unwrap();
-            assert!(state["resources"].as_array().is_none_or(Vec::is_empty));
+            assert!(state["resources"].as_array().is_none_or(|resources| {
+                resources.iter().all(|resource| resource["mode"] == "data")
+            }));
         }
     } else {
         assert!(directory.join("runtime/terraform.tfstate").is_file());
@@ -104,11 +106,16 @@ async fn exercise(fresh: bool) {
             .is_empty()
     );
     let before = bindings(&directory);
-    assert_eq!(before.len(), 8);
+    assert_eq!(
+        before
+            .keys()
+            .filter(|address| address.starts_with("docker_container.inference_service_"))
+            .count(),
+        1
+    );
     let (spec, id) = service(&directory);
-    let engine = Engine::connect(&spec.gateway.engine).unwrap();
-    let observed = engine.observe_runtime(&spec, &id).await.unwrap().unwrap();
-    engine.verify_artifacts(&observed).await.unwrap();
+    let engine = Engine::connect(spec.engine()).unwrap();
+    let observed = engine.observe_service(&spec, &id).await.unwrap().unwrap();
     let model = format!("/data/{}", huggingface::directory(desired));
     let manifest_path = format!("{model}/.nemoclaw-manifest.json");
     let manifest = engine
@@ -170,7 +177,7 @@ async fn exercise(fresh: bool) {
     tokio::time::timeout(Duration::from_secs(45), async {
         loop {
             if !engine
-                .observe_runtime(&spec, &id)
+                .observe_service(&spec, &id)
                 .await
                 .unwrap()
                 .unwrap()
@@ -186,7 +193,7 @@ async fn exercise(fresh: bool) {
     tokio::time::sleep(Duration::from_secs(3)).await;
     assert!(
         !engine
-            .observe_runtime(&spec, &id)
+            .observe_service(&spec, &id)
             .await
             .unwrap()
             .unwrap()
@@ -200,7 +207,19 @@ async fn exercise(fresh: bool) {
             .trim()
             .is_empty()
     );
-    assert_eq!(bindings(&directory), before);
+    let recovered = bindings(&directory);
+    for (address, id) in before
+        .iter()
+        .filter(|(address, _)| address.starts_with("nemoclaw_"))
+    {
+        assert_eq!(
+            recovered.get(address),
+            Some(id),
+            "durable identity changed: {address}"
+        );
+    }
+    let (spec, id) = service(&directory);
+    let observed = engine.observe_service(&spec, &id).await.unwrap().unwrap();
     assert_eq!(
         engine
             .read_file(&observed.container_id, &manifest_path, 4 << 20)
@@ -210,8 +229,7 @@ async fn exercise(fresh: bool) {
         manifest
     );
     deployment.destroy(&cancel).await.unwrap();
-    // Refresh rejects a missing bound container to prevent accidental recreation.
-    // Intentional destroy removes that binding; verify Docker and retained state.
+    // Destroy removes disposable compute while retaining durable storage bindings.
     assert!(
         engine
             .container(&observed.container_id)

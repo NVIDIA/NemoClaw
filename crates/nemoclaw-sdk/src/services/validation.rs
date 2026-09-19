@@ -46,38 +46,3 @@ pub fn validate_resource_spec(kind: &str, encoded: &str) -> Result<(), Error> {
     }
     Ok(())
 }
-
-/// Check hardware contracts against fresh host observations. OpenTofu may
-/// replan replacements with null prior state before releasing the old process;
-/// transient startup headroom and artifact space remain deployment/start checks.
-pub(crate) async fn check_resource_hardware(
-    engine: &crate::docker::Engine,
-    spec: &Spec,
-) -> Result<(), Error> {
-    if engine.endpoint() != spec.engine() {
-        return Err(Error::Conflict(
-            "hardware engine differs from runtime specification",
-        ));
-    }
-    let work = async {
-        let host = engine.host_observer.observe(engine).await?;
-        let info = engine.info().await?;
-        let capacity = host.for_engine(info.id.as_deref().unwrap_or(""))?;
-        match spec.kind.as_str() {
-            vllm::SERVICE_KIND => vllm::hardware_capacity::check_memory(
-                &vllm::configured_service(spec)?,
-                &capacity,
-                false,
-            ),
-            ollama::SERVICE_KIND => ollama::hardware_capacity::check_memory(
-                &ollama::configured_service(spec)?,
-                &capacity,
-                false,
-            ),
-            _ => Err(Error::Conflict("runtime has no hardware contract")),
-        }
-    };
-    tokio::time::timeout(std::time::Duration::from_secs(30), work)
-        .await
-        .map_err(|_| Error::State("host hardware observation timed out"))?
-}

@@ -222,9 +222,14 @@ async fn managed_installers_accept_current_runtime_readiness_without_collecting_
     }
 }
 #[tokio::test]
-async fn runtime_observation_preserves_identity_and_fails_closed_on_drift_or_partial_results() {
-    let (spec, container, volume, network) = reference();
-    let process = spec.process.clone().unwrap();
+async fn gateway_observation_preserves_identity_and_fails_closed_on_drift_or_partial_results() {
+    let fixtures: Vec<Value> = serde_json::from_str(include_str!("reference.json")).unwrap();
+    let data = &fixtures[0];
+    let spec: Spec = serde_json::from_str(data["spec"].as_str().unwrap()).unwrap();
+    let container = json!({"Id":"container","Name":format!("/{}",spec.name),"Image":"sha256:runtime","Config":data["config"],"HostConfig":data["hostConfig"],"State":{"Running":true},"Mounts":[{"Type":"volume","Name":spec.volume(),"Destination":"/var/lib/docker/volumes/fixture/_data","RW":true},{"Type":"bind","Source":"/var/run/docker.sock","Destination":"/var/run/docker.sock","RW":true}]});
+    let volume = json!({"Name":spec.volume(),"Driver":"local","Scope":"local","Mountpoint":"/var/lib/docker/volumes/fixture/_data","CreatedAt":"2026-09-14T00:00:00Z","Labels":spec.labels().unwrap(),"Options":{}});
+    let network = json!({"Id":"network","Name":spec.network(),"Driver":"bridge","Internal":false,"EnableIPv6":false,"Labels":spec.labels().unwrap(),"IPAM":{"Driver":"default","Config":[{"Subnet":spec.network_cidr(),"Gateway":spec.bridge().unwrap()}]}});
+    let gateway_config = spec.gateway_config("/var/lib/docker/volumes/fixture/_data");
     let state = Arc::new(Mutex::new((
         Some(container),
         Some(volume),
@@ -235,6 +240,33 @@ async fn runtime_observation_preserves_identity_and_fails_closed_on_drift_or_par
     let fixture = Fixture::start(move |request| {
         assert_eq!(request.method, "GET", "observation mutated Docker");
         let state = shared.lock().unwrap();
+        if request.path.contains("/archive?") {
+            let url = url::Url::parse(&format!("http://fixture{}", request.path)).unwrap();
+            let path = url
+                .query_pairs()
+                .find(|(key, _)| key == "path")
+                .unwrap()
+                .1
+                .into_owned();
+            let bytes = if path.ends_with("gateway.toml") {
+                gateway_config.as_bytes().to_vec()
+            } else if path.ends_with("public.pem") {
+                b"public".to_vec()
+            } else if path.ends_with("key-encryption-key.bin") {
+                vec![7; 32]
+            } else {
+                panic!("unexpected archive {path}")
+            };
+            let mut archive = tar::Builder::new(Vec::new());
+            let mut header = tar::Header::new_gnu();
+            header.set_size(bytes.len() as u64);
+            header.set_mode(0o600);
+            header.set_cksum();
+            archive
+                .append_data(&mut header, "file", bytes.as_slice())
+                .unwrap();
+            return Some((200, archive.into_inner().unwrap()));
+        }
         let (code, value) = if request.path == "/info" {
             (
                 200,
@@ -267,9 +299,9 @@ async fn runtime_observation_preserves_identity_and_fails_closed_on_drift_or_par
                 200,
                 json!({
                     "Id":"sha256:runtime",
-                    "Architecture":process.architecture,
+                    "Architecture":"arm64",
                     "Os":"linux",
-                    "Config":{"Env":[],"Labels":process.image_labels}
+                    "Config":{"Env":[],"Labels":{}}
                 }),
             )
         } else {
@@ -279,8 +311,12 @@ async fn runtime_observation_preserves_identity_and_fails_closed_on_drift_or_par
     })
     .await;
     let engine = fixture.engine_for(&spec.gateway.engine);
-    let observed = engine.observe_runtime(&spec, "").await.unwrap().unwrap();
-    assert_eq!(observed.id, "engine/container/2026-09-14T00:00:00Z/network");
+    let observed = engine.observe_gateway(&spec, "").await.unwrap().unwrap();
+    assert!(
+        observed
+            .id
+            .starts_with("engine/container/2026-09-14T00:00:00Z/network/")
+    );
     assert!(observed.running);
     let original = state.lock().unwrap().0.clone().unwrap();
     for pointer in [
@@ -303,30 +339,36 @@ async fn runtime_observation_preserves_identity_and_fails_closed_on_drift_or_par
         };
         state.lock().unwrap().0 = Some(changed);
         assert!(
-            engine.observe_runtime(&spec, &observed.id).await.is_err(),
+            engine.observe_gateway(&spec, &observed.id).await.is_err(),
             "{pointer}"
         );
     }
     state.lock().unwrap().0 = Some(original);
     state.lock().unwrap().3 = true;
-    assert!(engine.observe_runtime(&spec, &observed.id).await.is_err());
+    assert!(engine.observe_gateway(&spec, &observed.id).await.is_err());
     state.lock().unwrap().0 = None;
-    assert!(engine.observe_removal(&spec, &observed.id).await.is_err());
+    assert!(
+        engine
+            .observe_gateway_removal(&spec, &observed.id)
+            .await
+            .is_err()
+    );
     state.lock().unwrap().3 = false;
-    assert!(engine.observe_runtime(&spec, &observed.id).await.is_err());
+    assert!(engine.observe_gateway(&spec, &observed.id).await.is_err());
     assert!(matches!(
-        engine.observe_runtime(&spec, "").await,
+        engine.observe_gateway(&spec, "").await,
         Err(Error::PartialRuntime)
     ));
     assert!(
         engine
-            .observe_removal(&spec, &observed.id)
+            .observe_gateway_removal(&spec, &observed.id)
             .await
             .unwrap()
             .is_none()
     );
     state.lock().unwrap().1 = None;
-    assert!(engine.observe_runtime(&spec, "").await.unwrap().is_none());
+    state.lock().unwrap().2 = None;
+    assert!(engine.observe_gateway(&spec, "").await.unwrap().is_none());
 }
 
 #[test]
@@ -483,10 +525,10 @@ async fn retired_gateway_process_layouts_fail_before_engine_access() {
     for layout in [0, 1] {
         spec.layout = layout;
         assert!(spec.container("/owned-data").is_err());
-        assert!(engine.observe_runtime(&spec, "engine/bound").await.is_err());
-        assert!(engine.ensure_runtime(&spec, "engine/bound").await.is_err());
-        assert!(engine.replace_runtime(&spec, "engine/bound").await.is_err());
-        assert!(engine.remove_runtime(&spec, "engine/bound").await.is_err());
+        assert!(engine.observe_gateway(&spec, "engine/bound").await.is_err());
+        assert!(engine.ensure_gateway(&spec, "engine/bound").await.is_err());
+        assert!(engine.replace_gateway(&spec, "engine/bound").await.is_err());
+        assert!(engine.remove_gateway(&spec, "engine/bound").await.is_err());
         assert_eq!(requests.load(std::sync::atomic::Ordering::SeqCst), 0);
     }
 }

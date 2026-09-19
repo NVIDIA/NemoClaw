@@ -66,7 +66,7 @@ impl Storage {
                     Ok(None)
                 } else {
                     Err(Error::Conflict(
-                        "bound model storage is absent; recreation forbidden",
+                        "bound persistent storage is absent; recreation forbidden",
                     ))
                 };
             };
@@ -81,7 +81,7 @@ impl Storage {
                 .filter(|value| !value.is_empty())
                 .ok_or(ObservationError::Incomplete)?;
             if volume.name != self.name || volume.driver != "local" || !volume.options.is_empty() {
-                return Err(Error::Conflict("model storage configuration drifted"));
+                return Err(Error::Conflict("persistent storage configuration drifted"));
             }
             let actual = format!(
                 "{}/{}/{}",
@@ -115,7 +115,7 @@ impl Storage {
             .await
             .map_err(|error| remote(&error))?;
         self.observe(engine, id).await?.ok_or(Error::Conflict(
-            "cannot observe model storage after creation; keep the state directory and run apply again with the same configuration",
+            "cannot observe persistent storage after creation; keep the state directory and run apply again with the same configuration",
         ))
     }
 }

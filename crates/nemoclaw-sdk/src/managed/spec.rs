@@ -150,32 +150,6 @@ impl Spec {
         }
         Ok(())
     }
-    pub(crate) fn validate_process_image(
-        &self,
-        image: &bollard::models::ImageInspect,
-    ) -> Result<(), Error> {
-        let Some(process) = &self.process else {
-            return Ok(());
-        };
-        let labels = image
-            .config
-            .as_ref()
-            .and_then(|config| config.labels.as_ref())
-            .ok_or(crate::ObservationError::Incomplete)?;
-        if image.id.as_ref().is_none_or(String::is_empty)
-            || image.architecture.as_deref() != Some(process.architecture.as_str())
-            || image.os.as_deref() != Some("linux")
-            || process
-                .image_labels
-                .iter()
-                .any(|(key, value)| labels.get(key) != Some(value))
-        {
-            return Err(Error::Conflict(
-                "runtime image is incompatible with the managed service process",
-            ));
-        }
-        Ok(())
-    }
     pub(crate) fn binding_namespace(
         &self,
         engine_id: Option<&str>,

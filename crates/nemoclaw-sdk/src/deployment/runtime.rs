@@ -217,7 +217,7 @@ impl Deployment {
             let directory = store.directory.join("runtime");
             if directory.exists() && !Store::open(&directory)?.bindings()?.is_empty() {
                 return Err(Error::Conflict(
-                    "runtime state still contains retained resources; destroy the saved deployment before removing its final runtime",
+                    "a configuration without runtime requires a new state directory; retain the existing runtime configuration and state for recovery or destroy",
                 ));
             }
             return Ok((Vec::new(), false));

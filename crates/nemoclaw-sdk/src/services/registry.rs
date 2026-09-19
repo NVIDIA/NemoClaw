@@ -68,23 +68,6 @@ pub fn resource_schemas() -> Vec<ResourceSchema> {
             mutable: &[],
         },
         ResourceSchema {
-            kind: "ollama_proxy",
-            fields: &[
-                "name",
-                "owner",
-                "generation",
-                "engine",
-                "image",
-                "image_pull_policy",
-                "bind_address",
-                "upstream",
-                "model",
-                "digest",
-                "running",
-            ],
-            mutable: &["running", "image_pull_policy"],
-        },
-        ResourceSchema {
             kind: "ollama_external_model",
             fields: &[
                 "name",
@@ -98,19 +81,9 @@ pub fn resource_schemas() -> Vec<ResourceSchema> {
             mutable: &[],
         },
         ResourceSchema {
-            kind: installers::ollama::SERVICE_KIND,
-            fields: &["spec", "running", "image_pull_policy"],
-            mutable: &["running", "image_pull_policy"],
-        },
-        ResourceSchema {
             kind: installers::ollama::STORAGE_KIND,
             fields: &["spec"],
             mutable: &[],
-        },
-        ResourceSchema {
-            kind: installers::vllm::SERVICE_KIND,
-            fields: &["spec", "running", "image_pull_policy"],
-            mutable: &["running", "image_pull_policy"],
         },
         ResourceSchema {
             kind: installers::vllm::STORAGE_KIND,
@@ -672,30 +645,29 @@ impl<'a> BackendRegistry<'a> {
         kind: &str,
         row: &Row,
     ) -> Result<Option<RegisteredBackend>, ObservationError> {
-        let managed_service = if matches!(
+        if matches!(
             kind,
-            installers::vllm::SERVICE_KIND | installers::vllm::STORAGE_KIND
+            installers::vllm::SERVICE_KIND
+                | installers::ollama::SERVICE_KIND
+                | installers::ollama::proxy::PROXY
         ) {
-            Some((
-                installers::vllm::SERVICE_KIND,
-                installers::vllm::STORAGE_KIND,
-            ))
-        } else if matches!(
+            return Err(ObservationError::Backend(
+                "service lifecycle belongs to the Docker provider",
+            ));
+        }
+        if matches!(
             kind,
-            installers::ollama::SERVICE_KIND | installers::ollama::STORAGE_KIND
+            installers::vllm::STORAGE_KIND | installers::ollama::STORAGE_KIND
         ) {
-            Some((
-                installers::ollama::SERVICE_KIND,
-                installers::ollama::STORAGE_KIND,
-            ))
-        } else {
-            None
-        };
-        if let Some((process_kind, storage_kind)) = managed_service {
+            let storage_kind = if kind == installers::vllm::STORAGE_KIND {
+                installers::vllm::STORAGE_KIND
+            } else {
+                installers::ollama::STORAGE_KIND
+            };
             let engine = crate::managed::runtime_engine(self.connections, kind, row)
                 .map_err(|_| ObservationError::Backend("engine connection unavailable"))?;
             return Ok(Some(RegisteredBackend(Box::new(
-                crate::managed::ManagedBackend::service(engine, process_kind, storage_kind),
+                crate::managed::ManagedBackend::storage(engine, storage_kind),
             ))));
         }
         if crate::managed::ManagedBackend::supports(kind) {
@@ -755,5 +727,34 @@ impl Backend for RegisteredBackend {
         destroying: bool,
     ) -> Result<(), ObservationError> {
         self.0.remove(kind, prior, destroying).await
+    }
+}
+
+#[cfg(test)]
+mod lifecycle_tests {
+    use super::*;
+
+    #[test]
+    fn migrated_compute_is_not_a_custom_provider_resource_or_backend() {
+        let schemas = resource_schemas();
+        let connections = crate::docker::Connections::default();
+        let registry = BackendRegistry::new(&connections);
+        for kind in ["inference_service", "ollama_service", "ollama_proxy"] {
+            assert!(!schemas.iter().any(|schema| schema.kind == kind));
+            assert!(matches!(
+                registry.resolve(kind, &Row::new()),
+                Err(ObservationError::Backend(
+                    "service lifecycle belongs to the Docker provider"
+                ))
+            ));
+        }
+        for kind in [
+            "inference_storage",
+            "ollama_service_storage",
+            "ollama_proxy_storage",
+            "ollama_external_model",
+        ] {
+            assert!(schemas.iter().any(|schema| schema.kind == kind));
+        }
     }
 }

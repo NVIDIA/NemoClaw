@@ -228,11 +228,6 @@ pub(crate) fn verify_container(
     {
         return Err(Error::Conflict("managed runtime restart policy drifted"));
     }
-    if spec.process.is_some() && host.shm_size != expected_host.shm_size {
-        return Err(Error::Conflict(
-            "managed service shared memory policy drifted",
-        ));
-    }
     let mut expected_env = environment(image_env);
     expected_env.extend(environment(expected.env.as_deref()));
     if environment(config.env.as_deref()) != expected_env {
@@ -323,11 +318,16 @@ impl Engine {
             .map_err(|_| ObservationError::Transport)?
     }
 
-    pub async fn observe_runtime(
+    pub async fn observe_gateway(
         &self,
         spec: &Spec,
         id: &str,
     ) -> Result<Option<RuntimeObservation>, Error> {
+        if spec.kind != GATEWAY_KIND || spec.process.is_some() {
+            return Err(Error::Conflict(
+                "service compute is observed through its Docker provider ID",
+            ));
+        }
         spec.validate_runtime()?;
         if self.endpoint() != spec.engine() {
             return Err(Error::Conflict(
@@ -339,10 +339,7 @@ impl Engine {
             let container = self.managed_container(spec, &spec.name).await?;
             let volume = self.volume(&spec.volume()).await?;
             let network = self.network(&spec.network()).await?;
-            if container.is_none()
-                && volume.is_none()
-                && (spec.process.is_some() || network.is_none())
-            {
+            if container.is_none() && volume.is_none() && network.is_none() {
                 return if id.is_empty() {
                     Ok(None)
                 } else {
@@ -380,7 +377,6 @@ impl Engine {
                 )
                 .await?
                 .ok_or(ObservationError::Incomplete)?;
-            spec.validate_process_image(&image)?;
             let image_config = image.config.as_ref().ok_or(ObservationError::Incomplete)?;
             let image_id = image
                 .id
@@ -403,42 +399,40 @@ impl Engine {
                 network.id.ok_or(ObservationError::Incomplete)?
             );
 
-            if spec.kind == GATEWAY_KIND {
-                if self
-                    .read_file(
-                        &container_id,
-                        &format!("{}/gateway.toml", volume.mountpoint),
-                        128 << 10,
-                    )
-                    .await?
-                    .as_deref()
-                    != Some(spec.gateway_config(&volume.mountpoint).as_bytes())
-                {
-                    return Err(Error::Conflict(
-                        "managed gateway configuration changed or is unobservable",
-                    ));
-                }
-                let signing = self
-                    .read_file(
-                        &container_id,
-                        &format!("{}/tls/jwt/public.pem", volume.mountpoint),
-                        128 << 10,
-                    )
-                    .await?
-                    .ok_or(ObservationError::Incomplete)?;
-                let encryption = self
-                    .read_file(
-                        &container_id,
-                        &format!(
-                            "{}/state/openshell/gateway/credentials/key-encryption-key.bin",
-                            volume.mountpoint
-                        ),
-                        32,
-                    )
-                    .await?
-                    .ok_or(ObservationError::Incomplete)?;
-                actual = gateway_identity(&actual, &signing, &encryption)?;
+            if self
+                .read_file(
+                    &container_id,
+                    &format!("{}/gateway.toml", volume.mountpoint),
+                    128 << 10,
+                )
+                .await?
+                .as_deref()
+                != Some(spec.gateway_config(&volume.mountpoint).as_bytes())
+            {
+                return Err(Error::Conflict(
+                    "managed gateway configuration changed or is unobservable",
+                ));
             }
+            let signing = self
+                .read_file(
+                    &container_id,
+                    &format!("{}/tls/jwt/public.pem", volume.mountpoint),
+                    128 << 10,
+                )
+                .await?
+                .ok_or(ObservationError::Incomplete)?;
+            let encryption = self
+                .read_file(
+                    &container_id,
+                    &format!(
+                        "{}/state/openshell/gateway/credentials/key-encryption-key.bin",
+                        volume.mountpoint
+                    ),
+                    32,
+                )
+                .await?
+                .ok_or(ObservationError::Incomplete)?;
+            actual = gateway_identity(&actual, &signing, &encryption)?;
             if !id.is_empty() && id != actual {
                 return Err(ObservationError::BindingMismatch.into());
             }
@@ -456,11 +450,16 @@ impl Engine {
             .await
             .map_err(|_| ObservationError::Transport)?
     }
-    pub async fn observe_removal(
+    pub async fn observe_gateway_removal(
         &self,
         spec: &Spec,
         id: &str,
     ) -> Result<Option<RuntimeObservation>, Error> {
+        if spec.kind != GATEWAY_KIND || spec.process.is_some() {
+            return Err(Error::Conflict(
+                "service compute is observed through its Docker provider ID",
+            ));
+        }
         spec.validate_runtime()?;
         if id.is_empty() {
             return Err(Error::Conflict(
@@ -487,7 +486,7 @@ impl Engine {
         )) {
             return Err(ObservationError::BindingMismatch.into());
         }
-        match self.observe_runtime(spec, "").await {
+        match self.observe_gateway(spec, "").await {
             Err(Error::PartialRuntime) => Ok(None),
             Ok(Some(observed)) if observed.id != id => {
                 Err(ObservationError::BindingMismatch.into())

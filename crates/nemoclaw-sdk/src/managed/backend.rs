@@ -9,25 +9,18 @@ use crate::{
 pub const GATEWAY_STORAGE_KIND: &str = "gateway_storage";
 pub struct ManagedBackend {
     engine: Engine,
-    process_kind: Option<&'static str>,
     storage_kind: Option<&'static str>,
 }
 impl ManagedBackend {
     pub fn new(engine: Engine) -> Self {
         Self {
             engine,
-            process_kind: None,
             storage_kind: None,
         }
     }
-    pub(crate) fn service(
-        engine: Engine,
-        process_kind: &'static str,
-        storage_kind: &'static str,
-    ) -> Self {
+    pub(crate) fn storage(engine: Engine, storage_kind: &'static str) -> Self {
         Self {
             engine,
-            process_kind: Some(process_kind),
             storage_kind: Some(storage_kind),
         }
     }
@@ -41,10 +34,7 @@ impl ManagedBackend {
         apply: bool,
         removing: bool,
     ) -> Result<Option<Row>, Error> {
-        if !Self::supports(kind)
-            && self.process_kind != Some(kind)
-            && self.storage_kind != Some(kind)
-        {
+        if !Self::supports(kind) && self.storage_kind != Some(kind) {
             return Err(ObservationError::BindingMismatch.into());
         }
         if self.engine.endpoint() != connection_endpoint(kind, row)? {
@@ -73,11 +63,11 @@ impl ManagedBackend {
                 engine.gateway_storage(&spec, id, apply).await?
             } else {
                 let observed = if apply {
-                    Some(engine.ensure_runtime(&spec, id).await?)
+                    Some(engine.ensure_gateway(&spec, id).await?)
                 } else if removing {
-                    engine.observe_removal(&spec, id).await?
+                    engine.observe_gateway_removal(&spec, id).await?
                 } else {
-                    engine.observe_runtime(&spec, id).await?
+                    engine.observe_gateway(&spec, id).await?
                 };
                 observed.map(|observed| {
                     result.insert("running".into(), observed.running.to_string());
@@ -127,7 +117,7 @@ fn diagnostic(error: &Error) -> ObservationError {
 #[async_trait::async_trait]
 impl Backend for ManagedBackend {
     async fn plan(&self, kind: &str, desired: &Row, prior: Option<&Row>) -> Result<(), Error> {
-        if kind != GATEWAY_KIND && self.process_kind != Some(kind) {
+        if kind != GATEWAY_KIND {
             if prior.is_none() {
                 match self.observe(kind, desired, false, false).await {
                     Err(Error::PartialRuntime) => {}
@@ -155,14 +145,6 @@ impl Backend for ManagedBackend {
         }
         if prior.is_some_and(|row| row.get("id").is_none_or(String::is_empty)) {
             return Err(ObservationError::Incomplete.into());
-        }
-        if self.process_kind == Some(kind) {
-            if let Some(prior) = prior {
-                crate::services::capacity::check_process_plan(&self.engine, &want, &prior["id"])
-                    .await?;
-            } else {
-                crate::services::check_resource_hardware(&self.engine, &want).await?;
-            }
         }
 
         let work = async {
@@ -218,7 +200,7 @@ impl Backend for ManagedBackend {
         if self.engine.endpoint() != connection_endpoint(kind, prior)? {
             return Err(ObservationError::BindingMismatch);
         }
-        if kind != GATEWAY_KIND && self.process_kind != Some(kind) {
+        if kind != GATEWAY_KIND {
             return Err(ObservationError::Backend(
                 "persistent storage deletion is forbidden",
             ));
@@ -231,9 +213,9 @@ impl Backend for ManagedBackend {
             .ok_or(ObservationError::Incomplete)?;
         let engine = &self.engine;
         if destroying {
-            engine.remove_runtime(&spec, id).await
+            engine.remove_gateway(&spec, id).await
         } else {
-            engine.replace_runtime(&spec, id).await
+            engine.replace_gateway(&spec, id).await
         }
         .map_err(|error| diagnostic(&error))
     }
@@ -276,11 +258,8 @@ mod tests {
             ("id".into(), String::new()),
         ]);
         const STORAGE_KIND: &str = "test_storage";
-        let backend = ManagedBackend::service(
-            Engine::connect(&fixture.endpoint).unwrap(),
-            "test_process",
-            STORAGE_KIND,
-        );
+        let backend =
+            ManagedBackend::storage(Engine::connect(&fixture.endpoint).unwrap(), STORAGE_KIND);
         assert_eq!(backend.read(STORAGE_KIND, &row, false).await.unwrap(), None);
         *response.lock().unwrap() = (
             200,

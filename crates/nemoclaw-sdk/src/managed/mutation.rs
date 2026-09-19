@@ -22,50 +22,16 @@ use serde_json::json;
 const MISSING_IMAGE: &str = "image is absent from the selected engine and imagePullPolicy is Never; load the pinned image there or allow pulling";
 
 fn image_pull_policy(spec: &Spec) -> crate::config::ImagePullPolicy {
-    use crate::config::ImagePullPolicy;
-    spec.process.as_ref().map_or_else(
-        || spec.gateway.image_pull_policy.unwrap_or_default(),
-        |process| {
-            process.image_pull_policy.unwrap_or(if process.pull_image {
-                ImagePullPolicy::IfNotPresent
-            } else {
-                ImagePullPolicy::Never
-            })
-        },
-    )
-}
-#[async_trait::async_trait]
-trait CapacityCheck: Sync {
-    async fn check(
-        &self,
-        engine: &Engine,
-        spec: &Spec,
-        observed: Option<&RuntimeObservation>,
-    ) -> Result<(), Error>;
-}
-struct HostCapacity;
-#[async_trait::async_trait]
-impl CapacityCheck for HostCapacity {
-    async fn check(
-        &self,
-        engine: &Engine,
-        spec: &Spec,
-        observed: Option<&RuntimeObservation>,
-    ) -> Result<(), Error> {
-        crate::services::check_process_capacity(engine, spec, observed).await
-    }
+    spec.gateway.image_pull_policy.unwrap_or_default()
 }
 impl Engine {
-    pub async fn ensure_runtime(&self, spec: &Spec, id: &str) -> Result<RuntimeObservation, Error> {
-        self.ensure_runtime_checked(spec, id, &HostCapacity).await
-    }
-    async fn ensure_runtime_checked(
-        &self,
-        spec: &Spec,
-        id: &str,
-        capacity: &dyn CapacityCheck,
-    ) -> Result<RuntimeObservation, Error> {
-        let observed = match self.observe_runtime(spec, id).await {
+    pub async fn ensure_gateway(&self, spec: &Spec, id: &str) -> Result<RuntimeObservation, Error> {
+        if spec.kind != GATEWAY_KIND || spec.process.is_some() {
+            return Err(Error::Conflict(
+                "service lifecycle belongs to the Docker provider",
+            ));
+        }
+        let observed = match self.observe_gateway(spec, id).await {
             Err(Error::PartialRuntime) => None,
             result => result?,
         };
@@ -73,9 +39,6 @@ impl Engine {
             && observed.running
         {
             return Ok(observed.clone());
-        }
-        if spec.process.is_some() {
-            capacity.check(self, spec, observed.as_ref()).await?;
         }
         if observed.is_some() {
             self.ensure_image(spec).await?;
@@ -119,7 +82,7 @@ impl Engine {
         // Start only the freshly observed immutable container ID. A lost create
         // or start reply is reconciled by the next explicit apply, never retried.
         let observed = self
-            .observe_runtime(spec, id)
+            .observe_gateway(spec, id)
             .await?
             .ok_or(Error::Conflict(
                 "runtime changed before start; retained for inspection",
@@ -130,7 +93,7 @@ impl Engine {
                 .await
                 .map_err(|error| remote(&error))?;
         }
-        self.observe_runtime(spec, id).await?.ok_or(Error::Conflict(
+        self.observe_gateway(spec, id).await?.ok_or(Error::Conflict(
             "cannot observe the runtime after starting it; keep the state directory and run apply again with the same configuration",
         ))
     }
@@ -138,13 +101,13 @@ impl Engine {
         let image = self
             .acquire_image(spec.image(), image_pull_policy(spec))
             .await?;
-        self.validate_runtime_image(spec, &image).await
+        self.validate_runtime_image(&image).await
     }
     /// Inspect the pinned local image without pulling. Apply validates it again
     /// after acquisition, including images that are absent during planning.
     pub(crate) async fn check_planned_image(&self, spec: &Spec) -> Result<(), Error> {
         match self.image(spec.image()).await? {
-            Some(image) => self.validate_runtime_image(spec, &image).await,
+            Some(image) => self.validate_runtime_image(&image).await,
             None if image_pull_policy(spec) == crate::config::ImagePullPolicy::Never => {
                 Err(Error::Conflict(MISSING_IMAGE))
             }
@@ -153,24 +116,19 @@ impl Engine {
     }
     async fn validate_runtime_image(
         &self,
-        spec: &Spec,
         image: &bollard::models::ImageInspect,
     ) -> Result<(), Error> {
-        if spec.process.is_some() {
-            spec.validate_process_image(image)?;
-        } else {
-            let engine = self.info().await?;
-            if image.id.as_ref().is_none_or(String::is_empty)
-                || !gateway_architecture_matches(
-                    image.architecture.as_deref(),
-                    engine.architecture.as_deref(),
-                )
-                || image.os.as_deref() != Some("linux")
-            {
-                return Err(Error::Conflict(
-                    "runtime image is unavailable or incompatible with the execution target",
-                ));
-            }
+        let engine = self.info().await?;
+        if image.id.as_ref().is_none_or(String::is_empty)
+            || !gateway_architecture_matches(
+                image.architecture.as_deref(),
+                engine.architecture.as_deref(),
+            )
+            || image.os.as_deref() != Some("linux")
+        {
+            return Err(Error::Conflict(
+                "runtime image is unavailable or incompatible with the execution target",
+            ));
         }
         Ok(())
     }
@@ -235,19 +193,9 @@ impl Engine {
         progress.complete();
         Ok(())
     }
-    /// Shared gateway networks can be created by a dependency in the same apply.
-    /// Validate an existing network; defer shared-network absence until creation.
+    /// Validate the gateway network and check its subnet before creation.
     pub(crate) async fn check_planned_network(&self, spec: &Spec) -> Result<(), Error> {
-        if spec.kind == GATEWAY_KIND
-            || spec
-                .process
-                .as_ref()
-                .is_some_and(|process| process.create_network)
-        {
-            self.checked_network(spec).await?;
-        } else if let Some(network) = self.network(&spec.network()).await? {
-            verify_network(spec, &network)?;
-        }
+        self.checked_network(spec).await?;
         Ok(())
     }
     /// Observe an owned network, or check that its subnet is available for creation.
@@ -259,14 +207,6 @@ impl Engine {
         if let Some(network) = self.network(&spec.network()).await? {
             verify_network(spec, &network)?;
             return Ok(Some(network));
-        }
-        if spec.kind != GATEWAY_KIND
-            && spec
-                .process
-                .as_ref()
-                .is_none_or(|process| !process.create_network)
-        {
-            return Err(Error::Conflict("managed gateway network is absent"));
         }
         let networks = self
             .api
@@ -311,14 +251,14 @@ impl Engine {
             .ok_or(ObservationError::Incomplete)?;
         verify_network(spec, &network)
     }
-    pub async fn replace_runtime(&self, spec: &Spec, id: &str) -> Result<(), Error> {
-        if (spec.kind != GATEWAY_KIND && spec.process.is_none()) || id.is_empty() {
+    pub async fn replace_gateway(&self, spec: &Spec, id: &str) -> Result<(), Error> {
+        if spec.kind != GATEWAY_KIND || spec.process.is_some() || id.is_empty() {
             return Err(Error::Conflict(
-                "only a bound managed process container may be replaced",
+                "only a bound managed gateway container may be replaced",
             ));
         }
         let observed = self
-            .observe_runtime(spec, id)
+            .observe_gateway(spec, id)
             .await?
             .ok_or(ObservationError::Incomplete)?;
         if observed.running {
@@ -338,12 +278,17 @@ impl Engine {
             .await
             .map_err(|error| remote(&error))
     }
-    pub async fn remove_runtime(&self, spec: &Spec, id: &str) -> Result<(), Error> {
-        if self.observe_removal(spec, id).await?.is_none() {
+    pub async fn remove_gateway(&self, spec: &Spec, id: &str) -> Result<(), Error> {
+        if spec.kind != GATEWAY_KIND || spec.process.is_some() {
+            return Err(Error::Conflict(
+                "service lifecycle belongs to the Docker provider",
+            ));
+        }
+        if self.observe_gateway_removal(spec, id).await?.is_none() {
             return Ok(());
         }
-        self.replace_runtime(spec, id).await?;
-        if self.observe_removal(spec, id).await?.is_some() {
+        self.replace_gateway(spec, id).await?;
+        if self.observe_gateway_removal(spec, id).await?.is_some() {
             return Err(Error::Conflict(
                 "runtime deletion was not confirmed; retain state and rerun destroy",
             ));

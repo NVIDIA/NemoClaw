@@ -15,22 +15,51 @@ async fn existing_spark_runtime_bindings_are_observed_without_mutations() {
     for resource in state["resources"].as_array().unwrap() {
         if !matches!(
             resource["type"].as_str(),
-            Some("nemoclaw_managed_gateway" | "nemoclaw_inference_service")
+            Some("nemoclaw_managed_gateway" | "docker_container")
         ) {
             continue;
         }
         let instances = resource["instances"].as_array().unwrap();
         assert_eq!(instances.len(), 1);
         let attributes = &instances[0]["attributes"];
-        let spec: Spec = serde_json::from_str(attributes["spec"].as_str().unwrap()).unwrap();
-        let engine = Engine::connect(&spec.gateway.engine).unwrap();
         let id = attributes["id"].as_str().unwrap();
-        let runtime = engine
-            .observe_runtime(&spec, id)
-            .await
-            .unwrap_or_else(|error| panic!("{}: {error}", spec.kind))
-            .expect("bound runtime exists");
-        assert_eq!(runtime.id, id);
+        if resource["type"] == "docker_container" {
+            let storage = state["resources"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|resource| resource["type"] == "nemoclaw_inference_storage")
+                .unwrap();
+            let storage: nemoclaw_sdk::managed::Storage = serde_json::from_str(
+                storage["instances"][0]["attributes"]["spec"]
+                    .as_str()
+                    .unwrap(),
+            )
+            .unwrap();
+            let engine = Engine::connect(&storage.engine).unwrap();
+            let actual = engine
+                .container(id)
+                .await
+                .unwrap()
+                .expect("bound service exists");
+            assert_eq!(actual.id.as_deref(), Some(id));
+            assert_eq!(
+                actual
+                    .name
+                    .as_deref()
+                    .map(|name| name.trim_start_matches('/')),
+                attributes["name"].as_str()
+            );
+        } else {
+            let spec: Spec = serde_json::from_str(attributes["spec"].as_str().unwrap()).unwrap();
+            let engine = Engine::connect(spec.engine()).unwrap();
+            let runtime = engine
+                .observe_gateway(&spec, id)
+                .await
+                .unwrap()
+                .expect("bound gateway exists");
+            assert_eq!(runtime.id, id);
+        }
         observed += 1;
     }
     assert_eq!(observed, 2, "both gateway and inference must be observed");
