@@ -51,6 +51,7 @@ import {
   BACKUP_FAILURE_ABSENT_AFTER_EXTRACTION,
   BACKUP_FAILURE_PERMISSION_DENIED,
   classifyFailedDirsFromTarStderr,
+  relativeFailedBackupDir,
 } from "../domain/backup-failure.js";
 import { shellQuote } from "../runner.js";
 import { createTempSshConfig } from "../sandbox/temp-ssh-config.js";
@@ -1607,7 +1608,8 @@ function parsePreBackupAuditEntries(output: string): PreBackupAuditEntry[] | nul
 function classifyPreBackupAuditEntry(
   [type, absPath, linkTarget]: PreBackupAuditEntry,
   dirPrefix: string,
-): "whitelisted" | "hardLinked" | "violation" {
+): "whitelisted" | "hardLinked" | "unreadable" | "violation" {
+  if (type === "u") return "unreadable";
   const relPath = absPath.startsWith(dirPrefix) ? absPath.slice(dirPrefix.length) : absPath;
   if (type === "l" && isAllowedStateSymlink(relPath, linkTarget)) return "whitelisted";
   // The audit's `find` only emits regular files through its `-links +1`
@@ -1615,6 +1617,31 @@ function classifyPreBackupAuditEntry(
   // see the rationale at the audit command (#9314).
   if (type === "f") return "hardLinked";
   return "violation";
+}
+
+function recordUnreadableAuditDirs(
+  entries: readonly PreBackupAuditEntry[],
+  dirPrefix: string,
+  existingDirs: readonly string[],
+  failedDirs: string[],
+  failedDirReasons: Record<string, string>,
+): void {
+  for (const [, absPath] of entries) {
+    const relative = relativeFailedBackupDir(absPath, dirPrefix, existingDirs);
+    if (!relative) continue;
+    if (!failedDirs.includes(relative)) failedDirs.push(relative);
+    failedDirReasons[relative] ??= BACKUP_FAILURE_PERMISSION_DENIED;
+  }
+}
+
+/** @visibleForTesting */
+export function buildPreBackupAuditFindCommand(targetDir: string): string {
+  return (
+    `find ${shellQuote(targetDir)} ` +
+    `\\( \\( \\( -type l -o \\( -type f -a -links +1 \\) -o \\( ! -type f -a ! -type d \\) \\) ` +
+    `-printf "%y\\0%p\\0%l\\0" \\) ` +
+    `-o \\( -type d \\( ! -readable -o ! -executable \\) -printf "u\\0%p\\0\\0" \\) \\)`
+  );
 }
 
 export function backupSandboxState(sandboxName: string, options: BackupOptions = {}): BackupResult {
@@ -1859,14 +1886,12 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
         // a few state subdirs as root-owned (e.g. `extensions/<plugin>`,
         // `agents/<id>`) and `find` walking those from the sandbox-user SSH
         // session exits 1 on permission denied. The audit's real signal is
-        // stdout (the printf-emitted symlink/hardlink/special-file rows);
-        // letting one perm-denied subdir abort the whole chain blocks legitimate
-        // rebuilds.
+        // stdout (the printf-emitted symlink/hardlink/special-file rows plus
+        // unreadable directories). Descent errors stay on stderr so one
+        // perm-denied subdir cannot abort the chain; those directories are
+        // recorded as backup failures instead of being dropped silently.
         const auditCmd = existingDirs
-          .map(
-            (d) =>
-              `{ find ${shellQuote(`${dir}/${d}`)} \\( -type l -o \\( -type f -a -links +1 \\) -o \\( ! -type f -a ! -type d \\) \\) -printf "%y\\0%p\\0%l\\0" 2>/dev/null || true; }`,
-          )
+          .map((d) => `{ ${buildPreBackupAuditFindCommand(`${dir}/${d}`)} 2>/dev/null || true; }`)
           .join("; ");
         _log(`Pre-backup audit: checking for symlinks, hard links, and special files`);
         const auditResult = spawnSync("ssh", [...sshArgs(configFile, sandboxName), auditCmd], {
@@ -1907,13 +1932,34 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
         if (allEntries.length > 0) {
           const whitelisted: string[] = [];
           const hardLinked: string[] = [];
+          const unreadable: PreBackupAuditEntry[] = [];
           const violations: string[] = [];
           const dirPrefix = `${dir}/`;
           const rows = { whitelisted, hardLinked, violation: violations };
           for (const entry of allEntries) {
+            const kind = classifyPreBackupAuditEntry(entry, dirPrefix);
+            if (kind === "unreadable") {
+              unreadable.push(entry);
+              continue;
+            }
             // JSON escapes embedded controls before the entry reaches logs or
             // the user-facing rejection detail.
-            rows[classifyPreBackupAuditEntry(entry, dirPrefix)].push(JSON.stringify(entry));
+            rows[kind].push(JSON.stringify(entry));
+          }
+          if (unreadable.length > 0) {
+            recordUnreadableAuditDirs(
+              unreadable,
+              dirPrefix,
+              existingDirs,
+              failedDirs,
+              failedDirReasons,
+            );
+            _log(
+              `Pre-backup audit found ${unreadable.length} unreadable directories: ${unreadable
+                .slice(0, 5)
+                .map(([, absPath]) => JSON.stringify(absPath))
+                .join("; ")}`,
+            );
           }
           if (whitelisted.length > 0) {
             _log(
