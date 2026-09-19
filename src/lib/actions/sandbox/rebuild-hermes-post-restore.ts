@@ -10,7 +10,7 @@ import {
   executePrivilegedSandboxCommand,
   restartSandboxGateway,
   type SandboxCommandResult,
-} from "./runtime/hermes-lifecycle";
+} from "./process-recovery";
 
 const HERMES_CRON_CONTROL = "/usr/local/lib/nemoclaw/hermes-cron-restore-control.py";
 const HERMES_PYTHON = "/opt/hermes/.venv/bin/python";

@@ -1450,12 +1450,10 @@ $$nemoclaw my-assistant gateway restart [--quiet|-q]
 On success, the command reports that the gateway was restarted, health passed, and forwards were checked or recovered.
 It also checks the dashboard forward, messaging forward, and manifest-declared agent forwards.
 `--quiet` suppresses progress lines but still prints refusal diagnostics.
-In the direct root-entrypoint topology, PID 1 stops only the gateway child whose process ID and process start identity match the tracked child, applies the restart seal, and launches the replacement under the separate `gateway` UID.
-In the OpenShell-managed topology, the installed root controller verifies a stable OpenShell to `nemoclaw-start` to gateway process shape, holds a root-only lifecycle lock, publishes one root-owned exit authorization bound to the exact gateway process ID, kernel start identity, and live controller identity, pidfd-targets the observed child, waits for the nonroot entrypoint supervisor to respawn it under the sandbox UID, and proves the replacement listener and HTTP health.
+For OpenClaw's direct root-entrypoint topology, PID 1 stops only the gateway child whose process ID and process start identity match the tracked child, applies the restart seal, and launches the replacement under the separate `gateway` UID.
+For OpenClaw's OpenShell-managed topology, the installed root controller verifies a stable OpenShell to `nemoclaw-start` to gateway process shape, holds a root-only lifecycle lock, publishes one root-owned exit authorization bound to the exact gateway process ID, kernel start identity, and live controller identity, pidfd-targets the observed child, waits for the nonroot entrypoint supervisor to respawn it under the sandbox UID, and proves the replacement listener and HTTP health.
 That managed process proof prevents PID reuse from redirecting the signal but cannot establish provenance against a malicious same-UID process or create gateway and agent UID isolation.
-For Hermes, the entrypoint supervisor also owns the dashboard process, internal API relay, dashboard relay, and gateway log stream.
-The managed nonroot supervisor continuously repairs those processes, stops an alive but deaf gateway after four consecutive failed health checks, and stops relaunch for the current supervisor instance after five unexpected exits or failed replacement candidates within 60 seconds.
-That authorization keeps an authenticated host-requested exit out of the crash budget while its exact root controller remains live.
+The OpenClaw authorization keeps an authenticated host-requested exit out of the crash budget while its exact root controller remains live.
 It records host intent for the exit but does not claim that the host signal was the only possible cause in the shared-UID topology.
 The host repairs only the host-side OpenShell forwards after the supervisor reports a healthy gateway.
 
@@ -1464,6 +1462,8 @@ The host repairs only the host-side OpenShell forwards after the supervisor repo
 <AgentOnly variant="hermes">
 
 For Hermes, the host runs a non-mutating gateway preflight that validates `/sandbox/.hermes/.env` against the secret-boundary guard, then holds the shared sandbox lifecycle lock while OpenShell stops and starts the registered live sandbox identity. After startup, NemoClaw verifies gateway health and recovers the dashboard, messaging, and manifest-declared forwards.
+This path does not signal an in-sandbox gateway child or publish a controller exit authorization. OpenShell stop/start replaces the running supervisor instance, so the former controller crash-budget exemption is not part of Hermes restart behavior.
+The new Hermes supervisor continuously repairs its gateway, API relay, dashboard, dashboard relay, and gateway log stream; four consecutive gateway health failures trigger child recovery, while five unexpected exits or failed replacement candidates within 60 seconds stop relaunch for that supervisor instance.
 The restarted supervisor adopts one stable snapshot of mutable `config.yaml` and `.env` after the secret boundary passes.
 The native `mcp_servers` content in that snapshot remains authoritative, including direct edits; the supervisor does not reconcile it against host-side MCP state.
 Use supported host commands such as `$$nemoclaw <name> config set` and `$$nemoclaw inference set` for settings that must match host registry state.

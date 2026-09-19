@@ -4,7 +4,7 @@
 import { MessagingSetupApplier } from "../../../messaging/applier/setup-applier";
 import type { MessagingOpenShellRunner } from "../../../messaging/applier/types";
 import type { SandboxMessagingPlan } from "../../../messaging/manifest";
-import * as processRecovery from "../process-recovery";
+import { waitForRecoveredSandboxGateway } from "../process-recovery";
 import { withSandboxLifecycleLock } from "../lifecycle/lock";
 import {
   createHermesSandboxIdentityRevalidator,
@@ -64,7 +64,7 @@ export function createHermesCredentialEnvReconciliationRuntime(
     },
     waitForGateway: async (sandboxName: string, revalidate: (operation: string) => void) => {
       revalidate(`checking Hermes gateway health for sandbox '${sandboxName}'`);
-      const healthy = await processRecovery.waitForRecoveredSandboxGateway(sandboxName, {
+      const healthy = await waitForRecoveredSandboxGateway(sandboxName, {
         quiet: true,
         initialManagedHealthPassed: false,
         managedProbeImpl: () => null,
@@ -75,25 +75,3 @@ export function createHermesCredentialEnvReconciliationRuntime(
     revalidateSandboxIdentity,
   };
 }
-
-// Keep process-recovery's importer count flat: post-restore and post-create
-// reconciliation share this focused lifecycle adapter.
-export function restartSandboxGateway(
-  ...args: Parameters<typeof processRecovery.restartSandboxGateway>
-) {
-  return processRecovery.restartSandboxGateway(...args);
-}
-
-export function checkAndRecoverSandboxProcesses(
-  ...args: Parameters<typeof processRecovery.checkAndRecoverSandboxProcesses>
-) {
-  return processRecovery.checkAndRecoverSandboxProcesses(...args);
-}
-
-export function executePrivilegedSandboxCommand(
-  ...args: Parameters<typeof processRecovery.executePrivilegedSandboxCommand>
-) {
-  return processRecovery.executePrivilegedSandboxCommand(...args);
-}
-
-export type SandboxCommandResult = processRecovery.SandboxCommandResult;
