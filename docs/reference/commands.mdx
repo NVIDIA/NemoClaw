@@ -662,8 +662,16 @@ For a non-interactive install, set `NEMOCLAW_CONFIRM_LEGACY_MANAGED_RECREATE` to
 The confirmation permits those legacy entries to recover onto the current managed image, but it does not override recorded custom-image evidence.
 After confirmed recovery, the installer skips generic onboarding unless DGX Station reconciliation remains necessary.
 Required DGX Station reconciliation still passes host admission before onboarding.
-For any registered-sandbox upgrade that you already prepared manually, set `NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1` only after backing up every registered sandbox and retiring the old gateway.
-This environment variable asserts that those steps are complete, so the installer skips the repeated backup and gateway-retirement phase before it checks whether OpenShell is installed or whether its version is in range.
+For any registered-sandbox upgrade that you prepare manually, use the current prepared NemoClaw CLI to require every backup and retire all registered legacy forwards before you retire the old gateway:
+
+```bash
+retire_legacy_forwards_flag=--retire-legacy-forwards
+NEMOCLAW_REQUIRE_ALL_SANDBOX_BACKUPS=1 $$nemoclaw backup-all "$retire_legacy_forwards_flag"
+```
+
+Set `NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1` only after that command succeeds and reports a complete result, then retire the old gateway.
+If backup or forward retirement fails, resolve the failure while the current gateway and completed backups remain intact.
+This environment variable asserts that strict backup, legacy-forward retirement, and gateway retirement are complete, so the installer skips that repeated preparation phase before it checks whether OpenShell is installed or whether its version is in range.
 For a non-default gateway, preserve the selected port on the `bash` side of the install pipeline.
 
 ```bash

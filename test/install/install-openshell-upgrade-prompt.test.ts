@@ -126,6 +126,7 @@ async function runPreinstallUpgradeGuard(
   options: {
     currentBackupSucceeds?: boolean;
     currentCliAvailable?: boolean;
+    currentForwardRetirementSucceeds?: boolean;
     currentMaxOpenshellVersion?: string;
     currentMinOpenshellVersion?: string;
     finishDeferAsPlain?: boolean;
@@ -165,6 +166,8 @@ async function runPreinstallUpgradeGuard(
   fs.writeFileSync(registry, options.registryJson ?? '{"sandboxes":{"alpha":{"name":"alpha"}}}');
   const currentCliAvailable = options.currentCliAvailable === false ? "0" : "1";
   const currentBackupSucceeds = options.currentBackupSucceeds === false ? "0" : "1";
+  const currentForwardRetirementSucceeds =
+    options.currentForwardRetirementSucceeds === false ? "0" : "1";
   const openshellVersion = options.openshellVersion ?? "0.0.36";
   const gatewayDestroySucceeds = options.gatewayDestroySucceeds === true ? "1" : "0";
   const gatewayProcessStopSucceeds = options.gatewayProcessStopSucceeds === false ? "0" : "1";
@@ -199,6 +202,9 @@ if [ "\${1:-}" = "--version" ]; then
 fi
 if [ "\${1:-}" = "backup-all" ] && [ "${currentBackupSucceeds}" != "1" ]; then
   exit 4
+fi
+if [ "\${1:-} \${2:-}" = "backup-all --retire-legacy-forwards" ] && [ "${currentForwardRetirementSucceeds}" != "1" ]; then
+  exit 5
 fi
 exit 0
 `,
@@ -648,7 +654,7 @@ esac`,
     expect(result.stdout).toContain('CONFIRMED_NAMES=["alpha"]');
     expect(result.stdout).toContain('"alpha"');
     expect(cliLog.split(/\r?\n/)).toContain("prepare-current");
-    expect(cliLog.split(/\r?\n/)).toContain("current:backup-all");
+    expect(cliLog).toContain("current:backup-all");
     expect(cliLog).toContain("require-all-env=1");
     expect(cliLog).not.toContain("old:");
     expect(openshellLog).toContain("gateway remove nemoclaw");
@@ -683,13 +689,13 @@ esac`,
 
     expect(result.status).not.toBe(0);
     expect(result.stdout + result.stderr).toContain("Pre-upgrade backup failed");
-    expect(cliLog.split(/\r?\n/)).toContain("current:backup-all");
+    expect(cliLog).toContain("current:backup-all");
     expect(cliLog).toContain("require-all-env=1");
     expect(cliLog).not.toContain("old:");
     expect(openshellLog).toBe("");
   });
 
-  it("uses generic backup remediation outside the legacy gateway path (#6114)", async () => {
+  it("keeps the gateway when backup or forward retirement fails for an unsupported version", async () => {
     const { result, cliLog, openshellLog } = await runPreinstallUpgradeGuard(
       {
         NON_INTERACTIVE: "1",
@@ -700,11 +706,10 @@ esac`,
 
     const output = result.stdout + result.stderr;
     expect(result.status).not.toBe(0);
-    expect(output).toContain(
-      "Resolve every reported sandbox backup failure or skipped sandbox using the CLI output above",
-    );
+    expect(output).toContain("exact legacy dashboard forward retirement could not be proved");
+    expect(output).toContain("gateway was not retired");
     expect(output).not.toContain("NEMOCLAW_OPENSHELL_UPGRADE_PREPARED");
-    expect(cliLog.split(/\r?\n/)).toContain("current:backup-all");
+    expect(cliLog).toContain("current:backup-all");
     expect(openshellLog).toBe("");
   });
 
@@ -721,7 +726,7 @@ esac`,
     expect(result.stdout).toContain("RESTORE=1");
     expect(result.stdout).toContain('CONFIRMED_NAMES=["alpha"]');
     expect(cliLog.split(/\r?\n/)).toContain("prepare-current");
-    expect(cliLog.split(/\r?\n/)).toContain("current:backup-all");
+    expect(cliLog).toContain("current:backup-all");
     expect(cliLog).toContain("require-all-env=1");
     expect(cliLog).not.toContain("old:");
     expect(openshellLog).toContain("gateway remove nemoclaw");
@@ -745,7 +750,7 @@ esac`,
     expect(result.stdout).toContain("RESTORE=1");
     expect(result.stdout).toContain('CONFIRMED_NAMES=["alpha"]');
     expect(cliLog.split(/\r?\n/)).toContain("prepare-current");
-    expect(cliLog.split(/\r?\n/)).toContain("current:backup-all");
+    expect(cliLog).toContain("current:backup-all");
     expect(cliLog).toContain("require-all-env=1");
     expect(openshellLog).toContain("gateway remove nemoclaw");
   });
@@ -766,7 +771,7 @@ esac`,
 
     expect(result.status).not.toBe(0);
     expect(result.stdout + result.stderr).toContain("stopped after backup");
-    expect(cliLog.split(/\r?\n/)).toContain("current:backup-all");
+    expect(cliLog).toContain("current:backup-all");
     expect(openshellLog.split(/\r?\n/)).toContain("--version");
     expect(openshellLog).not.toContain("gateway");
     expect(registry).toBe(registryJson);
@@ -801,7 +806,7 @@ esac`,
 
     expect(result.status).toBe(0);
     expect(result.stdout).toContain('CONFIRMED_NAMES=["alpha"]');
-    expect(cliLog.split(/\r?\n/)).toContain("current:backup-all");
+    expect(cliLog).toContain("current:backup-all");
     expect(openshellLog).toContain("gateway remove nemoclaw");
   });
 
@@ -818,7 +823,7 @@ esac`,
     );
 
     expect(result.status).toBe(0);
-    expect(cliLog.split(/\r?\n/)).toContain("current:backup-all");
+    expect(cliLog).toContain("current:backup-all");
     expect(openshellLog).toBe("openshell install-mode if-missing defer=\n");
   });
 
@@ -861,8 +866,31 @@ esac`,
     );
 
     expect(result.status).toBe(0);
-    expect(cliLog.split(/\r?\n/)).toContain("current:backup-all");
+    expect(cliLog.split(/\r?\n/)).toContain("current:backup-all --retire-legacy-forwards");
     expect(openshellLog).toContain("gateway remove nemoclaw");
+  });
+
+  it("preserves the gateway and backup when legacy forward retirement is unproved (#11898)", async () => {
+    const { result, cliLog, openshellLog } = await runPreinstallUpgradeGuard(
+      { NON_INTERACTIVE: "1" },
+      {
+        currentForwardRetirementSucceeds: false,
+        hasOldCli: false,
+        openshellVersion: "0.0.86",
+        registryJson:
+          '{"sandboxes":{"alpha":{"name":"alpha","dashboardPort":18789,"nemoclawVersion":"0.0.85","fromDockerfile":false}}}',
+      },
+    );
+
+    expect(result.status).not.toBe(0);
+    expect(result.stdout + result.stderr).toContain(
+      "exact legacy dashboard forward retirement could not be proved",
+    );
+    expect(result.stdout + result.stderr).toContain("sandbox backups were preserved");
+    expect(cliLog.split(/\r?\n/)).toEqual(
+      expect.arrayContaining(["current:backup-all --retire-legacy-forwards"]),
+    );
+    expect(openshellLog).toBe("");
   });
 
   it("retires an OpenShell 0.0.85 user-service gateway without a PID file before installing 0.0.101 (#8800)", async () => {
@@ -883,7 +911,7 @@ esac`,
     );
 
     expect(result.status).toBe(0);
-    expect(cliLog.split(/\r?\n/)).toContain("current:backup-all");
+    expect(cliLog).toContain("current:backup-all");
     expect(openshellLog.split(/\r?\n/)).toEqual(
       expect.arrayContaining([
         "gateway destroy -g nemoclaw",
@@ -962,7 +990,7 @@ esac`,
       expect(result.stdout + result.stderr).toContain("did not start recovery");
       expect(result.stdout + result.stderr).toContain(testCase.expectedRetry);
       expect(result.stdout + result.stderr).not.toContain(testCase.forbiddenRetry);
-      expect(cliLog.split(/\r?\n/)).toContain("current:backup-all");
+      expect(cliLog).toContain("current:backup-all");
       expect(openshellLog).toContain("openshell install-mode force defer=");
     },
   );
@@ -984,7 +1012,7 @@ esac`,
     expect(result.stdout + result.stderr).toContain(
       "Could not resolve the current OpenShell version range",
     );
-    expect(cliLog.split(/\r?\n/)).toContain("current:backup-all");
+    expect(cliLog).toContain("current:backup-all");
     expect(openshellLog).toBe("");
   });
 
@@ -1004,7 +1032,7 @@ esac`,
     expect(result.stdout + result.stderr).toContain(
       "Could not determine the installed OpenShell version",
     );
-    expect(cliLog.split(/\r?\n/)).toContain("current:backup-all");
+    expect(cliLog).toContain("current:backup-all");
     expect(openshellLog).toBe("");
     expect(registry).toBe(registryJson);
   });
@@ -1046,7 +1074,7 @@ esac`,
     expect(result.stdout + result.stderr).toContain(
       "Could not retire the legacy OpenShell gateway after backup",
     );
-    expect(cliLog.split(/\r?\n/)).toContain("current:backup-all");
+    expect(cliLog).toContain("current:backup-all");
     expect(openshellLog.split(/\r?\n/)).toEqual(
       expect.arrayContaining([
         "gateway destroy -g nemoclaw",
@@ -1185,7 +1213,7 @@ esac`,
     );
 
     expect(result.status).toBe(0);
-    expect(cliLog.split(/\r?\n/)).toContain("current:backup-all");
+    expect(cliLog).toContain("current:backup-all");
     expect(openshellLog).toContain("gateway remove nemoclaw");
   });
 
@@ -1308,7 +1336,7 @@ esac`,
 
     expect(result.status).toBe(0);
     expect(result.stdout + result.stderr).not.toContain("incompatible-sibling-name");
-    expect(cliLog.split(/\r?\n/)).toContain("current:backup-all");
+    expect(cliLog).toContain("current:backup-all");
     expect(openshellLog).toContain("gateway remove nemoclaw-9123");
   });
 
@@ -1350,7 +1378,7 @@ esac`,
     expect(result.stdout).toContain("Backing up 2 sandbox(es)");
     expect(result.stdout).toContain('CONFIRMED_NAMES=["alpha","beta"]');
     expect(result.stdout + result.stderr).not.toContain('"tm"');
-    expect(cliLog.split(/\r?\n/)).toContain("current:backup-all");
+    expect(cliLog).toContain("current:backup-all");
     expect(cliLog).toContain("require-all-env=1");
     expect(openshellLog).toContain("gateway remove nemoclaw");
   });

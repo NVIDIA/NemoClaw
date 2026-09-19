@@ -85,6 +85,8 @@ If any sandbox is skipped or fails, the installer exits before it changes the ga
 For a failed required pre-upgrade backup, NemoClaw removes the incomplete timestamped backup directory so it cannot appear as a recovery point.
 If that removal fails, the installer reports the retained path; preserve it and do not use it for recovery.
 After backup, the installer requires any existing OpenShell executable it will use to report a version, then compares that version with the supported range declared by the prepared current source.
+Before it retires an out-of-range gateway, the installer retires every applicable registered legacy forward through its exact sandbox, bind, port, process, gateway, and workspace identity, including Hermes dashboard, active messaging, and declared agent forwards.
+If it cannot prove that retirement, it exits before retiring the gateway and preserves every completed backup.
 It retires the running gateway before replacing an out-of-range OpenShell installation, keeps the gateway when the installed version is supported, and stops without retiring it when the installed version or supported range cannot be validated.
 If OpenShell lifecycle commands cannot retire the gateway, the installer can use verified service or PID-file evidence on Linux and macOS.
 For the default gateway on port `8080`, Linux first checks verified systemd service evidence for `nemoclaw-openshell-gateway.service`, while macOS first checks verified Homebrew gateway service evidence.
@@ -101,7 +103,15 @@ If the forced installation fails, the installer does not stage a gateway service
 
 ## Resume a Manually Prepared Upgrade
 
-Use this path only after you back up every registered sandbox and retire the gateway.
+Use this path only after you back up every registered sandbox, retire each registered legacy dashboard forward, and retire the gateway.
+Run the backup and forward-retirement step with the current prepared NemoClaw CLI before you retire the gateway:
+
+```bash
+NEMOCLAW_REQUIRE_ALL_SANDBOX_BACKUPS=1 $$nemoclaw backup-all --retire-legacy-forwards
+```
+
+Do not set `NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1` unless that command succeeds and reports that every registered sandbox backup and exact legacy-forward retirement completed.
+If the command fails or cannot prove a retirement, resolve that failure while the current gateway and completed backups remain intact.
 Set `NEMOCLAW_GATEWAY_PORT` to the port for the gateway that you retired.
 Set `NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1` on the `bash` side of the install pipeline when you rerun the installer.
 
