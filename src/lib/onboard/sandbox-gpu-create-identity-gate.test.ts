@@ -594,11 +594,10 @@ describe("created sandbox identity gate", () => {
     );
     const patch = createGpuPatchFixture();
     patch.replacementRuntimeId.mockImplementation(() => replacementRuntimeId);
-    patch.maybeApplyDuringCreate.mockImplementation(() => {
+    patch.ensureApplied.mockImplementation(() => {
       events.push("compatibility-cutover");
       replacementRuntimeId = "b".repeat(64);
     });
-    patch.ensureApplied.mockImplementation(() => events.push("ensure-applied"));
     mocks.createDockerGpuSandboxCreatePatch.mockReturnValue(patch);
     mocks.streamSandboxCreate.mockImplementation(async (_command, args, _env, options) => {
       nonce = createAttemptNonce(args);

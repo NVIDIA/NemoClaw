@@ -994,7 +994,7 @@ export async function runSandboxCreateWithIdentityVerification<
   readonly create: (
     verifyCreatedSandbox: (
       created: Created,
-      beforeEffects?: () => void | Promise<void>,
+      beforeEffects?: () => unknown | Promise<unknown>,
     ) => Promise<string>,
   ) => Promise<Result>;
   readonly captureCreatedSandboxIdentity: (created: Created) => string;
@@ -1017,6 +1017,7 @@ export async function runSandboxCreateWithIdentityVerification<
     created: Created,
     exactIdentity: string,
     evidence: Evidence,
+    beforeEffectsResult?: unknown,
   ) => Promise<void>;
   readonly persistRetainedSandboxRecovery?: (
     message: string,
@@ -1082,7 +1083,7 @@ export async function runSandboxCreateWithIdentityVerification<
   };
   const verifyCreatedSandbox = async (
     created: Created,
-    beforeEffects?: () => void | Promise<void>,
+    beforeEffects?: () => unknown | Promise<unknown>,
   ): Promise<string> => {
     observedCreatedSandbox = created;
     try {
@@ -1121,8 +1122,13 @@ export async function runSandboxCreateWithIdentityVerification<
         evidence,
         `continuing onboarding for sandbox '${input.sandboxName}'`,
       );
-      await beforeEffects?.();
-      await input.runVerifiedCreateEffects?.(created, capturedIdentity, evidence);
+      const beforeEffectsResult = await beforeEffects?.();
+      await input.runVerifiedCreateEffects?.(
+        created,
+        capturedIdentity,
+        evidence,
+        beforeEffectsResult,
+      );
       input.revalidateCreatedSandboxIdentity(
         capturedIdentity,
         `confirming verified effects for sandbox '${input.sandboxName}'`,
@@ -2944,13 +2950,23 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         cleanupTemporarySources: cleanupSandboxCreateSources,
         runVerifiedCreateEffects:
           managedStartupRootApplyRequest || runDeferredProviderEffects
-            ? async (identity, _exactIdentity, boundary) => {
+            ? async (identity, _exactIdentity, boundary, beforeEffectsResult) => {
                 const context: VerifiedSandboxCreateEffectsContext = {
                   ...boundary,
                   revalidateSandboxIdentity: (operation) =>
                     revalidateVerifiedCreateIdentity(boundary, operation),
                 };
                 if (managedStartupRootApplyRequest) {
+                  const expectedContainerId =
+                    identity.route === "compatibility" ? String(beforeEffectsResult ?? "") : null;
+                  if (
+                    identity.route === "compatibility" &&
+                    !/^[a-f0-9]{64}$/u.test(expectedContainerId ?? "")
+                  ) {
+                    throw new Error(
+                      "Compatibility startup has no exact replacement runtime authority.",
+                    );
+                  }
                   context.revalidateSandboxIdentity(
                     `applying managed startup profile for sandbox '${sandboxName}'`,
                   );
@@ -2972,6 +2988,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
                         sandboxId: identity.sandboxId,
                         bootstrapIdentity: managedBootstrapIdentity,
                         request: managedStartupRootApplyRequest,
+                        ...(expectedContainerId ? { expectedContainerId } : {}),
                       });
                   } catch (error) {
                     console.error(

@@ -228,7 +228,7 @@ async function verifyCreatedSandboxBeforeEffects(
   createAttemptNonce: string | undefined,
   route: SelectedDockerGpuRoute,
   input: SandboxGpuCreateFlowInput,
-  beforeEffects?: () => void | Promise<void>,
+  beforeEffects?: () => unknown | Promise<unknown>,
 ): Promise<void> {
   if (!input.verifyCreatedSandboxBeforeEffects) return;
   await input.verifyCreatedSandboxBeforeEffects(
@@ -688,8 +688,9 @@ export function createSandboxGpuCreateAttemptRunner(
           input,
           async () => {
             revalidatePostCreateEffect(`apply runtime patch for sandbox '${input.sandboxName}'`);
-            runtimePatch.maybeApplyDuringCreate();
+            await runtimePatch.ensureApplied();
             await runtimePatch.exitOnPatchError();
+            return runtimePatch.replacementRuntimeId?.() ?? null;
           },
         );
         createdSandboxVerified = true;

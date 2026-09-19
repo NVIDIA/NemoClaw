@@ -77,17 +77,20 @@ function inspectExactCreatedRuntime(input: {
   readonly bundle: RuntimeProviderBundle;
   readonly sandboxName: string;
   readonly sandboxId: string;
+  readonly expectedContainerId?: string;
 }): ProviderManagedStartupRuntime {
   const runtime = requireRuntimeProvider(input.bundle);
   const sandbox: SandboxEntry = {
     name: input.sandboxName,
     openshellDriver: input.bundle.identity.id,
   };
-  const target = runtime.control.resolveTarget({
-    registeredSandboxNames: [input.sandboxName],
-    sandbox,
-    sandboxName: input.sandboxName,
-  });
+  const target = input.expectedContainerId
+    ? { resourceHandle: input.expectedContainerId }
+    : runtime.control.resolveTarget({
+        registeredSandboxNames: [input.sandboxName],
+        sandbox,
+        sandboxName: input.sandboxName,
+      });
   const inspected = runtime.capture(
     ["inspect", "--type", "container", target.resourceHandle],
     30_000,
@@ -178,6 +181,7 @@ function inspectExactTransactionRuntime(input: {
     bundle: input.runtimeProvider,
     sandboxName: input.sandboxName,
     sandboxId: input.sandboxId,
+    expectedContainerId: input.transaction.containerId,
   });
   if (
     pinned.transaction.containerId !== input.transaction.containerId ||
@@ -233,6 +237,7 @@ export function applyProviderManagedStartupRootRequest(input: {
   readonly sandboxId: string;
   readonly bootstrapIdentity: string;
   readonly request: ManagedStartupRootApplyRequest;
+  readonly expectedContainerId?: string;
   readonly environment?: NodeJS.ProcessEnv;
 }): ProviderManagedStartupTransaction | null {
   if (!/^[a-f0-9]{64}$/u.test(input.bootstrapIdentity)) {
@@ -242,6 +247,7 @@ export function applyProviderManagedStartupRootRequest(input: {
     bundle: input.runtimeProvider,
     sandboxName: input.sandboxName,
     sandboxId: input.sandboxId,
+    ...(input.expectedContainerId ? { expectedContainerId: input.expectedContainerId } : {}),
   });
   const runtime: ProviderManagedStartupRuntime = {
     ...pinned,
