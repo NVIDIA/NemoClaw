@@ -662,6 +662,17 @@ describe("E2E workflow plan", () => {
     expect(selectedWorkflowJobs(plan)).toEqual(["catalogue-standard", "jetson-nvmap-gpu"]);
   });
 
+  it.each([
+    "scripts/install.sh",
+    "src/lib/actions/global.ts",
+    "src/lib/actions/sandbox/forward-recovery.ts",
+  ])("selects both gateway-upgrade fixtures when %s changes", (changedFile) => {
+    expect(catalogueTargetsForChangedFiles([changedFile]).map((target) => target.id)).toEqual([
+      "openshell-gateway-upgrade-v0-0-89-x86-64",
+      "openshell-gateway-upgrade-v0-0-123-aarch64",
+    ]);
+  });
+
   it("selects sandbox operations when its gateway client changes", () => {
     const changedFile = "test/e2e/fixtures/clients/gateway.ts";
     const plan = buildE2eWorkflowPlan({}, { changedFiles: [changedFile] });

@@ -347,6 +347,15 @@ function commonEgressTarget(options: {
   });
 }
 
+const GATEWAY_UPGRADE_OWNING_PATHS = Object.freeze([
+  "scripts/install.sh",
+  "src/lib/actions/global.ts",
+  "src/lib/actions/sandbox/forward-recovery.ts",
+  "tools/e2e/openshell-gateway-upgrade-fixture.mts",
+  "test/e2e/live/openshell-gateway-upgrade-helpers.ts",
+  "test/e2e/live/openshell-gateway-upgrade-old-installer.ts",
+]);
+
 const GATEWAY_UPGRADE_TARGET = dockerOnlyTarget("openshell-gateway-upgrade-v0-0-89-x86-64", {
   targetId: "openshell-gateway-upgrade",
   displayName: `Upgrade: preserves a ${REVIEWED_GATEWAY_UPGRADE_FIXTURE.nemoclawRef} sandbox on x86-64`,
@@ -361,11 +370,7 @@ const GATEWAY_UPGRADE_TARGET = dockerOnlyTarget("openshell-gateway-upgrade-v0-0-
   restoreCli: true,
   exposeCliBin: true,
   shard: "v0-0-89-x86-64",
-  owningPaths: [
-    "tools/e2e/openshell-gateway-upgrade-fixture.mts",
-    "test/e2e/live/openshell-gateway-upgrade-helpers.ts",
-    "test/e2e/live/openshell-gateway-upgrade-old-installer.ts",
-  ],
+  owningPaths: GATEWAY_UPGRADE_OWNING_PATHS,
   environment: {
     ...nonInteractive,
     NEMOCLAW_GATEWAY_UPGRADE_SURVIVOR_NAME: "e2e-gw-survivor",
@@ -397,11 +402,7 @@ const GATEWAY_REGISTRATION_UPGRADE_TARGET = dockerOnlyTarget(
     restoreCli: true,
     exposeCliBin: true,
     shard: "v0-0-123-aarch64",
-    owningPaths: [
-      "tools/e2e/openshell-gateway-upgrade-fixture.mts",
-      "test/e2e/live/openshell-gateway-upgrade-helpers.ts",
-      "test/e2e/live/openshell-gateway-upgrade-old-installer.ts",
-    ],
+    owningPaths: GATEWAY_UPGRADE_OWNING_PATHS,
     environment: {
       ...nonInteractive,
       NEMOCLAW_GATEWAY_UPGRADE_SURVIVOR_NAME: "e2e-gw-survivor",
