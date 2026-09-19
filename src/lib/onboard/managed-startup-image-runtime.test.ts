@@ -25,6 +25,7 @@ import {
   MANAGED_STARTUP_COMPLETION_FILE,
   MANAGED_STARTUP_PROFILE_ENV,
   MANAGED_STARTUP_RUNTIME_ENV_FILE,
+  normalizeManagedStartupWorkspaceRoot,
   publishManagedStartupCompletionAfterCommit,
   type ManagedStartupImageActionPlanInput,
   main as mainManagedStartupImageRuntime,
@@ -334,6 +335,75 @@ describe("managed startup image runtime", () => {
     for (const directory of policyTemporaryDirectories.splice(0)) {
       fs.rmSync(directory, { recursive: true, force: true });
     }
+  });
+
+  it.each([
+    ["openclaw", 998, 998, 0o755],
+    ["hermes", 998, 999, 0o755],
+    ["langchain-deepagents-code", 0, 999, 0o1775],
+    ["pi", 999, 999, 0o755],
+  ] as const)("restores the declared %s workspace-root posture", (agent, uid, gid, mode) => {
+    const lstat = vi
+      .fn()
+      .mockReturnValueOnce({
+        gid: 999,
+        isDirectory: () => true,
+        isSymbolicLink: () => false,
+        mode: 0o040000 | 0o755,
+        uid: 999,
+      })
+      .mockReturnValueOnce({
+        gid,
+        isDirectory: () => true,
+        isSymbolicLink: () => false,
+        mode: 0o040000 | mode,
+        uid,
+      });
+    const chown = vi.fn();
+    const chmod = vi.fn();
+
+    normalizeManagedStartupWorkspaceRoot(agent, { lstat, chown, chmod });
+
+    expect(chown).toHaveBeenCalledExactlyOnceWith("/sandbox", uid, gid);
+    expect(chmod).toHaveBeenCalledExactlyOnceWith("/sandbox", mode);
+    expect(lstat).toHaveBeenCalledTimes(2);
+  });
+
+  it("rejects a symlinked workspace root before mutation", () => {
+    const chown = vi.fn();
+    const chmod = vi.fn();
+
+    expect(() =>
+      normalizeManagedStartupWorkspaceRoot("langchain-deepagents-code", {
+        lstat: () => ({
+          gid: 999,
+          isDirectory: () => false,
+          isSymbolicLink: () => true,
+          mode: 0o120777,
+          uid: 999,
+        }),
+        chown,
+        chmod,
+      }),
+    ).toThrow(/workspace root must be one real directory/u);
+    expect(chown).not.toHaveBeenCalled();
+    expect(chmod).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when workspace-root normalization does not settle", () => {
+    expect(() =>
+      normalizeManagedStartupWorkspaceRoot("langchain-deepagents-code", {
+        lstat: () => ({
+          gid: 999,
+          isDirectory: () => true,
+          isSymbolicLink: () => false,
+          mode: 0o040000 | 0o1775,
+          uid: 999,
+        }),
+        chown: () => undefined,
+        chmod: () => undefined,
+      }),
+    ).toThrow(/workspace root does not match its declared posture/u);
   });
 
   it("recognizes the identity-bound completion wait used by the non-root startup hold", async () => {

@@ -7,6 +7,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { PEM_CERTIFICATE_RE_GLOBAL } from "../corporate-ca-policy";
+import { managedImageRuntimeIdentity } from "../managed-image/agents";
 import {
   type ManagedStartupAgentEnvironment,
   type ManagedStartupAgentMaterial,
@@ -42,6 +43,7 @@ import {
   MANAGED_STARTUP_SHARED_ROLLBACK_RECEIPT_DIRECTORY,
   rollbackManagedStartupSharedStateTransaction,
 } from "./shared-state-transaction";
+import { managedStartupWorkspaceRoot } from "./state-roots";
 import { MANAGED_STARTUP_CA_ENV, MANAGED_STARTUP_PROFILE_ENV } from "./transport";
 
 export { MANAGED_STARTUP_CA_ENV, MANAGED_STARTUP_PROFILE_ENV } from "./transport";
@@ -152,6 +154,52 @@ export interface ManagedStartupRootApplyResult extends ManagedStartupImageApplyR
 export interface ManagedStartupRootApplyOptions {
   /** One-attempt identity for managed bootstrap; null keeps the direct root-apply contract. */
   readonly bootstrapIdentity?: string | null;
+}
+
+export interface ManagedStartupWorkspaceRootApplyDeps {
+  readonly lstat: (
+    target: string,
+  ) => Pick<fs.Stats, "gid" | "isDirectory" | "isSymbolicLink" | "mode" | "uid">;
+  readonly chown: (target: string, uid: number, gid: number) => void;
+  readonly chmod: (target: string, mode: number) => void;
+}
+
+const defaultWorkspaceRootApplyDeps: ManagedStartupWorkspaceRootApplyDeps = {
+  lstat: (target) => fs.lstatSync(target),
+  chown: (target, uid, gid) => fs.chownSync(target, uid, gid),
+  chmod: (target, mode) => fs.chmodSync(target, mode),
+};
+
+/** Restore the agent-declared ownership contract on OpenShell's persistent workspace root. */
+export function normalizeManagedStartupWorkspaceRoot(
+  agent: ManagedStartupAgent,
+  deps: ManagedStartupWorkspaceRootApplyDeps = defaultWorkspaceRootApplyDeps,
+): void {
+  const target = managedImageRuntimeIdentity(agent).workdir;
+  const before = deps.lstat(target);
+  if (before.isSymbolicLink() || !before.isDirectory()) {
+    fail("managed startup workspace root must be one real directory");
+  }
+  const expected = managedStartupWorkspaceRoot({
+    agent,
+    agentIdentity: managedImageRuntimeIdentity(agent),
+  });
+  try {
+    deps.chown(target, expected.uid, expected.gid);
+    deps.chmod(target, expected.mode);
+  } catch {
+    fail("managed startup workspace-root normalization failed");
+  }
+  const after = deps.lstat(target);
+  if (
+    after.isSymbolicLink() ||
+    !after.isDirectory() ||
+    after.uid !== expected.uid ||
+    after.gid !== expected.gid ||
+    (after.mode & 0o7777) !== expected.mode
+  ) {
+    fail("managed startup workspace root does not match its declared posture");
+  }
 }
 
 export interface ManagedStartupCompletionMarker {
@@ -1648,6 +1696,7 @@ export async function applyManagedStartupRootRequest(
   // mutation. A completed same-profile replay must still be allowed to refresh
   // these non-fingerprinted application-runtime values.
   mapManagedStartupProfileToAgentEnvironment(profile, imageEnvironment);
+  normalizeManagedStartupWorkspaceRoot(request.agent);
   const alreadyPublished = completionAlreadyPublished(request);
   const bootstrapIdentity = options.bootstrapIdentity ?? null;
   const transactionStatus =
