@@ -273,11 +273,12 @@ exit 0
         printf 'openshell install-mode %s defer=%s\n' "$1" "\${NEMOCLAW_DEFER_OPENSHELL_INSTALL:-}" >> "${openshellLog}"
         [ "${finishPreparedInstallSucceeds}" = "1" ]
       }
+      command_exists() {
+        [ "$1" != "systemctl" ] && command -v "$1" >/dev/null 2>&1 && return 0
+        [ "$1" = "systemctl" ] && [ "${finishLinuxSystemdUserManager}" = "1" ]
+      }
       if [ "${finishLinuxSystemdUserManager}" = "1" ]; then
         uname() { printf 'Linux\n'; }
-        command_exists() {
-          [ "$1" = "systemctl" ] || command -v "$1" >/dev/null 2>&1
-        }
         systemctl() { [ "$*" = "--user show-environment" ]; }
         restart_selected_openshell_gateway_user_service() {
           printf 'gateway service-restart %s\n' "$1" >> "${openshellLog}"
