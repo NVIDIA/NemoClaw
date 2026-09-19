@@ -822,6 +822,9 @@ restore_onboard_forward_after_post_checks() {
   chmod 700 "$state_dir" \
     || error "Could not secure gateway-scoped runtime state directory: ${state_dir}"
   pid_file="${state_dir}/${agent_name}-${sandbox_name}-${port}.forward.pid"
+  # Fresh onboarding already created and verified these service forwards. This
+  # installer path only retires an exact legacy watcher before normal recovery.
+  [[ -f "$pid_file" ]] || return 0
   if [[ -f "$pid_file" ]]; then
     local old_pid expected_watcher_script current_uid old_uid old_args node_bin openshell_bin expected_args
     old_pid="$(cat "$pid_file" 2>/dev/null || true)"
