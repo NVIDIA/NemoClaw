@@ -279,7 +279,7 @@ describe("Docker managed-bootstrap shared-state rollback authority", () => {
     expect(volumeCreates).toHaveLength(1);
     expect(rollbackMount).toMatch(
       new RegExp(
-        `^type=volume,src=${String(volumeCreates[0]?.[2])},dst=${path.posix.dirname(MANAGED_STARTUP_SHARED_ROLLBACK_RECEIPT_DIRECTORY)},readonly$`,
+        `^type=volume,src=${String(volumeCreates[0]?.at(-1))},dst=${path.posix.dirname(MANAGED_STARTUP_SHARED_ROLLBACK_RECEIPT_DIRECTORY)},readonly$`,
         "u",
       ),
     );

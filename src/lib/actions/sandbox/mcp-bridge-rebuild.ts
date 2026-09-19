@@ -32,7 +32,11 @@ import {
 } from "./mcp-bridge-provider";
 import { restoreExistingMcpBridgeRuntime } from "./mcp-bridge-restart";
 import { assertMcpAdapterTeardownRuntimeCapabilities } from "./mcp-bridge-runtime-capabilities";
-import { ensureSandboxGatewaySelected, getSandboxOrThrow } from "./mcp-bridge-state";
+import {
+  assertNoAmbiguousMcpCredentialTargets,
+  ensureSandboxGatewaySelected,
+  getSandboxOrThrow,
+} from "./mcp-bridge-state";
 import { assertAuthenticatedBridgeEntry, validateSandboxName } from "./mcp-bridge-validation";
 
 export interface McpRebuildPreparation {
@@ -100,6 +104,7 @@ async function getCompleteMcpRebuildEntries(
   const currentSandbox = getSandboxOrThrow(sandboxName);
   let runtimeSelection = options.runtimeSelection;
   const entries = sourceEntries.map(cloneMcpSourceEntry);
+  assertNoAmbiguousMcpCredentialTargets(entries);
   if (entries.length > 0) {
     runtimeSelection ??= getMcpProviderInspectionRuntimeSelection(currentSandbox);
   }
