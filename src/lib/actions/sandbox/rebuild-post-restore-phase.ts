@@ -55,13 +55,6 @@ export {
   runHermesCronRestoreTransaction,
 } from "./rebuild-hermes-post-restore";
 
-/** Probe the recreated runtime instead of accepting its requested version metadata. */
-function probeRebuiltAgentVersion(
-  sandboxName: string,
-): ReturnType<typeof sandboxVersion.checkAgentVersion> {
-  return sandboxVersion.checkAgentVersion(sandboxName, { forceProbe: true });
-}
-
 export function printHermesCronRestoreRecoveryCommand(
   sandboxName: string,
   writeLine: (message: string) => void = console.error,
@@ -111,6 +104,61 @@ export interface RebuildPostRestorePhaseInput {
 
 export interface RebuildPostRestoreVerification {
   readonly mutableConfigPermissionsVerified: boolean;
+}
+
+function describeRebuiltVersionFailure(
+  expectedVersion: string,
+  rebuiltVersion: sandboxVersion.VersionCheckResult,
+): { detail: string; bailMessage: string } | null {
+  const versionUnverified =
+    rebuiltVersion.verificationFailed || rebuiltVersion.sandboxVersion === null;
+  if (!versionUnverified && rebuiltVersion.sandboxVersion === expectedVersion) return null;
+  return {
+    detail: versionUnverified
+      ? `  Replacement agent version could not be verified (expected ${expectedVersion}).`
+      : `  Replacement agent version did not match the rebuild target (expected ${expectedVersion}, observed ${rebuiltVersion.sandboxVersion}).`,
+    bailMessage: versionUnverified
+      ? "Replacement agent version could not be verified after rebuild."
+      : "Replacement agent version did not match the authoritative rebuild target.",
+  };
+}
+
+function printRebuildVersionFailureRecovery(
+  input: RebuildPostRestorePhaseInput,
+  rebuiltVersion: sandboxVersion.VersionCheckResult,
+  mcpBridgeRestoreUnverified: boolean,
+  versionFailureMessage: string,
+): string {
+  const { sandboxName, backupManifest, targetAgentName, restoreSucceeded } = input;
+  const failureMessage = restoreSucceeded
+    ? versionFailureMessage
+    : `State restore remained incomplete after rebuilding '${sandboxName}'.`;
+  if (backupManifest) {
+    console.error(`  Backup is preserved at: ${backupManifest.backupPath}`);
+  }
+  printMcpRestoreRecovery(sandboxName, mcpBridgeRestoreUnverified);
+  // Resumed replacements can retain a cron gate without a new restore identity.
+  if (targetAgentName === "hermes" && input.preparedBackupRecovery) {
+    printHermesCronRestoreRecoveryCommand(sandboxName);
+    return failureMessage;
+  }
+  if (!restoreSucceeded) {
+    console.error(
+      `  State recovery remains incomplete. Correct the restore error, then run \`${CLI_NAME} ${sandboxName} rebuild\` again.`,
+    );
+    return failureMessage;
+  }
+  if (
+    targetAgentName === "hermes" &&
+    rebuiltVersion.verificationFailed &&
+    rebuiltVersion.unavailableReason === "probe-failed"
+  ) {
+    console.error(`  Run \`${CLI_NAME} ${sandboxName} gateway restart\`.`);
+    console.error(
+      `  If gateway health is still unverified, run \`${CLI_NAME} ${sandboxName} recover\`.`,
+    );
+  }
+  return failureMessage;
 }
 
 export function printHermesOperatorConfigRestoreReport(
@@ -421,34 +469,49 @@ export async function runRebuildPostRestorePhase(
     : { state: "not-applicable" as const, replacementIdentity: undefined };
   const hermesGatewayRestoreState = hermesGatewayVerification.state;
   const hermesGatewayRestoreUnverified = hermesGatewayRestoreState === "unverified";
+  const reportMcpRestoreFailure = mcpBridgeRestoreUnverified
+    ? () => printMcpRestoreRecovery(sandboxName, true)
+    : undefined;
   let verifiedAgentVersion: string | null = null;
   if (versionCheck.expectedVersion) {
     // The replacement runtime is the only authority for the completed rebuild
     // version. Clear create-time bookkeeping before the forced live probe so a
     // failed probe cannot leave the requested version recorded as observed.
     registry.updateSandbox(sandboxName, { agentVersion: null });
-    const rebuiltVersion = await probeRebuiltAgentVersion(sandboxName);
-    if (
-      rebuiltVersion.verificationFailed ||
-      rebuiltVersion.sandboxVersion !== versionCheck.expectedVersion
-    ) {
+    const rebuiltVersion = await sandboxVersion.checkAgentVersion(sandboxName, {
+      forceProbe: true,
+    });
+    const versionFailure = describeRebuiltVersionFailure(
+      versionCheck.expectedVersion,
+      rebuiltVersion,
+    );
+    if (versionFailure) {
       // checkAgentVersion caches a successful probe. Do not retain metadata
       // from a replacement that this rebuild rejects.
       registry.updateSandbox(sandboxName, { agentVersion: null });
-      const observed = rebuiltVersion.sandboxVersion ?? "unverified";
-      const detail = `  Replacement agent version did not match the rebuild target (expected ${versionCheck.expectedVersion}, observed ${observed}).`;
+      const { detail, bailMessage } = versionFailure;
       if (hermesCronRestoreIdentity) {
+        if (hermesGatewayRestoreUnverified) {
+          console.error("  Hermes gateway health was not verified after state restore.");
+        }
         return bailAfterHermesCronRestoreFailure(
           sandboxName,
           backupManifest,
           `${detail} Hermes cron dispatch remains drained.`,
-          "Replacement agent version did not match the authoritative rebuild target.",
+          bailMessage,
           bail,
-          mcpBridgeRestoreUnverified ? () => printMcpRestoreRecovery(sandboxName, true) : undefined,
+          reportMcpRestoreFailure,
         );
       }
       console.error(detail);
-      bail("Replacement agent version did not match the authoritative rebuild target.");
+      bail(
+        printRebuildVersionFailureRecovery(
+          input,
+          rebuiltVersion,
+          mcpBridgeRestoreUnverified,
+          bailMessage,
+        ),
+      );
       return;
     }
     verifiedAgentVersion = rebuiltVersion.sandboxVersion;
@@ -477,7 +540,7 @@ export async function runRebuildPostRestorePhase(
         "  Hermes cron dispatch remains drained because the replacement gateway was not verified.",
         "Hermes cron restore validation failed; dispatch was not re-enabled.",
         bail,
-        mcpBridgeRestoreUnverified ? () => printMcpRestoreRecovery(sandboxName, true) : undefined,
+        reportMcpRestoreFailure,
       );
     }
     if (mcpBridgeRestoreUnverified) {
