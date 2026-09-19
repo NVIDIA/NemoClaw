@@ -67,13 +67,7 @@ impl ManagedBackend {
                 spec.observe(engine, id).await?
             }
         } else {
-            let mut spec = specification(kind, encoded)?;
-            let policy = crate::config::ImagePullPolicy::from_row(row)?;
-            if let Some(process) = &mut spec.process {
-                process.image_pull_policy = policy;
-            } else {
-                spec.gateway.image_pull_policy = policy;
-            }
+            let spec = configured_specification(kind, row)?;
             let engine = &self.engine;
             if kind == GATEWAY_STORAGE_KIND {
                 engine.gateway_storage(&spec, id, apply).await?
@@ -110,6 +104,16 @@ fn specification(kind: &str, encoded: &str) -> Result<Spec, Error> {
     spec.validate()?;
     Ok(spec)
 }
+fn configured_specification(kind: &str, row: &Row) -> Result<Spec, Error> {
+    let mut spec = specification(kind, row.get("spec").ok_or(ObservationError::Incomplete)?)?;
+    let policy = crate::config::ImagePullPolicy::from_row(row)?;
+    if let Some(process) = &mut spec.process {
+        process.image_pull_policy = policy;
+    } else {
+        spec.gateway.image_pull_policy = policy;
+    }
+    Ok(spec)
+}
 fn diagnostic(error: &Error) -> ObservationError {
     match error {
         Error::Observation(error) => *error,
@@ -123,17 +127,18 @@ fn diagnostic(error: &Error) -> ObservationError {
 #[async_trait::async_trait]
 impl Backend for ManagedBackend {
     async fn plan(&self, kind: &str, desired: &Row, prior: Option<&Row>) -> Result<(), Error> {
-        if self.process_kind != Some(kind) {
+        if kind != GATEWAY_KIND && self.process_kind != Some(kind) {
             return Ok(());
         }
         let encoded = desired.get("spec").ok_or(ObservationError::Incomplete)?;
         crate::services::validate_resource_spec(kind, encoded)?;
-        let want = specification(kind, encoded)?;
+        let want = configured_specification(kind, desired)?;
         let old = prior
             .map(|row| specification(kind, row.get("spec").ok_or(ObservationError::Incomplete)?))
             .transpose()?
             .unwrap_or_else(|| want.clone());
-        if old.owner != want.owner
+        if self.engine.endpoint() != want.engine()
+            || old.owner != want.owner
             || old.generation != want.generation
             || old.name != want.name
             || old.engine() != want.engine()
@@ -143,7 +148,16 @@ impl Backend for ManagedBackend {
         if prior.is_some_and(|row| row.get("id").is_none_or(String::is_empty)) {
             return Err(ObservationError::Incomplete.into());
         }
-        crate::services::check_resource_hardware(&self.engine, &want).await
+        if self.process_kind == Some(kind) {
+            crate::services::check_resource_hardware(&self.engine, &want).await?;
+        }
+        let work = async {
+            self.engine.check_planned_network(&want).await?;
+            self.engine.check_planned_image(&want).await
+        };
+        tokio::time::timeout(std::time::Duration::from_secs(30), work)
+            .await
+            .map_err(|_| Error::State("runtime prerequisite observation timed out"))?
     }
 
     async fn read(

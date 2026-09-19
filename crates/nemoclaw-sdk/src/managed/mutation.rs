@@ -18,6 +18,22 @@ use bollard::{
 };
 use futures_util::StreamExt;
 use serde_json::json;
+
+const MISSING_IMAGE: &str = "image is absent from the selected engine and imagePullPolicy is Never; load the pinned image there or allow pulling";
+
+fn image_pull_policy(spec: &Spec) -> crate::config::ImagePullPolicy {
+    use crate::config::ImagePullPolicy;
+    spec.process.as_ref().map_or_else(
+        || spec.gateway.image_pull_policy.unwrap_or_default(),
+        |process| {
+            process.image_pull_policy.unwrap_or(if process.pull_image {
+                ImagePullPolicy::IfNotPresent
+            } else {
+                ImagePullPolicy::Never
+            })
+        },
+    )
+}
 #[async_trait::async_trait]
 trait CapacityCheck: Sync {
     async fn check(
@@ -119,20 +135,29 @@ impl Engine {
         ))
     }
     pub(crate) async fn ensure_image(&self, spec: &Spec) -> Result<(), Error> {
-        use crate::config::ImagePullPolicy;
-        let policy = spec.process.as_ref().map_or_else(
-            || spec.gateway.image_pull_policy.unwrap_or_default(),
-            |process| {
-                process.image_pull_policy.unwrap_or(if process.pull_image {
-                    ImagePullPolicy::IfNotPresent
-                } else {
-                    ImagePullPolicy::Never
-                })
-            },
-        );
-        let image = self.acquire_image(spec.image(), policy).await?;
+        let image = self
+            .acquire_image(spec.image(), image_pull_policy(spec))
+            .await?;
+        self.validate_runtime_image(spec, &image).await
+    }
+    /// Inspect the pinned local image without pulling. Apply validates it again
+    /// after acquisition, including images that are absent during planning.
+    pub(crate) async fn check_planned_image(&self, spec: &Spec) -> Result<(), Error> {
+        match self.image(spec.image()).await? {
+            Some(image) => self.validate_runtime_image(spec, &image).await,
+            None if image_pull_policy(spec) == crate::config::ImagePullPolicy::Never => {
+                Err(Error::Conflict(MISSING_IMAGE))
+            }
+            None => Ok(()),
+        }
+    }
+    async fn validate_runtime_image(
+        &self,
+        spec: &Spec,
+        image: &bollard::models::ImageInspect,
+    ) -> Result<(), Error> {
         if spec.process.is_some() {
-            spec.validate_process_image(&image)?;
+            spec.validate_process_image(image)?;
         } else {
             let engine = self.info().await?;
             if image.id.as_ref().is_none_or(String::is_empty)
@@ -162,9 +187,7 @@ impl Engine {
             self.pull_image(reference).await?;
             image = self.image(reference).await?;
         }
-        image.ok_or(Error::Conflict(
-            "image is absent from the selected engine and imagePullPolicy is Never; load the pinned image there or allow pulling",
-        ))
+        image.ok_or(Error::Conflict(MISSING_IMAGE))
     }
     pub(crate) async fn pull_image(&self, image: &str) -> Result<(), Error> {
         use crate::{
@@ -210,6 +233,21 @@ impl Engine {
             return Err(Error::Conflict("pinned image pull incomplete"));
         }
         progress.complete();
+        Ok(())
+    }
+    /// Shared gateway networks can be created by a dependency in the same apply.
+    /// Validate an existing network; defer shared-network absence until creation.
+    pub(crate) async fn check_planned_network(&self, spec: &Spec) -> Result<(), Error> {
+        if spec.kind == GATEWAY_KIND
+            || spec
+                .process
+                .as_ref()
+                .is_some_and(|process| process.create_network)
+        {
+            self.checked_network(spec).await?;
+        } else if let Some(network) = self.network(&spec.network()).await? {
+            verify_network(spec, &network)?;
+        }
         Ok(())
     }
     /// Observe an owned network, or check that its subnet is available for creation.

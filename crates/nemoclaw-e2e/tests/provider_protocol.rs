@@ -218,3 +218,101 @@ fn real_tofu_retains_identity_after_creation_reports_a_later_failure() {
         "fixture-id"
     );
 }
+
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires explicit NEMOCLAW_TEST_TOFU and NEMOCLAW_TEST_PROVIDER; isolated Docker fixture"]
+async fn production_provider_rechecks_network_and_image_prerequisites_before_saved_plan_apply() {
+    use nemoclaw_sdk::{compile, config::Document};
+    use std::sync::{Arc, Mutex};
+
+    let provider = PathBuf::from(
+        std::env::var_os("NEMOCLAW_TEST_PROVIDER").expect("explicit production provider required"),
+    );
+    assert!(provider.is_absolute());
+    let mode = Arc::new(Mutex::new("normal"));
+    let shared = mode.clone();
+    let fixture = nemoclaw_e2e::docker::Fixture::start(move |request| {
+        assert_eq!(request.method, "GET", "planning or rejected apply mutated Docker");
+        let mode = *shared.lock().unwrap();
+        let response = match request.path.split('?').next().unwrap() {
+            "/info" => (200, json!({"ID":"engine", "Architecture":"x86_64"})),
+            "/networks" => (200, if mode == "overlap" {
+                json!([{"IPAM":{"Config":[{"Subnet":"172.30.121.0/24"}]}}])
+            } else { json!([]) }),
+            path if path.starts_with("/networks/") => (404, json!({})),
+            path if path.starts_with("/images/") => {
+                if mode == "missing-image" {
+                    (404, json!({}))
+                } else {
+                    (200, json!({"Id":"sha256:gateway", "Os":"linux", "Architecture":if mode == "wrong-architecture" { "arm64" } else { "amd64" }}))
+                }
+            }
+            _ => panic!("unexpected prerequisite observation {}", request.path),
+        };
+        Some((response.0, serde_json::to_vec(&response.1).unwrap()))
+    }).await;
+    let e = Experiment::new();
+    fs::copy(
+        provider,
+        e.dir.path().join(nemoclaw_sdk::bundle::executable(
+            "terraform-provider-nemoclaw",
+        )),
+    )
+    .unwrap();
+    let document =
+        Document::parse(include_bytes!("../../../examples/spark/vllm.yaml").as_slice()).unwrap();
+    let generations = [
+        ("managed_gateway".into(), "a".repeat(32)),
+        ("inference_service".into(), "b".repeat(32)),
+    ]
+    .into();
+    let target = compile::runtime_targets(&document, &generations)
+        .unwrap()
+        .into_iter()
+        .find(|target| target.kind == "managed_gateway")
+        .unwrap();
+    let mut spec: Value = serde_json::from_str(&target.values["spec"]).unwrap();
+    spec["gateway"]["engine"] = json!(fixture.endpoint);
+    let configure = |policy: &str| {
+        fs::write(e.dir.path().join("main.tf.json"), json!({
+            "terraform":{"required_version":"= 1.12.6", "required_providers":{"nemoclaw":{"source":"registry.opentofu.org/nvidia/nemoclaw"}}},
+            "provider":{"nemoclaw":{"endpoint":"http://127.0.0.1:1"}},
+            "resource":{"nemoclaw_managed_gateway":{"gateway":{"spec":spec.to_string(), "image_pull_policy":policy}}}
+        }).to_string()).unwrap();
+    };
+    configure("Never");
+    e.success(&["validate"]);
+    for (failure, expected) in [
+        ("overlap", "subnet overlaps"),
+        (
+            "wrong-architecture",
+            "incompatible with the execution target",
+        ),
+        ("missing-image", "image is absent"),
+    ] {
+        *mode.lock().unwrap() = failure;
+        let output = e.run(&["plan", "-input=false"]);
+        assert!(!output.status.success());
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains(expected),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        *mode.lock().unwrap() = "normal";
+        e.success(&["plan", "-input=false", "-out=prerequisites.plan"]);
+        *mode.lock().unwrap() = failure;
+        let output = e.run(&["apply", "-input=false", "prerequisites.plan"]);
+        assert!(!output.status.success());
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains(expected),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    for policy in ["Always", "IfNotPresent"] {
+        configure(policy);
+        *mode.lock().unwrap() = "missing-image";
+        e.success(&["plan", "-input=false"]);
+    }
+}
