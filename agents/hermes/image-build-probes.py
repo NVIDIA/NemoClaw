@@ -225,6 +225,33 @@ def verify_auxiliary_token_limit() -> None:
     assert external_moa.get("max_tokens") == 64, external_moa
 
 
+def verify_oneshot_retry_exit_code() -> None:
+    """A one-shot that reports its own failure as text must still exit non-zero.
+
+    Hermes writes its retry-exhaustion notice into ``final_response`` and sets
+    ``result["failed"] = True`` in the same return; the unpatched CLI gate
+    only turns that into a non-zero exit when the response text is also
+    empty, so the notice text itself hides the failure from the caller's
+    exit code (NVIDIA/NemoClaw#11848).
+    """
+    from unittest.mock import patch
+
+    from hermes_cli import oneshot
+
+    retry_exhausted = (
+        "API call failed after 3 retries: 429 Too Many Requests",
+        {"failed": True, "completed": False, "error": "429 Too Many Requests"},
+    )
+    with patch.object(oneshot, "_run_agent", return_value=retry_exhausted):
+        code = oneshot.run_oneshot("probe prompt")
+    assert code != 0, f"a retry-exhausted one-shot must exit non-zero, got {code}"
+
+    delivered = ("56", {"failed": False, "completed": True})
+    with patch.object(oneshot, "_run_agent", return_value=delivered):
+        code = oneshot.run_oneshot("probe prompt")
+    assert code == 0, f"a delivered one-shot answer must still exit 0, got {code}"
+
+
 def verify_neutral_platform_inertness() -> None:
     import socket
 
@@ -750,6 +777,7 @@ COMMANDS: dict[str, Callable[[], None]] = {
     "langfuse-credentials": verify_langfuse_credentials,
     "managed-runtime-capability": verify_managed_runtime_capability,
     "neutral-platform-inertness": verify_neutral_platform_inertness,
+    "oneshot-retry-exit-code": verify_oneshot_retry_exit_code,
     "profile-policy": verify_profile_policy,
     "prepare-generated-config": prepare_generated_config,
     "session-delete": verify_session_delete,
