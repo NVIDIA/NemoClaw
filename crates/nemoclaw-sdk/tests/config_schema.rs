@@ -455,15 +455,24 @@ fn every_authored_example_selects_and_passes_the_checked_in_editor_schema() {
 }
 
 #[test]
-fn maintained_examples_include_the_spark_directory() {
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples");
-    let files = examples::yaml_files(&root);
-    for name in ["vllm.yaml", "spark-inline.yaml", "remote-vllm.yaml"] {
-        assert!(
-            files.contains(&root.join("spark").join(name)),
-            "missing Spark example: {name}"
-        );
+fn example_discovery_includes_nested_yaml_and_excludes_other_files() {
+    let root = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(root.path().join("nested/deeper")).unwrap();
+    let expected: std::collections::BTreeSet<_> =
+        ["top.yaml", "nested/child.yaml", "nested/deeper/leaf.yaml"]
+            .map(|name| root.path().join(name))
+            .into();
+    for path in &expected {
+        std::fs::write(path, "name: fixture\n").unwrap();
     }
+    std::fs::write(root.path().join("nested/readme.md"), "not a deployment").unwrap();
+    std::fs::write(root.path().join("nested/deeper/data.json"), "{}").unwrap();
+    assert_eq!(
+        examples::yaml_files(root.path())
+            .into_iter()
+            .collect::<std::collections::BTreeSet<_>>(),
+        expected
+    );
 }
 
 #[test]
