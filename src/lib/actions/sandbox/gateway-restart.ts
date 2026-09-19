@@ -6,6 +6,8 @@ import * as agentRuntime from "../../agent/runtime";
 import { G, R } from "../../cli/terminal-style";
 import { redactFullWithUrls } from "../../security/redact";
 
+export { restartHermesSandboxThroughOpenShell } from "./runtime/hermes-sandbox-lifecycle";
+
 export type GatewayRestartCommandResult = {
   status: number;
   stdout: string;
@@ -428,10 +430,28 @@ export async function restartSandboxGatewayWithDeps(
       return { ok: false, failureLayer: classified.layer, detail };
     }
   }
-  const restartResult =
-    agentName === "hermes"
-      ? await deps.restartHermesSandbox(sandboxName)
-      : await deps.executeSandboxExecCommand(sandboxName, nativeCommand, 210000);
+  let restartResult: GatewayRestartCommandResult | null;
+  try {
+    restartResult =
+      agentName === "hermes"
+        ? await deps.restartHermesSandbox(sandboxName)
+        : await deps.executeSandboxExecCommand(sandboxName, nativeCommand, 210000);
+  } catch (error) {
+    const rawDetail = error instanceof Error ? error.message : String(error);
+    const identityChanged = /identity changed/i.test(rawDetail);
+    const classified = identityChanged
+      ? classifyGatewayRestartFailure({
+          status: 1,
+          stdout: MANAGED_CONTROL_IDENTITY_CHANGED_MARKER,
+          stderr: rawDetail,
+        })
+      : {
+          layer: "native agent command" as const,
+          detail: sanitizeGatewayRestartFailureDetail(rawDetail) || "Hermes lifecycle failed",
+        };
+    printGatewayRestartFailure(sandboxName, classified.layer, classified.detail);
+    return { ok: false, failureLayer: classified.layer, detail: classified.detail };
+  }
   if (!restartResult) {
     const detail =
       agentName === "hermes"

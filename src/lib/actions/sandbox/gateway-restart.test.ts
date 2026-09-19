@@ -124,6 +124,24 @@ describe("restartSandboxGateway native lifecycle", () => {
     expect(deps.waitForRecoveredSandboxGateway).not.toHaveBeenCalled();
   });
 
+  it("converts a rejected Hermes identity check into a typed failure", async () => {
+    silenceConsole();
+    const deps = baseDeps({
+      getSessionAgent: () => ({ name: "hermes", displayName: "Hermes Agent" }),
+      getSandbox: () => ({ name: "hermes-box", agent: "hermes" }),
+      restartHermesSandbox: vi.fn(async () => {
+        throw new Error("Sandbox 'hermes-box' identity changed during Hermes restart.");
+      }),
+    });
+
+    await expect(restartSandboxGateway("hermes-box", { quiet: true, deps })).resolves.toEqual({
+      ok: false,
+      failureLayer: "container identity changed",
+      detail: "Sandbox 'hermes-box' identity changed during Hermes restart.",
+    });
+    expect(deps.waitForRecoveredSandboxGateway).not.toHaveBeenCalled();
+  });
+
   it("refuses Hermes restart before reload when the secret boundary fails", async () => {
     silenceConsole();
     const execute = vi.fn(async () => ({

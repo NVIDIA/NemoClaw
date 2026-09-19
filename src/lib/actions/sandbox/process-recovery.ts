@@ -79,6 +79,7 @@ import {
   MANAGED_CONTROL_IDENTITY_CHANGED_MARKER,
   parseManagedGatewayControlCompletion,
   printGatewayRestartFailure,
+  restartHermesSandboxThroughOpenShell,
   type RestartSandboxGatewayOptions as BaseRestartSandboxGatewayOptions,
   restartSandboxGatewayWithDeps,
   sandboxAgentName,
@@ -1860,24 +1861,22 @@ export async function restartSandboxGateway(
               throw new Error(`Sandbox '${name}' identity changed during Hermes restart.`);
             }
           };
-          const run = (action: "stop" | "start") => {
-            revalidate();
-            const result = captureOpenshell(
-              ["sandbox", action, name],
-              withSelectedOpenShellCommandOptions(
-                { ignoreError: true, includeStreams: true, timeout: 210000 },
-                runtimeSelection,
+          return restartHermesSandboxThroughOpenShell(
+            name,
+            (args, options = {}) =>
+              captureOpenshell(
+                [...args],
+                withSelectedOpenShellCommandOptions(
+                  {
+                    ignoreError: options.ignoreError,
+                    includeStreams: true,
+                    timeout: options.timeout,
+                  },
+                  runtimeSelection,
+                ),
               ),
-            );
-            revalidate();
-            return {
-              status: typeof result.status === "number" ? result.status : 1,
-              stdout: result.stdout ?? result.output ?? "",
-              stderr: result.stderr ?? "",
-            };
-          };
-          const stopped = run("stop");
-          return stopped.status === 0 ? run("start") : stopped;
+            revalidate,
+          );
         },
         waitForRecoveredSandboxGateway: (name, options) =>
           waitForRecoveredSandboxGateway(name, {
