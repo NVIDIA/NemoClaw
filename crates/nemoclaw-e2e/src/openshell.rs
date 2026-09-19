@@ -14,6 +14,8 @@ use tonic::{Request, Response, Status, body::Body};
 #[derive(Default)]
 pub struct State {
     pub driver: Option<String>,
+    pub gateway_info: Option<p::GetGatewayInfoResponse>,
+    pub gateway_reads: usize,
     pub workspaces: HashMap<String, p::Workspace>,
     pub profiles: HashMap<String, p::ProviderProfile>,
     pub providers: HashMap<String, p::Provider>,
@@ -437,6 +439,11 @@ fn gateway_info(
     state: &mut State,
     _: p::GetGatewayInfoRequest,
 ) -> Result<p::GetGatewayInfoResponse, Status> {
+    state.gateway_reads += 1;
+    state.read("gateway")?;
+    if let Some(info) = &state.gateway_info {
+        return Ok(info.clone());
+    }
     Ok(p::GetGatewayInfoResponse {
         gateway_version: serde_json::from_str::<serde_json::Value>(include_str!(
             "../../../versions.json"

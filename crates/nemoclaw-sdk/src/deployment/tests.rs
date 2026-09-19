@@ -2,6 +2,48 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::*;
+
+#[test]
+fn gateway_observations_are_read_only_in_plans_and_discardable_during_teardown() {
+    let address = "data.nemoclaw_gateway_capabilities.current";
+    for action in ["read", "no-op"] {
+        let plan: Plan = serde_json::from_value(json!({"resource_changes":[{"mode":"data", "address":address, "change":{"actions":[action]}}]})).unwrap();
+        assert!(
+            check_plan(&plan, &BTreeMap::new(), &BTreeMap::new())
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            runtime::check_runtime_plan(
+                &plan,
+                &BTreeMap::new(),
+                &BTreeMap::new(),
+                &BTreeSet::new()
+            )
+            .is_err()
+        );
+    }
+    let plan: Plan = serde_json::from_value(json!({"resource_changes":[{"mode":"data", "address":address, "change":{"actions":["delete"]}}]})).unwrap();
+    assert!(
+        check_destroy_plan(&plan, &BTreeMap::new(), &BTreeMap::new(), &BTreeSet::new())
+            .unwrap()
+            .is_empty()
+    );
+    for (mode, address, action) in [
+        ("managed", address, "read"),
+        ("data", "data.foreign.current", "read"),
+        ("data", address, "create"),
+        ("data", address, "delete"),
+    ] {
+        let value = json!({"mode":mode, "address":address, "change":{"actions":[action]}});
+        let plan: Plan = serde_json::from_value(json!({"resource_changes":[value]})).unwrap();
+        assert!(check_plan(&plan, &BTreeMap::new(), &BTreeMap::new()).is_err());
+    }
+    let change = json!({"mode":"data", "address":address, "change":{"actions":["read"]}});
+    let duplicate: Plan =
+        serde_json::from_value(json!({"resource_changes":[change, change]})).unwrap();
+    assert!(check_plan(&duplicate, &BTreeMap::new(), &BTreeMap::new()).is_err());
+}
 #[test]
 fn ordinary_plan_cannot_delete_replace_or_recreate_a_bound_resource() {
     let allowed = [("nemoclaw_workspace.deployment".into(), Row::new())].into();

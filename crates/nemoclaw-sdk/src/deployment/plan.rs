@@ -11,8 +11,35 @@ pub(super) struct Plan {
 }
 #[derive(Deserialize)]
 pub(super) struct ResourceChange {
+    #[serde(default)]
+    pub mode: Option<String>,
     pub address: String,
     pub change: PlannedChange,
+}
+fn gateway_observation(
+    change: &ResourceChange,
+    seen: &mut bool,
+    destroying: bool,
+) -> Result<bool, Error> {
+    if change.mode.as_deref() != Some("data") {
+        if change.mode.as_deref().is_some_and(|mode| mode != "managed") {
+            return Err(Error::Conflict(
+                "plan contains an unsupported resource mode",
+            ));
+        }
+        return Ok(false);
+    }
+    if change.address != crate::compile::GATEWAY_CAPABILITIES_ADDRESS
+        || std::mem::replace(seen, true)
+        || !(change.change.actions == ["no-op"]
+            || (!destroying && change.change.actions == ["read"])
+            || (destroying && change.change.actions == ["delete"]))
+    {
+        return Err(Error::Conflict(
+            "plan contains an unexpected gateway observation",
+        ));
+    }
+    Ok(true)
 }
 #[derive(Deserialize)]
 pub(super) struct PlannedChange {
@@ -42,7 +69,11 @@ pub(super) fn check_plan(
 ) -> Result<Vec<Change>, Error> {
     let mut seen = BTreeSet::new();
     let mut changes = Vec::new();
+    let mut gateway_seen = false;
     for change in &plan.resource_changes {
+        if gateway_observation(change, &mut gateway_seen, false)? {
+            continue;
+        }
         let expected = allowed
             .get(&change.address)
             .ok_or(Error::Conflict("plan contains an undeclared resource"))?;
@@ -83,7 +114,11 @@ pub(super) fn check_destroy_plan(
     let mut absent = BTreeSet::new();
     let mut seen = BTreeSet::new();
     let mut changes = Vec::new();
+    let mut gateway_seen = false;
     for drift in &plan.resource_drift {
+        if gateway_observation(drift, &mut gateway_seen, true)? {
+            continue;
+        }
         if !allowed.contains_key(&drift.address) {
             return Err(Error::Conflict(
                 "destroy plan reports changes to an undeclared resource",
@@ -104,7 +139,11 @@ pub(super) fn check_destroy_plan(
             ));
         }
     }
+    let mut gateway_seen = false;
     for change in &plan.resource_changes {
+        if gateway_observation(change, &mut gateway_seen, true)? {
+            continue;
+        }
         let expected = allowed.get(&change.address).ok_or(Error::Conflict(
             "destroy plan contains an undeclared resource",
         ))?;

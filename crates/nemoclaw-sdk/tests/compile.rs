@@ -6,6 +6,39 @@ use serde_json::Value;
 use std::{collections::BTreeMap, fs, path::Path};
 
 #[test]
+fn gateway_capabilities_gate_deployment_but_do_not_query_during_bootstrap() {
+    use nemoclaw_sdk::compile::compile_runtime;
+    let document = Document::parse(include_str!("fixtures/config/spark.yaml").as_bytes()).unwrap();
+    let generations = [
+        "workspace",
+        "provider",
+        "sandbox",
+        "managed_gateway",
+        "inference_service",
+    ]
+    .map(|kind| (kind.into(), "a".repeat(32)))
+    .into();
+    let graph = compile(&document, &generations, "0.1.0").unwrap();
+    assert_eq!(
+        graph["data"]["nemoclaw_gateway_capabilities"]["current"]["required_compute_drivers"],
+        serde_json::json!(["docker"])
+    );
+    for resources in graph["resource"].as_object().unwrap().values() {
+        for resource in resources.as_object().unwrap().values() {
+            assert_eq!(
+                resource["lifecycle"]["precondition"][0]["condition"],
+                "${data.nemoclaw_gateway_capabilities.current.compatible}"
+            );
+        }
+    }
+    let bootstrap = compile_runtime(&document, &generations, "0.1.0").unwrap();
+    assert!(
+        bootstrap.get("data").is_none(),
+        "bootstrap must not require an already running gateway"
+    );
+}
+
+#[test]
 fn image_pull_policy_reaches_the_engine_without_changing_runtime_identity() {
     use nemoclaw_sdk::{compile::compile_runtime, config::ImagePullPolicy};
     let generations = [

@@ -26,6 +26,15 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
+
+async fn validate_gateway(client: &OpenShell, document: &Document) -> Result<(), Error> {
+    let capabilities = client.gateway_capabilities().await?;
+    for sandbox in &document.spec.sandboxes {
+        capabilities.require(&sandbox.runtime.provider)?;
+    }
+    Ok(())
+}
+
 pub use timing::StepOutcome;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -277,6 +286,9 @@ impl Deployment {
         record.plan_digest = crate::bundle::hash_file(&store.directory.join("apply.plan"))?;
         store.save(&record)?;
         (self.progress)(Progress::Applying);
+        // Known data-source results can be cached in a saved plan. Re-observe
+        // before direct configuration writes or OpenTofu resource mutations.
+        tokio::select! {()=cancel.cancelled()=>return Err(Error::Cancelled),result=validate_gateway(&client,&document)=>result?}
         for target in targets.iter().filter(|target| target.kind == "sandbox") {
             let definition = document.sandbox(&target.values["name"])?;
             if document.sandbox_harness(definition)?.kind == "pi"
@@ -375,15 +387,7 @@ impl Deployment {
         targets: &[Target],
         bindings: &BTreeMap<String, StateBinding>,
     ) -> Result<(), Error> {
-        for driver in document
-            .spec
-            .sandboxes
-            .iter()
-            .map(|sandbox| &sandbox.runtime.provider)
-            .collect::<std::collections::BTreeSet<_>>()
-        {
-            client.verify_gateway(driver).await?;
-        }
+        validate_gateway(client, document).await?;
         for target in targets {
             let mut expected = target.values.clone();
             if let Some(binding) = bindings.get(&target.address) {

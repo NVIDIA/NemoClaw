@@ -1,4 +1,13 @@
 {
+  "data": {
+    "nemoclaw_gateway_capabilities": {
+      "current": {
+        "required_compute_drivers": [
+          "docker"
+        ]
+      }
+    }
+  },
   "provider": {
     "nemoclaw": {
       "endpoint": "http://127.0.0.1:17681"
@@ -14,6 +23,12 @@
         "endpoint": "http://172.20.0.1:11446/v1",
         "generation": "provider-generation",
         "lifecycle": {
+          "precondition": [
+            {
+              "condition": "${data.nemoclaw_gateway_capabilities.current.compatible}",
+              "error_message": "Gateway version or compute driver does not satisfy the configuration."
+            }
+          ],
           "prevent_destroy": true
         },
         "name": "local",
@@ -28,6 +43,12 @@
         "endpoint": "http://172.20.0.1:11446/v1",
         "generation": "provider-generation",
         "lifecycle": {
+          "precondition": [
+            {
+              "condition": "${data.nemoclaw_gateway_capabilities.current.compatible}",
+              "error_message": "Gateway version or compute driver does not satisfy the configuration."
+            }
+          ],
           "prevent_destroy": true
         },
         "name": "nemoclaw-inference-local",
@@ -47,6 +68,12 @@
         "image": "nc-prototype-fabric@sha256:c1cf75ce3036c2c438375b8e9921eeca06f302a3f7f42d1e412cd571ffd8323b",
         "inference_json": "{\"provider\":\"local\",\"connection\":{\"provider\":\"openai\",\"model\":\"fixture-model\",\"base_url\":\"http://172.20.0.1:11446/v1\",\"api_key_env\":\"NEMOCLAW_ANONYMOUS_API_KEY\"},\"api\":\"openai-completions\",\"tuning\":{}}",
         "lifecycle": {
+          "precondition": [
+            {
+              "condition": "${data.nemoclaw_gateway_capabilities.current.compatible}",
+              "error_message": "Gateway version or compute driver does not satisfy the configuration."
+            }
+          ],
           "prevent_destroy": true
         },
         "name": "assistant",
@@ -59,6 +86,12 @@
       "deployment": {
         "generation": "workspace-generation",
         "lifecycle": {
+          "precondition": [
+            {
+              "condition": "${data.nemoclaw_gateway_capabilities.current.compatible}",
+              "error_message": "Gateway version or compute driver does not satisfy the configuration."
+            }
+          ],
           "prevent_destroy": true
         },
         "name": "nc-56ad5164b5678df2",

@@ -5,6 +5,30 @@ use nemoclaw_provider::NemoClawProvider;
 use tf_provider::{Diagnostics, Provider};
 
 #[test]
+fn gateway_capabilities_are_exposed_as_read_only_data() {
+    use tf_provider::schema::AttributeConstraint;
+    let mut diagnostics = Diagnostics::default();
+    let sources = NemoClawProvider::default()
+        .get_data_sources(&mut diagnostics)
+        .unwrap();
+    let source = sources
+        .get("gateway_capabilities")
+        .expect("gateway observation data source");
+    let schema = source.schema(&mut diagnostics).unwrap();
+    assert!(matches!(
+        schema.block.attributes["required_compute_drivers"].constraint,
+        AttributeConstraint::Required
+    ));
+    for field in ["gateway_version", "compute_drivers", "compatible"] {
+        assert!(matches!(
+            schema.block.attributes[field].constraint,
+            AttributeConstraint::Computed
+        ));
+    }
+    assert!(diagnostics.errors.is_empty());
+}
+
+#[test]
 fn production_provider_exposes_the_existing_openshell_resource_addresses() {
     let provider = NemoClawProvider::default();
     let mut diagnostics = Diagnostics::default();
