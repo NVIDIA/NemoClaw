@@ -379,8 +379,6 @@ function mapOpenClawProfile(
     NEMOCLAW_CONTEXT_WINDOW: String(profile.tuning.contextWindow),
     NEMOCLAW_DASHBOARD_BIND:
       profile.dashboard.bindAddress === "0.0.0.0" ? profile.dashboard.bindAddress : "",
-    NEMOCLAW_DISABLE_DEVICE_AUTH: booleanFlag(profile.agentConfig.deviceAuth.disabled),
-    NEMOCLAW_DEVICE_AUTH_OPT_OUT_SOURCE: profile.agentConfig.deviceAuth.optOutSource,
     NEMOCLAW_EXTRA_AGENTS_JSON_B64: encodeCanonicalJson(profile.agentConfig.extraAgents),
     NEMOCLAW_INFERENCE_COMPAT_B64: encodeCanonicalJson(profile.inference?.compatibility ?? {}),
     NEMOCLAW_INFERENCE_INPUTS: profile.inference?.inputModalities?.join(",") ?? "text",
@@ -394,6 +392,7 @@ function mapOpenClawProfile(
     NEMOCLAW_PROXY_PORT: String(profile.proxy.managedPort),
     NEMOCLAW_REASONING: String(profile.tuning.reasoning),
     NEMOCLAW_REASONING_EFFORT: profile.tuning.reasoningEffort,
+    NEMOCLAW_SERVING_PRESET: profile.inference?.servingPreset ?? "",
     NEMOCLAW_WEB_SEARCH_ENABLED: booleanFlag(profile.agentConfig.webSearch.enabled),
     NEMOCLAW_WEB_SEARCH_PROVIDER: profile.agentConfig.webSearch.provider,
     NEMOCLAW_WSL_DASHBOARD_EXPOSURE: booleanFlag(profile.dashboard.wslExposure),

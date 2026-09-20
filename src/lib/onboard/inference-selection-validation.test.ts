@@ -109,7 +109,7 @@ describe("inference selection validation", () => {
         max_tokens: 16,
         temperature: 1,
         top_p: 0.95,
-        chat_template_kwargs: { enable_thinking: false },
+        reasoning_effort: "none",
       },
     },
     {
@@ -133,7 +133,7 @@ describe("inference selection validation", () => {
       },
     },
   ])(
-    "emits the $variant request through selection validation (#10880)",
+    "emits the $variant request through selection validation (#10880, #11965)",
     async ({ provider, useNvidiaEndpointProbePayload, expectedBody }) => {
       let observedBody = "";
       const server = http.createServer((request, response) => {

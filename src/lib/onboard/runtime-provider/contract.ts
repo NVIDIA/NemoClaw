@@ -2,12 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { SandboxEntry, SandboxWorkloadReceipt } from "../../state/registry/types";
-import type {
-  ManagedBootstrapRuntimeCreateLifecycle,
-  ManagedBootstrapRuntimeCreateLifecycleInput,
-  ManagedBootstrapRuntimeOnboardRouting,
-  ManagedBootstrapRuntimeOnboardRoutingInput,
-} from "../managed-bootstrap/runtime-create";
 import type { NativeArtifactWorkloadReceiptV1 } from "../workload/native-artifact";
 import type { PortableAgentRuntimeProviderSupport } from "../workload/portable-agent-runtime";
 import type { ManagedImageSelectionPolicy } from "../workload/source";
@@ -37,8 +31,6 @@ export type RuntimeProviderLifecycleAction = "start" | "stop";
 export type RuntimeProviderChannelStopTransport = "docker-kubectl-first" | "openshell";
 export type RuntimeProviderMutationOperation =
   | "registration"
-  | "start"
-  | "stop"
   | "inference-set"
   | "rebuild"
   | "clone"
@@ -188,7 +180,6 @@ export type RuntimeProviderReadOnlyHostMountCapability =
 
 export interface RuntimeProviderNormalizedCapabilities {
   readonly hostLocalInference: boolean;
-  readonly directLifecycle: boolean;
   readonly legacyGatewayContainerInspection: boolean;
   readonly workloadImageCleanup: boolean;
   readonly readOnlyHostMounts: RuntimeProviderReadOnlyHostMountCapability;
@@ -355,6 +346,8 @@ export interface RuntimeProviderLifecycleInput {
   /** Required by portable lifecycle operations to recheck authority after awaiting observations. */
   readonly readRegistry?: (sandboxName: string) => SandboxEntry | null;
   readonly environment: NodeJS.ProcessEnv;
+  /** Canonical gateway name resolved by the action that owns the persisted row. */
+  readonly gatewayName?: string;
   readonly log: (message: string) => void;
   readonly sandbox: SandboxEntry;
   readonly sandboxName: string;
@@ -446,10 +439,6 @@ export interface RuntimeProviderPrivilegedSandboxControl {
   buildLegacyDockerArgv?(
     input: Omit<RuntimeProviderPrivilegedSandboxCommandInput, "timeoutMs">,
   ): string[];
-}
-
-export interface RuntimeProviderLifecycleStopHooks {
-  readonly beforeStop: () => void;
 }
 
 export type RuntimeProviderProviderDetachResult = {
@@ -631,20 +620,9 @@ export type RuntimeProviderHostLocalInferenceSurface =
 export type RuntimeProviderLifecycleSurface =
   | RuntimeProviderSupportedSurface<{
       readonly channelStopTransport: RuntimeProviderChannelStopTransport;
-      /** Provider-owned timeout for direct container lifecycle mutations. */
+      /** Provider-owned timeout for exact privileged container mutations. */
       readonly containerMutationTimeoutMs?: number;
       readonly privilegedSandboxControl: RuntimeProviderPrivilegedSandboxControl;
-      start(
-        input: RuntimeProviderLifecycleInput,
-      ): RuntimeProviderLifecycleResult | Promise<RuntimeProviderLifecycleResult>;
-      verifyStarted(
-        input: RuntimeProviderLifecycleInput,
-        verifyGateway: (sandboxName: string) => Promise<void>,
-      ): Promise<void>;
-      stop(
-        input: RuntimeProviderLifecycleInput,
-        hooks: RuntimeProviderLifecycleStopHooks,
-      ): RuntimeProviderLifecycleStopOutcome | Promise<RuntimeProviderLifecycleStopOutcome>;
     }>
   | RuntimeProviderUnsupportedSurface;
 
@@ -653,19 +631,6 @@ export type RuntimeProviderMutationAuthoritySurface =
       readonly operations: readonly RuntimeProviderMutationOperation[];
     }>
   | RuntimeProviderUnsupportedSurface;
-
-export type RuntimeProviderManagedImageBootstrapSurface = RuntimeProviderSupportedSurface<{
-  readonly bootstrapKind: "managed-image";
-  createAuthorityStore(input: {
-    readonly stateRoot: string;
-  }): import("../managed-bootstrap/adapter").ManagedBootstrapAuthorityStore;
-  createLifecycle(
-    input: ManagedBootstrapRuntimeCreateLifecycleInput,
-  ): ManagedBootstrapRuntimeCreateLifecycle;
-  createOnboardRouting(
-    input: ManagedBootstrapRuntimeOnboardRoutingInput,
-  ): ManagedBootstrapRuntimeOnboardRouting;
-}>;
 
 export type RuntimeProviderNativeArtifactBootstrapSurface = RuntimeProviderSupportedSurface<{
   readonly bootstrapKind: "native-artifact";
@@ -680,7 +645,6 @@ export type RuntimeProviderNativeArtifactBootstrapSurface = RuntimeProviderSuppo
 }>;
 
 export type RuntimeProviderBootstrapSurface =
-  | RuntimeProviderManagedImageBootstrapSurface
   | RuntimeProviderNativeArtifactBootstrapSurface
   | RuntimeProviderUnsupportedSurface;
 

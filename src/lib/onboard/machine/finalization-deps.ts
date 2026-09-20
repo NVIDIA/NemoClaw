@@ -25,7 +25,9 @@ export {
 // process-recovery.ts both import onboarding helpers.
 type ProcessRecoveryDeps = Pick<
   typeof import("../../actions/sandbox/process-recovery"),
-  "checkAndRecoverSandboxProcesses" | "waitForRecreatedSandboxOpenShellReady"
+  | "checkAndRecoverSandboxProcesses"
+  | "waitForRecreatedSandboxOpenShellReady"
+  | "waitForStartedNativeGatewayProcess"
 >;
 type GatewayRestartDeps = Pick<
   typeof import("../../actions/sandbox/process-recovery"),
@@ -375,10 +377,27 @@ export const finalizationHandlerDeps = {
     portableSupervisorEnvironment?: NodeJS.ProcessEnv,
   ): Promise<boolean> {
     const processRecovery = finalizationHandlerRuntime.loadProcessRecovery();
-    const result = await processRecovery.checkAndRecoverSandboxProcesses(name, {
-      ...options,
-      ...(portableSupervisorEnvironment ? { portableSupervisorEnvironment } : {}),
-    });
+    const target = finalizationHandlerRuntime
+      .loadLaunchReadiness()
+      .resolveOrdinaryOpenClawPairingTarget(name);
+    if (target) {
+      const startup = await processRecovery.waitForStartedNativeGatewayProcess(
+        name,
+        "openclaw",
+        target.gatewayName,
+      );
+      if (startup === false) return false;
+    }
+    const recover = () =>
+      processRecovery.checkAndRecoverSandboxProcesses(name, {
+        ...options,
+        ...(portableSupervisorEnvironment ? { portableSupervisorEnvironment } : {}),
+      });
+    let result = await recover();
+    if (result.checked !== true) {
+      const controlPlaneReady = await processRecovery.waitForRecreatedSandboxOpenShellReady(name);
+      if (controlPlaneReady) result = await recover();
+    }
     return (
       result.checked === true &&
       (result.wasRunning !== false || result.recovered === true) &&

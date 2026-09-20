@@ -1420,14 +1420,41 @@ export function assertOnboardLockOwned(): void {
   assertOnboardStateLockOwned(heldLockHandle);
 }
 
+const ONBOARD_LOCK_CONTENTION_LEAD =
+  "Cannot update onboarding recovery while another onboarding run owns the lock.";
+
+type OnboardLockContentionDetails = Pick<
+  OnboardLockResult,
+  "stale" | "holderPid" | "holderStartedAt" | "holderCommand"
+>;
+
+/**
+ * Format holder-identity guidance for a live onboarding-lock contender.
+ *
+ * The caller's lead sentence stays first so the original internal wording is
+ * preserved, then the recorded holder details and a remediation step follow.
+ */
+function onboardLockContentionGuidance(
+  lock: OnboardLockContentionDetails,
+  lead: string = ONBOARD_LOCK_CONTENTION_LEAD,
+): string {
+  const holderDetails = [
+    lock.holderPid ? `Lock holder PID: ${lock.holderPid}.` : "",
+    lock.holderStartedAt ? `Started: ${lock.holderStartedAt}.` : "",
+    lock.holderCommand ? `Lock holder command: ${lock.holderCommand}.` : "",
+  ].filter((detail) => detail.length > 0);
+  const remediation = lock.stale
+    ? "Wait briefly, then rerun so verified stale-lock cleanup can finish."
+    : "Wait for the other run to finish, then rerun.";
+  return [lead, ...holderDetails, remediation].join(" ");
+}
+
 function withOwnedOnboardLock<T>(command: string, operation: () => T): T {
   const managesOnboardLock = heldLockHandle === null;
   if (managesOnboardLock) {
     const lock = acquireOnboardLock(command);
     if (!lock.acquired) {
-      throw new Error(
-        "Cannot update onboarding recovery while another onboarding run owns the lock.",
-      );
+      throw new Error(onboardLockContentionGuidance(lock));
     }
   }
   try {
@@ -2325,7 +2352,10 @@ export function reconcileStationExpressReceiptRetirement(expectedGeneration: str
     const lock = acquireOnboardLock("nemoclaw onboard (Station receipt retirement recovery)");
     if (!lock.acquired) {
       throw new Error(
-        "Cannot reconcile DGX Station Express receipt retirement while another onboarding run is in progress.",
+        onboardLockContentionGuidance(
+          lock,
+          "Cannot reconcile DGX Station Express receipt retirement while another onboarding run is in progress.",
+        ),
       );
     }
   }

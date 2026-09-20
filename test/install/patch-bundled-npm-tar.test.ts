@@ -10,6 +10,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
+  BUNDLED_NPM_TAR_COMMAND_TIMEOUT_MS,
   FIXED_TAR_INTEGRITY,
   FIXED_TAR_TARBALL,
   FIXED_TAR_VERSION,
@@ -81,6 +82,7 @@ describe("npm bundled node-tar remediation", () => {
       "sha512-XdhtCvlMywwxpCW8YEq3lOXBJpUPTR2OHHcwLPO3HwsJqOHa2Ok/oJ7ruGzp+JrKoRPVCzJwAdEjqLW/vNRPHA==",
     );
     expect(FIXED_TAR_TARBALL).toBe("https://registry.npmjs.org/tar/-/tar-7.5.21.tgz");
+    expect(BUNDLED_NPM_TAR_COMMAND_TIMEOUT_MS).toBeGreaterThanOrEqual(6 * 120_000 + 5 * 2_000);
   });
 
   it.each([
@@ -203,6 +205,19 @@ describe("npm bundled node-tar remediation", () => {
           commands.push(command);
           expect(command).toBe("curl");
           expect(args).toContain(FIXED_TAR_TARBALL);
+          expect(args).toEqual(
+            expect.arrayContaining([
+              "--retry",
+              "5",
+              "--retry-all-errors",
+              "--retry-delay",
+              "2",
+              "--connect-timeout",
+              "15",
+              "--max-time",
+              "120",
+            ]),
+          );
           const outputIndex = args.indexOf("--output");
           expect(outputIndex).toBeGreaterThanOrEqual(0);
           fs.writeFileSync(args[outputIndex + 1]!, "mismatched archive bytes\n");

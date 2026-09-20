@@ -60,6 +60,7 @@ const preflightFailureNoSandbox: ExpectedState = {
 const onboardingFailurePolicyPresetsRequired: ExpectedState = {
   id: "onboarding-failure-policy-presets-required",
   cli: { installed: true },
+  sandbox: { expected: "present", status: "running", agent: "openclaw" },
 };
 
 const REGISTRY: readonly ExpectedState[] = [

@@ -305,7 +305,9 @@ describe("warm-up tags its throwaway session for user-facing filters (#5511)", (
       );
 
       try {
-        const script = WARMUP_SCRIPT.replace(`timeout=${WARMUP_PROBE_TIMEOUT_S},`, "timeout=0.1,");
+        // Keep this far below the production bound while allowing a cold
+        // Python process enough time to exec the fixture before it is killed.
+        const script = WARMUP_SCRIPT.replace(`timeout=${WARMUP_PROBE_TIMEOUT_S},`, "timeout=1,");
         expect(script).not.toBe(WARMUP_SCRIPT);
         const result = spawnSync("sh", ["-c", script], {
           encoding: "utf-8",

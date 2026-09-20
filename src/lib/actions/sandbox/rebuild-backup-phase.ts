@@ -22,6 +22,13 @@ import type { RebuildBail, RebuildLog } from "./rebuild-credential-preflight";
 import { backupSandboxStateForRebuild, type RebuildSandboxEntry } from "./rebuild-flow-helpers";
 import type { RebuildRecreateOnboardOpts } from "./rebuild-gpu-opt-out";
 import { recordRebuildRecoveryBackup } from "./rebuild-recreate-journal";
+import {
+  abortOpenClawPostRestoreDoctor,
+  beginOpenClawBackupQuiesce,
+  finishOpenClawPostRestoreDoctor,
+  retireOpenClawPostRestoreDoctorForDelete,
+  type OpenClawPostRestoreDoctorWindow,
+} from "./runtime/openclaw-lifecycle";
 
 export {
   clearRebuildMcpHandoff,
@@ -72,6 +79,19 @@ export interface RebuildBackupPhaseInput {
 export interface RebuildBackupPhaseResult {
   backupManifest: RebuildBackupManifest;
   policySourcePath: string;
+  sourceOpenClawDoctorWindow?: OpenClawPostRestoreDoctorWindow;
+}
+
+export async function releaseRebuildSourceOpenClawWindow(window: OpenClawPostRestoreDoctorWindow) {
+  const finished = await finishOpenClawPostRestoreDoctor(window);
+  if (!finished.ok) await abortOpenClawPostRestoreDoctor(window);
+  return finished;
+}
+
+export function retireRebuildSourceOpenClawWindowForDelete(
+  window: OpenClawPostRestoreDoctorWindow,
+) {
+  return retireOpenClawPostRestoreDoctorForDelete(window);
 }
 
 export async function captureRebuildPolicyDocument(
@@ -135,81 +155,114 @@ export async function runRebuildBackupPhase(
           input.gatewayName,
           input.runtimeSelection,
         );
-  let backupManifest =
-    preparedRecoveryManifest ??
-    (await backupStateForRebuild(
-      input.sandboxName,
-      input.sandboxEntry,
-      input.staleRecovery,
-      input.log,
-      input.bail,
-    ));
-  if (backupManifest === undefined) return null;
-  const retainedPolicy = backupManifest ? readRebuildPolicyHandoff(backupManifest) : null;
-  if (input.staleRecovery && !retainedPolicy) {
-    return input.bail(
-      "The live OpenShell policy and its verified rebuild handoff are unavailable. Rebuild will not reconstruct policy from NemoClaw state.",
-    );
-  }
-  const retainedHandoff = backupManifest?.rebuildPolicyHandoff;
+  let sourceBackupWindow: OpenClawPostRestoreDoctorWindow | null = null;
   if (
-    retainedPolicy &&
-    backupManifest &&
-    retainedHandoff &&
-    !isSandboxPolicyCredentialFree(retainedPolicy)
+    !preparedRecoveryManifest &&
+    !input.staleRecovery &&
+    (input.sandboxEntry.agent ?? "openclaw") === "openclaw"
   ) {
-    const retainedHandoffPath = path.join(backupManifest.backupPath, retainedHandoff.file);
-    const recoveryTransactionId = input.recoveryTransactionId ?? randomUUID();
-    try {
-      recordRebuildRecoveryBackup({
-        sandboxName: input.sandboxName,
-        agentName: backupManifest.agentType,
-        transactionId: recoveryTransactionId,
-        gatewayName: input.gatewayName,
-        gatewayPort: input.gatewayPort,
-        backupManifest,
-      });
-    } catch (error) {
+    input.log("Entering verified OpenClaw gateway-quiesce window before state backup");
+    const begun = await beginOpenClawBackupQuiesce(input.sandboxName, input.runtimeSelection);
+    if (!begun.ok) {
       return input.bail(
-        `Cannot bind the retained credential-bearing policy handoff to a bounded recovery transaction: ${error instanceof Error ? error.message : String(error)} Recovery remains at '${backupManifest.backupPath}'.`,
+        `OpenClaw state backup could not enter its gateway-down maintenance window (${begun.stage}: ${begun.detail}).`,
       );
     }
-    return input.bail(
-      `The retained rebuild policy handoff for sandbox '${input.sandboxName}' contains a literal credential value and cannot restore the deleted sandbox. Recovery:\n` +
-        `  1. Recover any required data from the backup before deletion. Keep the backup and policy handoff until that recovery is complete.\n` +
-        `  2. Restore access to recorded gateway '${input.gatewayName}', select it with \`openshell gateway select ${input.gatewayName}\`, and confirm \`openshell status\` is healthy.\n` +
-        `  3. Only then run \`nemoclaw ${input.sandboxName} destroy --yes\` and confirm OpenShell reports the sandbox deleted. Do not use \`--force\` for this recovery. If deletion is unconfirmed, preserve the recovery state and restore gateway access before retrying cleanup.\n` +
-        "  4. Create a fresh sandbox under a new name by replacing `<new-sandbox>` in `nemoclaw onboard --name <new-sandbox>`. Do not retry rebuild with the unsafe handoff.\n" +
-        `  5. After required data is recovered and old-sandbox deletion is confirmed, retire only this failed transaction with \`nemoclaw ${input.sandboxName} rebuild --retire-recovery ${recoveryTransactionId} --yes\`. This removes the credential-bearing policy handoff at '${retainedHandoffPath}' while retaining the remaining backup.`,
-    );
+    sourceBackupWindow = begun.window;
   }
-  if (retainedPolicy && backupManifest && retainedHandoff) {
-    return {
-      backupManifest,
-      policySourcePath: fs.realpathSync(path.join(backupManifest.backupPath, retainedHandoff.file)),
-    };
-  }
-  const policy =
-    capturedPolicy ??
-    (await captureRebuildPolicyDocument(
-      input.sandboxName,
-      input.gatewayName,
-      input.runtimeSelection,
-    ));
-  if (backupManifest && !retainedPolicy) {
-    try {
-      backupManifest = writeRebuildPolicyHandoff(backupManifest, policy);
-      const handoff = backupManifest.rebuildPolicyHandoff;
-      if (!handoff) throw new Error("rebuild policy handoff was not published");
+  let transferSourceWindow = false;
+  try {
+    let backupManifest: RebuildBackupManifest | undefined =
+      preparedRecoveryManifest ??
+      (await backupStateForRebuild(
+        input.sandboxName,
+        input.sandboxEntry,
+        input.staleRecovery,
+        input.log,
+        input.bail,
+      ));
+    if (backupManifest === undefined) return null;
+    const retainedPolicy = backupManifest ? readRebuildPolicyHandoff(backupManifest) : null;
+    if (input.staleRecovery && !retainedPolicy) {
+      return input.bail(
+        "The live OpenShell policy and its verified rebuild handoff are unavailable. Rebuild will not reconstruct policy from NemoClaw state.",
+      );
+    }
+    const retainedHandoff = backupManifest?.rebuildPolicyHandoff;
+    if (
+      retainedPolicy &&
+      backupManifest &&
+      retainedHandoff &&
+      !isSandboxPolicyCredentialFree(retainedPolicy)
+    ) {
+      const retainedHandoffPath = path.join(backupManifest.backupPath, retainedHandoff.file);
+      const recoveryTransactionId = input.recoveryTransactionId ?? randomUUID();
+      try {
+        recordRebuildRecoveryBackup({
+          sandboxName: input.sandboxName,
+          agentName: backupManifest.agentType,
+          transactionId: recoveryTransactionId,
+          gatewayName: input.gatewayName,
+          gatewayPort: input.gatewayPort,
+          backupManifest,
+        });
+      } catch (error) {
+        return input.bail(
+          `Cannot bind the retained credential-bearing policy handoff to a bounded recovery transaction: ${error instanceof Error ? error.message : String(error)} Recovery remains at '${backupManifest.backupPath}'.`,
+        );
+      }
+      return input.bail(
+        `The retained rebuild policy handoff for sandbox '${input.sandboxName}' contains a literal credential value and cannot restore the deleted sandbox. Recovery:\n` +
+          `  1. Recover any required data from the backup before deletion. Keep the backup and policy handoff until that recovery is complete.\n` +
+          `  2. Restore access to recorded gateway '${input.gatewayName}', select it with \`openshell gateway select ${input.gatewayName}\`, and confirm \`openshell status\` is healthy.\n` +
+          `  3. Only then run \`nemoclaw ${input.sandboxName} destroy --yes\` and confirm OpenShell reports the sandbox deleted. Do not use \`--force\` for this recovery. If deletion is unconfirmed, preserve the recovery state and restore gateway access before retrying cleanup.\n` +
+          "  4. Create a fresh sandbox under a new name by replacing `<new-sandbox>` in `nemoclaw onboard --name <new-sandbox>`. Do not retry rebuild with the unsafe handoff.\n" +
+          `  5. After required data is recovered and old-sandbox deletion is confirmed, retire only this failed transaction with \`nemoclaw ${input.sandboxName} rebuild --retire-recovery ${recoveryTransactionId} --yes\`. This removes the credential-bearing policy handoff at '${retainedHandoffPath}' while retaining the remaining backup.`,
+      );
+    }
+    if (retainedPolicy && backupManifest && retainedHandoff) {
+      transferSourceWindow = true;
       return {
         backupManifest,
-        policySourcePath: fs.realpathSync(path.join(backupManifest.backupPath, handoff.file)),
+        policySourcePath: fs.realpathSync(
+          path.join(backupManifest.backupPath, retainedHandoff.file),
+        ),
+        ...(sourceBackupWindow ? { sourceOpenClawDoctorWindow: sourceBackupWindow } : {}),
       };
-    } catch (error) {
-      return input.bail(
-        `The current OpenShell policy could not be retained for rebuild recovery: ${error instanceof Error ? error.message : String(error)}`,
-      );
+    }
+    const policy =
+      capturedPolicy ??
+      (await captureRebuildPolicyDocument(
+        input.sandboxName,
+        input.gatewayName,
+        input.runtimeSelection,
+      ));
+    if (backupManifest && !retainedPolicy) {
+      try {
+        backupManifest = writeRebuildPolicyHandoff(backupManifest, policy);
+        const handoff = backupManifest.rebuildPolicyHandoff;
+        if (!handoff) throw new Error("rebuild policy handoff was not published");
+        transferSourceWindow = true;
+        return {
+          backupManifest,
+          policySourcePath: fs.realpathSync(path.join(backupManifest.backupPath, handoff.file)),
+          ...(sourceBackupWindow ? { sourceOpenClawDoctorWindow: sourceBackupWindow } : {}),
+        };
+      } catch (error) {
+        return input.bail(
+          `The current OpenShell policy could not be retained for rebuild recovery: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    }
+    transferSourceWindow = true;
+    return {
+      backupManifest,
+      policySourcePath: writeRebuildPolicySource(policy),
+      ...(sourceBackupWindow ? { sourceOpenClawDoctorWindow: sourceBackupWindow } : {}),
+    };
+  } finally {
+    if (sourceBackupWindow && !transferSourceWindow) {
+      await releaseRebuildSourceOpenClawWindow(sourceBackupWindow);
     }
   }
-  return { backupManifest, policySourcePath: writeRebuildPolicySource(policy) };
 }

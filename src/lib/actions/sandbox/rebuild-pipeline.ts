@@ -31,6 +31,9 @@ import {
   readRebuildPolicyHandoff,
   readRebuildMcpHandoff,
   type RebuildBackupManifest,
+  type RebuildBackupPhaseResult,
+  releaseRebuildSourceOpenClawWindow,
+  retireRebuildSourceOpenClawWindowForDelete,
   runRebuildBackupPhase,
   writeRebuildMcpHandoff,
   writeHermesOperatorConfigHandoff,
@@ -204,6 +207,7 @@ async function rebuildSandboxUnlocked(
     targetConfig,
     recreateOptions: stagedRecreateOptions,
     messagingPlan,
+    recheckMessagingConflicts,
     baseImagePreflight,
     liveState,
     recoveryManifest: validatedRecoveryManifest,
@@ -251,6 +255,9 @@ async function rebuildSandboxUnlocked(
       },
     );
     let retainPolicyHandoffForRecovery = false;
+    let sourceOpenClawDoctorWindow: NonNullable<
+      RebuildBackupPhaseResult["sourceOpenClawDoctorWindow"]
+    > | null = null;
 
     try {
       const preDeleteRecovery = revalidatePreparedRecoveryBeforeDelete(
@@ -273,7 +280,8 @@ async function rebuildSandboxUnlocked(
           recoveryManifest.rebuildMcpHandoff?.retired === true ||
           recoveryManifest.hermesOperatorConfigHandoff?.retired === true
         : false;
-      const activeRecoveryTransaction = onboardSession.loadSession()?.checkpoint?.sandboxRecreate;
+      const activeRecoverySession = onboardSession.loadSession();
+      const activeRecoveryTransaction = activeRecoverySession?.checkpoint?.sandboxRecreate;
       // Older manifests and a crash immediately after marker creation can lack
       // the MCP handoff. Re-observe only while the journal remains pre-delete
       // and the journaled source identity is verified before MCP inspection.
@@ -312,6 +320,7 @@ async function rebuildSandboxUnlocked(
         assertRebuildRecoverySource(
           activeRecoveryTransaction,
           target,
+          activeRecoverySession.sessionId,
           recreateOptions.runtimeSelection,
         );
       }
@@ -493,6 +502,7 @@ async function rebuildSandboxUnlocked(
         ...(mcpRuntimeSelection ? { runtimeSelection: mcpRuntimeSelection } : {}),
       });
       if (!backup) return;
+      sourceOpenClawDoctorWindow = backup.sourceOpenClawDoctorWindow ?? null;
       try {
         recreateOptions = bindRebuildSnapshotGpuAuthority(recreateOptions, backup.backupManifest);
       } catch (error) {
@@ -713,12 +723,14 @@ async function rebuildSandboxUnlocked(
           sandboxName,
           targetAgentName: rebuildAgent || "openclaw",
           messagingPlan,
+          recheckMessagingConflicts,
           backupManifest: recoveryBackup,
           mcpEntries,
           ...(recreateJournal.runtimeSelection
             ? { mcpRuntimeSelection: recreateJournal.runtimeSelection }
             : {}),
           restoreSucceeded: restored.restoreSucceeded,
+          openClawDoctorWindow: restored.openClawDoctorWindow,
           hermesOperatorConfigRestore: restored.hermesOperatorConfigRestore,
           preparedBackupRecovery: true,
           versionCheck,
@@ -788,9 +800,11 @@ async function rebuildSandboxUnlocked(
       }
 
       let preservedMcpPolicyHandoff = false;
+      const sourceWindowForDelete = sourceOpenClawDoctorWindow;
       const mcpPreparation = await runRebuildDestroyPhase({
         sandboxName,
         sandboxEntry,
+        recheckMessagingConflicts,
         staleRecovery,
         recreateJournal,
         backupManifest: backup.backupManifest,
@@ -930,6 +944,20 @@ async function rebuildSandboxUnlocked(
             };
           }
         },
+        prepareSourceForDelete: sourceWindowForDelete
+          ? async () => {
+              const retired =
+                await retireRebuildSourceOpenClawWindowForDelete(sourceWindowForDelete);
+              if (!retired.ok) {
+                return {
+                  ok: false,
+                  message: `OpenClaw source maintenance window could not be retired before deletion (${retired.stage}: ${retired.detail}).`,
+                };
+              }
+              sourceOpenClawDoctorWindow = null;
+              return { ok: true };
+            }
+          : undefined,
         cleanupDockerOrphanAfterDelete: () =>
           removeStaleRebuildDockerOrphan(sandboxName, sandboxEntry.openshellDriver, log),
         onDeleted: () => {
@@ -939,6 +967,7 @@ async function rebuildSandboxUnlocked(
           retainPolicyHandoffForRecovery = true;
         },
       });
+      if (mcpPreparation) sourceOpenClawDoctorWindow = null;
       if (!mcpPreparation) return;
       registryRollback.recordRemoval(mcpPreparation.removalReceipt);
 
@@ -1024,10 +1053,12 @@ async function rebuildSandboxUnlocked(
         sandboxName,
         targetAgentName: rebuildAgent || "openclaw",
         messagingPlan,
+        recheckMessagingConflicts,
         backupManifest: backup.backupManifest,
         mcpEntries: mcpPreparation.entries,
         mcpRuntimeSelection: mcpPreparation.runtimeSelection,
         restoreSucceeded: restored.restoreSucceeded,
+        openClawDoctorWindow: restored.openClawDoctorWindow,
         hermesOperatorConfigRestore: restored.hermesOperatorConfigRestore,
         hermesCronRestoreIdentity,
         preparedBackupRecovery,
@@ -1055,6 +1086,15 @@ async function rebuildSandboxUnlocked(
       }
       retainPolicyHandoffForRecovery = false;
     } finally {
+      if (sourceOpenClawDoctorWindow) {
+        const finished = await releaseRebuildSourceOpenClawWindow(sourceOpenClawDoctorWindow);
+        if (!finished.ok) {
+          console.error(
+            `  Warning: OpenClaw source maintenance cleanup did not return the retained sandbox healthy (${finished.stage}: ${finished.detail}).`,
+          );
+        }
+        sourceOpenClawDoctorWindow = null;
+      }
       const handoffManifest = rebuildPolicyHandoffManifest;
       if (
         handoffManifest &&

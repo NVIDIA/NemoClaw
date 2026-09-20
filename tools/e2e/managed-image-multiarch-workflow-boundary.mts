@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { createHash } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 
 import * as importedProtectedManagedImageContract from "../../scripts/checks/protected-managed-image-contract.ts";
@@ -23,6 +24,7 @@ type WorkflowStep = WorkflowRecord & {
   env?: WorkflowRecord;
   name?: string;
   run?: string;
+  shell?: string;
   uses?: string;
   with?: WorkflowRecord;
 };
@@ -37,6 +39,47 @@ const REGISTRY_IMAGE =
 const CHECKOUT_ACTION = "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1";
 const TRUSTED_HERMES_RESOLVER_ROOT = ".trusted-hermes-resolver";
 const REVIEWED_HERMES_PLATFORM_ACTION = `./${TRUSTED_HERMES_RESOLVER_ROOT}/.github/actions/resolve-reviewed-hermes-platform`;
+// Candidate-controlled execution starts at checkout and ends after the direct
+// managed-image consumer. Exact topology and complete step objects within that
+// window are the review boundary: matching selected command strings cannot
+// reject shell-equivalent full builds added to another step. Later cleanup,
+// evidence, security, and cache steps retain their targeted validators.
+const REVIEWED_EXECUTION_STEP_NAMES = [
+  "Checkout protected managed-image candidate source",
+  "Validate trusted Hermes resolver checkout path",
+  "Checkout trusted Hermes resolver",
+  "Bind protected managed-image Buildx configuration",
+  "Set up protected managed-image Buildx",
+  "Prepare E2E workspace",
+  "Build shared policy boundary",
+  "Authenticate to Docker Hub",
+  "Validate candidate activation contract",
+  "Resolve reviewed Hermes platform base image",
+  "Remove trusted Hermes resolver checkout",
+  "Resolve digest-pinned platform base images",
+  "Start isolated protected managed-image registry",
+  "Build exact all-agent protected managed images",
+  "Run every exact managed-image contract directly",
+] as const;
+const REVIEWED_EXECUTION_SURFACE_SHA256 =
+  "3838afa4f7e9fd98e182a5dc320a122751981a26c606732f240b5edb65ffcf16";
+const SHARED_POLICY_BOUNDARY_RUN = [
+  "set -euo pipefail",
+  "[[ ! -e nemoclaw/dist && ! -L nemoclaw/dist ]] || {",
+  '  echo "::error::Shared policy boundary output exists before the candidate build" >&2',
+  "  exit 1",
+  "}",
+  "npm run build:policy-boundary",
+  "for artifact in \\",
+  "  nemoclaw/dist/shared/openshell-policy-boundary.cjs \\",
+  "  nemoclaw/dist/shared/sandbox-name.cjs; do",
+  '  [[ -f "$artifact" && ! -L "$artifact" && -s "$artifact" ]] || {',
+  '    echo "::error::Shared policy boundary artifact is missing or invalid: $artifact" >&2',
+  "    exit 1",
+  "  }",
+  "done",
+  "",
+].join("\n");
 
 function record(value: unknown): WorkflowRecord {
   return value && typeof value === "object" && !Array.isArray(value)
@@ -179,6 +222,28 @@ export function validateManagedImageMultiarchWorkflow(workflow: WorkflowRecord):
   });
 
   const steps = workflowSteps(job.steps);
+  const executionStart = steps.findIndex((step) => step.name === REVIEWED_EXECUTION_STEP_NAMES[0]);
+  const executionEnd = steps.findIndex(
+    (step) => step.name === REVIEWED_EXECUTION_STEP_NAMES.at(-1),
+  );
+  const executionSteps =
+    executionStart >= 0 && executionEnd >= executionStart
+      ? steps.slice(executionStart, executionEnd + 1)
+      : [];
+  if (
+    !isDeepStrictEqual(
+      executionSteps.map((step) => step.name),
+      REVIEWED_EXECUTION_STEP_NAMES,
+    )
+  ) {
+    errors.push(`${JOB_ID} must preserve the reviewed candidate execution window topology`);
+  }
+  const executionSurfaceSha256 = createHash("sha256")
+    .update(JSON.stringify(executionSteps))
+    .digest("hex");
+  if (executionSurfaceSha256 !== REVIEWED_EXECUTION_SURFACE_SHA256) {
+    errors.push(`${JOB_ID} must preserve the reviewed candidate execution window surface`);
+  }
   const guard = requireStep(errors, steps, "Validate protected exact-head dispatch");
   requireValues(errors, `${JOB_ID} exact-head guard env`, record(guard?.env), {
     BASE_SHA: "${{ inputs.base_sha || github.event.before || github.sha }}",
@@ -247,6 +312,25 @@ export function validateManagedImageMultiarchWorkflow(workflow: WorkflowRecord):
     },
   );
 
+  const buildxConfig = requireStep(
+    errors,
+    steps,
+    "Bind protected managed-image Buildx configuration",
+  );
+  requireValues(errors, `${JOB_ID} Buildx configuration env`, record(buildxConfig?.env), {
+    SHARD: "${{ matrix.shard }}",
+  });
+  if (buildxConfig?.shell !== "bash") {
+    errors.push(`${JOB_ID} must bind protected Buildx configuration in a Bash step`);
+  }
+  requireFragments(errors, buildxConfig, [
+    '[[ "$SHARD" =~ ^linux-(amd64|arm64)$ ]]',
+    'buildx_config="${RUNNER_TEMP}/nemoclaw-protected-buildx-${SHARD}"',
+    '[[ ! -e "$buildx_config" && ! -L "$buildx_config" ]]',
+    'install -d -m 0700 "$buildx_config"',
+    `printf 'BUILDX_CONFIG=%s\\n' "$buildx_config" >>"$GITHUB_ENV"`,
+  ]);
+
   const buildx = requireStep(errors, steps, "Set up protected managed-image Buildx");
   if (buildx?.uses !== "docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c") {
     errors.push(`${JOB_ID} must pin the reviewed Buildx setup action`);
@@ -255,6 +339,22 @@ export function validateManagedImageMultiarchWorkflow(workflow: WorkflowRecord):
     "driver-opts": "network=host",
     "buildkitd-config-inline": '[registry."localhost:5000"]\n  http = true\n',
   });
+
+  const policyBoundary = requireStep(errors, steps, "Build shared policy boundary");
+  if (policyBoundary?.if !== undefined || policyBoundary?.["continue-on-error"] !== undefined) {
+    errors.push(`${JOB_ID} shared policy boundary step must not set if or continue-on-error`);
+  }
+  if (policyBoundary?.run !== SHARED_POLICY_BOUNDARY_RUN) {
+    errors.push(`${JOB_ID} shared policy boundary step must match the reviewed narrow script`);
+  }
+  const dockerAuth = requireStep(errors, steps, "Authenticate to Docker Hub");
+  if (
+    policyBoundary &&
+    dockerAuth &&
+    steps.indexOf(dockerAuth) !== steps.indexOf(policyBoundary) + 1
+  ) {
+    errors.push(`${JOB_ID} Docker Hub auth must run immediately after the shared boundary build`);
+  }
 
   const activation = requireStep(errors, steps, "Validate candidate activation contract");
   requireFragments(errors, activation, [
@@ -362,7 +462,6 @@ export function validateManagedImageMultiarchWorkflow(workflow: WorkflowRecord):
     "directRuns: $directRuns",
     "run: {id: $runId, attempt: $runAttempt}",
   ]);
-
   const cleanup = requireStep(errors, steps, "Remove isolated protected managed-image registry");
   if (cleanup?.if !== "always()") errors.push(`${JOB_ID} registry cleanup must always run`);
   requireFragments(errors, cleanup, [
@@ -388,6 +487,21 @@ export function validateManagedImageMultiarchWorkflow(workflow: WorkflowRecord):
   requireFragments(errors, evidence, [
     "tools/e2e/live-vitest-invocation.mts run",
     `--test-path ${DIRECT_TEST_PATH}`,
+  ]);
+  const receiptDaemonCleanup = requireStep(
+    errors,
+    steps,
+    "Remove owned Docker Engine 27 receipt daemon",
+  );
+  if (receiptDaemonCleanup?.if !== "always()") {
+    errors.push(`${JOB_ID} Docker Engine 27 receipt daemon cleanup must always run`);
+  }
+  requireFragments(errors, receiptDaemonCleanup, [
+    "scripts/checks/docker-engine-27-receipt-transfer-e2e.ts",
+    "--cleanup-only",
+    '--run-id "$GITHUB_RUN_ID"',
+    '--run-attempt "$GITHUB_RUN_ATTEMPT"',
+    '--platform "$NEMOCLAW_PROTECTED_MANAGED_IMAGE_PLATFORM"',
   ]);
   const cacheUpload = requireStep(
     errors,
@@ -440,6 +554,9 @@ export function validateManagedImageMultiarchWorkflow(workflow: WorkflowRecord):
     "Checkout protected managed-image candidate source",
     "Validate trusted Hermes resolver checkout path",
     "Checkout trusted Hermes resolver",
+    "Prepare E2E workspace",
+    "Build shared policy boundary",
+    "Authenticate to Docker Hub",
     "Validate candidate activation contract",
     "Resolve reviewed Hermes platform base image",
     "Remove trusted Hermes resolver checkout",
@@ -449,6 +566,7 @@ export function validateManagedImageMultiarchWorkflow(workflow: WorkflowRecord):
     "Run every exact managed-image contract directly",
     "Remove isolated protected managed-image registry",
     "Validate protected managed-image evidence",
+    "Remove owned Docker Engine 27 receipt daemon",
     "Validate OpenClaw managed-image security boundary",
     "Validate managed-image glibc probe lifecycle",
     "Remove protected managed-image cohort resources",

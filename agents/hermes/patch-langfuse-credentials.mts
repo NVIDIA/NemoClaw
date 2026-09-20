@@ -7,7 +7,7 @@ import process from "node:process";
 import { pathToFileURL } from "node:url";
 
 /**
- * Patch the Langfuse validator bundled with pinned Hermes v2026.8.27 / 0.20.6.
+ * Patch the Langfuse validator bundled with pinned Hermes v2026.9.14 / 0.21.3.
  *
  * Hermes rejects OpenShell resolver placeholders before the Langfuse SDK can
  * turn them into outbound authentication headers. NemoClaw keeps the real
@@ -50,12 +50,12 @@ _LANGFUSE_OPENSHELL_KEYS: Dict[str, str] = {
   {
     name: "credential validation",
     old: `\
-    if value.startswith(expected):
+    if not expected or value.startswith(expected):
         return None
-    return (
+    preview = "<empty>" if not value else repr(value) if len(value) <= 12 else repr(value[:6] + "...")
 `,
     patched: `\
-    if value.startswith(expected):
+    if not expected or value.startswith(expected):
         return None
     openshell_key = _LANGFUSE_OPENSHELL_KEYS.get(env_name)
     # Keep the generation bound aligned with NemoClaw's OpenShell credential
@@ -65,25 +65,19 @@ _LANGFUSE_OPENSHELL_KEYS: Dict[str, str] = {
         value,
     ):
         return None
-    return (
+    preview = "<empty>" if not value else repr(value) if len(value) <= 12 else repr(value[:6] + "...")
 `,
   },
   {
     name: "HTTPS base URL validation",
     old: `\
-    return (
-        f"{env_name}={_redact_key_preview(value)} "
-        f"(expected {expected!r} prefix)"
-    )
+    return f"{env_name}={preview} (expected {expected!r} prefix)"
 
 
-def _get_langfuse() -> Optional[Langfuse]:
+def _settled_client() -> Any:
 `,
     patched: `\
-    return (
-        f"{env_name}={_redact_key_preview(value)} "
-        f"(expected {expected!r} prefix)"
-    )
+    return f"{env_name}={preview} (expected {expected!r} prefix)"
 
 
 def _validate_langfuse_base_url(value: str) -> Optional[str]:
@@ -107,26 +101,23 @@ def _validate_langfuse_base_url(value: str) -> Optional[str]:
     return None
 
 
-def _get_langfuse() -> Optional[Langfuse]:
+def _settled_client() -> Any:
 `,
   },
   {
     name: "HTTPS base URL gate",
     old: `\
-        base_url = _env("HERMES_LANGFUSE_BASE_URL") or _env("LANGFUSE_BASE_URL") or "https://cloud.langfuse.com"
-        environment = _env("HERMES_LANGFUSE_ENV") or _env("LANGFUSE_ENV")
+    sample_rate = _secret("HERMES_LANGFUSE_SAMPLE_RATE")
 `,
     patched: `\
-        base_url = _env("HERMES_LANGFUSE_BASE_URL") or _env("LANGFUSE_BASE_URL") or "https://cloud.langfuse.com"
-        base_url_issue = _validate_langfuse_base_url(base_url)
-        if base_url_issue:
-            logger.warning(
-                "Langfuse plugin: invalid base URL, traces will NOT be emitted (%s).",
-                base_url_issue,
-            )
-            _LANGFUSE_CLIENT = _INIT_FAILED
-            return None
-        environment = _env("HERMES_LANGFUSE_ENV") or _env("LANGFUSE_ENV")
+    base_url_issue = _validate_langfuse_base_url(str(kwargs["base_url"]))
+    if base_url_issue:
+        logger.warning(
+            "Langfuse plugin: invalid base URL, traces will NOT be emitted (%s).",
+            base_url_issue,
+        )
+        return None
+    sample_rate = _secret("HERMES_LANGFUSE_SAMPLE_RATE")
 `,
   },
 ] as const;
