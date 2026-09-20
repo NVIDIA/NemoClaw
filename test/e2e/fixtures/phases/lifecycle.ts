@@ -277,7 +277,7 @@ export class LifecyclePhaseFixture {
     return await this.waitForSandboxReady(instance, options, "after rebuild");
   }
 
-  async assertSandboxReadyAfterGatewayRestart(
+  async waitForSandboxReadyAfterGatewayRestart(
     instance: NemoClawInstance | string,
     options: SandboxReadyOptions = {},
   ): Promise<ShellProbeResult> {

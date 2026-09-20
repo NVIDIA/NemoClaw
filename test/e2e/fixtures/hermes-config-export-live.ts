@@ -40,7 +40,8 @@ export interface HermesConfigExportLiveResult {
   readonly passed: boolean;
 }
 
-export interface HermesConfigExportLiveEvidence {
+interface HermesConfigExportPublishedEvidence {
+  readonly outcome: "published";
   readonly agent: string | undefined;
   readonly aliasesEquivalent: boolean;
   readonly checked: true;
@@ -57,10 +58,44 @@ export interface HermesConfigExportLiveEvidence {
   readonly sandboxNameMatches: boolean;
 }
 
+interface HermesConfigExportExpectedRefusalEvidence {
+  readonly outcome: "expected-refusal";
+  readonly aliasesEquivalent: boolean;
+  readonly checked: true;
+  readonly credentialValuesOmitted: boolean;
+  readonly outputFilesAbsent: boolean;
+  readonly refusalCategory: "unsupported" | null;
+  readonly refusalDiagnosticMatches: boolean;
+}
+
+export type HermesConfigExportLiveEvidence =
+  | HermesConfigExportPublishedEvidence
+  | HermesConfigExportExpectedRefusalEvidence;
+
+const CREDENTIAL_HTTP_REFUSAL =
+  "V1alpha1 requires HTTPS when an inference provider declares a credential.";
+const CREDENTIAL_HTTP_REFUSAL_DIAGNOSTIC = `Config export failed (unsupported).\n${CREDENTIAL_HTTP_REFUSAL}`;
+
+function normalizeCommandDiagnostics(stdout: string, stderr: string): string {
+  return [stdout, stderr]
+    .map((output) => output.replace(/\r\n?/g, "\n").trim())
+    .filter((output) => output.length > 0)
+    .join("\n");
+}
+
 /** Decide the live contract from redacted, serializable observations. */
 export function passesHermesConfigExportLiveEvidence(
   evidence: HermesConfigExportLiveEvidence,
 ): boolean {
+  if (evidence.outcome === "expected-refusal") {
+    return (
+      evidence.aliasesEquivalent &&
+      evidence.credentialValuesOmitted &&
+      evidence.outputFilesAbsent &&
+      evidence.refusalCategory === "unsupported" &&
+      evidence.refusalDiagnosticMatches
+    );
+  }
   return (
     evidence.agent === "hermes" &&
     evidence.aliasesEquivalent &&
@@ -201,11 +236,42 @@ export async function verifyHermesConfigExportLive(
   const launchersSucceeded = nemoclaw.exitCode === 0 && nemohermes.exitCode === 0;
   const nemoclawRaw = nemoclaw.exitCode === 0 ? fs.readFileSync(nemoclawPath, "utf8") : "";
   const nemohermesRaw = nemohermes.exitCode === 0 ? fs.readFileSync(nemohermesPath, "utf8") : "";
+  const nemoclawDiagnostics = normalizeCommandDiagnostics(nemoclaw.stdout, nemoclaw.stderr);
+  const nemohermesDiagnostics = normalizeCommandDiagnostics(nemohermes.stdout, nemohermes.stderr);
   const containsCredential = input.redactionValues.some(
-    (value) => value.length > 0 && (nemoclawRaw.includes(value) || nemohermesRaw.includes(value)),
+    (value) =>
+      value.length > 0 &&
+      [nemoclawRaw, nemohermesRaw, nemoclawDiagnostics, nemohermesDiagnostics].some((output) =>
+        output.includes(value),
+      ),
   );
   if (!launchersSucceeded) {
+    const expectsCredentialHttpRefusal =
+      typeof entry.credentialEnv === "string" &&
+      entry.credentialEnv.length > 0 &&
+      entry.endpointUrl?.toLowerCase().startsWith("http:") === true;
+    if (expectsCredentialHttpRefusal) {
+      const refusalDiagnosticMatches = [nemoclawDiagnostics, nemohermesDiagnostics].every(
+        (diagnostic) => diagnostic === CREDENTIAL_HTTP_REFUSAL_DIAGNOSTIC,
+      );
+      const refusalCategory = refusalDiagnosticMatches ? "unsupported" : null;
+      const evidence: HermesConfigExportExpectedRefusalEvidence = {
+        outcome: "expected-refusal",
+        aliasesEquivalent:
+          nemoclaw.exitCode !== 0 &&
+          nemohermes.exitCode !== 0 &&
+          nemoclawDiagnostics === nemohermesDiagnostics,
+        checked: true,
+        credentialValuesOmitted: !containsCredential,
+        outputFilesAbsent: !fs.existsSync(nemoclawPath) && !fs.existsSync(nemohermesPath),
+        refusalCategory,
+        refusalDiagnosticMatches,
+      };
+      await input.artifacts.writeJson("hermes-config-export-live-evidence.json", evidence);
+      return { checked: true, passed: passesHermesConfigExportLiveEvidence(evidence) };
+    }
     const evidence: HermesConfigExportLiveEvidence = {
+      outcome: "published",
       agent: undefined,
       aliasesEquivalent: false,
       checked: true,
@@ -274,6 +340,7 @@ export async function verifyHermesConfigExportLive(
   }
 
   const evidence: HermesConfigExportLiveEvidence = {
+    outcome: "published",
     aliasesEquivalent: isDeepStrictEqual(nemohermesDocument.spec, nemoclawDocument.spec),
     agent: sandbox.harness.kind,
     checked: true,

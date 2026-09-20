@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Relocate pinned Hermes gateway metadata below its writable runtime directory.
 
-Hermes v0.20.6 stores ``gateway.pid``, ``gateway.lock``, and
+Hermes v0.21.3 stores ``gateway.pid``, ``gateway.lock``, and
 ``gateway_state.json`` directly below ``HERMES_HOME``. NemoClaw
 correctly makes that config root root-owned and non-writable, so NemoClaw's
 managed stop/start recovery cannot remove the old PID file or atomically
@@ -27,29 +27,17 @@ import argparse
 from pathlib import Path
 
 OLD_PID_HELPER = '''def _get_pid_path() -> Path:
-    """Return the path to the gateway PID file, respecting HERMES_HOME."""
-    home = _get_process_hermes_home()
-    return home / "gateway.pid"
+    return _get_process_hermes_home() / "gateway.pid"
 '''
 NEW_PID_HELPER = '''def _get_pid_path() -> Path:
-    """Return the path to the gateway PID file, respecting HERMES_HOME."""
-    home = _get_process_hermes_home()
-    return home / "runtime" / "gateway.pid"
+    return _get_process_hermes_home() / "runtime" / "gateway.pid"
 '''
 
-OLD_LOCK_HELPER = '''def _get_gateway_lock_path(pid_path: Optional[Path] = None) -> Path:
-    """Return the path to the runtime gateway lock file."""
-    if pid_path is not None:
-        return pid_path.with_name(_GATEWAY_LOCK_FILENAME)
-    home = _get_process_hermes_home()
-    return home / _GATEWAY_LOCK_FILENAME
+OLD_STATUS_HELPER = '''def _get_runtime_status_path() -> Path:
+    return _get_process_hermes_home() / _RUNTIME_STATUS_FILE
 '''
-NEW_LOCK_HELPER = '''def _get_gateway_lock_path(pid_path: Optional[Path] = None) -> Path:
-    """Return the path to the runtime gateway lock file."""
-    if pid_path is not None:
-        return pid_path.with_name(_GATEWAY_LOCK_FILENAME)
-    home = _get_process_hermes_home()
-    return home / "runtime" / _GATEWAY_LOCK_FILENAME
+NEW_STATUS_HELPER = '''def _get_runtime_status_path() -> Path:
+    return _get_process_hermes_home() / "runtime" / _RUNTIME_STATUS_FILE
 '''
 
 
@@ -57,7 +45,7 @@ def patch_file(path: Path) -> None:
     source = path.read_text(encoding="utf-8")
     replacements = (
         ("PID", OLD_PID_HELPER, NEW_PID_HELPER),
-        ("lock", OLD_LOCK_HELPER, NEW_LOCK_HELPER),
+        ("status", OLD_STATUS_HELPER, NEW_STATUS_HELPER),
     )
 
     if all(source.count(old) == 0 and source.count(new) == 1 for _, old, new in replacements):

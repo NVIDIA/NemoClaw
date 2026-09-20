@@ -28,7 +28,7 @@ export {
 } from "./docker-gpu-patch-clone";
 
 import { collectDockerGpuPatchDiagnostics } from "./docker-gpu-patch-diagnostics";
-import { formatDockerContainerState } from "./managed-bootstrap/docker-container-failure-evidence";
+import { formatDockerContainerState } from "./compute/docker-container-failure-evidence";
 import {
   getDockerGpuPatchFailureContext,
   recreateOpenShellDockerSandboxWithGpu,

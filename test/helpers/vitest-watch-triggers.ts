@@ -85,7 +85,6 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
       "test/onboarding/onboard-extra-provider-reconciliation.test.ts",
       "test/onboarding/onboard-fresh-create-identity.test.ts",
       "test/onboarding/onboard-installer-restore-intent.test.ts",
-      "test/onboarding/onboard-managed-image-buildless-e2e.test.ts",
       "test/onboarding/onboard-messaging.test.ts",
       "test/onboarding/onboard-prepared-build-context.test.ts",
       "test/onboarding/onboard-reservation-recreate.test.ts",
@@ -154,6 +153,14 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
   {
     pattern: /(?:^|\/)agents\/hermes\/patch-cron-restore-drain\.py$/,
     testsToRun: runTests("test/agents/hermes/hermes-cron-restore-drain-patch.test.ts"),
+  },
+  {
+    pattern: /(?:^|\/)agents\/hermes\/patch-external-supervisor-recovery\.py$/,
+    testsToRun: runTests("test/agents/hermes/hermes-external-supervisor-recovery-patch.test.ts"),
+  },
+  {
+    pattern: /(?:^|\/)agents\/hermes\/patch-external-supervisor-restart\.py$/,
+    testsToRun: runTests("test/agents/hermes/hermes-external-supervisor-restart-patch.test.ts"),
   },
   {
     pattern: /(?:^|\/)agents\/hermes\/patch-session-list-preview\.py$/,
