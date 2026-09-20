@@ -124,6 +124,8 @@ export interface SandboxEntry extends Partial<InferenceSelection> {
    * through per-sandbox image deletion.
    */
   workload?: SandboxWorkloadReceipt;
+  /** Image-owned startup handshake used by managed-image onboarding finalization. */
+  managedStartupProtocol?: "identity-bound" | "legacy-unbound";
   /** Canonical provider-neutral receipt for an out-of-sandbox inference runtime. */
   hostLocalInferenceReceipt?: string | null;
   /** Explicit hidden-lifecycle provenance; absence keeps llama.cpp on its legacy path. */

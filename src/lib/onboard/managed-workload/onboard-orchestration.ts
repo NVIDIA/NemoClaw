@@ -5,7 +5,7 @@ import { isCandidateAgent, readCandidateQualificationReceipt } from "../../agent
 import type { AgentDefinition } from "../../agent/defs";
 import { getVersion } from "../../core/version";
 import type { SandboxMessagingPlan } from "../../messaging/manifest";
-import type { SandboxWorkloadReceipt } from "../../state/registry/types";
+import type { SandboxEntry, SandboxWorkloadReceipt } from "../../state/registry/types";
 import type {
   CreateSandboxBuildContextResult,
   PreparedSandboxBuildContext,
@@ -183,6 +183,18 @@ export function shouldActivateStockManagedRuntime(input: {
     !input.portableLifecycle &&
     !input.hermesPortableLifecycle &&
     isShippedManagedImageAgent(input.agentName)
+  );
+}
+
+/** Keep published base images on their legacy OpenClaw finalization contract. */
+export function shouldUseManagedOpenclawStartup(
+  defaultOpenclawSelected: boolean,
+  sandbox: Pick<SandboxEntry, "managedStartupProtocol" | "workload"> | null,
+): boolean {
+  return (
+    defaultOpenclawSelected &&
+    sandbox?.workload?.kind === "managed-image" &&
+    sandbox.managedStartupProtocol !== "legacy-unbound"
   );
 }
 

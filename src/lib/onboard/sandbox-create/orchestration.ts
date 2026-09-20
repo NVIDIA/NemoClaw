@@ -2689,6 +2689,9 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
     const createFlowEnvironment = hermesGpuAuthority?.env ?? sandboxEnv;
     const createGpuVerifier = hermesGpuAuthority?.verify ?? verifyDirectSandboxGpu;
     let managedBootstrapCreateFinished = false;
+    let managedStartupProtocol:
+      | managedWorkloadOnboard.ProviderManagedStartupTransaction["protocol"]
+      | null = null;
     let managedBootstrapCreateRoute: PendingSandboxCreateIdentity["route"] | null = null;
     let activeCompatibilityCreateAuthority: { readonly createAttemptNonce: string } | null = null;
     const allowNotReadyAfterFinalHandoff = (): boolean =>
@@ -3064,6 +3067,8 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
                         request: managedStartupRootApplyRequest,
                         ...(expectedContainerId ? { expectedContainerId } : {}),
                       });
+                    managedStartupProtocol =
+                      managedStartupTransaction?.protocol ?? "identity-bound";
                   } catch (error) {
                     console.error(
                       `  Managed startup root apply failed: ${
@@ -3166,6 +3171,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
               managedImage: preparedSandboxWorkload.source.kind === "managed-image",
               verifyCreatedSandboxBeforeEffects: async (identity, beforeEffects, afterEffects) => {
                 managedBootstrapCreateFinished = false;
+                managedStartupProtocol = null;
                 managedBootstrapCreateRoute = identity.route;
                 const createAttemptNonce = identity.createAttemptNonce;
                 if (identity.route === "compatibility") {
@@ -3478,6 +3484,14 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
               () => completeCreatedSandboxRegistration(created, null),
               () => recordPostCreateRecovery("registry publication"),
             );
+            if (
+              managedStartupProtocol &&
+              !registry.updateSandbox(sandboxName, { managedStartupProtocol })
+            ) {
+              throw new Error(
+                `Sandbox '${sandboxName}' registered without its managed startup protocol.`,
+              );
+            }
             createEffectsFinalized = true;
             return registration;
           },
