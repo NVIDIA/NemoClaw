@@ -59,18 +59,20 @@ describe("runInferenceSet OpenClaw routing", () => {
         model: { primary: "inference/nvidia/nemotron-3-super-120b-a12b" },
       },
     });
-    expect(deps.calls.setOpenClawConfigValue).toHaveBeenCalledWith(
-      "alpha",
-      "agents.defaults.model.primary",
-      "inference/nvidia/nemotron-3-super-120b-a12b",
-    );
-    expect(deps.calls.setOpenClawConfigValue).toHaveBeenCalledWith(
-      "alpha",
-      "models.providers.inference",
-      expect.objectContaining({
-        models: [expect.objectContaining({ id: "nvidia/nemotron-3-super-120b-a12b" })],
-      }),
-    );
+    expect(deps.calls.setOpenClawConfigValues).toHaveBeenCalledOnce();
+    expect(deps.calls.setOpenClawConfigValues).toHaveBeenCalledWith("alpha", [
+      {
+        dotpath: "agents.defaults.model.primary",
+        value: "inference/nvidia/nemotron-3-super-120b-a12b",
+      },
+      { dotpath: "models.mode", value: "merge" },
+      {
+        dotpath: "models.providers.inference",
+        value: expect.objectContaining({
+          models: [expect.objectContaining({ id: "nvidia/nemotron-3-super-120b-a12b" })],
+        }),
+      },
+    ]);
     expect(deps.calls.writeSandboxConfig).not.toHaveBeenCalled();
     expect(deps.calls.recomputeSandboxConfigHash).not.toHaveBeenCalled();
     // The dashboard re-seed is Hermes-only; OpenClaw has no isolated dashboard config. (#6893)

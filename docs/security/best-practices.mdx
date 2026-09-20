@@ -82,7 +82,7 @@ flowchart TB
 | Layer | What it protects | Enforcement point | Changeable at runtime |
 | --- | --- | --- | --- |
 | Network | Unauthorized outbound connections and data exfiltration. | OpenShell gateway | Yes. Use `openshell policy set` or operator approval. |
-| Filesystem | System binary tampering, credential theft, config manipulation. | Landlock LSM + container mounts | Landlock layout: no. Requires sandbox re-creation. Use host-side NemoClaw commands for durable config changes. |
+| Filesystem | System binary tampering, credential theft, config manipulation. | Landlock LSM + container mounts | Landlock layout: no. Requires sandbox re-creation. Configuration ownership depends on the agent runtime. Refer to [Understand Filesystem Controls](./security-controls/filesystem-controls). |
 | Process | Privilege escalation, fork bombs, syscall abuse. | Container runtime (Docker/K8s `securityContext`) | No. Requires sandbox re-creation. |
 | Gateway Authentication | Unauthorized devices or clients reaching the OpenShell gateway or dashboard surfaces when present. | OpenShell gateway | No. Set at image build / onboarding time. |
 | Inference | Credential exposure, unauthorized model access, cost overruns. | OpenShell gateway | Yes. Use the NemoClaw inference switching command. |

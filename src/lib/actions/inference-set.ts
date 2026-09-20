@@ -42,7 +42,8 @@ import {
   rewriteConfigUrlsWithDnsPinning,
   SandboxConfigError,
   seedHermesDashboardConfig,
-  setOpenClawConfigValue,
+  type OpenClawConfigUpdate,
+  setOpenClawConfigValues,
   writeSandboxConfig,
 } from "../sandbox/config";
 import type { ConfigObject, ConfigValue } from "../security/credential-filter";
@@ -188,7 +189,7 @@ export interface InferenceSetDeps extends InferenceGatewayRestartDeps {
     target: AgentConfigTarget,
     config: ConfigObject,
   ) => void;
-  setOpenClawConfigValue: (sandboxName: string, dotpath: string, value: ConfigValue) => void;
+  setOpenClawConfigValues: typeof setOpenClawConfigValues;
   runtimeProviders?: RuntimeProviderBundleRegistry;
   recomputeSandboxConfigHash: (sandboxName: string, target: AgentConfigTarget) => void;
   seedHermesDashboardConfig: (
@@ -303,7 +304,7 @@ function defaultDeps(): InferenceSetDeps {
     resolveAgentConfig,
     readSandboxConfig,
     writeSandboxConfig,
-    setOpenClawConfigValue,
+    setOpenClawConfigValues,
     recomputeSandboxConfigHash,
     seedHermesDashboardConfig,
     prepareRunOpenshell: () => {
@@ -653,7 +654,7 @@ function writeOpenClawInferenceConfigNatively(
   sandboxName: string,
   config: ConfigObject,
   route: SandboxInferenceConfig,
-  writeValue: InferenceSetDeps["setOpenClawConfigValue"],
+  writeValues: InferenceSetDeps["setOpenClawConfigValues"],
 ): void {
   const agents = config.agents;
   const models = config.models;
@@ -672,14 +673,34 @@ function writeOpenClawInferenceConfigNatively(
     throw new Error(`OpenClaw inference provider '${route.providerKey}' is missing.`);
   }
 
-  writeValue(sandboxName, "agents.defaults.model.primary", primary);
+  const updates: OpenClawConfigUpdate[] = [
+    { dotpath: "agents.defaults.model.primary", value: primary },
+  ];
   if (isConfigObject(agents.entries)) {
-    writeValue(sandboxName, "agents.entries", agents.entries);
+    updates.push({ dotpath: "agents.entries", value: agents.entries });
   } else if (Array.isArray(agents.list)) {
-    writeValue(sandboxName, "agents.list", agents.list);
+    updates.push({ dotpath: "agents.list", value: agents.list });
   }
-  writeValue(sandboxName, "models.mode", "merge");
-  writeValue(sandboxName, `models.providers.${route.providerKey}`, providerConfig);
+  updates.push(
+    { dotpath: "models.mode", value: "merge" },
+    { dotpath: `models.providers.${route.providerKey}`, value: providerConfig },
+  );
+  writeValues(sandboxName, updates);
+}
+
+function failOpenClawInferenceConfigSync(
+  agentName: string,
+  sandboxName: string,
+  detail: string,
+  deps: Pick<InferenceSetDeps, "log">,
+): void {
+  if (agentName !== "openclaw") return;
+  deps.log("  Retry the same inference set command to finish applying the model.");
+  throw new InferenceSetError(
+    `OpenClaw inference route synchronization did not complete for '${sandboxName}': ${detail}. ` +
+      `The native OpenClaw batch update applies all related values or none, but its completion was not confirmed. ` +
+      `Retry the same inference set command to converge it.`,
+  );
 }
 
 export function patchHermesInferenceConfig(
@@ -1479,8 +1500,8 @@ async function runInferenceSetWithoutHostLock(
         : `  Syncing OpenClaw model identity in sandbox '${sandboxName}'...`,
     );
     // In-sandbox config is the last, crash-prone layer (gateway + registry already consistent).
-    // OpenClaw keeps its existing degraded result on failure. Hermes finalizes the committed
-    // route and registry, then returns an error so automation cannot accept partial convergence.
+    // Both agents return an error after a failed sync so automation cannot accept partial
+    // convergence. OpenClaw retries the atomic native update; Hermes rebuilds its managed config.
     let inSandboxConfigSynced = false;
     try {
       if (agentName === "openclaw") {
@@ -1488,7 +1509,7 @@ async function runInferenceSetWithoutHostLock(
           sandboxName,
           config,
           patched.route,
-          deps.setOpenClawConfigValue,
+          deps.setOpenClawConfigValues,
         );
         inSandboxConfigSynced = true;
       } else {
@@ -1513,6 +1534,7 @@ async function runInferenceSetWithoutHostLock(
         `  Warning: gateway and registry now use ${provider} / ${model}, but writing the ` +
           `in-sandbox config failed: ${detail}`,
       );
+      failOpenClawInferenceConfigSync(agentName, sandboxName, detail, deps);
       deps.log(
         `  Run '${CLI_NAME} ${sandboxName} rebuild' to finish applying the model inside the sandbox.`,
       );

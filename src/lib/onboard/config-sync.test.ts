@@ -48,24 +48,10 @@ function runConfigSyncScript(
   homeDir: string,
   fakeUid: string,
   fakeOwnerUid = fakeUid,
-  options: { validationStatus?: number; expectedStatus?: number } = {},
 ) {
   const fakeBin = fs.mkdtempSync(path.join(homeDir, "bin-"));
-  const nativeLog = path.join(fakeBin, "native.log");
   writeFakeCommand(fakeBin, "id", fakeUid, String(process.getgid?.() ?? 0));
   writeFakeCommand(fakeBin, "stat", fakeOwnerUid);
-  fs.writeFileSync(
-    path.join(fakeBin, "openclaw"),
-    `#!/bin/sh
-printf '%s|%s|%s|%s\\n' "$*" "$OPENCLAW_STATE_DIR" "$OPENCLAW_CONFIG_PATH" "$HOME" >> ${shellQuote(nativeLog)}
-case "$*" in
-  'config validate') exit ${options.validationStatus ?? 0} ;;
-  'setup --baseline') printf '\\n' >> "$OPENCLAW_CONFIG_PATH" ;;
-  *) exit 99 ;;
-esac
-`,
-    { mode: 0o755 },
-  );
   const testScript = script
     .replace(
       'nemoclaw_dir="/sandbox/.nemoclaw"',
@@ -74,21 +60,14 @@ esac
     .replace(
       "config_dir=/sandbox/.openclaw",
       `config_dir=${shellQuote(path.join(homeDir, ".openclaw"))}`,
-    )
-    .replace("HOME=/sandbox", `HOME=${shellQuote(homeDir)}`)
-    .replaceAll("/usr/local/bin/openclaw", shellQuote(path.join(fakeBin, "openclaw")));
+    );
   const result = spawnSync("bash", ["-c", testScript], {
     cwd: homeDir,
     env: { ...process.env, HOME: homeDir, PATH: `${fakeBin}:${process.env.PATH || ""}` },
     encoding: "utf8",
   });
-  expect(result.status, result.stderr || result.stdout).toBe(options.expectedStatus ?? 0);
-  return {
-    result,
-    nativeCalls: fs.existsSync(nativeLog)
-      ? fs.readFileSync(nativeLog, "utf8").trim().split("\n")
-      : [],
-  };
+  expect(result.status, result.stderr || result.stdout).toBe(0);
+  return result;
 }
 
 function modeBits(file: string): number {
@@ -185,7 +164,7 @@ describe("sandbox config sync helpers", () => {
     );
   });
 
-  itUnix("writes selection and validates native state without changing its modes", () => {
+  itUnix("writes selection without inspecting native OpenClaw state", () => {
     const homeDir = createConfigSyncHome();
     const nemoclawDir = path.join(homeDir, ".nemoclaw");
     const openclawDir = path.join(homeDir, ".openclaw");
@@ -205,8 +184,9 @@ describe("sandbox config sync helpers", () => {
     };
     fs.writeFileSync(openclawConfig, JSON.stringify(existingConfig), { mode: 0o640 });
     const script = buildSandboxConfigSyncScript(selection);
+    expect(script).not.toContain("openclaw config validate");
 
-    const { nativeCalls } = runConfigSyncScript(script, homeDir, String(process.getuid?.()));
+    runConfigSyncScript(script, homeDir, String(process.getuid?.()));
 
     expect(JSON.parse(fs.readFileSync(path.join(nemoclawDir, "config.json"), "utf8"))).toEqual(
       selection,
@@ -214,7 +194,6 @@ describe("sandbox config sync helpers", () => {
     expect(modeBits(nemoclawDir)).toBe(0o700);
     expect(modeBits(path.join(nemoclawDir, "config.json"))).toBe(0o600);
     expect(JSON.parse(fs.readFileSync(openclawConfig, "utf8"))).toEqual(existingConfig);
-    expect(nativeCalls).toEqual([`config validate|${openclawDir}|${openclawConfig}|${homeDir}`]);
     expect(modeBits(openclawDir)).toBe(0o750);
     expect(modeBits(nestedOpenclawDir)).toBe(0o750);
     expect(modeBits(openclawConfig)).toBe(0o640);
@@ -226,12 +205,11 @@ describe("sandbox config sync helpers", () => {
     fs.mkdirSync(openclawDir, { mode: 0o700 });
     const script = buildSandboxConfigSyncScript(selection, true);
 
-    const { nativeCalls } = runConfigSyncScript(script, homeDir, String(process.getuid?.()));
+    runConfigSyncScript(script, homeDir, String(process.getuid?.()));
 
     expect(
       JSON.parse(fs.readFileSync(path.join(homeDir, ".nemoclaw", "config.json"), "utf8")),
     ).toEqual(selection);
-    expect(nativeCalls).toEqual([]);
     expect(modeBits(path.join(openclawDir, "agents", "main", "sessions"))).toBe(0o700);
   });
 
@@ -245,10 +223,7 @@ describe("sandbox config sync helpers", () => {
     fs.writeFileSync(hashFile, "retained hash\n", { mode: 0o640 });
     const modesBefore = [configDir, configFile, hashFile].map(modeBits);
     const runConnectScript = vi.fn(async (_name: string, script: string) => {
-      const { nativeCalls } = runConfigSyncScript(script, homeDir, "1234", "1234", {
-        validationStatus: 127,
-      });
-      expect(nativeCalls).toEqual([]);
+      runConfigSyncScript(script, homeDir, "1234", "1234");
     });
 
     await runSandboxConfigSync("hermes-reuse", {
@@ -283,7 +258,7 @@ describe("sandbox config sync helpers", () => {
     ).toEqual(anthropicSelection);
   });
 
-  itUnix("leaves an invalid native configuration unchanged", () => {
+  itUnix("syncs selection without reading invalid native OpenClaw configuration", () => {
     const homeDir = createConfigSyncHome();
     const configDir = path.join(homeDir, ".openclaw");
     const configFile = path.join(configDir, "openclaw.json");
@@ -291,14 +266,10 @@ describe("sandbox config sync helpers", () => {
     fs.mkdirSync(configDir);
     fs.writeFileSync(configFile, config);
     const script = buildSandboxConfigSyncScript(selection);
-    const { nativeCalls } = runConfigSyncScript(
-      script,
-      homeDir,
-      String(process.getuid?.()),
-      undefined,
-      { validationStatus: 1, expectedStatus: 1 },
-    );
-    expect(nativeCalls.map((call) => call.split("|")[0])).toEqual(["config validate"]);
+    runConfigSyncScript(script, homeDir, String(process.getuid?.()));
+    expect(
+      JSON.parse(fs.readFileSync(path.join(homeDir, ".nemoclaw", "config.json"), "utf8")),
+    ).toEqual(selection);
     expect(fs.readFileSync(configFile, "utf8")).toBe(config);
   });
 

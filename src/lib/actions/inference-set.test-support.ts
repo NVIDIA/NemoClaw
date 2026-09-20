@@ -184,7 +184,7 @@ export function createDeps(options: {
 }): InferenceSetDeps & {
   calls: {
     captureOpenshell: ReturnType<typeof vi.fn>;
-    setOpenClawConfigValue: ReturnType<typeof vi.fn>;
+    setOpenClawConfigValues: ReturnType<typeof vi.fn>;
     writeSandboxConfig: ReturnType<typeof vi.fn>;
     recomputeSandboxConfigHash: ReturnType<typeof vi.fn>;
     seedHermesDashboardConfig: ReturnType<typeof vi.fn>;
@@ -222,7 +222,7 @@ export function createDeps(options: {
       options.captureOpenshell ??
         ((args: string[]) => defaultCaptureOpenshell(args, options.openshellStatus ?? 0)),
     ),
-    setOpenClawConfigValue: vi.fn(),
+    setOpenClawConfigValues: vi.fn(),
     writeSandboxConfig: vi.fn(),
     recomputeSandboxConfigHash: vi.fn(),
     seedHermesDashboardConfig: vi.fn(() => options.seedHermesDashboardConfigResult ?? "converged"),
@@ -309,7 +309,7 @@ export function createDeps(options: {
     updateSession: calls.updateSession,
     resolveAgentConfig: () => options.target ?? OPENCLAW_TARGET,
     readSandboxConfig: calls.readSandboxConfig,
-    setOpenClawConfigValue: calls.setOpenClawConfigValue,
+    setOpenClawConfigValues: calls.setOpenClawConfigValues,
     writeSandboxConfig: calls.writeSandboxConfig,
     recomputeSandboxConfigHash: calls.recomputeSandboxConfigHash,
     seedHermesDashboardConfig: calls.seedHermesDashboardConfig,

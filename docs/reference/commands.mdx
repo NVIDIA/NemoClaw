@@ -3460,7 +3460,9 @@ Pass both `--provider` and `--model` when you want NemoClaw to update the OpenSh
 
 <AgentOnly variant="openclaw">
 
-If the in-sandbox config sync fails, NemoClaw keeps the gateway and registry aligned, warns that the running image may still need a rebuild, and points you to `$$nemoclaw <name> rebuild`.
+If NemoClaw cannot confirm the native OpenClaw config batch, the OpenShell route and registry remain committed, but `inference set` exits with status `1`.
+Rerun the same `inference set` command to converge the config.
+A rebuild restores the previous native `openclaw.json`, so it does not repair this failure.
 
 </AgentOnly>
 

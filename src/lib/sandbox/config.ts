@@ -618,6 +618,33 @@ function buildOpenClawNativeConfigSetInvocation(
   };
 }
 
+export interface OpenClawConfigUpdate {
+  dotpath: string;
+  value: ConfigValue;
+}
+
+function buildOpenClawNativeConfigBatchInvocation(
+  sandboxName: string,
+  updates: readonly OpenClawConfigUpdate[],
+): { args: string[]; input: string } {
+  return {
+    args: [
+      "sandbox",
+      "exec",
+      "--name",
+      sandboxName,
+      "--env",
+      "HOME=/sandbox",
+      "--",
+      "sh",
+      "-c",
+      'value=$(cat) || exit $?; exec openclaw config set --batch-json "$value"',
+      "nemoclaw-openclaw-config-set-batch",
+    ],
+    input: JSON.stringify(updates.map(({ dotpath, value }) => ({ path: dotpath, value }))),
+  };
+}
+
 function setOpenClawConfigValue(sandboxName: string, dotpath: string, value: ConfigValue): void {
   validateName(sandboxName, "sandbox name");
   const validation = validateConfigDotpath(dotpath);
@@ -625,6 +652,35 @@ function setOpenClawConfigValue(sandboxName: string, dotpath: string, value: Con
     throw new Error(`Invalid OpenClaw config key '${dotpath}': ${validation.reason}.`);
   }
   const invocation = buildOpenClawNativeConfigSetInvocation(sandboxName, dotpath, value);
+  const result = runOpenshellCommand(getOpenshellBinary(), invocation.args, {
+    ignoreError: true,
+    input: invocation.input,
+    maxBuffer: CONFIG_CAPTURE_MAX_BUFFER,
+    stdio: ["pipe", "pipe", "pipe"],
+    timeout: OPENSHELL_OPERATION_TIMEOUT_MS,
+  });
+  if (!result.error && !result.signal && result.status === 0) return;
+  const detail = redactFull(
+    result.error?.message || String(result.stderr ?? "").trim() || "command failed",
+  );
+  throw new Error(`Native OpenClaw config command failed: ${detail}`);
+}
+
+function setOpenClawConfigValues(
+  sandboxName: string,
+  updates: readonly OpenClawConfigUpdate[],
+): void {
+  validateName(sandboxName, "sandbox name");
+  if (updates.length === 0) {
+    throw new Error("Native OpenClaw config update requires at least one value.");
+  }
+  for (const { dotpath } of updates) {
+    const validation = validateConfigDotpath(dotpath);
+    if (!validation.ok) {
+      throw new Error(`Invalid OpenClaw config key '${dotpath}': ${validation.reason}.`);
+    }
+  }
+  const invocation = buildOpenClawNativeConfigBatchInvocation(sandboxName, updates);
   const result = runOpenshellCommand(getOpenshellBinary(), invocation.args, {
     ignoreError: true,
     input: invocation.input,
@@ -1434,6 +1490,7 @@ function confirmYesNo(question: string): Promise<boolean> {
 
 export {
   buildConfigSetRestartGuidance,
+  buildOpenClawNativeConfigBatchInvocation,
   buildOpenClawNativeConfigSetInvocation,
   buildRecomputeSandboxConfigHashScript,
   classifyNewKeyGate,
@@ -1460,6 +1517,7 @@ export {
   rewriteConfigUrlsWithDnsPinning,
   seedHermesDashboardConfig,
   setOpenClawConfigValue,
+  setOpenClawConfigValues,
   setDotpath,
   unsetOpenClawConfigValue,
   validateConfigDotpath,

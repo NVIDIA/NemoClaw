@@ -48,7 +48,7 @@ describe("runInferenceSet OpenClaw gateway restart", () => {
     );
     const restartOrder = deps.calls.restartSandboxGateway.mock.invocationCallOrder[0] ?? 0;
     const pairingOrder = deps.calls.settleOpenClawPairing.mock.invocationCallOrder[0] ?? 0;
-    expect(deps.calls.setOpenClawConfigValue.mock.invocationCallOrder[0]).toBeLessThan(
+    expect(deps.calls.setOpenClawConfigValues.mock.invocationCallOrder[0]).toBeLessThan(
       restartOrder,
     );
     expect(deps.calls.writeSandboxConfig).not.toHaveBeenCalled();
@@ -149,7 +149,7 @@ describe("runInferenceSet OpenClaw gateway restart", () => {
     );
     const restartOrder = deps.calls.restartSandboxGateway.mock.invocationCallOrder[0] ?? 0;
     const pairingOrder = deps.calls.settleOpenClawPairing.mock.invocationCallOrder[0] ?? 0;
-    expect(deps.calls.setOpenClawConfigValue.mock.invocationCallOrder[0]).toBeLessThan(
+    expect(deps.calls.setOpenClawConfigValues.mock.invocationCallOrder[0]).toBeLessThan(
       restartOrder,
     );
     expect(deps.calls.writeSandboxConfig).not.toHaveBeenCalled();
@@ -236,7 +236,7 @@ describe("runInferenceSet OpenClaw gateway restart", () => {
 
     expect(deps.calls.restartSandboxGateway).toHaveBeenCalledWith("alpha");
     expect(deps.calls.settleOpenClawPairing).not.toHaveBeenCalled();
-    expect(deps.calls.setOpenClawConfigValue).toHaveBeenCalled();
+    expect(deps.calls.setOpenClawConfigValues).toHaveBeenCalled();
     expect(deps.calls.writeSandboxConfig).not.toHaveBeenCalled();
     expect(deps.calls.recomputeSandboxConfigHash).not.toHaveBeenCalled();
     expect(deps.calls.updateSandbox.mock.calls.at(-1)).toEqual([
@@ -295,7 +295,7 @@ describe("runInferenceSet OpenClaw gateway restart", () => {
 
     expect(deps.calls.restartSandboxGateway).toHaveBeenCalledOnce();
     expect(deps.calls.settleOpenClawPairing).toHaveBeenCalledOnce();
-    expect(deps.calls.setOpenClawConfigValue).toHaveBeenCalled();
+    expect(deps.calls.setOpenClawConfigValues).toHaveBeenCalled();
     expect(deps.calls.writeSandboxConfig).not.toHaveBeenCalled();
     expect(deps.calls.recomputeSandboxConfigHash).not.toHaveBeenCalled();
     expect(deps.calls.updateSandbox.mock.calls.at(-1)).toEqual([

@@ -155,12 +155,12 @@ const expectConfigured: Record<Agent, (config: any) => void> = {
 type InferenceSetCalls = ReturnType<typeof createDeps>["calls"];
 const expectCommitted: Record<Agent, (calls: InferenceSetCalls) => void> = {
   openclaw(calls) {
-    expect(calls.setOpenClawConfigValue).toHaveBeenCalled();
+    expect(calls.setOpenClawConfigValues).toHaveBeenCalled();
     expect(calls.writeSandboxConfig).not.toHaveBeenCalled();
     expect(calls.recomputeSandboxConfigHash).not.toHaveBeenCalled();
   },
   hermes(calls) {
-    expect(calls.setOpenClawConfigValue).not.toHaveBeenCalled();
+    expect(calls.setOpenClawConfigValues).not.toHaveBeenCalled();
     expect(calls.writeSandboxConfig).toHaveBeenCalled();
     expect(calls.recomputeSandboxConfigHash).toHaveBeenCalled();
   },

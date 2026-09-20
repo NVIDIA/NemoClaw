@@ -72,10 +72,20 @@ A missing dashboard profile is treated as disabled and does not fail the switch.
 
 </AgentOnly>
 
-<AgentOnly variant="openclaw,hermes">
+<AgentOnly variant="openclaw">
+
+If NemoClaw cannot confirm the native OpenClaw config batch, the OpenShell route and host registry remain committed, but `inference set` exits nonzero.
+Rerun the same `inference set` command to converge the config.
+A rebuild restores the previous native `openclaw.json`, so it does not repair this failure.
+
+</AgentOnly>
+<AgentOnly variant="hermes">
 
 If the in-sandbox configuration sync fails after the gateway route changes, NemoClaw keeps the gateway and host registry aligned and prints a rebuild hint.
 Run the rebuild before relying on the running agent.
+
+</AgentOnly>
+<AgentOnly variant="openclaw,hermes">
 
 Use `--no-verify` only when OpenShell cannot verify the target provider at switch time and you have already confirmed its provider and credential.
 This flag does not bypass shared-gateway compatibility checks.

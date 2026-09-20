@@ -48,10 +48,9 @@ export function createNemoClawConfigSync(deps: NemoClawConfigSyncDeps) {
   };
 }
 
-// Write `~/.nemoclaw/config.json` inside the sandbox and, for OpenClaw,
-// initialize managed-profile session state or validate its native configuration.
-// Also replace the historical zero-byte placeholder that crashes the OpenClaw
-// nemoclaw plugin's loadOnboardConfig. Fixes #3999.
+// Write `~/.nemoclaw/config.json` inside the sandbox and initialize managed-profile
+// session state when needed. Also replace the historical zero-byte placeholder
+// that crashes the OpenClaw nemoclaw plugin's loadOnboardConfig. Fixes #3999.
 export async function runSandboxConfigSync(
   sandboxName: string,
   deps: RunSandboxConfigSyncDeps,
@@ -86,8 +85,8 @@ chmod 600 "$nemoclaw_config"
 `.trim();
   // Retained Hermes sandboxes can contain an unrelated .openclaw directory.
   if (selectionConfig.agent === "hermes") return writeSelection;
-  if (managedProfileApplied) {
-    return `${writeSelection}
+  if (!managedProfileApplied) return writeSelection;
+  return `${writeSelection}
 config_dir=/sandbox/.openclaw
 if [ -d "$config_dir" ]; then
   current_uid="$(id -u)"
@@ -107,20 +106,4 @@ if [ -d "$config_dir" ]; then
   chmod 700 "$config_dir/agents" "$config_dir/agents/main" "$config_dir/agents/main/sessions"
 fi
 exit`;
-  }
-  // Managed startup has already created OpenClaw's initial native configuration before its
-  // gateway becomes reachable. Re-running native setup here can rewrite live
-  // state and terminate the sandbox while onboarding is connected.
-  return `${writeSelection}
-config_dir=/sandbox/.openclaw
-if [ -d "$config_dir" ]; then
-  if [ -L "$config_dir" ] || [ -L "$config_dir/openclaw.json" ]; then
-    echo "Refusing OpenClaw state initialization through a symlink" >&2
-    exit 1
-  fi
-  export HOME=/sandbox OPENCLAW_STATE_DIR="$config_dir" OPENCLAW_CONFIG_PATH="$config_dir/openclaw.json"
-  /usr/local/bin/openclaw config validate
-fi
-exit
-`.trim();
 }

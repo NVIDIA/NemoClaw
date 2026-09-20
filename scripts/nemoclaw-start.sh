@@ -1785,7 +1785,9 @@ NODETOKEN
 }
 
 ensure_gateway_token_if_missing() {
-  if [ -n "$(_read_gateway_token)" ]; then
+  local token
+  token="$(_read_gateway_token)"
+  if [ -n "$token" ] && [ "$token" != "[STRIPPED_BY_MIGRATION]" ]; then
     return 0
   fi
 

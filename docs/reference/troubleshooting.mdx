@@ -2180,9 +2180,12 @@ This is expected behavior. OpenClaw 2026.9.1 retired the device-auth bypass. Nem
 
 Complete the normal pairing flow for each browser or CLI device. For the security model, refer to [Gateway Authentication Controls](../security/gateway-authentication-controls).
 
-### `openclaw.json` is empty after changing inference
+### OpenClaw Config Is Empty After Legacy or Manual Damage
 
-Some runtime inference changes can leave `/sandbox/.openclaw/openclaw.json` empty if the write fails partway through. When that happens, OpenClaw commands may report that the config is empty instead of showing a raw JSON parse error.
+A legacy non-atomic inference write or an interrupted manual edit can leave `/sandbox/.openclaw/openclaw.json` empty.
+Current `inference set` writes use an atomic native OpenClaw batch that applies all related values or none.
+If NemoClaw cannot confirm the batch, rerun the same `inference set` command instead of using this recovery procedure.
+When the file is empty, OpenClaw commands may report that the config is empty instead of showing a raw JSON parse error.
 
 NemoClaw treats `openclaw.json` as ordinary OpenClaw-owned state.
 It does not maintain a hash, seal, last-good copy, recovery anchor, baseline, or config guard that can replace or reject the file during startup.

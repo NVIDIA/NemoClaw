@@ -5,11 +5,16 @@ import { describe, expect, it } from "vitest";
 import YAML from "yaml";
 
 const {
+  buildOpenClawNativeConfigBatchInvocation,
   buildOpenClawNativeConfigSetInvocation,
   composeSandboxConfigBody,
   hermesConfigAllowsPrivateUrls,
   writeSandboxConfig,
 } = require("./config") as {
+  buildOpenClawNativeConfigBatchInvocation: (
+    sandboxName: string,
+    updates: Array<{ dotpath: string; value: unknown }>,
+  ) => { args: string[]; input: string };
   buildOpenClawNativeConfigSetInvocation: (
     sandboxName: string,
     dotpath: string,
@@ -104,6 +109,26 @@ describe("composeSandboxConfigBody", () => {
     expect(invocation.args.join(" ")).not.toContain("sandbox-only-secret");
     expect(invocation.args).toContain("models.providers.inference");
     expect(invocation.input).toContain("sandbox-only-secret");
+  });
+
+  it("sends related native OpenClaw config changes as one batch transaction", () => {
+    const invocation = buildOpenClawNativeConfigBatchInvocation("alpha", [
+      { dotpath: "agents.defaults.model.primary", value: "inference/model-a" },
+      {
+        dotpath: "models.providers.inference",
+        value: { apiKey: "sandbox-only-secret", models: [{ id: "model-a" }] },
+      },
+    ]);
+
+    expect(invocation.args.join(" ")).toContain("openclaw config set --batch-json");
+    expect(invocation.args.join(" ")).not.toContain("sandbox-only-secret");
+    expect(JSON.parse(invocation.input)).toEqual([
+      { path: "agents.defaults.model.primary", value: "inference/model-a" },
+      {
+        path: "models.providers.inference",
+        value: { apiKey: "sandbox-only-secret", models: [{ id: "model-a" }] },
+      },
+    ]);
   });
 
   it("does not prepend the header when the Hermes target writes JSON", () => {

@@ -54,7 +54,7 @@ describe("runInferenceSet degraded state handling", () => {
     expect(deps.calls.restartSandboxGateway).not.toHaveBeenCalled();
   });
 
-  it("keeps gateway and registry consistent when the in-sandbox config write fails (#3726)", async () => {
+  it("fails without restarting when the native OpenClaw batch update does not complete (#3726)", async () => {
     const config: ConfigObject = {
       agents: { defaults: { model: { primary: "inference/moonshotai/kimi-k2.6" } } },
       models: {
@@ -67,14 +67,16 @@ describe("runInferenceSet degraded state handling", () => {
       },
     };
     const deps = createDeps({ config, session: baseSession() });
-    deps.calls.setOpenClawConfigValue.mockImplementation(() => {
+    deps.calls.setOpenClawConfigValues.mockImplementation(() => {
       throw new Error("sandbox exec crashed");
     });
 
-    const result = await runInferenceSet(
-      { provider: "anthropic-prod", model: "claude-sonnet-4-6", noVerify: true },
-      deps,
-    );
+    await expect(
+      runInferenceSet(
+        { provider: "anthropic-prod", model: "claude-sonnet-4-6", noVerify: true },
+        deps,
+      ),
+    ).rejects.toThrow(/native OpenClaw batch update applies all related values or none/);
 
     // Registry still updated despite the in-sandbox sync throwing (no stale registry → no revert).
     expect(deps.calls.updateSandbox).toHaveBeenCalledWith(
@@ -85,15 +87,10 @@ describe("runInferenceSet degraded state handling", () => {
       }),
     );
     expect(deps.calls.recomputeSandboxConfigHash).not.toHaveBeenCalled();
-    expect(result).toMatchObject({
-      provider: "anthropic-prod",
-      model: "claude-sonnet-4-6",
-      inSandboxConfigSynced: false,
-    });
-    // Warned + pointed at rebuild, and never falsely reports "synced".
+    // Reports the committed outer state and recovery without claiming convergence.
     const logged = deps.calls.log.mock.calls.map((args) => String(args[0])).join("\n");
     expect(logged).toMatch(/in-sandbox config failed/);
-    expect(logged).toMatch(/rebuild/);
+    expect(logged).toMatch(/Retry the same inference set command/);
     expect(logged).not.toMatch(/Inference route synced/);
     expect(deps.calls.restartSandboxGateway).not.toHaveBeenCalled();
   });
@@ -156,12 +153,13 @@ describe("runInferenceSet degraded state handling", () => {
         providers.inference = structuredClone(value) as ConfigObject;
       },
     };
-    deps.calls.setOpenClawConfigValue
+    deps.calls.setOpenClawConfigValues
       .mockImplementationOnce(() => {
         throw new Error("sandbox exec crashed");
       })
-      .mockImplementation((_name, dotpath, value) => {
-        persistNativeValue[dotpath]?.(value);
+      .mockImplementation((_name, updates) => {
+        const providerUpdate = updates.at(-1)!;
+        persistNativeValue[providerUpdate.dotpath]?.(providerUpdate.value);
       });
 
     const options = {
@@ -173,9 +171,9 @@ describe("runInferenceSet degraded state handling", () => {
       noVerify: true,
     };
 
-    await expect(runInferenceSet(options, deps)).resolves.toMatchObject({
-      inSandboxConfigSynced: false,
-    });
+    await expect(runInferenceSet(options, deps)).rejects.toThrow(
+      /native OpenClaw batch update applies all related values or none/,
+    );
     expect(persistedConfig.models).toMatchObject({
       providers: {
         inference: {
