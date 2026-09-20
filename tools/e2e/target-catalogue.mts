@@ -921,6 +921,8 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     exposeCliBin: true,
     owningPaths: [
       "nemoclaw-blueprint/router/pool-config.yaml",
+      "src/lib/onboard/model-router-process.ts",
+      "src/lib/onboard/model-router.ts",
       "test/e2e/live/model-router-provider-routed-inference-helpers.ts",
     ],
     environment: { OPENSHELL_GATEWAY: "nemoclaw" },
