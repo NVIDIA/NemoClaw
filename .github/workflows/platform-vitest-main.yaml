@@ -423,10 +423,6 @@ jobs:
           if ! id -u sandbox >/dev/null 2>&1; then
             useradd --system --gid sandbox --home-dir /sandbox --shell /bin/bash sandbox
           fi
-          install -d -o root -g root -m 0755 /usr/local/lib/nemoclaw
-          install -o root -g root -m 0644 \
-            scripts/lib/normalize_mutable_config_perms.py \
-            /usr/local/lib/nemoclaw/normalize_mutable_config_perms.py
           npx vitest run --project integration \
             test/agents/hermes/hermes-restart-config-seal-recovery.test.ts \
             -t 'keeps the locked Hermes entry sticky-protected|lets a sandbox-group peer create state'
