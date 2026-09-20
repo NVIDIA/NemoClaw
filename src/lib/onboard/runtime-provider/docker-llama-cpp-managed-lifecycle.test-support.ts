@@ -4,6 +4,7 @@
 import { createHash } from "node:crypto";
 
 import { LLAMA_CPP_PORT } from "../../inference/llama-cpp/contract";
+import type { LlamaCppGgufCachePlan } from "../../inference/llama-cpp/gguf-cache-plan";
 import type { LlamaCppHostLocalLaunchContract } from "../../inference/llama-cpp/host-local-runtime";
 
 export const MODEL_DIGEST = `sha256:${"a".repeat(64)}`;
@@ -16,6 +17,33 @@ export const RECEIPT_TARGET_SHA256 = "8".repeat(64);
 export const MODEL_CONTENT = Buffer.alloc(64, 0x61);
 export const MODEL_FILENAME = "Nemotron-3-Nano-30B-A3B-UD-Q4_K_XL.gguf";
 export const REVISION = "f".repeat(40);
+
+export function plan(): LlamaCppGgufCachePlan {
+  const payload = {
+    schemaVersion: 1 as const,
+    recipeId: "llama-cpp.nemotron.spark.v1",
+    acquisition: {
+      ref: "hugging-face-exact-file/v1" as const,
+      downloaderImage: `nvcr.io/nvidia/vllm@sha256:${"d".repeat(64)}`,
+      url: `https://huggingface.co/example/model/resolve/${REVISION}/${MODEL_FILENAME}`,
+      authentication: { mode: "optional" as const, environment: "HF_TOKEN" as const },
+      source: {
+        repository: "example/model",
+        revision: REVISION,
+        file: { path: MODEL_FILENAME, digest: MODEL_DIGEST, sizeBytes: MODEL_CONTENT.length },
+      },
+    },
+    cache: {
+      ref: "hugging-face-shared-cache/v1" as const,
+      root: "user-cache" as const,
+      key: "sha256-model",
+      reuse: "verify-exact-file" as const,
+      sharing: "host-user" as const,
+      cleanup: "preserve" as const,
+    },
+  };
+  return { ...payload, planDigest: digest(payload) };
+}
 
 function canonical(value: unknown): unknown {
   return Array.isArray(value)

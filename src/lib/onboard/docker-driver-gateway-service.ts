@@ -7,8 +7,8 @@ import os from "node:os";
 import path from "node:path";
 
 import { sleepSeconds, waitUntilAsync } from "../core/wait";
-import { isGatewayHealthy } from "../state/gateway";
 import { envInt } from "./env";
+import type { GatewayRecoveryOutput } from "./gateway-recovery";
 import {
   createGatewayHealthWaitOptions,
   formatGatewayHealthWaitLimit,
@@ -17,6 +17,7 @@ import { isDockerDriverGatewayHttpReady } from "./gateway-http-readiness";
 import {
   getBlueprintMaxOpenshellVersion,
   getBlueprintMinOpenshellVersion,
+  isOpenshellDevVersion,
   shouldAllowOpenshellAboveBlueprintMax,
   versionGte,
 } from "./openshell-version";
@@ -26,7 +27,7 @@ export const NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE = "nemoclaw-openshell-gatew
 export const OPENSHELL_GATEWAY_HOMEBREW_SERVICE = "openshell";
 export const OPENSHELL_GATEWAY_HOMEBREW_TAP = "nvidia/openshell";
 export const OPENSHELL_GATEWAY_HOMEBREW_FORMULA_SHA256 =
-  "f0f86519e227b3b326431410058ba690b1a7b83e5af7384014e4b96283d3a642";
+  "cf00a9441589702ffe006720fd6a9dffc0f0745b337036aad26dc53eb94c1558";
 export const NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE_MARKER =
   "NEMOCLAW_MANAGED_OPENSHELL_GATEWAY=1";
 export const NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE_MARKER_LINE = `# ${NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE_MARKER}`;
@@ -127,13 +128,14 @@ export interface PackageManagedDockerDriverGatewayOptions {
   hasOpenShellGatewayUserService?: () => boolean;
   healthPollCount?: number;
   healthPollInterval?: number;
-  isDockerDriverGatewayReady?: () => Promise<boolean>;
+  isDockerDriverGatewayReady?: () => boolean | Promise<boolean>;
   managedServiceLogCommand?: string;
   now?: () => number;
+  output?: Pick<GatewayRecoveryOutput, "error" | "log" | "warn">;
   prepareOpenShellGatewayUserServiceEnv?: () => void;
   preparePortForOpenShellGatewayUserServiceStart?: () => void;
-  registerDockerDriverGatewayEndpoint: () => boolean;
-  runCaptureOpenshell: (args: string[], opts?: { ignoreError?: boolean }) => string;
+  registerDockerDriverGatewayEndpoint: () => boolean | Promise<boolean>;
+  observer: import("../adapters/openshell/gateway-reuse").OpenShellGatewayReuseObserver;
   skipSandboxBridgeReachability: boolean;
   sleepSeconds?: (seconds: number) => void;
   startOpenShellGatewayUserService?: (
@@ -146,8 +148,11 @@ export interface PackageManagedDockerDriverGatewayOptions {
   validatePortOwnerForOpenShellGatewayUserServiceStart?: () => void;
   verifySandboxBridgeGatewayReachableOrExit: (
     exitOnFailure: boolean,
-    options?: { skip?: boolean },
-  ) => Promise<void>;
+    options?: {
+      output?: Pick<GatewayRecoveryOutput, "error" | "log" | "warn">;
+      skip?: boolean;
+    },
+  ) => void | Promise<void>;
 }
 
 interface OpenShellGatewayUserServiceTarget {
@@ -275,6 +280,16 @@ export function checkUpstreamGatewayVersion(
       message:
         `  NemoClaw could not determine the package-managed OpenShell gateway version at ${binaryPath}. ` +
         "Restore the OpenShell package, then retry.",
+    };
+  }
+  if (isOpenshellDevVersion(versionOutput)) {
+    return {
+      supported: false,
+      binaryPath,
+      version,
+      message:
+        `  Refusing the system OpenShell gateway service: ${binaryPath} is a development build. ` +
+        "Install exact stable OpenShell 0.0.116 before retrying NemoClaw.",
     };
   }
   const bounds = (opts.getUpstreamGatewayVersionBounds ?? defaultUpstreamGatewayVersionBounds)();
@@ -435,9 +450,15 @@ function runSystemctlUser(
   args: string[],
   opts: Required<Pick<OpenShellGatewayUserServiceOptions, "env" | "spawnSyncImpl">>,
 ) {
+  const env: NodeJS.ProcessEnv = { ...opts.env, LC_ALL: "C" };
+  if (typeof process.getuid === "function") {
+    const runtimeDir = env.XDG_RUNTIME_DIR?.trim() || `/run/user/${String(process.getuid())}`;
+    env.XDG_RUNTIME_DIR = runtimeDir;
+    env.DBUS_SESSION_BUS_ADDRESS ||= `unix:path=${runtimeDir}/bus`;
+  }
   return runCommand("systemctl", ["--user", ...args], {
     ...opts,
-    env: { ...opts.env, LC_ALL: "C" },
+    env,
   });
 }
 
@@ -745,19 +766,9 @@ export function hasOpenShellGatewayUserService(
   return resolveOpenShellGatewayUserService(opts) !== null;
 }
 
-/**
- * Stop command for whichever service manager owns the gateway on this host, or
- * null when no managed service owns it and NemoClaw runs the gateway standalone.
- *
- * The resolver picks the upstream package unit, the NemoClaw unit, or the
- * Homebrew formula, so a caller that prints a stop command must ask for the
- * resolved name instead of deriving one from the platform (#8797).
- */
-export function getOpenShellGatewayServiceStopCommand(
-  opts: OpenShellGatewayUserServiceOptions = {},
-): string | null {
-  const service = resolveOpenShellGatewayUserService(opts);
-  if (!service) return null;
+function getOpenShellGatewayServiceStopCommandForTarget(
+  service: OpenShellGatewayUserServiceTarget,
+): string {
   const prefix = service.manager === "homebrew" ? "brew services stop" : "systemctl --user stop";
   return `${prefix} ${service.serviceName}`;
 }
@@ -988,6 +999,11 @@ export interface TrustedActiveOpenShellGatewayUserServiceIdentity {
   executablePath: string | null;
 }
 
+export interface TrustedActiveOpenShellGatewayUserServiceStopTarget extends TrustedActiveOpenShellGatewayUserServiceIdentity {
+  /** Stop command for the same service target that supplied this process identity. */
+  stopCommand: string;
+}
+
 const OPENSHELL_HOMEBREW_SERVICE_LABELS = [
   `sh.brew.${OPENSHELL_GATEWAY_HOMEBREW_SERVICE}`,
   `homebrew.mxcl.${OPENSHELL_GATEWAY_HOMEBREW_SERVICE}`,
@@ -1023,9 +1039,9 @@ function getActiveHomebrewGatewayServiceIdentity(
   return identities.length === 1 ? identities[0] : null;
 }
 
-export function getTrustedActiveOpenShellGatewayUserServiceIdentity(
+export function getTrustedActiveOpenShellGatewayUserServiceStopTarget(
   opts: OpenShellGatewayUserServiceOptions = {},
-): TrustedActiveOpenShellGatewayUserServiceIdentity | null {
+): TrustedActiveOpenShellGatewayUserServiceStopTarget | null {
   const platform = opts.platform ?? process.platform;
   if (platform !== "linux" && platform !== "darwin") return null;
   const env = opts.env ?? process.env;
@@ -1041,11 +1057,17 @@ export function getTrustedActiveOpenShellGatewayUserServiceIdentity(
   if (!service) return null;
   if (service.manager === "homebrew") {
     if (!commandExists("launchctl")) return null;
-    return getActiveHomebrewGatewayServiceIdentity(service, {
+    const identity = getActiveHomebrewGatewayServiceIdentity(service, {
       env,
       existsSync: opts.existsSync ?? fs.existsSync,
       spawnSyncImpl,
     });
+    return identity
+      ? {
+          ...identity,
+          stopCommand: getOpenShellGatewayServiceStopCommandForTarget(service),
+        }
+      : null;
   }
   if (!commandExists("systemctl")) return null;
   const result = runSystemctlUser(
@@ -1073,8 +1095,19 @@ export function getTrustedActiveOpenShellGatewayUserServiceIdentity(
   }
   const mainPid = Number(properties.MainPID);
   return Number.isSafeInteger(mainPid) && mainPid > 0
-    ? { pid: mainPid, executablePath: identity.execStartPath }
+    ? {
+        pid: mainPid,
+        executablePath: identity.execStartPath,
+        stopCommand: getOpenShellGatewayServiceStopCommandForTarget(service),
+      }
     : null;
+}
+
+export function getTrustedActiveOpenShellGatewayUserServiceIdentity(
+  opts: OpenShellGatewayUserServiceOptions = {},
+): TrustedActiveOpenShellGatewayUserServiceIdentity | null {
+  const target = getTrustedActiveOpenShellGatewayUserServiceStopTarget(opts);
+  return target ? { pid: target.pid, executablePath: target.executablePath } : null;
 }
 
 export function getTrustedActiveOpenShellGatewayUserServicePid(
@@ -1388,10 +1421,11 @@ export async function startPackageManagedDockerDriverGateway({
   isDockerDriverGatewayReady = isDockerDriverGatewayHttpReady,
   managedServiceLogCommand,
   now = Date.now,
+  output,
   prepareOpenShellGatewayUserServiceEnv,
   preparePortForOpenShellGatewayUserServiceStart,
   registerDockerDriverGatewayEndpoint,
-  runCaptureOpenshell,
+  observer,
   skipSandboxBridgeReachability,
   sleepSeconds: sleepSecondsImpl = sleepSeconds,
   startOpenShellGatewayUserService: startService = startOpenShellGatewayUserService,
@@ -1399,6 +1433,9 @@ export async function startPackageManagedDockerDriverGateway({
   validatePortOwnerForOpenShellGatewayUserServiceStart,
   verifySandboxBridgeGatewayReachableOrExit,
 }: PackageManagedDockerDriverGatewayOptions): Promise<boolean> {
+  const log = output?.log ?? console.log;
+  const warn = output?.warn ?? console.warn;
+  const printError = output?.error ?? console.error;
   const stopBeforeStandaloneFallback = () => {
     try {
       const stopped = stopService();
@@ -1414,7 +1451,7 @@ export async function startPackageManagedDockerDriverGateway({
       }
       if (stopped.attempted && !stopped.stopped) {
         const detail = stopped.reason ? ` (${stopped.reason})` : "";
-        console.warn(
+        warn(
           `  OpenShell gateway managed service could not be stopped${detail}; standalone startup will verify gateway port ownership.`,
         );
       }
@@ -1433,15 +1470,15 @@ export async function startPackageManagedDockerDriverGateway({
     if (!hasService()) return false;
   } catch (error) {
     if (error instanceof OpenShellGatewayServiceTrustError) throw error;
-    console.warn(
+    warn(
       `  OpenShell gateway managed service could not be inspected (${formatError(error)}); using standalone fallback.`,
     );
-    if (managedServiceLogCommand) console.warn(`  Logs: ${managedServiceLogCommand}`);
+    if (managedServiceLogCommand) warn(`  Logs: ${managedServiceLogCommand}`);
     stopBeforeStandaloneFallback();
     return false;
   }
 
-  console.log("  Starting OpenShell gateway via managed service...");
+  log("  Starting OpenShell gateway via managed service...");
   let serviceStart: OpenShellGatewayUserServiceStartResult;
   try {
     serviceStart = startService({
@@ -1456,26 +1493,26 @@ export async function startPackageManagedDockerDriverGateway({
     ) {
       throw error;
     }
-    console.warn(
+    warn(
       `  OpenShell gateway managed service startup failed (${formatError(error)}); using standalone fallback.`,
     );
-    if (managedServiceLogCommand) console.warn(`  Logs: ${managedServiceLogCommand}`);
+    if (managedServiceLogCommand) warn(`  Logs: ${managedServiceLogCommand}`);
     stopBeforeStandaloneFallback();
     return false;
   }
   const reportLogs = () => {
     const logCommand = serviceStart.logCommand ?? managedServiceLogCommand;
-    if (logCommand) console.warn(`  Logs: ${logCommand}`);
+    if (logCommand) warn(`  Logs: ${logCommand}`);
   };
   if (!serviceStart.started) {
     const detail = serviceStart.reason ? ` (${serviceStart.reason})` : "";
     if (serviceStart.standaloneFallbackBlocked || serviceStart.manager === "homebrew") {
       const message = `OpenShell gateway managed service failed to start${detail}.`;
-      console.error(`  ${message}`);
+      printError(`  ${message}`);
       if (exitOnFailure) process.exit(1);
       throw new Error(message);
     }
-    console.warn(
+    warn(
       `  OpenShell gateway managed service failed to start${detail}; using standalone fallback.`,
     );
     reportLogs();
@@ -1488,21 +1525,16 @@ export async function startPackageManagedDockerDriverGateway({
   const waitOptions = createGatewayHealthWaitOptions(pollCount, pollInterval, now, (ms) =>
     sleepSecondsImpl(ms / 1000),
   );
-  let lastReadiness = { cliHealthy: false, grpcHealthy: false, registered: false };
+  const registered = waitOptions !== null && (await registerDockerDriverGatewayEndpoint());
+  let lastReadiness = { cliHealthy: false, grpcHealthy: false, registered };
   const healthy =
+    registered &&
     waitOptions !== null &&
     (await waitUntilAsync(async () => {
-      const registered = registerDockerDriverGatewayEndpoint();
-      if (!registered) {
-        lastReadiness = { cliHealthy: false, grpcHealthy: false, registered };
-        return false;
-      }
-      const status = runCaptureOpenshell(["status"], { ignoreError: true });
-      const namedInfo = runCaptureOpenshell(["gateway", "info", "-g", gatewayName], {
-        ignoreError: true,
+      const observation = await observer.observeGatewayReuse({
+        target: { kind: "named", gatewayName },
       });
-      const currentInfo = runCaptureOpenshell(["gateway", "info"], { ignoreError: true });
-      const cliHealthy = isGatewayHealthy(status, namedInfo, currentInfo);
+      const cliHealthy = !observation.error && observation.healthy && observation.namedMetadata;
       const grpcHealthy = await isDockerDriverGatewayReady();
       lastReadiness = { cliHealthy, grpcHealthy, registered };
       return cliHealthy && grpcHealthy;
@@ -1510,9 +1542,10 @@ export async function startPackageManagedDockerDriverGateway({
   if (healthy) {
     clearDockerDriverGatewayRuntimeFiles();
     await verifySandboxBridgeGatewayReachableOrExit(exitOnFailure, {
+      ...(output ? { output } : {}),
       skip: skipSandboxBridgeReachability,
     });
-    console.log("  ✓ OpenShell gateway managed service is healthy");
+    log("  ✓ OpenShell gateway managed service is healthy");
     return true;
   }
 
@@ -1520,8 +1553,8 @@ export async function startPackageManagedDockerDriverGateway({
     pollCount,
     pollInterval,
   )}; using standalone fallback.`;
-  console.warn(`  ${message}`);
-  console.warn(
+  warn(`  ${message}`);
+  warn(
     `  Last readiness check: endpoint registered=${lastReadiness.registered ? "yes" : "no"}, OpenShell CLI health=${lastReadiness.cliHealthy ? "yes" : "no"}, direct gRPC health=${lastReadiness.grpcHealthy ? "yes" : "no"}.`,
   );
   reportLogs();

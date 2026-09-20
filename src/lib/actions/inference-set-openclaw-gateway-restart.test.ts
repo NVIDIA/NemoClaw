@@ -7,7 +7,55 @@ import { runInferenceSet } from "./inference-set";
 import { baseSession, createDeps } from "./inference-set.test-support";
 
 describe("runInferenceSet OpenClaw gateway restart", () => {
-  it("supervisor-restarts OpenClaw after cross-family sync (#4504)", async () => {
+  it("supervisor-restarts OpenClaw after a same-family config sync (#4504)", async () => {
+    const config: ConfigObject = {
+      agents: { defaults: { model: { primary: "inference/nvidia/model-a" } } },
+      models: {
+        mode: "merge",
+        providers: {
+          inference: {
+            baseUrl: "https://inference.local/v1",
+            apiKey: "unused",
+            api: "openai-completions",
+            headers: {
+              "X-NemoClaw-Upstream-Provider": "nvidia-prod",
+            },
+            models: [{ id: "nvidia/model-a", name: "inference/nvidia/model-a" }],
+          },
+        },
+      },
+    };
+    const deps = createDeps({
+      config,
+      entry: { name: "alpha", agent: "openclaw", provider: "nvidia-prod", model: "nvidia/model-a" },
+      session: baseSession({ provider: "nvidia-prod", model: "nvidia/model-a" }),
+    });
+
+    const result = await runInferenceSet(
+      { provider: "nvidia-prod", model: "nvidia/model-b", noVerify: true },
+      deps,
+    );
+
+    expect(result).toMatchObject({
+      configChanged: true,
+      inSandboxConfigSynced: true,
+      primaryModelRef: "inference/nvidia/model-b",
+    });
+    expect(deps.calls.restartSandboxGateway).toHaveBeenCalledOnce();
+    expect(deps.calls.restartSandboxGateway).toHaveBeenCalledWith("alpha");
+    expect(deps.calls.log).toHaveBeenCalledWith(
+      "  Restarting the OpenClaw gateway in 'alpha' to apply the updated inference configuration...",
+    );
+    const restartOrder = deps.calls.restartSandboxGateway.mock.invocationCallOrder[0] ?? 0;
+    const pairingOrder = deps.calls.settleOpenClawPairing.mock.invocationCallOrder[0] ?? 0;
+    expect(deps.calls.writeSandboxConfig.mock.invocationCallOrder[0]).toBeLessThan(restartOrder);
+    expect(deps.calls.recomputeSandboxConfigHash.mock.invocationCallOrder[0]).toBeLessThan(
+      restartOrder,
+    );
+    expect(restartOrder).toBeLessThan(pairingOrder);
+  });
+
+  it("supervisor-restarts OpenClaw after a changed config sync (#4504)", async () => {
     const config: ConfigObject = {
       agents: { defaults: { model: { primary: "openai/nvidia/model-a" } } },
       models: {

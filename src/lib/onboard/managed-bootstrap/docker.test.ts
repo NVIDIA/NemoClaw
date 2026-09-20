@@ -16,7 +16,6 @@ import {
 } from "./docker-spec";
 import {
   authority,
-  completion,
   durablePreparation,
   fixture as createFixture,
   heldArgv,
@@ -364,11 +363,31 @@ describe("Docker managed bootstrap adapter", () => {
         "journal:create",
         "journal:cutover",
         "journal:completion",
+        "journal:bootstrap-complete",
+        "journal:openshell-handoff-complete",
         "journal:remove",
         "journal:shared-state-committed",
       ],
       sharedState: "pending",
     });
+    fake.deps.runOpenshell = vi
+      .fn()
+      .mockReturnValueOnce({ status: 0 })
+      .mockReturnValueOnce({ status: 0 })
+      .mockReturnValueOnce({ status: 0 })
+      .mockImplementationOnce(() => {
+        expect(fake.journal?.phase).toBe("openshell-handoff-complete");
+        expect(fake.original).toMatchObject({ Id: OLD_ID, State: { Running: false } });
+        expect(fake.replacement?.State?.Running).toBe(true);
+        return { status: 0 };
+      })
+      .mockImplementationOnce(() => {
+        expect(fake.journal?.phase).toBe("shared-state-committed");
+        expect(fake.original).toMatchObject({ Id: OLD_ID, State: { Running: false } });
+        expect(fake.replacement?.State?.Running).toBe(true);
+        return { status: 0 };
+      })
+      .mockReturnValue({ status: 0 });
     const adapter = createDockerManagedBootstrapAdapter(fake.deps);
     const { handle, request: rootRequest, snapshot } = authority();
     const prepared = await adapter.prepareBootstrapReplacement({
@@ -414,6 +433,7 @@ describe("Docker managed bootstrap adapter", () => {
       replacement,
       timeoutSecs: 1,
     });
+    expect(fake.journal?.phase).toBe("openshell-handoff-complete");
     const reorderedCommitReceipt = {
       completedAt: commitReceipt.completedAt,
       transactionPending: commitReceipt.transactionPending,
@@ -439,6 +459,7 @@ describe("Docker managed bootstrap adapter", () => {
     expect(fake.events.indexOf("journal:completion")).toBeGreaterThan(
       fake.events.indexOf(`start:${NEW_ID}`),
     );
+    expect(vi.mocked(fake.deps.runOpenshell!)).toHaveBeenCalledTimes(3);
     const finalized = await adapter.finalizeBootstrap({
       outcome: "commit",
       handle,
@@ -450,11 +471,21 @@ describe("Docker managed bootstrap adapter", () => {
     });
     expect(finalized).toMatchObject({ outcome: "committed" });
     expectEventBefore(fake.events, "journal:shared-state-committed", `rm:${OLD_ID}`);
+    expect(fake.events).not.toContain(`stop:${NEW_ID}`);
     expectEventBefore(fake.events, "finalization:committed", "journal:removed");
     expect(fake.journal).toBeNull();
     expect(fake.finalization).toMatchObject({ phase: "committed", commitReceipt });
     expect(fake.sharedState).toBe("none");
-    expect(fake.replacement?.Id).toBe(NEW_ID);
+    expect(fake.replacement).toMatchObject({ Id: NEW_ID, State: { Running: true } });
+    expect(vi.mocked(fake.deps.runOpenshell!).mock.calls.map(([args]) => args.slice(0, 2))).toEqual(
+      [
+        ["sandbox", "stop"],
+        ["sandbox", "start"],
+        ["sandbox", "exec"],
+        ["sandbox", "exec"],
+        ["sandbox", "exec"],
+      ],
+    );
 
     const eventCount = fake.events.length;
     await expect(
@@ -493,8 +524,72 @@ describe("Docker managed bootstrap adapter", () => {
     expect(fake.finalization).toMatchObject({ phase: "committed", commitReceipt });
   });
 
+  it("keeps committed recovery authority when the supervisor does not remain connected", async () => {
+    const fake = fixture({ sharedState: "pending" });
+    fake.deps.errorPhaseDebouncePolls = 1;
+    fake.deps.runCaptureOpenshell = vi.fn((args) =>
+      args[1] === "list" ? "alpha Error" : "Name: alpha\nID: sandbox-alpha\n",
+    );
+    fake.deps.runOpenshell = vi
+      .fn()
+      .mockReturnValueOnce({ status: 0 })
+      .mockReturnValueOnce({ status: 0 })
+      .mockReturnValueOnce({ status: 0 })
+      .mockReturnValueOnce({ status: 0 })
+      .mockReturnValueOnce({ status: 1, stderr: "injected readiness failure" })
+      .mockReturnValue({ status: 0 });
+    const adapter = createDockerManagedBootstrapAdapter(fake.deps);
+    const { handle, request, snapshot } = authority();
+    const prepared = await adapter.prepareBootstrapReplacement({
+      handle,
+      snapshot,
+      request,
+      replacementOptions: { values: {} },
+    });
+    const durable = durablePreparation(handle, snapshot, prepared);
+    const replacement = await adapter.activateBootstrapReplacement({
+      handle,
+      snapshot,
+      prepared,
+      durablePreparation: durable,
+    });
+
+    const completion = await adapter.awaitBootstrap({
+      handle,
+      snapshot,
+      replacement,
+      timeoutSecs: 1,
+    });
+    expect(fake.journal?.phase).toBe("openshell-handoff-complete");
+    expect(fake.original).toMatchObject({
+      Id: OLD_ID,
+      State: { Running: false },
+    });
+    expect(fake.replacement).toMatchObject({
+      Id: NEW_ID,
+      State: { Running: true },
+    });
+
+    await expect(
+      adapter.finalizeBootstrap({
+        outcome: "commit",
+        handle,
+        snapshot,
+        prepared,
+        durablePreparation: durable,
+        replacement,
+        completion,
+      }),
+    ).rejects.toThrow(/supervisor did not reconnect/);
+    expect(fake.journal?.phase).toBe("shared-state-committed");
+    expect(fake.original).toMatchObject({ Id: OLD_ID, State: { Running: false } });
+    expect(fake.replacement).toMatchObject({ Id: NEW_ID, State: { Running: true } });
+    expect(fake.events).toContain("journal:shared-state-committed");
+    expect(fake.events).not.toContain(`rm:${OLD_ID}`);
+  });
+
   it("uses the Docker-GPU reconnect minimum instead of the shorter create timeout", async () => {
-    const fake = fixture();
+    const fake = fixture({ completionUnavailablePolls: 1 });
     fake.deps.sleep = vi.fn();
     const adapter = createDockerManagedBootstrapAdapter(fake.deps);
     const { handle, request, snapshot } = authority();
@@ -512,10 +607,6 @@ describe("Docker managed bootstrap adapter", () => {
       durablePreparation: durable,
     });
     const dateNow = vi.spyOn(Date, "now").mockReturnValueOnce(0).mockReturnValue(2_000);
-    vi.mocked(fake.deps.runOpenshell!)
-      .mockImplementationOnce(() => ({ status: 1 }))
-      .mockReturnValue({ status: 0 });
-
     await expect(
       adapter.awaitBootstrap({
         handle,
@@ -525,7 +616,10 @@ describe("Docker managed bootstrap adapter", () => {
       }),
     ).resolves.toMatchObject({ runtimeId: NEW_ID });
 
-    expect(fake.deps.runOpenshell).toHaveBeenCalledTimes(2);
+    const completionCopies = vi
+      .mocked(fake.deps.dockerRun!)
+      .mock.calls.filter(([args]) => args[0] === "cp" && String(args[1]).startsWith(`${NEW_ID}:`));
+    expect(completionCopies).toHaveLength(2);
     expect(fake.deps.sleep).toHaveBeenCalledWith(2);
     dateNow.mockRestore();
   });
@@ -534,18 +628,26 @@ describe("Docker managed bootstrap adapter", () => {
     const fake = fixture();
     const secret = "diagnostic-secret-canary";
     fake.deps.errorPhaseDebouncePolls = 1;
-    fake.deps.runOpenshell = vi.fn(() => {
-      assert(fake.replacement?.State);
-      Object.assign(fake.replacement.State, {
-        Status: "exited",
-        Running: false,
-        ExitCode: 137,
-        OOMKilled: true,
-        Error: "startup terminated",
+    fake.deps.runOpenshell = vi
+      .fn()
+      .mockReturnValueOnce({ status: 0 })
+      .mockReturnValueOnce({ status: 0 })
+      .mockReturnValueOnce({ status: 0 })
+      .mockReturnValueOnce({ status: 0 })
+      .mockImplementation(() => {
+        assert(fake.replacement?.State);
+        Object.assign(fake.replacement.State, {
+          Status: "exited",
+          Running: false,
+          ExitCode: 137,
+          OOMKilled: true,
+          Error: "startup terminated",
+        });
+        return { status: 1 };
       });
-      return { status: 1 };
-    });
-    fake.deps.runCaptureOpenshell = vi.fn(() => "alpha Error");
+    fake.deps.runCaptureOpenshell = vi.fn((args) =>
+      args[1] === "list" ? "alpha Error" : "Name: alpha\nID: sandbox-alpha\n",
+    );
     fake.deps.dockerLogs = vi.fn((id, options) => {
       expect(id).toBe(NEW_ID);
       expect(options).toEqual({ tail: 120, timeout: 2_000 });
@@ -566,8 +668,22 @@ describe("Docker managed bootstrap adapter", () => {
       prepared,
       durablePreparation: durable,
     });
+    const commitReceipt = await adapter.awaitBootstrap({
+      handle,
+      snapshot,
+      replacement,
+      timeoutSecs: 1,
+    });
     const failure = await adapter
-      .awaitBootstrap({ handle, snapshot, replacement, timeoutSecs: 1 })
+      .finalizeBootstrap({
+        outcome: "commit",
+        handle,
+        snapshot,
+        prepared,
+        durablePreparation: durable,
+        replacement,
+        completion: commitReceipt,
+      })
       .catch((error: unknown) => error);
 
     expect(failure).toBeInstanceOf(Error);
@@ -868,7 +984,9 @@ describe("Docker managed bootstrap adapter", () => {
   ])(
     "retains both containers when the exact $driftedRuntime identity changes before restoration-failure cleanup (#9486)",
     async ({ drift }) => {
-      const fake = fixture({
+      let fake!: ReturnType<typeof fixture>;
+      fake = fixture({
+        beforeSharedStateCommit: () => drift(fake),
         sharedState: "pending",
         sharedStateCommitResult: { status: 1, stderr: "injected commit failure" },
         sharedStateRollbackResult: {
@@ -897,7 +1015,6 @@ describe("Docker managed bootstrap adapter", () => {
         replacement,
         timeoutSecs: 1,
       });
-      drift(fake);
 
       const failure = (await adapter
         .finalizeBootstrap({
@@ -1050,39 +1167,6 @@ describe("Docker managed bootstrap adapter", () => {
     expect(fake.journal?.phase).toBe("owner-cleanup-required");
   });
 
-  it("fences rollback when image-owned shared state is already committed", async () => {
-    const fake = fixture({ sharedState: "committed" });
-    const { handle, request: rootRequest, snapshot } = authority();
-    const adapter = createDockerManagedBootstrapAdapter(fake.deps);
-    const prepared = await adapter.prepareBootstrapReplacement({
-      handle,
-      snapshot,
-      request: rootRequest,
-      replacementOptions: { values: {} },
-    });
-    const durable = durablePreparation(handle, snapshot, prepared);
-    const replacement = await adapter.activateBootstrapReplacement({
-      handle,
-      snapshot,
-      prepared,
-      durablePreparation: durable,
-    });
-    const eventCount = fake.events.length;
-    await expect(
-      adapter.finalizeBootstrap({
-        outcome: "rollback",
-        handle,
-        snapshot,
-        prepared,
-        durablePreparation: durable,
-        replacement,
-        completion: null,
-      }),
-    ).rejects.toMatchObject({ name: "ManagedBootstrapDurableCommitCleanupPendingError" });
-    expect(fake.journal?.phase).toBe("shared-state-committed");
-    expect(fake.events.slice(eventCount)).toEqual(["journal:shared-state-committed"]);
-  });
-
   it("rejects cutover before the exact durable authority receipt", async () => {
     const fake = fixture();
     const adapter = createDockerManagedBootstrapAdapter(fake.deps);
@@ -1164,6 +1248,12 @@ describe("Docker managed bootstrap adapter", () => {
         snapshot,
         prepared,
         durablePreparation: durable,
+      });
+      await adapter.awaitBootstrap({ handle, snapshot, replacement, timeoutSecs: 1 });
+      vi.mocked(fake.deps.runOpenshell!).mockImplementationOnce((args) => {
+        expect(args).toEqual(["sandbox", "stop", "alpha"]);
+        expect(fake.replacement?.State?.Running).toBe(true);
+        return { status: 0 };
       });
       await expect(
         adapter.finalizeBootstrap({
@@ -1303,7 +1393,7 @@ describe("Docker managed bootstrap adapter", () => {
     ).rejects.toThrow(
       "Managed bootstrap Docker replacement requires one bounded intended workload argv.",
     );
-    expect(fake.events).toContain("create:replacement");
+    expect(fake.events).not.toContain("create:replacement");
     expect(fake.events).not.toContain(`stop:${OLD_ID}`);
   });
 

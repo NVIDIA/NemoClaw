@@ -5,7 +5,7 @@ export interface DashboardForwardOptions {
   rollbackSandboxOnFailure?: boolean;
   gatewayName?: string;
   allowPortReallocation?: boolean;
-  reuseExistingOpenClawForward?: boolean;
+  reuseExistingForward?: boolean;
   /**
    * Record the bind of the forward this call starts as the sandbox's
    * dashboard bind (#10861). Only the dashboard callers set this. Declared
@@ -18,11 +18,11 @@ export interface DashboardForwardOptions {
 export function normalizeDashboardForwardOptions(options: DashboardForwardOptions = {}): {
   rollbackSandboxOnFailure: boolean;
   allowPortReallocation: boolean;
-  reuseExistingOpenClawForward: boolean;
+  reuseExistingForward: boolean;
 } {
   return {
     rollbackSandboxOnFailure: options.rollbackSandboxOnFailure === true,
     allowPortReallocation: options.allowPortReallocation !== false,
-    reuseExistingOpenClawForward: options.reuseExistingOpenClawForward === true,
+    reuseExistingForward: options.reuseExistingForward === true,
   };
 }

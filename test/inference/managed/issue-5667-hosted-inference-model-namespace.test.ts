@@ -299,9 +299,7 @@ const { setupNim } = require(${onboardPath});
 
       const configResult = spawnSync(
         process.execPath,
-        [
-          path.join(REPO_ROOT, "agents", "langchain-deepagents-code", "generate-config.ts"),
-        ],
+        [path.join(REPO_ROOT, "agents", "langchain-deepagents-code", "generate-config.ts")],
         {
           cwd: REPO_ROOT,
           encoding: "utf8",

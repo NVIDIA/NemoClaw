@@ -100,12 +100,18 @@ function mergeBaseRevision(git: GitRunner, baseBranch: string | undefined): stri
 }
 
 function changedPathsFromBase(git: GitRunner, revision: string): string[] {
-  return requireGitOutput(
+  const committed = requireGitOutput(
     git(["diff", "--no-ext-diff", "--no-textconv", "--name-only", "-z", revision, "HEAD", "--"]),
     `Could not inspect changes after ${revision}`,
-  )
-    .split("\0")
-    .filter(Boolean);
+  );
+  // Pre-commit runs before the receipt refresh is part of HEAD. Include the
+  // index so the final receipt commit can be validated without bypassing this
+  // check; CI still validates the committed comparison with an empty index.
+  const staged = requireGitOutput(
+    git(["diff", "--no-ext-diff", "--no-textconv", "--name-only", "-z", "--cached", "--"]),
+    "Could not inspect staged Pi receipt changes",
+  );
+  return [...new Set(`${committed}${staged}`.split("\0").filter(Boolean))];
 }
 
 function piImageSourcePaths(rootDir: string): string[] {
@@ -157,17 +163,14 @@ function parseReceipt(
 function requireReceiptSourceParity(
   git: GitRunner,
   revision: string,
-  comparisonRevision: string,
+  comparisonRevision: string | null,
   imageSourcePaths: readonly string[],
 ): void {
-  const result = git([
-    "diff",
-    "--quiet",
-    revision,
-    comparisonRevision,
-    "--",
-    ...imageSourcePaths,
-  ]);
+  const result = git(
+    comparisonRevision === null
+      ? ["diff", "--quiet", "--cached", revision, "--", ...imageSourcePaths]
+      : ["diff", "--quiet", revision, comparisonRevision, "--", ...imageSourcePaths],
+  );
   if (result.error) {
     throw new Error(`Could not run git to validate Pi receipt source parity (${result.error})`);
   }
@@ -181,8 +184,19 @@ function requireReceiptSourceParity(
   );
 }
 
-function receiptComparisonRevision(git: GitRunner, explicit?: string): string {
+function receiptComparisonRevision(git: GitRunner, explicit?: string): string | null {
   if (explicit) return explicit;
+  const mergeHead = git(["rev-parse", "--quiet", "--verify", "MERGE_HEAD"]);
+  if (mergeHead.error) {
+    throw new Error(`Could not detect an in-progress merge (${mergeHead.error})`);
+  }
+  if (mergeHead.status === 0) return null;
+  if (mergeHead.status !== 1) {
+    const detail = mergeHead.stderr?.trim();
+    throw new Error(
+      `Could not detect an in-progress merge: git exited ${mergeHead.status ?? "without status"}${detail ? ` (${detail})` : ""}`,
+    );
+  }
   if (process.env.GITHUB_ACTIONS !== "true" || process.env.GITHUB_EVENT_NAME !== "pull_request") {
     return "HEAD";
   }
@@ -200,7 +214,7 @@ function validateReceiptPair(
   imageSourcePaths: readonly string[],
   receipts: readonly { path: string; platform: ManagedImagePlatform }[],
   acceptedDigests: ReadonlySet<string>,
-  comparisonRevision: string,
+  comparisonRevision: string | null,
 ): void {
   const validated = receipts.map((receipt) => parseReceipt(rootDir, receipt, acceptedDigests));
   const contracts = validated.map(({ contract }) => contract);

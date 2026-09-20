@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { Buffer } from "node:buffer";
+import { PROVIDERLESS_INFERENCE_ENV } from "../../providerless-inference";
 
 import { parseSandboxMessagingPlan } from "../../messaging/plan-validation";
 import {
@@ -227,6 +228,8 @@ function applicationRuntimePlan(
 }
 
 function commonConfigurationEnvironment(profile: ManagedStartupProfile): MutableEnvironment {
+  if (profile.inference === null)
+    return { ...PROVIDERLESS_INFERENCE_ENV, NEMOCLAW_TOOL_DISCLOSURE: profile.tools.disclosure };
   return {
     NEMOCLAW_INFERENCE_API: profile.inference.api,
     NEMOCLAW_INFERENCE_BASE_URL: profile.inference.routedBaseUrl,
@@ -357,8 +360,8 @@ function mapOpenClawProfile(
     profile.agent !== "openclaw" ||
     profile.agentConfig.agent !== "openclaw" ||
     profile.dashboard.agent !== "openclaw" ||
-    profile.inference.primaryModelRef === null ||
-    profile.inference.inputModalities === null ||
+    (profile.inference !== null &&
+      (profile.inference.primaryModelRef === null || profile.inference.inputModalities === null)) ||
     profile.tuning.contextWindow === null ||
     profile.tuning.maxTokens === null ||
     profile.tuning.reasoning === null ||
@@ -376,21 +379,20 @@ function mapOpenClawProfile(
     NEMOCLAW_CONTEXT_WINDOW: String(profile.tuning.contextWindow),
     NEMOCLAW_DASHBOARD_BIND:
       profile.dashboard.bindAddress === "0.0.0.0" ? profile.dashboard.bindAddress : "",
-    NEMOCLAW_DISABLE_DEVICE_AUTH: booleanFlag(profile.agentConfig.deviceAuth.disabled),
-    NEMOCLAW_DEVICE_AUTH_OPT_OUT_SOURCE: profile.agentConfig.deviceAuth.optOutSource,
     NEMOCLAW_EXTRA_AGENTS_JSON_B64: encodeCanonicalJson(profile.agentConfig.extraAgents),
-    NEMOCLAW_INFERENCE_COMPAT_B64: encodeCanonicalJson(profile.inference.compatibility),
-    NEMOCLAW_INFERENCE_INPUTS: profile.inference.inputModalities.join(","),
+    NEMOCLAW_INFERENCE_COMPAT_B64: encodeCanonicalJson(profile.inference?.compatibility ?? {}),
+    NEMOCLAW_INFERENCE_INPUTS: profile.inference?.inputModalities?.join(",") ?? "text",
     NEMOCLAW_MAX_TOKENS: String(profile.tuning.maxTokens),
     NEMOCLAW_OPENCLAW_OTEL: booleanFlag(profile.agentConfig.otel.enabled),
     NEMOCLAW_OPENCLAW_OTEL_ENDPOINT: profile.agentConfig.otel.endpointUrl,
     NEMOCLAW_OPENCLAW_OTEL_SAMPLE_RATE: String(profile.agentConfig.otel.sampleRate),
     NEMOCLAW_OPENCLAW_OTEL_SERVICE_NAME: profile.agentConfig.otel.serviceName,
-    NEMOCLAW_PRIMARY_MODEL_REF: profile.inference.primaryModelRef,
+    NEMOCLAW_PRIMARY_MODEL_REF: profile.inference?.primaryModelRef ?? "",
     NEMOCLAW_PROXY_HOST: profile.proxy.managedHost,
     NEMOCLAW_PROXY_PORT: String(profile.proxy.managedPort),
     NEMOCLAW_REASONING: String(profile.tuning.reasoning),
     NEMOCLAW_REASONING_EFFORT: profile.tuning.reasoningEffort,
+    NEMOCLAW_SERVING_PRESET: profile.inference?.servingPreset ?? "",
     NEMOCLAW_WEB_SEARCH_ENABLED: booleanFlag(profile.agentConfig.webSearch.enabled),
     NEMOCLAW_WEB_SEARCH_PROVIDER: profile.agentConfig.webSearch.provider,
     NEMOCLAW_WSL_DASHBOARD_EXPOSURE: booleanFlag(profile.dashboard.wslExposure),
@@ -449,7 +451,6 @@ function mapHermesProfile(
 
   const runtimeEnvironment: MutableEnvironment = {
     ...configurationEnvironment,
-    HERMES_BUNDLED_PLUGINS: "/opt/hermes/plugins",
     HERMES_HOME: "/sandbox/.hermes",
     HERMES_LAZY_INSTALL_TARGET: "/sandbox/.hermes/lazy-packages",
   };
@@ -486,7 +487,8 @@ function mapDcodeProfile(
     profile.agent !== "langchain-deepagents-code" ||
     profile.agentConfig.agent !== "langchain-deepagents-code" ||
     profile.dashboard.agent !== "langchain-deepagents-code" ||
-    profile.messaging.plan !== null
+    profile.messaging.plan !== null ||
+    profile.inference === null
   ) {
     throw new ManagedStartupAgentEnvironmentError(
       "LangChain Deep Agents Code profile state is inconsistent",
@@ -586,8 +588,7 @@ function mapPiProfile(
     NEMOCLAW_CONTEXT_WINDOW:
       profile.tuning.contextWindow === null ? "" : String(profile.tuning.contextWindow),
     NEMOCLAW_MAX_TOKENS: profile.tuning.maxTokens === null ? "" : String(profile.tuning.maxTokens),
-    NEMOCLAW_REASONING:
-      profile.tuning.reasoning === null ? "" : String(profile.tuning.reasoning),
+    NEMOCLAW_REASONING: profile.tuning.reasoning === null ? "" : String(profile.tuning.reasoning),
   };
   appendHostProxyEnvironment(configurationEnvironment, profile);
   const runtimeEnvironment: MutableEnvironment = { ...configurationEnvironment };

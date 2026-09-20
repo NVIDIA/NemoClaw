@@ -70,7 +70,7 @@ describe("buildAutoPairApprovalScript (#4263/#4616)", () => {
     expect(restoredClone).toContain("local_approval_auth_mode == 'paired-token'");
     expect(restoredClone).toContain("sync_approved_clone_device_auth");
     expect(restoredClone).toContain("os.O_DIRECTORY | os.O_NOFOLLOW");
-    expect(restoredClone).toContain("getattr(os, 'O_PATH', os.O_RDONLY)");
+    expect(restoredClone).toContain('getattr(os, "O_PATH", os.O_RDONLY)');
     expect(restoredClone).toContain("dir_fd=clone_state_dir_fd");
     expect(restoredClone).toContain("clone_devices_dir_fd,");
     expect(restoredClone).toContain("clone_identity_dir_fd,");
@@ -84,7 +84,10 @@ describe("buildAutoPairApprovalScript (#4263/#4616)", () => {
     expect(restoredClone).toContain("approve_env['NEMOCLAW_OPENCLAW_PENDING_FD']");
     expect(restoredClone).toContain("approve_env['NEMOCLAW_OPENCLAW_PAIRED_FD']");
     expect(restoredClone).toContain("approve_env['NEMOCLAW_OPENCLAW_IDENTITY_FD']");
-    expect(restoredClone).toContain("clone_directory_is_current('devices'");
+    expect(restoredClone).toContain("Only explicitly projected local-device records");
+    expect(restoredClone).toContain("local_device_only=True");
+    expect(restoredClone).toContain("local_device_id: paired_device");
+    expect(restoredClone).toContain("clone_legacy_directory_is_current('devices'");
     expect(restoredClone).toContain("if not related_pending:");
     expect(restoredClone).toContain("len(related_pending) > 1");
     expect(restoredClone).toContain("pending = related_pending");

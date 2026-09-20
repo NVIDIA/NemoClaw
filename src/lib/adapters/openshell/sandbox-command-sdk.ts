@@ -10,6 +10,7 @@ import {
 import { isValidName } from "../../sandbox-name-contract";
 import type {
   OpenShellSandboxCommandCompletion,
+  OpenShellSandboxCommandError,
   OpenShellSandboxCommandOutcome,
   OpenShellSandboxCommandRequest,
 } from "./sandbox-command";
@@ -49,19 +50,16 @@ function commandFailure(error: unknown): OpenShellSandboxCommandOutcome {
     typeof error === "object" && error !== null && "code" in error
       ? String((error as { code?: unknown }).code)
       : "";
-  return {
-    kind: "failed",
-    error: {
-      kind:
-        error instanceof OpenShellSdkPreflightUnavailableError ||
-        /Cannot find (?:module|package) ['"]@nvidia\/openshell-sdk['"]/u.test(message)
-          ? "unavailable"
-          : /timeout|deadline/iu.test(`${code} ${message}`)
-            ? "timeout"
-            : "invocation",
-      message,
-    },
-  };
+  let kind: OpenShellSandboxCommandError["kind"] = "invocation";
+  if (
+    error instanceof OpenShellSdkPreflightUnavailableError ||
+    /Cannot find (?:module|package) ['"]@nvidia\/openshell-sdk['"]/u.test(message)
+  ) {
+    kind = "unavailable";
+  } else if (/timeout|deadline/iu.test(`${code} ${message}`)) {
+    kind = "timeout";
+  }
+  return { kind: "failed", error: { kind, message } };
 }
 
 function assertRequestName(name: string, label: string): void {

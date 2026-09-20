@@ -13,7 +13,7 @@ import {
 const listen = useOpenAiValidationTestServers();
 
 describe("OpenAI validation keepalive sequence", () => {
-  it("sends the NVIDIA Endpoints Nemotron request shape through native validation (#10880)", async () => {
+  it("sends the NVIDIA Endpoints Nemotron request shape through native validation (#10880, #11965)", async () => {
     let observedBody = "";
     const server = http.createServer((request, response) => {
       request.setEncoding("utf8");
@@ -45,9 +45,9 @@ describe("OpenAI validation keepalive sequence", () => {
       max_tokens: 16,
       temperature: 1,
       top_p: 0.95,
-      chat_template_kwargs: { enable_thinking: false },
+      reasoning_effort: "none",
     });
-    expect(JSON.parse(observedBody)).not.toHaveProperty("thinking");
+    expect(JSON.parse(observedBody)).not.toHaveProperty("chat_template_kwargs");
     expect(harness.legacyProbe).not.toHaveBeenCalled();
   });
 

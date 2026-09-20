@@ -9,7 +9,6 @@ const mocks = vi.hoisted(() => ({
   observeStableExportSource: vi.fn(),
   buildExportConfig: vi.fn(),
   renderCanonicalNemoClawConfig: vi.fn(),
-  validateNemoClawConfig: vi.fn(),
   publishExportFile: vi.fn(),
 }));
 
@@ -19,8 +18,9 @@ vi.mock("../../lib/config/canonical", () => ({
 vi.mock("../../lib/domain/config/export-document", () => ({
   buildExportConfig: mocks.buildExportConfig,
 }));
-vi.mock("../../lib/config/schema", () => ({
-  validateNemoClawConfig: mocks.validateNemoClawConfig,
+vi.mock("../../lib/config/v1alpha1-export", () => ({
+  isV1Alpha1ExportName: (value: unknown) =>
+    typeof value === "string" && /^[a-z][a-z0-9-]{0,39}$/u.test(value),
 }));
 vi.mock("../../lib/adapters/fs/config-export-file", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../lib/adapters/fs/config-export-file")>()),
@@ -51,7 +51,6 @@ describe("config export command", () => {
       attempts: 1,
     });
     mocks.buildExportConfig.mockReset().mockReturnValue({ kind: "NemoClawConfig" });
-    mocks.validateNemoClawConfig.mockReset().mockReturnValue({ kind: "NemoClawConfig" });
     mocks.renderCanonicalNemoClawConfig.mockReset().mockReturnValue({
       yaml: "kind: NemoClawConfig\n",
       documentDigest,
@@ -75,12 +74,12 @@ describe("config export command", () => {
       return true;
     }) as typeof process.stdout.write);
     await expect(
-      ConfigExportCommand.run(["alpha", "--output", "-", "--name", "team.alpha"], process.cwd()),
+      ConfigExportCommand.run(["alpha", "--output", "-", "--name", "team-alpha"], process.cwd()),
     ).resolves.toBeUndefined();
     expect(mocks.observeStableExportSource).toHaveBeenCalledWith("alpha", mocks.snapshotReader);
     expect(mocks.buildExportConfig).toHaveBeenCalledWith(
       { sandboxName: "alpha" },
-      expect.objectContaining({ documentName: "team.alpha", documentUid: expect.any(String) }),
+      expect.objectContaining({ documentName: "team-alpha", documentUid: expect.any(String) }),
     );
     expect(write).toHaveBeenCalledWith("kind: NemoClawConfig\n", expect.any(Function));
     expect(mocks.publishExportFile).not.toHaveBeenCalled();
@@ -103,7 +102,14 @@ describe("config export command", () => {
   it("rejects an invalid document name before reading source state (#10938)", async () => {
     await expect(
       ConfigExportCommand.run(["alpha", "--output", "-", "--name", "Not Valid"], process.cwd()),
-    ).rejects.toThrow("config name is invalid");
+    ).rejects.toThrow("config name must be a lowercase v1 name");
+    expect(mocks.observeStableExportSource).not.toHaveBeenCalled();
+  });
+
+  it("rejects a legacy dotted document name at the v1 export boundary (#11977)", async () => {
+    await expect(
+      ConfigExportCommand.run(["alpha", "--output", "-", "--name", "team.alpha"], process.cwd()),
+    ).rejects.toThrow("config name must be a lowercase v1 name");
     expect(mocks.observeStableExportSource).not.toHaveBeenCalled();
   });
 
@@ -126,7 +132,35 @@ describe("config export command", () => {
     expect(mocks.buildExportConfig).not.toHaveBeenCalled();
   });
 
+  it("reports observation failures in JSON without publishing a document", async () => {
+    vi.spyOn(process, "platform", "get").mockReturnValue("linux");
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    mocks.observeStableExportSource.mockResolvedValue({
+      ok: false,
+      findings: [
+        { field: "source.registry", category: "not-found", diagnostic: "Sandbox missing." },
+      ],
+      attempts: 1,
+    });
+    process.exitCode = undefined;
+
+    await ConfigExportCommand.run(
+      ["alpha", "--output", "/tmp/alpha.yaml", "--json"],
+      process.cwd(),
+    );
+
+    expect(JSON.parse(log.mock.calls[0]![0])).toMatchObject({
+      error: { message: "Config export failed (not-found).\nSandbox missing." },
+    });
+    expect(process.exitCode).not.toBe(0);
+    expect(mocks.buildExportConfig).not.toHaveBeenCalled();
+    expect(mocks.publishExportFile).not.toHaveBeenCalled();
+  });
+
   it("provides short and long command help without reading source state (#10938)", async () => {
+    expect(ConfigExportCommand.flags.name.description).toContain(
+      "lowercase, starts with a letter, up to 40 letters, digits, or hyphens",
+    );
     await expect(ConfigExportCommand.run(["alpha", "--help"], process.cwd())).rejects.toMatchObject(
       {
         code: "EEXIT",

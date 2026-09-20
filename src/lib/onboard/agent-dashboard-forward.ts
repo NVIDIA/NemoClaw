@@ -21,11 +21,11 @@ export type EnsureDashboardForward = (
   chatUiUrl?: string,
   options?: {
     allowPortReallocation?: boolean;
-    reuseExistingOpenClawForward?: boolean;
+    reuseExistingForward?: boolean;
     recordDashboardBind?: boolean;
     revalidateSandboxIdentity?: (operation: string) => void;
   },
-) => number;
+) => number | Promise<number>;
 
 export type AgentDashboardForwardConfig = NonNullable<DashboardRuntimeAgent> & {
   dashboard?: { kind?: unknown } | null;
@@ -41,7 +41,7 @@ export async function ensureAgentDashboardForward(options: {
   /** Host port allocated to this sandbox's OpenAI-compatible API, when it has one. */
   hermesApiPort?: number | null;
   beforeForwardPort?: (port: number) => Promise<void> | void;
-  reuseExistingOpenClawForward?: boolean;
+  reuseExistingForward?: boolean;
   revalidateSandboxIdentity?: (operation: string) => void;
   /**
    * Receives this launcher's warnings, such as an optional agent port
@@ -58,7 +58,7 @@ export async function ensureAgentDashboardForward(options: {
     controlUiPort,
     hermesApiPort,
     beforeForwardPort,
-    reuseExistingOpenClawForward = false,
+    reuseExistingForward = false,
     revalidateSandboxIdentity,
     warn = (message: string) => console.warn(message),
   } = options;
@@ -87,7 +87,7 @@ export async function ensureAgentDashboardForward(options: {
     // so forward the allocated port instead of the sibling sandbox's default.
     const resolveDeclaredPort = (port: number): number =>
       port === HERMES_OPENAI_API_PORT
-        ? (hermesApiPort ?? resolveOnboardHermesApiPort(sandboxName, { warn }))
+        ? (hermesApiPort ?? resolveOnboardHermesApiPort(sandboxName))
         : port;
     const declaredPrimaryPort = getAgentPrimaryForwardPort(agent, DASHBOARD_PORT);
     const usesFixedApiPort = agent.dashboard?.kind === "api";
@@ -111,12 +111,16 @@ export async function ensureAgentDashboardForward(options: {
         ? replaceUrlPort(chatUiUrl, agentDashboardPort)
         : `http://127.0.0.1:${agentDashboardPort}`;
     await beforeForwardPort?.(agentDashboardPort);
-    const actualAgentDashboardPort = ensureDashboardForward(sandboxName, requestedDashboardUrl, {
-      allowPortReallocation: false,
-      recordDashboardBind: true,
-      ...(reuseExistingOpenClawForward ? { reuseExistingOpenClawForward: true } : {}),
-      ...(revalidateIdentity ? { revalidateSandboxIdentity: revalidateIdentity } : {}),
-    });
+    const actualAgentDashboardPort = await ensureDashboardForward(
+      sandboxName,
+      requestedDashboardUrl,
+      {
+        allowPortReallocation: false,
+        recordDashboardBind: true,
+        ...(reuseExistingForward ? { reuseExistingForward: true } : {}),
+        ...(revalidateIdentity ? { revalidateSandboxIdentity: revalidateIdentity } : {}),
+      },
+    );
     if (!usesFixedApiPort) {
       revalidateIdentity?.(`publish the dashboard URL for sandbox '${sandboxName}'`);
       process.env.CHAT_UI_URL = replaceUrlPort(requestedDashboardUrl, actualAgentDashboardPort);
@@ -130,12 +134,13 @@ export async function ensureAgentDashboardForward(options: {
           port === optionalDashboardPort && chatUiUrl
             ? replaceUrlPort(chatUiUrl, port)
             : `http://127.0.0.1:${port}`;
-        ensureDashboardForward(sandboxName, forwardUrl, {
+        await ensureDashboardForward(sandboxName, forwardUrl, {
           allowPortReallocation: false,
+          ...(reuseExistingForward ? { reuseExistingForward: true } : {}),
           ...(revalidateIdentity ? { revalidateSandboxIdentity: revalidateIdentity } : {}),
         });
       } catch (err) {
-        if (err === identityFailure) throw err;
+        if (reuseExistingForward || err === identityFailure) throw err;
         warn(
           `  ! Could not start optional agent port forward ${port}: ${
             err instanceof Error ? err.message : String(err)
@@ -147,7 +152,7 @@ export async function ensureAgentDashboardForward(options: {
     revalidateIdentity?.(`report successful dashboard forwarding for sandbox '${sandboxName}'`);
     return actualAgentDashboardPort;
   } catch (error) {
-    if (error === identityFailure) {
+    if (reuseExistingForward || error === identityFailure) {
       restoreChatUiUrl();
     }
     throw error;

@@ -41,7 +41,6 @@ export {
   type SandboxInferenceRouteReservationDisposition,
 } from "./registry/route-reservation";
 import { cloneSandboxWorkloadReceipt } from "./registry/workload";
-import { normalizeSandboxMcpState } from "./registry-mcp";
 import {
   normalizePendingSandboxCreateIdentity,
   normalizeSandboxPolicyAttribution,
@@ -66,10 +65,6 @@ export {
   listExtraProviders,
   removeExtraProvider,
 } from "./registry/extra-providers";
-export {
-  listManagedMcpCredentialReservations,
-  type ManagedMcpCredentialReservation,
-} from "./registry/mcp-credential-reservations";
 
 import { isDcodeAutoApprovalMode } from "../onboard/dcode-auto-approval";
 import { cloneSandboxHostMounts, hasUnsafeHostMountTerminalText } from "./registry/host-mount";
@@ -106,8 +101,6 @@ export type {
   SandboxRegistry,
   SandboxWorkloadReceipt,
 } from "./registry/types";
-export type { McpBridgeEntry, SandboxMcpState } from "./registry-mcp";
-export { normalizeSandboxMcpState };
 export {
   getConfiguredMessagingChannelsFromEntry,
   getDisabledMessagingChannelsFromEntry,
@@ -508,12 +501,6 @@ export function registerSandbox(
           : null,
       agent: entry.agent || null,
       agentVersion: entry.agentVersion || null,
-      openclawImagePluginInstalls: Array.isArray(entry.openclawImagePluginInstalls)
-        ? entry.openclawImagePluginInstalls.map((install) => ({
-            ...install,
-            ...(install.loadPaths !== undefined ? { loadPaths: [...install.loadPaths] } : {}),
-          }))
-        : undefined,
       nemoclawVersion: entry.nemoclawVersion || null,
       fromDockerfile: entry.fromDockerfile || null,
       hermesAuthMethod:
@@ -527,7 +514,6 @@ export function registerSandbox(
       lifecycleGeneration: entry.lifecycleGeneration,
       lifecycleLiveIdentityFingerprint: entry.lifecycleLiveIdentityFingerprint,
       messaging: cloneSandboxMessagingState(entry.messaging),
-      mcp: normalizeSandboxMcpState(entry.mcp),
       hermesToolGateways:
         Array.isArray(entry.hermesToolGateways) && entry.hermesToolGateways.length > 0
           ? [...entry.hermesToolGateways]
@@ -775,6 +761,19 @@ export function updateSandbox(name: string, updates: Partial<SandboxEntry>): boo
     save(data);
     return true;
   });
+}
+
+/** Persist intentional-stop state while containing registry write failures. */
+export function recordSandboxStopIntent(
+  name: string,
+  stopped: boolean,
+  update: typeof updateSandbox,
+): boolean {
+  try {
+    return update(name, { stopped });
+  } catch {
+    return false;
+  }
 }
 
 /** Publish a missing gateway port only while the complete qualified row remains current. */

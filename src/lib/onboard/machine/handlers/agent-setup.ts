@@ -31,7 +31,8 @@ export interface AgentSetupStateOptions<Agent> {
     ensureAgentDashboardForward(sandboxName: string, agent: Agent | null): Promise<number> | number;
     persistDashboardPort(sandboxName: string, dashboardPort: number): void;
     recordStepSkipped(stepName: string): Promise<Session>;
-    isOpenclawReady(sandboxName: string): boolean;
+    isOpenclawReady(sandboxName: string): Promise<boolean>;
+    waitForSandboxControlPlaneReady(sandboxName: string): Promise<boolean>;
     skippedStepMessage(stepName: string, detail?: string | null): void;
     recordStateSkipped(
       state: "openclaw",
@@ -101,8 +102,13 @@ export async function handleAgentSetupState<Agent>({
     return { session, stateResult: advanceTo("policies", { metadata: { state: "agent_setup" } }) };
   }
 
-  const resumeOpenclaw = resume && sandboxName && deps.isOpenclawReady(sandboxName);
+  const resumeOpenclaw = resume && sandboxName && (await deps.isOpenclawReady(sandboxName));
   if (resumeOpenclaw) {
+    if (!(await deps.waitForSandboxControlPlaneReady(sandboxName))) {
+      throw new Error(
+        `Sandbox '${sandboxName}' did not re-register with OpenShell before OpenClaw resume configuration.`,
+      );
+    }
     deps.skippedStepMessage("openclaw", sandboxName);
     revalidateSandboxIdentity?.(`synchronize OpenClaw in sandbox '${sandboxName}'`);
     await deps.configureOpenclawSandbox(

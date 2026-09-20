@@ -10,7 +10,10 @@ import { isObjectRecord } from "../core/json-types";
 import { getMessagingPolicyKeysByChannel } from "../messaging/channels";
 import type { MessagingChannelConfig } from "../messaging-channel-config";
 import * as policies from "../policy";
-import { collectPlatformIdentity, type PlatformIdentity } from "../readiness/platform-qualification";
+import {
+  collectPlatformIdentity,
+  type PlatformIdentity,
+} from "../readiness/platform-qualification";
 import {
   isQualifiedStationProfile,
   isQualifiedStationRuntime,

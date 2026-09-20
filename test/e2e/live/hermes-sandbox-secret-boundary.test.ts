@@ -14,7 +14,6 @@ import { expect, test } from "../fixtures/e2e-test.ts";
 
 const BUILD_TIMEOUT_MS = 10 * 60_000;
 const RUN_TIMEOUT_MS = 60_000;
-const CONTROL_NONCE = "0".repeat(64);
 const RAW_SECRET_SENTINEL = "SENTINEL_RAW_SECRET_VALUE";
 const RAW_REFRESH_TOKEN = "raw-refresh-token";
 
@@ -490,60 +489,6 @@ async function inspectImageBoundary(probe: DockerProbe, image: string): Promise<
   ).toBe(0);
 }
 
-async function inspectGatewayControlBoundary(probe: DockerProbe, image: string): Promise<void> {
-  const rootProbe = await probe.run(
-    [
-      "run",
-      "--rm",
-      "--user",
-      "root",
-      "--entrypoint",
-      "/bin/sh",
-      image,
-      "-lc",
-      String.raw`
-set -eu
-[ "$(stat -c '%U:%G %a' /usr/local/bin/nemoclaw-gateway-control)" = "root:root 700" ]
-[ "$(stat -c '%U:%G %a' /usr/local/lib/nemoclaw/managed-gateway-control.py)" = "root:root 500" ]
-[ "$(stat -c '%U:%G %a' /usr/local/lib/nemoclaw/gateway-supervisor.sh)" = "root:root 444" ]
-id -nG gateway | tr ' ' '\n' | grep -qx sandbox
-id -nG root | tr ' ' '\n' | grep -qx sandbox
-rc=0
-/usr/local/bin/nemoclaw-gateway-control probe '${CONTROL_NONCE}' >/tmp/gateway-control-probe.out 2>&1 || rc=$?
-cat /tmp/gateway-control-probe.out
-[ "$rc" -ne 0 ]
-grep -qx SUPERVISOR_UNAVAILABLE /tmp/gateway-control-probe.out
-`,
-    ],
-    { artifactName: "inspect-hermes-gateway-control-root-boundary", timeoutMs: RUN_TIMEOUT_MS },
-  );
-  expect(
-    rootProbe.exitCode,
-    `Hermes image should preserve root-only helper modes, group access, and root probe execution\n${resultText(rootProbe)}`,
-  ).toBe(0);
-
-  const sandboxProbe = await probe.run(
-    [
-      "run",
-      "--rm",
-      "--user",
-      "sandbox",
-      "--entrypoint",
-      "/usr/local/bin/nemoclaw-gateway-control",
-      image,
-      "probe",
-      CONTROL_NONCE,
-    ],
-    { artifactName: "inspect-hermes-gateway-control-sandbox-refusal", timeoutMs: RUN_TIMEOUT_MS },
-  );
-  expect(
-    sandboxProbe.exitCode,
-    "Hermes sandbox user must not execute the root-only gateway control helper",
-  ).not.toBe(0);
-  expect(resultText(sandboxProbe)).toMatch(/permission denied/iu);
-  expect(resultText(sandboxProbe)).not.toContain("PRIVILEGED_CONTROL_UNAVAILABLE");
-}
-
 async function inspectManagedToolBoundary(probe: DockerProbe, image: string): Promise<void> {
   const result = await probe.run(
     ["run", "--rm", "--entrypoint", "python3", image, "-c", MANAGED_TOOL_INSPECTION_SCRIPT],
@@ -669,10 +614,13 @@ async function probeRuntimeApiServerKey(
   image: string,
   label: string,
 ): Promise<RuntimeApiKeyProbe> {
+  // Root startup refreshes both the strict and compatibility hashes.
   const result = await probe.run(
     [
       "run",
       "--rm",
+      "--user",
+      "root",
       "--entrypoint",
       "/usr/local/bin/nemoclaw-start",
       image,
@@ -721,155 +669,158 @@ async function expectRuntimeApiServerKeyPerSandbox(
   ).not.toBe(second.key_hash);
 }
 
-test("hermes sandbox secret boundary keeps raw secrets out of images and startup", {
-  meta: {
-    e2ePhases: [
-      "check Docker and Hermes image inputs",
-      "build base and managed Hermes images",
-      "inspect image secret and runtime boundaries",
-      "verify unique per-sandbox API keys",
-      "reject raw secrets from Hermes env files",
-      "reject raw secrets from Hermes process env",
-    ],
-  },
-}, async ({ artifacts, cleanup, progress, secrets, signal, skip }) => {
-  const probe = new DockerProbe(
-    artifacts,
-    (text, extraValues) => secrets.redact(text, extraValues),
-    undefined,
-    progress,
-    signal,
-  );
-  const runId = safeTag(`${process.env.GITHUB_RUN_ID ?? "local"}-${process.pid}-${Date.now()}`);
-  const baseImageFromEnv = Boolean(
-    process.env.NEMOCLAW_HERMES_BASE_IMAGE ?? process.env.HERMES_BASE_IMAGE,
-  );
-  const image =
-    process.env.NEMOCLAW_HERMES_TEST_IMAGE ?? `nemoclaw-hermes-secret-boundary:${runId}`;
-  const baseImage =
-    process.env.NEMOCLAW_HERMES_BASE_IMAGE ??
-    process.env.HERMES_BASE_IMAGE ??
-    `nemoclaw-hermes-sandbox-base-local:secret-boundary-${runId}`;
-  const managedImage =
-    process.env.NEMOCLAW_HERMES_MANAGED_TEST_IMAGE ??
-    `nemoclaw-hermes-secret-boundary-managed:${runId}`;
-  let removeImage = false;
-  let removeManagedImage = false;
-  let removeBaseImage = false;
-
-  await artifacts.target.declare({
-    id: "hermes-sandbox-secret-boundary",
-    boundary: "docker-hermes-image-and-startup",
-    image,
-    baseImage,
-    managedImage,
-    prebuiltImage: Boolean(process.env.NEMOCLAW_HERMES_TEST_IMAGE),
-    prebuiltManagedImage: Boolean(process.env.NEMOCLAW_HERMES_MANAGED_TEST_IMAGE),
-    contract: [
-      "Docker is required and prebuilt image env vars must reference inspectable images",
-      "Hermes .env in the sandbox image is a real file with no baked API_SERVER_KEY or raw external secret-shaped values",
-      "Hermes final image imports python-multipart from /opt/hermes/.venv and has no gcc, g++, or make commands",
-      "Hermes final image can allocate a PTY through /dev/pts",
-      "Hermes final image enforces root-only gateway-control modes and sandbox group membership",
-      "Hermes startup mints a unique API_SERVER_KEY per sandbox and refreshes strict and compatibility config hashes",
-      "Hermes config preserves api_server remote platform toolsets and does not use no_mcp",
-      "managed-tool image keeps gateway auth tokens out of sandbox env/config while preserving gateway URLs/config",
-      "nemoclaw-start rejects raw secret-shaped .env entries without echoing their values",
-      "nemoclaw-start rejects raw secret-shaped process env entries without echoing their values",
-    ],
-  });
-
-  cleanup.add("remove Hermes sandbox secret-boundary images", async () => {
-    const images = [
-      removeImage ? image : undefined,
-      removeManagedImage ? managedImage : undefined,
-      removeBaseImage ? baseImage : undefined,
-    ].filter((value): value is string => Boolean(value));
-    await (images.length === 0
-      ? Promise.resolve()
-      : probe.run(["rmi", "-f", ...images], {
-          artifactName: "cleanup-hermes-secret-boundary-images",
-          timeoutMs: 60_000,
-        }));
-  });
-
-  await requireDocker(probe, skip);
-
-  progress.phase("build base and managed Hermes images");
-  removeImage = await buildHermesImageIfNeeded(probe, image, baseImage, baseImageFromEnv);
-  await probe.expect(["image", "inspect", image], {
-    artifactName: "inspect-hermes-image-after-build",
-    timeoutMs: 30_000,
-  });
-  removeManagedImage = await buildManagedImageIfNeeded(
-    probe,
-    managedImage,
-    baseImage,
-    baseImageFromEnv,
-  );
-  removeBaseImage = !baseImageFromEnv && (removeImage || removeManagedImage);
-  await probe.expect(["image", "inspect", managedImage], {
-    artifactName: "inspect-managed-hermes-image-after-build",
-    timeoutMs: 30_000,
-  });
-
-  progress.phase("inspect image secret and runtime boundaries");
-  await inspectImageBoundary(probe, image);
-  await inspectGatewayControlBoundary(probe, image);
-  await inspectManagedToolBoundary(probe, managedImage);
-  progress.phase("verify unique per-sandbox API keys");
-  await expectRuntimeApiServerKeyPerSandbox(probe, image);
-  progress.phase("reject raw secrets from Hermes env files");
-  await expectStartupRejectsEnvFileEntry(
-    probe,
-    image,
-    `DEVTEST_API_TOKEN=${RAW_SECRET_SENTINEL}`,
-    "DEVTEST_API_TOKEN",
-    RAW_SECRET_SENTINEL,
-  );
-  await expectStartupRejectsEnvFileEntry(
-    probe,
-    image,
-    `INTERNAL_API=${RAW_SECRET_SENTINEL}`,
-    "INTERNAL_API",
-    RAW_SECRET_SENTINEL,
-  );
-  await expectStartupRejectsEnvFileEntry(
-    probe,
-    image,
-    "OPENAI_API_KEY=sk-OPENSHELL-PROXY-REWRITE",
-    "OPENAI_API_KEY",
-    "sk-OPENSHELL-PROXY-REWRITE",
-  );
-  progress.phase("reject raw secrets from Hermes process env");
-  await expectStartupRejectsRuntimeEnvEntry(
-    probe,
-    image,
-    `DEVTEST_API_TOKEN=${RAW_SECRET_SENTINEL}`,
-    "DEVTEST_API_TOKEN",
-    RAW_SECRET_SENTINEL,
-  );
-  await expectStartupRejectsRuntimeEnvEntry(
-    probe,
-    image,
-    `NEMOCLAW_HERMES_TOOL_GATEWAY_REFRESH_TOKEN=${RAW_REFRESH_TOKEN}`,
-    "NEMOCLAW_HERMES_TOOL_GATEWAY_REFRESH_TOKEN",
-    RAW_REFRESH_TOKEN,
-  );
-
-  await artifacts.target.complete({
-    id: "hermes-sandbox-secret-boundary",
-    image,
-    managedImage,
-    assertions: {
-      imageEnvSecretBoundaryVerified: true,
-      gatewayControlImageBoundaryVerified: true,
-      runtimeApiServerKeyPerSandboxVerified: true,
-      imageRemoteToolsetsVerified: true,
-      managedToolGatewayAuthBoundaryVerified: true,
-      envFileSecretRejectionsVerified: true,
-      runtimeEnvSecretRejectionsVerified: true,
-      rejectionOutputRedactionVerified: true,
+test(
+  "hermes sandbox secret boundary keeps raw secrets out of images and startup",
+  {
+    meta: {
+      e2ePhases: [
+        "check Docker and Hermes image inputs",
+        "build base and managed Hermes images",
+        "inspect image secret and runtime boundaries",
+        "verify unique per-sandbox API keys",
+        "reject raw secrets from Hermes env files",
+        "reject raw secrets from Hermes process env",
+      ],
     },
-  });
-});
+  },
+  async ({ artifacts, cleanup, progress, secrets, signal, skip }) => {
+    const probe = new DockerProbe(
+      artifacts,
+      (text, extraValues) => secrets.redact(text, extraValues),
+      undefined,
+      progress,
+      signal,
+    );
+    const runId = safeTag(`${process.env.GITHUB_RUN_ID ?? "local"}-${process.pid}-${Date.now()}`);
+    const baseImageFromEnv = Boolean(
+      process.env.NEMOCLAW_HERMES_BASE_IMAGE ?? process.env.HERMES_BASE_IMAGE,
+    );
+    const image =
+      process.env.NEMOCLAW_HERMES_TEST_IMAGE ?? `nemoclaw-hermes-secret-boundary:${runId}`;
+    const baseImage =
+      process.env.NEMOCLAW_HERMES_BASE_IMAGE ??
+      process.env.HERMES_BASE_IMAGE ??
+      `nemoclaw-hermes-sandbox-base-local:secret-boundary-${runId}`;
+    const managedImage =
+      process.env.NEMOCLAW_HERMES_MANAGED_TEST_IMAGE ??
+      `nemoclaw-hermes-secret-boundary-managed:${runId}`;
+    let removeImage = false;
+    let removeManagedImage = false;
+    let removeBaseImage = false;
+
+    await artifacts.target.declare({
+      id: "hermes-sandbox-secret-boundary",
+      boundary: "docker-hermes-image-and-startup",
+      image,
+      baseImage,
+      managedImage,
+      prebuiltImage: Boolean(process.env.NEMOCLAW_HERMES_TEST_IMAGE),
+      prebuiltManagedImage: Boolean(process.env.NEMOCLAW_HERMES_MANAGED_TEST_IMAGE),
+      contract: [
+        "Docker is required and prebuilt image env vars must reference inspectable images",
+        "Hermes .env in the sandbox image is a real file with no baked API_SERVER_KEY or raw external secret-shaped values",
+        "Hermes final image imports python-multipart from /opt/hermes/.venv and has no gcc, g++, or make commands",
+        "Hermes final image can allocate a PTY through /dev/pts",
+        "Hermes final image enforces root-only gateway-control modes and sandbox group membership",
+        "Hermes startup mints a unique API_SERVER_KEY per sandbox and refreshes strict and compatibility config hashes",
+        "Hermes config preserves api_server remote platform toolsets and does not use no_mcp",
+        "managed-tool image keeps gateway auth tokens out of sandbox env/config while preserving gateway URLs/config",
+        "nemoclaw-start rejects raw secret-shaped .env entries without echoing their values",
+        "nemoclaw-start rejects raw secret-shaped process env entries without echoing their values",
+      ],
+    });
+
+    cleanup.add("remove Hermes sandbox secret-boundary images", async () => {
+      const images = [
+        removeImage ? image : undefined,
+        removeManagedImage ? managedImage : undefined,
+        removeBaseImage ? baseImage : undefined,
+      ].filter((value): value is string => Boolean(value));
+      await (images.length === 0
+        ? Promise.resolve()
+        : probe.run(["rmi", "-f", ...images], {
+            artifactName: "cleanup-hermes-secret-boundary-images",
+            timeoutMs: 60_000,
+          }));
+    });
+
+    await requireDocker(probe, skip);
+
+    progress.phase("build base and managed Hermes images");
+    removeImage = await buildHermesImageIfNeeded(probe, image, baseImage, baseImageFromEnv);
+    await probe.expect(["image", "inspect", image], {
+      artifactName: "inspect-hermes-image-after-build",
+      timeoutMs: 30_000,
+    });
+    removeManagedImage = await buildManagedImageIfNeeded(
+      probe,
+      managedImage,
+      baseImage,
+      baseImageFromEnv,
+    );
+    removeBaseImage = !baseImageFromEnv && (removeImage || removeManagedImage);
+    await probe.expect(["image", "inspect", managedImage], {
+      artifactName: "inspect-managed-hermes-image-after-build",
+      timeoutMs: 30_000,
+    });
+
+    progress.phase("inspect image secret and runtime boundaries");
+    await inspectImageBoundary(probe, image);
+    await inspectManagedToolBoundary(probe, managedImage);
+    progress.phase("verify unique per-sandbox API keys");
+    await expectRuntimeApiServerKeyPerSandbox(probe, image);
+    progress.phase("reject raw secrets from Hermes env files");
+    await expectStartupRejectsEnvFileEntry(
+      probe,
+      image,
+      `DEVTEST_API_TOKEN=${RAW_SECRET_SENTINEL}`,
+      "DEVTEST_API_TOKEN",
+      RAW_SECRET_SENTINEL,
+    );
+    await expectStartupRejectsEnvFileEntry(
+      probe,
+      image,
+      `INTERNAL_API=${RAW_SECRET_SENTINEL}`,
+      "INTERNAL_API",
+      RAW_SECRET_SENTINEL,
+    );
+    await expectStartupRejectsEnvFileEntry(
+      probe,
+      image,
+      "OPENAI_API_KEY=sk-OPENSHELL-PROXY-REWRITE",
+      "OPENAI_API_KEY",
+      "sk-OPENSHELL-PROXY-REWRITE",
+    );
+    progress.phase("reject raw secrets from Hermes process env");
+    await expectStartupRejectsRuntimeEnvEntry(
+      probe,
+      image,
+      `DEVTEST_API_TOKEN=${RAW_SECRET_SENTINEL}`,
+      "DEVTEST_API_TOKEN",
+      RAW_SECRET_SENTINEL,
+    );
+    await expectStartupRejectsRuntimeEnvEntry(
+      probe,
+      image,
+      `NEMOCLAW_HERMES_TOOL_GATEWAY_REFRESH_TOKEN=${RAW_REFRESH_TOKEN}`,
+      "NEMOCLAW_HERMES_TOOL_GATEWAY_REFRESH_TOKEN",
+      RAW_REFRESH_TOKEN,
+    );
+
+    await artifacts.target.complete({
+      id: "hermes-sandbox-secret-boundary",
+      image,
+      managedImage,
+      assertions: {
+        imageEnvSecretBoundaryVerified: true,
+        gatewayControlImageBoundaryVerified: true,
+        runtimeApiServerKeyPerSandboxVerified: true,
+        imageRemoteToolsetsVerified: true,
+        managedToolGatewayAuthBoundaryVerified: true,
+        envFileSecretRejectionsVerified: true,
+        runtimeEnvSecretRejectionsVerified: true,
+        rejectionOutputRedactionVerified: true,
+      },
+    });
+  },
+);

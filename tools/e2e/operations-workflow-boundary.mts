@@ -11,6 +11,10 @@ import YAML from "yaml";
 import { RISK_RULES } from "../advisors/risk-plan.mts";
 import { validateStandardProfileWorkflowBoundary } from "./standard-profile-workflow-boundary.mts";
 import { catalogueTarget, E2E_TARGET_CATALOGUE } from "./target-catalogue.mts";
+import {
+  isReviewedOpenShellSdkInstallStep,
+  REVIEWED_OPEN_SHELL_SDK_INSTALL_STEP,
+} from "./reviewed-openshell-sdk-install-workflow-boundary.mts";
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const DEFAULT_WORKFLOW_PATH = join(REPO_ROOT, ".github", "workflows", "e2e.yaml");
@@ -33,6 +37,8 @@ const LIVE_VITEST_HELPER = "tools/e2e/live-vitest-invocation.mts run --test-path
 const E2E_ARTIFACT_ACTION = "NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@";
 const COLD_ONBOARD_PERFORMANCE_EVIDENCE_PATH =
   "e2e-artifacts/live/${{ matrix.id }}/onboard-progress-budget.json";
+const CONFIG_EXPORT_EVIDENCE_PATH =
+  "e2e-artifacts/live/${{ matrix.id }}/config-export-evidence.v1.json";
 const MANAGED_SOURCE_CONDITION =
   "${{ inputs.pr_number == '' || steps.select_pr_source.outputs.selection == 'base-cohort' }}";
 const BASE_PUBLICATION_CONDITION =
@@ -81,10 +87,15 @@ const PUBLICATION_CLASSIFIER_SCRIPT =
   [
     "set -euo pipefail",
     'case "${REPOSITORY}:${REF}:${EVENT_NAME}:${CHECKOUT_SHA:+controller}" in',
-    "  NVIDIA/NemoClaw:refs/heads/main:push:|NVIDIA/NemoClaw:refs/heads/main:workflow_dispatch:)",
+    "  NVIDIA/NemoClaw:refs/heads/main:push:)",
     '    expected_sha="$WORKFLOW_SHA"',
     "    allow_non_head=0",
     "    select_nearest_successful=0",
+    "    ;;",
+    "  NVIDIA/NemoClaw:refs/heads/main:workflow_dispatch:)",
+    '    expected_sha="$WORKFLOW_SHA"',
+    "    allow_non_head=0",
+    "    select_nearest_successful=1",
     "    ;;",
     "  NVIDIA/NemoClaw:refs/heads/*:workflow_dispatch:controller)",
     '    [[ "$BASE_SHA" =~ ^[a-f0-9]{40}$ ]] || {',
@@ -284,6 +295,7 @@ function passesNeedsAsEnvironmentData(step: WorkflowStep): boolean {
   );
 }
 
+/** Appends violations of the trusted PR dispatch boundary, including source identity and credential custody. */
 function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow): void {
   const inputs = workflow.on?.workflow_dispatch?.inputs ?? {};
   for (const name of [
@@ -386,7 +398,6 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
     errors.push("Manual PR authentication must run when any candidate identity input is present");
   }
   const authEnvironment = {
-    ALLOW_DGX_SPARK_RUNNER_QUEUE: "${{ inputs.allow_dgx_spark_runner_queue && 'true' || 'false' }}",
     ALLOW_JETSON_DISPATCH: "${{ inputs.allow_jetson_dispatch && 'true' || 'false' }}",
     BASE_SHA: "${{ inputs.base_sha }}",
     CHECKOUT_REPOSITORY: "${{ inputs.checkout_repository }}",
@@ -421,11 +432,8 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
     `[[ "$(jq -r '.base.ref // ""' <<< "$pull_json")" == "main" ]]`,
     'if [[ "$CHECKOUT_SHA" == "$BASE_SHA" ]]',
     '"$ALLOW_JETSON_DISPATCH" != "true"',
-    '"$ALLOW_DGX_SPARK_RUNNER_QUEUE" != "true"',
     '",${TARGETS}," != *",jetson-nvmap-gpu,"*',
     '",${JOBS}," != *",jetson-nvmap-gpu,"*',
-    '",${TARGETS}," != *",llama-cpp-dgx-spark-qualification,"*',
-    '",${JOBS}," != *",llama-cpp-dgx-spark-qualification,"*',
     "exact-base E2E cannot select dedicated hardware jobs",
     `[[ "$(jq -r '.base.repo.full_name // ""' <<< "$pull_json")" == "$CHECKOUT_REPOSITORY" ]]`,
     `[[ "$(jq -r '.head.repo.full_name // ""' <<< "$pull_json")" == "$CHECKOUT_REPOSITORY" ]]`,
@@ -611,16 +619,6 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
         step.name === "Checkout trusted Hermes resolver" &&
         step.with?.repository === "${{ github.repository }}" &&
         step.with?.ref === "${{ inputs.workflow_sha || github.workflow_sha }}";
-      const trustedLlamaCppPlanCheckout =
-        jobName === "llama-cpp-dgx-spark-plan" &&
-        step.name === "Checkout trusted llama.cpp plan compiler" &&
-        step.with?.repository === "${{ github.repository }}" &&
-        step.with?.ref === "${{ inputs.workflow_sha || github.workflow_sha }}";
-      const trustedLlamaCppQualificationCheckout =
-        jobName === "llama-cpp-dgx-spark-qualification" &&
-        step.name === "Checkout trusted llama.cpp qualification" &&
-        step.with?.repository === "${{ github.repository }}" &&
-        step.with?.ref === "${{ inputs.workflow_sha || github.workflow_sha }}";
       const trustedJetsonControllerCheckout =
         jobName === "jetson-nvmap-gpu" &&
         step.name === "Check out trusted Jetson controller" &&
@@ -687,8 +685,6 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
         trustedOpenShellSdkPackageCheckout ||
         trustedManagedImageMultiarchResolverCheckout ||
         trustedManagedImageRuntimeCheckout ||
-        trustedLlamaCppPlanCheckout ||
-        trustedLlamaCppQualificationCheckout ||
         trustedJetsonControllerCheckout ||
         nativeRuntimeQualificationCheckout ||
         trustedOpenShellDevToolingCheckout;
@@ -759,6 +755,10 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
         with: {},
       },
       {
+        name: "Install reviewed npm",
+        uses: "./.github/actions/setup-reviewed-npm",
+      },
+      {
         id: "select_pr_source",
         name: "Resolve exact PR managed-image publication",
         if: "${{ inputs.pr_number != '' }}",
@@ -793,7 +793,7 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
           "export GITHUB_REF=refs/heads/main",
           'export GITHUB_SHA="$EXPECTED_SHA"',
           "wait_seconds=3000",
-          'if [[ "$SELECT_NEAREST_SUCCESSFUL_PUBLICATION" == "1" ]]; then',
+          'if [[ "$PUBLICATION_HISTORY_ALLOW_NON_HEAD" == "1" ]]; then',
           "  wait_seconds=300",
           "fi",
           'node --no-warnings tools/e2e/base-image-publication.mts --wait-seconds "$wait_seconds" --poll-seconds 30',
@@ -871,8 +871,44 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
     errors.push("generate-matrix must not relay Deep Agents Code base outputs");
   }
   const live = workflow.jobs.live ?? {};
-  if (!sameMembers(needs(live), ["base-image-publication", "generate-matrix"])) {
-    errors.push("live E2E must wait for matrix generation and base-image publication");
+  if (
+    !sameMembers(needs(live), [
+      "base-image-publication",
+      "generate-matrix",
+      "package-openshell-sdk",
+    ])
+  ) {
+    errors.push(
+      "live E2E must wait for matrix generation, base-image publication, and the reviewed SDK",
+    );
+  }
+  const sdkSteps = live.steps ?? [];
+  const sdkDownload = findStep(live, "Download reviewed OpenShell SDK archive");
+  const sdkInstall = findStep(live, REVIEWED_OPEN_SHELL_SDK_INSTALL_STEP);
+  const prepareIndex = sdkSteps.indexOf(findStep(live, "Prepare E2E workspace"));
+  const downloadIndex = sdkSteps.indexOf(sdkDownload);
+  const installIndex = sdkSteps.indexOf(sdkInstall);
+  const runIndex = sdkSteps.indexOf(findStep(live, "Run live E2E tests"));
+  if (
+    !isDeepStrictEqual(sdkDownload, {
+      name: "Download reviewed OpenShell SDK archive",
+      uses: DOWNLOAD_ARTIFACT_ACTION,
+      with: {
+        name: "${{ needs.package-openshell-sdk.outputs.artifact_name }}",
+        path: "${{ runner.temp }}/openshell-sdk",
+      },
+    }) ||
+    !isReviewedOpenShellSdkInstallStep(sdkInstall) ||
+    !(
+      prepareIndex >= 0 &&
+      prepareIndex < downloadIndex &&
+      downloadIndex < installIndex &&
+      installIndex < runIndex
+    )
+  ) {
+    errors.push(
+      "live E2E must download and install the reviewed SDK after workspace preparation and before tests",
+    );
   }
   const cloudOnboard = workflow.jobs["cloud-onboard"] ?? {};
   if (!sameMembers(needs(cloudOnboard), ["base-image-publication", "generate-matrix"])) {
@@ -934,7 +970,13 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
     "catalogue-brave-nvidia-inference",
   ]) {
     const catalogue = workflow.jobs[jobName] ?? {};
-    if (!sameMembers(needs(catalogue), ["base-image-publication", "generate-matrix"])) {
+    if (
+      !sameMembers(needs(catalogue), [
+        "base-image-publication",
+        "generate-matrix",
+        "package-openshell-sdk",
+      ])
+    ) {
       errors.push(`${jobName} must wait for matrix generation and base-image publication`);
     }
     if (
@@ -959,6 +1001,7 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
     errors.push("live DCode must use one selected immutable image authority");
   }
   const evidence = findStep(live, "Record immutable Deep Agents Code base evidence");
+  const requireConfigExportEvidence = findStep(live, "Require automatic config export evidence");
   const upload = findStep(live, "Upload E2E artifacts");
   const uploadPaths = String(upload.with?.path ?? "")
     .split("\n")
@@ -980,6 +1023,22 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
   }
   if (!uploadPaths.includes(COLD_ONBOARD_PERFORMANCE_EVIDENCE_PATH)) {
     errors.push("live E2E must upload cold-onboard performance evidence");
+  }
+  if (!uploadPaths.includes(CONFIG_EXPORT_EVIDENCE_PATH)) {
+    errors.push("live E2E must upload automatic config export evidence");
+  }
+  if (
+    requireConfigExportEvidence.if !== "${{ success() }}" ||
+    requireConfigExportEvidence.shell !== "bash" ||
+    String(requireConfigExportEvidence.run ?? "").trim() !==
+      `test -f "${CONFIG_EXPORT_EVIDENCE_PATH}"` ||
+    (requireConfigExportEvidence["continue-on-error"] !== undefined &&
+      requireConfigExportEvidence["continue-on-error"] !== false) ||
+    liveSteps.indexOf(requireConfigExportEvidence) <=
+      liveSteps.indexOf(findStep(live, "Run live E2E tests")) ||
+    liveSteps.indexOf(requireConfigExportEvidence) >= liveSteps.indexOf(upload)
+  ) {
+    errors.push("live E2E must require automatic config export evidence before upload");
   }
   if (!sameMembers(needs(workflow.jobs["staging-brev-launchable"] ?? {}), ["generate-matrix"])) {
     errors.push("staging-brev-launchable must wait only for generate-matrix");
@@ -1110,12 +1169,15 @@ function validateAggregation(errors: string[], workflow: OperationsWorkflow): vo
   }
 }
 
+/** Appends violations that could let the aggregate check omit a selected E2E result. */
 function validateRelevantE2e(errors: string[], workflow: OperationsWorkflow): void {
   const job = workflow.jobs["relevant-e2e"] ?? {};
   const expectedCondition =
-    "${{ always() && github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && github.event_name == 'push' }}";
+    "${{ always() && github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.checkout_sha != '')) }}";
   if (job.name !== "Relevant E2E" || job.if !== expectedCondition) {
-    errors.push("relevant-e2e must be the stable aggregate check for main pushes");
+    errors.push(
+      "relevant-e2e must be the stable aggregate check for main pushes and trusted PR runs",
+    );
   }
   if (!isDeepStrictEqual(permissionMap(job.permissions), { contents: "read" })) {
     errors.push("relevant-e2e permissions must be contents: read");
@@ -1125,7 +1187,7 @@ function validateRelevantE2e(errors: string[], workflow: OperationsWorkflow): vo
   const steps = job.steps ?? [];
   requirePinnedAction(errors, checkout, "relevant-e2e checkout");
   if (
-    steps.length !== 3 ||
+    steps.length !== 4 ||
     steps[0] !== checkout ||
     steps[1] !== requireResults ||
     checkout.with?.ref !== "${{ github.workflow_sha }}" ||
@@ -1139,8 +1201,9 @@ function validateRelevantE2e(errors: string[], workflow: OperationsWorkflow): vo
     requireResults.env?.NEEDS_JSON !== "${{ toJSON(needs) }}" ||
     requireResults.env?.RELEASE_REQUIRED_JOBS !==
       "${{ needs.generate-matrix.outputs.selected_workflow_jobs }}" ||
-    requireResults.run !==
-      "node --no-warnings tools/e2e/release-qualification.mts"
+    requireResults.env?.E2E_RESULT_PATH !==
+      "${{ inputs.checkout_sha != '' && format('{0}/review-queue-e2e-result.json', runner.temp) || '' }}" ||
+    requireResults.run !== "node --no-warnings tools/e2e/release-qualification.mts"
   ) {
     errors.push("relevant-e2e must evaluate planner-selected jobs from needs");
   }
@@ -1149,7 +1212,7 @@ function validateRelevantE2e(errors: string[], workflow: OperationsWorkflow): vo
 function validateReleaseQualification(errors: string[], workflow: OperationsWorkflow): void {
   const job = workflow.jobs["release-qualification"] ?? {};
   const expectedCondition =
-    "${{ always() && github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && inputs.checkout_sha == '' && inputs.jobs == '' && inputs.targets == '' && inputs.include_staging_brev_launchable && !inputs.allow_jetson_dispatch && !inputs.allow_dgx_spark_runner_queue }}";
+    "${{ always() && github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && inputs.checkout_sha == '' && inputs.jobs == '' && inputs.targets == '' && inputs.include_staging_brev_launchable && !inputs.allow_jetson_dispatch }}";
   if (job.if !== expectedCondition) {
     errors.push("release-qualification must run only for a full manual run against main");
   }
@@ -1182,8 +1245,7 @@ function validateReleaseQualification(errors: string[], workflow: OperationsWork
     requireResults.env?.NEEDS_JSON !== "${{ toJSON(needs) }}" ||
     requireResults.env?.RELEASE_REQUIRED_JOBS !==
       "${{ needs.generate-matrix.outputs.release_required_jobs }}" ||
-    requireResults.run !==
-      "node --no-warnings tools/e2e/release-qualification.mts"
+    requireResults.run !== "node --no-warnings tools/e2e/release-qualification.mts"
   ) {
     errors.push("release-qualification must evaluate planner-selected jobs from needs");
   }

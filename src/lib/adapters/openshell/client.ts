@@ -13,6 +13,7 @@ import {
 import { redirectInheritedChildStdoutToStderr } from "../../cli/stdout-guard";
 import { buildSubprocessEnv } from "../../subprocess-env";
 import { processTreeBoundedOpenshellInvocation } from "./process-tree-timeout";
+import { captureSandboxSshConfig } from "./sandbox-ssh-config-capture";
 import { classifyManagedGatewayEndpointBinding } from "../../../../nemoclaw/dist/shared/openshell-gateway-endpoint-boundary.cjs";
 
 export { classifyManagedGatewayEndpointBinding };
@@ -94,7 +95,9 @@ export interface CaptureOpenshellOptions extends OpenshellSpawnOptions {
   maxBuffer?: number;
 }
 
-export interface CaptureOpenshellAsyncOptions extends CaptureOpenshellOptions {
+export interface CaptureOpenshellAsyncOptions extends Omit<CaptureOpenshellOptions, "maxBuffer"> {
+  signalSource?: OpenshellAsyncCaptureSignalSource;
+  outputLimitBytes?: number;
   killGraceMs?: number;
   spawnImpl?: OpenshellSpawn;
 }
@@ -308,46 +311,17 @@ export function captureOpenshellCommand(
   };
 }
 
-/**
- * Insert `-g <gateway>` after the subcommand pair, matching the placement
- * `gatewayScopedArgs` already uses in `actions/sandbox/gateway-state.ts`.
- * Duplicated rather than imported: an adapter must not depend on the actions
- * layer.
- */
-function gatewayScopedArgs(args: string[], gatewayName?: string): string[] {
-  if (!gatewayName) return args;
-  return [...args.slice(0, 2), "-g", gatewayName, ...args.slice(2)];
-}
-
 export function captureSandboxSshConfigCommand(
   binary: string,
   sandboxName: string,
   opts: CaptureSandboxSshConfigOptions = {},
 ): CaptureOpenshellResult {
   const { gatewayName, ...spawnOpts } = opts;
-  const sandboxGet = captureOpenshellCommand(
-    binary,
-    gatewayScopedArgs(["sandbox", "get", sandboxName], gatewayName),
-    {
+  return captureSandboxSshConfig(sandboxName, gatewayName, (args, { includeStderr }) =>
+    captureOpenshellCommand(binary, args, {
       ...spawnOpts,
-      ignoreError: true,
-      includeStderr: true,
-    },
-  );
-  if (sandboxGet.status !== 0) {
-    const output = sandboxGet.output || `failed to query sandbox '${sandboxName}'`;
-    const sandboxMissing = /\bnot[- ]?found\b/i.test(output);
-    return {
-      ...sandboxGet,
-      output: sandboxMissing ? `sandbox '${sandboxName}' not found` : output,
-    };
-  }
-  // Pin every hop to the same gateway so `get` and `ssh-config` cannot
-  // disagree about which one owns the sandbox.
-  return captureOpenshellCommand(
-    binary,
-    gatewayScopedArgs(["sandbox", "ssh-config", sandboxName], gatewayName),
-    spawnOpts,
+      ...(includeStderr ? { ignoreError: true, includeStderr: true } : {}),
+    }),
   );
 }
 
@@ -364,6 +338,8 @@ export function captureOpenshellCommandAsync(
     timeoutKillSignal:
       opts.killSignal === "SIGTERM" || opts.killSignal === "SIGKILL" ? opts.killSignal : undefined,
     timeoutMilliseconds: opts.timeout,
+    outputLimitBytes: opts.outputLimitBytes,
+    signalSource: opts.signalSource,
   }).then((result) => ({
     status: result.status ?? (result.timedOut ? null : 1),
     output: `${result.stdout}${shouldIncludeStderr(opts) ? result.stderr : ""}`.trim(),
@@ -416,12 +392,12 @@ export function captureOpenshellCommandAsyncResult(
     let stderrBytes = 0;
     const stdoutChunks: Buffer[] = [];
     const stderrChunks: Buffer[] = [];
-    const outputLimitBytes =
-      opts.outputLimitBytes === undefined || opts.outputLimitBytes === Number.POSITIVE_INFINITY
-        ? Number.POSITIVE_INFINITY
-        : Number.isFinite(opts.outputLimitBytes)
-          ? Math.max(0, opts.outputLimitBytes)
-          : 0;
+    let outputLimitBytes = 0;
+    if (opts.outputLimitBytes === undefined || opts.outputLimitBytes === Number.POSITIVE_INFINITY) {
+      outputLimitBytes = Number.POSITIVE_INFINITY;
+    } else if (Number.isFinite(opts.outputLimitBytes)) {
+      outputLimitBytes = Math.max(0, opts.outputLimitBytes);
+    }
     const killGraceMs = opts.killGraceMs ?? 1000;
 
     const clearTimers = () => {

@@ -21,7 +21,9 @@ import { executeSandboxDestroy } from "../../actions/sandbox/destroy-execution";
 import { SANDBOX_DESTROY_TIMEOUT_MS } from "../../actions/sandbox/destroy-gateway";
 import { startSandbox } from "../../actions/sandbox/start";
 import { stopSandbox } from "../../actions/sandbox/stop";
+import { withCurrentPortableHostFence } from "../../state/portable-uninstall-retirement";
 import { loadAgent } from "../../agent/defs";
+import * as registry from "../../state/registry";
 import type { SandboxEntry, SandboxWorkloadReceipt } from "../../state/registry/types";
 import { cloneSandboxWorkloadReceipt } from "../../state/registry/workload";
 import { createDockerManagedBootstrapSurface } from "../managed-bootstrap/docker-runtime";
@@ -692,6 +694,38 @@ describe("RuntimeProviderBundle registry contract", () => {
     expect(CURRENT_RUNTIME_PROVIDER_BUNDLES.podman?.gateway.ownsHostReadiness).toBe(true);
   });
 
+  it("requires an explicit final sandbox-liveness source", () => {
+    const bundle = mxcBundle();
+    const { finalSandboxLiveness: _finalSandboxLiveness, ...gatewayWithoutLivenessSource } =
+      bundle.gateway;
+
+    expect(() =>
+      createRuntimeProviderBundleRegistry([
+        ["mxc", replaceSurface(bundle, "gateway", gatewayWithoutLivenessSource)],
+      ]),
+    ).toThrow(/gateway\.finalSandboxLiveness/u);
+    expect(() =>
+      createRuntimeProviderBundleRegistry([
+        [
+          "mxc",
+          replaceSurface(bundle, "gateway", {
+            ...bundle.gateway,
+            finalSandboxLiveness: "host-readiness",
+          }),
+        ],
+      ]),
+    ).toThrow(/gateway\.finalSandboxLiveness/u);
+    expect(CURRENT_RUNTIME_PROVIDER_BUNDLES.docker?.gateway.finalSandboxLiveness).toBe(
+      "openshell-and-docker",
+    );
+    expect(CURRENT_RUNTIME_PROVIDER_BUNDLES.kubernetes?.gateway.finalSandboxLiveness).toBe(
+      "openshell-and-docker",
+    );
+    expect(CURRENT_RUNTIME_PROVIDER_BUNDLES.podman?.gateway.finalSandboxLiveness).toBe(
+      "openshell-only",
+    );
+  });
+
   it("requires provider-owned readiness observation from a gateway readiness owner (#10984)", () => {
     const bundle = CURRENT_RUNTIME_PROVIDER_BUNDLES.podman!;
     const { observeOwnedGateway: _observeOwnedGateway, ...gatewayWithoutObservation } =
@@ -950,7 +984,7 @@ describe("sandbox workload ownership receipt", () => {
     const canonicalProfile = Buffer.from(ENCODED_PROFILE, "base64url").toString("utf8");
     const encodedProfile = Buffer.from(
       canonicalProfile.replace(
-        `"model":${JSON.stringify(profile.inference.model)}`,
+        `"model":${JSON.stringify(profile.inference!.model)}`,
         `"model":"nvapi-${"a".repeat(32)}"`,
       ),
       "utf8",
@@ -1045,9 +1079,11 @@ describe("socket-free MXC action contract", () => {
   beforeEach(() => {
     testHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-runtime-provider-contract-"));
     vi.stubEnv("HOME", testHome);
+    vi.spyOn(registry, "getSandbox").mockReturnValue(null);
   });
 
   afterEach(() => {
+    vi.restoreAllMocks();
     vi.unstubAllEnvs();
     fs.rmSync(testHome, { recursive: true, force: true });
   });
@@ -1107,6 +1143,7 @@ describe("socket-free MXC action contract", () => {
         hermesToolGateways: [],
         hermesDashboardState: { enabled: false, config: null },
         dashboardPort: 18789,
+        ...(agent === "hermes" ? { hermesApiPort: 8_642 } : {}),
         gatewayName: "nemoclaw",
         gatewayPort: 8080,
         registerSandbox,
@@ -1114,31 +1151,50 @@ describe("socket-free MXC action contract", () => {
       });
       state.workloads.add(imageTag);
       const getSandbox = vi.fn(() => entry);
+      const updateSandbox = vi.fn(() => true);
       const stopSandboxChannels = vi.fn();
       const teardownSandboxDashboardForward = vi.fn();
-      const runOpenshell = vi.fn(() => ({ status: 0, stdout: "", stderr: "" }));
+      let deleteConvergenceMs = 0;
+      const runOpenshell = vi.fn((args: string[]) => {
+        switch (`${String(args[0])}:${String(args[1])}`) {
+          case "sandbox:get":
+            return {
+              status: 1,
+              stdout: "",
+              stderr:
+                "Error: code: 'Some requested entity was not found', message: \"sandbox not found\"",
+            };
+          default:
+            return { status: 0, stdout: "", stderr: "" };
+        }
+      });
 
       await expect(
         startSandbox(sandboxName, {
           getSandbox,
+          updateSandbox,
           runtimeProviders: providers,
           log: vi.fn(),
         }),
       ).resolves.toEqual({ exitCode: 0 });
-      expect(
-        stopSandbox(sandboxName, {
-          getSandbox,
-          runtimeProviders: providers,
-          stopSandboxChannels,
-          teardownSandboxDashboardForward,
-          log: vi.fn(),
-          warn: vi.fn(),
-        }),
-      ).toEqual({ exitCode: 0 });
+      await expect(
+        withCurrentPortableHostFence(() =>
+          stopSandbox(sandboxName, {
+            getSandbox,
+            updateSandbox,
+            runtimeProviders: providers,
+            stopSandboxChannels,
+            teardownSandboxDashboardForward,
+            log: vi.fn(),
+            warn: vi.fn(),
+          }),
+        ),
+      ).resolves.toEqual({ exitCode: 0 });
       expect(() => requireInferenceSetRuntimeAuthority(entry, providers)).not.toThrow();
       await expect(
         executeSandboxDestroy({
           force: false,
+          deleteGatewayName: "nemoclaw",
           runOpenshell,
           sandbox: entry,
           sandboxConfirmedAbsent: false,
@@ -1147,6 +1203,12 @@ describe("socket-free MXC action contract", () => {
           runtimeProviders: providers,
           deps: {
             wipeSandboxState: vi.fn(),
+            deleteConvergence: {
+              now: () => deleteConvergenceMs,
+              sleep: (milliseconds) => {
+                deleteConvergenceMs += milliseconds;
+              },
+            },
           },
         }),
       ).resolves.toMatchObject({ ok: true });
@@ -1164,12 +1226,18 @@ describe("socket-free MXC action contract", () => {
       });
 
       expect(registerSandbox).toHaveBeenCalledWith(entry);
-      expect(runOpenshell).toHaveBeenCalledWith(["sandbox", "delete", sandboxName], {
-        ignoreError: true,
-        killSignal: "SIGKILL",
-        stdio: ["ignore", "pipe", "pipe"],
-        timeout: SANDBOX_DESTROY_TIMEOUT_MS,
-      });
+      expect(runOpenshell).toHaveBeenCalledWith(
+        ["sandbox", "delete", "-g", "nemoclaw", sandboxName],
+        {
+          ignoreError: true,
+          killProcessTreeOnTimeout: true,
+          killSignal: "SIGKILL",
+          maxBuffer: 1024 * 1024,
+          stdio: ["ignore", "pipe", "pipe"],
+          suppressOutput: true,
+          timeout: SANDBOX_DESTROY_TIMEOUT_MS,
+        },
+      );
       const prepareDestroyIndex = state.events.indexOf(`prepare-destroy:${sandboxName}`);
       expect(prepareDestroyIndex).toBeGreaterThanOrEqual(0);
       expect(recordEvent.mock.invocationCallOrder[prepareDestroyIndex]).toBeLessThan(

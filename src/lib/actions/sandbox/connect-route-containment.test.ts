@@ -209,6 +209,7 @@ describe("connect route containment", () => {
       model: "nvidia/model-a",
     } as const;
     const harness = createConnectHarness({
+      inferenceGetOutput: "Gateway inference:\n  Not configured\n",
       registryEntry: alpha,
       registryEntries: [alpha, { ...alpha, name: "peer" }],
       withGatewayRouteMutationLock: async (_gatewayName, operation) => {
@@ -232,7 +233,7 @@ describe("connect route containment", () => {
     );
     expect(harness.captureOpenshellSpy).toHaveBeenCalledWith(
       ["inference", "get", "-g", "nemoclaw"],
-      { ignoreError: true, timeout: 15_000 },
+      expect.objectContaining({ ignoreError: true, timeout: 15_000 }),
     );
     expect(harness.runOpenshellSpy).toHaveBeenCalledWith(
       expect.arrayContaining(["inference", "set", "--provider", "nvidia-prod"]),

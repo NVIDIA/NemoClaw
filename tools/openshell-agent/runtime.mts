@@ -17,6 +17,7 @@ const HOST_CREDENTIALS = [
 export interface OpenShellCommandOptions {
   capture?: boolean;
   env: NodeJS.ProcessEnv;
+  killSignal?: NodeJS.Signals;
   timeout?: number;
 }
 
@@ -216,6 +217,7 @@ export const defaultOpenShellTools: OpenShellTools = {
     const output = execFileSync(command, [...args], {
       encoding: "utf8",
       env: options.env,
+      killSignal: options.killSignal,
       stdio: options.capture ? ["ignore", "pipe", "inherit"] : "inherit",
       timeout: options.timeout,
     });
@@ -307,7 +309,9 @@ function startOpenShellInference(
   );
   const stopGateway =
     tools.start("openshell-gateway", ["--config", configurationPath], {
-      env: commandEnv,
+      env: input.ownGateway
+        ? { ...commandEnv, OPENSHELL_DB_URL: "sqlite::memory:?cache=shared" }
+        : commandEnv,
       logPath: path.join(gatewayDirectory, "gateway.log"),
     }) ?? (async () => undefined);
 
@@ -397,6 +401,7 @@ export function createOpenShellSandbox(
   const driverConfigArgs = input.driverConfig
     ? ["--driver-config-json", JSON.stringify(input.driverConfig)]
     : [];
+  const commandArgs = input.command.length > 0 ? ["--", ...input.command] : [];
   tools.run(
     "openshell",
     [
@@ -411,8 +416,7 @@ export function createOpenShellSandbox(
       input.policyPath,
       ...uploadOptions,
       "--no-tty",
-      "--",
-      ...input.command,
+      ...commandArgs,
     ],
     { env: credentialFreeEnvironment(env) },
   );
@@ -462,11 +466,13 @@ export function execOpenShellSandboxAsync(
 
 export function downloadOpenShellPath(
   env: NodeJS.ProcessEnv,
-  input: { destination: string; name: string; source: string },
+  input: { destination: string; name: string; source: string; timeoutMs?: number },
   tools: OpenShellTools = defaultOpenShellTools,
 ): void {
   tools.run("openshell", ["sandbox", "download", input.name, input.source, input.destination], {
     env: credentialFreeEnvironment(env),
+    killSignal: "SIGKILL",
+    timeout: input.timeoutMs,
   });
 }
 

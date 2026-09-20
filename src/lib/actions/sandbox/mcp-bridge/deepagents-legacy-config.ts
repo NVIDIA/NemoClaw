@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-export const DEEPAGENTS_LEGACY_MCP_CONFIG_PATH = "/sandbox/.deepagents/.mcp.json";
+export const DEEPAGENTS_LEGACY_MCP_CONFIG_PATH = "/sandbox/.deepagents/.nemoclaw-mcp.json";
 
 export const DEEPAGENTS_LEGACY_CONFIG_HELPERS = [
   "LEGACY_MCP_MAX_BYTES = 262144",

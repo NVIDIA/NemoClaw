@@ -17,6 +17,7 @@ import {
   HOST_LOCAL_VLLM_PRESET_LABEL,
   HOST_LOCAL_VLLM_RECIPE_DIGEST_LABEL,
   HOST_LOCAL_VLLM_RECIPE_LABEL,
+  HOST_LOCAL_VLLM_RUNTIME_RECEIPT_FILE,
   persistHostLocalVllmRuntimeReceipt,
   type RecoverHostLocalManagedVllmOptions,
   recoverHostLocalManagedVllmEndpoint,
@@ -242,6 +243,26 @@ describe("host-local managed vLLM recovery", () => {
         stateDir: directory,
       }),
     ).toThrow("does not match its ownership receipt");
+  });
+
+  it.each([
+    ["undersized", "{"],
+    ["oversized", "x".repeat(64 * 1024 + 1)],
+  ])("rejects an %s owner-only receipt before loading credentials", (_kind, receipt) => {
+    const directory = stateDir();
+    const receiptPath = path.join(directory, HOST_LOCAL_VLLM_RUNTIME_RECEIPT_FILE);
+    fs.writeFileSync(receiptPath, receipt, { mode: 0o600 });
+    fs.chmodSync(receiptPath, 0o600);
+    const loadApiKey = vi.fn(() => API_KEY);
+
+    expect(() =>
+      recoverHostLocalManagedVllmEndpoint({
+        dockerInspect: () => inspect(API_KEY, runtimeAuthFingerprint(API_KEY), PROFILE_LABELS),
+        loadApiKey,
+        stateDir: directory,
+      }),
+    ).toThrow("runtime receipt has an unexpected size");
+    expect(loadApiKey).not.toHaveBeenCalled();
   });
 
   it("does not adopt a dual-Station container when every host-local marker also matches", () => {

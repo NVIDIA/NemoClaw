@@ -8,8 +8,7 @@ type InferenceInputCapabilityDeps = {
 };
 
 const VALID_INFERENCE_INPUTS = new Set(["text", "image"]);
-const MULTIMODAL_MODEL_HINT_PATTERN =
-  /(^|[\/:_\-.])(omni|vision|vl|image|multimodal)([\/:_\-.]|$)/i;
+const MULTIMODAL_MODEL_HINT_PATTERN = /(^|[/:_\-.])(omni|vision|vl|image|multimodal)([/:_\-.]|$)/i;
 
 export function isValidInferenceInputsOverride(value: string | undefined): boolean {
   if (!value) return false;

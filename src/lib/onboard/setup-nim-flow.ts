@@ -28,6 +28,7 @@ import {
 } from "../inference/llama-cpp/managed-selection";
 import { getOllamaContextWindowFloorForAgent } from "../inference/ollama-runtime-context";
 import {
+  NEMOCLAW_SERVING_PRESET_ENV,
   type RequestedServingProfileModel,
   resolveRequestedServingProfileModel,
 } from "../inference/serving/requested-profile-model";
@@ -524,7 +525,7 @@ function prepareManagedLlamaCppMenu(input: {
     ? discoverManagedLlamaCppSafely(
         deps,
         !deps.isNonInteractive() && !requestedProvider
-          ? { ...process.env, [LLAMA_CPP_RECIPE_ENV]: "" }
+          ? { ...process.env, [LLAMA_CPP_RECIPE_ENV]: "", [NEMOCLAW_SERVING_PRESET_ENV]: "" }
           : undefined,
         gpu,
         runtimeProviderId,
@@ -573,7 +574,11 @@ function resolveSelectedManagedLlamaCpp(input: {
   const { deps, gpu, recoveredFromSandbox, selectedFromInteractiveMenu, selectedRecipeId } = input;
   const env =
     selectedRecipeId && (recoveredFromSandbox || selectedFromInteractiveMenu)
-      ? { ...process.env, [LLAMA_CPP_RECIPE_ENV]: selectedRecipeId }
+      ? {
+          ...process.env,
+          [LLAMA_CPP_RECIPE_ENV]: selectedRecipeId,
+          [NEMOCLAW_SERVING_PRESET_ENV]: "",
+        }
       : undefined;
   const runtimeProvider = deps.getRuntimeProvider();
   return {
@@ -592,14 +597,24 @@ async function runDedicatedLocalModelProfile(input: {
   vllmRunning: boolean;
   providerMenuOptionCount: number;
   createSelectionState: () => SetupNimSelectionState;
-}): Promise<{ state: SetupNimSelectionState | null; providerMenuOptionCount: number }> {
+}): Promise<{
+  state: SetupNimSelectionState | null;
+  servingProfileProvenance: ServingProfileProvenance | null;
+  providerMenuOptionCount: number;
+}> {
   let plan: LocalModelProfilePlan | null;
   try {
     plan = input.integration.resolvePlan();
   } catch (error) {
     input.deps.abortNonInteractive((error as Error).message);
   }
-  if (!plan) return { state: null, providerMenuOptionCount: input.providerMenuOptionCount };
+  if (!plan) {
+    return {
+      state: null,
+      servingProfileProvenance: null,
+      providerMenuOptionCount: input.providerMenuOptionCount,
+    };
+  }
   if (!input.deps.isNonInteractive()) {
     input.deps.abortNonInteractive("The local model profile requires non-interactive onboarding.");
   }
@@ -617,7 +632,11 @@ async function runDedicatedLocalModelProfile(input: {
   if (result === "retry-selection") {
     input.deps.abortNonInteractive("The local model profile could not be configured.");
   }
-  return { state, providerMenuOptionCount: 0 };
+  return {
+    state,
+    servingProfileProvenance: plan.servingProfileProvenance,
+    providerMenuOptionCount: 0,
+  };
 }
 
 async function handleEndpointProviderSelection(input: {
@@ -1041,6 +1060,7 @@ export function createSetupNim(
       createSelectionState,
     });
     const localModelState = localModelProfile.state;
+    selectedServingProfileProvenance = localModelProfile.servingProfileProvenance;
     ({
       model,
       provider,

@@ -62,7 +62,7 @@ describe("trusted PR base comparison", () => {
     expect(command).not.toHaveBeenCalled();
   });
 
-  it("fetches and verifies the approved base before updating the comparison ref", async () => {
+  it("fetches and verifies the manual workflow base before updating the comparison ref", async () => {
     const command = vi
       .fn()
       .mockResolvedValueOnce(result())

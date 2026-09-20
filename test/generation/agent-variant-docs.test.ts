@@ -550,6 +550,62 @@ Real content.
     expect(() => renderAgentVariantPage(mixed, "openclaw")).not.toThrow();
   });
 
+  it("points OpenClaw enterprise readiness at the OpenClaw OTEL command fragment (#11145)", () => {
+    const sourcePath = path.join(repoRoot, "docs/reference/enterprise-readiness.mdx");
+    const rendered = renderAgentVariantPage(readFileSync(sourcePath, "utf8"), "openclaw", {
+      sourcePath,
+    });
+
+    expect(rendered).toContain("#openclaw-conversation-otel-diagnostics");
+    expect(rendered).not.toContain("#deep-agents-code-otlp-traces");
+  });
+
+  it("does not send Hermes enterprise readiness to the Deep Agents OTLP command fragment (#11145)", () => {
+    const sourcePath = path.join(repoRoot, "docs/reference/enterprise-readiness.mdx");
+    const rendered = renderAgentVariantPage(readFileSync(sourcePath, "utf8"), "hermes", {
+      sourcePath,
+    });
+
+    expect(rendered).not.toContain("#deep-agents-code-otlp-traces");
+    expect(rendered).toContain("#messaging-bridge-appears-running-but-no-messages-arrive");
+  });
+
+  it("keeps the messaging-bridge heading on the Hermes troubleshooting page (#11145)", () => {
+    const sourcePath = path.join(repoRoot, "docs/reference/troubleshooting.mdx");
+    const rendered = renderAgentVariantPage(readFileSync(sourcePath, "utf8"), "hermes", {
+      sourcePath,
+    });
+
+    expect(rendered).toContain("### Messaging bridge appears running but no messages arrive");
+  });
+
+  it("omits the messaging-bridge fragment from Deep Agents pages (#11145)", () => {
+    const readinessPath = path.join(repoRoot, "docs/reference/enterprise-readiness.mdx");
+    const troubleshootingPath = path.join(repoRoot, "docs/reference/troubleshooting.mdx");
+    const readiness = renderAgentVariantPage(readFileSync(readinessPath, "utf8"), "deepagents", {
+      sourcePath: readinessPath,
+    });
+    const troubleshooting = renderAgentVariantPage(
+      readFileSync(troubleshootingPath, "utf8"),
+      "deepagents",
+      { sourcePath: troubleshootingPath },
+    );
+
+    expect(troubleshooting).not.toContain(
+      "### Messaging bridge appears running but no messages arrive",
+    );
+    expect(readiness).not.toContain("#messaging-bridge-appears-running-but-no-messages-arrive");
+  });
+
+  it("points Hermes recovery at the variant recover command fragment (#11147)", () => {
+    const sourcePath = path.join(repoRoot, "docs/manage-sandboxes/recover-rebuild-sandboxes.mdx");
+    const pageSource = readFileSync(sourcePath, "utf8");
+    const rendered = renderAgentVariantPage(pageSource, "hermes", { sourcePath });
+
+    expect(rendered).toContain("#nemohermes-name-recover");
+    expect(rendered).not.toContain("#nemoclaw-name-recover");
+  });
+
   it("leaves no shared page section heading without content in any published variant (#9731)", () => {
     const pages = sharedVariantPages();
     const renderEveryPublishedVariant = () =>
@@ -559,5 +615,57 @@ Real content.
 
     expect(pages.length).toBeGreaterThan(0);
     expect(renderEveryPublishedVariant).not.toThrow();
+  });
+});
+
+/**
+ * `scripts/nemoclaw-start.sh` is the only writer of the default OpenClaw
+ * workspace templates, so it is the authority the workspace docs must match.
+ */
+function seededWorkspaceFiles(): readonly string[] {
+  const startScript = readFileSync(path.join(repoRoot, "scripts/nemoclaw-start.sh"), "utf8");
+  const seedLoop = /for file in ((?:[A-Z_]+\.md\s*)+); do/.exec(startScript);
+
+  return (seedLoop?.[1] ?? "").trim().split(/\s+/);
+}
+
+describe("workspace file documentation", () => {
+  const seeded = seededWorkspaceFiles();
+  const transfer = readFileSync(
+    path.join(repoRoot, "docs/manage-sandboxes/transfer-state-manually.mdx"),
+    "utf8",
+  );
+  const reference = readFileSync(
+    path.join(repoRoot, "docs/manage-sandboxes/workspace-files.mdx"),
+    "utf8",
+  );
+
+  it("covers every seeded workspace file in the manual transfer guide (#10481)", () => {
+    expect(seeded).toEqual([
+      "AGENTS.md",
+      "SOUL.md",
+      "IDENTITY.md",
+      "USER.md",
+      "TOOLS.md",
+      "HEARTBEAT.md",
+    ]);
+    expect(
+      seeded.filter(
+        (file) =>
+          !transfer.includes(`download /sandbox/.openclaw/workspace/${file} "$BACKUP_DIR/"`),
+      ),
+    ).toEqual([]);
+    expect(
+      seeded.filter(
+        (file) => !transfer.includes(`upload "$BACKUP_DIR/${file}" /sandbox/.openclaw/workspace/`),
+      ),
+    ).toEqual([]);
+    expect(seeded.filter((file) => !reference.includes(`| \`${file}\` |`))).toEqual([]);
+  });
+
+  it("documents POLICY.md as generated state that nobody uploads (#10481)", () => {
+    expect(reference).toContain("| `POLICY.md` |");
+    expect(transfer).toContain("The same directory also holds `POLICY.md`");
+    expect(transfer).not.toContain('upload "$BACKUP_DIR/POLICY.md"');
   });
 });

@@ -6,6 +6,7 @@ import path from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
 import { expectNoSandboxDelete } from "../../../../test/helpers/rebuild-delete-assertions";
+import { makePlan } from "../../../../test/helpers/messaging-conflict-fixtures";
 import {
   createRebuildFlowHarness,
   createHarnessTempDir,
@@ -17,8 +18,25 @@ import {
 } from "../../../../test/helpers/rebuild-flow-generic-harness";
 import { makePreparedRecoveryManifest } from "./rebuild-flow-test-fixtures";
 import { enforceRemovedImmutabilityMigrationBoundary } from "../../state/migrations/removed-immutability";
+import type { SandboxRuntimeSnapshot } from "../../state/registry/runtime-snapshot";
 
 const enforceRemovedImmutabilityMigrationBoundaryReal = enforceRemovedImmutabilityMigrationBoundary;
+
+function dockerGpuRuntimeSnapshot(device = "nvidia.com/gpu=0"): SandboxRuntimeSnapshot {
+  return {
+    schemaVersion: 1,
+    providerId: "docker",
+    providerHandle: "provider-handle",
+    lifecycleState: "running",
+    lifecycleGeneration: "generation-1",
+    runtime: {
+      schemaVersion: 1,
+      providerId: "docker",
+      runtime: { kind: "docker-container", handle: "c".repeat(64) },
+      acceleration: { kind: "gpu", vendor: "nvidia", devices: [device] },
+    },
+  };
+}
 
 describe("rebuildSandbox flow: lifecycle", () => {
   installRebuildFlowTestHooks();
@@ -41,6 +59,64 @@ describe("rebuildSandbox flow: lifecycle", () => {
     expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
     expect(harness.onboardSpy).not.toHaveBeenCalled();
     expectNoSandboxDelete(harness.runOpenshellSpy);
+  });
+
+  it("carries the messaging recheck through backup and refuses deletion after port drift", async () => {
+    const check = vi
+      .fn()
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(new Error("Teams port ownership changed"));
+    const harness = createRebuildFlowHarness({ preflightMessagingConflicts: check });
+
+    await expect(
+      harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+    ).rejects.toThrow("Teams port ownership changed");
+    expect(check).toHaveBeenCalledTimes(2);
+    expect(harness.backupSandboxStateSpy).toHaveBeenCalledOnce();
+    expect(harness.prepareMcpBridgesForRebuildSpy).toHaveBeenCalledOnce();
+    expectNoSandboxDelete(harness.runOpenshellSpy);
+    expect(harness.onboardSpy).not.toHaveBeenCalled();
+  });
+
+  it("retains replacement recovery when Teams forwarding fails after the source is deleted", async () => {
+    const check = vi
+      .fn()
+      .mockResolvedValueOnce(undefined)
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(new Error("Teams webhook port 3978 is occupied by nc (PID 4321)"));
+    const harness = createRebuildFlowHarness({
+      preflightMessagingConflicts: check,
+      buildMessagingRebuildPlan: () =>
+        makePlan("alpha", {
+          workflow: "rebuild",
+          channels: [
+            {
+              channelId: "teams",
+              displayName: "Microsoft Teams",
+              authMode: "token-paste",
+              active: true,
+              selected: true,
+              configured: true,
+              disabled: false,
+              inputs: [],
+              hooks: [],
+              hostForward: { channelId: "teams", port: 3978, label: "Microsoft Teams webhook" },
+            },
+          ],
+        }),
+    });
+    harness.ensureMessagingHostForwardAfterRebuildSpy.mockResolvedValue(false);
+
+    await expect(
+      harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+    ).rejects.toThrow("Teams webhook port 3978 is occupied by nc (PID 4321)");
+    expect(check).toHaveBeenCalledTimes(3);
+    expect(harness.onboardSpy).toHaveBeenCalledOnce();
+    expect(harness.removeSandboxRegistryEntryWithReceiptSpy).not.toHaveBeenCalled();
+    expect(fs.existsSync(harness.backupPath)).toBe(true);
+    expect(fs.existsSync(path.join(harness.backupPath, ".nemoclaw-rebuild-recovery.json"))).toBe(
+      true,
+    );
   });
 
   it("rejects a multi-agent sandbox before backup, onboard, or deletion", async () => {
@@ -108,7 +184,60 @@ describe("rebuildSandbox flow: lifecycle", () => {
     expectNoSandboxDelete(harness.runOpenshellSpy);
   });
 
-  it("backs up once, recreates with the captured OpenShell policy, and restores a mutable OpenClaw sandbox", async ({
+  it("recreates with the provider-captured exact GPU before snapshot restore (#10758)", async () => {
+    const harness = createRebuildFlowHarness({
+      sandboxEntry: {
+        sandboxGpuMode: "auto",
+        sandboxGpuEnabled: true,
+        sandboxGpuDevice: null,
+      },
+      backupRuntimeSnapshot: dockerGpuRuntimeSnapshot(),
+    });
+
+    await expect(
+      harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+    ).resolves.toBeUndefined();
+
+    expect(harness.onboardSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sandboxGpu: "enable",
+        sandboxGpuDevice: "nvidia.com/gpu=0",
+      }),
+    );
+    const deleteCall = harness.runOpenshellSpy.mock.calls.findIndex(
+      (call) => Array.isArray(call[0]) && call[0].join(" ") === "sandbox delete -g nemoclaw alpha",
+    );
+    expect(harness.backupSandboxStateSpy.mock.invocationCallOrder[0]).toBeLessThan(
+      harness.runOpenshellSpy.mock.invocationCallOrder[deleteCall],
+    );
+    expect(harness.runOpenshellSpy.mock.invocationCallOrder[deleteCall]).toBeLessThan(
+      harness.onboardSpy.mock.invocationCallOrder[0],
+    );
+    expect(harness.onboardSpy.mock.invocationCallOrder[0]).toBeLessThan(
+      harness.restoreSandboxStateSpy.mock.invocationCallOrder[0],
+    );
+  });
+
+  it("keeps the source sandbox when captured GPU authority conflicts with opt-out (#10758)", async () => {
+    const harness = createRebuildFlowHarness({
+      sandboxEntry: {
+        sandboxGpuMode: "0",
+        sandboxGpuEnabled: false,
+        sandboxGpuDevice: null,
+      },
+      backupRuntimeSnapshot: dockerGpuRuntimeSnapshot(),
+    });
+
+    await expect(
+      harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+    ).rejects.toThrow(/captured sandbox GPU authority cannot be replayed safely/iu);
+
+    expect(harness.backupSandboxStateSpy).toHaveBeenCalledOnce();
+    expect(harness.onboardSpy).not.toHaveBeenCalled();
+    expectNoSandboxDelete(harness.runOpenshellSpy);
+  });
+
+  it("observes current MCP sources, recreates with the captured policy, and restores OpenClaw", async ({
     onTestFinished,
   }) => {
     const restoreEnv = snapshotEnv(["NEMOCLAW_RECREATE_WITHOUT_BACKUP"]);
@@ -123,7 +252,7 @@ describe("rebuildSandbox flow: lifecycle", () => {
       env: ["GITHUB_TOKEN"],
       providerName: "nemoclaw-mcp-alpha-github",
       policyName: "mcp-bridge-github",
-      adapter: "mcporter",
+      adapter: "openclaw-config",
       createdAt: "2026-06-01T00:00:00.000Z",
       updatedAt: "2026-06-01T00:00:00.000Z",
     };
@@ -166,7 +295,11 @@ describe("rebuildSandbox flow: lifecycle", () => {
       "alpha",
       expect.objectContaining({ captureStateFile: expect.any(Function) }),
     );
-    expect(harness.prepareMcpBridgesForRebuildSpy).toHaveBeenCalledWith("alpha");
+    expect(harness.prepareMcpBridgesForRebuildSpy).toHaveBeenCalledWith(
+      "alpha",
+      { gatewayName: "nemoclaw", workspace: "default" },
+      [mcpEntry],
+    );
     expect(harness.prepareMcpBridgesForRebuildSpy.mock.invocationCallOrder[0]).toBeLessThan(
       harness.warnUnpreservedUserManagedFilesSpy.mock.invocationCallOrder[0],
     );
@@ -205,6 +338,7 @@ describe("rebuildSandbox flow: lifecycle", () => {
         hermesAuthMethod: null,
       }),
     );
+    expect(harness.registryUpdateSpy).toHaveBeenCalledWith("alpha", { stopped: false });
     const deleteCall = harness.runOpenshellSpy.mock.calls.findIndex(
       (call) => Array.isArray(call[0]) && call[0].join(" ") === "sandbox delete -g nemoclaw alpha",
     );
@@ -215,9 +349,13 @@ describe("rebuildSandbox flow: lifecycle", () => {
     expect(harness.session.steps.preflight.status).toBe("complete");
     expect(harness.session.steps.sandbox.status).toBe("pending");
     expect(harness.restoreSandboxStateSpy).toHaveBeenCalledWith("alpha", harness.backupPath, {
+      runtimeSelection: { gatewayName: "nemoclaw", workspace: "default" },
       targetAgentType: "openclaw",
     });
-    expect(harness.restoreMcpBridgesAfterRebuildSpy).toHaveBeenCalledWith("alpha", [mcpEntry]);
+    expect(harness.restoreMcpBridgesAfterRebuildSpy).toHaveBeenCalledWith("alpha", [mcpEntry], {
+      gatewayName: "nemoclaw",
+      workspace: "default",
+    });
     expect(harness.removeSandboxRegistryEntryWithReceiptSpy).not.toHaveBeenCalled();
     expect(harness.errorSpy.mock.calls.map((call) => String(call[0])).join("\n")).toContain(
       "Preserving journaled source registry entry across sandbox recreation",
@@ -229,12 +367,14 @@ describe("rebuildSandbox flow: lifecycle", () => {
     expect(harness.registryUpdateSpy).toHaveBeenCalledWith("alpha", {
       agentVersion: "0.2.0",
     });
-    expect(harness.executeSandboxExecCommandSpy).toHaveBeenCalledWith(
-      "alpha",
-      "openclaw doctor --fix",
-      300_000,
-      { localDockerFallbackPolicy: "never" },
-    );
+    expect(harness.runOpenClawPostRestoreDoctorSpy).toHaveBeenCalledWith({
+      sandboxName: "alpha",
+      kind: "backup",
+      runtimeSelection: {
+        gatewayName: "nemoclaw",
+        workspace: "default",
+      },
+    });
     expect(harness.retireRemovedImmutabilityStateRecordSpy).toHaveBeenCalledWith(
       "alpha",
       "mutable-rebuild",
@@ -249,6 +389,21 @@ describe("rebuildSandbox flow: lifecycle", () => {
     expect(harness.logSpy.mock.calls.map((call) => String(call[0])).join("\n")).toContain(
       "rebuild completed",
     );
+  });
+
+  it("reports failure and retains stop intent when the rebuilt sandbox cannot clear it", async () => {
+    const harness = createRebuildFlowHarness({ sandboxEntry: { stopped: true } });
+    const updateSandbox = harness.registryUpdateSpy.getMockImplementation();
+    harness.registryUpdateSpy.mockImplementation((name, updates) =>
+      updates?.stopped === false ? false : (updateSandbox?.(name, updates) ?? true),
+    );
+
+    await expect(
+      harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+    ).rejects.toThrow("could not clear its intentional-stop record");
+
+    expect(harness.registryUpdateSpy).toHaveBeenCalledWith("alpha", { stopped: false });
+    expect(harness.getSandboxEntry().stopped).toBe(true);
   });
 
   it("retains removed immutability state when mutable config verification fails", async () => {
@@ -291,7 +446,7 @@ describe("rebuildSandbox flow: lifecycle", () => {
 
   it("retains removed Shields state when a Pi terminal-agent restore fails", async () => {
     const harness = createRebuildFlowHarness({
-      sandboxEntry: { agent: "pi" },
+      sandboxEntry: { agent: "pi", stopped: true },
       restoreSandboxState: () => ({
         success: false,
         restoredDirs: [],
@@ -310,6 +465,13 @@ describe("rebuildSandbox flow: lifecycle", () => {
     ).rejects.toThrow(/State restore remained incomplete/u);
 
     expect(harness.retireRemovedImmutabilityStateRecordSpy).not.toHaveBeenCalled();
+    expect(harness.getSandboxEntry().stopped).toBe(false);
+    const stopIntentUpdateIndex = harness.registryUpdateSpy.mock.calls.findIndex(
+      ([, updates]) => updates?.stopped === false,
+    );
+    expect(harness.registryUpdateSpy.mock.invocationCallOrder[stopIntentUpdateIndex]).toBeLessThan(
+      harness.restoreSandboxStateSpy.mock.invocationCallOrder[0],
+    );
   });
 
   it("publishes the delete-edge policy recapture without a transient source file", async () => {
@@ -567,7 +729,10 @@ describe("rebuildSandbox flow: lifecycle", () => {
       expect.objectContaining({ toolDisclosure: "direct" }),
     );
     expect(harness.session.toolDisclosure).toBe("direct");
-    expect(harness.restoreMcpBridgesAfterRebuildSpy).toHaveBeenCalledWith("alpha", [mcpEntry]);
+    expect(harness.restoreMcpBridgesAfterRebuildSpy).toHaveBeenCalledWith("alpha", [mcpEntry], {
+      gatewayName: "nemoclaw",
+      workspace: "default",
+    });
     harness.registryUpdateSpy.mock.calls.forEach(([, update]) => {
       expect(update).not.toHaveProperty("toolDisclosure");
     });
@@ -577,7 +742,7 @@ describe("rebuildSandbox flow: lifecycle", () => {
     const preparedMcpEntry = {
       server: "github",
       agent: "openclaw",
-      adapter: "mcporter",
+      adapter: "openclaw-config",
       url: "https://mcp.example.test/mcp",
       env: ["GITHUB_TOKEN"],
       policyName: "mcp-bridge-github",
@@ -599,8 +764,31 @@ describe("rebuildSandbox flow: lifecycle", () => {
       harness.rebuildSandbox("alpha", ["--yes", "--force"], { throwOnError: true }),
     ).resolves.toBeUndefined();
 
-    expect(harness.prepareMcpBridgesForRebuildSpy).toHaveBeenCalledWith("alpha");
+    expect(harness.prepareMcpBridgesForRebuildSpy).toHaveBeenCalledWith("alpha", undefined, []);
     expect(harness.onboardSpy).toHaveBeenCalledOnce();
+  });
+
+  it("stops a legacy-only MCP rebuild before teardown or sandbox deletion", async () => {
+    const harness = createRebuildFlowHarness({
+      mcpLegacySources: [
+        {
+          server: "github",
+          agent: "openclaw",
+          adapter: "mcporter-config",
+          url: "https://mcp.example.test/mcp",
+          env: ["GITHUB_TOKEN"],
+        },
+      ],
+    });
+
+    await expect(
+      harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+    ).rejects.toThrow("Legacy MCP agent configuration requires explicit migration for 'github'");
+
+    expect(harness.prepareMcpBridgesForRebuildSpy).not.toHaveBeenCalled();
+    expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
+    expect(harness.onboardSpy).not.toHaveBeenCalled();
+    expectNoSandboxDelete(harness.runOpenshellSpy);
   });
 
   it("keeps the journaled row when replacement creation fails (#7734)", async () => {
@@ -654,7 +842,7 @@ describe("rebuildSandbox flow: lifecycle", () => {
     const mcpEntry = {
       server: "github",
       agent: "openclaw",
-      adapter: "mcporter",
+      adapter: "openclaw-config",
       url: "https://mcp.example.test/mcp",
       env: ["GITHUB_TOKEN"],
       providerName: "alpha-mcp-github",
@@ -700,7 +888,10 @@ describe("rebuildSandbox flow: lifecycle", () => {
       expect(harness.session.compatibleEndpointReasoningEffort).toBe("high");
       expect(process.env.NEMOCLAW_REASONING).toBe("false");
       expect(process.env.NEMOCLAW_REASONING_EFFORT).toBe("low");
-      expect(harness.restoreMcpBridgesAfterRebuildSpy).toHaveBeenCalledWith("alpha", [mcpEntry]);
+      expect(harness.restoreMcpBridgesAfterRebuildSpy).toHaveBeenCalledWith("alpha", [mcpEntry], {
+        gatewayName: "nemoclaw",
+        workspace: "default",
+      });
     } finally {
       restoreEnv();
     }

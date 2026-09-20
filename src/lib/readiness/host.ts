@@ -202,10 +202,7 @@ function adaptHostAssessment(
     cdiNvidiaGpuSpecNeedsRepair: host.cdiNvidiaGpuSpecNeedsRepair,
     platformIdentity: {
       ...platformIdentity,
-      n1xWslGpu:
-        host.isWsl && hostGpuPlatform === "n1x"
-          ? true
-          : undefined,
+      n1xWslGpu: host.isWsl && hostGpuPlatform === "n1x" ? true : undefined,
     },
     runtimeProviderId: runtimeProvider?.providerId,
     runtimeProviderOwnsHostReadiness: runtimeProvider?.ownsHostReadiness,
@@ -616,7 +613,9 @@ export function projectHostReadiness(
         finding(
           "host.docker.host_invalid",
           "blocking",
-          "DOCKER_HOST is not a supported absolute local Unix socket endpoint.",
+          // DOCKER_CONTEXT selects an endpoint too, so the text names the
+          // endpoint rather than one of the two variables that chose it (#11719).
+          "The selected Docker endpoint is not a supported absolute local Unix socket.",
           ["host.docker.endpoint_supported"],
         ),
       );

@@ -5,11 +5,11 @@ import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import YAML from "yaml";
-import { validateNemoClawConfig } from "../../../src/lib/config/schema.ts";
+import { asExportedConfig, exportedAgentList } from "../../support/config-export-document.ts";
 import { fingerprintOpenShellSandboxId } from "../../../src/lib/adapters/openshell/sandbox-identity.ts";
 import {
   namedOpenShellGateway,
-  syncCliOpenShellSandboxPolicyReader,
+  cliOpenShellSandboxPolicyReader,
 } from "../../../src/lib/adapters/openshell/sandbox-policy-cli.ts";
 import { load, save } from "../../../src/lib/state/registry/persistence.ts";
 import { createServer, type Server } from "node:http";
@@ -202,15 +202,22 @@ const candidates = fs
   .readdirSync(distDir)
   .filter((name) => /^openclaw-tools-(?!serve-config-).+\.js$/.test(name))
   .sort();
-if (candidates.length !== 1) {
-  fail("expected one OpenClaw tools module, found " + candidates.join(", "));
+const factories = [];
+for (const candidate of candidates) {
+  const mod = await import(pathToFileURL(path.join(distDir, candidate)).href);
+  const factory = mod.createOpenClawTools || mod.t;
+  if (typeof factory === "function") factories.push(factory);
 }
-
-const mod = await import(pathToFileURL(path.join(distDir, candidates[0])).href);
-const createOpenClawTools = mod.t || mod.createOpenClawTools;
-if (typeof createOpenClawTools !== "function") {
-  fail("OpenClaw tools export is missing");
+const uniqueFactories = [...new Set(factories)];
+if (uniqueFactories.length !== 1) {
+  fail(
+    "expected one OpenClaw tools implementation across " +
+      candidates.join(", ") +
+      "; found " +
+      uniqueFactories.length,
+  );
 }
+const createOpenClawTools = uniqueFactories[0];
 const tools = createOpenClawTools({
   config,
   sandboxed: true,
@@ -226,6 +233,20 @@ if (!webFetch || typeof webFetch.execute !== "function") {
 
 function summary(value) {
   return JSON.stringify(value).slice(0, 2000);
+}
+
+function errorChainDetail(error) {
+  const details = [];
+  const seen = new Set();
+  let current = error;
+  for (let depth = 0; depth < 8 && current !== undefined && !seen.has(current); depth += 1) {
+    const detail =
+      current && (current.stack || current.message) ? current.stack || current.message : current;
+    details.push(String(detail));
+    seen.add(current);
+    current = current && typeof current === "object" ? current.cause : undefined;
+  }
+  return details.join("\nCaused by: ");
 }
 
 const approved = await webFetch.execute("e2e-approved-host-gateway", {
@@ -251,7 +272,7 @@ try {
   }
   fail("E2E_FAIL_DENIED_PORT_UNEXPECTED_SUCCESS: " + deniedText);
 } catch (error) {
-  const detail = String(error && (error.stack || error.message) ? error.stack || error.message : error);
+  const detail = errorChainDetail(error);
   if (/E2E_FAIL_DENIED_PORT_|SsrFBlockedError|Blocked hostname|private\/internal\/special-use/i.test(detail)) {
     throw error;
   }
@@ -329,6 +350,12 @@ test(
       apiKey,
       scenarioLabel: "network-policy",
       scenarioSlug: "network-policy",
+      extraOnboardEnv: {
+        NEMOCLAW_EXTRA_AGENTS_JSON: JSON.stringify([
+          { id: "researcher", tools: { allow: ["read"] } },
+          { id: "reviewer", tools: { allow: ["read"] } },
+        ]),
+      },
       preCleanupArtifactPrefix: "pre-cleanup-nemoclaw-destroy-network-policy",
       onboardArtifactPrefix: "onboard-restricted-network-policy",
       onboardTimeoutMs: ONBOARD_TIMEOUT_MS,
@@ -345,7 +372,7 @@ test(
     );
     const registry = load();
     const entry = registry.sandboxes[SANDBOX_NAME];
-    const policy = syncCliOpenShellSandboxPolicyReader.readSandboxPolicy({
+    const policy = await cliOpenShellSandboxPolicyReader.readSandboxPolicy({
       target: namedOpenShellGateway(entry.gatewayName ?? ""),
       sandboxName: SANDBOX_NAME,
       scope: "effective",
@@ -359,16 +386,31 @@ test(
     expect(exported.exitCode, text(exported)).toBe(0);
     const raw = fs.readFileSync(outputPath, "utf8");
     expect(raw.includes(apiKey), "Export must omit credential values").toBe(false);
-    const document = validateNemoClawConfig(YAML.parse(raw));
-    expect(document.spec.sandboxes[0].name).toBe(SANDBOX_NAME);
-    expect(document.spec.sandboxes[0].runtime.image.ref).toBe(
-      entry.workload?.kind === "managed-image" ? entry.workload.reference : null,
+    const document = asExportedConfig(YAML.parse(raw));
+    const exportedSandbox = document.spec.sandboxes[0];
+    const agents = exportedAgentList(exportedSandbox);
+    const [primary] = agents;
+    const primaryInference = JSON.stringify(primary?.inference);
+    const roster = agents.map((agent) => {
+      const toolsConfig = "tools" in agent ? agent.tools : undefined;
+      const tools = toolsConfig && "allow" in toolsConfig ? toolsConfig.allow.join(",") : "primary";
+      const route = JSON.stringify(agent.inference) === primaryInference ? "shared" : "different";
+      return `${agent.name}:${tools}:${route}`;
+    });
+    expect(`${exportedSandbox.name}|${roster.join("|")}`).toBe(
+      `${SANDBOX_NAME}|primary:primary:shared|researcher:read:shared|reviewer:read:shared`,
     );
-    expect(document.spec.inferenceProviders[0].endpoint).toBe(
-      requireHostedInferenceConfig(secrets).endpointUrl,
-    );
-    expect(document.spec.sandboxes[0].network.policy.explicit).toEqual(
-      policy.ok ? YAML.parse(policy.value.document) : null,
+    expect(exportedSandbox).not.toHaveProperty("image");
+    const exportedProvider = document.spec.inferenceProviders[0];
+    const exportedEndpoint = "endpoint" in exportedProvider ? exportedProvider.endpoint : undefined;
+    expect(exportedEndpoint).toBe(requireHostedInferenceConfig(secrets).endpointUrl);
+    expect(
+      (document.spec.sandboxes[0].network.policy.explicit as { network_policies?: unknown })
+        .network_policies,
+    ).toEqual(
+      policy.ok
+        ? (YAML.parse(policy.value.document) as { network_policies?: unknown }).network_policies
+        : undefined,
     );
 
     const mismatchPath = path.join(exportDirectory, "must-not-exist.yaml");
@@ -396,8 +438,9 @@ test(
     }
     await artifacts.writeJson("config-export-live-evidence.json", {
       sandboxName: SANDBOX_NAME,
-      image: document.spec.sandboxes[0].runtime.image.ref,
-      endpoint: document.spec.inferenceProviders[0].endpoint,
+      agentNames: agents.map((agent) => agent.name),
+      image: "v1-default",
+      endpoint: exportedEndpoint,
       effectivePolicyMatches: true,
       identityDriftPreventedPublication: true,
     });

@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 export const MCP_DENIED_TOOL_SELECTOR_MAX_COUNT = 500;
-const MCP_DENIED_TOOL_SELECTOR_RE = /^[A-Za-z0-9_.?*{}\[\]-]{1,128}$/u;
+const MCP_DENIED_TOOL_SELECTOR_RE = /^[A-Za-z0-9_.?*{}[\]-]{1,128}$/u;
 
 export type McpDeniedToolSelectorInspection =
   | {

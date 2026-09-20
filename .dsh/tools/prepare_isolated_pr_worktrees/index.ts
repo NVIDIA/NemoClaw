@@ -105,7 +105,7 @@ export default async function prepare_isolated_pr_worktrees(input: {
         ...(!dryRun ? { apply: true } : {}),
       });
       results.push(result);
-    } catch (error) {
+    } catch {
       errors.push({ number, message: "Worktree preparation failed" });
       if (failure === "fail-fast") throw new Error("Worktree preparation failed for PR #" + number);
     }

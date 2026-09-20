@@ -4,6 +4,7 @@
 import type { AgentDefinition } from "../agent/defs";
 import type { SandboxEntry } from "../state/registry";
 import * as registry from "../state/registry";
+import { canReuseDashboardForwardForAgent } from "./dashboard-runtime";
 import {
   getHermesDashboardRegistryFields,
   type HermesDashboardOnboardState,
@@ -11,6 +12,7 @@ import {
 import type { SandboxGpuConfig } from "./sandbox-gpu-mode";
 import {
   isExplicitMissingSandboxGatewayOutput,
+  observeLegacySandboxOnGateway,
   SANDBOX_RECREATE_PROBE_TIMEOUT_MS,
 } from "./sandbox-recreate-probe";
 import {
@@ -85,7 +87,7 @@ export interface ReusedSandboxDashboardForwarding {
     sandboxName: string,
     rollback?: boolean,
     revalidateSandboxIdentity?: (operation: string) => void,
-  ): void;
+  ): void | Promise<void>;
 }
 
 export interface ReusedSandboxDashboardStateInput {
@@ -105,11 +107,11 @@ export interface ReusedSandboxDashboardStateInput {
     sandboxName: string,
     chatUiUrl: string,
     options?: {
-      reuseExistingOpenClawForward?: boolean;
+      reuseExistingForward?: boolean;
       recordDashboardBind?: boolean;
       revalidateSandboxIdentity?: (operation: string) => void;
     },
-  ): number;
+  ): number | Promise<number>;
   hermesDashboardForwarding: ReusedSandboxDashboardForwarding;
   updateSandbox?(sandboxName: string, updates: Partial<SandboxEntry>): unknown;
   revalidateSandboxIdentity?(operation: string): void;
@@ -131,9 +133,9 @@ export interface ReusedSandboxDashboardStateResult {
   hermesDashboardState: HermesDashboardOnboardState;
 }
 
-export function applyReusedSandboxDashboardState(
+export async function applyReusedSandboxDashboardState(
   input: ReusedSandboxDashboardStateInput,
-): ReusedSandboxDashboardStateResult {
+): Promise<ReusedSandboxDashboardStateResult> {
   const manageDashboard = input.manageDashboard ?? true;
   if (
     manageDashboard &&
@@ -146,20 +148,19 @@ export function applyReusedSandboxDashboardState(
     );
   }
   input.revalidateSandboxIdentity?.(`restore dashboard state for sandbox '${input.sandboxName}'`);
-  const reuseExistingOpenClawForward = input.agent == null || input.agent.name === "openclaw";
+  const reuseExistingForward = canReuseDashboardForwardForAgent(input.agent);
   // The launcher records the bind of the dashboard forward it starts and
   // leaves the record alone when it keeps an existing owned forward (#10861),
   // so this path writes no bind of its own.
-  let dashboardPort = 0;
-  if (manageDashboard) {
-    dashboardPort = input.ensureDashboardForward(input.sandboxName, input.chatUiUrl, {
-      recordDashboardBind: true,
-      ...(reuseExistingOpenClawForward ? { reuseExistingOpenClawForward: true } : {}),
-      ...(input.revalidateSandboxIdentity
-        ? { revalidateSandboxIdentity: input.revalidateSandboxIdentity }
-        : {}),
-    });
-  }
+  const dashboardPort = manageDashboard
+    ? await input.ensureDashboardForward(input.sandboxName, input.chatUiUrl, {
+        recordDashboardBind: true,
+        ...(reuseExistingForward ? { reuseExistingForward: true } : {}),
+        ...(input.revalidateSandboxIdentity
+          ? { revalidateSandboxIdentity: input.revalidateSandboxIdentity }
+          : {}),
+      })
+    : 0;
   const chatUiUrl = manageDashboard ? `http://127.0.0.1:${dashboardPort}` : input.chatUiUrl;
   if (manageDashboard) {
     input.revalidateSandboxIdentity?.(`record dashboard URL for sandbox '${input.sandboxName}'`);
@@ -172,12 +173,15 @@ export function applyReusedSandboxDashboardState(
     input.revalidateSandboxIdentity?.(
       `restore Hermes dashboard state for sandbox '${input.sandboxName}'`,
     );
-    input.hermesDashboardForwarding.ensureForState(
-      hermesDashboardState,
-      input.sandboxName,
-      false,
-      input.revalidateSandboxIdentity,
-    );
+    // The primary forward already serves the enabled Hermes dashboard.
+    if (hermesDashboardState.config?.port !== dashboardPort) {
+      await input.hermesDashboardForwarding.ensureForState(
+        hermesDashboardState,
+        input.sandboxName,
+        false,
+        input.revalidateSandboxIdentity,
+      );
+    }
   }
   input.revalidateSandboxIdentity?.(`update reused sandbox metadata for '${input.sandboxName}'`);
   input.updateReusedSandboxMetadata(
@@ -205,20 +209,20 @@ export async function restoreReusedSandboxDashboardState(
   input: ReusedSandboxDashboardStateInput & { releaseDashboardPort(): Promise<void> },
 ): Promise<ReusedSandboxDashboardStateResult> {
   await input.releaseDashboardPort();
-  const reusesOpenClaw = input.agent == null || input.agent.name === "openclaw";
+  const reusesRegisteredPort = canReuseDashboardForwardForAgent(input.agent);
   const registeredPort = (input.getSandbox ?? registry.getSandbox)(
     input.sandboxName,
   )?.dashboardPort;
-  const registeredOpenClawDashboardPort =
-    reusesOpenClaw &&
+  const registeredDashboardPort =
+    reusesRegisteredPort &&
     typeof registeredPort === "number" &&
     Number.isInteger(registeredPort) &&
     registeredPort > 0 &&
     registeredPort <= 65_535
       ? registeredPort
       : undefined;
-  const chatUiUrl = registeredOpenClawDashboardPort
-    ? `http://127.0.0.1:${String(registeredOpenClawDashboardPort)}`
+  const chatUiUrl = registeredDashboardPort
+    ? `http://127.0.0.1:${String(registeredDashboardPort)}`
     : input.chatUiUrl;
   return applyReusedSandboxDashboardState({
     ...input,
@@ -263,6 +267,18 @@ export function createSandboxReuseHelpers(deps: SandboxReuseDeps): SandboxReuseH
       includeStreams: true,
       timeout: SANDBOX_RECREATE_PROBE_TIMEOUT_MS,
     });
+    const legacy = observeLegacySandboxOnGateway(
+      { sandboxName, gatewayName: recordedGatewayName ?? deps.getGatewayName?.() ?? "" },
+      probe,
+      deps.captureOpenshell,
+      {
+        ignoreError: true,
+        includeStderr: true,
+        includeStreams: true,
+        timeout: SANDBOX_RECREATE_PROBE_TIMEOUT_MS,
+      },
+    );
+    if (legacy) return legacy;
     const { combined, stdout } = capturedProbeOutput(probe);
     if (isCleanFailedProbe(probe) && isExplicitMissingSandboxGatewayOutput(combined, sandboxName)) {
       return { state: "missing", liveIdentityFingerprint: null };

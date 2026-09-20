@@ -2,10 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { execFileSync, spawnSync } from "node:child_process";
+import { EventEmitter } from "node:events";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import YAML from "yaml";
 
 import {
   ADVISOR_OPENAI_COMPATIBLE_BASE_URL,
@@ -19,6 +21,7 @@ import {
   collectGitHubReviewContext,
   MAX_PREPARED_GITHUB_CONTEXT_BYTES,
   readPreparedGitHubContext,
+  selectFollowUpReview,
   serializePreparedGitHubContext,
 } from "../../../tools/pr-review-advisor/github-context.mts";
 import {
@@ -29,6 +32,7 @@ import {
   prepareAdvisorSandboxInputs,
   runAdvisorSandboxAsync,
   runOpenShellAdvisorCommand,
+  waitForAdvisorSandboxTermination,
   verifyAdvisorGitWorktree,
 } from "../../../tools/pr-review-advisor/openshell.mts";
 import {
@@ -267,11 +271,7 @@ describe("PR review advisor specialist lifecycle", () => {
       remove: () => void calls.push("remove"),
     };
 
-    await runAdvisorSpecialistCommand(
-      "analysis",
-      {},
-      lifecycle,
-    );
+    await runAdvisorSpecialistCommand("analysis", {}, lifecycle);
 
     expect(calls).toEqual(["create", "run", "download", "remove"]);
   });
@@ -310,74 +310,74 @@ describe("PR review advisor specialist lifecycle", () => {
   it.each([
     { failedStage: "configure", expectedDownload: false },
     { failedStage: "create", expectedDownload: false },
-    { failedStage: "run", expectedDownload: false },
-    { failedStage: "execution", expectedDownload: false },
+    { failedStage: "run", expectedDownload: true },
+    { failedStage: "execution", expectedDownload: true },
     { failedStage: "download", expectedDownload: true },
     { failedStage: "validate", expectedDownload: true },
-  ])("fails closed and cleans owned resources after $failedStage failure", async ({
-    failedStage,
-    expectedDownload,
-  }) => {
-    let sandboxOwned = false;
-    let analysisActive = false;
-    let gatewayStopped = false;
-    let downloaded = false;
-    let removeCalls = 0;
-    const failures: Record<string, () => never> = {
-      [failedStage]: () => {
-        throw new Error(`${failedStage} failed`);
-      },
-    };
-    const fail = (stage: string): void => failures[stage]?.();
-    const lifecycle: AdvisorSpecialistLifecycle = {
-      prepare: async () => undefined,
-      startGateway: () => ({
-        configure: Promise.resolve().then(() => fail("configure")),
-        stop: async () => void (gatewayStopped = true),
-      }),
-      create: () => {
-        sandboxOwned = true;
-        fail("create");
-      },
-      run: () => {
-        fail("run");
-        analysisActive = true;
-        return {
-          completion:
-            failedStage === "execution"
-              ? Promise.resolve().then(() => {
-                  analysisActive = false;
-                  throw new Error("execution failed");
-                })
-              : Promise.resolve().then(() => void (analysisActive = false)),
-          cancel: () => void (analysisActive = false),
-        };
-      },
-      download: () => {
-        downloaded = true;
-        fail("download");
-      },
-      remove: () => {
-        removeCalls += 1;
-        sandboxOwned = false;
-      },
-    };
+  ])(
+    "fails closed and cleans owned resources after $failedStage failure",
+    async ({ failedStage, expectedDownload }) => {
+      let sandboxOwned = false;
+      let analysisActive = false;
+      let gatewayStopped = false;
+      let downloaded = false;
+      let removeCalls = 0;
+      const failures: Record<string, () => never> = {
+        [failedStage]: () => {
+          throw new Error(`${failedStage} failed`);
+        },
+      };
+      const fail = (stage: string): void => failures[stage]?.();
+      const lifecycle: AdvisorSpecialistLifecycle = {
+        prepare: async () => undefined,
+        startGateway: () => ({
+          configure: Promise.resolve().then(() => fail("configure")),
+          stop: async () => void (gatewayStopped = true),
+        }),
+        create: () => {
+          sandboxOwned = true;
+          fail("create");
+        },
+        run: () => {
+          fail("run");
+          analysisActive = true;
+          return {
+            completion:
+              failedStage === "execution"
+                ? Promise.resolve().then(() => {
+                    analysisActive = false;
+                    throw new Error("execution failed");
+                  })
+                : Promise.resolve().then(() => void (analysisActive = false)),
+            cancel: () => void (analysisActive = false),
+          };
+        },
+        download: () => {
+          downloaded = true;
+          fail("download");
+        },
+        remove: () => {
+          removeCalls += 1;
+          sandboxOwned = false;
+        },
+      };
 
-    await expect(
-      runAdvisorSpecialist({
-        env: { PR_REVIEW_ADVISOR_INTEREST: "behavior", SANDBOX_NAME: "failure-test" },
-        lifecycle,
-        validate: () => fail("validate"),
-      }),
-    ).rejects.toThrow(`${failedStage} failed`);
-    expect({ analysisActive, downloaded, gatewayStopped, sandboxOwned }).toEqual({
-      analysisActive: false,
-      downloaded: expectedDownload,
-      gatewayStopped: true,
-      sandboxOwned: false,
-    });
-    expect(removeCalls).toBe(failedStage === "configure" ? 0 : 1);
-  });
+      await expect(
+        runAdvisorSpecialist({
+          env: { PR_REVIEW_ADVISOR_INTEREST: "behavior", SANDBOX_NAME: "failure-test" },
+          lifecycle,
+          validate: () => fail("validate"),
+        }),
+      ).rejects.toThrow(`${failedStage} failed`);
+      expect({ analysisActive, downloaded, gatewayStopped, sandboxOwned }).toEqual({
+        analysisActive: false,
+        downloaded: expectedDownload,
+        gatewayStopped: true,
+        sandboxOwned: false,
+      });
+      expect(removeCalls).toBe(failedStage === "configure" ? 0 : 1);
+    },
+  );
 
   it("preserves the primary failure when cleanup also fails", async () => {
     const lifecycle: AdvisorSpecialistLifecycle = {
@@ -400,7 +400,9 @@ describe("PR review advisor specialist lifecycle", () => {
       }),
     ).rejects.toMatchObject({
       message: expect.stringContaining("execution setup failed"),
-      cause: expect.objectContaining({ message: expect.stringContaining("execution setup failed") }),
+      cause: expect.objectContaining({
+        message: expect.stringContaining("execution setup failed"),
+      }),
       errors: [
         expect.objectContaining({ message: expect.stringContaining("execution setup failed") }),
         expect.objectContaining({ message: expect.stringContaining("sandbox cleanup failed") }),
@@ -431,12 +433,12 @@ describe("PR review advisor specialist lifecycle", () => {
       run: (env) => {
         sandboxNames.push(env.SANDBOX_NAME as string);
         return {
-        completion,
-        cancel: () => {
-          calls.push("cancel");
-          interrupt();
-        },
-      };
+          completion,
+          cancel: () => {
+            calls.push("cancel");
+            interrupt();
+          },
+        };
       },
       download: () => void calls.push("download"),
       remove: (env) => {
@@ -462,7 +464,11 @@ describe("PR review advisor specialist lifecycle", () => {
     await command;
 
     expect(calls).toEqual(["create", "cancel", "sandbox", "gateway", "listeners", "restore"]);
-    expect(sandboxNames).toEqual([expect.stringMatching(/^pr-adv-[a-f0-9]{12}$/u), sandboxNames[0], sandboxNames[0]]);
+    expect(sandboxNames).toEqual([
+      expect.stringMatching(/^pr-adv-[a-f0-9]{12}$/u),
+      sandboxNames[0],
+      sandboxNames[0],
+    ]);
     expect(restore).toHaveBeenCalledWith("SIGTERM");
     expect(stderr).not.toHaveBeenCalled();
     expect(calls).not.toContain("download");
@@ -473,7 +479,9 @@ describe("PR review advisor specialist lifecycle", () => {
     let finish!: () => void;
     const credential = "cleanup-secret";
     const events: string[] = [];
-    const stderr = vi.spyOn(console, "error").mockImplementation(() => void events.push("diagnostic"));
+    const stderr = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => void events.push("diagnostic"));
     const restore = vi.fn(() => void events.push("restore"));
     const lifecycle: AdvisorSpecialistLifecycle = {
       prepare: async () => undefined,
@@ -520,12 +528,85 @@ describe("PR review advisor specialist lifecycle", () => {
 });
 
 describe("PR review advisor OpenShell wrapper", () => {
-  it("dispatches sandbox runtime initialization", () => {
-    const initialize = vi.fn();
+  it.each(["SIGTERM", "SIGINT"] as const)(
+    "initializes and keeps the sandbox entrypoint alive until OpenShell sends %s (#10791)",
+    async (signal) => {
+      const signals = new EventEmitter();
+      const initialize = vi.fn();
+      let settled = false;
+      const waiting = runOpenShellAdvisorCommand("initialize", initialize, () =>
+        waitForAdvisorSandboxTermination(signals),
+      ).then(() => {
+        settled = true;
+      });
 
-    runOpenShellAdvisorCommand("initialize", initialize);
+      await Promise.resolve();
+      expect(initialize).toHaveBeenCalledOnce();
+      expect(settled).toBe(false);
 
-    expect(initialize).toHaveBeenCalledOnce();
+      signals.emit(signal);
+      await waiting;
+      expect(settled).toBe(true);
+      expect(signals.listenerCount("SIGTERM")).toBe(0);
+      expect(signals.listenerCount("SIGINT")).toBe(0);
+    },
+  );
+
+  it("keeps a real Node entrypoint alive while it waits for OpenShell termination (#10791)", () => {
+    const moduleUrl = new URL("../../../tools/pr-review-advisor/openshell.mts", import.meta.url)
+      .href;
+    const child = spawnSync(
+      process.execPath,
+      [
+        "--no-warnings",
+        "--input-type=module",
+        "--eval",
+        `import { waitForAdvisorSandboxTermination } from ${JSON.stringify(moduleUrl)}; await waitForAdvisorSandboxTermination();`,
+      ],
+      { encoding: "utf8", killSignal: "SIGTERM", timeout: 1_000 },
+    );
+
+    expect(child.error).toMatchObject({ code: "ETIMEDOUT" });
+    expect(child.status).toBe(0);
+    expect(child.signal).toBeNull();
+    expect(child.stderr).toBe("");
+  });
+
+  it("permits only the pinned image login files in managed review policies (#10947)", () => {
+    const advisorPolicy = YAML.parse(
+      fs.readFileSync("tools/pr-review-advisor/openshell-policy.yaml", "utf8"),
+    ) as {
+      filesystem_policy: { read_only: string[]; read_write: string[] };
+    };
+    const postMergePolicy = YAML.parse(
+      fs.readFileSync("tools/post-merge-docs/review-policy.yaml", "utf8"),
+    ) as {
+      filesystem_policy: { read_only: string[]; read_write: string[] };
+    };
+    const loginFiles = ["/sandbox/.bashrc", "/sandbox/.profile"];
+
+    expect(advisorPolicy.filesystem_policy).toEqual({
+      include_workdir: false,
+      read_only: [
+        "/usr/bin",
+        "/usr/lib",
+        "/usr/share/git-core",
+        "/etc",
+        "/sandbox/.bashrc",
+        "/sandbox/.profile",
+        "/advisor",
+        "/pr-workdir",
+        "/pr-review-advisor-context",
+        "/pr-review-advisor-tools",
+      ],
+      read_write: ["/dev", "/sandbox/pr-review-advisor-runtime"],
+    });
+    expect(
+      advisorPolicy.filesystem_policy.read_only.filter((entry) => entry.startsWith("/sandbox/.")),
+    ).toEqual(loginFiles);
+    expect(
+      postMergePolicy.filesystem_policy.read_only.filter((entry) => entry.startsWith("/sandbox/.")),
+    ).toEqual(loginFiles);
   });
 
   it.each([
@@ -539,10 +620,10 @@ describe("PR review advisor OpenShell wrapper", () => {
     ["delete", "Unsupported OpenShell advisor command: delete"],
     ["check", "Unsupported OpenShell advisor command: check"],
     ["unknown", "Unsupported OpenShell advisor command: unknown"],
-  ])("rejects unsupported OpenShell command %s", (command, message) => {
+  ])("rejects unsupported OpenShell command %s", async (command, message) => {
     const initialize = vi.fn();
 
-    expect(() => runOpenShellAdvisorCommand(command, initialize)).toThrow(message);
+    await expect(runOpenShellAdvisorCommand(command, initialize)).rejects.toThrow(message);
     expect(initialize).not.toHaveBeenCalled();
   });
 
@@ -656,6 +737,76 @@ describe("PR review advisor OpenShell wrapper", () => {
     expect(Buffer.byteLength(serializePreparedGitHubContext(context), "utf8")).toBeLessThanOrEqual(
       MAX_PREPARED_GITHUB_CONTEXT_BYTES,
     );
+  });
+
+  it("selects the latest trusted human review on a prior commit as the follow-up contract", () => {
+    const currentHead = "c".repeat(40);
+    const selected = selectFollowUpReview(
+      [
+        {
+          id: 10,
+          state: "CHANGES_REQUESTED",
+          commit_id: "a".repeat(40),
+          submitted_at: "2026-09-14T10:00:00Z",
+          author_association: "MEMBER",
+          user: { login: "maintainer", type: "User" },
+          body: "Preserve the remote result when cleanup fails.",
+        },
+        {
+          id: 11,
+          state: "CHANGES_REQUESTED",
+          commit_id: "b".repeat(40),
+          submitted_at: "2026-09-14T11:00:00Z",
+          author_association: "NONE",
+          user: { login: "coderabbitai[bot]", type: "Bot" },
+          body: "Untrusted bot review.",
+        },
+        {
+          id: 12,
+          state: "APPROVED",
+          commit_id: currentHead,
+          submitted_at: "2026-09-14T12:00:00Z",
+          author_association: "MEMBER",
+          user: { login: "maintainer", type: "User" },
+        },
+        {
+          id: 13,
+          state: "APPROVED",
+          commit_id: "d".repeat(40),
+          submitted_at: "2026-09-14T13:00:00Z",
+          author_association: "MEMBER",
+          user: { login: "different-maintainer", type: "User" },
+        },
+      ],
+      [
+        {
+          pull_request_review_id: 10,
+          path: "src/lib/transport.ts",
+          line: null,
+          original_line: 42,
+          body: "Keep both outcomes.",
+        },
+      ],
+      currentHead,
+      "maintainer",
+    );
+
+    expect(selected).toEqual({
+      reviewId: 10,
+      reviewedHeadSha: "a".repeat(40),
+      state: "CHANGES_REQUESTED",
+      submittedAt: "2026-09-14T10:00:00Z",
+      reviewer: "maintainer",
+      authorAssociation: "MEMBER",
+      body: "Preserve the remote result when cleanup fails.",
+      inlineComments: [
+        {
+          path: "src/lib/transport.ts",
+          line: 42,
+          body: "Keep both outcomes.",
+        },
+      ],
+    });
   });
 
   it("bounds large overlap path sets before serializing sandbox context", async () => {
@@ -896,6 +1047,74 @@ describe("PR review advisor OpenShell wrapper", () => {
     fs.chmodSync(diffPath, 0o600);
   });
 
+  it("prepares an exact follow-up delta from the trusted reviewed commit", async () => {
+    const env = advisorEnvironment();
+    const workdir = env.ADVISOR_WORKDIR as string;
+    fs.rmSync(path.join(workdir, ".git"), { recursive: true });
+    execFileSync("git", ["init", "--quiet"], { cwd: workdir });
+    const commit = (message: string) =>
+      execFileSync(
+        "git",
+        [
+          "-c",
+          "user.name=PR Review Advisor",
+          "-c",
+          "user.email=advisor@example.invalid",
+          "commit",
+          "--quiet",
+          "-m",
+          message,
+        ],
+        { cwd: workdir },
+      );
+    fs.writeFileSync(path.join(workdir, "reviewed.txt"), "base\n");
+    execFileSync("git", ["add", "reviewed.txt"], { cwd: workdir });
+    commit("test: add base content");
+    const reviewedHeadSha = execFileSync("git", ["rev-parse", "HEAD"], {
+      cwd: workdir,
+      encoding: "utf8",
+    }).trim();
+    fs.writeFileSync(path.join(workdir, "reviewed.txt"), "fixed\n");
+    execFileSync("git", ["add", "reviewed.txt"], { cwd: workdir });
+    commit("fix: address review contract");
+    env.BASE_REF = "HEAD~1";
+    env.HEAD_REF = "HEAD";
+    env.PR_REVIEW_ADVISOR_INTEREST = "security";
+    const binaries = path.join(temporaryDirectory(), "binaries");
+    fs.mkdirSync(binaries);
+    fs.writeFileSync(path.join(binaries, "rg"), "rg", { mode: 0o755 });
+    fs.writeFileSync(path.join(binaries, "fdfind"), "fdfind", { mode: 0o755 });
+
+    await prepareAdvisorSandboxInputs(env, {
+      collectContext: async () => ({
+        repo: "NVIDIA/NemoClaw",
+        prNumber: 7542,
+        followUpReview: {
+          reviewId: 10,
+          reviewedHeadSha,
+          state: "CHANGES_REQUESTED",
+          submittedAt: "2026-09-14T10:00:00Z",
+          reviewer: "maintainer",
+          authorAssociation: "MEMBER",
+          body: "Fix the regression.",
+          inlineComments: [],
+        },
+      }),
+      resolveExecutable: (name) => path.join(binaries, name),
+    });
+
+    const contextRoot = path.join(env.RUNNER_TEMP as string, "pr-review-advisor-context");
+    expect(
+      fs.readFileSync(path.join(contextRoot, "specialist", "follow-up-diff.patch"), "utf8"),
+    ).toContain("+fixed");
+    expect(
+      JSON.parse(fs.readFileSync(path.join(contextRoot, "github-context.json"), "utf8")),
+    ).toMatchObject({ followUpReview: { reviewedHeadSha } });
+    fs.chmodSync(path.join(contextRoot, "specialist"), 0o700);
+    fs.chmodSync(path.join(contextRoot, "specialist", "diff.patch"), 0o600);
+    fs.chmodSync(path.join(contextRoot, "specialist", "follow-up-diff.patch"), 0o600);
+  });
+
   it("requires repository metadata before placing immutable-boundary proof files", async () => {
     const env = advisorEnvironment();
     fs.rmSync(path.join(env.ADVISOR_WORKDIR as string, ".git"), {
@@ -982,6 +1201,7 @@ describe("PR review advisor OpenShell wrapper", () => {
 
   it("registers the selected model while confining the upstream key to provider creation", async () => {
     const env = advisorEnvironment();
+    env.OPENSHELL_DB_URL = "sqlite:///existing-provider-state.db";
     const tools = advisorTools();
 
     const gateway = startAdvisorOpenShellInference(env, tools);
@@ -1009,7 +1229,9 @@ describe("PR review advisor OpenShell wrapper", () => {
     expect(providerCalls).toHaveLength(1);
     expect(providerCalls[0]?.[2].env.OPENAI_API_KEY).toBe("model-host-secret");
     expect(providerCalls[0]?.[2].timeout).toBeGreaterThan(0);
-    expect(calls.filter(([, args]) => args.slice(0, 2).join(" ") === "inference set")).toHaveLength(1);
+    expect(calls.filter(([, args]) => args.slice(0, 2).join(" ") === "inference set")).toHaveLength(
+      1,
+    );
     calls.forEach(([command, args, options]) => {
       expect(options.env.GH_TOKEN, `${command} ${args.join(" ")}`).toBeUndefined();
       expect(options.env.GITHUB_TOKEN, `${command} ${args.join(" ")}`).toBeUndefined();
@@ -1017,6 +1239,10 @@ describe("PR review advisor OpenShell wrapper", () => {
     });
     expect(calls.filter(([, , options]) => options.env.OPENAI_API_KEY)).toHaveLength(1);
     expect(vi.mocked(tools.start).mock.calls[0]?.[2].env.OPENAI_API_KEY).toBeUndefined();
+    expect(vi.mocked(tools.start).mock.calls[0]?.[2].env.OPENSHELL_DB_URL).toBe(
+      "sqlite::memory:?cache=shared",
+    );
+    expect(env.OPENSHELL_DB_URL).toBe("sqlite:///existing-provider-state.db");
     const gatewayConfig = fs.readFileSync(
       path.join(env.RUNNER_TEMP as string, "openshell-gateway", "gateway.toml"),
       "utf8",
@@ -1027,6 +1253,10 @@ describe("PR review advisor OpenShell wrapper", () => {
 
   it("creates, runs, downloads, and deletes the sandbox without host credentials", async () => {
     const env = advisorEnvironment();
+    env.GITHUB_RUN_ID = "123456";
+    env.GITHUB_RUN_ATTEMPT = "2";
+    env.GITHUB_WORKFLOW_SHA = "c".repeat(40);
+    env.GITHUB_EVENT_NAME = "workflow_run";
     env.GIT_DIR = "/untrusted/ambient-git-dir";
     env.GIT_WORK_TREE = "/untrusted/ambient-worktree";
     const commandResponses = new Map([["openshell sandbox list --names", "pr-advisor-test\n"]]);
@@ -1037,6 +1267,14 @@ describe("PR review advisor OpenShell wrapper", () => {
     createAdvisorSandbox(env, tools);
     await runAdvisorSandboxAsync(env, tools).completion;
     downloadAdvisorArtifacts(env, tools);
+    const downloadOptions = vi
+      .mocked(tools.run)
+      .mock.calls.find(
+        ([command, args]) =>
+          command === "openshell" && args[0] === "sandbox" && args[1] === "download",
+      )?.[2];
+    expect(downloadOptions?.timeout).toBe(60_000);
+    expect(downloadOptions?.killSignal).toBe("SIGKILL");
     deleteAdvisorSandbox(env, tools);
 
     const calls = vi.mocked(tools.run).mock.calls;
@@ -1119,6 +1357,7 @@ describe("PR review advisor OpenShell wrapper", () => {
     expect(calls.some(([, args]) => args.slice(0, 2).join(" ") === "policy set")).toBe(false);
 
     const runArgs = vi.mocked(tools.runAsync).mock.calls[0]?.[1] ?? [];
+    expect(runArgs).not.toContain("--no-login-shell");
     expect(runArgs).toEqual(
       expect.arrayContaining([
         "sandbox",
@@ -1136,6 +1375,10 @@ describe("PR review advisor OpenShell wrapper", () => {
         "GIT_DIR=/pr-workdir/.git",
         "GIT_WORK_TREE=/pr-workdir",
         "TARGET_REPO=NVIDIA/NemoClaw",
+        "GITHUB_RUN_ID=123456",
+        "GITHUB_RUN_ATTEMPT=2",
+        `GITHUB_WORKFLOW_SHA=${"c".repeat(40)}`,
+        "GITHUB_EVENT_NAME=workflow_run",
         "/advisor/tools/pr-review-advisor/run-specialist.mts",
         "--base",
         "target/base",
@@ -1143,6 +1386,18 @@ describe("PR review advisor OpenShell wrapper", () => {
         "HEAD",
       ]),
     );
+    expect(runArgs).not.toContain("--no-login-shell");
+    const commandBoundaryIndex = runArgs.indexOf("--");
+    expect(runArgs.slice(commandBoundaryIndex)).toEqual([
+      "--",
+      "/usr/bin/node",
+      "--no-warnings",
+      "/advisor/tools/pr-review-advisor/run-specialist.mts",
+      "--base",
+      "target/base",
+      "--head",
+      "HEAD",
+    ]);
     expect(runArgs.join("\n")).not.toContain("github-host-secret");
     expect(runArgs.join("\n")).not.toContain("model-host-secret");
     expect(runArgs.join("\n")).not.toContain("advisor-host-secret");
@@ -1184,7 +1439,6 @@ describe("PR review advisor OpenShell wrapper", () => {
       expect(options.env.PR_REVIEW_ADVISOR_API_KEY, `${command} ${args.join(" ")}`).toBeUndefined();
     });
   });
-
 
   it("rejects artifact paths that could escape the sandbox runtime directory", () => {
     const env = advisorEnvironment();
