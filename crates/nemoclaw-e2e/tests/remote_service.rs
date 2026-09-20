@@ -149,8 +149,8 @@ async fn lifecycle(harness: &str, authenticated: bool, kind: &str, partial_destr
     let mut stats = json!({});
     let bearer = "d".repeat(64);
     if authenticated {
-        files["/data/inference-key"] = json!({"raw":bearer});
-        stats["/data/inference-key"] = json!({"name":"inference-key","size":64,"mode":384,"mtime":"2026-09-15T00:00:00Z","linkTarget":""});
+        files["/credentials/inference-key"] = json!({"raw":bearer});
+        stats["/credentials/inference-key"] = json!({"name":"inference-key","size":64,"mode":384,"mtime":"2026-09-15T00:00:00Z","linkTarget":""});
     }
     files["/data/status.json"] =
         json!({"phase":"ready","detail":"","updated":"2026-09-15T00:00:00Z","pid":42});
@@ -339,33 +339,39 @@ async fn lifecycle(harness: &str, authenticated: bool, kind: &str, partial_destr
         assert_eq!(read(root, "engine.json"), stable);
     }
     save(root, "control.json", &json!({}));
-    for fault in ["missing", "foreign", "substituted"] {
-        let mut damaged = stable.clone();
-        match fault {
-            "missing" => damaged["volume"] = Value::Null,
-            "foreign" => {
-                damaged["volume"]["Labels"]["nemoclaw.nvidia.com/uid"] =
-                    json!("ffffffff-ffff-ffff-ffff-ffffffffffff");
+    for storage in if authenticated {
+        vec!["volume", "auth_volume"]
+    } else {
+        vec!["volume"]
+    } {
+        for fault in ["missing", "foreign", "substituted"] {
+            let mut damaged = stable.clone();
+            match fault {
+                "missing" => damaged[storage] = Value::Null,
+                "foreign" => {
+                    damaged[storage]["Labels"]["nemoclaw.nvidia.com/uid"] =
+                        json!("ffffffff-ffff-ffff-ffff-ffffffffffff");
+                }
+                "substituted" => {
+                    damaged[storage]["CreatedAt"] = json!("2026-09-16T00:00:00Z");
+                }
+                _ => unreachable!(),
             }
-            "substituted" => {
-                damaged["volume"]["CreatedAt"] = json!("2026-09-16T00:00:00Z");
-            }
-            _ => unreachable!(),
+            save(root, "engine.json", &damaged);
+            run(root, &bundle, "plan", "config.yaml", false).await;
+            run(root, &bundle, "apply", "config.yaml", false).await;
+            assert_eq!(read(root, "engine.json"), damaged);
+            assert_eq!(
+                fs::read(root.join("deployment/runtime/terraform.tfstate")).unwrap(),
+                state
+            );
         }
-        save(root, "engine.json", &damaged);
-        run(root, &bundle, "plan", "config.yaml", false).await;
-        run(root, &bundle, "apply", "config.yaml", false).await;
-        assert_eq!(read(root, "engine.json"), damaged);
-        assert_eq!(
-            fs::read(root.join("deployment/runtime/terraform.tfstate")).unwrap(),
-            state
-        );
     }
     save(root, "engine.json", &stable);
     if authenticated {
         let original = read(root, "fixture.json");
         let mut corrupt = original.clone();
-        corrupt["stats"]["/data/inference-key"]["mode"] = json!(420);
+        corrupt["stats"]["/credentials/inference-key"]["mode"] = json!(420);
         save(root, "fixture.json", &corrupt);
         // Export does not load the generated credential. Apply must reject an insecure key.
         run(root, &bundle, "export", "", true).await;

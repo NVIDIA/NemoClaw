@@ -54,7 +54,7 @@ impl Source {
         );
         let (kind, suffix, local) = match source {
             Self::OllamaProxy { .. } => ("ollama-proxy-", "auth", true),
-            Self::ManagedService { .. } => ("inference-", "data", false),
+            Self::ManagedService { .. } => ("inference-", "auth", false),
         };
         let namespace = format!("{prefix}{kind}");
         let name = container.strip_prefix(&namespace);
@@ -92,6 +92,10 @@ impl Source {
             .await?
             .ok_or(Error::Conflict("credential storage is absent"))?;
         let volume = &storage.name;
+        let destination = match self {
+            Self::ManagedService { .. } => "/credentials",
+            Self::OllamaProxy { .. } => "/data",
+        };
         let container = engine
             .container(name)
             .await?
@@ -111,15 +115,15 @@ impl Source {
         let data: Vec<_> = mounts
             .iter()
             .filter(|mount| {
-                mount.destination.as_deref().is_some_and(|destination| {
-                    destination == "/"
-                        || destination == "/data"
-                        || destination.starts_with("/data/")
+                mount.destination.as_deref().is_some_and(|path| {
+                    path == "/"
+                        || path == destination
+                        || path.starts_with(&format!("{destination}/"))
                 })
             })
             .collect();
         if data.len() != 1
-            || data[0].destination.as_deref() != Some("/data")
+            || data[0].destination.as_deref() != Some(destination)
             || data[0].typ.as_deref() != Some("volume")
             || data[0].name.as_deref() != Some(volume.as_str())
         {
@@ -135,15 +139,20 @@ impl Source {
             let engine = Engine::connect(&self.fields().0.engine)?;
             let id = self.container_id(&engine).await?;
             match self {
-                Self::ManagedService { .. } => read_key(&engine, &id).await,
+                Self::ManagedService { .. } => read_service_key(&engine, &id).await,
                 Self::OllamaProxy { .. } => read_proxy_key(&engine, &id).await,
             }
         };
         work.await.map_err(|_| ObservationError::Authentication)
     }
 }
+pub(crate) async fn read_service_key(engine: &Engine, id: &str) -> Result<String, Error> {
+    read_key_at(engine, id, "/credentials/inference-key").await
+}
 pub(crate) async fn read_key(engine: &Engine, id: &str) -> Result<String, Error> {
-    let path = "/data/inference-key";
+    read_key_at(engine, id, "/data/inference-key").await
+}
+async fn read_key_at(engine: &Engine, id: &str, path: &str) -> Result<String, Error> {
     let stat = engine
         .stat_file(id, path)
         .await?

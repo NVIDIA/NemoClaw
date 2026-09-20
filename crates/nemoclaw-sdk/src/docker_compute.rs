@@ -194,6 +194,15 @@ fn container(target: &Target) -> Result<Value, Error> {
         .ok_or(Error::State("missing runtime process"))?;
     let launch = spec.container("/data")?;
     let mut attrs = json!({"name":spec.name,"labels":[{"label":crate::managed::OWNER_LABEL,"value":spec.owner}],"entrypoint":launch.entrypoint,"command":launch.cmd,"env":launch.env,"network_mode":spec.network(),"mounts":[{"type":"volume","source":spec.volume(),"target":process.mount_target}],"capabilities":[{"drop":["ALL"]}],"security_opts":["no-new-privileges"],"restart":"no","memory":process.memory_bytes/(1<<20),"memory_swap":process.memory_bytes/(1<<20),"shm_size":process.shared_memory_bytes/(1<<20),"ipc_mode":if process.host_ipc {"host"} else {"private"},"ulimit":[{"name":"memlock","soft":-1,"hard":-1},{"name":"stack","soft":67108864,"hard":67108864}],"ports":[{"internal":process.port,"external":process.port,"ip":process.bind_address,"protocol":"tcp"}],"log_driver":"json-file","log_opts":{"max-size":"32m","max-file":"3"},"must_run":true,"wait":false,"remove_volumes":false,"destroy_grace_seconds":60});
+    if target.kind == "inference_service"
+        && crate::services::installers::vllm::configured_service(&spec)?
+            .authentication
+            .is_some()
+    {
+        attrs["mounts"].as_array_mut().unwrap().push(
+            json!({"type":"volume","source":format!("{}-auth",spec.name),"target":"/credentials"}),
+        );
+    }
     if process.gpu {
         attrs["gpus"] = json!("all");
     }
@@ -320,6 +329,30 @@ mod tests {
         compile::{Generations, runtime_graph},
         config::Document,
     };
+    #[test]
+    fn authenticated_service_separates_cache_and_credential_mounts() {
+        let mut value: Value =
+            serde_saphyr::from_str(include_str!("../tests/fixtures/config/spark.yaml")).unwrap();
+        value["spec"]["services"]["qwen"]["authentication"] = json!("bearer");
+        let document = Document::parse(value.to_string().as_bytes()).unwrap();
+        let generations = crate::state::Record::new(document.clone())
+            .unwrap()
+            .generations;
+        let graph = crate::compile::compile_runtime(&document, &generations, "0.1.0").unwrap();
+        let mounts =
+            graph["resource"]["docker_container"]["inference_service_inference_qwen"]["mounts"]
+                .as_array()
+                .unwrap();
+        assert_eq!(mounts.len(), 2);
+        assert_eq!(mounts[0]["target"], "/data");
+        assert_eq!(mounts[1]["target"], "/credentials");
+        assert_ne!(mounts[0]["source"], mounts[1]["source"]);
+        let auth = &graph["resource"]["nemoclaw_inference_storage"]["inference_qwen_auth"];
+        let spec: crate::managed::Storage =
+            serde_json::from_str(auth["spec"].as_str().unwrap()).unwrap();
+        assert!(spec.name.ends_with("-auth"));
+        assert_eq!(auth["lifecycle"]["prevent_destroy"], true);
+    }
     #[test]
     fn docker_gateway_uses_retained_storage_outputs_and_native_compute() {
         let document =

@@ -87,7 +87,7 @@ with (root / "lock").open("w") as lock:
             state["image_missing"] = False
             value = {"status": "Downloading", "id": "abcdef", "progressDetail": {"current": 50, "total": 100}}
     elif method == "GET" and path.startswith("/volumes/"):
-        value = state.get("volume")
+        value = state.get("auth_volume" if path.endswith("-auth") else "volume")
     elif method == "GET" and path == "/networks":
         value = [state["network"]] if state.get("network") else []
     elif method == "GET" and path.startswith("/networks/"):
@@ -136,7 +136,7 @@ with (root / "lock").open("w") as lock:
         request = json.loads(body)
         value = {**request, "Driver": "local", "Scope": "local", "Options": {},
             "Mountpoint": "/srv/nemoclaw-fixture/docker/volumes/fixture/_data", "CreatedAt": "2026-09-15T00:00:00Z"}
-        state["volume"] = value
+        state["auth_volume" if request["Name"].endswith("-auth") else "volume"] = value
         state["effects"] += 1
     elif method == "POST" and path == "/networks/create" and control.get("network_create_failure"):
         code, value = 500, {"message":"intentional protocol fixture network creation failure"}
@@ -162,7 +162,7 @@ with (root / "lock").open("w") as lock:
             "State": {"Running": False, "Status":"created", "StartedAt": "2026-09-15T00:00:00Z", "ExitCode":0},
             "NetworkSettings":{"Ports":request["HostConfig"].get("PortBindings", {}),
                 "Networks":{state["network"]["Name"]:{"NetworkID":"remote-network", "IPAddress":"172.30.119.2", "Gateway":"172.30.119.1", "IPPrefixLen":24, "Aliases":[], "Links":[]}}},
-            "Mounts": [{"Type": "volume", "Name": state["volume"]["Name"], "Destination": "/data", "RW": True}]}
+            "Mounts": [{"Type": mount["Type"], "Name": mount["Source"], "Destination": mount["Target"], "RW": not mount.get("ReadOnly", False)} for mount in request["HostConfig"]["Mounts"]]}
         value = {"Id": container_id, "Warnings": []}
         state["effects"] += 1
         state["creates"] += 1

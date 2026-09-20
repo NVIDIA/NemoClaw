@@ -252,6 +252,15 @@ fn targets(
             values,
         });
     }
+    if service.authentication.is_some() {
+        let mut credentials = storage.clone();
+        credentials.name = format!("{}-auth", spec.name);
+        result.push(Target {
+            kind: STORAGE_KIND.into(),
+            address: address(STORAGE_KIND, &format!("{name}_auth")),
+            values: crate::backend::Row::from([("spec".into(), credentials.json()?)]),
+        });
+    }
     Ok((result, spec))
 }
 
@@ -265,6 +274,9 @@ impl Installer for Service {
         let (targets, _) = targets(document, name, self, generations)?;
         let service = address(SERVICE_KIND, name);
         let mut service_dependencies = vec![address(STORAGE_KIND, name)];
+        if self.authentication.is_some() {
+            service_dependencies.push(address(STORAGE_KIND, &format!("{name}_auth")));
+        }
         if document.spec.gateway.management == "managed" && self.placement.is_none() {
             service_dependencies.insert(0, "nemoclaw_managed_gateway.runtime".into());
         }
@@ -309,8 +321,11 @@ impl Installer for Service {
                 let status = engine.runtime_status(&observed).await?;
                 if status.phase == "ready" {
                     if self.authentication.is_some() {
-                        crate::services::authentication::read_key(&engine, &observed.container_id)
-                            .await?;
+                        crate::services::authentication::read_service_key(
+                            &engine,
+                            &observed.container_id,
+                        )
+                        .await?;
                     }
                     return Ok(());
                 }
@@ -336,9 +351,16 @@ impl Installer for Service {
         name: &str,
         _generations: &Generations,
     ) -> Result<RemovePlan, Error> {
+        let mut retained = vec![address(STORAGE_KIND, name)];
+        if self.authentication.is_some() {
+            retained.insert(0, address(STORAGE_KIND, &format!("{name}_auth")));
+        }
         Ok(RemovePlan {
-            retained: vec![address(STORAGE_KIND, name)],
-            required_storage: vec![(address(SERVICE_KIND, name), address(STORAGE_KIND, name))],
+            required_storage: retained
+                .iter()
+                .map(|storage| (address(SERVICE_KIND, name), storage.clone()))
+                .collect(),
+            retained,
         })
     }
 }
@@ -357,7 +379,7 @@ impl Service {
         Ok(Some(
             crate::services::authentication::Source::ManagedService {
                 storage: crate::managed::Storage {
-                    name: spec.volume(),
+                    name: format!("{}-auth", spec.name),
                     owner: spec.owner.clone(),
                     generation: spec.generation.clone(),
                     engine: spec.engine().into(),

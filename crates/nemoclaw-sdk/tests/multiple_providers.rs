@@ -247,7 +247,7 @@ fn managed_services_have_independent_storage_credentials_and_dependencies() {
         assert_eq!(credentials["storage"]["Generation"], spec["generation"]);
         assert_eq!(
             credentials["storage"]["Name"],
-            format!("{}-data", spec["name"].as_str().unwrap())
+            format!("{}-auth", spec["name"].as_str().unwrap())
         );
         assert!(credentials.get("spec").is_none());
         let dependencies = graph["resource"]["docker_container"]
@@ -255,7 +255,7 @@ fn managed_services_have_independent_storage_credentials_and_dependencies() {
             .as_array()
             .unwrap();
         assert!(dependencies.contains(&json!(format!(
-            "nemoclaw_inference_storage.inference_{name}"
+            "nemoclaw_inference_storage.inference_{name}_auth"
         ))));
     }
     // Duplicate bind ports must fail before creating either service.

@@ -47,6 +47,23 @@ pub(in crate::services) async fn run(
     lock.try_lock().map_err(|_| {
         Error::Conflict("persistent storage already has a writer or locking failed")
     })?;
+    // Credentials retain their own writer lock even if the model cache is replaced.
+    let _credentials_lock = if spec.authentication.is_some() {
+        let file = fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .read(true)
+            .write(true)
+            .mode(0o600)
+            .open("/credentials/runtime.lock")
+            .map_err(|_| Error::State("cannot open credential writer lock"))?;
+        file.try_lock().map_err(|_| {
+            Error::Conflict("credential storage already has a writer or locking failed")
+        })?;
+        Some(file)
+    } else {
+        None
+    };
     let result = run_owned(spec, cancel, trip).await;
     if let Err(error) = &result {
         // Only the holder of the persistent writer lock may publish status.
@@ -61,7 +78,7 @@ async fn run_owned(
 ) -> Result<(), Error> {
     let credential = spec
         .authentication
-        .map(|_| authentication::load(Path::new(ROOT)))
+        .map(|_| authentication::load(Path::new("/credentials")))
         .transpose()?;
     let prepared = recipe::prepare(spec, Path::new(ROOT), cancel).await?;
     if trip.is_cancelled() {
