@@ -272,20 +272,52 @@ fn first_install_rollback_restores_absence() {
 }
 
 #[test]
-fn a_stale_product_uninstall_cannot_retire_a_different_selected_runtime() {
+fn a_stale_product_uninstall_is_a_noop_for_a_different_selected_runtime() {
     let mut store = Store::old();
-    assert_eq!(
-        begin(
-            &mut store,
-            &identity('e').runtime_id,
-            PRODUCT,
-            Operation::Remove
-        ),
-        Err(Error::ForeignTransaction)
-    );
+    let stale = identity('e').runtime_id;
+    begin(&mut store, &stale, PRODUCT, Operation::Remove).unwrap();
+    commit(&mut store, &stale, true).unwrap();
     assert_eq!(store.selected, Some(identity('a')));
     assert!(store.events.is_empty());
     assert!(store.journal.is_none());
+}
+
+#[test]
+fn stale_remove_does_not_bypass_an_existing_foreign_transaction() {
+    let mut store = Store::old();
+    let next = identity('e');
+    begin(
+        &mut store,
+        &next.runtime_id,
+        PRODUCT,
+        Operation::Install(next.clone()),
+    )
+    .unwrap();
+    assert_eq!(
+        begin(
+            &mut store,
+            &identity('f').runtime_id,
+            PRODUCT,
+            Operation::Remove,
+        ),
+        Err(Error::ForeignTransaction),
+    );
+    assert_eq!(
+        commit(&mut store, &identity('f').runtime_id, true),
+        Err(Error::ForeignTransaction),
+    );
+    assert!(store.journal.is_some());
+}
+
+#[test]
+fn selected_runtime_remove_still_requires_its_begin_transaction() {
+    let mut store = Store::old();
+    assert_eq!(
+        commit(&mut store, &identity('a').runtime_id, true),
+        Err(Error::NoTransaction),
+    );
+    assert_eq!(store.selected, Some(identity('a')));
+    assert!(store.events.is_empty());
 }
 
 #[test]

@@ -263,7 +263,12 @@ pub fn begin<S: NativeStore>(
             .as_ref()
             .is_some_and(|value| value.runtime_id != owner)
     {
-        return Err(Error::ForeignTransaction);
+        // Burn can remove an older same-version MSI after the replacement MSI
+        // has already selected its distinct runtime. That stale product owns
+        // neither the selector nor the active runtime transaction. Let Windows
+        // remove only its obsolete MSI-owned files without retiring the newer
+        // runtime or creating a maintenance journal for it.
+        return Ok(());
     }
     let journal = Journal {
         owner_runtime_id: owner.into(),
@@ -339,7 +344,21 @@ pub fn rollback<S: NativeStore>(store: &mut S, owner: &str) -> Result<(), Error>
 }
 
 pub fn commit<S: NativeStore>(store: &mut S, owner: &str, removing: bool) -> Result<(), Error> {
-    let journal = owned(store, owner)?;
+    if !hex(owner, 64) {
+        return Err(Error::Identity);
+    }
+    let journal = match store.read_journal()? {
+        Some(journal) if journal.owner_runtime_id == owner => journal,
+        Some(_) => return Err(Error::ForeignTransaction),
+        None if removing => match store.installed_state()? {
+            InstalledState::Selected(selected) if selected.runtime_id != owner => {
+                selected.validate()?;
+                return Ok(());
+            }
+            _ => return Err(Error::NoTransaction),
+        },
+        None => return Err(Error::NoTransaction),
+    };
     match (&journal.operation, removing, journal.stage) {
         (Operation::Install(target), false, Stage::Verified) => store.select_verified(target)?,
         (Operation::Remove, true, Stage::Retired) => {
