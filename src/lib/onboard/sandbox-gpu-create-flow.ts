@@ -374,7 +374,18 @@ export async function runSandboxGpuCreateFlow(
   let registryImageRef: string | null = input.prebuild.imageRef;
   const createSandbox =
     deps.createSandbox ??
-    createCliOpenShellSandboxLifecycleFromRunner(deps.runOpenshell).createSandbox;
+    (() => {
+      let selectedExecutable: string | undefined;
+      return createCliOpenShellSandboxLifecycleFromRunner(deps.runOpenshell, {
+        resolveBinary: () => {
+          selectedExecutable ??= deps.openshellArgv([])[0];
+          if (!selectedExecutable) {
+            throw new Error("OpenShell executable selection returned an empty command.");
+          }
+          return selectedExecutable;
+        },
+      }).createSandbox;
+    })();
   const attemptRunner = createSandboxGpuCreateAttemptRunner(
     hermesPortableLifecycle ? { ...input, portableLifecycle: true } : input,
     hermesPortableLifecycle

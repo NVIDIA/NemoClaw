@@ -2,7 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { InitialSandboxPolicy } from "./initial-policy";
-import type { CreateOpenShellSandboxRequest } from "../adapters/openshell/sandbox-lifecycle";
+import {
+  type CreateOpenShellSandboxRequest,
+  withoutOpenShellSandboxCreateGpu,
+} from "../adapters/openshell/sandbox-lifecycle";
 import { hasConfiguredMessagingCredential, type MessagingTokenDef } from "./messaging-prep";
 import { filterMessagingProvidersForSandboxCreate } from "./sandbox-create-intent";
 import type {
@@ -17,113 +20,56 @@ import { prepareSandboxGpuRoutePolicies } from "./sandbox-gpu-route-policy";
 type PrepareInitialSandboxCreatePolicy =
   typeof import("./initial-policy").prepareInitialSandboxCreatePolicy;
 
-const CREATE_VALUE_OPTIONS = new Set([
-  "--from",
-  "--name",
-  "--policy",
-  "--driver-config-json",
-  "--gpu-device",
-  "--cpu",
-  "--memory",
-  "--provider",
-  "--label",
-]);
+export type PlannedOpenShellSandboxCreateRequest = Omit<
+  CreateOpenShellSandboxRequest,
+  "target" | "startupCommand" | "environment" | "workingDirectory"
+>;
 
-/** Convert the final ordinary onboarding plan into the typed lifecycle request. */
-export function materializeOpenShellSandboxCreateRequest(input: {
-  readonly createArgv: readonly string[];
+/** Bind runtime-only fields to the final typed ordinary create plan. */
+export function finalizeOpenShellSandboxCreateRequest(input: {
+  readonly plan: PlannedOpenShellSandboxCreateRequest;
   readonly gatewayName: string;
+  readonly startupCommand: readonly string[];
   readonly environment: NodeJS.ProcessEnv;
   readonly workingDirectory?: string;
+  readonly compatibilityPolicyPath?: string | null;
 }): CreateOpenShellSandboxRequest {
-  const argv = input.createArgv;
-  if (argv.length < 4 || argv[1] !== "sandbox" || argv[2] !== "create") {
-    throw new Error("Ordinary sandbox creation requires one OpenShell create command.");
-  }
-  const separator = argv.indexOf("--", 3);
-  if (separator < 0 || separator === argv.length - 1) {
-    throw new Error("Ordinary sandbox creation requires one startup command.");
-  }
-  const values = new Map<string, string[]>();
-  let gpu = false;
-  for (let index = 3; index < separator; index += 1) {
-    const option = argv[index];
-    if (option === "--gpu") {
-      gpu = true;
-      continue;
-    }
-    if (option === "-g" || option === "--gateway") {
-      const gatewayName = argv[index + 1];
-      if (gatewayName !== input.gatewayName) {
-        throw new Error("Sandbox create gateway changed before lifecycle submission.");
-      }
-      index += 1;
-      continue;
-    }
-    if (!option || !CREATE_VALUE_OPTIONS.has(option)) {
-      throw new Error(`Unsupported ordinary sandbox create option '${option ?? ""}'.`);
-    }
-    const value = argv[index + 1];
-    if (!value || value === "--") {
-      throw new Error(`Sandbox create option '${option}' is missing its value.`);
-    }
-    const entries = values.get(option) ?? [];
-    entries.push(value);
-    values.set(option, entries);
-    index += 1;
-  }
-  const requireOne = (option: string): string => {
-    const entries = values.get(option) ?? [];
-    if (entries.length !== 1) {
-      throw new Error(`Sandbox create option '${option}' must appear exactly once.`);
-    }
-    return entries[0]!;
-  };
-  const optionalOne = (option: string): string | undefined => {
-    const entries = values.get(option) ?? [];
-    if (entries.length > 1) {
-      throw new Error(`Sandbox create option '${option}' must not be repeated.`);
-    }
-    return entries[0];
-  };
-  const labels = Object.fromEntries(
-    (values.get("--label") ?? []).map((label) => {
-      const equals = label.indexOf("=");
-      if (equals <= 0 || equals === label.length - 1) {
-        throw new Error("Sandbox create labels must use name=value form.");
-      }
-      return [label.slice(0, equals), label.slice(equals + 1)];
-    }),
-  );
-  const gpuDevice = optionalOne("--gpu-device");
-  if (gpuDevice && !gpu) {
-    throw new Error("Sandbox create GPU device requires the GPU option.");
-  }
-  return Object.freeze({
-    sandboxName: requireOne("--name"),
+  const request: CreateOpenShellSandboxRequest = Object.freeze({
+    ...input.plan,
     target: Object.freeze({ kind: "named" as const, gatewayName: input.gatewayName }),
-    source: Object.freeze({ reference: requireOne("--from") }),
-    ...(optionalOne("--policy") ? { policyPath: optionalOne("--policy") } : {}),
-    ...(optionalOne("--driver-config-json")
-      ? { driverConfigJson: optionalOne("--driver-config-json") }
-      : {}),
-    ...(gpu ? { gpu: Object.freeze({ ...(gpuDevice ? { device: gpuDevice } : {}) }) } : {}),
-    ...(optionalOne("--cpu") || optionalOne("--memory")
-      ? {
-          resources: Object.freeze({
-            ...(optionalOne("--cpu") ? { cpu: optionalOne("--cpu") } : {}),
-            ...(optionalOne("--memory") ? { memory: optionalOne("--memory") } : {}),
-          }),
-        }
-      : {}),
-    ...((values.get("--provider")?.length ?? 0) > 0
-      ? { providers: Object.freeze([...(values.get("--provider") ?? [])]) }
-      : {}),
-    ...(Object.keys(labels).length > 0 ? { labels: Object.freeze(labels) } : {}),
-    startupCommand: Object.freeze(argv.slice(separator + 1)),
+    startupCommand: Object.freeze([...input.startupCommand]),
     environment: Object.freeze({ ...input.environment }),
     ...(input.workingDirectory ? { workingDirectory: input.workingDirectory } : {}),
   });
+  if (input.compatibilityPolicyPath === undefined) return request;
+  if (!input.compatibilityPolicyPath) {
+    throw new Error("Compatibility GPU route requires its route-specific sandbox policy.");
+  }
+  return withoutOpenShellSandboxCreateGpu(request, {
+    policyPath: input.compatibilityPolicyPath,
+  });
+}
+
+function materializeCreateResources(
+  args: readonly string[],
+): CreateOpenShellSandboxRequest["resources"] {
+  const resources: { cpu?: string; memory?: string } = {};
+  for (let index = 0; index < args.length; index += 2) {
+    const option = args[index];
+    const value = args[index + 1];
+    if (!value || (option !== "--cpu" && option !== "--memory")) {
+      throw new Error("Resource profile produced an unsupported sandbox create option.");
+    }
+    if (option === "--cpu") resources.cpu = value;
+    else resources.memory = value;
+  }
+  return Object.keys(resources).length > 0 ? Object.freeze(resources) : undefined;
+}
+
+function materializeCreateGpu(args: readonly string[]): CreateOpenShellSandboxRequest["gpu"] {
+  if (args.length === 0) return undefined;
+  if (args.length === 1 && args[0] === "--gpu") return Object.freeze({});
+  throw new Error("GPU selection produced an unsupported sandbox create option.");
 }
 
 const DCODE_MCP_SNAPSHOT_TMPFS_MOUNT = {
@@ -204,7 +150,9 @@ function buildSandboxDriverConfig(
 export type SandboxCreatePlan = {
   activeMessagingChannels: string[];
   initialSandboxPolicy: InitialSandboxPolicy;
-  createArgs: string[];
+  /** Ordinary lifecycle input. Portable retains raw create arguments until #12119. */
+  createRequest: PlannedOpenShellSandboxCreateRequest | null;
+  createArgs: string[] | null;
   messagingProviders: string[];
   gpuRoutePlan: SandboxCreateIntent["gpuRoutePlan"];
   compatibilityPolicyPath: string | null;
@@ -425,28 +373,26 @@ export async function materializeSandboxCreatePlan({
   getHermesToolGatewayProviderName,
   discloseInitialSandboxPolicy,
   prepareInitialSandboxCreatePolicy = getInitialSandboxCreatePolicy,
-}: MaterializeSandboxCreatePlanInput): Promise<SandboxCreatePlan> {
+}: MaterializeSandboxCreatePlanInput): Promise<
+  SandboxCreatePlan & {
+    readonly createRequest: PlannedOpenShellSandboxCreateRequest;
+    readonly createArgs: null;
+  }
+> {
   const enabledMessagingTokenDefs = validateSandboxCreateIntentBindings(intent, messagingTokenDefs);
   const driverConfig = buildSandboxDriverConfig(
     intent,
     managedStateMounts,
     managedStateMountDriverId,
   );
+  const resources = materializeCreateResources(intent.resourceCreateArgs);
+  const gpu = materializeCreateGpu(intent.gpuCreateArgs);
   const { initialSandboxPolicy, compatibilityPolicyPath } = prepareSandboxCreatePolicy(
     intent,
     prepareInitialSandboxCreatePolicy,
     messagingConfig,
   );
-  const createArgs = [
-    "--from",
-    fromRef,
-    "--name",
-    intent.sandboxName,
-    ...(!policylessCreate ? ["--policy", initialSandboxPolicy.policyPath] : []),
-    ...(driverConfig ? ["--driver-config-json", driverConfig] : []),
-    ...intent.gpuCreateArgs,
-    ...intent.resourceCreateArgs,
-  ];
+  const createProviders: string[] = [];
 
   let hermesToolGatewayProvider: string | null | undefined;
   const resolveHermesToolGatewayProvider = (): string | null => {
@@ -516,19 +462,25 @@ export async function materializeSandboxCreatePlan({
   };
   if (!deferSandboxEffectsUntilIdentityVerification && !skipProviderEffects) {
     try {
-      for (const provider of await activateProviderEffects()) {
-        createArgs.push("--provider", provider);
-      }
+      createProviders.push(...(await activateProviderEffects()));
     } catch (error) {
       initialSandboxPolicy.cleanup?.();
       throw error;
     }
   }
-
   return {
     activeMessagingChannels: [...intent.policy.activeMessagingChannels],
     initialSandboxPolicy,
-    createArgs,
+    createRequest: Object.freeze({
+      sandboxName: intent.sandboxName,
+      source: Object.freeze({ reference: fromRef }),
+      ...(!policylessCreate ? { policyPath: initialSandboxPolicy.policyPath } : {}),
+      ...(driverConfig ? { driverConfigJson: driverConfig } : {}),
+      ...(gpu ? { gpu } : {}),
+      ...(resources ? { resources } : {}),
+      ...(createProviders.length > 0 ? { providers: Object.freeze(createProviders) } : {}),
+    }),
+    createArgs: null,
     messagingProviders: plannedMessagingProviders,
     gpuRoutePlan: intent.gpuRoutePlan,
     compatibilityPolicyPath,
@@ -543,7 +495,7 @@ export async function materializeSandboxCreatePlan({
 export function materializeHermesPortableCreatePlan(input: {
   readonly intent: SandboxCreateIntent;
   readonly fromRef: string;
-}): SandboxCreatePlan {
+}): SandboxCreatePlan & { readonly createRequest: null; readonly createArgs: string[] } {
   const { intent, fromRef } = input;
   if (
     intent.policy.options.agentName !== "hermes" ||
@@ -589,6 +541,7 @@ export function materializeHermesPortableCreatePlan(input: {
   return {
     activeMessagingChannels: [],
     initialSandboxPolicy,
+    createRequest: null,
     createArgs,
     messagingProviders: [],
     gpuRoutePlan: intent.gpuRoutePlan,

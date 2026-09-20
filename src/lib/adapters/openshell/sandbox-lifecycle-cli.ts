@@ -449,7 +449,11 @@ function streamText(value: unknown): string {
 /** Adapt the existing buffered runner only inside the lifecycle transport boundary. */
 export function createCliOpenShellSandboxLifecycleFromRunner(
   run: RunSandboxMutationCommand,
-  options: Readonly<{ defaultTimeoutMs?: number; environment?: NodeJS.ProcessEnv }> = {},
+  options: Readonly<{
+    defaultTimeoutMs?: number;
+    environment?: NodeJS.ProcessEnv;
+    resolveBinary?: () => string;
+  }> = {},
 ): OpenShellSandboxLifecycle {
   return createCliOpenShellSandboxLifecycle({
     ...options,

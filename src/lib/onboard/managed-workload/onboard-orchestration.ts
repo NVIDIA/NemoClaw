@@ -17,11 +17,7 @@ import {
   isSandboxBridgeGatewayReachable,
   verifySandboxBridgeGatewayReachableOrExit,
 } from "../gateway-sandbox-reachability";
-import {
-  initialDockerGpuRoute,
-  renderSandboxCreateArgsForGpuRoute,
-  type SelectedDockerGpuRoute,
-} from "../docker-gpu-route";
+import { initialDockerGpuRoute, type SelectedDockerGpuRoute } from "../docker-gpu-route";
 import type { InitialSandboxPolicy } from "../initial-policy";
 import { isShippedManagedImageAgent } from "../managed-image/contract";
 import {
@@ -55,11 +51,13 @@ import type {
 } from "../sandbox-create-intent-types";
 import {
   materializeHermesPortableCreatePlan,
+  type PlannedOpenShellSandboxCreateRequest,
   type SandboxCreatePlan,
 } from "../sandbox-create-plan-materialization";
 import {
   prepareSandboxCreateLaunch,
-  prepareSandboxCreateLaunchWithPrebuild,
+  prepareSandboxRuntimeLaunch,
+  prebuildSandboxImageIfEligible,
   type SandboxCreateLaunchInput,
   type SandboxCreateLaunchWithPrebuild,
 } from "../sandbox-create-launch";
@@ -100,10 +98,10 @@ export { normalizeRuntimeProviderIdentity };
 
 export type ManagedStateVolumeOnboardLifecycle = {
   readonly roots: readonly import("../managed-startup/state-roots").ManagedStartupStateRoot[];
-  materializeSandboxCreatePlan(
+  materializeSandboxCreatePlan<T extends SandboxCreatePlan>(
     input: MaterializeSandboxCreatePlanInput,
-    materialize: (input: MaterializeSandboxCreatePlanInput) => Promise<SandboxCreatePlan>,
-  ): Promise<SandboxCreatePlan>;
+    materialize: (input: MaterializeSandboxCreatePlanInput) => Promise<T>,
+  ): Promise<T>;
   commit(): void;
 };
 
@@ -451,6 +449,7 @@ export interface PreparedOnboardSandboxWorkloadLaunch {
   readonly buildId: string;
   readonly dashboardRemoteBindPrepared: boolean;
   readonly legacyBuildContext: CreateSandboxBuildContextResult | null;
+  readonly createRequestPlan: PlannedOpenShellSandboxCreateRequest | null;
   readonly launch: SandboxCreateLaunchWithPrebuild;
 }
 
@@ -515,12 +514,10 @@ export async function prepareOnboardSandboxWorkloadLaunch(
     getChannelsFromPlan(input.plannedMessagingPlan) ?? createPlan.activeMessagingChannels;
   const initialGpuRoute = initialDockerGpuRoute(createPlan.gpuRoutePlan);
   const sandboxReadyTimeoutSecs = getSandboxReadyTimeoutSecs(input.gpu.config);
-  const launchInput: SandboxCreateLaunchInput & { sandboxName: string } = {
-    ...input.launchInput,
-    createArgs: renderSandboxCreateArgsForGpuRoute(createPlan.createArgs, initialGpuRoute, {
-      compatibilityPolicyPath: createPlan.compatibilityPolicyPath,
-    }),
-  };
+  if (!createPlan.createRequest) {
+    throw new Error("Ordinary sandbox workload is missing its typed create plan.");
+  }
+  const launchInput = input.launchInput;
 
   let buildId = String(Date.now());
   let dashboardRemoteBindPrepared = false;
@@ -553,13 +550,16 @@ export async function prepareOnboardSandboxWorkloadLaunch(
       encodedProfile: profile.encodedProfile,
       ...(profile.corporateCaB64 === undefined ? {} : { corporateCaB64: profile.corporateCaB64 }),
     });
-    const managedLaunch = prepareSandboxCreateLaunch({
+    const managedLaunch = prepareSandboxRuntimeLaunch({
       ...launchInput,
+      policyAttached: Boolean(createPlan.createRequest.policyPath),
       managedStartupRootApplyRequest: rootApplyRequest,
     });
     launch = {
       ...managedLaunch,
-      prebuild: { createArgs: [...launchInput.createArgs], imageRef: null, imageId: null },
+      createCommand: "",
+      createArgv: [],
+      prebuild: { createArgs: [], imageRef: null, imageId: null },
     };
   } else {
     const buildContext = requireLegacyBuildContext(legacyBuildContext);
@@ -581,16 +581,32 @@ export async function prepareOnboardSandboxWorkloadLaunch(
     });
     buildId = patch.buildId;
     dashboardRemoteBindPrepared = patch.dashboardRemoteBindPrepared;
-    launch = await prepareSandboxCreateLaunchWithPrebuild({
+    const runtimeLaunch = prepareSandboxRuntimeLaunch({
       ...launchInput,
-      prebuild: {
-        buildCtx: buildContext.buildCtx,
-        buildId,
-        dockerDriverGateway: input.gpu.dockerDriverGateway,
-        origin: buildContext.origin,
-      },
+      policyAttached: Boolean(createPlan.createRequest.policyPath),
     });
+    const prebuild = await prebuildSandboxImageIfEligible({
+      buildCtx: buildContext.buildCtx,
+      buildId,
+      dockerDriverGateway: input.gpu.dockerDriverGateway,
+      origin: buildContext.origin,
+      sourceReference: createPlan.createRequest.source.reference,
+      sandboxName: input.launchInput.sandboxName,
+      requiresLocalBuildKit:
+        buildContext.origin === "generated" &&
+        (input.legacy.agent == null ||
+          input.legacy.agent.name === "openclaw" ||
+          input.legacy.agent.name === "hermes"),
+    });
+    launch = { ...runtimeLaunch, createCommand: "", createArgv: [], prebuild };
   }
+
+  const createRequestPlan = Object.freeze({
+    ...createPlan.createRequest,
+    source: Object.freeze({
+      reference: launch.prebuild.sourceReference ?? createPlan.createRequest.source.reference,
+    }),
+  });
 
   return {
     initialSandboxPolicy: createPlan.initialSandboxPolicy,
@@ -603,6 +619,7 @@ export async function prepareOnboardSandboxWorkloadLaunch(
     buildId,
     dashboardRemoteBindPrepared,
     legacyBuildContext,
+    createRequestPlan,
     launch,
   };
 }
@@ -618,6 +635,9 @@ export function prepareHermesPortableOnboardSandboxLaunch(input: {
     intent: input.intent,
     fromRef: input.fromRef,
   });
+  if (!createPlan.createArgs) {
+    throw new Error("Hermes portable workload is missing its create arguments.");
+  }
   const launch = prepareSandboxCreateLaunch({
     ...input.launchInput,
     createArgs: createPlan.createArgs,
@@ -629,6 +649,7 @@ export function prepareHermesPortableOnboardSandboxLaunch(input: {
     buildId: "hermes-portable",
     dashboardRemoteBindPrepared: false,
     legacyBuildContext: null,
+    createRequestPlan: null,
     launch: {
       ...launch,
       prebuild: { createArgs: [...createPlan.createArgs], imageRef: null, imageId: null },

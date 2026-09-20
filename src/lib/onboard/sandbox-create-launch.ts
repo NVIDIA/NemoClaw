@@ -63,6 +63,8 @@ export interface SandboxCreateLaunch {
   managedStartupRootApplyRequest: ManagedStartupRootApplyRequest | null;
 }
 
+export type SandboxRuntimeLaunch = Omit<SandboxCreateLaunch, "createCommand" | "createArgv">;
+
 export interface SandboxCreateLaunchWithPrebuildInput extends SandboxCreateLaunchInput {
   sandboxName: string;
   prebuild: Omit<SandboxPrebuildInput, "createArgs" | "sandboxName">;
@@ -86,9 +88,15 @@ export function renderSandboxCreateCommand(
   ])} 2>&1`;
 }
 
-export { buildSandboxRuntimeEnvArgs, type SandboxRuntimeEnvArgsInput };
+export {
+  buildSandboxRuntimeEnvArgs,
+  type SandboxRuntimeEnvArgsInput,
+  prebuildSandboxImageIfEligible,
+};
 
-export function prepareSandboxCreateLaunch(input: SandboxCreateLaunchInput): SandboxCreateLaunch {
+export function prepareSandboxRuntimeLaunch(
+  input: Omit<SandboxCreateLaunchInput, "createArgs"> & { readonly policyAttached: boolean },
+): SandboxRuntimeLaunch {
   const env = input.env ?? process.env;
   const manageDashboard = input.manageDashboard ?? true;
   const { envArgs, effectiveDashboardPort } = buildSandboxRuntimeEnvArgs({
@@ -106,7 +114,7 @@ export function prepareSandboxCreateLaunch(input: SandboxCreateLaunchInput): San
   });
   const sandboxEnv = buildOpenShellSandboxCreateEnvironment(
     input.buildEnv ? input.buildEnv() : env,
-    { policyAttached: input.createArgs.includes("--policy") },
+    { policyAttached: input.policyAttached },
   );
 
   // Run without piping through awk; the pipe masked non-zero exit codes
@@ -143,20 +151,7 @@ export function prepareSandboxCreateLaunch(input: SandboxCreateLaunchInput): San
           MANAGED_STARTUP_EXECUTABLE,
         ]
       : intendedSandboxStartupCommand;
-  const createArgs = [...input.createArgs];
-  const openshellArgs = ["sandbox", "create", ...createArgs, "--", ...sandboxStartupCommand];
-  const createCommand = renderSandboxCreateCommand(
-    createArgs,
-    sandboxStartupCommand,
-    input.openshellShellCommand,
-  );
-  const createArgv = input.openshellArgv
-    ? input.openshellArgv(openshellArgs)
-    : ["bash", "-lc", createCommand];
-
   return {
-    createCommand,
-    createArgv,
     effectiveDashboardPort,
     envArgs,
     sandboxEnv,
@@ -164,6 +159,33 @@ export function prepareSandboxCreateLaunch(input: SandboxCreateLaunchInput): San
     intendedSandboxStartupCommand,
     managedBootstrapIdentity,
     managedStartupRootApplyRequest,
+  };
+}
+
+export function prepareSandboxCreateLaunch(input: SandboxCreateLaunchInput): SandboxCreateLaunch {
+  const runtime = prepareSandboxRuntimeLaunch({
+    ...input,
+    policyAttached: input.createArgs.includes("--policy"),
+  });
+  const createArgs = [...input.createArgs];
+  const openshellArgs = [
+    "sandbox",
+    "create",
+    ...createArgs,
+    "--",
+    ...runtime.sandboxStartupCommand,
+  ];
+  const createCommand = renderSandboxCreateCommand(
+    createArgs,
+    runtime.sandboxStartupCommand,
+    input.openshellShellCommand,
+  );
+  return {
+    ...runtime,
+    createCommand,
+    createArgv: input.openshellArgv
+      ? input.openshellArgv(openshellArgs)
+      : ["bash", "-lc", createCommand],
   };
 }
 

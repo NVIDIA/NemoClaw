@@ -11,6 +11,7 @@ import {
   createCliOpenShellSandboxLifecycleFromRunner,
   createCliOpenShellSandboxObserverFromRunner,
 } from "../../adapters/openshell/sandbox-lifecycle-cli";
+import type { PlannedOpenShellSandboxCreateRequest } from "../sandbox-create-plan-materialization";
 import {
   NEMOCLAW_CREATE_ATTEMPT_LABEL,
   resolveCreatedOpenShellSandboxId,
@@ -128,6 +129,54 @@ export function bindRebuildPolicyProvidersToCreateArgs(
   return result;
 }
 
+function bindRebuildPolicyProvidersToCreateRequest(
+  request: PlannedOpenShellSandboxCreateRequest,
+  policy: Pick<import("../initial-policy").InitialSandboxPolicy, "credentialBindingProviders">,
+): PlannedOpenShellSandboxCreateRequest {
+  const providers = new Set(request.providers ?? []);
+  for (const provider of policy.credentialBindingProviders ?? []) providers.add(provider);
+  return Object.freeze({
+    ...request,
+    ...(providers.size > 0 ? { providers: Object.freeze([...providers]) } : {}),
+  });
+}
+
+function selectRebuildCreateRequestPlan(input: {
+  readonly request: PlannedOpenShellSandboxCreateRequest | null;
+  readonly rebuildPolicySourcePath: string | null | undefined;
+  readonly policy: import("../initial-policy").InitialSandboxPolicy;
+}): PlannedOpenShellSandboxCreateRequest | null {
+  if (!input.request || !input.rebuildPolicySourcePath) return input.request;
+  return bindRebuildPolicyProvidersToCreateRequest(
+    Object.freeze({ ...input.request, policyPath: input.policy.policyPath }),
+    input.policy,
+  );
+}
+
+function finalizeOrdinaryCreateRequest(input: {
+  readonly portableLifecycle: boolean;
+  readonly plan: PlannedOpenShellSandboxCreateRequest | null;
+  readonly gatewayName: string;
+  readonly startupCommand: readonly string[];
+  readonly environment: NodeJS.ProcessEnv;
+  readonly compatibilityPolicyPath: string | null;
+  readonly compatibility: boolean;
+}) {
+  if (!input.plan) {
+    if (!input.portableLifecycle) {
+      throw new Error("Ordinary sandbox creation is missing its typed create request.");
+    }
+    return null;
+  }
+  return sandboxCreatePlanMaterialization.finalizeOpenShellSandboxCreateRequest({
+    plan: input.plan,
+    gatewayName: input.gatewayName,
+    startupCommand: input.startupCommand,
+    environment: input.environment,
+    ...(input.compatibility ? { compatibilityPolicyPath: input.compatibilityPolicyPath } : {}),
+  });
+}
+
 export function beginRecreateDeleteAfterPolicyPreflight<T>(input: {
   readonly capturePolicySource: () => unknown;
   readonly beginDelete: () => T;
@@ -137,7 +186,8 @@ export function beginRecreateDeleteAfterPolicyPreflight<T>(input: {
 }
 
 export function resolveRebuildPolicyProviderAuthority(input: {
-  readonly createArgs: readonly string[];
+  readonly createArgs?: readonly string[];
+  readonly createProviders?: readonly string[];
   readonly messagingPlan:
     | Pick<SandboxMessagingPlan, "credentialBindings" | "disabledChannels">
     | null
@@ -146,10 +196,11 @@ export function resolveRebuildPolicyProviderAuthority(input: {
   readonly policyProviders?: readonly string[];
 }): string[] {
   const providers = new Set(
-    input.createArgs.flatMap((value, index, args) =>
+    (input.createArgs ?? []).flatMap((value, index, args) =>
       index > 0 && args[index - 1] === "--provider" ? [value] : [],
     ),
   );
+  for (const provider of input.createProviders ?? []) providers.add(provider);
   const disabledChannels = new Set(input.messagingPlan?.disabledChannels ?? []);
   for (const binding of input.messagingPlan?.credentialBindings ?? []) {
     if (disabledChannels.has(binding.channelId)) continue;
@@ -2584,6 +2635,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       buildId,
       dashboardRemoteBindPrepared,
       legacyBuildContext,
+      createRequestPlan: materializedCreateRequestPlan,
       launch: {
         createArgv: materializedCreateArgv,
         intendedSandboxStartupCommand,
@@ -2613,7 +2665,9 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       materializedInitialSandboxPolicy.sourceBytes?.toString("utf8") ??
       fs.readFileSync(materializedInitialSandboxPolicy.policyPath, "utf8");
     const rebuildPolicyProviderAuthority = resolveRebuildPolicyProviderAuthority({
-      createArgs: materializedCreateArgv,
+      ...(materializedCreateRequestPlan
+        ? { createProviders: materializedCreateRequestPlan.providers }
+        : { createArgs: materializedCreateArgv }),
       messagingPlan: plannedMessagingState?.plan,
       ...(rebuildPolicySource
         ? { policyProviders: rebuildPolicySource.providers }
@@ -2647,6 +2701,11 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
           initialSandboxPolicy,
         )
       : materializedCreateArgv;
+    const createRequestPlan = selectRebuildCreateRequestPlan({
+      request: materializedCreateRequestPlan,
+      rebuildPolicySourcePath: createIntent?.rebuildPolicySourcePath,
+      policy: initialSandboxPolicy,
+    });
     const restoreBackupPath =
       pendingStateRestore?.manifest?.backupPath ?? pendingStateRestoreBackupPath;
     onboardSessionBootstrap.verifyReadOnlyHostMountSources(resolvedCreateIntent.hostMounts);
@@ -3470,6 +3529,15 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       });
       cleanupBuildContext();
     } else {
+      const routedOrdinaryCreateRequest = finalizeOrdinaryCreateRequest({
+        portableLifecycle: agentCreateInput.portableLifecycle,
+        plan: createRequestPlan,
+        gatewayName: GATEWAY_NAME,
+        startupCommand: sandboxStartupCommand,
+        environment: createFlowEnvironment,
+        compatibilityPolicyPath,
+        compatibility: initialGpuRoute === "compatibility",
+      });
       const created = await runSandboxCreateWithProviderEffects({
         resumingVerifiedCreate: Boolean(resumeVerifiedCreateInput),
         providerEffectBoundary,
@@ -3479,12 +3547,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
               ? { kind: "portable", argv: createArgv }
               : {
                   kind: "ordinary",
-                  request:
-                    sandboxCreatePlanMaterialization.materializeOpenShellSandboxCreateRequest({
-                      createArgv,
-                      gatewayName: GATEWAY_NAME,
-                      environment: createFlowEnvironment,
-                    }),
+                  request: routedOrdinaryCreateRequest!,
                 },
             undefined,
             undefined,

@@ -617,14 +617,12 @@ describe("managed workload onboard orchestration", () => {
     const materializeSandboxCreatePlan = vi.fn(() => ({
       activeMessagingChannels: [],
       compatibilityPolicyPath: null,
-      createArgs: [
-        "--from",
-        stagedContext.stagedDockerfile,
-        "--name",
-        "dcode",
-        "--policy",
-        "/tmp/nemoclaw-policy.yaml",
-      ],
+      createArgs: null,
+      createRequest: {
+        sandboxName: "dcode",
+        source: { reference: stagedContext.stagedDockerfile },
+        policyPath: "/tmp/nemoclaw-policy.yaml",
+      },
       gpuRoutePlan: "none",
       initialSandboxPolicy: {
         appliedPresets: [],
