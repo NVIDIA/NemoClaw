@@ -171,6 +171,103 @@ describe("provider-owned managed startup root application", () => {
     expect(JSON.stringify(calls.map(({ args }) => args))).not.toContain("docker");
   });
 
+  it("uses the published base-image unbound protocol without explicit hold release", () => {
+    const labels = {
+      "openshell.ai/managed-by": "openshell",
+      "openshell.ai/sandbox-name": SANDBOX_NAME,
+      "openshell.ai/sandbox-id": SANDBOX_ID,
+      "openshell.ai/sandbox-workspace": "default",
+    };
+    const capture = vi.fn(() => ({
+      status: 0,
+      stdout: JSON.stringify([
+        {
+          Id: CONTAINER_ID,
+          Image: IMAGE_ID,
+          Config: { Labels: labels },
+          State: { Dead: false, Paused: false, Restarting: false, Running: true },
+        },
+      ]),
+      stderr: "",
+    }));
+    const execute = vi.fn((input: { readonly command: readonly string[] }) => {
+      const operation = [
+        "--apply-root-stdin",
+        "--commit-shared-state-transaction",
+        "--release-startup-hold",
+      ].find((candidate) => input.command.includes(candidate));
+      switch (`${String(operation)}:${String(input.command.includes("--bootstrap-identity"))}`) {
+        case "--apply-root-stdin:true":
+          return {
+            status: 1,
+            stdout: "",
+            stderr:
+              "usage: managed-startup-image-runtime [--apply-root-stdin|--wait-for-completion] --agent <agent>",
+          };
+        case "--apply-root-stdin:false":
+        case "--commit-shared-state-transaction:false":
+          return { status: 0, stdout: "", stderr: "" };
+        default:
+          return { status: 1, stdout: "", stderr: "unexpected command" };
+      }
+    });
+    const runtimeProvider = {
+      identity: { id: "docker" },
+      lifecycle: {
+        supported: true,
+        privilegedSandboxControl: {
+          resolveTarget: () => ({ resourceHandle: CONTAINER_ID }),
+          execute,
+        },
+      },
+      containerEngine: {
+        supported: true,
+        identities: [{ operation: "sandbox-lifecycle" }],
+        capture,
+      },
+    } as unknown as RuntimeProviderBundle;
+    const request = createManagedStartupRootApplyRequest({
+      agent: "openclaw",
+      corporateCaB64: Buffer.from(MANAGED_STARTUP_E2E_CORPORATE_CA_PEM, "utf8").toString("base64"),
+      encodedProfile: encodeManagedStartupProfile(
+        managedStartupE2eProfile("openclaw", false, true, true),
+      ),
+    });
+
+    const transaction = applyProviderManagedStartupRootRequest({
+      runtimeProvider,
+      sandboxName: SANDBOX_NAME,
+      sandboxId: SANDBOX_ID,
+      bootstrapIdentity: "c".repeat(64),
+      request,
+      environment: {},
+    });
+
+    expect(transaction).toMatchObject({ protocol: "legacy-unbound" });
+    expect(
+      finalizeProviderManagedStartupSharedState({
+        runtimeProvider,
+        sandboxName: SANDBOX_NAME,
+        sandboxId: SANDBOX_ID,
+        transaction,
+        supervisorReady: true,
+      }),
+    ).toEqual({ supervisorReady: true, failure: null });
+    releaseProviderManagedStartupHold({
+      runtimeProvider,
+      sandboxName: SANDBOX_NAME,
+      sandboxId: SANDBOX_ID,
+      transaction: transaction!,
+      profileFingerprint: request.profileFingerprint,
+    });
+
+    expect(execute).toHaveBeenCalledTimes(3);
+    expect(execute.mock.calls[2]?.[0].command).not.toContain("--bootstrap-identity");
+    expect(
+      execute.mock.calls.some(([input]) => input.command.includes("--release-startup-hold")),
+    ).toBe(false);
+  });
+
   it.each(["docker", "podman"] as const)(
     "rolls back a definitive %s commit failure inside the exact sandbox without stop or removal",
     (providerId) => {
@@ -228,6 +325,7 @@ describe("provider-owned managed startup root application", () => {
           bootstrapIdentity: "c".repeat(64),
           containerId: CONTAINER_ID,
           image: IMAGE_ID,
+          protocol: "identity-bound",
           providerId,
         },
         supervisorReady: true,

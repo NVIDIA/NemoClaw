@@ -30,6 +30,7 @@ export interface ProviderManagedStartupTransaction {
   readonly bootstrapIdentity: string;
   readonly containerId: string;
   readonly image: string;
+  readonly protocol: "identity-bound" | "legacy-unbound";
   readonly providerId: "docker" | "podman";
 }
 
@@ -149,6 +150,7 @@ function inspectExactCreatedRuntime(input: {
       bootstrapIdentity: "",
       containerId,
       image,
+      protocol: "identity-bound",
       providerId,
     },
   };
@@ -206,9 +208,36 @@ function sharedStateTransactionCommand(
     `--${action}-shared-state-transaction`,
     "--agent",
     transaction.agent,
-    "--bootstrap-identity",
-    transaction.bootstrapIdentity,
+    ...(transaction.protocol === "identity-bound"
+      ? ["--bootstrap-identity", transaction.bootstrapIdentity]
+      : []),
   ];
+}
+
+function rootApplyCommand(
+  agent: ManagedStartupRootApplyRequest["agent"],
+  applicationRuntimeEnvironment: readonly string[],
+  bootstrapIdentity?: string,
+): readonly string[] {
+  return [
+    "/usr/bin/env",
+    "-i",
+    ...FIXED_ROOT_ENV,
+    ...applicationRuntimeEnvironment,
+    "/usr/local/bin/node",
+    MANAGED_STARTUP_RUNTIME_EXECUTABLE,
+    "--apply-root-stdin",
+    "--agent",
+    agent,
+    ...(bootstrapIdentity ? ["--bootstrap-identity", bootstrapIdentity] : []),
+  ];
+}
+
+function isLegacyUnboundRuntimeUsage(detail: string): boolean {
+  return (
+    detail.includes("usage: managed-startup-image-runtime") &&
+    !detail.includes("--release-startup-hold")
+  );
 }
 
 function sharedStateStatusCommand(
@@ -255,24 +284,17 @@ export function applyProviderManagedStartupRootRequest(input: {
       ...pinned.transaction,
       agent: input.request.agent,
       bootstrapIdentity: input.bootstrapIdentity,
+      protocol: "identity-bound",
     },
   };
   const applicationRuntimeEnvironment = Object.entries(
     selectManagedStartupApplicationRuntimeEnvironment(input.environment ?? process.env),
   ).map(([name, value]) => `${name}=${value}`);
-  const command = [
-    "/usr/bin/env",
-    "-i",
-    ...FIXED_ROOT_ENV,
-    ...applicationRuntimeEnvironment,
-    "/usr/local/bin/node",
-    MANAGED_STARTUP_RUNTIME_EXECUTABLE,
-    "--apply-root-stdin",
-    "--agent",
+  const command = rootApplyCommand(
     input.request.agent,
-    "--bootstrap-identity",
+    applicationRuntimeEnvironment,
     input.bootstrapIdentity,
-  ];
+  );
   let lastFailure = "";
   for (let attempt = 0; attempt < 2; attempt += 1) {
     const result = executeExact(runtime, command, {
@@ -297,6 +319,24 @@ export function applyProviderManagedStartupRootRequest(input: {
       break;
     }
     lastFailure = commandDetail(result);
+    if (isLegacyUnboundRuntimeUsage(lastFailure)) {
+      const legacyTransaction: ProviderManagedStartupTransaction = {
+        ...runtime.transaction,
+        protocol: "legacy-unbound",
+      };
+      const legacyRuntime = { ...runtime, transaction: legacyTransaction };
+      const legacyResult = executeExact(
+        legacyRuntime,
+        rootApplyCommand(input.request.agent, applicationRuntimeEnvironment),
+        {
+          input: Buffer.from(serializeManagedStartupRootApplyRequest(input.request), "utf8"),
+          timeoutMs: ROOT_APPLY_TIMEOUT_MS,
+        },
+      );
+      if (legacyResult.status === 0) return legacyTransaction;
+      lastFailure = commandDetail(legacyResult);
+      break;
+    }
   }
   const error = new Error(
     `Managed startup root application failed in exact ${runtime.transaction.providerId} container ${runtime.transaction.containerId.slice(0, 12)}${
@@ -371,6 +411,7 @@ export function releaseProviderManagedStartupHold(input: {
   if (!/^[a-f0-9]{64}$/u.test(input.profileFingerprint)) {
     throw new Error("Managed startup release requires one exact profile fingerprint.");
   }
+  if (input.transaction.protocol === "legacy-unbound") return;
   const runtime = inspectExactTransactionRuntime({
     runtimeProvider: input.runtimeProvider,
     sandboxName: input.sandboxName,
