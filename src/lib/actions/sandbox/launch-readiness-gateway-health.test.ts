@@ -14,9 +14,31 @@ import {
   requireLaunchSemanticHealth,
   type LaunchReadinessHealthDeps,
 } from "./launch-readiness/health";
-import { isSandboxGatewayRunningForStatus } from "./process-recovery";
+import {
+  isSandboxGatewayRunningForStatus,
+  waitForStartedHermesGatewayProcess,
+} from "./process-recovery";
 
 describe("launch-readiness gateway health scope", () => {
+  it.each([
+    ["becomes observable", [null, null, null, null, null, true], true],
+    ["remains unavailable", [null, null, null, null, null, null], false],
+  ] as const)(
+    "bounds a managed Hermes startup observation that %s",
+    async (_case, results, expected) => {
+      const observations = [...results];
+      const probe = vi.fn(async () => observations.shift() ?? null);
+      const sleep = vi.fn(async () => {});
+
+      await expect(
+        waitForStartedHermesGatewayProcess("alpha", "nemoclaw-19080", { probe, sleep }),
+      ).resolves.toBe(expected);
+
+      expect(probe).toHaveBeenCalledTimes(6);
+      expect(sleep.mock.calls).toEqual([[2_000], [2_000], [2_000], [2_000], [2_000]]);
+    },
+  );
+
   it("pins the semantic gateway probe to the owning OpenShell gateway (#8942)", async () => {
     const runBuffered = vi.fn<OpenShellSandboxBufferedCommandExecutor["runBuffered"]>(async () => ({
       outcome: { kind: "completed", exitCode: 0 },

@@ -11,7 +11,6 @@ import { createCliOpenShellSandboxObserver } from "../../adapters/openshell/sand
 import type { OpenShellSandboxBufferedCommandExecutor } from "../../adapters/openshell/sandbox-command";
 import type { CheckpointPortableRuntimeAuthority } from "../../state/onboard-checkpoint-types";
 import type { SandboxGpuProofResult } from "../../state/registry";
-import type { ManagedBootstrapRuntimeCreateLifecycleInput } from "../managed-bootstrap/runtime-create";
 import type {
   SandboxGpuCreateFlowDeps,
   SandboxGpuCreateFlowInput,
@@ -128,7 +127,7 @@ export function createGpuFlowDeps(
 export function createGpuPatchFixture() {
   return {
     maybeApplyDuringCreate: vi.fn(),
-    replacementRuntimeId: vi.fn(() => null),
+    replacementRuntimeId: vi.fn<() => string | null>(() => null),
     createFailureMessage: vi.fn(() => null),
     exitOnPatchError: vi.fn(),
     rollbackManagedStartupAfterCreateFailure: vi.fn(),
@@ -327,47 +326,6 @@ export function createGpuFlowTestHarness(mocks: Record<string, ReturnType<typeof
     return dockerConfig;
   }
 
-  function attachManagedBootstrap(input: SandboxGpuCreateFlowInput): void {
-    input.sandboxGpuConfig = {
-      mode: "0",
-      hostGpuDetected: false,
-      hostGpuPlatform: null,
-      sandboxGpuEnabled: false,
-      sandboxGpuDevice: null,
-      errors: [],
-    };
-    input.gpuRoutePlan = "none";
-    input.initialGpuRoute = "none";
-    input.managedBootstrap = {
-      bootstrapIdentity: "e".repeat(64),
-      stateRoot: "/tmp/nemoclaw-managed-bootstrap",
-      runtimeProvider: {
-        identity: { id: "mxc" },
-        bootstrap: {
-          createOnboardRouting: () => ({ nativeFallbackHasCleanBaseline: false }),
-          createLifecycle: (options: ManagedBootstrapRuntimeCreateLifecycleInput) => ({
-            launchArgv: options.launchArgv,
-            patch: createGpuPatchFixture(),
-            recoverUnfinished: async () => null,
-            prepareNetwork: async () => undefined,
-            runCreate: async <T>(
-              start: (held: {
-                readonly heldWorkloadArgv: readonly string[];
-                readonly bootstrapIdentity: string;
-              }) => Promise<{ readonly value: T }>,
-            ): Promise<T> =>
-              (
-                await start({
-                  heldWorkloadArgv: options.heldWorkloadArgv,
-                  bootstrapIdentity: options.bootstrapIdentity,
-                })
-              ).value,
-          }),
-        },
-      },
-    } as unknown as NonNullable<SandboxGpuCreateFlowInput["managedBootstrap"]>;
-  }
-
   function captureCreateEnv(): {
     env: NodeJS.ProcessEnv;
     configExisted: boolean;
@@ -425,7 +383,6 @@ export function createGpuFlowTestHarness(mocks: Record<string, ReturnType<typeof
     errorOutput,
     createSourceInput,
     writeDesktopCredsStore,
-    attachManagedBootstrap,
     captureCreateEnv,
     setupHarness,
     resetHarness,

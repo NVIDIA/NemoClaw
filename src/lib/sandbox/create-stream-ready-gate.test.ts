@@ -182,7 +182,7 @@ describe("sandbox-create-stream ready gate", () => {
     const child = new FakeChild();
     const traceEvent = vi.fn();
     const logLine = vi.fn();
-    const onPoll = vi.fn(() => {
+    const onPoll = vi.fn(async () => {
       throw new Error("Authorization: Bearer secret-token");
     });
     const promise = streamSandboxCreate(
