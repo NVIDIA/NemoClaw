@@ -22,6 +22,8 @@ A legacy image stops with migration guidance before it changes a live provider, 
 </AgentOnly>
 <AgentOnly variant="hermes">
 Hermes stores MCP servers in its native `config.yaml`. Registration and inspection preserve the stable credential handle from the readiness check in the OpenShell resolver placeholder without comparing it with host-side desired state.
+Before an MCP add or restart mutation, NemoClaw requires the Hermes helper to report reconcile-finality capability version 1.
+An add or restart with an older helper stops with rebuild guidance and leaves the provider, policy, attachment, and native configuration unchanged.
 </AgentOnly>
 <AgentOnly variant="openclaw">
 OpenClaw stores MCP servers in `openclaw.json` under `mcp.servers`.

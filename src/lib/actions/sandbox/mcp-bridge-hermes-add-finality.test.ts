@@ -20,6 +20,7 @@ const mocks = vi.hoisted(() => {
   };
   return {
     applyGeneratedPolicy: vi.fn(),
+    assertAgentMcpMutationRuntimeCapability: vi.fn(),
     attachProvider: vi.fn(),
     detachProvider: vi.fn(),
     inspectAgentAdapterRegistration: vi.fn(),
@@ -32,6 +33,7 @@ const mocks = vi.hoisted(() => {
     runOpenshellProviderCommand: vi.fn(),
     state,
     unregisterAgentAdapter: vi.fn(),
+    upsertMcpProvider: vi.fn(),
     waitForMcpBridgeConditionAsync: vi.fn(
       async (condition: () => Promise<boolean>, _options?: unknown) => {
         let matched = false;
@@ -69,7 +71,7 @@ vi.mock("./mcp-bridge-adapters", async (importOriginal) => {
   const original = await importOriginal<typeof import("./mcp-bridge-adapters")>();
   return {
     ...original,
-    assertAgentMcpMutationRuntimeCapability: vi.fn(),
+    assertAgentMcpMutationRuntimeCapability: mocks.assertAgentMcpMutationRuntimeCapability,
     inspectAgentAdapterRegistration: mocks.inspectAgentAdapterRegistration,
     inspectHermesMcpReloadFinality: (
       ...args: Parameters<typeof original.inspectHermesMcpReloadFinality>
@@ -157,24 +159,32 @@ vi.mock("./mcp-bridge-provider", async (importOriginal) => ({
   })),
   observeMcpCredentialRevision: mocks.observeMcpCredentialRevision,
   refreshMcpProviderEnvironment: vi.fn(),
-  upsertMcpProvider: vi.fn(async (_name, _env, options) => {
-    const action = mocks.state.provider ? "updated" : "created";
-    await options.prepareMutation?.(action);
-    mocks.state.provider = true;
-    return {
-      action,
-      inspection: {
-        credentialKeys: ["GITHUB_TOKEN"],
-        exists: true,
-        id: "11111111-2222-4333-8444-555555555555",
-        resourceVersion: 7,
-        type: "nemoclaw-mcp-v1",
-      },
-    };
-  }),
+  upsertMcpProvider: mocks.upsertMcpProvider,
   waitForAttachedMcpCredential: vi.fn(() => "v7"),
   waitForDetachedMcpCredential: vi.fn(),
 }));
+
+function configureUpsertMcpProviderMock(): void {
+  mocks.upsertMcpProvider.mockImplementation(
+    async (...args: Parameters<typeof upsertMcpProvider>) => {
+      const [, , options] = args;
+      const updating = mocks.state.provider;
+      const action = updating ? "updated" : "created";
+      await options.prepareMutation?.(updating ? "update" : "create");
+      mocks.state.provider = true;
+      return {
+        action,
+        inspection: {
+          credentialKeys: ["GITHUB_TOKEN"],
+          exists: true,
+          id: "11111111-2222-4333-8444-555555555555",
+          resourceVersion: 7,
+          type: "nemoclaw-mcp-v1",
+        },
+      };
+    },
+  );
+}
 
 vi.mock("./mcp-bridge-state", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./mcp-bridge-state")>()),
@@ -211,7 +221,11 @@ vi.mock("./mcp-bridge-validation", async (importOriginal) => ({
 
 import { HermesMcpReloadRelayLossError } from "./mcp-bridge-adapters";
 import { addMcpBridge } from "./mcp-bridge-add-restart";
-import { inspectMcpProvider, inspectMcpProviderAttachments } from "./mcp-bridge-provider";
+import {
+  inspectMcpProvider,
+  inspectMcpProviderAttachments,
+  upsertMcpProvider,
+} from "./mcp-bridge-provider";
 import * as policies from "../../policy";
 
 async function runAdd(): Promise<void> {
@@ -225,6 +239,7 @@ async function runAdd(): Promise<void> {
 describe("Hermes MCP add reload finality", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    configureUpsertMcpProviderMock();
     Object.assign(mocks.state, {
       adapter: false,
       attachment: false,
@@ -241,6 +256,8 @@ describe("Hermes MCP add reload finality", () => {
     });
     process.env.GITHUB_TOKEN = "host-only-secret";
     delete process.env.NEMOCLAW_TRUSTED_PRIVATE_HOSTS;
+
+    mocks.assertAgentMcpMutationRuntimeCapability.mockResolvedValue(undefined);
 
     mocks.applyGeneratedPolicy.mockImplementation((_sandbox, _entry, _target, options = {}) => {
       mocks.state.policy = options.bindCredential === false ? "capability" : "bound";
@@ -333,6 +350,25 @@ describe("Hermes MCP add reload finality", () => {
       mocks.state.adapter = false;
       return "removed";
     });
+  });
+
+  it("leaves all MCP state unchanged when a legacy Hermes helper lacks finality capability", async () => {
+    mocks.assertAgentMcpMutationRuntimeCapability.mockRejectedValue(
+      new Error(
+        "Hermes sandbox 'alpha' does not provide managed MCP reconcile-finality capability version 1. Rebuild the sandbox before changing authenticated MCP state.",
+      ),
+    );
+
+    await expect(runAdd()).rejects.toThrow(
+      "does not provide managed MCP reconcile-finality capability version 1. Rebuild the sandbox",
+    );
+    expect(mocks.applyGeneratedPolicy).not.toHaveBeenCalled();
+    expect(mocks.upsertMcpProvider).not.toHaveBeenCalled();
+    expect(mocks.attachProvider).not.toHaveBeenCalled();
+    expect(mocks.registerAgentAdapterAtCurrentCredentialRevision).not.toHaveBeenCalled();
+    expect(mocks.unregisterAgentAdapter).not.toHaveBeenCalled();
+    expect(mocks.detachProvider).not.toHaveBeenCalled();
+    expect(mocks.removeGeneratedPolicy).not.toHaveBeenCalled();
   });
 
   it("accepts exact committed state without repeating or rolling back the mutation", async () => {

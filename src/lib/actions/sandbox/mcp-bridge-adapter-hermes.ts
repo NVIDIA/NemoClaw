@@ -25,6 +25,7 @@ import type { McpAttachedCredentialRevision } from "./mcp-bridge-provider-readin
 const HERMES_MCP_EXEC_TIMEOUT_SECONDS = 620;
 const HERMES_MCP_PROBE_TIMEOUT_SECONDS = 30;
 const HERMES_MCP_INITIAL_PROBE_ATTEMPTS = 3;
+const HERMES_MCP_RECONCILE_FINALITY_CAPABILITY_VERSION = 1;
 const HERMES_MCP_GATEWAY_NOT_READY = "Hermes gateway is not running for managed MCP reload";
 const HERMES_MCP_LIFECYCLE_NOT_READY =
   "Hermes gateway is not running under the managed service lifecycle";
@@ -308,14 +309,28 @@ function parseLastJsonObject(output: string): Record<string, unknown> | null {
   return null;
 }
 
+function hasHermesMcpReconcileFinalityCapability(
+  response: Record<string, unknown> | null,
+): boolean {
+  const capabilities = response?.capabilities;
+  return (
+    capabilities !== null &&
+    typeof capabilities === "object" &&
+    !Array.isArray(capabilities) &&
+    (capabilities as Record<string, unknown>).reconcile_finality ===
+      HERMES_MCP_RECONCILE_FINALITY_CAPABILITY_VERSION
+  );
+}
+
 /**
  * Prove the running Hermes sandbox contains the packaged transaction helper
  * and can invoke it through OpenShell current main's ordinary exec path before
  * changing a global provider, policy, attachment, or adapter.
  */
-export function assertHermesMcpMutationRuntimeCapability(
+function assertHermesMcpRuntimeCapability(
   sandboxName: string,
   runtimeSelection: McpProviderInspectionRuntimeSelection,
+  requireReconcileFinality: boolean,
 ): void {
   let lastDetail = "";
   const probe = (): boolean => {
@@ -341,7 +356,14 @@ export function assertHermesMcpMutationRuntimeCapability(
       );
     }
     const response = parseLastJsonObject(result.stdout || "");
-    if (result.status === 0 && !result.error && response?.ok === true) return true;
+    if (result.status === 0 && !result.error && response?.ok === true) {
+      if (!requireReconcileFinality || hasHermesMcpReconcileFinalityCapability(response)) {
+        return true;
+      }
+      throw new McpBridgeError(
+        `Hermes sandbox '${sandboxName}' does not provide managed MCP reconcile-finality capability version ${HERMES_MCP_RECONCILE_FINALITY_CAPABILITY_VERSION}. Rebuild the sandbox before changing authenticated MCP state.`,
+      );
+    }
     lastDetail = commandOutput(result).trim();
     if (lastDetail === HERMES_MCP_GATEWAY_NOT_READY) return false;
     if (lastDetail === HERMES_MCP_LIFECYCLE_NOT_READY) {
@@ -368,6 +390,25 @@ export function assertHermesMcpMutationRuntimeCapability(
   throw new McpBridgeError(
     `Hermes sandbox '${sandboxName}' gateway is not ready on recorded OpenShell target '${runtimeSelection.gatewayName}'. Run \`${getAgentBranding().cli} ${sandboxName} recover\` and retry. NemoClaw did not attempt host-local supervisor recovery.`,
   );
+}
+
+export function assertHermesMcpMutationRuntimeCapability(
+  sandboxName: string,
+  runtimeSelection: McpProviderInspectionRuntimeSelection,
+): void {
+  assertHermesMcpRuntimeCapability(sandboxName, runtimeSelection, true);
+}
+
+/**
+ * Keep the baseline helper and lifecycle proof available for preservation-safe
+ * rebuild teardown. The replacement helper must pass the current mutation
+ * capability gate before it restores the retained registration.
+ */
+export function assertHermesMcpTeardownRuntimeCapability(
+  sandboxName: string,
+  runtimeSelection: McpProviderInspectionRuntimeSelection,
+): void {
+  assertHermesMcpRuntimeCapability(sandboxName, runtimeSelection, false);
 }
 
 function runHermesAdapterCommand(

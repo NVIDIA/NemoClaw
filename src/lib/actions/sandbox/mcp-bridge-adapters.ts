@@ -11,6 +11,7 @@ import {
 } from "./mcp-bridge-adapter-deepagents";
 import {
   assertHermesMcpMutationRuntimeCapability,
+  assertHermesMcpTeardownRuntimeCapability,
   inspectHermesAdapterRegistration,
   reloadHermesGatewayAfterMcpRestart,
   registerHermesAdapter,
@@ -123,7 +124,7 @@ export async function assertAgentMcpTeardownRuntimeCapability(
   runtimeSelection: McpProviderInspectionRuntimeSelection,
 ): Promise<void> {
   if (adapter === "hermes-config") {
-    await assertAgentMcpMutationRuntimeCapability(sandboxName, adapter, runtimeSelection);
+    assertHermesMcpTeardownRuntimeCapability(sandboxName, runtimeSelection);
   }
 }
 

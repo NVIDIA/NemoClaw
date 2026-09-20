@@ -58,6 +58,7 @@ GATEWAY_PUBLIC_PORT_PATH = "/run/nemoclaw/hermes-api-port"
 SERVICE_MANAGER_PATH = b"/usr/local/bin/nemoclaw-start"
 RELOAD_TIMEOUT_SECONDS = 300
 RECONCILE_STABILITY_SECONDS = 1
+RECONCILE_FINALITY_CAPABILITY_VERSION = 1
 MCP_TRANSACTION_LOCK_PATH = "/etc/nemoclaw/hermes-mcp-transaction.lock"
 MCP_TRANSACTION_LOCK_EXPECTED_UID = 0
 MCP_TRANSACTION_LOCK_EXPECTED_GID = 0
@@ -1589,7 +1590,12 @@ def probe() -> dict[str, object]:
     _configure_gateway_public_port()
     with _mcp_transaction_lock():
         pass
-    return {"ok": True}
+    return {
+        "ok": True,
+        "capabilities": {
+            "reconcile_finality": RECONCILE_FINALITY_CAPABILITY_VERSION
+        },
+    }
 
 
 def execute(action: str, payload: dict[str, object]) -> dict[str, object]:

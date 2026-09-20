@@ -129,6 +129,16 @@ Use `nemo-deepagents <name> mcp ...` for servers that need OpenShell credential 
 </AgentOnly>
 
 <AgentOnly variant="hermes">
+If Hermes reports that reconcile-finality capability version 1 is unavailable, the MCP mutation did not start.
+Rebuild the sandbox onto a current image, then retry the original MCP command:
+
+```bash
+$$nemoclaw <sandbox> rebuild
+```
+
+Rebuild uses the older helper only to remove exact managed entries from the retiring sandbox.
+The replacement helper must report capability version 1 before it restores those entries.
+
 If a Hermes sandbox is alive but its gateway is not running after a supervisor or container restart, run `$$nemoclaw <sandbox> recover` before retrying the MCP command.
 Recovery re-establishes the managed service lifecycle, API forwarding, and the exit-75 reload loop used for transactional MCP configuration changes.
 </AgentOnly>
