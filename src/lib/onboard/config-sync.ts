@@ -48,10 +48,10 @@ export function createNemoClawConfigSync(deps: NemoClawConfigSyncDeps) {
   };
 }
 
-// Write `~/.nemoclaw/config.json` inside the sandbox, initialize managed-profile
-// session state or validate the native agent configuration, and replace the
-// historical zero-byte placeholder that crashes the OpenClaw nemoclaw plugin's
-// loadOnboardConfig. Fixes #3999.
+// Write `~/.nemoclaw/config.json` inside the sandbox and, for OpenClaw,
+// initialize managed-profile session state or validate its native configuration.
+// Also replace the historical zero-byte placeholder that crashes the OpenClaw
+// nemoclaw plugin's loadOnboardConfig. Fixes #3999.
 export async function runSandboxConfigSync(
   sandboxName: string,
   deps: RunSandboxConfigSyncDeps,
