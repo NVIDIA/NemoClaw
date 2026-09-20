@@ -830,6 +830,9 @@ test(
     ).toBe(true);
     const gatewayRecoveryPassed = await runAcpScenario("gateway-recovery");
     await lifecycle.waitForGatewayConnected();
+    await lifecycle.waitForSandboxReadyAfterGatewayRestart(SANDBOX_NAME, {
+      artifactNamePrefix: "hermes-acp-post-gateway-recovery-ready",
+    });
     const exchangePassed = await runAcpScenario("exchange");
     const remoteExitPassed = await runAcpScenario("remote-exit");
     const cancellationPassed = await runAcpScenario("cancel");
