@@ -56,6 +56,17 @@ impl Standalone {
     fn state(&self) -> Vec<u8> {
         fs::read(self.root.path().join("terraform.tfstate")).unwrap()
     }
+    fn deferred_endpoint(&self) {
+        let source = fs::read_to_string(self.root.path().join("main.tf")).unwrap();
+        fs::write(
+            self.root.path().join("main.tf"),
+            source.replace(
+                "endpoint = var.endpoint",
+                "endpoint = terraform_data.bootstrap.output",
+            ) + "\nresource \"terraform_data\" \"bootstrap\" { input = var.endpoint }\n",
+        )
+        .unwrap();
+    }
     fn apply(&self) {
         self.run(&["apply", "-auto-approve", "-input=false"], true);
     }
@@ -286,33 +297,97 @@ async fn standalone_hcl_recovers_lost_delete_response_without_repeating_the_muta
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires explicit NEMOCLAW_TEST_TOFU and NEMOCLAW_TEST_PROVIDER; isolated OpenShell fixture"]
-async fn standalone_hcl_requires_provider_endpoint_before_bootstrap_planning() {
+async fn standalone_hcl_defers_provider_endpoint_until_bootstrap_apply() {
     let fixture = Fixture::start().await;
     let tofu = Standalone::new(&fixture.endpoint);
-    let source = fs::read_to_string(tofu.root.path().join("main.tf")).unwrap();
-    fs::write(
-        tofu.root.path().join("main.tf"),
-        source.replace(
-            "endpoint = var.endpoint",
-            "endpoint = terraform_data.bootstrap.output",
-        ) + "\nresource \"terraform_data\" \"bootstrap\" { input = var.endpoint }\n",
-    )
-    .unwrap();
-    let output = tofu.run(&["plan", "-input=false"], false);
-    assert!(String::from_utf8_lossy(&output.stderr).contains("Gateway connection"));
+    tofu.deferred_endpoint();
+    tofu.run(&["plan", "-input=false", "-out=bootstrap.plan"], true);
     assert_eq!(fixture.state.lock().unwrap().effects, 0);
     assert!(!tofu.root.path().join("terraform.tfstate").exists());
-    // Once bootstrap has established the endpoint, the same graph can plan
-    // and apply. This is evidence for staging with the current provider.
+    tofu.run(&["apply", "-input=false", "bootstrap.plan"], true);
+    tofu.noop();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires explicit NEMOCLAW_TEST_TOFU and NEMOCLAW_TEST_PROVIDER; isolated OpenShell fixture"]
+async fn deferred_provider_rechecks_ownership_before_saved_plan_apply() {
+    let fixture = Fixture::start().await;
+    let tofu = Standalone::new(&fixture.endpoint);
+    tofu.deferred_endpoint();
+    tofu.run(&["plan", "-input=false", "-out=bootstrap.plan"], true);
+    let foreign = Standalone::new(&fixture.endpoint);
+    let path = foreign.root.path().join("main.tf");
+    fs::write(
+        &path,
+        fs::read_to_string(&path)
+            .unwrap()
+            .replace("standalone-owner", "foreign-owner"),
+    )
+    .unwrap();
+    foreign.apply();
+    let effects = fixture.state.lock().unwrap().effects;
+    tofu.run(&["apply", "-input=false", "bootstrap.plan"], false);
+    assert_eq!(fixture.state.lock().unwrap().effects, effects);
+    foreign.noop();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires explicit NEMOCLAW_TEST_TOFU and NEMOCLAW_TEST_PROVIDER; isolated OpenShell fixture"]
+async fn deferred_provider_reports_apply_observation_failures_and_recovers() {
+    let fixture = Fixture::start().await;
+    fixture.state.lock().unwrap().fail_read = Some(("workspace", tonic::Code::Unavailable));
+    let tofu = Standalone::new(&fixture.endpoint);
+    tofu.deferred_endpoint();
+    tofu.run(&["plan", "-input=false", "-out=bootstrap.plan"], true);
+    tofu.run(&["apply", "-input=false", "bootstrap.plan"], false);
+    assert_eq!(fixture.state.lock().unwrap().effects, 0);
+    fixture.state.lock().unwrap().fail_read = None;
+    tofu.apply();
+    tofu.noop();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires explicit NEMOCLAW_TEST_TOFU and NEMOCLAW_TEST_PROVIDER; isolated OpenShell fixture"]
+async fn deferred_provider_keeps_bindings_when_bootstrap_endpoint_changes() {
+    let fixture = Fixture::start().await;
+    let next = Fixture::start().await;
+    let tofu = Standalone::new(&fixture.endpoint);
+    tofu.deferred_endpoint();
+    tofu.apply();
+    let prior = tofu.state();
+    let effects = fixture.state.lock().unwrap().effects;
+    fs::write(
+        tofu.root.path().join("terraform.tfvars.json"),
+        json!({"endpoint":next.endpoint}).to_string(),
+    )
+    .unwrap();
+    tofu.run(&["plan", "-input=false"], false);
+    assert_eq!(tofu.state(), prior);
+    assert_eq!(fixture.state.lock().unwrap().effects, effects);
+    assert_eq!(next.state.lock().unwrap().effects, 0);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires explicit NEMOCLAW_TEST_TOFU and NEMOCLAW_TEST_PROVIDER; isolated OpenShell fixture"]
+async fn unavailable_bound_gateway_blocks_bootstrap_replacement_before_apply() {
+    let fixture = Fixture::start().await;
+    let tofu = Standalone::new(&fixture.endpoint);
+    tofu.deferred_endpoint();
+    tofu.apply();
+    let prior = tofu.state();
+    let effects = fixture.state.lock().unwrap().effects;
+    fixture.state.lock().unwrap().fail_read = Some(("workspace", tonic::Code::Unavailable));
     tofu.run(
         &[
             "apply",
-            "-auto-approve",
             "-input=false",
-            "-target=terraform_data.bootstrap",
+            "-auto-approve",
+            "-replace=terraform_data.bootstrap",
         ],
-        true,
+        false,
     );
-    tofu.apply();
+    assert_eq!(tofu.state(), prior);
+    assert_eq!(fixture.state.lock().unwrap().effects, effects);
+    fixture.state.lock().unwrap().fail_read = None;
     tofu.noop();
 }

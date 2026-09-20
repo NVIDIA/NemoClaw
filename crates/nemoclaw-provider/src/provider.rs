@@ -40,17 +40,23 @@ fn text(value: Value<String>) -> String {
     }
 }
 #[derive(Default)]
-pub(crate) struct ConfiguredBackend(RwLock<Option<OpenShell>>, Connections);
+enum Connection {
+    #[default]
+    Unconfigured,
+    Deferred,
+    Ready(OpenShell),
+}
+#[derive(Default)]
+pub(crate) struct ConfiguredBackend(RwLock<Connection>, Connections);
 impl ConfiguredBackend {
     pub(crate) fn connections(&self) -> &Connections {
         &self.1
     }
     pub(crate) fn client(&self) -> Result<OpenShell, ObservationError> {
-        self.0
-            .read()
-            .map_err(|_| ObservationError::Query)?
-            .clone()
-            .ok_or(ObservationError::Query)
+        match &*self.0.read().map_err(|_| ObservationError::Query)? {
+            Connection::Ready(client) => Ok(client.clone()),
+            Connection::Unconfigured | Connection::Deferred => Err(ObservationError::Query),
+        }
     }
 }
 #[async_trait]
@@ -63,6 +69,17 @@ impl Backend for ConfiguredBackend {
     ) -> Result<(), nemoclaw_sdk::Error> {
         if let Some(backend) = BackendRegistry::new(&self.1).resolve(kind, desired)? {
             return backend.plan(kind, desired, prior).await;
+        }
+        // Unknown provider inputs may be produced by an upstream resource.
+        // Only fresh-resource planning can defer its read; bound resources
+        // must still be observed, and mutations always require a ready client.
+        if prior.is_none()
+            && matches!(
+                *self.0.read().map_err(|_| ObservationError::Query)?,
+                Connection::Deferred
+            )
+        {
+            return Ok(());
         }
         self.client()?.plan(kind, desired, prior).await
     }
@@ -168,6 +185,35 @@ impl Provider for NemoClawProvider {
         _: String,
         config: ProviderConfig,
     ) -> Option<()> {
+        // Reconfiguration must not retain a client or teardown permission from
+        // an earlier configuration when inputs become unknown or invalid.
+        self.destroying.store(false, Ordering::Release);
+        let deferred = [
+            &config.endpoint,
+            &config.credential_env,
+            &config.tls_ca_env,
+            &config.tls_certificate_env,
+            &config.tls_key_env,
+        ]
+        .into_iter()
+        .any(|value| matches!(value, Value::Unknown))
+            || matches!(config.destroy, Value::Unknown);
+        match self.backend.0.write() {
+            Ok(mut slot) => {
+                *slot = if deferred {
+                    Connection::Deferred
+                } else {
+                    Connection::Unconfigured
+                }
+            }
+            Err(_) => {
+                diags.root_error_short("Provider configuration lock failed");
+                return None;
+            }
+        }
+        if deferred {
+            return Some(());
+        }
         let mut gateway = Gateway {
             management: "external".into(),
             endpoint: text(config.endpoint),
@@ -194,7 +240,7 @@ impl Provider for NemoClawProvider {
         match OpenShell::connect(&gateway, Arc::new(EnvironmentSecrets)) {
             Ok(client) => {
                 match self.backend.0.write() {
-                    Ok(mut slot) => *slot = Some(client),
+                    Ok(mut slot) => *slot = Connection::Ready(client),
                     Err(_) => {
                         diags.root_error_short("Provider configuration lock failed");
                         return None;
@@ -288,5 +334,109 @@ impl Provider for NemoClawProvider {
                 })
                 .collect(),
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn known() -> ProviderConfig {
+        ProviderConfig {
+            endpoint: Value::Value("http://127.0.0.1:1".into()),
+            destroy: Value::Value(true),
+            ..Default::default()
+        }
+    }
+
+    #[tokio::test]
+    async fn unknown_connection_inputs_clear_old_clients_and_only_defer_fresh_planning() {
+        for field in 0..6 {
+            let provider = NemoClawProvider::default();
+            let mut diagnostics = Diagnostics::default();
+            provider
+                .configure(&mut diagnostics, String::new(), known())
+                .await
+                .unwrap();
+            assert!(provider.backend.client().is_ok());
+            assert!(provider.destroying.load(Ordering::Acquire));
+            let mut config = known();
+            match field {
+                0 => config.endpoint = Value::Unknown,
+                1 => config.credential_env = Value::Unknown,
+                2 => config.tls_ca_env = Value::Unknown,
+                3 => config.tls_certificate_env = Value::Unknown,
+                4 => config.tls_key_env = Value::Unknown,
+                _ => config.destroy = Value::Unknown,
+            }
+            provider
+                .configure(&mut diagnostics, String::new(), config)
+                .await
+                .unwrap();
+            assert!(diagnostics.errors.is_empty());
+            assert!(provider.backend.client().is_err());
+            assert!(!provider.destroying.load(Ordering::Acquire));
+            let row = Row::new();
+            assert!(provider.backend.plan("workspace", &row, None).await.is_ok());
+            assert!(
+                provider
+                    .backend
+                    .plan("workspace", &row, Some(&row))
+                    .await
+                    .is_err()
+            );
+            assert!(
+                provider
+                    .backend
+                    .read("workspace", &row, false)
+                    .await
+                    .is_err()
+            );
+            let (state, error) = provider
+                .backend
+                .ensure("workspace", &row)
+                .await
+                .into_parts();
+            assert!(state.is_none() && error.is_some());
+            assert!(
+                provider
+                    .backend
+                    .remove("workspace", &row, true)
+                    .await
+                    .is_err()
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn invalid_known_configuration_clears_previous_client_without_deferring() {
+        for endpoint in [Value::Null, Value::Value("invalid".into())] {
+            let provider = NemoClawProvider::default();
+            let mut diagnostics = Diagnostics::default();
+            provider
+                .configure(&mut diagnostics, String::new(), known())
+                .await
+                .unwrap();
+            let config = ProviderConfig {
+                endpoint,
+                ..known()
+            };
+            assert!(
+                provider
+                    .configure(&mut diagnostics, String::new(), config)
+                    .await
+                    .is_none()
+            );
+            assert!(!diagnostics.errors.is_empty());
+            assert!(provider.backend.client().is_err());
+            assert!(!provider.destroying.load(Ordering::Acquire));
+            assert!(
+                provider
+                    .backend
+                    .plan("workspace", &Row::new(), None)
+                    .await
+                    .is_err()
+            );
+        }
     }
 }
