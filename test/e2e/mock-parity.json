@@ -169,6 +169,7 @@
         "src/lib/onboard/machine/finalization-deps.test.ts",
         "test/agents/openclaw/runtime/nemoclaw-start-preload-gateway.test.ts",
         "src/lib/state/native-agent-state-restore.test.ts",
+        "src/lib/state/state-file-restore-mode.test.ts",
         "test/runtime/sandbox/sandbox-provisioning.test.ts",
         "test/e2e/support/hosted-inference.test.ts",
         "test/e2e/support/full-e2e-inference-probe.test.ts",
@@ -708,6 +709,7 @@
       "liveSources": ["test/e2e/live/openclaw-inference-switch-helpers.ts"],
       "fast": [
         "src/lib/actions/inference-set-compatible-provider.test.ts",
+        "src/lib/actions/inference-set-openclaw-run.test.ts",
         "test/e2e/support/retry-policy.test.ts",
         "test/e2e/support/compatible-anthropic-switch.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
@@ -972,6 +974,7 @@
     {
       "live": "test/e2e/live/runtime-overrides.test.ts",
       "fast": [
+        "test/agents/openclaw/runtime/nemoclaw-start-config-io.test.ts",
         "test/generation/generate-openclaw-config.test.ts",
         "test/e2e/support/e2e-progress-fixture.test.ts",
         "test/e2e/support/e2e-progress-outcome.test.ts",
