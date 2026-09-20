@@ -33,6 +33,10 @@ openshell forward list
 
 ## Run Multiple Sandboxes
 
+Choose a distinct sandbox name of 1 to 19 characters before onboarding.
+The limit matches OpenShell's routed sandbox-name limit and applies to every agent runtime.
+For the complete naming rules, refer to [`onboard --name`](../../reference/commands#--name-sandbox).
+
 <AgentOnly variant="openclaw,hermes">
 Each sandbox needs its own dashboard port because `openshell forward` refuses to bind a port that another sandbox already uses.
 </AgentOnly>

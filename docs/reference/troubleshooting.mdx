@@ -3074,12 +3074,12 @@ nemohermes <name> rebuild --yes
 
 The Hermes entrypoint supervisor remains responsible for the gateway, dashboard, internal API relay, dashboard relay, and gateway log stream throughout recovery.
 In the OpenShell-managed topology, that nonroot supervisor repairs failed auxiliaries continuously and recovers a gateway after four consecutive failed listener or HTTP health checks.
-Five exits within 60 seconds stop relaunch for the current supervisor instance.
+Five status-75 service-managed restart requests within 60 seconds stop the supervisor before a sixth gateway launch.
 The host repairs only the host-side OpenShell forwards after the supervised processes pass health checks.
 
-### Restart or recovery reports `relaunch quarantined`
+### Hermes Stops Repeated Service-Managed Restarts
 
-Valid Hermes config changes do not trigger relaunch quarantine.
+Valid Hermes config changes alone do not stop relaunch.
 The supervisor adopts a stable, secret-boundary-safe config snapshot before launching a replacement gateway. If the startup log reports `HERMES_RUNTIME_PREPARATION_FAILED stage=<stage>`, the named environment, config, dependency, provider, or messaging input still failed after five bounded preparation attempts. Correct that input through its supported host-side configuration or credential flow, then restart the sandbox:
 
 ```bash
@@ -3088,7 +3088,10 @@ nemohermes <name> stop
 nemohermes <name> start
 ```
 
-The supervisor stops relaunch after five unexpected gateway exits or failed replacement candidates within 60 seconds. Invalid Hermes config can make each replacement exit and consume that crash budget. Correct the process or config failure, then stop and start the sandbox to reset the supervisor.
+The supervisor stops before a sixth gateway launch after five status-75 service-managed restart requests within 60 seconds.
+Run `nemohermes <name> stop` followed by `nemohermes <name> start` to reset the supervisor.
+If the requests recur, inspect the gateway logs and correct the action or configuration that requests each restart.
+Other unexpected gateway exit statuses fail immediately and do not consume this restart budget.
 
 An unsafe startup layout also stops automatic relaunch. If layout repair reports the maximum log-entry count or repair depth, archive or remove old retained logs from a trusted host-side recovery environment, then stop and start the sandbox. For symbolic links, hard links, unsafe entry types, or paths that changed during repair, do not repair the path in place. Restore a trusted snapshot into a recreated sandbox or recreate from host-side onboarding configuration.
 
