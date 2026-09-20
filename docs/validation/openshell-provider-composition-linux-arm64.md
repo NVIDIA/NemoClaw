@@ -7,6 +7,8 @@ Ordinary HCL now composes workspace, provider profile, provider registration, an
 The provider rejects unsafe OpenShell lifecycle changes during planning.
 The SDK retains deployment intent checks and staged bootstrap because these serve boundaries the standalone resources do not replace.
 
+The later [deferred-configuration qualification](openshell-deferred-configuration-linux-arm64.md) supersedes this record's fresh-bootstrap limitation while retaining the bound-resource recovery boundary.
+
 ## Environment and Scope
 
 Tested on 2026-09-20 on Linux ARM64 with OpenTofu 1.12.6 and the production NemoClaw provider.
