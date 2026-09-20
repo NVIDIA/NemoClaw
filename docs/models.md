@@ -32,7 +32,8 @@ The OpenShell route's model must match `serving.modelName` when declared, or the
 
 Choose a scenario from the [DGX Spark examples](../examples/spark/README.md), including small Pi, multiple agents, shared inference, two local models, and a hosted model.
 The original ordinary-vLLM configuration is [examples/spark/vllm.yaml](../examples/spark/vllm.yaml).
-Its image digest refers to a locally built artifact, not a published registry image.
+For the exact single-GB300 configuration tested on DGX Station, use the [Station example](../examples/station/README.md) and preserve its qualification boundary.
+The runtime image digest in each example refers to a locally built artifact, not a published registry image.
 Build the runtime locally and use the digest reported by your build.
 
 Follow [the runtime image build procedure](build.md#build-a-runtime-image) and use the immutable OCI manifest digest from the build output.
@@ -179,7 +180,8 @@ All profiles retain the resident host-memory watchdog.
 
 The [profile catalog](../crates/nemoclaw-sdk/src/services/installers/vllm/hardware_profile.rs) uses NVIDIA's [compute-capability table](https://developer.nvidia.com/cuda/gpus) and current [DGX Station specification](https://www.nvidia.com/en-us/products/workstations/dgx-station/), checked on 2026-09-18.
 [Profile tests](../crates/nemoclaw-sdk/tests/hardware_profiles.rs) cover schema/parser agreement, GPU-family mismatches, architecture selection, and memory checks using fixtures.
-Live model/image qualification on the newly named hardware remains **TBD**; profile acceptance does not establish successful inference or support for every GPU SKU, quantization format, or host architecture.
+One Qwen3-4B and OpenClaw lifecycle is retained in the [DGX Station test record](validation/dgx-station-qwen3-openclaw-linux-arm64.md).
+That result does not establish successful inference for another candidate, model, agent, GPU count, or host configuration; those qualification checks remain **TBD**.
 
 ## Diagnose and Recover a Stopped Runtime
 

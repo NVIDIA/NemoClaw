@@ -14,6 +14,7 @@ Before reporting it as tested, review and retain the matching input and redacted
 
 The [earlier native inference attempt](rust-native-inference-linux-arm64.md) records a main-process environment failure on its named OpenShell revision.
 The [Spark example qualification](spark-examples-linux-arm64.md) records the new model/scenario combinations and their live-test limits.
+The [DGX Station Qwen3-4B and OpenClaw test](dgx-station-qwen3-openclaw-linux-arm64.md) records four complete lifecycles on one GB300 Station, including the current example candidate.
 The [harness and provider expansion](rust-harness-expansion-linux-arm64.md) records passing Docker-backed native inference, feature-specific limits, and the managed Podman blocker at that revision.
 The subsequent [managed Podman qualification](rust-managed-podman-linux-arm64.md) records the upstream TLS fix, real Deep Agents inference, lifecycle checks, and Docker upgrade results.
 
@@ -26,6 +27,7 @@ The subsequent [managed Podman qualification](rust-managed-podman-linux-arm64.md
 | Strict schema, defaults, resource addresses, digests and agent launch contracts | Checked-in fixtures in `crates/nemoclaw-sdk/tests/fixtures` and behavioral tests for maintained YAML examples |
 | Managed gateway and retained signing/encryption identity | [Gateway lifecycle](rust-managed-gateway-linux-arm64.json), [gateway storage](rust-gateway-storage-linux-arm64.json) |
 | Fresh Spark download/preparation, real OpenClaw response, no-op, export/reapply, capacity rejection, watchdog stop/recovery, image-only replacement | [Spark lifecycle](rust-spark-linux-arm64.json) |
+| Single DGX Station GB300, Qwen3-4B, OpenClaw response, no-op, export/reapply, and retained-storage destroy | [Station lifecycle](dgx-station-qwen3-openclaw-linux-arm64.md) |
 | Model-specific runtime sources, licenses, and repeatable local artifact build | [Final runtime reproduction](rust-runtime-memory-fix-linux-arm64.json) |
 | Fabric native harness protocols and native OpenClaw settings | [Ten-harness SDK fixtures](rust-native-platforms.json), [seven native harness fixtures](rust-fabric-adapters-linux-arm64.json), [native OpenClaw](rust-native-openclaw-linux-arm64.json) |
 | Managed Ollama initial apply, no-op, export/reapply | [Real Docker/Ollama lifecycle](rust-ollama-linux-arm64.json) |

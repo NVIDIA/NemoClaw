@@ -1,0 +1,64 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# yaml-language-server: $schema=../../schemas/nemoclaw-v1alpha1.schema.json
+apiVersion: nemoclaw.nvidia.com/v1alpha1
+kind: NemoClawConfig
+metadata:
+  name: dgx-station-qwen3-openclaw
+  uid: 80a5b9c4-d5ad-40fd-8c94-85b04a9e26f8
+spec:
+  gateway:
+    management: managed
+    endpoint: http://127.0.0.1:17696
+    engine: unix:///var/run/docker.sock
+    image: ghcr.io/nvidia/openshell/gateway@sha256:ec2b0efea84fff198e888e97c85befb9c908acde92e8256f9b527877ed182d66
+    networkCIDR: 172.30.131.0/24
+  services:
+    qwen:
+      kind: vllm
+      hardware:
+        profile: dgx-station
+      image: nc-prototype-vllm@sha256:0000000000000000000000000000000000000000000000000000000000000000
+      authentication: bearer
+      model:
+        repository: Qwen/Qwen3-4B
+        revision: 1cfa9a7208912126459214e8b04321603b3df60c
+      serving:
+        toolParser: hermes
+        reasoningParser: qwen3
+        port: 18899
+        contextTokens: 32768
+        maxSequences: 1
+        batchTokens: 1024
+        speculativeTokens: 0
+        startupTimeoutSeconds: 1800
+      memory:
+        gpuMemoryGiB: 20
+        hostReserveGiB: 32
+        kvCacheGiB: 6
+        minAvailableGiB: 8
+        minFreeGiB: 3
+        freeGateGiB: 12
+        consecutiveSamples: 5
+  inferenceProviders:
+    - name: qwen
+      provider: openai
+      serviceRef: qwen
+  sandboxes:
+    - name: assistant
+      image:
+        ref: nc-fabric@sha256:0000000000000000000000000000000000000000000000000000000000000000
+      runtime:
+        provider: docker
+      network:
+        tier: isolated
+      harness:
+        kind: openclaw
+      agent:
+        name: assistant
+        inference:
+          routes:
+            - name: primary
+              providerRef: qwen
+              overrides:
+                model: Qwen/Qwen3-4B
