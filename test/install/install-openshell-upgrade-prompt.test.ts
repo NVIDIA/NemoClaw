@@ -319,6 +319,26 @@ exit 0
 }
 
 describe.concurrent("install.sh OpenShell gateway upgrade guard", () => {
+  it("documents gateway process retirement before accepting prepared upgrade state", async () => {
+    const result = await runCommand("bash", [INSTALLER_PAYLOAD, "--help"], {
+      encoding: "utf-8",
+      env: process.env,
+    });
+    const backupCommand =
+      "NEMOCLAW_REQUIRE_ALL_SANDBOX_BACKUPS=1 nemoclaw backup-all --retire-legacy-forwards";
+    const destroyCommand = "openshell gateway destroy -g nemoclaw || openshell gateway destroy";
+
+    expect(result.status, result.stdout + result.stderr).toBe(0);
+    expect(result.stdout).toContain(backupCommand);
+    expect(result.stdout).toContain(destroyCommand);
+    expect(result.stdout.indexOf(backupCommand)).toBeLessThan(
+      result.stdout.indexOf(destroyCommand),
+    );
+    expect(result.stdout).toContain(
+      "For NEMOCLAW_GATEWAY_PORT=<port>, destroy nemoclaw-<port> with -g and omit the unnamed fallback",
+    );
+  });
+
   it.skipIf(process.platform !== "linux")(
     "stops only the verified gateway process recorded in the owned runtime PID file",
     async () => {
