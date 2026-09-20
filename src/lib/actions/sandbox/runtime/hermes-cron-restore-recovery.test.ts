@@ -9,7 +9,7 @@ const mocks = vi.hoisted(() => ({
   inspectPortableAgentReceiptDisposition: vi.fn(),
   prepareHermesCronRestoreRecovery: vi.fn(),
   recoverHermesCronRestore: vi.fn(),
-  withMcpLifecycleLock: vi.fn(
+  withSandboxLifecycleLock: vi.fn(
     async (_sandboxName: string, operation: () => Promise<void>, _options: unknown) => operation(),
   ),
 }));
@@ -19,8 +19,8 @@ vi.mock("../../../agent/runtime", async (importOriginal) => ({
   getSessionAgent: mocks.getSessionAgent,
 }));
 
-vi.mock("../../../state/mcp-lifecycle-lock", () => ({
-  withMcpLifecycleLock: mocks.withMcpLifecycleLock,
+vi.mock("../lifecycle/lock", () => ({
+  withSandboxLifecycleLock: mocks.withSandboxLifecycleLock,
 }));
 
 vi.mock("../../../onboard/experimental/portable-agent-lifecycle", () => ({
@@ -64,7 +64,7 @@ describe("sandbox recovery with a Hermes cron restore gate", () => {
 
     await recoverSandboxWithHermesCronRestore("alpha");
 
-    expect(mocks.withMcpLifecycleLock).toHaveBeenCalledWith("alpha", expect.any(Function), {
+    expect(mocks.withSandboxLifecycleLock).toHaveBeenCalledWith("alpha", expect.any(Function), {
       timeoutMs: 30_000,
     });
     expect(events).toEqual(["prepare", "connect", "recover"]);

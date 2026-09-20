@@ -15,8 +15,11 @@ import { cloneAndDeepFreeze } from "../core/immutable";
 import { isSandboxPolicyCredentialFree } from "../policy/sandbox-policy-validation";
 import {
   isCredentialEnvironmentReferenceName,
+  isValidNemoClawSecondaryAgentName,
   EXPORTED_VLLM_CONTEXT_WINDOW,
   NemoClawConfigSchema,
+  type NemoClawAgentConfig,
+  HERMES_INTERFACE_DEFAULTS,
   type NemoClawConfig,
   type NemoClawInferenceProviderConfig,
   type NemoClawSandboxConfig,
@@ -65,6 +68,17 @@ function duplicateProblems(values: readonly string[], location: string): string[
   return [...duplicate].sort().map(() => `${location} contains a duplicate name`);
 }
 
+function agentInterfaceProblems(
+  agent: NemoClawSandboxConfig["agents"][number],
+  location: string,
+): string[] {
+  const dashboard = agent.type === "hermes" ? agent.interfaces?.dashboard : undefined;
+  if (!dashboard?.enabled) return [];
+  const port = dashboard.port ?? HERMES_INTERFACE_DEFAULTS.dashboardPort;
+  const internalPort = dashboard.internalPort ?? HERMES_INTERFACE_DEFAULTS.dashboardInternalPort;
+  return port === internalPort ? [`${location}/interfaces/dashboard ports must differ`] : [];
+}
+
 function agentAuthProblems(
   agent: NemoClawSandboxConfig["agents"][number],
   location: string,
@@ -107,12 +121,8 @@ function sandboxProblems(
     ),
   );
   for (const [agentIndex, agent] of sandbox.agents.entries()) {
-    if (agent.type === "hermes" && "execution" in agent) {
-      problems.push(
-        `/spec/sandboxes/${sandboxIndex}/agents/${agentIndex}/execution is supported only for OpenClaw agents`,
-      );
-    }
     problems.push(
+      ...agentInterfaceProblems(agent, `/spec/sandboxes/${sandboxIndex}/agents/${agentIndex}`),
       ...duplicateProblems(
         agent.inference.routes.map(({ name }) => name),
         `/spec/sandboxes/${sandboxIndex}/agents/${agentIndex}/inference/routes`,
@@ -132,8 +142,67 @@ function sandboxProblems(
       ),
     );
   }
-  problems.push(...webSearchProblems(sandbox, sandboxIndex));
+  problems.push(
+    ...webSearchProblems(sandbox, sandboxIndex),
+    ...additionalAgentProblems(sandbox, sandboxIndex, providers),
+  );
   return problems;
+}
+
+function hasReadOnlyTools(agent: NemoClawAgentConfig): boolean {
+  return agent.type === "openclaw" && agent.tools !== undefined && "allow" in agent.tools;
+}
+
+function isPrimaryWithReadOnlyRoster(agents: readonly NemoClawAgentConfig[]): boolean {
+  const [primary, ...additional] = agents;
+  return (
+    additional.length > 0 &&
+    primary?.name === "primary" &&
+    primary.type === "openclaw" &&
+    !hasReadOnlyTools(primary) &&
+    additional.every(
+      (agent) =>
+        agent.type === "openclaw" &&
+        hasReadOnlyTools(agent) &&
+        isValidNemoClawSecondaryAgentName(agent.name) &&
+        agent.execution === undefined &&
+        agent.interfaces === undefined &&
+        agent.observability === undefined,
+    )
+  );
+}
+
+function sharesPrimarySupportedRoute(
+  agents: readonly NemoClawAgentConfig[],
+  providers: ReadonlyMap<string, NemoClawInferenceProviderConfig>,
+): boolean {
+  const [primary, ...additional] = agents;
+  const provider = providers.get(primary?.inference.routes[0]?.providerRef ?? "");
+  return (
+    primary?.inference.routes.length === 1 &&
+    additional.every((agent) =>
+      isDeepStrictEqual(primary.inference.routes, agent.inference.routes),
+    ) &&
+    provider !== undefined &&
+    (!("serving" in provider) || provider.serving.backend === "ollama")
+  );
+}
+
+function additionalAgentProblems(
+  sandbox: NemoClawSandboxConfig,
+  sandboxIndex: number,
+  providers: ReadonlyMap<string, NemoClawInferenceProviderConfig>,
+): string[] {
+  if (!sandbox.agents.some(hasReadOnlyTools)) return [];
+  const valid =
+    sandbox.runtime.provider === "docker" &&
+    isPrimaryWithReadOnlyRoster(sandbox.agents) &&
+    sharesPrimarySupportedRoute(sandbox.agents, providers);
+  return valid
+    ? []
+    : [
+        `/spec/sandboxes/${sandboxIndex}/agents must contain primary followed by uniquely named read-only OpenClaw agents sharing its hosted or attached-Ollama route`,
+      ];
 }
 
 function webSearchProblems(sandbox: NemoClawSandboxConfig, sandboxIndex: number): string[] {
@@ -163,6 +232,27 @@ function managedProviderProblems(
   provider: Extract<NemoClawInferenceProviderConfig, { serving: unknown }>,
   providerIndex: number,
 ): string[] {
+  if (provider.serving.backend === "ollama") {
+    const serving = provider.serving;
+    const matches =
+      serving.daemon.hostPort !== serving.proxy.hostPort &&
+      config.spec.sandboxes.every((sandbox) =>
+        sandbox.agents.every((agent) =>
+          agent.inference.routes.every(
+            (route) =>
+              route.providerRef !== provider.name ||
+              (sandbox.runtime.provider === "docker" &&
+                agent.type === "openclaw" &&
+                route.overrides.model === serving.model.servedName),
+          ),
+        ),
+      );
+    return matches
+      ? []
+      : [
+          `/spec/inferenceProviders/${providerIndex}/serving requires distinct Ollama ports and a matching Docker OpenClaw route`,
+        ];
+  }
   const matches = config.spec.sandboxes.every((sandbox) =>
     sandbox.agents.every((agent) =>
       agent.inference.routes.every(

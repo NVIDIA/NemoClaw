@@ -136,6 +136,20 @@ describe("standard E2E execution profile", () => {
     );
   });
 
+  it("requires the SDK producer to include an available reviewed transition replacement", () => {
+    const workflow = readWorkflow() as {
+      jobs: Record<string, { steps: Array<{ env?: Record<string, string>; name?: string }> }>;
+    };
+    const packageStep = workflow.jobs["package-openshell-sdk"]!.steps.find(
+      (step) => step.name === "Download and verify reviewed OpenShell SDK packages",
+    )!;
+    delete packageStep.env!.NEMOCLAW_OPEN_SHELL_SDK_INCLUDE_AVAILABLE_REPLACEMENT;
+
+    expect(validateStandardProfileWorkflowBoundary(workflow)).toContain(
+      "catalogue SDK packaging must include an available reviewed transition replacement",
+    );
+  });
+
   it("rejects a catalogue caller that does not consume its SDK artifact", () => {
     const workflow = readWorkflow() as { jobs: Record<string, { with: Record<string, string> }> };
     workflow.jobs["catalogue-nvidia-inference"]!.with.openshell_sdk_artifact_name = "unrelated";
@@ -180,6 +194,7 @@ describe("standard E2E execution profile", () => {
             if?: string;
             name?: string;
             run?: string;
+            uses?: string;
             with?: Record<string, string>;
           }>;
         };
@@ -189,15 +204,13 @@ describe("standard E2E execution profile", () => {
     steps.find((step) => step.name === "Validate catalogue execution plan")!.run = "echo skipped";
     steps.find((step) => step.name === "Provision trusted Hermes E2E swap")!.run +=
       "\necho candidate-controlled";
-    steps.find((step) => step.name === "Add swap for Hermes image rebuild")!.run =
-      "echo unsafe swap";
     steps.find((step) => step.name === "Install reviewed cloudflared")!.run =
       "sudo apt-get install cloudflared";
     steps.find((step) => step.name === "Download reviewed OpenShell SDK archive")!.with!.name =
       "unrelated";
     steps.find(
       (step) => step.name === "Install reviewed OpenShell SDK archive without package credentials",
-    )!.run = "npm install @nvidia/openshell-sdk";
+    )!.uses = "./.github/actions/install-reviewed-openshell-sdk";
     steps.find((step) => step.name === "Initialize runner comparison telemetry")!.run =
       "echo skipped";
     steps.find((step) => step.name === "Run catalogue E2E target")!.env!.COMPATIBLE_API_KEY =
@@ -215,7 +228,6 @@ describe("standard E2E execution profile", () => {
         expect.arrayContaining([
           "standard E2E profile must derive validated execution paths before candidate checkout",
           "standard E2E profile must preserve trusted Hermes swap before candidate checkout",
-          "standard E2E profile must add the reviewed Hermes rebuild swap after CLI restore",
           "standard E2E profile must install only the reviewed cloudflared package",
           "standard E2E profile must download the run-scoped reviewed SDK archive",
           "standard E2E profile must install one reviewed SDK archive without credentials or package scripts",

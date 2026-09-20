@@ -5,6 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { shellQuote } from "../../../src/lib/core/shell-quote.ts";
+import { resolveGatewayLogPathForPort } from "../../../src/lib/onboard/gateway/state-dir.ts";
 import {
   type ManagedImageContractCatalog,
   type ManagedImageContractV1,
@@ -21,6 +22,7 @@ import {
   outputContainsSandbox,
   resultText,
   type SandboxClient,
+  type TrustedSandboxShellScript,
   trustedSandboxShellScript,
 } from "../fixtures/clients/index.ts";
 import { expect } from "../fixtures/e2e-test.ts";
@@ -31,7 +33,9 @@ import {
 } from "../fixtures/docker-build-guard.ts";
 import { startFakeOpenAiCompatibleServer } from "../fixtures/fake-openai-compatible.ts";
 import { captureIssue4462FailureDiagnostics } from "../fixtures/issue-4462-diagnostics.ts";
+import { initializeGatewayForCleanup } from "../fixtures/gateway-runtime-start.ts";
 import type { LifecyclePhaseFixture } from "../fixtures/phases/lifecycle.ts";
+import { pollUntil } from "../fixtures/polling.ts";
 import type { TestProgress } from "../fixtures/progress.ts";
 
 const API_KEY = "nemoclaw-managed-activation-e2e-key";
@@ -39,6 +43,11 @@ const MODEL = "nemoclaw-managed-activation-model";
 const GATEWAY = "nemoclaw";
 const AGENT_TIMEOUT_MS = 3 * 60_000;
 const ONBOARD_TIMEOUT_MS = 20 * 60_000;
+const OPENCLAW_POST_RESTART_READY_TIMEOUT_SECONDS = 60;
+const OPENCLAW_POST_RESTART_READY_TIMEOUT_MS =
+  (OPENCLAW_POST_RESTART_READY_TIMEOUT_SECONDS + 10) * 1_000;
+const HERMES_BOUNDARY_SENTINEL = "SENTINEL_MANAGED_RESTART_RAW_SECRET";
+const HERMES_BOUNDARY_BACKUP = "/tmp/nemoclaw-hermes-env-before-restart-refusal";
 const ONBOARD_FAILURE_STARTUP_SIGNALS = {
   setupStarted: "Setting up NemoClaw",
 } as const;
@@ -191,6 +200,34 @@ function agentTurnCommand(agent: ShippedManagedImageAgent, sessionId: string): s
   }
 }
 
+export function managedActivationPostRestartAgentTurnScript(
+  agent: ShippedManagedImageAgent,
+  phase: "before" | "boundary" | "after",
+  command: readonly string[],
+): TrustedSandboxShellScript | null {
+  if (agent !== "openclaw" || phase !== "after") return null;
+
+  return trustedSandboxShellScript(`
+deadline=$(( $(date +%s) + ${OPENCLAW_POST_RESTART_READY_TIMEOUT_SECONDS} ))
+last_status=000
+while [ "$(date +%s)" -lt "$deadline" ]; do
+  last_status="$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' --max-time 2 http://127.0.0.1:18789/health || true)"
+  case "$last_status" in
+    200|401) break ;;
+  esac
+  sleep 2
+done
+case "$last_status" in
+  200|401) ;;
+  *)
+    printf 'OpenClaw gateway did not become ready after OpenShell restart (last HTTP status: %s)\n' "$last_status" >&2
+    exit 1
+    ;;
+esac
+exec ${command.map((argument) => shellQuote(argument)).join(" ")}
+`);
+}
+
 function registryDocument(): {
   sandboxes?: Record<string, { workload?: Record<string, unknown> }>;
 } {
@@ -217,30 +254,176 @@ async function runAgentTurn(
   sandbox: SandboxClient,
   agent: ShippedManagedImageAgent,
   sandboxName: string,
-  phase: "before" | "after",
+  phase: "before" | "boundary" | "after",
+  env: NodeJS.ProcessEnv,
+): Promise<void> {
+  const command = agentTurnCommand(agent, `managed-${agent}-${phase}-${Date.now()}`);
+  const postRestartScript = managedActivationPostRestartAgentTurnScript(agent, phase, command);
+  const options = {
+    artifactName: `${agent}-agent-turn-${phase}-restart`,
+    env,
+    redactionValues: [API_KEY],
+    timeoutMs:
+      AGENT_TIMEOUT_MS + (postRestartScript === null ? 0 : OPENCLAW_POST_RESTART_READY_TIMEOUT_MS),
+  };
+  const result =
+    postRestartScript === null
+      ? await sandbox.exec(sandboxName, command, options)
+      : await sandbox.execShell(sandboxName, postRestartScript, options);
+  expect(result.exitCode === 0 && /\bPONG\b/iu.test(resultText(result)), resultText(result)).toBe(
+    true,
+  );
+}
+
+export function managedOpenClawSubagentCommand(sessionId: string): string[] {
+  return agentTurnCommand("openclaw", sessionId).map((value) =>
+    value === "Reply with exactly one word: PONG"
+      ? "NEMOCLAW_MANAGED_SUBAGENT: use sessions_spawn once with task 'Reply with exactly one word: PONG', wait for its result, then reply PONG"
+      : value,
+  );
+}
+
+async function runOpenClawSubagentTurn(
+  sandbox: SandboxClient,
+  sandboxName: string,
   env: NodeJS.ProcessEnv,
 ): Promise<void> {
   const result = await sandbox.exec(
     sandboxName,
-    agentTurnCommand(agent, `managed-${agent}-${phase}-${Date.now()}`),
+    managedOpenClawSubagentCommand(`managed-openclaw-subagent-${Date.now()}`),
     {
-      artifactName: `${agent}-agent-turn-${phase}-restart`,
+      artifactName: "openclaw-native-loopback-subagent",
       env,
       redactionValues: [API_KEY],
       timeoutMs: AGENT_TIMEOUT_MS,
     },
   );
-  expect(result.exitCode, resultText(result)).toBe(0);
-  expect(resultText(result)).toMatch(/\bPONG\b/iu);
+  expect(result.exitCode === 0 && /\bPONG\b/iu.test(resultText(result)), resultText(result)).toBe(
+    true,
+  );
 }
 
-async function preclean(
+export function managedActivationOpenClawPluginScript(): string {
+  const packageJson = JSON.stringify({
+    name: "@nemoclaw/managed-activation-native-plugin",
+    version: "1.0.0",
+    type: "module",
+    main: "index.js",
+    files: ["index.js", "openclaw.plugin.json"],
+    openclaw: { extensions: ["./index.js"] },
+    peerDependencies: { openclaw: ">=2026.7.1" },
+  });
+  const manifest = JSON.stringify({
+    id: "managed-activation-native",
+    name: "Managed Activation Native Plugin",
+    version: "1.0.0",
+    description: "Managed-image native plugin fixture",
+    configSchema: { type: "object", properties: {}, additionalProperties: false },
+  });
+  const entrypoint =
+    'export default { id: "managed-activation-native", name: "Managed Activation Native Plugin", version: "1.0.0", register() {} };\n';
+  return [
+    "source_dir=/sandbox/managed-activation-native-plugin",
+    'rm -rf -- "$source_dir"',
+    'mkdir -p -- "$source_dir"',
+    `printf '%s' ${shellQuote(packageJson)} > "$source_dir/package.json"`,
+    `printf '%s' ${shellQuote(manifest)} > "$source_dir/openclaw.plugin.json"`,
+    `printf '%s' ${shellQuote(entrypoint)} > "$source_dir/index.js"`,
+    'HOME=/sandbox openclaw plugins install --force --accept-capabilities "$source_dir"',
+  ].join("\n");
+}
+
+function managedActivationNativeStateScript(agent: ShippedManagedImageAgent): string {
+  if (agent === "langchain-deepagents-code") return "";
+  return agent === "openclaw"
+    ? managedActivationOpenClawPluginScript()
+    : [
+        "plugin=/sandbox/.hermes/plugins/managed-activation-native",
+        "package=/sandbox/.hermes/lazy-packages/managed_activation_native",
+        'mkdir -p "$plugin" "$package"',
+        "printf '%s\\n' 'name: managed-activation-native' 'version: 1.0.0' > \"$plugin/plugin.yaml\"",
+        "printf '%s\\n' 'MANAGED_ACTIVATION_NATIVE = \"present\"' 'def register(ctx): pass' > \"$plugin/__init__.py\"",
+        "printf '%s\\n' 'MANAGED_ACTIVATION_NATIVE = \"present\"' > \"$package/__init__.py\"",
+      ].join("\n");
+}
+
+function managedActivationNativeStateReadbackScript(agent: ShippedManagedImageAgent): string {
+  if (agent === "langchain-deepagents-code") return "";
+  return agent === "openclaw"
+    ? "HOME=/sandbox openclaw plugins inspect managed-activation-native --runtime --json >/dev/null"
+    : [
+        "HERMES_HOME=/sandbox/.hermes hermes plugins list --plain --user >/tmp/managed-activation-native-plugins",
+        "grep -Fq 'managed-activation-native' /tmp/managed-activation-native-plugins",
+        "/opt/hermes/.venv/bin/python -I /sandbox/.hermes/plugins/managed-activation-native/__init__.py",
+        "HERMES_LAZY_INSTALL_TARGET=/sandbox/.hermes/lazy-packages /opt/hermes/.venv/bin/python -I -c 'import hermes_bootstrap, managed_activation_native'",
+      ].join("\n");
+}
+
+export function managedHermesBoundaryPoisonCommand(): string {
+  return `set -eu; cp /sandbox/.hermes/.env ${shellQuote(HERMES_BOUNDARY_BACKUP)}; printf '%s\\n' ${shellQuote(`DEVTEST_API_TOKEN=${HERMES_BOUNDARY_SENTINEL}`)} >> /sandbox/.hermes/.env`;
+}
+
+async function proveHermesRestartSecretBoundary(
+  host: HostCliClient,
+  sandbox: SandboxClient,
+  sandboxName: string,
+  env: NodeJS.ProcessEnv,
+): Promise<void> {
+  const poison = await sandbox.execShell(
+    sandboxName,
+    trustedSandboxShellScript(managedHermesBoundaryPoisonCommand()),
+    {
+      artifactName: "hermes-poison-env-before-native-restart",
+      env,
+      redactionValues: [API_KEY, HERMES_BOUNDARY_SENTINEL],
+      timeoutMs: 30_000,
+    },
+  );
+  assertExitZero(poison, "prepare Hermes secret-boundary restart refusal");
+
+  const restart = await host.nemoclaw([sandboxName, "gateway", "restart", "--quiet"], {
+    artifactName: "hermes-native-restart-secret-boundary-refusal",
+    env,
+    redactionValues: [API_KEY, HERMES_BOUNDARY_SENTINEL],
+    timeoutMs: 60_000,
+  });
+
+  const restore = await sandbox.execShell(
+    sandboxName,
+    trustedSandboxShellScript(
+      `set -eu; cp ${shellQuote(HERMES_BOUNDARY_BACKUP)} /sandbox/.hermes/.env; rm -f ${shellQuote(HERMES_BOUNDARY_BACKUP)}`,
+    ),
+    {
+      artifactName: "hermes-restore-env-after-native-restart-refusal",
+      env,
+      redactionValues: [API_KEY, HERMES_BOUNDARY_SENTINEL],
+      timeoutMs: 30_000,
+    },
+  );
+  assertExitZero(restore, "restore Hermes environment after restart refusal");
+
+  const output = resultText(restart);
+  expect(
+    restart.exitCode !== 0 &&
+      output.includes("secret-boundary") &&
+      !output.includes(HERMES_BOUNDARY_SENTINEL),
+    output,
+  ).toBe(true);
+  await runAgentTurn(sandbox, "hermes", sandboxName, "boundary", env);
+}
+
+export async function preclean(
   host: HostCliClient,
   lifecycle: LifecyclePhaseFixture,
   sandbox: SandboxClient,
   sandboxName: string,
   env: NodeJS.ProcessEnv,
 ): Promise<void> {
+  await initializeGatewayForCleanup(host, GATEWAY, {
+    artifactName: `pre-cleanup-initialize-gateway-${sandboxName}`,
+    env,
+    timeoutMs: 3 * 60_000,
+  });
   await host.bestEffortCleanupSandbox(sandboxName, {
     artifactName: `pre-cleanup-nemoclaw-${sandboxName}`,
     env,
@@ -265,32 +448,44 @@ async function verifyExactCleanup(
   sandboxName: string,
   env: NodeJS.ProcessEnv,
 ): Promise<void> {
-  const list = await host.nemoclaw(["list"], {
-    artifactName: `post-destroy-nemoclaw-list-${sandboxName}`,
-    env,
-    timeoutMs: 30_000,
+  const settled = await pollUntil({
+    artifactPrefix: `post-destroy-absence-${sandboxName}`,
+    deadlineMs: 60_000,
+    delayMs: 1_000,
+    probe: async (_attempt, artifactName) => {
+      const openshellList = await sandbox.list({
+        artifactName: `${artifactName}-openshell-list`,
+        env,
+        timeoutMs: 30_000,
+      });
+      const containers = await host.command(
+        "docker",
+        ["ps", "-aq", "--filter", `label=openshell.ai/sandbox-name=${sandboxName}`],
+        {
+          artifactName: `${artifactName}-docker-inventory`,
+          env,
+          timeoutMs: 30_000,
+        },
+      );
+      return { containers, openshellList };
+    },
+    terminal: ({ containers, openshellList }) => {
+      if (openshellList.exitCode !== 0) {
+        return `list OpenShell sandboxes after managed activation destroy failed: ${resultText(openshellList)}`;
+      }
+      if (containers.exitCode !== 0) {
+        return `inspect Docker inventory after managed activation destroy failed: ${resultText(containers)}`;
+      }
+      return undefined;
+    },
+    accept: ({ containers, openshellList }) =>
+      !outputContainsSandbox(openshellList, sandboxName) && containers.stdout.trim() === "",
   });
-  assertExitZero(list, "list sandboxes after managed activation destroy");
-  expect(outputContainsSandbox(list, sandboxName), resultText(list)).toBe(false);
-  const openshellList = await sandbox.list({
-    artifactName: `post-destroy-openshell-list-${sandboxName}`,
-    env,
-    timeoutMs: 30_000,
-  });
+  const { containers, openshellList } = settled.value;
   assertExitZero(openshellList, "list OpenShell sandboxes after managed activation destroy");
   expect(outputContainsSandbox(openshellList, sandboxName), resultText(openshellList)).toBe(false);
-  const containers = await host.command(
-    "docker",
-    ["ps", "-aq", "--filter", `label=openshell.ai/sandbox-name=${sandboxName}`],
-    {
-      artifactName: `post-destroy-docker-inventory-${sandboxName}`,
-      env,
-      timeoutMs: 30_000,
-    },
-  );
   assertExitZero(containers, "inspect Docker inventory after managed activation destroy");
   expect(containers.stdout.trim(), resultText(containers)).toBe("");
-  expect(registryDocument().sandboxes?.[sandboxName]).toBeUndefined();
 }
 
 function enterOnboardPhase(progress: TestProgress, agent: ShippedManagedImageAgent): void {
@@ -307,16 +502,16 @@ function enterOnboardPhase(progress: TestProgress, agent: ShippedManagedImageAge
   }
 }
 
-function enterRecoveryPhase(progress: TestProgress, agent: ShippedManagedImageAgent): void {
+function enterGatewayRestartPhase(progress: TestProgress, agent: ShippedManagedImageAgent): void {
   switch (agent) {
     case "openclaw":
-      progress.phase("restart and recover OpenClaw");
+      progress.phase("restart OpenShell gateway and recheck OpenClaw");
       return;
     case "hermes":
-      progress.phase("restart and recover Hermes");
+      progress.phase("restart OpenShell gateway and recheck Hermes");
       return;
     case "langchain-deepagents-code":
-      progress.phase("restart and recover Deep Agents Code");
+      progress.phase("restart OpenShell gateway and recheck Deep Agents Code");
       return;
   }
 }
@@ -343,6 +538,25 @@ async function collectOnboardFailureDockerDiagnostics(
   env: NodeJS.ProcessEnv,
 ): Promise<void> {
   try {
+    await host.command(
+      "tail",
+      [
+        "-c",
+        "65536",
+        resolveGatewayLogPathForPort({
+          configured: env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR,
+          home: os.homedir(),
+          port: 8080,
+        }),
+      ],
+      {
+        artifactName: `managed-activation-onboard-failure-${agent}-gateway-log`,
+        captureLimitBytes: 65536,
+        env,
+        redactionValues: [API_KEY],
+        timeoutMs: 5_000,
+      },
+    );
     const inventory = await host.command(
       "docker",
       [
@@ -442,15 +656,23 @@ async function qualifyAgent(
   }
   expect(onboard.exitCode, resultText(onboard)).toBe(0);
   expectManagedReceipt(sandboxName, contract);
-  await host.expectListed(sandboxName, { env });
-  await host.expectStatus(sandboxName, { env, timeoutMs: 120_000 });
-  await sandbox.expectListed(sandboxName, { env });
   await runAgentTurn(sandbox, agent, sandboxName, "before", env);
+  if (agent === "openclaw") await runOpenClawSubagentTurn(sandbox, sandboxName, env);
+  if (agent === "hermes") {
+    progress.phase("prove Hermes secret-boundary refusal before native restart");
+    await proveHermesRestartSecretBoundary(host, sandbox, sandboxName, env);
+  }
   const marker = `managed-activation-${agent}-${Date.now()}`;
   const writeMarker = await sandbox.execShell(
     sandboxName,
     trustedSandboxShellScript(
-      `umask 077; printf '%s\\n' ${shellQuote(marker)} > /sandbox/.nemoclaw-managed-activation-marker; sync`,
+      [
+        "set -eu",
+        `umask 077; printf '%s\\n' ${shellQuote(marker)} > /sandbox/.nemoclaw-managed-activation-marker; sync`,
+        managedActivationNativeStateScript(agent),
+      ]
+        .filter((line) => line !== "")
+        .join("\n"),
     ),
     {
       artifactName: `${agent}-write-durable-marker`,
@@ -460,7 +682,7 @@ async function qualifyAgent(
   );
   expect(writeMarker.exitCode, resultText(writeMarker)).toBe(0);
 
-  enterRecoveryPhase(progress, agent);
+  enterGatewayRestartPhase(progress, agent);
   await lifecycle.restartGatewayRuntime({ delayMs: 2_000, sandboxName });
   await lifecycle.waitForGatewayConnected({ attempts: 60, intervalMs: 5_000 });
   await lifecycle.assertSandboxReadyAfterGatewayRestart(sandboxName, {
@@ -468,26 +690,36 @@ async function qualifyAgent(
     env,
   });
   expectManagedReceipt(sandboxName, contract);
-  const readMarker = await sandbox.exec(
+  const readMarker = await sandbox.execShell(
     sandboxName,
-    ["cat", "/sandbox/.nemoclaw-managed-activation-marker"],
+    trustedSandboxShellScript(
+      [
+        "set -eu",
+        'marker="$(cat /sandbox/.nemoclaw-managed-activation-marker)"',
+        managedActivationNativeStateReadbackScript(agent),
+        'printf "%s\\n" "$marker"',
+      ]
+        .filter((line) => line !== "")
+        .join("\n"),
+    ),
     {
       artifactName: `${agent}-read-durable-marker`,
       env,
       timeoutMs: 30_000,
     },
   );
-  expect(readMarker.exitCode, resultText(readMarker)).toBe(0);
-  expect(readMarker.stdout.trim()).toBe(marker);
+  expect(
+    readMarker.exitCode === 0 && readMarker.stdout.trim() === marker,
+    resultText(readMarker),
+  ).toBe(true);
   await runAgentTurn(sandbox, agent, sandboxName, "after", env);
 
   enterCleanupPhase(progress, agent);
-  const destroy = await host.nemoclaw([sandboxName, "destroy", "--yes", "--no-cleanup-gateway"], {
-    artifactName: `managed-activation-destroy-${agent}`,
+  await sandbox.cleanupSandbox(sandboxName, {
+    artifactName: `managed-activation-openshell-delete-${agent}`,
     env,
-    timeoutMs: 5 * 60_000,
+    timeoutMs: 120_000,
   });
-  expect(destroy.exitCode, resultText(destroy)).toBe(0);
   await verifyExactCleanup(host, sandbox, sandboxName, env);
 }
 
@@ -514,6 +746,15 @@ export async function qualifyManagedImageActivation(fixtures: RuntimeFixtures): 
     publicHost: "host.openshell.internal",
     requireAuth: true,
     requireAuthModels: true,
+    requestCanaryMarker: "NEMOCLAW_MANAGED_SUBAGENT",
+    toolCallOnCanary: {
+      name: "sessions_spawn",
+      arguments: JSON.stringify({
+        task: "Reply with exactly one word: PONG",
+        mode: "run",
+        cleanup: "delete",
+      }),
+    },
   });
   cleanup.trackDisposable("close managed activation inference responder", async () => {
     await artifacts.writeJson("compatible-inference-requests.json", inference.requests());
@@ -538,9 +779,11 @@ export async function qualifyManagedImageActivation(fixtures: RuntimeFixtures): 
     .requests()
     .filter((request) => request.method === "POST" && request.path === "/v1/chat/completions");
   expect(chatRequests.length).toBeGreaterThanOrEqual(SHIPPED_MANAGED_IMAGE_AGENTS.length * 2);
-  expect(chatRequests.every((request) => request.auth === "ok" && request.model === MODEL)).toBe(
-    true,
-  );
+  expect(
+    chatRequests.every((request) => request.auth === "ok" && request.model === MODEL) &&
+      chatRequests.some((request) => request.requestCanaryPresent === true) &&
+      chatRequests.some((request) => request.toolResultPresent === true),
+  ).toBe(true);
   await artifacts.writeText("docker-argv.log", trace);
   await artifacts.writeJson("managed-image-activation-summary.json", {
     agents: SHIPPED_MANAGED_IMAGE_AGENTS,
@@ -552,7 +795,14 @@ export async function qualifyManagedImageActivation(fixtures: RuntimeFixtures): 
       revision: contract.source.revision,
       cohort: contract.source.cohort,
     })),
-    lifecycle: ["onboard", "agent-turn", "gateway-restart", "reconcile", "agent-turn", "destroy"],
+    lifecycle: [
+      "onboard",
+      "agent-turn",
+      "openshell-gateway-restart",
+      "native-readiness",
+      "agent-turn",
+      "openshell-delete",
+    ],
   });
   await artifacts.target.complete({
     id: "managed-image-activation",

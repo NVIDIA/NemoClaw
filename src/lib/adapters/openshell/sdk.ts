@@ -62,8 +62,7 @@ export function gatewayPort(target: OpenShellGatewayTarget): number {
 }
 
 async function loadOpenShellSdk(): Promise<OpenShellSdkModule> {
-  // Keep the optional reviewed package load lazy so source-only development can
-  // still compile before CI stages the private SDK artifact.
+  // Load the SDK lazily through native ESM so the CommonJS CLI uses its import exports.
   return (await importOpenShellSdk()) as OpenShellSdkModule;
 }
 
@@ -81,11 +80,17 @@ export async function connectManagedOpenShellSdk(
     port,
   });
   const gatewayName = target.kind === "named" ? target.gatewayName : "";
-  const ownershipFailure = managedGatewayStateRootOwnershipFailure({
-    gatewayName,
-    gatewayPort: port,
-    stateDir,
-  });
+  const ownershipFailure = managedGatewayStateRootOwnershipFailure(
+    {
+      gatewayName,
+      gatewayPort: port,
+      stateDir,
+    },
+    // The canonical default root predates the explicit marker. Its fixed path,
+    // owner-only directory checks, and local mTLS identity remain the legacy
+    // authority boundary. Explicit overrides must always carry the marker.
+    { allowLegacyManagedState: !configuredStateDir },
+  );
   if (ownershipFailure) {
     const message = `Unsafe OpenShell gateway state directory: ${ownershipFailure}.`;
     if (configuredStateDir) throw new Error(message);

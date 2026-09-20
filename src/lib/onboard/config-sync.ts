@@ -59,9 +59,10 @@ export async function runSandboxConfigSync(
   await deps.runConnectScript(sandboxName, script);
 }
 
-export function buildSandboxConfigSyncScript(selectionConfig: ProviderSelectionConfig): string {
-  // Native baseline setup preserves valid routing and creates its own state.
-  return `
+export function buildSandboxConfigSyncScript(
+  selectionConfig: ProviderSelectionConfig & { agent?: string },
+): string {
+  const writeSelection = `
 set -euo pipefail
 # OpenShell exec and the OpenClaw gateway can expose different HOME values.
 # The managed gateway always reads its NemoClaw state from /sandbox.
@@ -77,6 +78,13 @@ cat > "$nemoclaw_config" <<'EOF_NEMOCLAW_CFG'
 ${JSON.stringify(selectionConfig, null, 2)}
 EOF_NEMOCLAW_CFG
 chmod 600 "$nemoclaw_config"
+`.trim();
+  // Retained Hermes sandboxes can contain an unrelated .openclaw directory.
+  if (selectionConfig.agent === "hermes") return writeSelection;
+  // Managed startup has already created OpenClaw's baseline state before its
+  // gateway becomes reachable. Re-running native setup here can rewrite live
+  // state and terminate the sandbox while onboarding is connected.
+  return `${writeSelection}
 config_dir=/sandbox/.openclaw
 if [ -d "$config_dir" ]; then
   config_dir_owner="$(stat -c '%U' "$config_dir" 2>/dev/null || echo unknown)"
@@ -87,7 +95,6 @@ if [ -d "$config_dir" ]; then
     fi
     export HOME=/sandbox OPENCLAW_STATE_DIR="$config_dir" OPENCLAW_CONFIG_PATH="$config_dir/openclaw.json"
     /usr/local/bin/openclaw config validate
-    /usr/local/bin/openclaw setup --baseline
     (cd "$config_dir" && sha256sum openclaw.json >.config-hash)
     python3 -I /usr/local/lib/nemoclaw/normalize_mutable_config_perms.py "$config_dir" "$current_uid" "$(id -g)"
   fi

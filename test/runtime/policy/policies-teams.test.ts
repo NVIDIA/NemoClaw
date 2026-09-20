@@ -91,7 +91,7 @@ describe("Teams policy preset", () => {
     expect(policies.getPresetValidationWarning("teams")).toContain("Microsoft Teams");
   });
 
-  it("shares the Teams credential binding with Outlook only while Teams is active", () => {
+  it("shares the Teams credential binding with Outlook only while Teams is active", async () => {
     const sandboxName = "teams-outlook";
     const composed = policies.mergePresetNamesIntoPolicy(
       "version: 1\nnetwork_policies: {}\n",
@@ -111,7 +111,7 @@ describe("Teams policy preset", () => {
     expect(outlookLogin.credential_binding).toEqual(teamsLogin.credential_binding);
 
     const teamsEntries = policies.extractPresetEntries(
-      policies.loadPresetForSandbox(sandboxName, "teams"),
+      await policies.loadPresetForSandbox(sandboxName, "teams"),
     );
     const withoutTeams = policies.removePresetFromPolicy(composed, teamsEntries);
     const restored = YAML.parse(
@@ -268,16 +268,19 @@ describe("Teams policy preset", () => {
     const fakeOpenshell = path.join(tmpDir, "openshell");
     const policyOut = path.join(tmpDir, "policy.yaml");
     const script = String.raw`
+(async () => {
 const fs = require("node:fs");
 const registry = require(${REGISTRY_PATH});
 const policies = require(${POLICIES_PATH});
 ${managedRegistrationSource("hermes-sandbox", "hermes")}
-const result = policies.applyPresets("hermes-sandbox", ["teams"]);
+const result = await policies.applyPresets("hermes-sandbox", ["teams"]);
 process.stdout.write("\n__RESULT__" + JSON.stringify({
   result,
   policy: fs.readFileSync(process.env.POLICY_OUT, "utf-8"),
   registry: registry.getSandbox("hermes-sandbox"),
 }));
+
+})().catch((error) => { console.error(error); process.exitCode = 1; });
 `;
     fs.writeFileSync(
       fakeOpenshell,

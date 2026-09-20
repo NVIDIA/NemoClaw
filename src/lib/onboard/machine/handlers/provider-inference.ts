@@ -618,7 +618,9 @@ function hostLocalInferenceSetupOptions(
         : selected.request.service === "ollama"
           ? input.allowPublishedResume
             ? hasPublishedResume && !hasInterruptedRecovery
-            : !hasPublishedResume && !hasInterruptedRecovery
+            : !hasPublishedResume &&
+              (!hasInterruptedRecovery ||
+                (application === "hermes" && selected.runtimeProviderId === "podman"))
           : input.allowPublishedResume
             ? !(hasPublishedResume && hasInterruptedRecovery)
             : !hasPublishedResume && !hasInterruptedRecovery;
@@ -1191,7 +1193,6 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
   let vllmModelIdentity: string | undefined;
   const effectiveResume = resume && !fresh;
   let hostLocalInferenceRouteOnly = false;
-  let hostLocalInferenceRouteKnown = !isHostLocalInferenceProvider(provider ?? "");
   let hostLocalInferenceProofAuthority: HostLocalInferenceSandboxProofAuthority | null = null;
   const hostLocalInferenceResolutionCache = new Map<
     string,
@@ -1221,7 +1222,6 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
     if (!isHostLocalInferenceProvider(routeProvider) || !sandboxName || !routeModel) {
       hostLocalInferenceRouteOnly = false;
       hostLocalInferenceProofAuthority = null;
-      hostLocalInferenceRouteKnown = true;
       prospectiveHostLocalPolicyRoute = null;
       return;
     }
@@ -1243,7 +1243,6 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
     });
     hostLocalInferenceRouteOnly = resolvedRoute.routeOnly;
     hostLocalInferenceProofAuthority = resolvedRoute.proofAuthority;
-    hostLocalInferenceRouteKnown = true;
     prospectiveHostLocalPolicyRoute = {
       sandboxName,
       provider: routeProvider,
@@ -1282,7 +1281,6 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
   });
   hostLocalInferenceRouteOnly = initialHostLocalPolicyRoute.routeOnly;
   hostLocalInferenceProofAuthority = initialHostLocalPolicyRoute.proofAuthority;
-  hostLocalInferenceRouteKnown = initialHostLocalPolicyRoute.routeKnown;
   prospectiveHostLocalPolicyRoute = initialHostLocalPolicyRoute.selection;
   const stateResults: OnboardStateTransitionResult[] = [];
   const retryStateResults: OnboardStateTransitionResult[] = [];
@@ -1488,7 +1486,6 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
       ) {
         hostLocalInferenceRouteOnly = false;
         hostLocalInferenceProofAuthority = null;
-        hostLocalInferenceRouteKnown = !isHostLocalInferenceProvider(provider);
         prospectiveHostLocalPolicyRoute = null;
       }
       endpointUrl = selection.endpointUrl;
@@ -1649,7 +1646,6 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
     if (resumedHostLocalPolicyRouteEvidence) {
       hostLocalInferenceRouteOnly = resumedHostLocalPolicyRouteEvidence.routeOnly;
       hostLocalInferenceProofAuthority = resumedHostLocalPolicyRouteEvidence.proofAuthority;
-      hostLocalInferenceRouteKnown = resumedHostLocalPolicyRouteEvidence.routeKnown;
     }
     const resumeInference = canResumeInferenceRoute({
       needsBedrockRuntimeAdapter,
@@ -1888,7 +1884,6 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
       );
       hostLocalInferenceRouteOnly = prospectiveHostLocalRoute.routeOnly;
       hostLocalInferenceProofAuthority = prospectiveHostLocalRoute.proofAuthority;
-      hostLocalInferenceRouteKnown = true;
       const freshManagedOllama =
         activeHostLocalInferenceSetupOptions.hostLocalInference?.request.service === "ollama" &&
         "managed" in activeHostLocalInferenceSetupOptions.hostLocalInference.request;

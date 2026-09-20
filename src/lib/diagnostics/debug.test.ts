@@ -98,7 +98,7 @@ describe("createTarball", () => {
     vi.resetModules();
   });
 
-  it("sets process.exitCode = 1 and returns false when tar fails on invalid output path", () => {
+  it("sets process.exitCode = 1 and returns false for an invalid output path", () => {
     tempDir = mkdtempSync(join(tmpdir(), "debug-test-"));
     writeFileSync(join(tempDir, "dummy.txt"), "test data");
     const ok = createTarball(tempDir, "/nonexistent/path/debug.tar.gz");
@@ -140,6 +140,8 @@ describe("createTarball", () => {
     expect(ok).toBe(true);
     expect(process.exitCode).toBeUndefined();
     expect(existsSync(output)).toBe(true);
+    expect(statSync(output).mode & 0o777).toBe(0o600);
+    expect(readdirSync(outputDir)).toEqual(["output.tar.gz"]);
   });
 
   it("writes the bundle owner-only and removes the protected staging directory", () => {

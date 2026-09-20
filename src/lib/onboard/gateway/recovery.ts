@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import type { OpenShellGatewayLifecycle } from "../../adapters/openshell/gateway-lifecycle";
+import type { OpenShellGatewayReuseObserver } from "../../adapters/openshell/gateway-reuse";
 import path from "node:path";
 import { gatewayStartGuidance } from "../../gateway-start-guidance";
 import { getGatewayHealthWaitConfig, waitForGatewayHealth } from "../gateway-health-wait";
@@ -16,28 +18,25 @@ type GatewayBootstrapRepairHelpers = ReturnType<
   typeof import("../gateway-bootstrap").createGatewayBootstrapRepairHelpers
 >;
 type OnboardGpu = ReturnType<typeof import("../../inference/nim").detectGpu>;
-type RunResult = ReturnType<typeof import("../../runner").run>;
 
 export interface GatewayRecoveryOrchestrationDeps {
+  lifecycle: OpenShellGatewayLifecycle;
+  observer: OpenShellGatewayReuseObserver;
   SCRIPTS: string;
   assertGatewayStartAllowed(
     exitOnFailure: boolean,
     target?: { gatewayName: string; gatewayPort: number },
   ): void;
-  attachGatewayMetadataIfNeeded(options?: { forceRefresh?: boolean }): boolean;
+  attachGatewayMetadataIfNeeded(options?: { forceRefresh?: boolean }): Promise<boolean>;
   envInt: typeof import("../env").envInt;
   gatewayClusterHealthcheckPassed: GatewayBootstrapRepairHelpers["gatewayClusterHealthcheckPassed"];
   gatewayName(): string;
   getContainerRuntime: typeof import("../local-inference-topology").getContainerRuntime;
   getGatewayClusterContainerState(): string;
-  isGatewayHealthy(status: string, namedInfo: string, activeInfo: string): boolean;
   isGatewayHttpReady: DynamicGatewayHelpers["isGatewayHttpReady"];
   isLinuxDockerDriverGatewayEnabled(): boolean;
-  isSelectedGateway(status: string): boolean;
   repairGatewayBootstrapSecrets: GatewayBootstrapRepairHelpers["repairGatewayBootstrapSecrets"];
   run: typeof import("../../runner").run;
-  runCaptureOpenshell(args: string[], options?: { ignoreError?: boolean }): string;
-  runOpenshell(args: string[], options?: { ignoreError?: boolean }): RunResult;
   shouldPatchCoredns: typeof import("../../platform").shouldPatchCoredns;
   sleepSeconds: typeof import("../../core/wait").sleepSeconds;
   startDockerDriverGateway(options?: { exitOnFailure?: boolean }): Promise<void>;
@@ -64,8 +63,8 @@ export function createGatewayRecoveryOrchestration(
   ): Promise<void> {
     return startGatewayForRecoveryFlow(options, {
       assertGatewayStartAllowed: deps.assertGatewayStartAllowed,
-      runCaptureOpenshell: deps.runCaptureOpenshell,
-      runOpenshell: deps.runOpenshell,
+      lifecycle: deps.lifecycle,
+      observer: deps.observer,
       startGatewayWithOptions: deps.startGatewayWithOptions,
       isLinuxDockerDriverGatewayEnabled: deps.isLinuxDockerDriverGatewayEnabled,
     });
@@ -82,11 +81,14 @@ export function createGatewayRecoveryOrchestration(
       }
     }
 
-    deps.runOpenshell(["gateway", "select", deps.gatewayName()], { ignoreError: true });
-    const status = deps.runCaptureOpenshell(["status"], { ignoreError: true });
+    const request = { target: { kind: "named" as const, gatewayName: deps.gatewayName() } };
+    const selected = await deps.lifecycle.selectGateway(request);
+    if (!selected.ok) return false;
+    const observed = await deps.observer.observeGatewayReuse(request);
     if (
-      status.includes("Connected") &&
-      deps.isSelectedGateway(status) &&
+      !observed.error &&
+      observed.healthy &&
+      observed.namedMetadata &&
       (await deps.isGatewayHttpReady())
     ) {
       process.env.OPENSHELL_GATEWAY = deps.gatewayName();
@@ -101,16 +103,16 @@ export function createGatewayRecoveryOrchestration(
       ? recoveryWait.interval
       : deps.envInt("NEMOCLAW_HEALTH_POLL_INTERVAL", 2);
     const healthy = await waitForGatewayHealth({
+      lifecycle: deps.lifecycle,
+      observer: deps.observer,
       attachGatewayMetadataIfNeeded: deps.attachGatewayMetadataIfNeeded,
       gatewayClusterHealthcheckPassed: deps.gatewayClusterHealthcheckPassed,
       gatewayName: deps.gatewayName(),
       healthPollCount: pollCount,
       healthPollIntervalSeconds: pollInterval,
-      isGatewayHealthy: deps.isGatewayHealthy,
       isGatewayHttpReady: (signal?: AbortSignal) =>
         deps.isGatewayHttpReady(undefined, undefined, undefined, signal),
       repairGatewayBootstrapSecrets: deps.repairGatewayBootstrapSecrets,
-      runCaptureOpenshell: deps.runCaptureOpenshell,
       sleepSeconds: deps.sleepSeconds,
     });
     if (!healthy) {

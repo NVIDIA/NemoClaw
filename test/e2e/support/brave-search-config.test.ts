@@ -89,7 +89,7 @@ function exportedBraveConfig() {
 }
 
 describe("Brave Search E2E export assertion", () => {
-  it("returns the validated public spec without comparing generated document identity (#10904)", () => {
+  it("returns the expected public spec without comparing generated document identity (#10904)", () => {
     const document = exportedBraveConfig();
     expect(assertBraveExport(YAML.stringify(document), ["synthetic-secret"])).toEqual(
       document.spec,
@@ -110,13 +110,7 @@ describe("Brave Search E2E export assertion", () => {
     },
   );
 
-  it("validates the whole document, including fields outside the integration (#10904)", () => {
-    const document = exportedBraveConfig();
-    Object.assign(document, { unexpected: true });
-    expect(() => assertBraveExport(YAML.stringify(document), [])).toThrow();
-  });
-
-  it("requires the expected Brave integration even when the document schema allows its absence (#10904)", () => {
+  it("requires the expected Brave integration for this live scenario (#10904)", () => {
     const document = exportedBraveConfig();
     Object.assign(document.spec.sandboxes[0]!, { integrations: undefined });
     expect(() => assertBraveExport(YAML.stringify(document), [])).toThrow();

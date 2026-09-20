@@ -10,8 +10,9 @@
  *
  * Categories:
  *   PROBE    — read-only queries that should return instantly (list, status, info, ssh-config)
- *   OPERATION — mutating commands (provider CRUD, legacy-forward migration, gateway select)
+ *   OPERATION — mutating commands (provider CRUD, gateway select)
  *   HEAVY    — destructive or long-running (sandbox delete, gateway destroy, build)
+ *   POLICY_ACTIVATION — policy submission plus the OpenShell activation wait
  *   DOWNLOAD — file transfers over the sandbox SSH tunnel (config download)
  */
 
@@ -21,11 +22,14 @@ export const OPENSHELL_PROBE_TIMEOUT_MS = 15_000;
 /** In-sandbox inference.local route probe used during connect recovery */
 export const OPENSHELL_INFERENCE_ROUTE_PROBE_TIMEOUT_MS = 10_000;
 
-/** Mutating operations — provider create/delete, gateway select, legacy-forward migration */
+/** Mutating operations — provider create/delete, gateway select */
 export const OPENSHELL_OPERATION_TIMEOUT_MS = 30_000;
 
 /** Heavy operations — sandbox delete, gateway destroy, full build */
 export const OPENSHELL_HEAVY_TIMEOUT_MS = 60_000;
+
+/** Policy submission must outlast OpenShell's 60-second activation wait */
+export const OPENSHELL_POLICY_ACTIVATION_TIMEOUT_MS = 65_000;
 
 /** Sandbox download (config file fetch over SSH) */
 export const OPENSHELL_DOWNLOAD_TIMEOUT_MS = 30_000;

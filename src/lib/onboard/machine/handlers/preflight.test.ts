@@ -495,34 +495,101 @@ describe("handlePreflightState", () => {
     );
   });
 
-  it("rejects a cached resume when host collection exceeds the freshness window (#7411)", async () => {
+  it("closes the cached resume host collection before the gateway wait (#10670)", async () => {
     const session = createSession();
     session.steps.preflight.status = "complete";
-    let currentTime = Date.parse("2026-08-07T12:00:00.000Z");
-    const detectGpu = vi.fn(() => ({ type: "nvidia" }) as Gpu);
-    const bridge = vi.fn();
+    const startedAt = Date.parse("2026-08-07T12:00:00.000Z");
+    let currentTime = startedAt;
+    const stamps: { observedAt?: string; collectedAt?: string; admittedAt: number }[] = [];
     const harness = createDeps({
       now: () => new Date(currentTime),
       assessHost: () => {
-        currentTime += 30_001;
+        currentTime += 20_000;
         return { cdiNvidiaGpuSpecMissing: false };
       },
-      assertOnboardHostReadiness: (_host, _gpu, options) => {
-        expect(options.observedAt).toBe("2026-08-07T12:00:00.000Z");
-        const age = currentTime - Date.parse(options.observedAt as string);
-        expect(age).toBeGreaterThan(30_000);
-        throw new Error("host observations are stale");
+      detectGpuForReadiness: () => {
+        currentTime += 10_001;
+        return { type: "nvidia" } as Gpu;
       },
-      detectGpu,
-      assertRuntimeProviderHealthy: bridge,
+      detectGpu: () => {
+        currentTime += 10_001;
+        return { type: "nvidia" } as Gpu;
+      },
+      assertGatewayReadiness: async () => {
+        currentTime += 10_000;
+      },
+      assertOnboardHostReadiness: (_host, _gpu, options) => {
+        expect(currentTime - Date.parse(options.collectedAt ?? "")).toBeLessThanOrEqual(30_000);
+        stamps.push({
+          observedAt: options.observedAt,
+          collectedAt: options.collectedAt,
+          admittedAt: currentTime,
+        });
+      },
     });
 
-    await expect(
-      handlePreflightState({ ...baseOptions(harness.deps, session), resume: true }),
-    ).rejects.toThrow("host observations are stale");
-    expect(detectGpu).not.toHaveBeenCalled();
-    expect(bridge).not.toHaveBeenCalled();
+    await handlePreflightState({ ...baseOptions(harness.deps, session), resume: true });
+
+    const [first, second] = stamps;
+    expect(stamps).toHaveLength(2);
+    expect(first?.observedAt).toBe("2026-08-07T12:00:00.000Z");
+    // The host probes ran for longer than the reuse window. Their duration is
+    // provenance, not age: `collectedAt` closes the collection after them.
+    expect(Date.parse(first?.collectedAt ?? "")).toBe(startedAt + 30_001);
+    // The gateway wait falls after that stamp, so the window still charges it.
+    expect((first?.admittedAt ?? 0) - Date.parse(first?.collectedAt ?? "")).toBe(10_000);
+    expect(Date.parse(second?.collectedAt ?? "") - Date.parse(second?.observedAt ?? "")).toBe(
+      30_001,
+    );
+    expect((second?.admittedAt ?? 0) - Date.parse(second?.collectedAt ?? "")).toBe(10_000);
   });
+
+  it.each([
+    { checkpoint: "first", firstWait: 45_000, secondWait: 0, gpuEffects: 0 },
+    { checkpoint: "second", firstWait: 0, secondWait: 45_000, gpuEffects: 1 },
+  ])(
+    "stops cached resume effects after the $checkpoint gateway wait expires host facts (#10670)",
+    async ({ firstWait, secondWait, gpuEffects }) => {
+      const session = createSession();
+      session.steps.preflight.status = "complete";
+      let currentTime = Date.parse("2026-08-07T12:00:00.000Z");
+      const gatewayDelay = vi.fn().mockReturnValueOnce(firstWait).mockReturnValueOnce(secondWait);
+      const detectGpu = vi.fn(() => ({ type: "nvidia" }) as Gpu);
+      const assertRuntimeProviderHealthy = vi.fn();
+      const validateSandboxGpuPreflight = vi.fn();
+      const assertOnboardHostReadiness = vi.fn<
+        ReturnType<typeof baseOptions>["deps"]["assertOnboardHostReadiness"]
+      >((_host, _gpu, options) => {
+        expect(currentTime - Date.parse(options.collectedAt ?? "")).toBeLessThanOrEqual(30_000);
+      });
+      const harness = createDeps({
+        now: () => new Date(currentTime),
+        assessHost: () => {
+          currentTime += 20_000;
+          return { cdiNvidiaGpuSpecMissing: false };
+        },
+        detectGpuForReadiness: () => {
+          currentTime += 10_001;
+          return { type: "nvidia" } as Gpu;
+        },
+        detectGpu,
+        assertGatewayReadiness: async () => {
+          currentTime += gatewayDelay();
+        },
+        assertOnboardHostReadiness,
+        assertRuntimeProviderHealthy,
+        validateSandboxGpuPreflight,
+      });
+
+      await expect(
+        handlePreflightState({ ...baseOptions(harness.deps, session), resume: true }),
+      ).rejects.toThrow();
+      expect(assertOnboardHostReadiness).toHaveBeenCalledTimes(gpuEffects + 1);
+      expect(detectGpu).toHaveBeenCalledTimes(gpuEffects);
+      expect(assertRuntimeProviderHealthy).not.toHaveBeenCalled();
+      expect(validateSandboxGpuPreflight).not.toHaveBeenCalled();
+    },
+  );
 
   it("restores saved sandbox GPU intent only when resume has no explicit override", async () => {
     const session = createSession();

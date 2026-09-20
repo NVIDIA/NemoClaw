@@ -87,6 +87,32 @@ describe("common token-paste hook implementation", () => {
     });
   });
 
+  it("rejects the documented Discord token placeholder without saving it (#10668)", async () => {
+    const logs: string[] = [];
+    const registry = new MessagingHookRegistry([
+      {
+        id: COMMON_TOKEN_PASTE_HOOK_HANDLER_ID,
+        handler: createTokenPasteHook({
+          env: { DISCORD_BOT_TOKEN: "<your-discord-bot-token>" },
+          saveCredential: () => {
+            throw new Error("placeholder must not be saved");
+          },
+          log: (message) => logs.push(message),
+        }),
+      },
+    ]);
+
+    await expect(
+      runMessagingHook(discordManifest.hooks[1]!, registry, {
+        channelId: "discord",
+        isInteractive: false,
+      }),
+    ).rejects.toThrow("Invalid token format for DISCORD_BOT_TOKEN");
+    expect(logs).toContain(
+      "  ✗ Invalid format. Replace the documentation placeholder with your real Discord bot token.",
+    );
+  });
+
   it("collects Slack bot and app tokens through the shared token-paste hook", async () => {
     const registry = new MessagingHookRegistry([
       {

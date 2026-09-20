@@ -270,21 +270,21 @@ describe("Hermes cron rebuild restore contract", () => {
     );
   });
 
-  it("keeps dispatch drained when state restore is incomplete", () => {
+  it("keeps dispatch drained when state restore is incomplete", async () => {
     processMocks.executePrivilegedSandboxCommand.mockReturnValue({
       status: 0,
       stdout: receipt("begin"),
       stderr: "",
     });
 
-    expect(() =>
+    await expect(() =>
       runHermesCronRestoreTransaction("alpha", () => ({ restoreSucceeded: false })),
-    ).toThrow("state restore was incomplete");
+    ).rejects.toThrow("state restore was incomplete");
     expect(processMocks.executePrivilegedSandboxCommand).toHaveBeenCalledOnce();
     expect(processMocks.executePrivilegedSandboxCommand.mock.calls[0]?.[1]).toContain("begin");
   });
 
-  it("keeps dispatch held after restore validation until gateway replacement (#8472)", () => {
+  it("keeps dispatch held after restore validation until gateway replacement (#8472)", async () => {
     const events: string[] = [];
     processMocks.executePrivilegedSandboxCommand.mockImplementation(
       (_sandboxName: string, argv: string[]) => {
@@ -294,7 +294,7 @@ describe("Hermes cron rebuild restore contract", () => {
       },
     );
 
-    const transaction = runHermesCronRestoreTransaction(
+    const transaction = await runHermesCronRestoreTransaction(
       "alpha",
       () => {
         events.push("restore");

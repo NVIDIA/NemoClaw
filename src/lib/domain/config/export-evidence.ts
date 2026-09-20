@@ -5,17 +5,19 @@ import type * as TypeBoxModule from "typebox" with { "resolution-mode": "import"
 import {
   BoundedTextSchema,
   NemoClawManagedVllmServingSchema,
+  NemoClawOllamaServingSchema,
   CredentialEnvironmentReferenceNameSchema,
   ImmutableImageReferenceSchema,
   InferenceEndpointSchema,
   LocalResourceNameSchema,
   NemoClawInferenceApiSchema,
-  NemoClawAgentToolsConfigSchema,
-  NemoClawAgentInterfacesSchema,
+  NemoClawOpenClawInterfacesSchema,
+  NemoClawHermesInterfacesSchema,
+  NemoClawAgentToolDisclosureSchema,
+  NemoClawAdditionalAgentSchema,
   NemoClawInferenceTuningSchema,
   NemoClawAgentExecutionSchema,
   NemoClawBraveSearchConfigSchema,
-  NemoClawAgentTypeSchema,
   NemoClawOpenClawObservabilitySchema,
   NemoClawManagedProxyConfigSchema,
   RuntimeProviderSchema,
@@ -28,6 +30,7 @@ import {
 } from "../../config/model";
 import type { SandboxConfiguration } from "../sandbox/configuration";
 import type { SandboxEntry } from "../../state/registry/types";
+import type { ObservedOllamaProxy } from "../../inference/ollama/proxy-observation";
 
 const { Type } = require("typebox") as typeof TypeBoxModule;
 
@@ -47,6 +50,7 @@ export const EXPORT_REGISTRY_EVIDENCE_KEYS = [
   "credentialEnv",
   "dashboardPort",
   "dashboardRemoteBindPrepared",
+  "dcodeAutoApprovalMode",
   "endpointUrl",
   "fromDockerfile",
   "gatewayName",
@@ -65,13 +69,11 @@ export const EXPORT_REGISTRY_EVIDENCE_KEYS = [
   "imageTag",
   "lifecycleGeneration",
   "lifecycleLiveIdentityFingerprint",
-  "mcp",
   "messaging",
   "model",
   "name",
   "nimContainer",
   "observabilityEnabled",
-  "openclawImagePluginInstalls",
   "openshellDriver",
   "pendingRouteReservation",
   "preferredInferenceApi",
@@ -109,12 +111,13 @@ export interface ObservedExportEndpointEvidence {
     readonly id: string;
     readonly resourceVersion: string;
     readonly profileWorkspace?: string;
+    /** null means the OpenAI profile was read at its binding and confirmed absent. */
     readonly managedProfile?: {
       readonly id: "brave" | "openai";
       readonly source: "builtin" | "user";
       readonly scope: "" | "platform" | "workspace";
       readonly resourceVersion: string;
-    };
+    } | null;
   };
   readonly endpoint: string;
   readonly source:
@@ -161,6 +164,7 @@ export interface ObservedExportInference {
   readonly endpointEvidence: ObservedExportEndpointEvidence | null;
   readonly credentialEnv: string | null;
   readonly managedServing?: ObservedManagedVllmRuntime;
+  readonly ollamaServing?: ObservedOllamaProxy;
 }
 
 export interface ObservedExportPolicy {
@@ -188,6 +192,7 @@ export type ExportSnapshotReadStage =
   | "provider-metadata"
   | "web-search-provider"
   | "managed-serving"
+  | "ollama-serving"
   | "effective-policy";
 
 /** One complete, untrusted read from all export evidence owners. */
@@ -258,36 +263,76 @@ const ExportInferenceSchema = Type.Union([
   HostedExportInferenceSchema,
   Type.Object(
     {
+      provider: Type.Literal("ollama-local"),
+      model: Type.Refine(BoundedTextSchema, isValidNemoClawBoundedText),
+      api: Type.Literal("openai-completions"),
+      serving: NemoClawOllamaServingSchema,
+      overrides: Type.Optional(NemoClawInferenceTuningSchema),
+    },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    {
       provider: Type.Literal("vllm-local"),
       model: Type.Refine(BoundedTextSchema, isValidNemoClawBoundedText),
       api: Type.Literal("openai-completions"),
       serving: NemoClawManagedVllmServingSchema,
+      overrides: Type.Optional(NemoClawInferenceTuningSchema),
     },
     { additionalProperties: false },
   ),
 ]);
 
 /** Representable values only; provenance and policy qualification remain separate. */
-export const ExportSourceValuesSchema = Type.Refine(
-  Type.Object({
-    sandboxName: Type.Refine(SandboxNameSchema, isValidNemoClawSandboxName),
-    execution: Type.Optional(NemoClawAgentExecutionSchema),
-    agent: NemoClawAgentTypeSchema,
-    auth: Type.Optional(Type.Object({ method: Type.Literal("api-key") })),
-    runtime: Type.Object({
-      provider: RuntimeProviderSchema,
-      imageRef: ImmutableImageReferenceSchema,
-    }),
-    gateway: Type.Object({ name: LocalResourceNameSchema, port: TcpPortSchema }),
-    proxy: Type.Optional(NemoClawManagedProxyConfigSchema),
-    inference: ExportInferenceSchema,
-    tools: Type.Optional(NemoClawAgentToolsConfigSchema),
-    interfaces: Type.Optional(NemoClawAgentInterfacesSchema),
-    observability: Type.Optional(NemoClawOpenClawObservabilitySchema),
-    webSearch: Type.Optional(NemoClawBraveSearchConfigSchema),
+const exportSourceFields = {
+  sandboxName: Type.Refine(SandboxNameSchema, isValidNemoClawSandboxName),
+  execution: Type.Optional(NemoClawAgentExecutionSchema),
+  tools: Type.Optional(NemoClawAgentToolDisclosureSchema),
+  additionalAgents: Type.Optional(Type.Array(NemoClawAdditionalAgentSchema, { minItems: 1 })),
+  auth: Type.Optional(Type.Object({ method: Type.Literal("api-key") })),
+  runtime: Type.Object({
+    provider: RuntimeProviderSchema,
+    imageRef: ImmutableImageReferenceSchema,
   }),
-  (value) =>
-    value.agent === "openclaw" || (value.execution === undefined && value.tools === undefined),
+  gateway: Type.Object({ name: LocalResourceNameSchema, port: TcpPortSchema }),
+  proxy: Type.Optional(NemoClawManagedProxyConfigSchema),
+  inference: ExportInferenceSchema,
+  observability: Type.Optional(NemoClawOpenClawObservabilitySchema),
+  webSearch: Type.Optional(NemoClawBraveSearchConfigSchema),
+};
+
+export const ExportSourceValuesSchema = Type.Refine(
+  Type.Union([
+    Type.Object({
+      ...exportSourceFields,
+      agent: Type.Literal("openclaw"),
+      interfaces: Type.Optional(NemoClawOpenClawInterfacesSchema),
+    }),
+    Type.Object({
+      ...exportSourceFields,
+      agent: Type.Literal("hermes"),
+      interfaces: Type.Optional(NemoClawHermesInterfacesSchema),
+    }),
+    Type.Object({
+      ...exportSourceFields,
+      agent: Type.Literal("langchain-deepagents-code"),
+      interfaces: Type.Optional(Type.Never()),
+    }),
+  ]),
+  (value) => {
+    if (value.agent === "openclaw") return true;
+    if (
+      value.execution !== undefined ||
+      value.tools !== undefined ||
+      value.additionalAgents !== undefined ||
+      value.observability !== undefined
+    )
+      return false;
+    return (
+      value.agent === "hermes" ||
+      (value.auth === undefined && value.webSearch === undefined && value.interfaces === undefined)
+    );
+  },
 );
 
 type ExportSourceValues = DeepReadonly<TypeBoxModule.Type.Static<typeof ExportSourceValuesSchema>>;

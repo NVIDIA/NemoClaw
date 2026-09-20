@@ -9,7 +9,6 @@
  * external-link icon that otherwise stacks under each badge image.
  * Requires the `.badge-links` CSS rule from main.css.
  */
-declare const React: unknown;
 
 export type BadgeItem = {
   href: string;

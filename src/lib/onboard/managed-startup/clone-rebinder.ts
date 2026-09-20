@@ -128,7 +128,7 @@ function optionalCurrentString(value: unknown, label: string): string | null {
 function currentInference(
   profile: ManagedStartupProfile,
   current: ManagedStartupCloneCurrentState,
-): ManagedStartupProfile["inference"] {
+): NonNullable<ManagedStartupProfile["inference"]> {
   const provider = requireCurrentString(current.provider, "inference provider");
   const model = requireCurrentString(current.model, "inference model");
   const preferredApi = optionalCurrentString(
@@ -154,16 +154,18 @@ function currentInference(
   return {
     routeProvider: resolved.providerKey,
     upstreamProvider: provider,
+    servingPreset: profile.inference?.servingPreset ?? null,
     model,
     routedBaseUrl: resolved.inferenceBaseUrl,
     upstreamEndpointUrl,
-    api: resolved.inferenceApi as ManagedStartupProfile["inference"]["api"],
+    api: resolved.inferenceApi as NonNullable<ManagedStartupProfile["inference"]>["api"],
     primaryModelRef: profile.agent === "openclaw" ? resolved.primaryModelRef : null,
     compatibility:
       profile.agent === "openclaw"
         ? (JSON.parse(JSON.stringify(resolved.inferenceCompat ?? {})) as ManagedStartupJsonObject)
         : null,
-    inputModalities: profile.agent === "openclaw" ? profile.inference.inputModalities : null,
+    inputModalities:
+      profile.agent === "openclaw" ? (profile.inference?.inputModalities ?? ["text"]) : null,
   };
 }
 
@@ -337,8 +339,8 @@ function reconcileCurrentSourceProfile(
         ? (currentReasoningEffort ?? "default")
         : "default";
     if (
-      profile.inference.upstreamProvider !== current.provider ||
-      profile.inference.model !== current.model
+      profile.inference?.upstreamProvider !== current.provider ||
+      profile.inference?.model !== current.model
     ) {
       contextWindow = managedStartupCloneRebinderDependencies.resolveContextWindowForModel(
         requireCurrentString(current.provider, "inference provider"),
@@ -446,6 +448,7 @@ function destinationInference(
     input.destinationHermesInferenceProvider,
     "destination Hermes inference provider",
   );
+  if (profile.inference === null) fail("Hermes tool gateways require inference configuration");
   return {
     ...profile.inference,
     upstreamProvider: provider,

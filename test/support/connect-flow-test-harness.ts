@@ -42,11 +42,12 @@ export type ConnectHarness = {
   captureOpenshellSpy: MockInstance;
   captureResolvedOpenshellSpy: MockInstance;
   checkAndRecoverSpy: MockInstance;
+  waitForStartedHermesGatewayProcessSpy: MockInstance;
   connectSandbox: ConnectSandbox;
   ensureOllamaAuthProxySpy: MockInstance;
   findReachableOllamaHostSpy: MockInstance;
-  forwardServiceOwnerSpy: MockInstance;
-  launchForwardServiceSpy: MockInstance;
+  forwardAdapterObserveSpy: MockInstance;
+  forwardAdapterStartSpy: MockInstance;
   ensureLiveSandboxSpy: MockInstance;
   getSandboxDockerRuntimeSpy: MockInstance;
   dockerStartSpy: MockInstance;
@@ -129,6 +130,7 @@ export type ConnectHarnessOptions = {
     secretBoundaryRefused?: boolean;
     secretBoundaryReason?: SecretBoundaryRefusalReason;
   };
+  gatewayProcessSettlement?: boolean | null;
   portableRecoveryResult?: { kind: "not-installed" | "already-running" | "recovered" };
   portableReceiptDisposition?:
     | { kind: "absent" }
@@ -139,6 +141,7 @@ export type ConnectHarnessOptions = {
         gatewayName?: string;
         lifecycleGeneration?: string;
       };
+  useRealPortableReceipt?: boolean;
   dockerRuntime?: {
     health?: string;
     paused?: boolean;
@@ -146,6 +149,10 @@ export type ConnectHarnessOptions = {
     containerName?: string | null;
   };
   dockerStartStatus?: number | null;
+  /** Exit status the mocked `openshell sandbox start` reports. */
+  sandboxLifecycleStartStatus?: number | null;
+  /** Phase the mocked `openshell sandbox get` reports. */
+  sandboxGetPhase?: string;
   spawnSignal?: NodeJS.Signals | null;
   spawnStatus?: number | null;
   sttyThrows?: boolean;
@@ -164,6 +171,7 @@ export type ConnectHarnessOptions = {
       };
   readinessPublicationResult?: LaunchReadinessPublicationResult;
   portablePairingSettlementResult?: PortablePairingSettlementResult;
+  useRealProcessRecovery?: boolean;
 };
 
 function throwSttyFailure(): never {
@@ -197,6 +205,9 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
   const agentRuntime = requireDist("../../src/lib/agent/runtime.js");
   const dns = requireDist("../../src/lib/actions/dns/index.js");
   const gatewayState = requireDist("../../src/lib/actions/sandbox/gateway-state.js");
+  const gatewayTeardownAuthority = requireDist(
+    "../../src/lib/onboard/gateway-teardown-authority.js",
+  );
   const hermesInferenceRecovery = requireDist(
     "../../src/lib/actions/sandbox/probe/hermes-portable-inference-recovery.js",
   );
@@ -204,8 +215,7 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
     "../../src/lib/onboard/experimental/hermes-portable-ollama-inference.js",
   );
   const processRecovery = requireDist("../../src/lib/actions/sandbox/process-recovery.js");
-  const forwardHealth = requireDist("../../src/lib/actions/sandbox/forward-health.js");
-  const forwardService = requireDist("../../src/lib/adapters/openshell/forward-service.js");
+  const forwardRuntime = requireDist("../../src/lib/adapters/openshell/forward-runtime.js");
   const autoPairApproval = requireDist("../../src/lib/actions/sandbox/auto-pair-approval.js");
   const connectVllmPreflight = requireDist(
     "../../src/lib/actions/sandbox/connect-vllm-preflight.js",
@@ -224,6 +234,7 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
   const sandboxVersion = requireDist("../../src/lib/sandbox/version.js");
   const sandboxConfig = requireDist("../../src/lib/sandbox/config.js");
   const registry = requireDist("../../src/lib/state/registry.js");
+  const crossPortRegistry = requireDist("../../src/lib/state/registry/cross-port.js");
   const sandboxSession = requireDist("../../src/lib/state/sandbox-session.js");
   const vmDnsMonkeypatch = requireDist("../../src/lib/actions/sandbox/vm-dns-monkeypatch.js");
   const launchReadiness = requireDist("../../src/lib/actions/sandbox/launch-readiness.js");
@@ -247,6 +258,22 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
     _sandboxName: string,
     operation: () => Promise<unknown>,
   ) => operation()) as never);
+  vi.spyOn(gatewayTeardownAuthority, "resolveGatewayForwardAuthority").mockImplementation((({
+    gatewayName,
+    gatewayPort,
+  }: {
+    gatewayName: string;
+    gatewayPort: number;
+  }) => ({
+    gatewayName,
+    gatewayPort,
+    mode: "nemoclaw-managed",
+    source: "standalone",
+    endpoint: null,
+    stateDir: null,
+    supervisor: null,
+    requiredCapabilities: [],
+  })) as never);
   vi.spyOn(gatewayState, "buildHermesPortableCommandEnvironment").mockReturnValue({
     HOME: "/home/test",
     XDG_CONFIG_HOME: "/home/test/.config",
@@ -292,6 +319,11 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
     () => undefined,
   );
   const requestedPortableDisposition = options.portableReceiptDisposition ?? { kind: "absent" };
+  vi.spyOn(gatewayState, "hermesPortableLifecycleLockOptions").mockReturnValue(
+    requestedPortableDisposition.kind === "hermes"
+      ? { stateDir: "/home/test/.nemoclaw/state" }
+      : undefined,
+  );
   const portableDisposition =
     requestedPortableDisposition.kind === "hermes"
       ? {
@@ -307,37 +339,50 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
           liveIdentityFingerprint: "f".repeat(64),
         }
       : requestedPortableDisposition;
-  const inspectPortableReceiptDispositionSpy = vi
-    .spyOn(portableAgentLifecycle, "inspectPortableAgentReceiptDisposition")
-    .mockReturnValue(portableDisposition);
+  const inspectPortableReceiptDispositionSpy = vi.spyOn(
+    portableAgentLifecycle,
+    "inspectPortableAgentReceiptDisposition",
+  );
+  if (!options.useRealPortableReceipt) {
+    inspectPortableReceiptDispositionSpy.mockReturnValue(portableDisposition);
+  }
   let registryEntries: SandboxEntry[] = [];
   const qualifyPortableAgentLifecycleAuthority =
     portableAgentLifecycle.qualifyPortableAgentLifecycleAuthority;
   const requireHermesPortableActiveLifecycleAuthority =
     portableAgentLifecycle.requireHermesPortableActiveLifecycleAuthority;
   const portableAuthorityDeps = () => ({
-    inspectReceiptDisposition: (sandboxName: string) =>
-      portableAgentLifecycle.inspectPortableAgentReceiptDisposition(sandboxName),
+    ...(options.useRealPortableReceipt
+      ? {}
+      : {
+          inspectReceiptDisposition: (sandboxName: string) =>
+            portableAgentLifecycle.inspectPortableAgentReceiptDisposition(sandboxName),
+        }),
     readRegistry: (sandboxName: string) =>
       registryEntries.find((candidate) => candidate.name === sandboxName) ?? null,
   });
   vi.spyOn(gatewayState, "qualifyPortableAgentLifecycleAuthority").mockImplementation(((
     sandboxName: string,
-  ) => qualifyPortableAgentLifecycleAuthority(sandboxName, portableAuthorityDeps())) as never);
+    deps: object,
+  ) =>
+    qualifyPortableAgentLifecycleAuthority(sandboxName, {
+      ...deps,
+      ...portableAuthorityDeps(),
+    })) as never);
   vi.spyOn(gatewayState, "requireHermesPortableActiveLifecycleAuthority").mockImplementation(((
     sandboxName: string,
     expected: unknown,
+    deps: object,
   ) =>
-    requireHermesPortableActiveLifecycleAuthority(
-      sandboxName,
-      expected,
-      portableAuthorityDeps(),
-    )) as never);
+    requireHermesPortableActiveLifecycleAuthority(sandboxName, expected, {
+      ...deps,
+      ...portableAuthorityDeps(),
+    })) as never);
   const recoverHermesPortableOllamaInferenceSpy = vi
-    .spyOn(hermesInferenceRecovery, "recoverHermesPortableInferenceForConnectProbe")
+    .spyOn(hermesInferenceRecovery, "recoverHermesPortableInferenceForConnect")
     .mockImplementation((async (input: {
       verifyRoute: () => Promise<unknown>;
-      prepareProbeDependency?: () => { release: () => void };
+      prepareProbeDependency?: () => Promise<{ release: () => void }>;
     }) => {
       if (options.hermesInferenceRecoveryPhase) {
         throw new hermesOllamaInference.HermesPortableOllamaRecoveryPhaseError(
@@ -354,7 +399,7 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
         );
       }
       await input.verifyRoute();
-      input.prepareProbeDependency?.().release();
+      (await input.prepareProbeDependency?.())?.release();
       return "reused";
     }) as never);
   const hermesReadinessRuntimeCurrentSpy = vi.fn();
@@ -425,6 +470,20 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
   const inferenceProbeResponses = [...(options.inferenceProbeResponses ?? [])];
   const listOutputs = [...(options.listOutputs ?? [])];
   const sandboxRunBufferedSpy = vi.fn(async (request: OpenShellSandboxBufferedCommandRequest) => {
+    if (request.command.join(" ").includes("/health")) {
+      return {
+        outcome: { kind: "completed", exitCode: 0 },
+        stdout: "__NEMOCLAW_SANDBOX_EXEC_STARTED__\nRUNNING\n",
+        stderr: "",
+      } satisfies OpenShellSandboxBufferedCommandCompletion;
+    }
+    if (request.command.join(" ").includes("/v1/chat/completions")) {
+      return {
+        outcome: { kind: "completed", exitCode: 0 },
+        stdout: '200\n{"choices":[{"message":{"content":"OK"}}]}',
+        stderr: "",
+      } satisfies OpenShellSandboxBufferedCommandCompletion;
+    }
     if (!request.command.join(" ").includes("inference.local/v1/models")) {
       return {
         outcome: { kind: "completed", exitCode: 0 },
@@ -467,6 +526,18 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
   })) as never);
   const captureOpenshellImplementation = (args: unknown) => {
     const argv = Array.isArray(args) ? args : [];
+    if (argv[0] === "sandbox" && argv[1] === "start") {
+      return {
+        status:
+          options.sandboxLifecycleStartStatus === undefined
+            ? 0
+            : options.sandboxLifecycleStartStatus,
+        output: "",
+      };
+    }
+    if (argv[0] === "sandbox" && argv[1] === "get") {
+      return { status: 0, output: `Phase: ${options.sandboxGetPhase ?? "Ready"}\n` };
+    }
     if (argv[0] === "sandbox" && argv[1] === "list") {
       return {
         status: 0,
@@ -530,16 +601,39 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
   });
   vi.spyOn(sandboxVersion, "checkAgentVersion").mockResolvedValue({ isStale: false });
   vi.spyOn(sandboxVersion, "formatStalenessWarning").mockReturnValue([]);
-  const checkAndRecoverSpy = vi
-    .spyOn(processRecovery, "checkAndRecoverSandboxProcesses")
-    .mockReturnValue(options.processCheck ?? { checked: true, wasRunning: true, recovered: false });
-  vi.spyOn(forwardHealth, "isLocalForwardReachable").mockReturnValue(true);
-  const forwardServiceOwnerSpy = vi
-    .spyOn(forwardService, "isForwardServiceListenerOwner")
-    .mockReturnValue(false);
-  const launchForwardServiceSpy = vi
-    .spyOn(forwardService, "launchForwardService")
-    .mockImplementation(() => undefined);
+  const realCheckAndRecoverSandboxProcesses = processRecovery.checkAndRecoverSandboxProcesses;
+  const checkAndRecoverSpy = vi.spyOn(processRecovery, "checkAndRecoverSandboxProcesses");
+  if (options.useRealProcessRecovery) {
+    checkAndRecoverSpy.mockImplementation(((sandboxName: string, recoveryOptions: object = {}) =>
+      realCheckAndRecoverSandboxProcesses(sandboxName, {
+        ...recoveryOptions,
+        withLifecycleLock: async (_name: string, operation: () => unknown) => operation(),
+      })) as never);
+  } else {
+    checkAndRecoverSpy.mockReturnValue(
+      options.processCheck ?? { checked: true, wasRunning: true, recovered: false },
+    );
+  }
+  const waitForStartedHermesGatewayProcessSpy = vi
+    .spyOn(processRecovery, "waitForStartedHermesGatewayProcess")
+    .mockResolvedValue(
+      Object.hasOwn(options, "gatewayProcessSettlement")
+        ? (options.gatewayProcessSettlement ?? null)
+        : true,
+    );
+  const forwardAdapterObserveSpy = vi.fn(async ({ forwards }) =>
+    forwards.map((forward: object) => ({ state: "owned" as const, forward })),
+  );
+  const forwardAdapterStartSpy = vi.fn(async ({ forward }) => ({
+    state: "reused" as const,
+    forward,
+  }));
+  vi.spyOn(forwardRuntime, "createOpenShellForwardAdapterForAuthority").mockReturnValue({
+    observeForwards: forwardAdapterObserveSpy,
+    startForward: forwardAdapterStartSpy,
+    retireLegacyForward: vi.fn(),
+    verifyForwardRelease: vi.fn(async () => ({ state: "released" as const })),
+  });
   const verifyHermesPortableLaunchForwardsSpy = vi
     .spyOn(processRecovery, "verifyHermesPortableLaunchForwards")
     .mockReturnValue({ kind: "healthy" });
@@ -577,6 +671,9 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
     agent: options.agentName ?? "openclaw",
     provider: options.agentName === "hermes" ? "ollama-local" : null,
     model: options.agentName === "hermes" ? "qwen3-vl:4b" : null,
+    ...(options.agentName === "langchain-deepagents-code"
+      ? { provider: "nvidia-prod", model: "nvidia/nemotron-3-super-120b-a12b" }
+      : {}),
     lifecycleLiveIdentityFingerprint:
       portableDisposition.kind === "hermes"
         ? portableDisposition.liveIdentityFingerprint
@@ -607,6 +704,18 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
     : [primaryRegistryEntry];
   vi.spyOn(registry, "getSandbox").mockImplementation(
     (name: unknown) => registryEntries.find((candidate) => candidate.name === String(name)) ?? null,
+  );
+  vi.spyOn(crossPortRegistry, "findSandboxAcrossGatewayRoots").mockImplementation(
+    (name: unknown) => {
+      const entry = registryEntries.find((candidate) => candidate.name === String(name));
+      return entry
+        ? {
+            entry,
+            gatewayPort: entry.gatewayPort ?? null,
+            registryFile: "/test/.nemoclaw/sandboxes.json",
+          }
+        : null;
+    },
   );
   vi.spyOn(registry, "listSandboxes").mockReturnValue({
     sandboxes: registryEntries,
@@ -664,11 +773,12 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
     captureOpenshellSpy,
     captureResolvedOpenshellSpy,
     checkAndRecoverSpy,
+    waitForStartedHermesGatewayProcessSpy,
     connectSandbox: requireDist(connectModulePath).connectSandbox,
     ensureOllamaAuthProxySpy,
     findReachableOllamaHostSpy,
-    forwardServiceOwnerSpy,
-    launchForwardServiceSpy,
+    forwardAdapterObserveSpy,
+    forwardAdapterStartSpy,
     ensureLiveSandboxSpy,
     getSandboxDockerRuntimeSpy,
     dockerStartSpy,

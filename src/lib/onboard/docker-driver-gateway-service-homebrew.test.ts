@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { gatewayAdaptersForTest } from "../../../test/helpers/openshell-gateway-adapters";
 import { describe, expect, it, vi } from "vitest";
 
 import {
@@ -29,7 +30,7 @@ function officialFormulaInfo(
     JSON.stringify({
       formulae: [
         {
-          installed: options.installed ?? [{ version: "0.0.106" }],
+          installed: options.installed ?? [{ version: "0.0.116" }],
           name: "openshell",
           service: { run: options.serviceProgram ?? SERVICE_PROGRAM },
           tap: options.tap ?? "nvidia/openshell",
@@ -192,12 +193,12 @@ describe("OpenShell Homebrew service boundary", () => {
       throw new Error("managed start must not run");
     });
     const started = await startPackageManagedDockerDriverGateway({
+      observer: gatewayAdaptersForTest().observer,
       clearDockerDriverGatewayRuntimeFiles: () => {},
       exitOnFailure: false,
       gatewayName: "nemoclaw",
       hasOpenShellGatewayUserService: () => false,
       registerDockerDriverGatewayEndpoint: () => true,
-      runCaptureOpenshell: () => "",
       skipSandboxBridgeReachability: true,
       startOpenShellGatewayUserService: startService,
       verifySandboxBridgeGatewayReachableOrExit: async () => {},

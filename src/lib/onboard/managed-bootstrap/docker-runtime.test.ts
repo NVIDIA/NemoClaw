@@ -147,7 +147,11 @@ function compatibilityLifecycleInput(
       gatewayPort: 8080,
       reverifyBridgeReachability: vi.fn(),
     },
-    dependencies: { commandExecutor: successfulCommandExecutor(), ...dependencies },
+    dependencies: {
+      commandExecutor: successfulCommandExecutor(),
+      runOpenshell: vi.fn(() => ({ status: 0 })),
+      ...dependencies,
+    },
   };
 }
 
@@ -651,7 +655,10 @@ describe("Docker managed-bootstrap lifecycle composition", () => {
         gatewayPort: 0,
         reverifyBridgeReachability: () => undefined,
       },
-      dependencies: { commandExecutor: successfulCommandExecutor() },
+      dependencies: {
+        commandExecutor: successfulCommandExecutor(),
+        runOpenshell: vi.fn(() => ({ status: 0 })),
+      },
     });
     const child = new FakeChild();
     let ready = false;
@@ -758,7 +765,10 @@ describe("Docker managed-bootstrap lifecycle composition", () => {
         gatewayPort: 0,
         reverifyBridgeReachability: () => undefined,
       },
-      dependencies: { commandExecutor: successfulCommandExecutor() },
+      dependencies: {
+        commandExecutor: successfulCommandExecutor(),
+        runOpenshell: vi.fn(() => ({ status: 0 })),
+      },
     });
 
     await expect(
@@ -769,7 +779,9 @@ describe("Docker managed-bootstrap lifecycle composition", () => {
     )) as Error & { managedBootstrapRollbackError?: Error };
 
     expect(failure).toBeInstanceOf(Error);
-    expect(failure.message).toBe("commit acknowledgement lost");
+    expect(failure.message).toBe(
+      "commit acknowledgement lost\nManaged bootstrap rollback requires attention: Managed bootstrap rollback is no longer legal after commit finalization began.",
+    );
     expect(failure.managedBootstrapRollbackError?.message).toBe(
       "Managed bootstrap rollback is no longer legal after commit finalization began.",
     );

@@ -8,9 +8,10 @@ import {
 } from "./final-flow-phases";
 import { finalizationHandlerDeps } from "./finalization-deps";
 import type { OnboardFlowContext } from "./flow-context";
+import type { PortableOnboardRuntimeContext } from "../session-bootstrap";
 
 export { runFinalOnboardFlowSlice } from "./final-flow-phases";
-export { finalizationHandlerDeps } from "./finalization-deps";
+export { finalizationHandlerDeps, restartNativeGatewayForInitialSetup } from "./finalization-deps";
 
 type FinalizationHandlerDeps = typeof finalizationHandlerDeps;
 
@@ -20,8 +21,13 @@ export type FinalOnboardFlowCompositionOptions<
   VerificationResult extends VerifyDeploymentResult = VerifyDeploymentResult,
 > = Omit<
   FinalOnboardFlowPhaseOptions<Context, VerifyChain, VerificationResult>,
-  "finalizationDeps"
+  "agentSetupDeps" | "finalizationDeps"
 > & {
+  readonly portableRuntimeContext?: PortableOnboardRuntimeContext | null;
+  agentSetupDeps: Omit<
+    FinalOnboardFlowPhaseOptions<Context, VerifyChain, VerificationResult>["agentSetupDeps"],
+    "waitForSandboxControlPlaneReady"
+  >;
   finalizationDeps: Omit<
     FinalOnboardFlowPhaseOptions<Context, VerifyChain, VerificationResult>["finalizationDeps"],
     keyof FinalizationHandlerDeps
@@ -35,11 +41,34 @@ export function createFinalOnboardFlowPhases<
 >(
   options: FinalOnboardFlowCompositionOptions<Context, VerifyChain, VerificationResult>,
 ): ReturnType<typeof createFinalFlowPhases<Context, VerifyChain, VerificationResult>> {
+  const portableRuntime = options.portableRuntimeContext;
   return createFinalFlowPhases<Context, VerifyChain, VerificationResult>({
     ...options,
+    agentSetupDeps: {
+      ...options.agentSetupDeps,
+      waitForSandboxControlPlaneReady: finalizationHandlerDeps.waitForSandboxControlPlaneReady,
+    },
     finalizationDeps: {
       ...options.finalizationDeps,
       ...finalizationHandlerDeps,
+      ...(portableRuntime
+        ? {
+            checkAndRecoverSandboxProcesses: (name: string, options: { quiet: boolean }) => {
+              if (!portableRuntime.environmentScope) {
+                throw new Error(
+                  "Hermes portable finalization requires onboarding environment authority",
+                );
+              }
+              return finalizationHandlerDeps.checkAndRecoverSandboxProcesses(
+                name,
+                options,
+                portableRuntime.environmentScope.createHermesPortablePodmanSourceEnvironment(
+                  portableRuntime.authority,
+                ),
+              );
+            },
+          }
+        : {}),
     },
   });
 }

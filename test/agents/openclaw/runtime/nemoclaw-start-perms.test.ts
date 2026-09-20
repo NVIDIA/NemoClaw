@@ -56,6 +56,13 @@ function mode(filePath: string): number {
   return fs.statSync(filePath).mode & 0o7777;
 }
 
+function removeLegacyUpdateCheck(configDir: string) {
+  return spawnSync("python3", ["-I", normalizerFixture, "remove-legacy-update-check", configDir], {
+    encoding: "utf-8",
+    timeout: 5000,
+  });
+}
+
 function replaceRequired(source: string, target: string, replacement: string): string {
   const parts = source.split(target);
   expect(parts, `Expected exactly one replacement target: ${target}`).toHaveLength(2);
@@ -71,6 +78,55 @@ const configGuardFunction = extractShellFunction("run_openclaw_config_guard");
 const canRunPrivilegedPermissionFixture =
   process.platform === "linux" &&
   spawnSync("sudo", ["-n", "test", "-x", "/usr/bin/setpriv"], { stdio: "ignore" }).status === 0;
+
+describe("legacy OpenClaw update-check repair", () => {
+  it.each(["", '{"lastCheck":123}\n'])("removes stable cache content %j", (content) => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-update-check-"));
+    const configDir = path.join(root, ".openclaw");
+    const statePath = path.join(configDir, "update-check.json");
+    try {
+      fs.mkdirSync(configDir);
+      fs.writeFileSync(statePath, content, { mode: 0o640 });
+
+      const result = removeLegacyUpdateCheck(configDir);
+
+      expect(result.status, result.stderr).toBe(0);
+      expect(fs.existsSync(statePath)).toBe(false);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it.each(["symlink", "directory", "hardlink"] as const)(
+    "rejects an unsafe %s cache path",
+    (kind) => {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-update-check-unsafe-"));
+      const configDir = path.join(root, ".openclaw");
+      const statePath = path.join(configDir, "update-check.json");
+      const target = path.join(root, "target.json");
+      try {
+        fs.mkdirSync(configDir);
+        switch (kind) {
+          case "symlink":
+            fs.writeFileSync(target, "");
+            fs.symlinkSync(target, statePath);
+            break;
+          case "directory":
+            fs.mkdirSync(statePath);
+            break;
+          case "hardlink":
+            fs.writeFileSync(target, "{}");
+            fs.linkSync(target, statePath);
+            break;
+        }
+
+        expect(removeLegacyUpdateCheck(configDir).status).toBe(1);
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  );
+});
 
 function useTestRuntimeDirectory(source: string): string {
   let result = replaceRequired(
