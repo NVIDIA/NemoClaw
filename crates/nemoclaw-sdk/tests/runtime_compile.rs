@@ -24,12 +24,15 @@ fn multiple_services_share_image_acquisition_without_custom_capacity_gates() {
     assert!(graph["data"].get("nemoclaw_service_capacity").is_none());
     assert!(graph["data"].get("nemoclaw_gateway_capabilities").is_none());
     let containers = graph["resource"]["docker_container"].as_object().unwrap();
-    assert_eq!(containers.len(), 2);
+    assert_eq!(containers.len(), 3);
     assert_eq!(
         graph["resource"]["docker_image"].as_object().unwrap().len(),
-        1
+        2
     );
-    for attrs in containers.values() {
+    for (name, attrs) in containers {
+        if name == "managed_gateway_runtime" {
+            continue;
+        }
         assert!(attrs.get("lifecycle").is_none());
         assert_eq!(attrs["gpus"], "all");
         assert!(attrs["memory"].as_i64().unwrap() > 0);
@@ -52,8 +55,8 @@ fn managed_graph_separates_retained_storage_from_replaceable_processes() {
     .collect();
     let graph = compile_runtime(&document, &generations, "0.1.0").unwrap();
     let targets = runtime_targets(&document, &generations).unwrap();
-    assert_eq!(targets.len(), 5);
-    assert_eq!(graph["resource"].as_object().unwrap().len(), 5);
+    assert_eq!(targets.len(), 6);
+    assert_eq!(graph["resource"].as_object().unwrap().len(), 4);
     for kind in ["gateway_storage", "inference_storage"] {
         assert_eq!(
             graph["resource"][format!("nemoclaw_{kind}")][if kind == "gateway_storage" {
@@ -65,13 +68,13 @@ fn managed_graph_separates_retained_storage_from_replaceable_processes() {
         );
     }
     assert_eq!(
-        graph["resource"]["nemoclaw_managed_gateway"]["runtime"]["depends_on"],
+        graph["resource"]["docker_container"]["managed_gateway_runtime"]["depends_on"],
         json!(["nemoclaw_gateway_storage.runtime"])
     );
     assert_eq!(
         graph["resource"]["docker_container"]["inference_service_inference_qwen"]["depends_on"],
         json!([
-            "nemoclaw_managed_gateway.runtime",
+            "docker_container.managed_gateway_runtime",
             "nemoclaw_inference_storage.inference_qwen"
         ])
     );
@@ -87,20 +90,13 @@ fn managed_graph_separates_retained_storage_from_replaceable_processes() {
             "running is observed, not declared readiness"
         );
     }
-    let gateway: serde_json::Value = serde_json::from_str(
-        graph["resource"]["nemoclaw_managed_gateway"]["runtime"]["spec"]
-            .as_str()
-            .unwrap(),
-    )
-    .unwrap();
     let storage: serde_json::Value = serde_json::from_str(
         graph["resource"]["nemoclaw_gateway_storage"]["runtime"]["spec"]
             .as_str()
             .unwrap(),
     )
     .unwrap();
-    assert_eq!(gateway["layout"], 2);
-    assert!(storage.get("layout").is_none());
+    assert_eq!(storage["layout"], 1);
 }
 
 #[test]

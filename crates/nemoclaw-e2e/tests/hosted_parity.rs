@@ -161,18 +161,26 @@ mod live {
         let deployment = Deployment::new(&directory, &bundle);
         let cancel = CancellationToken::new();
 
+        let generations = ["workspace", "provider", "sandbox", "managed_gateway"]
+            .map(|kind| (kind.into(), "a".repeat(32)))
+            .into();
+        let mut runtime: Vec<_> = nemoclaw_sdk::compile::runtime_targets(&document, &generations)
+            .unwrap()
+            .into_iter()
+            .filter(|target| !target.address.starts_with("data."))
+            .map(|target| target.address)
+            .collect();
+        runtime.sort();
+        let runtime_create = changes(
+            &runtime.iter().map(String::as_str).collect::<Vec<_>>(),
+            "create",
+        );
         let plan = deployment.plan(&document, &cancel).await.unwrap();
         assert_eq!(
             plan,
             OperationResult {
                 outcome: Outcome::Planned,
-                changes: changes(
-                    &[
-                        "nemoclaw_gateway_storage.runtime",
-                        "nemoclaw_managed_gateway.runtime",
-                    ],
-                    "create"
-                ),
+                changes: runtime_create.clone(),
                 deferred: vec![
                     "OpenShell registration and sandbox require the managed gateway".into()
                 ],
@@ -182,21 +190,17 @@ mod live {
         );
         let applied = deployment.apply(&document, &cancel).await.unwrap();
         assert_eq!(applied.outcome, Outcome::Succeeded);
-        assert_eq!(
-            applied.changes,
-            changes(
-                &[
-                    "nemoclaw_gateway_storage.runtime",
-                    "nemoclaw_managed_gateway.runtime",
-                    "nemoclaw_provider.inference_hosted-nvidia-prod",
-                    "nemoclaw_provider_profile.inference_hosted-nvidia-prod",
-                    "nemoclaw_sandbox.assistant",
-                    "nemoclaw_workspace.deployment",
-                ],
-                "create"
-            )
-        );
-        assert!(applied.deferred.is_empty());
+        let mut expected = runtime_create;
+        expected.extend(changes(
+            &[
+                "nemoclaw_provider.inference_hosted-nvidia-prod",
+                "nemoclaw_provider_profile.inference_hosted-nvidia-prod",
+                "nemoclaw_sandbox.assistant",
+                "nemoclaw_workspace.deployment",
+            ],
+            "create",
+        ));
+        assert_eq!(applied.changes, expected);
         assert!(applied.retained.is_empty());
         assert_eq!(applied.health.len(), 1);
         assert_eq!(applied.health[0].sandbox, "assistant");
@@ -221,15 +225,22 @@ mod live {
         assert!(reapplied.changes.is_empty());
         assert!(reapplied.deferred.is_empty());
 
-        let removed = changes(
+        let mut removed = changes(
             &[
                 "nemoclaw_provider.inference_hosted-nvidia-prod",
                 "nemoclaw_provider_profile.inference_hosted-nvidia-prod",
                 "nemoclaw_sandbox.assistant",
-                "nemoclaw_managed_gateway.runtime",
             ],
             "delete",
         );
+        removed.extend(changes(
+            &runtime
+                .iter()
+                .filter(|address| address.as_str() != "nemoclaw_gateway_storage.runtime")
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+            "delete",
+        ));
         let retained = vec![
             "nemoclaw_workspace.deployment".into(),
             "nemoclaw_gateway_storage.runtime".into(),

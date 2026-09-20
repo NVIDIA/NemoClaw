@@ -325,7 +325,10 @@ pub(super) fn constrain(root: &mut Value) {
     ]}}));
     crate::services::constrain_schema(defs);
 
-    root["allOf"] = json!([]);
+    root["allOf"] = json!([{
+        "if": {"not": at("spec/sandboxes/[]/runtime/provider", json!({"const":"podman"}), true)},
+        "then": at("spec/gateway/imagePullPolicy", json!({"enum":["IfNotPresent", "Never"]}), false)
+    }]);
     let route_path = "spec/sandboxes/[]/agent/inference/routes/[]";
     root["allOf"].as_array_mut().unwrap().push(json!({
         "if": at(route_path, json!({"required":["providerRef"]}), true),

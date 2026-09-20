@@ -631,7 +631,7 @@
         },
         "imagePullPolicy": {
           "$ref": "#/$defs/ImagePullPolicy",
-          "description": "Image acquisition before container creation or restart. Omission means IfNotPresent; changing this does not restart a running container."
+          "description": "Image acquisition before container creation. Docker accepts IfNotPresent (the default) or Never; Podman also accepts Always before creation or restart."
         },
         "management": {
           "description": "Whether the SDK manages the gateway or connects to an existing one.",
@@ -3650,6 +3650,61 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
   "allOf": [
+    {
+      "if": {
+        "not": {
+          "properties": {
+            "spec": {
+              "properties": {
+                "sandboxes": {
+                  "items": {
+                    "properties": {
+                      "runtime": {
+                        "properties": {
+                          "provider": {
+                            "const": "podman"
+                          }
+                        },
+                        "required": [
+                          "provider"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "runtime"
+                    ]
+                  }
+                }
+              },
+              "required": [
+                "sandboxes"
+              ]
+            }
+          },
+          "required": [
+            "spec"
+          ]
+        }
+      },
+      "then": {
+        "properties": {
+          "spec": {
+            "properties": {
+              "gateway": {
+                "properties": {
+                  "imagePullPolicy": {
+                    "enum": [
+                      "IfNotPresent",
+                      "Never"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     {
       "if": {
         "properties": {

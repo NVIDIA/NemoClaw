@@ -202,3 +202,42 @@ async fn removing_the_last_runtime_cannot_orphan_retained_state() {
     );
     assert_eq!(fs::read(state).unwrap(), bytes);
 }
+
+#[test]
+fn docker_gateway_plan_uses_provider_reconciliation_but_requires_durable_identity() {
+    let (document, generations) = context();
+    let targets = compile::runtime_targets(&document, &generations).unwrap();
+    let gateway = targets
+        .iter()
+        .find(|target| target.kind == GATEWAY_KIND)
+        .unwrap();
+    let storage = targets
+        .iter()
+        .find(|target| target.kind == GATEWAY_STORAGE_KIND)
+        .unwrap();
+    let mut bindings = BTreeMap::from([(
+        gateway.address.clone(),
+        StateBinding {
+            id: "container".into(),
+            spec: String::new(),
+        },
+    )]);
+    assert!(runtime_bindings(&targets, &bindings).is_err());
+    bindings.insert(
+        storage.address.clone(),
+        StateBinding {
+            id: "durable".into(),
+            spec: storage.values["spec"].clone(),
+        },
+    );
+    for (actions, running) in [
+        (vec!["no-op"], true),
+        (vec!["delete", "create"], false),
+        (vec!["create"], false),
+    ] {
+        let plan: Plan = serde_json::from_value(json!({"resource_changes":[{"address":gateway.address,"change":{"actions":actions,"before":{"id":"container"}}}]})).unwrap();
+        let observed =
+            runtime_observations(&document, &generations, &targets, &bindings, &plan).unwrap();
+        assert_eq!(observed.gateway_running, running);
+    }
+}

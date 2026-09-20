@@ -20,7 +20,7 @@ impl ImagePullPolicy {
     pub(crate) fn validate_service(policy: Option<Self>) -> Result<(), super::ConfigError> {
         super::validation::require(
             policy != Some(Self::Always),
-            "managed service imagePullPolicy Always is unsupported; use IfNotPresent or Never",
+            "Docker-managed container imagePullPolicy Always is unsupported; use IfNotPresent or Never",
         )
     }
 

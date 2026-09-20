@@ -141,7 +141,7 @@ fn runtime_replacement_requires_retained_storage_and_preserves_the_old_binding()
 async fn managed_gateway_plan_apply_noop_destroy_and_recovery_use_real_opentofu() {
     let path =
         |name| PathBuf::from(std::env::var_os(name).expect("explicit managed qualification path"));
-    let document =
+    let mut document =
         Document::parse(fs::File::open(path("NEMOCLAW_TEST_GATEWAY_DOCUMENT")).unwrap()).unwrap();
     assert_eq!(document.spec.gateway.management, "managed");
     assert!(document.spec.inference_providers[0].service_ref.is_none());
@@ -190,7 +190,13 @@ async fn managed_gateway_plan_apply_noop_destroy_and_recovery_use_real_opentofu(
     let stage = Store::open(&store.directory.join("runtime")).unwrap();
     let first = stage.bindings().unwrap();
     drop(stage);
-    assert_eq!(first.len(), 2);
+    let docker = document.spec.sandboxes[0].runtime.provider == "docker";
+    let compute = if docker {
+        "docker_container.managed_gateway_runtime"
+    } else {
+        "nemoclaw_managed_gateway.runtime"
+    };
+    assert_eq!(first.len(), if docker { 3 } else { 2 });
     let (changes, deferred) = deployment
         .runtime_stage(&bundle, &store, &document, &mut record, true, &cancel)
         .await
@@ -201,9 +207,94 @@ async fn managed_gateway_plan_apply_noop_destroy_and_recovery_use_real_opentofu(
         assert_eq!(binding.id, first[&address].id);
     }
     drop(stage);
+    if docker {
+        for remove in [false, true] {
+            let old = engine.container(&name).await.unwrap().unwrap().id.unwrap();
+            engine.api.stop_container(&old, None).await.unwrap();
+            if remove {
+                engine.api.remove_container(&old, None).await.unwrap();
+            }
+            deployment
+                .runtime_stage(&bundle, &store, &document, &mut record, true, &cancel)
+                .await
+                .unwrap();
+            let current = engine.container(&name).await.unwrap().unwrap();
+            assert_eq!(current.state.unwrap().running, Some(true));
+            if remove {
+                assert_ne!(current.id.as_deref(), Some(old.as_str()));
+            }
+            assert_eq!(
+                Store::open(&store.directory.join("runtime"))
+                    .unwrap()
+                    .bindings()
+                    .unwrap()["nemoclaw_gateway_storage.runtime"]
+                    .id,
+                first["nemoclaw_gateway_storage.runtime"].id
+            );
+        }
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        drop(listener);
+        let old = engine.container(&name).await.unwrap().unwrap().id;
+        document.spec.gateway.endpoint = format!("http://127.0.0.1:{port}");
+        deployment
+            .runtime_stage(&bundle, &store, &document, &mut record, true, &cancel)
+            .await
+            .unwrap();
+        assert_ne!(engine.container(&name).await.unwrap().unwrap().id, old);
+        let stage = Store::open(&store.directory.join("runtime")).unwrap();
+        assert_eq!(
+            stage.bindings().unwrap()["nemoclaw_gateway_storage.runtime"].id,
+            first["nemoclaw_gateway_storage.runtime"].id
+        );
+        let state_path = stage.directory.join("terraform.tfstate");
+        let prior = fs::read(&state_path).unwrap();
+        drop(stage);
+        let data_path = engine
+            .volume(&format!("{name}-data"))
+            .await
+            .unwrap()
+            .unwrap()
+            .mountpoint;
+        let helper = engine
+            .container(&format!("{name}-initialize"))
+            .await
+            .unwrap()
+            .unwrap()
+            .id
+            .unwrap();
+        let key_path =
+            format!("{data_path}/state/openshell/gateway/credentials/key-encryption-key.bin");
+        let key = engine
+            .read_file(&helper, &key_path, 32)
+            .await
+            .unwrap()
+            .unwrap();
+        let mut replacement = key.clone();
+        replacement[0] ^= 1;
+        engine
+            .write_credential_key(&helper, &data_path, &replacement)
+            .await
+            .unwrap();
+        assert!(
+            deployment
+                .runtime_stage(&bundle, &store, &document, &mut record, true, &cancel)
+                .await
+                .is_err()
+        );
+        assert_eq!(fs::read(state_path).unwrap(), prior);
+        engine
+            .write_credential_key(&helper, &data_path, &key)
+            .await
+            .unwrap();
+        deployment
+            .runtime_stage(&bundle, &store, &document, &mut record, true, &cancel)
+            .await
+            .unwrap();
+    }
     drop(store);
     let plan = deployment.plan_destroy(&cancel).await.unwrap();
-    assert_eq!(plan.changes.len(), 1);
+    assert_eq!(plan.changes.len(), if docker { 2 } else { 1 });
     assert_eq!(plan.retained, vec!["nemoclaw_gateway_storage.runtime"]);
     deployment.destroy(&cancel).await.unwrap();
     assert!(engine.container(&name).await.unwrap().is_none());
@@ -219,10 +310,7 @@ async fn managed_gateway_plan_apply_noop_destroy_and_recovery_use_real_opentofu(
         recovered["nemoclaw_gateway_storage.runtime"].id,
         first["nemoclaw_gateway_storage.runtime"].id
     );
-    assert_ne!(
-        recovered["nemoclaw_managed_gateway.runtime"].id,
-        first["nemoclaw_managed_gateway.runtime"].id
-    );
+    assert_ne!(recovered[compute].id, first[compute].id);
     drop(stage);
     drop(store);
     deployment.destroy(&cancel).await.unwrap();
@@ -236,7 +324,7 @@ fn ollama_runtime_plan_recreates_compute_but_never_recreates_bound_storage() {
             .unwrap();
     let record = Record::new(document.clone()).unwrap();
     let expected = allowed(&compile::runtime_targets(&document, &record.generations).unwrap());
-    assert_eq!(expected.len(), 5);
+    assert_eq!(expected.len(), 6);
     let mut bindings = BTreeMap::from([(
         "docker_container.ollama_service_ollama-server".into(),
         StateBinding {

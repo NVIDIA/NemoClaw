@@ -7,14 +7,21 @@ use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 
 pub(crate) const VERSION: &str = "4.6.0";
-fn process(kind: &str) -> bool {
-    matches!(
-        kind,
-        "inference_service" | "ollama_service" | "ollama_proxy"
-    )
+fn process(target: &Target) -> bool {
+    (target.kind == crate::managed::GATEWAY_KIND
+        && spec(target).is_ok_and(|spec| spec.compute_driver == "docker"))
+        || matches!(
+            target.kind.as_str(),
+            "inference_service" | "ollama_service" | "ollama_proxy"
+        )
 }
 pub(crate) fn address(logical: &str) -> String {
-    for kind in ["inference_service", "ollama_service", "ollama_proxy"] {
+    for kind in [
+        "inference_service",
+        "ollama_service",
+        "ollama_proxy",
+        "managed_gateway",
+    ] {
         if let Some(name) = logical.strip_prefix(&format!("nemoclaw_{kind}.")) {
             return format!("docker_container.{kind}_{name}");
         }
@@ -55,15 +62,11 @@ fn image(target: &Target) -> Result<Target, Error> {
         )
     } else {
         let spec = spec(target)?;
-        let process = spec
+        let platform = spec
             .process
             .as_ref()
-            .ok_or(Error::State("missing runtime process"))?;
-        (
-            spec.engine().to_owned(),
-            spec.image().to_owned(),
-            Some(format!("linux/{}", process.architecture)),
-        )
+            .map(|process| format!("linux/{}", process.architecture));
+        (spec.engine().to_owned(), spec.image().to_owned(), platform)
     };
     let policy =
         ImagePullPolicy::from_row(&target.values)?.unwrap_or(ImagePullPolicy::IfNotPresent);
@@ -90,7 +93,7 @@ fn image(target: &Target) -> Result<Target, Error> {
     })
 }
 fn network(target: &Target) -> Result<Option<Target>, Error> {
-    if target.kind == "ollama_proxy" {
+    if matches!(target.kind.as_str(), "ollama_proxy" | "managed_gateway") {
         return Ok(None);
     }
     let spec = spec(target)?;
@@ -117,7 +120,7 @@ pub(crate) fn targets(raw: &[Target]) -> Result<Vec<Target>, Error> {
     let mut result = raw.to_vec();
     let mut ancillary: BTreeMap<String, Target> = BTreeMap::new();
     let mut platforms = BTreeMap::new();
-    for target in result.iter_mut().filter(|target| process(&target.kind)) {
+    for target in result.iter_mut().filter(|target| process(target)) {
         let image = image(target)?;
         if let Some(platform) = image.values.get("platform") {
             let key = (image.values["engine"].clone(), image.values["name"].clone());
@@ -179,6 +182,12 @@ fn container(target: &Target) -> Result<Value, Error> {
         );
     }
     let spec = spec(target)?;
+    if target.kind == crate::managed::GATEWAY_KIND {
+        let launch = spec.container("/NEMOCLAW_GATEWAY_DATA")?;
+        return Ok(
+            json!({"name":spec.name,"user":"0:0","labels":[{"label":crate::managed::OWNER_LABEL,"value":spec.owner}],"entrypoint":launch.entrypoint,"command":launch.cmd,"env":launch.env,"network_mode":"host","mounts":[{"type":"volume","source":spec.volume(),"target":"/NEMOCLAW_GATEWAY_DATA"},{"type":"bind","source":spec.gateway.engine.strip_prefix("unix://").ok_or(Error::State("gateway requires Unix engine"))?,"target":"/var/run/docker.sock"}],"capabilities":[{"drop":["ALL"]}],"security_opts":["no-new-privileges"],"restart":"no","log_driver":"json-file","log_opts":{"max-size":"32m","max-file":"3"},"must_run":true,"wait":false,"remove_volumes":false,"destroy_grace_seconds":60}),
+        );
+    }
     let process = spec
         .process
         .as_ref()
@@ -225,7 +234,7 @@ pub(crate) fn configure(graph: &mut Value, raw: &[Target]) -> Result<(), Error> 
             .ok_or(Error::State("invalid Docker resource address"))?;
         graph[section][kind][name] = attrs;
     }
-    for target in raw.iter().filter(|target| process(&target.kind)) {
+    for target in raw.iter().filter(|target| process(target)) {
         let (kind, name) = target
             .address
             .split_once('.')
@@ -236,7 +245,27 @@ pub(crate) fn configure(graph: &mut Value, raw: &[Target]) -> Result<(), Error> 
             .ok_or(Error::State("missing service resource"))?;
         let mut attrs = container(target)?;
         literal(&mut attrs);
+        if target.kind == crate::managed::GATEWAY_KIND {
+            fn storage_path(value: &mut Value) {
+                match value {
+                    Value::String(text) => {
+                        *text = text.replace(
+                            "/NEMOCLAW_GATEWAY_DATA",
+                            "${nemoclaw_gateway_storage.runtime.data_path}",
+                        )
+                    }
+                    Value::Array(items) => items.iter_mut().for_each(storage_path),
+                    Value::Object(items) => items.values_mut().for_each(storage_path),
+                    _ => {}
+                }
+            }
+            storage_path(&mut attrs);
+        }
         let image = image(target)?;
+        if target.kind == crate::managed::GATEWAY_KIND {
+            graph["resource"]["nemoclaw_gateway_storage"]["runtime"]["depends_on"] =
+                json!([image.address]);
+        }
         let attribute = if image.kind == "docker_image_data" {
             "id"
         } else {
@@ -291,6 +320,77 @@ mod tests {
         compile::{Generations, runtime_graph},
         config::Document,
     };
+    #[test]
+    fn docker_gateway_uses_retained_storage_outputs_and_native_compute() {
+        let document =
+            Document::parse(include_bytes!("../tests/fixtures/config/spark.yaml").as_slice())
+                .unwrap();
+        let generations = crate::state::Record::new(document.clone())
+            .unwrap()
+            .generations;
+        let graph = crate::compile::compile_runtime(&document, &generations, "0.1.0").unwrap();
+        let gateway = &graph["resource"]["docker_container"]["managed_gateway_runtime"];
+        assert_eq!(gateway["network_mode"], "host");
+        assert_eq!(gateway["user"], "0:0");
+        assert_eq!(
+            gateway["mounts"][0]["target"],
+            "${nemoclaw_gateway_storage.runtime.data_path}"
+        );
+        assert_eq!(gateway["mounts"][1]["target"], "/var/run/docker.sock");
+        assert_eq!(gateway["wait"], false);
+        assert_eq!(gateway["restart"], "no");
+        assert_eq!(
+            gateway["depends_on"],
+            json!(["nemoclaw_gateway_storage.runtime"])
+        );
+        assert!(graph["resource"]["nemoclaw_managed_gateway"].is_null());
+        let storage: Spec = serde_json::from_str(
+            graph["resource"]["nemoclaw_gateway_storage"]["runtime"]["spec"]
+                .as_str()
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(storage.layout, 1);
+        assert!(
+            graph["resource"]["docker_network"].is_null(),
+            "gateway bridge remains durable"
+        );
+        let mut changed = document.clone();
+        changed.spec.gateway.endpoint = "http://127.0.0.1:17682".into();
+        let updated = crate::compile::compile_runtime(&changed, &generations, "0.1.0").unwrap();
+        assert_eq!(
+            updated["resource"]["nemoclaw_gateway_storage"],
+            graph["resource"]["nemoclaw_gateway_storage"]
+        );
+    }
+    #[test]
+    fn podman_gateway_keeps_its_native_lifecycle_and_image_policy() {
+        let source =
+            Document::parse(include_bytes!("../tests/fixtures/config/spark.yaml").as_slice())
+                .unwrap();
+        let mut document =
+            Document::parse(include_bytes!("../tests/fixtures/config/local.yaml").as_slice())
+                .unwrap();
+        document.spec.gateway = source.spec.gateway;
+        document.spec.gateway.image_pull_policy = Some(ImagePullPolicy::Always);
+        document.spec.sandboxes[0].runtime.provider = "podman".into();
+        let generations = crate::state::Record::new(document.clone())
+            .unwrap()
+            .generations;
+        let graph = crate::compile::compile_runtime(&document, &generations, "0.1.0").unwrap();
+        assert!(graph["resource"]["docker_container"].is_null());
+        assert_eq!(
+            graph["resource"]["nemoclaw_managed_gateway"]["runtime"]["image_pull_policy"],
+            "Always"
+        );
+        let storage: Spec = serde_json::from_str(
+            graph["resource"]["nemoclaw_gateway_storage"]["runtime"]["spec"]
+                .as_str()
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(storage.layout, 0);
+    }
     #[test]
     fn delegated_compute_uses_provider_identity_and_preserves_retained_storage() {
         let document =
@@ -427,6 +527,7 @@ mod tests {
         .map(|kind| (kind.into(), "b".repeat(32)))
         .into();
         let (mut graph, mut raw) = runtime_graph(&document, &generations, "0.1.0").unwrap();
+        raw.retain(|target| target.kind != crate::managed::GATEWAY_KIND);
         for target in raw
             .iter_mut()
             .filter(|target| target.kind == "inference_service")

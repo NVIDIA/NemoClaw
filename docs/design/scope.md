@@ -9,8 +9,8 @@ Maintainer cvillela owns this design and its acceptance, recorded on 2026-09-14.
 NemoClaw provides a public desired-state SDK, its CLI, and an OpenTofu provider.
 The SDK owns deployment behavior; the CLI owns arguments, terminal output, and exit codes.
 OpenTofu owns graph execution and resource state.
-The Docker provider owns managed inference and proxy containers, their images, and service-owned networks.
-The NemoClaw provider owns OpenShell operations, managed gateways, and resources with application-specific persistence contracts.
+The Docker provider owns Docker gateway, inference, and proxy containers, their images, and service-owned networks.
+The NemoClaw provider owns OpenShell operations, Podman gateway processes, gateway initialization and retained bridges, and resources with application-specific persistence contracts.
 Add a crate only when it has a consumer and a dependency or deployment boundary that justifies it.
 
 The [architecture](architecture.md), [runtime](runtime.md), [execution-target](execution-targets.md), and [recipe](recipes.md) guides explain these boundaries and the implementation and tests behind them.
@@ -22,8 +22,8 @@ Reject unsupported state without silently adopting, replacing, or deleting its r
 
 - Validate configuration strictly and retain intent, configuration digests, secret references, and durable data bindings across operations.
 - Lock deployment state while coordinating an operation and retain provider state and operation progress to recover from partial creation or deletion.
-- Treat inference and proxy containers and service-owned networks as disposable compute; the Docker provider may recreate or replace them during explicit apply.
-- Verify ownership, generation, and durable identity for persistent data, credentials, managed gateways, and OpenShell resources before modification.
+- Treat Docker gateway, inference, and proxy containers and service-owned networks as disposable compute; the Docker provider may recreate or replace them during explicit apply.
+- Verify ownership, generation, and durable identity for persistent data, credentials, Podman gateway processes, and OpenShell resources before modification.
 - Use provider resource identities and reconciliation for disposable compute instead of requiring stable physical IDs across recovery.
 - Only confirmed absence may remove a resource from state.
 - Authentication, transport, extension, query, and incomplete-observation failures must stop planning and preserve prior bindings.

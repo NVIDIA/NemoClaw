@@ -120,6 +120,14 @@ impl Document {
         )?;
         if gateway.management == "managed" {
             gateway.validate_managed()?;
+            if self
+                .spec
+                .sandboxes
+                .iter()
+                .any(|sandbox| sandbox.runtime.provider == "docker")
+            {
+                super::ImagePullPolicy::validate_service(gateway.image_pull_policy)?;
+            }
         } else {
             require(
                 gateway.engine.is_empty()

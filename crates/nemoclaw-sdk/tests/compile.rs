@@ -59,7 +59,7 @@ fn image_pull_policy_reaches_the_engine_without_changing_runtime_identity() {
     let mut document =
         Document::parse(include_str!("fixtures/config/spark.yaml").as_bytes()).unwrap();
     let before = compile_runtime(&document, &generations, "0.1.0").unwrap();
-    document.spec.gateway.image_pull_policy = Some(ImagePullPolicy::Always);
+    document.spec.gateway.image_pull_policy = Some(ImagePullPolicy::IfNotPresent);
     let nemoclaw_sdk::services::ServiceDefinition::Vllm(service) =
         document.spec.services.values_mut().next().unwrap()
     else {
@@ -75,26 +75,7 @@ fn image_pull_policy_reaches_the_engine_without_changing_runtime_identity() {
             .values["image_pull_policy"],
         "IfNotPresent"
     );
-    let mut after = compile_runtime(&document, &generations, "0.1.0").unwrap();
-    for (kind, expected) in [
-        ("nemoclaw_managed_gateway", "Always"),
-        ("nemoclaw_gateway_storage", "Always"),
-    ] {
-        for resource in after["resource"][kind]
-            .as_object_mut()
-            .unwrap()
-            .values_mut()
-        {
-            assert_eq!(
-                resource
-                    .as_object_mut()
-                    .unwrap()
-                    .remove("image_pull_policy")
-                    .unwrap(),
-                expected
-            );
-        }
-    }
+    let after = compile_runtime(&document, &generations, "0.1.0").unwrap();
     assert_eq!(after, before);
 
     let mut document =
@@ -107,7 +88,10 @@ fn image_pull_policy_reaches_the_engine_without_changing_runtime_identity() {
     };
     service.image_pull_policy = Some(ImagePullPolicy::Never);
     let after = compile_runtime(&document, &generations, "0.1.0").unwrap();
-    assert!(after["resource"].get("docker_image").is_none());
+    assert_eq!(
+        after["resource"]["docker_image"].as_object().unwrap().len(),
+        1
+    );
     assert_eq!(after["data"]["docker_image"].as_object().unwrap().len(), 1);
     let mut before_container =
         before["resource"]["docker_container"]["ollama_service_ollama-server"].clone();

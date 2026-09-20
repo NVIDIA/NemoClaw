@@ -52,7 +52,7 @@ impl Record {
             );
         }
         Ok(Self {
-            version: 4,
+            version: 5,
             digest: document.digest(),
             document,
             generations,
@@ -60,9 +60,9 @@ impl Record {
         })
     }
     fn validate(&self) -> Result<(), Error> {
-        if self.version != 4 {
+        if self.version != 5 {
             return Err(Error::State(
-                "deployment predates Docker-provider compute ownership; retain state and use the original NemoClaw version for recovery or teardown",
+                "deployment predates Docker-provider gateway ownership; retain state and use the original NemoClaw version for recovery or teardown",
             ));
         }
         let service_generations_valid = crate::services::generation_kinds(&self.document)

@@ -41,10 +41,20 @@ fn runtime_targets_with_plans(
         process: None,
     };
     let mut storage = gateway.clone();
-    storage.layout = 0;
+    storage.layout = if gateway.compute_driver == "docker" {
+        1
+    } else {
+        0
+    };
+    if storage.layout == 1 {
+        // The listen port changes compute, not initialized data or credentials.
+        storage.gateway.endpoint = "http://127.0.0.1:8080".into();
+    }
     let target = |kind: &str, spec: String| {
         let mut values = Row::from([("spec".into(), spec)]);
-        if let Some(policy) = document.spec.gateway.image_pull_policy {
+        if (kind != GATEWAY_STORAGE_KIND || storage.layout == 0)
+            && let Some(policy) = document.spec.gateway.image_pull_policy
+        {
             values.insert("image_pull_policy".into(), policy.as_str().into());
         }
         Target {

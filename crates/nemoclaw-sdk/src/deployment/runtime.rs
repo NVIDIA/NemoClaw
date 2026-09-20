@@ -124,6 +124,15 @@ fn runtime_bindings(
         ));
     }
     for target in targets {
+        if target.kind == GATEWAY_KIND
+            && plan::disposable(&target.address)
+            && bindings.contains_key(&target.address)
+            && !bindings.contains_key(GATEWAY_STORAGE)
+        {
+            return Err(Error::Conflict(
+                "gateway compute requires its retained storage binding",
+            ));
+        }
         if plan::disposable(&target.address) || target.address.starts_with("data.") {
             continue;
         }
@@ -179,6 +188,18 @@ fn runtime_observations(
         })
         .map(|target| target.address.clone())
         .collect();
+    if let Some(gateway) = targets
+        .iter()
+        .find(|target| target.kind == GATEWAY_KIND && plan::disposable(&target.address))
+    {
+        result.gateway_running = plan.resource_changes.iter().any(|change| {
+            change.address == gateway.address
+                && change.change.actions == ["no-op"]
+                && change.change.before["id"]
+                    .as_str()
+                    .is_some_and(|id| !id.is_empty())
+        });
+    }
     for target in targets.iter().filter(|target| {
         !plan::disposable(&target.address)
             && (target.kind == GATEWAY_KIND

@@ -24,19 +24,34 @@ async fn existing_spark_runtime_bindings_are_observed_without_mutations() {
         let attributes = &instances[0]["attributes"];
         let id = attributes["id"].as_str().unwrap();
         if resource["type"] == "docker_container" {
+            let gateway = resource["name"] == "managed_gateway_runtime";
             let storage = state["resources"]
                 .as_array()
                 .unwrap()
                 .iter()
-                .find(|resource| resource["type"] == "nemoclaw_inference_storage")
+                .find(|resource| {
+                    resource["type"]
+                        == if gateway {
+                            "nemoclaw_gateway_storage"
+                        } else {
+                            "nemoclaw_inference_storage"
+                        }
+                })
                 .unwrap();
-            let storage: nemoclaw_sdk::managed::Storage = serde_json::from_str(
-                storage["instances"][0]["attributes"]["spec"]
-                    .as_str()
-                    .unwrap(),
-            )
-            .unwrap();
-            let engine = Engine::connect(&storage.engine).unwrap();
+            let encoded = storage["instances"][0]["attributes"]["spec"]
+                .as_str()
+                .unwrap();
+            let endpoint = if gateway {
+                serde_json::from_str::<Spec>(encoded)
+                    .unwrap()
+                    .gateway
+                    .engine
+            } else {
+                serde_json::from_str::<nemoclaw_sdk::managed::Storage>(encoded)
+                    .unwrap()
+                    .engine
+            };
+            let engine = Engine::connect(&endpoint).unwrap();
             let actual = engine
                 .container(id)
                 .await

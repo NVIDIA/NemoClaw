@@ -161,7 +161,9 @@ impl Engine {
             };
         }
         if missing && create {
-            self.ensure_image(spec).await?;
+            if spec.layout == 0 {
+                self.ensure_image(spec).await?;
+            }
             self.ensure_network(spec).await?;
             if volume.is_none() {
                 self.api
@@ -196,7 +198,7 @@ impl Engine {
             ));
         }
         if create && (missing || created) {
-            if !missing {
+            if !missing && spec.layout == 0 {
                 self.ensure_image(spec).await?;
             }
             self.initialize_gateway(spec, data_path).await?;
