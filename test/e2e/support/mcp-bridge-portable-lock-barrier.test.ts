@@ -156,8 +156,9 @@ describe("MCP Portable host lock overlap barrier", () => {
     const fixture = createBarrierFixture();
     const timing = fakeTiming(fixture, () => {
       const owner = path.join(fixture.lockDir, "owner");
-      fs.unlinkSync(owner);
-      fs.writeFileSync(owner, `${String(PID)}\n`, { mode: 0o600 });
+      const replacement = path.join(fixture.lockDir, "owner.replacement");
+      fs.writeFileSync(replacement, `${String(PID)}\n`, { mode: 0o600 });
+      fs.renameSync(replacement, owner);
     });
 
     await expect(pausePortableHostLockOwner(options(fixture), timing.deps)).rejects.toThrow(
