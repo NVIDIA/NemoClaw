@@ -391,3 +391,57 @@ async fn unavailable_bound_gateway_blocks_bootstrap_replacement_before_apply() {
     fixture.state.lock().unwrap().fail_read = None;
     tofu.noop();
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires explicit NEMOCLAW_TEST_TOFU and NEMOCLAW_TEST_PROVIDER; isolated OpenShell fixture"]
+async fn gateway_readiness_dependency_waits_for_startup_before_workspace_creation() {
+    let fixture = Fixture::start().await;
+    fixture.state.lock().unwrap().fail_read = Some(("gateway", tonic::Code::Unavailable));
+    let tofu = Standalone::new(&fixture.endpoint);
+    tofu.deferred_endpoint();
+    let path = tofu.root.path().join("main.tf");
+    let source = fs::read_to_string(&path).unwrap().replace(
+        "resource \"nemoclaw_workspace\" \"example\" {",
+        "resource \"nemoclaw_workspace\" \"example\" {\n depends_on = [data.nemoclaw_gateway_capabilities.ready]",
+    );
+    fs::write(
+        path,
+        source
+            + r#"
+ data "nemoclaw_gateway_capabilities" "ready" {
+   required_compute_drivers = ["docker"]
+   wait_timeout_seconds = 5
+   depends_on = [terraform_data.bootstrap]
+   lifecycle {
+     postcondition {
+       condition = self.compatible
+       error_message = "Gateway does not support Docker."
+     }
+   }
+ }
+"#,
+    )
+    .unwrap();
+    tofu.run(&["plan", "-input=false", "-out=ready.plan"], true);
+    assert_eq!(fixture.state.lock().unwrap().gateway_reads, 0);
+    let state = fixture.state.clone();
+    let startup = tokio::spawn(async move {
+        loop {
+            {
+                let mut state = state.lock().unwrap();
+                if state.gateway_reads >= 2 {
+                    assert_eq!(
+                        state.effects, 0,
+                        "resources created before gateway readiness"
+                    );
+                    state.fail_read = None;
+                    break;
+                }
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    });
+    tofu.run(&["apply", "-input=false", "ready.plan"], true);
+    startup.await.unwrap();
+    tofu.noop();
+}

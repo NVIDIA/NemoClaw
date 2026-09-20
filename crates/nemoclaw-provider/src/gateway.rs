@@ -3,8 +3,10 @@
 
 use crate::provider::ConfiguredBackend;
 use async_trait::async_trait;
+use nemoclaw_sdk::ObservationError;
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeSet, sync::Arc};
+use std::{future::Future, time::Duration};
 use tf_provider::{
     AttributePath, DataSource, Diagnostics,
     schema::{Attribute, AttributeConstraint, AttributeType, Block, Schema},
@@ -16,6 +18,7 @@ pub(crate) struct GatewayDataSource(pub Arc<ConfiguredBackend>);
 #[derive(Serialize, Deserialize)]
 pub(crate) struct GatewayState {
     required_compute_drivers: Value<Vec<Value<String>>>,
+    wait_timeout_seconds: Value<u64>,
     gateway_version: Value<String>,
     compute_drivers: Value<BTreeSet<String>>,
     compatible: Value<bool>,
@@ -42,7 +45,36 @@ fn requirements(diags: &mut Diagnostics, config: &GatewayState) -> Option<()> {
         );
         return None;
     }
+    if matches!(config.wait_timeout_seconds, Value::Value(seconds) if seconds > 300) {
+        diags.error(
+            "Invalid gateway wait",
+            "Use a timeout from 0 to 300 seconds.",
+            AttributePath::new("wait_timeout_seconds"),
+        );
+        return None;
+    }
     Some(())
+}
+
+async fn observe_with_wait<T, F: Future<Output = Result<T, ObservationError>>>(
+    timeout: Duration,
+    mut observe: impl FnMut() -> F,
+) -> Result<T, ObservationError> {
+    if timeout.is_zero() {
+        return observe().await;
+    }
+    tokio::time::timeout(timeout, async {
+        loop {
+            match observe().await {
+                Err(ObservationError::Transport) => {
+                    tokio::time::sleep(Duration::from_millis(200)).await
+                }
+                result => return result,
+            }
+        }
+    })
+    .await
+    .unwrap_or(Err(ObservationError::Transport))
 }
 
 #[async_trait]
@@ -55,6 +87,11 @@ impl DataSource for GatewayDataSource {
             version: 0,
             block: Block {
                 attributes: [
+                    (
+                        "wait_timeout_seconds",
+                        AttributeType::Number,
+                        AttributeConstraint::Optional,
+                    ),
                     (
                         "required_compute_drivers",
                         AttributeType::Set(Box::new(AttributeType::String)),
@@ -118,8 +155,21 @@ impl DataSource for GatewayDataSource {
             diags.root_error_short("Gateway requirements are not yet known");
             return None;
         };
+        let timeout = match config.wait_timeout_seconds {
+            Value::Null => 0,
+            Value::Value(seconds) => seconds,
+            Value::Unknown => {
+                diags.root_error_short("Gateway wait is not yet known");
+                return None;
+            }
+        };
         let observed = match self.0.client() {
-            Ok(client) => client.gateway_capabilities().await,
+            Ok(client) => {
+                observe_with_wait(Duration::from_secs(timeout), || {
+                    client.gateway_capabilities()
+                })
+                .await
+            }
             Err(error) => Err(error),
         };
         match observed {
@@ -160,6 +210,7 @@ mod tests {
         ] {
             let config = GatewayState {
                 required_compute_drivers: drivers,
+                wait_timeout_seconds: Value::Null,
                 gateway_version: Value::Null,
                 compute_drivers: Value::Null,
                 compatible: Value::Null,
@@ -171,5 +222,84 @@ mod tests {
             );
             assert!(!format!("{diagnostics:?}").contains("PRIVATE_SENTINEL"));
         }
+    }
+}
+
+#[cfg(test)]
+mod wait_tests {
+    use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    #[tokio::test]
+    async fn wait_timeout_is_optional_deferred_or_bounded() {
+        let source = GatewayDataSource(Arc::new(ConfiguredBackend::default()));
+        for (timeout, valid) in [
+            (Value::Null, true),
+            (Value::Unknown, true),
+            (Value::Value(0), true),
+            (Value::Value(300), true),
+            (Value::Value(301), false),
+        ] {
+            let config = GatewayState {
+                required_compute_drivers: Value::Value(vec![Value::Value("docker".into())]),
+                wait_timeout_seconds: timeout,
+                gateway_version: Value::Null,
+                compute_drivers: Value::Null,
+                compatible: Value::Null,
+            };
+            let mut diagnostics = Diagnostics::default();
+            assert_eq!(
+                source.validate(&mut diagnostics, config).await.is_some(),
+                valid
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn waits_only_for_transport_and_bounds_stalled_observations() {
+        let calls = AtomicUsize::new(0);
+        let result = observe_with_wait(Duration::from_secs(2), || {
+            std::future::ready(if calls.fetch_add(1, Ordering::SeqCst) == 0 {
+                Err(ObservationError::Transport)
+            } else {
+                Ok("ready")
+            })
+        })
+        .await;
+        assert_eq!(result.unwrap(), "ready");
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+        for error in [
+            ObservationError::Authentication,
+            ObservationError::Permission,
+            ObservationError::Query,
+            ObservationError::Incomplete,
+        ] {
+            let calls = AtomicUsize::new(0);
+            assert_eq!(
+                observe_with_wait::<(), _>(Duration::from_secs(2), || {
+                    calls.fetch_add(1, Ordering::SeqCst);
+                    std::future::ready(Err(error))
+                })
+                .await
+                .unwrap_err(),
+                error
+            );
+            assert_eq!(calls.load(Ordering::SeqCst), 1);
+        }
+        let calls = AtomicUsize::new(0);
+        assert!(
+            observe_with_wait::<(), _>(Duration::ZERO, || {
+                calls.fetch_add(1, Ordering::SeqCst);
+                std::future::ready(Err(ObservationError::Transport))
+            })
+            .await
+            .is_err()
+        );
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            observe_with_wait::<(), _>(Duration::from_millis(20), std::future::pending)
+                .await
+                .unwrap_err(),
+            ObservationError::Transport
+        );
     }
 }
