@@ -31,8 +31,14 @@ function runPatchedApprove(json: boolean) {
     runner,
     `const realExit = globalThis.process.exit.bind(globalThis.process);
 ${source}
-defaultRuntime.log = (value) => process.stdout.write(\`${"${String(value)}"}\\n\`);
-defaultRuntime.writeJson = (value) => process.stdout.write(\`${"${JSON.stringify(value)}"}\\n\`);
+defaultRuntime.log = (value) => {
+  process.stdout.write(\`${"${String(value)}"}\\n\`);
+  process.stderr.write("approved-stderr\\n");
+};
+defaultRuntime.writeJson = (value) => {
+  process.stdout.write(\`${"${JSON.stringify(value)}"}\\n\`);
+  process.stderr.write("approved-stderr\\n");
+};
 defaultRuntime.exit = (code) => realExit(code);
 setInterval(() => {}, 1000);
 runDevicesApproveSuccess(${JSON.stringify(APPROVAL)}, { json: ${String(json)} });
@@ -46,6 +52,7 @@ runDevicesApproveSuccess(${JSON.stringify(APPROVAL)}, { json: ${String(json)} })
   expect(result.error).toBeUndefined();
   expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
   expect(result.signal).toBeNull();
+  expect(result.stderr).toBe("approved-stderr\n");
   return result.stdout;
 }
 

@@ -37,8 +37,9 @@
  * On the local-fallback approve path, a failed gateway connect can leave
  * handles open. OpenClaw then prints Approved and returns without exiting, so
  * `openclaw devices approve` hangs and `nemoclaw connect` waits with it
- * (#12064). Drain stdout and force `defaultRuntime.exit(0)` after a successful
- * approve until upstream closes those handles or exits after Approved.
+ * (#12064). Drain stdout and stderr, then force `defaultRuntime.exit(0)` after
+ * a successful approve until upstream closes those handles or exits after
+ * Approved.
  *
  * Remove this patch when upstream OpenClaw supports same-device, operator-only
  * scope approval through the gateway using the already-approved pairing scope
@@ -395,10 +396,17 @@ const CLI_APPROVE_EXIT_TARGET = [
 ].join("\n");
 const CLI_APPROVE_EXIT_REPLACEMENT = [
   "\tconst exitAfterDevicesApproveOutput = () => {",
-  "\t\ttry {",
-  '\t\t\tprocess.stdout.write("", () => defaultRuntime.exit(0));',
-  "\t\t} catch {",
-  "\t\t\tdefaultRuntime.exit(0);",
+  "\t\tlet remaining = 2;",
+  "\t\tconst done = () => {",
+  "\t\t\tremaining -= 1;",
+  "\t\t\tif (remaining === 0) defaultRuntime.exit(0);",
+  "\t\t};",
+  "\t\tfor (const stream of [process.stdout, process.stderr]) {",
+  "\t\t\ttry {",
+  '\t\t\t\tstream.write("", done);',
+  "\t\t\t} catch {",
+  "\t\t\t\tdone();",
+  "\t\t\t}",
   "\t\t}",
   `\t}; // ${CLI_APPROVE_EXIT_MARKER} (#12064)`,
   "\tif (opts.json) {",
