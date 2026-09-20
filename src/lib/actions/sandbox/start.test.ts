@@ -529,8 +529,14 @@ describe("startSandbox native lifecycle", () => {
       exitCode: 1,
     });
 
-    expect(probeGatewayProcess).toHaveBeenCalledTimes(3);
-    expect(delayGatewayProcessProbe.mock.calls).toEqual([[2_000], [2_000]]);
+    expect(probeGatewayProcess).toHaveBeenCalledTimes(6);
+    expect(delayGatewayProcessProbe.mock.calls).toEqual([
+      [2_000],
+      [2_000],
+      [2_000],
+      [2_000],
+      [2_000],
+    ]);
     expect(h.verifyGateway).not.toHaveBeenCalled();
     expect(probeInferenceInvocation).not.toHaveBeenCalled();
   });
@@ -556,8 +562,14 @@ describe("startSandbox native lifecycle", () => {
 
     await expect(startSandbox("my-sandbox", h.deps)).resolves.toEqual({ exitCode: 1 });
 
-    expect(probeGatewayProcess).toHaveBeenCalledTimes(3);
-    expect(delayGatewayProcessProbe.mock.calls).toEqual([[2_000], [2_000]]);
+    expect(probeGatewayProcess).toHaveBeenCalledTimes(6);
+    expect(delayGatewayProcessProbe.mock.calls).toEqual([
+      [2_000],
+      [2_000],
+      [2_000],
+      [2_000],
+      [2_000],
+    ]);
     expect(h.verifyGateway).not.toHaveBeenCalled();
   });
 

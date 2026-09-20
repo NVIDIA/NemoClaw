@@ -21,8 +21,8 @@ import {
 
 describe("launch-readiness gateway health scope", () => {
   it.each([
-    ["becomes observable", [null, null, true], true],
-    ["remains unavailable", [null, null, null], false],
+    ["becomes observable", [null, null, null, null, null, true], true],
+    ["remains unavailable", [null, null, null, null, null, null], false],
   ] as const)(
     "bounds a managed Hermes startup observation that %s",
     async (_case, results, expected) => {
@@ -34,8 +34,8 @@ describe("launch-readiness gateway health scope", () => {
         waitForStartedHermesGatewayProcess("alpha", "nemoclaw-19080", { probe, sleep }),
       ).resolves.toBe(expected);
 
-      expect(probe).toHaveBeenCalledTimes(3);
-      expect(sleep.mock.calls).toEqual([[2_000], [2_000]]);
+      expect(probe).toHaveBeenCalledTimes(6);
+      expect(sleep.mock.calls).toEqual([[2_000], [2_000], [2_000], [2_000], [2_000]]);
     },
   );
 
