@@ -5,13 +5,22 @@ title: "Set Up Task-Specific Sub-Agents"
 sidebar-title: "Set Up Task-Specific Sub-Agents"
 description: "Where NemoClaw stores OpenClaw sub-agent model configuration, credentials, and workspace files inside the sandbox."
 description-agent: "Shows the NemoClaw-specific file paths and update flow for adding an auxiliary OpenClaw sub-agent model. Use when users ask how to add a second model, configure a sub-agent model, use Omni for vision tasks, configure agents.list, or use sessions_spawn in NemoClaw."
-keywords: ["nemoclaw additional model", "nemoclaw sub-agent model", "openclaw sub-agent", "agents.list", "sessions_spawn", "vlm-demo"]
+keywords:
+  [
+    "nemoclaw additional model",
+    "nemoclaw sub-agent model",
+    "openclaw sub-agent",
+    "agents.list",
+    "sessions_spawn",
+    "vlm-demo",
+  ]
 content:
   type: "how_to"
 skill:
   priority: 30
 agent-variants: ["openclaw"]
 ---
+
 OpenClaw documents the sub-agent behavior, `sessions_spawn` tool, `agents.list` configuration, tool policy, nesting, and auth model in [Sub-Agents](https://docs.openclaw.ai/tools/subagents).
 Use that page as the source of truth for how OpenClaw sub-agents work.
 
@@ -24,12 +33,12 @@ It also shows how the Omni VLM demo maps onto those paths.
 NemoClaw runs OpenClaw inside an OpenShell sandbox.
 Use these paths inside the sandbox when you adapt an OpenClaw sub-agent setup:
 
-| Path | Purpose |
-|---|---|
-| `/sandbox/.openclaw/openclaw.json` | OpenClaw config, including `models.providers`, `agents.defaults`, and `agents.list`. |
+| Path                                                            | Purpose                                                                                         |
+| --------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| `/sandbox/.openclaw/openclaw.json`                              | OpenClaw config, including `models.providers`, `agents.defaults`, and `agents.list`.            |
 | `/sandbox/.openclaw/agents/<agent-id>/agent/auth-profiles.json` | Per-agent provider credentials. Use this when a sub-agent calls an auxiliary provider directly. |
-| `/sandbox/.openclaw/workspace/` | Writable shared workspace path for files the primary agent passes to the sub-agent. |
-| `/tmp/gateway.log` | OpenClaw gateway log. Use it to confirm config reloads and diagnose sub-agent failures. |
+| `/sandbox/.openclaw/workspace/`                                 | Writable shared workspace path for files the primary agent passes to the sub-agent.             |
+| `/tmp/gateway.log`                                              | OpenClaw gateway log. Use it to confirm config reloads and diagnose sub-agent failures.         |
 
 For file-based tasks, instruct agents to use `/sandbox/.openclaw/workspace/`.
 Avoid relying on legacy `.openclaw-data` paths or read-only OpenClaw paths in delegation instructions.
@@ -40,14 +49,14 @@ The [`vlm-demo`](https://github.com/brevdev/nemoclaw-demos/tree/main/vlm-demo) a
 It keeps the primary `main` agent on the normal NemoClaw inference route.
 It adds a `vision-operator` sub-agent backed by an Omni vision model.
 
-| OpenClaw field | Omni example value |
-|---|---|
-| Primary agent | `main` |
-| Primary model | `inference/nvidia/nemotron-3-super-120b-a12b` |
-| Auxiliary provider | `nvidia-omni` |
-| Sub-agent | `vision-operator` |
-| Sub-agent model | `nvidia-omni/nvidia/nemotron-3-nano-omni-30b-a3b-reasoning` |
-| Delegation tool | `sessions_spawn` |
+| OpenClaw field     | Omni example value                                          |
+| ------------------ | ----------------------------------------------------------- |
+| Primary agent      | `main`                                                      |
+| Primary model      | `inference/nvidia/nemotron-3-super-120b-a12b`               |
+| Auxiliary provider | `nvidia-omni`                                               |
+| Sub-agent          | `vision-operator`                                           |
+| Sub-agent model    | `nvidia-omni/nvidia/nemotron-3-nano-omni-30b-a3b-reasoning` |
+| Delegation tool    | `sessions_spawn`                                            |
 
 The sub-agent uses Omni as the specialist model for image tasks.
 The primary orchestration model remains responsible for conversation, planning, and deciding when to delegate.
@@ -55,13 +64,14 @@ The primary orchestration model remains responsible for conversation, planning, 
 ## Update the Sandbox Config
 
 <Note>
-Finish the [Quickstart](../get-started/quickstart) and start the target sandbox before you run the `docker exec` commands in this section.
-These commands run on the host that owns the sandbox containers and discover the running sandbox container from the `openshell.ai/sandbox-name` Docker label.
-If you have not created a sandbox yet, onboard one first, such as `my-assistant`.
+  Finish the [Quickstart](../get-started/quickstart) and start the target sandbox before you run the
+  `docker exec` commands in this section. These commands run on the host that owns the sandbox
+  containers and discover the running sandbox container from the `openshell.ai/sandbox-name` Docker
+  label. If you have not created a sandbox yet, onboard one first, such as `my-assistant`.
 </Note>
 
 Fetch the current OpenClaw config from the sandbox.
-Patch it with your auxiliary provider and `agents.list` changes, then upload it.
+Patch it with your auxiliary provider and `agents.list` changes, then apply those values with native OpenClaw config commands.
 Run the following commands from the host that owns the sandbox containers when you use Docker-driver sandboxes.
 
 ### Export the Current Config
@@ -113,26 +123,69 @@ It writes the patched config to `/tmp/openclaw.updated.json`.
 
 For a sub-agent other than the Omni example, copy the exported config to `/tmp/openclaw.updated.json`.
 Use `cp /tmp/openclaw.json /tmp/openclaw.updated.json`.
-Before uploading the file, add your provider under `models.providers` and your sub-agent under `agents.list`.
+Before applying the file, add your provider under `models.providers` and your sub-agent under `agents.list`.
+Set `AUX_PROVIDER_ID` to that provider key before you apply the config.
+The command below defaults to `nvidia-omni` for the Omni example.
 Do not commit `/tmp/openclaw.updated.json` or any other file that contains a real API key.
 
 ### Apply the Updated Config
 
-Pass the patch to OpenClaw as the sandbox user.
-OpenClaw validates and writes its native configuration.
+Read each changed value from the prepared config and pass it to `openclaw config set` as the sandbox user.
+OpenClaw validates each value before it writes its native configuration.
 
 ```bash
-docker exec --user sandbox -i "$SANDBOX_CTR" sh -c '
-  tmp=$(mktemp /tmp/openclaw-config-patch.XXXXXX) || exit 1
-  trap '\''rm -f "$tmp"'\'' EXIT
-  cat > "$tmp" || exit 1
-  openclaw config patch --file "$tmp"
-' < /tmp/openclaw.updated.json
+(
+  set -euo pipefail
+  : "${AUX_PROVIDER_ID:=nvidia-omni}"
+
+  read_config_value() {
+    python3 -c '
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as source:
+    value = json.load(source)
+for key in sys.argv[2:]:
+    value = value[key]
+json.dump(value, sys.stdout, separators=(",", ":"))
+' /tmp/openclaw.updated.json "$@"
+  }
+
+  read_config_value models providers "$AUX_PROVIDER_ID" |
+    docker exec --user sandbox -i "$SANDBOX_CTR" sh -c '
+      value=$(cat) || exit 1
+      exec openclaw config set "models.providers.$1" "$value" --strict-json --merge
+    ' sh "$AUX_PROVIDER_ID"
+
+  if subagent_defaults=$(read_config_value agents defaults subagents 2>/dev/null); then
+    printf '%s' "$subagent_defaults" |
+      docker exec --user sandbox -i "$SANDBOX_CTR" sh -c '
+      value=$(cat) || exit 1
+      exec openclaw config set agents.defaults.subagents "$value" --strict-json --merge
+    '
+  fi
+
+  read_config_value agents defaults timeoutSeconds |
+    docker exec --user sandbox -i "$SANDBOX_CTR" sh -c '
+      value=$(cat) || exit 1
+      exec openclaw config set agents.defaults.timeoutSeconds "$value" --strict-json
+    '
+
+  read_config_value agents list |
+    docker exec --user sandbox -i "$SANDBOX_CTR" sh -c '
+      value=$(cat) || exit 1
+      exec openclaw config set agents.list "$value" --strict-json --replace
+    '
+)
 ```
 
 For ordinary key changes, connect to the sandbox and use `openclaw configure`, `openclaw config set`, or `openclaw config unset`.
 
-After applying the patch, restart the managed gateway.
+The subshell stops after the first failed write.
+Values written by earlier successful commands remain in the valid OpenClaw config.
+Correct the reported value or schema error, then rerun this section before you restart the gateway.
+
+After the writes succeed, restart the managed gateway.
 The restart verifies gateway health before it exits successfully.
 Then confirm that OpenClaw loaded the `agents.list` change:
 

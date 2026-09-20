@@ -2942,7 +2942,6 @@ describe("Telegram diagnostics (#2766)", () => {
         'emit_sandbox_sourced_file() { local target="$1"; cat > "$target"; chmod 444 "$target"; }',
         "prepare_openclaw_gateway_state() { :; }",
         "apply_model_override() { :; }",
-        "reconcile_agent_model_with_provider() { :; }",
         "apply_cors_override() { :; }",
         "run_requested_openclaw_post_upgrade_doctor() { :; }",
         "refresh_openclaw_provider_placeholders() { :; }",
