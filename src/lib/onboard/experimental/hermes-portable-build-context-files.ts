@@ -133,8 +133,6 @@ export const HERMES_PORTABLE_BUILD_CONTEXT_FILES = [
   { path: "scripts/lib/reviewed-npm-identity.mts", mode: "100755" },
   { path: "scripts/lib/sandbox-init.sh", mode: "100755" },
   { path: "scripts/lib/sandbox-rlimits.sh", mode: "100644" },
-  { path: "scripts/managed-bootstrap-entrypoint.c", mode: "100644" },
-  { path: "scripts/managed-bootstrap-trampoline.sh", mode: "100644" },
   { path: "scripts/managed-startup-hold.sh", mode: "100755" },
   { path: "scripts/patch-bundled-npm-brace-expansion.mts", mode: "100755" },
   { path: "scripts/patch-bundled-npm-tar.mts", mode: "100755" },
@@ -430,7 +428,7 @@ export const HERMES_PORTABLE_BUILD_CONTEXT_FILES = [
     mode: "100644",
   },
   {
-    path: "tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/managed-startup-image-runtime.bundle",
+    path: "tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/managed-startup-direct-image-runtime.bundle",
     mode: "100644",
   },
   {

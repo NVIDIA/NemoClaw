@@ -133,6 +133,7 @@ function gatewayRestartOutput(result: GatewayRestartCommandResult): string {
   return [result.stdout, result.stderr].filter(Boolean).join("\n");
 }
 
+/** Hermes can replace its gateway successfully while closing the exec relay that issued restart. */
 const HERMES_RESTART_RELAY_CLOSED = "exec relay closed before the command reported an exit status";
 const OPENSHELL_SERVICE_UNAVAILABLE = "code: 'The service is currently unavailable'";
 

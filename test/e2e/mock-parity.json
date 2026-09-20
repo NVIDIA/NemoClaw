@@ -63,8 +63,7 @@
         "src/lib/onboard/command.test.ts",
         "src/lib/onboard/sandbox-workload-preparation.test.ts",
         "test/e2e/support/managed-image-activation-diagnostics.test.ts",
-        "test/inference/managed/managed-image-publication-workflow.test.ts",
-        "test/onboarding/onboard-managed-image-buildless-e2e.test.ts"
+        "test/inference/managed/managed-image-publication-workflow.test.ts"
       ]
     },
     {
@@ -91,7 +90,8 @@
         "src/lib/adapters/podman/index.test.ts",
         "src/lib/adapters/podman/socket-authority.test.ts",
         "src/lib/onboard/docker-driver-gateway-runtime.test.ts",
-        "src/lib/onboard/runtime-provider/podman-lifecycle.test.ts",
+        "src/lib/adapters/openshell/sandbox-lifecycle-sdk.test.ts",
+        "src/lib/onboard/runtime-provider/podman.test.ts",
         "src/lib/onboard/runtime-provider/podman-preflight.test.ts",
         "src/lib/onboard/runtime-provider/podman.test.ts",
         "test/e2e/support/podman-cpu-proof-workflow.test.ts"

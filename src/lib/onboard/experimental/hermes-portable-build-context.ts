@@ -29,6 +29,9 @@ const OPEN_READ_FLAGS =
 const SOURCE_DOCKERFILE_RELATIVE_PATH = "agents/hermes/Dockerfile" as const;
 const CONTEXT_DOCKERFILE_RELATIVE_PATH = "Dockerfile" as const;
 
+// Portable retains the same image-owned non-root startup hold even though its
+// host lifecycle remains independently receipt-bound, so its staged context
+// must carry that hold and its identity-bound completion/release protocol.
 const LOCAL_COPY_SOURCES = [
   "agents/hermes/a2a-neutral.patch",
   "agents/hermes/config/",
@@ -76,8 +79,6 @@ const LOCAL_COPY_SOURCES = [
   "scripts/lib/reviewed-npm-identity.mts",
   "scripts/lib/sandbox-init.sh",
   "scripts/lib/sandbox-rlimits.sh",
-  "scripts/managed-bootstrap-entrypoint.c",
-  "scripts/managed-bootstrap-trampoline.sh",
   "scripts/managed-startup-hold.sh",
   "scripts/patch-bundled-npm-brace-expansion.mts",
   "scripts/patch-bundled-npm-tar.mts",
@@ -90,7 +91,7 @@ const LOCAL_COPY_SOURCES = [
   "src/lib/tool-disclosure.ts",
   "src/lib/providerless-inference.ts",
   "tools/mcp-tool-discovery-runtime/npm-cache-seed/tar-7.5.21.tgz",
-  "tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/managed-startup-image-runtime.bundle",
+  "tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/managed-startup-direct-image-runtime.bundle",
   "tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/mcp-tool-discovery/BUNDLED_PACKAGES.json",
   "tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/mcp-tool-discovery/THIRD_PARTY_LICENSES.txt",
   "tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/mcp-tool-discovery/mcp-tool-discovery.bundle",

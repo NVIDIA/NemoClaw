@@ -1921,6 +1921,31 @@ hermes_tracked_service_owns_listener() {
   esac
 }
 
+hermes_find_reparented_role_listener_pid() {
+  local role="$1"
+  local service_user="$2"
+  local port="$3"
+  local previous_pid="${4:-}"
+  local proc_dir pid
+  local matched_pid=""
+
+  for proc_dir in "${_HERMES_PROC_ROOT}"/[0-9]*; do
+    [ -d "$proc_dir" ] || continue
+    pid="${proc_dir##*/}"
+    [ "$pid" != "$previous_pid" ] || continue
+    hermes_process_role_identity "$role" "$pid" "$service_user" "$port" >/dev/null 2>&1 \
+      || continue
+    hermes_tracked_service_owns_listener "$pid" "$port" "$service_user" || continue
+    # A unique role-and-listener match is the only safe launcher handoff. An
+    # ambiguous match stays fail-closed so a sibling process is never adopted.
+    [ -z "$matched_pid" ] || return 1
+    matched_pid="$pid"
+  done
+
+  [ -n "$matched_pid" ] || return 1
+  printf '%s' "$matched_pid"
+}
+
 start_socat_forwarder() {
   local public_port="$1"
   local internal_port="$2"
@@ -1931,6 +1956,8 @@ start_socat_forwarder() {
   local _socat_pid
   local _socat_role=""
   local owner_role=""
+  local adopted_owner_pid=""
+  local adopted_owner_identity=""
 
   case "$owner_user" in
     gateway) owner_role=gateway ;;
@@ -1955,8 +1982,20 @@ start_socat_forwarder() {
       if [ -z "$owner_role" ] \
         || ! hermes_tracked_role_is_current \
           "$owner_role" "$owner_pid" "$owner_user" "$internal_port"; then
-        echo "[gateway] ${label} service owner pid ${owner_pid} exited before binding 127.0.0.1:${internal_port}" >&2
-        return 1
+        if [ "$owner_role" = dashboard ]; then
+          if adopted_owner_pid="$(hermes_find_reparented_role_listener_pid \
+            "$owner_role" "$owner_user" "$internal_port" "$owner_pid")" \
+            && adopted_owner_identity="$(hermes_process_role_identity \
+              "$owner_role" "$adopted_owner_pid" "$owner_user" "$internal_port")"; then
+            owner_pid="$adopted_owner_pid"
+            hermes_set_role_identity "$owner_role" "$adopted_owner_identity"
+            DASHBOARD_PID="$owner_pid"
+            echo "[gateway] ${label} service handed off to verified listener owner pid ${owner_pid}" >&2
+          fi
+        else
+          echo "[gateway] ${label} service owner pid ${owner_pid} exited before binding 127.0.0.1:${internal_port}" >&2
+          return 1
+        fi
       fi
       if hermes_tracked_service_owns_listener "$owner_pid" "$internal_port" "$owner_user"; then
         internal_ready=1

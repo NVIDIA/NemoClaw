@@ -112,7 +112,7 @@ describe("restartSandboxGateway native lifecycle", () => {
         status: 1,
         stdout: "",
         stderr:
-          "Error: code: 'The service is currently unavailable', message: \"exec relay closed\n│ before the command reported an exit status\"",
+          "Error:   × code: 'The service is currently unavailable', message: \"exec relay closed\n  │ before the command reported an exit status\"",
       })),
     });
 

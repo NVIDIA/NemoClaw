@@ -1617,7 +1617,7 @@ export async function isSandboxGatewayRunningForStatus(
   return isSandboxGatewayHttpReachableForStatus(sandboxName, gatewayName, options);
 }
 
-const HERMES_GATEWAY_PROCESS_SETTLEMENT_DELAYS_MS = [2_000, 2_000] as const;
+const HERMES_GATEWAY_PROCESS_SETTLEMENT_DELAYS_MS = [2_000, 2_000, 2_000, 2_000, 2_000] as const;
 const NATIVE_GATEWAY_PROCESS_SETTLEMENT_DELAY_MS = 2_000;
 
 /** Require one positive Hermes gateway observation after startup within the bounded window. */
