@@ -38,7 +38,10 @@ print(json.dumps(module.probe(), sort_keys=True))
     );
 
     expect(result.status, result.stderr).toBe(0);
-    expect(JSON.parse(result.stdout)).toEqual({ ok: true });
+    expect(JSON.parse(result.stdout)).toEqual({
+      capabilities: { reconcile_finality: 1 },
+      ok: true,
+    });
   });
 
   it("fails when the root API port marker cannot be resolved (#8543)", () => {
