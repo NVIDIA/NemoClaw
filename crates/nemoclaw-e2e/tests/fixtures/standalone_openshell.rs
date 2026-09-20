@@ -274,3 +274,36 @@ async fn standalone_hcl_recovers_lost_delete_response_without_repeating_the_muta
         (1, 0, 0, 0)
     );
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires explicit NEMOCLAW_TEST_TOFU and NEMOCLAW_TEST_PROVIDER; isolated OpenShell fixture"]
+async fn standalone_hcl_requires_provider_endpoint_before_bootstrap_planning() {
+    let fixture = Fixture::start().await;
+    let tofu = Standalone::new(&fixture.endpoint);
+    let source = fs::read_to_string(tofu.root.path().join("main.tf")).unwrap();
+    fs::write(
+        tofu.root.path().join("main.tf"),
+        source.replace(
+            "endpoint = var.endpoint",
+            "endpoint = terraform_data.bootstrap.output",
+        ) + "\nresource \"terraform_data\" \"bootstrap\" { input = var.endpoint }\n",
+    )
+    .unwrap();
+    let output = tofu.run(&["plan", "-input=false"], false);
+    assert!(String::from_utf8_lossy(&output.stderr).contains("Gateway connection"));
+    assert_eq!(fixture.state.lock().unwrap().effects, 0);
+    assert!(!tofu.root.path().join("terraform.tfstate").exists());
+    // Once bootstrap has established the endpoint, the same graph can plan
+    // and apply. This is evidence for staging with the current provider.
+    tofu.run(
+        &[
+            "apply",
+            "-auto-approve",
+            "-input=false",
+            "-target=terraform_data.bootstrap",
+        ],
+        true,
+    );
+    tofu.apply();
+    tofu.noop();
+}
