@@ -32,23 +32,26 @@ export type OpenShellSandboxCreateSubmission = StreamSandboxCreateResult &
 
 export type OpenShellSandboxCreateOptions = Omit<StreamSandboxCreateOptions, "cwd" | "spawnImpl">;
 
+export function withoutOpenShellSandboxCreateGpuDriverConfig(value: string): string | undefined {
+  const parsed = JSON.parse(value) as Record<string, unknown>;
+  for (const driverName of ["docker", "podman"]) {
+    const driver = parsed[driverName];
+    if (!driver || typeof driver !== "object" || Array.isArray(driver)) continue;
+    const config = { ...(driver as Record<string, unknown>) };
+    delete config.cdi_devices;
+    if (Object.keys(config).length === 0) delete parsed[driverName];
+    else parsed[driverName] = config;
+  }
+  return Object.keys(parsed).length > 0 ? JSON.stringify(parsed) : undefined;
+}
+
 export function withoutOpenShellSandboxCreateGpu(
   request: CreateOpenShellSandboxRequest,
   options: { readonly sourceReference?: string; readonly policyPath: string },
 ): CreateOpenShellSandboxRequest {
-  let driverConfigJson = request.driverConfigJson;
-  if (driverConfigJson) {
-    const parsed = JSON.parse(driverConfigJson) as Record<string, unknown>;
-    for (const driverName of ["docker", "podman"]) {
-      const driver = parsed[driverName];
-      if (!driver || typeof driver !== "object" || Array.isArray(driver)) continue;
-      const config = { ...(driver as Record<string, unknown>) };
-      delete config.cdi_devices;
-      if (Object.keys(config).length === 0) delete parsed[driverName];
-      else parsed[driverName] = config;
-    }
-    driverConfigJson = Object.keys(parsed).length > 0 ? JSON.stringify(parsed) : undefined;
-  }
+  const driverConfigJson = request.driverConfigJson
+    ? withoutOpenShellSandboxCreateGpuDriverConfig(request.driverConfigJson)
+    : undefined;
   return Object.freeze({
     ...request,
     source: Object.freeze({ reference: options.sourceReference ?? request.source.reference }),

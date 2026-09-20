@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { withoutOpenShellSandboxCreateGpuDriverConfig } from "../adapters/openshell/sandbox-lifecycle";
+
 export type DockerGpuRoutePlan =
   | "none"
   | "native-only"
@@ -116,19 +118,6 @@ export function isDockerGpuCompatibilityRoute(route: SelectedDockerGpuRoute): bo
   return route === "compatibility";
 }
 
-function removeCdiDevicesFromDriverConfig(value: string): string | null {
-  const parsed = JSON.parse(value) as Record<string, unknown>;
-  for (const driverName of ["docker", "podman"]) {
-    const driver = parsed[driverName];
-    if (!driver || typeof driver !== "object" || Array.isArray(driver)) continue;
-    const config = { ...(driver as Record<string, unknown>) };
-    delete config.cdi_devices;
-    if (Object.keys(config).length === 0) delete parsed[driverName];
-    else parsed[driverName] = config;
-  }
-  return Object.keys(parsed).length > 0 ? JSON.stringify(parsed) : null;
-}
-
 /** Render one already-materialized create plan for the selected GPU route. */
 export function renderSandboxCreateArgsForGpuRoute(
   createArgs: readonly string[],
@@ -150,7 +139,7 @@ export function renderSandboxCreateArgsForGpuRoute(
         throw new Error("Sandbox create arguments contain an empty driver config.");
       }
       index += 1;
-      const compatibilityConfig = removeCdiDevicesFromDriverConfig(driverConfig);
+      const compatibilityConfig = withoutOpenShellSandboxCreateGpuDriverConfig(driverConfig);
       if (compatibilityConfig) rendered.push(arg, compatibilityConfig);
       continue;
     }

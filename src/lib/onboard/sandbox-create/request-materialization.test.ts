@@ -10,7 +10,8 @@ describe("ordinary sandbox create request materialization", () => {
     sandboxName: "alpha",
     source: Object.freeze({ reference: "/tmp/Dockerfile" }),
     policyPath: "/tmp/native.yaml",
-    driverConfigJson: '{"docker":{"cdi_devices":["nvidia.com/gpu=all"],"mounts":[]}}',
+    driverConfigJson:
+      '{"docker":{"cdi_devices":["nvidia.com/gpu=all"],"mounts":[]},"podman":{"cdi_devices":["nvidia.com/gpu=all"],"mounts":[{"type":"bind","source":"/src","target":"/dst"}]}}',
     gpu: Object.freeze({ device: "nvidia.com/gpu=all" }),
     resources: Object.freeze({ cpu: "2", memory: "4Gi" }),
     providers: Object.freeze(["nvidia"]),
@@ -53,7 +54,9 @@ describe("ordinary sandbox create request materialization", () => {
       policyPath: "/tmp/compatibility.yaml",
     });
     expect(request.gpu).toBeUndefined();
-    expect(request.driverConfigJson).toBe('{"docker":{"mounts":[]}}');
+    expect(request.driverConfigJson).toBe(
+      '{"docker":{"mounts":[]},"podman":{"mounts":[{"type":"bind","source":"/src","target":"/dst"}]}}',
+    );
   });
 
   it("rejects compatibility materialization without its route-owned policy", () => {
