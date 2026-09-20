@@ -319,6 +319,10 @@ impl Resource for ResourceAdapter {
         config: State,
         _: ValueEmpty,
     ) -> Option<(State, ValueEmpty)> {
+        if self.destroying.load(Ordering::Acquire) {
+            diags.root_error_short("Creation forbidden during destroy");
+            return None;
+        }
         proposed.insert("id".into(), Value::Unknown);
         if self.computed_digest() {
             proposed.insert("digest".into(), Value::Unknown);

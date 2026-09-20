@@ -183,6 +183,15 @@ async fn standalone_hcl_rejects_replacement_and_unauthorized_removal_during_plan
     let effects = fixture.state.lock().unwrap().effects;
     tofu.run(&["plan", "-input=false", "-var=image=fixture@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"], false);
     tofu.run(&["plan", "-input=false", "-var=enabled=false"], false);
+    tofu.run(
+        &[
+            "plan",
+            "-input=false",
+            "-var=destroying=true",
+            "-replace=nemoclaw_sandbox.agent[0]",
+        ],
+        false,
+    );
     assert_eq!(tofu.state(), prior);
     let state = fixture.state.lock().unwrap();
     assert_eq!(state.effects, effects);
