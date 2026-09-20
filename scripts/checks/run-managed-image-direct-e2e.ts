@@ -9,7 +9,7 @@ import { pathToFileURL } from "node:url";
 import {
   createManagedBootstrapIdentity,
   renderManagedBootstrapHeldCommand,
-} from "../../src/lib/onboard/managed-bootstrap/adapter.ts";
+} from "../../src/lib/onboard/managed-bootstrap/identity-and-command.ts";
 import {
   MANAGED_BOOTSTRAP_REQUEST_FILE,
   serializeManagedBootstrapEnvelopeTar,

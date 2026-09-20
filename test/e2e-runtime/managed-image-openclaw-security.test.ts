@@ -360,6 +360,7 @@ const ROOT_BOOT_RECOVERY_PROBE = String.raw`
 `;
 
 const DOCKER_OPERATION_TIMEOUT_MS = 45_000;
+const CONFIG_RECOVERY_TIMEOUT_MS = 2 * DOCKER_OPERATION_TIMEOUT_MS;
 const MANAGED_IMAGE_SECURITY_TIMEOUT_MS = 8 * 60_000;
 
 function managedImageCohort(): string {
@@ -375,6 +376,7 @@ async function runContainer(
   script: string,
   artifactName: string,
   extraArgs: string[] = [],
+  timeoutMs = DOCKER_OPERATION_TIMEOUT_MS,
 ) {
   const result = await host.command(
     "docker",
@@ -393,11 +395,7 @@ async function runContainer(
       "-c",
       script,
     ],
-    {
-      artifactName,
-      captureLimitBytes: 1024 * 1024,
-      timeoutMs: DOCKER_OPERATION_TIMEOUT_MS,
-    },
+    { artifactName, captureLimitBytes: 1024 * 1024, timeoutMs },
   );
   expect(
     result.exitCode,
@@ -618,23 +616,31 @@ test.runIf(RUN_MANAGED_IMAGE_SECURITY)(
         'sandbox_gid="$(id -g sandbox)"',
         "chmod 700 /sandbox/.openclaw",
         "chmod 600 /sandbox/.openclaw/openclaw.json /sandbox/.openclaw/.config-hash",
+        "printf 'CONFIG_RECOVERY_PHASE=initial-normalize-start\\n' >&2",
         '/usr/local/lib/nemoclaw/normalize_mutable_config_perms.py /sandbox/.openclaw "$sandbox_uid" "$sandbox_gid"',
+        "printf 'CONFIG_RECOVERY_PHASE=initial-normalize-complete\\n' >&2",
         '[ "$(stat -c \'%a %U:%G\' /sandbox/.openclaw)" = "2770 sandbox:sandbox" ]',
         '[ "$(stat -c \'%a %U:%G\' /sandbox/.openclaw/openclaw.json)" = "660 sandbox:sandbox" ]',
         "cp /sandbox/.openclaw/openclaw.json /sandbox/.openclaw/openclaw.json.last-good",
         "chown sandbox:sandbox /sandbox/.openclaw/openclaw.json.last-good",
         "chmod 660 /sandbox/.openclaw/openclaw.json.last-good",
         ": >/sandbox/.openclaw/openclaw.json",
+        "printf 'CONFIG_RECOVERY_PHASE=recover-start\\n' >&2",
         '/usr/local/lib/nemoclaw/normalize_mutable_config_perms.py /sandbox/.openclaw "$sandbox_uid" "$sandbox_gid" recover',
+        "printf 'CONFIG_RECOVERY_PHASE=recover-complete\\n' >&2",
         "test -s /sandbox/.openclaw/openclaw.json",
         "chown gateway:gateway /sandbox/.openclaw",
         "before=\"$(stat -c '%u:%g:%a' /sandbox/.openclaw)\"",
         "repair_rc=0",
+        "printf 'CONFIG_RECOVERY_PHASE=refusal-start\\n' >&2",
         '/usr/local/lib/nemoclaw/normalize_mutable_config_perms.py /sandbox/.openclaw "$sandbox_uid" "$sandbox_gid" || repair_rc=$?',
+        "printf 'CONFIG_RECOVERY_PHASE=refusal-complete\\n' >&2",
         '[ "$repair_rc" -ne 0 ]',
         '[ "$before" = "$(stat -c \'%u:%g:%a\' /sandbox/.openclaw)" ]',
       ].join("\n"),
       "managed-image-openclaw-config-recovery",
+      [],
+      CONFIG_RECOVERY_TIMEOUT_MS,
     );
 
     await runContainer(
@@ -644,8 +650,12 @@ test.runIf(RUN_MANAGED_IMAGE_SECURITY)(
         '{ sed -n "/^resolve_mutable_config_normalizer() {$/,/^}$/p" /usr/local/bin/nemoclaw-start; sed -n "/^normalize_mutable_config_perms() {$/,/^}$/p" /usr/local/bin/nemoclaw-start; sed -n "/^recover_openclaw_config_if_empty() {$/,/^}$/p" /usr/local/bin/nemoclaw-start; } >/tmp/normalize.sh',
         "source /tmp/normalize.sh",
         "/usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- sh -c 'printf baseline > /sandbox/.openclaw/openclaw.json.nemoclaw-baseline; chmod 600 /sandbox/.openclaw/openclaw.json.nemoclaw-baseline; : > /sandbox/.openclaw/openclaw.json; chmod 600 /sandbox/.openclaw/openclaw.json /sandbox/.openclaw/.config-hash; chmod 700 /sandbox/.openclaw'",
+        "printf 'DAC_RECOVERY_PHASE=normalize-start\\n' >&2",
         "normalize_mutable_config_perms",
+        "printf 'DAC_RECOVERY_PHASE=normalize-complete\\n' >&2",
+        "printf 'DAC_RECOVERY_PHASE=recover-start\\n' >&2",
         "recover_openclaw_config_if_empty",
+        "printf 'DAC_RECOVERY_PHASE=recover-complete\\n' >&2",
         '[ "$(stat -c \'%a %U:%G\' /sandbox/.openclaw)" = "2770 sandbox:sandbox" ]',
         '[ "$(stat -c \'%a %U:%G\' /sandbox/.openclaw/openclaw.json)" = "660 sandbox:sandbox" ]',
         '[ "$(stat -c \'%a %U:%G\' /sandbox/.openclaw/.config-hash)" = "660 sandbox:sandbox" ]',
@@ -654,6 +664,7 @@ test.runIf(RUN_MANAGED_IMAGE_SECURITY)(
       ].join("\n"),
       "managed-image-openclaw-dac-recovery",
       ["--cap-drop=CAP_DAC_OVERRIDE"],
+      CONFIG_RECOVERY_TIMEOUT_MS,
     );
 
     await runContainer(

@@ -4238,6 +4238,7 @@ jobs:
             environment_or_inference_endpoint: "Arm64 Ubuntu; exact managed image startup"
             coverage_variant: linux-arm64
     env:
+      BUILDX_CONFIG: ${{ runner.temp }}/nemoclaw-protected-buildx-${{ matrix.shard }}
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/managed-image-multiarch-startup/${{ matrix.shard }}
       E2E_JOB: "1"
       E2E_GATEWAY_RUNTIMES: docker

@@ -261,7 +261,7 @@ describe("cross-process onboard lock", () => {
       const fd = fs.openSync(lockFile, "wx", 0o600);
       fs.writeSync(fd, JSON.stringify({
         pid: process.pid,
-        startedAt: "2026-01-02T03:04:05.000Z",
+        startedAt: new Date().toISOString(),
         command: "separate nemoclaw onboard process",
       }));
       process.stdout.write("locked\\\\n");
@@ -273,12 +273,15 @@ describe("cross-process onboard lock", () => {
     await once(child.stdout, "data");
 
     try {
+      const lockInfo = JSON.parse(fs.readFileSync(session.LOCK_FILE, "utf8")) as {
+        startedAt: string;
+      };
       const contend = () => session.listRetainedSandboxRecoveryRecords();
       expect(contend).toThrow(
         "Cannot update onboarding recovery while another onboarding run owns the lock.",
       );
       expect(contend).toThrow(`Lock holder PID: ${String(child.pid)}.`);
-      expect(contend).toThrow("Started: 2026-01-02T03:04:05.000Z.");
+      expect(contend).toThrow(`Started: ${lockInfo.startedAt}.`);
       expect(contend).toThrow("Lock holder command: separate nemoclaw onboard process.");
       expect(contend).toThrow("Wait for the other run to finish, then rerun.");
     } finally {

@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Relocate the pinned Hermes cron execution ledger into writable runtime state.
 
-Hermes v2026.8.27 / 0.20.6 creates ``cron/executions.db`` from the gateway.
+Hermes v2026.9.14 / 0.21.3 creates ``cron/executions.db`` from the gateway.
 NemoClaw keeps ``cron`` separate from the writable execution ledger because it is a high-risk
 location for cron job definitions, so a managed gateway restart cannot reopen
 that database.
@@ -31,8 +31,8 @@ NEW_EXECUTIONS_PATH = (
 )
 EXECUTIONS_CONTEXT = "from hermes_constants import get_hermes_home"
 
-OLD_BACKUP_PATH = '    "cron/executions.db",'
-NEW_BACKUP_PATH = '    "runtime/cron-executions.db",'
+OLD_BACKUP_PATH = '"cron/executions.db"'
+NEW_BACKUP_PATH = '"runtime/cron-executions.db"'
 BACKUP_CONTEXT = "_QUICK_STATE_FILES = ("
 
 

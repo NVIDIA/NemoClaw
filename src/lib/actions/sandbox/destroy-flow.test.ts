@@ -807,7 +807,13 @@ describe("destroySandbox flow", () => {
     await expect(harness.destroySandbox("alpha", { yes: true })).resolves.toBeUndefined();
 
     expect(harness.removeSandboxSpy).toHaveBeenCalledWith("alpha");
-    expect(harness.withGatewayRouteMutationLockSpy).not.toHaveBeenCalled();
+    expect(harness.withGatewayRouteMutationLockSpy).toHaveBeenCalledWith(
+      "nemoclaw-19080",
+      expect.any(Function),
+    );
+    expect(harness.removeSandboxSpy.mock.invocationCallOrder[0]).toBeLessThan(
+      harness.withGatewayRouteMutationLockSpy.mock.invocationCallOrder[0],
+    );
     expect(harness.stopModelRouterForDestroyedSandboxSpy).not.toHaveBeenCalled();
   });
 

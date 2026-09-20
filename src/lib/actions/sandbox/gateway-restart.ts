@@ -133,6 +133,19 @@ function gatewayRestartOutput(result: GatewayRestartCommandResult): string {
   return [result.stdout, result.stderr].filter(Boolean).join("\n");
 }
 
+const HERMES_RESTART_RELAY_CLOSED = "exec relay closed before the command reported an exit status";
+const OPENSHELL_SERVICE_UNAVAILABLE = "code: 'The service is currently unavailable'";
+
+export function isExpectedHermesRestartRelayClosure(
+  result: GatewayRestartCommandResult | null,
+): boolean {
+  if (!result || result.status === 0) return false;
+  const output = gatewayRestartOutput(result).replace(/[\s│]+/gu, " ");
+  return (
+    output.includes(OPENSHELL_SERVICE_UNAVAILABLE) && output.includes(HERMES_RESTART_RELAY_CLOSED)
+  );
+}
+
 const ANSI_CONTROL_RE =
   /\x1B(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1B\\)|[@-_])|[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g;
 
@@ -426,11 +439,7 @@ export async function restartSandboxGatewayWithDeps(
     return { ok: false, failureLayer: "native agent command", detail };
   }
   const hermesRelayClosed =
-    agentName === "hermes" &&
-    restartResult.status !== 0 &&
-    /code: 'The service is currently unavailable'[\s\S]*exec relay closed[\s\S]*before the command reported an exit status/u.test(
-      gatewayRestartOutput(restartResult),
-    );
+    agentName === "hermes" && isExpectedHermesRestartRelayClosure(restartResult);
   if (restartResult.status !== 0 && !hermesRelayClosed) {
     const classified = classifyGatewayRestartFailure(restartResult);
     if (agentName === "hermes" && classified.layer === "secret-boundary refusal") {
