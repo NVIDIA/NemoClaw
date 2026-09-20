@@ -160,7 +160,8 @@ For locally built images without a registry copy, load the pinned image into the
 imagePullPolicy: Never
 ```
 
-Managed gateways retain their existing image policy: omission means `IfNotPresent`, and `Always` contacts the registry before creation or restart, including its credential initializer.
+Docker-managed gateways use the same `IfNotPresent` and `Never` modes as services; `Always` is rejected.
+Podman gateways retain their existing image policy: omission means `IfNotPresent`, and `Always` contacts the registry before creation or restart, including its credential initializer.
 Service acquisition does not promise a registry request on every restart or layer-by-layer progress.
 Export preserves the declared setting.
 Downloaded service images remain on the selected engine after destroy, although their disposable provider resource bindings are removed.
@@ -190,7 +191,7 @@ Every declared service is installed, even without an inference provider referrin
 Every selected inference provider has a deployment-owned OpenShell registration; destroy removes that registration without deleting an external server.
 Managed model and credential storage survive destroy.
 Durable data and credential checks verify deployment ownership, generation, and the established storage/engine identity.
-Disposable service compute follows Docker-provider state and may be recreated or replaced during apply.
+Docker gateway and disposable service compute follow Docker-provider state and may be recreated or replaced during apply.
 This does not authorize migration or adoption of an existing unbound persistent volume.
 
 The former optional `management` annotations and ownership-only `storage`/`network` objects are rejected.

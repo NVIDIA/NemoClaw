@@ -21,7 +21,7 @@ A distinct daemon ID does not establish a distinct physical GPU or memory pool.
 | SDK `docker/` and `managed/backend.rs` | Connection resolution must select the same endpoint for read, ensure, remove, validation, readiness, and export. |
 | Provider `provider.rs`; SDK `services/registry.rs` and `services/installers/ollama/backend.rs` | Ollama’s engine connection is separate from its HTTP model API. The SDK and provider must select the same daemon. |
 | SDK `config/` and `managed/spec.rs` | Managed gateways select one local Docker or Podman compute driver for every sandbox. Managed inference can declare independent SSH placement and publication. |
-| SDK `managed/storage.rs`, `managed/gateway_storage.rs`, and `managed/observation.rs` | Durable storage bindings combine daemon identity, volume identity, ownership, and generation. Podman gateway bindings use the retained owned network UUID as their namespace anchor. Disposable service compute uses native Docker-provider IDs. |
+| SDK `managed/storage.rs`, `managed/gateway_storage.rs`, and `managed/observation.rs` | Durable storage bindings combine daemon identity, volume identity, ownership, and generation. Podman gateway bindings use the retained owned network UUID as their namespace anchor. Docker gateway and disposable service compute use native Docker-provider IDs. |
 | SDK `openshell/transport.rs`, `state/`, and `bundle/` | Gateway credentials, deployment locks, state, and bundle subprocesses remain client-side. OpenShell RPC observes gateway-owned resources. |
 
 A changed bound endpoint is rejected; there is no target migration or lost-state adoption command.
@@ -41,7 +41,7 @@ The earlier [native Podman test results](validation/rust-podman-rootless-linux-a
 | SDK `managed/spec.rs` gateway launch | Host networking, socket binds, supervisor paths, signing files, and relay paths must exist in the gateway and sandbox daemon’s shared host namespace. Remote inference does not move this gateway topology. |
 | SDK `managed/spec.rs`, `managed/mutation.rs`, and `managed/observation.rs` | Bridge identity and published bind addresses belong to the engine host. A local bridge address is not a general cross-host inference address. |
 | SDK `managed/gateway_storage.rs` and `managed/observation.rs` | Volume verification uses the selected daemon’s `DockerRootDir`, including non-default roots. It rejects paths outside that root and retains label, creation-time, network, and image checks. |
-| Docker provider; SDK `docker/mod.rs` | The provider acquires service images on the selected daemon. Application-status and credential archive reads use that same daemon. Model downloads belong to the runtime. Failed reads are not absence. |
+| Docker provider; SDK `docker/mod.rs` | The provider acquires Docker gateway and service images on the selected daemon. Application-status and credential archive reads use that same daemon. Model downloads belong to the runtime. Failed reads are not absence. |
 | SDK `config/`, `compile.rs`, and `openshell/probes.rs` | Local managed inference uses bridge publication; SSH services declare a private publication URL. Explicit inference verification sends requests from the sandbox through OpenShell to the configured endpoint. A client-side request cannot prove sandbox reachability. |
 | Build crate and `runtimes/` | Build-engine selection is separate from runtime placement. A locally loaded image must be transferred before another daemon can use it. |
 

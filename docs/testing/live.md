@@ -147,3 +147,26 @@ The test checks managed runtime bindings as well as the hosted agent identity ac
 
 The [two-daemon test results](../validation/rust-dual-daemon-linux-arm64.json) describe the earlier custom-controller path, including live rootless Podman, controlled download interruption, watchdog stop, engine retarget rejection, and retained model data.
 They do not qualify the current Docker-provider path on GPU hardware.
+
+## Docker Gateway Recovery
+
+The SDK's `managed_gateway_plan_apply_noop_destroy_and_recovery_use_real_opentofu` test exercises only the managed runtime stage with a real gateway, Docker, both providers, and OpenTofu.
+Supply a verified bundle and an owned configuration with a fresh UID, free gateway port/subnet, Docker sandboxes, external inference, and no managed services.
+The test does not create sandboxes or request inference.
+It removes its gateway process on completion but retains the database, keys, initializer, bridge, and state.
+
+From the repository root:
+
+```sh
+NEMOCLAW_TEST_BUNDLE=/absolute/path/to/bundle \
+NEMOCLAW_TEST_GATEWAY_DOCUMENT=/absolute/path/to/gateway.yaml \
+NEMOCLAW_TEST_GATEWAY_STATE=/absolute/path/to/new-state \
+cargo test -p nemoclaw-sdk \
+  managed_gateway_plan_apply_noop_destroy_and_recovery_use_real_opentofu \
+  --lib -- --ignored
+```
+
+The test checks read-only planning, unchanged apply, stopped/deleted process recovery, retained credential identity, and destroy/reapply.
+It also replaces the listen port inside the runtime-stage test and temporarily substitutes the owned encryption key to verify rejection without state changes, then restores the original key.
+That internal replacement test does not authorize retargeting an established public deployment endpoint; the SDK still rejects that operation.
+The gateway image remains pinned by the SDK.

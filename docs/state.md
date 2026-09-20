@@ -9,9 +9,10 @@ Separate deployments need separate state directories and deployment UUIDs.
 
 ## Provider-managed Service Compute
 
-Intent version 4 records inference and proxy compute through native Docker-provider resource IDs.
+Intent version 5 records Docker gateway, inference, and proxy compute through native Docker-provider resource IDs.
+Docker gateway storage binds both signing and encryption-key identity independently of the process.
 Containers and service-owned networks may be recreated during explicit apply while storage and credentials retain their independent bindings.
-Intent versions 1 through 3 are rejected without rewriting state or adopting resources.
+Intent versions 1 through 4 are rejected without rewriting state or adopting resources.
 Keep the matching original bundle and entire state directory for existing deployments' export, recovery, or teardown.
 Use a fresh deployment UUID and state directory for this contract; editing an intent version is not migration.
 

@@ -54,7 +54,7 @@ The shared backend code is compiled into its callers; it is not another server.
 The provider translates the OpenTofu protocol into those operations.
 The SDK also checks proposed changes against its deployment contract before asking OpenTofu to execute a saved plan.
 For example, an undeclared resource or changed durable storage binding stops apply even if OpenTofu can express that change.
-The Docker provider may recreate inference and proxy containers and service-owned networks; their physical identities are not recovery invariants.
+The Docker provider may recreate Docker gateway, inference, and proxy containers and service-owned networks; their physical identities are not recovery invariants.
 
 The [public SDK lifecycle commit](https://github.com/NVIDIA/NemoClaw/commit/bd45fa3297) tested SDK apply followed by CLI export and destroy.
 That mixed-client test established that recovery belongs below the CLI boundary.
@@ -176,8 +176,9 @@ Mutations and active readiness or inference probes remain direct.
 Export writes YAML only after all required observations succeed.
 
 The managed graph separates gateway storage, gateway process, model storage, and inference process.
-The gateway storage binding covers its database volume, bridge, initializer and signing identity.
-The gateway process additionally binds the persisted encryption key.
+The Docker gateway storage binding covers its database volume, bridge, initializer, signing identity, and persisted encryption key.
+Its process uses a native Docker-provider ID and the verified storage mountpoint.
+Podman retains its existing composite process identity and storage binding.
 
 A bound initializer cannot generate credentials again.
 Inference storage retains both the exact model snapshot and prepared data.
