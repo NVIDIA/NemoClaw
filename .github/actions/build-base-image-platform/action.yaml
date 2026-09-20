@@ -60,10 +60,93 @@ inputs:
 runs:
   using: composite
   steps:
+    - name: Install verified Docker Buildx
+      id: verified-buildx
+      shell: bash
+      env:
+        ARCH: ${{ inputs.arch }}
+        BUILDX_VERSION: 0.37.1
+        BUILDX_LINUX_AMD64_SHA256: 9447199cdb435f25880548343c128a4b6650e8891ee598905d8d29d39a8e359b
+        BUILDX_LINUX_ARM64_SHA256: e5cc9fe3bbff5cbc91230981f7860e06076110730a2db997082652199042a1f2
+      run: |
+        set -euo pipefail
+        case "${RUNNER_OS:-}:${RUNNER_ARCH:-}:$ARCH" in
+          Linux:X64:amd64)
+            buildx_arch="amd64"
+            expected_sha="$BUILDX_LINUX_AMD64_SHA256"
+            ;;
+          Linux:ARM64:arm64)
+            buildx_arch="arm64"
+            expected_sha="$BUILDX_LINUX_ARM64_SHA256"
+            ;;
+          *)
+            echo "ERROR: Docker Buildx has no reviewed artifact for this runner and target architecture." >&2
+            exit 1
+            ;;
+        esac
+        if [[ ! "$expected_sha" =~ ^[0-9a-f]{64}$ ]]; then
+          echo "ERROR: Docker Buildx artifact integrity pin is missing or invalid." >&2
+          exit 1
+        fi
+        asset="buildx-v${BUILDX_VERSION}.linux-${buildx_arch}"
+        download="$(mktemp "$RUNNER_TEMP/${asset}.XXXXXX")"
+        trap 'rm -f "$download"' EXIT
+        curl \
+          --proto '=https' \
+          --tlsv1.2 \
+          --location \
+          --fail \
+          --silent \
+          --show-error \
+          --output "$download" \
+          "https://github.com/docker/buildx/releases/download/v${BUILDX_VERSION}/${asset}"
+        if ! printf '%s  %s\n' "$expected_sha" "$download" | sha256sum --check --strict; then
+          echo "ERROR: Docker Buildx artifact checksum does not match the reviewed release." >&2
+          exit 1
+        fi
+        docker_config="${DOCKER_CONFIG:-$HOME/.docker}"
+        install -d -m 0700 "$docker_config/cli-plugins"
+        install -m 0755 "$download" "$docker_config/cli-plugins/docker-buildx"
+        installed_version="$(docker buildx version)"
+        read -r installed_product installed_release _ <<<"$installed_version"
+        if [ "$installed_product" != "github.com/docker/buildx" ] || \
+          [ "$installed_release" != "v${BUILDX_VERSION}" ]; then
+          echo "ERROR: Docker Buildx did not select the reviewed v${BUILDX_VERSION} artifact." >&2
+          exit 1
+        fi
+        printf 'sha256=%s\n' "$expected_sha" >> "$GITHUB_OUTPUT"
+        printf 'version=%s\n' "$BUILDX_VERSION" >> "$GITHUB_OUTPUT"
+
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
-      with:
-        version: v0.37.1
+
+    - name: Revalidate selected Docker Buildx
+      shell: bash
+      env:
+        BUILDX_VERSION: ${{ steps.verified-buildx.outputs.version }}
+        EXPECTED_SHA: ${{ steps.verified-buildx.outputs.sha256 }}
+      run: |
+        set -euo pipefail
+        if [[ ! "$EXPECTED_SHA" =~ ^[0-9a-f]{64}$ ]]; then
+          echo "ERROR: Docker Buildx post-setup integrity pin is missing or invalid." >&2
+          exit 1
+        fi
+        plugin="${DOCKER_CONFIG:-$HOME/.docker}/cli-plugins/docker-buildx"
+        if [ ! -f "$plugin" ] || [ -L "$plugin" ]; then
+          echo "ERROR: Docker Buildx post-setup plugin is missing or unsafe." >&2
+          exit 1
+        fi
+        if ! printf '%s  %s\n' "$EXPECTED_SHA" "$plugin" | sha256sum --check --strict; then
+          echo "ERROR: Docker Buildx post-setup checksum differs from the reviewed release." >&2
+          exit 1
+        fi
+        installed_version="$(docker buildx version)"
+        read -r installed_product installed_release _ <<<"$installed_version"
+        if [ "$installed_product" != "github.com/docker/buildx" ] || \
+          [ "$installed_release" != "v${BUILDX_VERSION}" ]; then
+          echo "ERROR: Docker Buildx post-setup selection differs from the reviewed release." >&2
+          exit 1
+        fi
 
     - name: Log in to GHCR
       uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
