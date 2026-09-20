@@ -1406,7 +1406,7 @@ The host selects the controller from the live container topology.
 In a direct root-entrypoint container, the request reaches the root PID 1 supervisor.
 In an OpenShell-managed container, the request enters the root-owned mode `0500` managed controller through a sanitized root exec while OpenShell remains PID 1.
 It does not use ordinary `openshell sandbox exec`, manual in-sandbox relaunch, or container replacement as a fallback.
-When `recover` repairs a stopped built-in OpenClaw or Hermes gateway, it repeats the recovery action only for these exact transient results:
+When `recover` repairs a stopped built-in OpenClaw or Hermes gateway, it repeats the managed-controller probe only while a bounded startup, discovery, lease-contention, or pinned-container restart transition remains unconfirmed. Any other result ends recovery.
 
 If the gateway is healthy, `recover` checks or repairs host-side forwards.
 It exits zero only when the required forward checks succeed.
