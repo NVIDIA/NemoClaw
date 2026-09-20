@@ -592,6 +592,8 @@ esac`,
     expect(output).not.toContain(
       "NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1 NEMOCLAW_CONFIRM_LEGACY_MANAGED_RECREATE=1",
     );
+    expect(output).toContain("openshell gateway destroy -g nemoclaw || openshell gateway destroy");
+    expect(output).not.toContain("openshell gateway remove nemoclaw");
     expect(cliLog).toBe("");
     expect(openshellLog).toBe("");
   });
@@ -613,14 +615,12 @@ esac`,
     expect(output).toContain(
       "NEMOCLAW_GATEWAY_PORT=9123 NEMOCLAW_REQUIRE_ALL_SANDBOX_BACKUPS=1 nemoclaw backup-all",
     );
-    expect(output).toContain(
-      "openshell gateway remove nemoclaw-9123 || openshell gateway destroy -g nemoclaw-9123",
-    );
+    expect(output).toContain("openshell gateway destroy -g nemoclaw-9123");
     expect(output).toContain(
       "curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_GATEWAY_PORT=9123 NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1 bash",
     );
     expect(output).toContain("NEMOCLAW_GATEWAY_PORT=9123 nemoclaw upgrade-sandboxes --check");
-    expect(output).not.toContain("openshell gateway remove nemoclaw ||");
+    expect(output).not.toContain("openshell gateway remove");
     expect(output).not.toContain("|| openshell gateway destroy\n");
     expect(output).not.toContain("pkill -f openshell-gateway");
     expect(cliLog).toBe("");
