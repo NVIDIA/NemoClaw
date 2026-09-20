@@ -984,7 +984,7 @@ describe("sandbox provisioning: unified .openclaw layout (#2227)", () => {
       const command = dockerRunCommandBetween(
         dockerfile,
         "# System-wide shell hooks",
-        "# Pin config hash at build time",
+        "# DAC-protect .nemoclaw directory",
       )
         .replaceAll("/usr/local/lib/nemoclaw/sandbox-rlimits.sh", rlimitLib)
         .replaceAll("/etc/profile.d/nemoclaw-rlimits.sh", rlimitHook)
