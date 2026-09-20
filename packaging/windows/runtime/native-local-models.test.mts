@@ -15,7 +15,11 @@ import {
   downloadedModelArguments,
   localModelIdentityMatches,
 } from "./native-local-models.mts";
-import { guardedNativeChat } from "./native-inference-manifest.mts";
+import {
+  guardedNativeChat,
+  nativeServerArguments,
+  requireFullCudaOffload,
+} from "./native-inference-manifest.mts";
 
 function fixture(t: TestContext) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-model-data-"));
@@ -81,12 +85,29 @@ test("each downloaded model binds its own alias and keeps a loopback-only server
     assert.equal(args[args.indexOf("--alias") + 1], model.id);
     assert.equal(args[args.indexOf("--host") + 1], "127.0.0.1");
     assert.equal(args[args.indexOf("--n-gpu-layers") + 1], "all");
+    assert.equal(args[args.indexOf("--log-verbosity") + 1], "4");
     assert.ok(args.includes("--no-webui"));
     assert.ok(localModelIdentityMatches(model.id, model.id));
     assert.equal(localModelIdentityMatches(model.id, "foreign"), false);
     assert.throws(() => downloadedModelArguments(model, "weights", "projector", 0, "CUDA0"));
     assert.throws(() => downloadedModelArguments(model, "weights", "projector", 12345, "CPU"));
   }
+});
+
+test("both native recipes retain the trace-level full-offload proof", () => {
+  const args = nativeServerArguments("weights.gguf", 12345, "CUDA0");
+  assert.equal(args[args.indexOf("--log-verbosity") + 1], "4");
+  assert.deepEqual(
+    requireFullCudaOffload(`
+0.03 I load_tensors: offloaded 66/66 layers to GPU
+0.03 I load_tensors: CUDA0 model buffer size = 14674.45 MiB
+`),
+    { offloadedLayers: 66, totalLayers: 66 },
+  );
+  assert.throws(
+    () => requireFullCudaOffload("model loaded without an offload summary"),
+    /full CUDA offload/u,
+  );
 });
 
 test("new model aliases do not bypass the existing inference request restrictions", () => {

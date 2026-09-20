@@ -162,6 +162,11 @@ export function nativeServerArguments(modelPath: string, port: number, device: s
     "900",
     "--sleep-idle-seconds",
     "-1",
+    // llama.cpp b10362 classifies the layer-offload summary as trace output.
+    // Keep it within the existing bounded startup capture so readiness can
+    // prove full CUDA offload instead of accepting a CPU fallback.
+    "--log-verbosity",
+    "4",
     "--metrics",
     "--no-webui",
     "--no-slots",

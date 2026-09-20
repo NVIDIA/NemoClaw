@@ -154,6 +154,9 @@ export function downloadedModelArguments(
     "--flash-attn",
     "on",
     "--jinja",
+    // llama.cpp b10362 emits its layer-offload proof only at trace verbosity.
+    "--log-verbosity",
+    "4",
     "--metrics",
     "--no-webui",
     "--temp",
