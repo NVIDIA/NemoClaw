@@ -256,7 +256,7 @@ Omission preserves the existing unauthenticated serving behavior.
 Build the [runtime image](build.md#build-a-runtime-image) from this revision and use its immutable digest; a container created from an incompatible image will not satisfy application readiness.
 Do not supply `inferenceProviders[].credential` for a managed service.
 
-The supervisor creates a mode-0600 key in `/data/inference-key` under its persistent writer lock and reuses it after restart.
+The supervisor creates a mode-0600 key in `/credentials/inference-key` on a separate credential volume under its own writer lock and reuses it after restart.
 It passes the key only to the vLLM child process through `VLLM_API_KEY`, then verifies `/v1/models` using bearer authentication before reporting readiness.
 Recipe environment maps cannot set `VLLM_API_KEY`.
 The SDK reads the key through the verified runtime container identity and installs it in OpenShell's provider credential store.
@@ -265,10 +265,10 @@ YAML, plans, container launch settings, and OpenTofu state contain no generated 
 The runtime's root user and Docker administrators can read the key and child environment.
 The private published HTTP endpoint provides bearer authentication without TLS.
 
-Destroy removes the runtime and provider registration and retains the model volume, including its credential.
-Recreation using that retained volume reuses the key.
+Destroy removes the runtime and provider registration and retains the separate model and credential volumes.
+Recreation using the retained credential volume reuses the key.
 A missing key after initialization or invalid key metadata stops startup and retains storage for inspection.
-Remove the retained volume explicitly when retiring its model data and credential.
+Retire model data and credentials separately; removing the model volume does not erase the credential.
 Changing an existing service to enable authentication follows the normal runtime replacement rules; YAML does not reconfigure a running server in place.
 
 ## Use External Ollama through a Managed Proxy
