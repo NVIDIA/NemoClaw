@@ -13,6 +13,7 @@ import {
   managedOpenClawSubagentCommand,
   preclean,
   summarizeOnboardFailureStartupSignals,
+  waitForManagedActivationSandboxAbsence,
 } from "../live/managed-image-activation-e2e-helpers.ts";
 
 function runPostRestartAgentTurnFixture(statuses: string[], times: number[]) {
@@ -256,5 +257,82 @@ describe("managed image activation failure diagnostics", () => {
       }),
     ).rejects.toThrow("startup failed");
     expect(calls).toEqual([]);
+  });
+
+  it("waits for a deleting managed activation sandbox to become absent", async () => {
+    vi.useFakeTimers();
+    const list = vi
+      .fn()
+      .mockResolvedValueOnce({
+        exitCode: 0,
+        stderr: "",
+        stdout: "NAME            CREATED   PHASE\nmi-act-hermes   1m        Deleting\n",
+      })
+      .mockResolvedValueOnce({
+        exitCode: 0,
+        stderr: "",
+        stdout: "NAME   CREATED   PHASE\n",
+      });
+
+    try {
+      const absence = waitForManagedActivationSandboxAbsence({ list } as never, "mi-act-hermes", {
+        OPENSHELL_GATEWAY: "nemoclaw",
+      });
+      await vi.advanceTimersByTimeAsync(1_000);
+      await absence;
+    } finally {
+      vi.useRealTimers();
+    }
+
+    expect(list).toHaveBeenCalledTimes(2);
+    expect(list).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        artifactName: "post-destroy-openshell-list-mi-act-hermes-attempt-01",
+      }),
+    );
+    expect(list).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        artifactName: "post-destroy-openshell-list-mi-act-hermes-attempt-02",
+      }),
+    );
+  });
+
+  it("fails when OpenShell still lists the managed activation sandbox at the cleanup deadline", async () => {
+    vi.useFakeTimers();
+    const list = vi.fn(async () => ({
+      exitCode: 0,
+      stderr: "",
+      stdout: "NAME            CREATED   PHASE\nmi-act-hermes   1m        Deleting\n",
+    }));
+
+    try {
+      const absence = waitForManagedActivationSandboxAbsence({ list } as never, "mi-act-hermes", {
+        OPENSHELL_GATEWAY: "nemoclaw",
+      });
+      const assertion = expect(absence).rejects.toThrow("polling exhausted its configured bound");
+      await vi.advanceTimersByTimeAsync(30_000);
+      await assertion;
+    } finally {
+      vi.useRealTimers();
+    }
+
+    expect(list.mock.calls.length).toBeGreaterThan(1);
+  });
+
+  it("stops when OpenShell cannot list sandboxes during cleanup verification", async () => {
+    const list = vi.fn(async () => ({
+      exitCode: 1,
+      stderr: "gateway transport unavailable",
+      stdout: "",
+    }));
+
+    await expect(
+      waitForManagedActivationSandboxAbsence({ list } as never, "mi-act-hermes", {
+        OPENSHELL_GATEWAY: "nemoclaw",
+      }),
+    ).rejects.toThrow("list OpenShell sandboxes after managed activation destroy failed");
+    expect(list).toHaveBeenCalledOnce();
   });
 });

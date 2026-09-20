@@ -192,6 +192,7 @@ export function validateManagedImageMultiarchWorkflow(workflow: WorkflowRecord):
   }
 
   requireValues(errors, `${JOB_ID} env`, record(job.env), {
+    BUILDX_CONFIG: "${{ runner.temp }}/nemoclaw-protected-buildx-${{ matrix.shard }}",
     E2E_ARTIFACT_DIR:
       "${{ github.workspace }}/e2e-artifacts/live/managed-image-multiarch-startup/${{ matrix.shard }}",
     E2E_JOB: "1",

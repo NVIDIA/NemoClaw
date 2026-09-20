@@ -442,6 +442,24 @@ export async function preclean(
   });
 }
 
+export async function waitForManagedActivationSandboxAbsence(
+  sandbox: SandboxClient,
+  sandboxName: string,
+  env: NodeJS.ProcessEnv,
+): Promise<void> {
+  await pollUntil({
+    artifactPrefix: `post-destroy-openshell-list-${sandboxName}`,
+    deadlineMs: 30_000,
+    delayMs: 1_000,
+    probe: async (_attempt, artifactName) => sandbox.list({ artifactName, env, timeoutMs: 10_000 }),
+    terminal: (result) =>
+      result.exitCode === 0
+        ? undefined
+        : `list OpenShell sandboxes after managed activation destroy failed: ${resultText(result)}`,
+    accept: (result) => !outputContainsSandbox(result, sandboxName),
+  });
+}
+
 async function verifyExactCleanup(
   host: HostCliClient,
   sandbox: SandboxClient,
@@ -685,7 +703,7 @@ async function qualifyAgent(
   enterGatewayRestartPhase(progress, agent);
   await lifecycle.restartGatewayRuntime({ delayMs: 2_000, sandboxName });
   await lifecycle.waitForGatewayConnected({ attempts: 60, intervalMs: 5_000 });
-  await lifecycle.assertSandboxReadyAfterGatewayRestart(sandboxName, {
+  await lifecycle.waitForSandboxReadyAfterGatewayRestart(sandboxName, {
     artifactNamePrefix: `${agent}-post-restart-ready`,
     env,
   });

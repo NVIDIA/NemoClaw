@@ -1623,7 +1623,7 @@ const NATIVE_GATEWAY_PROCESS_SETTLEMENT_DELAY_MS = 2_000;
 /** Require one positive Hermes gateway observation after startup within the bounded window. */
 export async function waitForStartedHermesGatewayProcess(
   sandboxName: string,
-  gatewayName: string,
+  gatewayName: string | undefined,
   options: {
     probe?: typeof isSandboxGatewayRunningForStatus;
     sleep?: (delayMs: number) => Promise<void>;

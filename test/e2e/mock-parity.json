@@ -805,6 +805,7 @@
         "src/lib/actions/sandbox/gateway-state-probe-recovery-start.test.ts",
         "src/lib/onboard/runtime-provider/docker.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
+        "test/e2e/support/e2e-phase-lifecycle.test.ts",
         "test/e2e/support/e2e-clients.test.ts"
       ]
     },

@@ -12,50 +12,73 @@ const root = path.join(import.meta.dirname, "../../..");
 const patcher = path.join(root, "agents", "hermes", "patch-session-list-preview.py");
 const fixtures: string[] = [];
 const oldQuery = "ORDER BY m.timestamp, m.id LIMIT 1";
-const oldRenderer = `                if has_titles:
-                    title = (s.get("title") or "—")[:26]
-                    print(f"{title:<28} {ws:<18} {last_active:<13} {s['id']}")`;
+const oldRenderer = `    _title = lambda s, n: (s.get("title") or "—")[:n]  # noqa: E731`;
 
 const stateFixture = `\
 def _preview(connection, query):
     return connection.execute(query).fetchone()[0]
 
 ${Array.from(
-  { length: 5 },
+  { length: 2 },
   (_, index) => `QUERY_${index} = "SELECT content FROM messages m ${oldQuery}"`,
 ).join("\n")}
 
 def previews(connection):
     return [_preview(connection, query) for query in (
-        QUERY_0, QUERY_1, QUERY_2, QUERY_3, QUERY_4,
+        QUERY_0, QUERY_1,
     )]
 `;
 
 const commandFixture = `\
 def render(session):
-    has_titles = True
-    s = session
-    ws = "workspace"
-    last_active = "now"
-    for _row in (session,):
-        if _row:
 ${oldRenderer}
+    print(_title(session, 26))
 `;
 
 function fixtureFiles() {
   const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-session-preview-"));
   fixtures.push(fixture);
-  const stateModule = path.join(fixture, "hermes_state.py");
+  const stateCommon = path.join(fixture, "hermes_state_common.py");
+  const stateSessions = path.join(fixture, "hermes_state_sessions.py");
+  const stateTelegram = path.join(fixture, "hermes_state_telegram.py");
   const commandModule = path.join(fixture, "sessions_cmd.py");
-  fs.writeFileSync(stateModule, stateFixture);
+  fs.writeFileSync(
+    stateCommon,
+    stateFixture
+      .replaceAll(oldQuery, `${oldQuery.slice(0, -1)}2`)
+      .replace(`${oldQuery.slice(0, -1)}2`, oldQuery),
+  );
+  fs.writeFileSync(stateSessions, stateFixture);
+  fs.writeFileSync(
+    stateTelegram,
+    stateFixture
+      .replaceAll(oldQuery, `${oldQuery.slice(0, -1)}2`)
+      .replace(`${oldQuery.slice(0, -1)}2`, oldQuery),
+  );
   fs.writeFileSync(commandModule, commandFixture);
-  return { commandModule, stateModule };
+  return { commandModule, stateCommon, stateSessions, stateTelegram };
 }
 
-function runPatcher(stateModule: string, commandModule: string) {
+function runPatcher(
+  stateCommon: string,
+  stateSessions: string,
+  stateTelegram: string,
+  commandModule: string,
+) {
   return spawnSync(
     "python3",
-    ["-I", patcher, stateModule, "--sessions-command-path", commandModule],
+    [
+      "-I",
+      patcher,
+      "--state-common-path",
+      stateCommon,
+      "--state-sessions-path",
+      stateSessions,
+      "--state-telegram-path",
+      stateTelegram,
+      "--sessions-command-path",
+      commandModule,
+    ],
     {
       encoding: "utf8",
       timeout: 5000,
@@ -71,9 +94,9 @@ afterEach(() => {
 
 describe("Hermes session-list preview patch", () => {
   it("shows the latest message while preserving explicit titles", () => {
-    const { commandModule, stateModule } = fixtureFiles();
+    const { commandModule, stateCommon, stateSessions, stateTelegram } = fixtureFiles();
 
-    const result = runPatcher(stateModule, commandModule);
+    const result = runPatcher(stateCommon, stateSessions, stateTelegram, commandModule);
 
     expect(result.status, result.stderr).toBe(0);
     const probe = `\
@@ -90,8 +113,8 @@ def load(name, path):
     spec.loader.exec_module(module)
     return module
 
-state = load("patched_state", sys.argv[1])
-command = load("patched_command", sys.argv[2])
+states = [load(f"patched_state_{index}", path) for index, path in enumerate(sys.argv[1:4])]
+command = load("patched_command", sys.argv[4])
 connection = sqlite3.connect(":memory:")
 connection.execute("CREATE TABLE messages (content TEXT, timestamp INTEGER, id INTEGER)")
 connection.executemany(
@@ -107,18 +130,23 @@ for session in (
     with contextlib.redirect_stdout(stream):
         command.render(session)
     output.append(stream.getvalue().strip())
-print(json.dumps({"previews": state.previews(connection), "output": output}))
+print(json.dumps({"previews": [state.previews(connection) for state in states], "output": output}))
 `;
-    const probeResult = spawnSync("python3", ["-I", "-c", probe, stateModule, commandModule], {
-      encoding: "utf8",
-      timeout: 5000,
-    });
+    const probeResult = spawnSync(
+      "python3",
+      ["-I", "-c", probe, stateCommon, stateSessions, stateTelegram, commandModule],
+      { encoding: "utf8", timeout: 5000 },
+    );
     expect(probeResult.status, probeResult.stderr).toBe(0);
     const observed = JSON.parse(probeResult.stdout) as {
-      previews: string[];
+      previews: string[][];
       output: string[];
     };
-    expect(observed.previews).toEqual(Array.from({ length: 5 }, () => "latest turn"));
+    expect(observed.previews).toEqual([
+      ["latest turn", "first turn"],
+      ["latest turn", "latest turn"],
+      ["latest turn", "first turn"],
+    ]);
     expect(observed.output[0]).toContain("latest turn");
     expect(observed.output[0]).not.toContain("seed title");
     expect(observed.output[1]).toContain("chosen title");
