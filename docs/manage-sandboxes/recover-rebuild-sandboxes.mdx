@@ -46,11 +46,12 @@ $$nemoclaw <sandbox-name> start
 This path preserves the sandbox workspace and leaves lifecycle ownership with OpenShell. `start`
 and `recover` reconcile a sandbox that OpenShell still reports as `Stopped`; neither command
 directly restarts or unpauses the underlying provider container. Before destructive replacement,
-run `$$nemoclaw <sandbox-name> status`. The status and connect recovery path can restore an
-OpenShell-missing standard Docker sandbox only when its exact labeled Docker-driver container
-still remains. If that check cannot identify or recover the sandbox, destroy the stale NemoClaw
-entry and onboard a clean replacement. Restore a separately created snapshot afterward if one is
-available; rebuild cannot recover a workspace or live OpenShell policy that no longer exists.
+run `$$nemoclaw <sandbox-name> status`. If the owning gateway reports the registered sandbox
+missing, NemoClaw leaves any provider container untouched. Preserve any separate snapshot, use
+`$$nemoclaw <sandbox-name> destroy --yes` to retire the stale registered sandbox when the command
+can prove the OpenShell resource absent, then onboard a clean replacement. Restore the snapshot
+afterward if one is available; rebuild cannot recover a workspace or live OpenShell policy that no
+longer exists.
 
 <AgentOnly variant="openclaw,hermes">
   The `start` command repairs the agent runtime and host-side port forwards.
@@ -69,7 +70,7 @@ available; rebuild cannot recover a workspace or live OpenShell policy that no l
 
 <AgentOnly variant="openclaw">
 If `$$nemoclaw <name> status` reports `Phase: Stopped` after an intentional stop, run `$$nemoclaw <name> start`.
-If status reports `sandbox_container_stopped`, a missing sandbox, or an unhealthy gateway, run the recover command instead of opening a shell.
+If status reports `sandbox_container_stopped` or an unhealthy gateway, run the recover command instead of opening a shell. For a missing sandbox, follow the replacement procedure under [Restart a Stopped Sandbox](#restart-a-stopped-sandbox).
 
 ```bash
 $$nemoclaw <sandbox-name> recover
@@ -89,7 +90,7 @@ The restart command asks the topology-specific controller to stop the tracked ga
 
 <AgentOnly variant="hermes">
 If `$$nemoclaw <name> status` reports `Phase: Stopped` after an intentional stop, run `$$nemoclaw <name> start`.
-If status reports `sandbox_container_stopped`, a missing sandbox, or an unhealthy Hermes gateway, run the recover command instead of opening a shell.
+If status reports `sandbox_container_stopped` or an unhealthy Hermes gateway, run the recover command instead of opening a shell. For a missing sandbox, follow the replacement procedure under [Restart a Stopped Sandbox](#restart-a-stopped-sandbox).
 
 ```bash
 $$nemoclaw <sandbox-name> recover
@@ -216,7 +217,7 @@ Rebuild creates the replacement from the base image selected during preflight, e
 If replacement onboarding returns a nonzero status, rebuild stops before post-create state restoration and preserves the backup and registry recovery state.
 It does not report a successful rebuild.
 
-If the sandbox's container is stopped (for example, an out-of-band container kill left the sandbox in `Phase: Error`), rebuild starts the container for the duration of the pre-recreate state backup and returns it to its stopped state afterward, the same recovery `$$nemoclaw backup-all` uses for a stopped container. If no stopped container can be found for the sandbox, or the retried backup still fails, rebuild aborts without recreating the sandbox; it reports an incomplete-snapshot notice only when a partial snapshot was retained. If the backup itself succeeds but the started container cannot be returned to its stopped state, rebuild also aborts, so a sandbox that was stopped before rebuild started is never left running without a warning.
+If the sandbox is stopped (for example, an out-of-band runtime failure left it in `Phase: Error`), rebuild asks OpenShell to start that exact sandbox for the duration of the pre-recreate state backup and asks OpenShell to return it to `Stopped` afterward, the same lifecycle path `$$nemoclaw backup-all` uses. If OpenShell cannot start the sandbox, or the retried backup still fails, rebuild aborts without recreating the sandbox; it reports an incomplete-snapshot notice only when a partial snapshot was retained. If the backup succeeds but OpenShell cannot return the sandbox to `Stopped`, rebuild also aborts and reports the failed transition.
 
 <AgentOnly variant="hermes">
 

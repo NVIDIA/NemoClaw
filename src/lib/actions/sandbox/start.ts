@@ -8,6 +8,7 @@ import { retryUntilAsync } from "../../core/retry";
 import { DEFAULT_SANDBOX_EXEC_TIMEOUT_MS } from "../../adapters/sandbox/command-transport";
 import { cliName } from "../../onboard/branding";
 import {
+  classifyRegisteredPortableAgentLifecycle,
   qualifyLegacyHermesPortableLifecycleProfile,
   recoverPortableAgentSandboxLifecycle,
   requalifyPortableAgentSandboxAuthority,
@@ -225,25 +226,19 @@ async function startSandboxWithinLifecycleFence(
   if (preflight) return preflight;
   let result: SandboxLifecycleResult & { readonly hermesPortableVerified?: true };
   try {
-    const legacyHermesPortableProfile =
-      resolved.bundle.identity.id === "docker" &&
-      resolved.sandbox.portableLifecycleProfile === undefined &&
-      resolved.sandbox.agent === "hermes" &&
-      typeof resolved.sandbox.lifecycleGeneration === "string" &&
-      (deps.qualifyLegacyPortableProfile ?? qualifyLegacyHermesPortableLifecycleProfile)(
-        sandboxName,
-        {
-          env: input.environment,
-          readRegistry: (name) => input.readRegistry?.(name) ?? null,
-        },
-      );
-    const portableAuthorityRecorded =
-      resolved.bundle.identity.id === "docker" &&
-      ((legacyHermesPortableProfile && resolved.sandbox.agent === "hermes") ||
-        (resolved.sandbox.portableLifecycleProfile === "hermes" &&
-          resolved.sandbox.agent === "hermes") ||
-        (resolved.sandbox.portableLifecycleProfile === "openclaw" &&
-          resolved.sandbox.agent === "openclaw"));
+    const portableAuthority = classifyRegisteredPortableAgentLifecycle(
+      sandboxName,
+      resolved.bundle.identity.id,
+      resolved.sandbox,
+      {
+        env: input.environment,
+        readRegistry: (name) => input.readRegistry?.(name) ?? null,
+        ...(deps.qualifyLegacyPortableProfile
+          ? { qualifyLegacyHermes: deps.qualifyLegacyPortableProfile }
+          : {}),
+      },
+    );
+    const portableAuthorityRecorded = portableAuthority.kind === "portable";
     if (portableAuthorityRecorded && resolved.sandbox.agent === "hermes") {
       await (deps.requalifyPortableSandbox ?? requalifyPortableAgentSandboxAuthority)(sandboxName, {
         env: input.environment,
