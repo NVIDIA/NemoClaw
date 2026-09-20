@@ -103,6 +103,7 @@ type HarnessOverrides = Readonly<{
   hostProbe?: HostProbe;
   inspect?: InspectListener;
   inspectLegacy?: InspectLegacyListener;
+  legacyForwardWorkspaceSelection?: "explicit" | "implicit-default";
   now?: () => number;
   platform?: NodeJS.Platform;
   procRoot?: string;
@@ -248,6 +249,9 @@ export function createHarness(overrides: HarnessOverrides = {}) {
     environment: overrides.environment ?? {},
     executable: overrides.executable ?? executable,
     gatewayEndpoint: overrides.gatewayEndpoint ?? forward.gatewayEndpoint,
+    ...(overrides.legacyForwardWorkspaceSelection
+      ? { legacyForwardWorkspaceSelection: overrides.legacyForwardWorkspaceSelection }
+      : {}),
     ...(overrides.hostProbe ? { hostProbe: overrides.hostProbe } : {}),
     inspect,
     inspectLegacy,

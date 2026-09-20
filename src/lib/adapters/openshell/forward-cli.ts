@@ -134,6 +134,7 @@ export type CliOpenShellForwardAdapterDeps = Readonly<{
   executable: string;
   environment?: NodeJS.ProcessEnv;
   gatewayEndpoint: string;
+  legacyForwardWorkspaceSelection?: "explicit" | "implicit-default";
   runtimeSelection: OpenShellRuntimeSelection;
   inspect?: (
     forward: OpenShellForwardIdentity,
@@ -236,7 +237,10 @@ export function parseCliOpenShellForwardList(
 }
 
 /** Build the gateway-scoped legacy forward-list command. */
-export function buildCliOpenShellForwardListArgs(forward: OpenShellForwardIdentity): string[] {
+export function buildCliOpenShellForwardListArgs(
+  forward: OpenShellForwardIdentity,
+  workspaceSelection: "explicit" | "implicit-default" = "explicit",
+): string[] {
   return [
     "forward",
     "list",
@@ -244,8 +248,7 @@ export function buildCliOpenShellForwardListArgs(forward: OpenShellForwardIdenti
     forward.gatewayName,
     "--gateway-endpoint",
     forward.gatewayEndpoint,
-    "--workspace",
-    forward.workspace,
+    ...(workspaceSelection === "explicit" ? ["--workspace", forward.workspace] : []),
   ];
 }
 
@@ -254,6 +257,7 @@ export { buildCliOpenShellForwardServiceArgs } from "./forward-cli-args";
 /** Build the authority-scoped legacy stop command. */
 export function buildCliOpenShellLegacyForwardStopArgs(
   forward: OpenShellForwardIdentity,
+  workspaceSelection: "explicit" | "implicit-default" = "explicit",
 ): string[] {
   return [
     "forward",
@@ -264,8 +268,7 @@ export function buildCliOpenShellLegacyForwardStopArgs(
     forward.gatewayName,
     "--gateway-endpoint",
     forward.gatewayEndpoint,
-    "--workspace",
-    forward.workspace,
+    ...(workspaceSelection === "explicit" ? ["--workspace", forward.workspace] : []),
   ];
 }
 
@@ -1065,6 +1068,7 @@ export function createCliOpenShellForwardAdapter(
 ): OpenShellForwardAdapter {
   const executable = deps.executable;
   const gatewayEndpoint = deps.gatewayEndpoint;
+  const legacyForwardWorkspaceSelection = deps.legacyForwardWorkspaceSelection ?? "explicit";
   const platform = deps.platform ?? process.platform;
   const sourceEnvironment = deps.environment ?? process.env;
   const runtimeSelection = snapshotRuntimeSelection(deps.runtimeSelection);
@@ -1277,7 +1281,7 @@ export function createCliOpenShellForwardAdapter(
     const beforeList = await runFence(assertCurrent, deadline);
     if (beforeList) return emptyEvidence(allIndeterminate(forwards, beforeList));
     const result = await runSafely(
-      buildCliOpenShellForwardListArgs(scope),
+      buildCliOpenShellForwardListArgs(scope, legacyForwardWorkspaceSelection),
       remaining(deadline, now),
     );
     const error = commandError(result);
@@ -1782,7 +1786,7 @@ export function createCliOpenShellForwardAdapter(
       return { state: "failed", forward, effect: "none", error: finalCurrentness };
     }
     const result = await runSafely(
-      buildCliOpenShellLegacyForwardStopArgs(forward),
+      buildCliOpenShellLegacyForwardStopArgs(forward, legacyForwardWorkspaceSelection),
       remaining(deadline, now),
     );
     const error = commandError(result);

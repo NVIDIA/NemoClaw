@@ -316,7 +316,11 @@ export async function retireRegisteredLegacyDashboardForwards(
   const resolveRuntime = deps.resolveForwardRuntimeAuthority ?? forwardRuntimeAuthority;
   const selectedGatewayName = deps.selectedGatewayName ?? resolveGatewayName(GATEWAY_PORT);
   const adapterForAuthority =
-    deps.forwardAdapterForAuthority ?? createOpenShellForwardAdapterForAuthority;
+    deps.forwardAdapterForAuthority ??
+    ((authority: OpenShellForwardRuntimeAuthority) =>
+      createOpenShellForwardAdapterForAuthority(authority, {
+        legacyForwardWorkspaceSelection: "implicit-default",
+      }));
   const sandboxes = [...(deps.listSandboxes ?? registry.listSandboxes)().sandboxes]
     .filter((sandbox) => resolveSandboxGatewayName(sandbox) === selectedGatewayName)
     .sort((a, b) => a.name.localeCompare(b.name));

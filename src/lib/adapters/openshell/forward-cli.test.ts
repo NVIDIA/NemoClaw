@@ -1099,6 +1099,23 @@ describe("CLI OpenShell direct forward start", () => {
 });
 
 describe("CLI OpenShell legacy forward retirement", () => {
+  it("omits the workspace flag for legacy CLIs that predate workspace selection", async () => {
+    const run = vi.fn<RunCommand>(async (_executable, args) =>
+      args.includes("list") ? captured(0, legacyForwardList) : captured(0),
+    );
+    const { adapter } = createHarness({
+      legacyForwardWorkspaceSelection: "implicit-default",
+      run,
+    });
+
+    await expect(
+      adapter.retireLegacyForward({ forward, authorize: async () => {} }),
+    ).resolves.toEqual({ state: "retired", forward });
+    expect(run.mock.calls.filter(([, args]) => args.includes("list"))).not.toEqual([]);
+    expect(run.mock.calls.every(([, args]) => !args.includes("--workspace"))).toBe(true);
+    expect(run.mock.calls.filter(([, args]) => args.includes("stop"))).toHaveLength(1);
+  });
+
   it("checks authority again, stops once, and verifies release", async () => {
     const operations: string[] = [];
     const run: RunCommand = async (_executable, args) => {
