@@ -25,6 +25,12 @@ impl ResourceAdapter {
             destroying: Arc::new(AtomicBool::new(false)),
         }
     }
+    fn openshell(&self) -> bool {
+        matches!(
+            self.definition.kind,
+            "workspace" | "provider_profile" | "provider" | "sandbox"
+        )
+    }
     fn optional(&self, field: &str) -> bool {
         (self.definition.kind == "provider_profile"
             && matches!(field, "endpoint" | "authenticated"))
@@ -282,6 +288,13 @@ impl Resource for ResourceAdapter {
                 )
                 .await
             {
+                Ok(None)
+                    if self.openshell()
+                        && (self.definition.kind == "workspace"
+                            || !self.destroying.load(Ordering::Acquire)) =>
+                {
+                    Err(ObservationError::BindingMismatch)
+                }
                 Ok(Some(row)) => self.checked(&prior, row).map(Some),
                 other => other,
             },
@@ -345,6 +358,10 @@ impl Resource for ResourceAdapter {
         self.check_plan(diags, &proposed, &config, Some(&prior))
             .await?;
         let (state, replacements) = plan_update(&self.definition, &prior, proposed);
+        if self.openshell() && !replacements.is_empty() {
+            diags.root_error_short("OpenShell resource replacement is forbidden; use explicit teardown and a new resource identity");
+            return None;
+        }
         Some((
             state,
             private,
@@ -353,11 +370,19 @@ impl Resource for ResourceAdapter {
     }
     async fn plan_destroy<'a>(
         &self,
-        _: &mut Diagnostics,
+        diags: &mut Diagnostics,
         _: State,
         private: ValueEmpty,
         _: ValueEmpty,
     ) -> Option<ValueEmpty> {
+        if self.openshell()
+            && (self.definition.kind == "workspace" || !self.destroying.load(Ordering::Acquire))
+        {
+            diags.root_error_short(
+                "OpenShell deletion requires destroy = true; workspaces must be retained",
+            );
+            return None;
+        }
         Some(private)
     }
     async fn create<'a>(

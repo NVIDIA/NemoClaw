@@ -132,19 +132,30 @@ async fn failed_and_partial_observations_retain_protocol_state() {
 }
 
 #[tokio::test]
-async fn confirmed_absence_has_no_error_and_returns_null_state() {
-    let resource = ResourceAdapter::new(
-        Definition::new("workspace", &["name", "owner", "generation"], &[]),
-        Arc::new(Fixture(Ok(None))),
-    );
-    let mut diagnostics = Diagnostics::default();
-    assert!(
-        resource
-            .read(&mut diagnostics, state(row()), Value::Null, Value::Null)
-            .await
-            .is_none()
-    );
-    assert!(diagnostics.errors.is_empty());
+async fn missing_openshell_bindings_are_preserved_except_during_non_workspace_teardown() {
+    for kind in ["workspace", "provider_profile", "provider", "sandbox"] {
+        for destroying in [false, true] {
+            let resource = ResourceAdapter::new(
+                Definition::new(kind, &["name", "owner", "generation"], &[]),
+                Arc::new(Fixture(Ok(None))),
+            );
+            resource
+                .destroying
+                .store(destroying, std::sync::atomic::Ordering::Release);
+            let mut diagnostics = Diagnostics::default();
+            let prior = state(row());
+            let result = resource
+                .read(&mut diagnostics, prior.clone(), Value::Null, Value::Null)
+                .await;
+            if destroying && kind != "workspace" {
+                assert!(result.is_none());
+                assert!(diagnostics.errors.is_empty());
+            } else {
+                assert_eq!(result.unwrap().0, prior);
+                assert!(!diagnostics.errors.is_empty());
+            }
+        }
+    }
 }
 
 struct CreatedIncomplete;
@@ -263,4 +274,44 @@ async fn immediate_exit_establishes_state_and_restart_preserves_identity() {
         .unwrap();
     assert!(diagnostics.errors.is_empty());
     assert_eq!(restarted, created);
+}
+
+#[tokio::test]
+async fn openshell_planning_rejects_immutable_changes_and_requires_explicit_teardown() {
+    for kind in ["workspace", "provider_profile", "provider", "sandbox"] {
+        let resource = ResourceAdapter::new(
+            Definition::new(kind, &["name", "owner", "generation"], &[]),
+            Arc::new(Fixture(Ok(None))),
+        );
+        let prior = state(row());
+        let mut changed = prior.clone();
+        changed.insert("name".into(), Value::Value("replacement".into()));
+        let mut diagnostics = Diagnostics::default();
+        assert!(
+            resource
+                .plan_update(
+                    &mut diagnostics,
+                    prior.clone(),
+                    changed.clone(),
+                    changed,
+                    Value::Null,
+                    Value::Null
+                )
+                .await
+                .is_none()
+        );
+        assert!(!diagnostics.errors.is_empty());
+        for destroying in [false, true] {
+            resource
+                .destroying
+                .store(destroying, std::sync::atomic::Ordering::Release);
+            let mut diagnostics = Diagnostics::default();
+            let result = resource
+                .plan_destroy(&mut diagnostics, prior.clone(), Value::Null, Value::Null)
+                .await;
+            let allowed = destroying && kind != "workspace";
+            assert_eq!(result.is_some(), allowed);
+            assert_eq!(diagnostics.errors.is_empty(), allowed);
+        }
+    }
 }

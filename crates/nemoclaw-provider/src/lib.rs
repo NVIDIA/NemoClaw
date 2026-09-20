@@ -33,7 +33,7 @@ impl Definition {
 }
 
 /// Preserve established computed identity; mark immutable configuration changes
-/// for replacement so the SDK can reject them before executing a saved plan.
+/// for replacement. The resource adapter rejects replacement for OpenShell resources.
 pub fn plan_update(
     definition: &Definition,
     prior: &State,

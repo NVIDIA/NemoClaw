@@ -146,3 +146,131 @@ async fn standalone_hcl_recovers_partial_creation_after_untaint_and_retains_work
         (1, 0, 0, 0)
     );
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires explicit NEMOCLAW_TEST_TOFU and NEMOCLAW_TEST_PROVIDER; isolated OpenShell fixture"]
+async fn standalone_hcl_rejects_missing_bound_resources_before_recreation() {
+    let fixture = Fixture::start().await;
+    let tofu = Standalone::new(&fixture.endpoint);
+    tofu.apply();
+    let prior = tofu.state();
+    fixture.state.lock().unwrap().sandboxes.clear();
+    let effects = fixture.state.lock().unwrap().effects;
+    tofu.run(&["plan", "-input=false"], false);
+    assert_eq!(tofu.state(), prior);
+    assert_eq!(fixture.state.lock().unwrap().effects, effects);
+    // Explicit teardown can account for confirmed absence.
+    tofu.run(
+        &[
+            "apply",
+            "-auto-approve",
+            "-input=false",
+            "-var=enabled=false",
+            "-var=destroying=true",
+        ],
+        true,
+    );
+    assert_eq!(fixture.state.lock().unwrap().workspaces.len(), 1);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires explicit NEMOCLAW_TEST_TOFU and NEMOCLAW_TEST_PROVIDER; isolated OpenShell fixture"]
+async fn standalone_hcl_rejects_replacement_and_unauthorized_removal_during_plan() {
+    let fixture = Fixture::start().await;
+    let tofu = Standalone::new(&fixture.endpoint);
+    tofu.apply();
+    let prior = tofu.state();
+    let effects = fixture.state.lock().unwrap().effects;
+    tofu.run(&["plan", "-input=false", "-var=image=fixture@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"], false);
+    tofu.run(&["plan", "-input=false", "-var=enabled=false"], false);
+    assert_eq!(tofu.state(), prior);
+    let state = fixture.state.lock().unwrap();
+    assert_eq!(state.effects, effects);
+    assert_eq!(state.delete_calls, 0);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires explicit NEMOCLAW_TEST_TOFU and NEMOCLAW_TEST_PROVIDER; isolated OpenShell fixture"]
+async fn standalone_hcl_preserves_state_on_failed_observation_and_foreign_identity() {
+    let fixture = Fixture::start().await;
+    let tofu = Standalone::new(&fixture.endpoint);
+    tofu.apply();
+    let prior = tofu.state();
+    let effects = fixture.state.lock().unwrap().effects;
+    for code in [tonic::Code::Unavailable, tonic::Code::Unauthenticated] {
+        fixture.state.lock().unwrap().fail_read = Some(("sandbox", code));
+        let output = tofu.run(&["plan", "-input=false"], false);
+        assert!(!String::from_utf8_lossy(&output.stderr).contains("secret-sentinel"));
+        assert_eq!(tofu.state(), prior);
+    }
+    fixture.state.lock().unwrap().fail_read = None;
+    let original = fixture.state.lock().unwrap().sandboxes.clone();
+    for field in [
+        "id",
+        "nemoclaw.nvidia.com/uid",
+        "nemoclaw.nvidia.com/generation",
+    ] {
+        {
+            let mut state = fixture.state.lock().unwrap();
+            state.sandboxes = original.clone();
+            let metadata = state
+                .sandboxes
+                .values_mut()
+                .next()
+                .unwrap()
+                .metadata
+                .as_mut()
+                .unwrap();
+            if field == "id" {
+                metadata.id = "substituted".into();
+            } else {
+                metadata.labels.insert(field.into(), "foreign".into());
+            }
+        }
+        tofu.run(&["plan", "-input=false"], false);
+        assert_eq!(tofu.state(), prior);
+    }
+    assert_eq!(fixture.state.lock().unwrap().effects, effects);
+    assert_eq!(fixture.state.lock().unwrap().delete_calls, 0);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires explicit NEMOCLAW_TEST_TOFU and NEMOCLAW_TEST_PROVIDER; isolated OpenShell fixture"]
+async fn standalone_hcl_recovers_lost_delete_response_without_repeating_the_mutation() {
+    let fixture = Fixture::start().await;
+    let tofu = Standalone::new(&fixture.endpoint);
+    tofu.apply();
+    fixture.state.lock().unwrap().lose_delete = true;
+    let args = [
+        "apply",
+        "-auto-approve",
+        "-input=false",
+        "-var=enabled=false",
+        "-var=destroying=true",
+    ];
+    tofu.run(&args, false);
+    assert!(fixture.state.lock().unwrap().sandboxes.is_empty());
+    assert_eq!(fixture.state.lock().unwrap().delete_calls, 1);
+    let partial: Value = serde_json::from_slice(&tofu.state()).unwrap();
+    // The sandbox deletion succeeded. The provider deletion lost its reply;
+    // OpenTofu must retain that provider binding until absence is confirmed.
+    assert!(
+        partial["resources"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|resource| resource["type"] == "nemoclaw_provider")
+    );
+    tofu.run(&args, true);
+    let state = fixture.state.lock().unwrap();
+    assert_eq!(state.delete_calls, 1);
+    assert_eq!(
+        (
+            state.workspaces.len(),
+            state.profiles.len(),
+            state.providers.len(),
+            state.sandboxes.len()
+        ),
+        (1, 0, 0, 0)
+    );
+}
