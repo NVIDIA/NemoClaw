@@ -191,6 +191,28 @@ export function requireFullCudaOffload(log: string): {
   return { offloadedLayers: Number(layers[1]), totalLayers: Number(layers[2]) };
 }
 
+function llamaCompatibleToolSchema(value: unknown, depth = 0): unknown {
+  if (depth > 128) throw new Error("The local tool schema is too deeply nested.");
+  if (Array.isArray(value))
+    return value.map((entry) => llamaCompatibleToolSchema(entry, depth + 1));
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(
+    Object.entries(value).flatMap(([key, entry]) => {
+      // llama.cpp b10362 requires whole-string patterns and its grammar
+      // converter supports only a subset of ECMAScript regex syntax. Omit this
+      // one constrained-decoding assertion rather than changing its semantics
+      // or rejecting OpenClaw's otherwise valid tool schemas. All structural
+      // constraints remain, and the tool receiver still validates execution.
+      if (key === "pattern" && typeof entry === "string") return [];
+      // These JSON Schema annotation and assertion values are literal data,
+      // not nested schemas. In particular, do not rewrite a user's object
+      // merely because it has a property named "pattern".
+      if (["const", "default", "enum", "examples"].includes(key)) return [[key, entry]];
+      return [[key, llamaCompatibleToolSchema(entry, depth + 1)]];
+    }),
+  );
+}
+
 export function guardedNativeChat(
   value: unknown,
   model = NATIVE_EXPRESS.model,
@@ -268,6 +290,7 @@ export function guardedNativeChat(
   const limit = Math.min(Number(output), NATIVE_EXPRESS.maxOutputTokens);
   return {
     ...request,
+    ...(body.tools === undefined ? {} : { tools: llamaCompatibleToolSchema(body.tools) }),
     max_tokens: limit,
     max_completion_tokens: limit,
     parallel_tool_calls: false,

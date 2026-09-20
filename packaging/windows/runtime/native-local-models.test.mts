@@ -136,6 +136,39 @@ test("new model aliases do not bypass the existing inference request restriction
   }
 });
 
+test("local tool schemas omit unsupported patterns at the llama.cpp boundary", () => {
+  const request = {
+    model: NATIVE_LOCAL_MODELS.defaultModel,
+    messages: [{ role: "user", content: "Use a tool" }],
+    tools: [
+      {
+        type: "function",
+        function: {
+          name: "fixture",
+          parameters: {
+            type: "object",
+            properties: {
+              anywhere: { type: "string", pattern: "foo|bar" },
+              start: { type: "string", pattern: "^prefix" },
+              end: { type: "string", pattern: "suffix$" },
+              exact: { type: "string", pattern: "^[a-z]+$" },
+              literal: { type: "object", default: { pattern: "do-not-rewrite" } },
+            },
+          },
+        },
+      },
+    ],
+  };
+  const guarded = guardedNativeChat(request, request.model) as typeof request;
+  const properties = guarded.tools[0].function.parameters.properties;
+  assert.equal(properties.anywhere.pattern, undefined);
+  assert.equal(properties.start.pattern, undefined);
+  assert.equal(properties.end.pattern, undefined);
+  assert.equal(properties.exact.pattern, undefined);
+  assert.equal(properties.literal.default.pattern, "do-not-rewrite");
+  assert.equal(request.tools[0].function.parameters.properties.anywhere.pattern, "foo|bar");
+});
+
 test("downloads the selected weights and projector then reuses verified cached bytes", async (t) => {
   const f = fixture(t);
   const signal = new AbortController().signal;
