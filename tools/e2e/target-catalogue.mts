@@ -1132,7 +1132,6 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
       "src/lib/onboard/managed-workload/",
       "src/lib/onboard/workload/",
       "test/e2e/live/pi-agent-qualification-events.ts",
-      "test/e2e/support/pi-agent-qualification-env.ts",
     ],
     environment: {
       ...nonInteractive,
