@@ -107,23 +107,18 @@ if [ -d "$config_dir" ]; then
 fi
 exit`;
   }
-  // Managed startup has already created OpenClaw's baseline state before its
+  // Managed startup has already created OpenClaw's initial native configuration before its
   // gateway becomes reachable. Re-running native setup here can rewrite live
   // state and terminate the sandbox while onboarding is connected.
   return `${writeSelection}
 config_dir=/sandbox/.openclaw
 if [ -d "$config_dir" ]; then
-  config_dir_owner="$(stat -c '%U' "$config_dir" 2>/dev/null || echo unknown)"
-  if [ "$config_dir_owner" != "root" ]; then
-    if [ -L "$config_dir" ] || [ -L "$config_dir/openclaw.json" ] || [ -L "$config_dir/.config-hash" ]; then
-      echo "Refusing OpenClaw state initialization through a symlink" >&2
-      exit 1
-    fi
-    export HOME=/sandbox OPENCLAW_STATE_DIR="$config_dir" OPENCLAW_CONFIG_PATH="$config_dir/openclaw.json"
-    /usr/local/bin/openclaw config validate
-    (cd "$config_dir" && sha256sum openclaw.json >.config-hash)
-    python3 -I /usr/local/lib/nemoclaw/normalize_mutable_config_perms.py "$config_dir" "$current_uid" "$(id -g)"
+  if [ -L "$config_dir" ] || [ -L "$config_dir/openclaw.json" ]; then
+    echo "Refusing OpenClaw state initialization through a symlink" >&2
+    exit 1
   fi
+  export HOME=/sandbox OPENCLAW_STATE_DIR="$config_dir" OPENCLAW_CONFIG_PATH="$config_dir/openclaw.json"
+  /usr/local/bin/openclaw config validate
 fi
 exit
 `.trim();

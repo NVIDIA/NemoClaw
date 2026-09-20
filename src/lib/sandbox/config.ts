@@ -3,13 +3,13 @@
 //
 // Host-side sandbox configuration management.
 //
-// All config commands are agent-aware: the sandbox registry records which
-// agent runs in each sandbox (openclaw, hermes, etc.), and agent-defs.ts
-// provides the per-agent config paths and formats. This module resolves
-// those at runtime so the same CLI surface works for any agent.
+// Config reads are agent-aware: the sandbox registry records which agent runs
+// in each sandbox, and agent-defs.ts provides the corresponding paths and
+// formats. Hermes supports host-side config mutation. OpenClaw owns its config;
+// internal host workflows invoke OpenClaw's native config commands.
 //
 // config get:          Read-only inspection with credential redaction.
-// config set:          Host-initiated config mutation with validation.
+// config set:          Validated host mutation for Hermes.
 // config rotate-token: Credential rotation via stdin or env var.
 
 import type { AgentConfigTarget } from "./agent-config";
@@ -39,18 +39,12 @@ const {
   withSandboxMutationLock,
 }: typeof import("../state/mcp-lifecycle-lock") = require("../state/mcp-lifecycle-lock");
 const {
-  validateOpenClawConfigCandidate,
-  writeOpenClawConfigCandidate,
-}: typeof import("./openclaw-config-guard") = require("./openclaw-config-guard");
-const {
   isAllowedOpenShellSandboxBridgeUrl,
   isPrivateHostname,
   isPrivateIp,
 }: typeof import("../private-networks") = require("../private-networks");
 const {
   capturePrivilegedSandboxCommand,
-  executePrivilegedSandboxCommand,
-  resolvePrivilegedSandboxTarget,
   withPrivilegedSandboxExecutionLease,
 }: typeof import("./privileged-exec") = require("./privileged-exec");
 const {
@@ -148,23 +142,10 @@ async function restartSandboxAgentAfterConfigSet(
   }
 }
 
-function buildConfigSetRestartGuidance(sandboxName: string, agentName: string): string[] {
-  if (agentName === "hermes") {
-    return [
-      "  Note: Hermes may restart its gateway when it applies this configuration.",
-      `  Use --restart to request and verify a restart, or run: nemoclaw ${shellQuote(sandboxName)} gateway restart`,
-    ];
-  }
-  if (agentName === "openclaw") {
-    return [
-      "  Note: Some config changes require a sandbox restart to take effect.",
-      `  Re-run with --restart or run: nemoclaw ${shellQuote(sandboxName)} gateway restart`,
-    ];
-  }
-
+function buildConfigSetRestartGuidance(sandboxName: string): string[] {
   return [
-    "  Note: Some config changes require restarting the agent runtime to take effect.",
-    `  Follow the restart procedure for '${agentName}'; NemoClaw does not manage restarts for this agent.`,
+    "  Note: Hermes may restart its gateway when it applies this configuration.",
+    `  Use --restart to request and verify a restart, or run: nemoclaw ${shellQuote(sandboxName)} gateway restart`,
   ];
 }
 
@@ -185,7 +166,6 @@ const HERMES_PYTHON = "/opt/hermes/.venv/bin/python";
 const HERMES_RESTART_SEAL_STATE = "/run/nemoclaw/hermes-restart-seal.json";
 const MAX_OPENCLAW_CONFIG_BYTES = 16 * 1024 * 1024;
 const CONFIG_CAPTURE_MAX_BUFFER = MAX_OPENCLAW_CONFIG_BYTES + 1024 * 1024;
-const OPENCLAW_CONFIG_GUARD_TIMEOUT_MS = 6 * 60 * 1000;
 const HERMES_CONFIG_GUARD_TIMEOUT_MS = 150_000;
 const CONFIG_SOURCE_SHA256: unique symbol = Symbol("nemoclaw.configSourceSha256");
 
@@ -205,41 +185,6 @@ function privilegedSandboxExec(
         timeout: opts.timeout ?? 30000,
       }).toString("utf8"),
   );
-}
-
-function openClawConfigGuardExec(sandboxName: string, expectedContainerId?: string) {
-  return {
-    run: (cmd: string[], input?: string) => {
-      try {
-        return withPrivilegedSandboxExecutionLease(sandboxName, "OpenClaw config guard", () => {
-          const result = executePrivilegedSandboxCommand(sandboxName, cmd, {
-            ...(input === undefined ? {} : { input }),
-            sanitizeEnvironment: true,
-            ...(expectedContainerId === undefined
-              ? {}
-              : { expectedResourceHandle: expectedContainerId }),
-            timeout: OPENCLAW_CONFIG_GUARD_TIMEOUT_MS,
-            maxOutputBytes: 2 * 1024 * 1024,
-          });
-          return {
-            status: result.status,
-            signal: result.signal,
-            stdout: result.stdout.toString("utf8"),
-            stderr: result.stderr.toString("utf8"),
-            ...(result.error ? { error: result.error.message } : {}),
-          };
-        });
-      } catch (error) {
-        return {
-          status: null,
-          signal: null,
-          stdout: "",
-          stderr: "",
-          error: error instanceof Error ? error.message : String(error),
-        };
-      }
-    },
-  };
 }
 
 function resolveAgentConfig(sandboxName: string): AgentConfigTarget {
@@ -532,11 +477,6 @@ function readSandboxConfig(sandboxName: string, target: AgentConfigTarget): Conf
   }
 }
 
-type ValidatedOpenClawCandidate = {
-  content: string;
-  privileged: import("./openclaw-config-guard").PrivilegedExec;
-};
-
 function isHermesCompatHashRecoveryError(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
   return /compat hash (does not match frozen Hermes inputs|verification failed)/iu.test(message);
@@ -554,11 +494,13 @@ function writeSandboxConfig(
   sandboxName: string,
   target: AgentConfigTarget,
   config: ConfigObject,
-  // Interactive config set supplies this after validating outside the mutation locks.
-  // Other callers retain the existing digest-bound write behavior.
-  validatedOpenClawCandidate?: ValidatedOpenClawCandidate,
 ): void {
-  const content = validatedOpenClawCandidate?.content ?? composeSandboxConfigBody(config, target);
+  if (target.agentName === "openclaw") {
+    throw new Error(
+      "Refusing a whole-file OpenClaw config write; use OpenClaw's native config commands.",
+    );
+  }
+  const content = composeSandboxConfigBody(config, target);
   if (target.agentName === "hermes") {
     const expectedConfigSha256 = (config as ConfigObject & { [CONFIG_SOURCE_SHA256]?: string })[
       CONFIG_SOURCE_SHA256
@@ -599,33 +541,6 @@ function writeSandboxConfig(
     }
     return;
   }
-  if (target.agentName === "openclaw") {
-    const expectedConfigSha256 = (config as ConfigObject & { [CONFIG_SOURCE_SHA256]?: string })[
-      CONFIG_SOURCE_SHA256
-    ];
-    if (!expectedConfigSha256) {
-      throw new Error(
-        "Refusing OpenClaw config write without the digest from the matching sandbox read.",
-      );
-    }
-    const result = writeOpenClawConfigCandidate(
-      validatedOpenClawCandidate?.privileged ?? openClawConfigGuardExec(sandboxName),
-      content,
-      expectedConfigSha256,
-    );
-    if (result.issues.length > 0) {
-      configFail(result.issues.map((issue) => `  ${issue}`));
-    }
-    // Integrity-only digest for guard output; this is not a password verifier.
-    const expectedNewDigest = createHash("sha256").update(content).digest("hex");
-    if (result.configSha256 !== expectedNewDigest) {
-      throw new Error(
-        `OpenClaw config guard committed digest ${String(result.configSha256)} (expected ${expectedNewDigest})`,
-      );
-    }
-    return;
-  }
-
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-config-"));
   const tmpFile = path.join(tmpDir, target.configFile);
   try {
@@ -651,10 +566,90 @@ function writeSandboxConfig(
   }
 }
 
+function runOpenClawNativeConfigCommand(sandboxName: string, args: string[]): void {
+  validateName(sandboxName, "sandbox name");
+  const result = captureOpenshellCommand(
+    getOpenshellBinary(),
+    [
+      "sandbox",
+      "exec",
+      "--name",
+      sandboxName,
+      "--env",
+      "HOME=/sandbox",
+      "--",
+      "openclaw",
+      "config",
+      ...args,
+    ],
+    {
+      ignoreError: true,
+      includeStreams: true,
+      maxBuffer: CONFIG_CAPTURE_MAX_BUFFER,
+      timeout: OPENSHELL_OPERATION_TIMEOUT_MS,
+    },
+  );
+  if (!result.error && !result.signal && result.status === 0) return;
+  const detail = redactFull(result.error?.message || result.stderr?.trim() || "command failed");
+  throw new Error(`Native OpenClaw config command failed: ${detail}`);
+}
+
+function buildOpenClawNativeConfigSetInvocation(
+  sandboxName: string,
+  dotpath: string,
+  value: ConfigValue,
+): { args: string[]; input: string } {
+  return {
+    args: [
+      "sandbox",
+      "exec",
+      "--name",
+      sandboxName,
+      "--env",
+      "HOME=/sandbox",
+      "--",
+      "sh",
+      "-c",
+      'value=$(cat) || exit $?; exec openclaw config set "$1" "$value" --strict-json',
+      "nemoclaw-openclaw-config-set",
+      dotpath,
+    ],
+    input: JSON.stringify(value),
+  };
+}
+
+function setOpenClawConfigValue(sandboxName: string, dotpath: string, value: ConfigValue): void {
+  validateName(sandboxName, "sandbox name");
+  const validation = validateConfigDotpath(dotpath);
+  if (!validation.ok) {
+    throw new Error(`Invalid OpenClaw config key '${dotpath}': ${validation.reason}.`);
+  }
+  const invocation = buildOpenClawNativeConfigSetInvocation(sandboxName, dotpath, value);
+  const result = runOpenshellCommand(getOpenshellBinary(), invocation.args, {
+    ignoreError: true,
+    input: invocation.input,
+    maxBuffer: CONFIG_CAPTURE_MAX_BUFFER,
+    stdio: ["pipe", "pipe", "pipe"],
+    timeout: OPENSHELL_OPERATION_TIMEOUT_MS,
+  });
+  if (!result.error && !result.signal && result.status === 0) return;
+  const detail = redactFull(
+    result.error?.message || String(result.stderr ?? "").trim() || "command failed",
+  );
+  throw new Error(`Native OpenClaw config command failed: ${detail}`);
+}
+
+function unsetOpenClawConfigValue(sandboxName: string, dotpath: string): void {
+  const validation = validateConfigDotpath(dotpath);
+  if (!validation.ok) {
+    throw new Error(`Invalid OpenClaw config key '${dotpath}': ${validation.reason}.`);
+  }
+  runOpenClawNativeConfigCommand(sandboxName, ["unset", dotpath]);
+}
+
 function buildRecomputeSandboxConfigHashScript(target: AgentConfigTarget): string | null {
-  // OpenClaw and Hermes write and refresh both hashes inside one fd-pinned sealed
-  // transaction. A second pathname-based hash pass would reopen the race that
-  // transaction is designed to close.
+  // OpenClaw owns its native config. Hermes refreshes its hashes inside its
+  // sealed transaction, so neither agent needs this legacy hash pass.
   if (target.agentName === "openclaw" || target.agentName === "hermes") return null;
   if (!target.sensitiveFiles?.includes(`${target.configDir}/.config-hash`)) return null;
   return [
@@ -1252,19 +1247,25 @@ async function configSet(sandboxName: string, opts: ConfigSetOpts = {}): Promise
   }
 
   const target = resolveAgentConfig(sandboxName);
-  if (opts.restart && target.agentName !== "openclaw" && target.agentName !== "hermes") {
-    configFail(
-      `  --restart is supported only for OpenClaw and Hermes; '${target.agentName}' config was not changed.`,
-    );
+  if (target.agentName === "openclaw") {
+    configFail([
+      "  config set is not available for OpenClaw because OpenClaw owns its configuration.",
+      `  Connect to the sandbox and use the native command instead: openclaw config set ${shellQuote(configKey)} <value>`,
+    ]);
   }
   // dcode bakes its config into the sandbox image at build time, so — unlike
-  // OpenClaw/Hermes — it has no host-side config-mutation path (the same reason
+  // Hermes — it has no host-side config-mutation path (the same reason
   // inference set refuses it, #6321). config get now reads TOML, but refuse
   // config set cleanly and point at the only way to change it: re-onboard. #6548
-  if (target.format === "toml") {
+  if (target.agentName !== "hermes" && target.format === "toml") {
     const { CLI_NAME } = require("../cli/branding");
     configFail(
       `  config set is not available for '${target.agentName}': its config is baked into the sandbox image at build time. To change it, re-onboard with the new selection (e.g. ${CLI_NAME} onboard --agent dcode --name ${shellQuote(sandboxName)} --fresh).`,
+    );
+  }
+  if (target.agentName !== "hermes") {
+    configFail(
+      `  config set is available only for Hermes; '${target.agentName}' config was not changed. Use the agent's native configuration command.`,
     );
   }
   // Read current config
@@ -1358,26 +1359,7 @@ async function configSet(sandboxName: string, opts: ConfigSetOpts = {}): Promise
     configFail(`  URL validation failed${suffix}: ${message}`);
   }
 
-  // Validation can take up to 30 seconds, so keep it outside both mutation locks.
-  let validatedOpenClawCandidate: ValidatedOpenClawCandidate | undefined;
-  if (target.agentName === "openclaw") {
-    setDotpath(config, opts.key, safeValue);
-    const content = composeSandboxConfigBody(config, target);
-    try {
-      const containerId = resolvePrivilegedSandboxTarget(sandboxName).resourceHandle;
-      const privileged = openClawConfigGuardExec(sandboxName, containerId);
-      const issues = validateOpenClawConfigCandidate(privileged, content);
-      if (issues.length > 0) configFail(issues.map((issue) => `  ${issue}`));
-      validatedOpenClawCandidate = { content, privileged };
-    } catch (error) {
-      if (error instanceof SandboxConfigError) throw error;
-      const message = error instanceof Error ? error.message : String(error);
-      configFail(`  OpenClaw schema validation could not start: ${message}`);
-    }
-  }
-
-  // Re-read under the sandbox mutation lock and enforce the source digest. For
-  // OpenClaw, also require the exact serialized bytes validated above.
+  // Re-read under the sandbox mutation lock and enforce the source digest.
   await withSandboxMutationLock(sandboxName, () => {
     const currentConfig = readSandboxConfig(sandboxName, target);
     const currentConfigSha256 = (
@@ -1390,20 +1372,8 @@ async function configSet(sandboxName: string, opts: ConfigSetOpts = {}): Promise
     }
     setDotpath(currentConfig, opts.key!, safeValue);
 
-    if (target.agentName === "openclaw") {
-      const currentCandidateContent = composeSandboxConfigBody(currentConfig, target);
-      if (
-        !validatedOpenClawCandidate ||
-        currentCandidateContent !== validatedOpenClawCandidate.content
-      ) {
-        configFail(
-          "  OpenClaw config candidate changed after schema validation. Re-run config set against the current value.",
-        );
-      }
-    }
-
     console.log(`  Writing config to sandbox (${target.configPath})...`);
-    writeSandboxConfig(sandboxName, target, currentConfig, validatedOpenClawCandidate);
+    writeSandboxConfig(sandboxName, target, currentConfig);
     recomputeSandboxConfigHash(sandboxName, target);
     appendAuditEntry({
       action: "config_set",
@@ -1420,7 +1390,7 @@ async function configSet(sandboxName: string, opts: ConfigSetOpts = {}): Promise
     await restartSandboxAgentAfterConfigSet(sandboxName, target.agentName);
   } else {
     console.log("");
-    for (const line of buildConfigSetRestartGuidance(sandboxName, target.agentName)) {
+    for (const line of buildConfigSetRestartGuidance(sandboxName)) {
       console.log(line);
     }
   }
@@ -1464,6 +1434,7 @@ function confirmYesNo(question: string): Promise<boolean> {
 
 export {
   buildConfigSetRestartGuidance,
+  buildOpenClawNativeConfigSetInvocation,
   buildRecomputeSandboxConfigHashScript,
   classifyNewKeyGate,
   composeSandboxConfigBody,
@@ -1488,7 +1459,9 @@ export {
   restoreHermesDashboardConfig,
   rewriteConfigUrlsWithDnsPinning,
   seedHermesDashboardConfig,
+  setOpenClawConfigValue,
   setDotpath,
+  unsetOpenClawConfigValue,
   validateConfigDotpath,
   validateUrlValue,
   validateUrlValueWithDns,

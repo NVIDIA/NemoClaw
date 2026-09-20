@@ -162,6 +162,18 @@ describe("configGet output redaction and gateway omission (#config-get)", () => 
     expect(JSON.parse(out)).toBe("nvidia/nemotron-3");
   });
 
+  it("returns OpenClaw configuration writes to the native CLI (#11764)", async () => {
+    delete require.cache[configModulePath];
+    const { configSet } = require(configModulePath) as {
+      configSet: (name: string, opts: { key: string; value: string }) => Promise<void>;
+    };
+    const secret = "value-that-must-not-be-echoed";
+
+    await expect(
+      configSet("alpha", { key: "agents.defaults.timeoutSeconds", value: secret }),
+    ).rejects.toThrow(/OpenClaw owns its configuration.*openclaw config set/isu);
+  });
+
   it("refuses to expose the gateway section via --key gateway (#config-get)", () => {
     const configGet = loadConfigGet();
     // gateway is deleted before dotpath extraction, so the key is not found and
@@ -343,5 +355,24 @@ describe("configGet parsing for manifest-declared formats (#6548)", () => {
     await expect(
       configSet("dcode-sb", { key: "models.default", value: "openai:nvidia/new-model" }),
     ).rejects.toThrow(/config set is not available.*baked into the sandbox image.*re-onboard/i);
+  });
+
+  it("does not extend host config set to another JSON agent", async () => {
+    registry.getSandbox = () => ({ agent: "future-agent" });
+    agentDefs.loadAgent = () => ({
+      configPaths: {
+        dir: "/sandbox/.future-agent",
+        configFile: "config.json",
+        format: "json",
+      },
+    });
+    delete require.cache[configModulePath];
+    const { configSet } = require(configModulePath) as {
+      configSet: (name: string, opts: { key: string; value: string }) => Promise<void>;
+    };
+
+    await expect(
+      configSet("future-sb", { key: "models.default", value: "model-a" }),
+    ).rejects.toThrow(/config set is available only for Hermes.*future-agent/isu);
   });
 });

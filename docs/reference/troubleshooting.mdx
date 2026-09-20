@@ -2136,7 +2136,8 @@ Ollama can serve local chat and some simple tool surfaces, but agent loops with 
 
 [Set up vLLM](../inference/local-inference/set-up-vllm) with automatic tool choice and the tool-call parser that matches the model family for persistent agent use. After the parser-aware server is ready, re-run onboarding. Select the **Local vLLM** entry for a server detected on `localhost:${NEMOCLAW_VLLM_PORT:-8000}`; for another address, select **Other OpenAI-compatible endpoint**. On generic hosts, the Local vLLM entry includes an experimental label; on DGX Spark or DGX Station, it does not. On N1x, decline or disable Express, or set `NEMOCLAW_PROVIDER=vllm`, to enter standard onboarding; this route remains unvalidated on N1x.
 
-Do not rely on direct edits to `openclaw.json` for a persistent provider change. NemoClaw-managed rebuilds can overwrite those edits, while onboarding keeps the sandbox image, OpenShell route, and host-managed credentials aligned.
+NemoClaw restores the complete credential-sanitized native OpenClaw configuration across rebuilds, but those edits do not change the OpenShell route, credential binding, or network policy.
+Use `$$nemoclaw inference set` when the provider change requires those host-side resources to stay aligned.
 
 Ask the agent to perform an action that requires a tool, then confirm that the TUI does not show a JSON blob as assistant text, the gateway log shows tool dispatch followed by an answer, and `$$nemoclaw <name> status` reports the intended local vLLM or compatible provider. If JSON still appears as text, confirm that vLLM started with automatic tool choice and the parser required by the model family.
 
@@ -2183,11 +2184,17 @@ Complete the normal pairing flow for each browser or CLI device. For the securit
 
 Some runtime inference changes can leave `/sandbox/.openclaw/openclaw.json` empty if the write fails partway through. When that happens, OpenClaw commands may report that the config is empty instead of showing a raw JSON parse error.
 
-Current NemoClaw sandboxes capture a known-good config baseline after a successful startup. On the next sandbox startup, NemoClaw restores `openclaw.json` from OpenClaw's last-good copy when available, or from the NemoClaw baseline. Recovery validates the config tree and selected source before atomically replacing `openclaw.json` and `.config-hash`. If it detects an unsafe link, unexpected owner, or path change, startup fails closed without following or modifying the unsafe target. If the sandbox still cannot start or reports that no baseline is available, rebuild it from the host:
+NemoClaw treats `openclaw.json` as ordinary OpenClaw-owned state.
+It does not maintain a hash, seal, last-good copy, recovery anchor, baseline, or config guard that can replace or reject the file during startup.
+
+Restore a trusted snapshot that predates the failed write:
 
 ```bash
-$$nemoclaw <name> rebuild
+$$nemoclaw <name> snapshot list
+$$nemoclaw <name> snapshot restore <selector>
 ```
+
+If no trusted snapshot exists, back up other required state manually, recreate the sandbox through onboarding, and restore only the trusted files.
 
 </AgentOnly>
 
@@ -2200,8 +2207,8 @@ NemoClaw freezes the messaging channel list into the sandbox image during `$$nem
 NemoClaw compiles the selected channel configuration into `NEMOCLAW_MESSAGING_PLAN_B64` for that build.
 The build applies the selected agent configuration to `/sandbox/.openclaw/openclaw.json` for OpenClaw or `/sandbox/.hermes/.env` for Hermes, writes reduced runtime metadata to `/usr/local/share/nemoclaw/messaging-runtime-plan.json`, and removes the full build plan from the runtime environment.
 Credential bindings remain OpenShell credential placeholders, so raw messaging credentials do not enter the sandbox image or agent configuration.
-Changes made inside the running sandbox do not persist across rebuilds, so `openclaw channels` commands that mutate the config are intercepted.
-NemoClaw's sandbox entrypoint installs a guard that intercepts `openclaw channels <add|remove>` and prints an actionable error pointing at the host-side commands below, instead of letting the call fail deep in the binary with a raw `EACCES` trace.
+NemoClaw restores the complete credential-sanitized native OpenClaw configuration across rebuilds, but an in-sandbox config change cannot create the matching OpenShell credential binding or policy.
+NemoClaw's sandbox entrypoint intercepts `openclaw channels <add|remove>` and points to the host-side commands below.
 
 Run the equivalent host-side command instead:
 
@@ -2224,104 +2231,46 @@ WhatsApp pairs entirely inside the sandbox. NemoClaw advertises WhatsApp for Ope
 
 <AgentOnly variant="openclaw">
 
-### `scripts/rcf_patch.py` is missing from the blueprint
+### Change OpenClaw Configuration Inside the Sandbox
 
-`scripts/rcf_patch.py` is intentionally absent from current NemoClaw blueprints. Older QA plans used that helper for a Dockerfile "Patch-4" test that corrupted the build-time `replaceConfigFile` monkey-patch and expected `ERROR: Patch 4 (replaceConfigFile EACCES) not applied`. The old Patch-4 fail-closed test no longer applies because NemoClaw no longer patches OpenClaw's compiled `replaceConfigFile` source at image build time.
-
-Current sandboxes use a mutable config model instead.
-Use the host-side NemoClaw config command when you need validation and managed metadata to change with the config.
-
-To validate this area now, use the config lifecycle tests instead of looking for `rcf_patch.py`:
+OpenClaw owns `/sandbox/.openclaw/openclaw.json` after first launch.
+Connect to the sandbox and use its native configuration commands:
 
 ```bash
-npm run build:cli
-npm test -- test/agents/openclaw/runtime/nemoclaw-start-perms.test.ts
+$$nemoclaw <sandbox> connect
+openclaw configure
+openclaw config set <dotpath> <value>
+openclaw config unset <dotpath>
 ```
 
-### `openclaw config set` or `unset` is blocked inside the sandbox
+Restart and reconnect preserve the current native configuration.
+Rebuild restores the credential-sanitized configuration captured immediately before rebuild.
+Snapshot restore reapplies only the credential-sanitized configuration present when that snapshot was created.
+The host command `$$nemoclaw <sandbox> config set` returns guidance to use the native OpenClaw command.
 
-This is expected. NemoClaw builds the sandbox's OpenClaw configuration (`/sandbox/.openclaw/openclaw.json`) from host-side onboarding, rebuild, inference, policy, and messaging inputs. Fresh sandboxes keep that file writable by default so the agent can manage runtime state, but direct in-sandbox edits are not the supported or durable path for NemoClaw-managed settings. NemoClaw's sandbox entrypoint installs a guard that intercepts `openclaw config set` and `openclaw config unset` and prints an actionable error, because changes made inside the running sandbox do not persist across rebuilds.
+Native OpenClaw commands do not create OpenShell credential bindings or widen network policy.
+Use NemoClaw credential, inference, and policy commands when a change needs matching host-side state.
+Keep provider credentials in OpenShell because values stored directly in `openclaw.json` are readable inside the sandbox and can be removed by snapshot sanitization.
+Restore does not change OpenShell policy, credential bindings, or the host-side inference route.
+Reconcile those resources after restore when the native configuration expects different values, then restart the gateway when OpenClaw requires it.
 
-For most configuration changes, exit the sandbox and rerun onboarding:
+### `openclaw doctor --fix` cannot reconcile managed Discord host resources
 
-```bash
-$$nemoclaw onboard
-```
-
-If NemoClaw reports a resumable failed onboarding session, run `$$nemoclaw onboard --resume` instead. This rebuilds the sandbox with your updated settings.
-
-For advanced live edits, use the host-side config command instead of running `openclaw config set` inside the sandbox:
-
-```bash
-$$nemoclaw <sandbox> config set --key <dotpath> --value '<json-or-string>' --restart
-```
-
-Host-side `config set` validates any HTTP or HTTPS URLs in the new value, including URLs nested inside JSON objects or arrays. NemoClaw rejects loopback, private, reserved, and internal hosts; DNS names must resolve successfully and must not resolve to private/internal addresses. HTTP URLs are written with the validated IP address pinned to reduce DNS-rebinding risk. Avoid putting credentials in config values; rotate provider credentials with the credential-management commands instead.
-
-### `openclaw doctor --fix` cannot repair Discord channel config inside the sandbox
-
-This is expected in NemoClaw-managed sandboxes. NemoClaw bakes channel entries into `/sandbox/.openclaw/openclaw.json` at image build time.
-
-As a result, commands that try to rewrite the baked config from inside the sandbox, including `openclaw doctor --fix`, cannot repair Discord, Telegram, or Slack channel entries in place.
-
-If your Discord channel config is wrong, rerun onboarding so NemoClaw rebuilds the sandbox image with the correct messaging selection. Do not treat a failed `doctor --fix` run as proof that the Discord gateway path itself is broken.
-
-If `openclaw doctor` reports that it moved Telegram single-account values under `channels.telegram.accounts.default`, rerun onboarding and rebuild the sandbox rather than trying to patch `openclaw.json` in place. Current NemoClaw rebuilds bake Telegram in the account-based layout and set Telegram group chats to `groupPolicy: open`, which avoids the empty `groupAllowFrom` warning path for default group-chat access.
-
-### `openclaw doctor --fix` tightened config permissions and the gateway can no longer save config
-
-In a sandbox with separate gateway and sandbox user IDs, both users need shared config access through the `sandbox` group.
-The directory `/sandbox/.openclaw` uses `2770`, and `openclaw.json` uses `0660`.
-Running `openclaw doctor --fix` can tighten these permissions to `0700/0600`, which prevents the separate gateway user from saving config changes.
-When the existing config guard verifies a same-user nonroot launch, `0700/0600` is supported and preserves gateway write access.
-
-When you invoke the command through the host-side one-shot path, NemoClaw restores the mutable contract as the command exits:
-
-```bash
-$$nemoclaw <sandbox> exec -- openclaw doctor --fix
-```
-
-When cleanup succeeds, `exec` preserves the `openclaw doctor --fix` exit code. If cleanup cannot inspect, restore, or verify the mutable config permission contract, it returns a cleanup failure instead and prints `OpenClaw permission cleanup failed (...)` with the command and cleanup statuses. Do not recursively change ownership or permissions over a config tree that failed this safety check. Inspect the reported condition and rebuild from trusted host-side configuration if the tree or image boundary is not the expected NemoClaw layout.
-
-If you ran `openclaw doctor --fix` from an interactive `connect` shell or use an older sandbox image, repair the mutable contract without rebuilding:
-
-```bash
-$$nemoclaw <sandbox> doctor --fix
-```
-
-`$$nemoclaw <sandbox> doctor` reports the drift as a `Config permissions` warning, and `--fix` restores the permissions selected by the existing config guard.
-Restarting the sandbox repairs the same drift automatically when the config tree passes its safety checks, and NemoClaw's own `rebuild` reapplies the contract after its post-upgrade `openclaw doctor --fix` step.
-For a persisted root-owned `700/600` tree, startup reclaims ownership only when both fixed config files have that exact posture under the expected sandbox-owned parent.
-Other root-owned layouts, links, mounts, and ambiguous metadata fail closed so startup cannot mistake an unsafe tree for ordinary mutable-permission drift.
-If startup reports `[SECURITY] Refusing mutable config permission normalization`, NemoClaw stops startup without following or modifying the unsafe target; safe permission repairs completed before detection are not rolled back.
-Rebuild with the current image and trusted host-side configuration instead of repairing the tree recursively.
-
-For a separate gateway user ID, verify write access with the image's installed mechanism so the `sandbox` group membership is initialized:
-
-```bash
-setpriv --reuid=gateway --regid=gateway --init-groups -- sh -c ': >> /sandbox/.openclaw/openclaw.json'
-```
-
-If `setpriv` is unavailable, rebuild the sandbox from a NemoClaw-managed image that includes `util-linux`. When a root entrypoint must change identity, it fails closed if this required privilege-separation command is missing.
-
-Do not probe with `su -s /bin/sh gateway ...`: `su` does not initialize the gateway's supplementary groups the same way, so a group-write probe can spuriously report `EACCES` even when the mutable contract is intact.
-
-The existing config guard selects these permissions for `/sandbox/.openclaw` and `openclaw.json`:
-
-- **Verified same-user nonroot launch:** `0700/0600` keeps config private to the sandbox user shared by the agent and gateway.
-- **Separate gateway identity or unverified layout:** `2770/0660` retains shared access through the `sandbox` group.
+`openclaw doctor --fix` can update native channel configuration, but it cannot create the matching OpenShell credential binding or network policy.
+If a managed Discord, Telegram, or Slack channel is still unhealthy, use the host-side channel command to reconcile those resources.
+Do not treat a successful native config repair as proof that the external channel credential and network path are ready.
 
 ### Discord bot logs in, but the channel still does not work
 
 Separate the problem into two parts:
 
-1. Baked config and provider wiring
+1. Channel selection and provider wiring
 
    Check that onboarding selected Discord and that the sandbox was created with the Discord messaging provider attached. If Discord was skipped during onboarding, rerun onboarding and select Discord again.
 
 1. Native Discord gateway path
 
-   Successful login alone does not prove that Discord works end to end. Discord also needs a working gateway connection to `gateway.discord.gg`. If logs show errors such as `getaddrinfo EAI_AGAIN gateway.discord.gg`, repeated reconnect loops, or a `400` response while probing the gateway path, the problem is usually in the native gateway/proxy path rather than in the baked config.
+   Successful login alone does not prove that Discord works end to end. Discord also needs a working gateway connection to `gateway.discord.gg`. If logs show errors such as `getaddrinfo EAI_AGAIN gateway.discord.gg`, repeated reconnect loops, or a `400` response while probing the gateway path, the problem is usually in the native gateway/proxy path rather than in the native channel configuration.
 
 Common signs of a native gateway-path failure:
 
@@ -2444,7 +2393,7 @@ Sandboxes created with OpenShell versions older than 0.0.24 can become unreachab
 
 ### DNS-backed HTTPS endpoint is not supported
 
-NemoClaw rejects an explicit custom endpoint when it resolves a public HTTPS hostname but cannot pin the same peer address across the downstream OpenShell runtime boundary while preserving TLS SNI and host validation. This can appear during a direct blueprint run, custom-endpoint onboarding, or a host-side `config set` write.
+NemoClaw rejects an explicit custom endpoint when it resolves a public HTTPS hostname but cannot pin the same peer address across the downstream OpenShell runtime boundary while preserving TLS SNI and host validation. This can appear during a direct blueprint run, custom-endpoint onboarding, or a Hermes host-side `config set` write.
 
 <AgentOnly variant="openclaw,hermes">
   It does not appear during a runtime `$$nemoclaw inference set` switch on an

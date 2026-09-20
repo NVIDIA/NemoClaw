@@ -42,6 +42,7 @@ import {
   rewriteConfigUrlsWithDnsPinning,
   SandboxConfigError,
   seedHermesDashboardConfig,
+  setOpenClawConfigValue,
   writeSandboxConfig,
 } from "../sandbox/config";
 import type { ConfigObject, ConfigValue } from "../security/credential-filter";
@@ -187,6 +188,7 @@ export interface InferenceSetDeps extends InferenceGatewayRestartDeps {
     target: AgentConfigTarget,
     config: ConfigObject,
   ) => void;
+  setOpenClawConfigValue: (sandboxName: string, dotpath: string, value: ConfigValue) => void;
   runtimeProviders?: RuntimeProviderBundleRegistry;
   recomputeSandboxConfigHash: (sandboxName: string, target: AgentConfigTarget) => void;
   seedHermesDashboardConfig: (
@@ -301,6 +303,7 @@ function defaultDeps(): InferenceSetDeps {
     resolveAgentConfig,
     readSandboxConfig,
     writeSandboxConfig,
+    setOpenClawConfigValue,
     recomputeSandboxConfigHash,
     seedHermesDashboardConfig,
     prepareRunOpenshell: () => {
@@ -542,8 +545,8 @@ function updatePrimaryAgentListModel(agents: ConfigObject, primaryModelRef: stri
   }
 }
 
-// Scoped to the provider whose registry row records the effort. Writing it for
-// any other provider would patch a config that the next rebuild silently drops.
+// Scoped to the compatible-endpoint OpenAI Completions route whose registry
+// metadata records the effort; other route contracts do not support this field.
 function applyReasoningEffortParams(
   modelEntry: ConfigObject,
   provider: string,
@@ -644,6 +647,39 @@ export function patchOpenClawInferenceConfig(
   );
 
   return { changed: before !== JSON.stringify(config), route };
+}
+
+function writeOpenClawInferenceConfigNatively(
+  sandboxName: string,
+  config: ConfigObject,
+  route: SandboxInferenceConfig,
+  writeValue: InferenceSetDeps["setOpenClawConfigValue"],
+): void {
+  const agents = config.agents;
+  const models = config.models;
+  if (!isConfigObject(agents) || !isConfigObject(models)) {
+    throw new Error("OpenClaw inference configuration is missing native agents or models state.");
+  }
+  const defaults = agents.defaults;
+  const defaultModel = isConfigObject(defaults) ? defaults.model : undefined;
+  const primary = isConfigObject(defaultModel) ? defaultModel.primary : undefined;
+  if (typeof primary !== "string") {
+    throw new Error("OpenClaw inference configuration is missing agents.defaults.model.primary.");
+  }
+  const providers = models.providers;
+  const providerConfig = isConfigObject(providers) ? providers[route.providerKey] : undefined;
+  if (!isConfigObject(providerConfig)) {
+    throw new Error(`OpenClaw inference provider '${route.providerKey}' is missing.`);
+  }
+
+  writeValue(sandboxName, "agents.defaults.model.primary", primary);
+  if (isConfigObject(agents.entries)) {
+    writeValue(sandboxName, "agents.entries", agents.entries);
+  } else if (Array.isArray(agents.list)) {
+    writeValue(sandboxName, "agents.list", agents.list);
+  }
+  writeValue(sandboxName, "models.mode", "merge");
+  writeValue(sandboxName, `models.providers.${route.providerKey}`, providerConfig);
 }
 
 export function patchHermesInferenceConfig(
@@ -1445,23 +1481,30 @@ async function runInferenceSetWithoutHostLock(
     // In-sandbox config is the last, crash-prone layer (gateway + registry already consistent).
     // OpenClaw keeps its existing degraded result on failure. Hermes finalizes the committed
     // route and registry, then returns an error so automation cannot accept partial convergence.
-    // Two degraded states, both fixed by `rebuild` (regenerates openclaw.json + .config-hash from registry):
-    //   - write fails:           config left old (old .config-hash still matches it)
-    //   - hash recompute fails:  config new but .config-hash stale -> integrity-guard mismatch
     let inSandboxConfigSynced = false;
     try {
-      deps.writeSandboxConfig(sandboxName, target, config);
-      try {
-        deps.recomputeSandboxConfigHash(sandboxName, target);
-        inSandboxConfigSynced = true;
-      } catch (hashError) {
-        const detail =
-          hashError instanceof Error && hashError.message ? hashError.message : String(hashError);
-        deps.log(
-          `  Warning: wrote the in-sandbox config for '${sandboxName}' but failed to refresh its ` +
-            `integrity hash: ${detail}`,
+      if (agentName === "openclaw") {
+        writeOpenClawInferenceConfigNatively(
+          sandboxName,
+          config,
+          patched.route,
+          deps.setOpenClawConfigValue,
         );
-        deps.log(`  Run '${CLI_NAME} ${sandboxName} rebuild' to resync the in-sandbox config.`);
+        inSandboxConfigSynced = true;
+      } else {
+        deps.writeSandboxConfig(sandboxName, target, config);
+        try {
+          deps.recomputeSandboxConfigHash(sandboxName, target);
+          inSandboxConfigSynced = true;
+        } catch (hashError) {
+          const detail =
+            hashError instanceof Error && hashError.message ? hashError.message : String(hashError);
+          deps.log(
+            `  Warning: wrote the in-sandbox config for '${sandboxName}' but failed to refresh its ` +
+              `integrity hash: ${detail}`,
+          );
+          deps.log(`  Run '${CLI_NAME} ${sandboxName} rebuild' to resync the in-sandbox config.`);
+        }
       }
     } catch (writeError) {
       const detail =

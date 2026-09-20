@@ -4,6 +4,7 @@
 import { constants, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import JSON5 from "json5";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { parse as parseYaml } from "yaml";
 
@@ -18,6 +19,7 @@ import {
   isSafeCredentialPlaceholder,
   isSensitiveFile,
   sanitizeConfigFile,
+  sanitizeConfigFileContent,
   sanitizeEnvFile,
   sanitizeEnvFileContent,
   sanitizeYamlConfigContent,
@@ -319,7 +321,7 @@ describe("sanitizeConfigFile", () => {
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it("strips credentials and removes gateway section", () => {
+  it("strips credentials while preserving non-secret gateway settings", () => {
     const configPath = join(tmpDir, "openclaw.json");
     writeFileSync(
       configPath,
@@ -335,7 +337,7 @@ describe("sanitizeConfigFile", () => {
     const result = JSON.parse(readFileSync(configPath, "utf-8"));
     expect(result.model).toBe("gpt-4");
     expect(result.apiKey).toBe("[STRIPPED_BY_MIGRATION]");
-    expect(result.gateway).toBeUndefined();
+    expect(result.gateway).toEqual({ port: 8080, authToken: "[STRIPPED_BY_MIGRATION]" });
   });
 
   it("sanitizes a realistic openclaw.json without breaking restorable settings (#5027)", () => {
@@ -370,7 +372,7 @@ describe("sanitizeConfigFile", () => {
     );
     expect(result.customAgents.researcher.prompt).toBe("be thorough");
     expect(result.leaked.apiKey).toBe("[STRIPPED_BY_MIGRATION]");
-    expect(result.gateway).toBeUndefined();
+    expect(result.gateway).toEqual({ port: 18789, authToken: "[STRIPPED_BY_MIGRATION]" });
   });
 
   it("skips non-existent files", () => {
@@ -384,6 +386,24 @@ describe("sanitizeConfigFile", () => {
     sanitizeConfigFile(configPath);
     // Should not throw, file unchanged
     expect(readFileSync(configPath, "utf-8")).toBe("not json at all");
+  });
+
+  it("preserves native OpenClaw JSON5 settings while scrubbing credentials (#11764)", () => {
+    const sanitized = sanitizeConfigFileContent(
+      "openclaw.json",
+      [
+        "{",
+        "  // Native OpenClaw config accepts JSON5.",
+        "  gateway: { port: 18789, auth: { token: 'gateway-secret', }, },",
+        "  plugins: { entries: { weather: { enabled: true, }, }, },",
+        "}",
+      ].join("\n"),
+    );
+
+    expect(JSON5.parse(sanitized as string)).toEqual({
+      gateway: { port: 18789, auth: { token: "[STRIPPED_BY_MIGRATION]" } },
+      plugins: { entries: { weather: { enabled: true } } },
+    });
   });
 
   it("does not follow config-file symlinks while sanitizing", () => {

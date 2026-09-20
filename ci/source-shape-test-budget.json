@@ -372,21 +372,6 @@
       "category": "security"
     },
     {
-      "file": "test/e2e-runtime/repro-4538-raw-doctor-perms.test.ts",
-      "test": "emitted openclaw() guard restores the contract AND preserves a nonzero exit",
-      "category": "security"
-    },
-    {
-      "file": "test/e2e-runtime/repro-4538-raw-doctor-perms.test.ts",
-      "test": "emitted openclaw() guard restores the contract even under an inherited `set -e`",
-      "category": "security"
-    },
-    {
-      "file": "test/e2e-runtime/repro-4538-raw-doctor-perms.test.ts",
-      "test": "restore helper re-asserts 2770/660 after the tree is tightened to 700/600",
-      "category": "security"
-    },
-    {
       "file": "test/install/installer-homebrew-formula-reuse-trust.test.ts",
       "test": "accepts only the reviewed OpenShell 0.0.116 installer template",
       "category": "security"

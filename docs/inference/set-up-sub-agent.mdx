@@ -27,7 +27,6 @@ Use these paths inside the sandbox when you adapt an OpenClaw sub-agent setup:
 | Path | Purpose |
 |---|---|
 | `/sandbox/.openclaw/openclaw.json` | OpenClaw config, including `models.providers`, `agents.defaults`, and `agents.list`. |
-| `/sandbox/.openclaw/.config-hash` | Hash for `openclaw.json`. Keep it in sync after manual config edits so OpenClaw can detect the updated config. |
 | `/sandbox/.openclaw/agents/<agent-id>/agent/auth-profiles.json` | Per-agent provider credentials. Use this when a sub-agent calls an auxiliary provider directly. |
 | `/sandbox/.openclaw/workspace/` | Writable shared workspace path for files the primary agent passes to the sub-agent. |
 | `/tmp/gateway.log` | OpenClaw gateway log. Use it to confirm config reloads and diagnose sub-agent failures. |
@@ -117,23 +116,23 @@ Use `cp /tmp/openclaw.json /tmp/openclaw.updated.json`.
 Before uploading the file, add your provider under `models.providers` and your sub-agent under `agents.list`.
 Do not commit `/tmp/openclaw.updated.json` or any other file that contains a real API key.
 
-### Upload the Updated Config
+### Apply the Updated Config
 
-Upload the patched config and refresh the hash.
-In the default mutable state, this keeps the local hash consistent but does not make it tamper-proof.
-Keep the refresh step so OpenClaw detects the update immediately.
+Pass the patch to OpenClaw as the sandbox user.
+OpenClaw validates and writes its native configuration.
 
 ```bash
-docker exec --user root "$SANDBOX_CTR" chmod 644 /sandbox/.openclaw/openclaw.json
-docker exec --user root "$SANDBOX_CTR" chmod 644 /sandbox/.openclaw/.config-hash
-docker exec --user root -i "$SANDBOX_CTR" sh -c 'cat > /sandbox/.openclaw/openclaw.json' < /tmp/openclaw.updated.json
-docker exec --user root "$SANDBOX_CTR" /bin/bash -c "cd /sandbox/.openclaw && sha256sum openclaw.json > .config-hash"
-docker exec --user root "$SANDBOX_CTR" chown sandbox:sandbox /sandbox/.openclaw/openclaw.json /sandbox/.openclaw/.config-hash
-docker exec --user root "$SANDBOX_CTR" chmod 660 /sandbox/.openclaw/openclaw.json
-docker exec --user root "$SANDBOX_CTR" chmod 660 /sandbox/.openclaw/.config-hash
+docker exec --user sandbox -i "$SANDBOX_CTR" sh -c '
+  tmp=$(mktemp /tmp/openclaw-config-patch.XXXXXX) || exit 1
+  trap '\''rm -f "$tmp"'\'' EXIT
+  cat > "$tmp" || exit 1
+  openclaw config patch --file "$tmp"
+' < /tmp/openclaw.updated.json
 ```
 
-After uploading the config, restart the managed gateway.
+For ordinary key changes, connect to the sandbox and use `openclaw configure`, `openclaw config set`, or `openclaw config unset`.
+
+After applying the patch, restart the managed gateway.
 The restart verifies gateway health before it exits successfully.
 Then confirm that OpenClaw loaded the `agents.list` change:
 

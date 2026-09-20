@@ -128,20 +128,6 @@ function createLaunchHarness(prefix: string, agent: string): LaunchHarness {
     ].join("\n"),
     { mode: 0o755 },
   );
-  // The exec path's post-command OpenClaw permission cleanup shells out to
-  // Docker; a stub keeps the outcome identical whether or not the host runs a
-  // Docker daemon.
-  fs.writeFileSync(
-    path.join(localBin, "docker"),
-    [
-      "#!/usr/bin/env bash",
-      'if [ "$1" = "info" ]; then echo "24.0.0"; exit 0; fi',
-      'if [ "$1" = "ps" ]; then exit 0; fi',
-      "exit 0",
-    ].join("\n"),
-    { mode: 0o755 },
-  );
-
   const readLines = (file: string): string[] =>
     fs.existsSync(file) ? fs.readFileSync(file, "utf8").split("\n").filter(Boolean) : [];
 
@@ -238,15 +224,11 @@ describe("CLI launch routing process contracts (#6006)", () => {
     },
   );
 
-  // OpenClaw sandboxes run a host-side mutable-config permission cleanup after
-  // the exec. The fake host has no sandbox container, so that cleanup fails and
-  // overrides the exit code; `command exit 0` records that the agent exec
-  // itself succeeded. The other agents skip the cleanup and exit 0 normally.
   it.each([
     {
       agent: "openclaw",
       agentCommand: "openclaw tui",
-      exitCode: 1,
+      exitCode: 0,
     },
     { agent: "hermes", agentCommand: "hermes", exitCode: 0 },
     {
@@ -291,19 +273,6 @@ describe("CLI launch routing process contracts (#6006)", () => {
       expect(harness.callLines().filter((call) => call.includes("--tty"))).toHaveLength(1);
 
       expect(result.code).toBe(exitCode);
-    },
-  );
-
-  it(
-    "reports the OpenClaw permission cleanup failure after a successful agent exec",
-    testTimeoutOptions(90_000),
-    () => {
-      const harness = createLaunchHarness("nemoclaw-cli-launch-openclaw-cleanup-", "openclaw");
-
-      const result = harness.runLaunch("launch alpha");
-
-      expect(result.code).toBe(1);
-      expect(result.out).toContain("OpenClaw permission cleanup failed (command exit 0");
     },
   );
 });

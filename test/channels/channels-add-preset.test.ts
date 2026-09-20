@@ -795,12 +795,12 @@ describe("channels add verifies bridge startup after rebuild (#4314, #4390)", ()
     expect(printedText()).toContain("'telegram' bridge startup detected");
   });
 
-  it("warns when the baked config does not mark the channel enabled", async () => {
+  it("warns when the current config does not mark the channel enabled", async () => {
     testConfig = { channels: { telegram: { accounts: { default: {} } } } };
 
     await addSandboxChannel("test-sb", { channel: "telegram" });
 
-    expect(printedText()).toContain("was not marked enabled in baked");
+    expect(printedText()).toContain("was not marked enabled in the current");
   });
 
   it("warns when the gateway log shows no bridge breadcrumb yet", async () => {
@@ -846,7 +846,7 @@ describe("channels add verifies bridge startup after rebuild (#4314, #4390)", ()
     await addSandboxChannel("test-sb", { channel: "whatsapp" });
 
     expect(execSpy).not.toHaveBeenCalled();
-    expect(printedText()).not.toContain("was not marked enabled in baked openclaw.json");
+    expect(printedText()).not.toContain("was not marked enabled in the current openclaw.json");
   });
 });
 

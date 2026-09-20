@@ -220,9 +220,6 @@ vi.mock("../../runtime-recovery", () => ({
   parseLiveSandboxNames: vi.fn(() => new Set(["alpha"])),
 }));
 vi.mock("../../sandbox/create-stream", () => ({ streamSandboxCreate: streamSandboxCreateMock }));
-vi.mock("../../sandbox/mutable-config-perms", () => ({
-  repairMutableConfigPerms: vi.fn(() => ({ applied: true, verified: true, errors: [] })),
-}));
 vi.mock("../../state/gateway", () => ({
   isGatewayHealthy: vi.fn(() => true),
   isSandboxReady: vi.fn((output: string, sandboxName: string) =>

@@ -33,7 +33,7 @@ The internal startup profile stores absent inference as `null` for these two age
 The image and startup generators omit inference configuration until a model is selected.
 Agent plugins, managed restrictions, and startup services retain their existing behavior.
 After the managed inference provider exists, `nemoclaw inference set` supplies the real provider and model.
-That command updates the OpenShell route, agent configuration, configuration hash, and agent services.
+That command updates the OpenShell route, agent configuration, and agent services.
 Hermes dashboard startup accepts absent routing and later copies the configured managed route.
 A partial route or unexpected credential still fails validation.
 Activation alone does not establish inference readiness. Verify the route, agent configuration, and a successful inference request.

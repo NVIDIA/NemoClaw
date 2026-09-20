@@ -3,7 +3,6 @@
 
 import { vi } from "vitest";
 import { resolveTestAgentBaselinePolicy } from "../../../../test/support/snapshot-policy-test-fixture";
-import type { MutableConfigRepairResult } from "../../sandbox/mutable-config-perms";
 import type { OpenShellSandboxPolicyReader } from "../../adapters/openshell/sandbox-policy";
 import type {
   SandboxEntry,
@@ -100,15 +99,6 @@ export function defaultOpenshellResponses(args: string[]): OpenshellCaptureResul
     },
   });
 }
-
-const mutableConfigMock = vi.hoisted(() => {
-  const repairMutableConfigPermsMock = vi.fn<() => MutableConfigRepairResult>(() => ({
-    applied: true,
-    verified: true,
-    errors: [],
-  }));
-  return { repairMutableConfigPermsMock };
-});
 
 const lifecycleMock = vi.hoisted(() => {
   const events: string[] = [];
@@ -246,7 +236,7 @@ export const latestBackupFixture = {
   backupPath: "/tmp/backup-alpha",
 };
 
-export { lifecycleMock, mutableConfigMock };
+export { lifecycleMock };
 
 vi.mock("../../adapters/docker", () => ({
   dockerCapture: vi.fn(() => ""),
@@ -319,10 +309,6 @@ vi.mock("../../runtime-recovery", () => ({
 
 vi.mock("../../onboard/initial-policy", () => ({
   prepareInitialSandboxCreatePolicy: prepareInitialSandboxCreatePolicyMock,
-}));
-
-vi.mock("../../sandbox/mutable-config-perms", () => ({
-  repairMutableConfigPerms: mutableConfigMock.repairMutableConfigPermsMock,
 }));
 
 vi.mock("../../sandbox/create-stream", () => ({
@@ -429,11 +415,6 @@ export function resetSnapshotRestoreMocks(): void {
     schemaVersion: 1,
     backupPath: "/tmp/backup-alpha",
     contentSha256: "a".repeat(64),
-  });
-  mutableConfigMock.repairMutableConfigPermsMock.mockReturnValue({
-    applied: true,
-    verified: true,
-    errors: [],
   });
   lifecycleMock.events.length = 0;
   captureOpenshellMock.mockImplementation((args) => defaultOpenshellResponses(args));

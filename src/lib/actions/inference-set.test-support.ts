@@ -19,7 +19,7 @@ export const OPENCLAW_TARGET: AgentConfigTarget = {
   configDir: "/sandbox/.openclaw",
   format: "json",
   configFile: "openclaw.json",
-  sensitiveFiles: ["/sandbox/.openclaw/.config-hash"],
+  sensitiveFiles: [],
 };
 
 export const HERMES_TARGET: AgentConfigTarget = {
@@ -184,6 +184,7 @@ export function createDeps(options: {
 }): InferenceSetDeps & {
   calls: {
     captureOpenshell: ReturnType<typeof vi.fn>;
+    setOpenClawConfigValue: ReturnType<typeof vi.fn>;
     writeSandboxConfig: ReturnType<typeof vi.fn>;
     recomputeSandboxConfigHash: ReturnType<typeof vi.fn>;
     seedHermesDashboardConfig: ReturnType<typeof vi.fn>;
@@ -221,6 +222,7 @@ export function createDeps(options: {
       options.captureOpenshell ??
         ((args: string[]) => defaultCaptureOpenshell(args, options.openshellStatus ?? 0)),
     ),
+    setOpenClawConfigValue: vi.fn(),
     writeSandboxConfig: vi.fn(),
     recomputeSandboxConfigHash: vi.fn(),
     seedHermesDashboardConfig: vi.fn(() => options.seedHermesDashboardConfigResult ?? "converged"),
@@ -307,6 +309,7 @@ export function createDeps(options: {
     updateSession: calls.updateSession,
     resolveAgentConfig: () => options.target ?? OPENCLAW_TARGET,
     readSandboxConfig: calls.readSandboxConfig,
+    setOpenClawConfigValue: calls.setOpenClawConfigValue,
     writeSandboxConfig: calls.writeSandboxConfig,
     recomputeSandboxConfigHash: calls.recomputeSandboxConfigHash,
     seedHermesDashboardConfig: calls.seedHermesDashboardConfig,

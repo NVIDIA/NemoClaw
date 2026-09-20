@@ -16,33 +16,8 @@ const sandboxState = (await import(
 const spec = { path: "openclaw.json", strategy: "copy" } as const;
 
 describe("buildStateFileRestoreCommand (#5202)", () => {
-  it("refreshes the OpenClaw .last-good anchor before swapping the live config", () => {
-    const cmd = sandboxState.buildStateFileRestoreCommand("/sandbox/.openclaw", spec, true);
-
-    // The anchor write targets openclaw.json.last-good and rejects symlinks.
-    expect(cmd).toContain('last_good="${dst}.last-good"');
-    expect(cmd).toContain("refusing symlinked last-good target");
-
-    // The anchor is staged through a temp and installed via atomic rename, and
-    // fails closed (exit 14) so a partial write never reaches .last-good.
-    expect(cmd).toContain(".nemoclaw-lastgood.XXXXXX");
-    expect(cmd).toContain('mv -f "$anchor_tmp" "$last_good"');
-    expect(cmd).toContain("exit 14");
-
-    // Anchor must be installed BEFORE the live file is swapped, so OpenClaw's
-    // integrity watcher never observes a config that disagrees with .last-good.
-    const anchorIdx = cmd.indexOf('mv -f "$anchor_tmp" "$last_good"');
-    const swapIdx = cmd.indexOf('mv -f "$tmp" "$dst"');
-    expect(anchorIdx).toBeGreaterThanOrEqual(0);
-    expect(swapIdx).toBeGreaterThan(anchorIdx);
-
-    // The .config-hash is still refreshed after the swap.
-    expect(cmd).toContain("sha256sum");
-    expect(cmd).toContain('chmod 660 "$tmp"');
-  });
-
-  it("does not touch the .last-good anchor for non-OpenClaw state restores", () => {
-    const cmd = sandboxState.buildStateFileRestoreCommand("/sandbox/.openclaw", spec, false);
+  it("restores OpenClaw config as an ordinary native file (#11764)", () => {
+    const cmd = sandboxState.buildStateFileRestoreCommand("/sandbox/.openclaw", spec);
     expect(cmd).not.toContain("last-good");
     expect(cmd).not.toContain("sha256sum");
     expect(cmd).toContain('mv -f "$tmp" "$dst"');
@@ -50,11 +25,10 @@ describe("buildStateFileRestoreCommand (#5202)", () => {
   });
 
   it("isolates SQLite restore from an agent-managed Python environment (#7144)", () => {
-    const cmd = sandboxState.buildStateFileRestoreCommand(
-      "/sandbox/.hermes",
-      { path: "kanban.db", strategy: "sqlite_backup" },
-      false,
-    );
+    const cmd = sandboxState.buildStateFileRestoreCommand("/sandbox/.hermes", {
+      path: "kanban.db",
+      strategy: "sqlite_backup",
+    });
 
     expect(cmd).toContain("/usr/bin/python3 -I -S -c");
     expect(cmd).not.toMatch(/(?:^|[; ])python3 -c/u);
@@ -86,11 +60,10 @@ describe("buildStateFileRestoreCommand (#5202)", () => {
         const backupDb = path.join(dir, "backup.db");
         makeDb(backupDb, "restored");
 
-        const cmd = sandboxState.buildStateFileRestoreCommand(
-          dir,
-          { path: "state.db", strategy: "sqlite_backup" },
-          false,
-        );
+        const cmd = sandboxState.buildStateFileRestoreCommand(dir, {
+          path: "state.db",
+          strategy: "sqlite_backup",
+        });
         const result = spawnSync("sh", ["-c", cmd], { input: fs.readFileSync(backupDb) });
 
         expect(result.stderr.toString()).toBe("");
@@ -121,11 +94,10 @@ describe("buildStateFileRestoreCommand (#5202)", () => {
         fs.writeFileSync(`${dst}-wal`, "live wal");
         fs.writeFileSync(`${dst}-shm`, "live shm");
 
-        const cmd = sandboxState.buildStateFileRestoreCommand(
-          dir,
-          { path: "state.db", strategy: "sqlite_backup" },
-          false,
-        );
+        const cmd = sandboxState.buildStateFileRestoreCommand(dir, {
+          path: "state.db",
+          strategy: "sqlite_backup",
+        });
         const result = spawnSync("sh", ["-c", cmd], {
           input: Buffer.from("not a sqlite database"),
         });
@@ -151,11 +123,10 @@ describe("buildStateFileRestoreCommand (#5202)", () => {
         fs.mkdirSync(realParent);
         fs.symlinkSync(realParent, linkedParent, "dir");
 
-        const cmd = sandboxState.buildStateFileRestoreCommand(
-          linkedParent,
-          { path: "state.db", strategy: "sqlite_backup" },
-          false,
-        );
+        const cmd = sandboxState.buildStateFileRestoreCommand(linkedParent, {
+          path: "state.db",
+          strategy: "sqlite_backup",
+        });
         const result = spawnSync("sh", ["-c", cmd], {
           input: Buffer.from("not a sqlite database"),
         });
@@ -179,11 +150,10 @@ describe("buildStateFileRestoreCommand (#5202)", () => {
         const originalDatabase = fs.readFileSync(realDatabase);
         fs.symlinkSync(realDatabase, linkedDatabase);
 
-        const cmd = sandboxState.buildStateFileRestoreCommand(
-          dir,
-          { path: "state.db", strategy: "sqlite_backup" },
-          false,
-        );
+        const cmd = sandboxState.buildStateFileRestoreCommand(dir, {
+          path: "state.db",
+          strategy: "sqlite_backup",
+        });
         const result = spawnSync("sh", ["-c", cmd], {
           input: Buffer.from("not a sqlite database"),
         });

@@ -12,6 +12,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { basename, dirname, join } from "node:path";
+import JSON5 from "json5";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 
 import {
@@ -42,10 +43,6 @@ export type {
   ConfigObject,
   ConfigValue,
 } from "../../../nemoclaw/dist/shared/credential-filter-boundary.cjs";
-
-function parseJson<T>(text: string): T {
-  return JSON.parse(text);
-}
 
 function readRegularFileNoFollow(filePath: string): string | null {
   const noFollowFlag = Reflect.get(constants, "O_NOFOLLOW");
@@ -154,29 +151,27 @@ export function sanitizeYamlConfigContent(rawConfig: string): string | null {
 }
 
 /**
- * Strip credential fields from a JSON or YAML config body.
+ * Strip credential fields from a JSON, native OpenClaw JSON5, or YAML config body.
  *
  * The filename is used only to decide whether a non-JSON document is an
  * allowed YAML target. Returns null when the input cannot be sanitized.
  * Credential-free JSON is returned byte for byte.
  */
 export function sanitizeConfigFileContent(configName: string, rawConfig: string): string | null {
+  const normalized = basename(configName).toLowerCase();
   try {
-    const parsed = parseJson<ConfigValue | object>(rawConfig);
+    const parsed =
+      normalized === "openclaw.json"
+        ? JSON5.parse<ConfigValue | object>(rawConfig)
+        : (JSON.parse(rawConfig) as ConfigValue | object);
     if (!isConfigValue(parsed)) return null;
-    let config = parsed;
-    if (isConfigObject(parsed)) {
-      const { gateway: _gateway, ...withoutGateway } = parsed;
-      config = withoutGateway;
-    }
-    const stripped = stripCredentials(config);
+    const stripped = stripCredentials(parsed);
     if (JSON.stringify(stripped) === JSON.stringify(parsed)) return rawConfig;
     return JSON.stringify(stripped, null, 2);
   } catch {
     // Fall through to YAML for Hermes and other non-JSON configs.
   }
 
-  const normalized = basename(configName).toLowerCase();
   if (normalized.endsWith(".yaml") || normalized.endsWith(".yml")) {
     return sanitizeYamlConfigContent(rawConfig);
   }

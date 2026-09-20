@@ -35,7 +35,7 @@ describe("agent config resolution", () => {
       configDir: "/sandbox/.openclaw",
       format: "json",
       configFile: "openclaw.json",
-      sensitiveFiles: ["/sandbox/.openclaw/.config-hash"],
+      sensitiveFiles: [],
     });
     expect(loadAgent).toHaveBeenCalledWith("openclaw");
   });

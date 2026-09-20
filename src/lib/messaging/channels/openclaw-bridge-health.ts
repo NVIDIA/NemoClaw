@@ -82,7 +82,7 @@ export function createOpenClawBridgeHealthHook(
 
       if (!channelEnabled) {
         log(
-          `  ⚠ '${spec.channelId}' channel was not marked enabled in baked ${OPENCLAW_CONFIG_FILE} after rebuild.`,
+          `  ⚠ '${spec.channelId}' channel was not marked enabled in the current ${OPENCLAW_CONFIG_FILE} after rebuild.`,
         );
         log(
           "    The bridge will not start. Re-run the sandbox rebuild or remove and add the channel again.",

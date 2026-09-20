@@ -37,14 +37,27 @@ Some changes apply at runtime, while image and filesystem changes require a rebu
 | Filesystem layout | Locked at creation | Re-onboard with `$$nemoclaw onboard --recreate-sandbox` |
 | Sandbox name | Locked at creation | Re-onboard with a different `--name` |
 | GPU passthrough or device selector | Locked at creation | Re-onboard with `--gpu` or `--sandbox-gpu-device` |
-| `agents.list` | Runtime after gateway restart; generated OpenClaw configuration disables hot reload | Prefer agent or NemoClaw commands that keep host and sandbox state aligned, then run `$$nemoclaw <name> gateway restart` |
-| `openclaw.json` keys | Mixed; supported config and inference updates apply at runtime, while image, policy, web search, and channel changes can require rebuild | Use `$$nemoclaw inference set` or `$$nemoclaw <name> config set` so the config and integrity hash change together |
+| `agents.list` | Runtime after gateway restart; generated OpenClaw configuration disables hot reload | Use `openclaw configure` or `openclaw config set`, then run `$$nemoclaw <name> gateway restart` |
+| `openclaw.json` keys | Runtime according to OpenClaw's native reload behavior; some changes require a gateway restart | Use `openclaw configure`, `openclaw config set`, or `openclaw config unset` inside the sandbox |
 
 For a new or pristine OpenClaw workspace, `NEMOCLAW_MINIMAL_BOOTSTRAP=1` avoids roughly 3,000 tokens of per-turn project-context overhead by skipping the default template seed. It does not delete existing workspace files.
 
-The runtime source of truth is `/sandbox/.openclaw/openclaw.json`. The host registry caches metadata, but the image and OpenClaw read from the in-sandbox file.
+The runtime source of truth is `/sandbox/.openclaw/openclaw.json`.
+NemoClaw writes the initial managed inference route and OpenShell credential placeholders during onboarding.
+After first launch, OpenClaw owns this file and can add providers, tools, plugins, hooks, cron jobs, and gateway settings through its native interfaces.
 
-Host-side OpenClaw config writes run under the per-sandbox transition lock and bind the replacement to the SHA-256 digest of the matching read. Before `config set` replaces the live file, NemoClaw validates the complete candidate with the installed OpenClaw runtime. If candidate validation fails, the command preserves the existing config and does not reach the gateway restart path. The root-only config guard validates bounded JSON input, transactionally publishes fresh config and hash inodes, and restores the prior mutable posture without adopting concurrent path changes.
+Restart and reconnect preserve the current native configuration.
+Rebuild restores the credential-sanitized configuration captured immediately before rebuild.
+Snapshot restore reapplies only the credential-sanitized configuration present when that snapshot was created.
+These operations replace the complete native file instead of reconstructing selected keys.
+Restore does not change OpenShell policy, credential bindings, or the host-side inference route.
+After restoring configuration that depends on different host resources, reconcile those resources with the matching NemoClaw commands and restart the gateway when OpenClaw requires it.
+The host command `$$nemoclaw <name> config set` is not available for OpenClaw.
+It remains available for Hermes.
+
+OpenClaw configuration cannot widen the OpenShell network policy or create an OpenShell credential binding.
+Keep provider credentials in OpenShell and use credential placeholders in `openclaw.json`.
+If you put a credential directly in native OpenClaw configuration, the sandbox can read it and snapshot sanitization can remove it during backup.
 
 `gateway restart` invokes OpenClaw's native safe restart command in the selected OpenShell sandbox.
 The native runtime owns restart admission and gateway replacement.
@@ -95,6 +108,10 @@ Let the active command finish, then retry instead of editing lock or seal files 
 NemoClaw does not provide post-provisioning immutability for agent configuration or persistent state.
 OpenShell remains authoritative for sandbox filesystem and network policy enforcement.
 An agent process can change files that its sandbox identity can write.
+
+For OpenClaw, the native `openclaw.json` file is authoritative after first launch.
+Lifecycle commands do not compare it with a NemoClaw hash, seal, recovery anchor, baseline, or selected-key registry.
+Use host commands only when a change also requires OpenShell policy, credential, or inference-route updates.
 
 For Hermes, direct changes to valid mutable configuration do not block restart. Lifecycle validation can still refuse raw secrets, unsafe paths, raced snapshots, or missing or malformed transaction metadata.
 Use supported host commands for settings that also require host-side route or OpenShell changes. Hermes-owned native configuration remains authoritative for direct runtime edits.

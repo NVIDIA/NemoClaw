@@ -217,10 +217,10 @@ If an unknown sender receives a pairing code, approve it through the registered 
 nemoclaw my-assistant exec -- openclaw pairing approve googlechat <code>
 ```
 
-After OpenClaw commits the sender to its owner allowlist, NemoClaw verifies the mutable config permissions and automatically restarts that selected gateway.
+After OpenClaw commits the sender to its owner allowlist, NemoClaw automatically restarts that selected gateway.
 An exit status of `0` means activation completed, so the sender's next message should receive a reply without another manual restart.
-If permission cleanup or gateway restart fails after the approval commits, `exec` exits with status `1` and reports that the approval was not rolled back.
-For a selected owning gateway, it prints the managed recovery command; correct any reported permission problem, then run `nemoclaw my-assistant gateway restart` before testing the next message.
+If gateway restart fails after the approval commits, `exec` exits with status `1` and reports that the approval was not rolled back.
+For a selected owning gateway, it prints the managed recovery command; run `nemoclaw my-assistant gateway restart` before testing the next message.
 If no owning managed gateway is registered, NemoClaw does not attempt activation or print that command; register and select the sandbox's owning gateway before recovery.
 Do not submit the pairing code again unless OpenClaw reports that it was not accepted.
 

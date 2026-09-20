@@ -51,7 +51,6 @@ import {
 import { ROOT, run, shellQuote, validateName } from "../../runner";
 import { parseLiveSandboxNames } from "../../runtime-recovery";
 import { streamSandboxCreate } from "../../sandbox/create-stream";
-import { repairMutableConfigPerms } from "../../sandbox/mutable-config-perms";
 import { isSandboxReady } from "../../state/gateway";
 import { withSandboxMutationLock } from "../../state/mcp-lifecycle-lock";
 import {
@@ -933,31 +932,6 @@ async function runSnapshotCreate(
   });
 }
 
-function requireRestoredOpenClawConfigPerms(
-  targetSandbox: string,
-  result: Awaited<ReturnType<typeof sandboxState.restoreSandboxState>>,
-): void {
-  if (!result.restoredFiles.includes("openclaw.json")) return;
-  let failure: string;
-  try {
-    const permRepair = repairMutableConfigPerms(targetSandbox);
-    if (permRepair.applied && permRepair.verified) {
-      console.log(`  ${G}✓${R} OpenClaw config permissions restored`);
-      return;
-    }
-    failure = permRepair.applied
-      ? permRepair.errors.join("; ") || "permission verification failed"
-      : permRepair.reason;
-  } catch (err) {
-    failure = err instanceof Error ? err.message : String(err);
-  }
-  throw new SnapshotCommandError([
-    `State restored into '${targetSandbox}', but OpenClaw config permissions could not be verified.`,
-    `Run \`${CLI_NAME} ${targetSandbox} doctor --fix\`, then rerun \`${CLI_NAME} ${targetSandbox} doctor\` before running an agent.`,
-    `Details: ${failure}`,
-  ]);
-}
-
 function readCurrentManagedSnapshotProfileAuthority(entry: SandboxEntry | null) {
   return entry
     ? readManagedSnapshotProfileAuthority({
@@ -1514,7 +1488,6 @@ async function runSnapshotRestoreUnlocked(
           snapshotExit(1);
         }
       }
-      requireRestoredOpenClawConfigPerms(targetSandbox, result);
       console.log(
         `  ${G}\u2713${R} Restored ${result.restoredDirs.length} directories, ${result.restoredFiles.length} files`,
       );

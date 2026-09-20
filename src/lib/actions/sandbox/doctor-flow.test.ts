@@ -52,12 +52,10 @@ function createDoctorHarness(
   getNamedGatewayLifecycleStateSpy: MockInstance;
   healthProbeSpy: MockInstance;
   ollamaInventoryProbeSpy: MockInstance;
-  inspectMutableConfigPermsSpy: MockInstance;
   loadAgentSpy: MockInstance;
   probeSandboxInferenceGatewayHealthSpy: MockInstance;
   logSpy: MockInstance;
   recoverNamedGatewayRuntimeSpy: MockInstance;
-  repairMutableConfigPermsSpy: MockInstance;
   resolveOpenShellSpy: MockInstance;
   resolveSandboxGatewayNameSpy: MockInstance;
   runSandboxDoctor: RunSandboxDoctor;
@@ -78,7 +76,6 @@ function createDoctorHarness(
   const gatewayBinding = requireDist("../../onboard/gateway-binding.js");
   const sandboxVerificationExec = requireDist("../../onboard/sandbox-verification-exec.js");
   const sandboxVersion = requireDist("../../sandbox/version.js");
-  const mutableConfigPerms = requireDist("../../sandbox/mutable-config-perms.js");
   const registry = requireDist("../../state/registry.js");
   const statusCommandDeps = requireDist("../../status-command-deps.js");
   const tunnelServices = requireDist("../../tunnel/services.js");
@@ -227,20 +224,6 @@ function createDoctorHarness(
     expectedVersion: "0.2.0",
     isStale: true,
   });
-  const inspectMutableConfigPermsSpy = vi
-    .spyOn(mutableConfigPerms, "inspectMutableConfigPerms")
-    .mockReturnValue({
-      applies: true,
-      ok: true,
-      issues: [],
-    });
-  const repairMutableConfigPermsSpy = vi
-    .spyOn(mutableConfigPerms, "repairMutableConfigPerms")
-    .mockReturnValue({
-      applied: true,
-      verified: true,
-      errors: [],
-    });
   vi.spyOn(statusCommandDeps, "buildStatusCommandDeps").mockReturnValue({});
   vi.spyOn(tunnelServices, "readCloudflaredState").mockReturnValue({ kind: "running", pid: 1234 });
   const executeSandboxCommandForVerificationSpy = vi
@@ -281,12 +264,10 @@ function createDoctorHarness(
     getNamedGatewayLifecycleStateSpy,
     healthProbeSpy,
     ollamaInventoryProbeSpy,
-    inspectMutableConfigPermsSpy,
     loadAgentSpy,
     probeSandboxInferenceGatewayHealthSpy,
     logSpy,
     recoverNamedGatewayRuntimeSpy,
-    repairMutableConfigPermsSpy,
     resolveOpenShellSpy,
     resolveSandboxGatewayNameSpy,
     runSandboxDoctor,
@@ -643,7 +624,6 @@ describe("runSandboxDoctor flow", () => {
     expect(exitSpy).toHaveBeenCalledWith(1);
     expect(harness.getSandboxSpy).not.toHaveBeenCalled();
     expect(harness.captureHostCommandSpy).not.toHaveBeenCalled();
-    expect(harness.repairMutableConfigPermsSpy).not.toHaveBeenCalled();
   });
 
   it("does not run live or tool-scope probes when OpenShell is unavailable", async () => {
@@ -855,13 +835,8 @@ describe("runSandboxDoctor flow", () => {
     );
   });
 
-  it("does not enable repairs for plain or JSON diagnostics", async () => {
+  it("does not enable tool-scope repairs for plain or JSON diagnostics", async () => {
     const harness = createDoctorHarness();
-    harness.inspectMutableConfigPermsSpy.mockReturnValue({
-      applies: true,
-      ok: false,
-      issues: ["directory mode differs from runtime contract"],
-    });
     const inferenceRouteHealth = requireDist("./inference-route-health.js");
     vi.mocked(inferenceRouteHealth.probeSandboxInferenceGatewayHealth).mockResolvedValue({
       ok: true,
@@ -873,7 +848,6 @@ describe("runSandboxDoctor flow", () => {
     await harness.runSandboxDoctor("alpha");
     await harness.runSandboxDoctor("alpha", ["--json"], { quietJson: true });
 
-    expect(harness.repairMutableConfigPermsSpy).not.toHaveBeenCalled();
     expect(harness.buildToolScopeChecksSpy).toHaveBeenCalledTimes(2);
     expect(harness.buildToolScopeChecksSpy.mock.calls.map((call) => call[2])).toEqual([
       false,

@@ -4,7 +4,17 @@
 import { describe, expect, it } from "vitest";
 import YAML from "yaml";
 
-const { composeSandboxConfigBody, hermesConfigAllowsPrivateUrls } = require("./config") as {
+const {
+  buildOpenClawNativeConfigSetInvocation,
+  composeSandboxConfigBody,
+  hermesConfigAllowsPrivateUrls,
+  writeSandboxConfig,
+} = require("./config") as {
+  buildOpenClawNativeConfigSetInvocation: (
+    sandboxName: string,
+    dotpath: string,
+    value: Record<string, unknown>,
+  ) => { args: string[]; input: string };
   composeSandboxConfigBody: (
     config: Record<string, unknown>,
     target: {
@@ -16,6 +26,11 @@ const { composeSandboxConfigBody, hermesConfigAllowsPrivateUrls } = require("./c
     },
   ) => string;
   hermesConfigAllowsPrivateUrls: (config: Record<string, unknown>) => boolean;
+  writeSandboxConfig: (
+    sandboxName: string,
+    target: typeof OPENCLAW_TARGET,
+    config: Record<string, unknown>,
+  ) => void;
 };
 
 const HERMES_TARGET = {
@@ -71,6 +86,24 @@ describe("composeSandboxConfigBody", () => {
     const written = composeSandboxConfigBody(config, OPENCLAW_TARGET);
     expect(written.startsWith("#")).toBe(false);
     expect(JSON.parse(written)).toEqual(config);
+  });
+
+  it("refuses generic whole-file writes for OpenClaw", () => {
+    expect(() => writeSandboxConfig("alpha", OPENCLAW_TARGET, {})).toThrow(
+      /Refusing a whole-file OpenClaw config write/,
+    );
+  });
+
+  it("streams native OpenClaw config values instead of exposing them in host argv", () => {
+    const invocation = buildOpenClawNativeConfigSetInvocation(
+      "alpha",
+      "models.providers.inference",
+      { apiKey: "sandbox-only-secret", models: [{ id: "model-a" }] },
+    );
+
+    expect(invocation.args.join(" ")).not.toContain("sandbox-only-secret");
+    expect(invocation.args).toContain("models.providers.inference");
+    expect(invocation.input).toContain("sandbox-only-secret");
   });
 
   it("does not prepend the header when the Hermes target writes JSON", () => {

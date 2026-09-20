@@ -45,8 +45,8 @@ export NEMOCLAW_AGENT_TIMEOUT=1800
 $$nemoclaw onboard
 ```
 
-This setting is baked into the sandbox image.
-Recreate an existing sandbox to apply a new value.
+This setting writes the initial OpenClaw config during onboarding.
+OpenClaw owns that config after first launch.
 
 Each key bounds a different deadline.
 `agents.defaults.timeoutSeconds` bounds one agent run, and `$$nemoclaw <name> agent --timeout <seconds>` overrides it for a single run.
@@ -56,7 +56,9 @@ Raise the provider key when a turn times out while waiting for the model server,
 To change a deadline on an existing sandbox instead of recreating it, write the key directly.
 
 ```bash
-$$nemoclaw <sandbox-name> config set --key agents.defaults.timeoutSeconds --value 1800 --restart
+$$nemoclaw <sandbox-name> exec -- \
+  openclaw config set agents.defaults.timeoutSeconds 1800 --strict-json
+$$nemoclaw <sandbox-name> gateway restart
 ```
 
 </AgentOnly>
@@ -146,14 +148,6 @@ Raise both onboarding budgets when the provider probe and the later sandbox crea
 export NEMOCLAW_LOCAL_INFERENCE_TIMEOUT=300
 export NEMOCLAW_SANDBOX_READY_TIMEOUT=600
 $$nemoclaw onboard
-```
-
-## Apply Build-Time Changes
-
-Recreate an existing sandbox when you change a timeout that NemoClaw bakes into its image.
-
-```bash
-$$nemoclaw onboard --fresh --name <sandbox-name> --recreate-sandbox
 ```
 
 ## Related Topics

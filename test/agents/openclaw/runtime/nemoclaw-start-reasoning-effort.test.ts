@@ -59,17 +59,10 @@ function runApplyModelOverride(
     }),
   );
   const configPath = path.join(openclawDir, "openclaw.json");
-  const hashPath = path.join(openclawDir, ".config-hash");
-  fs.writeFileSync(hashPath, "oldhash\n");
   fs.chmodSync(openclawDir, 0o2770);
   fs.chmodSync(configPath, 0o660);
-  fs.chmodSync(hashPath, 0o660);
 
-  const helperFns = [
-    "normalize_mutable_config_perms() { :; }",
-    'run_openclaw_config_as_owner() { "$@"; }',
-    `ensure_mutable_openclaw_config_hash() { (cd ${JSON.stringify(openclawDir)} && sha256sum openclaw.json >.config-hash); }`,
-  ].join("\n");
+  const helperFns = ['run_openclaw_config_as_owner() { "$@"; }'].join("\n");
   const fn = extractShellFunction("apply_model_override").replaceAll("/sandbox", root);
   const wrapper = [
     "#!/usr/bin/env bash",
@@ -86,14 +79,13 @@ function runApplyModelOverride(
     env: { ...process.env, ...env },
   });
   const config = JSON.parse(fs.readFileSync(configPath, "utf-8"));
-  const hash = fs.readFileSync(hashPath, "utf-8");
   fs.rmSync(root, { recursive: true, force: true });
-  return { result, config, hash };
+  return { result, config };
 }
 
 describe("reasoning-effort restart persistence (#7659)", () => {
   it("preserves a runtime effort instead of replaying the image-baked value", () => {
-    const { result, config, hash } = runApplyModelOverride({
+    const { result, config } = runApplyModelOverride({
       NEMOCLAW_UPSTREAM_PROVIDER: "compatible-endpoint",
       NEMOCLAW_REASONING_EFFORT: "high",
     });
@@ -101,11 +93,10 @@ describe("reasoning-effort restart persistence (#7659)", () => {
     expect(config.models.providers.inference.models[0].params).toEqual({
       extra_body: { reasoning_effort: "low", preserve_me: true },
     });
-    expect(hash).toBe("oldhash\n");
   });
 
   it("preserves endpoint-default instead of restoring the image-baked value", () => {
-    const { result, config, hash } = runApplyModelOverride(
+    const { result, config } = runApplyModelOverride(
       {
         NEMOCLAW_UPSTREAM_PROVIDER: "compatible-endpoint",
         NEMOCLAW_REASONING_EFFORT: "high",
@@ -117,7 +108,6 @@ describe("reasoning-effort restart persistence (#7659)", () => {
     expect(config.models.providers.inference.models[0].params).toEqual({
       extra_body: { preserve_me: true },
     });
-    expect(hash).toBe("oldhash\n");
   });
 
   it("preserves a runtime effort while applying an explicit model override", () => {
@@ -169,7 +159,7 @@ describe("reasoning-effort restart persistence (#7659)", () => {
   });
 
   it("does not treat image-baked default as a startup clear", () => {
-    const { result, config, hash } = runApplyModelOverride({
+    const { result, config } = runApplyModelOverride({
       NEMOCLAW_UPSTREAM_PROVIDER: "compatible-endpoint",
       NEMOCLAW_REASONING_EFFORT: "default",
     });
@@ -178,7 +168,6 @@ describe("reasoning-effort restart persistence (#7659)", () => {
     expect(config.models.providers.inference.models[0].params).toEqual({
       extra_body: { reasoning_effort: "low", preserve_me: true },
     });
-    expect(hash).toBe("oldhash\n");
   });
 
   it("ignores an invalid baked effort while applying an authorized model override", () => {

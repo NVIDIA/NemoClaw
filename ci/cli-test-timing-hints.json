@@ -62,7 +62,6 @@
     "test/agents/hermes/hermes-tool-gateway-broker.test.ts": 8095,
     "test/agents/hermes/nemohermes-alias.test.ts": 14670,
     "test/agents/openclaw/openclaw-chat-send-patch.test.ts": 8126,
-    "test/agents/openclaw/openclaw-config-guard.test.ts": 22936,
     "test/agents/openclaw/openclaw-config-snapshot.test.ts": 5147,
     "test/agents/openclaw/openclaw-device-self-approval-patch.test.ts": 36649,
     "test/agents/openclaw/openclaw-device-stored-auth-patch.test.ts": 8297,

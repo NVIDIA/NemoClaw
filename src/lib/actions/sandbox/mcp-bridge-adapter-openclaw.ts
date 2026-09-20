@@ -3,7 +3,12 @@
 
 import path from "node:path";
 
-import { readSandboxConfig, resolveAgentConfig, writeSandboxConfig } from "../../sandbox/config";
+import {
+  readSandboxConfig,
+  resolveAgentConfig,
+  setOpenClawConfigValue,
+  unsetOpenClawConfigValue,
+} from "../../sandbox/config";
 import type { ConfigObject } from "../../security/credential-filter";
 import type { McpSourceEntry } from "./mcp-bridge-contracts";
 import {
@@ -131,12 +136,11 @@ export async function registerOpenClawAdapter(
       throw new Error(`MCP server '${entry.server}' already exists in OpenClaw configuration`);
     }
     const headers = entryHeaders(entry, credentialRevision);
-    servers[entry.server] = {
+    const serverConfig: ConfigObject = {
       transport: OPENCLAW_NATIVE_MCP_TRANSPORT,
       url: entry.url,
       ...(Object.keys(headers).length > 0 ? { headers } : {}),
     };
-    current.mcp = { ...mcp, servers };
     if (
       current.tools !== undefined &&
       (!current.tools || typeof current.tools !== "object" || Array.isArray(current.tools))
@@ -151,16 +155,14 @@ export async function registerOpenClawAdapter(
     ) {
       throw new Error("OpenClaw tools.alsoAllow configuration must be a string array");
     }
-    current.tools = {
-      ...tools,
-      alsoAllow: [
-        ...new Set([
-          ...((tools.alsoAllow as string[] | undefined) ?? []),
-          OPENCLAW_NATIVE_MCP_PLUGIN_ID,
-        ]),
-      ],
-    };
-    writeSandboxConfig(sandboxName, target, current);
+    const alsoAllow = [
+      ...new Set([
+        ...((tools.alsoAllow as string[] | undefined) ?? []),
+        OPENCLAW_NATIVE_MCP_PLUGIN_ID,
+      ]),
+    ];
+    setOpenClawConfigValue(sandboxName, "tools.alsoAllow", alsoAllow);
+    setOpenClawConfigValue(sandboxName, `mcp.servers.${entry.server}`, serverConfig);
   } catch (error) {
     const output = redactBridgeSecretsForDisplay(
       error instanceof Error ? error.message : String(error),
@@ -244,9 +246,7 @@ export function unregisterOpenClawAdapter(
         `Refusing to remove modified OpenClaw MCP server '${entry.server}'. Use --force to remove it.`,
       );
     }
-    delete entries[entry.server];
-    current.mcp = { ...(mcp as ConfigObject), servers: entries };
-    writeSandboxConfig(sandboxName, target, current);
+    unsetOpenClawConfigValue(sandboxName, `mcp.servers.${entry.server}`);
   } catch (error) {
     if (options.bestEffort) return;
     const output = redactBridgeSecretsForDisplay(

@@ -4,6 +4,7 @@
 import type { AgentConfigTarget } from "../sandbox/config";
 import type { ConfigObject } from "../security/credential-filter";
 import { isConfigObject } from "../security/credential-filter";
+import { createCliOpenShellSandboxCommandExecutor } from "../adapters/openshell/sandbox-command-cli";
 
 const TRYCLOUDFLARE_HOST = "trycloudflare.com";
 
@@ -78,8 +79,7 @@ export function computeTunnelAllowedOrigins(
 export interface RegisterTunnelOriginDeps {
   resolveAgentConfig: (sandboxName: string) => AgentConfigTarget;
   readConfig: (sandboxName: string, target: AgentConfigTarget) => ConfigObject;
-  writeConfig: (sandboxName: string, target: AgentConfigTarget, config: ConfigObject) => void;
-  recomputeHash: (sandboxName: string, target: AgentConfigTarget) => void;
+  writeAllowedOrigins: (sandboxName: string, origins: string[]) => Promise<void>;
   reloadGateway: (sandboxName: string) => Promise<void>;
   info?: (msg: string) => void;
   warn?: (msg: string) => void;
@@ -88,9 +88,33 @@ export interface RegisterTunnelOriginDeps {
 type SandboxConfigModule = {
   resolveAgentConfig: RegisterTunnelOriginDeps["resolveAgentConfig"];
   readSandboxConfig: RegisterTunnelOriginDeps["readConfig"];
-  writeSandboxConfig: RegisterTunnelOriginDeps["writeConfig"];
-  recomputeSandboxConfigHash: RegisterTunnelOriginDeps["recomputeHash"];
 };
+
+async function writeNativeOpenClawAllowedOrigins(
+  sandboxName: string,
+  origins: string[],
+): Promise<void> {
+  const completed = await createCliOpenShellSandboxCommandExecutor().runBuffered({
+    sandboxName,
+    target: { kind: "selected" },
+    command: [
+      "openclaw",
+      "config",
+      "set",
+      "gateway.controlUi.allowedOrigins",
+      JSON.stringify(origins),
+      "--strict-json",
+    ],
+    sandboxEnvironment: { HOME: "/sandbox" },
+    timeoutMilliseconds: 30_000,
+  });
+  if (completed.outcome.kind === "failed") {
+    throw new Error(completed.outcome.error.message);
+  }
+  if (completed.outcome.exitCode !== 0) {
+    throw new Error(completed.stderr.trim() || "native OpenClaw config write failed");
+  }
+}
 
 /**
  * Default reload: the same managed gateway restart `config set --restart` uses.
@@ -104,14 +128,12 @@ async function defaultReloadGateway(sandboxName: string): Promise<void> {
 }
 
 function resolveDeps(deps: Partial<RegisterTunnelOriginDeps>): Required<RegisterTunnelOriginDeps> {
-  const needsConfig =
-    !deps.resolveAgentConfig || !deps.readConfig || !deps.writeConfig || !deps.recomputeHash;
+  const needsConfig = !deps.resolveAgentConfig || !deps.readConfig;
   const config = needsConfig ? (require("../sandbox/config") as SandboxConfigModule) : undefined;
   return {
     resolveAgentConfig: deps.resolveAgentConfig ?? config!.resolveAgentConfig,
     readConfig: deps.readConfig ?? config!.readSandboxConfig,
-    writeConfig: deps.writeConfig ?? config!.writeSandboxConfig,
-    recomputeHash: deps.recomputeHash ?? config!.recomputeSandboxConfigHash,
+    writeAllowedOrigins: deps.writeAllowedOrigins ?? writeNativeOpenClawAllowedOrigins,
     reloadGateway: deps.reloadGateway ?? defaultReloadGateway,
     info: deps.info ?? (() => {}),
     warn: deps.warn ?? (() => {}),
@@ -124,26 +146,6 @@ function readAllowedOrigins(config: ConfigObject): unknown {
   const controlUi = gateway.controlUi;
   if (!isConfigObject(controlUi)) return undefined;
   return controlUi.allowedOrigins;
-}
-
-function ensureConfigObject(record: ConfigObject, key: string): ConfigObject {
-  const existing = record[key];
-  if (isConfigObject(existing)) return existing;
-  const created: ConfigObject = {};
-  record[key] = created;
-  return created;
-}
-
-/**
- * Set gateway.controlUi.allowedOrigins in place, materializing intermediate
- * objects if absent. Mutating the object returned by readConfig preserves the
- * read digest the OpenClaw config guard binds the write to, and leaves sibling
- * gateway keys untouched.
- */
-function applyAllowedOrigins(config: ConfigObject, origins: string[]): void {
-  const gateway = ensureConfigObject(config, "gateway");
-  const controlUi = ensureConfigObject(gateway, "controlUi");
-  controlUi.allowedOrigins = origins;
 }
 
 /**
@@ -179,9 +181,7 @@ export async function registerTunnelOrigin(
       return;
     }
 
-    applyAllowedOrigins(config, origins);
-    resolved.writeConfig(sandboxName, target, config);
-    resolved.recomputeHash(sandboxName, target);
+    await resolved.writeAllowedOrigins(sandboxName, origins);
     info(`Registered tunnel origin with gateway: ${origin}`);
 
     info("Reloading gateway to apply tunnel origin...");

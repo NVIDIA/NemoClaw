@@ -4,7 +4,7 @@
 import { describe, expect, it } from "vitest";
 import type { ConfigObject } from "../security/credential-filter";
 import { runInferenceSet } from "./inference-set";
-import { baseSession, createDeps, OPENCLAW_TARGET } from "./inference-set.test-support";
+import { baseSession, createDeps } from "./inference-set.test-support";
 
 describe("runInferenceSet OpenClaw routing", () => {
   it("completes a same-API switch and pairing when audit persistence initially fails (#9527)", async () => {
@@ -59,8 +59,20 @@ describe("runInferenceSet OpenClaw routing", () => {
         model: { primary: "inference/nvidia/nemotron-3-super-120b-a12b" },
       },
     });
-    expect(deps.calls.writeSandboxConfig).toHaveBeenCalledWith("alpha", OPENCLAW_TARGET, config);
-    expect(deps.calls.recomputeSandboxConfigHash).toHaveBeenCalledWith("alpha", OPENCLAW_TARGET);
+    expect(deps.calls.setOpenClawConfigValue).toHaveBeenCalledWith(
+      "alpha",
+      "agents.defaults.model.primary",
+      "inference/nvidia/nemotron-3-super-120b-a12b",
+    );
+    expect(deps.calls.setOpenClawConfigValue).toHaveBeenCalledWith(
+      "alpha",
+      "models.providers.inference",
+      expect.objectContaining({
+        models: [expect.objectContaining({ id: "nvidia/nemotron-3-super-120b-a12b" })],
+      }),
+    );
+    expect(deps.calls.writeSandboxConfig).not.toHaveBeenCalled();
+    expect(deps.calls.recomputeSandboxConfigHash).not.toHaveBeenCalled();
     // The dashboard re-seed is Hermes-only; OpenClaw has no isolated dashboard config. (#6893)
     expect(deps.calls.seedHermesDashboardConfig).not.toHaveBeenCalled();
     expect(deps.calls.updateSandbox).toHaveBeenCalledWith(

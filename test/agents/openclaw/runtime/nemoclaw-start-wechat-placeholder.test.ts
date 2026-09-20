@@ -12,11 +12,6 @@ const REFRESH_HELPER = path.join(
   "../../../..",
   "scripts/lib/refresh-openclaw-wechat-placeholder.py",
 );
-const MUTABLE_CONFIG_NORMALIZER = path.join(
-  import.meta.dirname,
-  "../../../..",
-  "scripts/lib/normalize_mutable_config_perms.py",
-);
 const CANONICAL = "openshell:resolve:env:WECHAT_BOT_TOKEN";
 const SAVED_AT = "2026-08-29T00:00:00.000Z";
 
@@ -235,47 +230,6 @@ describe("OpenClaw WeChat provider placeholder refresh (#10079)", () => {
     expect(run.account.token).toBe(scoped);
     expect(run.config).toEqual(wechatConfig(true));
     expect(run.result.stderr).not.toContain(scoped);
-  });
-
-  it("refreshes after mutable-config normalization and preserves its group-write mode", () => {
-    const scoped = "openshell:resolve:env:v52_WECHAT_BOT_TOKEN";
-    const run = runWechatRefresh(
-      CANONICAL,
-      { WECHAT_BOT_TOKEN: scoped },
-      true,
-      ({ configPath, tmpDir }) => {
-        const normalizer = path.join(tmpDir, "normalizer.py");
-        fs.writeFileSync(
-          normalizer,
-          fs
-            .readFileSync(MUTABLE_CONFIG_NORMALIZER, "utf-8")
-            .replace(
-              'if __name__ == "__main__":',
-              'runtime_config_modes = lambda: (0o2770, 0o660)\n\nif __name__ == "__main__":',
-            ),
-        );
-        const normalized = spawnSync(
-          "python3",
-          [
-            "-I",
-            normalizer,
-            path.dirname(configPath),
-            String(process.getuid?.() ?? 0),
-            String(process.getgid?.() ?? 0),
-          ],
-          { encoding: "utf-8", timeout: 5000 },
-        );
-        expect(normalized.status, normalized.stderr).toBe(0);
-        expect(
-          fs.statSync(path.join(path.dirname(configPath), "openclaw-weixin/accounts/primary.json"))
-            .mode & 0o777,
-        ).toBe(0o660);
-      },
-    );
-
-    expect(run.result.status, String(run.result.stderr)).toBe(0);
-    expect(run.account.token).toBe(scoped);
-    expect(run.accountMode).toBe(0o660);
   });
 
   it("leaves an already-current placeholder untouched", () => {
