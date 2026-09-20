@@ -19,6 +19,7 @@ The subsequent [managed Podman qualification](rust-managed-podman-linux-arm64.md
 
 | Behavior | Tests and Results |
 |---|---|
+| Independent OpenShell HCL composition, lifecycle guards, recovery, and bootstrap limits | [Linux ARM64 provider qualification](openshell-provider-composition-linux-arm64.md) |
 | Independent Docker cache recovery and retained credential guards without SDK orchestration | [Linux ARM64 resource composition](docker-cache-credentials-linux-arm64.md) |
 | Docker gateway process recovery, independent credential identity, and retained namespace | [Linux ARM64 gateway lifecycle](docker-gateway-linux-arm64.md) |
 | Docker-provider service compute, image replacement, recovery, and retained data | [Linux ARM64 lifecycle fixtures](docker-provider-linux-arm64.md) |
