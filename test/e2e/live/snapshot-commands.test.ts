@@ -486,10 +486,13 @@ printf '%s' ${JSON.stringify(markerContent)} > ${JSON.stringify(MARKER_FILE)}`,
     );
     const parsedReplacementOrigins =
       replacementOrigins.exitCode === 0 ? JSON.parse(replacementOrigins.stdout) : null;
+    const replacementHasNativeOrigin =
+      Array.isArray(parsedReplacementOrigins) &&
+      parsedReplacementOrigins.some((origin) => origin === NATIVE_GATEWAY_ORIGIN);
     expect(
       replacementHasNoSnapshotMarkers.exitCode === 0 &&
         Array.isArray(parsedReplacementOrigins) &&
-        !parsedReplacementOrigins.includes(NATIVE_GATEWAY_ORIGIN),
+        !replacementHasNativeOrigin,
       `${resultText(replacementHasNoSnapshotMarkers)}\n${resultText(replacementOrigins)}`,
     ).toBe(true);
 
@@ -528,6 +531,9 @@ printf '%s' ${JSON.stringify(markerContent)} > ${JSON.stringify(MARKER_FILE)}`,
     );
     const parsedRestoredOrigins =
       restoredNativeConfig.exitCode === 0 ? JSON.parse(restoredNativeConfig.stdout) : null;
+    const restoredHasNativeOrigin =
+      Array.isArray(parsedRestoredOrigins) &&
+      parsedRestoredOrigins.some((origin) => origin === NATIVE_GATEWAY_ORIGIN);
     const validateRestoredConfig = await sandbox.exec(
       SANDBOX_NAME,
       ["/usr/bin/env", "HOME=/sandbox", "/usr/local/bin/openclaw", "config", "validate"],
@@ -540,7 +546,7 @@ printf '%s' ${JSON.stringify(markerContent)} > ${JSON.stringify(MARKER_FILE)}`,
     expect(
       classifySnapshotRestoreResult(replacementRestore) === "restored" &&
         Array.isArray(parsedRestoredOrigins) &&
-        parsedRestoredOrigins.includes(NATIVE_GATEWAY_ORIGIN) &&
+        restoredHasNativeOrigin &&
         validateRestoredConfig.exitCode === 0,
       [replacementRestore, restoredNativeConfig, validateRestoredConfig].map(resultText).join("\n"),
     ).toBe(true);
