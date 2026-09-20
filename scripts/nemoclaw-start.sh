@@ -675,15 +675,29 @@ apply_model_override() {
     NEMOCLAW_MAX_TOKENS="$max_tokens" \
     NEMOCLAW_REASONING="$reasoning" \
     /usr/bin/python3 -I - "$config_file" "$model_override" "$api_override" <<'PYOVERRIDE' || _write_rc=$?
-import json, os, sys
+import json, os, subprocess, sys
 
 config_file, model_override, api_override = sys.argv[1], sys.argv[2], sys.argv[3]
 context_window = os.environ.get("NEMOCLAW_CONTEXT_WINDOW", "")
 max_tokens = os.environ.get("NEMOCLAW_MAX_TOKENS", "")
 reasoning = os.environ.get("NEMOCLAW_REASONING", "")
 
-with open(config_file) as f:
-    cfg = json.load(f)
+with open(config_file, encoding="utf-8") as f:
+    source = f.read()
+parsed = subprocess.run(
+    [
+        "/usr/local/bin/node",
+        "-e",
+        'const JSON5=require("/opt/nemoclaw/node_modules/json5");'
+        'process.stdout.write(JSON.stringify(JSON5.parse(require("node:fs").readFileSync(0,"utf8"))));',
+    ],
+    input=source,
+    text=True,
+    stdout=subprocess.PIPE,
+    stderr=subprocess.DEVNULL,
+    check=True,
+)
+cfg = json.loads(parsed.stdout)
 
 # Patch primary model reference
 if model_override:
@@ -770,12 +784,26 @@ apply_cors_override() {
 
   run_openclaw_config_as_owner /usr/bin/python3 -I - \
     "$config_file" "$cors_origin" <<'PYCORS' || _write_rc=$?
-import json, sys
+import json, subprocess, sys
 
 config_file, cors_origin = sys.argv[1], sys.argv[2]
 
-with open(config_file) as f:
-    cfg = json.load(f)
+with open(config_file, encoding="utf-8") as f:
+    source = f.read()
+parsed = subprocess.run(
+    [
+        "/usr/local/bin/node",
+        "-e",
+        'const JSON5=require("/opt/nemoclaw/node_modules/json5");'
+        'process.stdout.write(JSON.stringify(JSON5.parse(require("node:fs").readFileSync(0,"utf8"))));',
+    ],
+    input=source,
+    text=True,
+    stdout=subprocess.PIPE,
+    stderr=subprocess.DEVNULL,
+    check=True,
+)
+cfg = json.loads(parsed.stdout)
 
 origins = cfg.get("gateway", {}).get("controlUi", {}).get("allowedOrigins", [])
 if cors_origin not in origins:
@@ -803,6 +831,7 @@ import base64
 import json
 import os
 import re
+import subprocess
 import sys
 
 config_file = sys.argv[1]
@@ -839,7 +868,21 @@ def walk(value):
 
 try:
     with open(config_file, encoding="utf-8") as f:
-        walk(json.load(f))
+        source = f.read()
+    parsed = subprocess.run(
+        [
+            "/usr/local/bin/node",
+            "-e",
+            'const JSON5=require("/opt/nemoclaw/node_modules/json5");'
+            'process.stdout.write(JSON.stringify(JSON5.parse(require("node:fs").readFileSync(0,"utf8"))));',
+        ],
+        input=source,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        check=True,
+    )
+    walk(json.loads(parsed.stdout))
 except Exception:
     pass
 
@@ -1008,6 +1051,7 @@ PYPLACEHOLDERSTATE
 import json
 import os
 import re
+import subprocess
 import sys
 
 config_file = sys.argv[1]
@@ -1043,7 +1087,21 @@ for key in keys:
         replacements[f"{prefix}{key}"] = (key, value)
 
 with open(config_file, encoding="utf-8") as f:
-    config = json.load(f)
+    source = f.read()
+parsed = subprocess.run(
+    [
+        "/usr/local/bin/node",
+        "-e",
+        'const JSON5=require("/opt/nemoclaw/node_modules/json5");'
+        'process.stdout.write(JSON.stringify(JSON5.parse(require("node:fs").readFileSync(0,"utf8"))));',
+    ],
+    input=source,
+    text=True,
+    stdout=subprocess.PIPE,
+    stderr=subprocess.DEVNULL,
+    check=True,
+)
+config = json.loads(parsed.stdout)
 
 refreshed = set()
 
@@ -3870,7 +3928,7 @@ seed_default_workspace_templates() {
   if ! command -v node >/dev/null 2>&1; then
     return 0
   fi
-  local skip_bootstrap_check='const fs = require("fs"); const configPath = process.argv[1]; const cfg = JSON.parse(fs.readFileSync(configPath, "utf8")); process.exit(cfg?.agents?.defaults?.skipBootstrap === true ? 0 : 1);'
+  local skip_bootstrap_check='const fs = require("fs"); const configPath = process.argv[1]; const source = fs.readFileSync(configPath, "utf8"); let cfg; try { cfg = JSON.parse(source); } catch { cfg = require("/opt/nemoclaw/node_modules/json5").parse(source); } process.exit(cfg?.agents?.defaults?.skipBootstrap === true ? 0 : 1);'
   if ! node -e "$skip_bootstrap_check" "$config_file" >/dev/null 2>&1; then
     return 0
   fi
@@ -4862,8 +4920,9 @@ provision_agent_workspaces() {
     config_names="$(
       node - "$config_dir/openclaw.json" <<'NODE' 2>/dev/null || true
   const fs = require("fs");
+  const JSON5 = require("/opt/nemoclaw/node_modules/json5");
   const configPath = process.argv[2];
-  const cfg = JSON.parse(fs.readFileSync(configPath, "utf8"));
+  const cfg = JSON5.parse(fs.readFileSync(configPath, "utf8"));
   const names = new Set();
   const workspacePattern = /^workspace-[A-Za-z0-9._-]+$/;
   function addWorkspace(value) {

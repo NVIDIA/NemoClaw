@@ -5,6 +5,7 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import JSON5 from "json5";
 import { describe, expect, it } from "vitest";
 
 const START_SCRIPT = path.join(
@@ -14,7 +15,11 @@ const START_SCRIPT = path.join(
   "scripts",
   "nemoclaw-start.sh",
 );
-const src = fs.readFileSync(START_SCRIPT, "utf-8");
+const JSON5_MODULE = path.join(import.meta.dirname, "../../../..", "node_modules", "json5");
+const src = fs
+  .readFileSync(START_SCRIPT, "utf-8")
+  .replaceAll("/opt/nemoclaw/node_modules/json5", JSON5_MODULE)
+  .replaceAll("/usr/local/bin/node", process.execPath);
 
 function extractShellFunction(name: string): string {
   const match = src.match(new RegExp(`${name}\\(\\) \\{([\\s\\S]*?)^\\}`, "m"));
@@ -32,7 +37,7 @@ function runApplyModelOverride(
   fs.mkdirSync(openclawDir, { recursive: true });
   fs.writeFileSync(
     path.join(openclawDir, "openclaw.json"),
-    JSON.stringify({
+    `// Native OpenClaw JSON5 remains valid across restart-time overrides.\n${JSON.stringify({
       agents: { defaults: { model: { primary: "old-model" } } },
       models: {
         providers: {
@@ -56,7 +61,7 @@ function runApplyModelOverride(
           },
         },
       },
-    }),
+    })}`,
   );
   const configPath = path.join(openclawDir, "openclaw.json");
   fs.chmodSync(openclawDir, 0o2770);
@@ -78,7 +83,7 @@ function runApplyModelOverride(
     encoding: "utf-8",
     env: { ...process.env, ...env },
   });
-  const config = JSON.parse(fs.readFileSync(configPath, "utf-8"));
+  const config = JSON5.parse(fs.readFileSync(configPath, "utf-8"));
   fs.rmSync(root, { recursive: true, force: true });
   return { result, config };
 }

@@ -173,7 +173,6 @@ describe("runInferenceSet Hermes routing", () => {
     expect(deps.calls.writeSandboxConfig.mock.calls[0][1].configPath).toBe(
       "/sandbox/.hermes/config.yaml",
     );
-    expect(deps.calls.recomputeSandboxConfigHash).toHaveBeenCalledWith("hermes", HERMES_TARGET);
     expect(deps.calls.updateSandbox).toHaveBeenCalledWith(
       "hermes",
       expect.objectContaining({
@@ -335,57 +334,6 @@ describe("runInferenceSet Hermes routing", () => {
       }),
     );
     expect(deps.calls.seedHermesDashboardConfig).not.toHaveBeenCalled();
-  });
-
-  it("fails after commit when the config hash refresh fails (#7083)", async () => {
-    const config: ConfigObject = {
-      model: { default: "moonshotai/kimi-k2.6", provider: "custom" },
-    };
-    const deps = createDeps({
-      config,
-      entry: {
-        name: "hermes",
-        agent: "hermes",
-        provider: "hermes-provider",
-        model: "moonshotai/kimi-k2.6",
-      },
-      defaultSandbox: "hermes",
-      target: HERMES_TARGET,
-      session: baseSession({ agent: "hermes", sandboxName: "hermes" }),
-    });
-    deps.calls.recomputeSandboxConfigHash.mockImplementation(() => {
-      throw new Error("hash refresh failed");
-    });
-
-    await expect(
-      runInferenceSet(
-        {
-          provider: "hermes-provider",
-          model: "openai/gpt-5.4-mini",
-          sandboxName: "hermes",
-          noVerify: true,
-        },
-        deps,
-      ),
-    ).rejects.toMatchObject({
-      name: "InferenceSetError",
-      exitCode: 1,
-      message: expect.stringMatching(/Hermes inference route synchronization did not complete/),
-    });
-
-    expect(deps.calls.writeSandboxConfig).toHaveBeenCalledOnce();
-    expect(deps.calls.updateSandbox).toHaveBeenCalledWith(
-      "hermes",
-      expect.objectContaining({
-        provider: "hermes-provider",
-        model: "openai/gpt-5.4-mini",
-      }),
-    );
-    expect(deps.calls.seedHermesDashboardConfig).not.toHaveBeenCalled();
-    const logs = deps.calls.log.mock.calls.map((call) => String(call[0]));
-    expect(logs.some((line) => line.includes("failed to refresh its integrity hash"))).toBe(true);
-    expect(logs.some((line) => line.includes("rebuild"))).toBe(true);
-    expect(logs.some((line) => line.includes("Inference route synced"))).toBe(false);
   });
 
   it("fails after commit when the dashboard does not converge (#6893)", async () => {

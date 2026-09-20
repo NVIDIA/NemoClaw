@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { createHash } from "node:crypto";
+import JSON5 from "json5";
 import type { OpenShellRuntimeSelection } from "../../adapters/openshell/runtime";
 import { shellQuote } from "../../core/shell-quote";
 import { MANAGED_PROVIDER_ID } from "../../inference/config";
@@ -243,7 +244,7 @@ async function readPrimaryModelRef(
   );
   if (!res || res.status !== 0 || !res.stdout.trim()) return null;
   try {
-    const config = JSON.parse(res.stdout) as {
+    const config = JSON5.parse(res.stdout) as {
       agents?: { defaults?: { model?: { primary?: unknown } } };
     };
     const primary = config.agents?.defaults?.model?.primary;

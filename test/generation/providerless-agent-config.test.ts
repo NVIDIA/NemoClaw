@@ -157,12 +157,10 @@ const expectCommitted: Record<Agent, (calls: InferenceSetCalls) => void> = {
   openclaw(calls) {
     expect(calls.setOpenClawConfigValues).toHaveBeenCalled();
     expect(calls.writeSandboxConfig).not.toHaveBeenCalled();
-    expect(calls.recomputeSandboxConfigHash).not.toHaveBeenCalled();
   },
   hermes(calls) {
     expect(calls.setOpenClawConfigValues).not.toHaveBeenCalled();
     expect(calls.writeSandboxConfig).toHaveBeenCalled();
-    expect(calls.recomputeSandboxConfigHash).toHaveBeenCalled();
   },
 };
 

@@ -86,7 +86,6 @@ describe("runInferenceSet degraded state handling", () => {
         model: "claude-sonnet-4-6",
       }),
     );
-    expect(deps.calls.recomputeSandboxConfigHash).not.toHaveBeenCalled();
     // Reports the committed outer state and recovery without claiming convergence.
     const logged = deps.calls.log.mock.calls.map((args) => String(args[0])).join("\n");
     expect(logged).toMatch(/in-sandbox config failed/);

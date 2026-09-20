@@ -76,7 +76,7 @@ function parseJson<T>(text: string): T {
 // Agent-aware config resolution
 //
 // Each agent defines its own config layout in agents/*/manifest.yaml:
-//   - openclaw: /sandbox/.openclaw/openclaw.json  (JSON)
+//   - openclaw: /sandbox/.openclaw/openclaw.json  (JSON5)
 //   - hermes:   /sandbox/.hermes/config.yaml      (YAML)
 //
 // resolveAgentConfig() looks up the sandbox's agent from the registry,
@@ -463,7 +463,7 @@ function readSandboxConfig(sandboxName: string, target: AgentConfigTarget): Conf
   }
 
   try {
-    const config = parseConfig(raw, target.format);
+    const config = parseConfig(raw, target.agentName === "openclaw" ? "json5" : target.format);
     Object.defineProperty(config, CONFIG_SOURCE_SHA256, {
       configurable: false,
       enumerable: false,
@@ -701,25 +701,6 @@ function unsetOpenClawConfigValue(sandboxName: string, dotpath: string): void {
     throw new Error(`Invalid OpenClaw config key '${dotpath}': ${validation.reason}.`);
   }
   runOpenClawNativeConfigCommand(sandboxName, ["unset", dotpath]);
-}
-
-function buildRecomputeSandboxConfigHashScript(target: AgentConfigTarget): string | null {
-  // OpenClaw owns its native config. Hermes refreshes its hashes inside its
-  // sealed transaction, so neither agent needs this legacy hash pass.
-  if (target.agentName === "openclaw" || target.agentName === "hermes") return null;
-  if (!target.sensitiveFiles?.includes(`${target.configDir}/.config-hash`)) return null;
-  return [
-    `cd ${shellQuote(target.configDir)}`,
-    `sha256sum ${shellQuote(target.configFile)} > .config-hash`,
-    "(chown sandbox:sandbox .config-hash 2>/dev/null || true)",
-    "(chmod 660 .config-hash 2>/dev/null || true)",
-  ].join(" && ");
-}
-
-function recomputeSandboxConfigHash(sandboxName: string, target: AgentConfigTarget): void {
-  const script = buildRecomputeSandboxConfigHashScript(target);
-  if (!script) return;
-  privilegedSandboxExec(sandboxName, ["sh", "-c", script]);
 }
 
 // Absolute path to the Hermes dashboard config seeder inside the sandbox image
@@ -1430,7 +1411,6 @@ async function configSet(sandboxName: string, opts: ConfigSetOpts = {}): Promise
 
     console.log(`  Writing config to sandbox (${target.configPath})...`);
     writeSandboxConfig(sandboxName, target, currentConfig);
-    recomputeSandboxConfigHash(sandboxName, target);
     appendAuditEntry({
       action: "config_set",
       sandbox: sandboxName,
@@ -1492,7 +1472,6 @@ export {
   buildConfigSetRestartGuidance,
   buildOpenClawNativeConfigBatchInvocation,
   buildOpenClawNativeConfigSetInvocation,
-  buildRecomputeSandboxConfigHashScript,
   classifyNewKeyGate,
   composeSandboxConfigBody,
   configGet,
@@ -1510,7 +1489,6 @@ export {
   parseConfigGetArgs,
   readSandboxConfig,
   readStdin,
-  recomputeSandboxConfigHash,
   resolveAgentConfig,
   restartSandboxAgentAfterConfigSet,
   restoreHermesDashboardConfig,

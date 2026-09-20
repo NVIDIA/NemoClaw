@@ -12,6 +12,7 @@
  */
 
 import { readFileSync } from "node:fs";
+import JSON5 from "json5";
 import { renderBox } from "./banner.js";
 import { handleSlashCommand } from "./commands/slash.js";
 import {
@@ -223,7 +224,7 @@ function readOpenClawPrimaryModel(
   configPath = OPENCLAW_CONFIG_PATH,
 ): string {
   try {
-    const parsed: unknown = JSON.parse(readFileSync(configPath, "utf-8"));
+    const parsed: unknown = JSON5.parse(readFileSync(configPath, "utf-8"));
     const agents = readObjectProperty(parsed, "agents");
     const defaults = readObjectProperty(agents, "defaults");
     const model = readObjectProperty(defaults, "model");

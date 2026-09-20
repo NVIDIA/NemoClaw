@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { isObjectRecord } from "../../core/json-types";
+import JSON5 from "json5";
 import type { MessagingHookHandler, MessagingHookRegistration } from "../hooks/types";
 
 const OPENCLAW_CONFIG_FILE = "/sandbox/.openclaw/openclaw.json";
@@ -73,7 +74,7 @@ export function createOpenClawBridgeHealthHook(
       let channelBlock: unknown = null;
       let channelEnabled = false;
       try {
-        const cfg = JSON.parse(String(configProbe.stdout));
+        const cfg = JSON5.parse(String(configProbe.stdout));
         channelBlock = getObjectPath(cfg, `channels.${spec.channelId}`);
         channelEnabled = Boolean(getObjectPath(channelBlock, "enabled"));
       } catch {

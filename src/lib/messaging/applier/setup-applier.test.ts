@@ -689,11 +689,11 @@ describe("MessagingSetupApplier", () => {
       "telegram",
     ]);
     const files: Record<string, string> = {
-      "/sandbox/.openclaw/openclaw.json": JSON.stringify({
+      "/sandbox/.openclaw/openclaw.json": `// Native OpenClaw JSON5\n${JSON.stringify({
         agents: {
           list: ["default"],
         },
-      }),
+      })}`,
     };
     const calls: Array<{ args: readonly string[]; input?: string }> = [];
     const runOpenshell: MessagingOpenShellRunner = (args, options) => {

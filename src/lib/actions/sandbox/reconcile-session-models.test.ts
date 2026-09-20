@@ -295,6 +295,25 @@ describe("reconcileStalePinnedSessionModelsAfterRebuild", () => {
     );
   });
 
+  it("reads the restored primary model from native JSON5 config (#11764)", async () => {
+    executeSandboxCommandMock
+      .mockResolvedValueOnce({
+        status: 0,
+        stdout: `{ agents: { defaults: { model: { primary: '${primary}', }, }, }, }`,
+        stderr: "",
+      })
+      .mockResolvedValueOnce({ status: 0, stdout: staleStore, stderr: "" })
+      .mockResolvedValueOnce({ status: 0, stdout: "", stderr: "" });
+    const log = vi.fn();
+
+    await reconcileStalePinnedSessionModelsAfterRebuild("alpha", log);
+
+    expect(executeSandboxCommandMock).toHaveBeenCalledTimes(3);
+    expect(log).toHaveBeenLastCalledWith(
+      `Session model reconcile: cleared stale pinned model on 1 session(s) so they follow ${primary}`,
+    );
+  });
+
   it("reuses the rebuild target for every restored session read and write (#10514)", async () => {
     executeSandboxCommandMock
       .mockResolvedValueOnce({ status: 0, stdout: config, stderr: "" })

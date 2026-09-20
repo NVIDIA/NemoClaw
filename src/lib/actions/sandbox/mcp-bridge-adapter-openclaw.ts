@@ -6,7 +6,7 @@ import path from "node:path";
 import {
   readSandboxConfig,
   resolveAgentConfig,
-  setOpenClawConfigValue,
+  setOpenClawConfigValues,
   unsetOpenClawConfigValue,
 } from "../../sandbox/config";
 import type { ConfigObject } from "../../security/credential-filter";
@@ -51,11 +51,12 @@ function openClawConfigPath(root: string): string {
 function openClawConfigReadHelpers(): string[] {
   return [
     'const fs = require("node:fs");',
+    'const JSON5 = require("/opt/nemoclaw/node_modules/json5");',
     "const MAX_BYTES = 1048576;",
     "function fingerprint(value) { return value ? [value.dev, value.ino, value.size, value.mtimeMs, value.ctimeMs, value.mode, value.nlink, value.uid] : null; }",
     "function readConfig(configPath) {",
     "  let fd; try { fd = fs.openSync(configPath, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW); } catch (error) { if (error && error.code === 'ENOENT') return { data: {}, identity: null }; throw error; }",
-    "  try { const before = fs.fstatSync(fd); const linked = fs.lstatSync(configPath); if (!before.isFile() || !linked.isFile() || before.uid !== process.getuid() || before.nlink !== 1 || before.dev !== linked.dev || before.ino !== linked.ino || before.size > MAX_BYTES) throw new Error('OpenClaw configuration source is unsafe'); const raw = Buffer.alloc(before.size); let count = 0; while (count < raw.length) { const read = fs.readSync(fd, raw, count, raw.length - count, count); if (read === 0) break; count += read; } const after = fs.fstatSync(fd); if (count !== before.size || JSON.stringify(fingerprint(before)) !== JSON.stringify(fingerprint(after))) throw new Error('OpenClaw configuration changed while reading'); const data = before.size === 0 ? {} : JSON.parse(raw.toString('utf8')); if (!data || typeof data !== 'object' || Array.isArray(data)) throw new Error('OpenClaw configuration must be an object'); return { data, identity: fingerprint(before) }; } finally { fs.closeSync(fd); }",
+    "  try { const before = fs.fstatSync(fd); const linked = fs.lstatSync(configPath); if (!before.isFile() || !linked.isFile() || before.uid !== process.getuid() || before.nlink !== 1 || before.dev !== linked.dev || before.ino !== linked.ino || before.size > MAX_BYTES) throw new Error('OpenClaw configuration source is unsafe'); const raw = Buffer.alloc(before.size); let count = 0; while (count < raw.length) { const read = fs.readSync(fd, raw, count, raw.length - count, count); if (read === 0) break; count += read; } const after = fs.fstatSync(fd); if (count !== before.size || JSON.stringify(fingerprint(before)) !== JSON.stringify(fingerprint(after))) throw new Error('OpenClaw configuration changed while reading'); const data = before.size === 0 ? {} : JSON5.parse(raw.toString('utf8')); if (!data || typeof data !== 'object' || Array.isArray(data)) throw new Error('OpenClaw configuration must be an object'); return { data, identity: fingerprint(before) }; } finally { fs.closeSync(fd); }",
     "}",
   ];
 }
@@ -161,8 +162,10 @@ export async function registerOpenClawAdapter(
         OPENCLAW_NATIVE_MCP_PLUGIN_ID,
       ]),
     ];
-    setOpenClawConfigValue(sandboxName, "tools.alsoAllow", alsoAllow);
-    setOpenClawConfigValue(sandboxName, `mcp.servers.${entry.server}`, serverConfig);
+    setOpenClawConfigValues(sandboxName, [
+      { dotpath: "tools.alsoAllow", value: alsoAllow },
+      { dotpath: `mcp.servers.${entry.server}`, value: serverConfig },
+    ]);
   } catch (error) {
     const output = redactBridgeSecretsForDisplay(
       error instanceof Error ? error.message : String(error),

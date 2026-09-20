@@ -31,11 +31,19 @@ const DIAGNOSTICS_PATH = path.join(
   "runtime",
   "telegram-diagnostics.ts",
 );
+const JSON5_MODULE = path.join(import.meta.dirname, "../../..", "node_modules", "json5");
 
 function runDriver(driverBody: string, env: Record<string, string> = {}) {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-telegram-diag-"));
   const driverPath = path.join(tmpDir, "driver.js");
+  const diagnosticsPath = path.join(tmpDir, "telegram-diagnostics.ts");
   const configPath = path.join(tmpDir, "openclaw.json");
+  fs.writeFileSync(
+    diagnosticsPath,
+    fs
+      .readFileSync(DIAGNOSTICS_PATH, "utf-8")
+      .replaceAll("/opt/nemoclaw/node_modules/json5", JSON5_MODULE),
+  );
   fs.writeFileSync(driverPath, driverBody);
   try {
     return {
@@ -44,7 +52,7 @@ function runDriver(driverBody: string, env: Record<string, string> = {}) {
         env: {
           PATH: process.env.PATH || "/usr/bin:/bin",
           NODE_OPTIONS: process.env.NODE_OPTIONS,
-          DIAGNOSTICS_PATH,
+          DIAGNOSTICS_PATH: diagnosticsPath,
           OPENCLAW_CONFIG_PATH: configPath,
           ...env,
         },
@@ -69,9 +77,10 @@ describe("telegram-diagnostics: startup-grace breadcrumb (#4314, #4390)", () => 
     const driver = `
       ${GATEWAY_TITLE_SETUP}
       const fs = require("fs");
-      fs.writeFileSync(process.env.OPENCLAW_CONFIG_PATH, JSON.stringify({
-        channels: { telegram: { enabled: true, accounts: { default: { botToken: "openshell:resolve:env:TELEGRAM_BOT_TOKEN" } } } },
-      }));
+      fs.writeFileSync(process.env.OPENCLAW_CONFIG_PATH, ${JSON.stringify(`{
+        // Native OpenClaw configuration accepts JSON5.
+        channels: { telegram: { enabled: true, accounts: { default: { botToken: "openshell:resolve:env:TELEGRAM_BOT_TOKEN", }, }, }, },
+      }`)});
       process.env.TELEGRAM_BOT_TOKEN = "openshell:resolve:env:TELEGRAM_BOT_TOKEN";
       require(process.env.DIAGNOSTICS_PATH);
       setTimeout(() => process.exit(0), 250);

@@ -217,6 +217,28 @@ describe("verifyWebSearchInsideSandbox", () => {
     expect(d.log).toHaveBeenCalledWith("  ✓ Brave Search egress verified inside sandbox");
   });
 
+  it("verifies web search from native OpenClaw JSON5 config (#11764)", async () => {
+    const d = deps([
+      "__nemoclaw_wsenv__:absent",
+      `{
+        tools: { web: { search: { enabled: true, provider: 'brave', }, }, },
+        plugins: {
+          entries: {
+            brave: {
+              config: { webSearch: { apiKey: 'openshell:resolve:env:BRAVE_API_KEY', }, },
+            },
+          },
+        },
+      }`,
+      JSON.stringify({ web: { results: [{ title: "NVIDIA" }] } }) + "\nHTTP_STATUS:200\n",
+    ]);
+
+    await verifyWebSearchInsideSandbox("alpha", { name: "openclaw" }, "brave", d);
+
+    expect(d.runBuffered).toHaveBeenCalledTimes(3);
+    expect(d.log).toHaveBeenCalledWith("  ✓ Brave Search egress verified inside sandbox");
+  });
+
   it("verifies OpenClaw Tavily Search egress through the bearer header", async () => {
     const d = deps([
       "__nemoclaw_wsenv__:placeholder",

@@ -63,6 +63,22 @@ describe("readSandboxConfig stopped-sandbox detail (#10251)", () => {
     delete require.cache[inferenceSetModulePath];
   });
 
+  it("accepts native OpenClaw JSON5 when reading the owned config", () => {
+    const raw = "{ // native comment\n tools: { web: { search: { enabled: true, }, }, }, }";
+    client.captureOpenshellCommand = () => ({
+      status: 0,
+      signal: null,
+      stdout: raw,
+      output: raw,
+      stderr: "",
+    });
+    const { readSandboxConfig } = loadConfigReaders();
+
+    expect(readSandboxConfig("sandbox-a", { ...OPENCLAW_TARGET, agentName: "openclaw" })).toEqual({
+      tools: { web: { search: { enabled: true } } },
+    });
+  });
+
   it.each([
     {
       label: "a wrapped phase detail",

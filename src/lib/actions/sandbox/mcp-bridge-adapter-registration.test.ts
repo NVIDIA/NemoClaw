@@ -16,7 +16,7 @@ const mocks = vi.hoisted(() => ({
   resolveAgentConfig: vi.fn(),
   restartSandboxGateway: vi.fn(),
   runOpenshellProviderCommand: vi.fn(),
-  setOpenClawConfigValue: vi.fn(),
+  setOpenClawConfigValues: vi.fn(),
   unsetOpenClawConfigValue: vi.fn(),
   waitForManagedGatewaySupervisor: vi.fn(),
   waitForMcpBridgeCondition: vi.fn((condition: () => boolean) =>
@@ -40,7 +40,7 @@ vi.mock("./process-recovery", () => ({
 vi.mock("../../sandbox/config", () => ({
   readSandboxConfig: mocks.readSandboxConfig,
   resolveAgentConfig: mocks.resolveAgentConfig,
-  setOpenClawConfigValue: mocks.setOpenClawConfigValue,
+  setOpenClawConfigValues: mocks.setOpenClawConfigValues,
   unsetOpenClawConfigValue: mocks.unsetOpenClawConfigValue,
 }));
 
@@ -107,7 +107,7 @@ function resetOpenClawConfigMocks(): void {
     configPath: "/sandbox/.openclaw/openclaw.json",
   });
   mocks.waitForManagedGatewaySupervisor.mockReset().mockReturnValue(true);
-  mocks.setOpenClawConfigValue.mockReset();
+  mocks.setOpenClawConfigValues.mockReset();
   mocks.unsetOpenClawConfigValue.mockReset();
 }
 
@@ -245,7 +245,7 @@ describe("OpenClaw MCP adapter registration", () => {
     mocks.getSandbox.mockReset().mockReturnValue(sandbox);
     resetOpenClawConfigMocks();
     mocks.restartSandboxGateway.mockReset();
-    mocks.setOpenClawConfigValue.mockReset();
+    mocks.setOpenClawConfigValues.mockReset();
     mocks.unsetOpenClawConfigValue.mockReset();
   });
 
@@ -307,11 +307,17 @@ describe("OpenClaw MCP adapter registration", () => {
     expect(mocks.executeSandboxCommand.mock.calls[0]?.[1]).toContain(
       "openshell:resolve:env:v12_GITHUB_TOKEN",
     );
-    expect(mocks.setOpenClawConfigValue).toHaveBeenCalledWith("alpha", "mcp.servers.github", {
-      transport: "streamable-http",
-      url: entry.url,
-      headers: { Authorization: "Bearer openshell:resolve:env:v12_GITHUB_TOKEN" },
-    });
+    expect(mocks.setOpenClawConfigValues).toHaveBeenCalledWith("alpha", [
+      { dotpath: "tools.alsoAllow", value: ["bundle-mcp"] },
+      {
+        dotpath: "mcp.servers.github",
+        value: {
+          transport: "streamable-http",
+          url: entry.url,
+          headers: { Authorization: "Bearer openshell:resolve:env:v12_GITHUB_TOKEN" },
+        },
+      },
+    ]);
   });
 
   it("removes the native entry through OpenClaw's config command", async () => {
@@ -372,10 +378,36 @@ describe("OpenClaw MCP adapter registration", () => {
 
     await registerOpenClawAdapter("alpha", entry, runtimeSelection, {}, false, "v12");
 
-    expect(mocks.setOpenClawConfigValue).toHaveBeenCalledWith("alpha", "tools.alsoAllow", [
-      "bundle-mcp",
+    expect(mocks.setOpenClawConfigValues).toHaveBeenCalledWith("alpha", [
+      { dotpath: "tools.alsoAllow", value: ["bundle-mcp"] },
+      {
+        dotpath: "mcp.servers.github",
+        value: {
+          transport: "streamable-http",
+          url: entry.url,
+          headers: { Authorization: "Bearer openshell:resolve:env:v12_GITHUB_TOKEN" },
+        },
+      },
     ]);
     expect(mocks.waitForManagedGatewaySupervisor).not.toHaveBeenCalled();
+  });
+
+  it("does not verify registration after the atomic native update fails", async () => {
+    const entry: McpSourceEntry = {
+      ...baseEntry,
+      agent: "openclaw",
+      adapter: "openclaw-config",
+    };
+    mocks.setOpenClawConfigValues.mockImplementation(() => {
+      throw new Error("batch rejected");
+    });
+
+    await expect(
+      registerOpenClawAdapter("alpha", entry, runtimeSelection, {}, false, "v12"),
+    ).rejects.toThrow("batch rejected");
+
+    expect(mocks.setOpenClawConfigValues).toHaveBeenCalledOnce();
+    expect(mocks.executeSandboxCommand).not.toHaveBeenCalled();
   });
 });
 
@@ -615,7 +647,7 @@ describe("MCP adapter credential revision reconciliation failures", () => {
         "v10",
       ),
     ).rejects.toThrow("credential revision did not stabilize");
-    expect(mocks.setOpenClawConfigValue).toHaveBeenCalledTimes(4);
+    expect(mocks.setOpenClawConfigValues).toHaveBeenCalledTimes(2);
   });
 });
 

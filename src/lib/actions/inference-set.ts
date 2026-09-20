@@ -37,7 +37,6 @@ import {
   type AgentConfigTarget,
   type HermesDashboardReseedResult,
   readSandboxConfig,
-  recomputeSandboxConfigHash,
   resolveAgentConfig,
   rewriteConfigUrlsWithDnsPinning,
   SandboxConfigError,
@@ -191,7 +190,6 @@ export interface InferenceSetDeps extends InferenceGatewayRestartDeps {
   ) => void;
   setOpenClawConfigValues: typeof setOpenClawConfigValues;
   runtimeProviders?: RuntimeProviderBundleRegistry;
-  recomputeSandboxConfigHash: (sandboxName: string, target: AgentConfigTarget) => void;
   seedHermesDashboardConfig: (
     sandboxName: string,
     target: AgentConfigTarget,
@@ -305,7 +303,6 @@ function defaultDeps(): InferenceSetDeps {
     readSandboxConfig,
     writeSandboxConfig,
     setOpenClawConfigValues,
-    recomputeSandboxConfigHash,
     seedHermesDashboardConfig,
     prepareRunOpenshell: () => {
       getOpenshellBinary();
@@ -1514,18 +1511,7 @@ async function runInferenceSetWithoutHostLock(
         inSandboxConfigSynced = true;
       } else {
         deps.writeSandboxConfig(sandboxName, target, config);
-        try {
-          deps.recomputeSandboxConfigHash(sandboxName, target);
-          inSandboxConfigSynced = true;
-        } catch (hashError) {
-          const detail =
-            hashError instanceof Error && hashError.message ? hashError.message : String(hashError);
-          deps.log(
-            `  Warning: wrote the in-sandbox config for '${sandboxName}' but failed to refresh its ` +
-              `integrity hash: ${detail}`,
-          );
-          deps.log(`  Run '${CLI_NAME} ${sandboxName} rebuild' to resync the in-sandbox config.`);
-        }
+        inSandboxConfigSynced = true;
       }
     } catch (writeError) {
       const detail =

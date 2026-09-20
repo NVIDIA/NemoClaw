@@ -5,6 +5,7 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { describe, expect, it } from "vitest";
 
@@ -14,6 +15,8 @@ import {
   MCPORTER_VERSION,
 } from "./mcp-bridge-adapter-openclaw";
 import { entryHeaders, openClawHeadersMatchExpected } from "./mcp-bridge-adapter-status";
+
+const JSON5_MODULE_PATH = fileURLToPath(import.meta.resolve("json5"));
 
 const entry: McpSourceEntry = {
   server: "github",
@@ -26,25 +29,30 @@ const entry: McpSourceEntry = {
 };
 
 function run(command: string) {
-  return spawnSync("/bin/sh", ["-c", command], { encoding: "utf8" });
+  return spawnSync(
+    "/bin/sh",
+    ["-c", command.replaceAll("/opt/nemoclaw/node_modules/json5", JSON5_MODULE_PATH)],
+    { encoding: "utf8" },
+  );
 }
 
 describe("OpenClaw native MCP adapter", () => {
   it("inspects a native OpenClaw entry without changing its configuration", () => {
     const temp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-mcp-"));
     const configPath = path.join(temp, "openclaw.json");
-    const content = JSON.stringify({
+    const content = `{
+      // Native OpenClaw configuration accepts JSON5.
       preserved: true,
       mcp: {
         servers: {
           github: {
             transport: "streamable-http",
-            url: entry.url,
-            headers: entryHeaders(entry),
+            url: ${JSON.stringify(entry.url)},
+            headers: ${JSON.stringify(entryHeaders(entry))},
           },
         },
       },
-    });
+    }`;
     try {
       fs.writeFileSync(configPath, content, { mode: 0o600 });
       const inspection = run(buildStrictOpenClawMcpInspectCommand(entry, true, temp));

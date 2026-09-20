@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import JSON5 from "json5";
+
 type ConfigObject = import("../security/credential-filter").ConfigObject;
 
 const MAX_CONFIG_STRUCTURE_DEPTH = 64;
@@ -123,6 +125,12 @@ export function parseConfig(raw: string, format: string): ConfigObject {
       parsed = TOML.parse(raw);
     } catch {
       throw new Error("Invalid TOML configuration syntax.");
+    }
+  } else if (format === "json5") {
+    try {
+      parsed = JSON5.parse(raw);
+    } catch {
+      throw new Error("Invalid JSON5 configuration syntax.");
     }
   } else {
     try {

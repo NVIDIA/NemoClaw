@@ -7,6 +7,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
+import JSON5 from "json5";
 import * as ts from "typescript";
 import { describe, expect, it, vi } from "vitest";
 import { extractShellFunctionFromSource } from "../../../helpers/shell-source";
@@ -34,14 +35,7 @@ const CHANNEL_RUNTIME_SCRIPTS = path.join(
   "../../..",
   "src/lib/messaging/channels",
 );
-const JSON5_MODULE = path.join(
-  import.meta.dirname,
-  "..",
-  "../../..",
-  "nemoclaw",
-  "node_modules",
-  "json5",
-);
+const JSON5_MODULE = path.resolve(import.meta.dirname, "../../../../nemoclaw/node_modules/json5");
 const runCommand = promisify(execFile);
 
 // Concurrent process fixtures are independent, but keep their host load bounded.
@@ -1805,7 +1799,7 @@ describe("NC-2227-01: legacy migration behavior", () => {
       fs.symlinkSync(tmpDir, path.join(configDir, "workspace-linked"));
       fs.writeFileSync(
         path.join(configDir, "openclaw.json"),
-        JSON.stringify({
+        `// Native OpenClaw JSON5\n${JSON.stringify({
           agents: {
             defaults: { workspace: "main" },
             entries: {
@@ -1814,16 +1808,15 @@ describe("NC-2227-01: legacy migration behavior", () => {
               invalid: { workspace: "../escape" },
             },
           },
-        }),
+        })}`,
       );
       const body = [
         "#!/usr/bin/env bash",
         "set -euo pipefail",
         extractShellFunctionFromSource(src, "chown_tree_no_symlink_follow"),
-        extractShellFunctionFromSource(src, "provision_agent_workspaces").replaceAll(
-          "/sandbox/.openclaw",
-          configDir,
-        ),
+        extractShellFunctionFromSource(src, "provision_agent_workspaces")
+          .replaceAll("/sandbox/.openclaw", configDir)
+          .replaceAll("/opt/nemoclaw/node_modules/json5", JSON5_MODULE),
         "provision_agent_workspaces",
       ].join("\n");
       fs.writeFileSync(script, body, { mode: 0o700 });
@@ -2277,11 +2270,16 @@ describe.concurrent("provider placeholder refresh (#4251)", () => {
       const runtimePlanPath = path.join(tmpDir, "messaging-runtime-plan.json");
       const scriptPath = path.join(tmpDir, "run.sh");
       fs.mkdirSync(openclawDir, { recursive: true });
-      fs.writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`);
+      fs.writeFileSync(
+        configPath,
+        `// Native OpenClaw JSON5\n${JSON.stringify(config, null, 2)}\n`,
+      );
       fs.writeFileSync(runtimePlanPath, JSON.stringify(runtimePlan));
       const fn = extractShellFunctionFromSource(src, "refresh_openclaw_provider_placeholders")
         .replaceAll("/sandbox/.openclaw", openclawDir)
-        .replaceAll("/usr/local/share/nemoclaw/messaging-runtime-plan.json", runtimePlanPath);
+        .replaceAll("/usr/local/share/nemoclaw/messaging-runtime-plan.json", runtimePlanPath)
+        .replaceAll("/opt/nemoclaw/node_modules/json5", JSON5_MODULE)
+        .replaceAll("/usr/local/bin/node", process.execPath);
       fs.writeFileSync(
         scriptPath,
         [
@@ -2304,7 +2302,7 @@ describe.concurrent("provider placeholder refresh (#4251)", () => {
         env: { PATH: process.env.PATH || "", ...env },
         timeout: 5000,
       });
-      const updatedConfig = JSON.parse(fs.readFileSync(configPath, "utf-8"));
+      const updatedConfig = JSON5.parse(fs.readFileSync(configPath, "utf-8"));
       const handoffEnv = fs.existsSync(handoffEnvPath)
         ? fs.readFileSync(handoffEnvPath, "utf-8")
         : "";

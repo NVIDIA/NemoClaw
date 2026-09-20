@@ -71,7 +71,7 @@ The primary orchestration model remains responsible for conversation, planning, 
 </Note>
 
 Fetch the current OpenClaw config from the sandbox.
-Patch it with your auxiliary provider and `agents.list` changes, then apply those values with native OpenClaw config commands.
+Patch it with your auxiliary provider and `agents.list` changes, then apply those values in one native OpenClaw config patch.
 Run the following commands from the host that owns the sandbox containers when you use Docker-driver sandboxes.
 
 ### Export the Current Config
@@ -85,7 +85,21 @@ if [ -z "$SANDBOX_CTR" ]; then
   echo "No running sandbox container found for $SANDBOX. Start the sandbox before editing its config."
   exit 1
 fi
-docker exec --user root "$SANDBOX_CTR" cat /sandbox/.openclaw/openclaw.json > /tmp/openclaw.json
+
+NEMOCLAW_SUBAGENT_UMASK=$(umask)
+umask 077
+NEMOCLAW_SUBAGENT_TMP=$(mktemp -d)
+chmod 700 "$NEMOCLAW_SUBAGENT_TMP"
+cleanup_nemoclaw_subagent_files() {
+  if [ -n "${NEMOCLAW_SUBAGENT_TMP:-}" ] && [ -d "$NEMOCLAW_SUBAGENT_TMP" ]; then
+    rm -rf -- "$NEMOCLAW_SUBAGENT_TMP"
+  fi
+  umask "$NEMOCLAW_SUBAGENT_UMASK"
+}
+trap cleanup_nemoclaw_subagent_files EXIT
+
+docker exec --user sandbox "$SANDBOX_CTR" \
+  cat /sandbox/.openclaw/openclaw.json > "$NEMOCLAW_SUBAGENT_TMP/openclaw.json"
 ```
 
 If `SANDBOX_CTR` is empty, the sandbox is not running on this host.
@@ -93,13 +107,28 @@ Start the sandbox, confirm that `docker ps` shows the matching `openshell.ai/san
 
 ### Prepare the Updated Config
 
-Create `/tmp/openclaw.updated.json` with the OpenClaw sub-agent config.
+Create `openclaw.updated.json` in the private temporary directory with the OpenClaw sub-agent config.
 For the Omni example, the demo provides `vlm-demo/vlm-subagent/openclaw-patch.py`.
+The helper expects strict JSON, so first use OpenClaw's pinned JSON5 parser to normalize the exported
+config without putting its contents in an argument or environment variable.
 The wrapper reads the key without echoing it and keeps the value out of the child process's operating-system argument list.
 Set `VLM_DEMO_DIR` to the local `vlm-demo` directory from the demo assets, then run the patch helper.
 
 ```bash
 export VLM_DEMO_DIR=/path/to/nemoclaw-demos/vlm-demo
+docker exec --user sandbox -i "$SANDBOX_CTR" \
+  node -e '
+const JSON5 = require("/opt/nemoclaw/node_modules/json5");
+
+let input = "";
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", (chunk) => { input += chunk; });
+process.stdin.on("end", () => {
+  process.stdout.write(`${JSON.stringify(JSON5.parse(input), null, 2)}\n`);
+});
+' < "$NEMOCLAW_SUBAGENT_TMP/openclaw.json" \
+  > "$NEMOCLAW_SUBAGENT_TMP/openclaw.strict.json"
+
 (
   read -rsp "NVIDIA API key: " NVIDIA_API_KEY
   printf '\n'
@@ -113,79 +142,73 @@ helper = sys.argv[1]
 sys.argv = [helper, os.environ["NVIDIA_API_KEY"]]
 runpy.run_path(helper, run_name="__main__")
 ' "$VLM_DEMO_DIR/vlm-subagent/openclaw-patch.py" \
-    < /tmp/openclaw.json > /tmp/openclaw.updated.json
+    < "$NEMOCLAW_SUBAGENT_TMP/openclaw.strict.json" \
+    > "$NEMOCLAW_SUBAGENT_TMP/openclaw.updated.json"
 )
 ```
 
-The helper reads `/tmp/openclaw.json` from standard input.
+The helper reads the normalized config from standard input.
 It adds the Omni provider and `vision-operator` entry.
-It writes the patched config to `/tmp/openclaw.updated.json`.
+It writes the patched config inside the private temporary directory.
 
-For a sub-agent other than the Omni example, copy the exported config to `/tmp/openclaw.updated.json`.
-Use `cp /tmp/openclaw.json /tmp/openclaw.updated.json`.
+For a sub-agent other than the Omni example, copy the exported config to `openclaw.updated.json` in the private temporary directory.
+Use `cp "$NEMOCLAW_SUBAGENT_TMP/openclaw.json" "$NEMOCLAW_SUBAGENT_TMP/openclaw.updated.json"`.
 Before applying the file, add your provider under `models.providers` and your sub-agent under `agents.list`.
 Set `AUX_PROVIDER_ID` to that provider key before you apply the config.
 The command below defaults to `nvidia-omni` for the Omni example.
-Do not commit `/tmp/openclaw.updated.json` or any other file that contains a real API key.
+Do not commit the temporary files or any other file that contains a real API key.
 
 ### Apply the Updated Config
 
-Read each changed value from the prepared config and pass it to `openclaw config set` as the sandbox user.
-OpenClaw validates each value before it writes its native configuration.
+Stream the prepared JSON5 config into the sandbox as the sandbox user.
+The first process builds one minimal JSON patch, and the second process applies it with one native OpenClaw command.
 
 ```bash
 (
   set -euo pipefail
   : "${AUX_PROVIDER_ID:=nvidia-omni}"
 
-  read_config_value() {
-    python3 -c '
-import json
-import sys
+  docker exec --user sandbox -i "$SANDBOX_CTR" \
+    node -e '
+const JSON5 = require("/opt/nemoclaw/node_modules/json5");
 
-with open(sys.argv[1], encoding="utf-8") as source:
-    value = json.load(source)
-for key in sys.argv[2:]:
-    value = value[key]
-json.dump(value, sys.stdout, separators=(",", ":"))
-' /tmp/openclaw.updated.json "$@"
+let input = "";
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", (chunk) => { input += chunk; });
+process.stdin.on("end", () => {
+  const config = JSON5.parse(input);
+  const providerId = process.argv[1];
+  const provider = config.models?.providers?.[providerId];
+  const defaults = config.agents?.defaults;
+  const agents = config.agents?.list;
+  if (provider === undefined || defaults?.timeoutSeconds === undefined || !Array.isArray(agents)) {
+    throw new Error("Prepared config is missing the provider, timeoutSeconds, or agents.list");
   }
-
-  read_config_value models providers "$AUX_PROVIDER_ID" |
-    docker exec --user sandbox -i "$SANDBOX_CTR" sh -c '
-      value=$(cat) || exit 1
-      exec openclaw config set "models.providers.$1" "$value" --strict-json --merge
-    ' sh "$AUX_PROVIDER_ID"
-
-  if subagent_defaults=$(read_config_value agents defaults subagents 2>/dev/null); then
-    printf '%s' "$subagent_defaults" |
-      docker exec --user sandbox -i "$SANDBOX_CTR" sh -c '
-      value=$(cat) || exit 1
-      exec openclaw config set agents.defaults.subagents "$value" --strict-json --merge
-    '
-  fi
-
-  read_config_value agents defaults timeoutSeconds |
-    docker exec --user sandbox -i "$SANDBOX_CTR" sh -c '
-      value=$(cat) || exit 1
-      exec openclaw config set agents.defaults.timeoutSeconds "$value" --strict-json
-    '
-
-  read_config_value agents list |
-    docker exec --user sandbox -i "$SANDBOX_CTR" sh -c '
-      value=$(cat) || exit 1
-      exec openclaw config set agents.list "$value" --strict-json --replace
-    '
+  const patch = {
+    models: { providers: { [providerId]: provider } },
+    agents: { defaults: { timeoutSeconds: defaults.timeoutSeconds }, list: agents },
+  };
+  if (Object.hasOwn(defaults, "subagents")) {
+    patch.agents.defaults.subagents = defaults.subagents;
+  }
+  process.stdout.write(JSON.stringify(patch));
+});
+' "$AUX_PROVIDER_ID" < "$NEMOCLAW_SUBAGENT_TMP/openclaw.updated.json" |
+    docker exec --user sandbox -i "$SANDBOX_CTR" \
+      /usr/bin/env HOME=/sandbox openclaw config patch --stdin
 )
 ```
 
 For ordinary key changes, connect to the sandbox and use `openclaw configure`, `openclaw config set`, or `openclaw config unset`.
 
-The subshell stops after the first failed write.
-Values written by earlier successful commands remain in the valid OpenClaw config.
-Correct the reported value or schema error, then rerun this section before you restart the gateway.
+Node parses the prepared JSON5 and sends only the selected provider, optional `agents.defaults.subagents`, `agents.defaults.timeoutSeconds`, and `agents.list` to OpenClaw through standard input.
+OpenClaw validates and writes the whole patch atomically.
+If parsing, validation, or writing fails, the native config remains unchanged.
+Correct the reported error, then rerun this section before you restart the gateway.
+On success, OpenClaw serializes the complete config as standard JSON, so JSON5 comments and formatting
+in the original file are removed.
 
-After the writes succeed, restart the managed gateway.
+After the patch succeeds, restart the managed gateway.
 The restart verifies gateway health before it exits successfully.
 Then confirm that OpenClaw loaded the `agents.list` change:
 
@@ -207,21 +230,69 @@ For the Omni example:
 ```
 
 Use the same provider ID that appears in `models.providers`, such as `nvidia-omni`.
-Create `/tmp/auth-profiles.json` from `vlm-demo/vlm-subagent/auth-profiles.template.json`.
+Create `auth-profiles.json` in `$NEMOCLAW_SUBAGENT_TMP` from `vlm-demo/vlm-subagent/auth-profiles.template.json`.
 Replace `YOUR_NVIDIA_API_KEY_HERE` with the provider key.
-Then upload the file into the sandbox:
+The private directory and restrictive umask keep the credential readable only by your host account until
+you install it in the sandbox. The installation creates the destination with mode `0600` before an atomic
+rename, so there is no interval where another sandbox user can read the key.
 
 ```bash
-docker exec --user root "$SANDBOX_CTR" mkdir -p /sandbox/.openclaw/agents/vision-operator/agent
-docker exec --user root -i "$SANDBOX_CTR" sh -c 'cat > /sandbox/.openclaw/agents/vision-operator/agent/auth-profiles.json' < /tmp/auth-profiles.json
-docker exec --user root "$SANDBOX_CTR" chmod 600 /sandbox/.openclaw/agents/vision-operator/agent/auth-profiles.json
+docker exec --user root "$SANDBOX_CTR" \
+  install -d -m 700 -o sandbox -g sandbox /sandbox/.openclaw/agents/vision-operator/agent
+docker exec --user root -i "$SANDBOX_CTR" sh -ceu '
+target=$1
+temporary="${target}.nemoclaw.$$"
+trap '\''rm -f -- "$temporary"'\'' 0
+umask 077
+cat > "$temporary"
+chown sandbox:sandbox "$temporary"
+chmod 600 "$temporary"
+mv -f -- "$temporary" "$target"
+trap - 0
+' sh /sandbox/.openclaw/agents/vision-operator/agent/auth-profiles.json \
+  < "$NEMOCLAW_SUBAGENT_TMP/auth-profiles.json"
+
+trap - EXIT
+cleanup_nemoclaw_subagent_files
+unset NEMOCLAW_SUBAGENT_TMP NEMOCLAW_SUBAGENT_UMASK
 ```
 
-After uploading the auth profile, make sure the sandbox user owns the sub-agent directory:
+The cleanup removes the host copies of the full config and credentials after the sandbox installation.
+If you stop before this step, exit the shell or run `cleanup_nemoclaw_subagent_files` yourself.
+
+### Credential Access and Removal
+
+The Omni demo helper stores the real provider key in two persistent sandbox files:
+
+- `models.providers.nvidia-omni.apiKey` in `/sandbox/.openclaw/openclaw.json`.
+- `providers.nvidia-omni.apiKey` in `/sandbox/.openclaw/agents/vision-operator/agent/auth-profiles.json`.
+
+OpenClaw and any other process running as the sandbox user can read these files.
+Container root and administrators of the Docker host can also read them.
+The files remain across gateway restarts and for the life of the current sandbox container until you
+replace the key, remove the provider, or delete the sandbox.
+They do not survive a NemoClaw rebuild or snapshot restore: those flows strip credential values from
+`openclaw.json` and omit `auth-profiles.json`.
+Re-provision both copies before using the auxiliary provider after a rebuild or restore.
+
+When you remove `vision-operator`, first remove it from `agents.list`.
+Then remove the provider and the retired agent's credential file, and restart the gateway:
 
 ```bash
-docker exec --user root "$SANDBOX_CTR" chown -R sandbox:sandbox /sandbox/.openclaw/agents/vision-operator
+docker exec --user sandbox "$SANDBOX_CTR" \
+  /usr/bin/env HOME=/sandbox openclaw config unset models.providers.nvidia-omni
+docker exec --user sandbox "$SANDBOX_CTR" \
+  rm -f -- /sandbox/.openclaw/agents/vision-operator/agent/auth-profiles.json
+nemoclaw "$SANDBOX" gateway restart
 ```
+
+If you retarget `vision-operator` to another provider, do not delete the whole credential file.
+Remove only the retired `providers.nvidia-omni` entry and preserve every other provider entry.
+Then remove the retired provider from the native config with the `openclaw config unset` command above
+and restart the gateway.
+
+Removing only one copy does not retire the credential.
+Rotate the provider key if either persistent file may have been exposed.
 
 ## Allow Auxiliary Provider Egress
 

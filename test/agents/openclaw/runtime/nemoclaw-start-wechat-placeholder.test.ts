@@ -5,6 +5,7 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import JSON5 from "json5";
 import { describe, expect, it } from "vitest";
 
 const REFRESH_HELPER = path.join(
@@ -14,6 +15,19 @@ const REFRESH_HELPER = path.join(
 );
 const CANONICAL = "openshell:resolve:env:WECHAT_BOT_TOKEN";
 const SAVED_AT = "2026-08-29T00:00:00.000Z";
+const JSON5_MODULE = path.join(import.meta.dirname, "../../../..", "node_modules", "json5");
+
+function portableRefreshHelper(tmpDir: string): string {
+  const helper = path.join(tmpDir, "refresh-openclaw-wechat-placeholder.py");
+  fs.writeFileSync(
+    helper,
+    fs
+      .readFileSync(REFRESH_HELPER, "utf-8")
+      .replaceAll("/opt/nemoclaw/node_modules/json5", JSON5_MODULE)
+      .replaceAll("/usr/local/bin/node", process.execPath),
+  );
+  return helper;
+}
 
 interface WechatRefreshFixture {
   readonly account: Record<string, unknown>;
@@ -64,6 +78,7 @@ function runWechatRefresh(
   mutateAccount?: (paths: { accountPath: string; configPath: string; tmpDir: string }) => void,
   accountEnabled: boolean | null = true,
   faultMode: "replace-and-unlink" | null = null,
+  configSource?: string,
 ): WechatRefreshFixture {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-wechat-placeholder-"));
   const openclawDir = path.join(tmpDir, ".openclaw");
@@ -72,7 +87,7 @@ function runWechatRefresh(
   fs.mkdirSync(path.dirname(accountPath), { recursive: true });
   fs.writeFileSync(
     configPath,
-    `${JSON.stringify(wechatConfig(enabled, accountEnabled), null, 2)}\n`,
+    configSource ?? `${JSON.stringify(wechatConfig(enabled, accountEnabled), null, 2)}\n`,
   );
   fs.writeFileSync(
     accountPath,
@@ -81,6 +96,7 @@ function runWechatRefresh(
   );
   fs.chmodSync(accountPath, 0o600);
   mutateAccount?.({ accountPath, configPath, tmpDir });
+  const refreshHelper = portableRefreshHelper(tmpDir);
 
   try {
     const pythonArgs =
@@ -96,11 +112,11 @@ function runWechatRefresh(
               "    raise OSError('forced temporary cleanup failure')",
               "os.replace = fail_replace",
               "os.unlink = fail_unlink",
-              `sys.argv = [${JSON.stringify(REFRESH_HELPER)}, ${JSON.stringify(configPath)}]`,
-              `runpy.run_path(${JSON.stringify(REFRESH_HELPER)}, run_name="__main__")`,
+              `sys.argv = [${JSON.stringify(refreshHelper)}, ${JSON.stringify(configPath)}]`,
+              `runpy.run_path(${JSON.stringify(refreshHelper)}, run_name="__main__")`,
             ].join("\n"),
           ]
-        : ["-I", REFRESH_HELPER, configPath];
+        : ["-I", refreshHelper, configPath];
     const result = spawnSync("python3", pythonArgs, {
       encoding: "utf-8",
       env: { PATH: process.env.PATH || "", ...env },
@@ -109,7 +125,7 @@ function runWechatRefresh(
     const account = JSON.parse(fs.readFileSync(accountPath, "utf-8"));
     const accountFiles = fs.readdirSync(path.dirname(accountPath));
     const accountMode = fs.statSync(accountPath).mode & 0o777;
-    const config = JSON.parse(fs.readFileSync(configPath, "utf-8")) as OpenClawTestConfig;
+    const config = JSON5.parse(fs.readFileSync(configPath, "utf-8")) as OpenClawTestConfig;
     return { account, accountFiles, accountMode, config, result };
   } finally {
     fs.rmSync(tmpDir, { recursive: true, force: true });
@@ -148,6 +164,7 @@ function runMultiAccountCommitFailure(): MultiAccountFailureFixture {
   );
   fs.writeFileSync(primaryPath, primaryBefore, { mode: 0o600 });
   fs.writeFileSync(secondaryPath, secondaryBefore, { mode: 0o600 });
+  const refreshHelper = portableRefreshHelper(tmpDir);
 
   try {
     const result = spawnSync(
@@ -165,8 +182,8 @@ function runMultiAccountCommitFailure(): MultiAccountFailureFixture {
           "        raise OSError('forced second account commit failure')",
           "    return real_replace(src, dst, *args, **kwargs)",
           "os.replace = fail_second_commit",
-          `sys.argv = [${JSON.stringify(REFRESH_HELPER)}, ${JSON.stringify(configPath)}]`,
-          `runpy.run_path(${JSON.stringify(REFRESH_HELPER)}, run_name="__main__")`,
+          `sys.argv = [${JSON.stringify(refreshHelper)}, ${JSON.stringify(configPath)}]`,
+          `runpy.run_path(${JSON.stringify(refreshHelper)}, run_name="__main__")`,
         ].join("\n"),
       ],
       {
@@ -215,6 +232,30 @@ describe("OpenClaw WeChat provider placeholder refresh (#10079)", () => {
   it("refreshes the account when active WeChat config omits the account enabled field", () => {
     const scoped = "openshell:resolve:env:v42_WECHAT_BOT_TOKEN";
     const run = runWechatRefresh(CANONICAL, { WECHAT_BOT_TOKEN: scoped }, true, undefined, null);
+
+    expect(run.result.status, String(run.result.stderr)).toBe(0);
+    expect(run.account.token).toBe(scoped);
+  });
+
+  it("refreshes the account when native OpenClaw config uses JSON5", () => {
+    const scoped = "openshell:resolve:env:v42_WECHAT_BOT_TOKEN";
+    const run = runWechatRefresh(
+      CANONICAL,
+      { WECHAT_BOT_TOKEN: scoped },
+      true,
+      undefined,
+      true,
+      null,
+      `{
+        // Native OpenClaw configuration accepts JSON5.
+        channels: {
+          "openclaw-weixin": {
+            enabled: true,
+            accounts: { primary: { enabled: true, }, },
+          },
+        },
+      }`,
+    );
 
     expect(run.result.status, String(run.result.stderr)).toBe(0);
     expect(run.account.token).toBe(scoped);
@@ -418,9 +459,10 @@ describe("OpenClaw WeChat provider placeholder refresh (#10079)", () => {
     const configPath = path.join(openclawDir, "openclaw.json");
     fs.mkdirSync(openclawDir);
     fs.writeFileSync(configPath, `${JSON.stringify(wechatConfig(true), null, 2)}\n`);
+    const refreshHelper = portableRefreshHelper(tmpDir);
 
     try {
-      const result = spawnSync("python3", ["-I", REFRESH_HELPER, configPath], {
+      const result = spawnSync("python3", ["-I", refreshHelper, configPath], {
         encoding: "utf-8",
         env: {
           PATH: process.env.PATH || "",

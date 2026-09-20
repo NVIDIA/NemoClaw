@@ -52,7 +52,6 @@ describe("runInferenceSet OpenClaw gateway restart", () => {
       restartOrder,
     );
     expect(deps.calls.writeSandboxConfig).not.toHaveBeenCalled();
-    expect(deps.calls.recomputeSandboxConfigHash).not.toHaveBeenCalled();
     expect(restartOrder).toBeLessThan(pairingOrder);
   });
 
@@ -153,7 +152,6 @@ describe("runInferenceSet OpenClaw gateway restart", () => {
       restartOrder,
     );
     expect(deps.calls.writeSandboxConfig).not.toHaveBeenCalled();
-    expect(deps.calls.recomputeSandboxConfigHash).not.toHaveBeenCalled();
     expect(restartOrder).toBeLessThan(pairingOrder);
   });
 
@@ -238,7 +236,6 @@ describe("runInferenceSet OpenClaw gateway restart", () => {
     expect(deps.calls.settleOpenClawPairing).not.toHaveBeenCalled();
     expect(deps.calls.setOpenClawConfigValues).toHaveBeenCalled();
     expect(deps.calls.writeSandboxConfig).not.toHaveBeenCalled();
-    expect(deps.calls.recomputeSandboxConfigHash).not.toHaveBeenCalled();
     expect(deps.calls.updateSandbox.mock.calls.at(-1)).toEqual([
       "alpha",
       expect.objectContaining({
@@ -297,7 +294,6 @@ describe("runInferenceSet OpenClaw gateway restart", () => {
     expect(deps.calls.settleOpenClawPairing).toHaveBeenCalledOnce();
     expect(deps.calls.setOpenClawConfigValues).toHaveBeenCalled();
     expect(deps.calls.writeSandboxConfig).not.toHaveBeenCalled();
-    expect(deps.calls.recomputeSandboxConfigHash).not.toHaveBeenCalled();
     expect(deps.calls.updateSandbox.mock.calls.at(-1)).toEqual([
       "alpha",
       expect.objectContaining({

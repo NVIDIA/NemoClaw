@@ -7,6 +7,7 @@ import os
 import re
 import secrets
 import stat
+import subprocess
 import sys
 
 config_file = os.path.abspath(sys.argv[1])
@@ -21,6 +22,23 @@ scoped_re = re.compile(
 def fail(message):
     print(f"[SECURITY] Refusing WeChat provider placeholder refresh — {message}", file=sys.stderr)
     raise SystemExit(1)
+
+
+def parse_openclaw_config(source):
+    parsed = subprocess.run(
+        [
+            "/usr/local/bin/node",
+            "-e",
+            'const JSON5=require("/opt/nemoclaw/node_modules/json5");'
+            'process.stdout.write(JSON.stringify(JSON5.parse(require("node:fs").readFileSync(0,"utf8"))));',
+        ],
+        input=source,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        check=True,
+    )
+    return json.loads(parsed.stdout)
 
 
 def safe_account_id(value):
@@ -200,11 +218,11 @@ try:
                 fail("openclaw.json is not a single regular file")
             with os.fdopen(config_fd, "r", encoding="utf-8") as stream:
                 config_fd = -1
-                config = json.load(stream)
+                config = parse_openclaw_config(stream.read())
         finally:
             if config_fd >= 0:
                 os.close(config_fd)
-    except (OSError, ValueError, json.JSONDecodeError):
+    except (OSError, ValueError, json.JSONDecodeError, subprocess.SubprocessError):
         fail("openclaw.json is unreadable or unsafe")
 
     channels = config.get("channels") if isinstance(config, dict) else None

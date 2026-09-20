@@ -3,6 +3,7 @@
 
 import { posix as path } from "node:path";
 
+import JSON5 from "json5";
 import YAML from "yaml";
 
 import { isObjectRecord } from "../../core/json-types";
@@ -416,7 +417,7 @@ function parseStructuredConfig(
   format: "json" | "yaml",
 ): Record<string, MessagingSerializableValue> {
   if (!existing || existing.trim().length === 0) return {};
-  const parsed = format === "yaml" ? YAML.parse(existing) : (JSON.parse(existing) as unknown);
+  const parsed = format === "yaml" ? YAML.parse(existing) : (JSON5.parse(existing) as unknown);
   if (!isObjectRecord(parsed)) {
     throw new Error(`Messaging agent config target ${target} must contain an object.`);
   }

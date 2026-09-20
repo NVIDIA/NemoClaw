@@ -20,7 +20,6 @@ const {
   formatConfigValueForLogs,
   resolveAgentConfig,
   buildConfigSetRestartGuidance,
-  buildRecomputeSandboxConfigHashScript,
   hermesCompatHashRecoveryError,
   isHermesCompatHashRecoveryError,
 } = require("../../src/lib/sandbox/config");
@@ -49,34 +48,6 @@ describe("resolveAgentConfig", () => {
   it("includes configFile in configPath", () => {
     const target = resolveAgentConfig("any-sandbox");
     expect(target.configPath.endsWith(target.configFile)).toBe(true);
-  });
-});
-
-describe("buildRecomputeSandboxConfigHashScript", () => {
-  it("does not run a pathname hash pass after an OpenClaw config transaction", () => {
-    const script = buildRecomputeSandboxConfigHashScript({
-      agentName: "openclaw",
-      configPath: "/sandbox/.openclaw/openclaw.json",
-      configDir: "/sandbox/.openclaw",
-      format: "json",
-      configFile: "openclaw.json",
-      sensitiveFiles: [],
-    });
-
-    expect(script).toBeNull();
-  });
-
-  it("does not run a second pathname-based hash pass after a Hermes config transaction", () => {
-    const script = buildRecomputeSandboxConfigHashScript({
-      agentName: "hermes",
-      configPath: "/sandbox/.hermes/config.yaml",
-      configDir: "/sandbox/.hermes",
-      format: "yaml",
-      configFile: "config.yaml",
-      sensitiveFiles: ["/sandbox/.hermes/.config-hash", "/sandbox/.hermes/.env"],
-    });
-
-    expect(script).toBeNull();
   });
 });
 

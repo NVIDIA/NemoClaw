@@ -138,7 +138,7 @@ describe("plugin registration", () => {
     });
     mockedReadFileSync.mockReset();
     mockedReadFileSync.mockReturnValue(
-      JSON.stringify({
+      `// Native OpenClaw JSON5\n${JSON.stringify({
         agents: {
           defaults: {
             model: {
@@ -146,7 +146,7 @@ describe("plugin registration", () => {
             },
           },
         },
-      }),
+      })}`,
     );
 
     const api = createMockApi();

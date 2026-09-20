@@ -74,7 +74,6 @@ describe("runInferenceSet OpenClaw routing", () => {
       },
     ]);
     expect(deps.calls.writeSandboxConfig).not.toHaveBeenCalled();
-    expect(deps.calls.recomputeSandboxConfigHash).not.toHaveBeenCalled();
     // The dashboard re-seed is Hermes-only; OpenClaw has no isolated dashboard config. (#6893)
     expect(deps.calls.seedHermesDashboardConfig).not.toHaveBeenCalled();
     expect(deps.calls.updateSandbox).toHaveBeenCalledWith(

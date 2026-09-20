@@ -186,7 +186,6 @@ export function createDeps(options: {
     captureOpenshell: ReturnType<typeof vi.fn>;
     setOpenClawConfigValues: ReturnType<typeof vi.fn>;
     writeSandboxConfig: ReturnType<typeof vi.fn>;
-    recomputeSandboxConfigHash: ReturnType<typeof vi.fn>;
     seedHermesDashboardConfig: ReturnType<typeof vi.fn>;
     updateSandbox: ReturnType<typeof vi.fn>;
     readSandboxConfig: ReturnType<typeof vi.fn>;
@@ -224,7 +223,6 @@ export function createDeps(options: {
     ),
     setOpenClawConfigValues: vi.fn(),
     writeSandboxConfig: vi.fn(),
-    recomputeSandboxConfigHash: vi.fn(),
     seedHermesDashboardConfig: vi.fn(() => options.seedHermesDashboardConfigResult ?? "converged"),
     updateSandbox: vi.fn(options.updateSandbox ?? (() => true)),
     readSandboxConfig: vi.fn(() => options.config),
@@ -311,7 +309,6 @@ export function createDeps(options: {
     readSandboxConfig: calls.readSandboxConfig,
     setOpenClawConfigValues: calls.setOpenClawConfigValues,
     writeSandboxConfig: calls.writeSandboxConfig,
-    recomputeSandboxConfigHash: calls.recomputeSandboxConfigHash,
     seedHermesDashboardConfig: calls.seedHermesDashboardConfig,
     prepareRunOpenshell: calls.prepareRunOpenshell,
     captureOpenshell: calls.captureOpenshell,
