@@ -258,9 +258,10 @@ async function verifyCreatedSandboxBeforeEffects(
 function requireCompatibilityLifecycleCommand(
   action: "start" | "stop",
   sandboxName: string,
+  gatewayName: string,
   deps: SandboxGpuCreateFlowDeps,
 ): void {
-  const result = deps.runOpenshell(["sandbox", action, sandboxName], {
+  const result = deps.runOpenshell(["sandbox", action, "-g", gatewayName, sandboxName], {
     ignoreError: true,
     killProcessTreeOnTimeout: true,
     killSignal: "SIGKILL",
@@ -744,7 +745,7 @@ export function createSandboxGpuCreateAttemptRunner(
     let compatibilityCreatePollError: unknown = null;
     const applyVerifiedCompatibilityCutover = async (): Promise<string | null> => {
       revalidatePostCreateEffect(`apply runtime patch for sandbox '${input.sandboxName}'`);
-      requireCompatibilityLifecycleCommand("stop", input.sandboxName, deps);
+      requireCompatibilityLifecycleCommand("stop", input.sandboxName, input.gatewayName, deps);
       revalidatePostCreateEffect(`confirm stopped compatibility sandbox '${input.sandboxName}'`);
       await runtimePatch.ensureApplied();
       await runtimePatch.exitOnPatchError();
@@ -752,7 +753,7 @@ export function createSandboxGpuCreateAttemptRunner(
     };
     const publishVerifiedCompatibilityCutover = async (): Promise<void> => {
       revalidatePostCreateEffect(`publish replacement runtime for sandbox '${input.sandboxName}'`);
-      requireCompatibilityLifecycleCommand("start", input.sandboxName, deps);
+      requireCompatibilityLifecycleCommand("start", input.sandboxName, input.gatewayName, deps);
     };
     const verifyAndPatchCompatibilityDuringCreate = async (): Promise<void> => {
       if (!compatibility || !deferPostCreateEffects || !createAttemptNonce) return;

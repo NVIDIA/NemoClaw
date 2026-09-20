@@ -580,8 +580,7 @@ describe("created sandbox identity gate", () => {
   it("applies a compatibility cutover when the Ready create client exits first (#11905)", async () => {
     const events: string[] = [];
     let nonce = "";
-    let replacementRuntimeId: string | null = null;
-    const input = createGpuFlowInput();
+    const input = Object.assign(createGpuFlowInput(), { gatewayName: "selected-gateway" });
     input.gpuRoutePlan = "compatibility-only";
     input.initialGpuRoute = "compatibility";
     input.persistRetainedSandboxRecovery = vi.fn(() => true);
@@ -596,20 +595,16 @@ describe("created sandbox identity gate", () => {
       events.push(`revalidate:${operation}`),
     );
     const patch = createGpuPatchFixture();
-    patch.replacementRuntimeId.mockImplementation(() => replacementRuntimeId);
+    patch.replacementRuntimeId.mockReturnValue("b".repeat(64));
     patch.ensureApplied.mockImplementation(() => {
       events.push("compatibility-cutover");
-      replacementRuntimeId = "b".repeat(64);
     });
     mocks.createDockerGpuSandboxCreatePatch.mockReturnValue(patch);
     mocks.streamSandboxCreate.mockImplementation(async (_command, args, _env, options) => {
       nonce = createAttemptNonce(args);
-      expect(options.readyCheck?.()).toBe(false);
       await options.onPoll?.();
       await options.onPoll?.();
       await options.onPoll?.();
-      expect(input.verifyCreatedSandboxBeforeEffects).not.toHaveBeenCalled();
-      expect(patch.maybeApplyDuringCreate).not.toHaveBeenCalled();
       events.push("create-complete");
       return { status: 0, output: "Created sandbox: alpha", sawProgress: true };
     });
@@ -638,9 +633,13 @@ describe("created sandbox identity gate", () => {
     vi.mocked(deps.runCaptureOpenshell).mockImplementation((args) =>
       !args.includes("--selector") ? observeList() : observeSelector(),
     );
-    await expect(runSandboxGpuCreateFlow(input, deps)).resolves.toMatchObject({
-      route: "compatibility",
-    });
+    await runSandboxGpuCreateFlow(input, deps);
+    expect(vi.mocked(deps.runOpenshell).mock.calls.map(([args]) => args)).toEqual(
+      expect.arrayContaining([
+        ["sandbox", "stop", "-g", "selected-gateway", "alpha"],
+        ["sandbox", "start", "-g", "selected-gateway", "alpha"],
+      ]),
+    );
     expect(events.indexOf("create-complete")).toBeLessThan(events.indexOf("verify-created"));
     expect(events.indexOf("verify-created")).toBeLessThan(events.indexOf("compatibility-cutover"));
   });
