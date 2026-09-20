@@ -20,6 +20,13 @@ internal static class Program
             if (!Environment.UserInteractive || Process.GetCurrentProcess().SessionId == 0)
                 throw new InvalidOperationException("Run these WPF controls in an interactive desktop session.");
             _ = new Application();
+            var eligibility = NativeExpressSetup.CheckPreliminaryEligibilityAsync(download: true).GetAwaiter().GetResult();
+            if (eligibility.IsDevice)
+            {
+                if (!eligibility.Eligible || eligibility.DriverVersion is null || eligibility.CudaVersion is null)
+                    throw new InvalidOperationException("The live N1X preflight did not expose its compatible driver and CUDA status.");
+                passed.Add("live N1X driver, CUDA, memory, and storage preflight");
+            }
             foreach (var model in new[] { "qwen3.8-27b", "qwen3.6-35b-a3b" })
             {
                 Check(model, "openclaw", true, false);

@@ -95,6 +95,7 @@ internal sealed class NemoClawBootstrapperApplication : BootstrapperApplication
                 this.window.OpenLogRequested += (_, _) => this.OpenBundleLog();
                 this.window.ConfigureRequested += (_, _) => _ = this.ConfigureInstalledAgentAsync();
                 this.window.LaunchRequested += (_, _) => this.LaunchNemoClaw();
+                this.window.RetryRequested += (_, _) => this.RetrySetup();
                 this.window.ModelSetupCancelRequested += (_, _) => this.modelSetupCancellation?.Cancel();
                 this.window.Closed += (_, _) =>
                 {
@@ -262,6 +263,22 @@ internal sealed class NemoClawBootstrapperApplication : BootstrapperApplication
             this.Ui(() => this.window?.ShowFailure("Setup could not verify the packaged MXC isolation capabilities. No installation changes were started.", this.BundleLogPath()));
             this.StopDispatchersForHeadless();
         }
+    }
+
+    private void RetrySetup()
+    {
+        if (this.preparingMaintenance || this.modelSetupCancellation is not null) return;
+        var retryAction = this.plannedAction;
+        this.cancelRequested = false;
+        this.executingPackage = false;
+        this.executingPackageId = null;
+        this.preparationFailure = null;
+        this.preparationTier = null;
+        this.result = 0;
+        this.plannedAction = LaunchAction.Unknown;
+        if (retryAction is LaunchAction.Install or LaunchAction.Repair or LaunchAction.Uninstall)
+            _ = this.BeginPlanAsync(retryAction);
+        else this.Engine.Detect();
     }
 
     private async Task BeginMaintenanceAsync(LaunchAction action)

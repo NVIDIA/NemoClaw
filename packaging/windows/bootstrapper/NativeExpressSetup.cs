@@ -8,12 +8,11 @@ using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
-using Microsoft.Win32;
 
 namespace Nvidia.NemoClaw.Bootstrapper;
 
 internal sealed record NativeExpressProgress(string Phase, string Message, long? CompletedBytes, long? TotalBytes);
-internal sealed record NativeExpressEligibility(bool IsDevice, bool Eligible, string Message);
+internal sealed record NativeExpressEligibility(bool IsDevice, bool Eligible, string Message, string? DriverVersion = null, string? CudaVersion = null, long? AvailableStorageBytes = null);
 
 internal sealed class NativeModelSetupException : InvalidOperationException
 {
@@ -60,30 +59,19 @@ internal static class NativeExpressSetup
     {
         if (!OperatingSystem.IsWindows() || RuntimeInformation.OSArchitecture != Architecture.Arm64)
             return new(false, false, "N1X Express requires native Windows ARM64.");
-        using var registry = RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, RegistryView.Registry64);
-        using var bios = registry.OpenSubKey(@"HARDWARE\DESCRIPTION\System\BIOS");
-        var product = (bios?.GetValue("SystemProductName") as string ?? string.Empty).Trim();
-        using var processor = registry.OpenSubKey(@"HARDWARE\DESCRIPTION\System\CentralProcessor\0");
-        var processorName = processor?.GetValue("ProcessorNameString") as string ?? string.Empty;
-        if (!(product + " " + processorName).Contains(Manifest.GetProperty("productName").GetString()!, StringComparison.OrdinalIgnoreCase))
-            return new(false, false, "N1X Express requires the supported RTX Spark N1X device.");
-        var memory = new MemoryStatus { Length = (uint)Marshal.SizeOf<MemoryStatus>() };
-        var minimumMemory = download ? 32UL * 1024 * 1024 * 1024 : (ulong)Manifest.GetProperty("memoryBytes").GetInt64();
-        if (!GlobalMemoryStatusEx(ref memory) || memory.TotalPhysical < minimumMemory || memory.AvailablePhysical < minimumMemory)
-            return new(true, false, $"Free at least {minimumMemory / 1_000_000_000d:0.0} GB of memory to use N1X Express.");
         var candidates = new[]
         {
             Path.Combine(Environment.SystemDirectory, "nvidia-smi.exe"),
             Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "NVIDIA Corporation", "NVSMI", "nvidia-smi.exe"),
         };
         var diagnostic = candidates.FirstOrDefault(File.Exists);
-        if (diagnostic is null) return new(true, false, "Install the NVIDIA driver to enable N1X Express.");
+        if (diagnostic is null) return new(false, false, "N1X Express requires the supported RTX Spark N1X device and driver.");
         using var process = new Process
         {
             StartInfo = new ProcessStartInfo
             {
                 FileName = diagnostic,
-                Arguments = "--query-gpu=name --format=csv,noheader",
+                Arguments = "-q -x",
                 UseShellExecute = false,
                 CreateNoWindow = true,
                 RedirectStandardOutput = true,
@@ -99,12 +87,36 @@ internal static class NativeExpressSetup
             var stdout = process.StandardOutput.ReadToEndAsync(timeout.Token);
             var stderr = process.StandardError.ReadToEndAsync(timeout.Token);
             await Task.WhenAll(process.WaitForExitAsync(timeout.Token), stdout, stderr);
-            if (process.ExitCode != 0 || string.IsNullOrWhiteSpace(stdout.Result) || stdout.Result.Length > 4096 || stderr.Result.Length > 4096)
+            if (process.ExitCode != 0 || string.IsNullOrWhiteSpace(stdout.Result) || stdout.Result.Length > 256 * 1024 || stderr.Result.Length > 16 * 1024)
                 return new(true, false, "The NVIDIA driver needs attention before local inference.");
-            return new(true, true, download ? "llama.cpp is included. Choose a model to download during setup. GPU readiness is checked at agent startup." : "Use the prebuilt on-device model. Its service starts when you launch the agent.");
+            var driver = Regex.Match(stdout.Result, @"<driver_version>([0-9.]+)</driver_version>", RegexOptions.CultureInvariant).Groups[1].Value;
+            var cuda = Regex.Match(stdout.Result, @"<cuda_version>([0-9.]+)</cuda_version>", RegexOptions.CultureInvariant).Groups[1].Value;
+            var gpuCount = Regex.Matches(stdout.Result, @"<product_name>[^<]*RTX Spark N1X[^<]*</product_name>", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant).Count;
+            if (gpuCount == 0)
+                return new(false, false, "N1X Express requires the supported RTX Spark N1X device.");
+            var minimumDriver = Manifest.GetProperty("minimumDriverVersion").GetString()!;
+            var minimumCuda = Manifest.GetProperty("cudaVersion").GetString()!;
+            if (!VersionAtLeast(driver, minimumDriver) || !VersionAtLeast(cuda, minimumCuda) || gpuCount != 1)
+                return new(true, false, $"Install N1X Windows driver {minimumDriver} or later with CUDA {minimumCuda} support before downloading the local model.");
+            var memory = new MemoryStatus { Length = (uint)Marshal.SizeOf<MemoryStatus>() };
+            var minimumMemory = download ? 32UL * 1024 * 1024 * 1024 : (ulong)Manifest.GetProperty("memoryBytes").GetInt64();
+            if (!GlobalMemoryStatusEx(ref memory) || memory.TotalPhysical < minimumMemory || memory.AvailablePhysical < minimumMemory)
+                return new(true, false, $"Free at least {minimumMemory / 1_000_000_000d:0.0} GB of memory to use N1X Express.");
+            var systemDrive = new DriveInfo(Path.GetPathRoot(Environment.SystemDirectory)!);
+            if (download && systemDrive.AvailableFreeSpace < NativeDownloadedModelSetup.RequiredFreeBytes(NativeDownloadedModelSetup.DefaultModel))
+                return new(true, false, $"Free at least {NativeDownloadedModelSetup.RequiredFreeBytes(NativeDownloadedModelSetup.DefaultModel) / 1_000_000_000d:0.0} GB on {systemDrive.Name} before downloading the local model.");
+            return new(true, true, download
+                ? $"Local setup is available · driver {driver} · CUDA {cuda} · {systemDrive.AvailableFreeSpace / 1_000_000_000d:0.0} GB free on {systemDrive.Name.TrimEnd('\\')}. Continue, then review the local model download."
+                : $"The included local model is compatible · driver {driver} · CUDA {cuda}.", driver, cuda, systemDrive.AvailableFreeSpace);
         }
         catch (Exception) { return new(true, false, "The NVIDIA driver check did not complete. You can use hosted inference."); }
         finally { if (started && !process.HasExited) process.Kill(entireProcessTree: true); }
+    }
+
+    private static bool VersionAtLeast(string actual, string minimum)
+    {
+        if (!Version.TryParse(actual, out var left) || !Version.TryParse(minimum, out var right)) return false;
+        return left >= right;
     }
 
     internal static void ValidatePrebuiltSelection(JsonElement preparation, string selected)

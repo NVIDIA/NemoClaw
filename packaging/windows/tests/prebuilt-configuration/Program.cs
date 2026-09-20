@@ -8,19 +8,19 @@ using Nvidia.NemoClaw.Bootstrapper;
 
 // Only this test executable understands the fixture mode; no installed launcher
 // or model server is invoked by the progress/cancellation controls below.
-if (args.Length == 4 && args[0] == "--native-inference" && args[1] == "install" && args[2] == "--model")
+if (args.Length == 4 && args[0] == "--native-inference" && args[1] is "install" or "ensure-ready" && args[2] == "--model")
 {
     var scenario = Environment.GetEnvironmentVariable("NEMOCLAW_TEST_DOWNLOAD_HELPER");
     if (scenario == "oversized") Console.WriteLine(new string('x', 4097));
     else if (scenario == "incomplete") Console.Write("{");
-    else if (scenario == "wrong-model") Console.WriteLine("{\"schemaVersion\":1,\"event\":\"downloaded\",\"localModel\":\"foreign\"}");
+    else if (scenario == "wrong-model") Console.WriteLine(JsonSerializer.Serialize(new { schemaVersion = 1, @event = args[1] == "install" ? "downloaded" : "ready", localModel = "foreign" }));
     else if (scenario == "bad-phase") Console.WriteLine("{\"schemaVersion\":1,\"event\":\"progress\",\"phase\":\"ready\",\"message\":\"not a download\"}");
     else if (scenario == "exit-failure") Environment.ExitCode = 1;
     else
     {
-        Console.WriteLine("{\"schemaVersion\":1,\"event\":\"progress\",\"phase\":\"downloading\",\"message\":\"Fixture only\",\"completedBytes\":1,\"totalBytes\":2}");
+        Console.WriteLine(JsonSerializer.Serialize(new { schemaVersion = 1, @event = "progress", phase = args[1] == "install" ? "downloading" : "probing", message = "Fixture only", completedBytes = 1, totalBytes = 2 }));
         if (scenario == "cancel") _ = await Console.In.ReadLineAsync();
-        else Console.WriteLine(JsonSerializer.Serialize(new { schemaVersion = 1, @event = "downloaded", localModel = args[3] }));
+        else Console.WriteLine(JsonSerializer.Serialize(new { schemaVersion = 1, @event = args[1] == "install" ? "downloaded" : "ready", localModel = args[3] }));
     }
     return;
 }
@@ -172,6 +172,12 @@ try
         if (scenario == "cancel") Require(failure is OperationCanceledException);
         controls.Add($"download helper {scenario} is bounded and cleaned up");
     }
+    Environment.SetEnvironmentVariable("NEMOCLAW_TEST_DOWNLOAD_HELPER", "success");
+    var readinessProgress = new List<string>();
+    await NativeDownloadedModelSetup.EnsureReadyAsync(Environment.ProcessPath!, NativeDownloadedModelSetup.DefaultModel,
+        value => readinessProgress.Add(value.Phase), CancellationToken.None);
+    Require(readinessProgress.SequenceEqual(new[] { "probing" }));
+    controls.Add("GPU readiness helper requires its real terminal proof after progress");
 }
 finally { Environment.SetEnvironmentVariable("NEMOCLAW_TEST_DOWNLOAD_HELPER", previousScenario); }
 Console.WriteLine(JsonSerializer.Serialize(new { schemaVersion = 1, passed = controls.Count, failed = 0, controls, installedModelAuthorityTested = false, windowsExecutionRequired = OperatingSystem.IsWindows() }));

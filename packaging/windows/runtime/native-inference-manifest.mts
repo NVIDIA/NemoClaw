@@ -10,6 +10,7 @@ type NativeExpressManifest = {
   productName: string;
   serverVersion: string;
   cudaVersion: string;
+  minimumDriverVersion: string;
   model: string;
   modelRepository: string;
   modelRevision: string;
@@ -62,6 +63,17 @@ export type NativeHardware = {
   gpuCount: number;
 };
 
+function versionAtLeast(actual: string, minimum: string): boolean {
+  if (!/^\d+(?:\.\d+){1,3}$/u.test(actual) || !/^\d+(?:\.\d+){1,3}$/u.test(minimum)) return false;
+  const left = actual.split(".").map(Number);
+  const right = minimum.split(".").map(Number);
+  for (let index = 0; index < Math.max(left.length, right.length); index++) {
+    const difference = (left[index] ?? 0) - (right[index] ?? 0);
+    if (difference !== 0) return difference > 0;
+  }
+  return true;
+}
+
 export function nativeEligibility(
   hardware: NativeHardware,
   options: { prebuilt?: boolean } = {},
@@ -93,10 +105,11 @@ export function nativeEligibility(
     Number(version[1]) < 13 ||
     (Number(version[1]) === 13 && Number(version[2]) < 4) ||
     !/^\d+(?:\.\d+){1,3}$/u.test(hardware.driverVersion) ||
+    !versionAtLeast(hardware.driverVersion, NATIVE_EXPRESS.minimumDriverVersion) ||
     hardware.gpuCount !== 1
   )
     reasons.push(
-      "Install the N1X Windows driver with CUDA 13.4 support; one NVIDIA GPU must be visible.",
+      `Install N1X Windows driver ${NATIVE_EXPRESS.minimumDriverVersion} or later with CUDA 13.4 support; one NVIDIA GPU must be visible.`,
     );
   return reasons;
 }

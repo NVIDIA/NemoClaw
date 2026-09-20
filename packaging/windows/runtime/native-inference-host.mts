@@ -290,9 +290,10 @@ export async function hardwareCatalog(
       hardware.driverVersion =
         /<driver_version>([\d.]+)<\/driver_version>/u.exec(gpu.value)?.[1] ?? "";
       hardware.cudaVersion = /<cuda_version>([\d.]+)<\/cuda_version>/u.exec(gpu.value)?.[1] ?? "";
-      hardware.gpuCount = Number(
-        /<attached_gpus>(\d+)<\/attached_gpus>/u.exec(gpu.value)?.[1] ?? "0",
-      );
+      // N1X exposes its RTX GPU and an NVIDIA NPU through nvidia-smi. Only the
+      // RTX Spark entries are CUDA model devices; the NPU must not make a valid
+      // one-GPU host fail admission.
+      hardware.gpuCount = n1xGpuCount(gpu.value);
     }
   }
   signal?.throwIfAborted();
@@ -319,6 +320,11 @@ export async function hardwareCatalog(
       },
     ],
   };
+}
+
+export function n1xGpuCount(nvidiaSmiXml: string): number {
+  return [...nvidiaSmiXml.matchAll(/<product_name>[^<]*RTX Spark N1X[^<]*<\/product_name>/giu)]
+    .length;
 }
 
 export function controlProof(

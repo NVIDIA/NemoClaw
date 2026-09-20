@@ -20,9 +20,11 @@ internal static class NativeDownloadedModelSetup
     internal static string Description(string id)
     {
         var model = Model(id);
-        var size = model.GetProperty("weights").GetProperty("bytes").GetInt64() + model.GetProperty("visionProjector").GetProperty("bytes").GetInt64();
-        return $"llama.cpp is included. Setup downloads {size / 1_000_000_000d:0.0} GB of model data. No API key or manual server setup is needed. GPU readiness is checked when the agent starts.";
+        var size = DownloadBytes(id);
+        return $"Setup downloads {size / 1_000_000_000d:0.0} GB for text chat and keeps about {RequiredFreeBytes(id) / 1_000_000_000d:0.0} GB free during setup. No API key or manual server setup is needed. Setup will load the model on the GPU and test a real response before reporting success.";
     }
+    internal static long DownloadBytes(string id) => Model(id).GetProperty("weights").GetProperty("bytes").GetInt64();
+    internal static long RequiredFreeBytes(string id) => DownloadBytes(id) + 1024L * 1024 * 1024;
     private static JsonElement Load()
     {
         using var stream = Assembly.GetExecutingAssembly().GetManifestResourceStream("Nvidia.NemoClaw.NativeLocalModels.json") ?? throw new NativeModelSetupException("The local model catalog is missing.");
@@ -52,7 +54,13 @@ internal static class NativeDownloadedModelSetup
         }
     }
 
-    internal static async Task DownloadAsync(string launcher, string selected, Action<NativeExpressProgress>? progress, CancellationToken cancellation)
+    internal static Task DownloadAsync(string launcher, string selected, Action<NativeExpressProgress>? progress, CancellationToken cancellation) =>
+        RunAsync(launcher, selected, "install", "downloaded", TimeSpan.FromHours(2), progress, cancellation);
+
+    internal static Task EnsureReadyAsync(string launcher, string selected, Action<NativeExpressProgress>? progress, CancellationToken cancellation) =>
+        RunAsync(launcher, selected, "ensure-ready", "ready", TimeSpan.FromMinutes(30), progress, cancellation);
+
+    private static async Task RunAsync(string launcher, string selected, string action, string completionEvent, TimeSpan timeout, Action<NativeExpressProgress>? progress, CancellationToken cancellation)
     {
         _ = Model(selected);
         cancellation.ThrowIfCancellationRequested();
@@ -61,9 +69,9 @@ internal static class NativeDownloadedModelSetup
             RedirectStandardInput = true, RedirectStandardOutput = true, RedirectStandardError = true,
             WorkingDirectory = Path.GetDirectoryName(launcher)!,
         } };
-        foreach (var argument in new[] { "--native-inference", "install", "--model", selected }) process.StartInfo.ArgumentList.Add(argument);
+        foreach (var argument in new[] { "--native-inference", action, "--model", selected }) process.StartInfo.ArgumentList.Add(argument);
         using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
-        lifetime.CancelAfter(TimeSpan.FromHours(2));
+        lifetime.CancelAfter(timeout);
         if (!process.Start()) throw new NativeModelSetupException("The model download helper could not start.");
         var completed = false;
         try
@@ -88,7 +96,7 @@ internal static class NativeDownloadedModelSetup
                             var value = document.RootElement;
                             if (completed || value.GetProperty("schemaVersion").GetInt32() != 1) throw new NativeModelSetupException("The model helper returned invalid progress.");
                             var kind = value.GetProperty("event").GetString();
-                            if (kind == "downloaded")
+                            if (kind == completionEvent)
                             {
                                 if (value.GetProperty("localModel").GetString() != selected) throw new NativeModelSetupException("The model helper completed a different selection.");
                                 completed = true;
@@ -96,7 +104,7 @@ internal static class NativeDownloadedModelSetup
                             else if (kind == "progress")
                             {
                                 var phase = value.GetProperty("phase").GetString();
-                                if (phase is not ("checking" or "downloading" or "verifying")) throw new NativeModelSetupException("The model helper returned an invalid setup phase.");
+                                if (phase is not ("checking" or "downloading" or "verifying" or "unpacking" or "loading" or "probing")) throw new NativeModelSetupException("The model helper returned an invalid setup phase.");
                                 progress?.Invoke(new(phase, value.GetProperty("message").GetString() ?? "Preparing local model",
                                     value.TryGetProperty("completedBytes", out var done) ? done.GetInt64() : null,
                                     value.TryGetProperty("totalBytes", out var total) ? total.GetInt64() : null));
@@ -110,11 +118,15 @@ internal static class NativeDownloadedModelSetup
             }
             await Task.WhenAll(Consume(process.StandardOutput, true), Consume(process.StandardError, false), process.WaitForExitAsync(lifetime.Token));
             cancellation.ThrowIfCancellationRequested();
-            if (process.ExitCode != 0 || !completed) throw new NativeModelSetupException("The model download did not finish. Check disk space and connectivity, then retry.");
+            if (process.ExitCode != 0 || !completed) throw new NativeModelSetupException(action == "install"
+                ? "The model download did not finish. Check disk space and connectivity, then retry."
+                : "The GPU readiness test did not finish. Check the NVIDIA driver and available memory, then retry.");
         }
         catch (OperationCanceledException) when (!cancellation.IsCancellationRequested)
         {
-            throw new NativeModelSetupException("The model download exceeded its time limit. Check connectivity, then retry.");
+            throw new NativeModelSetupException(action == "install"
+                ? "The model download exceeded its time limit. Check connectivity, then retry."
+                : "The GPU readiness test exceeded its time limit. Check the NVIDIA driver and available memory, then retry.");
         }
         finally
         {

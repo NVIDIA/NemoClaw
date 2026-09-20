@@ -5,6 +5,7 @@
   "productName": "RTX Spark N1X",
   "serverVersion": "b10868",
   "cudaVersion": "13.4",
+  "minimumDriverVersion": "616.41",
   "model": "qwen3.6-35b-a3b",
   "modelRepository": "ggml-org/Qwen3.6-35B-A3B-GGUF",
   "modelRevision": "baec3ebee244827cda0f4557eafa8b28f7545fa6",

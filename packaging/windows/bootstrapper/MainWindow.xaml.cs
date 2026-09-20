@@ -38,6 +38,7 @@ public partial class MainWindow : Window
     private bool packageInstalled;
     private bool configurationSaved;
     private bool preparingModel;
+    private NativeExpressEligibility? localEligibility;
 
     public MainWindow()
     {
@@ -67,12 +68,20 @@ public partial class MainWindow : Window
                 if (this.runtimeAvailability.IsSelectedRuntimeBuild && !this.runtimeAvailability.PrebuiltLocalModelAvailable && !downloads)
                     eligibility = eligibility with { Eligible = false, Message = "The prebuilt on-device model is not included in this distribution. Choose a hosted provider or an existing local server." };
                 if (!this.IsLoaded || !eligibility.IsDevice) return;
+                this.localEligibility = eligibility;
                 this.ExpressOffer.Visibility = Visibility.Visible;
                 this.ExpressStatus.Text = eligibility.Message;
-                this.UseExpressButton.IsEnabled = eligibility.Eligible;
                 if (eligibility.Eligible && downloads)
+                {
+                    ComboBoxItem? recommended = null;
                     foreach (var model in NativeDownloadedModelSetup.Models)
-                        this.ProviderChoice.Items.Add(new ComboBoxItem { Tag = model.GetProperty("id").GetString(), Content = "Run locally · " + model.GetProperty("displayName").GetString() });
+                    {
+                        var item = new ComboBoxItem { Tag = model.GetProperty("id").GetString(), Content = "Run locally · " + model.GetProperty("displayName").GetString() };
+                        this.ProviderChoice.Items.Add(item);
+                        recommended ??= item;
+                    }
+                    if (this.SelectedAgent == "openclaw" && recommended is not null) this.ProviderChoice.SelectedItem = recommended;
+                }
                 else if (eligibility.Eligible) this.ProviderChoice.Items.Add(new ComboBoxItem { Tag = "n1x", Content = NativeExpressSetup.DisplayName });
             }
             catch (Exception) { this.ExpressOffer.Visibility = Visibility.Collapsed; }
@@ -94,6 +103,7 @@ public partial class MainWindow : Window
     public event EventHandler? OpenLogRequested;
     public event EventHandler? ConfigureRequested;
     public event EventHandler? LaunchRequested;
+    public event EventHandler? RetryRequested;
     public event EventHandler? ModelSetupCancelRequested;
 
     public string SelectedAgent { get; private set; } = "openclaw";
@@ -137,6 +147,7 @@ public partial class MainWindow : Window
         this.StopElapsed();
         this.progress.Reset();
         this.OverallProgressText.Visibility = Visibility.Collapsed;
+        this.OverallProgressBar.Visibility = Visibility.Collapsed;
         this.SetJourneyStage(installed ? 4 : 1);
         this.HidePanels();
         (installed ? this.MaintenancePanel : this.ReadyPanel).Visibility = Visibility.Visible;
@@ -155,6 +166,7 @@ public partial class MainWindow : Window
     {
         if (!this.busy) this.progress.Reset();
         this.busy = true;
+        this.completed = false;
         this.canCancel = true;
         this.SetJourneyStage(3);
         this.HidePanels();
@@ -173,6 +185,8 @@ public partial class MainWindow : Window
         if (percentage is < 0 or > 100 || !this.busy) return;
         this.OverallProgressText.Text = $"Windows installation · {percentage}% reported";
         this.OverallProgressText.Visibility = NativePreviewPresentation.DiagnosticsEnabled ? Visibility.Visible : Visibility.Collapsed;
+        this.OverallProgressBar.Value = percentage;
+        this.OverallProgressBar.Visibility = NativePreviewPresentation.DiagnosticsEnabled ? Visibility.Visible : Visibility.Collapsed;
     }
 
     public void SetPackageProgress(int percentage)
@@ -238,8 +252,18 @@ public partial class MainWindow : Window
             return;
         }
         this.preparingModel = true;
-        this.ShowProgress("Preparing your on-device model", progress.Message, "model-" + progress.Phase);
-        this.ProgressLabel.Text = "LOCAL SETUP · MODEL DOWNLOAD";
+        var title = progress.Phase switch
+        {
+            "checking" => "Checking the saved model",
+            "downloading" => "Downloading the on-device model",
+            "verifying" => "Verifying the on-device model",
+            "unpacking" => "Preparing the model engine",
+            "loading" => "Loading the model on your GPU",
+            "probing" => "Testing a real GPU response",
+            _ => "Preparing your on-device model",
+        };
+        this.ShowProgress(title, progress.Message, "model-" + progress.Phase);
+        this.ProgressLabel.Text = "LOCAL SETUP · " + progress.Phase.ToUpperInvariant();
         this.canCancel = true;
         this.CancelButton.Content = "Cancel model setup";
         if (progress.CompletedBytes is long completed && progress.TotalBytes is long total && total > 0 && completed >= 0 && completed <= total)
@@ -257,7 +281,7 @@ public partial class MainWindow : Window
         this.HidePanels();
         this.ConfigurationPanel.Visibility = Visibility.Visible;
         this.SetJourneyStage(2);
-        this.ConfigurationDetail.Text = "NemoClaw is installed. Complete your agent settings to finish setup.";
+        this.ConfigurationDetail.Text = "NemoClaw is installed, but agent setup did not finish. Correct the issue and retry; completed model downloads are reused.";
         this.InstallButton.Content = "Save configuration";
         this.BackButton.Visibility = Visibility.Collapsed;
         this.UpdateSetupAction();
@@ -271,7 +295,7 @@ public partial class MainWindow : Window
         this.ShowSuccess(LaunchAction.Install);
         if (launch)
         {
-            this.SuccessTitle.Text = "OpenClaw setup is complete.";
+            this.SuccessTitle.Text = this.Configuration?.LocalModel is not null ? "OpenClaw is GPU-ready." : "OpenClaw setup is complete.";
             this.LaunchRequested?.Invoke(this, EventArgs.Empty);
         }
     }
@@ -291,19 +315,28 @@ public partial class MainWindow : Window
         {
             this.SuccessTitle.Text = "NemoClaw was removed.";
             this.SuccessDetail.Text = "The application was removed. Your personal agent settings remain in your Windows account.";
+            this.SuccessSummary.Text = "Downloaded local models are retained for a faster reinstall. Remove them manually only if you need to reclaim their storage.";
         }
         else if (action == LaunchAction.Repair)
         {
             this.SuccessTitle.Text = "NemoClaw is repaired.";
             this.SuccessDetail.Text = "Your native runtime is restored. Open NemoClaw from the Start menu when you are ready.";
+            this.SuccessSummary.Text = "The installed application was repaired. Agent data and downloaded models were preserved.";
         }
         else
         {
             var agentName = AgentNames.GetValueOrDefault(this.SelectedAgent, "Your agent");
             this.SuccessTitle.Text = this.configurationSaved ? $"{agentName} is ready." : "NemoClaw is installed.";
             this.SuccessDetail.Text = this.configurationSaved
-                ? "Setup is complete. Your settings are saved for your Windows account. Launch your agent when you are ready."
+                ? this.Configuration?.LocalModel is not null
+                    ? $"Setup loaded {this.Configuration.Model} on the NVIDIA GPU and received a real model response. Launching starts a fresh chat; the first visible reply can still take longer than later replies."
+                    : "Setup is complete. Your settings are saved for your Windows account. Launch your agent when you are ready."
                 : "The native application is installed. Your agent configuration has not been saved.";
+            this.SuccessSummary.Text = this.Configuration?.LocalModel is not null
+                ? $"GPU check passed · {this.Configuration.Model}" +
+                    (this.localEligibility?.DriverVersion is string driver ? $" · driver {driver}" : "") +
+                    (this.localEligibility?.CudaVersion is string cuda ? $" · CUDA {cuda}" : "")
+                : "Installed for native Windows ARM64. Repair or remove NemoClaw from Windows Installed apps.";
             this.LaunchButton.Content = $"Launch {agentName}";
         }
         this.CloseButton.Focus();
@@ -326,7 +359,9 @@ public partial class MainWindow : Window
         this.ClearCredential();
         this.HidePanels();
         this.FailurePanel.Visibility = Visibility.Visible;
-        this.FailureDetail.Text = File.Exists(setupLog) ? $"{detail}\n\nChoose Setup log to open the saved details." : detail;
+        this.FailureDetail.Text = File.Exists(setupLog)
+            ? $"{detail}\n\nRetry after correcting the cause, copy this error, or open Setup log for saved details."
+            : $"{detail}\n\nRetry after correcting the cause, or copy this error for support.";
     }
 
     public void ShowRecoverableError(string detail)
@@ -539,6 +574,12 @@ public partial class MainWindow : Window
     private void RepairClicked(object sender, RoutedEventArgs args) => this.RepairRequested?.Invoke(this, EventArgs.Empty);
     private void UninstallClicked(object sender, RoutedEventArgs args) => this.UninstallRequested?.Invoke(this, EventArgs.Empty);
     private void OpenLogClicked(object sender, RoutedEventArgs args) => this.OpenLogRequested?.Invoke(this, EventArgs.Empty);
+    private void RetryClicked(object sender, RoutedEventArgs args) => this.RetryRequested?.Invoke(this, EventArgs.Empty);
+    private void CopyErrorClicked(object sender, RoutedEventArgs args)
+    {
+        try { Clipboard.SetText(this.FailureDetail.Text); }
+        catch (Exception) { this.RecoverableError.Text = "Windows could not copy the error. Open the setup log instead."; this.RecoverableError.Visibility = Visibility.Visible; }
+    }
     private void LaunchClicked(object sender, RoutedEventArgs args) => this.LaunchRequested?.Invoke(this, EventArgs.Empty);
     private void CloseClicked(object sender, RoutedEventArgs args) => this.Close();
     private void MinimizeClicked(object sender, RoutedEventArgs args) => this.WindowState = WindowState.Minimized;
@@ -561,12 +602,6 @@ public partial class MainWindow : Window
         this.progress.Report("cancelling");
         this.RenderProgress();
         this.ProgressDetail.Text = "Please keep this window open while Windows completes rollback.";
-    }
-
-    private void UseExpressClicked(object sender, RoutedEventArgs args)
-    {
-        foreach (var item in this.ProviderChoice.Items.OfType<ComboBoxItem>())
-            if (item.Tag as string == "n1x" || item.Tag as string == NativeDownloadedModelSetup.DefaultModel) { this.ProviderChoice.SelectedItem = item; this.ConfigureClicked(sender, args); return; }
     }
 
     private void WindowClosing(object? sender, CancelEventArgs args)

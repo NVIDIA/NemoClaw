@@ -159,6 +159,20 @@ export function nativeOpenClawOptions(options: NativeOptions) {
   }
   return {
     tools: {
+      // OpenClaw defaults an omitted profile to "full", which injects every
+      // installed tool schema into even a plain chat turn. Keep the native
+      // personal-assistant surface deliberately small and add only capabilities
+      // the user selected during setup.
+      profile: "minimal",
+      alsoAllow: [
+        "read",
+        "write",
+        "edit",
+        "exec",
+        "process",
+        ...(options.search ? ["web_search", "web_fetch"] : []),
+        ...(Object.keys(options.messaging ?? {}).length ? ["message"] : []),
+      ],
       web: {
         search: options.search
           ? { enabled: true, provider: options.search.provider }

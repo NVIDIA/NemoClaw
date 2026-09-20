@@ -47,6 +47,11 @@ internal static class NativeSetupOperations
                 await RunSetupHelperAsync(launcher, new[] { "--credential-write", service, "--binding", serviceBindings[service] }, serviceBytes[service]);
             await RunSetupHelperAsync(launcher, new[] { "--configure-native" }, configurationBytes);
             NativeDesktopIntegration.Ensure(configuration.Agent, launcher);
+            if (NativeDownloadedModelSetup.IsModel(configuration.LocalModel))
+            {
+                progress?.Invoke(new("loading", "Starting the selected model on the NVIDIA GPU.", null, null));
+                await NativeDownloadedModelSetup.EnsureReadyAsync(launcher, configuration.LocalModel!, progress, cancellation);
+            }
         }
         finally
         {

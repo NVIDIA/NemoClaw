@@ -46,6 +46,7 @@ import {
 } from "./native-runtime.mts";
 import { resolveNativeConfiguredInference } from "./native-configured-inference.mts";
 import type { NativeInferenceProgress } from "./native-inference-manifest.mts";
+import { isDownloadedLocalModel } from "./native-local-models.mts";
 
 import {
   nativeCredentialBinding,
@@ -223,6 +224,8 @@ const required = (name) => {
 const launcher = required("NEMOCLAW_MXC_OPENCLAW_ENTRY");
 const home = required("NEMOCLAW_MXC_HOME");
 const modelId = required("NEMOCLAW_MXC_MODEL_ID");
+const modelContext = Number(required("NEMOCLAW_MXC_MODEL_CONTEXT"));
+if (![65536, 131072].includes(modelContext)) throw new Error("The native model context is invalid.");
 const modelToken = required("NEMOCLAW_MXC_MODEL_TOKEN");
 const qualification = required("NEMOCLAW_MXC_QUALIFICATION") === "1";
 const configured = required("NEMOCLAW_NATIVE_SERVICES") === "1";
@@ -391,9 +394,9 @@ writeFileSync(join(configDirectory, "openclaw.json"), JSON.stringify({
     apiKey: modelToken,
     api: "openai-completions",
     timeoutSeconds: 180,
-    models: [{ id: modelId, name: modelId, reasoning: false, input: ["text"], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 131072, maxTokens: 4096 }],
+    models: [{ id: modelId, name: modelId, reasoning: false, input: ["text"], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: modelContext, maxTokens: 4096 }],
   } } },
-  agents: { defaults: { model: { primary: "nemoclawNative/" + modelId }, timeoutSeconds: 180, skipBootstrap: true, thinkingDefault: "off" }, list: [{ id: "main", default: true }] },
+  agents: { defaults: { model: { primary: "nemoclawNative/" + modelId }, timeoutSeconds: 180, skipBootstrap: true, thinkingDefault: "off" }, list: [{ id: "main", default: true, skills: [] }] },
 }), "utf8");
 Object.assign(process.env, {
   HOME: home,
@@ -1095,6 +1098,9 @@ async function mainInternal(runtimeLease: NativeRuntimeSession) {
     if (configuredIdentity && resolvedInference)
       configuredIdentity.config = resolvedInference.configuration;
     const modelId = configuredIdentity?.config.model ?? "native-preview";
+    const modelContext = isDownloadedLocalModel(configuredIdentity?.config.localModel)
+      ? 65536
+      : 131072;
     const modelToken = randomBytes(32).toString("base64url");
     const credential = resolvedInference?.credential ?? "";
     diagnostics.secret(modelToken, credential);
@@ -1460,6 +1466,7 @@ async function mainInternal(runtimeLease: NativeRuntimeSession) {
         LOCALAPPDATA: home,
         NEMOCLAW_MXC_HOME: home,
         NEMOCLAW_MXC_MODEL_ID: modelId,
+        NEMOCLAW_MXC_MODEL_CONTEXT: String(modelContext),
         ...(brokerRelay === null
           ? { NEMOCLAW_MXC_MODEL_PORT: String(modelPort) }
           : {
@@ -1617,7 +1624,11 @@ async function mainInternal(runtimeLease: NativeRuntimeSession) {
         if (!webSession) fail("the native Web UI control is unavailable");
         webSession.assertRunning();
         webSession?.progress("browser");
-        webSession.ready(uiUrl);
+        // Do not reopen a growing or previously failed Main Session after an
+        // install, repair, or ordinary relaunch. The old sessions remain in the
+        // sidebar, while this launch starts with a small prompt history.
+        const freshSession = `agent:main:native-${randomBytes(8).toString("hex")}`;
+        webSession.ready(`${uiUrl}/chat?session=${encodeURIComponent(freshSession)}`);
         diagnostics.stage("agent");
         await Promise.race([
           webSession.stopped,

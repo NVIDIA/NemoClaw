@@ -77,7 +77,14 @@ export async function verifyPinnedFile(
     const hash = createHash("sha256");
     let bytes = 0;
     let last = 0;
-    for await (const chunk of handle.createReadStream({ autoClose: false, signal })) {
+    // Large model files are verified on every new inference-owner startup. A
+    // larger read buffer preserves the full SHA-256 trust check while avoiding
+    // hundreds of thousands of tiny stream operations on a multi-GB GGUF.
+    for await (const chunk of handle.createReadStream({
+      autoClose: false,
+      highWaterMark: 4 * 1024 * 1024,
+      signal,
+    })) {
       signal.throwIfAborted();
       hash.update(chunk);
       bytes += chunk.length;

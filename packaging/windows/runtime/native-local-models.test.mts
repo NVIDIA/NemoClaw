@@ -17,9 +17,37 @@ import {
 } from "./native-local-models.mts";
 import {
   guardedNativeChat,
+  nativeEligibility,
   nativeServerArguments,
   requireFullCudaOffload,
 } from "./native-inference-manifest.mts";
+import { n1xGpuCount } from "./native-inference-host.mts";
+
+test("native eligibility rejects an older N1X driver before model download", () => {
+  const hardware = {
+    platform: "win32",
+    arch: "arm64",
+    product: "NVIDIA RTX Spark N1X",
+    totalMemoryBytes: 64 * 1024 ** 3,
+    availableMemoryBytes: 64 * 1024 ** 3,
+    availableStorageBytes: 64 * 1024 ** 3,
+    driverVersion: "616.52",
+    cudaVersion: "13.4",
+    gpuCount: 1,
+  };
+  assert.deepEqual(nativeEligibility(hardware), []);
+  assert.match(nativeEligibility({ ...hardware, driverVersion: "616.40" })[0], /616\.41/u);
+});
+
+test("N1X hardware discovery ignores the companion NVIDIA NPU", () => {
+  assert.equal(
+    n1xGpuCount(`
+<attached_gpus>2</attached_gpus>
+<gpu><product_name>NVIDIA RTX Spark N1X (6144-core Blackwell RTX GPU)</product_name></gpu>
+<gpu><product_name>NVIDIA NPU</product_name></gpu>`),
+    1,
+  );
+});
 
 function fixture(t: TestContext) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-model-data-"));
@@ -81,16 +109,17 @@ test("the catalog selects only explicit known models and never substitutes the a
 
 test("each downloaded model binds its own alias and keeps a loopback-only server", () => {
   for (const model of NATIVE_LOCAL_MODELS.models) {
-    const args = downloadedModelArguments(model, "weights.gguf", "projector.gguf", 12345, "CUDA0");
+    const args = downloadedModelArguments(model, "weights.gguf", 12345, "CUDA0");
     assert.equal(args[args.indexOf("--alias") + 1], model.id);
     assert.equal(args[args.indexOf("--host") + 1], "127.0.0.1");
     assert.equal(args[args.indexOf("--n-gpu-layers") + 1], "all");
+    assert.equal(args.includes("--mmproj"), false);
     assert.equal(args[args.indexOf("--log-verbosity") + 1], "4");
     assert.ok(args.includes("--no-webui"));
     assert.ok(localModelIdentityMatches(model.id, model.id));
     assert.equal(localModelIdentityMatches(model.id, "foreign"), false);
-    assert.throws(() => downloadedModelArguments(model, "weights", "projector", 0, "CUDA0"));
-    assert.throws(() => downloadedModelArguments(model, "weights", "projector", 12345, "CPU"));
+    assert.throws(() => downloadedModelArguments(model, "weights", 0, "CUDA0"));
+    assert.throws(() => downloadedModelArguments(model, "weights", 12345, "CPU"));
   }
 });
 
@@ -169,12 +198,12 @@ test("local tool schemas omit unsupported patterns at the llama.cpp boundary", (
   assert.equal(request.tools[0].function.parameters.properties.anywhere.pattern, "foo|bar");
 });
 
-test("downloads the selected weights and projector then reuses verified cached bytes", async (t) => {
+test("downloads only the text weights and reuses verified cached bytes", async (t) => {
   const f = fixture(t);
   const signal = new AbortController().signal;
   const result = await downloadLocalModelAssets(f.model, f.lease, signal, () => {}, f.request);
   assert.equal(result.model, f.model.id);
-  assert.deepEqual(f.requests, ["weights.gguf", "projector.gguf"]);
+  assert.deepEqual(f.requests, ["weights.gguf"]);
   assert.equal(fs.readFileSync(result.weights, "utf8"), "fixture model bytes");
   await downloadLocalModelAssets(
     f.model,
@@ -187,12 +216,15 @@ test("downloads the selected weights and projector then reuses verified cached b
   );
 });
 
-test("bad projector digest retains verified weights but removes the incomplete download", async (t) => {
+test("an unused vision projector is not downloaded", async (t) => {
   const f = fixture(t);
   f.model.visionProjector.sha256 = "0".repeat(64);
-  await assert.rejects(
-    downloadLocalModelAssets(f.model, f.lease, new AbortController().signal, () => {}, f.request),
-    /SHA-256/u,
+  await downloadLocalModelAssets(
+    f.model,
+    f.lease,
+    new AbortController().signal,
+    () => {},
+    f.request,
   );
   assert.deepEqual(fs.readdirSync(f.cache), ["weights.gguf"]);
 });
@@ -258,7 +290,7 @@ test("a cancelled cache verification never renames valid model data as corrupt",
     /progress failed/u,
   );
   assert.deepEqual(fs.readdirSync(f.cache).sort(), before);
-  assert.equal(f.requests.length, 2);
+  assert.equal(f.requests.length, 1);
 });
 
 test("floating revisions and untrusted download hosts are rejected before download", (t) => {

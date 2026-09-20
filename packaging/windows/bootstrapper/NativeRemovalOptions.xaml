@@ -6,10 +6,10 @@
  <StackPanel>
   <TextBlock x:Name="UnavailableDetail" Visibility="Collapsed" Foreground="#BBBBBB" TextWrapping="Wrap" Margin="0,0,0,10"
    Text="This older preview keeps your agent data when uninstalled. Install the current preview to use selected data removal." />
-  <CheckBox x:Name="RemoveData" Content="Also remove selected agent data and saved keys" Foreground="White"
+  <CheckBox x:Name="RemoveData" Content="Also remove selected agent conversations, settings, and saved keys" Foreground="White"
    Checked="SelectionChanged" Unchecked="SelectionChanged" AutomationProperties.AutomationId="RemoveOwnedAgentData" />
   <StackPanel x:Name="Selections" Visibility="Collapsed" Margin="20,10,0,0">
-   <TextBlock Text="Choose the agents to reset. Stop their active sessions first. Shared local models are retained."
+   <TextBlock Text="Choose the agents to reset. Stop their active sessions first. Downloaded local models are retained and can use 16.5–23.6 GB each."
     Foreground="#BBBBBB" TextWrapping="Wrap" Margin="0,0,0,8" />
    <WrapPanel x:Name="Agents" />
   </StackPanel>

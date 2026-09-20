@@ -498,7 +498,6 @@ async function servePrebuiltNativeInference(
     if (downloaded) {
       const files = await verifyLocalModelAssets(downloaded.id, state, signal, onProgress);
       prepared.modelPath = files.weights;
-      prepared.projector = files.projector;
     }
     upstreamPort = await nativeFreePort();
     onProgress({
@@ -510,13 +509,7 @@ async function servePrebuiltNativeInference(
     serverProcess = spawn(
       prepared.executable,
       downloaded
-        ? downloadedModelArguments(
-            downloaded,
-            prepared.modelPath,
-            prepared.projector!,
-            upstreamPort,
-            prepared.device,
-          )
+        ? downloadedModelArguments(downloaded, prepared.modelPath, upstreamPort, prepared.device)
         : nativeServerArguments(prepared.modelPath, upstreamPort, prepared.device),
       {
         env: { ...prepared.environment, LLAMA_API_KEY: upstreamCredential },

@@ -111,21 +111,18 @@ export async function verifyLocalModelAssets(
   if (!info.isDirectory() || info.isSymbolicLink())
     throw new Error("Run local model setup again; the model cache is unavailable.");
   const weights = path.join(directory, model.weights.name);
-  const projector = path.join(directory, model.visionProjector.name);
   const report: ProgressSink = (event) => {
     lease.assertHeld();
     progress(event);
   };
   await verifyPinnedFile(weights, model.weights, signal, report);
-  await verifyPinnedFile(projector, model.visionProjector, signal, report);
   lease.assertHeld();
-  return { weights, projector };
+  return { weights };
 }
 
 export function downloadedModelArguments(
   model: LocalModel,
   weights: string,
-  projector: string,
   port: number,
   device: string,
 ) {
@@ -135,8 +132,6 @@ export function downloadedModelArguments(
   return [
     "--model",
     weights,
-    "--mmproj",
-    projector,
     "--alias",
     model.id,
     "--host",
@@ -207,7 +202,9 @@ export async function downloadLocalModelAssets(
   // files are verified by the downloader, not treated as proof of readiness.
   const space = await fs.promises.statfs(directory);
   let missingBytes = 0;
-  for (const asset of [model.weights, model.visionProjector]) {
+  // The native integration currently advertises and accepts text only. Do not
+  // download the almost-1-GB vision projector until the image boundary exists.
+  for (const asset of [model.weights]) {
     try {
       const cached = await fs.promises.lstat(path.join(directory, asset.name));
       if (!cached.isFile() || cached.isSymbolicLink() || cached.size !== asset.bytes)
@@ -236,16 +233,7 @@ export async function downloadLocalModelAssets(
     );
     downloadSignal.throwIfAborted();
     lease.assertHeld();
-    const projector = await downloadPinnedAsset(
-      model.visionProjector,
-      directory,
-      downloadSignal,
-      progress,
-      checkedRequest,
-    );
-    downloadSignal.throwIfAborted();
-    lease.assertHeld();
-    return Object.freeze({ model: model.id, revision: model.revision, weights, projector });
+    return Object.freeze({ model: model.id, revision: model.revision, weights });
   } catch (error) {
     downloadSignal.throwIfAborted();
     throw error;

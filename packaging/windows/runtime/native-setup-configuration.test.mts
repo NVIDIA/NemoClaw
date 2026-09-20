@@ -14,7 +14,7 @@ import { fileURLToPath } from "node:url";
 import { parse as parseYaml } from "yaml";
 import { configureNativeFromStdin } from "./native-setup-configuration.mts";
 import { nativeCredentialBinding, renderNativeGatewayConfig } from "./native-security.mts";
-import { nativeServiceBinding } from "./native-options.mts";
+import { nativeOpenClawOptions, nativeServiceBinding } from "./native-options.mts";
 import { NATIVE_EXPRESS } from "./native-inference-manifest.mts";
 import { NATIVE_LOCAL_MODELS } from "./native-local-models.mts";
 import { normalizeOnboardingConfiguration } from "./native-setup-configuration.mts";
@@ -47,6 +47,41 @@ test("prebuilt OpenClaw factories materialize the exported workers as valid Java
     });
     assert.equal(parsed.status, 0, parsed.stderr);
   }
+});
+
+test("native OpenClaw uses a bounded tool surface and adds only selected capabilities", () => {
+  assert.deepEqual(nativeOpenClawOptions({}).tools, {
+    profile: "minimal",
+    alsoAllow: ["read", "write", "edit", "exec", "process"],
+    web: { search: { enabled: false } },
+  });
+  const selected = nativeOpenClawOptions({
+    search: { provider: "brave", credentialStored: true },
+    messaging: { telegram: { credentialStored: true, allowedUsers: [] } },
+  });
+  assert.deepEqual(selected.tools.alsoAllow, [
+    "read",
+    "write",
+    "edit",
+    "exec",
+    "process",
+    "web_search",
+    "web_fetch",
+    "message",
+  ]);
+});
+
+test("native OpenClaw advertises the actual model context and opens a fresh chat", () => {
+  const source = gatewaySource();
+  assert(source.includes('required("NEMOCLAW_MXC_MODEL_CONTEXT")'));
+  assert(source.includes("contextWindow: modelContext"));
+  assert(source.includes("skills: []"));
+  const owner = fs.readFileSync(
+    new URL("./run-installed-native-web-ui.mts", import.meta.url),
+    "utf8",
+  );
+  assert(owner.includes("isDownloadedLocalModel(configuredIdentity?.config.localModel)"));
+  assert(owner.includes("/chat?session=${encodeURIComponent(freshSession)}"));
 });
 
 function heldHermesRuntime(agent: "hermes" | "pi" = "hermes") {

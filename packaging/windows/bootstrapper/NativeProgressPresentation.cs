@@ -139,11 +139,23 @@ internal sealed class NativeProgressPresentation
     internal TimeSpan PhaseElapsed => this.now() - this.phaseStarted;
     internal TimeSpan SinceAdvance => this.now() - this.lastAdvance;
     internal double ActivityOpacity => 0.45 + 0.45 * (0.5 + 0.5 * Math.Sin(this.SessionElapsed.TotalSeconds * Math.PI));
-    internal string ActivityText => this.Measurement is null
-        ? $"This step {Duration(this.PhaseElapsed)} · Waiting for a measured progress update"
-        : this.SinceAdvance >= TimeSpan.FromSeconds(3)
-            ? $"This step {Duration(this.PhaseElapsed)} · No new count for {Duration(this.SinceAdvance)}"
-            : $"This step {Duration(this.PhaseElapsed)} · Showing the latest reported count";
+    internal string ActivityText
+    {
+        get
+        {
+            var elapsed = this.PhaseElapsed;
+            if (this.Measurement is null) return $"This phase {Duration(elapsed)} · Working; this phase does not report a count";
+            if (this.Measurement.Completed == this.Measurement.Total) return $"This phase {Duration(elapsed)} · Phase complete";
+            if (this.SinceAdvance >= TimeSpan.FromSeconds(5)) return $"This phase {Duration(elapsed)} · No new count for {Duration(this.SinceAdvance)}; setup is still running";
+            if (this.Measurement.Unit == "bytes" && elapsed >= TimeSpan.FromSeconds(2) && this.Measurement.Completed > 0)
+            {
+                var bytesPerSecond = this.Measurement.Completed / elapsed.TotalSeconds;
+                var remaining = TimeSpan.FromSeconds((this.Measurement.Total - this.Measurement.Completed) / bytesPerSecond);
+                return $"This phase {Duration(elapsed)} · {bytesPerSecond / 1_000_000d:0.0} MB/s · about {Duration(remaining)} remaining";
+            }
+            return $"This phase {Duration(elapsed)} · Measuring progress";
+        }
+    }
     internal static string Duration(TimeSpan duration) =>
         string.Create(CultureInfo.InvariantCulture, $"{Math.Max(0, (long)duration.TotalHours):00}:{Math.Max(0, duration.Minutes):00}:{Math.Max(0, duration.Seconds):00}");
 }
