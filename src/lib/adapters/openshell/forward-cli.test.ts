@@ -530,23 +530,40 @@ describe("CLI OpenShell forward observations", () => {
   });
 
   it.each([
-    ["remains the same", false, { state: "stale", forward }],
-    ["gains another listener", true, { state: "indeterminate", forward, error: errors.ownership }],
-  ] as const)(
-    "accepts Linux /proc legacy proof only when its sole PID %s",
-    async (_case, drift, expected) => {
-      const fixture = createLinuxProcFixture({ pid: 4_312 });
-      let probes = 0;
-      const hostProbe = vi.fn<HostProbe>(async () => {
-        probes += 1;
-        invokeWhen(drift && probes === 2, () => fixture.addSocketOwner(9_876));
-        return missingCommand();
-      });
+    {
+      case: "remains the same",
+      expected: { state: "stale", forward } as const,
+      incomplete: false,
+      drift: false,
+    },
+    {
+      case: "has an unreadable unrelated process",
+      expected: { state: "stale", forward } as const,
+      incomplete: true,
+      drift: false,
+    },
+    {
+      case: "gains another listener",
+      expected: { state: "indeterminate", forward, error: errors.ownership } as const,
+      incomplete: false,
+      drift: true,
+    },
+  ])(
+    "accepts Linux /proc legacy proof only when its sole PID $case",
+    async ({ drift, expected, incomplete }) => {
+      const fixture = createLinuxProcFixture({ incomplete, pid: 4_312 });
+      const hostProbe = vi.fn<HostProbe>(async () => missingCommand());
+      let nowCalls = 0;
       const adapter = createCliOpenShellForwardAdapter({
         environment: {},
         executable: fixture.executable,
         gatewayEndpoint: forward.gatewayEndpoint,
         hostProbe,
+        now: () => {
+          nowCalls += 1;
+          invokeWhen(drift && nowCalls === 4, () => fixture.addSocketOwner(9_876));
+          return 0;
+        },
         platform: "linux",
         procRoot: fixture.procRoot,
         run: async () => captured(0, legacyForwardList),
@@ -555,11 +572,7 @@ describe("CLI OpenShell forward observations", () => {
 
       try {
         await expect(adapter.observeForwards({ forwards: [forward] })).resolves.toEqual([expected]);
-        expect(hostProbe).toHaveBeenCalledTimes(2);
-        expect(hostProbe.mock.calls.map(([command, args]) => [command, args])).toEqual([
-          ["/usr/bin/lsof", ["-ti4TCP:18789", "-sTCP:LISTEN"]],
-          ["/usr/bin/lsof", ["-ti4TCP:18789", "-sTCP:LISTEN"]],
-        ]);
+        expect(hostProbe).not.toHaveBeenCalled();
       } finally {
         fixture.remove();
       }

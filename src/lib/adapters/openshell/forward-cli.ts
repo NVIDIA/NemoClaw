@@ -581,16 +581,19 @@ async function linuxListenerPids(
   procRoot: string,
   workLimit: number,
   timeoutMs: number,
+  expectedPid?: number,
 ): Promise<PidInspection> {
   if (
     !Number.isSafeInteger(workLimit) ||
     workLimit < 1 ||
     !Number.isFinite(timeoutMs) ||
-    timeoutMs <= 0
+    timeoutMs <= 0 ||
+    (expectedPid !== undefined && (!Number.isSafeInteger(expectedPid) || expectedPid < 1))
   ) {
     return { ok: false };
   }
   const deadline = performance.now() + timeoutMs;
+  const expectedPidText = expectedPid === undefined ? null : String(expectedPid);
   const bounded = async <T>(operation: () => Promise<T>) => {
     const available = deadline - performance.now();
     if (available <= 0) return { state: "timeout" } as const;
@@ -671,7 +674,12 @@ async function linuxListenerPids(
     const descriptorsRead = await bounded(() => readdir(path.join(procRoot, entry.name, "fd")));
     if (descriptorsRead.state === "timeout") return { ok: false };
     if (descriptorsRead.state === "error") {
-      if ((descriptorsRead.error as NodeJS.ErrnoException).code !== "ENOENT") incomplete = true;
+      if (
+        (descriptorsRead.error as NodeJS.ErrnoException).code !== "ENOENT" &&
+        (expectedPidText === null || entry.name === expectedPidText)
+      ) {
+        incomplete = true;
+      }
       continue;
     }
     const descriptors = descriptorsRead.value;
@@ -689,7 +697,7 @@ async function linuxListenerPids(
           break;
         }
       } else if ((linkRead.error as NodeJS.ErrnoException).code !== "ENOENT") {
-        incomplete = true;
+        if (expectedPidText === null || entry.name === expectedPidText) incomplete = true;
       }
     }
   }
@@ -857,16 +865,28 @@ async function inspectLegacyForward(
 ): Promise<CliOpenShellLegacyForwardInspection> {
   if (options.platform === "win32") return { state: "indeterminate" };
   const deadline = options.now() + timeoutMs;
+  // A legacy OpenShell list row already names the validated forward PID. On
+  // Linux, prove that PID against /proc directly so unreadable, unrelated
+  // system processes cannot make an otherwise exact user-owned forward
+  // indeterminate. Readable co-owners are still collected and rejected.
   const inspect = () =>
-    listenerPids(
-      forward,
-      options.platform,
-      options.environment,
-      options.procRoot,
-      options.procWorkLimit,
-      remaining(deadline, options.now),
-      options.run,
-    );
+    options.platform === "linux"
+      ? linuxListenerPids(
+          forward.port,
+          options.procRoot,
+          options.procWorkLimit,
+          remaining(deadline, options.now),
+          expectedPid,
+        )
+      : listenerPids(
+          forward,
+          options.platform,
+          options.environment,
+          options.procRoot,
+          options.procWorkLimit,
+          remaining(deadline, options.now),
+          options.run,
+        );
   const before = await inspect();
   if (!before.ok) return { state: "indeterminate" };
   if (before.pids.length !== 1 || before.pids[0] !== expectedPid) {
