@@ -2094,9 +2094,13 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
                 }
               }
             } else {
+              // Include already-recorded audit failures so a nested path
+              // such as workspace/restricted matches before its declared
+              // parent. An extracted parent then stays in backedUpDirs
+              // when tar only reports that audited descendant.
               const tarFailedDirs = classifyFailedDirsFromTarStderr(
                 result.stderr?.toString() || "",
-                existingDirs,
+                [...new Set([...existingDirs, ...failedDirs])],
               );
               if (tarFailedDirs.size === 0) {
                 _log(
