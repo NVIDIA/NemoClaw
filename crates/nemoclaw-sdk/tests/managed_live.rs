@@ -3,7 +3,7 @@
 use nemoclaw_sdk::{docker::Engine, managed::Spec};
 
 #[tokio::test]
-#[ignore = "requires explicit NEMOCLAW_TEST_RUNTIME_STATE; reads existing owned runtimes only"]
+#[ignore = "requires explicit NEMOCLAW_TEST_RUNTIME_STATE and NEMOCLAW_TEST_RUNTIME_ENGINE; reads existing owned runtimes only"]
 async fn existing_spark_runtime_bindings_are_observed_without_mutations() {
     let path = std::path::PathBuf::from(
         std::env::var_os("NEMOCLAW_TEST_RUNTIME_STATE").expect("explicit state file"),
@@ -24,33 +24,8 @@ async fn existing_spark_runtime_bindings_are_observed_without_mutations() {
         let attributes = &instances[0]["attributes"];
         let id = attributes["id"].as_str().unwrap();
         if resource["type"] == "docker_container" {
-            let gateway = resource["name"] == "managed_gateway_runtime";
-            let storage = state["resources"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .find(|resource| {
-                    resource["type"]
-                        == if gateway {
-                            "nemoclaw_gateway_storage"
-                        } else {
-                            "nemoclaw_inference_storage"
-                        }
-                })
-                .unwrap();
-            let encoded = storage["instances"][0]["attributes"]["spec"]
-                .as_str()
-                .unwrap();
-            let endpoint = if gateway {
-                serde_json::from_str::<Spec>(encoded)
-                    .unwrap()
-                    .gateway
-                    .engine
-            } else {
-                serde_json::from_str::<nemoclaw_sdk::managed::Storage>(encoded)
-                    .unwrap()
-                    .engine
-            };
+            let endpoint = std::env::var("NEMOCLAW_TEST_RUNTIME_ENGINE")
+                .expect("explicit Docker engine for native provider bindings");
             let engine = Engine::connect(&endpoint).unwrap();
             let actual = engine
                 .container(id)
@@ -87,7 +62,7 @@ async fn existing_spark_runtime_bindings_are_observed_without_mutations() {
 
 #[tokio::test]
 #[ignore = "requires explicit NEMOCLAW_TEST_RUNTIME_STATE; reads retained owned storage only"]
-async fn retained_inference_volume_preserves_its_reference_binding() {
+async fn retained_inference_credentials_preserve_their_reference_binding() {
     let path = std::path::PathBuf::from(
         std::env::var_os("NEMOCLAW_TEST_RUNTIME_STATE").expect("explicit state file"),
     );

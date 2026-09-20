@@ -318,7 +318,7 @@ async fn managed_gateway_plan_apply_noop_destroy_and_recovery_use_real_opentofu(
 }
 
 #[test]
-fn ollama_runtime_plan_recreates_compute_but_never_recreates_bound_storage() {
+fn ollama_runtime_plan_allows_native_compute_and_cache_recovery() {
     let document =
         Document::parse(include_str!("../../tests/fixtures/config/managed-ollama.yaml").as_bytes())
             .unwrap();
@@ -336,13 +336,13 @@ fn ollama_runtime_plan_recreates_compute_but_never_recreates_bound_storage() {
     let plan: Plan = serde_json::from_value(json!({"resource_changes":changes})).unwrap();
     assert!(check_plan(&plan, &expected, &bindings).is_ok());
     bindings.insert(
-        "nemoclaw_ollama_service_storage.ollama-server".into(),
+        "docker_volume.ollama_service_storage_ollama-server".into(),
         StateBinding {
             id: "engine/volume/created".into(),
-            spec: expected["nemoclaw_ollama_service_storage.ollama-server"]["spec"].clone(),
+            spec: String::new(),
         },
     );
-    assert!(check_plan(&plan, &expected, &bindings).is_err());
+    assert!(check_plan(&plan, &expected, &bindings).is_ok());
     assert!(check_plan(&plan, &expected, &BTreeMap::new()).is_ok());
 }
 

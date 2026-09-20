@@ -537,8 +537,8 @@ impl Installer for ManagedOllama {
         _generations: &Generations,
     ) -> Result<RemovePlan, Error> {
         Ok(RemovePlan {
-            retained: vec![address(STORAGE_KIND, name)],
-            required_storage: vec![(address(SERVICE_KIND, name), address(STORAGE_KIND, name))],
+            retained: vec![crate::docker_compute::address(&address(STORAGE_KIND, name))],
+            required_storage: Vec::new(),
         })
     }
 }

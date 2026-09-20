@@ -267,14 +267,19 @@ fn teardown_graph(
     // Teardown must remain available when gateway capabilities or host capacity change.
     graph.as_object_mut().unwrap().remove("data");
     graph["provider"]["nemoclaw"]["destroy"] = json!(true);
+    let compiled_resources = graph["resource"].take();
     graph["resource"] = json!({});
     for address in retained {
         if bindings.contains_key(address) {
             let (kind, name) = address
                 .split_once('.')
                 .ok_or(Error::State("invalid resource address"))?;
-            let retained_values = serde_json::to_value(&expected[address])
-                .map_err(|_| Error::State("cannot encode retained resource"))?;
+            let retained_values = if address.starts_with("docker_volume.") {
+                compiled_resources[kind][name].clone()
+            } else {
+                serde_json::to_value(&expected[address])
+                    .map_err(|_| Error::State("cannot encode retained resource"))?
+            };
             let mut attrs = retained_values;
             attrs["lifecycle"] = json!({"prevent_destroy":true});
             graph["resource"][kind][name] = attrs;
@@ -344,6 +349,9 @@ mod tests {
         let document =
             Document::parse(include_str!("../../../tests/fixtures/config/spark.yaml").as_bytes())
                 .unwrap();
+        let mut value = serde_json::to_value(document).unwrap();
+        value["spec"]["services"]["qwen"]["authentication"] = json!("bearer");
+        let document = Document::parse(value.to_string().as_bytes()).unwrap();
         let record = Record::new(document).unwrap();
         let bindings = compile::runtime_targets(&record.document, &record.generations)
             .unwrap()
@@ -438,7 +446,7 @@ mod tests {
                 .collect();
         let expected = teardown_expected(&record, &bindings, true).unwrap();
         let retained = retained_addresses(&record, &bindings, true).unwrap();
-        assert_eq!(retained.len(), 3);
+        assert_eq!(retained.len(), 5);
         let storage_kind = service_storage(&record)
             .split_once('.')
             .unwrap()
@@ -456,7 +464,10 @@ mod tests {
             2
         );
         assert!(graph["resource"].get(&process_kind).is_none());
-        for address in retained {
+        for address in retained
+            .into_iter()
+            .filter(|address| !address.starts_with("docker_volume."))
+        {
             let mut missing = bindings.clone();
             missing.remove(&address);
             assert!(
@@ -499,7 +510,7 @@ mod tests {
             teardown_graph(&record, "0.1.0", &expected, &bindings, &retained, true).unwrap();
         assert!(graph.get("data").is_none());
         assert_eq!(graph["provider"]["nemoclaw"]["destroy"], true);
-        assert_eq!(graph["resource"].as_object().unwrap().len(), 2);
+        assert_eq!(graph["resource"].as_object().unwrap().len(), 3);
         for address in [GATEWAY_STORAGE, retained_storage.as_str()] {
             let (kind, name) = address.split_once('.').unwrap();
             assert_eq!(

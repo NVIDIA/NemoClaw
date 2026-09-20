@@ -16,6 +16,13 @@ fn process(target: &Target) -> bool {
         )
 }
 pub(crate) fn address(logical: &str) -> String {
+    for kind in ["inference_storage", "ollama_service_storage"] {
+        if let Some(name) = logical.strip_prefix(&format!("nemoclaw_{kind}."))
+            && !name.ends_with("_auth")
+        {
+            return format!("docker_volume.{kind}_{name}");
+        }
+    }
     for kind in [
         "inference_service",
         "ollama_service",
@@ -29,9 +36,14 @@ pub(crate) fn address(logical: &str) -> String {
     logical.into()
 }
 pub(crate) fn is_disposable(address: &str) -> bool {
-    ["docker_container.", "docker_image.", "docker_network."]
-        .iter()
-        .any(|prefix| address.starts_with(prefix))
+    [
+        "docker_container.",
+        "docker_image.",
+        "docker_network.",
+        "docker_volume.",
+    ]
+    .iter()
+    .any(|prefix| address.starts_with(prefix))
 }
 fn digest(engine: &str, name: &str) -> String {
     Sha256::digest(format!("{engine}\0{name}").as_bytes())[..16]
@@ -118,6 +130,19 @@ fn network(target: &Target) -> Result<Option<Target>, Error> {
 }
 pub(crate) fn targets(raw: &[Target]) -> Result<Vec<Target>, Error> {
     let mut result = raw.to_vec();
+    for target in &mut result {
+        if address(&target.address).starts_with("docker_volume.") {
+            let storage: crate::managed::Storage = serde_json::from_str(&target.values["spec"])
+                .map_err(|_| Error::State("invalid cache specification"))?;
+            target.address = address(&target.address);
+            target.kind = "docker_volume".into();
+            target.values = Row::from([
+                ("engine".into(), storage.engine),
+                ("name".into(), storage.name),
+                ("owner".into(), storage.owner),
+            ]);
+        }
+    }
     let mut ancillary: BTreeMap<String, Target> = BTreeMap::new();
     let mut platforms = BTreeMap::new();
     for target in result.iter_mut().filter(|target| process(target)) {
@@ -213,13 +238,16 @@ pub(crate) fn configure(graph: &mut Value, raw: &[Target]) -> Result<(), Error> 
     for target in targets(raw)?.iter().filter(|target| {
         matches!(
             target.kind.as_str(),
-            "docker_network" | "docker_image" | "docker_image_data"
+            "docker_network" | "docker_image" | "docker_image_data" | "docker_volume"
         )
     }) {
         let engine = &target.values["engine"];
         let alias = format!("engine_{}", digest(engine, ""));
         providers.insert(alias.clone(), engine.clone());
         let mut attrs = match target.kind.as_str() {
+            "docker_volume" => {
+                json!({"name":target.values["name"],"driver":"local","labels":[{"label":crate::managed::OWNER_LABEL,"value":target.values["owner"]}],"lifecycle":{"prevent_destroy":true}})
+            }
             "docker_network" => {
                 json!({"name":target.values["name"],"labels":[{"label":crate::managed::OWNER_LABEL,"value":target.values["owner"]}],"driver":"bridge","ipam_config":[{"subnet":target.values["cidr"],"gateway":crate::config::bridge_address(&target.values["cidr"])?}]})
             }
@@ -242,6 +270,20 @@ pub(crate) fn configure(graph: &mut Value, raw: &[Target]) -> Result<(), Error> 
             .split_once('.')
             .ok_or(Error::State("invalid Docker resource address"))?;
         graph[section][kind][name] = attrs;
+    }
+    for target in raw
+        .iter()
+        .filter(|target| address(&target.address).starts_with("docker_volume."))
+    {
+        let (kind, name) = target.address.split_once('.').unwrap();
+        graph["resource"][kind]
+            .as_object_mut()
+            .unwrap()
+            .remove(name);
+        if graph["resource"][kind].as_object().unwrap().is_empty() {
+            graph["resource"].as_object_mut().unwrap().remove(kind);
+        }
+        rewrite(graph, &target.address, &address(&target.address));
     }
     for target in raw.iter().filter(|target| process(target)) {
         let (kind, name) = target
@@ -269,6 +311,16 @@ pub(crate) fn configure(graph: &mut Value, raw: &[Target]) -> Result<(), Error> 
                 }
             }
             storage_path(&mut attrs);
+        }
+        if matches!(target.kind.as_str(), "inference_service" | "ollama_service") {
+            let cache_kind = if target.kind == "inference_service" {
+                "inference_storage"
+            } else {
+                "ollama_service_storage"
+            };
+            let name = target.address.split_once('.').unwrap().1;
+            attrs["mounts"][0]["source"] =
+                json!(format!("${{docker_volume.{cache_kind}_{name}.name}}"));
         }
         let image = image(target)?;
         if target.kind == crate::managed::GATEWAY_KIND {
@@ -329,6 +381,29 @@ mod tests {
         compile::{Generations, runtime_graph},
         config::Document,
     };
+    #[test]
+    fn model_caches_use_native_volume_recovery_with_explicit_retention() {
+        let document =
+            Document::parse(include_bytes!("../tests/fixtures/config/spark.yaml").as_slice())
+                .unwrap();
+        let generations = crate::state::Record::new(document.clone())
+            .unwrap()
+            .generations;
+        let graph = crate::compile::compile_runtime(&document, &generations, "0.1.0").unwrap();
+        let cache = &graph["resource"]["docker_volume"]["inference_storage_inference_qwen"];
+        assert!(cache["name"].as_str().unwrap().ends_with("-data"));
+        assert_eq!(cache["lifecycle"]["prevent_destroy"], true);
+        assert!(graph["resource"]["nemoclaw_inference_storage"].is_null());
+        let mounts =
+            &graph["resource"]["docker_container"]["inference_service_inference_qwen"]["mounts"];
+        assert_eq!(
+            mounts[0]["source"],
+            "${docker_volume.inference_storage_inference_qwen.name}"
+        );
+        assert!(is_disposable(
+            "docker_volume.inference_storage_inference_qwen"
+        ));
+    }
     #[test]
     fn authenticated_service_separates_cache_and_credential_mounts() {
         let mut value: Value =
@@ -473,7 +548,7 @@ mod tests {
         );
         assert!(container.get("lifecycle").is_none());
         assert_eq!(
-            graph["resource"]["nemoclaw_inference_storage"]["inference_qwen"]["lifecycle"]["prevent_destroy"],
+            graph["resource"]["docker_volume"]["inference_storage_inference_qwen"]["lifecycle"]["prevent_destroy"],
             true
         );
         let compiled = targets(&raw).unwrap();

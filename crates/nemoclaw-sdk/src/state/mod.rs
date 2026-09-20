@@ -52,7 +52,7 @@ impl Record {
             );
         }
         Ok(Self {
-            version: 6,
+            version: 7,
             digest: document.digest(),
             document,
             generations,
@@ -60,9 +60,9 @@ impl Record {
         })
     }
     fn validate(&self) -> Result<(), Error> {
-        if self.version != 6 {
+        if self.version != 7 {
             return Err(Error::State(
-                "deployment predates independent credential storage; retain state and use the original NemoClaw version for recovery or teardown",
+                "deployment predates Docker-provider model cache ownership; retain state and use the original NemoClaw version for recovery or teardown",
             ));
         }
         let service_generations_valid = crate::services::generation_kinds(&self.document)

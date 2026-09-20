@@ -115,10 +115,9 @@ fn runtime_bindings(
     bindings: &BTreeMap<String, StateBinding>,
 ) -> Result<BTreeMap<String, Row>, Error> {
     let mut expected = allowed(targets);
-    if bindings
-        .keys()
-        .any(|key| !expected.contains_key(key) && !plan::disposable(key))
-    {
+    if bindings.keys().any(|key| {
+        !expected.contains_key(key) && (!plan::disposable(key) || key.starts_with("docker_volume."))
+    }) {
         return Err(Error::Conflict(
             "ordinary apply cannot remove a managed runtime",
         ));

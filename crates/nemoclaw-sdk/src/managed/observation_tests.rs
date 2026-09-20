@@ -192,8 +192,8 @@ async fn managed_installers_accept_current_runtime_readiness_without_collecting_
                 &crate::docker_compute::address(&target.address),
             )
             .unwrap()
-            .is_some(),
-            "provider compute must retain its independent storage dependency"
+            .is_none(),
+            "unauthenticated compute must not require immutable cache identity"
         );
         let cancel = crate::CancellationToken::new();
         crate::services::check_running(

@@ -351,13 +351,14 @@ impl Installer for Service {
         name: &str,
         _generations: &Generations,
     ) -> Result<RemovePlan, Error> {
-        let mut retained = vec![address(STORAGE_KIND, name)];
+        let mut retained = vec![crate::docker_compute::address(&address(STORAGE_KIND, name))];
         if self.authentication.is_some() {
             retained.insert(0, address(STORAGE_KIND, &format!("{name}_auth")));
         }
         Ok(RemovePlan {
             required_storage: retained
                 .iter()
+                .filter(|storage| !storage.starts_with("docker_volume."))
                 .map(|storage| (address(SERVICE_KIND, name), storage.clone()))
                 .collect(),
             retained,

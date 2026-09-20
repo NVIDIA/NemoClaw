@@ -270,7 +270,7 @@ async fn lifecycle(harness: &str, authenticated: bool, kind: &str, partial_destr
         assert_eq!(read(root, "engine.json"), before);
         save(root, "config.yaml", &original);
     }
-    // A missing process is disposable; its data and credentials are not.
+    // Process recovery preserves both cache and credentials.
     let before_loss = read(root, "engine.json");
     let mut missing = before_loss.clone();
     missing["container"] = Value::Null;
@@ -283,7 +283,22 @@ async fn lifecycle(harness: &str, authenticated: bool, kind: &str, partial_destr
         recreated["creates"].as_u64().unwrap(),
         before_loss["creates"].as_u64().unwrap() + 1
     );
-    let stable = read(root, "engine.json");
+    // Cache loss is recoverable independently of durable credentials.
+    let before_cache_loss = read(root, "engine.json");
+    let mut missing = before_cache_loss.clone();
+    missing["container"] = Value::Null;
+    missing["volume"] = Value::Null;
+    save(root, "engine.json", &missing);
+    run(root, &bundle, "apply", "config.yaml", true).await;
+    let rebuilt = read(root, "engine.json");
+    assert!(rebuilt["volume"].is_object());
+    assert_eq!(rebuilt["auth_volume"], before_cache_loss["auth_volume"]);
+    assert_eq!(
+        rebuilt["creates"].as_u64().unwrap(),
+        before_cache_loss["creates"].as_u64().unwrap() + 1
+    );
+    let volume = rebuilt["volume"].clone();
+    let stable = rebuilt;
     run(root, &bundle, "apply", "config.yaml", true).await;
     let exported = run(root, &bundle, "export", "", true).await;
     assert!(!String::from_utf8_lossy(&exported).contains(&bearer));
@@ -326,10 +341,11 @@ async fn lifecycle(harness: &str, authenticated: bool, kind: &str, partial_destr
         );
         save(root, "config.yaml", &original);
     }
-    for control in [
-        json!({"transport_failure":true}),
-        json!({"daemon":"other-engine"}),
-    ] {
+    let mut failures = vec![json!({"transport_failure":true})];
+    if authenticated {
+        failures.push(json!({"daemon":"other-engine"}));
+    }
+    for control in failures {
         save(root, "control.json", &control);
         run(root, &bundle, "plan", "config.yaml", false).await;
         assert_eq!(
@@ -340,9 +356,9 @@ async fn lifecycle(harness: &str, authenticated: bool, kind: &str, partial_destr
     }
     save(root, "control.json", &json!({}));
     for storage in if authenticated {
-        vec!["volume", "auth_volume"]
+        vec!["auth_volume"]
     } else {
-        vec!["volume"]
+        vec![]
     } {
         for fault in ["missing", "foreign", "substituted"] {
             let mut damaged = stable.clone();

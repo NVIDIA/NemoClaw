@@ -190,7 +190,7 @@ fn multiple_selected_ollama_installers_have_independent_resources_and_dependenci
             graph["resource"]["docker_container"][format!("ollama_service_{service}")]["depends_on"]
                 .as_array()
                 .unwrap()
-                .contains(&json!(format!("nemoclaw_ollama_service_storage.{service}")))
+                .contains(&json!(format!("docker_volume.ollama_service_storage_{service}")))
         );
     }
 }

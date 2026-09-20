@@ -57,13 +57,12 @@ fn managed_graph_separates_retained_storage_from_replaceable_processes() {
     let targets = runtime_targets(&document, &generations).unwrap();
     assert_eq!(targets.len(), 6);
     assert_eq!(graph["resource"].as_object().unwrap().len(), 4);
-    for kind in ["gateway_storage", "inference_storage"] {
+    for (kind, name) in [
+        ("nemoclaw_gateway_storage", "runtime"),
+        ("docker_volume", "inference_storage_inference_qwen"),
+    ] {
         assert_eq!(
-            graph["resource"][format!("nemoclaw_{kind}")][if kind == "gateway_storage" {
-                "runtime"
-            } else {
-                "inference_qwen"
-            }]["lifecycle"]["prevent_destroy"],
+            graph["resource"][kind][name]["lifecycle"]["prevent_destroy"],
             true
         );
     }
@@ -75,7 +74,7 @@ fn managed_graph_separates_retained_storage_from_replaceable_processes() {
         graph["resource"]["docker_container"]["inference_service_inference_qwen"]["depends_on"],
         json!([
             "docker_container.managed_gateway_runtime",
-            "nemoclaw_inference_storage.inference_qwen"
+            "docker_volume.inference_storage_inference_qwen"
         ])
     );
     for target in targets
@@ -128,7 +127,7 @@ fn remote_service_is_independent_of_the_external_sandbox_gateway() {
     assert_eq!(
         graph["resource"]["docker_container"]["inference_service_inference_qwen"]["depends_on"],
         json!([
-            "nemoclaw_inference_storage.inference_qwen",
+            "docker_volume.inference_storage_inference_qwen",
             format!(
                 "docker_network.{}",
                 graph["resource"]["docker_network"]

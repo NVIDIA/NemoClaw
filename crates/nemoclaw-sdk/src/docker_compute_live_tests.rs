@@ -175,14 +175,13 @@ fn fixture(
     process.shared_memory_bytes = 64 << 20;
     process.bind_address = "127.0.0.1".into();
     process.port = free_port();
-    let storage_target = targets
-        .iter()
-        .find(|target| crate::services::resource_behavior(&target.kind).retained_storage)
-        .unwrap();
-    let mut storage: Storage = serde_json::from_str(&storage_target.values["spec"]).unwrap();
-    storage.engine = ENGINE.into();
-    let (kind, name) = storage_target.address.split_once('.').unwrap();
-    graph["resource"][kind][name]["spec"] = json!(storage.json().unwrap());
+    let port = process.port;
+    let storage = Storage {
+        name: spec.volume(),
+        owner: spec.owner.clone(),
+        generation: spec.generation.clone(),
+        engine: ENGINE.into(),
+    };
     for provider in graph["provider"]["docker"].as_array_mut().unwrap() {
         provider["host"] = json!(ENGINE);
     }
@@ -197,7 +196,7 @@ fn fixture(
     container["shm_size"] = json!(64);
     container["destroy_grace_seconds"] = json!(1);
     container["ports"][0]["ip"] = json!("127.0.0.1");
-    container["ports"][0]["external"] = json!(process.port);
+    container["ports"][0]["external"] = json!(port);
     (graph, spec, storage, address)
 }
 
@@ -269,7 +268,12 @@ async fn cpu_runtime_provider_reconciles_compute_and_retains_data() {
             !original_id.contains('/'),
             "Docker provider uses raw container IDs"
         );
-        let storage_id = storage.observe(&engine, "").await.unwrap().unwrap();
+        let storage_id = engine
+            .volume(&storage.name)
+            .await
+            .unwrap()
+            .unwrap()
+            .created_at;
         let observed = engine
             .observe_service(&spec, &original_id)
             .await
@@ -300,11 +304,12 @@ async fn cpu_runtime_provider_reconciles_compute_and_retains_data() {
         wait_ready(&engine, &observed).await;
         sentinel(&spec.name, false);
         assert_eq!(
-            storage
-                .observe(&engine, &storage_id)
+            engine
+                .volume(&storage.name)
                 .await
                 .unwrap()
-                .unwrap(),
+                .unwrap()
+                .created_at,
             storage_id
         );
         assert_noop(&bundle, root);
@@ -320,11 +325,12 @@ async fn cpu_runtime_provider_reconciles_compute_and_retains_data() {
         assert_ne!(changed_id, restarted_id);
         sentinel(&spec.name, false);
         assert_eq!(
-            storage
-                .observe(&engine, &storage_id)
+            engine
+                .volume(&storage.name)
                 .await
                 .unwrap()
-                .unwrap(),
+                .unwrap()
+                .created_at,
             storage_id
         );
         let network_before: Value =
@@ -339,11 +345,12 @@ async fn cpu_runtime_provider_reconciles_compute_and_retains_data() {
         assert_ne!(network_before[0]["Id"], network_after[0]["Id"]);
         sentinel(&spec.name, false);
         assert_eq!(
-            storage
-                .observe(&engine, &storage_id)
+            engine
+                .volume(&storage.name)
                 .await
                 .unwrap()
-                .unwrap(),
+                .unwrap()
+                .created_at,
             storage_id
         );
         assert_noop(&bundle, root);
@@ -358,11 +365,12 @@ async fn cpu_runtime_provider_reconciles_compute_and_retains_data() {
         assert!(engine.container(&spec.name).await.unwrap().is_none());
         assert!(engine.network(&spec.network()).await.unwrap().is_none());
         assert_eq!(
-            storage
-                .observe(&engine, &storage_id)
+            engine
+                .volume(&storage.name)
                 .await
                 .unwrap()
-                .unwrap(),
+                .unwrap()
+                .created_at,
             storage_id
         );
         docker(&["image", "inspect", &image]);
