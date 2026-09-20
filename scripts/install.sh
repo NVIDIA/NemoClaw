@@ -1082,7 +1082,7 @@ usage() {
   printf "    curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash -s -- [options]\n\n"
   printf "  ${C_DIM}Options:${C_RESET}\n"
   printf "    --non-interactive    Skip prompts (uses env vars / defaults)\n"
-  printf "    --express-install    Run DGX Station Express without prompts (requires third-party software acceptance)\n"
+  printf "    --express-install    Select Station Express for CI qualification (requires software acceptance)\n"
   printf "    --yes-i-accept-third-party-software Accept the third-party software notice without prompting\n"
   printf "    --defer-onboarding   Install Hermes without onboarding when NVIDIA inference credentials are absent\n"
   printf "                          Use only with NEMOCLAW_AGENT=hermes, no registered sandboxes, no local model profile,\n"

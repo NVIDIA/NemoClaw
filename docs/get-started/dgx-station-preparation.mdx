@@ -12,40 +12,6 @@ content:
 
 Complete this preparation before following the Quickstart on a qualifying DGX Station GB300.
 
-## Run Express Without a Selection Prompt
-
-For an automated install, prepare non-interactive sudo access for the account that runs the installer.
-From a local NemoClaw checkout, select Station Express and accept the third-party software notice:
-
-<AgentOnly variant="openclaw">
-
-```bash
-NEMOCLAW_AGENT=openclaw NEMOCLAW_REPO_ROOT="$(pwd)" bash install.sh --express-install --yes-i-accept-third-party-software
-```
-
-</AgentOnly>
-
-<AgentOnly variant="hermes">
-
-```bash
-NEMOCLAW_AGENT=hermes NEMOCLAW_REPO_ROOT="$(pwd)" bash install.sh --express-install --yes-i-accept-third-party-software
-```
-
-</AgentOnly>
-
-<AgentOnly variant="deepagents">
-
-```bash
-NEMOCLAW_AGENT=langchain-deepagents-code NEMOCLAW_REPO_ROOT="$(pwd)" bash install.sh --express-install --yes-i-accept-third-party-software
-```
-
-</AgentOnly>
-
-`--express-install` selects the existing Station Express recipe without its confirmation prompt.
-It retains the default Nemotron 3 Ultra 550B model when no model override is set.
-It requires a qualifying Station and software acceptance.
-It rejects provider and local-model-profile overrides, deferred onboarding, and the interactive `--station-deepseek` and `--force-station-install` options.
-
 ## Qualify Your DGX Station
 
 DGX Station GB300 Express install accepts these host images:
