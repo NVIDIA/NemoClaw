@@ -51,6 +51,7 @@ import {
   BACKUP_FAILURE_ABSENT_AFTER_EXTRACTION,
   BACKUP_FAILURE_PERMISSION_DENIED,
   classifyFailedDirsFromTarStderr,
+  recordFailedBackupDir,
   relativeFailedBackupDir,
 } from "../domain/backup-failure.js";
 import { shellQuote } from "../runner.js";
@@ -1629,8 +1630,7 @@ function recordUnreadableAuditDirs(
   for (const [, absPath] of entries) {
     const relative = relativeFailedBackupDir(absPath, dirPrefix, existingDirs);
     if (!relative) continue;
-    if (!failedDirs.includes(relative)) failedDirs.push(relative);
-    failedDirReasons[relative] ??= BACKUP_FAILURE_PERMISSION_DENIED;
+    recordFailedBackupDir(failedDirs, relative, failedDirReasons, BACKUP_FAILURE_PERMISSION_DENIED);
   }
 }
 
@@ -2085,8 +2085,12 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
                   backedUpDirs.push(d);
                 } else {
                   _log(`Dir ${d} missing from clean tar extraction — marking failed`);
-                  failedDirs.push(d);
-                  failedDirReasons[d] = BACKUP_FAILURE_ABSENT_AFTER_EXTRACTION;
+                  recordFailedBackupDir(
+                    failedDirs,
+                    d,
+                    failedDirReasons,
+                    BACKUP_FAILURE_ABSENT_AFTER_EXTRACTION,
+                  );
                 }
               }
             } else {
@@ -2098,18 +2102,21 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
                 _log(
                   `tar exited ${result.status} without attributable failed dirs — marking all dirs failed`,
                 );
-                failedDirs.push(...existingDirs);
+                for (const d of existingDirs) recordFailedBackupDir(failedDirs, d);
               } else {
                 for (const d of existingDirs) {
                   const tarFailureReason = tarFailedDirs.get(d);
                   if (tarFailureReason !== undefined) {
                     _log(`Dir ${d} had tar read errors (${tarFailureReason}) — marking failed`);
-                    failedDirs.push(d);
-                    failedDirReasons[d] = tarFailureReason;
+                    recordFailedBackupDir(failedDirs, d, failedDirReasons, tarFailureReason);
                   } else if (!extractedDirs.has(d)) {
                     _log(`Dir ${d} missing from partial tar extraction — marking failed`);
-                    failedDirs.push(d);
-                    failedDirReasons[d] = BACKUP_FAILURE_ABSENT_AFTER_EXTRACTION;
+                    recordFailedBackupDir(
+                      failedDirs,
+                      d,
+                      failedDirReasons,
+                      BACKUP_FAILURE_ABSENT_AFTER_EXTRACTION,
+                    );
                   } else {
                     backedUpDirs.push(d);
                   }
@@ -2118,7 +2125,7 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
             }
           } else if (extractResult) {
             _log(`SECURITY: tar extraction blocked: ${extractResult.error}`);
-            failedDirs.push(...existingDirs);
+            for (const d of existingDirs) recordFailedBackupDir(failedDirs, d);
           }
         } else {
           const tarFailedDirs = classifyFailedDirsFromTarStderr(
@@ -2126,9 +2133,7 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
             existingDirs,
           );
           for (const name of existingDirs) {
-            failedDirs.push(name);
-            const reason = tarFailedDirs.get(name);
-            if (reason !== undefined) failedDirReasons[name] = reason;
+            recordFailedBackupDir(failedDirs, name, failedDirReasons, tarFailedDirs.get(name));
           }
         }
       }
