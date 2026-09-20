@@ -3,11 +3,24 @@
 
 import { describe, expect, it } from "vitest";
 
-import { parseManagedImageDirectE2eInputs } from "../../../scripts/checks/run-managed-image-direct-e2e";
+import {
+  managedImageDirectNativeStartupCommand,
+  parseManagedImageDirectE2eInputs,
+} from "../../../scripts/checks/run-managed-image-direct-e2e";
+import { MANAGED_STARTUP_EXECUTABLE } from "../../../src/lib/onboard/managed-startup/hold";
 
 const IMMUTABLE_IMAGE_ID = `sha256:${"a".repeat(64)}`;
 
 describe("managed-image direct E2E inputs", () => {
+  it("runs the native marker through the image-declared entrypoint", () => {
+    expect(managedImageDirectNativeStartupCommand()).toEqual([
+      MANAGED_STARTUP_EXECUTABLE,
+      "/bin/sh",
+      "-c",
+      expect.stringContaining("nemoclaw-native-startup-uid"),
+    ]);
+  });
+
   it.each(["linux/amd64", "linux/arm64"] as const)(
     "accepts the native publication platform %s (#7744)",
     (platform) => {

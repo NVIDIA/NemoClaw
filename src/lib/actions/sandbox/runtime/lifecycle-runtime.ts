@@ -83,6 +83,7 @@ export function resolveSandboxLifecycleProvider(
 
 export interface RegisteredStandardLifecycleDeps extends StandardSandboxLifecycleDeps {
   readonly environment?: NodeJS.ProcessEnv;
+  readonly gatewayName?: string;
   readonly log?: (message: string) => void;
   readonly readRegistry?: (sandboxName: string) => SandboxEntry | null;
   readonly runtimeProviders?: RuntimeProviderBundleRegistry;
@@ -106,6 +107,7 @@ export async function mutateRegisteredStandardSandboxLifecycle(
     action,
     {
       environment: deps.environment ?? process.env,
+      ...(deps.gatewayName ? { gatewayName: deps.gatewayName } : {}),
       log: deps.log ?? console.error,
       readRegistry: deps.readRegistry,
       sandbox: resolved.sandbox,

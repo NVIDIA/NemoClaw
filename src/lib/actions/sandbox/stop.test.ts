@@ -295,6 +295,21 @@ describe("discoverActiveOllamaSandboxNames", () => {
 });
 
 describe("stopSandbox", () => {
+  it("derives the canonical gateway name from a persisted non-default port", async () => {
+    const h = harness();
+    h.getSandbox.mockReturnValue(
+      sandbox({ gatewayName: undefined, gatewayPort: 18080, openshellDriver: "docker" }),
+    );
+
+    await expect(stopSandbox("my-sandbox", h.deps)).resolves.toEqual({ exitCode: 0 });
+
+    expect(h.stopOpenShellSandbox).toHaveBeenCalledWith(
+      expect.objectContaining({
+        target: { kind: "named", gatewayName: "nemoclaw-18080" },
+      }),
+    );
+  });
+
   beforeEach(() => {
     vi.spyOn(ollamaProxy, "loadPersistedOllamaHost").mockReturnValue(null);
   });

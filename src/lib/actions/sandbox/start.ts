@@ -216,6 +216,7 @@ async function startSandboxWithinLifecycleFence(
   const input = {
     readRegistry: deps.getSandbox ?? registry.getSandbox,
     environment: deps.environment ?? process.env,
+    gatewayName: getPersistedSandboxTargetGatewayName(resolved.sandbox),
     log,
     sandbox: resolved.sandbox,
     sandboxName,

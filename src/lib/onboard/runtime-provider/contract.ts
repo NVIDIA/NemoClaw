@@ -346,6 +346,8 @@ export interface RuntimeProviderLifecycleInput {
   /** Required by portable lifecycle operations to recheck authority after awaiting observations. */
   readonly readRegistry?: (sandboxName: string) => SandboxEntry | null;
   readonly environment: NodeJS.ProcessEnv;
+  /** Canonical gateway name resolved by the action that owns the persisted row. */
+  readonly gatewayName?: string;
   readonly log: (message: string) => void;
   readonly sandbox: SandboxEntry;
   readonly sandboxName: string;

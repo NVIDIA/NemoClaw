@@ -156,6 +156,21 @@ describe("startSandbox native lifecycle", () => {
     },
   );
 
+  it("derives the canonical gateway name from a persisted non-default port", async () => {
+    const h = harness();
+    h.getSandbox.mockReturnValue(
+      sandbox({ gatewayName: undefined, gatewayPort: 18080, openshellDriver: "docker" }),
+    );
+
+    await expect(startSandbox("my-sandbox", h.deps)).resolves.toEqual({ exitCode: 0 });
+
+    expect(h.startOpenShellSandbox).toHaveBeenCalledWith(
+      expect.objectContaining({
+        target: { kind: "named", gatewayName: "nemoclaw-18080" },
+      }),
+    );
+  });
+
   it("waits for OpenShell readiness before observing native gateway health", async () => {
     const h = harness();
     h.getSandbox.mockReturnValue(

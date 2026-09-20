@@ -308,6 +308,7 @@ async function stopSandboxWithinLifecycleFence(
   const input = {
     readRegistry: deps.getSandbox ?? registry.getSandbox,
     environment: deps.environment ?? process.env,
+    gatewayName: resolvePersistedSandboxOwnershipGateway(resolved.sandbox),
     log,
     sandbox: resolved.sandbox,
     sandboxName,

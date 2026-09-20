@@ -35,7 +35,7 @@ export async function mutateStandardSandboxLifecycle(
     sandboxIdentityFingerprint,
     target: {
       kind: "named" as const,
-      gatewayName: input.sandbox.gatewayName ?? "nemoclaw",
+      gatewayName: input.gatewayName ?? input.sandbox.gatewayName ?? "nemoclaw",
     },
   };
   const result =

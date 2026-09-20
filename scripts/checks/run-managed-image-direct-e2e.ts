@@ -13,7 +13,10 @@ import {
   type ShippedManagedImageAgent,
 } from "../../src/lib/onboard/managed-image/contract.ts";
 import { encodeManagedStartupProfile } from "../../src/lib/onboard/managed-startup/profile.ts";
-import { MANAGED_STARTUP_HOLD_EXECUTABLE } from "../../src/lib/onboard/managed-startup/hold.ts";
+import {
+  MANAGED_STARTUP_EXECUTABLE,
+  MANAGED_STARTUP_HOLD_EXECUTABLE,
+} from "../../src/lib/onboard/managed-startup/hold.ts";
 import { MANAGED_STARTUP_RUNTIME_EXECUTABLE } from "../../src/lib/onboard/managed-startup/image-runtime.ts";
 import {
   createManagedStartupRootApplyRequest,
@@ -109,6 +112,16 @@ function managedConfig(agent: ShippedManagedImageAgent): string {
   }
 }
 
+/** Exercise the image-declared entrypoint before publishing the native marker. */
+export function managedImageDirectNativeStartupCommand(): readonly string[] {
+  return [
+    MANAGED_STARTUP_EXECUTABLE,
+    "/bin/sh",
+    "-c",
+    "id -u > /tmp/nemoclaw-native-startup-uid; exec /usr/bin/tail -f /dev/null",
+  ];
+}
+
 function waitForNativeStartup(containerId: string): void {
   for (let attempt = 0; attempt < 60; attempt += 1) {
     const probe = docker(
@@ -164,9 +177,7 @@ export function runManagedImageDirectE2e(input: ManagedImageDirectE2eInputs): vo
       "--bootstrap-identity",
       bootstrapIdentity,
       "--",
-      "/bin/sh",
-      "-c",
-      "id -u > /tmp/nemoclaw-native-startup-uid; exec /usr/bin/tail -f /dev/null",
+      ...managedImageDirectNativeStartupCommand(),
     ]).stdout.trim();
     if (!CONTAINER_ID_RE.test(containerId)) {
       throw new Error("docker run did not return one exact container identity");

@@ -1314,7 +1314,7 @@ If the host rebooted or the OpenShell gateway is down, first run:
 $$nemoclaw <name> status
 ```
 
-The status command selects or starts the sandbox's recorded OpenShell gateway when possible, then checks whether OpenShell can still see the sandbox. If the sandbox container is present but stopped on a Docker-driver host without a matching intentional-stop record, status can recover the labeled container and then re-query OpenShell. If you stopped the sandbox intentionally, run `$$nemoclaw <name> start`. After the sandbox is visible again, use `$$nemoclaw <name> recover` only for the in-sandbox OpenClaw gateway and host forwards. Use `$$nemoclaw <name> gateway restart` when you intentionally need the in-sandbox gateway to reload supported runtime configuration.
+The status command selects or starts the sandbox's recorded OpenShell gateway when possible, then checks whether OpenShell can still see the sandbox. If OpenShell reports the registered sandbox missing, status leaves any provider container untouched and reports the missing state. If you stopped the sandbox intentionally, run `$$nemoclaw <name> start`. After the sandbox is visible again, use `$$nemoclaw <name> recover` only for the in-sandbox OpenClaw gateway and host forwards. Use `$$nemoclaw <name> gateway restart` when you intentionally need the in-sandbox gateway to reload supported runtime configuration.
 
 </AgentOnly>
 
@@ -1662,7 +1662,7 @@ Deep Agents Code does not provide the `recover` command. Use `$$nemoclaw <name> 
    $$nemoclaw <name> status
    ```
 
-   On Docker-driver hosts, status also attempts non-destructive recovery when OpenShell reports the sandbox as missing but Docker still has a stopped `openshell.ai/sandbox-name=<name>` container or the latest GPU-backup sibling. A successful recovery prints that the sandbox was recovered from Docker and then shows the refreshed OpenShell state.
+   On Docker-driver hosts, a missing OpenShell sandbox remains a missing result even when Docker still has a labeled container. Status does not start, unpause, rename, or replace that container; use the reported OpenShell recovery guidance.
 
 1. Rebuild only if the sandbox cannot be restarted but OpenShell still reports the live sandbox and its current policy:
 

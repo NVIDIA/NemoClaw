@@ -72,10 +72,6 @@ import {
   OPENSHELL_PROBE_TIMEOUT_MS,
 } from "../../adapters/openshell/runtime";
 import {
-  type DockerDriverRecoveryResult,
-  recoverDockerDriverSandbox,
-} from "../../onboard/docker-driver-sandbox-recovery";
-import {
   assertHermesPortableAgentLifecycleAuthority,
   buildHermesPortableCommandEnvironment,
   buildHermesPortableCommandAuthority,
@@ -675,7 +671,7 @@ export async function getSandboxGatewayStateForStatus(
  * helper self-heals an unscoped lookup by attempting `openshell gateway select
  * nemoclaw` and re-querying. When `pinnedGatewayName` is present, the NotFound
  * already came from the recorded owner, so ambient selection is ignored and
- * only the existing Docker-side recovery path is considered.
+ * the missing result remains authoritative.
  */
 export async function reconcileMissingAgainstNamedGateway(
   sandboxName: string,
@@ -685,8 +681,9 @@ export async function reconcileMissingAgainstNamedGateway(
   const targetGatewayName = pinnedGatewayName ?? getSandboxTargetGatewayName(sandboxName);
   if (pinnedGatewayName) {
     // The owner-scoped RPC reached this exact gateway and reported NotFound.
-    // Ambient selection is irrelevant and must not trigger a sibling retry.
-    return tryRecoverDockerDriverSandbox(sandboxName, missingLookup, pinnedGatewayName);
+    // Ambient selection is irrelevant and must not trigger a sibling retry or
+    // direct container recovery outside OpenShell.
+    return missingLookup;
   }
   const lifecycle = await getNamedGatewayLifecycleState(targetGatewayName);
   if (lifecycle.recoveryBlocked) {
@@ -705,10 +702,7 @@ export async function reconcileMissingAgainstNamedGateway(
     if (retry.state === "missing") {
       const after = await getNamedGatewayLifecycleState(targetGatewayName);
       if (after.state === "healthy_named") {
-        // Even with the right gateway selected, the sandbox is
-        // still missing. Try Docker-side recovery before declaring
-        // the sandbox truly absent.
-        return tryRecoverDockerDriverSandbox(sandboxName, retry);
+        return retry;
       }
       // The select moved the active gateway off, but the target gateway is
       // now missing or unreachable. Surface that post-select state so the
@@ -734,46 +728,9 @@ export async function reconcileMissingAgainstNamedGateway(
     return { state: "gateway_unreachable_after_restart", output: lifecycle.diagnostic };
   }
   if (lifecycle.state === "healthy_named") {
-    // The gateway is healthy and we already see `missing`. This is
-    // the precise post-reboot precondition described in #4423: the
-    // gateway came back fresh (per #4580's user-systemd unit) with
-    // no sandbox memory, but Docker may still have the labeled
-    // container. Attempt active Docker-side recovery before falling
-    // through to non-destructive guidance.
-    return tryRecoverDockerDriverSandbox(sandboxName, missingLookup);
+    return missingLookup;
   }
   return missingLookup;
-}
-
-/**
- * Attempt Docker-driver sandbox recovery (#4423) and re-query the
- * OpenShell gateway. Returns the new lookup with `recoveredSandbox`
- * flags set when recovery succeeded; otherwise returns the original
- * `missing` lookup unchanged so the caller's existing non-destructive
- * guidance fires.
- */
-async function tryRecoverDockerDriverSandbox(
-  sandboxName: string,
-  missingLookup: SandboxGatewayState,
-  gatewayName?: string,
-): Promise<SandboxGatewayState> {
-  let recovery: DockerDriverRecoveryResult;
-  try {
-    recovery = recoverDockerDriverSandbox(sandboxName);
-  } catch {
-    return missingLookup;
-  }
-  if (!recovery.recovered) {
-    return missingLookup;
-  }
-  // Recovery succeeded against Docker; re-query OpenShell so the
-  // returned state reflects what the gateway sees post-restart.
-  const retried = await getSandboxGatewayState(sandboxName, gatewayName);
-  return {
-    ...retried,
-    recoveredSandbox: true,
-    recoverySandboxVia: recovery.via,
-  };
 }
 
 /**
@@ -1060,6 +1017,7 @@ export async function startStoppedSandboxContainerForProbeRecovery(
   console.error(`  Sandbox '${sandboxName}' is stopped — starting it through OpenShell...`);
   const result = await mutateRegisteredStandardSandboxLifecycle("start", sandboxName, sandbox, {
     ...deps,
+    gatewayName: getPersistedSandboxTargetGatewayName(sandbox),
     readRegistry: deps.getSandbox,
   });
   if (result.exitCode === 0) return true;
