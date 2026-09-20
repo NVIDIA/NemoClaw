@@ -186,6 +186,7 @@ export async function applyFixtureProviderPolicyEndpoint(
     readonly protocol: "rest" | "websocket";
     readonly providerName: string;
     readonly redactionValues: readonly string[];
+    readonly restMethods?: readonly ("GET" | "POST")[];
     readonly rewrite: "request-body-credential-rewrite" | "websocket-credential-rewrite";
   },
 ): Promise<void> {
@@ -207,7 +208,10 @@ export async function applyFixtureProviderPolicyEndpoint(
   });
 
   const policyHost = "host.openshell.internal";
-  const methods = options.protocol === "rest" ? ["GET", "POST"] : ["GET", "WEBSOCKET_TEXT"];
+  const methods =
+    options.protocol === "rest"
+      ? (options.restMethods ?? ["GET", "POST"])
+      : ["GET", "WEBSOCKET_TEXT"];
   const args = [
     "policy",
     "update",
