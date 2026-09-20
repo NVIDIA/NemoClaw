@@ -139,7 +139,7 @@ if (cmd.includes("tar ") && cmd.includes("-cf -")) {
   const r = spawnSync("sh", ["-c", real], { stdio: ["ignore", "pipe", "pipe"] });
   if (r.stdout) fs.writeSync(1, r.stdout);
   if (tarStderr) fs.writeSync(2, tarStderr);
-  process.exit(tarStatus ?? r.status || 0);
+  process.exit(tarStatus ?? (r.status || 0));
 }
 process.exit(0);
 `,
