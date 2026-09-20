@@ -96,6 +96,22 @@ describe("snapshot create cleanup after a failed capture", () => {
     expect(errors).toContain("Failed files: openclaw.json");
   }, 15_000);
 
+  it("names an unreadable nested directory in the snapshot create failure (#12069)", async () => {
+    mocks.backupSandboxState.mockReturnValue(
+      failedCaptureWithPublishedSnapshot({
+        backedUpDirs: ["workspace"],
+        failedDirs: ["workspace/restricted"],
+        failedDirReasons: { "workspace/restricted": "permission denied" },
+        failedFiles: [],
+      }),
+    );
+
+    const errors = await createSnapshot();
+
+    expect(errors).toContain("Snapshot failed.");
+    expect(errors).toContain("Failed directories: workspace/restricted (permission denied)");
+  }, 15_000);
+
   it("removes the snapshot so a later restore cannot select an incomplete capture (#8201)", async () => {
     mocks.backupSandboxState.mockReturnValue(failedCaptureWithPublishedSnapshot());
 

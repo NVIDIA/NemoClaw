@@ -51,6 +51,8 @@ import {
   BACKUP_FAILURE_ABSENT_AFTER_EXTRACTION,
   BACKUP_FAILURE_PERMISSION_DENIED,
   classifyFailedDirsFromTarStderr,
+  recordFailedBackupDir,
+  relativeFailedBackupDir,
 } from "../domain/backup-failure.js";
 import { shellQuote } from "../runner.js";
 import { createTempSshConfig } from "../sandbox/temp-ssh-config.js";
@@ -1607,7 +1609,8 @@ function parsePreBackupAuditEntries(output: string): PreBackupAuditEntry[] | nul
 function classifyPreBackupAuditEntry(
   [type, absPath, linkTarget]: PreBackupAuditEntry,
   dirPrefix: string,
-): "whitelisted" | "hardLinked" | "violation" {
+): "whitelisted" | "hardLinked" | "unreadable" | "violation" {
+  if (type === "u") return "unreadable";
   const relPath = absPath.startsWith(dirPrefix) ? absPath.slice(dirPrefix.length) : absPath;
   if (type === "l" && isAllowedStateSymlink(relPath, linkTarget)) return "whitelisted";
   // The audit's `find` only emits regular files through its `-links +1`
@@ -1615,6 +1618,74 @@ function classifyPreBackupAuditEntry(
   // see the rationale at the audit command (#9314).
   if (type === "f") return "hardLinked";
   return "violation";
+}
+
+function recordUnreadableAuditDirs(
+  entries: readonly PreBackupAuditEntry[],
+  dirPrefix: string,
+  existingDirs: readonly string[],
+  failedDirs: string[],
+  failedDirReasons: Record<string, string>,
+): void {
+  for (const [, absPath] of entries) {
+    const relative = relativeFailedBackupDir(absPath, dirPrefix, existingDirs);
+    if (!relative) continue;
+    recordFailedBackupDir(failedDirs, relative, failedDirReasons, BACKUP_FAILURE_PERMISSION_DENIED);
+  }
+}
+
+function collectPreBackupAuditViolations(
+  entries: readonly PreBackupAuditEntry[],
+  dirPrefix: string,
+  existingDirs: readonly string[],
+  failedDirs: string[],
+  failedDirReasons: Record<string, string>,
+): string[] {
+  const whitelisted: string[] = [];
+  const hardLinked: string[] = [];
+  const unreadable: PreBackupAuditEntry[] = [];
+  const violations: string[] = [];
+  const rows = { whitelisted, hardLinked, violation: violations };
+  for (const entry of entries) {
+    const kind = classifyPreBackupAuditEntry(entry, dirPrefix);
+    if (kind === "unreadable") {
+      unreadable.push(entry);
+      continue;
+    }
+    // JSON escapes embedded controls before the entry reaches logs or
+    // the user-facing rejection detail.
+    rows[kind].push(JSON.stringify(entry));
+  }
+  if (unreadable.length > 0) {
+    recordUnreadableAuditDirs(unreadable, dirPrefix, existingDirs, failedDirs, failedDirReasons);
+    _log(
+      `Pre-backup audit found ${unreadable.length} unreadable directories: ${unreadable
+        .slice(0, 5)
+        .map(([, absPath]) => JSON.stringify(absPath))
+        .join("; ")}`,
+    );
+  }
+  if (whitelisted.length > 0) {
+    _log(
+      `Pre-backup audit whitelisted ${whitelisted.length} entries (image npm symlinks): ${whitelisted.slice(0, 5).join("; ")}`,
+    );
+  }
+  if (hardLinked.length > 0) {
+    _log(
+      `Pre-backup audit accepted ${hardLinked.length} multiply-linked regular files (archived as plain files): ${hardLinked.slice(0, 5).join("; ")}`,
+    );
+  }
+  return violations;
+}
+
+/** @visibleForTesting */
+export function buildPreBackupAuditFindCommand(targetDir: string): string {
+  return (
+    `find ${shellQuote(targetDir)} ` +
+    `\\( \\( \\( -type l -o \\( -type f -a -links +1 \\) -o \\( ! -type f -a ! -type d \\) \\) ` +
+    `-printf "%y\\0%p\\0%l\\0" \\) ` +
+    `-o \\( -type d \\( ! -readable -o ! -executable \\) -printf "u\\0%p\\0\\0" \\) \\)`
+  );
 }
 
 export function backupSandboxState(sandboxName: string, options: BackupOptions = {}): BackupResult {
@@ -1859,14 +1930,12 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
         // a few state subdirs as root-owned (e.g. `extensions/<plugin>`,
         // `agents/<id>`) and `find` walking those from the sandbox-user SSH
         // session exits 1 on permission denied. The audit's real signal is
-        // stdout (the printf-emitted symlink/hardlink/special-file rows);
-        // letting one perm-denied subdir abort the whole chain blocks legitimate
-        // rebuilds.
+        // stdout (the printf-emitted symlink/hardlink/special-file rows plus
+        // unreadable directories). Descent errors stay on stderr so one
+        // perm-denied subdir cannot abort the chain; those directories are
+        // recorded as backup failures instead of being dropped silently.
         const auditCmd = existingDirs
-          .map(
-            (d) =>
-              `{ find ${shellQuote(`${dir}/${d}`)} \\( -type l -o \\( -type f -a -links +1 \\) -o \\( ! -type f -a ! -type d \\) \\) -printf "%y\\0%p\\0%l\\0" 2>/dev/null || true; }`,
-          )
+          .map((d) => `{ ${buildPreBackupAuditFindCommand(`${dir}/${d}`)} 2>/dev/null || true; }`)
           .join("; ");
         _log(`Pre-backup audit: checking for symlinks, hard links, and special files`);
         const auditResult = spawnSync("ssh", [...sshArgs(configFile, sandboxName), auditCmd], {
@@ -1904,42 +1973,27 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
             error: "Pre-backup audit rejected malformed output",
           };
         }
-        if (allEntries.length > 0) {
-          const whitelisted: string[] = [];
-          const hardLinked: string[] = [];
-          const violations: string[] = [];
-          const dirPrefix = `${dir}/`;
-          const rows = { whitelisted, hardLinked, violation: violations };
-          for (const entry of allEntries) {
-            // JSON escapes embedded controls before the entry reaches logs or
-            // the user-facing rejection detail.
-            rows[classifyPreBackupAuditEntry(entry, dirPrefix)].push(JSON.stringify(entry));
-          }
-          if (whitelisted.length > 0) {
-            _log(
-              `Pre-backup audit whitelisted ${whitelisted.length} entries (image npm symlinks): ${whitelisted.slice(0, 5).join("; ")}`,
-            );
-          }
-          if (hardLinked.length > 0) {
-            _log(
-              `Pre-backup audit accepted ${hardLinked.length} multiply-linked regular files (archived as plain files): ${hardLinked.slice(0, 5).join("; ")}`,
-            );
-          }
-          if (violations.length > 0) {
-            // Non-whitelisted symlinks / special files — reject
-            _log(
-              `SECURITY: Pre-backup audit found ${violations.length} unsafe entries: ${violations.slice(0, 5).join("; ")}`,
-            );
-            return {
-              success: false,
-              manifest,
-              backedUpDirs,
-              failedDirs: [...existingDirs],
-              backedUpFiles,
-              failedFiles: stateFiles.map((f) => f.path),
-              error: `Pre-backup audit rejected: symlinks or special files found in state dirs: ${violations.slice(0, 3).join("; ")}`,
-            };
-          }
+        const violations = collectPreBackupAuditViolations(
+          allEntries,
+          `${dir}/`,
+          existingDirs,
+          failedDirs,
+          failedDirReasons,
+        );
+        if (violations.length > 0) {
+          // Non-whitelisted symlinks / special files — reject
+          _log(
+            `SECURITY: Pre-backup audit found ${violations.length} unsafe entries: ${violations.slice(0, 5).join("; ")}`,
+          );
+          return {
+            success: false,
+            manifest,
+            backedUpDirs,
+            failedDirs: [...existingDirs],
+            backedUpFiles,
+            failedFiles: stateFiles.map((f) => f.path),
+            error: `Pre-backup audit rejected: symlinks or special files found in state dirs: ${violations.slice(0, 3).join("; ")}`,
+          };
         }
         _log("Pre-backup audit passed — no unsafe symlinks or special files found");
 
@@ -2031,31 +2085,42 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
                   backedUpDirs.push(d);
                 } else {
                   _log(`Dir ${d} missing from clean tar extraction — marking failed`);
-                  failedDirs.push(d);
-                  failedDirReasons[d] = BACKUP_FAILURE_ABSENT_AFTER_EXTRACTION;
+                  recordFailedBackupDir(
+                    failedDirs,
+                    d,
+                    failedDirReasons,
+                    BACKUP_FAILURE_ABSENT_AFTER_EXTRACTION,
+                  );
                 }
               }
             } else {
+              // Include already-recorded audit failures so a nested path
+              // such as workspace/restricted matches before its declared
+              // parent. An extracted parent then stays in backedUpDirs
+              // when tar only reports that audited descendant.
               const tarFailedDirs = classifyFailedDirsFromTarStderr(
                 result.stderr?.toString() || "",
-                existingDirs,
+                [...new Set([...existingDirs, ...failedDirs])],
               );
               if (tarFailedDirs.size === 0) {
                 _log(
                   `tar exited ${result.status} without attributable failed dirs — marking all dirs failed`,
                 );
-                failedDirs.push(...existingDirs);
+                for (const d of existingDirs) recordFailedBackupDir(failedDirs, d);
               } else {
                 for (const d of existingDirs) {
                   const tarFailureReason = tarFailedDirs.get(d);
                   if (tarFailureReason !== undefined) {
                     _log(`Dir ${d} had tar read errors (${tarFailureReason}) — marking failed`);
-                    failedDirs.push(d);
-                    failedDirReasons[d] = tarFailureReason;
+                    recordFailedBackupDir(failedDirs, d, failedDirReasons, tarFailureReason);
                   } else if (!extractedDirs.has(d)) {
                     _log(`Dir ${d} missing from partial tar extraction — marking failed`);
-                    failedDirs.push(d);
-                    failedDirReasons[d] = BACKUP_FAILURE_ABSENT_AFTER_EXTRACTION;
+                    recordFailedBackupDir(
+                      failedDirs,
+                      d,
+                      failedDirReasons,
+                      BACKUP_FAILURE_ABSENT_AFTER_EXTRACTION,
+                    );
                   } else {
                     backedUpDirs.push(d);
                   }
@@ -2064,7 +2129,7 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
             }
           } else if (extractResult) {
             _log(`SECURITY: tar extraction blocked: ${extractResult.error}`);
-            failedDirs.push(...existingDirs);
+            for (const d of existingDirs) recordFailedBackupDir(failedDirs, d);
           }
         } else {
           const tarFailedDirs = classifyFailedDirsFromTarStderr(
@@ -2072,9 +2137,7 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
             existingDirs,
           );
           for (const name of existingDirs) {
-            failedDirs.push(name);
-            const reason = tarFailedDirs.get(name);
-            if (reason !== undefined) failedDirReasons[name] = reason;
+            recordFailedBackupDir(failedDirs, name, failedDirReasons, tarFailedDirs.get(name));
           }
         }
       }
