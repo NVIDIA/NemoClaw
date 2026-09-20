@@ -2954,6 +2954,7 @@ readonly HERMES_GATEWAY_RECOVERY_STATUS=79
 readonly HERMES_SERVICE_RESTART_MAX=5
 readonly HERMES_SERVICE_RESTART_WINDOW_SECONDS=60
 readonly HERMES_GATEWAY_RECOVERY_REQUESTER_EXIT_ATTEMPTS=30
+readonly HERMES_GATEWAY_RECOVERY_REQUEST_WAIT_SECONDS=120
 readonly HERMES_GATEWAY_RECOVERY_TRANSPORT_SETTLE_SECONDS=1
 
 hermes_gateway_recovery_request_value() {
@@ -3082,10 +3083,11 @@ publish_hermes_gateway_recovery_generation() {
 }
 
 wait_for_hermes_gateway_recovery_request() {
-  local current request_generation requester_pid requester_start version
+  local attempt current request_generation requester_pid requester_start version
   publish_hermes_gateway_recovery_generation || return 1
   echo "[gateway] Hermes gateway stopped cleanly; awaiting gated host recovery" >&2
-  while :; do
+  attempt=0
+  while [ "$attempt" -lt "$HERMES_GATEWAY_RECOVERY_REQUEST_WAIT_SECONDS" ]; do
     current="$(hermes_gateway_recovery_request_value)" || return 1
     read -r version request_generation requester_pid requester_start <<<"$current"
     if [ "$version" = v2 ] \
@@ -3103,7 +3105,10 @@ wait_for_hermes_gateway_recovery_request() {
       return 0
     fi
     sleep 1
+    attempt=$((attempt + 1))
   done
+  echo "[CRITICAL] Hermes gateway recovery request timed out after ${HERMES_GATEWAY_RECOVERY_REQUEST_WAIT_SECONDS} seconds; the gateway remains stopped; run 'nemoclaw <name> stop' followed by 'nemoclaw <name> start' to restart the sandbox" >&2
+  return 1
 }
 
 relaunch_hermes_gateway_current_user() {

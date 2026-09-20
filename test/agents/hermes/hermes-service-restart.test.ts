@@ -56,6 +56,7 @@ describe("Hermes native service restart supervision", () => {
     const script = [
       "set -uo pipefail",
       "readonly HERMES_GATEWAY_RECOVERY_REQUESTER_EXIT_ATTEMPTS=30",
+      "readonly HERMES_GATEWAY_RECOVERY_REQUEST_WAIT_SECONDS=120",
       "readonly HERMES_GATEWAY_RECOVERY_TRANSPORT_SETTLE_SECONDS=1",
       'request_identity="v2 $(printf d%.0s {1..64}) 321 654"',
       'publish_hermes_gateway_recovery_generation() { HERMES_GATEWAY_RECOVERY_GENERATION="$(printf a%.0s {1..64})"; }',
@@ -78,6 +79,7 @@ describe("Hermes native service restart supervision", () => {
     const script = [
       "set -uo pipefail",
       "readonly HERMES_GATEWAY_RECOVERY_REQUESTER_EXIT_ATTEMPTS=30",
+      "readonly HERMES_GATEWAY_RECOVERY_REQUEST_WAIT_SECONDS=120",
       "readonly HERMES_GATEWAY_RECOVERY_TRANSPORT_SETTLE_SECONDS=1",
       "sleep_count=0",
       'publish_hermes_gateway_recovery_generation() { HERMES_GATEWAY_RECOVERY_GENERATION="$(printf b%.0s {1..64})"; request_identity="v2 $HERMES_GATEWAY_RECOVERY_GENERATION 321 654"; }',
@@ -101,6 +103,7 @@ describe("Hermes native service restart supervision", () => {
     const script = [
       "set -uo pipefail",
       "readonly HERMES_GATEWAY_RECOVERY_REQUESTER_EXIT_ATTEMPTS=30",
+      "readonly HERMES_GATEWAY_RECOVERY_REQUEST_WAIT_SECONDS=120",
       "readonly HERMES_GATEWAY_RECOVERY_TRANSPORT_SETTLE_SECONDS=1",
       'probe_count_file="$(mktemp)"',
       'printf "%s\\n" 0 >"$probe_count_file"',
@@ -130,6 +133,7 @@ describe("Hermes native service restart supervision", () => {
     const script = [
       "set -uo pipefail",
       "readonly HERMES_GATEWAY_RECOVERY_REQUESTER_EXIT_ATTEMPTS=30",
+      "readonly HERMES_GATEWAY_RECOVERY_REQUEST_WAIT_SECONDS=120",
       "readonly HERMES_GATEWAY_RECOVERY_TRANSPORT_SETTLE_SECONDS=1",
       'publish_hermes_gateway_recovery_generation() { HERMES_GATEWAY_RECOVERY_GENERATION="$(printf c%.0s {1..64})"; request_identity="v2 $HERMES_GATEWAY_RECOVERY_GENERATION 321 654"; }',
       'hermes_gateway_recovery_request_value() { printf "%s\\n" "$request_identity"; }',
@@ -151,6 +155,7 @@ describe("Hermes native service restart supervision", () => {
     const script = [
       "set -uo pipefail",
       "readonly HERMES_GATEWAY_RECOVERY_REQUESTER_EXIT_ATTEMPTS=2",
+      "readonly HERMES_GATEWAY_RECOVERY_REQUEST_WAIT_SECONDS=120",
       "readonly HERMES_GATEWAY_RECOVERY_TRANSPORT_SETTLE_SECONDS=1",
       'publish_hermes_gateway_recovery_generation() { HERMES_GATEWAY_RECOVERY_GENERATION="$(printf c%.0s {1..64})"; request_identity="v2 $HERMES_GATEWAY_RECOVERY_GENERATION 321 654"; }',
       'hermes_gateway_recovery_request_value() { printf "%s\\n" "$request_identity"; }',
@@ -172,6 +177,7 @@ describe("Hermes native service restart supervision", () => {
     const script = [
       "set -uo pipefail",
       "readonly HERMES_GATEWAY_RECOVERY_REQUESTER_EXIT_ATTEMPTS=2",
+      "readonly HERMES_GATEWAY_RECOVERY_REQUEST_WAIT_SECONDS=120",
       "readonly HERMES_GATEWAY_RECOVERY_TRANSPORT_SETTLE_SECONDS=1",
       'publish_hermes_gateway_recovery_generation() { HERMES_GATEWAY_RECOVERY_GENERATION="$(printf c%.0s {1..64})"; request_identity="v2 $HERMES_GATEWAY_RECOVERY_GENERATION 321 654"; }',
       'hermes_gateway_recovery_request_value() { printf "%s\\n" "$request_identity"; }',
@@ -186,6 +192,34 @@ describe("Hermes native service restart supervision", () => {
 
     expect(result.status).toBe(1);
     expect(result.stderr).toContain("controller did not exit");
+    expect(result.stderr).not.toContain("relaunching");
+  });
+
+  it("stops when no gated recovery request arrives before the deadline", () => {
+    const script = [
+      "set -uo pipefail",
+      "readonly HERMES_GATEWAY_RECOVERY_REQUESTER_EXIT_ATTEMPTS=30",
+      "readonly HERMES_GATEWAY_RECOVERY_REQUEST_WAIT_SECONDS=2",
+      "readonly HERMES_GATEWAY_RECOVERY_TRANSPORT_SETTLE_SECONDS=1",
+      "sleep_count=0",
+      'publish_hermes_gateway_recovery_generation() { HERMES_GATEWAY_RECOVERY_GENERATION="$(printf c%.0s {1..64})"; }',
+      'hermes_gateway_recovery_request_value() { printf "%s\\n" absent; }',
+      "hermes_recovery_requester_start_time() { return 1; }",
+      "sleep() { sleep_count=$((sleep_count + 1)); }",
+      extractShellFunction(source, "wait_for_hermes_recovery_requester_exit"),
+      extractShellFunction(source, "wait_for_hermes_gateway_recovery_request"),
+      "status=0",
+      "wait_for_hermes_gateway_recovery_request || status=$?",
+      'printf "status=%s sleeps=%s\\n" "$status" "$sleep_count"',
+    ].join("\n");
+
+    const result = spawnSync("bash", ["-c", script], { encoding: "utf8", timeout: 5_000 });
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout.trim()).toBe("status=1 sleeps=2");
+    expect(result.stderr).toContain("recovery request timed out after 2 seconds");
+    expect(result.stderr).toContain("nemoclaw <name> stop");
+    expect(result.stderr).toContain("nemoclaw <name> start");
     expect(result.stderr).not.toContain("relaunching");
   });
 

@@ -134,6 +134,10 @@ The restart command invokes Hermes' native lifecycle command through the selecte
 If that command closes the OpenShell exec relay before it returns status, NemoClaw waits for the sandbox control plane to become ready again.
 NemoClaw then verifies gateway health and checks or recovers host-side dashboard, messaging, and agent forwards.
 
+When the gateway exits cleanly or with exit status `79`, the supervisor waits up to 120 seconds for the authenticated gated recovery request.
+If the request does not arrive, the supervisor exits nonzero and leaves the gateway stopped.
+Follow the printed recovery guidance by running `$$nemoclaw <sandbox-name> stop`, then `$$nemoclaw <sandbox-name> start`.
+
 For Hermes, the entrypoint supervisor owns the gateway, dashboard process, internal API relay, dashboard relay, and gateway log stream.
 The nonroot managed supervisor repairs those processes continuously and stops an alive but deaf gateway after four consecutive failed health checks.
 Five status-75 service-managed restart requests within 60 seconds stop the supervisor before a sixth gateway launch.
@@ -342,7 +346,17 @@ Do not log, share, or commit the token.
 nemohermes <sandbox-name> gateway-token --quiet
 ```
 
-Before post-restore repairs, NemoClaw verifies that the recreated sandbox still identifies as Hermes and exits nonzero if its identity does not match the rebuild target. After state restore, NemoClaw restarts the Hermes gateway so it reads the restored durable state, then restores managed MCP configuration through the normal lifecycle. MCP restoration performs an acknowledged gateway reload, so NemoClaw finishes by verifying the final running gateway and its managed MCP state without replacing that verified process again. The gateway starts during recreation and reads its durable state before the restore replaces it, which is why the first post-restore restart must happen before managed MCP restoration. `rebuild` exits nonzero instead of reporting success when it cannot verify final gateway health or managed MCP state. Follow the printed recovery guidance, using `$$nemoclaw <sandbox-name> gateway restart` first for gateway health, `$$nemoclaw <sandbox-name> recover` when the restart does not restore verified health, and `$$nemoclaw <sandbox-name> mcp restart` for incomplete managed MCP restoration.
+Before post-restore repairs, NemoClaw verifies that the recreated sandbox still identifies as Hermes and exits nonzero if its identity does not match the rebuild target.
+After state restore, NemoClaw restarts the Hermes gateway so it reads the restored durable state, then restores managed MCP configuration through the normal lifecycle.
+MCP restoration performs an acknowledged gateway reload, so NemoClaw finishes by verifying the final running gateway and its managed MCP state without replacing that verified process again.
+The gateway starts during recreation and reads its durable state before the restore replaces it, which is why the first post-restore restart must happen before managed MCP restoration.
+`rebuild` exits nonzero instead of reporting success when it cannot verify final gateway health or managed MCP state.
+Follow the printed recovery guidance.
+Run `$$nemoclaw <sandbox-name> gateway restart` first to request a native gateway restart.
+After gateway health returns, run `$$nemoclaw <sandbox-name> recover` only to reconcile host-side forwards or cron restore state.
+If gateway health does not return, run `$$nemoclaw <sandbox-name> stop`, then `$$nemoclaw <sandbox-name> start`.
+Run `$$nemoclaw <sandbox-name> rebuild` only if the sandbox still cannot start.
+Run `$$nemoclaw <sandbox-name> mcp restart` for incomplete managed MCP restoration.
 
 When the rebuild backup contains active Hermes cron jobs that reference scripts, NemoClaw validates those script references before it deletes the existing sandbox. The check covers the default profile and named profiles. Each referenced script must exist, be readable, be a regular file, and remain inside its profile's `scripts` directory. Disabled and paused jobs do not require their referenced scripts. If this validation fails, the rebuild keeps the existing sandbox and reports the preserved backup path.
 
