@@ -82,6 +82,11 @@ export function currentGatewayUpgradeInstallerArgs(installer: string): string[] 
   return [installer, ...NON_INTERACTIVE_INSTALLER_ARGS];
 }
 
+/** Override the historical Dockerfile base only when the reviewed fixture pins one. */
+export function legacyGatewayUpgradeBaseImageOverrideEnabled(baseImageRef: string): boolean {
+  return baseImageRef.length > 0;
+}
+
 export function currentNemoclawUpgradeRef(env: NodeJS.ProcessEnv): string {
   for (const candidate of [
     env.NEMOCLAW_CURRENT_NEMOCLAW_REF,

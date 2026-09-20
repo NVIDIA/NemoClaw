@@ -63,6 +63,7 @@ function harness(options: {
         },
       }),
       resolveSandboxDashboardPort: (name) => current.get(name)?.dashboardPort ?? 18_789,
+      selectedGatewayName: "nemoclaw",
     });
   return { current, retireLegacyForward, summary };
 }
@@ -75,6 +76,25 @@ describe("installer legacy dashboard forward retirement", () => {
     expect(test.retireLegacyForward.mock.calls.map(([request]) => request.forward)).toEqual([
       expect.objectContaining({ sandboxName: "alpha", port: 18_789 }),
       expect.objectContaining({ sandboxName: "beta", port: 18_790 }),
+    ]);
+  });
+
+  it("retires forwards only for sandboxes registered to the selected gateway", async () => {
+    const test = harness({
+      entries: [
+        { name: "selected", dashboardPort: 18_789, gatewayName: "nemoclaw" },
+        {
+          name: "sibling",
+          dashboardPort: 18_790,
+          gatewayName: "nemoclaw-18080",
+          gatewayPort: 18_080,
+        },
+      ],
+    });
+
+    await expect(test.summary()).resolves.toEqual({ retired: 1, unchanged: 0, skipped: 0 });
+    expect(test.retireLegacyForward.mock.calls.map(([request]) => request.forward)).toEqual([
+      expect.objectContaining({ gatewayName: "nemoclaw", sandboxName: "selected", port: 18_789 }),
     ]);
   });
 

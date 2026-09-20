@@ -107,16 +107,19 @@ Use this path only after you back up every registered sandbox, retire each regis
 Run the backup and forward-retirement step with the current prepared NemoClaw CLI before you retire the gateway:
 
 ```bash
-NEMOCLAW_REQUIRE_ALL_SANDBOX_BACKUPS=1 $$nemoclaw backup-all --retire-legacy-forwards
+selected_port=8080
+gateway_name=nemoclaw
+NEMOCLAW_GATEWAY_PORT="$selected_port" NEMOCLAW_REQUIRE_ALL_SANDBOX_BACKUPS=1 $$nemoclaw backup-all --retire-legacy-forwards && \
+  { openshell gateway remove "$gateway_name" || openshell gateway destroy -g "$gateway_name"; }
 ```
 
-Do not set `NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1` unless that command succeeds and reports that every registered sandbox backup and exact legacy-forward retirement completed.
-If the command fails or cannot prove a retirement, resolve that failure while the current gateway and completed backups remain intact.
-Set `NEMOCLAW_GATEWAY_PORT` to the port for the gateway that you retired.
+For a non-default gateway, replace `8080` with its port and set `gateway_name` to `nemoclaw-<selected-port>`.
+Do not set `NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1` unless both commands succeed and the backup command reports that every registered sandbox backup and exact legacy-forward retirement completed.
+If either command fails or cannot prove a retirement, resolve that failure while the completed backups remain intact.
 Set `NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1` on the `bash` side of the install pipeline when you rerun the installer.
 
 ```bash
-curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_GATEWAY_PORT=<selected-port> NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1 bash
+curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_GATEWAY_PORT="$selected_port" NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1 bash
 ```
 
 Set `NEMOCLAW_GATEWAY_PORT=8080` when you prepared the default gateway.

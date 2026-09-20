@@ -17,13 +17,14 @@ import {
   OPENSHELL_PROBE_TIMEOUT_MS,
 } from "../../adapters/openshell/command-execution";
 import * as agentRuntime from "../../agent/runtime";
-import { DASHBOARD_PORT, HERMES_OPENAI_API_PORT } from "../../core/ports";
+import { DASHBOARD_PORT, GATEWAY_PORT, HERMES_OPENAI_API_PORT } from "../../core/ports";
 import { getActiveMessagingHostForward } from "../../messaging/host-forward";
 import { hydrateDerivedSandboxMessagingPlanFields } from "../../messaging/hydration";
 import type { SandboxMessagingHostForwardPlan } from "../../messaging/manifest";
 import { parseSandboxMessagingPlan } from "../../messaging/plan-validation";
 import { isRemoteDashboardBindRequested } from "../../onboard/dockerfile-remote-dashboard-bind-contract";
 import {
+  resolveGatewayName,
   resolveGatewayPortFromName,
   resolveSandboxGatewayName,
 } from "../../onboard/gateway-binding";
@@ -159,6 +160,7 @@ type InstallerLegacyForwardRetirementDeps = {
   ) => Pick<OpenShellForwardAdapter, "retireLegacyForward">;
   resolveForwardRuntimeAuthority?: typeof forwardRuntimeAuthority;
   resolveSandboxDashboardPort?: typeof resolveSandboxDashboardPort;
+  selectedGatewayName?: string;
 };
 
 export type InstallerLegacyForwardRetirementSummary = Readonly<{
@@ -312,11 +314,12 @@ export async function retireRegisteredLegacyDashboardForwards(
   const hasGatewayRuntime = deps.hasGatewayRuntime ?? agentRuntime.hasGatewayRuntime;
   const resolvePort = deps.resolveSandboxDashboardPort ?? resolveSandboxDashboardPort;
   const resolveRuntime = deps.resolveForwardRuntimeAuthority ?? forwardRuntimeAuthority;
+  const selectedGatewayName = deps.selectedGatewayName ?? resolveGatewayName(GATEWAY_PORT);
   const adapterForAuthority =
     deps.forwardAdapterForAuthority ?? createOpenShellForwardAdapterForAuthority;
-  const sandboxes = [...(deps.listSandboxes ?? registry.listSandboxes)().sandboxes].sort((a, b) =>
-    a.name.localeCompare(b.name),
-  );
+  const sandboxes = [...(deps.listSandboxes ?? registry.listSandboxes)().sandboxes]
+    .filter((sandbox) => resolveSandboxGatewayName(sandbox) === selectedGatewayName)
+    .sort((a, b) => a.name.localeCompare(b.name));
   let retired = 0;
   let unchanged = 0;
   let skipped = 0;

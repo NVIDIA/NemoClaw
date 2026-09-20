@@ -48,6 +48,7 @@ import {
   currentNemoclawUpgradeRef,
   GATEWAY_UPGRADE_INSTALL_TIMEOUT_MS,
   isolateGatewayUpgradeFixtureEnv,
+  legacyGatewayUpgradeBaseImageOverrideEnabled,
   legacyGatewayUpgradeHostFirewallOptions,
   oldGatewayUpgradeInstallerArgs,
   throwGatewayUpgradeSetupFailures,
@@ -286,6 +287,12 @@ function createOldDockerWrapper(artifacts: ArtifactSink): string {
   const wrapperDir = artifacts.pathFor("old-docker-wrapper");
   const logFile = artifacts.pathFor("old-docker-wrapper.log");
   const realDocker = process.env.NEMOCLAW_REAL_DOCKER ?? "/usr/bin/docker";
+  const rewriteBaseImage = legacyGatewayUpgradeBaseImageOverrideEnabled(OLD_SANDBOX_BASE_IMAGE_REF);
+  const inlineBaseImageHandler = rewriteBaseImage
+    ? `      args+=("--build-arg=BASE_IMAGE=\${base_ref}")
+      rewrote_base=1
+      printf 'rewrite build-arg %s -> BASE_IMAGE=%s\\n' "$1" "$base_ref" >>"$log_file"`
+    : `      args+=("$1")`;
   fs.mkdirSync(wrapperDir, { recursive: true, mode: 0o700 });
   writeExecutable(
     path.join(wrapperDir, "docker"),
@@ -296,7 +303,7 @@ base_ref=${shellQuote(OLD_SANDBOX_BASE_IMAGE_REF)}
 old_openclaw=${shellQuote(OLD_OPENCLAW_VERSION)}
 log_file=${shellQuote(logFile)}
 base_tag="ghcr.io/nvidia/nemoclaw/sandbox-base:latest"
-if [ "\${1:-}" = "pull" ]; then
+if [ -n "$base_ref" ] && [ "\${1:-}" = "pull" ]; then
   for arg in "$@"; do
     if [ "$arg" = "$base_tag" ]; then
       printf 'rewrite pull %s -> %s\n' "$base_tag" "$base_ref" >>"$log_file"
@@ -323,7 +330,7 @@ while [ "$#" -gt 0 ]; do
         shift 2
         continue
       fi
-      if [ "$#" -ge 2 ] && [ "\${2#BASE_IMAGE=}" != "$2" ]; then
+      if [ -n "$base_ref" ] && [ "$#" -ge 2 ] && [ "\${2#BASE_IMAGE=}" != "$2" ]; then
         args+=("--build-arg" "BASE_IMAGE=\${base_ref}")
         rewrote_base=1
         printf 'rewrite build-arg %s -> BASE_IMAGE=%s\n' "$2" "$base_ref" >>"$log_file"
@@ -339,9 +346,7 @@ while [ "$#" -gt 0 ]; do
       continue
       ;;
     --build-arg=BASE_IMAGE=*)
-      args+=("--build-arg=BASE_IMAGE=\${base_ref}")
-      rewrote_base=1
-      printf 'rewrite build-arg %s -> BASE_IMAGE=%s\n' "$1" "$base_ref" >>"$log_file"
+${inlineBaseImageHandler}
       shift
       continue
       ;;
@@ -353,7 +358,7 @@ if [ "$rewrote_openclaw" = "0" ]; then
   args+=("--build-arg" "OPENCLAW_VERSION=\${old_openclaw}")
   printf 'add build-arg OPENCLAW_VERSION=%s\n' "$old_openclaw" >>"$log_file"
 fi
-if [ "$rewrote_base" = "0" ]; then
+if [ -n "$base_ref" ] && [ "$rewrote_base" = "0" ]; then
   args+=("--build-arg" "BASE_IMAGE=\${base_ref}")
   printf 'add build-arg BASE_IMAGE=%s\n' "$base_ref" >>"$log_file"
 fi
