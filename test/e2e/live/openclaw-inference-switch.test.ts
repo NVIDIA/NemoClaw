@@ -4,7 +4,7 @@
 /**
  * Preserve the script's real user-visible boundary: install.sh onboards an
  * OpenClaw sandbox, `nemoclaw inference set` switches the running route, then
- * OpenShell route state, OpenClaw config/hash state, registry/session state,
+ * OpenShell route state, native OpenClaw config state, registry/session state,
  * inference.local, and a real OpenClaw gateway model run are checked from the live
  * host/sandbox boundary. Target-specific helpers stay local; shared shell
  * primitives come from the fixture layer's production-backed helper.
@@ -589,18 +589,6 @@ async function assertOpenClawConfig(sandbox: SandboxClient, home: string): Promi
   expect(firstModel?.name).toBe(expectedPrimary);
   expect(typeof firstModel?.maxTokens).toBe("number");
   expect(firstModel?.maxTokens).toBeGreaterThan(0);
-
-  const hashCheck = await sandboxShell(
-    sandbox,
-    home,
-    "cd /sandbox/.openclaw && sha256sum -c .config-hash --status && echo OK",
-    {
-      artifactName: "openclaw-config-hash-after-inference-switch",
-      timeoutMs: COMMAND_TIMEOUT_MS,
-    },
-  );
-  expect(hashCheck.exitCode, resultText(hashCheck)).toBe(0);
-  expect(hashCheck.stdout.trim()).toBe("OK");
 }
 
 function httpStatusFromResponse(response: string): string {
@@ -948,7 +936,7 @@ test(
         "nemoclaw inference set switches the running sandbox route",
         "OpenClaw gateway is supervisor-restarted after every changed inference configuration",
         "OpenShell route points at the switched provider/model",
-        "OpenClaw config and .config-hash reflect the switched inference API/model",
+        "OpenClaw config reflects the switched inference API/model",
         "registry and onboard session record the switched provider/model",
         "sandbox inference.local returns PONG from the switched model",
         "OpenClaw gateway model inference answers through the switched route without agent tools",

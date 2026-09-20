@@ -234,11 +234,6 @@ const MARKER_SHA = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852
             };
           },
         },
-        cleanupDeps: {
-          getSandbox: () => ({ agent: "openclaw" }),
-          inspectMutableConfigPerms: () => ({ applies: true, ok: true }),
-          repairMutableConfigPerms: () => ({ applied: false }),
-        },
         exit: (code) => {
           execCode = code;
           throw execFinished;

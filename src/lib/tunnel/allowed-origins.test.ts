@@ -32,16 +32,14 @@ const OPENCLAW_TARGET: AgentConfigTarget = {
 function makeDeps(config: ConfigObject, target: AgentConfigTarget = OPENCLAW_TARGET) {
   const resolveAgentConfig = vi.fn((_sb: string): AgentConfigTarget => target);
   const readConfig = vi.fn((_sb: string, _t: AgentConfigTarget): ConfigObject => config);
-  const writeConfig = vi.fn((_sb: string, _t: AgentConfigTarget, _c: ConfigObject): void => {});
-  const recomputeHash = vi.fn((_sb: string, _t: AgentConfigTarget): void => {});
+  const writeAllowedOrigins = vi.fn(async (_sb: string, _origins: string[]): Promise<void> => {});
   const reloadGateway = vi.fn(async (_sb: string): Promise<void> => {});
   const info = vi.fn((_msg: string): void => {});
   const warn = vi.fn((_msg: string): void => {});
   const deps: RegisterTunnelOriginDeps = {
     resolveAgentConfig,
     readConfig,
-    writeConfig,
-    recomputeHash,
+    writeAllowedOrigins,
     reloadGateway,
     info,
     warn,
@@ -50,18 +48,11 @@ function makeDeps(config: ConfigObject, target: AgentConfigTarget = OPENCLAW_TAR
     deps,
     resolveAgentConfig,
     readConfig,
-    writeConfig,
-    recomputeHash,
+    writeAllowedOrigins,
     reloadGateway,
     info,
     warn,
   };
-}
-
-function readOrigins(config: ConfigObject): unknown {
-  const gateway = config.gateway as ConfigObject | undefined;
-  const controlUi = gateway?.controlUi as ConfigObject | undefined;
-  return controlUi?.allowedOrigins;
 }
 
 // Scenario 1
@@ -156,100 +147,98 @@ describe("computeTunnelAllowedOrigins", () => {
 
 describe("registerTunnelOrigin", () => {
   // Scenario 8
-  it("writes the tunnel origin, recomputes the hash, and reloads once", () => {
+  it("writes the tunnel origin through native config and reloads once", async () => {
     const config: ConfigObject = {
       gateway: { controlUi: { allowedOrigins: [LOOPBACK] } },
     };
-    const { deps, writeConfig, recomputeHash, reloadGateway } = makeDeps(config);
+    const { deps, writeAllowedOrigins, reloadGateway } = makeDeps(config);
 
-    registerTunnelOrigin("sb", "https://good.trycloudflare.com/route", deps);
+    await registerTunnelOrigin("sb", "https://good.trycloudflare.com/route", deps);
 
-    expect(writeConfig).toHaveBeenCalledTimes(1);
-    expect(writeConfig).toHaveBeenCalledWith("sb", OPENCLAW_TARGET, expect.anything());
-    const written = writeConfig.mock.calls[0][2];
-    expect(readOrigins(written)).toEqual([LOOPBACK, "https://good.trycloudflare.com"]);
-    expect(recomputeHash).toHaveBeenCalledTimes(1);
-    expect(recomputeHash).toHaveBeenCalledWith("sb", OPENCLAW_TARGET);
+    expect(writeAllowedOrigins).toHaveBeenCalledWith("sb", [
+      LOOPBACK,
+      "https://good.trycloudflare.com",
+    ]);
     expect(reloadGateway).toHaveBeenCalledTimes(1);
     expect(reloadGateway).toHaveBeenCalledWith("sb");
   });
 
   // Scenario 9
-  it("skips the write and reload when the origin is already registered", () => {
+  it("skips the write and reload when the origin is already registered", async () => {
     const config: ConfigObject = {
       gateway: { controlUi: { allowedOrigins: ["https://good.trycloudflare.com"] } },
     };
-    const { deps, writeConfig, recomputeHash, reloadGateway, info } = makeDeps(config);
+    const { deps, writeAllowedOrigins, reloadGateway, info } = makeDeps(config);
 
-    registerTunnelOrigin("sb", "https://good.trycloudflare.com", deps);
+    await registerTunnelOrigin("sb", "https://good.trycloudflare.com", deps);
 
-    expect(writeConfig).not.toHaveBeenCalled();
-    expect(recomputeHash).not.toHaveBeenCalled();
+    expect(writeAllowedOrigins).not.toHaveBeenCalled();
     expect(reloadGateway).not.toHaveBeenCalled();
     expect(info).toHaveBeenCalledWith(expect.stringContaining("already registered"));
   });
 
   // Scenario 10
-  it("skips entirely for a non-OpenClaw agent", () => {
+  it("skips entirely for a non-OpenClaw agent", async () => {
     const config: ConfigObject = {
       gateway: { controlUi: { allowedOrigins: [] } },
     };
     const hermesTarget: AgentConfigTarget = { ...OPENCLAW_TARGET, agentName: "hermes" };
-    const { deps, readConfig, writeConfig, reloadGateway, info } = makeDeps(config, hermesTarget);
+    const { deps, readConfig, writeAllowedOrigins, reloadGateway, info } = makeDeps(
+      config,
+      hermesTarget,
+    );
 
-    registerTunnelOrigin("sb", "https://good.trycloudflare.com", deps);
+    await registerTunnelOrigin("sb", "https://good.trycloudflare.com", deps);
 
     expect(readConfig).not.toHaveBeenCalled();
-    expect(writeConfig).not.toHaveBeenCalled();
+    expect(writeAllowedOrigins).not.toHaveBeenCalled();
     expect(reloadGateway).not.toHaveBeenCalled();
     expect(info).toHaveBeenCalledWith(expect.stringContaining("OpenClaw-only"));
   });
 
   // Scenario 11
-  it("swallows a read failure with a warning and does not throw", () => {
+  it("swallows a read failure with a warning and does not throw", async () => {
     const config: ConfigObject = {
       gateway: { controlUi: { allowedOrigins: [] } },
     };
-    const { deps, readConfig, writeConfig, reloadGateway, warn } = makeDeps(config);
+    const { deps, readConfig, writeAllowedOrigins, reloadGateway, warn } = makeDeps(config);
     readConfig.mockImplementation(() => {
       throw new Error("sandbox not running");
     });
 
-    expect(() => registerTunnelOrigin("sb", "https://good.trycloudflare.com", deps)).not.toThrow();
-    expect(writeConfig).not.toHaveBeenCalled();
+    await expect(
+      registerTunnelOrigin("sb", "https://good.trycloudflare.com", deps),
+    ).resolves.toBeUndefined();
+    expect(writeAllowedOrigins).not.toHaveBeenCalled();
     expect(reloadGateway).not.toHaveBeenCalled();
     expect(warn).toHaveBeenCalledWith(expect.stringContaining("Could not register tunnel origin"));
   });
 
   // Scenario 12
-  it("returns immediately for a null origin without invoking any dep", () => {
+  it("returns immediately for a null origin without invoking any dep", async () => {
     const config: ConfigObject = {
       gateway: { controlUi: { allowedOrigins: [] } },
     };
-    const { deps, resolveAgentConfig, readConfig, writeConfig, reloadGateway } = makeDeps(config);
+    const { deps, resolveAgentConfig, readConfig, writeAllowedOrigins, reloadGateway } =
+      makeDeps(config);
 
-    registerTunnelOrigin("sb", "", deps);
+    await registerTunnelOrigin("sb", "", deps);
 
     expect(resolveAgentConfig).not.toHaveBeenCalled();
     expect(readConfig).not.toHaveBeenCalled();
-    expect(writeConfig).not.toHaveBeenCalled();
+    expect(writeAllowedOrigins).not.toHaveBeenCalled();
     expect(reloadGateway).not.toHaveBeenCalled();
   });
 
   // Scenario 13
-  it("preserves sibling gateway keys through the read-modify-write", () => {
+  it("writes only the native allowedOrigins key without carrying sibling credentials", async () => {
     const config: ConfigObject = {
       gateway: { auth: { token: "t" }, controlUi: { allowedOrigins: [] } },
     };
-    const { deps, writeConfig } = makeDeps(config);
+    const { deps, writeAllowedOrigins } = makeDeps(config);
 
-    registerTunnelOrigin("sb", "https://a.trycloudflare.com", deps);
+    await registerTunnelOrigin("sb", "https://a.trycloudflare.com", deps);
 
-    expect(writeConfig).toHaveBeenCalledTimes(1);
-    const written = writeConfig.mock.calls[0][2];
-    const gateway = written.gateway as ConfigObject;
-    const auth = gateway.auth as ConfigObject;
-    expect(auth.token).toBe("t");
-    expect(readOrigins(written)).toContain("https://a.trycloudflare.com");
+    expect(writeAllowedOrigins).toHaveBeenCalledWith("sb", ["https://a.trycloudflare.com"]);
   });
 });

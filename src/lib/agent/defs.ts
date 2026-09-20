@@ -78,7 +78,6 @@ export type {
   AgentVersionScheme,
   StateFileFreshHeader,
   StateFileKeyAllowlistRestoreOwnership,
-  StateFileOpenClawRestoreOwnership,
   StateFileRestoreMerge,
   StateFileRestoreOwnership,
   StateFileUserKey,

@@ -343,10 +343,8 @@ async function runOpenClawLaunchTurns(input: {
   redactionValues: string[];
   sandbox: SandboxClient;
 }): Promise<void> {
-  // OpenClaw 2026.9.1 requires exclusive gateway-lifecycle ownership for
-  // doctor repairs. The rebuild qualification lane owns that offline
-  // maintenance boundary; this security lane retains the live lint evidence
-  // above and limits its running-gateway mutation to config set/validate.
+  // Exercise the native configuration interface after onboarding. NemoClaw
+  // must preserve this OpenClaw-owned value across restart and reconnect.
   const prepareLaunch = await input.sandbox.execShell(
     SANDBOX_NAME,
     trustedSandboxShellScript(`set -eu
@@ -379,25 +377,17 @@ sha256sum /sandbox/.bashrc /sandbox/.profile > /tmp/nemoclaw-e2e-profiles.sha256
       .map(resultText)
       .join("\n"),
   ).toBe(true);
-  const configEdit = securityPostureEnabled()
+  const restartAfterNativeEdit = securityPostureEnabled()
     ? await repoNemoclaw(
         input.host,
-        [
-          SANDBOX_NAME,
-          "config",
-          "set",
-          "--key",
-          "agents.defaults.timeoutSeconds",
-          "--value",
-          "120",
-          "--restart",
-        ],
-        "phase-4-host-config-edit-private-state",
+        [SANDBOX_NAME, "gateway", "restart"],
+        "phase-4-restart-after-native-config-edit",
       )
     : null;
   expect(
-    !configEdit || (!configEdit.timedOut && configEdit.exitCode === 0),
-    configEdit ? resultText(configEdit) : "launch preparation passed",
+    !restartAfterNativeEdit ||
+      (!restartAfterNativeEdit.timedOut && restartAfterNativeEdit.exitCode === 0),
+    restartAfterNativeEdit ? resultText(restartAfterNativeEdit) : "launch preparation passed",
   ).toBe(true);
 
   await runOpenClawLaunchReadinessLeaseTurns({
@@ -420,6 +410,7 @@ sha256sum /sandbox/.bashrc /sandbox/.profile > /tmp/nemoclaw-e2e-profiles.sha256
     SANDBOX_NAME,
     trustedSandboxShellScript(
       "test -w /sandbox/.openclaw && test -w /sandbox/.openclaw/openclaw.json && " +
+        'test "$(/usr/local/bin/openclaw config get agents.defaults.timeoutSeconds --json)" = "119" && ' +
         "/usr/bin/env -u NEMOCLAW_E2E_PERSONAL_PROFILE bash -lc 'test \"$NEMOCLAW_E2E_PERSONAL_PROFILE\" = loaded' && " +
         "/usr/bin/env -u NEMOCLAW_E2E_PERSONAL_PROFILE bash -ic 'test \"$NEMOCLAW_E2E_PERSONAL_PROFILE\" = loaded' && " +
         "/usr/bin/sha256sum -c /tmp/nemoclaw-e2e-profiles.sha256 && " +
@@ -726,13 +717,13 @@ test(
         "sandbox state contains neither auth-profiles.json nor secret-shaped credential values",
         ...(process.platform === "linux"
           ? [
-              "each of two PTY launches records two ordered structured turns and restores the mutable config permission contract",
+              "each of two PTY launches records two ordered structured turns and preserves native OpenClaw configuration",
             ]
           : []),
         "nemoclaw logs produces output and cleanup removes registry state",
         ...(securityPostureEnabled()
           ? [
-              "non-root host, native private state through doctor/fix/config edit, editable profiles, protected proxy files, and clean startup log",
+              "non-root host, native configuration persistence, editable profiles, protected proxy files, and clean startup log",
             ]
           : []),
       ],

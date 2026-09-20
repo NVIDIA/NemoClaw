@@ -71,9 +71,6 @@ export type RebuildFlowOverrides = {
     options: RebuildRecreateOnboardOpts,
   ) => Promise<void> | void;
   beforeBackup?: () => void;
-  repairMutableConfigPerms?: () =>
-    | { applied: false; skipReason: "agent"; reason: string }
-    | { applied: true; verified: boolean; errors: string[] };
   restoreSandboxState?: () => {
     success: boolean;
     restoredDirs: string[];

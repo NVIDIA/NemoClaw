@@ -240,7 +240,6 @@ describe("sandbox build context staging", () => {
     writeFixture(path.join("scripts", "managed-bootstrap-trampoline.sh"));
     writeFixture(path.join("scripts", "gateway-control.sh"));
     writeFixture(path.join("scripts", "managed-gateway-control.py"));
-    writeFixture(path.join("scripts", "openclaw-config-guard.py"));
     writeFixture(path.join("scripts", "openclaw-cli-wrapper.sh"));
     writeFixture(path.join("scripts", "codex-acp-wrapper.sh"));
     writeFixture(path.join("scripts", "generate-openclaw-config.mts"));
@@ -257,7 +256,6 @@ describe("sandbox build context staging", () => {
     writeFixture(path.join("scripts", "lib", "sandbox-rlimits.sh"));
     writeFixture(path.join("scripts", "lib", "openclaw_device_approval_policy.py"));
     writeFixture(path.join("scripts", "lib", "openclaw_pairing_state.py"));
-    writeFixture(path.join("scripts", "lib", "normalize_mutable_config_perms.py"));
     writeFixture(path.join("scripts", "lib", "refresh-openclaw-wechat-placeholder.py"));
     writeFixture(
       path.join("src", "lib", "messaging", "applier", "build", "messaging-build-applier.mts"),

@@ -732,17 +732,6 @@ export function runManagedImageDirectE2e(input: ManagedImageDirectE2eInputs): vo
       ) {
         throw new Error("managed OpenClaw configuration lost the isolated heartbeat settings");
       }
-      docker([
-        "exec",
-        "--user",
-        "sandbox",
-        "--workdir",
-        "/sandbox/.openclaw",
-        containerId,
-        "sha256sum",
-        "--check",
-        ".config-hash",
-      ]);
     }
     const runtimeEnvironment = docker([
       "exec",

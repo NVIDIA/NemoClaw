@@ -39,7 +39,6 @@ import {
   writeHermesOperatorConfigHandoff,
   writeRebuildPolicyHandoff,
 } from "./rebuild-backup-phase";
-import { buildRefreshMutableOpenClawConfigHashCommand } from "./rebuild-config-hash";
 import { runRebuildDestroyPhase } from "./rebuild-destroy-phase";
 import {
   captureHermesOperatorConfigSnapshot,
@@ -98,7 +97,7 @@ import { runRebuildRecreatePhase } from "./rebuild-recreate-phase";
 import { createRebuildRegistryRollback } from "./rebuild-registry-rollback";
 import { runRebuildRestorePhase } from "./rebuild-restore-phase";
 
-export { buildRefreshMutableOpenClawConfigHashCommand, stageMessagingManifestPlanForRebuild };
+export { stageMessagingManifestPlanForRebuild };
 
 function runBestEffortRebuildCleanup(cleanup: () => boolean | void, warning: string): void {
   try {

@@ -18,15 +18,9 @@ const SAFE_VALIDATION_GENERATOR_RE =
   /^RUN\s+validation_home="\$validation_root\/progressive";\s+HOME=(?:"\$validation_home"|\$validation_home)\s+node\s+\/scripts\/generate-openclaw-config\.mts$/;
 const PASSIVE_FINAL_STAGE_INSTRUCTION_RE = /^(?:ARG|ENV|WORKDIR|USER|HEALTHCHECK|ENTRYPOINT|CMD)\b/;
 const CONFIG_MODE_RE = /^RUN\s+chmod\s+660\s+\/sandbox\/\.openclaw\/openclaw\.json$/;
-const CONFIG_HASH_RE =
-  /^RUN\s+sha256sum\s+\/sandbox\/\.openclaw\/openclaw\.json\s+>\s+\/sandbox\/\.openclaw\/\.config-hash(?:\s+&&\s+chmod\s+660\s+\/sandbox\/\.openclaw\/\.config-hash)?(?:\s+&&\s+chown\s+sandbox:sandbox\s+\/sandbox\/\.openclaw\/\.config-hash)?$/;
 const MESSAGING_BUILD_APPLIER_RE =
   /^RUN\s+OPENCLAW_VERSION="\$\{OPENCLAW_VERSION\}"\s+node\s+\/src\/lib\/messaging\/applier\/build\/messaging-build-applier\.mts\s+--agent\s+openclaw\s+--phase\s+(?:agent-install|post-agent-install)$/;
-const EXACT_CUSTOM_POST_GENERATOR_RUN_RE = [
-  CONFIG_MODE_RE,
-  CONFIG_HASH_RE,
-  MESSAGING_BUILD_APPLIER_RE,
-] as const;
+const EXACT_CUSTOM_POST_GENERATOR_RUN_RE = [CONFIG_MODE_RE, MESSAGING_BUILD_APPLIER_RE] as const;
 
 // Complex RUN instructions and reviewed payload copies in the shipped
 // Dockerfile are accepted only as exact normalized instructions. Prefix
@@ -109,6 +103,8 @@ const CANONICAL_POST_GENERATOR_INSTRUCTION_SHA256 = new Set([
   // The reviewed scratch payload has no /sandbox/.openclaw content, so this
   // exact late copy preserves the generated remote-dashboard configuration.
   "0416afe770a7a4281aca9db4cf13d58f90bbf2b46e8225cbd4d6c2571eb7a9c0",
+  "5affeb3e77c22d6f17ec42c5ea39033d86a84e8320a659b5e3b163a3eaf2daac",
+  "295282a4f06106c93df72b4e035f980a2fc0e8a7dcbf6d270e102d7c75be27fb",
 ]);
 
 function instructionSha256(text: string): string {

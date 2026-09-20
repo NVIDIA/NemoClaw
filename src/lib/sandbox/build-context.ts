@@ -318,10 +318,6 @@ function stageOptimizedSandboxBuildContext(
     path.join(stagedScriptsDir, "managed-bootstrap-trampoline.sh"),
   );
   fs.copyFileSync(
-    path.join(rootDir, "scripts", "openclaw-config-guard.py"),
-    path.join(stagedScriptsDir, "openclaw-config-guard.py"),
-  );
-  fs.copyFileSync(
     path.join(rootDir, "scripts", "openclaw-cli-wrapper.sh"),
     path.join(stagedScriptsDir, "openclaw-cli-wrapper.sh"),
   );
@@ -362,10 +358,6 @@ function stageOptimizedSandboxBuildContext(
   fs.copyFileSync(
     path.join(rootDir, "scripts", "lib", "openclaw_pairing_state.py"),
     path.join(stagedScriptsDir, "lib", "openclaw_pairing_state.py"),
-  );
-  fs.copyFileSync(
-    path.join(rootDir, "scripts", "lib", "normalize_mutable_config_perms.py"),
-    path.join(stagedScriptsDir, "lib", "normalize_mutable_config_perms.py"),
   );
   fs.copyFileSync(
     path.join(rootDir, "scripts", "lib", "refresh-openclaw-wechat-placeholder.py"),

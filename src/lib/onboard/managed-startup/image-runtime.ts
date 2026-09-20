@@ -700,7 +700,7 @@ function verifyMessagingRuntimeTarget(mode: "apply" | "clear"): void {
 }
 
 function runInternalSandboxAction(
-  action: "write-openclaw-hash" | "write-hermes-compat-hash",
+  action: "write-hermes-compat-hash",
   configurationEnvironment: Readonly<Record<string, string>>,
   applicationRuntime: ManagedStartupApplicationRuntimePlan,
   extraEnvironment: Readonly<Record<string, string>> = {},
@@ -713,7 +713,7 @@ function runInternalSandboxAction(
   );
 }
 
-function sealOpenClawConfiguration(
+function validateOpenClawConfiguration(
   configurationEnvironment: Readonly<Record<string, string>>,
   applicationRuntime: ManagedStartupApplicationRuntimePlan,
 ): void {
@@ -740,7 +740,6 @@ function sealOpenClawConfiguration(
   ) {
     fail("OpenClaw rejected the generated managed startup config");
   }
-  runInternalSandboxAction("write-openclaw-hash", configurationEnvironment, applicationRuntime);
 }
 
 export interface StableRegularFile {
@@ -1391,7 +1390,7 @@ function applyAdapter(
 
   switch (context.agent) {
     case "openclaw":
-      sealOpenClawConfiguration(mapped.configurationEnvironment, mapped.applicationRuntime);
+      validateOpenClawConfiguration(mapped.configurationEnvironment, mapped.applicationRuntime);
       break;
     case "hermes":
       installHermesManagedPolicy();
@@ -1631,14 +1630,6 @@ function writeSandboxFileAtomically(target: string, contents: string, mode: numb
   }
 }
 
-function internalWriteOpenClawHash(): void {
-  if (process.geteuid?.() === 0) fail("sandbox hash writer must not run as root");
-  const configPath = "/sandbox/.openclaw/openclaw.json";
-  const config = readStableRegularFile(configPath, 16 * 1024 * 1024);
-  const text = `${createHash("sha256").update(config).digest("hex")}  openclaw.json\n`;
-  writeSandboxFileAtomically("/sandbox/.openclaw/.config-hash", text, 0o660);
-}
-
 function internalWriteHermesCompatHash(): void {
   if (process.geteuid?.() === 0) fail("sandbox hash writer must not run as root");
   const encoded = process.env.NEMOCLAW_MANAGED_HERMES_HASH_B64 ?? "";
@@ -1683,10 +1674,6 @@ function readCliBootstrapIdentity(argv: readonly string[]): string {
 }
 
 export async function main(argv: readonly string[] = process.argv.slice(2)): Promise<void> {
-  if (argv.length === 1 && argv[0] === "--internal-write-openclaw-hash") {
-    internalWriteOpenClawHash();
-    return;
-  }
   if (argv.length === 1 && argv[0] === "--internal-write-hermes-compat-hash") {
     internalWriteHermesCompatHash();
     return;

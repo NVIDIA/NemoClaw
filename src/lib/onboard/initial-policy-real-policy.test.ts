@@ -109,7 +109,6 @@ describe("initial sandbox policy real preset merge", () => {
   ] as const;
   const protectedManagedStartupPaths = [
     MANAGED_STARTUP_COMPLETION_FILE,
-    "/run/nemoclaw/openclaw-config-guard",
     MANAGED_STARTUP_SHARED_ROLLBACK_RECEIPT_DIRECTORY,
     MANAGED_STARTUP_SHARED_TRANSACTION_DIRECTORY,
     MANAGED_STARTUP_SHARED_COMMIT_RECEIPT_DIRECTORY,

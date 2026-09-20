@@ -233,9 +233,9 @@ export const googlechatManifest = {
       //           route → inbound 404s, bot goes silent ~60s after every start.
       // 3. Alts:  none in-sandbox — the self-write is OpenClaw's; a periodic restart
       //           only resets the timer. Real fix is upstream (5).
-      // 4. Risk:  low — the sandbox openclaw.json is build-time-sealed (0600 +
-      //           integrity hash), so nothing legitimately reloads it at runtime;
-      //           NemoClaw still restarts the gateway explicitly on rebuild/restart.
+      // 4. Risk:  bounded — this sets only the initial managed configuration.
+      //           OpenClaw owns the file after launch, so native changes may
+      //           re-enable reload; NemoClaw still restarts the gateway explicitly.
       // 5. Exit:  upstream reload re-mounts channels (not just plugins) on config
       //           reload → drop this fragment.
       id: "googlechat-openclaw-gateway-reload-off",

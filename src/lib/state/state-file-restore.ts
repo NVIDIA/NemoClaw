@@ -7,7 +7,6 @@ import path from "node:path";
 
 import type { StateFileRestoreOwnership } from "../agent/defs.js";
 import { shellQuote } from "../runner.js";
-import { buildOpenClawConfigRestoreInputFromSandbox } from "./openclaw-config-restore-input.js";
 import { buildKeyAllowlistMergeRestoreCommand } from "./state-file-key-merge.js";
 
 export interface StateFileRestoreSpec {
@@ -47,11 +46,7 @@ function stateFileRemotePath(dir: string, filePath: string): string {
   return `${dir.replace(/\/+$/, "")}/${filePath}`;
 }
 
-export function buildStateFileRestoreCommand(
-  dir: string,
-  spec: StateFileRestoreSpec,
-  refreshOpenClawConfigHash = false,
-): string {
+export function buildStateFileRestoreCommand(dir: string, spec: StateFileRestoreSpec): string {
   const remotePath = stateFileRemotePath(dir, spec.path);
   const quotedRemotePath = shellQuote(remotePath);
   if (spec.strategy === "sqlite_backup") {
@@ -88,9 +83,7 @@ export function buildStateFileRestoreCommand(
   }
 
   const steps = [
-    // Steps join with ";", so only the last step sets the exit status and the
-    // OpenClaw path ends with `|| true`. "&&" is not a substitute: an earlier
-    // failure then falls into the next step's `|| { ...; exit N; }` guard.
+    // Fail immediately so a partial state-file restore cannot report success.
     "set -e",
     `dst=${quotedRemotePath}`,
     'parent="$(dirname "$dst")"',
@@ -98,40 +91,11 @@ export function buildStateFileRestoreCommand(
     '[ ! -L "$dst" ] || { echo "refusing symlinked state target: $dst" >&2; exit 11; }',
     'mkdir -p "$parent"',
     'tmp="$(mktemp "${parent}/.nemoclaw-restore.XXXXXX")"',
-    'trap \'rm -f "$tmp" "${anchor_tmp:-}"\' EXIT',
+    "trap 'rm -f \"$tmp\"' EXIT",
     'cat > "$tmp"',
-    // The managed OpenClaw restart preflight accepts only the exact mutable
-    // sandbox:sandbox 0660 configuration posture. Apply that mode to the
-    // staged inode before the atomic swap so the gateway and its trusted
-    // controller never observe the restored config with the generic 0640
-    // state-file mode.
-    refreshOpenClawConfigHash ? 'chmod 660 "$tmp"' : 'chmod 640 "$tmp"',
+    'chmod 640 "$tmp"',
+    'mv -f "$tmp" "$dst"',
   ];
-
-  if (refreshOpenClawConfigHash) {
-    // Stage the OpenClaw recovery anchor before swapping the live config so
-    // the integrity watcher can never observe a restored config paired with a
-    // stale `.last-good` recovery target.
-    steps.push(
-      'last_good="${dst}.last-good"',
-      '[ ! -L "$last_good" ] || { echo "refusing symlinked last-good target: $last_good" >&2; exit 13; }',
-      'anchor_tmp="$(mktemp "${parent}/.nemoclaw-lastgood.XXXXXX")" || { echo "failed to stage last-good anchor" >&2; exit 14; }',
-      'cat "$tmp" > "$anchor_tmp" || { echo "failed to write last-good anchor" >&2; exit 14; }',
-      'chmod 660 "$anchor_tmp" 2>/dev/null || true',
-      'mv -f "$anchor_tmp" "$last_good" || { echo "failed to install last-good anchor" >&2; exit 14; }',
-    );
-  }
-
-  steps.push('mv -f "$tmp" "$dst"');
-
-  if (refreshOpenClawConfigHash) {
-    steps.push(
-      'hash_file="${parent}/.config-hash"',
-      '[ ! -L "$hash_file" ] || { echo "refusing symlinked config hash target: $hash_file" >&2; exit 12; }',
-      '(cd "$parent" && sha256sum "$(basename "$dst")" > .config-hash)',
-      'chmod 660 "$hash_file" 2>/dev/null || true',
-    );
-  }
 
   return steps.join("; ");
 }
@@ -154,29 +118,13 @@ export function restoreStateFile(
 
   let command: string;
   let input: Buffer | null;
-  if (ownership?.merge === "openclaw-config") {
-    command = buildStateFileRestoreCommand(dir, spec, true);
-    const result = buildOpenClawConfigRestoreInputFromSandbox({
-      backupContents,
-      dir,
-      env,
-      log,
-      specPath: spec.path,
-      sshArgs,
-    });
-    if (result.ok) {
-      input = result.input;
-    } else {
-      log(`FAILED: ${result.error}`);
-      input = null;
-    }
-  } else if (ownership?.merge === "key-allowlist") {
+  if (ownership?.merge === "key-allowlist") {
     command = allowCustomImageWholeStateFileRestore
-      ? buildStateFileRestoreCommand(dir, spec, false)
+      ? buildStateFileRestoreCommand(dir, spec)
       : buildKeyAllowlistMergeRestoreCommand(dir, spec, ownership);
     input = backupContents;
   } else {
-    command = buildStateFileRestoreCommand(dir, spec, false);
+    command = buildStateFileRestoreCommand(dir, spec);
     input = backupContents;
   }
   if (input === null) return false;

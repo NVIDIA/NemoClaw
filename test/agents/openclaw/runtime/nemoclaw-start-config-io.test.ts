@@ -2,11 +2,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawn, spawnSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import { extractShellFunctionFromSource } from "../../../helpers/shell-source";
 
 const START_SCRIPT = path.join(
@@ -51,25 +51,15 @@ describe("runtime model override (#759)", () => {
       }),
     );
     const configPath = path.join(openclawDir, "openclaw.json");
-    const hashPath = path.join(openclawDir, ".config-hash");
-    fs.writeFileSync(hashPath, "oldhash\n");
     fs.chmodSync(openclawDir, 0o2770);
     fs.chmodSync(configPath, 0o660);
-    fs.chmodSync(hashPath, 0o660);
 
-    const helperFns = [extractShellFunction("openclaw_config_dir_owner")]
-      .join("\n")
-      .replaceAll("/sandbox", root);
     const fn = extractShellFunction("apply_model_override").replaceAll("/sandbox", root);
     const wrapper = [
       "#!/usr/bin/env bash",
       "set -euo pipefail",
       "id() { echo 0; }",
-      "normalize_mutable_config_perms() { :; }",
       'run_openclaw_config_as_owner() { "$@"; }',
-      `ensure_mutable_openclaw_config_hash() { (cd ${JSON.stringify(openclawDir)} && sha256sum openclaw.json >.config-hash); }`,
-      `stat() { if [ "$1" = "-c" ] && [ "$2" = "%U" ] && [ "$3" = ${JSON.stringify(openclawDir)} ]; then echo sandbox; return 0; fi; command stat "$@"; }`,
-      helperFns,
       fn,
       "apply_model_override",
     ].join("\n");
@@ -80,18 +70,12 @@ describe("runtime model override (#759)", () => {
       env: { ...process.env, ...env },
     });
     const config = JSON.parse(fs.readFileSync(configPath, "utf-8"));
-    const hash = fs.readFileSync(hashPath, "utf-8");
-    const modes = {
-      dir: fs.statSync(openclawDir).mode & 0o7777,
-      config: fs.statSync(configPath).mode & 0o777,
-      hash: fs.statSync(hashPath).mode & 0o777,
-    };
     fs.rmSync(root, { recursive: true, force: true });
-    return { result, config, hash, modes };
+    return { result, config };
   }
 
-  it("applies model, API, context, max-token, and reasoning overrides and recomputes the hash", () => {
-    const { result, config, hash } = runApplyModelOverride({
+  it("applies model, API, context, max-token, and reasoning overrides", () => {
+    const { result, config } = runApplyModelOverride({
       NEMOCLAW_MODEL_OVERRIDE: "new-model",
       NEMOCLAW_INFERENCE_API_OVERRIDE: "anthropic-messages",
       NEMOCLAW_CONTEXT_WINDOW: "4096",
@@ -110,18 +94,6 @@ describe("runtime model override (#759)", () => {
       maxTokens: 512,
       reasoning: true,
     });
-    expect(hash).toContain("openclaw.json");
-  });
-
-  it("restores mutable config permissions after successful overrides", () => {
-    const { result, modes } = runApplyModelOverride({
-      NEMOCLAW_MODEL_OVERRIDE: "new-model",
-    });
-
-    expect(result.status).toBe(0);
-    expect(modes.dir).toBe(0o2770);
-    expect(modes.config).toBe(0o660);
-    expect(modes.hash).toBe(0o660);
   });
 
   it.each([
@@ -150,7 +122,7 @@ describe("runtime model override (#759)", () => {
       message: 'must be "openai-completions" or "anthropic-messages"',
     },
   ])("treats invalid supplemental overrides as atomic no-ops [case %#]", ({ env, message }) => {
-    const { result, config, hash } = runApplyModelOverride({
+    const { result, config } = runApplyModelOverride({
       NEMOCLAW_MODEL_OVERRIDE: "new-model",
       ...env,
     });
@@ -166,7 +138,6 @@ describe("runtime model override (#759)", () => {
       maxTokens: 128,
       reasoning: false,
     });
-    expect(hash).toBe("oldhash\n");
   });
 });
 
@@ -213,7 +184,6 @@ describe("root OpenClaw config I/O authority", () => {
       configPath,
       JSON.stringify({ gateway: { controlUi: { allowedOrigins: [] } } }),
     );
-    fs.writeFileSync(path.join(openclawDir, ".config-hash"), "oldhash\n");
     const applyCors = extractShellFunctionFromSource(src, "apply_cors_override").replaceAll(
       "/sandbox/.openclaw",
       openclawDir,
@@ -226,9 +196,7 @@ describe("root OpenClaw config I/O authority", () => {
         "id() { printf '0\\n'; }",
         `chown() { printf 'chown\\n' >>${JSON.stringify(metadataLog)}; return 97; }`,
         `chmod() { printf 'chmod\\n' >>${JSON.stringify(metadataLog)}; return 98; }`,
-        "normalize_mutable_config_perms() { :; }",
         'run_openclaw_config_as_owner() { "$@"; }',
-        `ensure_mutable_openclaw_config_hash() { (cd ${JSON.stringify(openclawDir)} && sha256sum openclaw.json >.config-hash); }`,
         applyCors,
         "export NEMOCLAW_CORS_ORIGIN=https://owner-io.example.test",
         "apply_cors_override",
@@ -246,69 +214,6 @@ describe("root OpenClaw config I/O authority", () => {
       fs.rmSync(root, { recursive: true, force: true });
     }
   });
-
-  it("rejects a mutable-directory replacement race before any writer runs", async () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-config-writer-race-"));
-    const configDir = path.join(root, ".openclaw");
-    const racedDir = path.join(root, ".openclaw-raced");
-    const checkpoint = path.join(configDir, "000-checkpoint");
-    const normalizer = path.join(root, "normalizer.py");
-    fs.writeFileSync(
-      normalizer,
-      fs
-        .readFileSync(
-          path.join(path.dirname(START_SCRIPT), "lib/normalize_mutable_config_perms.py"),
-          "utf-8",
-        )
-        .replace(
-          'if __name__ == "__main__":',
-          'runtime_config_modes = lambda: (0o2770, 0o660)\n\nif __name__ == "__main__":',
-        ),
-    );
-    fs.mkdirSync(configDir, { mode: 0o700 });
-    fs.writeFileSync(path.join(configDir, "openclaw.json"), "{}\n", { mode: 0o600 });
-    fs.writeFileSync(path.join(configDir, ".config-hash"), "hash\n", { mode: 0o600 });
-    fs.writeFileSync(checkpoint, "checkpoint\n", { mode: 0o600 });
-    Array.from({ length: 64 }, (_, directoryIndex) => {
-      const directory = path.join(configDir, `100-bulk-${String(directoryIndex).padStart(3, "0")}`);
-      fs.mkdirSync(directory, { mode: 0o700 });
-      Array.from({ length: 64 }, (_, fileIndex) =>
-        path.join(directory, `entry-${String(fileIndex).padStart(3, "0")}`),
-      ).forEach((file) => fs.writeFileSync(file, "fixture\n", { mode: 0o600 }));
-    });
-
-    const child = spawn(
-      "/usr/bin/python3",
-      [normalizer, configDir, String(process.getuid?.()), String(process.getgid?.())],
-      { stdio: ["ignore", "ignore", "pipe"], timeout: 20_000, killSignal: "SIGKILL" },
-    );
-    let stderr = "";
-    child.stderr?.on("data", (chunk) => (stderr += String(chunk)));
-    const exit = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>(
-      (resolve, reject) => {
-        child.once("error", reject);
-        child.once("close", (code, signal) => resolve({ code, signal }));
-      },
-    );
-    try {
-      await vi.waitFor(() => expect(fs.statSync(checkpoint).mode & 0o777).toBe(0o660), {
-        interval: 1,
-        timeout: 10_000,
-      });
-      fs.renameSync(configDir, racedDir);
-      fs.mkdirSync(configDir, { mode: 0o700 });
-      fs.writeFileSync(path.join(configDir, "replacement"), "untouched\n", { mode: 0o600 });
-
-      const result = await exit;
-      expect(result.code, stderr).not.toBe(0);
-      expect(result.signal, stderr).toBeNull();
-      expect(fs.readFileSync(path.join(configDir, "replacement"), "utf-8")).toBe("untouched\n");
-      expect(fs.existsSync(racedDir)).toBe(true);
-    } finally {
-      child.kill("SIGKILL");
-      fs.rmSync(root, { recursive: true, force: true });
-    }
-  }, 30_000);
 });
 
 describe("runtime CORS origin override (#719)", () => {
@@ -329,15 +234,9 @@ describe("runtime CORS origin override (#719)", () => {
       }),
     );
     const configPath = path.join(openclawDir, "openclaw.json");
-    const hashPath = path.join(openclawDir, ".config-hash");
-    fs.writeFileSync(hashPath, "oldhash\n");
     fs.chmodSync(openclawDir, 0o2770);
     fs.chmodSync(configPath, 0o660);
-    fs.chmodSync(hashPath, 0o660);
 
-    const helperFns = [extractShellFunction("openclaw_config_dir_owner")]
-      .join("\n")
-      .replaceAll("/sandbox", root);
     const fn = extractShellFunction("apply_cors_override").replaceAll("/sandbox", root);
     const script = path.join(root, "run.sh");
     fs.writeFileSync(
@@ -346,11 +245,7 @@ describe("runtime CORS origin override (#719)", () => {
         "#!/usr/bin/env bash",
         "set -euo pipefail",
         "id() { echo 0; }",
-        "normalize_mutable_config_perms() { :; }",
         'run_openclaw_config_as_owner() { "$@"; }',
-        `ensure_mutable_openclaw_config_hash() { (cd ${JSON.stringify(openclawDir)} && sha256sum openclaw.json >.config-hash); }`,
-        `stat() { if [ "$1" = "-c" ] && [ "$2" = "%U" ] && [ "$3" = ${JSON.stringify(openclawDir)} ]; then echo sandbox; return 0; fi; command stat "$@"; }`,
-        helperFns,
         fn,
         "apply_cors_override",
       ].join("\n"),
@@ -361,16 +256,14 @@ describe("runtime CORS origin override (#719)", () => {
       env: { ...process.env, NEMOCLAW_CORS_ORIGIN: origin },
     });
     const config = JSON.parse(fs.readFileSync(configPath, "utf-8"));
-    const hash = fs.readFileSync(hashPath, "utf-8");
     fs.rmSync(root, { recursive: true, force: true });
-    return { result, config, hash };
+    return { result, config };
   }
 
-  it("adds valid CORS origins and recomputes the config hash", () => {
-    const { result, config, hash } = runApplyCorsOverride("https://chat.example.test");
+  it("adds valid CORS origins", () => {
+    const { result, config } = runApplyCorsOverride("https://chat.example.test");
     expect(result.status).toBe(0);
     expect(config.gateway.controlUi.allowedOrigins).toContain("https://chat.example.test");
-    expect(hash).toContain("openclaw.json");
   });
 
   it("rejects invalid CORS origins without mutating config", () => {

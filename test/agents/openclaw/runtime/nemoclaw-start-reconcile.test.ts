@@ -49,12 +49,9 @@ describe("agent identity reconciliation with provider (#3175)", () => {
     const openclawDir = path.join(root, ".openclaw");
     fs.mkdirSync(openclawDir, { recursive: true });
     const configPath = path.join(openclawDir, "openclaw.json");
-    const hashPath = path.join(openclawDir, ".config-hash");
     fs.writeFileSync(configPath, JSON.stringify(initialConfig));
-    fs.writeFileSync(hashPath, "oldhash\n");
     fs.chmodSync(openclawDir, 0o2770);
     fs.chmodSync(configPath, 0o660);
-    fs.chmodSync(hashPath, 0o660);
 
     const binDir = path.join(root, "bin");
     fs.mkdirSync(binDir);
@@ -79,11 +76,7 @@ describe("agent identity reconciliation with provider (#3175)", () => {
       fs.writeFileSync(path.join(binDir, "openshell"), stub, { mode: 0o755 });
     }
 
-    const helperFns = [
-      "normalize_mutable_config_perms() { :; }",
-      'run_openclaw_config_as_owner() { "$@"; }',
-      `ensure_mutable_openclaw_config_hash() { (cd ${JSON.stringify(openclawDir)} && sha256sum openclaw.json >.config-hash); }`,
-    ].join("\n");
+    const helperFns = ['run_openclaw_config_as_owner() { "$@"; }'].join("\n");
     const fn = extractShellFunction("reconcile_agent_model_with_provider").replaceAll(
       "/sandbox",
       root,
@@ -120,13 +113,12 @@ describe("agent identity reconciliation with provider (#3175)", () => {
       env: { ...process.env, ...options.env, PATH: pathValue },
     });
     const config = JSON.parse(fs.readFileSync(configPath, "utf-8"));
-    const hash = fs.readFileSync(hashPath, "utf-8");
     fs.rmSync(root, { recursive: true, force: true });
-    return { result, config, hash };
+    return { result, config };
   }
 
   it("aligns agents.defaults.model.primary to inference provider's first model when they drift", () => {
-    const { result, config, hash } = runReconcile({
+    const { result, config } = runReconcile({
       agents: { defaults: { model: { primary: "inference/old-model" } } },
       models: {
         providers: {
@@ -140,12 +132,10 @@ describe("agent identity reconciliation with provider (#3175)", () => {
 
     expect(result.status).toBe(0);
     expect(config.agents.defaults.model.primary).toBe("inference/nvidia/new-model");
-    expect(hash).not.toBe("oldhash\n");
-    expect(hash).toContain("openclaw.json");
   });
 
   it("is a no-op when primary already matches the provider's model", () => {
-    const { result, config, hash } = runReconcile({
+    const { result, config } = runReconcile({
       agents: {
         defaults: { model: { primary: "inference/nvidia/same-model" } },
       },
@@ -161,11 +151,10 @@ describe("agent identity reconciliation with provider (#3175)", () => {
 
     expect(result.status).toBe(0);
     expect(config.agents.defaults.model.primary).toBe("inference/nvidia/same-model");
-    expect(hash).toBe("oldhash\n");
   });
 
   it("falls back to an inference-qualified model ref when provider metadata lacks name", () => {
-    const { result, config, hash } = runReconcile({
+    const { result, config } = runReconcile({
       agents: { defaults: { model: { primary: "inference/old-model" } } },
       models: {
         providers: {
@@ -179,27 +168,23 @@ describe("agent identity reconciliation with provider (#3175)", () => {
 
     expect(result.status).toBe(0);
     expect(config.agents.defaults.model.primary).toBe("inference/nvidia/new-model");
-    expect(hash).not.toBe("oldhash\n");
-    expect(hash).toContain("openclaw.json");
   });
 
   it("is a no-op when openclaw.json has no inference provider", () => {
-    const { result, config, hash } = runReconcile({
+    const { result, config } = runReconcile({
       agents: { defaults: { model: { primary: "inference/old-model" } } },
       models: { providers: {} },
     });
 
     expect(result.status).toBe(0);
     expect(config.agents.defaults.model.primary).toBe("inference/old-model");
-    expect(hash).toBe("oldhash\n");
   });
 
   it("is a no-op when openclaw.json is missing required keys", () => {
-    const { result, config, hash } = runReconcile({ unrelated: true });
+    const { result, config } = runReconcile({ unrelated: true });
 
     expect(result.status).toBe(0);
     expect(config).toEqual({ unrelated: true });
-    expect(hash).toBe("oldhash\n");
   });
 
   // ── Gateway-as-source-of-truth path (the #3175 user-reported repro) ──
@@ -223,18 +208,17 @@ describe("agent identity reconciliation with provider (#3175)", () => {
         },
       },
     };
-    const { result, config, hash } = runReconcile(initial, {
+    const { result, config } = runReconcile(initial, {
       env: { NEMOCLAW_MODEL_OVERRIDE: "anthropic/claude-sonnet-4-6" },
       gatewayModel: "nvidia/nemotron-3-super-120b-a12b",
     });
 
     expect(result.status).toBe(0);
     expect(config).toEqual(initial);
-    expect(hash).toBe("oldhash\n");
   });
 
   it("still reconciles from the live gateway when no explicit model override is set", () => {
-    const { result, config, hash } = runReconcile(
+    const { result, config } = runReconcile(
       {
         agents: { defaults: { model: { primary: "inference/nvidia-routed" } } },
         models: {
@@ -259,12 +243,10 @@ describe("agent identity reconciliation with provider (#3175)", () => {
     expect(config.models.providers.inference.models[0].id).toBe(
       "nvidia/nemotron-3-super-120b-a12b",
     );
-    expect(hash).not.toBe("oldhash\n");
-    expect(hash).toContain("openclaw.json");
   });
 
   it("patches primary AND models[0] to the live gateway model when both file fields are stale", () => {
-    const { result, config, hash } = runReconcile(
+    const { result, config } = runReconcile(
       {
         agents: { defaults: { model: { primary: "inference/nvidia-routed" } } },
         models: {
@@ -289,8 +271,6 @@ describe("agent identity reconciliation with provider (#3175)", () => {
     expect(config.models.providers.inference.models[0].id).toBe(
       "nvidia/nemotron-3-super-120b-a12b",
     );
-    expect(hash).not.toBe("oldhash\n");
-    expect(hash).toContain("openclaw.json");
   });
 
   it("accepts an inference-qualified gateway model without double-prefixing", () => {
@@ -319,7 +299,7 @@ describe("agent identity reconciliation with provider (#3175)", () => {
   });
 
   it("is a no-op when the live gateway model matches both file fields", () => {
-    const { result, config, hash } = runReconcile(
+    const { result, config } = runReconcile(
       {
         agents: { defaults: { model: { primary: "inference/nvidia/synced" } } },
         models: {
@@ -336,7 +316,6 @@ describe("agent identity reconciliation with provider (#3175)", () => {
 
     expect(result.status).toBe(0);
     expect(config.agents.defaults.model.primary).toBe("inference/nvidia/synced");
-    expect(hash).toBe("oldhash\n");
   });
 
   it("falls back to the in-file reconcile when the gateway probe returns no model", () => {
@@ -370,7 +349,7 @@ describe("agent identity reconciliation with provider (#3175)", () => {
   // not run on PR CI. These mocked shell-units pin the guard in the PR gate.
 
   it("leaves an explicit NEMOCLAW_MODEL_OVERRIDE untouched even when the gateway reports a divergent model", () => {
-    const { result, config, hash } = runReconcile(
+    const { result, config } = runReconcile(
       {
         agents: {
           defaults: { model: { primary: "inference/user/explicit-choice" } },
@@ -400,13 +379,12 @@ describe("agent identity reconciliation with provider (#3175)", () => {
     // to the divergent inference/-qualified value; the override must survive.
     expect(config.agents.defaults.model.primary).toBe("inference/user/explicit-choice");
     expect(config.models.providers.inference.models[0].id).toBe("user/explicit-choice");
-    expect(hash).toBe("oldhash\n");
   });
 
   it("does not fall back to the in-file reconcile when NEMOCLAW_MODEL_OVERRIDE is set", () => {
     // Even the legacy no-gateway path must be skipped: apply_model_override has
     // already written the user's choice, so a stale file model must not win.
-    const { result, config, hash } = runReconcile(
+    const { result, config } = runReconcile(
       {
         agents: {
           defaults: { model: { primary: "inference/user/explicit-choice" } },
@@ -430,13 +408,12 @@ describe("agent identity reconciliation with provider (#3175)", () => {
 
     expect(result.status).toBe(0);
     expect(config.agents.defaults.model.primary).toBe("inference/user/explicit-choice");
-    expect(hash).toBe("oldhash\n");
   });
 
   it("still reconciles to the gateway model when NEMOCLAW_MODEL_OVERRIDE is unset", () => {
     // Guard is scoped to explicit overrides only; the normal drift-correction
     // path must keep working (regression fence around the early return itself).
-    const { result, config, hash } = runReconcile(
+    const { result, config } = runReconcile(
       {
         agents: { defaults: { model: { primary: "inference/nvidia-routed" } } },
         models: {
@@ -455,7 +432,6 @@ describe("agent identity reconciliation with provider (#3175)", () => {
     expect(config.agents.defaults.model.primary).toBe(
       "inference/nvidia/nemotron-3-super-120b-a12b",
     );
-    expect(hash).not.toBe("oldhash\n");
   });
 
   it("falls back to the in-file reconcile when the gateway probe emits malformed JSON", () => {

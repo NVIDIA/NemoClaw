@@ -266,8 +266,9 @@ An unavailable or different version ends the rebuild with a nonzero status inste
 
 <AgentOnly variant="openclaw">
 
-After post-restore writes, rebuild verifies that the final `openclaw.json` and `.config-hash` pair match.
-If verification fails, NemoClaw exits nonzero and does not report a successful rebuild.
+Rebuild restores the complete credential-sanitized native `openclaw.json` file from the pre-rebuild snapshot.
+NemoClaw does not compare that file with a config hash, seal, last-good copy, recovery anchor, baseline, or selected-key registry.
+If the file cannot be restored safely, NemoClaw exits nonzero and does not report a successful rebuild.
 
 </AgentOnly>
 
@@ -311,6 +312,8 @@ A gateway that reports no live inference route does not stop the rebuild. Replac
   reuses an existing Brave or Tavily credential only when the provider name, type, and credential
   key match the sandbox's binding on its recorded OpenShell gateway. A missing or mismatched binding
   stops before recreation and requires the matching host environment variable before you retry.
+  Rebuild also restores the complete credential-sanitized native `openclaw.json` file.
+  Native OpenClaw configuration changes therefore survive sandbox replacement without a selective merge.
   After state restoration, NemoClaw clears a session's stale model and provider pin when it still
   targets the managed `inference` provider but no longer matches the configured default model. The
   session then follows the current default selected through `inference set`, while sessions pinned

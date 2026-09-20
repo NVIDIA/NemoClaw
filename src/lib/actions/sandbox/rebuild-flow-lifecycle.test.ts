@@ -406,27 +406,6 @@ describe("rebuildSandbox flow: lifecycle", () => {
     expect(harness.getSandboxEntry().stopped).toBe(true);
   });
 
-  it("retains removed immutability state when mutable config verification fails", async () => {
-    const harness = createRebuildFlowHarness({
-      sandboxEntry: {},
-      repairMutableConfigPerms: () => ({
-        applied: true,
-        verified: false,
-        errors: ["permission verification failed"],
-      }),
-    });
-    harness.enforceRemovedImmutabilityMigrationBoundarySpy.mockReturnValue({
-      stateRecord: "/tmp/shields-alpha.json",
-      recoveryArtifacts: [],
-    });
-
-    await expect(
-      harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
-    ).rejects.toThrow(/state was retained.*mutable config posture was not verified/u);
-
-    expect(harness.retireRemovedImmutabilityStateRecordSpy).not.toHaveBeenCalled();
-  });
-
   it("retires removed Shields state after a complete Pi terminal-agent rebuild", async () => {
     const harness = createRebuildFlowHarness({ sandboxEntry: { agent: "pi" } });
     harness.enforceRemovedImmutabilityMigrationBoundarySpy.mockReturnValue({

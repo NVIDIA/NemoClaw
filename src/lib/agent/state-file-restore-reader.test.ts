@@ -72,25 +72,6 @@ describe("state file restore ownership", () => {
     ]);
   });
 
-  it("parses the openclaw-config named restore strategy (#6334)", () => {
-    const agentName = `restore-openclaw-${String(Date.now())}`;
-    writeTempAgentManifest(
-      agentName,
-      [
-        `name: ${agentName}`,
-        "display_name: Restore",
-        "state_files:",
-        "  - path: openclaw.json",
-        "    restore:",
-        "      merge: openclaw-config",
-      ].join("\n"),
-    );
-
-    expect(loadAgent(agentName).stateFiles).toEqual([
-      { path: "openclaw.json", strategy: "copy", restore: { merge: "openclaw-config" } },
-    ]);
-  });
-
   it("rejects an unknown state-file restore merge strategy (#6334)", () => {
     const agentName = `restore-badmerge-${String(Date.now())}`;
     writeTempAgentManifest(
@@ -207,28 +188,6 @@ describe("state file restore ownership", () => {
     );
 
     expect(() => loadAgent(agentName)).toThrow(/user_keys\[0\]\.min.*integer or number/);
-  });
-
-  it("rejects openclaw-config restore with extra ownership fields (#6334)", () => {
-    const agentName = `restore-openclaw-extra-${String(Date.now())}`;
-    writeTempAgentManifest(
-      agentName,
-      [
-        `name: ${agentName}`,
-        "display_name: Restore",
-        "state_files:",
-        "  - path: openclaw.json",
-        "    restore:",
-        "      merge: openclaw-config",
-        "      user_keys:",
-        "        - key: ui.theme",
-        "          type: string",
-      ].join("\n"),
-    );
-
-    expect(() => loadAgent(agentName)).toThrow(
-      /user_keys.*not allowed for merge 'openclaw-config'/,
-    );
   });
 
   it("rejects unknown state-file fields instead of silently dropping restore intent (#6334)", () => {

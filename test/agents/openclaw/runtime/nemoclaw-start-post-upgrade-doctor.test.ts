@@ -19,7 +19,6 @@ function doctorFunction(
   rootMode = false,
 ): string {
   return [
-    'normalize_mutable_config_perms() { printf \'normalize\\n\' >>"$NORMALIZE_CALLS"; return "${NORMALIZE_EXIT_CODE:-0}"; }',
     'STEP_DOWN_PREFIX_SANDBOX=("$STEP_DOWN")',
     extractShellFunctionFromSource(source, "_nemoclaw_safe_replace_tmp_file"),
     extractShellFunctionFromSource(source, "run_requested_openclaw_post_upgrade_doctor")
@@ -44,7 +43,6 @@ function fixture() {
   const marker = path.join(configDir, ".nemoclaw-post-upgrade-doctor");
   const ready = path.join(root, "doctor-ready");
   const calls = path.join(root, "calls");
-  const normalizeCalls = path.join(root, "normalize-calls");
   const openclaw = path.join(root, "openclaw-cli");
   const fakeBin = path.join(root, "bin");
   const stepDown = path.join(root, "step-down");
@@ -71,7 +69,6 @@ function fixture() {
     configDir,
     fakeBin,
     marker,
-    normalizeCalls,
     openclaw,
     ready,
     root,
@@ -88,7 +85,6 @@ function fixtureEnv(
     ...process.env,
     ...extra,
     OPENCLAW: f.openclaw,
-    NORMALIZE_CALLS: f.normalizeCalls,
     PATH: `${f.fakeBin}:${process.env.PATH ?? ""}`,
     STEP_DOWN: f.stepDown,
   };
@@ -133,7 +129,6 @@ describe("nemoclaw-start post-upgrade doctor", () => {
       expect(fs.existsSync(f.marker)).toBe(false);
       expect(fs.existsSync(f.ready)).toBe(false);
       expect(fs.existsSync(f.calls)).toBe(false);
-      expect(fs.existsSync(f.normalizeCalls)).toBe(false);
     } finally {
       fs.rmSync(f.root, { recursive: true, force: true });
     }
@@ -229,7 +224,6 @@ describe("nemoclaw-start post-upgrade doctor", () => {
       expect(result.status, result.stderr).toBe(0);
       expect(fs.existsSync(f.marker)).toBe(false);
       expect(fs.readFileSync(f.calls, "utf8")).toBe("doctor --fix --yes --non-interactive\n");
-      expect(fs.readFileSync(f.normalizeCalls, "utf8")).toBe("normalize\n");
     } finally {
       fs.rmSync(f.root, { recursive: true, force: true });
     }
@@ -339,33 +333,6 @@ describe("nemoclaw-start post-upgrade doctor", () => {
 
       expect(result.status).toBe(1);
       expect(fs.readFileSync(f.marker, "utf8")).toBe("nemoclaw-openclaw-post-upgrade-doctor-v2\n");
-      expect(fs.existsSync(f.normalizeCalls)).toBe(false);
-    } finally {
-      fs.rmSync(f.root, { recursive: true, force: true });
-    }
-  });
-
-  it("retains the marker when mutable permissions cannot be restored", () => {
-    const source = fs.readFileSync(START_SCRIPT, "utf8");
-    const f = fixture();
-    try {
-      fs.writeFileSync(f.marker, "nemoclaw-openclaw-post-upgrade-doctor-v2\n", { mode: 0o600 });
-      const result = spawnSync(
-        "bash",
-        [
-          "-c",
-          `${doctorFunction(source, f.configDir, f.ready)}\nrun_requested_openclaw_post_upgrade_doctor`,
-        ],
-        {
-          encoding: "utf8",
-          env: fixtureEnv(f, { NORMALIZE_EXIT_CODE: "8" }),
-        },
-      );
-
-      expect(result.status).toBe(1);
-      expect(fs.readFileSync(f.calls, "utf8")).toBe("doctor --fix --yes --non-interactive\n");
-      expect(fs.readFileSync(f.marker, "utf8")).toBe("nemoclaw-openclaw-post-upgrade-doctor-v2\n");
-      expect(fs.readFileSync(f.normalizeCalls, "utf8")).toBe("normalize\n");
     } finally {
       fs.rmSync(f.root, { recursive: true, force: true });
     }

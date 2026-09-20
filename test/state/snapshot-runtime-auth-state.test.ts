@@ -128,14 +128,7 @@ if (cmd.includes("openclaw.json") && cmd.includes("cat --")) {
 if (cmd.includes(".nemoclaw-restore") && cmd.includes("openclaw.json")) {
   const configPath = path.join(dir, "openclaw.json");
   const restored = readStdin();
-  if (cmd.includes("last-good")) {
-    fs.writeFileSync(path.join(dir, "openclaw.json.last-good"), restored);
-  }
   fs.writeFileSync(configPath, restored);
-  if (cmd.includes("sha256sum") && cmd.includes(".config-hash")) {
-    const digest = require("crypto").createHash("sha256").update(fs.readFileSync(configPath)).digest("hex");
-    fs.writeFileSync(path.join(dir, ".config-hash"), digest + "  openclaw.json\\n");
-  }
   process.exit(0);
 }
 process.exit(0);

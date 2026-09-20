@@ -67,7 +67,7 @@ describe("runInferenceSet degraded state handling", () => {
       },
     };
     const deps = createDeps({ config, session: baseSession() });
-    deps.calls.writeSandboxConfig.mockImplementation(() => {
+    deps.calls.setOpenClawConfigValue.mockImplementation(() => {
       throw new Error("sandbox exec crashed");
     });
 
@@ -147,12 +147,21 @@ describe("runInferenceSet degraded state handling", () => {
       Object.assign(entry, updates);
       return true;
     });
-    deps.calls.writeSandboxConfig
+    const persistNativeValue: Record<string, (value: unknown) => void> = {
+      "agents.defaults.model.primary": () => undefined,
+      "models.mode": () => undefined,
+      "models.providers.inference": (value) => {
+        const models = persistedConfig.models as ConfigObject;
+        const providers = models.providers as ConfigObject;
+        providers.inference = structuredClone(value) as ConfigObject;
+      },
+    };
+    deps.calls.setOpenClawConfigValue
       .mockImplementationOnce(() => {
         throw new Error("sandbox exec crashed");
       })
-      .mockImplementation((_name, _target, config) => {
-        persistedConfig = structuredClone(config);
+      .mockImplementation((_name, dotpath, value) => {
+        persistNativeValue[dotpath]?.(value);
       });
 
     const options = {
@@ -189,46 +198,5 @@ describe("runInferenceSet degraded state handling", () => {
         },
       },
     });
-  });
-
-  it("reports degraded (not synced) when the in-sandbox hash recompute fails (#3726)", async () => {
-    const config: ConfigObject = {
-      agents: { defaults: { model: { primary: "inference/moonshotai/kimi-k2.6" } } },
-      models: {
-        providers: {
-          inference: {
-            api: "openai-completions",
-            models: [{ id: "moonshotai/kimi-k2.6", name: "inference/moonshotai/kimi-k2.6" }],
-          },
-        },
-      },
-    };
-    const deps = createDeps({ config, session: baseSession() });
-    deps.calls.recomputeSandboxConfigHash.mockImplementation(() => {
-      throw new Error("hash recompute failed");
-    });
-
-    const result = await runInferenceSet(
-      { provider: "anthropic-prod", model: "claude-sonnet-4-6", noVerify: true },
-      deps,
-    );
-
-    // Config write happened and registry is updated; the run resolves without aborting.
-    expect(deps.calls.writeSandboxConfig).toHaveBeenCalled();
-    expect(deps.calls.updateSandbox).toHaveBeenCalledWith(
-      "alpha",
-      expect.objectContaining({
-        provider: "anthropic-prod",
-        model: "claude-sonnet-4-6",
-      }),
-    );
-    expect(result).toMatchObject({ inSandboxConfigSynced: false });
-
-    // Degraded: warns about the stale integrity hash, points at rebuild, no "synced".
-    const logged = deps.calls.log.mock.calls.map((args) => String(args[0])).join("\n");
-    expect(logged).toMatch(/integrity hash/);
-    expect(logged).toMatch(/rebuild/);
-    expect(logged).not.toMatch(/Inference route synced/);
-    expect(deps.calls.restartSandboxGateway).not.toHaveBeenCalled();
   });
 });

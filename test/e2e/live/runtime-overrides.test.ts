@@ -10,8 +10,8 @@ import { REPO_ROOT } from "../fixtures/paths.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 
 // Docker-image/entrypoint boundary: build the NemoClaw sandbox image, start
-// short-lived containers through the real ENTRYPOINT, then read the patched
-// /sandbox/.openclaw/openclaw.json and .config-hash from inside the container.
+// short-lived containers through the real ENTRYPOINT, then read OpenClaw's
+// native configuration from inside the container.
 
 const TEST_TIMEOUT_MS = 45 * 60 * 1000;
 const DOCKER_BUFFER_BYTES = 20 * 1024 * 1024;
@@ -175,10 +175,12 @@ async function runContainer(
   script: string,
 ): Promise<CommandResult> {
   const args = dockerRunArgs(image, env, script);
-  expect(
-    args.slice(0, 4),
-    "runtime overrides require root to mutate root-owned OpenClaw configuration",
-  ).toEqual(["run", "--rm", "--user", "root"]);
+  expect(args.slice(0, 4), "runtime override coverage uses the root entrypoint path").toEqual([
+    "run",
+    "--rm",
+    "--user",
+    "root",
+  ]);
   const result = await run("docker", args, label);
   dockerLog.push(formatLog(label, result));
   return result;
@@ -219,27 +221,6 @@ async function captureConfig(
   throw new Error(
     `${label} config capture failed after 3 attempts\n${lastError?.message ?? ""}\n${lastResult ? spawnResultText(lastResult) : ""}`,
   );
-}
-
-async function runConfigHashCheck(
-  run: ObservableCommandRunner,
-  dockerLog: string[],
-  image: string,
-  label: string,
-  env: Record<string, string> = {},
-): Promise<string> {
-  // Keep the one-shot container alive long enough for its tiny fd3 marker to
-  // drain through Docker attach; the JSON capture above is naturally larger.
-  const result = await runContainer(
-    run,
-    dockerLog,
-    image,
-    `${label} config hash check`,
-    env,
-    'cd /sandbox/.openclaw && if sha256sum -c .config-hash --status; then printf "OK\\n" >&3; else printf "FAIL\\n" >&3; fi; sleep 0.1',
-  );
-  expect(result.status, spawnResultText(result)).toBe(0);
-  return result.stdout.trim();
 }
 
 async function assertManagedInferenceCompactionRuntime(
@@ -348,7 +329,6 @@ test(
         boundary: "docker-image-entrypoint",
         image,
         contract: [
-          "baseline config hash validates",
           "pinned OpenClaw accepts and loads managed inference safeguard compaction",
           "model/API/context/max-token/reasoning overrides patch openclaw.json",
           "CORS origin override extends gateway.controlUi.allowedOrigins",
@@ -381,7 +361,6 @@ test(
       const baselineOriginCount = allowedOrigins(baseline).length;
 
       await assertManagedInferenceCompactionRuntime(run, dockerLog, image);
-      expect(await runConfigHashCheck(run, dockerLog, image, "baseline")).toBe("OK");
 
       progress.phase("apply valid runtime overrides");
       const overrideModel = "anthropic/claude-sonnet-4-6";
@@ -389,21 +368,11 @@ test(
         NEMOCLAW_MODEL_OVERRIDE: overrideModel,
       });
       expect(primaryModel(modelOverride)).toBe(overrideModel);
-      expect(
-        await runConfigHashCheck(run, dockerLog, image, "model override", {
-          NEMOCLAW_MODEL_OVERRIDE: overrideModel,
-        }),
-      ).toBe("OK");
 
       const apiOverride = await captureConfig(run, dockerLog, image, "inference API override", {
         NEMOCLAW_INFERENCE_API_OVERRIDE: "anthropic-messages",
       });
       expect(firstProvider(apiOverride).api).toBe("anthropic-messages");
-      expect(
-        await runConfigHashCheck(run, dockerLog, image, "inference API override", {
-          NEMOCLAW_INFERENCE_API_OVERRIDE: "anthropic-messages",
-        }),
-      ).toBe("OK");
 
       const contextOverride = await captureConfig(
         run,
