@@ -265,3 +265,6 @@ async fn gateway_capability_reads_wait_for_unknown_bootstrap_dependencies() {
     assert!(fixture.state.lock().unwrap().gateway_reads > 0);
     assert_eq!(fixture.state.lock().unwrap().effects, 0);
 }
+
+#[path = "fixtures/standalone_openshell.rs"]
+mod standalone;

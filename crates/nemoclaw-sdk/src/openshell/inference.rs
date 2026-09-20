@@ -20,9 +20,6 @@ pub(super) fn inference_settings(
                 .ok_or(ObservationError::Query)?,
         )
         .map_err(|_| ObservationError::Query)?;
-    if serde_json::to_string(&settings).map_err(|_| ObservationError::Query)? != text {
-        return Err(ObservationError::Query);
-    }
     Ok(Some(settings))
 }
 pub(super) fn inference_environment(row: &Row) -> Result<Row, ObservationError> {
@@ -59,4 +56,31 @@ pub(super) fn provider_names(text: &str, runtime: &str) -> Result<Vec<String>, O
         providers.push(crate::config::search_provider_name(&search.credential.env));
     }
     Ok(providers)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn inference_json_accepts_hcl_encoding_and_rejects_invalid_settings() {
+        let valid = serde_json::json!({
+            "provider": "local",
+            "connection": {"provider":"openai", "model":"fixture-model",
+                "base_url":"http://127.0.0.1:11434/v1", "api_key_env":"NEMOCLAW_ANONYMOUS_API_KEY"},
+            "api":"openai-completions", "tuning":{}
+        });
+        for encoded in [
+            valid.to_string(),
+            serde_json::to_string_pretty(&valid).unwrap(),
+        ] {
+            assert!(inference_settings(&encoded, "fabric-openclaw").is_ok());
+        }
+        let mut unknown = valid.clone();
+        unknown["unexpected"] = true.into();
+        let mut invalid = valid;
+        invalid["connection"]["api_key_env"] = "INVALID".into();
+        for encoded in [unknown.to_string(), invalid.to_string(), "{".into()] {
+            assert!(inference_settings(&encoded, "fabric-openclaw").is_err());
+        }
+    }
 }
