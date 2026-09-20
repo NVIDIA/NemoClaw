@@ -58,6 +58,7 @@ import {
   type OwnedSandboxRecreateRuntime,
 } from "../onboard-recreate-journal";
 import { managedImageRuntimeIdentity } from "../managed-image/agents";
+import type { ProviderManagedStartupTransaction } from "../managed-startup/provider-root-apply";
 import {
   managedStartupStateRoots,
   MANAGED_HERMES_STATE_ROOT,
@@ -2689,9 +2690,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
     const createFlowEnvironment = hermesGpuAuthority?.env ?? sandboxEnv;
     const createGpuVerifier = hermesGpuAuthority?.verify ?? verifyDirectSandboxGpu;
     let managedBootstrapCreateFinished = false;
-    let managedStartupProtocol:
-      | managedWorkloadOnboard.ProviderManagedStartupTransaction["protocol"]
-      | null = null;
+    let managedStartupProtocol: ProviderManagedStartupTransaction["protocol"] | null = null;
     let managedBootstrapCreateRoute: PendingSandboxCreateIdentity["route"] | null = null;
     let activeCompatibilityCreateAuthority: { readonly createAttemptNonce: string } | null = null;
     const allowNotReadyAfterFinalHandoff = (): boolean =>
