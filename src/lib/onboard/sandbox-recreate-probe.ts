@@ -113,7 +113,7 @@ export function observeSandboxOnGateway(
   target: SandboxRecreateTarget,
   capture: SandboxRecreateCapture = captureOpenshell,
   runtimeSelection?: OpenShellRuntimeSelection,
-  timeoutMs = OPENSHELL_PROBE_TIMEOUT_MS,
+  timeoutMs?: number,
 ): SandboxRecreateObservation {
   if (runtimeSelection && runtimeSelection.gatewayName !== target.gatewayName) {
     throw new Error(
@@ -121,7 +121,7 @@ export function observeSandboxOnGateway(
     );
   }
   const boundedTimeoutMs =
-    Number.isFinite(timeoutMs) && timeoutMs > 0
+    timeoutMs !== undefined && Number.isFinite(timeoutMs) && timeoutMs > 0
       ? Math.max(1, Math.min(OPENSHELL_PROBE_TIMEOUT_MS, Math.floor(timeoutMs)))
       : OPENSHELL_PROBE_TIMEOUT_MS;
   const probeDeadlineMs = performance.now() + boundedTimeoutMs;
@@ -149,7 +149,7 @@ export function observeSandboxOnGateway(
     !probe.error && !probe.signal && probe.status !== null && probe.status !== 0;
   const legacy = observeLegacySandboxOnGateway(target, probe, capture, {
     ...captureOptions,
-    timeout: remainingProbeTimeoutMs(),
+    timeout: timeoutMs === undefined ? boundedTimeoutMs : remainingProbeTimeoutMs(),
   });
   if (legacy) return legacy;
   if (failedCleanly && isExplicitMissingSandboxGatewayOutput(combined, target.sandboxName)) {
