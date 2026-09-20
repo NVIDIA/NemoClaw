@@ -30,6 +30,17 @@ describe("backup failure diagnostics", () => {
     });
   });
 
+  it("attributes a nested tar error to the audited descendant instead of the parent", () => {
+    const failures = classifyFailedDirsFromTarStderr(
+      "tar: workspace/restricted: Cannot open: Permission denied\n",
+      ["workspace", "workspace/restricted"],
+    );
+
+    expect(Object.fromEntries(failures)).toEqual({
+      "workspace/restricted": BACKUP_FAILURE_PERMISSION_DENIED,
+    });
+  });
+
   it("records a failed directory only once and keeps the first reason", () => {
     const failedDirs: string[] = [];
     const reasons: Record<string, string> = {};

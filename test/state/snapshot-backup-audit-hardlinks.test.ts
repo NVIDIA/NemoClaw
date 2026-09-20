@@ -233,6 +233,23 @@ describe("pre-backup audit record framing", () => {
   );
 
   hardDereferenceTest(
+    "keeps the extracted parent when tar reports an audited unreadable descendant (#12069)",
+    () => {
+      const backup = backupWithAuditOutput(
+        encodePreBackupAuditEntries([["u", "/sandbox/.openclaw/workspace/restricted", ""]]),
+        {
+          tarStatus: 2,
+          tarStderr: "tar: workspace/restricted: Cannot open: Permission denied\n",
+        },
+      );
+
+      expect(backup.success).toBe(false);
+      expect(backup.failedDirs).toEqual(["workspace/restricted"]);
+      expect(backup.backedUpDirs).toEqual(["workspace"]);
+    },
+  );
+
+  hardDereferenceTest(
     "records an unreadable declared directory once when tar also reports it (#12069)",
     () => {
       const backup = backupWithAuditOutput(
