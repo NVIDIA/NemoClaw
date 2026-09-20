@@ -31,7 +31,7 @@ import {
 import {
   isSandboxGatewayHttpReachableForStatus,
   isSandboxGatewayRunningForStatus,
-} from "../status/process-recovery";
+} from "../process-recovery";
 
 export type LaunchReadinessObservationCategory =
   | "missing"

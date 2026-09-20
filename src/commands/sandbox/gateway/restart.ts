@@ -10,9 +10,9 @@ import { NemoClawCommand } from "../../../lib/cli/nemoclaw-oclif-command";
 export default class GatewayRestartCliCommand extends NemoClawCommand {
   static id = "sandbox:gateway:restart";
   static strict = true;
-  static summary = "Restart the sandbox agent gateway or Hermes sandbox";
+  static summary = "Restart the sandbox agent gateway";
   static description =
-    "Restart the native agent gateway. For Hermes, preflight the boundary and use OpenShell to stop and start the identified sandbox. Then wait for gateway health and check or recover host forwards.";
+    "Ask the native agent to restart its gateway, wait for health, and check or recover host forwards.";
   static usage = ["<name> [--quiet|-q]"];
   static examples = [
     "<%= config.bin %> sandbox gateway restart alpha",

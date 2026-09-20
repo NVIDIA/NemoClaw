@@ -239,7 +239,7 @@ describe("Google Chat pairing approval gateway activation (#8553)", () => {
                     stderr: result.stderr,
                   };
                 },
-                restartHermesSandbox: async () => ({ status: 0, stdout: "", stderr: "" }),
+                waitForSandboxControlPlaneReady: async () => true,
                 waitForRecoveredSandboxGateway: async () => true,
                 ensureSandboxPortForward: () => true,
                 ensureHermesDashboardPortForwardIfEnabled: () => null,

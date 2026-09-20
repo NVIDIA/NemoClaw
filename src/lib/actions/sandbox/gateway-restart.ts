@@ -3,33 +3,8 @@
 
 import { GATEWAY_RESTART_MARKERS as MARKERS } from "../../agent/gateway-restart-markers";
 import * as agentRuntime from "../../agent/runtime";
-import { inspectOpenShellSandboxIdentityFingerprint } from "../../adapters/openshell/sandbox-identity-cli";
-import type { OpenShellRuntimeSelection } from "../../adapters/openshell/runtime";
 import { G, R } from "../../cli/terminal-style";
 import { redactFullWithUrls } from "../../security/redact";
-import { createHermesSandboxIdentityRevalidator } from "./runtime/hermes-sandbox-lifecycle";
-
-export {
-  createHermesSandboxIdentityRevalidator,
-  restartHermesSandboxThroughOpenShell,
-} from "./runtime/hermes-sandbox-lifecycle";
-
-export function createCliHermesSandboxIdentityRevalidator(input: {
-  readonly sandboxName: string;
-  readonly getSandbox: Parameters<typeof createHermesSandboxIdentityRevalidator>[0]["getSandbox"];
-  readonly runtimeSelection?: OpenShellRuntimeSelection;
-}): (operation: string) => void {
-  return createHermesSandboxIdentityRevalidator({
-    sandboxName: input.sandboxName,
-    getSandbox: input.getSandbox,
-    inspectLiveIdentity: (sandboxName, gatewayName) =>
-      inspectOpenShellSandboxIdentityFingerprint({
-        sandboxName,
-        gatewayName,
-        runtimeSelection: input.runtimeSelection,
-      }),
-  });
-}
 
 export type GatewayRestartCommandResult = {
   status: number;
@@ -106,8 +81,6 @@ type SandboxExec = (
   timeout?: number,
 ) => Promise<GatewayRestartCommandResult | null>;
 
-type HermesSandboxRestart = (sandboxName: string) => Promise<GatewayRestartCommandResult | null>;
-
 const GATEWAY_RESTART_SUPPORTED_AGENTS = ["openclaw", "hermes"] as const;
 
 export type GatewayRestartDeps = {
@@ -115,7 +88,7 @@ export type GatewayRestartDeps = {
   getSandbox: SandboxAgentLookup;
   resolveSandboxDashboardPort: (sandboxName: string) => number;
   executeSandboxExecCommand: SandboxExec;
-  restartHermesSandbox: HermesSandboxRestart;
+  waitForSandboxControlPlaneReady: (sandboxName: string) => Promise<boolean>;
   waitForRecoveredSandboxGateway: (
     sandboxName: string,
     options?: {
@@ -439,47 +412,12 @@ export async function restartSandboxGatewayWithDeps(
     );
   }
   const nativeCommand =
-    "env -u OPENCLAW_HOME -u OPENCLAW_STATE_DIR -u OPENCLAW_CONFIG_PATH openclaw gateway restart --safe --skip-deferral --json";
-  if (agentName === "hermes") {
-    const boundaryCheck = await deps.executeSandboxExecCommand(
-      sandboxName,
-      "hermes gateway --help",
-      210000,
-    );
-    if (!boundaryCheck || boundaryCheck.status !== 0) {
-      const classified = classifyGatewayRestartFailure(boundaryCheck);
-      const detail = classified.detail || "Hermes gateway secret-boundary preflight failed";
-      printGatewayRestartFailure(sandboxName, classified.layer, detail);
-      return { ok: false, failureLayer: classified.layer, detail };
-    }
-  }
-  let restartResult: GatewayRestartCommandResult | null;
-  try {
-    restartResult =
-      agentName === "hermes"
-        ? await deps.restartHermesSandbox(sandboxName)
-        : await deps.executeSandboxExecCommand(sandboxName, nativeCommand, 210000);
-  } catch (error) {
-    const rawDetail = error instanceof Error ? error.message : String(error);
-    const identityChanged = /identity changed/i.test(rawDetail);
-    const classified = identityChanged
-      ? classifyGatewayRestartFailure({
-          status: 1,
-          stdout: MANAGED_CONTROL_IDENTITY_CHANGED_MARKER,
-          stderr: rawDetail,
-        })
-      : {
-          layer: "native agent command" as const,
-          detail: sanitizeGatewayRestartFailureDetail(rawDetail) || "Hermes lifecycle failed",
-        };
-    printGatewayRestartFailure(sandboxName, classified.layer, classified.detail);
-    return { ok: false, failureLayer: classified.layer, detail: classified.detail };
-  }
+    agentName === "openclaw"
+      ? "env -u OPENCLAW_HOME -u OPENCLAW_STATE_DIR -u OPENCLAW_CONFIG_PATH openclaw gateway restart --safe --skip-deferral --json"
+      : `${agentName} gateway restart`;
+  const restartResult = await deps.executeSandboxExecCommand(sandboxName, nativeCommand, 210000);
   if (!restartResult) {
-    const detail =
-      agentName === "hermes"
-        ? "OpenShell sandbox stop/start did not return command output"
-        : `${nativeCommand} did not return command output`;
+    const detail = `${nativeCommand} did not return command output`;
     const gatewayLogTail =
       agentName === "hermes"
         ? await hermesGatewayLogTail(sandboxName, deps.executeSandboxExecCommand)
@@ -487,7 +425,13 @@ export async function restartSandboxGatewayWithDeps(
     printGatewayRestartFailure(sandboxName, "native agent command", detail, gatewayLogTail);
     return { ok: false, failureLayer: "native agent command", detail };
   }
-  if (restartResult.status !== 0) {
+  const hermesRelayClosed =
+    agentName === "hermes" &&
+    restartResult.status !== 0 &&
+    /code: 'The service is currently unavailable'[\s\S]*exec relay closed[\s\S]*before the command reported an exit status/u.test(
+      gatewayRestartOutput(restartResult),
+    );
+  if (restartResult.status !== 0 && !hermesRelayClosed) {
     const classified = classifyGatewayRestartFailure(restartResult);
     if (agentName === "hermes" && classified.layer === "secret-boundary refusal") {
       printGatewayRestartFailure(sandboxName, classified.layer, classified.detail);
@@ -495,13 +439,19 @@ export async function restartSandboxGatewayWithDeps(
     }
     const detail =
       sanitizeGatewayRestartFailureDetail(gatewayRestartOutput(restartResult)) ||
-      `${agentName === "hermes" ? "OpenShell sandbox stop/start" : nativeCommand} exited ${restartResult.status}`;
+      `${nativeCommand} exited ${restartResult.status}`;
     const gatewayLogTail =
       agentName === "hermes"
         ? await hermesGatewayLogTail(sandboxName, deps.executeSandboxExecCommand)
         : [];
     printGatewayRestartFailure(sandboxName, "native agent command", detail, gatewayLogTail);
     return { ok: false, failureLayer: "native agent command", detail };
+  }
+
+  if (hermesRelayClosed && !(await deps.waitForSandboxControlPlaneReady(sandboxName))) {
+    const detail = "Hermes restarted, but its OpenShell exec relay did not re-register";
+    printGatewayRestartFailure(sandboxName, "health timeout", detail);
+    return { ok: false, failureLayer: "health timeout", detail };
   }
 
   if (

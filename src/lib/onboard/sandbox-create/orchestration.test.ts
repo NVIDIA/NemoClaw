@@ -43,11 +43,7 @@ describe("created Hermes credential environment reconciliation", () => {
     const wait = vi
       .spyOn(processRecovery, "waitForRecoveredSandboxGateway")
       .mockResolvedValueOnce(true);
-    const runtime = createHermesCredentialEnvReconciliationRuntime(
-      "nemoclaw-19080",
-      vi.fn() as never,
-      vi.fn(),
-    );
+    const runtime = createHermesCredentialEnvReconciliationRuntime(vi.fn() as never, vi.fn());
 
     await expect(runtime.waitForGateway("alpha", vi.fn())).resolves.toBe(true);
 
@@ -59,57 +55,48 @@ describe("created Hermes credential environment reconciliation", () => {
     wait.mockRestore();
   });
 
-  it("restarts through OpenShell with an identity gate around each lifecycle mutation", async () => {
+  it("uses the native restart recovery path after the secret boundary", async () => {
     const events: string[] = [];
-    const runOpenshell = vi.fn((args: readonly string[]) => {
-      events.push(args.join(" "));
-      return { status: 0, stdout: "", stderr: "" };
-    });
-    const runtime = createHermesCredentialEnvReconciliationRuntime(
-      "nemoclaw-19080",
-      runOpenshell,
-      vi.fn(),
-    );
+    const restart = vi
+      .spyOn(processRecovery, "restartSandboxGateway")
+      .mockImplementation(async () => {
+        events.push("restart");
+        return { ok: true, restarted: true, healthPassed: true, forwardRecovered: true };
+      });
+    const runtime = createHermesCredentialEnvReconciliationRuntime(vi.fn() as never, vi.fn());
 
     await expect(
       runtime.restartGateway("alpha", (operation) => events.push(`identity:${operation}`)),
-    ).resolves.toEqual({ status: 0, stdout: "", stderr: "" });
+    ).resolves.toEqual({
+      status: 0,
+      stdout: "Hermes gateway restarted and forwards recovered.",
+      stderr: "",
+    });
 
     expect(events).toEqual([
-      "identity:stopping Hermes sandbox 'alpha'",
-      "sandbox stop --gateway nemoclaw-19080 alpha",
-      "identity:confirming Hermes sandbox 'alpha' after OpenShell stop",
-      "identity:starting Hermes sandbox 'alpha'",
-      "sandbox start --gateway nemoclaw-19080 alpha",
-      "identity:confirming Hermes sandbox 'alpha' after OpenShell start",
+      "identity:restarting Hermes gateway for sandbox 'alpha'",
+      "restart",
+      "identity:confirming Hermes gateway restart for sandbox 'alpha'",
     ]);
-    expect(runOpenshell).toHaveBeenCalledTimes(2);
-    expect(runOpenshell).toHaveBeenNthCalledWith(
-      1,
-      ["sandbox", "stop", "--gateway", "nemoclaw-19080", "alpha"],
-      {
-        ignoreError: true,
-        suppressOutput: true,
-        timeout: 210000,
-      },
-    );
+    expect(restart).toHaveBeenCalledWith("alpha", { quiet: true });
+    restart.mockRestore();
   });
 
-  it("does not start when OpenShell cannot stop the sandbox", async () => {
-    const runOpenshell = vi.fn(() => ({ status: 1, stdout: "", stderr: "stop failed" }));
-    const runtime = createHermesCredentialEnvReconciliationRuntime(
-      "nemoclaw-19080",
-      runOpenshell,
-      vi.fn(),
-    );
+  it("preserves native restart recovery failures for onboarding", async () => {
+    const restart = vi.spyOn(processRecovery, "restartSandboxGateway").mockResolvedValueOnce({
+      ok: false,
+      failureLayer: "health timeout",
+      detail: "gateway process restarted but health did not pass before timeout",
+    });
+    const runtime = createHermesCredentialEnvReconciliationRuntime(vi.fn() as never, vi.fn());
 
     await expect(runtime.restartGateway("alpha", vi.fn())).resolves.toEqual({
       status: 1,
       stdout: "",
-      stderr: "stop failed",
+      stderr: "health timeout: gateway process restarted but health did not pass before timeout",
     });
 
-    expect(runOpenshell).toHaveBeenCalledOnce();
+    restart.mockRestore();
   });
 
   it("finalizes sandbox registration before reconciling credentials (#9833)", async () => {
@@ -235,7 +222,7 @@ describe("created Hermes credential environment reconciliation", () => {
         },
         recordRecovery,
       ),
-    ).rejects.toThrow("OpenShell sandbox restart failed");
+    ).rejects.toThrow("native Hermes restart failed");
     expect(recordRecovery).toHaveBeenCalledOnce();
   });
 });

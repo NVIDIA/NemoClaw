@@ -27,7 +27,6 @@ import {
   resolveGatewayPortFromName,
   resolveSandboxGatewayName,
 } from "../../onboard/gateway-binding";
-export { resolveSandboxGatewayName };
 import { resolveGatewayForwardAuthority } from "../../onboard/gateway-teardown-authority";
 import { resolveGatewayForwardRuntimeAuthority } from "../../onboard/gateway-host-runtime";
 import { sameGatewayOwner, type GatewayOwner } from "../../onboard/gateway-ownership";

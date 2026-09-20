@@ -4,43 +4,9 @@
 import { MessagingSetupApplier } from "../../../messaging/applier/setup-applier";
 import type { MessagingOpenShellRunner } from "../../../messaging/applier/types";
 import type { SandboxMessagingPlan } from "../../../messaging/manifest";
-import { waitForRecoveredSandboxGateway } from "../process-recovery";
-import { withSandboxLifecycleLock } from "../lifecycle/lock";
-import {
-  createHermesSandboxIdentityRevalidator,
-  restartHermesSandboxThroughOpenShell,
-} from "./hermes-sandbox-lifecycle";
-
-export function createRegisteredHermesSandboxIdentityRevalidator(input: {
-  readonly sandboxName: string;
-  readonly getSandbox: Parameters<typeof createHermesSandboxIdentityRevalidator>[0]["getSandbox"];
-  readonly observeSandbox: (
-    sandboxName: string,
-    gatewayName: string,
-  ) => { readonly liveIdentityFingerprint: string | null };
-}): (operation: string) => void {
-  return createHermesSandboxIdentityRevalidator({
-    sandboxName: input.sandboxName,
-    getSandbox: input.getSandbox,
-    inspectLiveIdentity: (sandboxName, gatewayName) => {
-      const fingerprint = input.observeSandbox(sandboxName, gatewayName).liveIdentityFingerprint;
-      if (typeof fingerprint !== "string") {
-        throw new Error(`Sandbox '${sandboxName}' has no verifiable live identity.`);
-      }
-      return fingerprint;
-    },
-  });
-}
-
-export async function withHermesCredentialEnvReconciliationLock<T>(
-  sandboxName: string,
-  operation: () => Promise<T> | T,
-): Promise<T> {
-  return await withSandboxLifecycleLock(sandboxName, operation);
-}
+import * as processRecovery from "../process-recovery";
 
 export function createHermesCredentialEnvReconciliationRuntime(
-  gatewayName: string,
   runOpenshell: MessagingOpenShellRunner,
   revalidateSandboxIdentity: (operation: string) => void,
 ) {
@@ -55,16 +21,20 @@ export function createHermesCredentialEnvReconciliationRuntime(
         },
       }),
     restartGateway: async (sandboxName: string, revalidate: (operation: string) => void) => {
-      return restartHermesSandboxThroughOpenShell(
-        sandboxName,
-        gatewayName,
-        runOpenshell,
-        revalidate,
-      );
+      revalidate(`restarting Hermes gateway for sandbox '${sandboxName}'`);
+      const result = await processRecovery.restartSandboxGateway(sandboxName, { quiet: true });
+      revalidate(`confirming Hermes gateway restart for sandbox '${sandboxName}'`);
+      return result.ok
+        ? { status: 0, stdout: "Hermes gateway restarted and forwards recovered.", stderr: "" }
+        : {
+            status: 1,
+            stdout: "",
+            stderr: `${result.failureLayer}: ${result.detail}`,
+          };
     },
     waitForGateway: async (sandboxName: string, revalidate: (operation: string) => void) => {
       revalidate(`checking Hermes gateway health for sandbox '${sandboxName}'`);
-      const healthy = await waitForRecoveredSandboxGateway(sandboxName, {
+      const healthy = await processRecovery.waitForRecoveredSandboxGateway(sandboxName, {
         quiet: true,
         initialManagedHealthPassed: false,
         managedProbeImpl: () => null,
@@ -75,3 +45,25 @@ export function createHermesCredentialEnvReconciliationRuntime(
     revalidateSandboxIdentity,
   };
 }
+
+// Keep process-recovery's importer count flat: post-restore and post-create
+// reconciliation share this focused lifecycle adapter.
+export function restartSandboxGateway(
+  ...args: Parameters<typeof processRecovery.restartSandboxGateway>
+) {
+  return processRecovery.restartSandboxGateway(...args);
+}
+
+export function checkAndRecoverSandboxProcesses(
+  ...args: Parameters<typeof processRecovery.checkAndRecoverSandboxProcesses>
+) {
+  return processRecovery.checkAndRecoverSandboxProcesses(...args);
+}
+
+export function executePrivilegedSandboxCommand(
+  ...args: Parameters<typeof processRecovery.executePrivilegedSandboxCommand>
+) {
+  return processRecovery.executePrivilegedSandboxCommand(...args);
+}
+
+export type SandboxCommandResult = processRecovery.SandboxCommandResult;

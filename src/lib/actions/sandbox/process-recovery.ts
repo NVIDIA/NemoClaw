@@ -57,7 +57,6 @@ import {
   recoverDeclaredAgentForwardPorts,
   recoverHermesPortableLaunchForwards,
   recoverMessagingHostForward,
-  resolveSandboxGatewayName,
   resolveSandboxDashboardPort,
   resolveSandboxHealthProbeUrl,
   nonOwnedForwardListenerRefusal,
@@ -80,8 +79,6 @@ import {
   MANAGED_CONTROL_IDENTITY_CHANGED_MARKER,
   parseManagedGatewayControlCompletion,
   printGatewayRestartFailure,
-  createCliHermesSandboxIdentityRevalidator,
-  restartHermesSandboxThroughOpenShell,
   type RestartSandboxGatewayOptions as BaseRestartSandboxGatewayOptions,
   restartSandboxGatewayWithDeps,
   sandboxAgentName,
@@ -1849,35 +1846,8 @@ export async function restartSandboxGateway(
             timeout,
             runtimeSelection ? { runtimeSelection } : { localDockerFallbackPolicy: "read-only" },
           ),
-        restartHermesSandbox: async (name) => {
-          const registered = registry.getSandbox(name);
-          const gatewayName = registered ? resolveSandboxGatewayName(registered) : null;
-          if (!gatewayName) {
-            throw new Error(`Sandbox '${name}' has no verified OpenShell gateway owner.`);
-          }
-          const revalidate = createCliHermesSandboxIdentityRevalidator({
-            sandboxName: name,
-            getSandbox: registry.getSandbox,
-            runtimeSelection,
-          });
-          return restartHermesSandboxThroughOpenShell(
-            name,
-            gatewayName,
-            (args, options = {}) =>
-              captureOpenshell(
-                [...args],
-                withSelectedOpenShellCommandOptions(
-                  {
-                    ignoreError: options.ignoreError,
-                    includeStreams: true,
-                    timeout: options.timeout,
-                  },
-                  runtimeSelection,
-                ),
-              ),
-            revalidate,
-          );
-        },
+        waitForSandboxControlPlaneReady: (name) =>
+          waitForRecreatedSandboxOpenShellReady(name, { runtimeSelection }),
         waitForRecoveredSandboxGateway: (name, options) =>
           waitForRecoveredSandboxGateway(name, {
             ...options,

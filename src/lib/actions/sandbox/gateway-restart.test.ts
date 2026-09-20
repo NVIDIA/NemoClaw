@@ -3,11 +3,7 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { GATEWAY_RESTART_MARKERS as MARKERS } from "../../agent/gateway-restart-markers";
-import {
-  classifyGatewayRestartFailure,
-  createHermesSandboxIdentityRevalidator,
-  restartHermesSandboxThroughOpenShell,
-} from "./gateway-restart";
+import { classifyGatewayRestartFailure } from "./gateway-restart";
 import { restartSandboxGateway } from "./process-recovery";
 
 afterEach(() => vi.restoreAllMocks());
@@ -59,7 +55,7 @@ describe("restartSandboxGateway native lifecycle", () => {
         stdout: "",
         stderr: "",
       })),
-      restartHermesSandbox: vi.fn(async () => ({ status: 0, stdout: "", stderr: "" })),
+      waitForSandboxControlPlaneReady: vi.fn(async () => true),
       waitForRecoveredSandboxGateway: vi.fn(async () => true),
       ensureSandboxPortForward: vi.fn(() => true),
       ensureHermesDashboardPortForwardIfEnabled: vi.fn(() => null),
@@ -87,7 +83,7 @@ describe("restartSandboxGateway native lifecycle", () => {
     );
   });
 
-  it("restarts the Hermes sandbox through OpenShell lifecycle", async () => {
+  it("asks Hermes to restart its gateway", async () => {
     silenceConsole();
     const deps = baseDeps({
       getSessionAgent: () => ({ name: "hermes", displayName: "Hermes Agent" }),
@@ -99,156 +95,35 @@ describe("restartSandboxGateway native lifecycle", () => {
     });
 
     expect(result).toMatchObject({ ok: true });
-    expect(deps.restartHermesSandbox).toHaveBeenCalledExactlyOnceWith("hermes-box");
-    expect(deps.executeSandboxExecCommand).toHaveBeenCalledExactlyOnceWith(
+    expect(deps.executeSandboxExecCommand).toHaveBeenCalledOnce();
+    expect(deps.executeSandboxExecCommand).toHaveBeenCalledWith(
       "hermes-box",
-      "hermes gateway --help",
+      "hermes gateway restart",
       210000,
     );
   });
 
-  it("reports a failed Hermes OpenShell lifecycle before gateway health", async () => {
+  it("requires health proof when Hermes restart closes the exec relay before status", async () => {
     silenceConsole();
     const deps = baseDeps({
       getSessionAgent: () => ({ name: "hermes", displayName: "Hermes Agent" }),
       getSandbox: () => ({ name: "hermes-box", agent: "hermes" }),
-      restartHermesSandbox: vi.fn(async () => ({
+      executeSandboxExecCommand: vi.fn(async () => ({
         status: 1,
         stdout: "",
-        stderr: "OpenShell sandbox stop failed",
+        stderr:
+          "Error: code: 'The service is currently unavailable', message: exec relay closed before the command reported an exit status",
       })),
     });
 
     await expect(restartSandboxGateway("hermes-box", { quiet: true, deps })).resolves.toMatchObject(
       {
-        ok: false,
-        failureLayer: "native agent command",
+        ok: true,
+        healthPassed: true,
       },
     );
-    expect(deps.waitForRecoveredSandboxGateway).not.toHaveBeenCalled();
-  });
-
-  it("preserves a Hermes start failure and stops before health or forward recovery", async () => {
-    silenceConsole();
-    const fingerprint = "a".repeat(64);
-    const entry = {
-      name: "hermes-box",
-      agent: "hermes",
-      gatewayName: "nemoclaw-19080",
-      lifecycleGeneration: "generation-1",
-      lifecycleLiveIdentityFingerprint: fingerprint,
-    };
-    const runOpenshell = vi
-      .fn()
-      .mockReturnValueOnce({ status: 0, stdout: "stopped", stderr: "" })
-      .mockReturnValueOnce({ status: 1, stdout: "", stderr: "start failed" });
-    const revalidate = createHermesSandboxIdentityRevalidator({
-      sandboxName: entry.name,
-      getSandbox: () => entry,
-      inspectLiveIdentity: () => fingerprint,
-    });
-    const deps = baseDeps({
-      getSessionAgent: () => ({ name: "hermes", displayName: "Hermes Agent" }),
-      getSandbox: () => entry,
-      restartHermesSandbox: vi.fn(async (sandboxName: string) =>
-        restartHermesSandboxThroughOpenShell(
-          sandboxName,
-          entry.gatewayName,
-          runOpenshell,
-          revalidate,
-        ),
-      ),
-    });
-
-    await expect(restartSandboxGateway("hermes-box", { quiet: true, deps })).resolves.toMatchObject(
-      {
-        ok: false,
-        failureLayer: "native agent command",
-        detail: "start failed",
-      },
-    );
-    expect(runOpenshell).toHaveBeenNthCalledWith(
-      1,
-      ["sandbox", "stop", "--gateway", "nemoclaw-19080", "hermes-box"],
-      expect.any(Object),
-    );
-    expect(runOpenshell).toHaveBeenNthCalledWith(
-      2,
-      ["sandbox", "start", "--gateway", "nemoclaw-19080", "hermes-box"],
-      expect.any(Object),
-    );
-    expect(deps.waitForRecoveredSandboxGateway).not.toHaveBeenCalled();
-    expect(deps.ensureSandboxPortForward).not.toHaveBeenCalled();
-    expect(deps.recoverMessagingHostForward).not.toHaveBeenCalled();
-  });
-
-  it("converts a rejected Hermes identity check into a typed failure", async () => {
-    silenceConsole();
-    const deps = baseDeps({
-      getSessionAgent: () => ({ name: "hermes", displayName: "Hermes Agent" }),
-      getSandbox: () => ({ name: "hermes-box", agent: "hermes" }),
-      restartHermesSandbox: vi.fn(async () => {
-        throw new Error("Sandbox 'hermes-box' identity changed during Hermes restart.");
-      }),
-    });
-
-    await expect(restartSandboxGateway("hermes-box", { quiet: true, deps })).resolves.toEqual({
-      ok: false,
-      failureLayer: "container identity changed",
-      detail: "Sandbox 'hermes-box' identity changed during Hermes restart.",
-    });
-    expect(deps.waitForRecoveredSandboxGateway).not.toHaveBeenCalled();
-  });
-
-  it("refuses a same-name Hermes replacement before start or health recovery", async () => {
-    silenceConsole();
-    const expectedFingerprint = "a".repeat(64);
-    const replacementFingerprint = "b".repeat(64);
-    const entry = {
-      name: "hermes-box",
-      agent: "hermes",
-      gatewayName: "nemoclaw",
-      lifecycleGeneration: "generation-1",
-      lifecycleLiveIdentityFingerprint: expectedFingerprint,
-    };
-    const inspectLiveIdentity = vi
-      .fn<() => string>()
-      .mockReturnValueOnce(expectedFingerprint)
-      .mockReturnValue(replacementFingerprint);
-    const runOpenshell = vi.fn(() => ({ status: 0, stdout: "", stderr: "" }));
-    const revalidate = createHermesSandboxIdentityRevalidator({
-      sandboxName: entry.name,
-      getSandbox: () => entry,
-      inspectLiveIdentity: () => inspectLiveIdentity(),
-    });
-    const deps = baseDeps({
-      getSessionAgent: () => ({ name: "hermes", displayName: "Hermes Agent" }),
-      getSandbox: () => entry,
-      restartHermesSandbox: vi.fn(async (sandboxName: string) =>
-        restartHermesSandboxThroughOpenShell(
-          sandboxName,
-          entry.gatewayName,
-          runOpenshell,
-          revalidate,
-        ),
-      ),
-    });
-
-    await expect(restartSandboxGateway("hermes-box", { quiet: true, deps })).resolves.toEqual({
-      ok: false,
-      failureLayer: "container identity changed",
-      detail:
-        "Sandbox 'hermes-box' live identity changed before confirming Hermes sandbox 'hermes-box' after OpenShell stop.",
-    });
-    expect(runOpenshell).toHaveBeenCalledExactlyOnceWith(
-      ["sandbox", "stop", "--gateway", "nemoclaw", "hermes-box"],
-      expect.any(Object),
-    );
-    expect(runOpenshell).not.toHaveBeenCalledWith(
-      ["sandbox", "start", "--gateway", "nemoclaw", "hermes-box"],
-      expect.any(Object),
-    );
-    expect(deps.waitForRecoveredSandboxGateway).not.toHaveBeenCalled();
+    expect(deps.waitForRecoveredSandboxGateway).toHaveBeenCalledOnce();
+    expect(deps.waitForSandboxControlPlaneReady).toHaveBeenCalledExactlyOnceWith("hermes-box");
   });
 
   it("refuses Hermes restart before reload when the secret boundary fails", async () => {
@@ -272,8 +147,7 @@ describe("restartSandboxGateway native lifecycle", () => {
       detail: "[SECURITY] restart refused\nSECRET_BOUNDARY_REFUSED",
     });
     expect(execute).toHaveBeenCalledOnce();
-    expect(execute).toHaveBeenCalledWith("hermes-box", "hermes gateway --help", 210000);
-    expect(deps.restartHermesSandbox).not.toHaveBeenCalled();
+    expect(execute).toHaveBeenCalledWith("hermes-box", "hermes gateway restart", 210000);
   });
 
   it("reports the native OpenClaw restart failure without an authorization verdict", async () => {

@@ -3065,8 +3065,6 @@ Do not edit either hash file manually.
 If the error reports `secret-boundary refusal`, inspect `/sandbox/.hermes/.env` for raw secret-shaped values.
 Replace them through the supported credential flow so the file contains `openshell:resolve:env:<name>` placeholders, then run `nemohermes <name> recover`.
 
-For `nemohermes <name> gateway restart`, NemoClaw runs that secret-boundary check as a non-mutating preflight before it asks the sandbox's recorded OpenShell gateway to stop and start the complete sandbox. It revalidates the registered and live sandbox identity around the lifecycle steps, then requires native gateway health before repairing host forwards. If the identity changes or OpenShell cannot safely complete either lifecycle step, the command exits nonzero and does not continue to health or forward recovery. Do not retry against a same-named replacement; inspect the recorded gateway and sandbox identity first.
-
 If the error reports `unsafe config path`, do not follow or edit the unsafe path in place. Rebuild from registered configuration to restore the managed layout.
 If it reports `config hash mismatch`, do not repair the hash or restart metadata by hand. Rebuild from registered configuration:
 

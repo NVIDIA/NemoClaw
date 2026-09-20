@@ -4,11 +4,7 @@
 import { isDeepStrictEqual } from "node:util";
 import fs from "node:fs";
 
-import {
-  createHermesCredentialEnvReconciliationRuntime,
-  createRegisteredHermesSandboxIdentityRevalidator,
-  withHermesCredentialEnvReconciliationLock,
-} from "../../actions/sandbox/runtime/hermes-lifecycle";
+import { createHermesCredentialEnvReconciliationRuntime } from "../../actions/sandbox/runtime/hermes-lifecycle";
 import type { SandboxCreateOrchestrationRuntime } from "../../onboard";
 import { HERMES_PORTABLE_OPENSHELL_VERSION } from "../../adapters/openshell/resolve-shared";
 import {
@@ -929,9 +925,7 @@ type CreatedHermesCredentialEnvReconciliationDeps = {
 /**
  * Reconcile credentials rendered by an older managed Hermes image before
  * onboarding reports success. A changed env file is not effective until the
- * OpenShell restarts the sandbox and the native Hermes gateway passes its
- * health probe. Hermes' in-container restart fallback stays in the foreground
- * when no service manager is present, so OpenShell must own this lifecycle.
+ * native Hermes gateway restarts and passes its health probe.
  */
 export async function reconcileCreatedHermesCredentialEnvironment(
   input: {
@@ -956,7 +950,7 @@ export async function reconcileCreatedHermesCredentialEnvironment(
     const restart = await deps.restartGateway(input.sandboxName, deps.revalidateSandboxIdentity);
     if (!restart || restart.status !== 0) {
       throw new Error(
-        `Hermes messaging credential reconciliation changed the gateway environment for sandbox '${input.sandboxName}', but the OpenShell sandbox restart failed.`,
+        `Hermes messaging credential reconciliation changed the gateway environment for sandbox '${input.sandboxName}', but the native Hermes restart failed.`,
       );
     }
     if (!(await deps.waitForGateway(input.sandboxName, deps.revalidateSandboxIdentity))) {
@@ -3295,25 +3289,17 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
             return registration;
           },
           () =>
-            withHermesCredentialEnvReconciliationLock(sandboxName, () => {
-              const revalidateRegisteredSandbox = createRegisteredHermesSandboxIdentityRevalidator({
+            reconcileCreatedHermesCredentialEnvironment(
+              {
                 sandboxName,
-                getSandbox: registry.getSandbox,
-                observeSandbox: getSandboxRecreateObservation,
-              });
-              return reconcileCreatedHermesCredentialEnvironment(
-                {
-                  sandboxName,
-                  plan: plannedMessagingState?.plan ?? null,
-                },
-                createHermesCredentialEnvReconciliationRuntime(
-                  GATEWAY_NAME,
-                  (args, options) => runOpenshell([...args], options),
-                  revalidateRegisteredSandbox,
-                ),
-                () => recordPostCreateRecovery("onboarding finalization"),
-              );
-            }),
+                plan: plannedMessagingState?.plan ?? null,
+              },
+              createHermesCredentialEnvReconciliationRuntime(
+                (args, options) => runOpenshell([...args], options),
+                (operation) => revalidateSandboxIdentity(true, operation),
+              ),
+              () => recordPostCreateRecovery("onboarding finalization"),
+            ),
         );
       } finally {
         cleanupInitialCreateSource();
