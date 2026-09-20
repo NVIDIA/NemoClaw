@@ -31,7 +31,7 @@ function packageFixture(): string {
     ],
   });
   roots.push(root);
-  for (const name of ["yaml", "typebox", "ajv", "@bufbuild/protobuf"]) {
+  for (const name of ["yaml", "typebox", "ajv", "json5", "@bufbuild/protobuf"]) {
     const destination = path.join(root, "node_modules", name);
     mkdirSync(path.dirname(destination), { recursive: true });
     symlinkSync(path.join(repositoryRoot, "node_modules", name), destination, "dir");
