@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { performance } from "node:perf_hooks";
+
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
@@ -69,6 +71,10 @@ vi.mock("../platform", async (importOriginal) => ({
 }));
 
 import {
+  NEMOCLAW_CREATE_ATTEMPT_LABEL,
+  NEMOCLAW_CREATE_ATTEMPT_NONCE_HEX_LENGTH,
+} from "../adapters/openshell/sandbox-identity";
+import {
   createGpuFlowDeps as createDeps,
   createGpuFlowInput as createInput,
   createGpuPatchFixture as createPatch,
@@ -111,6 +117,39 @@ const SEMANTIC_CREATE_ARGS = [
   "--",
   "nemoclaw-start",
 ];
+
+function createVerifiedNoGpuInput() {
+  const input = createInput();
+  input.sandboxGpuConfig = {
+    mode: "0",
+    hostGpuDetected: false,
+    hostGpuPlatform: null,
+    sandboxGpuEnabled: false,
+    sandboxGpuDevice: null,
+    errors: [],
+  };
+  input.gpuRoutePlan = "none";
+  input.initialGpuRoute = "none";
+  input.createRequest = { ...input.createRequest!, gpu: undefined };
+  input.persistRetainedSandboxRecovery = vi.fn(() => true);
+  input.verifyCreatedSandboxBeforeEffects = vi.fn();
+  input.revalidateVerifiedSandboxBeforeEffect = vi.fn();
+  return input;
+}
+
+function sandboxListWithAttempt(nonce: string): string {
+  return JSON.stringify([
+    {
+      id: "alpha-sandbox-id",
+      name: "alpha",
+      labels: { [NEMOCLAW_CREATE_ATTEMPT_LABEL]: nonce },
+      resource_version: 1,
+      created_at: "2026-08-25T00:00:00Z",
+      phase: "Ready",
+      current_policy_version: 1,
+    },
+  ]);
+}
 
 beforeEach(setupHarness);
 afterEach(resetHarness);
@@ -247,6 +286,64 @@ describe("runSandboxGpuCreateFlow proof authorization", () => {
 });
 
 describe("runSandboxGpuCreateFlow native failure and readiness", () => {
+  it("settles an ambiguous create submission before post-create effects", async () => {
+    let nonce = "";
+    const input = createVerifiedNoGpuInput();
+    const deps = createDeps();
+    deps.createSandbox = vi.fn(async (request) => {
+      nonce = request.labels?.[NEMOCLAW_CREATE_ATTEMPT_LABEL] ?? "";
+      return {
+        status: 1,
+        output: "OpenShell create handoff was interrupted.",
+        sawProgress: false,
+        ambiguous: true,
+        diagnostic: "OpenShell create handoff was interrupted.",
+      };
+    });
+    vi.mocked(deps.runCaptureOpenshell).mockImplementationOnce(() => sandboxListWithAttempt(nonce));
+    const exit = vi.spyOn(process, "exit");
+
+    await expect(runSandboxGpuCreateFlow(input, deps)).resolves.toMatchObject({ route: "none" });
+
+    expect(nonce).toHaveLength(NEMOCLAW_CREATE_ATTEMPT_NONCE_HEX_LENGTH);
+    expect(input.verifyCreatedSandboxBeforeEffects).toHaveBeenCalledOnce();
+    expect(input.persistRetainedSandboxRecovery).not.toHaveBeenCalled();
+    expect(exit).not.toHaveBeenCalled();
+  });
+
+  it("persists recovery when an ambiguous create submission has no settled identity", async () => {
+    let nonce = "";
+    const input = createVerifiedNoGpuInput();
+    const deps = createDeps();
+    deps.createSandbox = vi.fn(async (request) => {
+      nonce = request.labels?.[NEMOCLAW_CREATE_ATTEMPT_LABEL] ?? "";
+      return {
+        status: 1,
+        output: "OpenShell create handoff was interrupted.",
+        sawProgress: false,
+        ambiguous: true,
+        diagnostic: "OpenShell create handoff was interrupted.",
+      };
+    });
+    vi.mocked(deps.runCaptureOpenshell).mockReturnValue("[]");
+    vi.spyOn(performance, "now")
+      .mockReturnValueOnce(0)
+      .mockReturnValueOnce(0)
+      .mockReturnValueOnce(30_000);
+
+    await expect(runSandboxGpuCreateFlow(input, deps)).rejects.toThrow(
+      "did not return one exact durable sandbox identity before post-create effects",
+    );
+
+    expect(input.persistRetainedSandboxRecovery).toHaveBeenCalledExactlyOnceWith(
+      expect.stringContaining(`${NEMOCLAW_CREATE_ATTEMPT_LABEL}=${nonce}`),
+      undefined,
+      nonce,
+    );
+    expect(input.verifyCreatedSandboxBeforeEffects).not.toHaveBeenCalled();
+    expect(deps.createSandbox).toHaveBeenCalledOnce();
+  });
+
   it("bounds the streamed sandbox readiness probe", async () => {
     const deps = createDeps();
     mocks.streamSandboxCreate.mockImplementationOnce(async (...args) => {

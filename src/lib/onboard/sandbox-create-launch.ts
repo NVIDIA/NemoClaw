@@ -105,7 +105,7 @@ export function prepareSandboxCreateLaunch(input: SandboxCreateLaunchInput): San
     env,
   });
   const sandboxEnv = buildOpenShellSandboxCreateEnvironment(
-    input.buildEnv ? input.buildEnv() : process.env,
+    input.buildEnv ? input.buildEnv() : env,
     { policyAttached: input.createArgs.includes("--policy") },
   );
 

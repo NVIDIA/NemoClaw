@@ -907,7 +907,14 @@ export function createSandboxGpuCreateAttemptRunner(
     }
     if (createResult && !state.firstCreateOutput) state.firstCreateOutput = createResult.output;
     if (!deferPostCreateEffects) await runtimePatch.exitOnPatchError();
-    if (createResult && createResult.status !== 0) {
+    const createSubmissionAmbiguous =
+      createResult !== null && "ambiguous" in createResult && createResult.ambiguous === true;
+    if (createSubmissionAmbiguous && !deferPostCreateEffects) {
+      throw new Error(
+        `OpenShell did not confirm whether sandbox '${input.sandboxName}' was created. Preserve the terminal output and do not submit another create attempt until OpenShell confirms identity or absence.`,
+      );
+    }
+    if (createResult && createResult.status !== 0 && !createSubmissionAmbiguous) {
       const failure = classifySandboxCreateFailure(createResult.output);
       let nativeCreateRejectedBeforeProgress = false;
       if (failure.kind === "sandbox_create_incomplete") {
