@@ -172,7 +172,7 @@ The Podman path does not enable the Docker-specific managed llama.cpp or Windows
 If the installer offers Express on WSL, a qualifying N1x WSL host uses managed llama.cpp with Qwen 3.6 35B-A3B.
 The installer leaves inference selection to onboarding.
 Onboarding requires Linux ARM64 WSL, one GPU whose normalized identity is either `NVIDIA RTX Spark N1X` or `NVIDIA RTX Spark N1X (6144-core Blackwell RTX GPU)`, the default local Docker context, at least 48,000 MiB of Docker and GPU memory, driver version `580.65.06` or later, Docker storage and runtime readiness, NVIDIA GPU integration, and a successful Docker Desktop GPU passthrough proof.
-The Windows chassis model does not participate in selection.
+The Windows chassis model does not participate in managed llama.cpp selection.
 If N1x readiness does not match before managed selection starts, Windows Express selects WSL-local Ollama.
 If a required check fails after managed selection starts, onboarding stops before installation.
 Other WSL hosts also use WSL-local Ollama for Express installation.
@@ -203,7 +203,9 @@ A direct request from WSL can fail because Docker Desktop defines this hostname 
 Do not set Windows `OLLAMA_HOST` to `0.0.0.0:11434`; the wildcard listener is unauthenticated and disables the loopback-only HTTP `Host` validation that NemoClaw requires.
 Do not run both the Windows and WSL Ollama instances on port `11434` at the same time.
 Use one instance, or move one of them to a different port before running `$$nemoclaw onboard`.
-A WSL host whose Windows product reports RTX Spark N1x uses capacity from the selected Docker or Podman provider's CUDA proof to rank installed Ollama models.
+On a WSL RTX Spark N1x, NemoClaw ranks installed Ollama models with capacity from the selected Docker or Podman provider's CUDA proof.
+The proof-backed GPU identity or a Windows chassis model that reports `RTX Spark N1X` qualifies the host for this ranking.
+The chassis model does not establish N1x WSL identity.
 Both providers run the same pinned CUDA workload and capacity query; their provider implementation owns the GPU injection arguments.
 When `qwen3.6:35b` is installed and that proof reports at least 30,000 MiB available, NemoClaw selects it before `qwen3.5:9b`.
 Other Windows on Arm GPUs remain compute-constrained and select `qwen3.5:9b` instead of the 30B and 35B starter models.
