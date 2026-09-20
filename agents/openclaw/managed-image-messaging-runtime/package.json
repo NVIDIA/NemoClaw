@@ -6,18 +6,39 @@
   "description": "Locked production dependency graph for the managed OpenClaw messaging capability union",
   "license": "Apache-2.0",
   "dependencies": {
-    "@openclaw/discord": "2026.7.1",
-    "@openclaw/googlechat": "2026.7.1",
-    "@openclaw/msteams": "2026.7.1",
-    "@openclaw/slack": "2026.7.1",
-    "@openclaw/whatsapp": "2026.7.1",
+    "@emnapi/core": "1.11.1",
+    "@emnapi/runtime": "1.11.1",
+    "@openclaw/discord": "2026.9.1",
+    "@openclaw/googlechat": "2026.9.1",
+    "@openclaw/msteams": "2026.9.1",
+    "@openclaw/slack": "2026.9.1",
+    "@openclaw/whatsapp": "2026.9.1",
     "@tencent-weixin/openclaw-weixin": "2.4.3",
     "agent-base": "6.0.2",
-    "axios": "1.18.0",
+    "axios": "1.19.0",
     "https-proxy-agent": "5.0.1",
+    "nemoclaw-openclaw-override-fast-uri": "npm:fast-uri@4.1.4",
+    "nemoclaw-openclaw-override-ip-address": "npm:ip-address@10.5.0",
+    "nemoclaw-openclaw-override-protobufjs": "npm:protobufjs@8.7.2",
+    "nemoclaw-openclaw-override-qs": "npm:qs@6.15.3",
+    "nemoclaw-openclaw-override-uuid": "npm:uuid@14.0.2",
+    "openclaw": "2026.9.1",
     "undici": "8.10.0"
   },
   "engines": {
     "node": ">=22.19.0"
+  },
+  "overrides": {
+    "@openclaw/discord@2026.9.1": {
+      "@discord/embedded-app-sdk@2.5.0": {
+        "uuid": "14.0.2"
+      }
+    },
+    "@openclaw/whatsapp@2026.9.1": {
+      "baileys@7.0.0-rc14": {
+        "file-type": "22.0.2",
+        "protobufjs": "8.7.2"
+      }
+    }
   }
 }

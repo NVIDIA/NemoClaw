@@ -421,7 +421,6 @@ describe("inactive OpenShell MXC runtime provider", () => {
 
     expect(provider.capabilities).toMatchObject({
       hostLocalInference: false,
-      directLifecycle: false,
       workloadImageCleanup: false,
       readOnlyHostMounts: {
         supported: false,
@@ -458,7 +457,6 @@ describe("inactive OpenShell MXC runtime provider", () => {
     });
     expect(provider.mutationAuthority).toMatchObject({ supported: false });
     expect(provider.capabilities).toMatchObject({
-      directLifecycle: false,
       workloadImageCleanup: false,
     });
   });

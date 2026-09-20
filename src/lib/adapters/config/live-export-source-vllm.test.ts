@@ -23,13 +23,13 @@ import { servingProfileProvenance } from "../../inference/serving/profile-proven
 import { applyVllmRuntimeContextWindow } from "../../inference/vllm-runtime-context";
 import { resolveManagedStartupInferenceRoute } from "../../inference/gateway/route-contract";
 import type { ObservedManagedVllmRuntime } from "../../domain/config/export-evidence";
-import { getLiveGatewayInference } from "../../inference/live";
 import { buildManagedStartupProfile } from "../../onboard/managed-startup/profile-builder";
 import type { ManagedStartupProfileBuilderInput } from "../../onboard/managed-startup/profile-builder";
 import { getSandboxEntryInference } from "../../state/registry-entry-view";
 import { load as loadRegistry } from "../../state/registry/persistence";
 import type { SandboxEntry } from "../../state/registry/types";
 import { observeStableExportSource } from "../../actions/config/observe-export-source";
+import { captureSanitizedResolvedOpenshell } from "../openshell/sanitized-capture";
 import { createLiveExportSnapshotReader } from "./live-export-source";
 import {
   braveProvider,
@@ -118,11 +118,9 @@ function mockManagedVllmSource(
     provider: "vllm-local",
     model,
   });
-  vi.mocked(getLiveGatewayInference).mockReturnValue({
-    failure: null,
-    inference: { provider: "vllm-local", model },
-    output: "",
+  vi.mocked(captureSanitizedResolvedOpenshell).mockReturnValue({
     status: 0,
+    output: `Gateway inference:\n  Provider: vllm-local\n  Model: ${model}\n`,
   });
   const liveSandbox = inventory();
   Object.assign(liveSandbox.sandbox.spec, { providers: ["vllm-local"] });
@@ -147,41 +145,53 @@ function mockManagedVllmSource(
 }
 
 describe("managed vLLM export pipeline", () => {
-  it("exports the real fixed onboarding profile and reparses its managed provider", async () => {
-    mockManagedVllmSource();
-    const output = vi.fn(async (_value: string) => {});
-    const publish = vi.fn();
-    const result = await runConfigExport(
-      {
-        sandboxName: "alpha",
-        documentName: parseNemoClawConfigDocumentName("alpha"),
-        target: { kind: "stdout" },
-      },
-      {
-        observe: (name) => observeStableExportSource(name, createLiveExportSnapshotReader()),
-        createDocumentUid: () =>
-          parseNemoClawConfigDocumentUid("123e4567-e89b-42d3-a456-426614174000"),
-        publish,
-        writeStdout: output,
-      },
-    );
-    expect(result).toMatchObject({
-      ok: false,
-      failure: {
-        kind: "observation",
-        findings: [
-          {
-            field: "spec.inferenceProviders",
-            category: "unsupported",
-            diagnostic:
-              "V1alpha1 export currently supports hosted inference; managed vLLM and Ollama compatibility are deferred.",
-          },
-        ],
-      },
-    });
-    expect(output).not.toHaveBeenCalled();
-    expect(publish).not.toHaveBeenCalled();
-  });
+  it.each([
+    { count: 1, names: ["researcher"] },
+    { count: 2, names: ["researcher", "reviewer"] },
+    { count: 128, names: Array.from({ length: 128 }, (_, index) => `reader-${index}`) },
+  ])(
+    "admits all $count fixed-profile secondaries before the deferred target mapping (#11859)",
+    async ({ names }) => {
+      mockManagedVllmSource({
+        NEMOCLAW_EXTRA_AGENTS_JSON: JSON.stringify(
+          names.map((id) => ({ id, tools: { allow: ["read"] } })),
+        ),
+      });
+      const output = vi.fn(async (_value: string) => {});
+      const publish = vi.fn();
+      const result = await runConfigExport(
+        {
+          sandboxName: "alpha",
+          documentName: parseNemoClawConfigDocumentName("alpha"),
+          target: { kind: "stdout" },
+        },
+        {
+          observe: (name) => observeStableExportSource(name, createLiveExportSnapshotReader()),
+          createDocumentUid: () =>
+            parseNemoClawConfigDocumentUid("123e4567-e89b-42d3-a456-426614174000"),
+          publish,
+          writeStdout: output,
+        },
+      );
+      expect(result).toEqual({
+        ok: false,
+        failure: {
+          kind: "observation",
+          attempts: 1,
+          findings: [
+            {
+              field: "spec.inferenceProviders",
+              category: "unsupported",
+              diagnostic:
+                "V1alpha1 export currently supports hosted inference; managed vLLM and Ollama compatibility are deferred.",
+            },
+          ],
+        },
+      });
+      expect(output).not.toHaveBeenCalled();
+      expect(publish).not.toHaveBeenCalled();
+    },
+  );
 
   it("exports direct tools, managed vLLM, Brave and retained OTLP with qualified profile bindings", async () => {
     mockManagedVllmSource(

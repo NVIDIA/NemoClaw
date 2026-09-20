@@ -1,12 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import fs from "node:fs";
-
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-
-import { managedStartupE2eProfile } from "../../../scripts/checks/generate-managed-startup-profile-fixture.mts";
-import { createInMemoryRuntimeProviderBundle } from "../../../test/helpers/runtime-provider-bundle";
 
 const mocks = vi.hoisted(() => ({
   streamSandboxCreate: vi.fn(),
@@ -81,23 +76,7 @@ import {
   GPU_IMAGE_ID as IMAGE_ID,
   VERIFIED_GPU_PROOF as VERIFIED_PROOF,
 } from "./__test-helpers__/sandbox-gpu-create-flow";
-import {
-  MANAGED_BOOTSTRAP_SCHEMA_VERSION,
-  type ManagedBootstrapRecoveryReport,
-} from "./managed-bootstrap/adapter";
-import type {
-  ManagedBootstrapRuntimeCreateLifecycleInput,
-  ManagedBootstrapRuntimePatch,
-} from "./managed-bootstrap/runtime-create";
-import { encodeManagedStartupProfile } from "./managed-startup/profile";
-import { createManagedStartupRootApplyRequest } from "./managed-startup/root-apply";
-import type {
-  RuntimeProviderBundle,
-  RuntimeProviderManagedImageBootstrapSurface,
-} from "./runtime-provider/contract";
-import { createRuntimeProviderBundleRegistry } from "./runtime-provider/registry";
-import { prepareSandboxCreateLaunch } from "./sandbox-create-launch";
-import { runSandboxGpuCreateFlow, type SandboxGpuCreateFlowInput } from "./sandbox-gpu-create-flow";
+import { runSandboxGpuCreateFlow } from "./sandbox-gpu-create-flow";
 
 const {
   READY_CHECK_OPTIONS,
@@ -105,7 +84,6 @@ const {
   NVIDIA_SMI_FAILED_PROOF,
   DEFAULT_RUNTIME_SNAPSHOT,
   PORTABLE_RUNTIME_AUTHORITY,
-  managedDockerConfigPreservationCases,
   readySandboxGetResult,
   createSequencedOpenShellRunner,
   failNativeCreate,
@@ -116,9 +94,6 @@ const {
   expectNativeStateKept,
   errorOutput,
   createSourceInput,
-  writeDesktopCredsStore,
-  attachManagedBootstrap,
-  captureCreateEnv,
   setupHarness,
   resetHarness,
 } = createGpuFlowTestHarness(mocks);
@@ -127,359 +102,6 @@ const READY_CHECK_ARGS = ["sandbox", "list", "-g", "nemoclaw"];
 beforeEach(setupHarness);
 afterEach(resetHarness);
 
-describe("runSandboxGpuCreateFlow provider-owned managed create", () => {
-  it("isolates an unavailable WSL Docker Desktop helper during managed create (#10349)", async () => {
-    vi.stubEnv("DOCKER_CONTEXT", "ambient-remote-context");
-    vi.stubEnv("DOCKER_HOST", "tcp://ambient-remote.example:2376");
-    const dockerConfig = writeDesktopCredsStore();
-    const input = createInput();
-    attachManagedBootstrap(input);
-    input.sandboxEnv = {
-      PATH: "/usr/bin",
-      OPENSHELL_GATEWAY: "1",
-      WSL_DISTRO_NAME: "Ubuntu",
-      DOCKER_CONFIG: dockerConfig,
-    };
-    const captured = captureCreateEnv();
-    const deps = createDeps();
-    vi.mocked(deps.runCaptureOpenshell).mockImplementation((args) =>
-      args[1] === "get" ? "ID: alpha-sandbox-id\nState: Ready\n" : "alpha Ready",
-    );
-
-    await runSandboxGpuCreateFlow(input, deps);
-
-    expect(captured.env.DOCKER_CONFIG).toContain("nemoclaw-wsl-buildkit-docker-config-");
-    expect(captured.env.DOCKER_CONFIG).not.toBe(dockerConfig);
-    expect(captured.env.PATH).toBe("/usr/bin");
-    expect(captured.env.OPENSHELL_GATEWAY).toBe("1");
-    expect(captured.configExisted).toBe(true);
-    expect(fs.existsSync(String(captured.env.DOCKER_CONFIG))).toBe(false);
-    expect(mocks.dockerSpawnSync.mock.calls[0]?.[1]?.env).not.toHaveProperty("DOCKER_CONTEXT");
-    expect(mocks.dockerSpawnSync.mock.calls[0]?.[1]?.env).not.toHaveProperty("DOCKER_HOST");
-    expect(mocks.streamSandboxCreate).toHaveBeenCalledOnce();
-  });
-
-  it.each(managedDockerConfigPreservationCases)(
-    "keeps the caller Docker config when $title (#10349)",
-    async (row) => {
-      const dockerConfig = writeDesktopCredsStore();
-      mocks.helperResponds.mockReturnValue(row.helperResponds);
-      mocks.dockerSpawnSync.mockReturnValue({
-        status: 0,
-        error: undefined,
-        stdout: row.contextStdout,
-        stderr: "",
-      });
-      const input = createInput();
-      attachManagedBootstrap(input);
-      input.sandboxEnv = {
-        PATH: "/usr/bin",
-        OPENSHELL_GATEWAY: "1",
-        WSL_DISTRO_NAME: "Ubuntu",
-        DOCKER_CONFIG: dockerConfig,
-        ...(row.dockerHost === undefined ? {} : { DOCKER_HOST: row.dockerHost }),
-      };
-      const captured = captureCreateEnv();
-      const deps = createDeps();
-      vi.mocked(deps.runCaptureOpenshell).mockImplementation((args) =>
-        args[1] === "get" ? "ID: alpha-sandbox-id\nState: Ready\n" : "alpha Ready",
-      );
-
-      await runSandboxGpuCreateFlow(input, deps);
-
-      expect(captured.env.DOCKER_CONFIG).toBe(dockerConfig);
-      expect(captured.env.PATH).toBe("/usr/bin");
-      expect(captured.env.OPENSHELL_GATEWAY).toBe("1");
-      expect(captured.configExisted).toBe(true);
-      expect(fs.existsSync(dockerConfig)).toBe(true);
-    },
-  );
-
-  it("recovers before an MXC-style create without a Docker branch in central orchestration", async () => {
-    const input = createInput();
-    input.sandboxGpuConfig = {
-      mode: "0",
-      hostGpuDetected: false,
-      hostGpuPlatform: null,
-      sandboxGpuEnabled: false,
-      sandboxGpuDevice: null,
-      errors: [],
-    };
-    input.gpuRoutePlan = "none";
-    input.initialGpuRoute = "none";
-    const request = createManagedStartupRootApplyRequest({
-      agent: "openclaw",
-      encodedProfile: encodeManagedStartupProfile(managedStartupE2eProfile("openclaw")),
-    });
-    const launch = prepareSandboxCreateLaunch({
-      agent: null,
-      sandboxName: "alpha",
-      chatUiUrl: "",
-      createArgs: ["--name", "alpha"],
-      env: {},
-      extraPlaceholderKeys: [],
-      getDashboardForwardPort: () => "0",
-      hermesDashboardState: { config: null, enabled: false },
-      manageDashboard: false,
-      openshellShellCommand: (args) => args.join(" "),
-      openshellArgv: (args) => ["openshell", ...args],
-      buildEnv: () => ({}),
-      managedStartupRootApplyRequest: request,
-    });
-    input.createArgv = launch.createArgv;
-    input.sandboxEnv = launch.sandboxEnv;
-    input.sandboxStartupCommand = launch.sandboxStartupCommand;
-    const patch = createPatch() as unknown as ManagedBootstrapRuntimePatch;
-    const recoveryReport = (
-      sandboxName: string | null,
-      detail = "opaque MXC recovery detail",
-    ): ManagedBootstrapRecoveryReport =>
-      Object.freeze({
-        receipts: Object.freeze([]),
-        failures: Object.freeze([
-          Object.freeze({
-            schemaVersion: MANAGED_BOOTSTRAP_SCHEMA_VERSION,
-            providerId: "mxc",
-            sourcePhase: "provider-owned-cleanup",
-            sandbox:
-              sandboxName === null
-                ? null
-                : Object.freeze({
-                    sandboxName,
-                    sandboxId: `mxc-${sandboxName}`,
-                    driverId: "mxc",
-                  }),
-            bootstrapIdentity: "e".repeat(64),
-            code: "mxc-recovery-retry",
-            blockingScope: "sandbox",
-            retryable: true,
-            detail,
-          }),
-        ]),
-      });
-    const recoverUnfinished = vi.fn(async () => recoveryReport("bravo"));
-    const prepareNetwork = vi.fn(async () => undefined);
-    const createLifecycle = vi.fn(
-      (lifecycleInput: ManagedBootstrapRuntimeCreateLifecycleInput) => ({
-        launchArgv: ["mxc-launch", ...lifecycleInput.launchArgv.slice(1)],
-        patch,
-        recoverUnfinished,
-        prepareNetwork,
-        runCreate: async <T>(
-          start: (held: {
-            readonly heldWorkloadArgv: readonly string[];
-            readonly bootstrapIdentity: string;
-          }) => Promise<{ readonly value: T }>,
-        ): Promise<T> =>
-          (
-            await start({
-              heldWorkloadArgv: lifecycleInput.heldWorkloadArgv,
-              bootstrapIdentity: lifecycleInput.bootstrapIdentity,
-            })
-          ).value,
-      }),
-    );
-    const source = createInMemoryRuntimeProviderBundle({
-      providerId: "mxc",
-      workloadProfile: {
-        support: null,
-        hostArchitectures: [],
-        managedImageSelectionPolicy: "prefer-managed",
-        legacyDockerfileBuilds: true,
-      },
-    });
-    const registered = createRuntimeProviderBundleRegistry([
-      [
-        "mxc",
-        {
-          ...source,
-          bootstrap: {
-            providerId: "mxc",
-            supported: true,
-            bootstrapKind: "managed-image",
-            createAuthorityStore: vi.fn(() => ({
-              recordPreparedAuthority: vi.fn(),
-            })),
-            createLifecycle,
-            createOnboardRouting: vi.fn(() => ({
-              nativeFallbackHasCleanBaseline: false,
-              inspectNativeRuntime: vi.fn(() => null),
-              isNativeCreateRoutingFailure: vi.fn(() => false),
-              isTrustedNativeRuntimeError: vi.fn(() => false),
-              isNativeReadinessRoutingFailure: vi.fn(() => false),
-              prepareCompatibilityLaunch: vi.fn(() => ({
-                createArgv: [],
-                registryImageRef: null,
-              })),
-            })),
-          },
-        },
-      ],
-    ]);
-    const runtimeProvider = registered.mxc as RuntimeProviderBundle & {
-      readonly bootstrap: RuntimeProviderManagedImageBootstrapSurface;
-    };
-    input.managedBootstrap = {
-      bootstrapIdentity: launch.managedBootstrapIdentity!,
-      stateRoot: "/tmp/nemoclaw-mxc-bootstrap",
-      runtimeProvider,
-      authorityStore: {
-        async recordPreparedAuthority(authority) {
-          return {
-            schemaVersion: 1,
-            sandbox: authority.sandbox,
-            bootstrapIdentity: authority.bootstrapIdentity,
-            authorityFingerprint: authority.authorityFingerprint,
-            recordId: "mxc-record-alpha",
-            recordedAt: "2026-07-31T00:00:00.000Z",
-          };
-        },
-      },
-      request,
-      image: {
-        repository: "registry.example/nemoclaw-openclaw",
-        manifestDigest: `sha256:${"d".repeat(64)}`,
-      },
-      agentIdentity: { uid: 1000, gid: 1000, workdir: "/sandbox" },
-      workspaceRoot: { uid: 1000, gid: 1000, mode: 0o755 },
-      managedStateRoots: [],
-      intendedWorkloadArgv: launch.intendedSandboxStartupCommand,
-      expectedSupervisorArgv: ["/mxc/supervisor"],
-    };
-    const sandboxId = "mxc-alpha";
-    const deps = createDeps(sandboxId);
-    const adapterOverride = {} as never;
-    deps.createManagedBootstrapAdapter = vi.fn(() => adapterOverride);
-    deps.runOpenshell = vi.fn(() => readySandboxGetResult(sandboxId));
-    vi.mocked(deps.runCaptureOpenshell).mockImplementation((args) =>
-      args[1] === "get" ? `ID: ${sandboxId}\n` : "alpha Ready",
-    );
-    recoverUnfinished.mockRejectedValueOnce(new Error("unfinished recovery failed"));
-
-    await expect(runSandboxGpuCreateFlow(input, deps)).rejects.toThrow(
-      "unfinished recovery failed",
-    );
-    expect(prepareNetwork).not.toHaveBeenCalled();
-    expect(mocks.streamSandboxCreate).not.toHaveBeenCalled();
-    recoverUnfinished.mockClear();
-    createLifecycle.mockClear();
-    mocks.streamSandboxCreate.mockResolvedValueOnce({
-      status: 23,
-      output: "Created sandbox: alpha",
-      sawProgress: true,
-    });
-
-    const result = await runSandboxGpuCreateFlow(input, deps);
-
-    expect(result).toMatchObject({ route: "none", runtimePatch: patch });
-    expect(createLifecycle).toHaveBeenCalledWith(
-      expect.objectContaining({
-        providerId: "mxc",
-        route: "none",
-        stateRoot: "/tmp/nemoclaw-mxc-bootstrap",
-        adapterOverride,
-      }),
-    );
-    expect(deps.createManagedBootstrapAdapter).toHaveBeenCalledWith("/tmp/nemoclaw-mxc-bootstrap");
-    expect(mocks.streamSandboxCreate).toHaveBeenCalledWith(
-      "mxc-launch",
-      input.createArgv.slice(1),
-      input.sandboxEnv,
-      expect.objectContaining({ readyCheckOutputPatterns: [] }),
-    );
-    expect(recoverUnfinished.mock.invocationCallOrder[0]).toBeLessThan(
-      prepareNetwork.mock.invocationCallOrder[0],
-    );
-    expect(prepareNetwork.mock.invocationCallOrder[0]).toBeLessThan(
-      mocks.streamSandboxCreate.mock.invocationCallOrder[0],
-    );
-    expect(mocks.createDockerGpuSandboxCreatePatch).not.toHaveBeenCalled();
-    expect(mocks.queryOpenShellDockerSandboxContainers).not.toHaveBeenCalled();
-    expect(mocks.queryOpenShellDockerSandboxRuntimeSnapshot).not.toHaveBeenCalled();
-    expect(mocks.enforceDockerGpuPatchPreserveNetwork).not.toHaveBeenCalled();
-    expect(
-      mocks.waitForCreatedSandboxReadyWithTrace.mock.calls.map(
-        ([options]) => options.stableReadyPolls,
-      ),
-    ).toEqual([2, 2]);
-    vi.mocked(deps.runCaptureOpenshell).mockClear();
-    await expect(runSandboxGpuCreateFlow(input, deps)).resolves.toMatchObject({ route: "none" });
-    expect(deps.runCaptureOpenshell).toHaveBeenCalledWith(READY_CHECK_ARGS, READY_CHECK_OPTIONS);
-    expect(vi.mocked(console.warn).mock.calls.flat().join("\n")).toContain(
-      "unrelated sandbox 'bravo'",
-    );
-    const recoverySecret = "opaque-recovery-token";
-    recoverUnfinished.mockResolvedValueOnce(
-      recoveryReport("alpha", `Authorization: Bearer ${recoverySecret}`),
-    );
-    prepareNetwork.mockClear();
-    mocks.streamSandboxCreate.mockClear();
-    mockExit();
-    await expect(runSandboxGpuCreateFlow(input, deps)).rejects.toThrow("process.exit:1");
-    expect(prepareNetwork).not.toHaveBeenCalled();
-    expect(mocks.streamSandboxCreate).not.toHaveBeenCalled();
-    expect(errorOutput()).toContain("recovery stopped before sandbox 'alpha' was created");
-    expect(errorOutput()).toContain("Transaction");
-    expect(errorOutput()).toContain(`durable sandbox ID ${sandboxId}`);
-    expect(errorOutput()).toContain("OpenShell's sandbox get command");
-    expect(errorOutput()).toContain("never delete a runtime by mutable sandbox name");
-    expect(errorOutput()).toContain("Authorization: Bearer <REDACTED>");
-    expect(errorOutput()).not.toContain(recoverySecret);
-  });
-
-  it("reports the terminal phase when an incomplete managed create cannot become ready (#9819)", async () => {
-    const input = createInput();
-    input.gatewayName = "nemoclaw-18080";
-    const bootstrapIdentity = "e".repeat(64);
-    input.managedBootstrap = {
-      bootstrapIdentity,
-      stateRoot: "/tmp/nemoclaw-managed-bootstrap",
-      runtimeProvider: {
-        identity: { id: "mxc" },
-        bootstrap: {
-          createOnboardRouting: () => ({ nativeFallbackHasCleanBaseline: false }),
-          createLifecycle: (options: ManagedBootstrapRuntimeCreateLifecycleInput) => ({
-            launchArgv: options.launchArgv,
-            patch: createPatch(),
-            recoverUnfinished: async () => null,
-            prepareNetwork: async () => undefined,
-            runCreate: async <T>(
-              start: (held: {
-                readonly heldWorkloadArgv: readonly string[];
-                readonly bootstrapIdentity: string;
-              }) => Promise<{ readonly value: T }>,
-            ): Promise<T> =>
-              (
-                await start({
-                  heldWorkloadArgv: options.heldWorkloadArgv,
-                  bootstrapIdentity: options.bootstrapIdentity,
-                })
-              ).value,
-          }),
-        },
-      },
-    } as unknown as NonNullable<SandboxGpuCreateFlowInput["managedBootstrap"]>;
-    const deps = createDeps();
-    mocks.streamSandboxCreate.mockResolvedValueOnce({
-      status: 23,
-      output: "Created sandbox: alpha",
-      sawProgress: true,
-    });
-    mocks.waitForCreatedSandboxReadyWithTrace.mockReturnValueOnce({
-      ready: false,
-      reason: "terminal_failure_phase",
-      failurePhase: "Failed",
-    });
-    await expect(runSandboxGpuCreateFlow(input, deps)).rejects.toThrow(
-      "Sandbox 'alpha' entered Failed phase before it became ready (waited up to 60s).",
-    );
-    expect(mocks.waitForCreatedSandboxReadyWithTrace).toHaveBeenCalledWith(
-      expect.objectContaining({
-        target: { kind: "named", gatewayName: input.gatewayName },
-      }),
-    );
-  });
-});
 describe("runSandboxGpuCreateFlow proof authorization", () => {
   it("does not retry compatibility when the native proof throws an exec/policy error (#6110)", async () => {
     const deps = createDeps();
@@ -687,6 +309,46 @@ describe("runSandboxGpuCreateFlow native failure and readiness", () => {
     );
   });
 
+  it("keeps managed DCode on the exact OpenShell-created runtime", async () => {
+    const input = createInput();
+    const patch = createPatch();
+    mocks.createDockerGpuSandboxCreatePatch.mockReturnValueOnce(patch);
+    input.sandboxGpuConfig = {
+      ...input.sandboxGpuConfig,
+      mode: "0",
+      sandboxGpuEnabled: false,
+    };
+    input.gpuRoutePlan = "none";
+    input.initialGpuRoute = "none";
+    input.createArgv = ["openshell", "sandbox", "create"];
+    input.persistStartupCommand = true;
+    input.managedImage = true;
+    input.requiredUlimits = [
+      { name: "nproc", soft: 512, hard: 512 },
+      { name: "nofile", soft: 65_536, hard: 65_536 },
+    ];
+
+    await expect(runSandboxGpuCreateFlow(input, createDeps())).resolves.toMatchObject({
+      route: "none",
+    });
+
+    expect(mocks.createDockerGpuSandboxCreatePatch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        route: "none",
+        persistStartupCommand: true,
+        externalRecreation: true,
+        requiredUlimits: null,
+      }),
+    );
+    expect(mocks.streamSandboxCreate).toHaveBeenCalledWith(
+      "openshell",
+      ["sandbox", "create"],
+      input.sandboxEnv,
+      expect.objectContaining({ waitForReadyTermination: false }),
+    );
+    expect(patch.ensureApplied).toHaveBeenCalled();
+  });
+
   it("does not delete a recreated sandbox when the exact readiness probe fails (#9050)", async () => {
     const input = createInput();
     const patch = createPatch();
@@ -892,6 +554,28 @@ describe("runSandboxGpuCreateFlow native failure and readiness", () => {
     );
   });
 
+  it("keeps managed-image limits inside the exact OpenShell-created runtime", async () => {
+    const input = createInput();
+    input.managedImage = true;
+    input.persistStartupCommand = true;
+    input.requiredUlimits = [
+      { name: "nproc", soft: 512, hard: 512 },
+      { name: "nofile", soft: 65_536, hard: 65_536 },
+    ];
+
+    await expect(runSandboxGpuCreateFlow(input, createDeps())).resolves.toMatchObject({
+      route: "native",
+    });
+
+    expect(mocks.createDockerGpuSandboxCreatePatch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        externalRecreation: true,
+        persistStartupCommand: true,
+        requiredUlimits: null,
+      }),
+    );
+  });
+
   it.each([
     {
       failure: "image build",
@@ -998,14 +682,12 @@ describe("runSandboxGpuCreateFlow native failure and readiness", () => {
     expect(mocks.enforceDockerGpuPatchPreserveNetwork).not.toHaveBeenCalled();
   });
 
-  it("uses the provided lifecycle generation for portable setup and registration (#8942)", async () => {
+  it("preserves standard lifecycle generation without enrolling Portable ownership", async () => {
     const input = createInput();
     input.lifecycleGeneration = "current-generation";
     input.portableRuntimeAuthority = PORTABLE_RUNTIME_AUTHORITY;
     const deps = createDeps();
-    deps.installPortableDemoLifecycle = vi.fn(
-      (_sandboxName, _startupCommand, _env, options) => options.registryGeneration ?? null,
-    );
+    deps.installPortableDemoLifecycle = vi.fn(() => "unexpected-portable-generation");
 
     const result = await runSandboxGpuCreateFlow(input, deps);
 
@@ -1014,54 +696,7 @@ describe("runSandboxGpuCreateFlow native failure and readiness", () => {
       lifecycleGeneration: "current-generation",
     });
 
-    expect(deps.installPortableDemoLifecycle).toHaveBeenCalledWith(
-      input.sandboxName,
-      input.sandboxStartupCommand,
-      process.env,
-      {
-        registryGeneration: "current-generation",
-        runtimeAuthority: PORTABLE_RUNTIME_AUTHORITY,
-      },
-    );
-  });
-
-  it("preserves the provided lifecycle generation when portable setup is unavailable (#8942)", async () => {
-    const input = createInput();
-    input.lifecycleGeneration = "fresh-generation";
-    input.portableRuntimeAuthority = PORTABLE_RUNTIME_AUTHORITY;
-    const deps = createDeps();
-    deps.installPortableDemoLifecycle = vi.fn(() => null);
-
-    const result = await runSandboxGpuCreateFlow(input, deps);
-
-    expect(result.lifecycleRegistrationFields).toEqual({
-      lifecycleGeneration: "fresh-generation",
-    });
-    expect(deps.installPortableDemoLifecycle).toHaveBeenCalledWith(
-      input.sandboxName,
-      input.sandboxStartupCommand,
-      process.env,
-      {
-        registryGeneration: "fresh-generation",
-        runtimeAuthority: PORTABLE_RUNTIME_AUTHORITY,
-      },
-    );
-  });
-
-  it("keeps a created sandbox when portable lifecycle setup fails (#8441)", async () => {
-    const deps = createDeps();
-    deps.installPortableDemoLifecycle = vi.fn(() => {
-      throw new Error("Authorization: Bearer portable-secret");
-    });
-
-    await expect(runSandboxGpuCreateFlow(createInput(), deps)).resolves.toMatchObject({
-      route: "native",
-    });
-
-    const warning = vi.mocked(console.warn).mock.calls.flat().join("\n");
-    expect(warning).toContain("Portable demo lifecycle setup did not complete");
-    expect(warning).toContain("Authorization: Bearer <REDACTED>");
-    expect(warning).not.toContain("portable-secret");
+    expect(deps.installPortableDemoLifecycle).not.toHaveBeenCalled();
   });
 
   it("uses the exact portable lifecycle without Docker container substitution (#9068)", async () => {
@@ -1159,31 +794,6 @@ describe("runSandboxGpuCreateFlow native failure and readiness", () => {
     expect(mocks.queryOpenShellDockerSandboxContainers).not.toHaveBeenCalled();
   });
 
-  it("rejects managed bootstrap before portable Docker lifecycle access (#9068)", async () => {
-    const input = createInput();
-    input.gpuRoutePlan = "native-only";
-    input.hostEnv = { NEMOCLAW_EXPERIMENTAL_PROFILE: "portable" };
-    input.portableLifecycle = true;
-    const createOnboardRouting = vi.fn();
-    const createLifecycle = vi.fn();
-    input.managedBootstrap = {
-      runtimeProvider: {
-        bootstrap: { createOnboardRouting, createLifecycle },
-      },
-    } as unknown as NonNullable<SandboxGpuCreateFlowInput["managedBootstrap"]>;
-
-    await expect(runSandboxGpuCreateFlow(input, createDeps())).rejects.toThrow(
-      "Portable OpenClaw onboarding cannot use managed-image bootstrap",
-    );
-
-    expect(createOnboardRouting).not.toHaveBeenCalled();
-    expect(createLifecycle).not.toHaveBeenCalled();
-    expect(mocks.streamSandboxCreate).not.toHaveBeenCalled();
-    expect(mocks.createDockerGpuSandboxCreatePatch).not.toHaveBeenCalled();
-    expect(mocks.queryOpenShellDockerSandboxContainers).not.toHaveBeenCalled();
-    expect(mocks.queryOpenShellDockerSandboxRuntimeSnapshot).not.toHaveBeenCalled();
-  });
-
   it("preserves an unready portable sandbox without lifecycle mutation (#9068)", async () => {
     const input = createInput();
     input.gpuRoutePlan = "native-only";
@@ -1271,6 +881,24 @@ describe("runSandboxGpuCreateFlow fallback ordering", () => {
     expect(mocks.streamSandboxCreate).toHaveBeenCalledTimes(2);
     expect(mocks.waitForCreatedSandboxReadyWithTrace).toHaveBeenCalledWith(
       expect.objectContaining({ stableReadyPolls: 2 }),
+    );
+  });
+
+  it("recreates a managed compatibility route with the complete GPU envelope", async () => {
+    const input = createInput();
+    input.managedImage = true;
+    failNativeCreate();
+
+    await expect(runSandboxGpuCreateFlow(input, createDeps())).resolves.toMatchObject({
+      route: "compatibility",
+    });
+
+    expect(mocks.createDockerGpuSandboxCreatePatch).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        route: "compatibility",
+        externalRecreation: false,
+      }),
     );
   });
 

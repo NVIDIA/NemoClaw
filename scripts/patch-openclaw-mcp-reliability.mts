@@ -38,6 +38,56 @@ const ACQUIRE_LEASE_PATTERN = ["\t\tacquireLease() {", "\t\t\tactiveLeases += 1;
 const TRANSPORT_FACTORY_PATTERN = "function resolveMcpTransport(serverName, rawServer) {";
 const LOG_WARN_PATTERN = "logWarn(";
 
+const PREPARED_ENTRY_20260901_PATTERN = [
+  "\t\t\t\t\t\trawServer,",
+  "\t\t\t\t\t\tresolved,",
+  "\t\t\t\t\t\tsafeServerName,",
+  "\t\t\t\t\t\tlaunchDescription",
+].join("\n");
+const PREPARED_ENTRY_20260901_REPLACEMENT = [
+  "\t\t\t\t\t\trawServer,",
+  "\t\t\t\t\t\ttransportSource,",
+  "\t\t\t\t\t\tresolved,",
+  "\t\t\t\t\t\tsafeServerName,",
+  "\t\t\t\t\t\tlaunchDescription",
+].join("\n");
+const TASK_OPEN_20260901_PATTERN =
+  "\t\t\t\tconst tasks = preparedEntries.map(({ serverName, rawServer, resolved, safeServerName, launchDescription }) => async () => {";
+const TASK_CLOSE_20260901_PATTERN = [
+  "\t\t\t\t});",
+  "\t\t\t\tconst { results, firstError, hasError } = await runTasksWithConcurrency({",
+].join("\n");
+const START_FAILURE_RETURN_20260901_PATTERN = [
+  "\t\t\t\t\t\treturn {",
+  "\t\t\t\t\t\t\tserverName,",
+  "\t\t\t\t\t\t\tserverEntry: null,",
+  "\t\t\t\t\t\t\ttoolEntries: [],",
+  "\t\t\t\t\t\t\tpolicyToolEntries: [],",
+  "\t\t\t\t\t\t\tdiagnostics: diags",
+  "\t\t\t\t\t\t};",
+].join("\n");
+const TRANSPORT_FACTORY_IMPORT_20260901_PATTERN = " t as resolveMcpTransport,";
+const SESSION_SCOPE_BINDINGS_20260901_PATTERN = [
+  "function createSessionMcpRuntime(params) {",
+  "\tconst { loaded, fingerprint: computedFingerprint } = loadSessionMcpConfig({",
+  "\t\tworkspaceDir: params.workspaceDir,",
+  "\t\tcfg: params.cfg,",
+].join("\n");
+const PREPARED_TRANSPORT_SCOPE_20260901_PATTERN = [
+  "\t\t\t\tfor (const [serverName, rawServer] of Object.entries(loaded.mcpServers)) {",
+  "\t\t\t\t\tfailIfDisposed();",
+  "\t\t\t\t\tif (retryServerNames && !retryServerNames.has(serverName)) continue;",
+  "\t\t\t\t\tconst override = params.connectionOverrides?.get(serverName);",
+  "\t\t\t\t\tconst transportSource = override ? applyMcpConnectionOverride(rawServer, override) : rawServer;",
+  "\t\t\t\t\tconst dataDirOwnership = Object.hasOwn(loaded.prepareDataDirsByServer ?? {}, serverName) ? loaded.prepareDataDirsByServer?.[serverName] : void 0;",
+  "\t\t\t\t\tconst resolved = resolveMcpTransport(serverName, transportSource, {",
+  "\t\t\t\t\t\tcfg: params.cfg,",
+  "\t\t\t\t\t\tagentDir: params.agentDir,",
+  "\t\t\t\t\t\tprepareDataDir: dataDirOwnership?.dataDir,",
+  "\t\t\t\t\t\trequesterScope: params.requesterScope",
+  "\t\t\t\t\t});",
+].join("\n");
+
 /** Anchors this patch rewrites; each must appear exactly once before patching. */
 const UNPATCHED_TARGET_PATTERNS = [
   TASK_OPEN_PATTERN,
@@ -95,25 +145,103 @@ const ACQUIRE_LEASE_REPLACEMENT = [
   "\t\t\tactiveLeases += 1;",
 ].join("\n");
 
-const PATCHED_REQUIRED_PATTERNS = [
-  MARKER,
-  TASK_OPEN_REPLACEMENT,
-  TASK_CLOSE_REPLACEMENT,
-  START_FAILURE_RETURN_REPLACEMENT,
-  LIST_TOOLS_REPLACEMENT,
-  ACQUIRE_LEASE_REPLACEMENT,
-];
+const TASK_OPEN_20260901_REPLACEMENT = [
+  "\t\t\t\tconst tasks = preparedEntries.map(({ serverName, rawServer, transportSource, resolved, safeServerName, launchDescription }) => nemoClawWithMcpStartRetry({",
+  "\t\t\t\t\tserverName,",
+  "\t\t\t\t\tinitialResolved: resolved,",
+  "\t\t\t\t\tresolveTransport: () => resolveMcpTransport(serverName, transportSource, {",
+  "\t\t\t\t\t\tcfg: params.cfg,",
+  "\t\t\t\t\t\tagentDir: params.agentDir,",
+  "\t\t\t\t\t\tprepareDataDir: loaded.prepareDataDirsByServer?.[serverName]?.dataDir,",
+  "\t\t\t\t\t\trequesterScope: params.requesterScope",
+  "\t\t\t\t\t}),",
+  "\t\t\t\t\tattempt: async (resolved) => {",
+].join("\n");
+const TASK_CLOSE_20260901_REPLACEMENT = [
+  "\t\t\t\t\t}",
+  "\t\t\t\t}));",
+  "\t\t\t\tconst { results, firstError, hasError } = await runTasksWithConcurrency({",
+].join("\n");
+const START_FAILURE_RETURN_20260901_REPLACEMENT = [
+  "\t\t\t\t\t\treturn {",
+  "\t\t\t\t\t\t\tserverName,",
+  "\t\t\t\t\t\t\tserverEntry: null,",
+  "\t\t\t\t\t\t\ttoolEntries: [],",
+  "\t\t\t\t\t\t\tpolicyToolEntries: [],",
+  "\t\t\t\t\t\t\tdiagnostics: diags,",
+  "\t\t\t\t\t\t\t[NEMOCLAW_MCP_START_FAILURE]: {",
+  "\t\t\t\t\t\t\t\terror,",
+  "\t\t\t\t\t\t\t\treusedSession",
+  "\t\t\t\t\t\t\t}",
+  "\t\t\t\t\t\t};",
+].join("\n");
+
+const LEGACY_SHAPE = {
+  unpatched: UNPATCHED_TARGET_PATTERNS,
+  required: REQUIRED_PATTERNS,
+  patched: [
+    MARKER,
+    TASK_OPEN_REPLACEMENT,
+    TASK_CLOSE_REPLACEMENT,
+    START_FAILURE_RETURN_REPLACEMENT,
+    LIST_TOOLS_REPLACEMENT,
+    ACQUIRE_LEASE_REPLACEMENT,
+  ],
+  replacements: [
+    [TASK_OPEN_PATTERN, TASK_OPEN_REPLACEMENT],
+    [TASK_CLOSE_PATTERN, TASK_CLOSE_REPLACEMENT],
+    [START_FAILURE_RETURN_PATTERN, START_FAILURE_RETURN_REPLACEMENT],
+    [LIST_TOOLS_PATTERN, LIST_TOOLS_REPLACEMENT],
+    [ACQUIRE_LEASE_PATTERN, ACQUIRE_LEASE_REPLACEMENT],
+  ],
+} as const;
+
+const SHAPE_20260901 = {
+  unpatched: [
+    PREPARED_ENTRY_20260901_PATTERN,
+    TASK_OPEN_20260901_PATTERN,
+    TASK_CLOSE_20260901_PATTERN,
+    START_FAILURE_RETURN_20260901_PATTERN,
+    ACQUIRE_LEASE_PATTERN,
+  ],
+  required: [
+    PREPARED_ENTRY_20260901_PATTERN,
+    TASK_OPEN_20260901_PATTERN,
+    TASK_CLOSE_20260901_PATTERN,
+    START_FAILURE_RETURN_20260901_PATTERN,
+    ACQUIRE_LEASE_PATTERN,
+    TRANSPORT_FACTORY_IMPORT_20260901_PATTERN,
+    SESSION_SCOPE_BINDINGS_20260901_PATTERN,
+    PREPARED_TRANSPORT_SCOPE_20260901_PATTERN,
+  ],
+  patched: [
+    MARKER,
+    PREPARED_ENTRY_20260901_REPLACEMENT,
+    TASK_OPEN_20260901_REPLACEMENT,
+    TASK_CLOSE_20260901_REPLACEMENT,
+    START_FAILURE_RETURN_20260901_REPLACEMENT,
+    ACQUIRE_LEASE_REPLACEMENT,
+  ],
+  replacements: [
+    [PREPARED_ENTRY_20260901_PATTERN, PREPARED_ENTRY_20260901_REPLACEMENT],
+    [TASK_OPEN_20260901_PATTERN, TASK_OPEN_20260901_REPLACEMENT],
+    [TASK_CLOSE_20260901_PATTERN, TASK_CLOSE_20260901_REPLACEMENT],
+    [START_FAILURE_RETURN_20260901_PATTERN, START_FAILURE_RETURN_20260901_REPLACEMENT],
+    [ACQUIRE_LEASE_PATTERN, ACQUIRE_LEASE_REPLACEMENT],
+  ],
+} as const;
 
 /**
  * Injected compatibility runtime for OpenClaw `bundle-mcp`.
  *
  * Retries exactly one classified transient Streamable HTTP server *startup*
- * failure with a fresh transport and bounded jitter. A tool-capable
- * Streamable HTTP server that returns an empty initial list receives one
- * idempotent list retry on the established transport. The patch also stops a
- * catalog that carries any server diagnostic from becoming the session's
- * stable catalog. A credential, TLS, policy, or configuration rejection is
- * never retried, and keeps its own diagnostic.
+ * failure with a fresh transport and bounded jitter. Legacy layouts also give
+ * a tool-capable Streamable HTTP server that returns an empty initial list one
+ * idempotent list retry on the established transport. OpenClaw 2026.9.1 uses
+ * its newer listAllTools lifecycle instead. The patch also stops a catalog
+ * that carries any server diagnostic from becoming the session's stable
+ * catalog. A credential, TLS, policy, or configuration rejection is never
+ * retried, and keeps its own diagnostic.
  */
 export const INJECTED_START_RETRY_HELPER = [
   MARKER,
@@ -301,8 +429,13 @@ function listJsFiles(dir: string): string[] {
 
 /** Fail closed: a recognized bundle-mcp runtime must expose every patch anchor exactly once. */
 export function patchBundleMcpRuntimeText(source: string, filePath: string): PatchTextResult {
+  const currentLayout =
+    source.includes(TASK_OPEN_20260901_PATTERN) ||
+    source.includes(TASK_OPEN_20260901_REPLACEMENT) ||
+    (source.includes("policyToolEntries: []") && source.includes("launchDescription"));
+  const shape = currentLayout ? SHAPE_20260901 : LEGACY_SHAPE;
   if (source.includes(MARKER)) {
-    for (const pattern of PATCHED_REQUIRED_PATTERNS) {
+    for (const pattern of shape.patched) {
       const count = countOccurrences(source, pattern);
       if (count !== 1) {
         throw new Error(
@@ -310,7 +443,7 @@ export function patchBundleMcpRuntimeText(source: string, filePath: string): Pat
         );
       }
     }
-    for (const pattern of UNPATCHED_TARGET_PATTERNS) {
+    for (const pattern of shape.unpatched) {
       if (source.includes(pattern)) {
         throw new Error(
           `${filePath}: MCP startup recovery marker is present but an unpatched target remains`,
@@ -323,7 +456,7 @@ export function patchBundleMcpRuntimeText(source: string, filePath: string): Pat
   if (!source.includes(LOG_WARN_PATTERN)) {
     throw new Error(`${filePath}: bundle-mcp runtime lacks the expected logWarn diagnostic helper`);
   }
-  for (const pattern of REQUIRED_PATTERNS) {
+  for (const pattern of shape.required) {
     const count = countOccurrences(source, pattern);
     if (count !== 1) {
       throw new Error(
@@ -340,13 +473,9 @@ export function patchBundleMcpRuntimeText(source: string, filePath: string): Pat
   let text = `${source.slice(0, importMatch[0].length)}${INJECTED_START_RETRY_HELPER}${source.slice(
     importMatch[0].length,
   )}`;
-  text = text.replace(TASK_OPEN_PATTERN, TASK_OPEN_REPLACEMENT);
-  text = text.replace(TASK_CLOSE_PATTERN, TASK_CLOSE_REPLACEMENT);
-  text = text.replace(START_FAILURE_RETURN_PATTERN, START_FAILURE_RETURN_REPLACEMENT);
-  text = text.replace(LIST_TOOLS_PATTERN, LIST_TOOLS_REPLACEMENT);
-  text = text.replace(ACQUIRE_LEASE_PATTERN, ACQUIRE_LEASE_REPLACEMENT);
+  for (const [upstream, patched] of shape.replacements) text = text.replace(upstream, patched);
 
-  for (const pattern of PATCHED_REQUIRED_PATTERNS) {
+  for (const pattern of shape.patched) {
     const count = countOccurrences(text, pattern);
     if (count !== 1) {
       throw new Error(
@@ -382,7 +511,10 @@ export function patchOpenClawMcpReliability(distDir: string): {
   return { status: result.status, file: target, version };
 }
 
-export function auditOpenClawMcpReliability(distDir: string): { file: string; version: string } {
+export function auditOpenClawMcpReliability(distDir: string): {
+  file: string;
+  version: string;
+} {
   const resolvedDist = path.resolve(distDir);
   const version = readOpenClawVersion(resolvedDist);
   const target = resolveBundleMcpRuntimeFile(resolvedDist);

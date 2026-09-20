@@ -12,7 +12,6 @@ import {
   createPodmanContainerEngine,
   type PodmanBoundContainerEngine,
 } from "../../../src/lib/adapters/podman/index.ts";
-import type { RuntimeProviderLifecycleInput } from "../../../src/lib/onboard/runtime-provider/contract.ts";
 import { createPodmanRuntimeProviderBundle } from "../../../src/lib/onboard/runtime-provider/podman.ts";
 import {
   PODMAN_MANAGED_LABEL,
@@ -24,7 +23,6 @@ import {
   PODMAN_SANDBOX_WORKSPACE,
   PODMAN_SANDBOX_WORKSPACE_LABEL,
 } from "../../../src/lib/onboard/runtime-provider/podman-lifecycle.ts";
-import type { SandboxEntry } from "../../../src/lib/state/registry/types.ts";
 import { expect } from "../fixtures/e2e-test.ts";
 import { spawnObservedChild } from "../fixtures/observed-child-process.ts";
 import type { TestProgress } from "../fixtures/progress.ts";
@@ -65,7 +63,7 @@ export const NATIVE_RUNTIME_QUALIFICATION_E2E_PHASES = [
   "bind the rootless Podman engine",
   "launch exact local inference",
   "onboard the managed agent image",
-  "exercise sandbox lifecycle and state recovery",
+  "exercise state snapshot and rebuild recovery",
   "restart and reconcile inference",
   "prove exact cleanup",
   "emit bounded case evidence",
@@ -776,20 +774,6 @@ async function agentTurn(
   return sha256(output);
 }
 
-function lifecycleInput(agent: string, sandboxName: string): RuntimeProviderLifecycleInput {
-  const sandbox: SandboxEntry = {
-    agent,
-    name: sandboxName,
-    openshellDriver: "podman",
-  };
-  return {
-    environment: process.env,
-    log: () => undefined,
-    sandbox,
-    sandboxName,
-  };
-}
-
 function lifecycleSandboxName(agent: NativeRuntimeQualificationAgent): string {
   return LIFECYCLE_SANDBOX_NAMES[agent];
 }
@@ -1013,35 +997,8 @@ export async function executeNativeRuntimeQualificationCase(progress: TestProgre
       route: "provider-network-dns",
     });
 
-    if (!bundle.lifecycle.supported) throw new Error("Podman lifecycle surface is unavailable");
-    progress.phase("exercise sandbox lifecycle and state recovery");
-    const lifecycle = bundle.lifecycle;
-    const input = lifecycleInput(row.case.agent, sandboxName);
-    let beforeStopCalled = false;
-    const firstStop = await lifecycle.stop(input, {
-      beforeStop: () => {
-        beforeStopCalled = true;
-      },
-    });
-    if (firstStop.exitCode !== 0) {
-      throw new Error(`Initial sandbox stop failed: ${bounded(firstStop.message ?? "unknown")}`);
-    }
-    expect(firstStop.state).toBe("stopped");
-    expect(beforeStopCalled).toBe(true);
-    expect(await lifecycle.start(input)).toEqual({ exitCode: 0 });
-    operationDetails.set("sandbox.stop-start", {
-      containerId: agentId,
-      executionPath: "runtime-provider-bundle",
-      stoppedAndStarted: true,
-    });
-
+    progress.phase("exercise state snapshot and rebuild recovery");
     snapshot = path.join(os.tmpdir(), `nemoclaw-q-${caseSuffix}.tar`);
-    const snapshotStop = await lifecycle.stop(input, { beforeStop: () => undefined });
-    if (snapshotStop.exitCode !== 0) {
-      throw new Error(
-        `Snapshot sandbox stop failed: ${bounded(snapshotStop.message ?? "unknown")}`,
-      );
-    }
     capture(
       lifecycleEngine,
       ["volume", "export", "--output", snapshot, volumeName],
@@ -1050,7 +1007,6 @@ export async function executeNativeRuntimeQualificationCase(progress: TestProgre
     );
     const snapshotBytes = fs.readFileSync(snapshot);
     const snapshotSha256 = sha256(snapshotBytes);
-    expect(await lifecycle.start(input)).toEqual({ exitCode: 0 });
     capture(
       lifecycleEngine,
       ["exec", agentId, "/bin/sh", "-c", "printf '%s\\n' drifted >/qualification/state"],
@@ -1139,23 +1095,10 @@ export async function executeNativeRuntimeQualificationCase(progress: TestProgre
         "exit 0",
       ]);
       if (duplicate.status === 0) throw new Error("Podman allowed unsafe managed-name reuse");
-      capture(lifecycleEngine, ["kill", "--signal", "KILL", agentId], "sandbox crash injection");
-      expect(await lifecycle.start(input)).toEqual({ exitCode: 0 });
-      expect(
-        capture(
-          lifecycleEngine,
-          ["exec", agentId, "cat", "/qualification/state"],
-          "recovered state",
-        ),
-      ).toBe("qualified");
       focusedResults.clone = { cloneContainerId: cloneId, restored: true };
       focusedResults.backup = {
         sha256: snapshotSha256,
         bytes: snapshotBytes.length,
-      };
-      focusedResults["crash-recovery"] = {
-        signal: "SIGKILL",
-        recovered: true,
       };
       focusedResults.rollback = { restoredSnapshotSha256: snapshotSha256 };
       focusedResults["name-reuse"] = { rejected: true };

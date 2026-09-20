@@ -6,6 +6,7 @@ import { isDeepStrictEqual } from "node:util";
 import { isValidNemoClawPort } from "../../config/model";
 
 import { createProviders, type Provider } from "../openshell/providers";
+import { createSynchronousCliOpenShellInferenceRouteObserver } from "../openshell/inference-route-cli";
 import { createSandboxes, type Sandbox } from "../openshell/sandboxes";
 import { createSandboxConfig } from "../openshell/sandbox-config";
 import { captureSanitizedResolvedOpenshell } from "../openshell/sanitized-capture";
@@ -24,7 +25,6 @@ import type {
   ObservedExportSandboxIdentity,
   RawExportSnapshot,
 } from "../../domain/config/export-evidence";
-import { getLiveGatewayInference } from "../../inference/live";
 import { VLLM_LOCAL_CREDENTIAL_ENV } from "../../inference/serving/vllm-credential-contract";
 import { observeManagedVllmForExport } from "../../inference/serving/vllm-export-runtime";
 import { createOllamaExportProbe } from "../../inference/ollama/proxy";
@@ -41,7 +41,6 @@ import { getSandboxEntryInference } from "../../state/registry-entry-view";
 import { load as loadRegistry } from "../../state/registry/persistence";
 import type { SandboxEntry } from "../../state/registry/types";
 
-const CAPTURE_MAX_BYTES = 1024 * 1024;
 const CAPTURE_TIMEOUT_MS = 30_000;
 
 function registryEvidence(entry: Readonly<SandboxEntry>): ObservedExportRegistry {
@@ -98,30 +97,31 @@ function sandboxIdentity(row: Sandbox): ObservedExportSandboxIdentity {
   };
 }
 
-function readInferenceRoute(entry: Readonly<SandboxEntry>, gatewayName: string) {
+async function readInferenceRoute(entry: Readonly<SandboxEntry>, gatewayName: string) {
   const selected = getSandboxEntryInference(entry);
-  const live = getLiveGatewayInference(
-    (args, options) =>
-      args.includes("-g") || args.includes("--gateway")
-        ? captureSanitizedResolvedOpenshell(args, {
-            ignoreError: true,
-            includeStderr: true,
-            includeStreams: true,
-            maxBuffer: CAPTURE_MAX_BYTES,
-            timeout: options?.timeout ?? CAPTURE_TIMEOUT_MS,
-          })
-        : { status: 1, output: "" },
-    { gatewayName: gatewayName, timeout: CAPTURE_TIMEOUT_MS },
+  const observer = createSynchronousCliOpenShellInferenceRouteObserver((args, options) =>
+    captureSanitizedResolvedOpenshell(args, {
+      ignoreError: true,
+      includeStderr: true,
+      includeStreams: true,
+      maxBuffer: options.maxBuffer,
+      timeout: options?.timeout ?? CAPTURE_TIMEOUT_MS,
+    }),
   );
-  if (live.failure || !live.inference)
+  const result = observer.observeInferenceRoute({
+    target: namedOpenShellGateway(gatewayName),
+    timeoutMs: CAPTURE_TIMEOUT_MS,
+  });
+  if (!result.ok || result.value.state !== "configured")
     throw new Error("The live gateway inference route could not be read.");
+  const live = result.value.route;
   if (
     selected.kind !== "configured" ||
-    live.inference.provider !== selected.provider ||
-    live.inference.model !== selected.model
+    live.provider !== selected.provider ||
+    live.model !== selected.model
   )
     throw new Error("The live gateway inference route does not match the registry.");
-  return { provider: live.inference.provider, model: live.inference.model };
+  return live;
 }
 
 function providerContract(api: string | null | undefined) {
@@ -229,7 +229,7 @@ async function inferenceFor(
 ): Promise<ObservedExportInference> {
   const normalized = normalizeInferenceSelection(entry);
   const gateway = resolveGatewayBinding(entry);
-  const live = readInferenceRoute(entry, gateway.name);
+  const live = await readInferenceRoute(entry, gateway.name);
   beforeRead("provider-metadata");
   const endpointEvidence = await readProviderEvidence(
     normalized,

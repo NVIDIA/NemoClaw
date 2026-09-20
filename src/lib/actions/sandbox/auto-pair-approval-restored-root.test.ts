@@ -56,7 +56,7 @@ _nemoclaw_test_os.open = _nemoclaw_test_open
         budget: { maxApprovals: 1 },
       },
     );
-    const legacyScript = script.replace("getattr(os, 'O_PATH', os.O_RDONLY)", "os.O_RDONLY");
+    const legacyScript = script.replace('getattr(os, "O_PATH", os.O_RDONLY)', "os.O_RDONLY");
     const tmpDir = fs.realpathSync(
       fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-restored-root-")),
     );
