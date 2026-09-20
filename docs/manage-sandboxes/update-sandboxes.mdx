@@ -103,7 +103,9 @@ If the forced installation fails, the installer does not stage a gateway service
 
 ## Resume a Manually Prepared Upgrade
 
-Use this path only after you back up every registered sandbox, retire each registered legacy dashboard forward, and retire the gateway.
+Use this path only after strict backup succeeds, every applicable registered legacy forward is retired, and the gateway is retired.
+Strict backup can report a confirmed stranded registry sandbox without creating a backup for it because both the selected gateway and the container provider prove that no sandbox runtime remains.
+That record requires the cleanup or recreation action printed by `$$nemoclaw backup-all`, but it does not block a prepared upgrade after the strict command succeeds.
 Run the backup and forward-retirement step with the current prepared NemoClaw CLI before you retire the gateway:
 
 ```bash
@@ -116,7 +118,8 @@ NEMOCLAW_GATEWAY_PORT="$selected_port" NEMOCLAW_REQUIRE_ALL_SANDBOX_BACKUPS=1 $$
 For a non-default gateway, replace `8080` with its port and set `gateway_name` to `nemoclaw-<selected-port>`.
 If an older OpenShell release rejects the named destroy command for the default `nemoclaw` gateway, run `openshell gateway destroy` instead.
 Do not substitute `openshell gateway remove`: removal can unregister a gateway without stopping its process.
-Do not set `NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1` unless both commands succeed and the backup command reports that every registered sandbox backup and exact legacy-forward retirement completed.
+Do not set `NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1` unless both commands succeed and the backup command reports that strict backup and exact legacy-forward retirement completed.
+A confirmed stranded record has no backup to reuse; complete the reported cleanup or recreation action during recovery.
 If either command fails or cannot prove a retirement, resolve that failure while the completed backups remain intact.
 Set `NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1` on the `bash` side of the install pipeline when you rerun the installer.
 

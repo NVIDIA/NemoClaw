@@ -116,12 +116,12 @@ function inspectContainerStatus(
  * which under installer-strict mode (#6114) fails the whole run — but a
  * stopped container's state is backupable: the backup transport is SSH+tar
  * through the container's PID 1 and does not need the agent gateway (#6500).
- * OpenShell still owns the sandbox phase, so these helpers first start and
- * stop through OpenShell. A bare container start leaves the phase `Stopped`
- * and older gateway generations never publish the SSH endpoint (#11898).
- * Direct container lifecycle remains the fallback when OpenShell rejects a
- * legacy recovery state. Either path returns the sandbox to its original
- * stopped state after backup, so the strict gate stays fail-closed.
+ * OpenShell still owns the sandbox phase, so these helpers start and stop
+ * through OpenShell. A bare container start would bypass the authoritative
+ * lifecycle boundary, leave the phase `Stopped`, and fail to publish the SSH
+ * endpoint on older gateway generations (#11898). The helper therefore fails
+ * closed when OpenShell rejects the start. It returns a successfully started
+ * sandbox to its original stopped state after backup.
  *
  * Only containers whose `.State.Status` is `exited` or `created` qualify.
  * A running-but-not-Ready container (crash loop, gateway drift, paused) is
@@ -134,7 +134,6 @@ export interface StartedForBackup {
   gatewayName: string;
   runtimeProviderId: string;
   sandboxName: string;
-  startedThroughOpenShell: boolean;
 }
 
 interface StartDeps {
@@ -148,7 +147,6 @@ interface StartDeps {
   ) => string[] | null;
   inspectStatus: (engine: SandboxLifecycleEngine, containerName: string) => string | null;
   startThroughOpenShell: (sandboxName: string, gatewayName: string, timeoutMs: number) => boolean;
-  startContainer: (engine: SandboxLifecycleEngine, containerName: string) => boolean;
 }
 
 const defaultStartDeps: StartDeps = {
@@ -173,8 +171,6 @@ const defaultStartDeps: StartDeps = {
     });
     return result.status === 0 && result.error === undefined;
   },
-  startContainer: (engine, containerName) =>
-    captureSucceeded(engine.capture(["start", containerName], engine.mutationTimeoutMs)),
 };
 
 export function startStoppedSandboxContainerForBackup(
@@ -207,22 +203,19 @@ export function startStoppedSandboxContainerForBackup(
     gatewayName,
     engine.mutationTimeoutMs,
   );
-  let actualStartThroughOpenShell = startedThroughOpenShell;
   if (!startedThroughOpenShell) {
+    // A bounded command can report failure after the gateway applied the
+    // start. Accept only authoritative provider evidence that the owned
+    // container is already running. Every other failure, including policy,
+    // authorization, identity, and transport denial, remains fail-closed.
     const reconciledStatus = deps.inspectStatus(engine, containerName);
-    if (reconciledStatus === "running") {
-      actualStartThroughOpenShell = true;
-    } else {
-      if (reconciledStatus !== "exited" && reconciledStatus !== "created") return null;
-      if (!deps.startContainer(engine, containerName)) return null;
-    }
+    if (reconciledStatus !== "running") return null;
   }
   return {
     containerName,
     gatewayName,
     runtimeProviderId: engine.runtimeProviderId,
     sandboxName,
-    startedThroughOpenShell: actualStartThroughOpenShell,
   };
 }
 
@@ -298,18 +291,14 @@ export function returnSandboxContainerToStopped(
   const deps: StopDeps = { ...defaultStopDeps, ...depsOverride };
   const engine = deps.resolveLifecycleEngine(started.runtimeProviderId);
   if (!engine) return false;
-  if (started.startedThroughOpenShell) {
-    deps.stopThroughOpenShell(started.sandboxName, started.gatewayName, engine.mutationTimeoutMs);
-    // OpenShell can fail or time out after starting the owned container. If
-    // the provider still reports it running, stop that same validated
-    // container directly before deciding whether cleanup succeeded.
-    if (deps.inspectStatus(engine, started.containerName) !== "exited") {
-      deps.stopContainer(engine, started.containerName);
-    } else {
-      return true;
-    }
-  } else {
+  deps.stopThroughOpenShell(started.sandboxName, started.gatewayName, engine.mutationTimeoutMs);
+  // OpenShell can fail or time out after starting the owned container. If
+  // the provider still reports it running, stop that same validated
+  // container directly before deciding whether cleanup succeeded.
+  if (deps.inspectStatus(engine, started.containerName) !== "exited") {
     deps.stopContainer(engine, started.containerName);
+  } else {
+    return true;
   }
   // A bounded lifecycle command can report timeout after the provider already
   // applied the mutation. The container's final state is authoritative.

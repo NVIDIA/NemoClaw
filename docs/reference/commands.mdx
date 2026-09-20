@@ -662,7 +662,9 @@ For a non-interactive install, set `NEMOCLAW_CONFIRM_LEGACY_MANAGED_RECREATE` to
 The confirmation permits those legacy entries to recover onto the current managed image, but it does not override recorded custom-image evidence.
 After confirmed recovery, the installer skips generic onboarding unless DGX Station reconciliation remains necessary.
 Required DGX Station reconciliation still passes host admission before onboarding.
-For any registered-sandbox upgrade that you prepare manually, use the current prepared NemoClaw CLI to require every backup and retire all registered legacy forwards before you retire the old gateway:
+For any registered-sandbox upgrade that you prepare manually, use the current prepared NemoClaw CLI to require strict backup and retire all applicable registered legacy forwards before you retire the old gateway.
+Strict backup can report a confirmed stranded registry sandbox without creating a backup for it because both the selected gateway and the container provider prove that no sandbox runtime remains.
+That record requires the cleanup or recreation action printed by `$$nemoclaw backup-all`, but it does not block a prepared upgrade after the strict command succeeds:
 
 ```bash
 selected_port=8080
@@ -676,6 +678,7 @@ For a non-default gateway, replace `8080` with its port and set `gateway_name` t
 If an older OpenShell release rejects the named destroy command for the default `nemoclaw` gateway, run `openshell gateway destroy` instead.
 Do not substitute `openshell gateway remove`: removal can unregister a gateway without stopping its process.
 Set `NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1` only after both commands succeed and the backup command reports a complete result.
+A confirmed stranded record has no backup to reuse; complete the reported cleanup or recreation action during recovery.
 If backup, forward retirement, or gateway retirement fails, resolve the failure while the completed backups remain intact.
 This environment variable asserts that strict backup, legacy-forward retirement, and gateway retirement are complete, so the installer skips that repeated preparation phase before it checks whether OpenShell is installed or whether its version is in range.
 For a non-default gateway, preserve the selected port on the `bash` side of the install pipeline.

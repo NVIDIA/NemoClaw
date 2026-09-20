@@ -87,7 +87,6 @@ describe("startStoppedSandboxContainerForBackup", () => {
       gatewayName: "nemoclaw",
       runtimeProviderId: "docker",
       sandboxName: "my-sb",
-      startedThroughOpenShell: true,
     });
     expect(d.startThroughOpenShell).toHaveBeenCalledWith("my-sb", "nemoclaw", 30_000);
     expect(d.startContainer).not.toHaveBeenCalled();
@@ -105,7 +104,6 @@ describe("startStoppedSandboxContainerForBackup", () => {
       gatewayName: "nemoclaw",
       runtimeProviderId: "podman",
       sandboxName: "my-sb",
-      startedThroughOpenShell: true,
     });
     expect(d.startThroughOpenShell).toHaveBeenCalledWith("my-sb", "nemoclaw", 30_000);
     expect(d.startContainer).not.toHaveBeenCalled();
@@ -135,7 +133,6 @@ describe("startStoppedSandboxContainerForBackup", () => {
       gatewayName: "nemoclaw-9123",
       runtimeProviderId: "docker",
       sandboxName: "my-sb",
-      startedThroughOpenShell: true,
     });
     expect(adapterMocks.openshellCapture).toHaveBeenCalledWith(
       ["sandbox", "start", "-g", "nemoclaw-9123", "my-sb"],
@@ -171,7 +168,6 @@ describe("startStoppedSandboxContainerForBackup", () => {
       gatewayName: "nemoclaw",
       runtimeProviderId: "docker",
       sandboxName: "my",
-      startedThroughOpenShell: true,
     });
   });
 
@@ -237,16 +233,10 @@ describe("startStoppedSandboxContainerForBackup", () => {
     expect(d.startContainer).not.toHaveBeenCalled();
   });
 
-  it("falls back to the provider container when OpenShell cannot start the sandbox", () => {
+  it("fails closed on an OpenShell authorization denial without a direct provider start", () => {
     const d = deps({ startThroughOpenShell: vi.fn().mockReturnValue(false) });
-    expect(startStoppedSandboxContainerForBackup("my-sb", d)).toEqual({
-      containerName: "openshell-my-sb-abc123",
-      gatewayName: "nemoclaw",
-      runtimeProviderId: "docker",
-      sandboxName: "my-sb",
-      startedThroughOpenShell: false,
-    });
-    expect(d.startContainer).toHaveBeenCalledWith(expect.any(Object), "openshell-my-sb-abc123");
+    expect(startStoppedSandboxContainerForBackup("my-sb", d)).toBeNull();
+    expect(d.startContainer).not.toHaveBeenCalled();
   });
 
   it("retains an uncertain OpenShell start so cleanup stops it through OpenShell", () => {
@@ -262,7 +252,6 @@ describe("startStoppedSandboxContainerForBackup", () => {
       gatewayName: "nemoclaw",
       runtimeProviderId: "docker",
       sandboxName: "my-sb",
-      startedThroughOpenShell: true,
     });
     expect(d.startContainer).not.toHaveBeenCalled();
 
@@ -286,14 +275,6 @@ describe("startStoppedSandboxContainerForBackup", () => {
 
     expect(startStoppedSandboxContainerForBackup("my-sb", d)).toBeNull();
     expect(d.startContainer).not.toHaveBeenCalled();
-  });
-
-  it("returns null when both start operations fail", () => {
-    const d = deps({
-      startThroughOpenShell: vi.fn().mockReturnValue(false),
-      startContainer: vi.fn().mockReturnValue(false),
-    });
-    expect(startStoppedSandboxContainerForBackup("my-sb", d)).toBeNull();
   });
 });
 
@@ -386,7 +367,6 @@ describe("returnSandboxContainerToStopped", () => {
     gatewayName: "nemoclaw",
     runtimeProviderId: "podman",
     sandboxName: "my-sb",
-    startedThroughOpenShell: true,
   };
 
   it("uses OpenShell to restore the sandbox phase before confirming the container stopped", () => {
@@ -423,37 +403,20 @@ describe("returnSandboxContainerToStopped", () => {
     );
   });
 
-  it("uses the provider lifecycle timeout after a direct-container fallback", () => {
+  it("uses the provider lifecycle timeout when OpenShell cleanup leaves the container running", () => {
+    adapterMocks.openshellCapture.mockReturnValue({ status: 1, output: "failed" });
     adapterMocks.providerCapture
+      .mockReturnValueOnce({ status: 0, stdout: "running\n", stderr: "" })
       .mockReturnValueOnce({ status: 0, stdout: "", stderr: "" })
       .mockReturnValueOnce({ status: 0, stdout: "exited\n", stderr: "" });
 
-    expect(returnSandboxContainerToStopped({ ...started, startedThroughOpenShell: false })).toBe(
-      true,
-    );
+    expect(returnSandboxContainerToStopped(started)).toBe(true);
     expect(adapterMocks.providerCapture).toHaveBeenNthCalledWith(
-      1,
+      2,
       "sandbox-lifecycle",
       ["stop", "openshell-my-sb-abc123"],
       75_000,
     );
-  });
-
-  it("reports failure when a failed provider stop leaves the container running", () => {
-    const engine = lifecycleEngine("podman");
-    const stopContainer = vi.fn().mockReturnValue(false);
-    const inspectStatus = vi.fn().mockReturnValue("running");
-    expect(
-      returnSandboxContainerToStopped(
-        { ...started, startedThroughOpenShell: false },
-        {
-          resolveLifecycleEngine: vi.fn().mockReturnValue(engine),
-          stopContainer,
-          inspectStatus,
-        },
-      ),
-    ).toBe(false);
-    expect(inspectStatus).toHaveBeenCalledWith(engine, "openshell-my-sb-abc123");
   });
 
   it("accepts an uncertain OpenShell stop when the container is already exited", () => {
