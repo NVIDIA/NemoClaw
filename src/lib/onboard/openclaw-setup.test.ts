@@ -1,7 +1,22 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+const configMocks = vi.hoisted(() => ({
+  readSandboxConfig: vi.fn(),
+  restartSandboxAgentAfterConfigSet: vi.fn(),
+  resolveAgentConfig: vi.fn(),
+  setOpenClawConfigValue: vi.fn(),
+}));
+
+vi.mock("../sandbox/config", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../sandbox/config")>()),
+  readSandboxConfig: configMocks.readSandboxConfig,
+  restartSandboxAgentAfterConfigSet: configMocks.restartSandboxAgentAfterConfigSet,
+  resolveAgentConfig: configMocks.resolveAgentConfig,
+  setOpenClawConfigValue: configMocks.setOpenClawConfigValue,
+}));
 import {
   createConfigureOpenclawSandbox,
   createOpenclawSetup,
@@ -10,6 +25,10 @@ import {
 } from "./openclaw-setup";
 
 describe("OpenClaw sandbox setup", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
   it.each([200, 401])("accepts OpenClaw gateway HTTP %i as ready", async (httpCode) => {
     const runBuffered = vi.fn(async () => ({
       outcome: { kind: "completed" as const, exitCode: 0 },
@@ -204,6 +223,33 @@ describe("OpenClaw sandbox setup", () => {
 });
 
 describe("fresh OpenClaw reuse web search reconciliation", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("uses the native writer and reloads OpenClaw when disabling stale web search (#11764)", async () => {
+    configMocks.resolveAgentConfig.mockReturnValue({ agentName: "openclaw" });
+    configMocks.readSandboxConfig.mockReturnValue({
+      tools: { web: { search: { enabled: true } } },
+    });
+    configMocks.restartSandboxAgentAfterConfigSet.mockResolvedValue(undefined);
+
+    await reconcileOpenClawWebSearchForReuse("alpha", null);
+
+    expect(configMocks.setOpenClawConfigValue).toHaveBeenCalledExactlyOnceWith(
+      "alpha",
+      "tools.web.search.enabled",
+      false,
+    );
+    expect(configMocks.restartSandboxAgentAfterConfigSet).toHaveBeenCalledExactlyOnceWith(
+      "alpha",
+      "openclaw",
+    );
+    expect(configMocks.setOpenClawConfigValue).toHaveBeenCalledBefore(
+      configMocks.restartSandboxAgentAfterConfigSet,
+    );
+  });
+
   it("disables stale live web search when fresh re-onboard selects disabled (#10404)", async () => {
     const disable = vi.fn(async () => undefined);
 

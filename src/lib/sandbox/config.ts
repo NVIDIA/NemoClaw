@@ -130,10 +130,10 @@ async function restartSandboxAgentAfterConfigSet(
     (require("../actions/sandbox/process-recovery").restartSandboxGateway as ManagedGatewayRestart);
   const result = await restart(sandboxName);
   if (!result.ok) {
-    // The config was already written to disk (the CAS write above succeeded),
-    // but the running agent was not reloaded. Say so plainly and point at the
-    // idempotent retry rather than leaving disk and the live gateway silently
-    // diverged. The restart layer has already printed its own failure detail.
+    // The config write already completed, but the running agent was not
+    // reloaded. Say so plainly and point to the idempotent retry rather than
+    // leaving disk and the live gateway silently diverged. The restart layer
+    // has already printed its own failure detail.
     configFail([
       `  Config was written to disk but NOT applied to the running agent.`,
       `  The ${agentName} gateway restart did not complete for '${sandboxName}' (see the failure above).`,

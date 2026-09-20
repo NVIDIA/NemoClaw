@@ -2,10 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import {
-  configSet,
   extractDotpath,
   readSandboxConfig,
+  restartSandboxAgentAfterConfigSet,
   resolveAgentConfig,
+  setOpenClawConfigValue,
 } from "../sandbox/config";
 import type { OpenShellSandboxBufferedCommandExecutor } from "../adapters/openshell/sandbox-command";
 
@@ -75,18 +76,17 @@ const defaultWebSearchReuseDeps: OpenClawWebSearchReuseDeps = {
     }
     return extractDotpath(readSandboxConfig(sandboxName, target), "tools.web.search.enabled");
   },
-  disable: (sandboxName) =>
-    configSet(sandboxName, {
-      key: "tools.web.search.enabled",
-      value: "false",
-      restart: true,
-    }),
+  disable: async (sandboxName) => {
+    setOpenClawConfigValue(sandboxName, "tools.web.search.enabled", false);
+    await restartSandboxAgentAfterConfigSet(sandboxName, "openclaw");
+  },
 };
 
 /**
  * Onboarding can reuse an already-ready sandbox without rerunning the image
  * generator. Apply a newly disabled web-search choice to the live OpenClaw
- * config through its guarded config writer on both fresh and resumed reuse.
+ * config through its native OpenClaw config writer on both fresh and resumed
+ * reuse.
  */
 export async function reconcileOpenClawWebSearchForReuse(
   sandboxName: string,
