@@ -32,6 +32,7 @@ import * as rebuildRoutePreflight from "./rebuild-preflight-guards";
 import * as rebuildRecreateJournal from "./rebuild-recreate-journal";
 import * as rebuildUsageNotice from "./rebuild-usage-notice";
 import * as policyGet from "./policy-get";
+import * as openClawLifecycle from "./runtime/openclaw-lifecycle";
 
 const policyBoundaryMocks = vi.hoisted(() => ({
   inspectSandboxPolicy: vi.fn(async () => ({
@@ -303,6 +304,13 @@ describe("rebuild resume snapshot repair", () => {
       vi.spyOn(nim, "stopNimContainer").mockReturnValue(true),
       vi.spyOn(nim, "stopNimContainerByName").mockReturnValue(true),
       vi.spyOn(nim, "detectGpu").mockReturnValue(null),
+      vi.spyOn(openClawLifecycle, "beginOpenClawBackupQuiesce").mockResolvedValue({
+        ok: true,
+        window: { sandboxName: "alpha", kind: "backup" },
+      }),
+      vi
+        .spyOn(openClawLifecycle, "retireOpenClawPostRestoreDoctorForDelete")
+        .mockResolvedValue({ ok: true }),
       vi
         .spyOn(rebuildOnboardDependencies, "preflightAuthoritativeRebuildTarget")
         .mockResolvedValue({

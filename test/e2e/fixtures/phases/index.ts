@@ -2,6 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 export {
+  CONFIG_EXPORT_EVIDENCE_CONTRACT,
+  type ConfigExportEvidenceEnvelope,
+  ConfigExportValidationPhaseFixture,
+  type ConfigExportVerification,
+} from "./config-export-validation.ts";
+export {
   EnvironmentPhaseFixture,
   type EnvironmentReady,
   type RuntimeExpectation,

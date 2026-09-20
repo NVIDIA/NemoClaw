@@ -1,14 +1,13 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawn, spawnSync } from "node:child_process";
-import { once } from "node:events";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
 import { describe, expect, expectTypeOf, it, vi } from "vitest";
 import {
+  assertExitCode,
   assertExitZero,
   type CommandRunner,
   GatewayClient,
@@ -24,7 +23,8 @@ import {
   validateSandboxName,
 } from "../fixtures/clients/index.ts";
 import { ArtifactSink } from "../fixtures/artifacts.ts";
-import { ShellProbe } from "../fixtures/shell-probe.ts";
+import { assertCleanupPassed, CleanupRegistry } from "../fixtures/cleanup.ts";
+import { ShellProbe, trustedShellCommand } from "../fixtures/shell-probe.ts";
 import { startTestProgress } from "../fixtures/progress.ts";
 import type {
   ShellProbeResult,
@@ -80,28 +80,6 @@ class FakeRunner implements CommandRunner {
       },
     };
   }
-}
-
-const LOCAL_CLI_DEVICE = {
-  deviceId: "device-local",
-  clientId: "cli",
-  clientMode: "cli",
-  tokens: { operator: { token: "operator-token-local" } },
-};
-
-function writePairingFile(stateDir: string, relativePath: string, value: unknown): void {
-  const file = path.join(stateDir, relativePath);
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  fs.writeFileSync(file, JSON.stringify(value));
-}
-
-/** The `node -e <program>` argv the sandbox client sends, captured through the fake runner. */
-async function recordedPairingWait(): Promise<string[]> {
-  const runner = new FakeRunner();
-  await new SandboxClient(runner, { openshellPath: "openshell" }).waitForInitialOpenClawPairing(
-    "assistant",
-  );
-  return runner.calls[0].args.slice(5, 8);
 }
 
 describe("E2E fixture clients", () => {
@@ -398,16 +376,75 @@ describe("E2E fixture clients", () => {
     },
   );
 
-  it("host client surfaces unexpected sandbox cleanup failures", async () => {
-    const runner = new FakeRunner();
-    runner.exitCode = 1;
-    runner.stderr = "permission denied";
-    const host = new HostCliClient(runner, { cliPath: "nemoclaw" });
-
-    await expect(host.cleanupSandbox("assistant")).rejects.toThrow(
-      "cleanup destroy sandbox assistant failed: permission denied",
-    );
-  });
+  it.each([0, 23])(
+    "preserves destroy exit %i and its artifacts after successful final cleanup",
+    async (destroyExitCode) => {
+      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cleanup-evidence-"));
+      const progress = startTestProgress("cleanup", ["destroy sandbox", "inspect evidence"], {
+        logLine: () => undefined,
+      });
+      try {
+        const artifacts = new ArtifactSink(tmp);
+        const probe = new ShellProbe({
+          artifacts,
+          progress,
+          redact: (text) => text,
+          signal: new AbortController().signal,
+        });
+        let attempt = 0;
+        const host = new HostCliClient({
+          run: (_command, options) =>
+            probe.run(
+              trustedShellCommand({
+                command: process.execPath,
+                args: [
+                  "-e",
+                  "const code = Number(process.argv[1]); code && process.stderr.write('destroy permission denied'); process.exitCode = code;",
+                  String(attempt++ === 1 ? destroyExitCode : 0),
+                ],
+                reason: "exercise cleanup command results",
+              }),
+              options,
+            ),
+        });
+        const cleanup = new CleanupRegistry();
+        cleanup.trackSandbox(host, "assistant", { artifactName: "cleanup-nemoclaw-destroy" });
+        progress.phase("destroy sandbox");
+        await host.cleanupSandbox("assistant", { artifactName: "pre-cleanup-nemoclaw-destroy" });
+        const outcome = await (async () => {
+          try {
+            await host.cleanupSandbox("assistant", {
+              artifactName: "verify-cleanup-nemoclaw-destroy",
+            });
+          } finally {
+            assertCleanupPassed(await cleanup.runAll());
+          }
+        })().catch((error: Error) => error.message);
+        expect(outcome).toBe(
+          destroyExitCode === 0
+            ? undefined
+            : "cleanup destroy sandbox assistant failed: destroy permission denied",
+        );
+        progress.phase("inspect evidence");
+        const readResult = (prefix: string) =>
+          JSON.parse(
+            fs.readFileSync(
+              artifacts.pathFor(`shell/${prefix}-nemoclaw-destroy.result.json`),
+              "utf8",
+            ),
+          );
+        expect(readResult("pre-cleanup")).toMatchObject({ exitCode: 0 });
+        expect(readResult("verify-cleanup")).toMatchObject({
+          exitCode: destroyExitCode,
+          stderr: destroyExitCode === 0 ? "" : "destroy permission denied",
+        });
+        expect(readResult("cleanup")).toMatchObject({ exitCode: 0 });
+      } finally {
+        progress.stop();
+        fs.rmSync(tmp, { recursive: true, force: true });
+      }
+    },
+  );
 
   it("host client removes a current OpenShell gateway with the caller environment", async () => {
     const runner = new FakeRunner();
@@ -699,100 +736,62 @@ describe("E2E fixture clients", () => {
     ).expectOpenshellStatusConnected();
   });
 
-  it("sandbox client builds the bounded initial OpenClaw pairing wait", async () => {
+  it("gateway client proves registration, listener, and host runtime are removed", async () => {
     const runner = new FakeRunner();
-    const sandbox = new SandboxClient(runner, { openshellPath: "openshell" });
+    runner.enqueue({ exitCode: 1, stderr: "No active gateway" });
+    runner.enqueue({ exitCode: 1 });
+    runner.enqueue({ exitCode: 1 });
+    runner.enqueue({ exitCode: 0 });
+    const gateway = new GatewayClient(
+      new HostCliClient(runner, { cliPath: "nemoclaw" }),
+      new SandboxClient(runner),
+    );
 
-    await sandbox.waitForInitialOpenClawPairing("assistant");
+    await gateway.expectRemoved("nemoclaw", {
+      artifactName: "final-gateway",
+      gatewayPort: 18_080,
+    });
 
-    expect(runner.calls[0]).toEqual({
-      command: "openshell",
-      args: [
-        "sandbox",
-        "exec",
-        "-n",
-        "assistant",
-        "--",
-        "node",
-        "-e",
-        expect.stringContaining("identity/device-auth.json"),
-        "60000",
-        "/sandbox/.openclaw",
-      ],
-      options: {
-        artifactName: "wait-for-initial-openclaw-pairing",
-        timeoutMs: 70_000,
-      },
+    expect(runner.calls.map(({ command, args }) => [command, args])).toEqual([
+      ["openshell", ["status"]],
+      ["lsof", ["-ti", ":18080", "-sTCP:LISTEN"]],
+      ["sh", expect.any(Array)],
+      ["docker", ["container", "ps", "--format", "{{.ID}}\t{{.Names}}"]],
+      ["true", []],
+    ]);
+    expect(runner.calls[0].options).toMatchObject({
+      artifactName: "final-gateway-status",
+      env: { OPENSHELL_GATEWAY: "nemoclaw" },
+    });
+    expect(runner.calls[1].options).toMatchObject({
+      artifactName: "final-gateway-listener",
     });
   });
 
-  it("initial pairing wait exits 0 once the local CLI device is paired with the stored token (#11085)", async () => {
-    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pairing-wait-"));
-    try {
-      writePairingFile(stateDir, "identity/device.json", { deviceId: LOCAL_CLI_DEVICE.deviceId });
-      const [command, ...args] = await recordedPairingWait();
-      const child = spawn(command, [...args, "3000", stateDir], {
-        stdio: ["ignore", "pipe", "ignore"],
-      });
-      let output = "";
-      child.stdout.on("data", (chunk: Buffer) => {
-        output += chunk.toString();
-      });
-      setTimeout(() => {
-        writePairingFile(stateDir, "devices/paired.json", {
-          [LOCAL_CLI_DEVICE.deviceId]: LOCAL_CLI_DEVICE,
-        });
-        writePairingFile(stateDir, "identity/device-auth.json", {
-          tokens: LOCAL_CLI_DEVICE.tokens,
-        });
-      }, 400);
+  it("gateway client rejects an inconclusive listener absence probe", async () => {
+    const runner = new FakeRunner();
+    runner.enqueue({ exitCode: 1, stderr: "Status: Disconnected\nGateway: nemoclaw" });
+    runner.enqueue({ exitCode: 1, stderr: "lsof: command unavailable" });
+    const gateway = new GatewayClient(
+      new HostCliClient(runner, { cliPath: "nemoclaw" }),
+      new SandboxClient(runner),
+    );
 
-      const [status] = await once(child, "exit");
-      expect(status).toBe(0);
-      expect(output).toBe("");
-    } finally {
-      fs.rmSync(stateDir, { recursive: true, force: true });
-    }
+    await expect(gateway.expectRemoved("nemoclaw", { gatewayPort: 8_080 })).rejects.toThrow(
+      "gateway listener still exists or could not be disproved on port 8080",
+    );
   });
 
-  it("initial pairing wait exits 1 at the deadline without a matching CLI record (#11085)", async () => {
-    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pairing-wait-"));
-    try {
-      const [command, ...args] = await recordedPairingWait();
-      const attempt = (paired: Record<string, unknown>) => {
-        writePairingFile(stateDir, "devices/paired.json", paired);
-        return spawnSync(command, [...args, "200", stateDir], { encoding: "utf8" });
-      };
-      writePairingFile(stateDir, "identity/device.json", { deviceId: LOCAL_CLI_DEVICE.deviceId });
-      const authMissing = attempt({ [LOCAL_CLI_DEVICE.deviceId]: LOCAL_CLI_DEVICE });
-      writePairingFile(stateDir, "identity/device-auth.json", {
-        tokens: { operator: { token: "operator-token-stale" } },
-      });
-      const staleToken = attempt({ [LOCAL_CLI_DEVICE.deviceId]: LOCAL_CLI_DEVICE });
-      writePairingFile(stateDir, "identity/device-auth.json", { tokens: LOCAL_CLI_DEVICE.tokens });
-      const foreignDevice = attempt({
-        "device-other": { ...LOCAL_CLI_DEVICE, deviceId: "device-other" },
-      });
-      const nonCli = attempt({
-        [LOCAL_CLI_DEVICE.deviceId]: { ...LOCAL_CLI_DEVICE, clientMode: "ui" },
-      });
-
-      const results = [authMissing, staleToken, foreignDevice, nonCli];
-      expect(results.map((result) => result.status)).toEqual([1, 1, 1, 1]);
-      expect(results.map((result) => result.stdout)).toEqual(["", "", "", ""]);
-      expect(results.some((result) => result.stderr.includes("operator-token"))).toBe(false);
-    } finally {
-      fs.rmSync(stateDir, { recursive: true, force: true });
-    }
-  }, 15_000);
-
-  it("sandbox client rejects a nonzero initial pairing wait (#11085)", async () => {
+  it("gateway client rejects a gateway that still accepts status connections", async () => {
     const runner = new FakeRunner();
-    runner.enqueue({ exitCode: 1 });
-    const sandbox = new SandboxClient(runner, { openshellPath: "openshell" });
+    runner.enqueue({ exitCode: 0, stdout: "Status: Connected\nGateway: nemoclaw" });
+    const gateway = new GatewayClient(
+      new HostCliClient(runner, { cliPath: "nemoclaw" }),
+      new SandboxClient(runner),
+    );
 
-    await expect(sandbox.waitForInitialOpenClawPairing("assistant")).rejects.toThrow(
-      "wait for initial OpenClaw CLI pairing in assistant failed: exit=1",
+    await expect(gateway.expectRemoved("nemoclaw", { gatewayPort: 8_080 })).rejects.toThrow(
+      "openshell status did not prove gateway 'nemoclaw' disconnected",
     );
   });
 
@@ -933,14 +932,16 @@ describe("E2E fixture clients", () => {
     await expect(sandbox.cleanupSandbox("assistant")).resolves.toBeUndefined();
   });
 
-  it("sandbox client surfaces unexpected cleanup failures", async () => {
+  it.each([
+    "permission denied",
+    "Error:   × Unknown gateway 'nemoclaw'.",
+    "Error:   × No active gateway.",
+  ])("sandbox client surfaces cleanup failures that do not prove absence: %s", async (stderr) => {
     const runner = new FakeRunner();
-    runner.enqueue({ exitCode: 1, stderr: "permission denied" });
+    runner.enqueue({ exitCode: 1, stderr });
     const sandbox = new SandboxClient(runner);
 
-    await expect(sandbox.cleanupSandbox("assistant")).rejects.toThrow(
-      "cleanup OpenShell sandbox assistant failed: permission denied",
-    );
+    await expect(sandbox.cleanupSandbox("assistant")).rejects.toThrow(stderr);
   });
 
   it("sandbox client validates list output using the OpenShell gateway env", async () => {
@@ -1385,7 +1386,7 @@ describe("E2E fixture clients", () => {
     );
   });
 
-  it("assertExitZero reports non-zero and signaled commands", () => {
+  it("exit assertions report unexpected and signaled command results", () => {
     const result: ShellProbeResult = {
       command: ["cmd"],
       exitCode: 7,
@@ -1400,6 +1401,8 @@ describe("E2E fixture clients", () => {
     expect(() => assertExitZero({ ...result, exitCode: null, signal: "SIGTERM" }, "cmd")).toThrow(
       "cmd failed: signal=SIGTERM",
     );
+    expect(() => assertExitCode(result, 7, "cmd")).not.toThrow();
+    expect(() => assertExitCode(result, 1, "cmd")).toThrow("cmd expected exit=1, got exit=7");
   });
 
   it("assertExitZero accepts lightweight command results and retains both output streams", () => {

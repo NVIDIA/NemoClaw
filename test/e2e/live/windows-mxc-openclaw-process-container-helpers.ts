@@ -1167,13 +1167,11 @@ writeFileSync(join(configDirectory, "openclaw.json"), JSON.stringify({
     mode: "local",
     port: Number(port),
     controlUi: {
-      allowInsecureAuth: true,
-      dangerouslyDisableDeviceAuth: false,
       allowedOrigins: ["http://127.0.0.1:" + port],
     },
     trustedProxies: ["127.0.0.1", "::1"],
     auth: { token: "" },
-    reload: { mode: "hot" },
+    reload: { mode: "off" },
   },
 }), "utf8");
 

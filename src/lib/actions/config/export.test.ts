@@ -6,7 +6,6 @@ import { describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   buildExportConfig: vi.fn(),
   renderCanonicalNemoClawConfig: vi.fn(),
-  validateNemoClawConfig: vi.fn(),
 }));
 
 vi.mock("../../config/canonical", () => ({
@@ -15,10 +14,6 @@ vi.mock("../../config/canonical", () => ({
 vi.mock("../../domain/config/export-document", () => ({
   buildExportConfig: mocks.buildExportConfig,
 }));
-vi.mock("../../config/schema", () => ({
-  validateNemoClawConfig: mocks.validateNemoClawConfig,
-}));
-
 import { Check } from "typebox/value";
 import { runConfigExport, ConfigExportResultSchema, type ConfigExportDependencies } from "./export";
 
@@ -35,7 +30,6 @@ function dependencies(): ConfigExportDependencies {
   const observation = { sandboxName: "alpha" } as never;
   const config = { kind: "NemoClawConfig" } as never;
   mocks.buildExportConfig.mockReset().mockReturnValue(config);
-  mocks.validateNemoClawConfig.mockReset().mockReturnValue(config);
   mocks.renderCanonicalNemoClawConfig.mockReset().mockReturnValue({
     yaml: "kind: NemoClawConfig\n",
     documentDigest: "sha256:" + "a".repeat(64),
@@ -91,7 +85,6 @@ describe("runConfigExport", () => {
       documentName: "team",
       documentUid: "123e4567-e89b-42d3-a456-426614174000",
     });
-    expect(mocks.validateNemoClawConfig).toHaveBeenCalledWith({ kind: "NemoClawConfig" });
     expect(deps.publish).toHaveBeenCalledWith("/tmp/alpha.yaml", "kind: NemoClawConfig\n", true);
   });
 

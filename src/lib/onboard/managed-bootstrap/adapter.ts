@@ -1,13 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { createHash, randomBytes as defaultRandomBytes } from "node:crypto";
+import { createHash } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 
-import {
-  MANAGED_STARTUP_EXECUTABLE,
-  MANAGED_STARTUP_HOLD_EXECUTABLE,
-} from "../managed-startup/hold";
 import type { ManagedStartupAgent } from "../managed-startup/profile";
 import type { ManagedStartupStateRoot } from "../managed-startup/state-roots";
 import {
@@ -16,28 +12,26 @@ import {
   serializeManagedStartupRootApplyRequest,
 } from "../managed-startup/root-apply";
 import { redactOnboardErrorText, sanitizeOnboardFailure } from "../diagnostics/redaction";
+import {
+  assertManagedBootstrapIdentity,
+  createManagedBootstrapIdentity,
+  renderManagedBootstrapHeldCommand,
+} from "./identity-and-command";
+
+export {
+  assertManagedBootstrapIdentity,
+  assertManagedBootstrapSafeProcessEnvironmentKey,
+  createManagedBootstrapIdentity,
+  MANAGED_BOOTSTRAP_IDENTITY_BYTES,
+  MANAGED_BOOTSTRAP_IDENTITY_ENV,
+  renderManagedBootstrapHeldCommand,
+} from "./identity-and-command";
 
 export const MANAGED_BOOTSTRAP_SCHEMA_VERSION = 1 as const;
-export const MANAGED_BOOTSTRAP_IDENTITY_BYTES = 32;
-export const MANAGED_BOOTSTRAP_IDENTITY_ENV = "NEMOCLAW_MANAGED_BOOTSTRAP_IDENTITY";
 
 const SHA256_RE = /^[a-f0-9]{64}$/u;
 const MANIFEST_DIGEST_RE = /^sha256:[a-f0-9]{64}$/u;
-const ENV_ASSIGNMENT_RE = /^[A-Za-z_][A-Za-z0-9_]*=/u;
 const MAX_MANAGED_BOOTSTRAP_RECOVERY_RECORDS = 4096;
-const PROCESS_INJECTION_ENV_KEYS = new Set([
-  "BASHOPTS",
-  "BASH_ENV",
-  "ENV",
-  "LD_AUDIT",
-  "LD_LIBRARY_PATH",
-  "LD_PRELOAD",
-  "NODE_OPTIONS",
-  "NODE_PATH",
-  "PS4",
-  "SHELLOPTS",
-]);
-const PROCESS_INJECTION_ENV_PREFIXES = ["BASH_FUNC_"] as const;
 
 export interface ManagedBootstrapImageIdentity {
   readonly repository: string;
@@ -1027,70 +1021,6 @@ export function sameManagedBootstrapCompletionReceipt(
   right: ManagedBootstrapCompletionReceipt,
 ): boolean {
   return canonicalJson(left) === canonicalJson(right);
-}
-
-export function assertManagedBootstrapIdentity(value: string): void {
-  if (!SHA256_RE.test(value)) {
-    protocolFail("identity must be 32 random bytes encoded as lowercase hex");
-  }
-}
-
-export function createManagedBootstrapIdentity(
-  randomBytes: (size: number) => Buffer = defaultRandomBytes,
-): string {
-  const identity = randomBytes(MANAGED_BOOTSTRAP_IDENTITY_BYTES).toString("hex");
-  assertManagedBootstrapIdentity(identity);
-  return identity;
-}
-
-export function assertManagedBootstrapSafeProcessEnvironmentKey(key: string): void {
-  if (
-    PROCESS_INJECTION_ENV_KEYS.has(key) ||
-    PROCESS_INJECTION_ENV_PREFIXES.some((prefix) => key.startsWith(prefix))
-  ) {
-    throw new Error(`Managed bootstrap refuses process-control environment assignment '${key}'.`);
-  }
-}
-
-export function renderManagedBootstrapHeldCommand(
-  request: ManagedStartupRootApplyRequest,
-  bootstrapIdentity: string,
-  intendedWorkloadArgv: readonly string[],
-): readonly string[] {
-  assertManagedBootstrapIdentity(bootstrapIdentity);
-  assertArgv(intendedWorkloadArgv, "intended workload");
-  if (intendedWorkloadArgv[0] !== "env") {
-    protocolFail("intended workload must begin with env");
-  }
-  let executableIndex = 1;
-  while (executableIndex < intendedWorkloadArgv.length) {
-    const assignment = intendedWorkloadArgv[executableIndex] as string;
-    const separator = assignment.indexOf("=");
-    if (separator > 0 && assignment.startsWith("BASH_FUNC_")) {
-      assertManagedBootstrapSafeProcessEnvironmentKey(assignment.slice(0, separator));
-    }
-    if (!ENV_ASSIGNMENT_RE.test(assignment)) break;
-    assertManagedBootstrapSafeProcessEnvironmentKey(assignment.slice(0, separator));
-    executableIndex += 1;
-  }
-  if (executableIndex >= intendedWorkloadArgv.length) {
-    protocolFail("intended workload executable is missing");
-  }
-  if (intendedWorkloadArgv[executableIndex] !== MANAGED_STARTUP_EXECUTABLE) {
-    protocolFail(`intended workload executable must be ${MANAGED_STARTUP_EXECUTABLE}`);
-  }
-  return Object.freeze([
-    ...intendedWorkloadArgv.slice(0, executableIndex),
-    MANAGED_STARTUP_HOLD_EXECUTABLE,
-    "--agent",
-    request.agent,
-    "--profile-fingerprint",
-    request.profileFingerprint,
-    "--bootstrap-identity",
-    bootstrapIdentity,
-    "--",
-    ...intendedWorkloadArgv.slice(executableIndex + 1),
-  ]);
 }
 
 function freezeSandboxIdentity(

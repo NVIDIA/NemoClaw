@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import * as agentRuntime from "../../../agent/runtime";
 import { MessagingSetupApplier } from "../../../messaging/applier/setup-applier";
 import type { MessagingOpenShellRunner } from "../../../messaging/applier/types";
 import type { SandboxMessagingPlan } from "../../../messaging/manifest";
@@ -62,6 +63,26 @@ export function executePrivilegedSandboxCommand(
   ...args: Parameters<typeof processRecovery.executePrivilegedSandboxCommand>
 ) {
   return processRecovery.executePrivilegedSandboxCommand(...args);
+}
+
+export async function waitForGatedHermesGatewayRecovery(sandboxName: string): Promise<boolean> {
+  const agent = agentRuntime.getSessionAgent(sandboxName);
+  const timeoutSeconds = agent?.name === "hermes" ? agent.healthProbe?.timeout_seconds : undefined;
+  if (
+    typeof timeoutSeconds !== "number" ||
+    !Number.isFinite(timeoutSeconds) ||
+    timeoutSeconds < 0
+  ) {
+    return false;
+  }
+  return processRecovery.waitForRecoveredSandboxGateway(sandboxName, {
+    quiet: true,
+    timeoutSeconds,
+    // Hermes and OpenShell own the native gateway lifecycle. Observe the
+    // relaunched gateway through its sandbox health endpoint instead of the
+    // retired NemoClaw managed-gateway controller.
+    managedProbeImpl: () => null,
+  });
 }
 
 export type SandboxCommandResult = processRecovery.SandboxCommandResult;

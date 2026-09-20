@@ -49,11 +49,9 @@ type OpenClawConfig = {
 const MANAGED_INFERENCE_SAFEGUARD_COMPACTION = {
   mode: "safeguard",
   timeoutSeconds: 120,
-  maxHistoryShare: 0.35,
   recentTurnsPreserve: 1,
   qualityGuard: { enabled: true, maxRetries: 0 },
   notifyUser: true,
-  truncateAfterCompaction: true,
 };
 
 type ObservableCommandRunner = (

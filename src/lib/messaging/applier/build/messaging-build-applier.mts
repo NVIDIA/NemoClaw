@@ -139,6 +139,16 @@ type OpenClawPluginInstall = {
   readonly pin: boolean;
 };
 
+// OpenClaw 2026.9.1 grants the channel-ingress queue only to bundled plugins or
+// installs whose record has official registry provenance. A reviewed npm-pack
+// archive records sourcePath/artifactKind and therefore cannot become a trusted
+// official install even when its package identity and SRI are correct. Keep this
+// list narrow: these packages require the privileged API and must be installed
+// through their exact `npm:` spec after the reviewed archive proof succeeds.
+const OPENCLAW_OFFICIAL_NPM_PLUGIN_IDS: Readonly<Record<string, string>> = Object.freeze({
+  "@openclaw/googlechat": "googlechat",
+});
+
 // Every trusted messaging plugin binds exact package identity, registry SRI,
 // registry tarball URL, and packed-byte SRI before local archive installation.
 // Keep these checks together when #5896 consolidates the archive installers.
@@ -773,14 +783,32 @@ function installOpenClawPluginPackages(installs: readonly OpenClawPluginInstall[
     // fetched bytes in HOME/.npm in an earlier image layer.
     const packed = packVerifiedOpenClawPluginArchive(install, installEnv);
     try {
-      // Install through the `npm-pack:` spec so OpenClaw records npm
-      // provenance (source, resolved name/version, integrity) for the
-      // verified tarball. A bare archive path records archive provenance,
-      // which fails the trusted-official-install check gating openKeyedStore
-      // on OpenClaw >= 2026.6.10 and crash-loops channel plugins that use
-      // keyed state (e.g. WhatsApp). npm-pack installs always record the
-      // exact resolved version, so `--pin` is not needed.
-      runCommand(["openclaw", "plugins", "install", `npm-pack:${packed.archivePath}`], installEnv);
+      const packageName = exactNpmPackageName(install.spec);
+      const officialPluginId = packageName
+        ? OPENCLAW_OFFICIAL_NPM_PLUGIN_IDS[packageName]
+        : undefined;
+      // Most reviewed plugins install through `npm-pack:` so OpenClaw records
+      // exact resolved identity/integrity for the already-verified archive.
+      // Google Chat is the narrow exception above: 2026.9.1's ingress queue
+      // requires an official npm record with no sourcePath/artifactKind. npm
+      // pack has already verified and warmed the exact pinned artifact; prefer
+      // that cache while OpenClaw performs its registry-shaped install.
+      const installTarget = officialPluginId ? install.spec : `npm-pack:${packed.archivePath}`;
+      const commandEnv = officialPluginId
+        ? { ...installEnv, NPM_CONFIG_PREFER_OFFLINE: "true" }
+        : installEnv;
+      runCommand(
+        ["openclaw", "plugins", "install", "--force", "--accept-capabilities", installTarget],
+        commandEnv,
+      );
+      if (officialPluginId) {
+        const inspection = runCommand(
+          ["openclaw", "plugins", "inspect", officialPluginId, "--json"],
+          commandEnv,
+          { emitOutput: false },
+        );
+        verifyTrustedOfficialNpmInstall(install, officialPluginId, inspection);
+      }
       if (install.runtimeLock) {
         const openClawVersion = sanitizeOptionalString(env.OPENCLAW_VERSION);
         if (!openClawVersion) {
@@ -1332,7 +1360,11 @@ function requireExactNpmPackageSpec(
   return { packageSpec: parsed.packageSpec, version: parsed.version };
 }
 
-function runCommand(args: readonly string[], env: Env): void {
+function runCommand(
+  args: readonly string[],
+  env: Env,
+  options: { readonly emitOutput?: boolean } = {},
+): string {
   console.log(`+ ${args.join(" ")}`);
   const result = spawnSync(args[0] as string, args.slice(1), {
     encoding: "utf8",
@@ -1344,8 +1376,46 @@ function runCommand(args: readonly string[], env: Env): void {
   if (result.status !== 0) {
     throw new MessagingBuildCommandError();
   }
-  if (result.stdout) process.stdout.write(result.stdout);
+  if (result.stdout && options.emitOutput !== false) process.stdout.write(result.stdout);
   if (result.stderr) process.stderr.write(result.stderr);
+  return result.stdout ?? "";
+}
+
+function exactNpmPackageName(spec: string): string | undefined {
+  const parsed = parseNpmPackageSpec(spec);
+  if (!parsed?.version) return undefined;
+  return parsed.packageSpec.slice(0, -(parsed.version.length + 1));
+}
+
+function verifyTrustedOfficialNpmInstall(
+  install: OpenClawPluginInstall,
+  pluginId: string,
+  inspectOutput: string,
+): void {
+  let inspected: unknown;
+  try {
+    inspected = JSON.parse(inspectOutput);
+  } catch {
+    throw new MessagingBuildApplierError(
+      `OpenClaw official npm plugin ${install.npmPackageSpec ?? install.spec} inspection did not return JSON`,
+    );
+  }
+  const inspectedRecord = isObject(inspected) ? inspected : {};
+  const record = isObject(inspectedRecord.install) ? inspectedRecord.install : {};
+  const plugin = isObject(inspectedRecord.plugin) ? inspectedRecord.plugin : {};
+  if (
+    plugin.id !== pluginId ||
+    plugin.trustedOfficialInstall !== true ||
+    record.source !== "npm" ||
+    record.sourcePath !== undefined ||
+    record.artifactKind !== undefined ||
+    record.resolvedSpec !== install.npmPackageSpec ||
+    record.integrity !== install.integrity
+  ) {
+    throw new MessagingBuildApplierError(
+      `OpenClaw official npm plugin ${install.npmPackageSpec ?? install.spec} did not retain trusted exact registry provenance`,
+    );
+  }
 }
 
 function packVerifiedOpenClawPluginArchive(
@@ -1381,7 +1451,10 @@ function packVerifiedOpenClawPluginArchive(
     packageSpec: exactPackage.packageSpec,
     workingDirectory: archive.rootDirectory,
   });
-  return { archivePath: remediated.archivePath, rootDir: archive.rootDirectory };
+  return {
+    archivePath: remediated.archivePath,
+    rootDir: archive.rootDirectory,
+  };
 }
 
 type CredentialPlaceholderRule = {
@@ -1967,7 +2040,10 @@ export function main(argv: readonly string[] = process.argv.slice(2)): void {
     console.log(JSON.stringify(describeMessagingBuildPhase(plan, phase, process.env), null, 2));
     return;
   }
-  applyMessagingBuildPhase(plan, phase, process.env, { managedStartupRuntime, mode });
+  applyMessagingBuildPhase(plan, phase, process.env, {
+    managedStartupRuntime,
+    mode,
+  });
 }
 
 function parseMessagingBuildArgs(argv: readonly string[]): {

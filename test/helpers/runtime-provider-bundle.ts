@@ -142,6 +142,7 @@ export function createInMemoryRuntimeProviderBundle({
       supported: true,
       launcher: gatewayLauncher,
       inspectLegacyContainer: false,
+      finalSandboxLiveness: "openshell-and-docker",
       ownsHostReadiness: false,
       observeHostRuntime: projectGatewayHostRuntime,
       prepareHostRuntime: projectGatewayHostRuntime,

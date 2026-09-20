@@ -372,6 +372,8 @@ const GATEWAY_UPGRADE_TARGET = dockerOnlyTarget("openshell-gateway-upgrade-v0-0-
     NEMOCLAW_OLD_SANDBOX_BASE_IMAGE_REF: REVIEWED_GATEWAY_UPGRADE_FIXTURE.sandboxBaseImageRef,
     NEMOCLAW_OLD_OPENSHELL_VERSION: REVIEWED_GATEWAY_UPGRADE_FIXTURE.openShellVersion,
     NEMOCLAW_OLD_OPENCLAW_VERSION: REVIEWED_GATEWAY_UPGRADE_FIXTURE.openclawVersion,
+    // This target upgrades only the host gateway. Its survivor intentionally
+    // keeps the reviewed historical OpenClaw image and state format.
     OPENSHELL_GATEWAY: "nemoclaw",
   },
 });
@@ -738,7 +740,6 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
       "src/lib/inference/ollama/proxy-observation.ts",
       "scripts/ollama-auth-proxy.mts",
       "src/lib/adapters/config/live-export-source.ts",
-      "src/lib/domain/config/verify-ollama-serving.ts",
       "src/lib/config/model.ts",
       "src/lib/config/schema.ts",
     ],
@@ -1202,10 +1203,21 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     },
   }),
   managedRuntimeTarget("sandbox-operations", {
-    displayName: "Sandbox: preserves lifecycle and multi-sandbox operations",
+    displayName: "Sandbox: preserves lifecycle and final gateway cleanup",
     agentRuntime: "openclaw",
     environmentOrInferenceEndpoint: "Ubuntu; NVIDIA hosted inference",
     profile: "nvidia-inference",
+    owningPaths: [
+      "src/lib/actions/sandbox/destroy-gateway-cleanup.ts",
+      "src/lib/actions/sandbox/destroy.ts",
+      "src/lib/domain/sandbox/destroy.ts",
+      "src/lib/onboard/runtime-provider/contract.ts",
+      "src/lib/onboard/runtime-provider/docker.ts",
+      "src/lib/onboard/runtime-provider/mxc.ts",
+      "src/lib/onboard/runtime-provider/podman.ts",
+      "src/lib/onboard/runtime-provider/registry.ts",
+      "test/e2e/fixtures/clients/gateway.ts",
+    ],
     timeoutMinutes: 120,
     installMode: "credential-free",
     installNonInteractive: true,

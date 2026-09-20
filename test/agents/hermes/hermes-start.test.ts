@@ -322,8 +322,8 @@ function runTirithExplicitCommandDispatch(mode: "non-root" | "root") {
       `HERMES_HASH_FILE=${shellQuote(path.join(tmpDir, "hermes.config-hash"))}`,
       `_HERMES_PYTHON=${shellQuote(process.env.PYTHON || "python3")}`,
       `_HERMES_TIRITH_MARKER_FINALIZER=${shellQuote(TIRITH_FINALIZER)}`,
-      "STEP_DOWN_PREFIX_SANDBOX=(env)",
-      'NEMOCLAW_CMD=(bash -c \'test ! -e "$1/.tirith-install-failed"\' bash "$HERMES_DIR")',
+      "STEP_DOWN_PREFIX_SANDBOX=(env NEMOCLAW_ROOT_DISPATCH=1)",
+      'NEMOCLAW_CMD=(bash -c \'printf "ROOT_DISPATCH=%s\\n" "${NEMOCLAW_ROOT_DISPATCH:-0}"; test ! -e "$1/.tirith-install-failed"\' bash "$HERMES_DIR")',
       extractTirithDispatchBlock(src, mode),
     ].join("\n"),
     { mode: 0o700 },
@@ -1445,6 +1445,7 @@ describe("agents/hermes/start.sh Tirith marker bootstrap", () => {
       const run = runTirithExplicitCommandDispatch(mode);
       expect(run.result.status, `${mode}: ${run.result.stderr}`).toBe(0);
       expect(run.markerExists, mode).toBe(false);
+      expect(run.result.stdout).toContain(`ROOT_DISPATCH=${mode === "root" ? "1" : "0"}`);
       expect(run.result.stderr).toContain(
         "download_failed marker present; letting Hermes runtime fallback retry Tirith",
       );

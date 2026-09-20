@@ -315,6 +315,46 @@ describe("base-image publication workflow boundary (#7372)", () => {
     ["matrix publication dependency", (value) => (value.jobs["generate-matrix"].needs = [])],
     ["live publication dependency", (value) => (value.jobs.live.needs = ["generate-matrix"])],
     [
+      "live SDK dependency",
+      (value) => (value.jobs.live.needs = ["base-image-publication", "generate-matrix"]),
+    ],
+    [
+      "live SDK download",
+      (value) => {
+        value.jobs.live.steps = value.jobs.live.steps!.filter(
+          (step) => step.name !== "Download reviewed OpenShell SDK archive",
+        );
+      },
+    ],
+    [
+      "live SDK artifact identity",
+      (value) => {
+        value.jobs.live.steps!.find(
+          (step) => step.name === "Download reviewed OpenShell SDK archive",
+        )!.with!.name = "unreviewed-sdk";
+      },
+    ],
+    [
+      "live conditional SDK install",
+      (value) => {
+        value.jobs.live.steps!.find(
+          (step) =>
+            step.name === "Install reviewed OpenShell SDK archive without package credentials",
+        )!.if = "false";
+      },
+    ],
+    [
+      "live SDK install ordering",
+      (value) => {
+        const steps = value.jobs.live.steps!;
+        const index = steps.findIndex(
+          (step) =>
+            step.name === "Install reviewed OpenShell SDK archive without package credentials",
+        );
+        steps.push(...steps.splice(index, 1));
+      },
+    ],
+    [
       "live managed-image revision",
       (value) => (value.jobs.live.env!.E2E_MANAGED_IMAGE_REVISION = "${{ github.sha }}"),
     ],

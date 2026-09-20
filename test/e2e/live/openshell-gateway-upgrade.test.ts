@@ -5,7 +5,8 @@
  * Installs one reviewed historical NemoClaw/OpenShell gateway, creates a real
  * OpenClaw sandbox, seeds durable workspace state, and runs the current
  * installer upgrade path. The survivor must remain usable and retain its
- * workspace state across the gateway transition.
+ * historical OpenClaw image and workspace state across the gateway transition.
+ * Agent-image and OpenClaw-state-format migration are outside this target.
  */
 
 import { createHash } from "node:crypto";

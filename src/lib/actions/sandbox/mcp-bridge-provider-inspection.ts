@@ -33,9 +33,9 @@ import { McpBridgeError } from "./mcp-bridge-contracts";
 import type { McpBridgeTargetValidation } from "./mcp-bridge-url-validation";
 import {
   assertAuthenticatedBridgeEntry,
-  normalizeMcpServerUrl,
   preflightMcpServerUrlResolvedTarget,
 } from "./mcp-bridge-validation";
+import { normalizeRecordedMcpServerUrl } from "./mcp-bridge/recorded-url";
 
 export const MCP_BRIDGE_PROVIDER_TYPE = "nemoclaw-mcp-v1";
 
@@ -436,8 +436,7 @@ export async function preflightMcpEntryTargets(
   for (const entry of entries) assertAuthenticatedBridgeEntry(entry);
   const results = await Promise.all(
     entries.map(async (entry) => {
-      const trustedPrivateHosts = entry.trustedPrivateHost ? [entry.trustedPrivateHost] : undefined;
-      const normalized = normalizeMcpServerUrl(entry.url, { trustedPrivateHosts });
+      const normalized = normalizeRecordedMcpServerUrl(entry);
       if (normalized !== entry.url) {
         throw new McpBridgeError(
           `MCP server '${entry.server}' has a non-canonical stored URL. Remove it with --force and add it again before lifecycle operations.`,
