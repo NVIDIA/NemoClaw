@@ -96,6 +96,20 @@ describe("OpenShell sandbox lifecycle CLI", () => {
     expect(streamCreate).not.toHaveBeenCalled();
   });
 
+  it("classifies executable resolution failure as definite before spawn", async () => {
+    const streamCreate = vi.fn();
+    const result = await createCliOpenShellSandboxLifecycle({
+      capture: vi.fn(),
+      streamCreate,
+      resolveBinary: () => {
+        throw new Error("OpenShell executable selection returned an empty command.");
+      },
+    }).createSandbox(createRequest);
+
+    expect(result).toMatchObject({ status: 1, ambiguous: false });
+    expect(streamCreate).not.toHaveBeenCalled();
+  });
+
   it("classifies a post-spawn ready handoff timeout as ambiguous and redacts its result", async () => {
     const streamCreate = vi.fn().mockResolvedValue({
       status: 1,

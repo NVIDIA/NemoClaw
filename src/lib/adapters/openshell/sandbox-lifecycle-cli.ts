@@ -346,13 +346,12 @@ export function createCliOpenShellSandboxLifecycle(input: {
         const environment = request.runtimeSelection
           ? buildOpenShellCommandEnv(request.runtimeSelection, filteredEnvironment)
           : filteredEnvironment;
+        const executable = input.resolveBinary?.() ?? resolveOpenshellBinary();
         submitted = true;
-        const result = await stream(
-          input.resolveBinary?.() ?? resolveOpenshellBinary(),
-          args,
-          environment,
-          { ...options, ...(request.workingDirectory ? { cwd: request.workingDirectory } : {}) },
-        );
+        const result = await stream(executable, args, environment, {
+          ...options,
+          ...(request.workingDirectory ? { cwd: request.workingDirectory } : {}),
+        });
         const ambiguous = result.readyTerminationTimedOut === true;
         const diagnostic = safeDiagnostic(result.output);
         return {
