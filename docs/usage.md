@@ -190,9 +190,10 @@ Only `gateway.management` selects a lifecycle mode.
 Every declared service is installed, even without an inference provider referring to it.
 Every selected inference provider has a deployment-owned OpenShell registration; destroy removes that registration without deleting an external server.
 Managed model and credential storage survive destroy.
-Durable data and credential checks verify deployment ownership, generation, and the established storage/engine identity.
+Gateway storage and credential checks verify deployment ownership, generation, and the established storage/engine identity.
 Docker gateway and disposable service compute follow Docker-provider state and may be recreated or replaced during apply.
-This does not authorize migration or adoption of an existing unbound persistent volume.
+Model caches use native Docker volume reconciliation, including its name-based reuse; they have no immutable creation-time binding.
+There is no migration or lost-state adoption workflow for credentials or gateway storage.
 
 The former optional `management` annotations and ownership-only `storage`/`network` objects are rejected.
 For a new deployment, omit those fields and use a fresh UID and state directory.
@@ -248,7 +249,7 @@ Existing state needs the [named-resource transition](state.md#named-sandbox-reso
 | Sandbox image, harness, API, OpenClaw tuning, agent/tools, execution settings, interfaces, or attached integration settings | Changes the sandbox launch specification; ordinary apply refuses replacement; use a separate deployment with a fresh UID and state |
 | Sandbox network policy or proxy | Changes the sandbox specification; follow [policy change constraints](sandbox-network.md) and use a separate deployment when replacement is required |
 | Managed inference or proxy image or serving specification | Docker-provider reconciliation may replace the container while retaining its independently bound storage; review the plan and [model constraints](models.md) |
-| Deployment UID, established gateway endpoint, or bound runtime engine | Cannot retarget the existing state; create a separate deployment |
+| Deployment UID, established gateway endpoint, or bound credential/gateway engine | Cannot retarget the existing state; create a separate deployment |
 | Remove a resource or change management mode so its binding disappears | Ordinary apply refuses removal; assess a separate deployment and explicit retirement of the original |
 | Change a credential value behind the same environment reference | Unchanged apply does not detect rotation; see [credential lifecycle](security.md#credentials-and-authentication) |
 
@@ -287,7 +288,8 @@ After an interrupted apply, keep the original YAML and entire state directory, i
 If the error says an unfinished apply has different intent, use the exact configuration from that unfinished operation before attempting a new change.
 If readiness fails after resource creation, provider state and persistent data remain recorded.
 A later explicit apply may replace or recreate disposable service compute.
-Authentication, transport, and incomplete observations remain failures; missing or changed bound storage never authorizes its automatic recreation.
+Authentication, transport, and incomplete observations remain failures; missing or changed bound credentials and gateway storage never authorize their automatic recreation.
+A missing model-cache volume may be recreated during apply, followed by model download and preparation; its separate credential volume must still match.
 
 Export requires complete observations and agent configuration checks, but does not invoke inference.
 It preserves references and desired settings, not model weights, histories, native settings, or agent files.
@@ -297,7 +299,7 @@ When a managed service is stopped, plan observes the stopped resource without st
 An explicit apply runs the install operation again and performs one bounded readiness check.
 The installer contract has no separate recovery operation and does not create an automatic restart loop.
 Export preserves retained intent and validates required resource bindings without another readiness or model-inventory check.
-Destroy uses provider compute state and separately verified persistent storage; it does not inspect model inventories.
+Destroy uses native provider compute/cache state and separately verified credential and gateway storage; it does not inspect model inventories.
 
 ## Destroy
 
@@ -322,7 +324,7 @@ Repeating completed destroy has no changes.
 An interrupted destroy resumes from its recorded graph boundary; other operations refuse unfinished teardown.
 
 Reapply the original configuration to recreate workloads using retained storage.
-Managed Ollama retains its service-storage binding while deleting its container.
+Managed Ollama retains its native Docker cache-volume binding while deleting its container.
 Model files are not deleted.
 
 The local lock excludes other NemoClaw operations on the same state directory, not other gateway clients.

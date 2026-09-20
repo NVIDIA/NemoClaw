@@ -9,10 +9,11 @@ Separate deployments need separate state directories and deployment UUIDs.
 
 ## Provider-managed Service Compute
 
-Intent version 6 separates vLLM credentials from model data and records Docker gateway, inference, and proxy compute through native Docker-provider resource IDs.
+Intent version 7 delegates model caches to Docker volumes, separates vLLM credentials from model data, and records Docker gateway, inference, and proxy compute through native Docker-provider resource IDs.
 Docker gateway storage binds both signing and encryption-key identity independently of the process.
-Containers and service-owned networks may be recreated during explicit apply while storage and credentials retain their independent bindings.
-Intent versions 1 through 5 are rejected without rewriting state or adopting resources.
+Containers and service-owned networks may be recreated during explicit apply while credentials retain their independent durable bindings.
+Missing model-cache volumes may be recreated; downloads and preparation run again, without replacing credentials.
+Intent versions 1 through 6 are rejected without rewriting state or adopting resources.
 Keep the matching original bundle and entire state directory for existing deployments' export, recovery, or teardown.
 Use a fresh deployment UUID and state directory for this contract; editing an intent version is not migration.
 
@@ -113,7 +114,7 @@ There is no current purge command.
 | External gateway, inference service, external Ollama daemon/model, and externally owned engine/network | Remain under their operators' control |
 | OpenShell workspace | Retained and tracked; does not preserve the deleted sandbox's files |
 | Managed vLLM/Ollama process containers and service-owned networks | Removed; model storage remains tracked |
-| Managed model downloads and prepared data | Retained separately from generated credentials |
+| Managed model downloads and prepared data | Native Docker volumes retained by default; missing caches may be reconstructed separately from credentials |
 | Managed vLLM credentials | Separate tracked credential volume retained |
 | Managed Ollama proxy | Container removed; tracked credential volume retained |
 | Managed gateway | Process removed; database, signing/encryption keys, bridge, and stopped initializer retained |

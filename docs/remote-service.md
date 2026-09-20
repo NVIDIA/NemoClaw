@@ -21,7 +21,7 @@ The remote host must satisfy its service's hardware contract and provide Docker 
 The runtime image performs hardware and memory observation inside the container; normal deployment does not require the SDK's Python SSH capacity collector.
 The existing example uses Linux ARM64 DGX Spark; [the Nemotron example](models.md#configure-nemotron-on-an-amd64-gpu-host) declares an AMD64 GPU with dedicated memory.
 Configure SSH authentication and host trust beforehand.
-Managed volume observation uses that daemon's reported data root, including a non-default root; it never substitutes the client host's storage path.
+Docker resolves named cache and credential mounts in the selected daemon's storage namespace; it never substitutes the client host's storage path.
 
 Load the pinned runtime image into the selected Docker daemon; the example's runtime image has not been published.
 Load the sandbox image into Podman.
@@ -37,7 +37,8 @@ nemoclaw apply --state-dir .local/remote examples/spark/remote-vllm.yaml
 Apply creates retained model storage and provider-managed inference compute on the SSH target, waits for application readiness, then configures the sandbox's OpenShell route.
 Plan reads provider resource state without collecting host capacity or model inventories.
 Hardware, startup memory, and preparation failures are reported by the runtime during apply.
-Changing a bound engine endpoint requires migration and is rejected.
+Bound credentials cannot move to another engine through ordinary apply.
+Cache and compute use native Docker-provider reconciliation; a cross-host transfer is not qualified, so use a fresh deployment and state for another host.
 
 Failed observations stop the operation; confirmed missing service compute can be recreated during explicit apply.
 Destroy retains model data and credentials and removes the service-owned network.

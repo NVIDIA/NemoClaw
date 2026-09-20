@@ -82,7 +82,7 @@ An observation has three outcomes, with different consequences:
 | Observation | Meaning | Consequence |
 |---|---|---|
 | Present and verified | The owning API returned a complete result with matching identity | Compare configuration and plan permitted changes. |
-| Confirmed absent | The owning API established that the resource is missing | The provider can report absence; deployment rules still forbid automatic recreation of bound storage. |
+| Confirmed absent | The owning API established that the resource is missing | The provider can report absence; deployment rules still forbid automatic recreation of bound credentials and gateway storage; model caches may be reconstructed. |
 | Failed or incomplete | The resource may exist, but the client cannot verify it | Stop and preserve the prior binding. |
 
 For example, an authentication error from Docker cannot mean that a model volume disappeared.
@@ -138,7 +138,8 @@ A stopped service remains bound, and an explicit apply can reconcile it without 
 
 A runtime process and its data have different lifetimes.
 Updating an image can require a new container while model files, prepared artifacts, or gateway signing keys must remain intact.
-Separate storage bindings let the SDK verify those dependencies before authorizing process replacement.
+Separate credential bindings let the provider reject lost durable storage during planning before process replacement.
+Reproducible model caches use Docker volume resources, without a second SDK physical-identity check.
 
 This distinction also changed Ollama teardown.
 The [storage separation commit](https://github.com/NVIDIA/NemoClaw/commit/8040b1ef99) made it possible to remove the verified service container while retaining model bytes.
@@ -221,11 +222,11 @@ Package-specific model download, runtime arguments, and bounded readiness checks
 Deployment orchestration consumes only the installer plan and the resolved provider connection.
 
 Destroy retains the volume resource and its data, then removes the provider-managed container and service-owned network after dependent OpenShell resources.
-The Ollama installer verifies the retained storage relationship without deleting model bytes.
-Retained storage verifies the selected engine and data identity independently of disposable container state.
+The Ollama installer declares a native Docker cache volume and retains it during teardown.
+Credential and gateway storage verify durable identity independently of disposable container state; model caches use native provider reconciliation.
 
 A lost deletion response leaves state for explicit reconciliation.
-The fixture also checks volume replacement and engine failure before any deletion, and reapply after destroy keeps model data without another pull.
+The fixture checks credential-volume replacement and engine failures before compute changes, cache reconstruction, and retained teardown.
 This is deterministic Docker/HTTP/OpenShell fixture qualification with the real provider and OpenTofu; it does not establish a new live Ollama hardware qualification.
 
 Managed apply also exposed an async allocation cost that the release CLI hid: composing several debug-build SDK calls overflowed a normal executor thread stack.

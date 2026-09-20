@@ -43,15 +43,15 @@ Run it explicitly for candidate dependency upgrades, outside the default build; 
 
 ## Retained Storage Observations
 
-The read-only live storage test requires an explicit OpenTofu runtime state file containing the test deployment's retained inference volume binding:
+The read-only live storage test requires an explicit OpenTofu runtime state file containing the test deployment's retained inference credential-volume binding from an authenticated vLLM service:
 
 ```sh
 NEMOCLAW_TEST_RUNTIME_STATE=/absolute/path/to/runtime/terraform.tfstate \
   cargo test -p nemoclaw-sdk --test managed_live \
-  retained_inference_volume_preserves_its_reference_binding -- --ignored
+  retained_inference_credentials_preserve_their_reference_binding -- --ignored
 ```
 
-The separate `existing_spark_runtime_bindings_are_observed_without_mutations` test requires both gateway and inference container bindings to exist.
+The separate `existing_spark_runtime_bindings_are_observed_without_mutations` test requires both gateway and inference container bindings to exist and `NEMOCLAW_TEST_RUNTIME_ENGINE` to select their Docker engine.
 Neither read-only test creates resources or establishes live agent inference.
 Refer to [recorded volume-retention results](../validation/rust-storage-linux-arm64.json).
 

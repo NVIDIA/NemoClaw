@@ -19,6 +19,7 @@ The subsequent [managed Podman qualification](rust-managed-podman-linux-arm64.md
 
 | Behavior | Tests and Results |
 |---|---|
+| Independent Docker cache recovery and retained credential guards without SDK orchestration | [Linux ARM64 resource composition](docker-cache-credentials-linux-arm64.md) |
 | Docker gateway process recovery, independent credential identity, and retained namespace | [Linux ARM64 gateway lifecycle](docker-gateway-linux-arm64.md) |
 | Docker-provider service compute, image replacement, recovery, and retained data | [Linux ARM64 lifecycle fixtures](docker-provider-linux-arm64.md) |
 | SDK and CLI plan/apply/export/destroy; ownership, identity, drift, partial creation, failed observations, interrupted destroy | Workspace behavioral tests and real OpenTofu protocol/lifecycle tests in [native platform qualification](rust-native-platforms.json) |

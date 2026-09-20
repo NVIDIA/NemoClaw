@@ -124,7 +124,7 @@ The fixture checks that the supervisor runs independently of the CLI; it does no
 
 The `remote_service` E2E fixture exercises the bundled CLI/provider boundary with an isolated Docker-over-SSH simulator and OpenShell fixture.
 Run `cargo test -p nemoclaw-e2e --test remote_service -- --ignored` with `NEMOCLAW_TEST_BUNDLE` set.
-It checks read-only planning without host-capacity collection, failed startup recovery, missing-container replacement, no-op, export/reapply, and failed observation or daemon retargeting without lost bindings.
+It checks read-only planning without host-capacity collection, failed startup recovery, missing-container replacement, no-op, export/reapply, cache reconstruction with unchanged credentials, and failed observation or credential-daemon retargeting without lost bindings.
 Destroy removes disposable containers and service networks while retaining storage.
 
 Native CI runs these isolated fixtures on Unix, including managed OpenClaw, Hermes, Pi, and bearer-credential lifecycles.
@@ -154,6 +154,25 @@ Those images must provide Python 3 and `/usr/local/bin/nemoclaw-runtime`, which 
 Run it with `cargo test -p nemoclaw-sdk cpu_runtime_provider_reconciles_compute_and_retains_data -- --ignored`.
 It adapts host placement and GPU-sized limits for CPU execution and checks replacement, network recreation, and a retained data sentinel.
 It does not qualify GPU execution, model preparation, inference, or the runtime's hardware checks.
+
+## Standalone Cache and Credential Resources
+
+On Linux with Docker, select a verified bundle, an explicit local engine socket, and an already loaded digest-pinned image containing Python 3.
+From the repository root:
+
+```sh
+NEMOCLAW_TEST_BUNDLE=/absolute/path/to/bundle \
+NEMOCLAW_TEST_CACHE_ENGINE=unix:///var/run/docker.sock \
+NEMOCLAW_TEST_CACHE_IMAGE=repository@sha256:YOUR_IMAGE_DIGEST \
+  cargo test -p nemoclaw-e2e --test cache_provider -- --ignored
+```
+
+The [hand-written HCL](../../crates/nemoclaw-e2e/tests/fixtures/cache_provider.tf) composes `docker_volume`, `docker_container`, and `nemoclaw_inference_storage`; no SDK compiler or deployment coordinator runs.
+The fixture creates fresh owned resources, checks no-op, replacement, failed-start recovery, retained teardown/reapply, and cache reconstruction with the same credential.
+Missing or substituted credential volumes must stop apply before compute creation and preserve state.
+Teardown sets the container count to zero while keeping both volume declarations; ordinary `tofu destroy` is deliberately blocked by their retention rules.
+The runner removes only its labelled resources afterward and retains logs and state under its printed temporary path for diagnosis.
+Its Python process simulates model reconstruction and a credential; it does not qualify the vLLM supervisor, GPU execution, model preparation, inference, or OpenShell deployment.
 
 ## Inference API Fixtures
 

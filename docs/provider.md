@@ -5,7 +5,7 @@
 
 The native bundle includes the NemoClaw and Docker OpenTofu providers.
 The SDK compiles desired-state YAML into resource graphs and runs bundled OpenTofu.
-Docker manages disposable service compute and Docker gateway processes; NemoClaw manages OpenShell operations, Podman gateway processes, initialization, retained gateway bridges, and data bindings.
+Docker manages disposable service compute and Docker gateway processes; NemoClaw manages OpenShell operations, Podman gateway processes, initialization, retained gateway bridges, and durable data bindings.
 Use [the SDK](sdk.md) or [CLI](reference/cli.md) for the documented deployment workflow.
 
 ## Resource and State Ownership
@@ -28,11 +28,12 @@ The generated graphs use these resource groups:
 |---|---|
 | NemoClaw provider | OpenShell workspace, provider, profile, route, and sandbox |
 | NemoClaw provider | Podman gateway process; gateway storage, initialization, and retained bridge |
-| NemoClaw provider | Retained inference, Ollama, and proxy storage; external Ollama model observation |
-| Docker provider | Docker gateway, inference, and proxy containers; service-owned networks and acquired images |
+| NemoClaw provider | Retained inference credentials and proxy storage; external Ollama model observation |
+| Docker provider | Docker gateway, inference, and proxy containers; model-cache volumes, service-owned networks and acquired images |
 | Docker provider data source | Local images selected with `imagePullPolicy: Never` |
 
-The existence of these resources does not establish a supported standalone HCL workflow.
+The [standalone HCL fixture](testing/fixtures.md#standalone-cache-and-credential-resources) verifies cache and credential resource composition without SDK orchestration.
+It does not qualify a complete standalone OpenShell deployment workflow.
 Do not edit SDK-generated graphs or share a deployment state directory between independently managed workflows.
 
 ## Gateway Capabilities
@@ -79,7 +80,10 @@ Operators must choose budgets appropriate for the shared host.
 The Docker provider creates, refreshes, replaces, and removes Docker gateway and service containers, and service-owned private networks.
 These resources use native provider IDs; labels are diagnostic metadata rather than a second compute-ownership mechanism.
 A missing service container may be recreated during explicit apply.
-Missing or substituted bound storage remains an error.
+Missing or substituted bound credentials and gateway storage remain errors.
+A missing model-cache volume may be recreated; its original creation time and daemon ID are not application identity.
+The generated graph retains caches with `prevent_destroy`; SDK teardown keeps those volume resources declared.
+OpenTofu cannot enforce `prevent_destroy` after its resource declaration is removed, so the SDK still rejects ordinary removal of retained cache declarations.
 The gateway bridge serves OpenShell sandboxes and remains part of the retained storage namespace; the Docker gateway process uses host networking.
 Gateway initialization consumes the provider-acquired image before the process is created.
 Podman initialization retains its existing image acquisition path.
