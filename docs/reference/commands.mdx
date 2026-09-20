@@ -3550,7 +3550,7 @@ Run read-only checks for the host and the NemoClaw gateway without selecting a s
 The command works before you create a sandbox.
 It checks the NemoClaw CLI build, the selected host runtime provider, the OpenShell CLI, the sandbox registry, and the gateway selected by `NEMOCLAW_GATEWAY_PORT`.
 It does not start, select, restart, or repair a gateway.
-It does not run sandbox, inference, messaging, agent-version, config-permission, or agent-service checks.
+It does not run sandbox, inference, messaging, agent-version, or agent-service checks.
 Use `$$nemoclaw <name> doctor` when you need those sandbox checks.
 If a sandbox is named `doctor`, the bare command still selects this global report. Use `$$nemoclaw doctor connect` to connect to that sandbox explicitly.
 

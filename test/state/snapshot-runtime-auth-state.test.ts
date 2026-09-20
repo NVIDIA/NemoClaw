@@ -119,7 +119,7 @@ if (cmd.includes("-xf - -C ")) {
 // Restore: best-effort chown; usability probe over restored dirs.
 if (cmd.startsWith("chown ")) { process.exit(0); }
 if (cmd.includes("[ -d ")) { process.exit(0); }
-// Backup + config merge: read the live openclaw.json.
+// Backup + restore: read the live openclaw.json.
 if (cmd.includes("openclaw.json") && cmd.includes("cat --")) {
   process.stdout.write(fs.readFileSync(path.join(dir, "openclaw.json")));
   process.exit(0);
