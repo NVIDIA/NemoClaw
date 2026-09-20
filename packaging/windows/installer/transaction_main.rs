@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+mod legacy_runtime;
 #[path = "../launcher/src/runtime_lease.rs"]
 mod runtime_lease;
 mod runtime_manifest;
@@ -158,6 +159,9 @@ fn bundle_transaction(arguments: &[String]) -> Result<(), String> {
         return runtime_lease::native::ControlDirectory::cleanup_removed_installation()
             .map_err(str::to_owned);
     }
+    if action == "prepare-upgrade" && arguments.len() == 2 {
+        return legacy_runtime::prepare_upgrade(&arguments[1]);
+    }
     let mut store = windows_runtime_store::WindowsStore::new();
     let commands = match (action, &arguments[1..]) {
         ("install", fields) if fields.len() == 5 => vec![
@@ -254,7 +258,7 @@ fn main() {
                 let stage = match args.get(1).copied() {
                     Some("begin-install" | "begin-remove" | "join-remove" | "verify"
                         | "commit-install" | "commit-remove" | "rollback" | "install"
-                        | "repair" | "remove" | "cleanup") => args[1],
+                        | "repair" | "remove" | "cleanup" | "prepare-upgrade") => args[1],
                     _ => "invalid",
                 };
                 diagnostics::record(

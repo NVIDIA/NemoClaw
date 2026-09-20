@@ -7,6 +7,9 @@
   <?ifndef RuntimeImageFinalization ?>
   <?define RuntimeImageFinalization = "false" ?>
   <?endif ?>
+  <?ifndef RuntimeUpgradePreparation ?>
+  <?define RuntimeUpgradePreparation = "false" ?>
+  <?endif ?>
   <Bundle
     Name="NemoClaw RTX Spark Preview"
     Manufacturer="NVIDIA Corporation"
@@ -78,6 +81,21 @@
         <MsiProperty Name="NEMOCLAW_BUNDLE_MANAGED_RUNTIME" Value="1" />
         <?endif ?>
       </MsiPackage>
+      <?if $(var.RuntimeUpgradePreparation) = "true" ?>
+      <!-- Run after the new MSI succeeds and before Burn removes related old
+           bundles. The helper skips the current sealed runtime and removes
+           only legacy MSI registrations with their authored ownership bypass. -->
+      <ExePackage
+        Id="NemoClawLegacyRuntimePreparation"
+        CacheId="NemoClawLegacyRuntimePreparation-$(var.RuntimeFinalizerSha256)"
+        Name="runtime\NemoClawRuntimeTransaction.exe"
+        SourceFile="$(var.RuntimeFinalizerPath)"
+        InstallArguments="--runtime-bundle prepare-upgrade $(var.RuntimeId)"
+        PerMachine="yes"
+        Permanent="yes"
+        Compressed="yes"
+        Vital="yes" />
+      <?endif ?>
       <?if $(var.RuntimeImageFinalization) = "true" ?>
       <!-- Windows Installer strips SeManageVolumePrivilege from deferred custom
            actions. Burn runs this package from its elevated engine after MSI
