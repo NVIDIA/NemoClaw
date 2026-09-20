@@ -170,7 +170,7 @@ fn real_tofu_checks_hardware_during_validation_planning_and_saved_plan_apply() {
 
 #[test]
 #[ignore = "requires explicit NEMOCLAW_TEST_TOFU; no live services"]
-fn real_tofu_preserves_failed_observations_and_distinguishes_absence_from_drift() {
+fn real_tofu_preserves_failed_observations_and_missing_bindings_but_allows_mutable_drift() {
     let e = Experiment::new();
     e.success(&["apply", "-auto-approve", "-input=false"]);
     let original = e.state();
@@ -199,10 +199,9 @@ fn real_tofu_preserves_failed_observations_and_distinguishes_absence_from_drift(
         json!(["update"])
     );
     e.mode("absent");
-    assert_eq!(
-        e.plan()["resource_changes"][0]["change"]["actions"],
-        json!(["create"])
-    );
+    let output = e.run(&["plan", "-input=false"]);
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("Resource observation"));
     assert_eq!(e.state(), original, "plan must not persist refreshed state");
 }
 
