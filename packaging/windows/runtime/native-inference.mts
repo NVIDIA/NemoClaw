@@ -60,6 +60,22 @@ export type NativeInferenceConnection = {
 };
 const quiet: ProgressSink = () => undefined;
 
+export async function verifyNativeUpstreamAuthentication(
+  upstreamPort: number,
+  signal: AbortSignal = AbortSignal.timeout(5000),
+) {
+  // llama.cpp intentionally exposes discovery routes such as /v1/models
+  // without authentication. Probe a protected metadata route instead.
+  const rejected = await fetch(`http://127.0.0.1:${upstreamPort}/props`, {
+    headers: { authorization: "Bearer invalid-native-qualification-key" },
+    signal,
+    redirect: "error",
+  });
+  await rejected.body?.cancel();
+  if (rejected.status !== 401)
+    throw new Error("The native model server did not reject an incorrect credential.");
+}
+
 async function responseJson(response: Response, maximum = 512 * 1024): Promise<unknown> {
   if (!response.body) throw new Error("The local inference response is empty.");
   const chunks: Uint8Array[] = [];
@@ -584,14 +600,7 @@ async function servePrebuiltNativeInference(
         prepared.modelPath.replaceAll("/", "\\").toLowerCase()
     )
       throw new Error("The native model properties do not match the selected recipe.");
-    const rejected = await fetch(`http://127.0.0.1:${upstreamPort}/v1/models`, {
-      headers: { authorization: "Bearer invalid-native-qualification-key" },
-      signal: AbortSignal.timeout(5000),
-      redirect: "error",
-    });
-    await rejected.body?.cancel();
-    if (rejected.status !== 401)
-      throw new Error("The native model server did not reject an incorrect credential.");
+    await verifyNativeUpstreamAuthentication(upstreamPort);
     const completion = (await responseJson(
       await upstream("/v1/chat/completions", {
         method: "POST",
