@@ -94,6 +94,7 @@ function encodePreBackupAuditEntries(
  */
 function backupWithAuditOutput(
   auditOutput: string,
+  options: { tarStatus?: number; tarStderr?: string } = {},
 ): ReturnType<SandboxStateModule["backupSandboxState"]> {
   const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-audit-fixture-"));
   const oldPath = process.env.PATH;
@@ -121,6 +122,8 @@ const { spawnSync } = require("node:child_process");
 const fs = require("node:fs");
 const cmd = process.argv[process.argv.length - 1] || "";
 const existingDirs = ${JSON.stringify(existingDirs)};
+const tarStatus = ${JSON.stringify(options.tarStatus ?? null)};
+const tarStderr = ${JSON.stringify(options.tarStderr ?? null)};
 if (cmd.includes("[ -d ")) {
   process.stdout.write(existingDirs.join("\\n") + "\\n");
   process.exit(0);
@@ -135,7 +138,8 @@ if (cmd.includes("tar ") && cmd.includes("-cf -")) {
   const real = cmd.split("/sandbox/.openclaw").join(${JSON.stringify(stateRoot)});
   const r = spawnSync("sh", ["-c", real], { stdio: ["ignore", "pipe", "pipe"] });
   if (r.stdout) fs.writeSync(1, r.stdout);
-  process.exit(r.status || 0);
+  if (tarStderr) fs.writeSync(2, tarStderr);
+  process.exit(tarStatus ?? r.status || 0);
 }
 process.exit(0);
 `,
@@ -228,29 +232,64 @@ describe("pre-backup audit record framing", () => {
     },
   );
 
-  it.skipIf(process.platform !== "linux")(
-    "emits the unreadable directory from the pre-backup find walk (#12069)",
+  hardDereferenceTest(
+    "records an unreadable declared directory once when tar also reports it (#12069)",
     () => {
-      const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-unreadable-find-"));
-      const workspace = path.join(fixture, "workspace");
-      const restricted = path.join(workspace, "restricted");
-      try {
-        fs.mkdirSync(path.join(restricted, "secret"), { recursive: true });
-        fs.chmodSync(restricted, 0);
+      const backup = backupWithAuditOutput(
+        encodePreBackupAuditEntries([["u", "/sandbox/.openclaw/workspace", ""]]),
+        {
+          tarStatus: 2,
+          tarStderr: "tar: workspace: Cannot open: Permission denied\n",
+        },
+      );
 
-        const result = spawnSync(
-          "bash",
-          ["-lc", sandboxState.buildPreBackupAuditFindCommand(workspace)],
-          { encoding: "buffer" },
-        );
-        const output = (result.stdout ?? Buffer.alloc(0)).toString("binary");
-        expect(output).toContain(`u\0${restricted}\0\0`);
-      } finally {
-        fs.chmodSync(restricted, 0o700);
-        fs.rmSync(fixture, { recursive: true, force: true });
-      }
+      expect(backup.success).toBe(false);
+      expect(backup.failedDirs).toEqual(["workspace"]);
+      expect(backup.failedDirReasons).toEqual({ workspace: "permission denied" });
+      expect(backup.backedUpDirs).toEqual([]);
     },
   );
+
+  it.skipIf(
+    process.platform !== "linux" ||
+      (process.getuid?.() === 0 && !fs.existsSync("/usr/bin/setpriv")),
+  )("emits the unreadable directory from the pre-backup find walk (#12069)", () => {
+    const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-unreadable-find-"));
+    const workspace = path.join(fixture, "workspace");
+    const restricted = path.join(workspace, "restricted");
+    try {
+      fs.mkdirSync(path.join(restricted, "secret"), { recursive: true });
+      fs.chmodSync(restricted, 0);
+      if (process.getuid?.() === 0) {
+        fs.chmodSync(fixture, 0o755);
+        fs.chmodSync(workspace, 0o755);
+      }
+      const findCommand = sandboxState.buildPreBackupAuditFindCommand(workspace);
+      // Root can read mode-000 directories. Drop to nobody so find still
+      // emits the unreadable record the audit command is meant to produce.
+      const result =
+        process.getuid?.() === 0
+          ? spawnSync(
+              "/usr/bin/setpriv",
+              [
+                "--reuid=65534",
+                "--regid=65534",
+                "--clear-groups",
+                "--",
+                "bash",
+                "-lc",
+                findCommand,
+              ],
+              { encoding: "buffer" },
+            )
+          : spawnSync("bash", ["-lc", findCommand], { encoding: "buffer" });
+      const output = (result.stdout ?? Buffer.alloc(0)).toString("binary");
+      expect(output).toContain(`u\0${restricted}\0\0`);
+    } finally {
+      fs.chmodSync(restricted, 0o700);
+      fs.rmSync(fixture, { recursive: true, force: true });
+    }
+  });
 
   it("rejects a symlink path containing tabs and newlines", () => {
     // NUL framing must keep every control character inside the pathname field

@@ -39,6 +39,22 @@ export function classifyFailedDirsFromTarStderr(
   return failed;
 }
 
+/**
+ * Record a failed backup directory once. Keep the first known reason when
+ * the audit path and a later tar-error path both report the same directory.
+ */
+export function recordFailedBackupDir(
+  failedDirs: string[],
+  name: string,
+  failedDirReasons?: Record<string, string>,
+  reason?: string,
+): void {
+  if (!failedDirs.includes(name)) failedDirs.push(name);
+  if (failedDirReasons !== undefined && reason !== undefined) {
+    failedDirReasons[name] ??= reason;
+  }
+}
+
 /** Render failed items with any known per-directory cause. */
 export function formatFailedBackupItems(
   failedItems: readonly string[],

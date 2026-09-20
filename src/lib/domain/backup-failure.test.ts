@@ -8,6 +8,7 @@ import {
   BACKUP_FAILURE_TAR_READ_ERROR,
   classifyFailedDirsFromTarStderr,
   formatFailedBackupItems,
+  recordFailedBackupDir,
   relativeFailedBackupDir,
 } from "./backup-failure";
 
@@ -27,6 +28,16 @@ describe("backup failure diagnostics", () => {
       "agents/main": BACKUP_FAILURE_PERMISSION_DENIED,
       workspace: BACKUP_FAILURE_TAR_READ_ERROR,
     });
+  });
+
+  it("records a failed directory only once and keeps the first reason", () => {
+    const failedDirs: string[] = [];
+    const reasons: Record<string, string> = {};
+    recordFailedBackupDir(failedDirs, "workspace", reasons, BACKUP_FAILURE_PERMISSION_DENIED);
+    recordFailedBackupDir(failedDirs, "workspace", reasons, BACKUP_FAILURE_TAR_READ_ERROR);
+    recordFailedBackupDir(failedDirs, "workspace");
+    expect(failedDirs).toEqual(["workspace"]);
+    expect(reasons).toEqual({ workspace: BACKUP_FAILURE_PERMISSION_DENIED });
   });
 
   it("renders known reasons while preserving uncategorized items", () => {
