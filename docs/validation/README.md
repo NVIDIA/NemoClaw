@@ -20,6 +20,7 @@ The subsequent [managed Podman qualification](rust-managed-podman-linux-arm64.md
 
 | Behavior | Tests and Results |
 |---|---|
+| Real gateway startup, capability readiness dependency, workspace creation, and bound-state recovery limit | [Linux ARM64 manual readiness test](gateway-readiness-linux-arm64.md) |
 | Deferred provider configuration and the bound-gateway recovery boundary | [Linux ARM64 bootstrap qualification](openshell-deferred-configuration-linux-arm64.md) |
 | Independent OpenShell HCL composition, lifecycle guards, recovery, and bootstrap limits | [Linux ARM64 provider qualification](openshell-provider-composition-linux-arm64.md) |
 | Independent Docker cache recovery and retained credential guards without SDK orchestration | [Linux ARM64 resource composition](docker-cache-credentials-linux-arm64.md) |
