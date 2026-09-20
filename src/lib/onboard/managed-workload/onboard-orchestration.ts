@@ -60,6 +60,7 @@ import {
   prebuildSandboxImageIfEligible,
   type SandboxCreateLaunchInput,
   type SandboxCreateLaunchWithPrebuild,
+  type SandboxRuntimeLaunchWithPrebuild,
 } from "../sandbox-create-launch";
 import { getSandboxReadyTimeoutSecs } from "../sandbox-gpu-create";
 import type { SandboxGpuConfig } from "../sandbox-gpu-mode";
@@ -438,7 +439,7 @@ export interface PrepareOnboardSandboxWorkloadLaunchInput {
   readonly onExit?: (cleanup: () => void) => void;
 }
 
-export interface PreparedOnboardSandboxWorkloadLaunch {
+interface PreparedOnboardSandboxWorkloadLaunchBase {
   readonly initialSandboxPolicy: InitialSandboxPolicy;
   readonly messagingProviders: string[];
   readonly gpuRoutePlan: SandboxCreateIntent["gpuRoutePlan"];
@@ -449,9 +450,19 @@ export interface PreparedOnboardSandboxWorkloadLaunch {
   readonly buildId: string;
   readonly dashboardRemoteBindPrepared: boolean;
   readonly legacyBuildContext: CreateSandboxBuildContextResult | null;
-  readonly createRequestPlan: PlannedOpenShellSandboxCreateRequest | null;
-  readonly launch: SandboxCreateLaunchWithPrebuild;
 }
+
+export type PreparedOnboardSandboxWorkloadLaunch = PreparedOnboardSandboxWorkloadLaunchBase &
+  (
+    | {
+        readonly createRequestPlan: PlannedOpenShellSandboxCreateRequest;
+        readonly launch: SandboxRuntimeLaunchWithPrebuild;
+      }
+    | {
+        readonly createRequestPlan: null;
+        readonly launch: SandboxCreateLaunchWithPrebuild;
+      }
+  );
 
 function requireLegacyBuildContext(
   buildContext: CreateSandboxBuildContextResult | null,
@@ -521,7 +532,7 @@ export async function prepareOnboardSandboxWorkloadLaunch(
 
   let buildId = String(Date.now());
   let dashboardRemoteBindPrepared = false;
-  let launch: SandboxCreateLaunchWithPrebuild;
+  let launch: SandboxRuntimeLaunchWithPrebuild;
   if (input.workload.source.kind === "managed-image") {
     const runtimeProvider = requireManagedRuntimeProvider(input.runtime.runtimeProvider);
     const gatewayRuntime = runtimeProvider.gateway.prepareHostRuntime({
@@ -557,9 +568,7 @@ export async function prepareOnboardSandboxWorkloadLaunch(
     });
     launch = {
       ...managedLaunch,
-      createCommand: "",
-      createArgv: [],
-      prebuild: { createArgs: [], imageRef: null, imageId: null },
+      prebuild: { imageRef: null, imageId: null },
     };
   } else {
     const buildContext = requireLegacyBuildContext(legacyBuildContext);
@@ -585,7 +594,7 @@ export async function prepareOnboardSandboxWorkloadLaunch(
       ...launchInput,
       policyAttached: Boolean(createPlan.createRequest.policyPath),
     });
-    const prebuild = await prebuildSandboxImageIfEligible({
+    const { createArgs: _portableCreateArgs, ...prebuild } = await prebuildSandboxImageIfEligible({
       buildCtx: buildContext.buildCtx,
       buildId,
       dockerDriverGateway: input.gpu.dockerDriverGateway,
@@ -598,7 +607,7 @@ export async function prepareOnboardSandboxWorkloadLaunch(
           input.legacy.agent.name === "openclaw" ||
           input.legacy.agent.name === "hermes"),
     });
-    launch = { ...runtimeLaunch, createCommand: "", createArgv: [], prebuild };
+    launch = { ...runtimeLaunch, prebuild };
   }
 
   const createRequestPlan = Object.freeze({

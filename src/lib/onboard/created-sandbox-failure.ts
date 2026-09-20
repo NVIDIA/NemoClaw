@@ -40,8 +40,8 @@ export type SandboxCreateFailureReportOptions = {
   createOutput: string;
   /** Pre-recreate/pre-upgrade state backup path to surface in diagnostics, if any. */
   restoreBackupPath: string | null;
-  /** Resolved `openshell sandbox create` args, so recovery hints stay aligned with --from. */
-  createArgs: readonly string[];
+  /** Deferred Portable create args, when the caller still owns a raw create representation. */
+  createArgs?: readonly string[];
 };
 
 export type SandboxCreateFailureReportDeps = {
@@ -86,7 +86,9 @@ export function reportSandboxCreateFailure(
     backupPath: options.restoreBackupPath,
   });
   deps.error("  Try:  openshell sandbox list        # check gateway state");
-  deps.printRecoveryHints(redactedCreateOutput, { createArgs: options.createArgs });
+  if (options.createArgs) {
+    deps.printRecoveryHints(redactedCreateOutput, { createArgs: options.createArgs });
+  }
   return deps.exitProcess(options.createStatus === 0 ? 1 : options.createStatus);
 }
 

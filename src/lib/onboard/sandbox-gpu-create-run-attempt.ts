@@ -690,6 +690,51 @@ export function createSandboxGpuCreateAttemptRunner(
       }
       return sandboxId;
     };
+    const settleAmbiguousCreateResult = (
+      createResult: StreamSandboxCreateResult | null,
+      ambiguous: boolean,
+    ): string | null => {
+      if (!ambiguous || !createResult) return null;
+      if (!deferPostCreateEffects) {
+        throw new Error(
+          `OpenShell did not confirm whether sandbox '${input.sandboxName}' was created. Preserve the terminal output and do not submit another create attempt until OpenShell confirms identity or absence.`,
+        );
+      }
+      let sandboxId: string;
+      try {
+        sandboxId = settleCreatedIdentity();
+      } catch (error) {
+        persistIdentitySettlementRecovery();
+        throw new Error(
+          `Sandbox '${input.sandboxName}' was created, but OpenShell did not return one exact durable sandbox identity before post-create effects.`,
+          { cause: error },
+        );
+      }
+      if (createResult.status !== 0 && input.requirePolicylessCreate) {
+        const failure = classifySandboxCreateFailure(createResult.output);
+        if (failure.kind !== "sandbox_create_incomplete") {
+          persistIdentitySettlementRecovery(fingerprintSandboxRecreateValue(sandboxId));
+          reportSandboxCreateFailure(
+            {
+              sandboxName: input.sandboxName,
+              createStatus: createResult.status,
+              createOutput: createResult.output,
+              restoreBackupPath: input.restoreBackupPath,
+              ...(input.prebuild.createArgs ? { createArgs: input.prebuild.createArgs } : {}),
+            },
+            {
+              classifyCreateFailure: classifySandboxCreateFailure,
+              printCreateFailureDiagnostics,
+              printRecoveryHints: printSandboxCreateRecoveryHints,
+              warn: (message) => console.warn(message),
+              error: (message) => console.error(message),
+              exitProcess: (code) => process.exit(code),
+            },
+          );
+        }
+      }
+      return sandboxId;
+    };
     let createdSandboxVerified = false;
     let compatibilityCreatePollError: unknown = null;
     const applyVerifiedCompatibilityCutover = async (): Promise<string | null> => {
@@ -909,11 +954,10 @@ export function createSandboxGpuCreateAttemptRunner(
     if (!deferPostCreateEffects) await runtimePatch.exitOnPatchError();
     const createSubmissionAmbiguous =
       createResult !== null && "ambiguous" in createResult && createResult.ambiguous === true;
-    if (createSubmissionAmbiguous && !deferPostCreateEffects) {
-      throw new Error(
-        `OpenShell did not confirm whether sandbox '${input.sandboxName}' was created. Preserve the terminal output and do not submit another create attempt until OpenShell confirms identity or absence.`,
-      );
-    }
+    const settledAmbiguousSandboxId = settleAmbiguousCreateResult(
+      createResult,
+      createSubmissionAmbiguous,
+    );
     if (createResult && createResult.status !== 0 && !createSubmissionAmbiguous) {
       const failure = classifySandboxCreateFailure(createResult.output);
       let nativeCreateRejectedBeforeProgress = false;
@@ -972,7 +1016,7 @@ export function createSandboxGpuCreateAttemptRunner(
             createStatus: createResult.status,
             createOutput: createResult.output,
             restoreBackupPath: input.restoreBackupPath,
-            createArgs: input.prebuild.createArgs,
+            ...(input.prebuild.createArgs ? { createArgs: input.prebuild.createArgs } : {}),
           },
           {
             classifyCreateFailure: classifySandboxCreateFailure,
@@ -991,7 +1035,7 @@ export function createSandboxGpuCreateAttemptRunner(
       }
       let sandboxId: string;
       try {
-        sandboxId = settleCreatedIdentity();
+        sandboxId = settledAmbiguousSandboxId ?? settleCreatedIdentity();
       } catch (error) {
         persistIdentitySettlementRecovery();
         throw new Error(

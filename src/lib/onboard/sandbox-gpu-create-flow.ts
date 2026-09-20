@@ -222,7 +222,8 @@ export interface SandboxGpuCreateFlowInput {
   sandboxStartupCommand: string[];
   lifecycleGeneration?: SandboxEntry["lifecycleGeneration"];
   portableRuntimeAuthority?: CheckpointPortableRuntimeAuthority | null;
-  prebuild: SandboxPrebuildResult;
+  prebuild: Omit<SandboxPrebuildResult, "createArgs"> &
+    Partial<Pick<SandboxPrebuildResult, "createArgs">>;
   restoreBackupPath: string | null;
   terminalAgent: boolean;
   persistStartupCommand?: boolean;

@@ -2637,7 +2637,6 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       legacyBuildContext,
       createRequestPlan: materializedCreateRequestPlan,
       launch: {
-        createArgv: materializedCreateArgv,
         intendedSandboxStartupCommand,
         managedBootstrapIdentity,
         managedStartupRootApplyRequest,
@@ -2646,6 +2645,16 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         sandboxStartupCommand,
       },
     } = preparedOnboardLaunch;
+    const materializedCreateArgv =
+      preparedOnboardLaunch.createRequestPlan === null
+        ? preparedOnboardLaunch.launch.createArgv
+        : null;
+    const requireMaterializedPortableCreateArgv = (): string[] => {
+      if (!materializedCreateArgv) {
+        throw new Error("Portable sandbox workload is missing its materialized create arguments.");
+      }
+      return materializedCreateArgv;
+    };
     const rebuildMessagingPolicyDeltas = resolveRebuildMessagingPolicyDeltas(
       plannedMessagingState?.plan,
       {
@@ -2667,7 +2676,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
     const rebuildPolicyProviderAuthority = resolveRebuildPolicyProviderAuthority({
       ...(materializedCreateRequestPlan
         ? { createProviders: materializedCreateRequestPlan.providers }
-        : { createArgs: materializedCreateArgv }),
+        : { createArgs: requireMaterializedPortableCreateArgv() }),
       messagingPlan: plannedMessagingState?.plan,
       ...(rebuildPolicySource
         ? { policyProviders: rebuildPolicySource.providers }
@@ -2693,14 +2702,22 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
           rebuildPolicySource?.document,
         )
       : materializedInitialSandboxPolicy;
-    const createArgv = createIntent?.rebuildPolicySourcePath
-      ? bindRebuildPolicyProvidersToCreateArgs(
-          materializedCreateArgv.map((value, index, argv) =>
-            index > 0 && argv[index - 1] === "--policy" ? initialSandboxPolicy.policyPath : value,
-          ),
-          initialSandboxPolicy,
-        )
-      : materializedCreateArgv;
+    const createArgv = materializedCreateArgv
+      ? createIntent?.rebuildPolicySourcePath
+        ? bindRebuildPolicyProvidersToCreateArgs(
+            materializedCreateArgv.map((value, index, argv) =>
+              index > 0 && argv[index - 1] === "--policy" ? initialSandboxPolicy.policyPath : value,
+            ),
+            initialSandboxPolicy,
+          )
+        : materializedCreateArgv
+      : null;
+    const requirePortableCreateArgv = (): string[] => {
+      if (!createArgv) {
+        throw new Error("Portable sandbox workload is missing its raw create arguments.");
+      }
+      return createArgv;
+    };
     const createRequestPlan = selectRebuildCreateRequestPlan({
       request: materializedCreateRequestPlan,
       rebuildPolicySourcePath: createIntent?.rebuildPolicySourcePath,
@@ -3458,7 +3475,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         gatewayName: GATEWAY_NAME,
         lifecycleGeneration: createdSandboxLifecycle.generation,
         portableRuntime: portableRuntimeContext,
-        createArgv,
+        createArgv: requirePortableCreateArgv(),
         createPolicyPath: initialSandboxPolicy.policyPath,
         startup: {
           agent: hermesPortableAuthority.agent,
@@ -3544,7 +3561,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         create: (runAfterVerifiedCreate) =>
           runCreateFlow(
             agentCreateInput.portableLifecycle
-              ? { kind: "portable", argv: createArgv }
+              ? { kind: "portable", argv: requirePortableCreateArgv() }
               : {
                   kind: "ordinary",
                   request: routedOrdinaryCreateRequest!,

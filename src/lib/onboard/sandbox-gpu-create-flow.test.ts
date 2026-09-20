@@ -727,25 +727,28 @@ describe("runSandboxGpuCreateFlow native failure and readiness", () => {
       failure: "policy application",
       output: "Sandbox policy application failed: requested policy was denied",
     },
-  ])("does not retry compatibility for a $failure failure (#6110)", async ({ output }) => {
+  ])("retains an ambiguous post-progress $failure failure (#6110)", async ({ output }) => {
     mocks.streamSandboxCreate.mockResolvedValueOnce({
       status: 1,
       output,
       sawProgress: true,
     });
     const deps = createDeps();
-    mockExit();
+    const exit = mockExit();
 
-    await expect(runSandboxGpuCreateFlow(createInput(), deps)).rejects.toThrow("process.exit:1");
+    await expect(runSandboxGpuCreateFlow(createInput(), deps)).rejects.toThrow(
+      "did not confirm whether sandbox 'alpha' was created",
+    );
     expect(mocks.streamSandboxCreate).toHaveBeenCalledOnce();
     expect(mocks.createDockerGpuSandboxCreatePatch).toHaveBeenCalledOnce();
     expect(mocks.createDockerGpuSandboxCreatePatch).toHaveBeenCalledWith(
       expect.objectContaining({ route: "native" }),
     );
     expect(deps.runOpenshell).not.toHaveBeenCalled();
+    expect(exit).not.toHaveBeenCalled();
   });
 
-  it("redacts create errors and preserves their exact nonzero status (#6110)", async () => {
+  it("redacts an ambiguous post-progress create failure without ordinary cleanup (#6110)", async () => {
     mocks.streamSandboxCreate.mockResolvedValueOnce({
       status: 19,
       output: "provider failed with NVIDIA_API_KEY=super-secret-create-value",
@@ -754,12 +757,11 @@ describe("runSandboxGpuCreateFlow native failure and readiness", () => {
     const exit = mockExit(19);
 
     await expect(runSandboxGpuCreateFlow(createInput(), createDeps())).rejects.toThrow(
-      "process.exit:19",
+      "did not confirm whether sandbox 'alpha' was created",
     );
 
     const output = vi.mocked(console.error).mock.calls.flat().join("\n");
-    expect(exit).toHaveBeenCalledWith(19);
-    expect(output).toMatch(/NVIDIA_API_KEY=[^\n]*\*+/);
+    expect(exit).not.toHaveBeenCalled();
     expect(output).not.toContain("super-secret-create-value");
   });
 
@@ -779,7 +781,7 @@ describe("runSandboxGpuCreateFlow native failure and readiness", () => {
     expect(mocks.streamSandboxCreate).toHaveBeenCalledOnce();
   });
 
-  it("preserves a nonzero create status when separate readiness polling fails (#6110)", async () => {
+  it("retains a post-progress nonzero result before separate readiness polling (#6110)", async () => {
     mocks.streamSandboxCreate.mockResolvedValueOnce({
       status: 23,
       output: "Created sandbox: alpha",
@@ -793,10 +795,11 @@ describe("runSandboxGpuCreateFlow native failure and readiness", () => {
     const exit = mockExit(23);
 
     await expect(runSandboxGpuCreateFlow(createInput(), createDeps())).rejects.toThrow(
-      "process.exit:23",
+      "did not confirm whether sandbox 'alpha' was created",
     );
 
-    expect(exit).toHaveBeenCalledWith(23);
+    expect(exit).not.toHaveBeenCalled();
+    expect(mocks.waitForCreatedSandboxReadyWithTrace).not.toHaveBeenCalled();
   });
 
   it("keeps native readiness on the single-Ready contract", async () => {
@@ -1205,7 +1208,7 @@ describe("runSandboxGpuCreateFlow cleanup and provenance", () => {
     expect(deps.openshellArgv).toHaveBeenCalledExactlyOnceWith([]);
   });
 
-  it("ignores create-stream tags and reuses only the inspected immutable image", async () => {
+  it("does not inspect or retry an ambiguous create-stream image reference", async () => {
     const input = createSourceInput();
     mockRuntimeSnapshot({
       bookkeepingImageRef: "openshell/sandbox-from:built",
@@ -1219,26 +1222,14 @@ describe("runSandboxGpuCreateFlow cleanup and provenance", () => {
     });
     const deps = createDeps();
 
-    await expect(runSandboxGpuCreateFlow(input, deps)).resolves.toMatchObject({
-      route: "compatibility",
-      registryImageRef: "openshell/sandbox-from:built",
-    });
-
-    expect(mocks.streamSandboxCreate).toHaveBeenNthCalledWith(
-      2,
-      expect.stringMatching(/openshell$/u),
-      expect.arrayContaining(["--from", IMAGE_ID]),
-      expect.any(Object),
-      expect.any(Object),
+    await expect(runSandboxGpuCreateFlow(input, deps)).rejects.toThrow(
+      "did not confirm whether sandbox 'alpha' was created",
     );
-    expect(mocks.streamSandboxCreate.mock.calls[1]?.[1]).not.toContain(
-      "attacker.example/redirect:latest",
-    );
-    expect(mocks.streamSandboxCreate).toHaveBeenCalledTimes(2);
-    expect(mocks.queryOpenShellDockerSandboxRuntimeSnapshot).toHaveBeenCalledOnce();
+    expect(mocks.streamSandboxCreate).toHaveBeenCalledOnce();
+    expect(mocks.queryOpenShellDockerSandboxRuntimeSnapshot).not.toHaveBeenCalled();
   });
 
-  it("does not persist an immutable retry ID as the registry image tag", async () => {
+  it("does not reuse an immutable image ID after an ambiguous create result", async () => {
     const input = createSourceInput();
     mockRuntimeSnapshot({
       bookkeepingImageRef: IMAGE_ID,
@@ -1251,17 +1242,10 @@ describe("runSandboxGpuCreateFlow cleanup and provenance", () => {
     });
     const deps = createDeps();
 
-    await expect(runSandboxGpuCreateFlow(input, deps)).resolves.toMatchObject({
-      route: "compatibility",
-      registryImageRef: null,
-    });
-
-    expect(mocks.streamSandboxCreate).toHaveBeenNthCalledWith(
-      2,
-      expect.stringMatching(/openshell$/u),
-      expect.arrayContaining(["--from", IMAGE_ID]),
-      expect.any(Object),
-      expect.any(Object),
+    await expect(runSandboxGpuCreateFlow(input, deps)).rejects.toThrow(
+      "did not confirm whether sandbox 'alpha' was created",
     );
+    expect(mocks.streamSandboxCreate).toHaveBeenCalledOnce();
+    expect(mocks.queryOpenShellDockerSandboxRuntimeSnapshot).not.toHaveBeenCalled();
   });
 });

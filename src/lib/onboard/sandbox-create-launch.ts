@@ -74,6 +74,10 @@ export interface SandboxCreateLaunchWithPrebuild extends SandboxCreateLaunch {
   prebuild: SandboxPrebuildResult;
 }
 
+export interface SandboxRuntimeLaunchWithPrebuild extends SandboxRuntimeLaunch {
+  prebuild: Omit<SandboxPrebuildResult, "createArgs">;
+}
+
 export function renderSandboxCreateCommand(
   createArgs: readonly string[],
   sandboxStartupCommand: readonly string[],

@@ -279,6 +279,42 @@ function outputOf(result: CapturedOpenShellCommandResult): string {
   return streams || result.output.trim();
 }
 
+/** Exact CLI parser rejection that proves OpenShell did not submit a create request. */
+export function isNativeGpuCreatePreBuildRejection(output: string): boolean {
+  const text = String(output ?? "");
+  if (text.length > 4096) return false;
+  const lines = text
+    .split(/\r?\n/u)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  if (lines.length === 0 || lines.length > 4) return false;
+  const [errorLine, ...envelope] = lines;
+  const exactError =
+    /^error:\s+(?:unexpected|unrecognized|unknown|unsupported)\s+(?:argument|option|flag)(?:\s+|:\s*)['"`]?--gpu['"`]?(?:\s+(?:found|provided|specified))?\.?$/iu.test(
+      errorLine,
+    ) ||
+    /^error:\s+(?:argument|option|flag)\s+['"`]?--gpu['"`]?\s+(?:is not supported|was rejected)\.?$/iu.test(
+      errorLine,
+    );
+  return (
+    exactError &&
+    envelope.every(
+      (line) =>
+        /^tip:\s+to pass ['"`]--gpu['"`] as a value, use ['"`]-- --gpu['"`]\.?$/iu.test(line) ||
+        /^Usage:\s+openshell sandbox create(?:\s|$)/u.test(line) ||
+        /^For more information, try ['"`]--help['"`]\.?$/u.test(line),
+    )
+  );
+}
+
+function isDefiniteCreatePreSubmissionFailure(result: StreamSandboxCreateResult): boolean {
+  if (result.sawProgress) return false;
+  return (
+    isNativeGpuCreatePreBuildRejection(result.output) ||
+    /^spawn failed:.*\((?:ENOENT|EACCES)\)$/imu.test(result.output)
+  );
+}
+
 function failedDelete(
   error: OpenShellSandboxError,
   diagnostic = "",
@@ -352,7 +388,11 @@ export function createCliOpenShellSandboxLifecycle(input: {
           ...options,
           ...(request.workingDirectory ? { cwd: request.workingDirectory } : {}),
         });
-        const ambiguous = result.readyTerminationTimedOut === true;
+        // A spawned non-success result is ambiguous unless the child reported
+        // exact evidence that submission never began.
+        const ambiguous =
+          result.readyTerminationTimedOut === true ||
+          (result.status !== 0 && !isDefiniteCreatePreSubmissionFailure(result));
         const diagnostic = safeDiagnostic(result.output);
         return {
           ...result,

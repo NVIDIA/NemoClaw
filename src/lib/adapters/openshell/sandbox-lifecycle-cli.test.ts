@@ -126,6 +126,35 @@ describe("OpenShell sandbox lifecycle CLI", () => {
     expect(JSON.stringify(result)).not.toContain("must-not-leak");
   });
 
+  it("classifies every post-spawn nonzero result as ambiguous", async () => {
+    const streamCreate = vi.fn().mockResolvedValue({
+      status: 1,
+      output: "gateway returned an ordinary command failure",
+      sawProgress: true,
+    });
+    const result = await createCliOpenShellSandboxLifecycle({
+      capture: vi.fn(),
+      streamCreate,
+    }).createSandbox(createRequest);
+
+    expect(result).toMatchObject({ status: 1, ambiguous: true });
+    expect(streamCreate).toHaveBeenCalledOnce();
+  });
+
+  it("keeps an exact pre-submission CLI parser rejection definite", async () => {
+    const streamCreate = vi.fn().mockResolvedValue({
+      status: 2,
+      output: "error: unexpected argument '--gpu' found",
+      sawProgress: false,
+    });
+    const result = await createCliOpenShellSandboxLifecycle({
+      capture: vi.fn(),
+      streamCreate,
+    }).createSandbox(createRequest);
+
+    expect(result).toMatchObject({ status: 2, ambiguous: false });
+  });
+
   it("submits one explicitly targeted delete without retrying", async () => {
     const capture = vi.fn().mockResolvedValue({ status: 0, output: "deleted" });
     const result = await createCliOpenShellSandboxLifecycle({ capture }).deleteSandbox(request);

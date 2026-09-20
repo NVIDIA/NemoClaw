@@ -645,7 +645,7 @@ describe("created sandbox identity gate", () => {
     expect(events.indexOf("verify-created")).toBeLessThan(events.indexOf("compatibility-cutover"));
   });
 
-  it("returns false and blocks effects when the create-attempt selector returns no sandbox ID (#10769)", async () => {
+  it("retains recovery when a post-submission failure cannot settle to an exact sandbox ID (#10769)", async () => {
     const input = noGpuInput();
     input.verifyCreatedSandboxBeforeEffects = vi.fn();
     input.revalidateVerifiedSandboxBeforeEffect = vi.fn();
@@ -653,7 +653,7 @@ describe("created sandbox identity gate", () => {
     mocks.createDockerGpuSandboxCreatePatch.mockReturnValue(patch);
     mocks.streamSandboxCreate.mockImplementation(async (_command, _args, _env, options) => {
       expect(options.readyCheck?.()).toBe(false);
-      return { status: 0, output: "", sawProgress: true };
+      return { status: 1, output: "accepted then disconnected", sawProgress: true };
     });
     const deps = createGpuFlowDeps();
     deps.installPortableDemoLifecycle = vi.fn();
@@ -661,9 +661,7 @@ describe("created sandbox identity gate", () => {
       .mockReturnValueOnce("alpha Ready")
       .mockReturnValueOnce("[]");
 
-    await expect(runSandboxGpuCreateFlow(input, deps)).rejects.toThrow(
-      "did not return one exact durable sandbox identity before post-create effects",
-    );
+    await expect(runSandboxGpuCreateFlow(input, deps)).rejects.toThrow("exact durable sandbox");
 
     expect(input.persistRetainedSandboxRecovery).toHaveBeenCalledOnce();
     expect(input.verifyCreatedSandboxBeforeEffects).not.toHaveBeenCalled();
@@ -1386,12 +1384,16 @@ describe("created sandbox identity gate", () => {
       containerId: "container-a",
     });
     const deps = createGpuFlowDeps();
-    vi.mocked(deps.runCaptureOpenshell).mockReturnValue("[]");
+    vi.mocked(deps.runCaptureOpenshell)
+      .mockReturnValueOnce("alpha Ready")
+      .mockReturnValueOnce("[]");
     vi.spyOn(process, "exit").mockImplementation(() => {
       throw new Error("process.exit:1");
     });
 
-    await expect(runSandboxGpuCreateFlow(input, deps)).rejects.toThrow("process.exit:1");
+    await expect(runSandboxGpuCreateFlow(input, deps)).rejects.toThrow(
+      "did not return one exact durable sandbox identity before post-create effects",
+    );
 
     expect(input.persistRetainedSandboxRecovery).toHaveBeenCalledExactlyOnceWith(
       expect.any(String),
