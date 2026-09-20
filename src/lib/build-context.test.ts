@@ -58,6 +58,25 @@ describe("printSandboxCreateRecoveryHints", () => {
     expect(stderr()).toContain("Docker memory");
   });
 
+  it("prints semantic ordinary-create context without runtime environment values", () => {
+    printSandboxCreateRecoveryHints("provider rejected request", {
+      createContext: {
+        sourceReference: "managed@example.invalid",
+        policyAttached: true,
+        providers: ["nvidia"],
+        gpuRequested: true,
+        gpuDevice: null,
+        cpu: "2",
+        memory: "4Gi",
+      },
+    });
+
+    expect(stderr()).toContain("source: managed@example.invalid");
+    expect(stderr()).toContain("providers: nvidia");
+    expect(stderr()).toContain("resources: cpu=2, memory=4Gi");
+    expect(stderr()).toContain("runtime environment omitted");
+  });
+
   it("prints progress-specific resume guidance when upload reached the gateway", () => {
     printSandboxCreateRecoveryHints(
       ["[progress] Uploaded to gateway", "failed to read image export stream"].join("\n"),

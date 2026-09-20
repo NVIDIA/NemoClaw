@@ -23,6 +23,7 @@ import { getReadyCheckOutputPatternsForAgent } from "../sandbox/create-stream-re
 import type { SandboxGpuProofResult } from "../state/registry";
 import { classifySandboxCreateFailure } from "../validation";
 import {
+  createSandboxRecoveryContext,
   formatRetainedSandboxRecoveryMessage,
   reportSandboxCreateFailure,
 } from "./created-sandbox-failure";
@@ -620,6 +621,10 @@ export function createSandboxGpuCreateAttemptRunner(
       createAttemptNonce && unboundAttemptRequest
         ? withCreateAttemptLabel(unboundAttemptRequest, createAttemptNonce)
         : unboundAttemptRequest;
+    const createFailureRecoveryEvidence = () => ({
+      ...(input.prebuild.createArgs ? { createArgs: input.prebuild.createArgs } : {}),
+      ...(attemptRequest ? { createContext: createSandboxRecoveryContext(attemptRequest) } : {}),
+    });
     const attemptArgv =
       createAttemptNonce && unboundAttemptArgv
         ? addCreateAttemptIdentityLabel(unboundAttemptArgv, createAttemptNonce)
@@ -720,7 +725,7 @@ export function createSandboxGpuCreateAttemptRunner(
               createStatus: createResult.status,
               createOutput: createResult.output,
               restoreBackupPath: input.restoreBackupPath,
-              ...(input.prebuild.createArgs ? { createArgs: input.prebuild.createArgs } : {}),
+              ...createFailureRecoveryEvidence(),
             },
             {
               classifyCreateFailure: classifySandboxCreateFailure,
@@ -1016,7 +1021,7 @@ export function createSandboxGpuCreateAttemptRunner(
             createStatus: createResult.status,
             createOutput: createResult.output,
             restoreBackupPath: input.restoreBackupPath,
-            ...(input.prebuild.createArgs ? { createArgs: input.prebuild.createArgs } : {}),
+            ...createFailureRecoveryEvidence(),
           },
           {
             classifyCreateFailure: classifySandboxCreateFailure,

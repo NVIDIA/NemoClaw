@@ -99,10 +99,12 @@ export function printSandboxCreateRecoveryHints(
     platform = process.platform,
     arch = process.arch,
     createArgs,
+    createContext,
   }: {
     platform?: NodeJS.Platform;
     arch?: NodeJS.Architecture;
     createArgs?: readonly string[];
+    createContext?: import("./onboard/created-sandbox-failure").SandboxCreateRecoveryContext;
   } = {},
 ): void {
   // Every branch below prints tailored `--resume` recovery guidance, so suppress
@@ -111,6 +113,22 @@ export function printSandboxCreateRecoveryHints(
   const portable = isPortableExperimentalProfile();
   const recoveryCommand = onboardResumeRecoveryCommand();
   const failure = classifySandboxCreateFailure(output);
+  if (createContext) {
+    const resources = [
+      createContext.cpu ? `cpu=${createContext.cpu}` : null,
+      createContext.memory ? `memory=${createContext.memory}` : null,
+    ].filter((value): value is string => value !== null);
+    console.error("  NemoClaw create context (runtime environment omitted):");
+    console.error(`    source: ${createContext.sourceReference}`);
+    console.error(`    policy: ${createContext.policyAttached ? "attached" : "none"}`);
+    console.error(
+      `    providers: ${createContext.providers.length > 0 ? createContext.providers.join(", ") : "none"}`,
+    );
+    console.error(
+      `    gpu: ${createContext.gpuRequested ? (createContext.gpuDevice ?? "requested") : "none"}`,
+    );
+    console.error(`    resources: ${resources.length > 0 ? resources.join(", ") : "defaults"}`);
+  }
   if (failure.kind === "image_upload_container_missing") {
     const { arm64ImageRefWorkaround } = planSandboxCreateRecovery(failure, { platform, arch });
     const builtRef = extractBuiltImageRef(output);
