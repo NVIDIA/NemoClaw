@@ -116,6 +116,24 @@ function waitForFile(filename: string, timeoutMs = 2_000): void {
 }
 
 describe("source require loader", () => {
+  it("loads relative ESM source boundaries through their .mjs specifier", () => {
+    const script = `
+require(${JSON.stringify(SOURCE_REQUIRE_HOOK)});
+const sdk = require(${JSON.stringify(path.join(REPO_ROOT, "src/lib/adapters/openshell/sdk.ts"))});
+process.exitCode = sdk.gatewayPort({ kind: "named", gatewayName: "nemoclaw" }) === 8080 ? 0 : 7;
+`;
+    const result = spawnSync(process.execPath, ["-e", script], {
+      cwd: REPO_ROOT,
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        NODE_OPTIONS: nodeOptionsWithoutSourceLoader(process.env.NODE_OPTIONS),
+      },
+      timeout: 10_000,
+    });
+    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+  });
+
   it.each([
     { built: false, prepareBuild: (_root: string) => {} },
     {

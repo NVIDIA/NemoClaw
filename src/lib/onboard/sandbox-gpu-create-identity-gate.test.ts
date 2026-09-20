@@ -203,11 +203,6 @@ describe("created sandbox identity gate", () => {
         ? { status: 0, stdout: `Name: alpha\nId: ${sandboxId}\nState: Ready\n`, stderr: "" }
         : { status: 0, stdout: "", stderr: "" },
     );
-    deps.installPortableDemoLifecycle = vi.fn(() => {
-      events.push("portable-lifecycle");
-      return "generation-1";
-    });
-
     await expect(runSandboxGpuCreateFlow(input, deps)).resolves.toMatchObject({
       origin: "resumed",
       route: "none",
@@ -220,7 +215,6 @@ describe("created sandbox identity gate", () => {
     );
     expect(events).toEqual([
       "verify-created",
-      "revalidate:activate managed sandbox network for 'alpha'",
       "revalidate:validate runtime patch for sandbox 'alpha'",
       "runtime-check",
       "revalidate:apply runtime patch for sandbox 'alpha'",
@@ -230,8 +224,6 @@ describe("created sandbox identity gate", () => {
       "readiness",
       "revalidate:commit runtime readiness for sandbox 'alpha'",
       "commit",
-      "revalidate:record portable lifecycle for sandbox 'alpha'",
-      "portable-lifecycle",
     ]);
   });
 
@@ -502,10 +494,6 @@ describe("created sandbox identity gate", () => {
       expect(patch.exitOnPatchError).not.toHaveBeenCalled();
       expect(patch.ensureApplied).not.toHaveBeenCalled();
     });
-    deps.installPortableDemoLifecycle = vi.fn(() => {
-      events.push("portable-lifecycle");
-      return "generation-1";
-    });
     vi.mocked(deps.runCaptureOpenshell)
       .mockImplementationOnce((args) => {
         expect(args).not.toContain("--selector");
@@ -555,8 +543,6 @@ describe("created sandbox identity gate", () => {
       "readiness",
       "revalidate:commit runtime readiness for sandbox 'alpha'",
       "commit",
-      "revalidate:record portable lifecycle for sandbox 'alpha'",
-      "portable-lifecycle",
     ]);
     expect(deps.runCaptureOpenshell).toHaveBeenNthCalledWith(
       2,
@@ -589,6 +575,74 @@ describe("created sandbox identity gate", () => {
       expect.anything(),
     );
     expect(deps.sleep).not.toHaveBeenCalled();
+  });
+
+  it("applies a compatibility cutover when the Ready create client exits first (#11905)", async () => {
+    const events: string[] = [];
+    let nonce = "";
+    let replacementRuntimeId: string | null = null;
+    const input = createGpuFlowInput();
+    input.gpuRoutePlan = "compatibility-only";
+    input.initialGpuRoute = "compatibility";
+    input.persistRetainedSandboxRecovery = vi.fn(() => true);
+    input.verifyCreatedSandboxBeforeEffects = vi.fn(
+      async (_identity, beforeEffects, afterEffects) => {
+        events.push("verify-created");
+        await beforeEffects?.();
+        await afterEffects?.();
+      },
+    );
+    input.revalidateVerifiedSandboxBeforeEffect = vi.fn((operation) =>
+      events.push(`revalidate:${operation}`),
+    );
+    const patch = createGpuPatchFixture();
+    patch.replacementRuntimeId.mockImplementation(() => replacementRuntimeId);
+    patch.ensureApplied.mockImplementation(() => {
+      events.push("compatibility-cutover");
+      replacementRuntimeId = "b".repeat(64);
+    });
+    mocks.createDockerGpuSandboxCreatePatch.mockReturnValue(patch);
+    mocks.streamSandboxCreate.mockImplementation(async (_command, args, _env, options) => {
+      nonce = createAttemptNonce(args);
+      expect(options.readyCheck?.()).toBe(false);
+      await options.onPoll?.();
+      await options.onPoll?.();
+      await options.onPoll?.();
+      expect(input.verifyCreatedSandboxBeforeEffects).not.toHaveBeenCalled();
+      expect(patch.maybeApplyDuringCreate).not.toHaveBeenCalled();
+      events.push("create-complete");
+      return { status: 0, output: "Created sandbox: alpha", sawProgress: true };
+    });
+    const deps = createGpuFlowDeps();
+    mocks.queryOpenShellDockerSandboxContainers.mockReturnValue({
+      ok: true,
+      ids: ["b".repeat(64)],
+    });
+    let listAttempts = 0;
+    let selectorAttempts = 0;
+    const observeSelector = (): string =>
+      ++selectorAttempts === 1
+        ? sandboxListJson("alpha-sandbox-id", {
+            [NEMOCLAW_CREATE_ATTEMPT_LABEL]: "f".repeat(62),
+          })
+        : selectorAttempts === 2
+          ? sandboxListJson(
+              "alpha-sandbox-id",
+              { [NEMOCLAW_CREATE_ATTEMPT_LABEL]: nonce },
+              { resource_version: null },
+            )
+          : sandboxListJson("alpha-sandbox-id", {
+              [NEMOCLAW_CREATE_ATTEMPT_LABEL]: nonce,
+            });
+    const observeList = (): string => (++listAttempts <= 2 ? "No sandboxes found." : "alpha Ready");
+    vi.mocked(deps.runCaptureOpenshell).mockImplementation((args) =>
+      !args.includes("--selector") ? observeList() : observeSelector(),
+    );
+    await expect(runSandboxGpuCreateFlow(input, deps)).resolves.toMatchObject({
+      route: "compatibility",
+    });
+    expect(events.indexOf("create-complete")).toBeLessThan(events.indexOf("verify-created"));
+    expect(events.indexOf("verify-created")).toBeLessThan(events.indexOf("compatibility-cutover"));
   });
 
   it("returns false and blocks effects when the create-attempt selector returns no sandbox ID (#10769)", async () => {

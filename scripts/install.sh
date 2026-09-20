@@ -3244,6 +3244,18 @@ finish_nemoclaw_install() {
       fi
       error "Could not install the OpenShell version pinned by the prepared source after retiring the gateway. The installer preserved the sandbox backups and did not start recovery. Rerun the installer with ${retry_gateway_port_env}NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1 to reuse the prepared upgrade state and retry the OpenShell install."
     fi
+    # The retired gateway registration is intentionally gone. Start the newly
+    # installed, identity-checked NemoClaw service before upgrade-sandboxes
+    # queries the old rows; otherwise the recovery command sees an unreachable
+    # selected gateway and cannot recreate even though its backup is complete.
+    if [[ "$(uname -s)" == "Linux" ]] \
+      && command_exists systemctl \
+      && systemctl --user show-environment >/dev/null 2>&1; then
+      info "Starting the current OpenShell gateway before sandbox recovery…"
+      restart_selected_openshell_gateway_user_service \
+        "systemd:${NEMOCLAW_GATEWAY_SERVICE_NAME}.service" \
+        || error "The current OpenShell gateway service could not start after the legacy gateway was retired. Sandbox backups were preserved; fix the user service and rerun with NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1."
+    fi
     _OPENSHELL_INSTALL_REQUIRED_BEFORE_RECOVERY=false
   else
     case "${_NEMOCLAW_CLI_INSTALL_MODE:-}" in

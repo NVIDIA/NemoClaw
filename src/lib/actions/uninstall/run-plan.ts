@@ -2405,7 +2405,7 @@ function removeDockerContainers(
         // and managed inference), so that term only ever selected the separate
         // OpenClaw project's containers for `docker rm -f` (#8496).
         // Probe containers that run with `--rm` and no `--name`, such as
-        // `hermesBaseImageSupportsMcp`, take a random Docker name. Their
+        // `hermesBaseImageSupportsRuntime`, take a random Docker name. Their
         // NemoClaw image reference is the only way to reclaim one that an
         // interrupted run orphaned.
         return isOwnedDockerContainerName(name) || isOwnedDockerImageRepository(image);

@@ -62,7 +62,7 @@ export function prepareManagedProxyFixture(
     .replace("/usr/local/lib/nemoclaw/entrypoint-env-wrapper.sh", ENTRYPOINT_ENV_WRAPPER)
     .replace("/usr/local/lib/nemoclaw/sandbox-rlimits.sh", rlimitLib)
     .replace("../../scripts/lib/sandbox-rlimits.sh", "missing-dev-sandbox-rlimits.sh")
-    .replaceAll("/run/nemoclaw/managed-startup-ca-bundle.pem", caFile)
+    .replaceAll("/tmp/nemoclaw-managed-startup-ca-bundle.pem", caFile)
     .replace(
       'readonly MANAGED_PROXY_HOST_FILE="/usr/local/share/nemoclaw/dcode-proxy-host"',
       `readonly MANAGED_PROXY_HOST_FILE="${hostFile}"`,
@@ -99,8 +99,8 @@ export function makeStartScriptFixture(
       options.liveCaFile ?? "/etc/openshell-tls/ca-bundle.pem",
     )
     .replaceAll(
-      "/run/nemoclaw/managed-startup-ca-bundle.pem",
-      options.fallbackCaFile ?? "/run/nemoclaw/managed-startup-ca-bundle.pem",
+      "/tmp/nemoclaw-managed-startup-ca-bundle.pem",
+      options.fallbackCaFile ?? "/tmp/nemoclaw-managed-startup-ca-bundle.pem",
     );
   assert.ok(original.includes("local target=/tmp/nemoclaw-proxy-env.sh"));
   assert.ok(original.includes('tmp="$(mktemp /tmp/nemoclaw-proxy-env.XXXXXX)"'));

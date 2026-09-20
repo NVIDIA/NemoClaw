@@ -131,11 +131,11 @@ printf 'start:%s:%s:%s:%s:%s:%s\\n' "$NEMOCLAW_MANAGED_STARTUP_APPLIED" "\${NEMO
             `_nemoclaw_runtime=${JSON.stringify(runtime)}`,
           )
           .replace(
-            '_nemoclaw_runtime_env="/run/nemoclaw/managed-startup-runtime.env"',
+            '_nemoclaw_runtime_env="/tmp/nemoclaw-managed-startup-runtime.env"',
             `_nemoclaw_runtime_env=${JSON.stringify(runtimeEnvironment)}`,
           )
           .replace("/usr/local/bin/node", path.join(directory, "node"))
-          .replace("/usr/local/bin/nemoclaw-start", path.join(directory, "nemoclaw-start"));
+          .replaceAll("/usr/local/bin/nemoclaw-start", path.join(directory, "nemoclaw-start"));
         fs.writeFileSync(script, source, { mode: 0o755 });
         fs.chmodSync(script, 0o755);
         const fingerprint = "a".repeat(64);
@@ -151,6 +151,7 @@ printf 'start:%s:%s:%s:%s:%s:%s\\n' "$NEMOCLAW_MANAGED_STARTUP_APPLIED" "\${NEMO
             "--bootstrap-identity",
             bootstrapIdentity,
             "--",
+            path.join(directory, "nemoclaw-start"),
             "/bin/sh",
             "-c",
             "exec tail -f /dev/null",

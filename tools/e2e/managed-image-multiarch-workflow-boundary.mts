@@ -24,6 +24,7 @@ type WorkflowStep = WorkflowRecord & {
   env?: WorkflowRecord;
   name?: string;
   run?: string;
+  shell?: string;
   uses?: string;
   with?: WorkflowRecord;
 };
@@ -47,6 +48,7 @@ const REVIEWED_EXECUTION_STEP_NAMES = [
   "Checkout protected managed-image candidate source",
   "Validate trusted Hermes resolver checkout path",
   "Checkout trusted Hermes resolver",
+  "Bind protected managed-image Buildx configuration",
   "Set up protected managed-image Buildx",
   "Prepare E2E workspace",
   "Build shared policy boundary",
@@ -60,7 +62,7 @@ const REVIEWED_EXECUTION_STEP_NAMES = [
   "Run every exact managed-image contract directly",
 ] as const;
 const REVIEWED_EXECUTION_SURFACE_SHA256 =
-  "208d6e851b5e336788e9ccf646b64bb5d2ceef175475bf689f217e05b5709452";
+  "3838afa4f7e9fd98e182a5dc320a122751981a26c606732f240b5edb65ffcf16";
 const SHARED_POLICY_BOUNDARY_RUN = [
   "set -euo pipefail",
   "[[ ! -e nemoclaw/dist && ! -L nemoclaw/dist ]] || {",
@@ -309,6 +311,25 @@ export function validateManagedImageMultiarchWorkflow(workflow: WorkflowRecord):
       "persist-credentials": false,
     },
   );
+
+  const buildxConfig = requireStep(
+    errors,
+    steps,
+    "Bind protected managed-image Buildx configuration",
+  );
+  requireValues(errors, `${JOB_ID} Buildx configuration env`, record(buildxConfig?.env), {
+    SHARD: "${{ matrix.shard }}",
+  });
+  if (buildxConfig?.shell !== "bash") {
+    errors.push(`${JOB_ID} must bind protected Buildx configuration in a Bash step`);
+  }
+  requireFragments(errors, buildxConfig, [
+    '[[ "$SHARD" =~ ^linux-(amd64|arm64)$ ]]',
+    'buildx_config="${RUNNER_TEMP}/nemoclaw-protected-buildx-${SHARD}"',
+    '[[ ! -e "$buildx_config" && ! -L "$buildx_config" ]]',
+    'install -d -m 0700 "$buildx_config"',
+    `printf 'BUILDX_CONFIG=%s\\n' "$buildx_config" >>"$GITHUB_ENV"`,
+  ]);
 
   const buildx = requireStep(errors, steps, "Set up protected managed-image Buildx");
   if (buildx?.uses !== "docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c") {
