@@ -113,9 +113,7 @@ function targetIdentity(summary: ValidatedProgressSummary): string {
   return [summary.targetId ?? "unlabeled", summary.shardId].filter(Boolean).join("/");
 }
 
-export function collectRuntimeHistorySamples(
-  roots: readonly string[],
-): RuntimeHistorySample[] {
+export function collectRuntimeHistorySamples(roots: readonly string[]): RuntimeHistorySample[] {
   const grouped = new Map<string, ValidatedProgressSummary[]>();
   for (const summary of readProgressSummaries(roots)) {
     const key = JSON.stringify([targetIdentity(summary), summary.scenario]);

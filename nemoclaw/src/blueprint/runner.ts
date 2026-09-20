@@ -189,8 +189,11 @@ const BLUEPRINT_KEYS = new Set([
 ]);
 const MISSING_PROVIDER_INSPECTION_PATTERN =
   /(?:\bprovider\b[^\r\n]*\b(?:not found|does not exist)\b|\b(?:not found|does not exist)\b[^\r\n]*\bprovider\b|\bunknown provider\b)/i;
+const MISSING_SANDBOX_INSPECTION_PATTERN =
+  /(?:\bsandbox\b[^\r\n]*\b(?:not found|does not exist)\b|\b(?:not found|does not exist)\b[^\r\n]*\bsandbox\b|\bunknown sandbox\b)/i;
 const POLICY_INSPECTION_MAX_BYTES = 1024 * 1024;
 const POLICY_INSPECTION_TIMEOUT_MS = 30_000;
+const POLICY_INSPECTION_DETAIL_MAX_CHARS = 240;
 const BLUEPRINT_POLICY_REBASE_ATTEMPTS = 3;
 const UNRESTRICTED_POLICY_HOSTS = new Set(["*", "0.0.0.0", "0.0.0.0/0", "::", "::/0"]);
 
@@ -252,6 +255,8 @@ function isAction(value: string | undefined): value is Action {
 const MAX_COMMAND_ERROR_CHARS = 500;
 const SENSITIVE_ERROR_ASSIGNMENT =
   /(\b[A-Z][A-Z0-9_]*(?:KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL)[A-Z0-9_]*\s*)[:=]\s*(?:"[^"]*"|'[^']*'|[^\s,;]+)/gi;
+const UNSAFE_COMMAND_ERROR_CONTROL =
+  /[\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u2028-\u202e\u2066-\u2069]/gu;
 
 function boundedCommandError(stderr: string, secretValues: readonly string[] = []): string {
   let redacted = redactCredentialText(stderr);
@@ -262,7 +267,11 @@ function boundedCommandError(stderr: string, secretValues: readonly string[] = [
   }
   redacted = redacted
     .replace(SENSITIVE_ERROR_ASSIGNMENT, "$1=<REDACTED>")
-    .replace(/\b(Bearer)\s+\S+/gi, "$1 <REDACTED>");
+    .replace(/\b(Bearer)\s+\S+/gi, "$1 <REDACTED>")
+    .replace(
+      UNSAFE_COMMAND_ERROR_CONTROL,
+      (character) => `\\u${character.charCodeAt(0).toString(16).padStart(4, "0")}`,
+    );
   const collapsed = redacted.replace(/\s+/g, " ").trim();
   if (collapsed.length === 0) return "no error output";
   return collapsed.length > MAX_COMMAND_ERROR_CHARS
@@ -875,10 +884,23 @@ async function runBlueprintInspectionCommand(
     throw new Error(failureMessage);
   }
   if (
-    result.exitCode !== 0 ||
     Buffer.byteLength(result.stdout, "utf8") + Buffer.byteLength(result.stderr, "utf8") >
-      POLICY_INSPECTION_MAX_BYTES
+    POLICY_INSPECTION_MAX_BYTES
   ) {
+    throw new Error(failureMessage);
+  }
+  if (result.exitCode !== 0) {
+    const output = result.stderr.trim() || result.stdout.trim();
+    if (failure.kind === "policy" && output.length > 0) {
+      const sanitized = boundedCommandError(output);
+      const detail =
+        sanitized.length > POLICY_INSPECTION_DETAIL_MAX_CHARS
+          ? `${sanitized.slice(0, POLICY_INSPECTION_DETAIL_MAX_CHARS - 1)}…`
+          : sanitized;
+      throw new Error(
+        `OpenShell ${failure.subject} policy inspection failed. OpenShell detail: ${detail}. Policy-dependent operations must stop.`,
+      );
+    }
     throw new Error(failureMessage);
   }
   return result;
@@ -1779,6 +1801,7 @@ export async function actionApply(
   try {
     let reuseExistingInferenceProvider = false;
     let reuseExistingInferenceRoute = false;
+    let reuseExistingSandbox = false;
     progress(20, "Creating OpenClaw sandbox");
     const createArgs = [
       "openshell",
@@ -1799,20 +1822,37 @@ export async function actionApply(
     }
 
     await requireCreatePolicyBoundary();
-    const createResult = await runCmd(createArgs, {
-      gateway: policyGateway.name,
-      omitSandboxPolicy: true,
-      reject: false,
-    });
-    if (createResult.exitCode !== 0) {
-      if (createResult.stderr.includes("already exists")) {
+    if (runtimeIdentityConfig) {
+      const sandboxResult = await runCmd(["openshell", "sandbox", "get", sandboxName], {
+        gateway: policyGateway.name,
+        reject: false,
+      });
+      const sandboxOutput = `${sandboxResult.stderr}\n${sandboxResult.stdout}`;
+      if (sandboxResult.exitCode === 0) {
+        reuseExistingSandbox = true;
         log(`Sandbox '${sandboxName}' already exists; using its current OpenShell policy.`);
-      } else {
-        throw new Error(`Failed to create sandbox: ${boundedCommandError(createResult.stderr)}`);
+      } else if (!MISSING_SANDBOX_INSPECTION_PATTERN.test(sandboxOutput)) {
+        throw new Error(
+          `Failed to inspect sandbox '${sandboxName}' before runtime identity apply: ${boundedCommandError(sandboxOutput)}`,
+        );
       }
-    } else {
-      sandboxCreatedByApply = true;
-      persistRunPlan();
+    }
+    if (!reuseExistingSandbox) {
+      const createResult = await runCmd(createArgs, {
+        gateway: policyGateway.name,
+        omitSandboxPolicy: true,
+        reject: false,
+      });
+      if (createResult.exitCode !== 0) {
+        if (createResult.stderr.includes("already exists")) {
+          log(`Sandbox '${sandboxName}' already exists; using its current OpenShell policy.`);
+        } else {
+          throw new Error(`Failed to create sandbox: ${boundedCommandError(createResult.stderr)}`);
+        }
+      } else {
+        sandboxCreatedByApply = true;
+        persistRunPlan();
+      }
     }
 
     persistRunPlan();

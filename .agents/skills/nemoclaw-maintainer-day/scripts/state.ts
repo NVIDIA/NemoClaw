@@ -13,7 +13,7 @@
  *   set-queue <json>              Update queue from triage output (pipe JSON to stdin)
  *   set-hotspots <json>           Update hotspots from hotspot output (pipe JSON to stdin)
  *
- * Usage: node --experimental-strip-types --no-warnings .agents/skills/nemoclaw-maintainer-day/scripts/state.ts <subcommand> [args]
+ * Usage: node --no-warnings .agents/skills/nemoclaw-maintainer-day/scripts/state.ts <subcommand> [args]
  */
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync, appendFileSync } from "node:fs";

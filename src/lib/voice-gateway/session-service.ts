@@ -80,10 +80,7 @@ function deriveAgentSessionKey(
     options.sandbox,
     runtimeConversationId,
   ]);
-  const bindingHash = createHash("sha256")
-    .update(binding)
-    .digest("base64url")
-    .toLowerCase();
+  const bindingHash = createHash("sha256").update(binding).digest("base64url").toLowerCase();
   return `agent:${options.agent}:nemoclaw-voice:${bindingHash}`;
 }
 
@@ -291,12 +288,10 @@ export class VoiceSessionService {
           },
         }),
       )
-      .catch(
-        (): Awaited<ReturnType<AgentTurnClient["runTurn"]>> => ({
-          outcome: "failed",
-          reason: "agent_gateway_unavailable",
-        }),
-      );
+      .catch((): Awaited<ReturnType<AgentTurnClient["runTurn"]>> => ({
+        outcome: "failed",
+        reason: "agent_gateway_unavailable",
+      }));
 
     const result = await Promise.race([runResult, timeoutResult]);
     if (timeout) clearTimeout(timeout);

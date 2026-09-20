@@ -77,9 +77,10 @@
 # Only a small set of top-level commands are intercepted. Managed dashboard
 # launches receive the local API bearer token through process environment after
 # a descriptor-safe read, so the isolated dashboard home does not need a second
-# credential-bearing dotenv file. Other subcommands pass through unchanged.
+# credential-bearing dotenv file.
 
 import ast
+import hashlib
 import json
 import os
 import re
@@ -101,23 +102,9 @@ _DASHBOARD_API_SERVER_ENV_PATH = "NEMOCLAW_HERMES_DASHBOARD_API_SERVER_ENV"
 _API_SERVER_KEY_RE = re.compile(r"^[0-9a-f]{64}$")
 _CLI_ADAPTER_DEV_FILENAME = "hermes-cli-adapter-v1.json"
 _HERMES_MAIN_DEV_FILENAME = "hermes-main.py"
-_GATEWAY_LAZY_INSTALL_TARGET = "/run/nemoclaw/hermes-gateway-lazy-packages"
-_MANAGED_BUNDLED_PLUGINS = "/opt/hermes/plugins"
 _MANAGED_HERMES_HOME = "/sandbox/.hermes"
+_MANAGED_HERMES_ENV = "/sandbox/.hermes/.env"
 _MANAGED_HOME = "/sandbox"
-_GATEWAY_PACKAGE_ENV_KEYS = frozenset({"BASH_ENV", "ENV", "PATH", "VIRTUAL_ENV"})
-_GATEWAY_PACKAGE_ENV_PREFIXES = ("DYLD_", "LD_", "UV_", "PIP_", "PYTHON")
-_GATEWAY_PACKAGE_ENV = {
-    "UV_NO_CONFIG": "1",
-    "UV_NO_CACHE": "1",
-    "UV_CACHE_DIR": f"{_GATEWAY_LAZY_INSTALL_TARGET}/.uv-cache",
-    "PIP_CONFIG_FILE": "/dev/null",
-    "PIP_DISABLE_PIP_VERSION_CHECK": "1",
-    "PYTHONSAFEPATH": "1",
-    "PYTHONNOUSERSITE": "1",
-    "PYTHONUTF8": "1",
-    "PATH": "/usr/local/bin:/opt/hermes/.venv/bin:/usr/sbin:/usr/bin:/sbin:/bin",
-}
 # Trusted absolute paths for the python3 interpreter, ordered most-preferred
 # first. The resolver returns the first executable match (first-wins); the
 # same priority is mirrored by `agents/hermes/start.sh:resolve_trusted_python3`
@@ -146,6 +133,12 @@ def _resolve_guard() -> str:
     if os.path.isfile(_INSTALLED_GUARD):
         return _INSTALLED_GUARD
     return os.path.join(_self_dir(), _GUARD_DEV_FILENAME)
+
+
+def _resolve_gateway_env_path(guard_path: str) -> str:
+    if os.path.abspath(guard_path) == _INSTALLED_GUARD:
+        return _MANAGED_HERMES_ENV
+    return os.path.join(_self_dir(), ".env")
 
 
 def _resolve_cli_adapter() -> str:
@@ -352,16 +345,93 @@ def _run_gateway_guard(guard_path: str) -> int:
             file=sys.stderr,
         )
         return 127
-    return subprocess.call([python3, "-I", guard_path, "runtime-env"])
+    logical_env = dict(os.environ)
+    payload = json.dumps(
+        logical_env, ensure_ascii=True, separators=(",", ":")
+    ).encode("ascii")
+    return subprocess.run(
+        [python3, "-I", guard_path, "runtime-env-json"],
+        input=payload,
+        check=False,
+    ).returncode
 
 
-def _harden_root_separated_gateway_package_env() -> None:
-    """Remove sandbox-controlled installer inputs before gateway exec."""
+def _gateway_env_fingerprint(path: str) -> tuple[tuple[int, ...], str]:
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    fd = os.open(path, flags)
+    try:
+        before = os.fstat(fd)
+        chunks: list[bytes] = []
+        total = 0
+        while True:
+            chunk = os.read(fd, min(1024 * 1024, 4 * 1024 * 1024 + 1 - total))
+            if not chunk:
+                break
+            total += len(chunk)
+            if total > 4 * 1024 * 1024:
+                raise ValueError("Hermes env file exceeds the fingerprint limit")
+            chunks.append(chunk)
+        after = os.fstat(fd)
+        identity = (
+            before.st_dev,
+            before.st_ino,
+            before.st_mode,
+            before.st_uid,
+            before.st_gid,
+            before.st_nlink,
+            before.st_size,
+            before.st_mtime_ns,
+            before.st_ctime_ns,
+        )
+        after_identity = (
+            after.st_dev,
+            after.st_ino,
+            after.st_mode,
+            after.st_uid,
+            after.st_gid,
+            after.st_nlink,
+            after.st_size,
+            after.st_mtime_ns,
+            after.st_ctime_ns,
+        )
+        if identity != after_identity:
+            raise ValueError("Hermes env file changed while fingerprinting")
+        return identity, hashlib.sha256(b"".join(chunks)).hexdigest()
+    finally:
+        os.close(fd)
 
-    for key in tuple(os.environ):
-        if key in _GATEWAY_PACKAGE_ENV_KEYS or key.startswith(_GATEWAY_PACKAGE_ENV_PREFIXES):
-            os.environ.pop(key, None)
-    os.environ.update(_GATEWAY_PACKAGE_ENV)
+
+def _run_gateway_env_file_guard(guard_path: str) -> int:
+    python3 = _resolve_trusted_python3()
+    if python3 is None:
+        print(
+            "[SECURITY] Refusing hermes gateway: no python3 at a trusted absolute path to run the secret-boundary guard",
+            file=sys.stderr,
+        )
+        return 127
+    env_path = _resolve_gateway_env_path(guard_path)
+    try:
+        before = _gateway_env_fingerprint(env_path)
+        rc = subprocess.run(
+            [python3, "-I", guard_path, "env-file", env_path],
+            check=False,
+        ).returncode
+        if rc != 0:
+            print("SECRET_BOUNDARY_REFUSED", file=sys.stderr)
+            return rc
+        after = _gateway_env_fingerprint(env_path)
+    except (OSError, ValueError) as exc:
+        print(f"[SECURITY] Refusing hermes gateway: env-file validation failed: {exc}", file=sys.stderr)
+        print("SECRET_BOUNDARY_REFUSED", file=sys.stderr)
+        return 1
+    if before != after:
+        print(
+            "[SECURITY] Refusing hermes gateway: env file changed during secret-boundary validation",
+            file=sys.stderr,
+        )
+        print("SECRET_BOUNDARY_REFUSED", file=sys.stderr)
+        return 1
+    return 0
 
 
 _SUPPORTED_CLI_ADAPTER_VERSION = 1
@@ -769,6 +839,7 @@ def _report_cli_adapter_error(exc: _CliAdapterError) -> int:
 
 
 def main(argv: list[str]) -> int:
+    os.environ["HERMES_SKIP_CHMOD"] = "1"
     real_hermes = _resolve_real_hermes()
     guard_path = _resolve_guard()
     if argv[:1] == ["dashboard"] and not _load_dashboard_api_server_key():
@@ -783,13 +854,14 @@ def main(argv: list[str]) -> int:
             )
             return 1
         os.environ["HERMES_HOME"] = _MANAGED_HERMES_HOME
-        os.environ["HERMES_BUNDLED_PLUGINS"] = _MANAGED_BUNDLED_PLUGINS
         os.environ["HOME"] = _MANAGED_HOME
-        rc = _run_gateway_guard(guard_path)
+        rc = _run_gateway_env_file_guard(guard_path)
         if rc != 0:
             return rc
-        if os.environ.get("HERMES_LAZY_INSTALL_TARGET") == _GATEWAY_LAZY_INSTALL_TARGET:
-            _harden_root_separated_gateway_package_env()
+        rc = _run_gateway_guard(guard_path)
+        if rc != 0:
+            print("SECRET_BOUNDARY_REFUSED", file=sys.stderr)
+            return rc
     try:
         adapter = _load_cli_adapter(_resolve_cli_adapter())
         adapter_result, exec_argv = _adapt_cli_argv(argv, adapter)

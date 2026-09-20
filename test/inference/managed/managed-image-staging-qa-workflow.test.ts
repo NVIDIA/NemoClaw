@@ -1,6 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { spawnSync } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
 import { describe, expect, it } from "vitest";
 
 import { readWorkflow, required, step } from "../../helpers/managed-image-publication-workflow";
@@ -29,6 +34,12 @@ function stagingQaDeepCodeBuilder(workflow: Workflow): Job {
   );
 }
 
+function writeOverlayFixture(root: string, relative: string, content: string) {
+  const destination = path.join(root, relative);
+  fs.mkdirSync(path.dirname(destination), { recursive: true });
+  fs.writeFileSync(destination, content);
+}
+
 describe("managed-image staging QA workflow", () => {
   it("rebuilds the staging QA base from exact source before validating the Deep Agents Code repair (#8665)", () => {
     const workflow = readWorkflow("managed-images.yaml");
@@ -41,6 +52,10 @@ describe("managed-image staging QA workflow", () => {
     const drift = step(qaBuilder, "Reproduce staging discovery permission drift");
     const baseBuild = step(qaBuilder, "Rebuild staging QA Deep Agents Code base from exact source");
     const finalBuild = step(qaBuilder, "Build latest PR commit against reproduced staging QA base");
+    const darwinBuild = step(
+      qaBuilder,
+      "Build Darwin compatibility image against reproduced staging QA base",
+    );
     const contract = step(qaBuilder, "Validate staging QA final image contract");
 
     expect(qaBuilder.if).toBe("github.event_name == 'pull_request'");
@@ -51,6 +66,7 @@ describe("managed-image staging QA workflow", () => {
       CANDIDATE_SHA: "${{ github.event.pull_request.head.sha }}",
       STAGING_QA_SOURCE_SHA: "ce96811ddb418ad01c040521a1fe912b5bcb405e",
       STAGING_QA_BASE_IMAGE: "nemoclaw-deepagents-code-base:staging-31396519688",
+      STAGING_QA_DARWIN_IMAGE: "nemoclaw-managed-pr/langchain-deepagents-code-staging-qa-darwin",
     });
     expect(qaBuilder.env).not.toHaveProperty("STAGING_PRODUCER_SHA");
     expect(qaBuilder.env).not.toHaveProperty("STAGING_QA_RECORDED_INDEX_DIGEST");
@@ -76,15 +92,76 @@ describe("managed-image staging QA workflow", () => {
     expect(steps.indexOf(overlay)).toBeLessThan(steps.indexOf(drift));
     expect(steps.indexOf(drift)).toBeLessThan(steps.indexOf(baseBuild));
     expect(steps.indexOf(baseBuild)).toBeLessThan(steps.indexOf(finalBuild));
-    expect(steps.indexOf(finalBuild)).toBeLessThan(steps.indexOf(contract));
+    expect(steps.indexOf(finalBuild)).toBeLessThan(steps.indexOf(darwinBuild));
+    expect(steps.indexOf(darwinBuild)).toBeLessThan(steps.indexOf(contract));
 
     const overlaySource = required(overlay.run, "staging QA dependency overlay is missing");
     expect(overlaySource).toContain("agents/langchain-deepagents-code/Dockerfile.base");
     expect(overlaySource).toContain("agents/langchain-deepagents-code/requirements.lock");
-    expect(overlaySource).toContain("scripts/lib/bundled-npm-package.mts");
+    [
+      "ci/reviewed-npm-audit.json",
+      "scripts/lib/bundled-npm-package.mts",
+      "scripts/lib/patch-bundled-npm-ip-address.mts",
+      "scripts/lib/reviewed-npm-archive.mts",
+      "scripts/lib/reviewed-npm-audit.mts",
+      "scripts/lib/reviewed-npm-identity.mts",
+      "scripts/patch-bundled-npm-brace-expansion.mts",
+      "scripts/patch-bundled-npm-tar.mts",
+      "scripts/upgrade-bundled-npm.mts",
+    ].forEach((npmSupportFile) => expect(overlaySource).toContain(npmSupportFile));
     expect(overlaySource).toContain(
       "scripts/security/patches/perl-5.44.0-net-ping-capability-tests.patch",
     );
+
+    const overlayFixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-staging-overlay-"));
+    const candidateRoot = path.join(overlayFixture, "candidate");
+    const stagingRoot = path.join(overlayFixture, "staging-qa-base-source");
+    const dockerfile = "agents/langchain-deepagents-code/Dockerfile.base";
+    const packageBuilder = "scripts/security/build-native-security-packages.sh";
+    const requirements = "agents/langchain-deepagents-code/requirements.lock";
+    const npmSupportFiles = [
+      "ci/reviewed-npm-audit.json",
+      "scripts/lib/bundled-npm-package.mts",
+      "scripts/lib/patch-bundled-npm-ip-address.mts",
+      "scripts/lib/reviewed-npm-archive.mts",
+      "scripts/lib/reviewed-npm-audit.mts",
+      "scripts/lib/reviewed-npm-identity.mts",
+      "scripts/patch-bundled-npm-brace-expansion.mts",
+      "scripts/patch-bundled-npm-tar.mts",
+      "scripts/upgrade-bundled-npm.mts",
+    ];
+    const perlPatch = "scripts/security/patches/perl-5.44.0-net-ping-capability-tests.patch";
+    try {
+      writeOverlayFixture(candidateRoot, dockerfile, "candidate Dockerfile\n");
+      writeOverlayFixture(candidateRoot, packageBuilder, "exit 42\n");
+      writeOverlayFixture(candidateRoot, requirements, "candidate requirements\n");
+      writeOverlayFixture(candidateRoot, perlPatch, "candidate Perl patch\n");
+      writeOverlayFixture(stagingRoot, dockerfile, "staging Dockerfile\n");
+      writeOverlayFixture(stagingRoot, packageBuilder, "exit 41\n");
+      writeOverlayFixture(stagingRoot, requirements, "staging requirements\n");
+      writeOverlayFixture(stagingRoot, perlPatch, "staging Perl patch\n");
+      npmSupportFiles.forEach((supportFile) => {
+        writeOverlayFixture(candidateRoot, supportFile, "candidate npm support\n");
+        writeOverlayFixture(stagingRoot, supportFile, "staging npm support\n");
+      });
+      const summary = path.join(overlayFixture, "summary.md");
+      const result = spawnSync("bash", ["-c", overlaySource], {
+        encoding: "utf-8",
+        env: {
+          ...process.env,
+          CANDIDATE_SHA: "candidate-sha",
+          GITHUB_STEP_SUMMARY: summary,
+          GITHUB_WORKSPACE: overlayFixture,
+        },
+      });
+      expect({ status: result.status, stderr: result.stderr }).toEqual({
+        status: 0,
+        stderr: "",
+      });
+      expect(spawnSync("bash", [path.join(stagingRoot, packageBuilder)]).status).toBe(42);
+    } finally {
+      fs.rmSync(overlayFixture, { recursive: true, force: true });
+    }
 
     const baseSource = required(baseBuild.run, "staging QA base build is missing");
     expect(baseBuild.env?.DOCKER_BUILDKIT).toBe("1");
@@ -111,11 +188,29 @@ describe("managed-image staging QA workflow", () => {
     expect(finalSource).toContain("--build-arg NEMOCLAW_DARWIN_VM_COMPAT=0");
     expect(finalSource).toMatch(/-t "\$final_reference"\s+\\\n\s+\./u);
 
+    const darwinSource = required(darwinBuild.run, "Darwin compatibility image build is missing");
+    expect(darwinBuild["working-directory"]).toBe("candidate");
+    expect(darwinBuild.env?.DOCKER_BUILDKIT).toBe("1");
+    expect(darwinSource).toContain("-f agents/langchain-deepagents-code/Dockerfile");
+    expect(darwinSource).toContain('--build-arg BASE_IMAGE="$STAGING_QA_BASE_IMAGE"');
+    expect(darwinSource).toContain("--build-arg NEMOCLAW_DARWIN_VM_COMPAT=1");
+    expect(darwinSource).toContain("${STAGING_QA_DARWIN_IMAGE}:${CANDIDATE_SHA}");
+
     const contractSource = required(contract.run, "staging QA final contract is missing");
     expect(contractSource).toMatch(
       /if ! jq -n -e \\\n\s+--argjson base "\$base_layers" \\\n\s+--argjson final "\$final_layers"/u,
     );
     expect(contractSource).toContain("$final[.] == $base[.]");
+    expect(contract.env).toMatchObject({
+      DARWIN_FINAL_ID: "${{ steps.staging-darwin-final.outputs.id }}",
+      FINAL_ID: "${{ steps.staging-final.outputs.id }}",
+    });
+    expect(contractSource).toMatch(
+      /verify-dcode-conversation-history-image\.sh \\\n\s+"\$FINAL_ID" linux\/amd64 0/u,
+    );
+    expect(contractSource).toMatch(
+      /verify-dcode-conversation-history-image\.sh \\\n\s+"\$DARWIN_FINAL_ID" linux\/amd64 1/u,
+    );
     expect(contractSource).toContain('find -P "$discovery_runtime" ! -user root');
     expect(contractSource).toContain("\\( ! -user root -o -perm /022 \\) -print -quit");
     expect(contractSource).toContain("-type d ! -perm 0555");

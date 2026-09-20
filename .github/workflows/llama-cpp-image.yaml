@@ -79,14 +79,17 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 22.19.0
+          node-version: 24.18.1
+
+      - name: Install reviewed npm
+        uses: ./.github/actions/setup-reviewed-npm
 
       - name: Install manifest compiler dependencies
         run: npm ci --ignore-scripts
 
       - name: Compile image manifest
         id: manifest
-        run: node --experimental-strip-types --no-warnings scripts/checks/export-llama-cpp-image-config.mts
+        run: node --no-warnings scripts/checks/export-llama-cpp-image-config.mts
 
   pr-build:
     name: Build native llama.cpp server (${{ matrix.arch }})
@@ -664,7 +667,7 @@ jobs:
 
       - name: Scan exact platform digest
         id: scan
-        uses: anchore/scan-action@e1165082ffb1fe366ebaf02d8526e7c4989ea9d2 # v7.4.0
+        uses: anchore/scan-action@27805bf3b4e84b4a5c980df22ed233c00390a439 # v7.4.2
         env:
           GRYPE_PLATFORM: ${{ matrix.platform }}
         with:

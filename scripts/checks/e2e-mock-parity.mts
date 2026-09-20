@@ -51,7 +51,23 @@ function sourceTokens(source: string): string {
       }
       return;
     }
-    for (const child of children) visit(child);
+    // Ignore only optional list punctuation; runtime operators and array holes remain.
+    for (const child of children) {
+      if (
+        node.kind === ts.SyntaxKind.SyntaxList &&
+        child.kind === ts.SyntaxKind.CommaToken &&
+        child === children.at(-1)
+      )
+        continue;
+      if (
+        child === children[0] &&
+        ((node.parent?.kind === ts.SyntaxKind.UnionType && child.kind === ts.SyntaxKind.BarToken) ||
+          (node.parent?.kind === ts.SyntaxKind.IntersectionType &&
+            child.kind === ts.SyntaxKind.AmpersandToken))
+      )
+        continue;
+      visit(child);
+    }
   };
   visit(sourceFile);
   return JSON.stringify({

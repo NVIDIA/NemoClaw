@@ -30,6 +30,8 @@ export type DockerManagedBootstrapJournalPhase =
   | "cutover"
   | "rollback-authorized"
   | "owner-cleanup-required"
+  | "bootstrap-complete"
+  | "openshell-handoff-complete"
   | "shared-state-committed";
 
 export interface DockerManagedBootstrapJournal {
@@ -107,7 +109,10 @@ export interface DockerManagedBootstrapJournalStore {
 
 export interface DockerManagedBootstrapLegacyJournalContext {
   readonly schemaVersion: 1 | 2;
-  readonly phase: Exclude<DockerManagedBootstrapJournalPhase, "owner-cleanup-required">;
+  readonly phase: Exclude<
+    DockerManagedBootstrapJournalPhase,
+    "owner-cleanup-required" | "bootstrap-complete" | "openshell-handoff-complete"
+  >;
   readonly bootstrapIdentity: string;
   readonly providerId: string;
   readonly sandbox: ManagedBootstrapSandboxIdentity;
@@ -186,7 +191,11 @@ const ALLOWED_TRANSITIONS = new Set([
   "staged->cutover",
   "staged->owner-cleanup-required",
   "cutover->rollback-authorized",
-  "cutover->shared-state-committed",
+  "cutover->bootstrap-complete",
+  "bootstrap-complete->rollback-authorized",
+  "bootstrap-complete->openshell-handoff-complete",
+  "openshell-handoff-complete->rollback-authorized",
+  "openshell-handoff-complete->shared-state-committed",
   "rollback-authorized->owner-cleanup-required",
 ]);
 
@@ -230,6 +239,8 @@ function exactPhase(value: unknown): DockerManagedBootstrapJournalPhase {
       "cutover",
       "rollback-authorized",
       "owner-cleanup-required",
+      "bootstrap-complete",
+      "openshell-handoff-complete",
       "shared-state-committed",
     ].includes(String(value))
   ) {
@@ -240,13 +251,19 @@ function exactPhase(value: unknown): DockerManagedBootstrapJournalPhase {
 
 function exactLegacyPhase(
   value: unknown,
-): Exclude<DockerManagedBootstrapJournalPhase, "owner-cleanup-required"> {
+): Exclude<
+  DockerManagedBootstrapJournalPhase,
+  "owner-cleanup-required" | "bootstrap-complete" | "openshell-handoff-complete"
+> {
   if (
     !["staged", "cutover", "rollback-authorized", "shared-state-committed"].includes(String(value))
   ) {
     fail("legacy phase is unsupported");
   }
-  return value as Exclude<DockerManagedBootstrapJournalPhase, "owner-cleanup-required">;
+  return value as Exclude<
+    DockerManagedBootstrapJournalPhase,
+    "owner-cleanup-required" | "bootstrap-complete" | "openshell-handoff-complete"
+  >;
 }
 
 function exactAgent(value: unknown): ManagedStartupAgent {
@@ -1227,6 +1244,8 @@ export function createFileDockerManagedBootstrapJournalStore(
     const phase = decision.endsWith("\n") ? decision.slice(0, -1) : "";
     const decisionMatchesJournal =
       journal.phase === "cutover" ||
+      journal.phase === "bootstrap-complete" ||
+      journal.phase === "openshell-handoff-complete" ||
       journal.phase === phase ||
       (phase === "rollback-authorized" && journal.phase === "owner-cleanup-required");
     if (
@@ -1236,7 +1255,11 @@ export function createFileDockerManagedBootstrapJournalStore(
       fail("decision does not match its cutover journal");
     }
     const decided = normalizeDockerManagedBootstrapJournal({ ...journal, phase });
-    if (journal.phase === "cutover") {
+    if (
+      journal.phase === "cutover" ||
+      journal.phase === "bootstrap-complete" ||
+      journal.phase === "openshell-handoff-complete"
+    ) {
       atomicWrite(directory, target, serializeDockerManagedBootstrapJournal(decided), false);
       return decided;
     }
@@ -1316,7 +1339,12 @@ export function createFileDockerManagedBootstrapJournalStore(
         fail(`expected phase ${expected} before transition to ${next}`);
       }
       const updated = normalizeDockerManagedBootstrapJournal({ ...current, phase: next });
-      if (expected === "cutover") {
+      if (
+        (expected === "cutover" ||
+          expected === "bootstrap-complete" ||
+          expected === "openshell-handoff-complete") &&
+        DECISION_PHASES.has(next)
+      ) {
         const decision = decisionPath(target);
         try {
           atomicWrite(directory, decision, `${next}\n`, true);

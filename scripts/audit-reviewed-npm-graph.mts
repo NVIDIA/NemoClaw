@@ -1,4 +1,4 @@
-#!/usr/bin/env -S node --experimental-strip-types
+#!/usr/bin/env node
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
@@ -7,8 +7,10 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 import { remediateReviewedOpenClawPluginArchive } from "./lib/openclaw-npm-remediation.mts";
+import { canonicalAuditReceipt, createAuditReceipt } from "./lib/npm-audit-receipt.mts";
+import { resolvePathWithinRoot } from "./lib/repository-input-path.mts";
 import {
   packReviewedNpmArchive,
   verifyInstalledNpmLock,
@@ -17,7 +19,10 @@ import {
 } from "./lib/reviewed-npm-archive.mts";
 import {
   type AuditPolicyResult,
+  type ReviewedNpmIdentity,
+  NPM_AUDIT_REGISTRY,
   assertExceptionGraphs,
+  parseReviewedNpmIdentityConfig,
   readAuditExceptionRegistry,
   runReviewedNpmAudit,
   type Severity,
@@ -29,20 +34,21 @@ type ReviewedPackage = Readonly<{
   packageSpec: string;
   tarballUrl: string;
 }>;
+type LockedGraphIdentity = ReviewedPackage & Readonly<{ lockSha256: string }>;
 type SourceRegistryPackage = ReviewedPackage & Readonly<{ artifactName: string }>;
 type PackageWithoutIntegrity = Readonly<{
   label: string;
   packageSpec: string;
   tarballUrl: string;
 }>;
-type LockedGraph = ReviewedPackage &
+type LockedGraph = LockedGraphIdentity &
   Readonly<{
     directory: string;
     id: string;
     inputValidation?: "wechat-runtime";
     installMode?: "legacy-peer-deps";
     lockSha256: string;
-    replacementLockSha256?: string;
+    replacement?: LockedGraphIdentity;
     severityThreshold?: Severity;
     signatureAudit?: "retry-download-failures";
   }>;
@@ -54,11 +60,15 @@ type AuditConfig = Readonly<{
   exceptionFile: string;
   lockedGraphs: readonly LockedGraph[];
   nodeVersion: string;
+  npmArchiveSha256: string;
+  npmIntegrity: string;
+  npmVersion: string;
   registryOrigin: string;
   schemaVersion: 2;
   severityThreshold: Severity;
   sourceNestedShrinkwrapPackages: readonly string[];
   sourceRegistryPackage: SourceRegistryPackage;
+  sourceRegistryPackageReplacement?: SourceRegistryPackage;
   sourceRegistryPackagesWithoutIntegrity: readonly PackageWithoutIntegrity[];
 }>;
 type ReviewedAuditReport = Readonly<{
@@ -73,6 +83,12 @@ const TARGET_REPO_ROOT = fs.realpathSync(
 );
 const CONFIG_PATH = resolveTrustedAuditConfigPath(TRUSTED_REPO_ROOT);
 const SEVERITIES: readonly Severity[] = ["info", "low", "moderate", "high", "critical"];
+export const NPM_AUDIT_SIGNATURE_ARGV = [
+  "audit",
+  "signatures",
+  `--registry=${NPM_AUDIT_REGISTRY}`,
+  "--omit=dev",
+] as const;
 const SEMVER_NUMERIC_IDENTIFIER = String.raw`(?:0|[1-9][0-9]*)`;
 const SEMVER_PRERELEASE_IDENTIFIER = String.raw`(?:${SEMVER_NUMERIC_IDENTIFIER}|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)`;
 const EXACT_NPM_PACKAGE_SPEC = new RegExp(
@@ -82,6 +98,45 @@ const SOURCE_GRAPH = {
   id: "nemoclaw-cli",
   label: "NemoClaw CLI locked production graph",
 } as const;
+
+function isSourceRegistryPackage(value: unknown): value is SourceRegistryPackage {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const candidate = value as Partial<SourceRegistryPackage>;
+  return (
+    typeof candidate.artifactName === "string" &&
+    /^[a-z0-9][a-z0-9._-]*\.tgz$/.test(candidate.artifactName) &&
+    typeof candidate.label === "string" &&
+    candidate.label.length > 0 &&
+    typeof candidate.packageSpec === "string" &&
+    EXACT_NPM_PACKAGE_SPEC.test(candidate.packageSpec) &&
+    typeof candidate.integrity === "string" &&
+    candidate.integrity.length > 0 &&
+    typeof candidate.tarballUrl === "string" &&
+    candidate.tarballUrl.length > 0
+  );
+}
+
+function isLockedGraphIdentity(value: unknown): value is LockedGraphIdentity {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const candidate = value as Partial<LockedGraphIdentity>;
+  return (
+    typeof candidate.label === "string" &&
+    candidate.label.length > 0 &&
+    typeof candidate.packageSpec === "string" &&
+    EXACT_NPM_PACKAGE_SPEC.test(candidate.packageSpec) &&
+    typeof candidate.integrity === "string" &&
+    candidate.integrity.length > 0 &&
+    typeof candidate.tarballUrl === "string" &&
+    candidate.tarballUrl.length > 0 &&
+    typeof candidate.lockSha256 === "string" &&
+    /^[0-9a-f]{64}$/.test(candidate.lockSha256)
+  );
+}
+
+function exactPackageName(packageSpec: string): string {
+  const separator = packageSpec.lastIndexOf("@");
+  return packageSpec.slice(0, separator);
+}
 const OPENCLAW_DOMEXCEPTION_ALIAS = {
   actualName: "@nolyfill/domexception",
   aliasPackagePath: "node_modules/openclaw/node_modules/node-domexception",
@@ -94,37 +149,13 @@ const OPENCLAW_DOMEXCEPTION_ALIAS = {
   version: "1.0.28",
 } as const;
 
-export function resolvePathWithinRoot(root: string, relativePath: string, label: string): string {
-  if (!relativePath || path.isAbsolute(relativePath)) {
-    throw new Error(`${label} must be a nonempty relative path`);
-  }
-  const canonicalRoot = fs.realpathSync(path.resolve(root));
-  const resolved = path.resolve(canonicalRoot, relativePath);
-  if (!resolved.startsWith(`${canonicalRoot}${path.sep}`)) {
-    throw new Error(`${label} escapes its repository root: ${relativePath}`);
-  }
-  let current = canonicalRoot;
-  for (const component of path.relative(canonicalRoot, resolved).split(path.sep)) {
-    current = path.join(current, component);
-    let stat: fs.Stats;
-    try {
-      stat = fs.lstatSync(current);
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") break;
-      throw error;
-    }
-    if (stat.isSymbolicLink()) {
-      throw new Error(`${label} contains a symbolic-link component: ${relativePath}`);
-    }
-  }
-  return resolved;
-}
+export { resolvePathWithinRoot } from "./lib/repository-input-path.mts";
 
 export function resolveTrustedAuditConfigPath(trustedRoot: string): string {
   return resolvePathWithinRoot(
     trustedRoot,
     "ci/reviewed-npm-audit.json",
-    "trusted reviewed npm audit configuration",
+    "trusted npm audit configuration",
   );
 }
 
@@ -134,6 +165,32 @@ function trustedRepositoryPath(relativePath: string, label: string): string {
 
 function targetRepositoryPath(relativePath: string, label: string): string {
   return resolvePathWithinRoot(TARGET_REPO_ROOT, relativePath, label);
+}
+
+function graphCacheFile(graphId: string): string | undefined {
+  const configuredDirectory = process.env.NEMOCLAW_REVIEWED_NPM_AUDIT_CACHE_DIR;
+  if (!configuredDirectory) return undefined;
+  if (!path.isAbsolute(configuredDirectory)) {
+    throw new Error("npm audit cache directory must be absolute");
+  }
+  if (!/^[a-z0-9][a-z0-9._-]*$/.test(graphId)) {
+    throw new Error(`npm audit cache graph ID is unsafe: ${graphId}`);
+  }
+  const directory = path.resolve(configuredDirectory);
+  let current = path.parse(directory).root;
+  for (const component of path.relative(current, directory).split(path.sep)) {
+    if (!component) continue;
+    current = path.join(current, component);
+    const stat = fs.lstatSync(current, { throwIfNoEntry: false });
+    if (!stat) throw new Error("npm audit cache directory must exist");
+    if (stat.isSymbolicLink()) {
+      throw new Error("npm audit cache directory must not contain symbolic links");
+    }
+  }
+  if (!fs.statSync(directory).isDirectory()) {
+    throw new Error("npm audit cache directory must be a directory");
+  }
+  return path.join(directory, `${graphId}.json`);
 }
 
 function run(command: string, args: readonly string[], cwd: string) {
@@ -153,6 +210,7 @@ function run(command: string, args: readonly string[], cwd: string) {
 
 export function parseAuditConfig(contents: string): AuditConfig {
   const parsed = JSON.parse(contents) as AuditConfig;
+  const reviewedNpmIdentity = parseReviewedNpmIdentityConfig(contents);
   if (
     parsed.schemaVersion !== 2 ||
     !SEVERITIES.includes(parsed.severityThreshold) ||
@@ -161,8 +219,6 @@ export function parseAuditConfig(contents: string): AuditConfig {
     parsed.archiveTarVersion !== "7.5.21" ||
     typeof parsed.exceptionFile !== "string" ||
     !parsed.exceptionFile ||
-    typeof parsed.registryOrigin !== "string" ||
-    !parsed.registryOrigin ||
     !Array.isArray(parsed.archivePackages) ||
     !Array.isArray(parsed.lockedGraphs) ||
     !Array.isArray(parsed.sourceNestedShrinkwrapPackages) ||
@@ -183,19 +239,15 @@ export function parseAuditConfig(contents: string): AuditConfig {
     ) ||
     new Set(parsed.sourceRegistryPackagesWithoutIntegrity.map(({ packageSpec }) => packageSpec))
       .size !== parsed.sourceRegistryPackagesWithoutIntegrity.length ||
-    typeof parsed.sourceRegistryPackage !== "object" ||
-    parsed.sourceRegistryPackage === null ||
-    Array.isArray(parsed.sourceRegistryPackage) ||
-    typeof parsed.sourceRegistryPackage.artifactName !== "string" ||
-    !/^[a-z0-9][a-z0-9._-]*\.tgz$/.test(parsed.sourceRegistryPackage.artifactName) ||
-    typeof parsed.sourceRegistryPackage.label !== "string" ||
-    !parsed.sourceRegistryPackage.label ||
-    typeof parsed.sourceRegistryPackage.packageSpec !== "string" ||
-    !EXACT_NPM_PACKAGE_SPEC.test(parsed.sourceRegistryPackage.packageSpec) ||
-    typeof parsed.sourceRegistryPackage.integrity !== "string" ||
-    !parsed.sourceRegistryPackage.integrity ||
-    typeof parsed.sourceRegistryPackage.tarballUrl !== "string" ||
-    !parsed.sourceRegistryPackage.tarballUrl ||
+    !isSourceRegistryPackage(parsed.sourceRegistryPackage) ||
+    (parsed.sourceRegistryPackageReplacement !== undefined &&
+      (!isSourceRegistryPackage(parsed.sourceRegistryPackageReplacement) ||
+        exactPackageName(parsed.sourceRegistryPackageReplacement.packageSpec) !==
+          exactPackageName(parsed.sourceRegistryPackage.packageSpec) ||
+        parsed.sourceRegistryPackageReplacement.packageSpec ===
+          parsed.sourceRegistryPackage.packageSpec ||
+        parsed.sourceRegistryPackageReplacement.artifactName ===
+          parsed.sourceRegistryPackage.artifactName)) ||
     parsed.lockedGraphs.some(
       (graph) =>
         typeof graph.id !== "string" ||
@@ -218,16 +270,18 @@ export function parseAuditConfig(contents: string): AuditConfig {
           (graph.installMode !== undefined ||
             graph.severityThreshold !== undefined ||
             graph.signatureAudit !== undefined)) ||
-        (graph.replacementLockSha256 !== undefined &&
-          (typeof graph.replacementLockSha256 !== "string" ||
-            !/^[0-9a-f]{64}$/.test(graph.replacementLockSha256) ||
-            graph.replacementLockSha256 === graph.lockSha256)),
+        (graph.replacement !== undefined &&
+          (!isLockedGraphIdentity(graph.replacement) ||
+            exactPackageName(graph.replacement.packageSpec) !==
+              exactPackageName(graph.packageSpec) ||
+            graph.replacement.packageSpec === graph.packageSpec ||
+            graph.replacement.lockSha256 === graph.lockSha256)),
     ) ||
     new Set(parsed.lockedGraphs.map(({ id }) => id)).size !== parsed.lockedGraphs.length
   ) {
     throw new Error("ci/reviewed-npm-audit.json is invalid");
   }
-  return parsed;
+  return { ...parsed, ...reviewedNpmIdentity };
 }
 
 function readConfig(): AuditConfig {
@@ -246,6 +300,25 @@ export function reviewedArchiveGraphManifest(archiveTarVersion: unknown) {
   } as const;
 }
 
+export function stageReviewedArchiveForInstall(
+  graphDirectory: string,
+  archivePath: string,
+  index: number,
+): string {
+  if (!Number.isSafeInteger(index) || index < 0) {
+    throw new Error("reviewed archive install index must be a non-negative integer");
+  }
+  const filename = path.basename(archivePath);
+  if (!filename.endsWith(".tgz") || filename === ".tgz") {
+    throw new Error(`reviewed archive install filename is invalid: ${filename}`);
+  }
+  const relativeArchivePath = path.join("reviewed-archives", `${index}-${filename}`);
+  const archiveDirectory = path.join(graphDirectory, "reviewed-archives");
+  fs.mkdirSync(archiveDirectory, { recursive: true });
+  fs.copyFileSync(archivePath, path.join(graphDirectory, relativeArchivePath));
+  return `.${path.sep}${relativeArchivePath}`;
+}
+
 function materializeArchiveGraph(
   packages: readonly ReviewedPackage[],
   tempRoot: string,
@@ -257,7 +330,7 @@ function materializeArchiveGraph(
     path.join(graphDirectory, "package.json"),
     `${JSON.stringify(reviewedArchiveGraphManifest(archiveTarVersion), null, 2)}\n`,
   );
-  const archives = packages.map((reviewed) => {
+  const archives = packages.map((reviewed, index) => {
     const archive = packReviewedNpmArchive({
       expectedIntegrity: reviewed.integrity,
       label: reviewed.label,
@@ -265,22 +338,16 @@ function materializeArchiveGraph(
       tarballUrl: reviewed.tarballUrl,
       tempDirectory: tempRoot,
     });
-    return remediateReviewedOpenClawPluginArchive({
+    const remediated = remediateReviewedOpenClawPluginArchive({
       archivePath: archive.archivePath,
       packageSpec: reviewed.packageSpec,
       workingDirectory: archive.rootDirectory,
     });
+    return stageReviewedArchiveForInstall(graphDirectory, remediated.archivePath, index);
   });
   run(
     "npm",
-    [
-      "install",
-      "--ignore-scripts",
-      "--omit=dev",
-      "--no-audit",
-      "--no-fund",
-      ...archives.map((archive) => archive.archivePath),
-    ],
+    ["install", "--ignore-scripts", "--omit=dev", "--no-audit", "--no-fund", ...archives],
     graphDirectory,
   );
   return graphDirectory;
@@ -340,7 +407,7 @@ function materializeLockedGraph(
   graph: LockedGraph,
   tempRoot: string,
   registryOrigin: string,
-): string {
+): Readonly<{ directory: string; identity: LockedGraphIdentity }> {
   const sourcePackage = targetRepositoryPath(
     path.join(graph.directory, "package.json"),
     `${graph.label} package manifest`,
@@ -363,20 +430,16 @@ function materializeLockedGraph(
     }
     validateWechatRuntimeInputs(sourcePackage, sourceLock, registryOrigin);
   }
-  const expectedLockSha256 = selectReviewedLockSha256(
-    sourceLock,
-    graph.lockSha256,
-    graph.replacementLockSha256,
-    graph.label,
-  );
+  const reviewedIdentity = selectReviewedLockedGraphIdentity(sourceLock, graph);
+  const expectedLockSha256 = reviewedIdentity.lockSha256;
   verifyReviewedNpmLock({
-    expectedIntegrity: graph.integrity,
+    expectedIntegrity: reviewedIdentity.integrity,
     expectedLockSha256,
-    label: graph.label,
+    label: reviewedIdentity.label,
     lockfilePath: sourceLock,
-    packageSpec: graph.packageSpec,
+    packageSpec: reviewedIdentity.packageSpec,
     registryOrigin,
-    tarballUrl: graph.tarballUrl,
+    tarballUrl: reviewedIdentity.tarballUrl,
   });
   const destination = path.join(tempRoot, `locked-${path.basename(graph.directory)}`);
   fs.mkdirSync(destination);
@@ -385,8 +448,35 @@ function materializeLockedGraph(
   const installArgs = ["ci", "--ignore-scripts", "--omit=dev", "--no-audit", "--no-fund"];
   if (graph.installMode === "legacy-peer-deps") installArgs.push("--legacy-peer-deps");
   run("npm", installArgs, destination);
-  verifyMaterializedLockedGraph({ destination, expectedLockSha256, label: graph.label });
-  return destination;
+  verifyMaterializedLockedGraph({
+    destination,
+    expectedLockSha256,
+    label: reviewedIdentity.label,
+  });
+  return { directory: destination, identity: reviewedIdentity };
+}
+
+export function selectReviewedLockedGraphIdentity(
+  lockfilePath: string,
+  graph: LockedGraph,
+): LockedGraphIdentity {
+  const actual = createHash("sha256").update(fs.readFileSync(lockfilePath)).digest("hex");
+  if (actual === graph.lockSha256) {
+    return {
+      integrity: graph.integrity,
+      label: graph.label,
+      lockSha256: actual,
+      packageSpec: graph.packageSpec,
+      tarballUrl: graph.tarballUrl,
+    };
+  }
+  if (actual === graph.replacement?.lockSha256) return graph.replacement;
+  const reviewedDigests = [graph.lockSha256, graph.replacement?.lockSha256].filter(
+    (digest): digest is string => digest !== undefined,
+  );
+  throw new Error(
+    `${graph.label} lock SHA-256 mismatch\nExpected one of: ${reviewedDigests.join(", ")}\nActual:          ${actual}`,
+  );
 }
 
 export function verifyMaterializedLockedGraph({
@@ -406,23 +496,6 @@ export function verifyMaterializedLockedGraph({
     lockfilePath,
     omitDev: true,
   });
-}
-
-export function selectReviewedLockSha256(
-  lockfilePath: string,
-  lockSha256: string,
-  replacementLockSha256: string | undefined,
-  label: string,
-): string {
-  const actual = createHash("sha256").update(fs.readFileSync(lockfilePath)).digest("hex");
-  const reviewedDigests =
-    replacementLockSha256 === undefined ? [lockSha256] : [lockSha256, replacementLockSha256];
-  if (!reviewedDigests.includes(actual)) {
-    throw new Error(
-      `${label} lock SHA-256 mismatch\nExpected one of: ${reviewedDigests.join(", ")}\nActual:          ${actual}`,
-    );
-  }
-  return actual;
 }
 
 function readJsonObject(file: string, label: string): Record<string, any> {
@@ -453,26 +526,33 @@ export function materializeSourceGraph(
   sourceRegistryPackage?: ReviewedPackage,
   sourceNestedShrinkwrapPackages: readonly string[] = [],
   sourceRegistryPackagesWithoutIntegrity: readonly PackageWithoutIntegrity[] = [],
+  sourceRegistryPackageReplacements: readonly ReviewedPackage[] = [],
 ): string {
   assertRegularFile(sourcePackage, "NemoClaw CLI package manifest");
   assertRegularFile(sourceLock, "NemoClaw CLI lockfile");
-  verifyReviewedNpmLockPackages({
+  const reviewedSourcePackages = [
+    sourceRegistryPackage,
+    ...sourceRegistryPackageReplacements,
+  ].filter((reviewed): reviewed is ReviewedPackage => reviewed !== undefined);
+  const lockedPackages = verifyReviewedNpmLockPackages({
     allowedNestedShrinkwrapPackages: sourceNestedShrinkwrapPackages,
     lockfilePath: sourceLock,
     omitDev: true,
     registryOrigin,
-    reviewedRegistryPackages: sourceRegistryPackage
-      ? [
-          {
-            expectedIntegrity: sourceRegistryPackage.integrity,
-            label: sourceRegistryPackage.label,
-            packageSpec: sourceRegistryPackage.packageSpec,
-            tarballUrl: sourceRegistryPackage.tarballUrl,
-          },
-        ]
-      : [],
+    reviewedRegistryPackages: reviewedSourcePackages.map((reviewed) => ({
+      expectedIntegrity: reviewed.integrity,
+      label: reviewed.label,
+      packageSpec: reviewed.packageSpec,
+      tarballUrl: reviewed.tarballUrl,
+    })),
     reviewedPackagesWithoutIntegrity: sourceRegistryPackagesWithoutIntegrity,
   });
+  if (
+    reviewedSourcePackages.filter(({ packageSpec }) => lockedPackages.includes(packageSpec))
+      .length > 1
+  ) {
+    throw new Error("reviewed npm lock uses conflicting OpenShell SDK identities");
+  }
   const lockSha256 = createHash("sha256").update(fs.readFileSync(sourceLock)).digest("hex");
   fs.mkdirSync(destination);
   fs.copyFileSync(sourcePackage, path.join(destination, "package.json"));
@@ -501,12 +581,19 @@ export function normalizeOpenClawSignatureAlias(directory: string): void {
     version,
   } = OPENCLAW_DOMEXCEPTION_ALIAS;
   const lockfile = path.join(directory, "package-lock.json");
+  assertRegularFile(lockfile, "OpenClaw signature-audit lock");
+  const lock = readJsonObject(lockfile, "OpenClaw signature-audit lock");
+  if (typeof lock.packages !== "object" || lock.packages === null || Array.isArray(lock.packages)) {
+    throw new Error("OpenClaw signature-audit alias lock identity drifted");
+  }
+  const packages = lock.packages as Record<string, any>;
+  if (!packages[aliasPackagePath]) return;
+
   const aliasDirectory = path.join(directory, aliasPackagePath);
   const actualDirectory = path.join(directory, actualPackagePath);
   const aliasManifestFile = path.join(aliasDirectory, "package.json");
   const requesterManifestFile = path.join(directory, requesterPackagePath, "package.json");
   for (const [file, label] of [
-    [lockfile, "OpenClaw signature-audit lock"],
     [aliasManifestFile, "OpenClaw aliased package manifest"],
     [requesterManifestFile, "OpenClaw alias requester manifest"],
   ] as const) {
@@ -516,8 +603,6 @@ export function normalizeOpenClawSignatureAlias(directory: string): void {
     throw new Error(`OpenClaw signature-audit destination already exists: ${actualPackagePath}`);
   }
 
-  const lock = readJsonObject(lockfile, "OpenClaw signature-audit lock");
-  const packages = lock.packages as Record<string, any> | undefined;
   const aliasEntry = packages?.[aliasPackagePath];
   const requesterEntry = packages?.[requesterPackagePath];
   if (
@@ -559,19 +644,27 @@ export function normalizeOpenClawSignatureAlias(directory: string): void {
   fs.writeFileSync(requesterManifestFile, `${JSON.stringify(requesterManifest, null, 2)}\n`);
 }
 
-type CommandResult = Readonly<{ status: number | null; stdout: string; stderr: string }>;
+type CommandResult = Readonly<{
+  status: number | null;
+  stdout: string;
+  stderr: string;
+}>;
 
 export function verifySignaturesWithReviewedRetry(
   directory: string,
   evidenceFile: string,
   runner: (directory: string) => CommandResult = (cwd) => {
-    const result = spawnSync("npm", ["audit", "signatures", "--omit=dev"], {
+    const result = spawnSync("npm", NPM_AUDIT_SIGNATURE_ARGV, {
       cwd,
       encoding: "utf-8",
       env: { ...process.env, NPM_CONFIG_UPDATE_NOTIFIER: "false" },
     });
     if (result.error) throw result.error;
-    return { status: result.status, stderr: result.stderr, stdout: result.stdout };
+    return {
+      status: result.status,
+      stderr: result.stderr,
+      stdout: result.stdout,
+    };
   },
 ): void {
   const evidence: string[] = [];
@@ -616,7 +709,7 @@ function makeTreeOwnerWritable(root: string): void {
 }
 
 function verifyWechatInstallCacheBoundary(
-  graph: LockedGraph,
+  identity: LockedGraphIdentity,
   tempRoot: string,
   registryOrigin: string,
 ): void {
@@ -632,32 +725,40 @@ function verifyWechatInstallCacheBoundary(
     NPM_CONFIG_REGISTRY: registryOrigin,
     NPM_CONFIG_USERCONFIG: "/dev/null",
   };
-  const cache = spawnSync("npm", ["cache", "add", graph.packageSpec], {
+  const cache = spawnSync("npm", ["cache", "add", identity.packageSpec], {
     encoding: "utf-8",
     env,
     stdio: ["ignore", "pipe", "pipe"],
   });
   if (cache.error) throw cache.error;
   if (cache.status !== 0) throw new Error(`npm cache add failed: ${cache.stderr || cache.stdout}`);
-  fs.chmodSync(trustedCache, 0o555);
-  for (const entry of fs.readdirSync(trustedCache, { recursive: true })) {
-    fs.chmodSync(
-      path.join(trustedCache, entry.toString()),
-      fs.lstatSync(path.join(trustedCache, entry.toString())).isDirectory() ? 0o555 : 0o444,
-    );
+  try {
+    fs.chmodSync(trustedCache, 0o555);
+    for (const entry of fs.readdirSync(trustedCache, { recursive: true })) {
+      fs.chmodSync(
+        path.join(trustedCache, entry.toString()),
+        fs.lstatSync(path.join(trustedCache, entry.toString())).isDirectory() ? 0o555 : 0o444,
+      );
+    }
+    assertTreeReadOnly(trustedCache);
+    fs.cpSync(trustedCache, installCache, { recursive: true, force: true });
+    makeTreeOwnerWritable(installCache);
+    packReviewedNpmArchive({
+      env: {
+        ...env,
+        NPM_CONFIG_CACHE: installCache,
+        NPM_CONFIG_OFFLINE: "true",
+      },
+      expectedIntegrity: identity.integrity,
+      label: identity.label,
+      packageSpec: identity.packageSpec,
+      tarballUrl: identity.tarballUrl,
+      tempDirectory: packDirectory,
+    });
+    assertTreeReadOnly(trustedCache);
+  } finally {
+    makeTreeOwnerWritable(trustedCache);
   }
-  assertTreeReadOnly(trustedCache);
-  fs.cpSync(trustedCache, installCache, { recursive: true, force: true });
-  makeTreeOwnerWritable(installCache);
-  packReviewedNpmArchive({
-    env: { ...env, NPM_CONFIG_CACHE: installCache, NPM_CONFIG_OFFLINE: "true" },
-    expectedIntegrity: graph.integrity,
-    label: graph.label,
-    packageSpec: graph.packageSpec,
-    tarballUrl: graph.tarballUrl,
-    tempDirectory: packDirectory,
-  });
-  assertTreeReadOnly(trustedCache);
 }
 
 function auditLockedGraph(
@@ -667,21 +768,22 @@ function auditLockedGraph(
   tempRoot: string,
   exceptionFile: string,
   artifactDirectory: string,
-  npmVersion: string,
 ) {
-  const directory = materializeLockedGraph(graph, tempRoot, config.registryOrigin);
+  const { directory, identity } = materializeLockedGraph(graph, tempRoot, config.registryOrigin);
   const result = runReviewedNpmAudit({
+    cacheFile: graphCacheFile(graph.id),
     directory,
     exceptionFile,
     graph: graph.id,
-    provenance: {
-      label: graph.label,
-      nodeVersion: process.version,
-      npmVersion,
-      packageSpecs: [graph.packageSpec],
-    },
+    provenance: lockedGraphAuditProvenance(
+      identity,
+      process.version,
+      config.npmVersion,
+      config.npmIntegrity,
+    ),
+    reviewedNpmIdentity: config,
     reportFile: path.join(artifactDirectory, `locked-graph-${index + 1}.json`),
-    resultFile: path.join(artifactDirectory, `locked-graph-${index + 1}-policy.json`),
+    resultFile: path.join(artifactDirectory, `${graph.id}.policy.json`),
     threshold: graph.severityThreshold ?? config.severityThreshold,
     throwOnBlock: false,
   });
@@ -694,12 +796,27 @@ function auditLockedGraph(
       path.join(artifactDirectory, `locked-graph-${index + 1}-signatures.txt`),
     );
   } else {
-    run("npm", ["audit", "signatures", "--omit=dev"], directory);
+    run("npm", NPM_AUDIT_SIGNATURE_ARGV, directory);
   }
   if (graph.inputValidation === "wechat-runtime") {
-    verifyWechatInstallCacheBoundary(graph, tempRoot, config.registryOrigin);
+    verifyWechatInstallCacheBoundary(identity, tempRoot, config.registryOrigin);
   }
-  return result;
+  return { identity, result };
+}
+
+function lockedGraphAuditProvenance(
+  identity: LockedGraphIdentity,
+  nodeVersion: string,
+  npmVersion: string,
+  npmIntegrity: string,
+) {
+  return {
+    label: identity.label,
+    nodeVersion,
+    npmIntegrity,
+    npmVersion,
+    packageSpecs: [identity.packageSpec],
+  };
 }
 
 function auditSourceGraph(
@@ -707,7 +824,6 @@ function auditSourceGraph(
   tempRoot: string,
   exceptionFile: string,
   artifactDirectory: string,
-  npmVersion: string,
 ) {
   const sourcePackage = targetRepositoryPath("package.json", "NemoClaw CLI package manifest");
   const sourceLock = targetRepositoryPath("package-lock.json", "NemoClaw CLI lockfile");
@@ -724,12 +840,13 @@ function auditSourceGraph(
     config.sourceRegistryPackage,
     config.sourceNestedShrinkwrapPackages,
     config.sourceRegistryPackagesWithoutIntegrity,
+    config.sourceRegistryPackageReplacement ? [config.sourceRegistryPackageReplacement] : [],
   );
   return auditMaterializedSourceGraph({
     directory,
     exceptionFile,
     artifactDirectory,
-    npmVersion,
+    reviewedNpmIdentity: config,
     packageSpec: `${sourceManifest.name}@${sourceManifest.version}`,
     threshold: config.severityThreshold,
   });
@@ -740,8 +857,8 @@ export function auditMaterializedSourceGraph(
     artifactDirectory: string;
     directory: string;
     exceptionFile: string;
-    npmVersion: string;
     packageSpec: string;
+    reviewedNpmIdentity: ReviewedNpmIdentity;
     threshold: Severity;
   }>,
   dependencies: Readonly<{
@@ -750,15 +867,18 @@ export function auditMaterializedSourceGraph(
   }> = {},
 ): AuditPolicyResult {
   const result = (dependencies.runAudit ?? runReviewedNpmAudit)({
+    cacheFile: graphCacheFile(SOURCE_GRAPH.id),
     directory: options.directory,
     exceptionFile: options.exceptionFile,
     graph: SOURCE_GRAPH.id,
     provenance: {
       label: SOURCE_GRAPH.label,
       nodeVersion: process.version,
-      npmVersion: options.npmVersion,
+      npmIntegrity: options.reviewedNpmIdentity.npmIntegrity,
+      npmVersion: options.reviewedNpmIdentity.npmVersion,
       packageSpecs: [options.packageSpec],
     },
+    reviewedNpmIdentity: options.reviewedNpmIdentity,
     reportFile: path.join(options.artifactDirectory, "source-graph.json"),
     resultFile: path.join(options.artifactDirectory, "source-graph-policy.json"),
     threshold: options.threshold,
@@ -766,9 +886,80 @@ export function auditMaterializedSourceGraph(
   });
   (
     dependencies.verifySignatures ??
-    ((directory) => run("npm", ["audit", "signatures", "--omit=dev"], directory))
+    ((directory) => run("npm", NPM_AUDIT_SIGNATURE_ARGV, directory))
   )(options.directory);
   return result;
+}
+
+export function emitAuditReceipt(
+  options: Readonly<{
+    artifactDirectory: string;
+    expectedLockSha256?: string;
+    graphId: string;
+    reviewedNpmIdentity: ReviewedNpmIdentity;
+    packageJsonFile: string;
+    packageLockFile: string;
+    preserveInputs?: boolean;
+    rawReportFile: string;
+    registryOrigin: string;
+    result: AuditPolicyResult;
+    threshold: Severity;
+  }>,
+): string {
+  if (
+    options.result.status === "blocked" ||
+    options.result.unacceptedBlockingAdvisories.length > 0
+  ) {
+    throw new Error(`cannot emit receipt for blocked graph ${options.graphId}`);
+  }
+  const provenanceFile = options.rawReportFile.replace(/\.json$/, ".provenance.json");
+  const provenance = readJsonObject(provenanceFile, `${options.graphId} audit provenance`);
+  const cache = provenance.cache as Record<string, unknown> | undefined;
+  const run = provenance.run as Record<string, unknown> | undefined;
+  const createdAt = cache?.createdAt ?? run?.startedAt;
+  if (typeof createdAt !== "string") {
+    throw new Error(`${options.graphId} audit provenance lacks evidence creation time`);
+  }
+  const packageLock = fs.readFileSync(options.packageLockFile);
+  if (
+    options.expectedLockSha256 !== undefined &&
+    createHash("sha256").update(packageLock).digest("hex") !== options.expectedLockSha256
+  ) {
+    throw new Error(`${options.graphId} receipt lock does not match its reviewed identity`);
+  }
+  const receipt = createAuditReceipt({
+    acceptedAdvisoryIds: options.result.acceptedAdvisories,
+    createdAt: new Date(createdAt),
+    blockingAdvisoryIds: options.result.unacceptedBlockingAdvisories.map(
+      ({ advisory }) => advisory,
+    ),
+    exceptionPolicySha256: options.result.exceptionPolicySha256,
+    graphId: options.graphId,
+    reviewedNpmIdentity: options.reviewedNpmIdentity,
+    packageJson: fs.readFileSync(options.packageJsonFile),
+    packageLock,
+    rawResponse: fs.readFileSync(options.rawReportFile),
+    registryOrigin: options.registryOrigin,
+    severityThreshold: options.threshold,
+  });
+  const receiptFile = path.join(options.artifactDirectory, `${options.graphId}.receipt.json`);
+  const transportRawFile = path.join(options.artifactDirectory, `${options.graphId}.raw.json`);
+  fs.copyFileSync(options.rawReportFile, transportRawFile);
+  fs.chmodSync(transportRawFile, 0o600);
+  if (options.preserveInputs) {
+    for (const [source, suffix] of [
+      [options.packageJsonFile, "package.json"],
+      [options.packageLockFile, "package-lock.json"],
+    ] as const) {
+      const destination = path.join(options.artifactDirectory, `${options.graphId}.${suffix}`);
+      fs.copyFileSync(source, destination);
+      fs.chmodSync(destination, 0o600);
+    }
+  }
+  fs.writeFileSync(receiptFile, canonicalAuditReceipt(receipt), {
+    mode: 0o600,
+  });
+  return receiptFile;
 }
 
 export function assertReviewedAuditReportsPass(
@@ -781,15 +972,14 @@ export function assertReviewedAuditReportsPass(
       ({ label, result, threshold: reportThreshold }) =>
         `${label}: ${result.unacceptedBlockingAdvisories.length} unaccepted at or above ${reportThreshold ?? threshold}`,
     );
-  if (failures.length > 0)
-    throw new Error(`reviewed npm audit threshold failed\n${failures.join("\n")}`);
+  if (failures.length > 0) throw new Error(`npm audit threshold failed\n${failures.join("\n")}`);
 }
 
 function main(): void {
   const config = readConfig();
   const expectedNode = `v${config.nodeVersion}`;
   if (process.version !== expectedNode) {
-    throw new Error(`reviewed npm audit requires Node ${expectedNode}; running ${process.version}`);
+    throw new Error(`npm audit requires Node ${expectedNode}; running ${process.version}`);
   }
   const artifactDirectory = targetRepositoryPath(
     process.env.NEMOCLAW_REVIEWED_NPM_AUDIT_REPORT_DIR ?? config.artifactDirectory,
@@ -808,66 +998,132 @@ function main(): void {
   fs.rmSync(artifactDirectory, { recursive: true, force: true });
   fs.mkdirSync(artifactDirectory, { recursive: true });
   const npmVersion = run("npm", ["--version"], TRUSTED_REPO_ROOT).stdout.trim();
+  if (npmVersion !== config.npmVersion) {
+    throw new Error(`npm audit requires npm ${config.npmVersion}; running npm ${npmVersion}`);
+  }
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-reviewed-npm-audit-"));
   try {
-    const reports = [
-      {
-        label: SOURCE_GRAPH.label,
-        result: auditSourceGraph(config, tempRoot, exceptionFile, artifactDirectory, npmVersion),
-      },
-      {
+    const sourceResult = auditSourceGraph(config, tempRoot, exceptionFile, artifactDirectory);
+    const archiveDirectory = materializeArchiveGraph(
+      config.archivePackages,
+      tempRoot,
+      config.archiveTarVersion,
+    );
+    const archiveResult = runReviewedNpmAudit({
+      cacheFile: graphCacheFile(config.archiveGraphId),
+      directory: archiveDirectory,
+      exceptionFile,
+      graph: config.archiveGraphId,
+      provenance: {
         label: "reviewed archive graph",
-        result: runReviewedNpmAudit({
-          directory: materializeArchiveGraph(
-            config.archivePackages,
-            tempRoot,
-            config.archiveTarVersion,
-          ),
-          exceptionFile,
-          graph: config.archiveGraphId,
-          provenance: {
-            label: "reviewed archive graph",
-            nodeVersion: process.version,
-            npmVersion,
-            packageSpecs: config.archivePackages.map((reviewed) => reviewed.packageSpec),
-          },
-          reportFile: path.join(artifactDirectory, "reviewed-archive-graph.json"),
-          resultFile: path.join(artifactDirectory, "reviewed-archive-graph-policy.json"),
-          threshold: config.severityThreshold,
-          throwOnBlock: false,
-        }),
+        nodeVersion: process.version,
+        npmIntegrity: config.npmIntegrity,
+        npmVersion,
+        packageSpecs: config.archivePackages.map((reviewed) => reviewed.packageSpec),
       },
+      reviewedNpmIdentity: config,
+      reportFile: path.join(artifactDirectory, "reviewed-archive-graph.json"),
+      resultFile: path.join(artifactDirectory, "reviewed-archive-graph-policy.json"),
+      threshold: config.severityThreshold,
+      throwOnBlock: false,
+    });
+    const lockedAudits = config.lockedGraphs.map((graph, index) =>
+      auditLockedGraph(graph, index, config, tempRoot, exceptionFile, artifactDirectory),
+    );
+    const reports = [
+      { label: SOURCE_GRAPH.label, result: sourceResult },
+      { label: "reviewed archive graph", result: archiveResult },
       ...config.lockedGraphs.map((graph, index) => ({
-        label: graph.label,
+        label: lockedAudits[index]!.identity.label,
         threshold: graph.severityThreshold ?? config.severityThreshold,
-        result: auditLockedGraph(
-          graph,
-          index,
-          config,
-          tempRoot,
-          exceptionFile,
-          artifactDirectory,
-          npmVersion,
-        ),
+        result: lockedAudits[index]!.result,
       })),
     ];
     assertReviewedAuditReportsPass(reports, config.severityThreshold);
+
+    emitAuditReceipt({
+      artifactDirectory,
+      graphId: SOURCE_GRAPH.id,
+      reviewedNpmIdentity: config,
+      packageJsonFile: targetRepositoryPath("package.json", "NemoClaw CLI package manifest"),
+      packageLockFile: targetRepositoryPath("package-lock.json", "NemoClaw CLI lockfile"),
+      rawReportFile: path.join(artifactDirectory, "source-graph.json"),
+      registryOrigin: NPM_AUDIT_REGISTRY,
+      result: sourceResult,
+      threshold: config.severityThreshold,
+    });
+    emitAuditReceipt({
+      artifactDirectory,
+      graphId: config.archiveGraphId,
+      reviewedNpmIdentity: config,
+      packageJsonFile: path.join(archiveDirectory, "package.json"),
+      packageLockFile: path.join(archiveDirectory, "package-lock.json"),
+      preserveInputs: true,
+      rawReportFile: path.join(artifactDirectory, "reviewed-archive-graph.json"),
+      registryOrigin: NPM_AUDIT_REGISTRY,
+      result: archiveResult,
+      threshold: config.severityThreshold,
+    });
+    config.lockedGraphs.forEach((graph, index) => {
+      emitAuditReceipt({
+        artifactDirectory,
+        expectedLockSha256: lockedAudits[index]!.identity.lockSha256,
+        graphId: graph.id,
+        reviewedNpmIdentity: config,
+        packageJsonFile: targetRepositoryPath(
+          path.join(graph.directory, "package.json"),
+          `${graph.label} package manifest`,
+        ),
+        packageLockFile: targetRepositoryPath(
+          path.join(graph.directory, "package-lock.json"),
+          `${graph.label} lockfile`,
+        ),
+        rawReportFile: path.join(artifactDirectory, `locked-graph-${index + 1}.json`),
+        registryOrigin: NPM_AUDIT_REGISTRY,
+        result: lockedAudits[index]!.result,
+        threshold: graph.severityThreshold ?? config.severityThreshold,
+      });
+    });
   } finally {
+    makeTreeOwnerWritable(tempRoot);
     fs.rmSync(tempRoot, { recursive: true, force: true });
   }
 }
 
 function isMainModule(): boolean {
-  return process.argv[1]
-    ? import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href
-    : false;
+  if (!process.argv[1]) return false;
+  let invokedPath: string;
+  try {
+    invokedPath = fs.realpathSync.native(path.resolve(process.argv[1]));
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+    throw error;
+  }
+  return fs.realpathSync.native(fileURLToPath(import.meta.url)) === invokedPath;
+}
+
+function fatalAuditDiagnostic(error: unknown): string {
+  const message = error instanceof Error ? error.message : "";
+  if (message.startsWith("npm audit requires npm ")) {
+    return "Reviewed npm audit requires its configured npm version.";
+  }
+  if (message.includes(" npm pack failed")) {
+    return "Reviewed npm audit could not pack a reviewed archive.";
+  }
+  if (message.includes("refuses target-controlled npm config")) {
+    return "Reviewed npm audit refused target-controlled npm configuration.";
+  }
+  if (message.includes("locked package must resolve from the reviewed npm registry origin")) {
+    return "Reviewed npm audit rejected a package outside the reviewed npm registry.";
+  }
+  return "Reviewed npm audit failed.";
 }
 
 if (isMainModule()) {
   try {
     main();
   } catch (error) {
-    console.error(error instanceof Error ? error.message : String(error));
+    console.error(fatalAuditDiagnostic(error));
     process.exit(1);
   }
 }

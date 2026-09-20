@@ -1,0 +1,131 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+import { afterEach, expect, it, vi } from "vitest";
+
+import {
+  createDestroyHarness,
+  resetDestroyModuleCache,
+} from "../../../../test/helpers/destroy-flow-test-harness";
+import { testTimeoutOptions } from "../../../../test/helpers/timeouts";
+
+const absentPodmanIdentity = {
+  schemaVersion: 1 as const,
+  providerId: "podman",
+  resourceHandle: null,
+  ownershipSha256: null,
+};
+
+const presentPodmanIdentity = {
+  schemaVersion: 1 as const,
+  providerId: "podman",
+  resourceHandle: "a".repeat(64),
+  ownershipSha256: "b".repeat(64),
+};
+
+afterEach(() => {
+  vi.restoreAllMocks();
+  vi.unstubAllEnvs();
+  resetDestroyModuleCache();
+});
+
+it(
+  "passes registered Podman authority through final gateway cleanup",
+  testTimeoutOptions(30_000),
+  async () => {
+    const harness = createDestroyHarness({
+      openshellDriver: "podman",
+      runtimeProviderIdentityProof: absentPodmanIdentity,
+      executeSandboxDestroyResult: {
+        ok: true,
+        alreadyGone: false,
+        deleteOutput: "",
+        deleteResult: { kind: "accepted", diagnostic: "", exitCode: 0 },
+        detachOutcome: { detached: [], failures: [] },
+        forcedLocalCleanup: false,
+      },
+    });
+
+    await expect(
+      harness.destroySandbox("alpha", { yes: true, cleanupGateway: true }),
+    ).resolves.toBeUndefined();
+
+    expect(harness.resolveGatewayRuntimeProviderIdSpy).toHaveBeenCalledWith(
+      "nemoclaw-19080",
+      "podman",
+    );
+    expect(harness.assertDestroyIdentitySpy).toHaveBeenCalledWith(
+      "alpha",
+      expect.objectContaining({ providerId: "podman" }),
+    );
+    expect(harness.cleanupGatewaySpy).toHaveBeenCalledWith(
+      "nemoclaw-19080",
+      harness.runOpenshellSpy,
+      { runtimeProviderId: "podman" },
+    );
+    expect(harness.dockerCaptureSpy).not.toHaveBeenCalled();
+  },
+);
+
+it(
+  "recovers Podman authority when final cleanup is retried after registry removal",
+  testTimeoutOptions(30_000),
+  async () => {
+    const harness = createDestroyHarness({
+      registryEntryPresent: false,
+      removeSandboxResult: false,
+      recoveredGatewayRuntimeProviderId: "podman",
+      runtimeProviderIdentityProof: absentPodmanIdentity,
+      sandboxPresent: false,
+      executeSandboxDestroyResult: {
+        ok: true,
+        alreadyGone: true,
+        deleteOutput: "sandbox not found",
+        deleteResult: { kind: "absent", diagnostic: "sandbox not found", exitCode: 1 },
+        detachOutcome: { detached: [], failures: [] },
+        forcedLocalCleanup: false,
+      },
+    });
+
+    await expect(
+      harness.destroySandbox("alpha", { yes: true, cleanupGateway: true }),
+    ).resolves.toBeUndefined();
+
+    expect(harness.resolveGatewayRuntimeProviderIdSpy).toHaveBeenCalledWith("nemoclaw", undefined);
+    expect(harness.assertDestroyIdentitySpy).toHaveBeenCalledWith(
+      "alpha",
+      expect.objectContaining({ providerId: "podman", sandbox: null }),
+    );
+    expect(harness.cleanupGatewaySpy).toHaveBeenCalledWith("nemoclaw", harness.runOpenshellSpy, {
+      runtimeProviderId: "podman",
+    });
+    expect(harness.dockerCaptureSpy).not.toHaveBeenCalled();
+  },
+);
+
+it("uses selected Podman authority when failed onboarding has no registry row or marker", async () => {
+  vi.spyOn(process, "platform", "get").mockReturnValue("linux");
+  vi.stubEnv("NEMOCLAW_GATEWAY_RUNTIME", "podman");
+  const harness = createDestroyHarness({
+    registryEntryPresent: false,
+    recoveredGatewayRuntimeProviderId: null,
+    runtimeProviderIdentityProof: presentPodmanIdentity,
+    executeSandboxDestroyResult: {
+      ok: true,
+      alreadyGone: false,
+      deleteOutput: "",
+      deleteResult: { kind: "accepted", diagnostic: "", exitCode: 0 },
+      detachOutcome: { detached: [], failures: [] },
+      forcedLocalCleanup: false,
+    },
+  });
+
+  await expect(harness.destroySandbox("alpha", { yes: true })).resolves.toBeUndefined();
+
+  expect(harness.resolveGatewayRuntimeProviderIdSpy).toHaveBeenCalledWith("nemoclaw", undefined);
+  expect(harness.assertDestroyIdentitySpy).toHaveBeenCalledWith(
+    "alpha",
+    expect.objectContaining({ providerId: "podman", sandbox: null }),
+  );
+  expect(harness.dockerCaptureSpy).not.toHaveBeenCalled();
+});

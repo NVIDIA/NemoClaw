@@ -469,7 +469,7 @@ function buildLlamaCppHostLocalDockerRunArgv(
   bindings: LlamaCppHostLocalRuntimeBindings,
 ): string[] {
   const { resources } = contract.runtime;
-  const { serve } = contract;
+
   const containerModelPath = `/models/${contract.model.file.path}`;
   const runtimeIdentity = `${String(bindings.runtimeUid)}:${String(bindings.runtimeGid)}`;
   return [

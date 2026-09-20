@@ -16,9 +16,13 @@ export const HOST_KEY_FINGERPRINT = `SHA256:${"A".repeat(43)}`;
 export function stationHost(side: "local" | "peer"): StationDiscoveryHost {
   const local = side === "local";
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     hostname: local ? "station-a" : "station-b",
     productName: "NVIDIA DGX Station GB300",
+    productFamily: "",
+    boardName: "",
+    deviceTreeModel: "",
+    stationGb300PciGpu: true,
     architecture: "aarch64",
     gpus: [
       {

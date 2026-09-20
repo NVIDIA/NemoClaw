@@ -17,8 +17,6 @@ const PUBLIC_BOOTSTRAP = path.join(REPO_ROOT, "install.sh");
 const STATION_PREPARE = path.join(REPO_ROOT, "scripts", "prepare-dgx-station-host.sh");
 const STATION_REVISION = "a".repeat(40);
 const STATION_GENERATION = "0123456789abcdef0123456789abcdef";
-const APT_DRIVER_POLICY_OPTION =
-  "Dir::Etc::Preferences=/run/nemoclaw-apt-transaction.TEST/driver-policy";
 
 function runSourced(script: string, body: string, extraEnv: Record<string, string> = {}) {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-station-host-"));
@@ -327,6 +325,7 @@ installed_version() { if [[ "$1" == "dkms" ]]; then printf '3.0.11-1ubuntu13'; f
 install_packages() { printf 'INSTALL_PACKAGES\n'; }
 ensure_docker_group() { printf 'ENSURE_DOCKER_GROUP\n'; }
 require_docker_restart_quiescence() { printf 'RECHECK_RESTART_QUIESCENCE\n'; }
+query_host_docker() { DOCKER_QUERY_OUTPUT=""; return 0; }
 write_install_boot_marker() { printf 'WRITE_BOOT_MARKER\n'; }
 sudo() { printf 'SUDO %s\n' "$*"; }
 run_apply
@@ -481,6 +480,7 @@ check_capacity() { :; }
 check_network() { :; }
 check_failed_units() { :; }
 capture_docker_container_baseline() { printf 'DOCKER_BASELINE_CAPTURED\n'; }
+query_host_docker() { DOCKER_QUERY_OUTPUT=""; return 0; }
 check_dgx_os_runtime_commands() { :; }
 ps() { printf '%s 999 1 python python -m vllm serve model\n' "$EUID"; }
 ss() { :; }

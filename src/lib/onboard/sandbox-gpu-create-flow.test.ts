@@ -97,11 +97,7 @@ import type {
 } from "./runtime-provider/contract";
 import { createRuntimeProviderBundleRegistry } from "./runtime-provider/registry";
 import { prepareSandboxCreateLaunch } from "./sandbox-create-launch";
-import {
-  runSandboxGpuCreateFlow,
-  type SandboxGpuCreateFlowDeps,
-  type SandboxGpuCreateFlowInput,
-} from "./sandbox-gpu-create-flow";
+import { runSandboxGpuCreateFlow, type SandboxGpuCreateFlowInput } from "./sandbox-gpu-create-flow";
 
 const {
   READY_CHECK_OPTIONS,
@@ -547,7 +543,7 @@ describe("runSandboxGpuCreateFlow proof authorization", () => {
       { expectedContainerId: replacementContainerId },
     );
     expect(deps.runOpenshell).toHaveBeenCalledWith(
-      ["sandbox", "delete", "alpha"],
+      ["sandbox", "delete", "-g", "nemoclaw", "alpha"],
       expect.objectContaining({ suppressOutput: true }),
     );
   });
@@ -712,14 +708,15 @@ describe("runSandboxGpuCreateFlow native failure and readiness", () => {
     vi.mocked(deps.runOpenshell).mockImplementation(
       createSequencedOpenShellRunner([
         ["sandbox get -g nemoclaw alpha", [readySandboxGetResult(), readySandboxGetResult()]],
-        [
-          "sandbox exec -g nemoclaw --name alpha -- true",
-          [{ status: 1, stdout: "", stderr: "permission denied" }],
-        ],
       ]),
     );
-    mocks.waitForCreatedSandboxReadyWithTrace.mockImplementationOnce((options) => {
-      expect(options.checkReadyIdentity?.()).toBe("probe_failed");
+    vi.mocked(deps.commandExecutor.runBuffered).mockResolvedValueOnce({
+      outcome: { kind: "completed", exitCode: 1, signal: null },
+      stdout: "",
+      stderr: "permission denied",
+    });
+    mocks.waitForCreatedSandboxReadyWithTrace.mockImplementationOnce(async (options) => {
+      await expect(options.checkReadyIdentity?.()).resolves.toBe("probe_failed");
       return {
         ready: false,
         reason: "identity_probe_failed",
@@ -767,24 +764,24 @@ describe("runSandboxGpuCreateFlow native failure and readiness", () => {
           "sandbox get -g nemoclaw alpha",
           [readySandboxGetResult(), readySandboxGetResult(), readySandboxGetResult()],
         ],
-        [
-          "sandbox exec -g nemoclaw --name alpha -- true",
-          [
-            {
-              status: 1,
-              stdout: "",
-              stderr:
-                `Error:   × code: 'The system is not in a state required for the operation's\n` +
-                '  │ execution\', message: "sandbox is not ready"\n',
-            },
-            { status: 0, stdout: "", stderr: "" },
-          ],
-        ],
       ]),
     );
-    mocks.waitForCreatedSandboxReadyWithTrace.mockImplementationOnce((options) => {
-      expect(options.checkReadyIdentity?.()).toBe("not_ready");
-      expect(options.checkReadyIdentity?.()).toBe("ready");
+    vi.mocked(deps.commandExecutor.runBuffered)
+      .mockResolvedValueOnce({
+        outcome: { kind: "completed", exitCode: 1, signal: null },
+        stdout: "",
+        stderr:
+          `Error:   × code: 'The system is not in a state required for the operation's\n` +
+          '  │ execution\', message: "sandbox is not ready"\n',
+      })
+      .mockResolvedValueOnce({
+        outcome: { kind: "completed", exitCode: 0, signal: null },
+        stdout: "",
+        stderr: "",
+      });
+    mocks.waitForCreatedSandboxReadyWithTrace.mockImplementationOnce(async (options) => {
+      await expect(options.checkReadyIdentity?.()).resolves.toBe("not_ready");
+      await expect(options.checkReadyIdentity?.()).resolves.toBe("ready");
       return { ready: true, reason: "ready", failurePhase: null };
     });
 
@@ -792,13 +789,7 @@ describe("runSandboxGpuCreateFlow native failure and readiness", () => {
       route: "none",
     });
 
-    expect(
-      vi
-        .mocked(deps.runOpenshell)
-        .mock.calls.filter(
-          ([args]) => args.join(" ") === "sandbox exec -g nemoclaw --name alpha -- true",
-        ),
-    ).toHaveLength(2);
+    expect(deps.commandExecutor.runBuffered).toHaveBeenCalledTimes(2);
     expect(patch.rollbackManagedStartupAfterCreateFailure).not.toHaveBeenCalled();
     expect(deps.runOpenshell).not.toHaveBeenCalledWith(
       ["sandbox", "delete", "alpha"],
@@ -970,7 +961,7 @@ describe("runSandboxGpuCreateFlow native failure and readiness", () => {
     expect(mocks.streamSandboxCreate).toHaveBeenCalledOnce();
     expect(mocks.verifyGpuSandboxAccessAfterReady).not.toHaveBeenCalled();
     expect(deps.runOpenshell).not.toHaveBeenCalled();
-    expect(errorOutput()).toContain("Verify the sandbox identity before manual cleanup");
+    expect(errorOutput()).toContain("Recovery remains blocked while this sandbox exists");
     expect(mocks.streamSandboxCreate).toHaveBeenCalledOnce();
   });
 
@@ -1384,7 +1375,7 @@ describe("runSandboxGpuCreateFlow cleanup and provenance", () => {
     const output = vi.mocked(console.error).mock.calls.flat().join("\n");
     expect(deps.runOpenshell).not.toHaveBeenCalled();
     expect(output).toContain("left sandbox 'alpha' in place");
-    expect(output).toContain("Verify the sandbox identity before manual cleanup");
+    expect(output).toContain("Recovery remains blocked while this sandbox exists");
     expect(output).not.toContain("openshell sandbox delete");
     expect(output).not.toContain("Retry: nemoclaw onboard");
   });
@@ -1401,7 +1392,7 @@ describe("runSandboxGpuCreateFlow cleanup and provenance", () => {
     const output = vi.mocked(console.error).mock.calls.flat().join("\n");
     expect(deps.runOpenshell).not.toHaveBeenCalled();
     expect(output).toContain("left sandbox 'alpha' in place");
-    expect(output).toContain("Verify the sandbox identity before manual cleanup");
+    expect(output).toContain("Recovery remains blocked while this sandbox exists");
     expect(output).not.toContain("Retry: nemoclaw onboard");
   });
 

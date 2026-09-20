@@ -5,14 +5,8 @@ import { spawnSync } from "node:child_process";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as providerCommand from "../../adapters/openshell/provider-command";
-import type { McpBridgeEntry } from "../../state/registry";
-import {
-  buildMcpCredentialRevisionObservationCommand,
-  parseMcpProviderAttachmentNames,
-  parseMcpProviderMetadata,
-  providerDetachChangedState,
-} from "./mcp-bridge";
-import { commandOutput } from "./mcp-bridge-output";
+import type { McpSourceEntry } from "./mcp-bridge-contracts";
+import { buildMcpCredentialRevisionObservationCommand } from "./mcp-bridge";
 import {
   assertNoAttachedProviderCredentialCollisions,
   assertNoRegisteredProviderCredentialCollisions,
@@ -22,8 +16,6 @@ import {
 import {
   attachProvider,
   assertMcpProviderRecoverable,
-  deleteProvider,
-  detachMissingProviderReference,
   detachProvider,
   ensureMcpBridgeProviderProfile,
   MCP_BRIDGE_PROVIDER_TYPE,
@@ -41,60 +33,28 @@ const runtimeSelection = {
   workspace: "default",
 } as const;
 
+function providerMetadataOutput(
+  name: string,
+  type: string,
+  id: string,
+  resourceVersion: number,
+  credentialKey: string,
+): string {
+  return [
+    `Name: ${name}`,
+    `Id: ${id}`,
+    `Type: ${type}`,
+    `Resource version: ${resourceVersion}`,
+    `Credential keys: ${credentialKey}`,
+    "Config keys: <none>",
+  ].join("\n");
+}
+
 describe("OpenShell MCP provider state", () => {
   afterEach(() => {
     providerCommand.setProviderCommandRuntimeHooksForTest({});
     vi.restoreAllMocks();
     vi.unstubAllEnvs();
-  });
-
-  it("parses provider type and credential keys without values", () => {
-    expect(
-      parseMcpProviderMetadata(`
-Provider:
-
-  Id: 11111111-2222-4333-8444-555555555555
-  Name: alpha-mcp-github
-  Type: nemoclaw-mcp-v1
-  Resource version: 7
-  Credential keys: GITHUB_TOKEN
-  Config keys: <none>
-`),
-    ).toEqual({
-      id: "11111111-2222-4333-8444-555555555555",
-      resourceVersion: 7,
-      type: "nemoclaw-mcp-v1",
-      credentialKeys: ["GITHUB_TOKEN"],
-    });
-    expect(parseMcpProviderMetadata("Type: nemoclaw-mcp-v1\nCredential keys: <none>\n")).toEqual({
-      id: null,
-      resourceVersion: null,
-      type: "nemoclaw-mcp-v1",
-      credentialKeys: [],
-    });
-  });
-
-  it("parses ANSI-decorated OpenShell provider metadata after redaction", () => {
-    const output = commandOutput({
-      status: 0,
-      stdout: [
-        "\u001b[2mProvider:\u001b[0m",
-        "\u001b[2m  Id:\u001b[0m 11111111-2222-4333-8444-555555555555",
-        "\u001b[2m  Type:\u001b[0m nemoclaw-mcp-v1",
-        "\u001b[2m  Resource version:\u001b[0m 7",
-        "\u001b[2m  Credential keys:\u001b[0m GITHUB_TOKEN",
-      ].join("\n"),
-      stderr: "",
-    });
-
-    expect(parseMcpProviderMetadata(output)).toEqual({
-      id: "11111111-2222-4333-8444-555555555555",
-      resourceVersion: 7,
-      type: "nemoclaw-mcp-v1",
-      credentialKeys: ["GITHUB_TOKEN"],
-    });
-    expect(output).not.toContain("\u001b");
-    expect(output).not.toMatch(/\[[0-9;]*m/);
   });
 
   it("accepts an exact legacy generic provider only for cleanup", () => {
@@ -119,38 +79,48 @@ Provider:
     ).toBe(true);
   });
 
-  it("rejects a legacy generic provider before active MCP reconciliation", () => {
+  it("rejects a legacy generic provider before active MCP reconciliation", async () => {
     vi.spyOn(providerCommand, "runOpenshellProviderCommand").mockReturnValue({
       pid: 1234,
       status: 0,
       signal: null,
       output: [
         null,
-        "Id: 11111111-2222-4333-8444-555555555555\nType: generic\nResource version: 7\nCredential keys: GITHUB_TOKEN\n",
+        providerMetadataOutput(
+          "alpha-mcp-github",
+          "generic",
+          "11111111-2222-4333-8444-555555555555",
+          7,
+          "GITHUB_TOKEN",
+        ),
         "",
       ],
-      stdout:
-        "Id: 11111111-2222-4333-8444-555555555555\nType: generic\nResource version: 7\nCredential keys: GITHUB_TOKEN\n",
+      stdout: providerMetadataOutput(
+        "alpha-mcp-github",
+        "generic",
+        "11111111-2222-4333-8444-555555555555",
+        7,
+        "GITHUB_TOKEN",
+      ),
       stderr: "",
     });
-    const entry: McpBridgeEntry = {
+    const entry: McpSourceEntry = {
       server: "github",
       agent: "openclaw",
-      adapter: "mcporter",
+      adapter: "openclaw-config",
       url: "https://api.githubcopilot.com/mcp",
       env: ["GITHUB_TOKEN"],
       providerName: "alpha-mcp-github",
       providerId: "11111111-2222-4333-8444-555555555555",
       policyName: "mcp-bridge-github",
-      addedAt: "2026-08-19T00:00:00.000Z",
     };
 
-    expect(() => assertMcpProviderRecoverable(entry, runtimeSelection)).toThrow(
+    await expect(assertMcpProviderRecoverable(entry, runtimeSelection)).rejects.toThrow(
       /legacy generic profile.*cannot bind to an MCP endpoint/,
     );
   });
 
-  it("republishes an exact provider only after policy binding without reading its credential", () => {
+  it("republishes an exact provider only after policy binding without reading its credential", async () => {
     const id = "11111111-2222-4333-8444-555555555555";
     const providerResult = (resourceVersion: number) => ({
       pid: 1234,
@@ -158,10 +128,22 @@ Provider:
       signal: null,
       output: [
         null,
-        `Id: ${id}\nType: nemoclaw-mcp-v1\nResource version: ${resourceVersion}\nCredential keys: GITHUB_TOKEN\n`,
+        providerMetadataOutput(
+          "alpha-mcp-github",
+          "nemoclaw-mcp-v1",
+          id,
+          resourceVersion,
+          "GITHUB_TOKEN",
+        ),
         "",
       ],
-      stdout: `Id: ${id}\nType: nemoclaw-mcp-v1\nResource version: ${resourceVersion}\nCredential keys: GITHUB_TOKEN\n`,
+      stdout: providerMetadataOutput(
+        "alpha-mcp-github",
+        "nemoclaw-mcp-v1",
+        id,
+        resourceVersion,
+        "GITHUB_TOKEN",
+      ),
       stderr: "",
     });
     const run = vi
@@ -177,30 +159,29 @@ Provider:
       })
       .mockReturnValueOnce(providerResult(8));
 
-    expect(
+    await expect(
       refreshMcpProviderEnvironment(
         {
           server: "github",
           agent: "openclaw",
-          adapter: "mcporter",
+          adapter: "openclaw-config",
           url: "https://api.githubcopilot.com/mcp",
           env: ["GITHUB_TOKEN"],
           providerName: "alpha-mcp-github",
           providerId: id,
           policyName: "mcp-bridge-github",
-          addedAt: "2026-08-19T00:00:00.000Z",
         },
         {
           gatewayName: "nemoclaw-8080",
           workspace: "default",
         },
       ),
-    ).toMatchObject({ resourceVersion: 8 });
+    ).resolves.toMatchObject({ resourceVersion: 8 });
     expect(run.mock.calls[1]?.[0]).toEqual(["provider", "update", "alpha-mcp-github"]);
     expect(run.mock.calls[1]?.[0]).not.toContain("--credential");
   });
 
-  it("pins every managed MCP provider lifecycle read and write to the recorded runtime target (#10514)", () => {
+  it("pins every managed MCP provider lifecycle read and write to the recorded runtime target (#10514)", async () => {
     vi.stubEnv("EXPECTED_TOKEN", "host-only-secret");
     vi.stubEnv("OPENSHELL_GATEWAY", "ambient-gateway");
     vi.stubEnv("OPENSHELL_GATEWAY_ENDPOINT", "http://ambient.invalid");
@@ -214,12 +195,13 @@ Provider:
     let providerAttached = false;
     let resourceVersion = 0;
     const providerOutput = () =>
-      [
-        `Id: ${providerId}`,
-        `Type: ${MCP_BRIDGE_PROVIDER_TYPE}`,
-        `Resource version: ${resourceVersion}`,
-        "Credential keys: EXPECTED_TOKEN",
-      ].join("\n");
+      providerMetadataOutput(
+        "alpha-mcp-fake",
+        MCP_BRIDGE_PROVIDER_TYPE,
+        providerId,
+        resourceVersion,
+        "EXPECTED_TOKEN",
+      );
     const profileOutput = (id: string, inferenceCapable: boolean) =>
       JSON.stringify({
         id,
@@ -301,176 +283,56 @@ Provider:
     });
     providerCommand.setProviderCommandRuntimeHooksForTest({ runOpenshell: runOpenshell as never });
 
-    ensureMcpBridgeProviderProfile(runtimeSelection);
-    const created = upsertMcpProvider("alpha-mcp-fake", [{ name: "EXPECTED_TOKEN" }], {
+    await ensureMcpBridgeProviderProfile(runtimeSelection);
+    const created = await upsertMcpProvider("alpha-mcp-fake", [{ name: "EXPECTED_TOKEN" }], {
       allowExisting: false,
       runtimeSelection,
     });
-    const entry: McpBridgeEntry = {
+    const entry: McpSourceEntry = {
       server: "fake",
       agent: "openclaw",
-      adapter: "mcporter",
+      adapter: "openclaw-config",
       url: "https://mcp.example.test/mcp",
       env: ["EXPECTED_TOKEN"],
       providerName: "alpha-mcp-fake",
       providerId: created.inspection.id ?? undefined,
       policyName: "mcp-bridge-fake",
-      addedAt: "2026-06-01T00:00:00.000Z",
     };
-    attachProvider("alpha", entry, runtimeSelection);
-    refreshMcpProviderEnvironment(entry, runtimeSelection);
-    expect(detachProvider("alpha", entry, { runtimeSelection })).toBe("detached");
-    deleteProvider(entry, { runtimeSelection });
-    expect(detachMissingProviderReference("alpha", entry, runtimeSelection)).toBe("absent");
+    await attachProvider("alpha", entry, runtimeSelection);
+    await refreshMcpProviderEnvironment(entry, runtimeSelection);
+    await expect(detachProvider("alpha", entry, { runtimeSelection })).resolves.toBe("detached");
 
     expect(commandFamilies).toEqual(
-      new Set(["profile", "get", "create", "attach", "list", "update", "detach", "delete"]),
+      new Set(["profile", "get", "create", "attach", "list", "update", "detach"]),
     );
   });
 
-  it.each([
-    "NotFound: provider",
-    "provider 'other-mcp-github' not found",
-    'status: NotFound, message: "gateway nemoclaw-8091 not found"',
-  ])(
-    "rejects ambiguous provider-delete output %s while cleanup is retryable (#10514)",
-    (diagnostic) => {
-      const id = "11111111-2222-4333-8444-555555555555";
-      const runtimeSelection = { gatewayName: "nemoclaw-8091", workspace: "default" };
-      const run = vi
-        .spyOn(providerCommand, "runOpenshellProviderCommand")
-        .mockReturnValueOnce({
-          pid: 1234,
-          status: 0,
-          signal: null,
-          output: [
-            null,
-            `Id: ${id}\nType: nemoclaw-mcp-v1\nResource version: 7\nCredential keys: GITHUB_TOKEN\n`,
-            "",
-          ],
-          stdout: `Id: ${id}\nType: nemoclaw-mcp-v1\nResource version: 7\nCredential keys: GITHUB_TOKEN\n`,
-          stderr: "",
-        })
-        .mockReturnValueOnce({
-          pid: 1234,
-          status: 1,
-          signal: null,
-          output: [null, "", diagnostic],
-          stdout: "",
-          stderr: diagnostic,
-        });
-      const entry: McpBridgeEntry = {
-        server: "github",
-        agent: "openclaw",
-        adapter: "mcporter",
-        url: "https://api.githubcopilot.com/mcp",
-        env: ["GITHUB_TOKEN"],
-        providerName: "alpha-mcp-github",
-        providerId: id,
-        policyName: "mcp-bridge-github",
-        addedAt: "2026-08-19T00:00:00.000Z",
-      };
-
-      expect(() => deleteProvider(entry, { allowMissing: true, runtimeSelection })).toThrow(
-        diagnostic,
-      );
-      expect(run).toHaveBeenCalledTimes(2);
-    },
-  );
-
-  it("accepts an exact provider-delete absence while cleanup is retryable (#10514)", () => {
-    const id = "11111111-2222-4333-8444-555555555555";
-    const runtimeSelection = { gatewayName: "nemoclaw-8091", workspace: "default" };
-    const run = vi
-      .spyOn(providerCommand, "runOpenshellProviderCommand")
-      .mockReturnValueOnce({
-        pid: 1234,
-        status: 0,
-        signal: null,
-        output: [
-          null,
-          `Id: ${id}\nType: nemoclaw-mcp-v1\nResource version: 7\nCredential keys: GITHUB_TOKEN\n`,
-          "",
-        ],
-        stdout: `Id: ${id}\nType: nemoclaw-mcp-v1\nResource version: 7\nCredential keys: GITHUB_TOKEN\n`,
-        stderr: "",
-      })
-      .mockReturnValueOnce({
-        pid: 1234,
-        status: 1,
-        signal: null,
-        output: [null, "", "provider 'alpha-mcp-github' not found"],
-        stdout: "",
-        stderr: "provider 'alpha-mcp-github' not found",
-      });
-    const entry: McpBridgeEntry = {
-      server: "github",
-      agent: "openclaw",
-      adapter: "mcporter",
-      url: "https://api.githubcopilot.com/mcp",
-      env: ["GITHUB_TOKEN"],
-      providerName: "alpha-mcp-github",
-      providerId: id,
-      policyName: "mcp-bridge-github",
-      addedAt: "2026-08-19T00:00:00.000Z",
-    };
-
-    expect(() => deleteProvider(entry, { allowMissing: true, runtimeSelection })).not.toThrow();
-    expect(run).toHaveBeenCalledTimes(2);
-  });
-
-  it("distinguishes a real detach from OpenShell's idempotent success", () => {
-    expect(
-      providerDetachChangedState(0, "✓ Detached provider alpha-mcp-github from sandbox alpha"),
-    ).toBe(true);
-    expect(
-      providerDetachChangedState(0, "Provider alpha-mcp-github was not attached to sandbox alpha."),
-    ).toBe(false);
-  });
-
-  it("parses the stock OpenShell sandbox provider table", () => {
-    expect(
-      parseMcpProviderAttachmentNames(`
-NAME              TYPE     CREDENTIAL_KEYS   CONFIG_KEYS
-alpha-mcp-github  generic  1                 0
-alpha-mcp-slack   generic  1                 0
-`),
-    ).toEqual(["alpha-mcp-github", "alpha-mcp-slack"]);
-    expect(parseMcpProviderAttachmentNames("No providers attached to sandbox alpha.\n")).toEqual(
-      [],
-    );
-    expect(() => parseMcpProviderAttachmentNames("unexpected output\n")).toThrow(
-      /attachment table header/,
-    );
-  });
-
-  it("rejects a multi-key bridge before provider collision inspection", () => {
+  it("rejects a multi-key bridge before provider collision inspection", async () => {
     const providerCommandRun = vi.spyOn(providerCommand, "runOpenshellProviderCommand");
-    const entry: McpBridgeEntry = {
+    const entry: McpSourceEntry = {
       server: "example",
       agent: "openclaw",
-      adapter: "mcporter",
+      adapter: "openclaw-config",
       url: "https://8.8.8.8/mcp",
       env: ["PRIMARY_TOKEN", "SECONDARY_TOKEN"],
       providerName: "alpha-mcp-example",
       providerId: "11111111-2222-4333-8444-555555555555",
       policyName: "mcp-bridge-example",
-      addedAt: "2026-06-01T00:00:00.000Z",
     };
 
-    expect(() =>
+    await expect(
       assertNoAttachedProviderCredentialCollisions("alpha", [entry], runtimeSelection),
-    ).toThrow("MCP server 'example' has no complete authenticated credential binding");
-    expect(() =>
+    ).rejects.toThrow("MCP server 'example' has no complete authenticated credential binding");
+    await expect(
       assertNoRegisteredProviderCredentialCollisions([entry], {
         listExtraProviders: () => ["foreign-registered"],
       }),
-    ).toThrow("MCP server 'example' has no complete authenticated credential binding");
+    ).rejects.toThrow("MCP server 'example' has no complete authenticated credential binding");
     expect(providerCommandRun).not.toHaveBeenCalled();
   });
 
-  it("rejects a registered provider that will collide on the next rebuild (#9388)", () => {
-    const entry: McpBridgeEntry = {
+  it("rejects a registered provider that will collide on the next rebuild (#9388)", async () => {
+    const entry: McpSourceEntry = {
       server: "test-dir1",
       agent: "hermes",
       adapter: "hermes-config",
@@ -478,13 +340,12 @@ alpha-mcp-slack   generic  1                 0
       env: ["TEST_DIR1_TOKEN"],
       providerName: "hermes-mcp-test-dir1",
       policyName: "mcp-bridge-test-dir1",
-      addedAt: "2026-08-18T00:00:00.000Z",
     };
 
-    expect(() =>
+    await expect(
       assertNoRegisteredProviderCredentialCollisions([entry], {
         listExtraProviders: () => ["test-dir1"],
-        inspectProvider: () => ({
+        inspectProvider: async () => ({
           exists: true,
           id: "99999999-8888-4777-8666-555555555555",
           resourceVersion: 1,
@@ -492,12 +353,12 @@ alpha-mcp-slack   generic  1                 0
           credentialKeys: ["TEST_DIR1_TOKEN"],
         }),
       }),
-    ).toThrow(
-      "Credential key 'TEST_DIR1_TOKEN' is already supplied by registered provider 'test-dir1'",
+    ).rejects.toThrow(
+      "Credential key 'TEST_DIR1_TOKEN' is already supplied by configured extra provider 'test-dir1'",
     );
   });
 
-  it("pins attachment collision inspection to the recorded runtime target (#10514)", () => {
+  it("pins attachment collision inspection to the recorded runtime target (#10514)", async () => {
     const runtimeSelection = { gatewayName: "nemoclaw-9090", workspace: "default" };
     const run = vi
       .spyOn(providerCommand, "runOpenshellProviderCommand")
@@ -519,28 +380,38 @@ alpha-mcp-slack   generic  1                 0
         signal: null,
         output: [
           null,
-          "Id: 99999999-8888-4777-8666-555555555555\nType: nemoclaw-mcp-v1\nResource version: 1\nCredential keys: GITHUB_TOKEN\n",
+          providerMetadataOutput(
+            "foreign-provider",
+            "nemoclaw-mcp-v1",
+            "99999999-8888-4777-8666-555555555555",
+            1,
+            "GITHUB_TOKEN",
+          ),
           "",
         ],
-        stdout:
-          "Id: 99999999-8888-4777-8666-555555555555\nType: nemoclaw-mcp-v1\nResource version: 1\nCredential keys: GITHUB_TOKEN\n",
+        stdout: providerMetadataOutput(
+          "foreign-provider",
+          "nemoclaw-mcp-v1",
+          "99999999-8888-4777-8666-555555555555",
+          1,
+          "GITHUB_TOKEN",
+        ),
         stderr: "",
       });
-    const entry: McpBridgeEntry = {
+    const entry: McpSourceEntry = {
       server: "github",
       agent: "openclaw",
-      adapter: "mcporter",
+      adapter: "openclaw-config",
       url: "https://api.githubcopilot.com/mcp",
       env: ["GITHUB_TOKEN"],
       providerName: "alpha-mcp-github",
       providerId: "11111111-2222-4333-8444-555555555555",
       policyName: "mcp-bridge-github",
-      addedAt: "2026-08-19T00:00:00.000Z",
     };
 
-    expect(() =>
+    await expect(
       assertNoAttachedProviderCredentialCollisions("alpha", [entry], runtimeSelection),
-    ).toThrow("Credential key 'GITHUB_TOKEN' is already supplied by attached provider");
+    ).rejects.toThrow("Credential key 'GITHUB_TOKEN' is already supplied by attached provider");
     expect(run).toHaveBeenCalledTimes(2);
     expect(
       run.mock.calls.every(
@@ -551,7 +422,7 @@ alpha-mcp-slack   generic  1                 0
     ).toBe(true);
   });
 
-  it("pins registered collision inspection to the recorded runtime target (#10514)", () => {
+  it("pins registered collision inspection to the recorded runtime target (#10514)", async () => {
     const runtimeSelection = { gatewayName: "nemoclaw-9090", workspace: "default" };
     const run = vi.spyOn(providerCommand, "runOpenshellProviderCommand").mockReturnValue({
       pid: 1234,
@@ -559,31 +430,43 @@ alpha-mcp-slack   generic  1                 0
       signal: null,
       output: [
         null,
-        "Id: 99999999-8888-4777-8666-555555555555\nType: nemoclaw-mcp-v1\nResource version: 1\nCredential keys: GITHUB_TOKEN\n",
+        providerMetadataOutput(
+          "foreign-provider",
+          "nemoclaw-mcp-v1",
+          "99999999-8888-4777-8666-555555555555",
+          1,
+          "GITHUB_TOKEN",
+        ),
         "",
       ],
-      stdout:
-        "Id: 99999999-8888-4777-8666-555555555555\nType: nemoclaw-mcp-v1\nResource version: 1\nCredential keys: GITHUB_TOKEN\n",
+      stdout: providerMetadataOutput(
+        "foreign-provider",
+        "nemoclaw-mcp-v1",
+        "99999999-8888-4777-8666-555555555555",
+        1,
+        "GITHUB_TOKEN",
+      ),
       stderr: "",
     });
-    const entry: McpBridgeEntry = {
+    const entry: McpSourceEntry = {
       server: "github",
       agent: "openclaw",
-      adapter: "mcporter",
+      adapter: "openclaw-config",
       url: "https://api.githubcopilot.com/mcp",
       env: ["GITHUB_TOKEN"],
       providerName: "alpha-mcp-github",
       providerId: "11111111-2222-4333-8444-555555555555",
       policyName: "mcp-bridge-github",
-      addedAt: "2026-08-19T00:00:00.000Z",
     };
 
-    expect(() =>
+    await expect(
       assertNoRegisteredProviderCredentialCollisions([entry], {
         listExtraProviders: () => ["foreign-provider"],
         runtimeSelection,
       }),
-    ).toThrow("Credential key 'GITHUB_TOKEN' is already supplied by registered provider");
+    ).rejects.toThrow(
+      "Credential key 'GITHUB_TOKEN' is already supplied by configured extra provider",
+    );
     expect(run).toHaveBeenCalledWith(
       ["provider", "get", "foreign-provider"],
       expect.objectContaining({ runtimeSelection }),
@@ -595,6 +478,10 @@ alpha-mcp-slack   generic  1                 0
     { value: "openshell:resolve:env:GITHUB_TOKEN", observation: "canonical" },
     { value: "openshell:resolve:env:v11_GITHUB_TOKEN", observation: "v11" },
     { value: "openshell:resolve:env:v0_GITHUB_TOKEN", observation: "v0" },
+    {
+      value: `openshell:resolve:env:s${"a".repeat(64)}_GITHUB_TOKEN`,
+      observation: `s${"a".repeat(64)}`,
+    },
   ] as const)("emits the bounded $observation credential revision", ({ value, observation }) => {
     const command = buildMcpCredentialRevisionObservationCommand("GITHUB_TOKEN");
     const result = spawnSync("/bin/sh", ["-c", command], {
@@ -612,6 +499,9 @@ alpha-mcp-slack   generic  1                 0
     "openshell:resolve:env:v11_OTHER_TOKEN",
     "openshell:resolve:env:v11x_GITHUB_TOKEN",
     `openshell:resolve:env:v${"1".repeat(21)}_GITHUB_TOKEN`,
+    `openshell:resolve:env:s${"a".repeat(63)}_GITHUB_TOKEN`,
+    `openshell:resolve:env:s${"A".repeat(64)}_GITHUB_TOKEN`,
+    `openshell:resolve:env:s${"a".repeat(64)}_OTHER_TOKEN`,
   ])("rejects an unbounded credential revision [case %#]", (value) => {
     const command = buildMcpCredentialRevisionObservationCommand("GITHUB_TOKEN");
     const result = spawnSync("/bin/sh", ["-c", command], {
@@ -628,71 +518,76 @@ alpha-mcp-slack   generic  1                 0
     expect(command).not.toMatch(/\/tmp|snapshot|cat\s|exec\s+[0-9]*>/);
   });
 
-  it("uses an OpenShell-only exec for provider credential proofs", () => {
-    const exec = vi.spyOn(processRecovery, "executeSandboxExecCommand").mockReturnValue({
+  it("uses an OpenShell-only exec for provider credential proofs", async () => {
+    const exec = vi.spyOn(processRecovery, "executeSandboxExecCommand").mockResolvedValue({
       status: 0,
       stdout: "v11",
       stderr: "",
     });
 
-    expect(
-      observeMcpCredentialRevision("alpha", {
-        server: "github",
-        agent: "openclaw",
-        adapter: "mcporter",
-        url: "https://mcp.example.test/mcp",
-        env: ["GITHUB_TOKEN"],
-        providerName: "alpha-mcp-github-0123456789abcdef",
-        providerId: "11111111-2222-4333-8444-555555555555",
-        policyName: "mcp-bridge-github",
-        addedAt: "2026-06-01T00:00:00.000Z",
-      }, runtimeSelection),
-    ).toBe("v11");
+    await expect(
+      observeMcpCredentialRevision(
+        "alpha",
+        {
+          server: "github",
+          agent: "openclaw",
+          adapter: "openclaw-config",
+          url: "https://mcp.example.test/mcp",
+          env: ["GITHUB_TOKEN"],
+          providerName: "alpha-mcp-github-0123456789abcdef",
+          providerId: "11111111-2222-4333-8444-555555555555",
+          policyName: "mcp-bridge-github",
+        },
+        runtimeSelection,
+      ),
+    ).resolves.toBe("v11");
     const proofCommand = exec.mock.calls[0]?.[1] ?? "";
     expect(proofCommand).toContain("\n");
     expect(proofCommand).toContain("GITHUB_TOKEN");
     expect(proofCommand).not.toMatch(/\/tmp|snapshot/);
     expect(proofCommand).not.toContain("base64 -d");
     expect(exec).toHaveBeenCalledWith("alpha", proofCommand, undefined, {
-      allowLocalDockerFallback: false,
+      localDockerFallbackPolicy: "never",
       runtimeSelection,
     });
 
-    exec.mockReturnValue({ status: 0, stdout: "raw-secret", stderr: "" });
-    expect(() =>
-      observeMcpCredentialRevision("alpha", {
-        server: "github",
-        agent: "openclaw",
-        adapter: "mcporter",
-        url: "https://mcp.example.test/mcp",
-        env: ["GITHUB_TOKEN"],
-        providerName: "alpha-mcp-github-0123456789abcdef",
-        providerId: "11111111-2222-4333-8444-555555555555",
-        policyName: "mcp-bridge-github",
-        addedAt: "2026-06-01T00:00:00.000Z",
-      }, runtimeSelection),
-    ).toThrow(/Could not observe the current OpenShell credential revision/);
+    exec.mockResolvedValue({ status: 0, stdout: "raw-secret", stderr: "" });
+    await expect(
+      observeMcpCredentialRevision(
+        "alpha",
+        {
+          server: "github",
+          agent: "openclaw",
+          adapter: "openclaw-config",
+          url: "https://mcp.example.test/mcp",
+          env: ["GITHUB_TOKEN"],
+          providerName: "alpha-mcp-github-0123456789abcdef",
+          providerId: "11111111-2222-4333-8444-555555555555",
+          policyName: "mcp-bridge-github",
+        },
+        runtimeSelection,
+      ),
+    ).rejects.toThrow(/Could not observe the current OpenShell credential revision/);
   });
 
-  it("waits for native multiline OpenShell exec to expose an attached revision", () => {
+  it("waits for native multiline OpenShell exec to expose an attached revision", async () => {
     const exec = vi
       .spyOn(processRecovery, "executeSandboxExecCommand")
-      .mockReturnValueOnce({ status: 0, stdout: "canonical", stderr: "" })
-      .mockReturnValue({ status: 0, stdout: "v11", stderr: "" });
+      .mockResolvedValueOnce({ status: 0, stdout: "canonical", stderr: "" })
+      .mockResolvedValue({ status: 0, stdout: "v11", stderr: "" });
     const refreshAfterObservedAbsence = vi.fn();
 
-    const revision = waitForAttachedMcpCredential(
+    const revision = await waitForAttachedMcpCredential(
       "alpha",
       {
         server: "github",
         agent: "openclaw",
-        adapter: "mcporter",
+        adapter: "openclaw-config",
         url: "https://mcp.example.test/mcp",
         env: ["GITHUB_TOKEN"],
         providerName: "alpha-mcp-github-0123456789abcdef",
         providerId: "11111111-2222-4333-8444-555555555555",
         policyName: "mcp-bridge-github",
-        addedAt: "2026-06-01T00:00:00.000Z",
       },
       runtimeSelection,
       { refreshAfterObservedAbsence },
@@ -708,158 +603,162 @@ alpha-mcp-slack   generic  1                 0
     expect(revision).toBe("v11");
   });
 
-  it("waits for a post-policy credential revision to settle before returning", () => {
-    const entry: McpBridgeEntry = {
+  it("waits for a post-policy credential revision to settle before returning", async () => {
+    const entry: McpSourceEntry = {
       server: "github",
       agent: "openclaw",
-      adapter: "mcporter",
+      adapter: "openclaw-config",
       url: "https://mcp.example.test/mcp",
       env: ["GITHUB_TOKEN"],
       providerName: "alpha-mcp-github-0123456789abcdef",
       providerId: "11111111-2222-4333-8444-555555555555",
       policyName: "mcp-bridge-github",
-      addedAt: "2026-06-01T00:00:00.000Z",
     };
     const exec = vi
       .spyOn(processRecovery, "executeSandboxExecCommand")
-      .mockReturnValueOnce({ status: 0, stdout: "v11", stderr: "" })
-      .mockReturnValue({ status: 0, stdout: "v12", stderr: "" });
+      .mockResolvedValueOnce({ status: 0, stdout: "v11", stderr: "" })
+      .mockResolvedValue({ status: 0, stdout: "v12", stderr: "" });
 
-    expect(waitForAttachedMcpCredential("alpha", entry, runtimeSelection)).toBe("v12");
+    await expect(waitForAttachedMcpCredential("alpha", entry, runtimeSelection)).resolves.toBe(
+      "v12",
+    );
     expect(exec).toHaveBeenCalledTimes(3);
   });
 
-  it("rejects a stable pre-update revision until the opaque provider mutation is projected", () => {
-    const entry: McpBridgeEntry = {
+  it("rejects a stable pre-update revision until the opaque provider mutation is projected", async () => {
+    const entry: McpSourceEntry = {
       server: "github",
       agent: "openclaw",
-      adapter: "mcporter",
+      adapter: "openclaw-config",
       url: "https://mcp.example.test/mcp",
       env: ["GITHUB_TOKEN"],
       providerName: "alpha-mcp-github-0123456789abcdef",
       providerId: "11111111-2222-4333-8444-555555555555",
       policyName: "mcp-bridge-github",
-      addedAt: "2026-06-01T00:00:00.000Z",
     };
     const exec = vi
       .spyOn(processRecovery, "executeSandboxExecCommand")
-      .mockReturnValueOnce({ status: 0, stdout: "v15566468742889590075", stderr: "" })
-      .mockReturnValueOnce({ status: 0, stdout: "v15566468742889590075", stderr: "" })
-      .mockReturnValueOnce({ status: 0, stdout: "v7480654703696766813", stderr: "" })
-      .mockReturnValue({ status: 0, stdout: "v7480654703696766813", stderr: "" });
+      .mockResolvedValueOnce({ status: 0, stdout: "v15566468742889590075", stderr: "" })
+      .mockResolvedValueOnce({ status: 0, stdout: "v15566468742889590075", stderr: "" })
+      .mockResolvedValueOnce({ status: 0, stdout: "v7480654703696766813", stderr: "" })
+      .mockResolvedValue({ status: 0, stdout: "v7480654703696766813", stderr: "" });
 
-    expect(
+    await expect(
       waitForAttachedMcpCredential("alpha", entry, runtimeSelection, {
         previousRevision: "v15566468742889590075",
       }),
-    ).toBe("v7480654703696766813");
+    ).resolves.toBe("v7480654703696766813");
     expect(exec).toHaveBeenCalledTimes(4);
   });
 
-  it("does not accept an identityless placeholder as attachment readiness", () => {
+  it("does not accept an identityless placeholder as attachment readiness", async () => {
     vi.stubEnv("NEMOCLAW_MCP_PROVIDER_SYNC_TIMEOUT_SECONDS", "1");
-    vi.spyOn(processRecovery, "executeSandboxExecCommand").mockReturnValue({
+    vi.spyOn(processRecovery, "executeSandboxExecCommand").mockResolvedValue({
       status: 0,
       stdout: "canonical",
       stderr: "",
     });
     vi.spyOn(Date, "now").mockReturnValueOnce(0).mockReturnValueOnce(0).mockReturnValue(1_000);
 
-    expect(() =>
-      waitForAttachedMcpCredential("alpha", {
-        server: "github",
-        agent: "deepagents-code",
-        adapter: "deepagents-config",
-        url: "https://mcp.example.test/mcp",
-        env: ["GITHUB_TOKEN"],
-        providerName: "alpha-mcp-github-0123456789abcdef",
-        providerId: "11111111-2222-4333-8444-555555555555",
-        policyName: "mcp-bridge-github",
-        addedAt: "2026-06-01T00:00:00.000Z",
-      }, runtimeSelection),
-    ).toThrow(/last bounded observation: canonical/);
-  });
-
-  it("reports an absent attached credential without attempting policy recovery", () => {
-    vi.stubEnv("NEMOCLAW_MCP_PROVIDER_SYNC_TIMEOUT_SECONDS", "1");
-    const exec = vi.spyOn(processRecovery, "executeSandboxExecCommand").mockReturnValue({
-      status: 0,
-      stdout: "absent",
-      stderr: "",
-    });
-    vi.spyOn(Date, "now").mockReturnValueOnce(0).mockReturnValueOnce(0).mockReturnValue(1_000);
-
-    expect(() =>
-      waitForAttachedMcpCredential("alpha", {
-        server: "github",
-        agent: "openclaw",
-        adapter: "mcporter",
-        url: "https://mcp.example.test/mcp",
-        env: ["GITHUB_TOKEN"],
-        providerName: "alpha-mcp-github-0123456789abcdef",
-        providerId: "11111111-2222-4333-8444-555555555555",
-        policyName: "mcp-bridge-github",
-        addedAt: "2026-06-01T00:00:00.000Z",
-      }, runtimeSelection),
-    ).toThrow(/last bounded observation: absent/);
-    expect(exec).toHaveBeenCalledOnce();
-  });
-
-  it("runs one provider-owned refresh after a fresh exec reports the credential absent", () => {
-    const entry: McpBridgeEntry = {
-      server: "github",
-      agent: "openclaw",
-      adapter: "mcporter",
-      url: "https://mcp.example.test/mcp",
-      env: ["GITHUB_TOKEN"],
-      providerName: "alpha-mcp-github-0123456789abcdef",
-      providerId: "11111111-2222-4333-8444-555555555555",
-      policyName: "mcp-bridge-github",
-      addedAt: "2026-06-01T00:00:00.000Z",
-    };
-    const exec = vi
-      .spyOn(processRecovery, "executeSandboxExecCommand")
-      .mockReturnValueOnce({ status: 0, stdout: "absent", stderr: "" })
-      .mockReturnValue({ status: 0, stdout: "v12", stderr: "" });
-    const refreshAfterObservedAbsence = vi.fn();
-
-    expect(
-      waitForAttachedMcpCredential("alpha", entry, runtimeSelection, {
-        refreshAfterObservedAbsence,
-      }),
-    ).toBe("v12");
-    expect(refreshAfterObservedAbsence).toHaveBeenCalledOnce();
-    expect(exec).toHaveBeenCalledTimes(3);
-  });
-
-  it("does not repeat the provider refresh when the credential remains absent", () => {
-    vi.stubEnv("NEMOCLAW_MCP_PROVIDER_SYNC_TIMEOUT_SECONDS", "1");
-    const exec = vi.spyOn(processRecovery, "executeSandboxExecCommand").mockReturnValue({
-      status: 0,
-      stdout: "absent",
-      stderr: "",
-    });
-    vi.spyOn(Date, "now").mockReturnValueOnce(0).mockReturnValueOnce(0).mockReturnValue(1_000);
-    const refreshAfterObservedAbsence = vi.fn();
-
-    expect(() =>
+    await expect(
       waitForAttachedMcpCredential(
         "alpha",
         {
           server: "github",
-          agent: "openclaw",
-          adapter: "mcporter",
+          agent: "deepagents-code",
+          adapter: "deepagents-config",
           url: "https://mcp.example.test/mcp",
           env: ["GITHUB_TOKEN"],
           providerName: "alpha-mcp-github-0123456789abcdef",
           providerId: "11111111-2222-4333-8444-555555555555",
           policyName: "mcp-bridge-github",
-          addedAt: "2026-06-01T00:00:00.000Z",
+        },
+        runtimeSelection,
+      ),
+    ).rejects.toThrow(/last bounded observation: canonical/);
+  });
+
+  it("reports an absent attached credential without attempting policy recovery", async () => {
+    vi.stubEnv("NEMOCLAW_MCP_PROVIDER_SYNC_TIMEOUT_SECONDS", "1");
+    const exec = vi.spyOn(processRecovery, "executeSandboxExecCommand").mockResolvedValue({
+      status: 0,
+      stdout: "absent",
+      stderr: "",
+    });
+    vi.spyOn(Date, "now").mockReturnValueOnce(0).mockReturnValueOnce(0).mockReturnValue(1_000);
+
+    await expect(
+      waitForAttachedMcpCredential(
+        "alpha",
+        {
+          server: "github",
+          agent: "openclaw",
+          adapter: "openclaw-config",
+          url: "https://mcp.example.test/mcp",
+          env: ["GITHUB_TOKEN"],
+          providerName: "alpha-mcp-github-0123456789abcdef",
+          providerId: "11111111-2222-4333-8444-555555555555",
+          policyName: "mcp-bridge-github",
+        },
+        runtimeSelection,
+      ),
+    ).rejects.toThrow(/last bounded observation: absent/);
+    expect(exec).toHaveBeenCalledOnce();
+  });
+
+  it("runs one provider-owned refresh after a fresh exec reports the credential absent", async () => {
+    const entry: McpSourceEntry = {
+      server: "github",
+      agent: "openclaw",
+      adapter: "openclaw-config",
+      url: "https://mcp.example.test/mcp",
+      env: ["GITHUB_TOKEN"],
+      providerName: "alpha-mcp-github-0123456789abcdef",
+      providerId: "11111111-2222-4333-8444-555555555555",
+      policyName: "mcp-bridge-github",
+    };
+    const exec = vi
+      .spyOn(processRecovery, "executeSandboxExecCommand")
+      .mockResolvedValueOnce({ status: 0, stdout: "absent", stderr: "" })
+      .mockResolvedValue({ status: 0, stdout: "v12", stderr: "" });
+    const refreshAfterObservedAbsence = vi.fn();
+
+    await expect(
+      waitForAttachedMcpCredential("alpha", entry, runtimeSelection, {
+        refreshAfterObservedAbsence,
+      }),
+    ).resolves.toBe("v12");
+    expect(refreshAfterObservedAbsence).toHaveBeenCalledOnce();
+    expect(exec).toHaveBeenCalledTimes(3);
+  });
+
+  it("does not repeat the provider refresh when the credential remains absent", async () => {
+    vi.stubEnv("NEMOCLAW_MCP_PROVIDER_SYNC_TIMEOUT_SECONDS", "1");
+    const exec = vi.spyOn(processRecovery, "executeSandboxExecCommand").mockResolvedValue({
+      status: 0,
+      stdout: "absent",
+      stderr: "",
+    });
+    vi.spyOn(Date, "now").mockReturnValueOnce(0).mockReturnValueOnce(0).mockReturnValue(1_000);
+    const refreshAfterObservedAbsence = vi.fn();
+
+    await expect(
+      waitForAttachedMcpCredential(
+        "alpha",
+        {
+          server: "github",
+          agent: "openclaw",
+          adapter: "openclaw-config",
+          url: "https://mcp.example.test/mcp",
+          env: ["GITHUB_TOKEN"],
+          providerName: "alpha-mcp-github-0123456789abcdef",
+          providerId: "11111111-2222-4333-8444-555555555555",
+          policyName: "mcp-bridge-github",
         },
         runtimeSelection,
         { refreshAfterObservedAbsence },
       ),
-    ).toThrow(/post-absence provider refresh attempted: yes/u);
+    ).rejects.toThrow(/post-absence provider refresh attempted: yes/u);
     expect(refreshAfterObservedAbsence).toHaveBeenCalledOnce();
     expect(exec).toHaveBeenCalledTimes(2);
   });
@@ -868,26 +767,25 @@ alpha-mcp-slack   generic  1                 0
     ["unavailable", null, "transport-unavailable"],
     ["malformed", { status: 0, stdout: "raw-secret", stderr: "" }, "invalid-bounded-output"],
     ["rejected", { status: 1, stdout: "", stderr: "" }, "proof-command-exit-1"],
-  ])("does not refresh when a credential observation is %s", (_case, result, diagnostic) => {
+  ])("does not refresh when a credential observation is %s", async (_case, result, diagnostic) => {
     vi.stubEnv("NEMOCLAW_MCP_PROVIDER_SYNC_TIMEOUT_SECONDS", "1");
-    vi.spyOn(processRecovery, "executeSandboxExecCommand").mockReturnValue(result);
+    vi.spyOn(processRecovery, "executeSandboxExecCommand").mockResolvedValue(result);
     vi.spyOn(Date, "now").mockReturnValueOnce(0).mockReturnValueOnce(0).mockReturnValue(1_000);
     const refreshAfterObservedAbsence = vi.fn();
 
     let failure: unknown;
     try {
-      waitForAttachedMcpCredential(
+      await waitForAttachedMcpCredential(
         "alpha",
         {
           server: "github",
           agent: "openclaw",
-          adapter: "mcporter",
+          adapter: "openclaw-config",
           url: "https://mcp.example.test/mcp",
           env: ["GITHUB_TOKEN"],
           providerName: "alpha-mcp-github-0123456789abcdef",
           providerId: "11111111-2222-4333-8444-555555555555",
           policyName: "mcp-bridge-github",
-          addedAt: "2026-06-01T00:00:00.000Z",
         },
         runtimeSelection,
         { refreshAfterObservedAbsence },
@@ -901,8 +799,8 @@ alpha-mcp-slack   generic  1                 0
     expect(refreshAfterObservedAbsence).not.toHaveBeenCalled();
   });
 
-  it("propagates a provider refresh failure after observed absence", () => {
-    vi.spyOn(processRecovery, "executeSandboxExecCommand").mockReturnValue({
+  it("propagates a provider refresh failure after observed absence", async () => {
+    vi.spyOn(processRecovery, "executeSandboxExecCommand").mockResolvedValue({
       status: 0,
       stdout: "absent",
       stderr: "",
@@ -911,120 +809,150 @@ alpha-mcp-slack   generic  1                 0
       throw new Error("provider refresh failed");
     });
 
-    expect(() =>
+    await expect(
       waitForAttachedMcpCredential(
         "alpha",
         {
           server: "github",
           agent: "openclaw",
-          adapter: "mcporter",
+          adapter: "openclaw-config",
           url: "https://mcp.example.test/mcp",
           env: ["GITHUB_TOKEN"],
           providerName: "alpha-mcp-github-0123456789abcdef",
           providerId: "11111111-2222-4333-8444-555555555555",
           policyName: "mcp-bridge-github",
-          addedAt: "2026-06-01T00:00:00.000Z",
         },
         runtimeSelection,
         { refreshAfterObservedAbsence },
       ),
-    ).toThrow("provider refresh failed");
+    ).rejects.toThrow("provider refresh failed");
     expect(refreshAfterObservedAbsence).toHaveBeenCalledOnce();
   });
 
-  it("does not accept a stale revision after the provider refresh", () => {
+  it("does not accept a stale revision after the provider refresh", async () => {
     vi.stubEnv("NEMOCLAW_MCP_PROVIDER_SYNC_TIMEOUT_SECONDS", "1");
     const exec = vi
       .spyOn(processRecovery, "executeSandboxExecCommand")
-      .mockReturnValueOnce({ status: 0, stdout: "absent", stderr: "" })
-      .mockReturnValueOnce({ status: 0, stdout: "v11", stderr: "" });
+      .mockResolvedValueOnce({ status: 0, stdout: "absent", stderr: "" })
+      .mockResolvedValueOnce({ status: 0, stdout: "v11", stderr: "" });
     vi.spyOn(Date, "now").mockReturnValueOnce(0).mockReturnValueOnce(0).mockReturnValue(1_000);
     const refreshAfterObservedAbsence = vi.fn();
 
-    expect(() =>
+    await expect(
       waitForAttachedMcpCredential(
         "alpha",
         {
           server: "github",
           agent: "openclaw",
-          adapter: "mcporter",
+          adapter: "openclaw-config",
           url: "https://mcp.example.test/mcp",
           env: ["GITHUB_TOKEN"],
           providerName: "alpha-mcp-github-0123456789abcdef",
           providerId: "11111111-2222-4333-8444-555555555555",
           policyName: "mcp-bridge-github",
-          addedAt: "2026-06-01T00:00:00.000Z",
         },
         runtimeSelection,
         { previousRevision: "v11", refreshAfterObservedAbsence },
       ),
-    ).toThrow(/last bounded observation: v11; post-absence provider refresh attempted: yes/u);
+    ).rejects.toThrow(
+      /last bounded observation: v11; post-absence provider refresh attempted: yes/u,
+    );
     expect(refreshAfterObservedAbsence).toHaveBeenCalledOnce();
     expect(exec).toHaveBeenCalledTimes(2);
   });
 
-  it("fails detach verification when the strict OpenShell exec is unavailable", () => {
+  it("fails detach verification when the strict OpenShell exec is unavailable", async () => {
     vi.stubEnv("NEMOCLAW_MCP_PROVIDER_SYNC_TIMEOUT_SECONDS", "1");
-    const exec = vi.spyOn(processRecovery, "executeSandboxExecCommand").mockReturnValue(null);
+    const exec = vi.spyOn(processRecovery, "executeSandboxExecCommand").mockResolvedValue(null);
     vi.spyOn(Date, "now").mockReturnValueOnce(0).mockReturnValueOnce(0).mockReturnValue(1_000);
 
-    expect(() =>
-      waitForDetachedMcpCredential("alpha", {
-        server: "github",
-        agent: "openclaw",
-        adapter: "mcporter",
-        url: "https://mcp.example.test/mcp",
-        env: ["GITHUB_TOKEN"],
-        providerName: "alpha-mcp-github-0123456789abcdef",
-        providerId: "11111111-2222-4333-8444-555555555555",
-        policyName: "mcp-bridge-github",
-        addedAt: "2026-06-01T00:00:00.000Z",
-      }, runtimeSelection),
-    ).toThrow(/did not confirm credential 'GITHUB_TOKEN' was revoked/);
+    await expect(
+      waitForDetachedMcpCredential(
+        "alpha",
+        {
+          server: "github",
+          agent: "openclaw",
+          adapter: "openclaw-config",
+          url: "https://mcp.example.test/mcp",
+          env: ["GITHUB_TOKEN"],
+          providerName: "alpha-mcp-github-0123456789abcdef",
+          providerId: "11111111-2222-4333-8444-555555555555",
+          policyName: "mcp-bridge-github",
+        },
+        runtimeSelection,
+      ),
+    ).rejects.toThrow(/did not confirm credential 'GITHUB_TOKEN' was revoked/);
 
     const proofCommand = exec.mock.calls[0]?.[1] ?? "";
     expect(proofCommand).toContain("GITHUB_TOKEN+x");
     expect(proofCommand).not.toContain("base64 -d");
     expect(exec).toHaveBeenCalledWith("alpha", proofCommand, undefined, {
-      allowLocalDockerFallback: false,
+      localDockerFallbackPolicy: "never",
       runtimeSelection,
     });
   });
 
-  it("requires a changed credential revision after provider updates", () => {
-    const entry = {
+  it("requires a changed credential revision after provider updates", async () => {
+    const entry: McpSourceEntry = {
       server: "github",
       agent: "openclaw",
-      adapter: "mcporter",
+      adapter: "openclaw-config",
       url: "https://mcp.example.test/mcp",
       env: ["GITHUB_TOKEN"],
       providerName: "alpha-mcp-github-0123456789abcdef",
       providerId: "11111111-2222-4333-8444-555555555555",
       policyName: "mcp-bridge-github",
-      addedAt: "2026-06-01T00:00:00.000Z",
     };
-    const exec = vi.spyOn(processRecovery, "executeSandboxExecCommand").mockReturnValue({
+    const exec = vi.spyOn(processRecovery, "executeSandboxExecCommand").mockResolvedValue({
       status: 0,
       stdout: "v12",
       stderr: "",
     });
 
-    expect(
+    await expect(
       waitForAttachedMcpCredential("alpha", entry, runtimeSelection, {
         previousRevision: "v11",
       }),
-    ).toBe("v12");
+    ).resolves.toBe("v12");
     expect(exec).toHaveBeenCalledTimes(2);
 
     vi.stubEnv("NEMOCLAW_MCP_PROVIDER_SYNC_TIMEOUT_SECONDS", "1");
     exec.mockClear();
-    exec.mockReturnValue({ status: 0, stdout: "v11", stderr: "" });
+    exec.mockResolvedValue({ status: 0, stdout: "v11", stderr: "" });
     vi.spyOn(Date, "now").mockReturnValueOnce(0).mockReturnValueOnce(0).mockReturnValue(1_000);
-    expect(() =>
+    await expect(
       waitForAttachedMcpCredential("alpha", entry, runtimeSelection, {
         previousRevision: "v11",
       }),
-    ).toThrow(/did not synchronize the expected credential revision/);
+    ).rejects.toThrow(/did not synchronize the expected credential revision/);
     expect(exec).toHaveBeenCalledTimes(1);
+  });
+
+  it("accepts a stable credential handle retained across provider updates", async () => {
+    const stableHandle = `s${"a".repeat(64)}` as const;
+    const exec = vi.spyOn(processRecovery, "executeSandboxExecCommand").mockResolvedValue({
+      status: 0,
+      stdout: stableHandle,
+      stderr: "",
+    });
+
+    await expect(
+      waitForAttachedMcpCredential(
+        "alpha",
+        {
+          server: "github",
+          agent: "openclaw",
+          adapter: "openclaw-config",
+          url: "https://mcp.example.test/mcp",
+          env: ["GITHUB_TOKEN"],
+          providerName: "alpha-mcp-github-0123456789abcdef",
+          providerId: "11111111-2222-4333-8444-555555555555",
+          policyName: "mcp-bridge-github",
+        },
+        runtimeSelection,
+        { previousRevision: stableHandle },
+      ),
+    ).resolves.toBe(stableHandle);
+    expect(exec).toHaveBeenCalledTimes(2);
   });
 });

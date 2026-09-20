@@ -37,7 +37,8 @@ const EXPECTED_MANAGED_IMAGE_OPENCLAW_MESSAGING_CAPABILITIES = [
   { channelId: "googlechat", pluginId: "googlechat" },
 ] as const;
 const EXPECTED_MANAGED_IMAGE_OPENCLAW_BUNDLED_INERT_CAPABILITIES = [
-  { channelId: "imessage", pluginId: "imessage" },
+  { channelId: "a2a", pluginId: "a2a" },
+  { channelId: "reef", pluginId: "reef" },
 ] as const;
 const EXPECTED_MANAGED_IMAGE_OPENCLAW_NEUTRAL_CAPABILITIES = [
   ...EXPECTED_MANAGED_IMAGE_OPENCLAW_MESSAGING_CAPABILITIES,
@@ -76,7 +77,8 @@ function messagingPlanner(): MessagingWorkflowPlanner {
 describe("generate-openclaw-config.mts: default plugin entries", () => {
   it("adds the installed NemoClaw plugin to the default OpenClaw allowlist (#8975)", () => {
     const config = buildConfig({ ...BASE_ENV });
-    expect(config.plugins.allow).toEqual(["nemoclaw"]);
+    expect(config.plugins.allow).toBeUndefined();
+    expect(config.tools.alsoAllow).toEqual(["bundle-mcp"]);
   });
 
   it("allows the enabled diagnostics plugin (#8975)", () => {
@@ -87,7 +89,7 @@ describe("generate-openclaw-config.mts: default plugin entries", () => {
     });
 
     expect(config.plugins.entries["diagnostics-otel"]).toEqual({ enabled: true });
-    expect(config.plugins.allow).toContain("diagnostics-otel");
+    expect(config.plugins.allow).toBeUndefined();
   });
 
   it("omits the stale acpx entry and disables bundled bonjour by default", () => {
@@ -119,9 +121,10 @@ describe("generate-openclaw-config.mts: default plugin entries", () => {
       expect(config.plugins.entries[pluginId], pluginId).toEqual({ enabled: false });
       expect(config.channels[channelId], channelId).toEqual({ enabled: false });
     });
-    ["diagnostics-otel", "brave", "tavily"].forEach((pluginId) => {
+    ["diagnostics-otel", "brave"].forEach((pluginId) => {
       expect(config.plugins.entries[pluginId], pluginId).toEqual({ enabled: false });
     });
+    expect(config.plugins.entries.tavily).toBeUndefined();
     expect(config.tools.web.search).toEqual({ enabled: false });
   });
 
@@ -151,7 +154,7 @@ describe("generate-openclaw-config.mts: default plugin entries", () => {
     });
     expect(JSON.stringify(added.channels.telegram)).not.toContain("botToken");
     expect(added.plugins.entries.telegram).toEqual({ enabled: true });
-    expect(added.plugins.allow).toContain("telegram");
+    expect(added.plugins.allow).toBeUndefined();
     expect(addedPlan.credentialBindings).toContainEqual(
       expect.objectContaining({ channelId: "telegram", providerEnvKey: "TELEGRAM_BOT_TOKEN" }),
     );
@@ -183,12 +186,12 @@ describe("generate-openclaw-config.mts: default plugin entries", () => {
     expect(removed.channels.telegram.accounts).toBeUndefined();
     expect(JSON.stringify(removed.channels.telegram)).not.toContain("TELEGRAM_BOT_TOKEN");
     expect(removed.plugins.entries.telegram).toEqual({ enabled: false });
-    expect(removed.plugins.allow).not.toContain("telegram");
+    expect(removed.plugins.allow).toBeUndefined();
     expect(removed.channels.discord).toEqual({ enabled: false });
     expect(removed.plugins.entries.discord).toEqual({ enabled: false });
   });
 
-  it("retains existing plugin allowlist and managed-image install metadata while explicitly disabling the plugin (#7744)", () => {
+  it("preserves native plugin controls while explicitly disabling the managed-image channel (#7744, #11766)", () => {
     const tempDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-managed-union-"));
     const originalEnvironment = { ...process.env };
     const configPath = path.join(tempDirectory, ".openclaw", "openclaw.json");
@@ -220,7 +223,7 @@ describe("generate-openclaw-config.mts: default plugin entries", () => {
 
       const config = JSON.parse(fs.readFileSync(configPath, "utf8"));
       expect(config.plugins?.installs?.["openclaw-weixin"]).toEqual(installEntry);
-      expect(config.plugins?.allow).toEqual(["nemoclaw", "openclaw-weixin"]);
+      expect(config.plugins?.allow).toEqual(["openclaw-weixin"]);
       expect(config.plugins?.entries?.["openclaw-weixin"]).toEqual({ enabled: false });
       expect(config.channels?.["openclaw-weixin"]).toEqual({ enabled: false });
     } finally {

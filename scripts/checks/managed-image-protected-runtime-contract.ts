@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { createDockerGpuDiagnosticRedactor } from "../../src/lib/onboard/docker-gpu-diagnostic-redaction.ts";
 import type { ShippedManagedImageAgent } from "../../src/lib/onboard/managed-image/contract.ts";
 import type { ManagedStartupProfile } from "../../src/lib/onboard/managed-startup/profile.ts";
 
@@ -22,13 +23,12 @@ export type ManagedImageProtectedRouteKind = ManagedImageLocalInferenceKind | "r
 // free without relying on truncation.
 export const MANAGED_IMAGE_PROTECTED_SANDBOX_PREFIX = "nmc-mi-";
 
-const PROTECTED_SANDBOX_AGENT_TOKENS: Readonly<Record<ShippedManagedImageAgent, string>> = Object.freeze(
-  {
+const PROTECTED_SANDBOX_AGENT_TOKENS: Readonly<Record<ShippedManagedImageAgent, string>> =
+  Object.freeze({
     openclaw: "oc",
     hermes: "he",
     "langchain-deepagents-code": "dc",
-  },
-);
+  });
 
 const PROTECTED_SANDBOX_ROUTE_TOKENS: Readonly<Record<ManagedImageProtectedRouteKind, string>> =
   Object.freeze({
@@ -100,10 +100,14 @@ export function withManagedImageLocalInferenceProfile(
   model: string,
 ): ManagedStartupProfile {
   const primaryModelRef =
-    profile.agent === "openclaw" ? `inference/${model}` : profile.inference.primaryModelRef;
+    profile.agent === "openclaw"
+      ? `inference/${model}`
+      : (profile.inference?.primaryModelRef ?? null);
   return {
     ...profile,
     inference: {
+      compatibility: profile.agent === "openclaw" ? {} : null,
+      inputModalities: profile.agent === "openclaw" ? ["text"] : null,
       ...profile.inference,
       routeProvider: "inference",
       upstreamProvider: route.providerName,
@@ -121,4 +125,16 @@ export function managedImageProtectedSandboxName(
   routeKind: ManagedImageProtectedRouteKind,
 ): string {
   return `${MANAGED_IMAGE_PROTECTED_SANDBOX_PREFIX}${PROTECTED_SANDBOX_AGENT_TOKENS[agent]}-${PROTECTED_SANDBOX_ROUTE_TOKENS[routeKind]}`;
+}
+
+export function managedImageFailureDetail(
+  error: unknown,
+  env: NodeJS.ProcessEnv = process.env,
+): string {
+  const redactor = createDockerGpuDiagnosticRedactor();
+  redactor.rememberInspect({
+    Config: { Env: Object.entries(env).map(([key, value]) => `${key}=${value ?? ""}`) },
+  });
+  const detail = error instanceof Error ? (error.stack ?? error.message) : String(error);
+  return redactor.redactText(detail).slice(0, 8_000);
 }

@@ -52,7 +52,8 @@ export type ResolveBaseImageOptions = {
   env?: NodeJS.ProcessEnv;
   pinnedRemoteRef?: string;
   requirePinnedRemoteRef?: boolean;
-  validateImage?: (imageRef: string) => boolean;
+  allowLocalFallback?: boolean;
+  validateImage?: (imageRef: string, context?: SandboxBaseImageValidationContext) => boolean;
   validationDescription?: string;
   resolutionHint?: SandboxBaseImageResolutionMetadata | null;
   forceRefresh?: boolean;
@@ -72,6 +73,11 @@ export type SandboxBaseImageResolution = {
   glibcVersion: string | null;
   metadata?: SandboxBaseImageResolutionMetadata;
 };
+
+export type SandboxBaseImageValidationContext = Pick<
+  SandboxBaseImageResolution,
+  "source" | "pinnedRemoteRef"
+>;
 
 export type LocalImageMetadata = {
   Id?: unknown;

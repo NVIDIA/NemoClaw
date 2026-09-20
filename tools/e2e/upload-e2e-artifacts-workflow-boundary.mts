@@ -55,7 +55,6 @@ const NATIVE_RUNTIME_AGGREGATE_UPLOAD_CONTRACT: WorkflowStep = {
 };
 const INNER_ALWAYS = "${{ always() }}";
 const CALLER_ALWAYS = "always()";
-const RETIRED_SELECTOR_COMPATIBILITY_JOB = "retired-selector-compatibility";
 const MCP_SCANNED_UPLOAD_CONDITION =
   "${{ always() && steps.mcp_artifact_secret_scan.outcome == 'success' }}";
 const CREDENTIAL_WINDOW_SCANNED_UPLOAD_CONDITION =
@@ -109,6 +108,22 @@ function isExactNativeRuntimeAggregateUpload(jobName: string, step: WorkflowStep
   );
 }
 
+function isExactReviewQueueResultUpload(jobName: string, step: WorkflowStep): boolean {
+  return (
+    jobName === "relevant-e2e" &&
+    isDeepStrictEqual(step, {
+      name: "Upload PR E2E results",
+      if: "${{ always() && inputs.checkout_sha != '' }}",
+      uses: UPLOAD_ARTIFACT_ACTION,
+      with: {
+        name: "review-queue-e2e-result-${{ github.run_id }}-${{ github.run_attempt }}",
+        path: "${{ runner.temp }}/review-queue-e2e-result.json",
+        "if-no-files-found": "error",
+      },
+    })
+  );
+}
+
 function isExactOpenShellSdkE2ePackageUpload(jobName: string, step: WorkflowStep): boolean {
   const inputs = record(step.with);
   return (
@@ -142,13 +157,6 @@ const EXPLICIT_UPLOAD_CONTRACTS = new Map<string, ExplicitUploadContract>([
     {
       name: "e2e-jetson-nvmap-gpu",
       path: "${{ runner.temp }}/e2e-artifacts/live/jetson-nvmap-gpu/",
-    },
-  ],
-  [
-    "retired-selector-compatibility",
-    {
-      name: "e2e-retired-selector-compatibility",
-      path: "e2e-artifacts/live/retired-selector-compatibility/",
     },
   ],
   [
@@ -188,6 +196,7 @@ const EXPLICIT_UPLOAD_CONTRACTS = new Map<string, ExplicitUploadContract>([
         "e2e-artifacts/live/${{ matrix.id }}/environment.result.json",
         "e2e-artifacts/live/${{ matrix.id }}/onboarding.result.json",
         "e2e-artifacts/live/${{ matrix.id }}/state-validation.result.json",
+        "e2e-artifacts/live/${{ matrix.id }}/config-export-evidence.v1.json",
         "e2e-artifacts/live/${{ matrix.id }}/dcode-base-image.json",
         "e2e-artifacts/live/${{ matrix.id }}/cloud-onboard-trace-timing-summary.json",
         "e2e-artifacts/live/${{ matrix.id }}/onboard-progress-budget.json",
@@ -225,13 +234,6 @@ const EXPLICIT_UPLOAD_CONTRACTS = new Map<string, ExplicitUploadContract>([
     {
       name: "${{ matrix.artifactName }}",
       path: "${{ runner.temp }}/native-runtime-evidence/",
-    },
-  ],
-  [
-    "llama-cpp-dgx-spark-qualification",
-    {
-      name: "e2e-llama-cpp-dgx-spark-qualification",
-      path: "e2e-artifacts/live/llama-cpp-dgx-spark-qualification/",
     },
   ],
   [
@@ -364,12 +366,18 @@ function validateUploadPlacement(
   // checkout. Its exact pre-checkout position is enforced by workflow-boundary.
   if (jobName === "generate-matrix") return;
   const stepsAfterUpload = jobSteps.slice(jobSteps.indexOf(upload) + 1);
-  if (
-    stepsAfterUpload.length > 1 ||
-    stepsAfterUpload.some((step) => step.name !== "Clean up Docker auth")
-  ) {
+  const tailNames = stepsAfterUpload.map((step) => step.name);
+  const validTail = [
+    [],
+    ["Clean up Docker auth"],
+    ["Restore Docker CLI after native Podman E2E"],
+    ["Restore Docker CLI after native Podman E2E", "Clean up Docker auth"],
+    ["Restore Docker CLI after native Podman public install"],
+    ["Restore Docker CLI after native Podman public install", "Clean up Docker auth"],
+  ].some((candidate) => isDeepStrictEqual(tailNames, candidate));
+  if (!validTail) {
     errors.push(
-      `${jobName} upload-e2e-artifacts invocation must follow artifact producers and precede only Docker auth cleanup`,
+      `${jobName} upload-e2e-artifacts invocation must follow artifact producers and precede only native Podman restoration and Docker auth cleanup`,
     );
   }
 }
@@ -447,7 +455,6 @@ export function validateUploadE2eArtifactsInvocations(workflow: WorkflowRecord):
           jobName === "live" ||
           jobName === "native-runtime-qualification-podman-toolchain" ||
           jobName === "openshell-dev-artifact" ||
-          jobName === RETIRED_SELECTOR_COMPATIBILITY_JOB ||
           env.E2E_JOB === "1" ||
           env.NEMOCLAW_RUN_LIVE_E2E === "1" ||
           SHARED_E2E_JOBS.has(jobName) ||
@@ -512,7 +519,8 @@ export function validateUploadE2eArtifactsInvocations(workflow: WorkflowRecord):
         !isExactCommitCliArtifactUpload &&
         !isExactManagedImageBuildCacheUpload(jobName, step) &&
         !isExactOpenShellSdkE2ePackageUpload(jobName, step) &&
-        !isExactNativeRuntimeAggregateUpload(jobName, step)
+        !isExactNativeRuntimeAggregateUpload(jobName, step) &&
+        !isExactReviewQueueResultUpload(jobName, step)
       ) {
         errors.push(`${jobName} must not invoke actions/upload-artifact directly`);
       }

@@ -115,50 +115,52 @@ describe("local adapter lifecycle", () => {
     expect(fs.statSync(pidPath).mode & 0o777).toBe(0o600);
   });
 
-  it.each([
-    "ollama-auth-proxy.js",
-    "ollama-auth-proxy.mts",
-  ])("guards PID cleanup for the supported %s script", (scriptName) => {
-    const pidPath = path.join(tempDir(), "adapter.pid");
-    persistLocalAdapterPid(pidPath, 789);
-    const killed: string[][] = [];
-    const commandLine = `node /opt/nemoclaw/scripts/${scriptName}`;
+  it.each(["ollama-auth-proxy.js", "ollama-auth-proxy.mts"])(
+    "guards PID cleanup for the supported %s script",
+    (scriptName) => {
+      const pidPath = path.join(tempDir(), "adapter.pid");
+      persistLocalAdapterPid(pidPath, 789);
+      const killed: string[][] = [];
+      const commandLine = `node /opt/nemoclaw/scripts/${scriptName}`;
 
-    expect(isLocalAdapterProcess(789, isOllamaAuthProxyCommandLine, () => commandLine)).toBe(true);
+      expect(isLocalAdapterProcess(789, isOllamaAuthProxyCommandLine, () => commandLine)).toBe(
+        true,
+      );
 
-    killLocalAdapterPid({
-      pidPath,
-      processMatcher: isOllamaAuthProxyCommandLine,
-      run: (args) => {
-        killed.push(args);
-      },
-      runCapture: () => commandLine,
-    });
+      killLocalAdapterPid({
+        pidPath,
+        processMatcher: isOllamaAuthProxyCommandLine,
+        run: (args) => {
+          killed.push(args);
+        },
+        runCapture: () => commandLine,
+      });
 
-    expect(killed).toEqual([["kill", "789"]]);
-    expect(loadLocalAdapterPid(pidPath)).toBeNull();
-  });
+      expect(killed).toEqual([["kill", "789"]]);
+      expect(loadLocalAdapterPid(pidPath)).toBeNull();
+    },
+  );
 
-  it.each([
-    "ollama-auth-proxy-helper.mjs",
-    "ollama-auth-proxy.mts.backup",
-  ])("does not clean up the near-named %s process", (scriptName) => {
-    const pidPath = path.join(tempDir(), "adapter.pid");
-    persistLocalAdapterPid(pidPath, 789);
-    const killed: string[][] = [];
+  it.each(["ollama-auth-proxy-helper.mjs", "ollama-auth-proxy.mts.backup"])(
+    "does not clean up the near-named %s process",
+    (scriptName) => {
+      const pidPath = path.join(tempDir(), "adapter.pid");
+      persistLocalAdapterPid(pidPath, 789);
+      const killed: string[][] = [];
 
-    killLocalAdapterPid({
-      pidPath,
-      processMatcher: isOllamaAuthProxyCommandLine,
-      run: (args) => {
-        killed.push(args);
-      },
-      runCapture: () => `node /opt/nemoclaw/scripts/${scriptName}`,
-    });
+      killLocalAdapterPid({
+        pidPath,
+        processMatcher: isOllamaAuthProxyCommandLine,
+        run: (args) => {
+          killed.push(args);
+        },
+        runCapture: () => `node /opt/nemoclaw/scripts/${scriptName}`,
+      });
 
-    expect(killed).toEqual([]);
-    expect(loadLocalAdapterPid(pidPath)).toBeNull();
-  });
+      expect(killed).toEqual([]);
+      expect(loadLocalAdapterPid(pidPath)).toBeNull();
+    },
+  );
 
   it("signals the spawned child of a failed startup when its pid file was never written", () => {
     const dir = tempDir();
@@ -346,25 +348,25 @@ describe("ensureLocalAdapterStateDir", () => {
   });
 
   describe.skipIf(process.platform === "win32")("symlink-safe adapter state", () => {
-    it.each([
-      "gateways",
-      "selected port",
-    ])("rejects a symlink at the %s ancestor before writing adapter secrets (#3053)", (symlinkAt) => {
-      const home = tempDir();
-      vi.stubEnv("HOME", home);
-      const controlled = path.join(home, "controlled");
-      const sharedRoot = path.join(home, ".nemoclaw");
-      const gatewaysDir = path.join(sharedRoot, "gateways");
-      const selectedDir = path.join(gatewaysDir, "9123");
-      fs.mkdirSync(controlled, { recursive: true });
-      fs.mkdirSync(symlinkAt === "gateways" ? sharedRoot : gatewaysDir, { recursive: true });
-      fs.symlinkSync(controlled, symlinkAt === "gateways" ? gatewaysDir : selectedDir);
+    it.each(["gateways", "selected port"])(
+      "rejects a symlink at the %s ancestor before writing adapter secrets (#3053)",
+      (symlinkAt) => {
+        const home = tempDir();
+        vi.stubEnv("HOME", home);
+        const controlled = path.join(home, "controlled");
+        const sharedRoot = path.join(home, ".nemoclaw");
+        const gatewaysDir = path.join(sharedRoot, "gateways");
+        const selectedDir = path.join(gatewaysDir, "9123");
+        fs.mkdirSync(controlled, { recursive: true });
+        fs.mkdirSync(symlinkAt === "gateways" ? sharedRoot : gatewaysDir, { recursive: true });
+        fs.symlinkSync(controlled, symlinkAt === "gateways" ? gatewaysDir : selectedDir);
 
-      expect(() =>
-        writeLocalAdapterSecretFile(path.join(selectedDir, "adapter-token"), "secret"),
-      ).toThrow(/symbolic link/);
-      expect(fs.existsSync(path.join(controlled, "adapter-token"))).toBe(false);
-    });
+        expect(() =>
+          writeLocalAdapterSecretFile(path.join(selectedDir, "adapter-token"), "secret"),
+        ).toThrow(/symbolic link/);
+        expect(fs.existsSync(path.join(controlled, "adapter-token"))).toBe(false);
+      },
+    );
 
     it("refuses to overwrite an adapter secret through a final-component symlink", () => {
       const home = tempDir();

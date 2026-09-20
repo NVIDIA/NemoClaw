@@ -50,7 +50,10 @@ describe("showSandboxStatus flow", () => {
       const report = await harness.getSandboxStatusReport("alpha");
 
       expect(harness.logSpy.mock.calls.flat().join("\n")).toContain(
-        `Portable lifecycle phase: ${phase}`,
+        `Saved Portable lifecycle phase: ${phase}`,
+      );
+      expect(harness.logSpy.mock.calls.flat().join("\n")).toContain(
+        "Runtime and agent health: not probed",
       );
       expect(report).toMatchObject({
         schemaVersion: 1,
@@ -139,7 +142,7 @@ describe("showSandboxStatus flow", () => {
     await expect(harness.showSandboxStatus("alpha")).resolves.toBeUndefined();
 
     expect(harness.logSpy.mock.calls.flat().join("\n")).toContain(
-      "Portable lifecycle phase: active",
+      "Saved Portable lifecycle phase: active",
     );
     expect(harness.collectSandboxStatusSnapshotSpy).not.toHaveBeenCalled();
     expect(harness.getSandboxDockerRuntimeSpy).not.toHaveBeenCalled();
@@ -665,6 +668,50 @@ describe("showSandboxStatus flow", () => {
     });
   });
 
+  it("renders llama.cpp details already classified in the snapshot", async () => {
+    const harness = createStatusFlowHarness({
+      sandboxEntry: {
+        provider: "llama-cpp-local",
+        model: "muse-glimmer",
+      },
+      currentProvider: "llama-cpp-local",
+      currentModel: "muse-glimmer",
+      llamaCpp: { kind: "attached", endpointUrl: "http://127.0.0.1:8081/v1" },
+    });
+
+    await expect(harness.showSandboxStatus("alpha")).resolves.toBeUndefined();
+
+    const output = harness.logSpy.mock.calls.flat().join("\n");
+    expect(output).toContain("Llama.cpp: attached");
+    expect(output).toContain("Endpoint: http://127.0.0.1:8081/v1");
+  });
+
+  it("exits nonzero when text status reports unavailable llama.cpp ownership (#10256)", async () => {
+    const harness = createStatusFlowHarness({
+      sandboxEntry: {
+        provider: "llama-cpp-local",
+        model: "muse-glimmer",
+      },
+      currentProvider: "llama-cpp-local",
+      currentModel: "muse-glimmer",
+      llamaCpp: {
+        kind: "unavailable",
+        diagnostic: "Managed llama.cpp ownership state is unavailable.",
+        recovery:
+          "Run nemoclaw alpha doctor. Rerun onboarding for that sandbox if the managed llama.cpp runtime check fails.",
+      },
+    });
+
+    await expect(harness.showSandboxStatus("alpha")).resolves.toBeUndefined();
+
+    const output = harness.logSpy.mock.calls.flat().join("\n");
+    expect(output).toContain("Llama.cpp: unavailable");
+    expect(output).toContain(
+      "Run nemoclaw alpha doctor. Rerun onboarding for that sandbox if the managed llama.cpp runtime check fails.",
+    );
+    expect(process.exitCode).toBe(1);
+  });
+
   it("does not erase a dashboard-port conflict during Docker recovery", async () => {
     const conflict = {
       failure: {
@@ -681,9 +728,11 @@ describe("showSandboxStatus flow", () => {
     });
 
     await expect(harness.showSandboxStatus("alpha")).resolves.toBeUndefined();
+    const report = await harness.getSandboxStatusReport("alpha");
 
     const output = harness.logSpy.mock.calls.flat().join("\n");
     expect(output).toContain("Failure layer: sandbox_dashboard_port_conflict");
+    expect(report.inferenceHealth).toBeNull();
     expect(process.exitCode).toBe(1);
   });
 

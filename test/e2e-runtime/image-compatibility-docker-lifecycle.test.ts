@@ -53,27 +53,27 @@ log_file=${shellQuote(logPath)}
 
 if [[ "\${1:-}" == "run" ]]; then
   probe_name=""
-  for ((index = 1; index <= \$#; index += 1)); do
+  for ((index = 1; index <= $#; index += 1)); do
     if [[ "\${!index}" == "--name" ]]; then
-      name_index=\$((index + 1))
+      name_index=$((index + 1))
       probe_name="\${!name_index}"
       break
     fi
   done
-  printf '%s\n' "\$probe_name" >>"\$probe_names_file"
-  if [[ ! -e "\$marker" ]]; then
-    : >"\$marker"
-    printf '%s\n' "\$probe_name" >"\$name_file"
-    printf 'retained %s\n' "\$probe_name" >>"\$log_file"
-    "\$real_docker" create --name "\$probe_name" --entrypoint /usr/bin/ldd "\$test_image" --version >/dev/null
+  printf '%s\n' "$probe_name" >>"$probe_names_file"
+  if [[ ! -e "$marker" ]]; then
+    : >"$marker"
+    printf '%s\n' "$probe_name" >"$name_file"
+    printf 'retained %s\n' "$probe_name" >>"$log_file"
+    "$real_docker" create --name "$probe_name" --entrypoint /usr/bin/ldd "$test_image" --version >/dev/null
     exit 124
   fi
-  printf 'retried %s\n' "\$probe_name" >>"\$log_file"
+  printf 'retried %s\n' "$probe_name" >>"$log_file"
 elif [[ "\${1:-}" == "rm" && "\${2:-}" == "-f" ]]; then
-  printf 'removed %s\n' "\${3:-}" >>"\$log_file"
+  printf 'removed %s\n' "\${3:-}" >>"$log_file"
 fi
 
-exec "\$real_docker" "\$@"
+exec "$real_docker" "$@"
 `;
 
       fs.writeFileSync(shimPath, shim, { mode: 0o755 });

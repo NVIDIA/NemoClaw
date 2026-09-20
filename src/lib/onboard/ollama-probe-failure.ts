@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { ApplyOllamaRuntimeContextWindowResult } from "../inference/ollama-runtime-context";
-import { abortNonInteractive } from "./non-interactive-abort";
 import { isOllamaProviderPinned } from "./ollama-startup";
 
 export interface OllamaProbeFailureInput {
@@ -21,6 +20,28 @@ type SelectedOllamaModel = {
 
 export type OllamaModelSelectionOutcome = SelectedOllamaModel | { outcome: "back-to-selection" };
 
+/** A fatal selection outcome whose process termination must happen after transactional rollback. */
+export class OllamaSelectionFatalError extends Error {
+  constructor(
+    readonly termination: "process" | "non-interactive",
+    message: string,
+    readonly hint?: string,
+  ) {
+    super(message);
+    this.name = "OllamaSelectionFatalError";
+  }
+}
+
+/** Defer a fatal process exit to the owner of any active Ollama mutation. */
+export function deferOllamaProcessExit(): never {
+  throw new OllamaSelectionFatalError("process", "Fatal Ollama model selection failure.");
+}
+
+/** Defer a non-interactive abort to the owner of any active Ollama mutation. */
+export function deferAbort(message: string, hint?: string): never {
+  throw new OllamaSelectionFatalError("non-interactive", message, hint);
+}
+
 /** Finish Ollama selection, returning to provider selection on an interactive context failure. */
 export function completeOllamaRuntimeContextSelection(
   result: ApplyOllamaRuntimeContextWindowResult,
@@ -28,9 +49,13 @@ export function completeOllamaRuntimeContextSelection(
   isNonInteractive: () => boolean,
 ): OllamaModelSelectionOutcome {
   if (result.ok) return selected;
-  if (isNonInteractive()) abortNonInteractive(result.message);
+  if (isNonInteractive()) {
+    throw new OllamaSelectionFatalError("non-interactive", result.message);
+  }
   console.error(`  ${result.message}`);
-  if (isOllamaProviderPinned()) process.exit(1);
+  if (isOllamaProviderPinned()) {
+    throw new OllamaSelectionFatalError("process", result.message);
+  }
   console.log("  Returning to provider selection.");
   console.log("");
   return { outcome: "back-to-selection" };
@@ -60,10 +85,14 @@ export function handleOllamaProbeFailure(
       console.error(
         "  NEMOCLAW_PROVIDER pins onboarding to Ollama but the Ollama model runner is unhealthy; refusing to loop on Ollama model selection.",
       );
-      process.exit(1);
+      throw new OllamaSelectionFatalError(
+        "process",
+        `Ollama daemon is unhealthy for model '${selectedModel}'.`,
+      );
     }
     if (isNonInteractive()) {
-      abortNonInteractive(
+      throw new OllamaSelectionFatalError(
+        "non-interactive",
         `Ollama daemon is unhealthy for model '${selectedModel}'.`,
         "Pick a non-Ollama provider, restart Ollama, or rerun with NEMOCLAW_PROVIDER set explicitly.",
       );
@@ -77,7 +106,12 @@ export function handleOllamaProbeFailure(
     console.log("");
     return "back-to-selection";
   }
-  if (isNonInteractive()) abortNonInteractive(`Ollama model '${selectedModel}' unavailable.`);
+  if (isNonInteractive()) {
+    throw new OllamaSelectionFatalError(
+      "non-interactive",
+      `Ollama model '${selectedModel}' unavailable.`,
+    );
+  }
   console.log("  Choose a different Ollama model or select Other.");
   console.log("");
   return "continue";

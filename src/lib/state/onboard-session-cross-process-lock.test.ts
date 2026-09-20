@@ -252,6 +252,64 @@ describe("cross-process onboard lock", () => {
     }
   });
 
+  it("reports the live holder identity when a competing write is blocked by lock contention (#11052)", async () => {
+    const childScript = `
+      const fs = require("node:fs");
+      const path = require("node:path");
+      const lockFile = process.argv[1];
+      fs.mkdirSync(path.dirname(lockFile), { recursive: true });
+      const fd = fs.openSync(lockFile, "wx", 0o600);
+      fs.writeSync(fd, JSON.stringify({
+        pid: process.pid,
+        startedAt: "2026-01-02T03:04:05.000Z",
+        command: "separate nemoclaw onboard process",
+      }));
+      process.stdout.write("locked\\\\n");
+      setInterval(() => {}, 1000);
+    `;
+    const child = spawn(process.execPath, ["-e", childScript, session.LOCK_FILE], {
+      stdio: ["ignore", "pipe", "inherit"],
+    });
+    await once(child.stdout, "data");
+
+    try {
+      const contend = () => session.listRetainedSandboxRecoveryRecords();
+      expect(contend).toThrow(
+        "Cannot update onboarding recovery while another onboarding run owns the lock.",
+      );
+      expect(contend).toThrow(`Lock holder PID: ${String(child.pid)}.`);
+      expect(contend).toThrow("Started: 2026-01-02T03:04:05.000Z.");
+      expect(contend).toThrow("Lock holder command: separate nemoclaw onboard process.");
+      expect(contend).toThrow("Wait for the other run to finish, then rerun.");
+    } finally {
+      const exited = once(child, "exit");
+      child.kill();
+      await exited;
+    }
+  });
+
+  it("points at verified stale-lock cleanup when the recorded lock is stale (#11052)", () => {
+    fs.mkdirSync(path.dirname(session.LOCK_FILE), { recursive: true });
+    fs.writeFileSync(session.LOCK_FILE, "not-a-lock-record", { mode: 0o600 });
+
+    expect(() => session.listRetainedSandboxRecoveryRecords()).toThrow(
+      "Wait briefly, then rerun so verified stale-lock cleanup can finish.",
+    );
+    expect(() => session.listRetainedSandboxRecoveryRecords()).not.toThrow(/Lock holder PID/u);
+  });
+
+  it("omits holder details when live lock contention records none (#11052)", () => {
+    const migrationLock = path.join(tempHome, ".nemoclaw", ".gateway-state-migration.lock");
+    fs.mkdirSync(migrationLock, { recursive: true });
+
+    expect(() => session.listRetainedSandboxRecoveryRecords()).toThrow(
+      "Wait for the other run to finish, then rerun.",
+    );
+    expect(() => session.listRetainedSandboxRecoveryRecords()).not.toThrow(
+      /Lock holder PID|Started:|Lock holder command/u,
+    );
+  });
+
   it("does not replace a session written by the process that owns the onboard lock", async () => {
     session.saveSession(
       session.createSession({
@@ -452,5 +510,83 @@ describe("cross-process onboard lock", () => {
         createAttemptNonce,
       }),
     ]);
+  });
+
+  it("reconstructs retained recovery from the sole verified-create registry checkpoint (#11096)", () => {
+    const fingerprint = "a".repeat(64);
+    const createAttemptNonce = "b".repeat(62);
+    const lifecycleGeneration = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    const pendingCreateIdentity = {
+      schemaVersion: 1 as const,
+      state: "verified-create" as const,
+      gatewayName: "nemoclaw",
+      gatewayPort: 8080,
+      sandboxName: "alpha",
+      lifecycleGeneration,
+      sandboxIdentityFingerprint: fingerprint,
+      createAttemptNonce,
+      route: "native" as const,
+    };
+    session.saveSession(
+      session.createSession({ sessionId: "replacement-session", sandboxName: "alpha" }),
+    );
+    const registryEntry = {
+      name: "alpha",
+      provider: "vllm-local",
+      credentialEnv: "VLLM_API_KEY",
+      pendingRouteReservation: true as const,
+      reservationSessionId: "failed-create-session",
+      gatewayName: "nemoclaw",
+      gatewayPort: 8080,
+      lifecycleGeneration,
+      lifecycleLiveIdentityFingerprint: fingerprint,
+      pendingCreateIdentity,
+    };
+
+    const first = session.reconstructRetainedSandboxRecoveryFromPendingCreate(registryEntry);
+    const second = session.reconstructRetainedSandboxRecoveryFromPendingCreate(registryEntry);
+
+    expect(second).toEqual(first);
+    expect(session.listRetainedSandboxRecoveryRecords()).toEqual([
+      expect.objectContaining({
+        sandboxName: "alpha",
+        sandboxIdentityFingerprint: fingerprint,
+        gatewayName: "nemoclaw",
+        gatewayPort: 8080,
+        lifecycleGeneration,
+        createAttemptNonce,
+        resources: {
+          sharedInferenceProviders: ["vllm-local"],
+          sandboxScopedProviders: [],
+          credentialEnvironmentVariables: ["VLLM_API_KEY"],
+        },
+      }),
+    ]);
+  });
+
+  it("refuses registry-only recovery when the checkpoint overlay disagrees (#11096)", () => {
+    expect(() =>
+      session.reconstructRetainedSandboxRecoveryFromPendingCreate({
+        name: "alpha",
+        pendingRouteReservation: true,
+        reservationSessionId: "failed-create-session",
+        gatewayName: "nemoclaw",
+        gatewayPort: 8080,
+        lifecycleGeneration: "generation-alpha",
+        lifecycleLiveIdentityFingerprint: "a".repeat(64),
+        pendingCreateIdentity: {
+          schemaVersion: 1,
+          state: "verified-create",
+          gatewayName: "nemoclaw",
+          gatewayPort: 8080,
+          sandboxName: "alpha",
+          lifecycleGeneration: "generation-alpha",
+          sandboxIdentityFingerprint: "b".repeat(64),
+          createAttemptNonce: "c".repeat(62),
+          route: "native",
+        },
+      }),
+    ).toThrow(/does not match the registry lifecycle authority/u);
+    expect(session.listRetainedSandboxRecoveryRecords()).toEqual([]);
   });
 });

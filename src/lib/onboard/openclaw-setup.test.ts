@@ -9,8 +9,12 @@ import {
 } from "./openclaw-setup";
 
 describe("OpenClaw sandbox setup", () => {
-  it("shares config sync before web-search reconciliation", async () => {
-    const syncNemoClawConfigInSandbox = vi.fn();
+  it("waits for config sync before web-search reconciliation", async () => {
+    let finishConfigSync!: () => void;
+    const configSync = new Promise<void>((resolve) => {
+      finishConfigSync = resolve;
+    });
+    const syncNemoClawConfigInSandbox = vi.fn(() => configSync);
     const reconcileWebSearch = vi.fn(async () => undefined);
     const revalidateSandboxIdentity = vi.fn();
     const configureOpenclawSandbox = createConfigureOpenclawSandbox({
@@ -18,7 +22,7 @@ describe("OpenClaw sandbox setup", () => {
       reconcileWebSearch,
     });
 
-    await configureOpenclawSandbox(
+    const configuring = configureOpenclawSandbox(
       "spark-box",
       "model",
       "provider",
@@ -32,34 +36,73 @@ describe("OpenClaw sandbox setup", () => {
       "model",
       revalidateSandboxIdentity,
     );
+    expect(reconcileWebSearch).not.toHaveBeenCalled();
+
+    finishConfigSync();
+    await configuring;
+
     expect(reconcileWebSearch).toHaveBeenCalledExactlyOnceWith(
       "spark-box",
       null,
       revalidateSandboxIdentity,
     );
-    expect(syncNemoClawConfigInSandbox.mock.invocationCallOrder[0]).toBeLessThan(
-      reconcileWebSearch.mock.invocationCallOrder[0]!,
+  });
+
+  it("propagates config sync failure before web-search reconciliation", async () => {
+    const syncNemoClawConfigInSandbox = vi.fn(async () => {
+      throw new Error("config sync failed");
+    });
+    const reconcileWebSearch = vi.fn(async () => undefined);
+    const configureOpenclawSandbox = createConfigureOpenclawSandbox({
+      syncNemoClawConfigInSandbox,
+      reconcileWebSearch,
+    });
+
+    await expect(configureOpenclawSandbox("spark-box", "model", "provider", null)).rejects.toThrow(
+      "config sync failed",
     );
+
+    expect(reconcileWebSearch).not.toHaveBeenCalled();
   });
 
   it("delegates fresh setup to shared OpenClaw configuration", async () => {
     const configureOpenclawSandbox = vi.fn(async () => undefined);
+    const restartNativeGateway = vi.fn(async () => ({ ok: true as const }));
     const revalidateSandboxIdentity = vi.fn();
     const setup = createOpenclawSetup({
       step: vi.fn(),
       agentProductName: () => "OpenClaw",
       configureOpenclawSandbox,
+      restartNativeGateway,
+      shouldRestartNativeGateway: (provider) => provider === "nvidia-router",
     });
 
-    await setup("spark-box", "model", "provider", null, revalidateSandboxIdentity);
+    await setup("spark-box", "model", "nvidia-router", null, revalidateSandboxIdentity);
 
     expect(configureOpenclawSandbox).toHaveBeenCalledExactlyOnceWith(
       "spark-box",
       "model",
-      "provider",
+      "nvidia-router",
       null,
       revalidateSandboxIdentity,
     );
+    expect(restartNativeGateway).toHaveBeenCalledExactlyOnceWith("spark-box");
+    expect(configureOpenclawSandbox).toHaveBeenCalledBefore(restartNativeGateway);
+  });
+
+  it("leaves ordinary providers on their initial native gateway", async () => {
+    const restartNativeGateway = vi.fn(async () => ({ ok: true as const }));
+    const setup = createOpenclawSetup({
+      step: vi.fn(),
+      agentProductName: () => "OpenClaw",
+      configureOpenclawSandbox: vi.fn(async () => undefined),
+      restartNativeGateway,
+      shouldRestartNativeGateway: (provider) => provider === "nvidia-router",
+    });
+
+    await setup("spark-box", "model", "compatible-endpoint", null);
+
+    expect(restartNativeGateway).not.toHaveBeenCalled();
   });
 
   it("withholds setup success when sandbox identity changes during config sync (#9833)", async () => {
@@ -71,12 +114,38 @@ describe("OpenClaw sandbox setup", () => {
         configureOpenclawSandbox: async () => {
           throw new Error("sandbox identity changed");
         },
+        restartNativeGateway: vi.fn(),
+        shouldRestartNativeGateway: () => false,
       });
 
       await expect(setup("spark-box", "model", "provider", null)).rejects.toThrow(
         "sandbox identity changed",
       );
 
+      expect(log.mock.calls.flat().join("\n")).not.toContain("gateway launched");
+    } finally {
+      log.mockRestore();
+    }
+  });
+
+  it("withholds setup success when the native gateway restart fails", async () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    try {
+      const setup = createOpenclawSetup({
+        step: vi.fn(),
+        agentProductName: () => "OpenClaw",
+        configureOpenclawSandbox: vi.fn(async () => undefined),
+        restartNativeGateway: vi.fn(async () => ({
+          ok: false as const,
+          failureLayer: "native agent command",
+          detail: "restart rejected",
+        })),
+        shouldRestartNativeGateway: () => true,
+      });
+
+      await expect(setup("spark-box", "model", "nvidia-router", null)).rejects.toThrow(
+        /native gateway restart failed.*restart rejected/,
+      );
       expect(log.mock.calls.flat().join("\n")).not.toContain("gateway launched");
     } finally {
       log.mockRestore();

@@ -43,8 +43,8 @@ export const REBUILD_TIMEOUT_MS = 25 * 60_000;
 export const PROBE_TIMEOUT_MS = 120_000;
 export const LIVE_TIMEOUT_MS = 90 * 60_000;
 export const OPENSHELL_EXEC_ARGUMENT_LIMIT_BYTES = 32_768;
-const FAKE_API_IMAGE =
-  "node:22-trixie-slim@sha256:db8a96a63e5264607ada2d206758876ebbed6a12be2ada7517793cbfb0c2a29c";
+export const FAKE_API_IMAGE =
+  "node:24.18.1-trixie-slim@sha256:ac39e4b5fcb2b1b34b20364fd58b2e898f3bb80731ee6f62a7536f9df3d6aadc";
 const DEFAULT_OPENSHELL_DOCKER_NETWORK = "openshell-docker";
 export const FAKE_API_PROXY_READINESS_PORT = 8079;
 export const FAKE_API_PROXY_SOURCE = String.raw`
@@ -521,6 +521,7 @@ export async function runSandboxNode(
   options: {
     artifactName: string;
     env?: Record<string, string>;
+    preserveSymlinks?: boolean;
     redactionValues: string[];
     sandboxName?: string;
     timeoutMs?: number;
@@ -543,6 +544,7 @@ export function buildSandboxNodeInvocation(
   options: {
     artifactName: string;
     env?: Record<string, string>;
+    preserveSymlinks?: boolean;
   },
 ): string[] {
   const environment = Object.entries(options.env ?? {}).map(([key, value]) => {
@@ -552,11 +554,12 @@ export function buildSandboxNodeInvocation(
     return `export ${key}=${shellQuote(value)}`;
   });
   const scriptName = `/tmp/nemoclaw-${options.artifactName.replace(/[^a-zA-Z0-9_.-]/g, "-")}.mjs`;
+  const nodeOptions = options.preserveSymlinks === false ? "" : " --preserve-symlinks";
   return buildSandboxShellInvocation(`
 set -eu
 ${environment.join("\n")}
 printf '%s' ${shellQuote(base64(source))} | base64 -d > ${shellQuote(scriptName)}
-node --preserve-symlinks ${shellQuote(scriptName)}
+node${nodeOptions} ${shellQuote(scriptName)}
 `);
 }
 

@@ -140,6 +140,10 @@ function completeBundle(providerId: string): RuntimeProviderBundle {
         displayName: "Contract fixture",
       })),
       capture: () => ({ status: 0, stdout: "", stderr: "" }),
+      nvidiaContainer: {
+        capture: () => ({ status: 0, stdout: "", stderr: "" }),
+        cleanup: () => ({ status: "absent" }),
+      },
     },
   };
 }
@@ -338,9 +342,29 @@ describe("runtime provider activation catalog", () => {
 
       expect(() =>
         createRuntimeProviderActivationCatalog([registration(candidate, incomplete)]),
-      ).toThrow(`missing: ${operation}`);
+      ).toThrow(
+        operation === "host-local-inference"
+          ? "cannot expose NVIDIA container proof without host-local-inference authority"
+          : `missing: ${operation}`,
+      );
     },
   );
+
+  it("accepts a qualified provider without the optional NVIDIA container capability", () => {
+    const candidate = CANDIDATE_TOPOLOGIES[1];
+    const bundle = completeBundle(candidate.providerId);
+    const supported = bundle.containerEngine as Extract<
+      RuntimeProviderBundle["containerEngine"],
+      { readonly supported: true }
+    >;
+    const { nvidiaContainer: _capability, ...containerEngine } = supported;
+
+    expect(() =>
+      createRuntimeProviderActivationCatalog([
+        registration(candidate, { ...bundle, containerEngine }),
+      ]),
+    ).not.toThrow();
+  });
 
   it("rejects incomplete host-local inference authority", () => {
     const candidate = CANDIDATE_TOPOLOGIES[1];

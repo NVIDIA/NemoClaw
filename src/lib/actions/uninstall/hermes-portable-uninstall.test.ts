@@ -30,11 +30,11 @@ import { inspectHermesPortableUninstallJournal } from "./hermes-portable-uninsta
 let homeDir: string;
 let fixture: HermesPortableUninstallFixture | undefined;
 
-function runCleanup(target: HermesPortableUninstallFixture) {
+async function runCleanup(target: HermesPortableUninstallFixture) {
   const legacyOpenShell = vi.fn(() => true);
-  const result = runPortableRuntimeCleanupTransaction(target.cleanupInput, legacyOpenShell, {
+  const result = await runPortableRuntimeCleanupTransaction(target.cleanupInput, legacyOpenShell, {
     hermesPortable: target.deps,
-    withRegistryLock: (_registryFile, operation) => operation(),
+    withRegistryLock: async (_registryFile, operation) => operation(),
   });
   expect(legacyOpenShell).not.toHaveBeenCalled();
   return result;
@@ -58,7 +58,7 @@ describe("Hermes Portable schema-5 uninstall", () => {
     expect(fixture.targetRow.credentialEnv).toBeNull();
     expect(fixture.targetRow.hostLocalInferenceReceipt).toEqual(expect.any(String));
     expect(fixture.targetRow.hostLocalInferenceProvenance).toBeUndefined();
-    expect(runCleanup(fixture)).toMatchObject({
+    expect(await runCleanup(fixture)).toMatchObject({
       sandboxContainersRemoved: 1,
       selectorsRemoved: [],
     });
@@ -78,7 +78,7 @@ describe("Hermes Portable schema-5 uninstall", () => {
 
     const eventCount = fixture.operationEvents.length;
     const providerCallCount = fixture.gatewayProvider.calls().length;
-    expect(runCleanup(fixture)).toMatchObject({ sandboxContainersRemoved: 0 });
+    expect(await runCleanup(fixture)).toMatchObject({ sandboxContainersRemoved: 0 });
     expect(fixture.operationEvents).toHaveLength(eventCount);
     expect(fixture.gatewayProvider.calls()).toHaveLength(providerCallCount);
     expect(fixture.sandboxDeleteCount()).toBe(1);
@@ -109,7 +109,9 @@ describe("Hermes Portable schema-5 uninstall", () => {
         },
       });
 
-      expect(() => runCleanup(fixture!)).toThrow("registry row 'portable-hermes' is incomplete");
+      await expect(runCleanup(fixture!)).rejects.toThrow(
+        "registry row 'portable-hermes' is incomplete",
+      );
       expect(fixture.sandboxDeleteCount()).toBe(0);
       expect(fixture.gatewayProvider.isPresent()).toBe(true);
       expect(fixture.harness.container()).not.toBeNull();
@@ -119,12 +121,12 @@ describe("Hermes Portable schema-5 uninstall", () => {
 
   it("replaces completed journal authority after a later install (#9608)", async () => {
     fixture = await createHermesPortableUninstallFixture(homeDir);
-    expect(runCleanup(fixture)).toMatchObject({ sandboxContainersRemoved: 1 });
+    expect(await runCleanup(fixture)).toMatchObject({ sandboxContainersRemoved: 1 });
     const firstAuthority = inspectHermesPortableUninstallJournal(fixture.stateDir)?.authoritySha256;
 
     fixture.restore();
     fixture = await createHermesPortableUninstallFixture(homeDir);
-    expect(runCleanup(fixture)).toMatchObject({ sandboxContainersRemoved: 1 });
+    expect(await runCleanup(fixture)).toMatchObject({ sandboxContainersRemoved: 1 });
     expect(inspectHermesPortableUninstallJournal(fixture.stateDir)?.authoritySha256).not.toBe(
       firstAuthority,
     );
@@ -135,7 +137,7 @@ describe("Hermes Portable schema-5 uninstall", () => {
     fixture = await createHermesPortableUninstallFixture(homeDir, {
       interruptAfter: "receipts-retired",
     });
-    expect(() => runCleanup(fixture!)).toThrow("interrupted after receipts-retired");
+    await expect(runCleanup(fixture!)).rejects.toThrow("interrupted after receipts-retired");
 
     const blockedOperation = vi.fn();
     await expect(
@@ -179,7 +181,7 @@ describe("Hermes Portable schema-5 uninstall", () => {
     expect(replacementOnboarding.events).toEqual(["lock-enter", "lock-exit"]);
     expect(replacementInput.buildContext.assertCurrentSource).not.toHaveBeenCalled();
 
-    expect(runCleanup(fixture)).toMatchObject({ sandboxContainersRemoved: 0 });
+    expect(await runCleanup(fixture)).toMatchObject({ sandboxContainersRemoved: 0 });
     expect(inspectHermesPortableUninstallJournal(fixture.stateDir)?.phase).toBe("completed");
     expect(() =>
       assertHermesPortableUninstallCompleteForOnboarding(fixture!.stateDir),
@@ -190,14 +192,14 @@ describe("Hermes Portable schema-5 uninstall", () => {
       lifecycleGeneration: "generation-2",
     });
     expect(fixture.targetRow.lifecycleGeneration).toBe("generation-2");
-    expect(runCleanup(fixture)).toMatchObject({ sandboxContainersRemoved: 1 });
+    expect(await runCleanup(fixture)).toMatchObject({ sandboxContainersRemoved: 1 });
     expect(inspectHermesPortableUninstallJournal(fixture.stateDir)?.phase).toBe("completed");
   });
 
   it("preserves a provider, inference runtime, and recovery evidence shared by a sibling (#9608)", async () => {
     fixture = await createHermesPortableUninstallFixture(homeDir, { shared: true });
 
-    expect(runCleanup(fixture)).toMatchObject({ sandboxContainersRemoved: 1 });
+    expect(await runCleanup(fixture)).toMatchObject({ sandboxContainersRemoved: 1 });
     expect(fixture.gatewayProvider.isPresent()).toBe(true);
     expect(fixture.harness.container()).not.toBeNull();
     expect(fs.existsSync(fixture.inferenceDirectory)).toBe(true);
@@ -208,7 +210,7 @@ describe("Hermes Portable schema-5 uninstall", () => {
     ]);
 
     const eventCount = fixture.operationEvents.length;
-    expect(runCleanup(fixture)).toMatchObject({ sandboxContainersRemoved: 0 });
+    expect(await runCleanup(fixture)).toMatchObject({ sandboxContainersRemoved: 0 });
     expect(fixture.operationEvents).toHaveLength(eventCount);
     expect(fixture.gatewayProvider.isPresent()).toBe(true);
     expect(fixture.harness.container()).not.toBeNull();
@@ -219,7 +221,7 @@ describe("Hermes Portable schema-5 uninstall", () => {
       providerOnlyShared: true,
     });
 
-    expect(runCleanup(fixture)).toMatchObject({ sandboxContainersRemoved: 1 });
+    expect(await runCleanup(fixture)).toMatchObject({ sandboxContainersRemoved: 1 });
     expect(fixture.gatewayProvider.isPresent()).toBe(true);
     expect(fixture.harness.container()).toBeNull();
     expect(fs.existsSync(fixture.inferenceDirectory)).toBe(true);
@@ -228,7 +230,7 @@ describe("Hermes Portable schema-5 uninstall", () => {
     ]);
 
     const eventCount = fixture.operationEvents.length;
-    expect(runCleanup(fixture)).toMatchObject({ sandboxContainersRemoved: 0 });
+    expect(await runCleanup(fixture)).toMatchObject({ sandboxContainersRemoved: 0 });
     expect(fixture.operationEvents).toHaveLength(eventCount);
     expect(fixture.gatewayProvider.isPresent()).toBe(true);
     expect(fixture.harness.container()).toBeNull();
@@ -245,13 +247,13 @@ describe("Hermes Portable schema-5 uninstall", () => {
   ] as const)("resumes the real transaction after the %s action (#9608)", async (phase) => {
     fixture = await createHermesPortableUninstallFixture(homeDir, { interruptAfter: phase });
 
-    expect(() => runCleanup(fixture!)).toThrow(`interrupted after ${phase}`);
+    await expect(runCleanup(fixture!)).rejects.toThrow(`interrupted after ${phase}`);
     expect(inspectHermesPortableUninstallJournal(fixture.stateDir)?.phase).toBe(phase);
-    expect(runCleanup(fixture)).toMatchObject({ sandboxContainersRemoved: 0 });
+    expect(await runCleanup(fixture)).toMatchObject({ sandboxContainersRemoved: 0 });
     expect(inspectHermesPortableUninstallJournal(fixture.stateDir)?.phase).toBe("completed");
 
     const eventCount = fixture.operationEvents.length;
-    expect(runCleanup(fixture)).toMatchObject({ sandboxContainersRemoved: 0 });
+    expect(await runCleanup(fixture)).toMatchObject({ sandboxContainersRemoved: 0 });
     expect(fixture.operationEvents).toHaveLength(eventCount);
     expect(fixture.sandboxDeleteCount()).toBe(1);
     expect(
@@ -284,7 +286,7 @@ describe("Hermes Portable schema-5 uninstall", () => {
     fixture = await createHermesPortableUninstallFixture(homeDir);
     mutate(fixture);
 
-    expect(() => runCleanup(fixture!)).toThrow(message);
+    await expect(runCleanup(fixture!)).rejects.toThrow(message);
     expect(fixture.sandboxDeleteCount()).toBe(0);
     expect(fixture.gatewayProvider.isPresent()).toBe(true);
     expect(fixture.harness.container()).not.toBeNull();
@@ -296,9 +298,9 @@ describe("Hermes Portable schema-5 uninstall", () => {
       interruptAfter: "prepared",
     });
 
-    expect(() => runCleanup(fixture!)).toThrow("interrupted after prepared");
+    await expect(runCleanup(fixture!)).rejects.toThrow("interrupted after prepared");
     fixture.replaceSandbox();
-    expect(() => runCleanup(fixture!)).toThrow("OpenShell sandbox identity disagrees");
+    await expect(runCleanup(fixture!)).rejects.toThrow("OpenShell sandbox identity disagrees");
     expect(fixture.sandboxDeleteCount()).toBe(1);
     expect(fixture.gatewayProvider.isPresent()).toBe(true);
     expect(fixture.harness.container()).not.toBeNull();
@@ -330,7 +332,7 @@ describe("Hermes Portable schema-5 uninstall", () => {
     fixture = await createHermesPortableUninstallFixture(homeDir);
     fixture[mutate]();
 
-    expect(() => runCleanup(fixture!)).toThrow(message);
+    await expect(runCleanup(fixture!)).rejects.toThrow(message);
     expect(fixture.sandboxDeleteCount()).toBe(0);
     expect(fixture.gatewayProvider.isPresent()).toBe(true);
     expect(fixture.harness.container()).not.toBeNull();
@@ -343,7 +345,7 @@ describe("Hermes Portable schema-5 uninstall", () => {
     fixture = await createHermesPortableUninstallFixture(homeDir);
     fs.chmodSync(fixture.inferenceDirectory, 0o755);
 
-    expect(() => runCleanup(fixture!)).toThrow(
+    await expect(runCleanup(fixture!)).rejects.toThrow(
       "Hermes Portable inference gateway provider journal directory lacks private authority",
     );
     expect(fs.statSync(fixture.inferenceDirectory).mode & 0o777).toBe(0o755);
@@ -355,7 +357,7 @@ describe("Hermes Portable schema-5 uninstall", () => {
     fixture = await createHermesPortableUninstallFixture(homeDir);
     fs.rmSync(fixture.inferenceDirectory, { recursive: true });
 
-    expect(() => runCleanup(fixture!)).toThrow("authority directory is missing");
+    await expect(runCleanup(fixture!)).rejects.toThrow("authority directory is missing");
     expect(fs.existsSync(fixture.inferenceDirectory)).toBe(false);
     expect(fixture.sandboxDeleteCount()).toBe(0);
     expect(inspectHermesPortableUninstallJournal(fixture.stateDir)).toBeNull();
@@ -366,9 +368,9 @@ describe("Hermes Portable schema-5 uninstall", () => {
       interruptAfter: "prepared",
     });
 
-    expect(() => runCleanup(fixture!)).toThrow("interrupted after prepared");
+    await expect(runCleanup(fixture!)).rejects.toThrow("interrupted after prepared");
     fixture.gatewayProvider.setPresent(false);
-    expect(() => runCleanup(fixture!)).toThrow(
+    await expect(runCleanup(fixture!)).rejects.toThrow(
       "gateway provider disappeared before uninstall journaled it",
     );
     expect(inspectHermesPortableUninstallJournal(fixture.stateDir)?.phase).toBe("prepared");
@@ -381,10 +383,10 @@ describe("Hermes Portable schema-5 uninstall", () => {
     async (phase) => {
       fixture = await createHermesPortableUninstallFixture(homeDir, { interruptAfter: phase });
 
-      expect(() => runCleanup(fixture!)).toThrow(`interrupted after ${phase}`);
+      await expect(runCleanup(fixture!)).rejects.toThrow(`interrupted after ${phase}`);
       const containerId = fixture.harness.container()!.id;
       expect(fixture.harness.engine.capture(["rm", "--force", containerId], 1_000).status).toBe(0);
-      expect(() => runCleanup(fixture!)).toThrow(
+      await expect(runCleanup(fixture!)).rejects.toThrow(
         "Podman host-local inference container inspection failed",
       );
       expect(inspectHermesPortableUninstallJournal(fixture.stateDir)?.phase).toBe(phase);

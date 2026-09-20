@@ -19,7 +19,10 @@ import {
   installManagedImageCapabilityUnion,
 } from "../../../src/lib/messaging/applier/build/messaging-build-applier.mts";
 import { BUILT_IN_CHANNEL_MANIFESTS } from "../../../src/lib/messaging/channels/built-ins.ts";
-import type { ChannelManifest, MessagingAgentId } from "../../../src/lib/messaging/manifest/types.ts";
+import type {
+  ChannelManifest,
+  MessagingAgentId,
+} from "../../../src/lib/messaging/manifest/types.ts";
 
 function renderedIds(
   manifest: ChannelManifest,
@@ -37,14 +40,14 @@ function renderedIds(
 
 describe("managed-image capability union", () => {
   it("derives the complete all-agent package union from trusted manifests (#7744)", () => {
-    expect(collectManagedImageOpenClawPluginInstallSpecs({ OPENCLAW_VERSION: "2026.7.1" })).toEqual(
+    expect(collectManagedImageOpenClawPluginInstallSpecs({ OPENCLAW_VERSION: "2026.9.1" })).toEqual(
       [
-        "npm:@openclaw/discord@2026.7.1",
+        "npm:@openclaw/discord@2026.9.1",
         "npm:@tencent-weixin/openclaw-weixin@2.4.3",
-        "npm:@openclaw/slack@2026.7.1",
-        "npm:@openclaw/whatsapp@2026.7.1",
-        "npm:@openclaw/msteams@2026.7.1",
-        "npm:@openclaw/googlechat@2026.7.1",
+        "npm:@openclaw/slack@2026.9.1",
+        "npm:@openclaw/whatsapp@2026.9.1",
+        "npm:@openclaw/msteams@2026.9.1",
+        "npm:@openclaw/googlechat@2026.9.1",
       ],
     );
     expect(collectManagedImageHermesUvPackages()).toEqual([
@@ -75,7 +78,9 @@ describe("managed-image capability union", () => {
     });
     expect(MANAGED_IMAGE_HERMES_SUPPORTED_PLATFORMS).toEqual(hermesPlatforms);
     expect(MANAGED_IMAGE_HERMES_NEUTRAL_PLATFORMS).toEqual([
+      "a2a",
       "bluebubbles",
+      "buzz",
       "dingtalk",
       "discord",
       "email",

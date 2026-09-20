@@ -26,24 +26,28 @@ function extractShellFunctionFromSource(src: string, name: string): string {
 }
 
 /**
- * Extract remove_stale_gateway_file and run it against `pidPath` inside a
+ * Extract remove_stale_hermes_gateway_files and run it against `pidPath` inside a
  * throwaway temp dir. Returns the spawn result plus the temp root so callers
  * can assert on the resulting on-disk shape.
  */
-export function runRemoveStale(
-  seed: (tmp: string, pidPath: string) => void,
-  label = "legacy PID file",
-): { status: number | null; stderr: string; tmp: string; pidPath: string } {
+export function runRemoveStale(seed: (tmp: string, pidPath: string) => void): {
+  status: number | null;
+  stderr: string;
+  tmp: string;
+  pidPath: string;
+} {
   const src = fs.readFileSync(START_SCRIPT, "utf-8");
-  const fn = extractShellFunctionFromSource(src, "remove_stale_gateway_file");
+  const fn = extractShellFunctionFromSource(src, "remove_stale_hermes_gateway_files");
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "hermes-gw-pid-cleanup-"));
   const pidPath = path.join(tmp, "gateway.pid");
+  fs.mkdirSync(path.join(tmp, "runtime"));
   seed(tmp, pidPath);
 
   const script = [
     "set -euo pipefail",
     fn,
-    `remove_stale_gateway_file ${JSON.stringify(pidPath)} ${JSON.stringify(label)}`,
+    `HERMES_DIR=${JSON.stringify(tmp)}`,
+    "remove_stale_hermes_gateway_files",
   ].join("\n");
 
   const result = spawnSync("bash", ["-c", script], { encoding: "utf-8", timeout: 5000 });

@@ -26,6 +26,7 @@ import {
 
 const AGENT_TURN_TIMEOUT_MS = 3 * 60_000;
 const OPENCLAW_AGENT_ATTEMPTS = 3;
+const OPENCLAW_MAIN_AGENT_DATABASE = "/sandbox/.openclaw/agents/main/agent/openclaw-agent.sqlite";
 
 export interface OpenClawAgentAssertionEvidence {
   reply: string;
@@ -86,15 +87,9 @@ export async function runOpenClawAgentAssertion(
     },
     run: async (attempt) => {
       const sessionId = `e2e-common-egress-${Date.now()}-${process.pid}-${attempt}`;
-      const sessionRoot = "/sandbox/.openclaw/agents/main/sessions";
-      const remoteCommand = [
-        `rm -f ${shellQuote(`${sessionRoot}/${sessionId}.jsonl`)} ${shellQuote(
-          `${sessionRoot}/${sessionId}.jsonl.lock`,
-        )} ${shellQuote(`${sessionRoot}/${sessionId}.trajectory.jsonl`)} 2>/dev/null || true`,
-        `openclaw agent --agent main --json --thinking off --session-id ${shellQuote(
-          sessionId,
-        )} -m ${shellQuote(args.prompt)}`,
-      ].join("; ");
+      const remoteCommand = `openclaw agent --agent main --json --thinking off --session-id ${shellQuote(
+        sessionId,
+      )} -m ${shellQuote(args.prompt)}`;
       const agent = await host.command(
         "ssh",
         [
@@ -161,8 +156,8 @@ export async function runOpenClawAgentAssertion(
               "node",
               "-e",
               buildOpenClawToolEvidenceReducerScript(args.publicFetchExpectation),
-              `${sessionRoot}/${sessionId}.jsonl`,
-              `${sessionRoot}/${sessionId}.trajectory.jsonl`,
+              OPENCLAW_MAIN_AGENT_DATABASE,
+              sessionId,
             ],
             {
               env: commandEnv(),

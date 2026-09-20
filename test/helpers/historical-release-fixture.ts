@@ -97,7 +97,6 @@ export function pushTag(fixture: HistoricalReleaseFixture, tag: string, target: 
 export function planArguments(candidate: string, exception?: string, output?: string): string[] {
   const args = [
     "node",
-    "--experimental-strip-types",
     "--no-warnings",
     planScriptPath,
     "--version",

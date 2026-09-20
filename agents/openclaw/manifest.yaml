@@ -19,7 +19,7 @@ homepage: "https://openclaw.ai"
 install_method: npm  # npm install -g openclaw@<version>
 binary_path: /usr/local/bin/openclaw
 version_command: "openclaw --version"
-expected_version: "2026.7.1"
+expected_version: "2026.9.1"
 version_scheme: calendar
 gateway_command: "openclaw gateway run"
 # Interactive entry point a user types inside the sandbox. OpenClaw stays a
@@ -44,10 +44,21 @@ config:
   config_file: openclaw.json
   format: json
 
+# Static integration metadata only. OpenClaw remains the authority on which
+# skills are visible or active.
+skills:
+  writable_root: /sandbox/.openclaw/workspace/skills
+  list_command: [skills, list, --agent, main]
+  add_command: [skills, install, "{source}", --agent, main, --force]
+
 # ── State directories ──────────────────────────────────────────
 state_dirs:
   - agents
-  - extensions
+  # OpenClaw owns native plugin lifecycle. Restore a captured extensions tree,
+  # but do not erase target-only native installs when an older snapshot had no
+  # extensions directory.
+  - path: extensions
+    clear_when_absent: false
   # Legacy layouts can still contain this pre-extensions directory. Keep it
   # outside portable state.
   - path: plugins
@@ -67,6 +78,10 @@ state_dirs:
   - path: identity
     backup: false
   - path: devices
+    backup: false
+  # Canonical SQLite pairing and gateway authentication state is machine-local.
+  # Wipe it on destroy, but never include it in portable backups.
+  - path: state
     backup: false
   - canvas
   - cron
@@ -106,7 +121,7 @@ inference:
 # ── MCP server support ───────────────────────────────────────────
 mcp:
   support: bridge
-  adapter: mcporter
+  adapter: openclaw-config
 
 # ── Phone-home hosts ───────────────────────────────────────────
 phone_home_hosts:

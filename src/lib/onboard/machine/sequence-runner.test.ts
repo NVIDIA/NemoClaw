@@ -4,7 +4,6 @@
 import { describe, expect, it } from "vitest";
 
 import { advanceTo, branchTo, completeOnboardMachine, retryTo } from "./result";
-import { OnboardRuntime, type OnboardRuntimeDeps } from "./runtime";
 import {
   buildOnboardSequenceHandlers,
   DuplicateOnboardSequencePhaseError,
@@ -13,8 +12,6 @@ import {
 } from "./sequence-runner";
 import {
   type Session,
-  type SessionUpdates,
-  cloneSession,
   createSession,
   createTestRuntime,
 } from "../../../../test/helpers/onboard-machine-runtime-fixture";

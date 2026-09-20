@@ -16,13 +16,21 @@ import {
 } from "./hermes-portable-contract";
 
 const SANDBOX = "alpha";
+const PRE_SKILLS_MANIFEST_SHA256 =
+  "c7bcd6e0616904ab66c1f2f39a670d920cfb1b7ef7c1edc496e20e554db6a6c2";
+const PRE_NATIVE_OWNERSHIP_MANIFEST_SHA256 =
+  "e78822837d5530f61a26ea1d554d7f9b21be13e3e223e294f0999187dc0fa71e";
 const temporaryDirectories: string[] = [];
 
 function startupArgv(...extra: string[]): string[] {
+  return startupArgvFor(SANDBOX, ...extra);
+}
+
+function startupArgvFor(sandboxName: string, ...extra: string[]): string[] {
   return [
     "env",
     "NEMOCLAW_HERMES_API_PORT=8642",
-    `NEMOCLAW_SANDBOX_NAME=${SANDBOX}`,
+    `NEMOCLAW_SANDBOX_NAME=${sandboxName}`,
     ...extra,
     "/usr/local/bin/nemoclaw-start",
   ];
@@ -48,6 +56,40 @@ function setExpectedManifestVersion(
     mode: 0o644,
   });
   agent.expected_version = expectedVersion;
+}
+
+function removeReviewedSkillsMetadata(agent: AgentDefinition): void {
+  const source = fs.readFileSync(agent.manifestPath, "utf8");
+  const metadata = [
+    "# Static integration metadata only. Hermes remains the authority on which",
+    "# skills are visible or active.",
+    "skills:",
+    "  writable_root: /sandbox/.hermes/skills",
+    "  list_command: [skills, list]",
+    "",
+    "",
+  ].join("\n");
+  expect(source.split(metadata)).toHaveLength(2);
+  fs.writeFileSync(agent.manifestPath, source.replace(metadata, ""), { mode: 0o644 });
+}
+
+function removeReviewedNativeOwnershipMetadata(agent: AgentDefinition): void {
+  const source = fs.readFileSync(agent.manifestPath, "utf8");
+  const previous = source
+    .replace("  - path: lazy-packages\n    clear_when_absent: false\n", "  - lazy-packages\n")
+    .replace("  - path: plugins\n    clear_when_absent: false\n", "  - plugins\n");
+  expect(previous).not.toBe(source);
+  fs.writeFileSync(agent.manifestPath, previous, { mode: 0o644 });
+  Object.defineProperty(agent, "stateDirectories", {
+    configurable: true,
+    enumerable: true,
+    writable: true,
+    value: agent.stateDirectories.map((entry) =>
+      entry.kind === "path" && ["lazy-packages", "plugins"].includes(entry.path)
+        ? { ...entry, clearWhenAbsent: true }
+        : entry,
+    ),
+  });
 }
 
 function expectStartupCandidatesRejected(
@@ -95,10 +137,10 @@ describe("Hermes portable startup contract", () => {
       devicePairing: false,
       configDir: "/sandbox/.hermes",
     });
-    expect(agent.expected_version).toBe("0.19.0");
+    expect(agent.expected_version).toBe("0.20.6");
   });
 
-  it.each([undefined, "", "0.19.1"])(
+  it.each([undefined, "", "0.19.0"])(
     "rejects Hermes manifest version %j outside the accepted portable matrix (#9203)",
     (expectedVersion) => {
       const agent = copyAgent();
@@ -121,7 +163,7 @@ describe("Hermes portable startup contract", () => {
       sandboxName: SANDBOX,
       startupArgv: startupArgv(),
     });
-    setExpectedManifestVersion(accepted, "0.19.1");
+    setExpectedManifestVersion(accepted, "0.19.0");
 
     expect(() =>
       assertCurrentHermesPortableStartupContract(contract, {
@@ -169,6 +211,102 @@ describe("Hermes portable startup contract", () => {
       startupArgv: startupArgv(),
     });
     expect(() => assertCurrentHermesPortableStoredStartupContract(contract, SANDBOX)).not.toThrow();
+  });
+
+  it.each([
+    {
+      expectedManifestSha256: PRE_SKILLS_MANIFEST_SHA256,
+      prepare: (agent: AgentDefinition) => {
+        removeReviewedSkillsMetadata(agent);
+        removeReviewedNativeOwnershipMetadata(agent);
+      },
+    },
+    {
+      expectedManifestSha256: PRE_NATIVE_OWNERSHIP_MANIFEST_SHA256,
+      prepare: removeReviewedNativeOwnershipMetadata,
+    },
+  ])(
+    "accepts reviewed manifest metadata transition $expectedManifestSha256 when startup authority is unchanged (#11248, #11766)",
+    ({ expectedManifestSha256, prepare }) => {
+      const installedAgent = copyAgent();
+      prepare(installedAgent);
+      const installed = resolveHermesPortableStartupContract({
+        agent: installedAgent,
+        sandboxName: SANDBOX,
+        startupArgv: startupArgv(),
+      });
+      const input = {
+        agent: loadAgent("hermes"),
+        sandboxName: SANDBOX,
+        startupArgv: startupArgv(),
+      };
+      const current = resolveHermesPortableStartupContract(input);
+
+      expect(installed.manifestSha256).toBe(expectedManifestSha256);
+      expect(installed.startupDescriptorSha256).not.toBe(current.startupDescriptorSha256);
+      expect(() =>
+        assertCurrentHermesPortableStoredStartupContract(installed, SANDBOX),
+      ).not.toThrow();
+      expect(assertCurrentHermesPortableStartupContract(installed, input)).toEqual(current);
+    },
+  );
+
+  it("derives reviewed transition descriptors for the actual sandbox name (#11766)", () => {
+    const sandboxName = "hermes-portable-e2e";
+    const installedAgent = copyAgent();
+    removeReviewedSkillsMetadata(installedAgent);
+    removeReviewedNativeOwnershipMetadata(installedAgent);
+    const installed = resolveHermesPortableStartupContract({
+      agent: installedAgent,
+      sandboxName,
+      startupArgv: startupArgvFor(sandboxName),
+    });
+    const input = {
+      agent: loadAgent("hermes"),
+      sandboxName,
+      startupArgv: startupArgvFor(sandboxName),
+    };
+    const current = resolveHermesPortableStartupContract(input);
+
+    expect(installed.startupDescriptorSha256).not.toBe(current.startupDescriptorSha256);
+    expect(() =>
+      assertCurrentHermesPortableStoredStartupContract(installed, sandboxName),
+    ).not.toThrow();
+    expect(assertCurrentHermesPortableStartupContract(installed, input)).toEqual(current);
+  });
+
+  it("rejects unreviewed manifest transitions with an unchanged startup descriptor (#11248)", () => {
+    const current = resolveHermesPortableStartupContract({
+      agent: loadAgent("hermes"),
+      sandboxName: SANDBOX,
+      startupArgv: startupArgv(),
+    });
+
+    expect(() =>
+      assertCurrentHermesPortableStoredStartupContract(
+        { ...current, manifestSha256: "0".repeat(64) },
+        SANDBOX,
+      ),
+    ).toThrow("current startup authority disagrees");
+  });
+
+  it("rejects security authority drift during the reviewed manifest transition (#11248)", () => {
+    const current = resolveHermesPortableStartupContract({
+      agent: loadAgent("hermes"),
+      sandboxName: SANDBOX,
+      startupArgv: startupArgv(),
+    });
+
+    expect(() =>
+      assertCurrentHermesPortableStoredStartupContract(
+        {
+          ...current,
+          manifestSha256: PRE_SKILLS_MANIFEST_SHA256,
+          stateIdentitySha256: "0".repeat(64),
+        },
+        SANDBOX,
+      ),
+    ).toThrow("current startup authority disagrees");
   });
 
   it.each([

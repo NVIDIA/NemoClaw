@@ -279,17 +279,15 @@ describe("portable onboarding environment scope", () => {
     expect(env).toEqual(before);
   });
 
-  it.each(
-    [
-        "NEMOCLAW_PROVIDER",
-        "NEMOCLAW_MODEL",
-        "NEMOCLAW_PROVIDER_MODEL",
-        "NEMOCLAW_ENDPOINT_URL",
-        "NEMOCLAW_PREFERRED_API",
-        "NEMOCLAW_POLICY_TIER",
-        "NEMOCLAW_TOOL_DISCLOSURE",
-      ],
-  )(
+  it.each([
+    "NEMOCLAW_PROVIDER",
+    "NEMOCLAW_MODEL",
+    "NEMOCLAW_PROVIDER_MODEL",
+    "NEMOCLAW_ENDPOINT_URL",
+    "NEMOCLAW_PREFERRED_API",
+    "NEMOCLAW_POLICY_TIER",
+    "NEMOCLAW_TOOL_DISCLOSURE",
+  ])(
     "clears ambient inference selectors while preserving an explicit resume policy list [%s] (#9035)",
     (key) => {
       const env: NodeJS.ProcessEnv = {

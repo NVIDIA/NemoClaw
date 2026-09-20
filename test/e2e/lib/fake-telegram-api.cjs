@@ -16,7 +16,9 @@ const expectedToken = process.env.FAKE_TELEGRAM_API_EXPECTED_TOKEN || "";
 const MAX_BODY_BYTES = 1024 * 1024;
 
 if (!Number.isInteger(port) || port < 0 || port > 65535) {
-  console.error(`FAKE_TELEGRAM_API_PORT must be an integer between 0 and 65535 (received: ${rawPort})`);
+  console.error(
+    `FAKE_TELEGRAM_API_PORT must be an integer between 0 and 65535 (received: ${rawPort})`,
+  );
   process.exit(2);
 }
 
