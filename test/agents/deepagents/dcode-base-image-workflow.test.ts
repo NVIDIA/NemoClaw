@@ -47,6 +47,14 @@ type OciDescriptor = {
   size: number;
 };
 
+type BuildxInstallScenario = {
+  arch: string;
+  diagnostic: string;
+  expectedSha: string;
+  runnerArch: string;
+  stepEnv?: Record<string, string>;
+};
+
 const repoRoot = path.resolve(import.meta.dirname, "../../..");
 const baseDockerfiles = [
   "Dockerfile.base",
@@ -207,6 +215,152 @@ describe("base-image dependency contracts", () => {
     },
   );
 
+  it.each([
+    [
+      "the reviewed linux-amd64 artifact",
+      {
+        arch: "amd64",
+        diagnostic: "",
+        expectedSha: "9447199cdb435f25880548343c128a4b6650e8891ee598905d8d29d39a8e359b",
+        runnerArch: "X64",
+      },
+    ],
+    [
+      "the reviewed linux-arm64 artifact",
+      {
+        arch: "arm64",
+        diagnostic: "",
+        expectedSha: "e5cc9fe3bbff5cbc91230981f7860e06076110730a2db997082652199042a1f2",
+        runnerArch: "ARM64",
+      },
+    ],
+    [
+      "a missing integrity pin",
+      {
+        arch: "amd64",
+        diagnostic: "artifact integrity pin is missing or invalid",
+        expectedSha: "9447199cdb435f25880548343c128a4b6650e8891ee598905d8d29d39a8e359b",
+        runnerArch: "X64",
+        stepEnv: { BUILDX_LINUX_AMD64_SHA256: "" },
+      },
+    ],
+    [
+      "an incorrect integrity pin",
+      {
+        arch: "arm64",
+        diagnostic: "artifact checksum does not match the reviewed release",
+        expectedSha: "e5cc9fe3bbff5cbc91230981f7860e06076110730a2db997082652199042a1f2",
+        runnerArch: "ARM64",
+        stepEnv: { BUILDX_LINUX_ARM64_SHA256: "f".repeat(64) },
+      },
+    ],
+  ] satisfies Array<[string, BuildxInstallScenario]>)(
+    "installs only %s before Buildx setup (#12086)",
+    (_case, scenario: BuildxInstallScenario) => {
+      const action = YAML.parse(
+        fs.readFileSync(
+          path.join(repoRoot, ".github", "actions", "build-base-image-platform", "action.yaml"),
+          "utf8",
+        ),
+      ) as { runs?: { steps?: Step[] } };
+      const installBuildx =
+        (action.runs?.steps ?? []).find(
+          (candidate) => candidate.name === "Install verified Docker Buildx",
+        ) ??
+        (() => {
+          throw new Error("Base-image platform action is missing verified Buildx installation");
+        })();
+      const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-buildx-install-"));
+      const fakeBin = path.join(temporaryRoot, "bin");
+      const dockerConfig = path.join(temporaryRoot, "docker-config");
+      const curlArguments = path.join(temporaryRoot, "curl-arguments");
+      const checksumRecord = path.join(temporaryRoot, "checksum-record");
+      const dockerArguments = path.join(temporaryRoot, "docker-arguments");
+      fs.mkdirSync(fakeBin);
+      fs.writeFileSync(
+        path.join(fakeBin, "curl"),
+        `#!/bin/sh
+set -eu
+printf '%s\\n' "$*" > "$FAKE_CURL_ARGUMENTS"
+output=""
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = "--output" ]; then
+    shift
+    output="$1"
+  fi
+  shift
+done
+test -n "$output"
+printf '%s' 'reviewed-buildx-binary' > "$output"
+`,
+        { mode: 0o755 },
+      );
+      fs.writeFileSync(
+        path.join(fakeBin, "sha256sum"),
+        `#!/bin/sh
+set -eu
+record="$(cat)"
+printf '%s\\n' "$record" > "$FAKE_CHECKSUM_RECORD"
+checksum="\${record%%  *}"
+test "$checksum" = "$FAKE_EXPECTED_SHA"
+`,
+        { mode: 0o755 },
+      );
+      fs.writeFileSync(
+        path.join(fakeBin, "docker"),
+        `#!/bin/sh
+set -eu
+printf '%s\\n' "$*" > "$FAKE_DOCKER_ARGUMENTS"
+test "$*" = "buildx version"
+printf '%s\\n' 'github.com/docker/buildx v0.37.1 reviewed'
+`,
+        { mode: 0o755 },
+      );
+      try {
+        const stepEnvironment = Object.fromEntries(
+          Object.entries(installBuildx.env ?? {}).map(([key, value]) => [key, String(value)]),
+        );
+        const result = spawnSync("bash", ["-c", installBuildx.run ?? ""], {
+          encoding: "utf8",
+          env: {
+            ...process.env,
+            ...stepEnvironment,
+            ...scenario.stepEnv,
+            ARCH: scenario.arch,
+            DOCKER_CONFIG: dockerConfig,
+            FAKE_CHECKSUM_RECORD: checksumRecord,
+            FAKE_CURL_ARGUMENTS: curlArguments,
+            FAKE_DOCKER_ARGUMENTS: dockerArguments,
+            FAKE_EXPECTED_SHA: scenario.expectedSha,
+            HOME: path.join(temporaryRoot, "home"),
+            PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
+            RUNNER_ARCH: scenario.runnerArch,
+            RUNNER_OS: "Linux",
+            RUNNER_TEMP: temporaryRoot,
+          },
+        });
+        const installedPlugin = path.join(dockerConfig, "cli-plugins", "docker-buildx");
+        expect(result.status === 0 ? 0 : 1, result.stderr).toBe(scenario.diagnostic ? 1 : 0);
+        expect(result.stderr).toContain(scenario.diagnostic);
+        scenario.diagnostic === ""
+          ? (() => {
+              expect(fs.readFileSync(installedPlugin, "utf8")).toBe("reviewed-buildx-binary");
+              expect(fs.statSync(installedPlugin).mode & 0o777).toBe(0o755);
+              expect(fs.readFileSync(checksumRecord, "utf8")).toMatch(
+                new RegExp(`^${scenario.expectedSha}  `),
+              );
+              expect(fs.readFileSync(curlArguments, "utf8")).toContain(
+                `https://github.com/docker/buildx/releases/download/v0.37.1/buildx-v0.37.1.linux-${scenario.arch}`,
+              );
+              expect(fs.readFileSync(dockerArguments, "utf8")).toBe("buildx version\n");
+            })()
+          : expect(fs.existsSync(installedPlugin)).toBe(false);
+      } finally {
+        fs.rmSync(temporaryRoot, { force: true, recursive: true });
+      }
+    },
+  );
+
   it("validates each local Deep Agents Code candidate before publication (#12086)", () => {
     const action = YAML.parse(
       fs.readFileSync(
@@ -219,6 +373,16 @@ describe("base-image dependency contracts", () => {
       steps.find((candidate) => candidate.name === "Set up Docker Buildx") ??
       (() => {
         throw new Error("Base-image platform action is missing the Buildx setup");
+      })();
+    const installBuildx =
+      steps.find((candidate) => candidate.name === "Install verified Docker Buildx") ??
+      (() => {
+        throw new Error("Base-image platform action is missing verified Buildx installation");
+      })();
+    const registryLogin =
+      steps.find((candidate) => candidate.name === "Log in to GHCR") ??
+      (() => {
+        throw new Error("Base-image platform action is missing registry login");
       })();
     const localBuild =
       steps.find((candidate) => candidate.name === "Build Deep Agents Code platform candidate") ??
@@ -248,12 +412,20 @@ describe("base-image dependency contracts", () => {
       (candidate) => candidate.name === "Build and push platform digest",
     );
     const localBuildIndex = steps.indexOf(localBuild);
+    const installBuildxIndex = steps.indexOf(installBuildx);
+    const setupBuildxIndex = steps.indexOf(setupBuildx);
+    const registryLoginIndex = steps.indexOf(registryLogin);
     const identityIndex = steps.indexOf(identity);
     const validateIndex = steps.indexOf(validate);
     const publishIndex = steps.indexOf(publish);
     const exportIndex = steps.findIndex((candidate) => candidate.name === "Export platform digest");
 
-    expect(setupBuildx.with).toMatchObject({ version: "v0.37.1" });
+    expect(setupBuildx.uses).toBe(
+      "docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c",
+    );
+    expect(setupBuildx.with?.version).toBeUndefined();
+    expect(installBuildxIndex).toBeLessThan(setupBuildxIndex);
+    expect(setupBuildxIndex).toBeLessThan(registryLoginIndex);
     expect(localBuild.if).toBe("${{ inputs.agent == 'langchain-deepagents-code' }}");
     expect(localBuild.with).toMatchObject({
       platforms: "${{ inputs.platform }}",
