@@ -92,6 +92,7 @@ jobs:
           fi
           {
             printf 'base_sha=%s\n' "$base_sha"
+            printf 'head_sha=%s\n' "$head_sha"
             printf 'selected=%s\n' "$selected"
           } >>"$GITHUB_OUTPUT"
 
@@ -121,11 +122,11 @@ jobs:
         name: Verify complete base and managed-image publication
         if: ${{ steps.changed.outputs.selected == 'true' }}
         env:
-          EXPECTED_SHA: ${{ steps.changed.outputs.base_sha }}
+          EXPECTED_SHA: ${{ steps.changed.outputs.head_sha }}
           GITHUB_TOKEN: ${{ github.token }}
           PUBLICATION_HISTORY_ALLOW_NON_HEAD: "1"
           REQUIRE_MANAGED_IMAGE_PUBLICATION: "1"
-          SELECT_NEAREST_SUCCESSFUL_PUBLICATION: "1"
+          SELECT_NEAREST_SUCCESSFUL_PUBLICATION: "0"
         shell: bash
         run: |
           set -euo pipefail

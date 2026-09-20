@@ -161,7 +161,7 @@ describe.concurrent("generic NVIDIA GPU PR selection", () => {
     "selects the generic NVIDIA GPU E2E job when %s can change installer readiness",
     async (changedFile, { expect }) => {
       const result = await selectGenericGpuLane([changedFile]);
-      expect(result).toBe(`base_sha=${BASE_SHA}\nselected=true`);
+      expect(result).toBe(`base_sha=${BASE_SHA}\nhead_sha=${CANDIDATE_SHA}\nselected=true`);
     },
   );
 
@@ -169,7 +169,7 @@ describe.concurrent("generic NVIDIA GPU PR selection", () => {
     "independently requires the generic GPU E2E when runtime authority owner %s changes",
     async (changedFile, { expect }) => {
       const result = await selectGenericGpuLane([changedFile]);
-      expect(result).toBe(`base_sha=${BASE_SHA}\nselected=true`);
+      expect(result).toBe(`base_sha=${BASE_SHA}\nhead_sha=${CANDIDATE_SHA}\nselected=true`);
     },
   );
 
@@ -177,21 +177,21 @@ describe.concurrent("generic NVIDIA GPU PR selection", () => {
     expect,
   }) => {
     const result = await selectGenericGpuLane(["src/lib/onboard/runtime-provider/podman.ts"]);
-    expect(result).toBe(`base_sha=${BASE_SHA}\nselected=false`);
+    expect(result).toBe(`base_sha=${BASE_SHA}\nhead_sha=${CANDIDATE_SHA}\nselected=false`);
   });
 
   it("does not treat an N1x identity-only change as generic x86 GPU evidence", async ({
     expect,
   }) => {
     const result = await selectGenericGpuLane(["src/lib/inference/platform-identity/n1x.ts"]);
-    expect(result).toBe(`base_sha=${BASE_SHA}\nselected=false`);
+    expect(result).toBe(`base_sha=${BASE_SHA}\nhead_sha=${CANDIDATE_SHA}\nselected=false`);
   });
 
   it("does not select the generic NVIDIA GPU E2E job for unrelated documentation", async ({
     expect,
   }) => {
     const result = await selectGenericGpuLane(["docs/get-started/quickstart.mdx"]);
-    expect(result).toBe(`base_sha=${BASE_SHA}\nselected=false`);
+    expect(result).toBe(`base_sha=${BASE_SHA}\nhead_sha=${CANDIDATE_SHA}\nselected=false`);
   });
 
   it("rejects a copied branch whose commit does not match the current PR head", async ({
@@ -219,8 +219,8 @@ describe.concurrent("generic NVIDIA GPU PR selection", () => {
     expect(workflow().jobs["llama-cpp-generic-gpu"]?.env?.NEMOCLAW_GATEWAY_RUNTIME).toBe("docker");
   });
 
-  // source-shape-contract: security -- The copied PR workflow must run the publication verifier from the validated PR base before the generic GPU job receives its managed-image revision
-  it("binds trusted base publication to the generic NVIDIA GPU job", ({ expect }) => {
+  // source-shape-contract: security -- The copied PR workflow must use the base-reviewed verifier to bind the exact PR managed-image publication before the generic GPU job receives its revision
+  it("binds the exact PR publication to the generic NVIDIA GPU job", ({ expect }) => {
     const value = workflow();
     const selector = value.jobs["select-llama-cpp-generic-gpu"];
 
@@ -252,11 +252,11 @@ describe.concurrent("generic NVIDIA GPU PR selection", () => {
     const publication = selector?.steps?.find((step) => step.id === "publication");
     expect(publication).toMatchObject({
       env: {
-        EXPECTED_SHA: "${{ steps.changed.outputs.base_sha }}",
+        EXPECTED_SHA: "${{ steps.changed.outputs.head_sha }}",
         GITHUB_TOKEN: "${{ github.token }}",
         PUBLICATION_HISTORY_ALLOW_NON_HEAD: "1",
         REQUIRE_MANAGED_IMAGE_PUBLICATION: "1",
-        SELECT_NEAREST_SUCCESSFUL_PUBLICATION: "1",
+        SELECT_NEAREST_SUCCESSFUL_PUBLICATION: "0",
       },
       if: "${{ steps.changed.outputs.selected == 'true' }}",
     });
