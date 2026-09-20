@@ -2941,7 +2941,12 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         ),
       );
     const runCreateFlow = async (
-      attemptCreateArgv: string[],
+      createSubmission:
+        | Readonly<{
+            kind: "ordinary";
+            request: import("../../adapters/openshell/sandbox-lifecycle").CreateOpenShellSandboxRequest;
+          }>
+        | Readonly<{ kind: "portable"; argv: string[] }>,
       hermesPortableReadyCapture?: import("../sandbox-gpu-create-flow").HermesPortableReadyCapture,
       hermesPortableReadyRunner?: import("../sandbox-gpu-create-flow").HermesPortableReadyRunner,
       createWorkingDirectory?: string,
@@ -3158,7 +3163,9 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
               gatewayName: GATEWAY_NAME,
               gatewayPort: GATEWAY_PORT,
               sandboxReadyTimeoutSecs,
-              createArgv: attemptCreateArgv,
+              ...(createSubmission.kind === "ordinary"
+                ? { createRequest: createSubmission.request }
+                : { createArgv: createSubmission.argv }),
               ...(createWorkingDirectory ? { createWorkingDirectory } : {}),
               sandboxEnv: createFlowEnvironment,
               sandboxStartupCommand,
@@ -3417,7 +3424,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
             providerEffectBoundary,
             create: (runAfterVerifiedCreate) =>
               runCreateFlow(
-                [...attemptArgv],
+                { kind: "portable", argv: [...attemptArgv] },
                 readyCapture,
                 readyRunner,
                 buildContextPath,
@@ -3468,7 +3475,17 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         providerEffectBoundary,
         create: (runAfterVerifiedCreate) =>
           runCreateFlow(
-            createArgv,
+            agentCreateInput.portableLifecycle
+              ? { kind: "portable", argv: createArgv }
+              : {
+                  kind: "ordinary",
+                  request:
+                    sandboxCreatePlanMaterialization.materializeOpenShellSandboxCreateRequest({
+                      createArgv,
+                      gatewayName: GATEWAY_NAME,
+                      environment: createFlowEnvironment,
+                    }),
+                },
             undefined,
             undefined,
             undefined,

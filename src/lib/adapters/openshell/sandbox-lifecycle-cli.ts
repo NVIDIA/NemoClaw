@@ -2,12 +2,23 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { isValidName } from "../../sandbox-name-contract";
+import { buildSubprocessEnvFrom } from "../../subprocess-env";
+import {
+  streamSandboxCreate,
+  type StreamSandboxCreateOptions,
+  type StreamSandboxCreateResult,
+} from "../../sandbox/create-stream";
 import { redactCredentialText } from "../../security/credential-filter";
 import { redact } from "../../security/redact";
 import { waitUntilAsync } from "../../core/wait";
-import { withSelectedOpenShellCommandOptions } from "./command-argv";
+import {
+  buildOpenShellCommandEnv,
+  resolveOpenshellBinary,
+  withSelectedOpenShellCommandOptions,
+} from "./command-argv";
 import { assertNoOpenShellGatewayEndpointOverride } from "./gateway-scope";
 import type {
+  CreateOpenShellSandboxRequest,
   DeleteOpenShellSandboxRequest,
   OpenShellSandboxDeleteSubmission,
   OpenShellSandboxLifecycle,
@@ -176,6 +187,93 @@ function validDeleteRequest(request: DeleteOpenShellSandboxRequest): boolean {
   );
 }
 
+export type StreamSandboxCreateCommand = (
+  command: string,
+  args: readonly string[],
+  env: NodeJS.ProcessEnv,
+  options: StreamSandboxCreateOptions,
+) => Promise<StreamSandboxCreateResult>;
+
+function validCreateText(value: string | undefined): value is string {
+  return typeof value === "string" && value.length > 0 && !/[\u0000\r\n]/u.test(value);
+}
+
+/** Own the child environment allowlist for OpenShell create processes. */
+export function buildOpenShellSandboxCreateEnvironment(
+  source: NodeJS.ProcessEnv,
+  options: { readonly policyAttached: boolean },
+): Record<string, string> {
+  const environment = buildSubprocessEnvFrom(source);
+  delete environment.KUBECONFIG;
+  delete environment.SSH_AUTH_SOCK;
+  if (!options.policyAttached) delete environment.OPENSHELL_SANDBOX_POLICY;
+  return environment;
+}
+
+function validCreateRequest(request: CreateOpenShellSandboxRequest): boolean {
+  if (
+    !isValidName(request.sandboxName) ||
+    request.target.kind !== "named" ||
+    !isValidName(request.target.gatewayName) ||
+    !validCreateText(request.source.reference) ||
+    request.startupCommand.length === 0 ||
+    request.startupCommand.some((value) => !validCreateText(value)) ||
+    (request.runtimeSelection &&
+      request.runtimeSelection.gatewayName !== request.target.gatewayName)
+  ) {
+    return false;
+  }
+  const optionalValues = [
+    request.policyPath,
+    request.driverConfigJson,
+    request.gpu?.device,
+    request.resources?.cpu,
+    request.resources?.memory,
+    ...Object.keys(request.labels ?? {}),
+    ...Object.values(request.labels ?? {}),
+    ...(request.providers ?? []),
+  ];
+  if (optionalValues.some((value) => value !== undefined && !validCreateText(value))) return false;
+  if (request.driverConfigJson) {
+    try {
+      const parsed = JSON.parse(request.driverConfigJson) as unknown;
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return false;
+    } catch {
+      return false;
+    }
+  }
+  return true;
+}
+
+export function renderCreateOpenShellSandboxArgs(request: CreateOpenShellSandboxRequest): string[] {
+  if (!validCreateRequest(request)) {
+    throw new Error("Invalid OpenShell sandbox create request.");
+  }
+  return [
+    "sandbox",
+    "create",
+    "-g",
+    request.target.gatewayName,
+    "--from",
+    request.source.reference,
+    "--name",
+    request.sandboxName,
+    ...(request.policyPath ? ["--policy", request.policyPath] : []),
+    ...(request.driverConfigJson ? ["--driver-config-json", request.driverConfigJson] : []),
+    ...(request.gpu ? ["--gpu"] : []),
+    ...(request.gpu?.device ? ["--gpu-device", request.gpu.device] : []),
+    ...(request.resources?.cpu ? ["--cpu", request.resources.cpu] : []),
+    ...(request.resources?.memory ? ["--memory", request.resources.memory] : []),
+    ...Object.entries(request.labels ?? {}).flatMap(([name, value]) => [
+      "--label",
+      `${name}=${value}`,
+    ]),
+    ...(request.providers ?? []).flatMap((provider) => ["--provider", provider]),
+    "--",
+    ...request.startupCommand,
+  ];
+}
+
 function outputOf(result: CapturedOpenShellCommandResult): string {
   const streams = `${result.stderr ?? ""}\n${result.stdout ?? ""}`.trim();
   return streams || result.output.trim();
@@ -219,10 +317,65 @@ function isAmbiguousFailure(
 
 export function createCliOpenShellSandboxLifecycle(input: {
   capture: SandboxLifecycleCapture;
+  streamCreate?: StreamSandboxCreateCommand;
+  resolveBinary?: () => string;
   defaultTimeoutMs?: number;
   environment?: NodeJS.ProcessEnv;
 }): OpenShellSandboxLifecycle {
   return {
+    async createSandbox(request, options = {}) {
+      if (!validCreateRequest(request)) {
+        return {
+          status: 1,
+          output: "Invalid OpenShell sandbox create request.",
+          sawProgress: false,
+          ambiguous: false,
+          diagnostic: "Invalid OpenShell sandbox create request.",
+        };
+      }
+      let submitted = false;
+      try {
+        if (!request.runtimeSelection) {
+          assertNoOpenShellGatewayEndpointOverride(request.environment);
+        }
+        const args = renderCreateOpenShellSandboxArgs(request);
+        const stream = input.streamCreate ?? streamSandboxCreate;
+        const filteredEnvironment = buildOpenShellSandboxCreateEnvironment(request.environment, {
+          policyAttached: Boolean(request.policyPath),
+        });
+        const environment = request.runtimeSelection
+          ? buildOpenShellCommandEnv(request.runtimeSelection, filteredEnvironment)
+          : filteredEnvironment;
+        submitted = true;
+        const result = await stream(
+          input.resolveBinary?.() ?? resolveOpenshellBinary(),
+          args,
+          environment,
+          { ...options, ...(request.workingDirectory ? { cwd: request.workingDirectory } : {}) },
+        );
+        const ambiguous = result.readyTerminationTimedOut === true;
+        const diagnostic = safeDiagnostic(result.output);
+        return {
+          ...result,
+          output: diagnostic,
+          ambiguous,
+          diagnostic,
+        };
+      } catch (caught) {
+        const error = caught instanceof Error ? caught : new Error("OpenShell create failed.");
+        const code = (error as NodeJS.ErrnoException).code;
+        const definite =
+          code === "ENOENT" || code === "EACCES" || error.message.startsWith("Invalid");
+        const diagnostic = safeDiagnostic(error.message);
+        return {
+          status: 1,
+          output: diagnostic,
+          sawProgress: false,
+          ambiguous: submitted && !definite,
+          diagnostic,
+        };
+      }
+    },
     async deleteSandbox(request) {
       if (!validDeleteRequest(request)) return failedDelete(invalidDeleteError);
       if (!request.runtimeSelection) {

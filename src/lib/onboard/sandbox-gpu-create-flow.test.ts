@@ -98,6 +98,19 @@ const {
   resetHarness,
 } = createGpuFlowTestHarness(mocks);
 const READY_CHECK_ARGS = ["sandbox", "list", "-g", "nemoclaw"];
+const SEMANTIC_CREATE_ARGS = [
+  "sandbox",
+  "create",
+  "-g",
+  "nemoclaw",
+  "--from",
+  "openshell/sandbox-from:test",
+  "--name",
+  "alpha",
+  "--gpu",
+  "--",
+  "nemoclaw-start",
+];
 
 beforeEach(setupHarness);
 afterEach(resetHarness);
@@ -273,6 +286,7 @@ describe("runSandboxGpuCreateFlow native failure and readiness", () => {
     input.gpuRoutePlan = "none";
     input.initialGpuRoute = "none";
     input.createArgv = ["openshell", "sandbox", "create"];
+    input.createRequest = { ...input.createRequest!, gpu: undefined };
     input.persistStartupCommand = true;
     input.requiredUlimits = [
       { name: "nproc", soft: 512, hard: 512 },
@@ -294,8 +308,8 @@ describe("runSandboxGpuCreateFlow native failure and readiness", () => {
       }),
     );
     expect(mocks.streamSandboxCreate).toHaveBeenCalledWith(
-      "openshell",
-      ["sandbox", "create"],
+      expect.stringMatching(/openshell$/u),
+      SEMANTIC_CREATE_ARGS.filter((value) => value !== "--gpu"),
       input.sandboxEnv,
       expect.objectContaining({ waitForReadyTermination: true }),
     );
@@ -321,6 +335,7 @@ describe("runSandboxGpuCreateFlow native failure and readiness", () => {
     input.gpuRoutePlan = "none";
     input.initialGpuRoute = "none";
     input.createArgv = ["openshell", "sandbox", "create"];
+    input.createRequest = { ...input.createRequest!, gpu: undefined };
     input.persistStartupCommand = true;
     input.managedImage = true;
     input.requiredUlimits = [
@@ -341,8 +356,8 @@ describe("runSandboxGpuCreateFlow native failure and readiness", () => {
       }),
     );
     expect(mocks.streamSandboxCreate).toHaveBeenCalledWith(
-      "openshell",
-      ["sandbox", "create"],
+      expect.stringMatching(/openshell$/u),
+      SEMANTIC_CREATE_ARGS.filter((value) => value !== "--gpu"),
       input.sandboxEnv,
       expect.objectContaining({ waitForReadyTermination: false }),
     );
@@ -483,8 +498,8 @@ describe("runSandboxGpuCreateFlow native failure and readiness", () => {
       expect.objectContaining({ route: "native", persistStartupCommand: true }),
     );
     expect(mocks.streamSandboxCreate).toHaveBeenCalledWith(
-      "openshell",
-      input.createArgv.slice(1),
+      expect.stringMatching(/openshell$/u),
+      SEMANTIC_CREATE_ARGS,
       input.sandboxEnv,
       expect.objectContaining({ waitForReadyTermination: true }),
     );
@@ -505,8 +520,8 @@ describe("runSandboxGpuCreateFlow native failure and readiness", () => {
       expect.objectContaining({ route: "native", persistStartupCommand: false }),
     );
     expect(mocks.streamSandboxCreate).toHaveBeenCalledWith(
-      "openshell",
-      input.createArgv.slice(1),
+      expect.stringMatching(/openshell$/u),
+      SEMANTIC_CREATE_ARGS,
       input.sandboxEnv,
       expect.objectContaining({ waitForReadyTermination: false }),
     );
@@ -733,8 +748,8 @@ describe("runSandboxGpuCreateFlow native failure and readiness", () => {
     expect(mocks.queryOpenShellDockerSandboxContainers).not.toHaveBeenCalled();
     expect(mocks.queryOpenShellDockerSandboxRuntimeSnapshot).not.toHaveBeenCalled();
     expect(mocks.streamSandboxCreate).toHaveBeenCalledWith(
-      "openshell",
-      input.createArgv.slice(1),
+      expect.stringMatching(/openshell$/u),
+      input.createArgv!.slice(1),
       input.sandboxEnv,
       expect.objectContaining({ waitForReadyTermination: false }),
     );
@@ -836,7 +851,7 @@ describe("runSandboxGpuCreateFlow fallback ordering", () => {
     expect(mocks.streamSandboxCreate).toHaveBeenCalledTimes(2);
   });
 
-  it("streams native and compatibility attempts through direct argv without a shell (#6110)", async () => {
+  it("streams native and compatibility attempts through the semantic lifecycle without a shell (#6110)", async () => {
     failNativeCreate();
     const input = createInput();
     await expect(runSandboxGpuCreateFlow(input, createDeps())).resolves.toMatchObject({
@@ -845,8 +860,8 @@ describe("runSandboxGpuCreateFlow fallback ordering", () => {
 
     expect(mocks.streamSandboxCreate).toHaveBeenNthCalledWith(
       1,
-      "openshell",
-      ["sandbox", "create", "--gpu"],
+      expect.stringMatching(/openshell$/u),
+      SEMANTIC_CREATE_ARGS,
       input.sandboxEnv,
       expect.objectContaining({
         onPoll: expect.any(Function),
@@ -855,7 +870,7 @@ describe("runSandboxGpuCreateFlow fallback ordering", () => {
     );
     expect(mocks.streamSandboxCreate).toHaveBeenNthCalledWith(
       2,
-      "openshell",
+      expect.stringMatching(/openshell$/u),
       expect.arrayContaining(["sandbox", "create", "--from", IMAGE_ID]),
       input.sandboxEnv,
       expect.any(Object),
@@ -946,15 +961,17 @@ describe("runSandboxGpuCreateFlow fallback ordering", () => {
     expect(errorOutput()).toContain("Compatibility retry policy was not materialized");
   });
 
-  it("keeps native state when compatibility command rendering fails (#6110)", async () => {
-    failNativeCreate();
+  it("rejects a malformed semantic request before process spawn (#6110)", async () => {
     const deps = createDeps();
-    vi.mocked(deps.openshellArgv).mockImplementation(() => {
-      throw new Error("compatibility command render rejected");
-    });
-    await expectFlowExit(createInput(), deps);
-    expectNativeStateKept(deps);
-    expect(errorOutput()).toContain("compatibility command render rejected");
+    const input = createInput();
+    input.createRequest = { ...input.createRequest!, driverConfigJson: "{" };
+    await expectFlowExit(input, deps);
+    expect(mocks.streamSandboxCreate).not.toHaveBeenCalled();
+    expect(deps.runOpenshell).not.toHaveBeenCalledWith(
+      expect.arrayContaining(["delete"]),
+      expect.anything(),
+    );
+    expect(errorOutput()).toContain("Invalid OpenShell sandbox create request");
   });
 
   it("runs compatibility network preflight only after native cleanup succeeds (#6110)", async () => {
@@ -966,7 +983,7 @@ describe("runSandboxGpuCreateFlow fallback ordering", () => {
     );
     const deps = createDeps();
     await expectFlowExit(input, deps);
-    expect(deps.openshellArgv).toHaveBeenCalledOnce();
+    expect(deps.openshellArgv).not.toHaveBeenCalled();
     expect(deps.runOpenshell).not.toHaveBeenCalledWith(
       ["sandbox", "delete", "alpha"],
       expect.anything(),
@@ -1001,7 +1018,10 @@ describe("runSandboxGpuCreateFlow cleanup and provenance", () => {
     await expectFlowExit(createInput(), deps);
 
     const output = vi.mocked(console.error).mock.calls.flat().join("\n");
-    expect(deps.runOpenshell).not.toHaveBeenCalled();
+    expect(deps.runOpenshell).not.toHaveBeenCalledWith(
+      expect.arrayContaining(["delete"]),
+      expect.anything(),
+    );
     expect(output).toContain("left sandbox 'alpha' in place");
     expect(output).toContain("Recovery remains blocked while this sandbox exists");
     expect(output).not.toContain("openshell sandbox delete");
@@ -1041,7 +1061,7 @@ describe("runSandboxGpuCreateFlow cleanup and provenance", () => {
     expect(diagnostic).toContain("Cleanup could not be proven safe");
     expect(diagnostic).toContain("NVIDIA_API_KEY=<REDACTED>");
     expect(diagnostic).not.toContain("super-secret-cleanup-value");
-    expect(deps.openshellArgv).toHaveBeenCalledOnce();
+    expect(deps.openshellArgv).not.toHaveBeenCalled();
     expect(mocks.enforceDockerGpuPatchPreserveNetwork).not.toHaveBeenCalled();
     expect(input.sandboxGpuConfig.sandboxGpuProof).toBe(VERIFIED_PROOF);
   });
@@ -1086,9 +1106,15 @@ describe("runSandboxGpuCreateFlow cleanup and provenance", () => {
       registryImageRef: "openshell/sandbox-from:built",
     });
 
-    expect(deps.openshellArgv).toHaveBeenCalledWith(expect.arrayContaining(["--from", IMAGE_ID]));
-    expect(deps.openshellArgv).not.toHaveBeenCalledWith(
-      expect.arrayContaining(["--from", "attacker.example/redirect:latest"]),
+    expect(mocks.streamSandboxCreate).toHaveBeenNthCalledWith(
+      2,
+      expect.stringMatching(/openshell$/u),
+      expect.arrayContaining(["--from", IMAGE_ID]),
+      expect.any(Object),
+      expect.any(Object),
+    );
+    expect(mocks.streamSandboxCreate.mock.calls[1]?.[1]).not.toContain(
+      "attacker.example/redirect:latest",
     );
     expect(mocks.streamSandboxCreate).toHaveBeenCalledTimes(2);
     expect(mocks.queryOpenShellDockerSandboxRuntimeSnapshot).toHaveBeenCalledOnce();
@@ -1112,6 +1138,12 @@ describe("runSandboxGpuCreateFlow cleanup and provenance", () => {
       registryImageRef: null,
     });
 
-    expect(deps.openshellArgv).toHaveBeenCalledWith(expect.arrayContaining(["--from", IMAGE_ID]));
+    expect(mocks.streamSandboxCreate).toHaveBeenNthCalledWith(
+      2,
+      expect.stringMatching(/openshell$/u),
+      expect.arrayContaining(["--from", IMAGE_ID]),
+      expect.any(Object),
+      expect.any(Object),
+    );
   });
 });

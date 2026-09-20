@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { InitialSandboxPolicy } from "./initial-policy";
+import type { CreateOpenShellSandboxRequest } from "../adapters/openshell/sandbox-lifecycle";
 import { hasConfiguredMessagingCredential, type MessagingTokenDef } from "./messaging-prep";
 import { filterMessagingProvidersForSandboxCreate } from "./sandbox-create-intent";
 import type {
@@ -15,6 +16,115 @@ import { prepareSandboxGpuRoutePolicies } from "./sandbox-gpu-route-policy";
 
 type PrepareInitialSandboxCreatePolicy =
   typeof import("./initial-policy").prepareInitialSandboxCreatePolicy;
+
+const CREATE_VALUE_OPTIONS = new Set([
+  "--from",
+  "--name",
+  "--policy",
+  "--driver-config-json",
+  "--gpu-device",
+  "--cpu",
+  "--memory",
+  "--provider",
+  "--label",
+]);
+
+/** Convert the final ordinary onboarding plan into the typed lifecycle request. */
+export function materializeOpenShellSandboxCreateRequest(input: {
+  readonly createArgv: readonly string[];
+  readonly gatewayName: string;
+  readonly environment: NodeJS.ProcessEnv;
+  readonly workingDirectory?: string;
+}): CreateOpenShellSandboxRequest {
+  const argv = input.createArgv;
+  if (argv.length < 4 || argv[1] !== "sandbox" || argv[2] !== "create") {
+    throw new Error("Ordinary sandbox creation requires one OpenShell create command.");
+  }
+  const separator = argv.indexOf("--", 3);
+  if (separator < 0 || separator === argv.length - 1) {
+    throw new Error("Ordinary sandbox creation requires one startup command.");
+  }
+  const values = new Map<string, string[]>();
+  let gpu = false;
+  for (let index = 3; index < separator; index += 1) {
+    const option = argv[index];
+    if (option === "--gpu") {
+      gpu = true;
+      continue;
+    }
+    if (option === "-g" || option === "--gateway") {
+      const gatewayName = argv[index + 1];
+      if (gatewayName !== input.gatewayName) {
+        throw new Error("Sandbox create gateway changed before lifecycle submission.");
+      }
+      index += 1;
+      continue;
+    }
+    if (!option || !CREATE_VALUE_OPTIONS.has(option)) {
+      throw new Error(`Unsupported ordinary sandbox create option '${option ?? ""}'.`);
+    }
+    const value = argv[index + 1];
+    if (!value || value === "--") {
+      throw new Error(`Sandbox create option '${option}' is missing its value.`);
+    }
+    const entries = values.get(option) ?? [];
+    entries.push(value);
+    values.set(option, entries);
+    index += 1;
+  }
+  const requireOne = (option: string): string => {
+    const entries = values.get(option) ?? [];
+    if (entries.length !== 1) {
+      throw new Error(`Sandbox create option '${option}' must appear exactly once.`);
+    }
+    return entries[0]!;
+  };
+  const optionalOne = (option: string): string | undefined => {
+    const entries = values.get(option) ?? [];
+    if (entries.length > 1) {
+      throw new Error(`Sandbox create option '${option}' must not be repeated.`);
+    }
+    return entries[0];
+  };
+  const labels = Object.fromEntries(
+    (values.get("--label") ?? []).map((label) => {
+      const equals = label.indexOf("=");
+      if (equals <= 0 || equals === label.length - 1) {
+        throw new Error("Sandbox create labels must use name=value form.");
+      }
+      return [label.slice(0, equals), label.slice(equals + 1)];
+    }),
+  );
+  const gpuDevice = optionalOne("--gpu-device");
+  if (gpuDevice && !gpu) {
+    throw new Error("Sandbox create GPU device requires the GPU option.");
+  }
+  return Object.freeze({
+    sandboxName: requireOne("--name"),
+    target: Object.freeze({ kind: "named" as const, gatewayName: input.gatewayName }),
+    source: Object.freeze({ reference: requireOne("--from") }),
+    ...(optionalOne("--policy") ? { policyPath: optionalOne("--policy") } : {}),
+    ...(optionalOne("--driver-config-json")
+      ? { driverConfigJson: optionalOne("--driver-config-json") }
+      : {}),
+    ...(gpu ? { gpu: Object.freeze({ ...(gpuDevice ? { device: gpuDevice } : {}) }) } : {}),
+    ...(optionalOne("--cpu") || optionalOne("--memory")
+      ? {
+          resources: Object.freeze({
+            ...(optionalOne("--cpu") ? { cpu: optionalOne("--cpu") } : {}),
+            ...(optionalOne("--memory") ? { memory: optionalOne("--memory") } : {}),
+          }),
+        }
+      : {}),
+    ...((values.get("--provider")?.length ?? 0) > 0
+      ? { providers: Object.freeze([...(values.get("--provider") ?? [])]) }
+      : {}),
+    ...(Object.keys(labels).length > 0 ? { labels: Object.freeze(labels) } : {}),
+    startupCommand: Object.freeze(argv.slice(separator + 1)),
+    environment: Object.freeze({ ...input.environment }),
+    ...(input.workingDirectory ? { workingDirectory: input.workingDirectory } : {}),
+  });
+}
 
 const DCODE_MCP_SNAPSHOT_TMPFS_MOUNT = {
   type: "tmpfs",

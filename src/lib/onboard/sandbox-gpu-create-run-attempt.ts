@@ -59,11 +59,21 @@ type NativeRuntimeSnapshot = Readonly<{
 
 export type SandboxGpuCreateAttemptState = {
   firstCreateOutput: string;
-  compatibilityArgv: string[] | null;
+  compatibilityRequest: NonNullable<SandboxGpuCreateFlowInput["createRequest"]> | null;
   allowUnbuiltCompatibilitySource: boolean;
   nativeRuntimeSnapshot: NativeRuntimeSnapshot | null;
   portableLifecycleGeneration: string | null;
 };
+
+function withCreateAttemptLabel(
+  request: NonNullable<SandboxGpuCreateFlowInput["createRequest"]>,
+  value: string,
+): NonNullable<SandboxGpuCreateFlowInput["createRequest"]> {
+  return Object.freeze({
+    ...request,
+    labels: Object.freeze({ ...request.labels, [NEMOCLAW_CREATE_ATTEMPT_LABEL]: value }),
+  });
+}
 
 // A runtime-managed container replacement can briefly observe the original
 // container's stale Ready row. Require one confirmation poll before advancing
@@ -459,7 +469,9 @@ function requiresRuntimePatchApplication(input: {
 
 export function createSandboxGpuCreateAttemptRunner(
   input: SandboxGpuCreateFlowInput,
-  deps: SandboxGpuCreateFlowDeps,
+  deps: SandboxGpuCreateFlowDeps & {
+    createSandbox: NonNullable<SandboxGpuCreateFlowDeps["createSandbox"]>;
+  },
 ) {
   const portableLifecycle = input.portableLifecycle === true;
   const printCreateFailureDiagnostics =
@@ -482,7 +494,7 @@ export function createSandboxGpuCreateAttemptRunner(
   }
   const state: SandboxGpuCreateAttemptState = {
     firstCreateOutput: "",
-    compatibilityArgv: null,
+    compatibilityRequest: null,
     allowUnbuiltCompatibilitySource: false,
     nativeRuntimeSnapshot: null,
     portableLifecycleGeneration: null,
@@ -525,8 +537,20 @@ export function createSandboxGpuCreateAttemptRunner(
     }
     const hasRequiredLegacyUlimits =
       input.managedImage !== true && (input.requiredUlimits?.length ?? 0) > 0;
-    const unboundAttemptArgv = state.compatibilityArgv ?? input.createArgv;
-    if (input.requirePolicylessCreate) assertPolicylessSandboxCreateArgv(unboundAttemptArgv);
+    const unboundAttemptRequest = state.compatibilityRequest ?? input.createRequest;
+    const unboundAttemptArgv = input.createArgv;
+    if (portableLifecycle && !unboundAttemptArgv) {
+      throw new Error("Portable sandbox creation has no executable create command.");
+    }
+    if (!portableLifecycle && !unboundAttemptRequest) {
+      throw new Error("Ordinary sandbox creation has no semantic create request.");
+    }
+    if (input.requirePolicylessCreate) {
+      if (unboundAttemptRequest?.policyPath) {
+        throw new Error("APF interceptor sandbox creation must not supply a caller policy.");
+      }
+      if (unboundAttemptArgv) assertPolicylessSandboxCreateArgv(unboundAttemptArgv);
+    }
     const createAttemptNonce = resolveCreateAttemptNonce(input, deferPostCreateEffects);
     const persistIdentitySettlementRecovery = (
       sandboxIdentityFingerprint: string | null = null,
@@ -592,9 +616,14 @@ export function createSandboxGpuCreateAttemptRunner(
         },
       } as const;
     };
-    const attemptArgv = createAttemptNonce
-      ? addCreateAttemptIdentityLabel(unboundAttemptArgv, createAttemptNonce)
-      : unboundAttemptArgv;
+    const attemptRequest =
+      createAttemptNonce && unboundAttemptRequest
+        ? withCreateAttemptLabel(unboundAttemptRequest, createAttemptNonce)
+        : unboundAttemptRequest;
+    const attemptArgv =
+      createAttemptNonce && unboundAttemptArgv
+        ? addCreateAttemptIdentityLabel(unboundAttemptArgv, createAttemptNonce)
+        : unboundAttemptArgv;
     const persistRestartSafeStartup =
       input.persistStartupCommand === true &&
       (route !== "native" || !input.terminalAgent || hasRequiredLegacyUlimits);
@@ -637,8 +666,7 @@ export function createSandboxGpuCreateAttemptRunner(
         : queryOpenShellDockerSandboxRuntimeSnapshot(input.sandboxName);
       return snapshot.ok ? snapshot : null;
     };
-    const [createExecutable, ...createExecutableArgs] = attemptArgv;
-    if (!createExecutable) throw new Error("Sandbox create executable is missing.");
+    const [createExecutable, ...createExecutableArgs] = attemptArgv ?? [];
     let readyCheckCreatedSandboxId: string | null = null;
     let readyCheckCreatedIdentityFailure: unknown = null;
     const failReadyCheckCreatedIdentity = (diagnostic: string): true => {
@@ -731,8 +759,8 @@ export function createSandboxGpuCreateAttemptRunner(
         input.managedImage === true,
         input.sandboxName,
         input.sandboxEnv,
-        (createEnv) =>
-          streamSandboxCreate(createExecutable, createExecutableArgs, createEnv, {
+        (createEnv) => {
+          const createOptions = {
             ...(input.createWorkingDirectory ? { cwd: input.createWorkingDirectory } : {}),
             readyCheck: () => {
               const list = deps.runCaptureOpenshell(["sandbox", "list", "-g", input.gatewayName], {
@@ -805,10 +833,27 @@ export function createSandboxGpuCreateAttemptRunner(
             traceEvent: addTraceEvent,
             waitForReadyTermination: deferRestartSafeCutover || deferPostCreateEffects,
             initialPhase:
-              compatibility && (input.prebuild.imageRef || state.compatibilityArgv)
+              compatibility && (input.prebuild.imageRef || state.compatibilityRequest)
                 ? "create"
                 : undefined,
-          }),
+          } as const;
+          if (portableLifecycle) {
+            if (!createExecutable) throw new Error("Sandbox create executable is missing.");
+            return streamSandboxCreate(
+              createExecutable,
+              createExecutableArgs,
+              createEnv,
+              createOptions,
+            );
+          }
+          if (!attemptRequest) {
+            throw new Error("Ordinary sandbox creation has no semantic create request.");
+          }
+          return deps.createSandbox(
+            Object.freeze({ ...attemptRequest, environment: Object.freeze({ ...createEnv }) }),
+            createOptions,
+          );
+        },
       );
       if (compatibilityCreatePollError !== null) throw compatibilityCreatePollError;
       if (createResult.readyTerminationTimedOut) {
