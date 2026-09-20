@@ -21,8 +21,6 @@ filesystem_policy:
     - /proc
     - /dev/urandom
     - /app
-    - /run/nemoclaw/managed-startup-ca-bundle.pem
-    - /run/nemoclaw/managed-startup-runtime.env
     - /run/nemoclaw/managed-gateway-expected-exit
     - /etc
     - /var/log

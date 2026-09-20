@@ -12,13 +12,8 @@ const root = path.join(import.meta.dirname, "../../..");
 const patcher = path.join(root, "agents", "hermes", "patch-auxiliary-token-limit.py");
 const fixtures: string[] = [];
 
-const condition = `        if (
-            _is_anthropic_compat_endpoint(provider, _effective_base)
-            or _nous_on_messages
-            or _is_nvidia_nim
-            or _is_moa
-            or _is_gemini_native
-        ):`;
+const condition = `        or _is_managed_local_endpoint(effective_base)
+    )`;
 
 function moduleSource(target = condition): string {
   return `from urllib.parse import urlparse
@@ -26,23 +21,18 @@ function moduleSource(target = condition): string {
 def base_url_host_matches(value, expected):
     return (urlparse(value).hostname or "").lower() == expected
 
-def _is_anthropic_compat_endpoint(_provider, _base_url):
+def _is_managed_local_endpoint(_base_url):
     return False
 
-def auxiliary_max_tokens_param(value, *, model):
-    return {"max_tokens": value, "model_seen": model}
+def _forwards_max_tokens(provider, provider_norm, model, effective_base, task):
+    return (
+        False
+${target}
 
 def build(provider, model, base_url, max_tokens, task="title_generation"):
     kwargs = {}
-    _effective_base = base_url
-    _provider_norm = provider
-    _is_nvidia_nim = False
-    _is_moa = task == "moa_reference"
-    _is_gemini_native = False
-    _nous_on_messages = False
-    if max_tokens is not None:
-${target}
-            kwargs.update(auxiliary_max_tokens_param(max_tokens, model=model))
+    if max_tokens is not None and _forwards_max_tokens(provider, provider, model, base_url, task):
+        kwargs.update({"max_tokens": max_tokens, "model_seen": model})
     return kwargs
 `;
 }
@@ -107,16 +97,6 @@ describe("Hermes managed auxiliary output limit", () => {
     expect(JSON.parse(request.stdout)).toEqual({});
   });
 
-  it("preserves the MoA reference limit on another custom endpoint", () => {
-    const file = fixtureFile();
-    expect(runPatcher(file).status).toBe(0);
-
-    const request = evaluate(file, "https://example.test/v1", "moa_reference");
-
-    expect(request.status, request.stderr).toBe(0);
-    expect(JSON.parse(request.stdout)).toEqual({ max_tokens: 64, model_seen: "qwen3-vl:4b" });
-  });
-
   it("accepts one already-patched module without rewriting it", () => {
     const file = fixtureFile();
     expect(runPatcher(file).status).toBe(0);
@@ -129,7 +109,12 @@ describe("Hermes managed auxiliary output limit", () => {
   });
 
   it.each([
-    ["missing", moduleSource(condition.replace("or _is_moa\n", ""))],
+    [
+      "missing",
+      moduleSource(
+        condition.replace("        or _is_managed_local_endpoint(effective_base)\n", ""),
+      ),
+    ],
     ["duplicate", `${moduleSource()}\n${moduleSource()}`],
   ])("rejects a %s upstream condition", (_name, source) => {
     const file = fixtureFile(source);

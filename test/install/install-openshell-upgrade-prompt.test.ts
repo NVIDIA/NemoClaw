@@ -130,7 +130,9 @@ async function runPreinstallUpgradeGuard(
     currentMinOpenshellVersion?: string;
     finishDeferAsPlain?: boolean;
     finishGatewayPort?: string;
+    finishGatewayServiceRestartSucceeds?: boolean;
     finishInstallMode?: "managed" | "source" | "unset";
+    finishLinuxSystemdUserManager?: boolean;
     finishPreparedInstallSucceeds?: boolean;
     gatewayDestroySucceeds?: boolean;
     gatewayProcessStopSucceeds?: boolean;
@@ -172,7 +174,10 @@ async function runPreinstallUpgradeGuard(
   const gatewayServiceStopSucceeds = options.gatewayServiceStopSucceeds === true ? "1" : "0";
   const finishDeferAsPlain = options.finishDeferAsPlain === true ? "1" : "0";
   const finishGatewayPort = options.finishGatewayPort ?? "";
+  const finishGatewayServiceRestartSucceeds =
+    options.finishGatewayServiceRestartSucceeds === false ? "0" : "1";
   const finishInstallMode = options.finishInstallMode ?? "";
+  const finishLinuxSystemdUserManager = options.finishLinuxSystemdUserManager === true ? "1" : "0";
   const finishPreparedInstallSucceeds = options.finishPreparedInstallSucceeds === false ? "0" : "1";
   const openshellVersionCommandFails = options.openshellVersionCommandFails === true ? "1" : "0";
   const installedOpenshellVersionOverride =
@@ -268,6 +273,18 @@ exit 0
         printf 'openshell install-mode %s defer=%s\n' "$1" "\${NEMOCLAW_DEFER_OPENSHELL_INSTALL:-}" >> "${openshellLog}"
         [ "${finishPreparedInstallSucceeds}" = "1" ]
       }
+      command_exists() {
+        [ "$1" != "systemctl" ] && command -v "$1" >/dev/null 2>&1 && return 0
+        [ "$1" = "systemctl" ] && [ "${finishLinuxSystemdUserManager}" = "1" ]
+      }
+      if [ "${finishLinuxSystemdUserManager}" = "1" ]; then
+        uname() { printf 'Linux\n'; }
+        systemctl() { [ "$*" = "--user show-environment" ]; }
+        restart_selected_openshell_gateway_user_service() {
+          printf 'gateway service-restart %s\n' "$1" >> "${openshellLog}"
+          [ "${finishGatewayServiceRestartSucceeds}" = "1" ]
+        }
+      fi
       refresh_path() { :; }
       ensure_nemoclaw_shim() { :; }
       [ -z "${finishGatewayPort}" ] || NEMOCLAW_GATEWAY_PORT="${finishGatewayPort}"
@@ -1400,5 +1417,55 @@ esac`,
     expect(result.stdout).toContain("RESTORE=1");
     expect(cliLog).toBe("");
     expect(openshellLog).toBe("openshell install-mode force defer=\n");
+  });
+
+  it("starts the replacement gateway service before recovering a retired legacy gateway (#11905)", async () => {
+    const { result, openshellLog } = await runPreinstallUpgradeGuard(
+      {
+        NON_INTERACTIVE: "1",
+        NEMOCLAW_OPENSHELL_UPGRADE_PREPARED: "1",
+        NEMOCLAW_CONFIRM_LEGACY_MANAGED_RECREATE: '["alpha"]',
+      },
+      {
+        finishInstallMode: "source",
+        finishLinuxSystemdUserManager: true,
+        hasOldCli: false,
+        openshellOnPath: false,
+      },
+    );
+
+    expect(result.status, result.stdout + result.stderr).toBe(0);
+    expect(openshellLog.split(/\r?\n/u).filter(Boolean)).toEqual([
+      "openshell install-mode force defer=",
+      "gateway service-restart systemd:nemoclaw-openshell-gateway.service",
+    ]);
+    expect(result.stdout).toContain(
+      "Starting the current OpenShell gateway before sandbox recovery",
+    );
+  });
+
+  it("preserves prepared recovery state when the replacement gateway service cannot start (#11905)", async () => {
+    const { result, openshellLog } = await runPreinstallUpgradeGuard(
+      {
+        NON_INTERACTIVE: "1",
+        NEMOCLAW_OPENSHELL_UPGRADE_PREPARED: "1",
+        NEMOCLAW_CONFIRM_LEGACY_MANAGED_RECREATE: '["alpha"]',
+      },
+      {
+        finishGatewayServiceRestartSucceeds: false,
+        finishInstallMode: "source",
+        finishLinuxSystemdUserManager: true,
+        hasOldCli: false,
+        openshellOnPath: false,
+      },
+    );
+
+    expect(result.status).not.toBe(0);
+    expect(openshellLog).toContain(
+      "gateway service-restart systemd:nemoclaw-openshell-gateway.service",
+    );
+    expect(result.stderr).toContain(
+      "Sandbox backups were preserved; fix the user service and rerun with NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1",
+    );
   });
 });

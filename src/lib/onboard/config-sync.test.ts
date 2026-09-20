@@ -251,6 +251,21 @@ describe("sandbox config sync helpers", () => {
     },
   );
 
+  itUnix("syncs selection metadata and completes managed OpenClaw session state", () => {
+    const homeDir = createConfigSyncHome();
+    const openclawDir = path.join(homeDir, ".openclaw");
+    fs.mkdirSync(openclawDir, { mode: 0o700 });
+    const script = buildSandboxConfigSyncScript(selection, true);
+
+    const { nativeCalls } = runConfigSyncScript(script, homeDir, String(process.getuid?.()));
+
+    expect(
+      JSON.parse(fs.readFileSync(path.join(homeDir, ".nemoclaw", "config.json"), "utf8")),
+    ).toEqual(selection);
+    expect(nativeCalls).toEqual([]);
+    expect(modeBits(path.join(openclawDir, "agents", "main", "sessions"))).toBe(0o700);
+  });
+
   itUnix("propagates a real config normalizer ownership refusal", () => {
     const homeDir = createConfigSyncHome();
     const configDir = path.join(homeDir, ".openclaw");

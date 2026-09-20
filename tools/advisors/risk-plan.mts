@@ -39,7 +39,7 @@ const JOURNALED_RECREATE_RESUME_RUNTIME_FILES = new Set([
 ]);
 const SANDBOX_LIFECYCLE_RUNTIME_FILES = new Set([
   "src/lib/actions/sandbox/status-snapshot.ts",
-  "src/lib/onboard/docker-driver-sandbox-recovery.ts",
+  "src/lib/onboard/docker-driver-container-observation.ts",
   "src/lib/onboard/docker-startup-command-agent.ts",
   "src/lib/onboard/sandbox-create-step.ts",
 ]);
