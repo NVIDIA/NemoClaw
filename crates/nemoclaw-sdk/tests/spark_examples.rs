@@ -3,10 +3,11 @@
 use nemoclaw_sdk::{
     compile::{Generations, runtime_targets, targets},
     config::{Document, ServiceDefinition},
+    services::installers::vllm::{HardwareProfile, ServiceHardware},
 };
 
 #[test]
-fn spark_scenarios_compile_their_shared_and_independent_resources() {
+fn arm64_hardware_scenarios_compile_their_declared_resources() {
     let generations: Generations = [
         "workspace",
         "provider",
@@ -16,18 +17,20 @@ fn spark_scenarios_compile_their_shared_and_independent_resources() {
     ]
     .map(|key| (key.into(), "a".repeat(32)))
     .into();
-    for name in [
-        "pi-small.yaml",
-        "deepagents-team.yaml",
-        "shared-model.yaml",
-        "two-models.yaml",
-        "local-and-hosted.yaml",
+    for (directory, name) in [
+        ("spark", "pi-small.yaml"),
+        ("spark", "deepagents-team.yaml"),
+        ("spark", "shared-model.yaml"),
+        ("spark", "two-models.yaml"),
+        ("spark", "local-and-hosted.yaml"),
+        ("station", "vllm.yaml"),
     ] {
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../examples/spark")
+            .join("../../examples")
+            .join(directory)
             .join(name);
         let doc = Document::parse(std::fs::File::open(path).unwrap())
-            .unwrap_or_else(|error| panic!("{name}: {error}"));
+            .unwrap_or_else(|error| panic!("{directory}/{name}: {error}"));
         let runtime = runtime_targets(&doc, &generations).unwrap();
         assert_eq!(
             runtime
@@ -39,7 +42,7 @@ fn spark_scenarios_compile_their_shared_and_independent_resources() {
                 .values()
                 .filter(|service| matches!(service, ServiceDefinition::Vllm(_)))
                 .count(),
-            "{name}"
+            "{directory}/{name}"
         );
         assert_eq!(
             targets(&doc, &generations)
@@ -48,7 +51,7 @@ fn spark_scenarios_compile_their_shared_and_independent_resources() {
                 .filter(|r| r.kind == "sandbox")
                 .count(),
             doc.spec.sandboxes.len(),
-            "{name}"
+            "{directory}/{name}"
         );
         assert_eq!(
             Document::parse(doc.yaml().unwrap().as_bytes()).unwrap(),
@@ -68,6 +71,26 @@ fn spark_scenarios_compile_their_shared_and_independent_resources() {
                     .unwrap();
                 assert!(!args.iter().any(|arg| arg == "--trust-remote-code"));
             }
+        }
+        if directory == "station" {
+            let ServiceDefinition::Vllm(service) = &doc.spec.services["qwen"] else {
+                panic!("station/vllm.yaml: expected vLLM service");
+            };
+            assert_eq!(
+                service.hardware,
+                Some(ServiceHardware::Profile {
+                    profile: HardwareProfile::DgxStation,
+                    architecture: None,
+                    min_gpu_memory_bytes: None,
+                })
+            );
+            assert!(service.image.starts_with("nc-prototype-vllm@sha256:"));
+            assert!(
+                doc.spec.sandboxes[0]
+                    .image
+                    .ref_
+                    .starts_with("nc-fabric@sha256:")
+            );
         }
     }
 }
