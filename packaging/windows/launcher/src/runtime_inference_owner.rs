@@ -47,6 +47,8 @@ unsafe extern "system" {
         user: *mut FileTime,
     ) -> i32;
     fn CancelSynchronousIo(thread: RawHandle) -> i32;
+    fn GetStdHandle(kind: u32) -> RawHandle;
+    fn SetHandleInformation(handle: RawHandle, mask: u32, flags: u32) -> i32;
     fn LocalFree(value: *mut c_void) -> *mut c_void;
 }
 #[link(name = "advapi32")]
@@ -146,7 +148,23 @@ fn selected_model(action: &str) -> Result<Option<&'static str>, &'static str> {
         _ => Err("runtime-service-request"),
     }
 }
+pub(super) fn prevent_diagnostic_handle_inheritance() -> Result<(), &'static str> {
+    // The inference owner is intentionally detached after admission. Do not let
+    // that long-lived process retain the short-lived installer's redirected
+    // stdout/stderr pipe handles, or the installer can wait forever for EOF.
+    for kind in [(-11i32) as u32, (-12i32) as u32] {
+        let handle = unsafe { GetStdHandle(kind) };
+        if !handle.is_null()
+            && handle as isize != -1
+            && unsafe { SetHandleInformation(handle, 1, 0) } == 0
+        {
+            return Err("runtime-service-diagnostic-handle");
+        }
+    }
+    Ok(())
+}
 fn start_existing(installation: &Path, model: Option<&str>) -> Result<Child, &'static str> {
+    prevent_diagnostic_handle_inheritance()?;
     let mut command = Command::new(installation.join("bin").join("NemoClaw.exe"));
     command
         .args(["--native-inference", "serve", "--startup-owned"])

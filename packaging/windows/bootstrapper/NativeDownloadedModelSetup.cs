@@ -74,6 +74,7 @@ internal static class NativeDownloadedModelSetup
         lifetime.CancelAfter(timeout);
         if (!process.Start()) throw new NativeModelSetupException("The model download helper could not start.");
         var completed = false;
+        var terminal = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         try
         {
             async Task Consume(StreamReader reader, bool output)
@@ -100,6 +101,7 @@ internal static class NativeDownloadedModelSetup
                             {
                                 if (value.GetProperty("localModel").GetString() != selected) throw new NativeModelSetupException("The model helper completed a different selection.");
                                 completed = true;
+                                terminal.TrySetResult();
                             }
                             else if (kind == "progress")
                             {
@@ -114,9 +116,26 @@ internal static class NativeDownloadedModelSetup
                     }
                     if (line.Length != 0) throw new NativeModelSetupException("The model helper returned incomplete progress.");
                 }
+                catch (ObjectDisposedException) when (completed && process.HasExited) { }
+                catch (IOException) when (completed && process.HasExited) { }
                 catch { lifetime.Cancel(); throw; }
             }
-            await Task.WhenAll(Consume(process.StandardOutput, true), Consume(process.StandardError, false), process.WaitForExitAsync(lifetime.Token));
+            var readers = Task.WhenAll(Consume(process.StandardOutput, true), Consume(process.StandardError, false));
+            await process.WaitForExitAsync(lifetime.Token);
+            if (!readers.IsCompleted && !completed)
+                await Task.WhenAny(readers, terminal.Task, Task.Delay(TimeSpan.FromSeconds(2), lifetime.Token));
+            // The committed GPU supervisor intentionally outlives this helper.
+            // A Windows descendant can retain inherited pipe handles even after
+            // the helper exits, so terminal proof plus the helper exit—not EOF
+            // from unrelated descendants—is the bounded completion contract.
+            if (completed && !readers.IsCompleted)
+            {
+                process.StandardOutput.Close();
+                process.StandardError.Close();
+            }
+            if (readers.IsCompleted) await readers;
+            else _ = readers.ContinueWith(static task => { _ = task.Exception; }, CancellationToken.None,
+                TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
             cancellation.ThrowIfCancellationRequested();
             if (process.ExitCode != 0 || !completed) throw new NativeModelSetupException(action == "install"
                 ? "The model download did not finish. Check disk space and connectivity, then retry."

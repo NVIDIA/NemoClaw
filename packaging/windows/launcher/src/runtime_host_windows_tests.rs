@@ -115,6 +115,18 @@ fn owned_process_fixture() {
     let root = PathBuf::from(std::env::var_os("NEMOCLAW_GUARDIAN_TEST_ROOT").unwrap());
     match mode.as_str() {
         "exit23" => std::process::exit(23),
+        "diagnostic-child" => std::thread::sleep(Duration::from_secs(4)),
+        "diagnostic-parent" => {
+            super::inference_owner::prevent_diagnostic_handle_inheritance().unwrap();
+            let mut command = Command::new(std::env::current_exe().unwrap());
+            command
+                .args(["--exact", FIXTURE, "--nocapture"])
+                .env("NEMOCLAW_GUARDIAN_TEST_MODE", "diagnostic-child")
+                .current_dir(std::env::temp_dir())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null());
+            spawn_command(&mut command).unwrap();
+        }
         "stdin" => {
             let mut line = String::new();
             std::io::stdin().lock().read_line(&mut line).unwrap();
@@ -491,6 +503,20 @@ fn committed_service_outlives_request_pipe_and_keeps_its_own_lease_until_stop() 
     assert_eq!(service.code(), 0);
     process.wait();
     fs::remove_file(fixture.root.join("lease")).unwrap();
+    finish(fixture);
+}
+#[test]
+fn detached_service_does_not_retain_the_requesters_diagnostic_pipe() {
+    let fixture = Fixture::new();
+    let started = Instant::now();
+    let output = fixture
+        .command("diagnostic-parent")
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert!(started.elapsed() < Duration::from_secs(2));
     finish(fixture);
 }
 #[test]

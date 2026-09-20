@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+using System.Diagnostics;
 using System.Reflection;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -8,6 +9,11 @@ using Nvidia.NemoClaw.Bootstrapper;
 
 // Only this test executable understands the fixture mode; no installed launcher
 // or model server is invoked by the progress/cancellation controls below.
+if (args.SequenceEqual(new[] { "--hold-inherited-output" }))
+{
+    Thread.Sleep(TimeSpan.FromSeconds(4));
+    return;
+}
 if (args.Length == 4 && args[0] == "--native-inference" && args[1] is "install" or "ensure-ready" && args[2] == "--model")
 {
     var scenario = Environment.GetEnvironmentVariable("NEMOCLAW_TEST_DOWNLOAD_HELPER");
@@ -20,7 +26,15 @@ if (args.Length == 4 && args[0] == "--native-inference" && args[1] is "install" 
     {
         Console.WriteLine(JsonSerializer.Serialize(new { schemaVersion = 1, @event = "progress", phase = args[1] == "install" ? "downloading" : "probing", message = "Fixture only", completedBytes = 1, totalBytes = 2 }));
         if (scenario == "cancel") _ = await Console.In.ReadLineAsync();
-        else Console.WriteLine(JsonSerializer.Serialize(new { schemaVersion = 1, @event = args[1] == "install" ? "downloaded" : "ready", localModel = args[3] }));
+        else
+        {
+            Console.WriteLine(JsonSerializer.Serialize(new { schemaVersion = 1, @event = args[1] == "install" ? "downloaded" : "ready", localModel = args[3] }));
+            if (scenario == "inherited-output")
+            {
+                var descendant = Process.Start(new ProcessStartInfo { FileName = Environment.ProcessPath!, UseShellExecute = false, Arguments = "--hold-inherited-output" });
+                descendant?.Dispose();
+            }
+        }
     }
     return;
 }
@@ -178,6 +192,12 @@ try
         value => readinessProgress.Add(value.Phase), CancellationToken.None);
     Require(readinessProgress.SequenceEqual(new[] { "probing" }));
     controls.Add("GPU readiness helper requires its real terminal proof after progress");
+    Environment.SetEnvironmentVariable("NEMOCLAW_TEST_DOWNLOAD_HELPER", "inherited-output");
+    var bounded = Stopwatch.StartNew();
+    await NativeDownloadedModelSetup.EnsureReadyAsync(Environment.ProcessPath!, NativeDownloadedModelSetup.DefaultModel, null, CancellationToken.None);
+    bounded.Stop();
+    Require(bounded.Elapsed < TimeSpan.FromSeconds(2));
+    controls.Add("GPU readiness ignores inherited descendant output handles after terminal proof");
 }
 finally { Environment.SetEnvironmentVariable("NEMOCLAW_TEST_DOWNLOAD_HELPER", previousScenario); }
 Console.WriteLine(JsonSerializer.Serialize(new { schemaVersion = 1, passed = controls.Count, failed = 0, controls, installedModelAuthorityTested = false, windowsExecutionRequired = OperatingSystem.IsWindows() }));
