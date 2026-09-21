@@ -50,8 +50,6 @@ const ARTIFACT_NAME = /^[A-Za-z0-9._-]{1,128}$/u;
 
 const REQUIRED_MUTATIONS = [
   "registration",
-  "start",
-  "stop",
   "inference-set",
   "rebuild",
   "clone",
@@ -403,7 +401,6 @@ function validateCompleteBundle(bundle: RuntimeProviderBundle): void {
     "hostLocalInference",
     "lifecycle",
     "mutationAuthority",
-    "bootstrap",
     "snapshot",
     "recovery",
     "cleanup",
@@ -413,16 +410,10 @@ function validateCompleteBundle(bundle: RuntimeProviderBundle): void {
   }
   if (
     bundle.capabilities.hostLocalInference !== true ||
-    bundle.capabilities.directLifecycle !== true ||
     bundle.capabilities.workloadImageCleanup !== true
   ) {
     throw new RuntimeProviderActivationError(
       `provider '${providerId}' does not declare the complete lifecycle capability set`,
-    );
-  }
-  if (bundle.bootstrap.supported !== true || bundle.bootstrap.bootstrapKind !== "managed-image") {
-    throw new RuntimeProviderActivationError(
-      `provider '${providerId}' does not provide managed-image bootstrap authority`,
     );
   }
   const workload = bundle.workload.profile;

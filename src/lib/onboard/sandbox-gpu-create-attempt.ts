@@ -9,7 +9,6 @@ import {
   initialDockerGpuRoute,
   type SelectedDockerGpuRoute,
 } from "./docker-gpu-route";
-import type { ManagedBootstrapNativeGpuFallbackOwnerCleanupHandoff } from "./managed-bootstrap/runtime-create";
 import {
   type OpenShellDockerSandboxContainerQuery,
   queryOpenShellDockerSandboxContainers,
@@ -22,7 +21,7 @@ import {
 
 export type SandboxGpuCreateFailureStage = "create" | "readiness" | "gpu-proof";
 
-export { getSandboxFailurePhase, isSandboxReady };
+export { getSandboxFailurePhase, hasSandboxListEntry, isSandboxReady };
 
 export type SandboxGpuCreateAttemptSuccess<T> = {
   ok: true;
@@ -42,7 +41,6 @@ export type SandboxGpuCreateAttemptFailure = {
   };
   /** Strict native `--gpu` parser rejection observed before build or create progress. */
   nativeCreateRejectedBeforeProgress?: true;
-  nativeCleanupHandoff?: ManagedBootstrapNativeGpuFallbackOwnerCleanupHandoff;
 };
 
 export type SandboxGpuCreateAttemptResult<T> =
@@ -281,7 +279,6 @@ export function verifyRejectedNativeGpuAttemptAbsentForFallback(
   });
 }
 
-/** Keep owner-managed runtimes out of the generic mutable-name cleanup path. */
 export async function cleanupNativeGpuFailureForFallback(
   sandboxName: string,
   failure: SandboxGpuCreateAttemptFailure,
@@ -289,16 +286,6 @@ export async function cleanupNativeGpuFailureForFallback(
 ): Promise<NativeGpuFallbackCleanupResult> {
   if (failure.nativeCreateRejectedBeforeProgress) {
     return verifyRejectedNativeGpuAttemptAbsentForFallback(sandboxName, deps);
-  }
-  if (failure.nativeCleanupHandoff) {
-    return {
-      safe: false,
-      reason:
-        "managed bootstrap owner cleanup is required for the exact sandbox and runtime identities",
-      deleteStatus: null,
-      sandboxPresent: null,
-      containerIds: [failure.nativeCleanupHandoff.runtimeId],
-    };
   }
   return cleanupNativeGpuAttemptForFallback(sandboxName, deps);
 }

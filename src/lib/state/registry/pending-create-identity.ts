@@ -9,6 +9,7 @@ const KEYS = new Set([
   "gatewayPort",
   "lifecycleGeneration",
   "createAttemptNonce",
+  "managedBootstrapIdentity",
   "exactFinalHandoffCommitStarted",
   "exactFinalHandoffRuntimeId",
   "exactFinalHandoffAcknowledged",
@@ -54,6 +55,9 @@ export function normalizePendingSandboxCreateIdentity(
     (value.createAttemptNonce !== undefined &&
       (typeof value.createAttemptNonce !== "string" ||
         !/^[0-9a-f]{62}$/u.test(value.createAttemptNonce))) ||
+    (value.managedBootstrapIdentity !== undefined &&
+      (typeof value.managedBootstrapIdentity !== "string" ||
+        !SHA256_DIGEST_PATTERN.test(value.managedBootstrapIdentity))) ||
     (value.exactFinalHandoffAcknowledged !== undefined &&
       value.exactFinalHandoffAcknowledged !== true) ||
     (value.exactFinalHandoffCommitStarted !== undefined &&
@@ -83,6 +87,9 @@ export function normalizePendingSandboxCreateIdentity(
     lifecycleGeneration: value.lifecycleGeneration,
     sandboxIdentityFingerprint: value.sandboxIdentityFingerprint,
     ...(value.createAttemptNonce ? { createAttemptNonce: value.createAttemptNonce } : {}),
+    ...(typeof value.managedBootstrapIdentity === "string"
+      ? { managedBootstrapIdentity: value.managedBootstrapIdentity }
+      : {}),
     route: value.route,
     ...(value.exactFinalHandoffCommitStarted === true
       ? { exactFinalHandoffCommitStarted: true as const }

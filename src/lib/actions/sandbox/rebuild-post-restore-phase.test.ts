@@ -565,7 +565,7 @@ describe("rebuild post-restore phase", () => {
     expect(verification).toEqual({ mutableConfigPermissionsVerified: true });
   });
 
-  it("rejects a replacement whose live version does not match the rebuild target", async () => {
+  it.each([false, true])("rejects a version mismatch during recovery=%s", async (recovery) => {
     agentName = "hermes";
     vi.mocked(agentDefs.loadAgent).mockReturnValue({
       name: "hermes",
@@ -581,12 +581,15 @@ describe("rebuild post-restore phase", () => {
     });
     const args = {
       ...input(),
+      preparedBackupRecovery: recovery,
       versionCheck: { expectedVersion: "0.20.6" } as never,
-      hermesCronRestoreIdentity: {
-        pid: 41,
-        start_time: 902,
-        drain_token: "restore-token",
-      },
+      hermesCronRestoreIdentity: !recovery
+        ? {
+            pid: 41,
+            start_time: 902,
+            drain_token: "restore-token",
+          }
+        : undefined,
     };
 
     await runRebuildPostRestorePhase(args);
@@ -609,13 +612,143 @@ describe("rebuild post-restore phase", () => {
       rebuildHermesPostRestore.completeHermesCronRestoreAfterGatewayReplacement,
     ).not.toHaveBeenCalled();
     expect(messagingHostForward.ensureMessagingHostForwardAfterRebuild).not.toHaveBeenCalled();
-    expect(vi.mocked(console.error).mock.calls.flat().join("\n")).toContain(
-      "Hermes cron dispatch remains drained",
-    );
-    expect(vi.mocked(console.log).mock.calls.flat().join("\n")).not.toContain(
-      "rebuilt successfully",
-    );
+    const errors = vi.mocked(console.error).mock.calls.flat().join("\n");
+    expect(errors.includes("Hermes cron dispatch remains drained")).toBe(!recovery);
+    expect(errors).toContain("nemoclaw alpha recover");
+    expect(errors).toContain("expected 0.20.6, observed 0.19.0");
+    expect(errors).not.toContain("gateway restart");
+    expect(vi.mocked(console.log).mock.calls.flat().join("\n")).not.toContain("rebuild completed");
   });
+
+  it.each([
+    {
+      cronGate: false,
+      preparedBackupRecovery: false,
+      restoreSucceeded: true,
+      gatewayDetail: "nemoclaw alpha gateway restart",
+      recoveryDetail: "If gateway health is still unverified",
+    },
+    {
+      cronGate: true,
+      preparedBackupRecovery: false,
+      restoreSucceeded: true,
+      gatewayDetail: "Hermes gateway health was not verified after state restore.",
+      recoveryDetail: "Hermes cron dispatch remains drained",
+    },
+    {
+      cronGate: false,
+      preparedBackupRecovery: true,
+      restoreSucceeded: false,
+      gatewayDetail: "Correct the reported restore problem",
+      recoveryDetail: "nemoclaw alpha recover",
+    },
+  ])(
+    "reports unavailable verification with cron gate=$cronGate, prepared recovery=$preparedBackupRecovery, and restore=$restoreSucceeded (#12004)",
+    async ({
+      cronGate,
+      preparedBackupRecovery,
+      restoreSucceeded,
+      gatewayDetail,
+      recoveryDetail,
+    }) => {
+      agentName = "hermes";
+      vi.mocked(sandboxVersion.checkAgentVersion).mockResolvedValue({
+        sandboxVersion: null,
+        expectedVersion: "0.20.6",
+        isStale: false,
+        verificationFailed: true,
+        detectionMethod: "unknown",
+        unavailableReason: "probe-failed",
+      });
+      vi.mocked(rebuildHermesPostRestore.restartHermesGatewayAfterStateRestore).mockResolvedValue(
+        "restart-failed",
+      );
+      vi.mocked(
+        rebuildHermesPostRestore.verifyHermesGatewayAfterStateRestoreForCronGate,
+      ).mockResolvedValue({ state: "unverified" });
+      vi.mocked(rebuildMcp.restoreMcpAfterRebuild).mockResolvedValue(false);
+      const failure = new Error("rebuild stopped");
+      const args = {
+        ...input(),
+        preparedBackupRecovery,
+        restoreSucceeded,
+        bail: vi.fn((): never => {
+          throw failure;
+        }),
+        backupManifest: { backupPath: "/tmp/alpha-backup" } as never,
+        versionCheck: { expectedVersion: "0.20.6" } as never,
+        hermesCronRestoreIdentity: cronGate
+          ? { pid: 41, start_time: 902, drain_token: "restore-token" }
+          : undefined,
+      };
+
+      await expect(runRebuildPostRestorePhase(args)).rejects.toBe(failure);
+
+      expect(args.bail).toHaveBeenCalledExactlyOnceWith(
+        restoreSucceeded
+          ? "Replacement agent version could not be verified after rebuild."
+          : "State restore remained incomplete after rebuilding 'alpha'.",
+      );
+      const errors = vi.mocked(console.error).mock.calls.flat().join("\n");
+      const logs = vi.mocked(console.log).mock.calls.flat().join("\n");
+      expect(errors).toContain(
+        "Replacement agent version could not be verified (expected 0.20.6).",
+      );
+      expect(errors).not.toContain("did not match");
+      expect(errors).toContain("Backup is preserved at: /tmp/alpha-backup");
+      expect(errors).toContain("nemoclaw alpha recover");
+      expect(logs).toContain("nemoclaw alpha mcp restart");
+      expect(errors).toContain(gatewayDetail);
+      expect(errors).toContain(recoveryDetail);
+      expect(errors.includes("gateway restart")).toBe(!cronGate && !preparedBackupRecovery);
+      expect(errors.indexOf(gatewayDetail)).toBeLessThan(errors.indexOf("alpha recover"));
+      expect(registry.updateSandbox).toHaveBeenLastCalledWith("alpha", { agentVersion: null });
+      expect(
+        rebuildHermesPostRestore.completeHermesCronRestoreAfterGatewayReplacement,
+      ).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    { target: "hermes", restoreSucceeded: true, reason: "invalid-gateway-binding" },
+    { target: "hermes", restoreSucceeded: false, reason: "probe-failed" },
+    { target: "openclaw", restoreSucceeded: true, reason: "probe-failed" },
+  ] as const)(
+    "omits Hermes restart guidance for $target with restore=$restoreSucceeded and $reason (#12004)",
+    async ({ target, restoreSucceeded, reason }) => {
+      agentName = target;
+      vi.mocked(sandboxVersion.checkAgentVersion).mockResolvedValue({
+        sandboxVersion: null,
+        expectedVersion: "0.20.6",
+        isStale: false,
+        verificationFailed: true,
+        detectionMethod: reason === "probe-failed" ? "unknown" : "unavailable",
+        unavailableReason: reason,
+      });
+      const failure = new Error("rebuild stopped");
+      const args = {
+        ...input(),
+        restoreSucceeded,
+        bail: vi.fn((): never => {
+          throw failure;
+        }),
+        versionCheck: { expectedVersion: "0.20.6" } as never,
+      };
+      await expect(runRebuildPostRestorePhase(args)).rejects.toBe(failure);
+      expect(args.bail).toHaveBeenCalledExactlyOnceWith(
+        restoreSucceeded
+          ? "Replacement agent version could not be verified after rebuild."
+          : "State restore remained incomplete after rebuilding 'alpha'.",
+      );
+      const errors = vi.mocked(console.error).mock.calls.flat().join("\n");
+      expect(errors).not.toContain("gateway restart");
+      expect(
+        errors.includes(
+          "State recovery remains incomplete. Correct the restore error, then run `nemoclaw alpha rebuild` again.",
+        ),
+      ).toBe(!restoreSucceeded);
+    },
+  );
 
   it("records the live replacement version only after an exact forced probe", async () => {
     agentName = "hermes";
