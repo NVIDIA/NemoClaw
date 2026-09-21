@@ -31,13 +31,19 @@ Compare the results with the required checks in `repo-policy.md`.
 
 ## Gate 3: Mergeable, no conflicts
 
-`mergeable: MERGEABLE` and `mergeStateStatus: CLEAN`. The PR must merge cleanly into its base branch.
+Require `mergeable: MERGEABLE` and one of these `mergeStateStatus` values:
+`BEHIND`, `BLOCKED`, `CLEAN`, `HAS_HOOKS`, or `UNSTABLE`.
+These are the same conflict conditions used by the trusted merge gate.
+A `BEHIND` state alone does not fail this gate.
+
+Separately confirm whether an active rule requires the branch to be up to date.
+If it does, integrate the base and rerun all candidate evidence before declaring the PR eligible to merge.
 
 **Common failure modes:**
 
 - `CONFLICTING` — base branch has diverged
 - `DIRTY` — staged changes block merge
-- `BLOCKED` — required checks failing or reviews missing
+- `UNKNOWN` — GitHub has not established mergeability
 
 ## Gate 4: Contributor compliance satisfied
 
