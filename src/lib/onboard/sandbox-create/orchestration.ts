@@ -11,7 +11,10 @@ import {
   createCliOpenShellSandboxLifecycleFromRunner,
   createCliOpenShellSandboxObserverFromRunner,
 } from "../../adapters/openshell/sandbox-lifecycle-cli";
-import { NEMOCLAW_CREATE_ATTEMPT_LABEL } from "../../adapters/openshell/sandbox-identity";
+import {
+  NEMOCLAW_CREATE_ATTEMPT_LABEL,
+  resolveCreatedOpenShellSandboxId,
+} from "../../adapters/openshell/sandbox-identity";
 import type { AgentDefinition } from "../../agent/defs";
 import type { WebSearchConfig } from "../../inference/web-search";
 import {
@@ -55,11 +58,11 @@ import {
   type OwnedSandboxRecreateRuntime,
 } from "../onboard-recreate-journal";
 import { managedImageRuntimeIdentity } from "../managed-image/agents";
+import type { ProviderManagedStartupTransaction } from "../managed-startup/provider-root-apply";
 import {
   managedStartupStateRoots,
   MANAGED_HERMES_STATE_ROOT,
 } from "../managed-startup/state-roots";
-import type { ManagedBootstrapRuntimePatch } from "../managed-bootstrap/runtime-create";
 import type { SandboxGpuConfig } from "../sandbox-gpu-mode";
 import { cliName } from "../branding";
 import type {
@@ -101,6 +104,10 @@ function cancelRecoveryIdentity(
 }
 
 /** Finalize provider arguments from the exact policy that creation consumes. */
+type ManagedBootstrapRuntimePatch = Readonly<{
+  allowsNotReadyLifecycleRevalidation?(): boolean;
+}>;
+
 export function bindRebuildPolicyProvidersToCreateArgs(
   createArgs: readonly string[],
   policy: Pick<import("../initial-policy").InitialSandboxPolicy, "credentialBindingProviders">,
@@ -482,13 +489,46 @@ export function allowsNotReadyCreatedSandboxReconciliation(input: {
   readonly acceptedCheckpoint: PendingSandboxCreateIdentity | null;
 }): boolean {
   const checkpoint = input.currentCheckpoint ?? input.acceptedCheckpoint;
-  if (
-    checkpoint?.exactFinalHandoffCommitStarted === true ||
-    input.createRoute === "compatibility"
-  ) {
-    return checkpoint?.exactFinalHandoffCommitStarted === true;
-  }
+  // Compatibility applies one exact, reversible initial runtime cutover after
+  // OpenShell publishes the nonce-owned sandbox but before that replacement
+  // can settle Ready. Reconciliation stays bound to the captured fingerprint;
+  // final registration uses allowsNotReadyCreatedSandboxRevalidation and still
+  // requires the durable handoff acknowledgement.
+  if (input.createRoute === "compatibility") return true;
+  if (checkpoint?.exactFinalHandoffCommitStarted === true) return true;
   return input.managedBootstrapCreateFinished;
+}
+
+/**
+ * Keep the initial compatibility cutover bound to the nonce-selected sandbox.
+ *
+ * OpenShell may report the just-created runtime Error before the compatibility
+ * envelope is installed. That lifecycle state is the reason for the cutover,
+ * not authority to select a different sandbox. During this one reversible
+ * window, revalidate the exact create-attempt identity instead of requiring a
+ * Ready/NotReady lifecycle state. Final publication remains behind the durable
+ * handoff acknowledgement and the ordinary lifecycle revalidation above.
+ */
+export function revalidateCreatedSandboxIdentityDuringCreate(input: {
+  readonly expectedIdentity: string;
+  readonly compatibilityReconciliation: {
+    readonly resolveSandboxId: () => string;
+  } | null;
+  readonly fingerprintSandboxId: (sandboxId: string) => string;
+  readonly revalidateLifecycle: () => void;
+}): void {
+  if (!input.compatibilityReconciliation) {
+    input.revalidateLifecycle();
+    return;
+  }
+  const observedIdentity = input.fingerprintSandboxId(
+    input.compatibilityReconciliation.resolveSandboxId(),
+  );
+  if (observedIdentity !== input.expectedIdentity) {
+    throw new Error(
+      "OpenShell create-attempt identity changed during initial compatibility reconciliation.",
+    );
+  }
 }
 
 /** Upgrade legacy compatibility recovery only from exact Docker runtime authority. */
@@ -973,6 +1013,22 @@ export async function finalizeCreatedSandboxBeforeHermesCredentialReconciliation
   return registration;
 }
 
+const MANAGED_STARTUP_HOLD_RELEASE_ATTEMPTS = 3;
+
+/** Retry the exact-container hold release before entering retained recovery. */
+export function releaseManagedStartupHoldWithRetry(release: () => void): void {
+  let failure: unknown;
+  for (let attempt = 0; attempt < MANAGED_STARTUP_HOLD_RELEASE_ATTEMPTS; attempt += 1) {
+    try {
+      release();
+      return;
+    } catch (error) {
+      failure = error;
+    }
+  }
+  throw failure;
+}
+
 /**
  * Keep every effect after an unverified create behind one exact-identity gate.
  *
@@ -987,7 +1043,13 @@ export async function runSandboxCreateWithIdentityVerification<
 >(input: {
   readonly sandboxName: string;
   readonly revalidate: (sandboxIsLive: boolean, operation: string) => void;
-  readonly create: (verifyCreatedSandbox: (created: Created) => Promise<string>) => Promise<Result>;
+  readonly create: (
+    verifyCreatedSandbox: (
+      created: Created,
+      beforeEffects?: () => unknown | Promise<unknown>,
+      afterEffects?: () => void | Promise<void>,
+    ) => Promise<string>,
+  ) => Promise<Result>;
   readonly captureCreatedSandboxIdentity: (created: Created) => string;
   readonly captureCreatedSandboxCreateAttemptNonce?: (created: Created) => string | undefined;
   readonly persistCreatedSandboxIdentity: (created: Created, exactIdentity: string) => void;
@@ -1008,6 +1070,7 @@ export async function runSandboxCreateWithIdentityVerification<
     created: Created,
     exactIdentity: string,
     evidence: Evidence,
+    beforeEffectsResult?: unknown,
   ) => Promise<void>;
   readonly persistRetainedSandboxRecovery?: (
     message: string,
@@ -1071,7 +1134,11 @@ export async function runSandboxCreateWithIdentityVerification<
       `Sandbox post-create verification or finalization failed; automatic sandbox cleanup was not safe. ${recoveryGuidance}`,
     );
   };
-  const verifyCreatedSandbox = async (created: Created): Promise<string> => {
+  const verifyCreatedSandbox = async (
+    created: Created,
+    beforeEffects?: () => unknown | Promise<unknown>,
+    afterEffects?: () => void | Promise<void>,
+  ): Promise<string> => {
     observedCreatedSandbox = created;
     try {
       const capturedCreateAttemptNonce = input.captureCreatedSandboxCreateAttemptNonce?.(created);
@@ -1109,7 +1176,14 @@ export async function runSandboxCreateWithIdentityVerification<
         evidence,
         `continuing onboarding for sandbox '${input.sandboxName}'`,
       );
-      await input.runVerifiedCreateEffects?.(created, capturedIdentity, evidence);
+      const beforeEffectsResult = await beforeEffects?.();
+      await input.runVerifiedCreateEffects?.(
+        created,
+        capturedIdentity,
+        evidence,
+        beforeEffectsResult,
+      );
+      await afterEffects?.();
       input.revalidateCreatedSandboxIdentity(
         capturedIdentity,
         `confirming verified effects for sandbox '${input.sandboxName}'`,
@@ -1531,7 +1605,6 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       readDcodeSelectionDrift,
       sandboxCommandExecutor,
       getDefaultSandboxNameForAgent,
-      getDockerDriverGatewayStateDir,
       getHermesToolGatewayBroker,
       getRequestedSandboxAgentName,
       getSandboxAgentDrift,
@@ -2476,6 +2549,8 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
                 : hermesDashboardState,
               hermesApiPort: hermesApiPortReservationScope.effectivePort,
               manageDashboard,
+              managedBootstrapIdentity:
+                acceptedTargetPendingIdentity?.managedBootstrapIdentity ?? null,
               openshellShellCommand,
               openshellArgv,
             },
@@ -2578,15 +2653,6 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
     runForNewSandboxCreate(agentCreateInput.hermesPortableLifecycle || resumingVerifiedCreate, () =>
       recreateRuntime.advance("creating"),
     );
-    const managedBootstrap = managedWorkloadOnboard.resolveOnboardManagedBootstrapLaunch({
-      runtime: managedWorkloadRuntime,
-      workload: preparedSandboxWorkload,
-      sandboxName,
-      stateRoot: getDockerDriverGatewayStateDir(),
-      bootstrapIdentity: managedBootstrapIdentity,
-      request: managedStartupRootApplyRequest,
-      intendedWorkloadArgv: intendedSandboxStartupCommand,
-    });
     const recoveredHermesLifecycleGeneration = readHermesPortableLifecycleGeneration({
       enabled: agentCreateInput.hermesPortableLifecycle,
       sandboxName,
@@ -2624,7 +2690,9 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
     const createFlowEnvironment = hermesGpuAuthority?.env ?? sandboxEnv;
     const createGpuVerifier = hermesGpuAuthority?.verify ?? verifyDirectSandboxGpu;
     let managedBootstrapCreateFinished = false;
+    let managedStartupProtocol: ProviderManagedStartupTransaction["protocol"] | null = null;
     let managedBootstrapCreateRoute: PendingSandboxCreateIdentity["route"] | null = null;
+    let activeCompatibilityCreateAuthority: { readonly createAttemptNonce: string } | null = null;
     const allowNotReadyAfterFinalHandoff = (): boolean =>
       allowsNotReadyCreatedSandboxRevalidation({
         managedBootstrapCreateFinished,
@@ -2643,15 +2711,32 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       expectedIdentity: string,
       _operation: string,
     ): void => {
-      sandboxRecreateTransaction.revalidateCreatedSandboxLifecycleRegistration(
-        { sandboxName, gatewayName: GATEWAY_NAME },
-        {
-          lifecycleGeneration: createdSandboxLifecycle.generation,
-          lifecycleLiveIdentityFingerprint: expectedIdentity,
-        },
-        getSandboxRecreateObservation,
-        { allowNotReadyWithMatchingIdentity: allowNotReadyDuringCreate() },
-      );
+      const compatibilityAuthority = activeCompatibilityCreateAuthority;
+      revalidateCreatedSandboxIdentityDuringCreate({
+        expectedIdentity,
+        fingerprintSandboxId: sandboxRecreateTransaction.fingerprintSandboxRecreateValue,
+        compatibilityReconciliation: compatibilityAuthority
+          ? {
+              resolveSandboxId: () =>
+                resolveCreatedOpenShellSandboxId({
+                  sandboxName,
+                  gatewayName: GATEWAY_NAME,
+                  createAttemptNonce: compatibilityAuthority.createAttemptNonce,
+                  runCaptureOpenshell,
+                }),
+            }
+          : null,
+        revalidateLifecycle: () =>
+          sandboxRecreateTransaction.revalidateCreatedSandboxLifecycleRegistration(
+            { sandboxName, gatewayName: GATEWAY_NAME },
+            {
+              lifecycleGeneration: createdSandboxLifecycle.generation,
+              lifecycleLiveIdentityFingerprint: expectedIdentity,
+            },
+            getSandboxRecreateObservation,
+            { allowNotReadyWithMatchingIdentity: allowNotReadyDuringCreate() },
+          ),
+      });
     };
     const requireVerifiedCreateBoundary = (): NonNullable<typeof verifiedCreateBoundary> => {
       if (!verifiedCreateBoundary) {
@@ -2903,6 +2988,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
             lifecycleGeneration: createdSandboxLifecycle.generation,
             lifecycleLiveIdentityFingerprint: identity.liveIdentityFingerprint,
             createAttemptNonce: identity.createAttemptNonce,
+            ...(managedBootstrapIdentity ? { managedBootstrapIdentity } : {}),
             route: identity.route,
           };
         },
@@ -2936,16 +3022,112 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
           ),
         retainedSandboxRecoveryRetryOwner: postCreateRecoveryRetryOwner,
         cleanupTemporarySources: cleanupSandboxCreateSources,
-        runVerifiedCreateEffects: runDeferredProviderEffects
-          ? async (_identity, _exactIdentity, boundary) => {
-              const context: VerifiedSandboxCreateEffectsContext = {
-                ...boundary,
-                revalidateSandboxIdentity: (operation) =>
-                  revalidateVerifiedCreateIdentity(boundary, operation),
-              };
-              await runDeferredProviderEffects(context);
-            }
-          : undefined,
+        runVerifiedCreateEffects:
+          managedStartupRootApplyRequest || runDeferredProviderEffects
+            ? async (identity, _exactIdentity, boundary, beforeEffectsResult) => {
+                const context: VerifiedSandboxCreateEffectsContext = {
+                  ...boundary,
+                  revalidateSandboxIdentity: (operation) =>
+                    revalidateVerifiedCreateIdentity(boundary, operation),
+                };
+                if (managedStartupRootApplyRequest) {
+                  const expectedContainerId =
+                    identity.route === "compatibility" ? String(beforeEffectsResult ?? "") : null;
+                  if (
+                    identity.route === "compatibility" &&
+                    beforeEffectsResult !== undefined &&
+                    !/^[a-f0-9]{64}$/u.test(expectedContainerId ?? "")
+                  ) {
+                    throw new Error(
+                      "Compatibility startup has no exact replacement runtime authority.",
+                    );
+                  }
+                  context.revalidateSandboxIdentity(
+                    `applying managed startup profile for sandbox '${sandboxName}'`,
+                  );
+                  if (!managedBootstrapIdentity) {
+                    throw new Error("Managed startup launch has no exact bootstrap identity.");
+                  }
+                  if (!managedWorkloadRuntime.runtimeProvider) {
+                    throw new Error("Managed startup launch has no selected runtime provider.");
+                  }
+                  const managedStartupRuntimeProvider = managedWorkloadRuntime.runtimeProvider;
+                  console.log("  Applying managed startup profile to the verified sandbox...");
+                  let managedStartupTransaction: ReturnType<
+                    typeof managedWorkloadOnboard.applyProviderManagedStartupRootRequest
+                  >;
+                  try {
+                    managedStartupTransaction =
+                      managedWorkloadOnboard.applyProviderManagedStartupRootRequest({
+                        runtimeProvider: managedStartupRuntimeProvider,
+                        sandboxName,
+                        sandboxId: identity.sandboxId,
+                        bootstrapIdentity: managedBootstrapIdentity,
+                        request: managedStartupRootApplyRequest,
+                        ...(expectedContainerId ? { expectedContainerId } : {}),
+                      });
+                    managedStartupProtocol =
+                      managedStartupTransaction?.protocol ?? "identity-bound";
+                  } catch (error) {
+                    console.error(
+                      `  Managed startup root apply failed: ${
+                        error instanceof Error ? error.message : "unknown root apply failure"
+                      }`,
+                    );
+                    throw error;
+                  }
+                  console.log("  ✓ Applied the managed startup profile");
+                  if (managedStartupTransaction) {
+                    console.log("  Committing managed startup shared state...");
+                    const sharedState =
+                      managedWorkloadOnboard.finalizeProviderManagedStartupSharedState({
+                        runtimeProvider: managedStartupRuntimeProvider,
+                        sandboxName,
+                        sandboxId: identity.sandboxId,
+                        transaction: managedStartupTransaction,
+                        supervisorReady: true,
+                      });
+                    if (!sharedState.supervisorReady || sharedState.failure) {
+                      console.error(
+                        `  Managed startup shared-state commit failed: ${
+                          sharedState.failure?.message ?? "startup supervisor was not ready"
+                        }`,
+                      );
+                      throw (
+                        sharedState.failure ??
+                        new Error("Managed startup shared-state commit failed.")
+                      );
+                    }
+                    console.log("  ✓ Committed managed startup shared state");
+                    try {
+                      releaseManagedStartupHoldWithRetry(() =>
+                        managedWorkloadOnboard.releaseProviderManagedStartupHold({
+                          runtimeProvider: managedStartupRuntimeProvider,
+                          sandboxName,
+                          sandboxId: identity.sandboxId,
+                          transaction: managedStartupTransaction,
+                          profileFingerprint: managedStartupRootApplyRequest.profileFingerprint,
+                        }),
+                      );
+                    } catch (error) {
+                      console.error(
+                        `  Managed startup hold release failed after commit: ${
+                          error instanceof Error ? error.message : "unknown release failure"
+                        }`,
+                      );
+                      throw error;
+                    }
+                    console.log("  ✓ Released the managed startup hold");
+                  }
+                  managedBootstrapCreateFinished = true;
+                  context.revalidateSandboxIdentity(
+                    `confirming managed startup profile for sandbox '${sandboxName}'`,
+                  );
+                  console.log("  ✓ Revalidated the managed startup sandbox identity");
+                }
+                if (runDeferredProviderEffects) await runDeferredProviderEffects(context);
+              }
+            : undefined,
         create: async (verifyCreatedSandbox) => {
           const created = await sandboxGpuCreateFlow.runSandboxGpuCreateFlow(
             {
@@ -2985,11 +3167,27 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
               prebuild,
               restoreBackupPath,
               terminalAgent: agentDefs.isTerminalAgent(agent),
-              managedBootstrap,
-              verifyCreatedSandboxBeforeEffects: async (identity) => {
-                managedBootstrapCreateFinished = managedBootstrap !== null;
+              managedImage: preparedSandboxWorkload.source.kind === "managed-image",
+              verifyCreatedSandboxBeforeEffects: async (identity, beforeEffects, afterEffects) => {
+                managedBootstrapCreateFinished = false;
+                managedStartupProtocol = null;
                 managedBootstrapCreateRoute = identity.route;
-                await verifyCreatedSandbox(identity);
+                const createAttemptNonce = identity.createAttemptNonce;
+                if (identity.route === "compatibility") {
+                  if (!createAttemptNonce) {
+                    throw new Error(
+                      "Compatibility reconciliation has no exact create-attempt authority.",
+                    );
+                  }
+                  activeCompatibilityCreateAuthority = { createAttemptNonce };
+                } else {
+                  activeCompatibilityCreateAuthority = null;
+                }
+                try {
+                  await verifyCreatedSandbox(identity, beforeEffects, afterEffects);
+                } finally {
+                  activeCompatibilityCreateAuthority = null;
+                }
               },
               revalidateVerifiedSandboxBeforeEffect: (operation) =>
                 revalidateVerifiedCreateIdentity(requireVerifiedCreateBoundary(), operation),
@@ -3117,7 +3315,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         sandboxName,
         allowManagedBootstrapNotReady: () =>
           allowsManagedBootstrapNotReady(
-            managedBootstrap !== null,
+            managedStartupRootApplyRequest !== null,
             requireVerifiedCreateBoundary().route,
             pendingCreateIdentity,
           ),
@@ -3173,9 +3371,9 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       if (!portableRuntimeContext?.environmentScope) {
         throw new Error("Hermes portable onboarding is missing runtime environment authority.");
       }
-      if (managedBootstrap || !["none", "native-only"].includes(gpuRoutePlan)) {
+      if (managedStartupRootApplyRequest || !["none", "native-only"].includes(gpuRoutePlan)) {
         throw new Error(
-          "Hermes portable onboarding cannot use managed bootstrap or Docker GPU compatibility.",
+          "Hermes portable onboarding cannot use managed startup root application or Docker GPU compatibility.",
         );
       }
       if (!inferenceRouteReservationAuthority?.sessionId) {
@@ -3285,6 +3483,14 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
               () => completeCreatedSandboxRegistration(created, null),
               () => recordPostCreateRecovery("registry publication"),
             );
+            if (
+              managedStartupProtocol &&
+              !registry.updateSandbox(sandboxName, { managedStartupProtocol })
+            ) {
+              throw new Error(
+                `Sandbox '${sandboxName}' registered without its managed startup protocol.`,
+              );
+            }
             createEffectsFinalized = true;
             return registration;
           },

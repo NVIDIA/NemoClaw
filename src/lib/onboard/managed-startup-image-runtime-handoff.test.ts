@@ -53,6 +53,7 @@ describe("managed startup image runtime handoff and descriptor integrity", () =>
 
   beforeEach(() => {
     temporaryDirectoryPath = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-managed-startup-"));
+    fs.chmodSync(temporaryDirectoryPath, 0o1777);
   });
   afterEach(() => {
     vi.restoreAllMocks();
@@ -66,16 +67,20 @@ describe("managed startup image runtime handoff and descriptor integrity", () =>
   function mockDescriptorOwnership(uid: bigint, gid: bigint): void {
     const realFstatSync = fs.fstatSync.bind(fs);
     const realLstatSync = fs.lstatSync.bind(fs);
-    const ownership = new Map<PropertyKey, unknown>([
-      ["uid", uid],
-      ["gid", gid],
-    ]);
-    const owned = (stat: fs.BigIntStats): fs.BigIntStats =>
+    const owned = <T extends fs.Stats | fs.BigIntStats>(stat: T): T =>
       new Proxy(stat, {
         get(inner, property) {
-          const value = ownership.has(property)
-            ? ownership.get(property)
-            : (Reflect.get(inner, property, inner) as unknown);
+          const current = Reflect.get(inner, property, inner) as unknown;
+          const value =
+            property === "uid"
+              ? typeof current === "bigint"
+                ? uid
+                : Number(uid)
+              : property === "gid"
+                ? typeof current === "bigint"
+                  ? gid
+                  : Number(gid)
+                : current;
           return typeof value === "function" ? value.bind(inner) : value;
         },
       });
@@ -91,7 +96,23 @@ describe("managed startup image runtime handoff and descriptor integrity", () =>
     gid: bigint,
   ): void {
     const realFstatSync = fs.fstatSync.bind(fs);
+    const realLstatSync = fs.lstatSync.bind(fs);
     const runtimeInode = fs.lstatSync(runtimeEnvironmentFile, { bigint: true }).ino;
+    vi.spyOn(fs, "lstatSync").mockImplementation(((file: fs.PathLike, options?: unknown) => {
+      const stat = realLstatSync(file, options as never);
+      return new Proxy(stat, {
+        get(inner, property) {
+          const current = Reflect.get(inner, property, inner) as unknown;
+          const value =
+            property === "uid" || property === "gid"
+              ? typeof current === "bigint"
+                ? 0n
+                : 0
+              : current;
+          return typeof value === "function" ? value.bind(inner) : value;
+        },
+      });
+    }) as typeof fs.lstatSync);
     vi.spyOn(fs, "fstatSync").mockImplementation(((
       descriptor: number,
       options: { bigint: true },

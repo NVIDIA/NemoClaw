@@ -11,7 +11,6 @@ filesystem_policy:
     - /app
     - /proc
     - /etc
-    - /run/nemoclaw/managed-startup-ca-bundle.pem
   read_write:
     - /sandbox
     - /tmp

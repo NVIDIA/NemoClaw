@@ -1314,7 +1314,7 @@ If the host rebooted or the OpenShell gateway is down, first run:
 $$nemoclaw <name> status
 ```
 
-The status command selects or starts the sandbox's recorded OpenShell gateway when possible, then checks whether OpenShell can still see the sandbox. If the sandbox container is present but stopped on a Docker-driver host without a matching intentional-stop record, status can recover the labeled container and then re-query OpenShell. If you stopped the sandbox intentionally, run `$$nemoclaw <name> start`. After the sandbox is visible again, use `$$nemoclaw <name> recover` only for the in-sandbox OpenClaw gateway and host forwards. Use `$$nemoclaw <name> gateway restart` when you intentionally need the in-sandbox gateway to reload supported runtime configuration.
+The status command selects or starts the sandbox's recorded OpenShell gateway when possible, then checks whether OpenShell can still see the sandbox. If OpenShell reports the registered sandbox missing, status leaves any provider container untouched and reports the missing state. If you stopped the sandbox intentionally, run `$$nemoclaw <name> start`. After the sandbox is visible again, use `$$nemoclaw <name> recover` only for the in-sandbox OpenClaw gateway and host forwards. Use `$$nemoclaw <name> gateway restart` when you intentionally need the in-sandbox gateway to reload supported runtime configuration.
 
 </AgentOnly>
 
@@ -1642,7 +1642,7 @@ When status reports `sandbox_container_stopped`, Docker still has a container fo
 $$nemoclaw <name> recover
 ```
 
-For a stopped, non-paused Docker-driver container, `recover` starts the sandbox through OpenShell before it waits for readiness. If the container already runs while OpenShell reports `Stopped`, `recover` still starts the sandbox through OpenShell to repair the phase. It leaves paused containers and running sandboxes in other phases unchanged. If OpenShell cannot start a stopped container, recovery starts the container directly when needed, then continues to the readiness check and reports the resulting failure.
+For a stopped standard sandbox, `recover` asks OpenShell to start that exact sandbox before it waits for readiness. If provider state appears active while OpenShell reports `Stopped`, recovery still submits the start through OpenShell so one lifecycle owner repairs the phase. If OpenShell cannot start the sandbox, recovery reports the failure and does not fall back to a direct provider-container mutation.
 
 </AgentOnly>
 
@@ -1662,7 +1662,7 @@ Deep Agents Code does not provide the `recover` command. Use `$$nemoclaw <name> 
    $$nemoclaw <name> status
    ```
 
-   On Docker-driver hosts, status also attempts non-destructive recovery when OpenShell reports the sandbox as missing but Docker still has a stopped `openshell.ai/sandbox-name=<name>` container or the latest GPU-backup sibling. A successful recovery prints that the sandbox was recovered from Docker and then shows the refreshed OpenShell state.
+   On Docker-driver hosts, a missing OpenShell sandbox remains a missing result even when Docker still has a labeled container. Status does not start, unpause, rename, or replace that container; use the reported OpenShell recovery guidance.
 
 1. Rebuild only if the sandbox cannot be restarted but OpenShell still reports the live sandbox and its current policy:
 
@@ -3074,12 +3074,12 @@ nemohermes <name> rebuild --yes
 
 The Hermes entrypoint supervisor remains responsible for the gateway, dashboard, internal API relay, dashboard relay, and gateway log stream throughout recovery.
 In the OpenShell-managed topology, that nonroot supervisor repairs failed auxiliaries continuously and recovers a gateway after four consecutive failed listener or HTTP health checks.
-Five exits within 60 seconds stop relaunch for the current supervisor instance.
+Five status-75 service-managed restart requests within 60 seconds stop the supervisor before a sixth gateway launch.
 The host repairs only the host-side OpenShell forwards after the supervised processes pass health checks.
 
-### Restart or recovery reports `relaunch quarantined`
+### Hermes Stops Repeated Service-Managed Restarts
 
-Valid Hermes config changes do not trigger relaunch quarantine.
+Valid Hermes config changes alone do not stop relaunch.
 The supervisor adopts a stable, secret-boundary-safe config snapshot before launching a replacement gateway. If the startup log reports `HERMES_RUNTIME_PREPARATION_FAILED stage=<stage>`, the named environment, config, dependency, provider, or messaging input still failed after five bounded preparation attempts. Correct that input through its supported host-side configuration or credential flow, then restart the sandbox:
 
 ```bash
@@ -3088,7 +3088,10 @@ nemohermes <name> stop
 nemohermes <name> start
 ```
 
-The supervisor stops relaunch after five unexpected gateway exits or failed replacement candidates within 60 seconds. Invalid Hermes config can make each replacement exit and consume that crash budget. Correct the process or config failure, then stop and start the sandbox to reset the supervisor.
+The supervisor stops before a sixth gateway launch after five status-75 service-managed restart requests within 60 seconds.
+Run `nemohermes <name> stop` followed by `nemohermes <name> start` to reset the supervisor.
+If the requests recur, inspect the gateway logs and correct the action or configuration that requests each restart.
+Other unexpected gateway exit statuses fail immediately and do not consume this restart budget.
 
 An unsafe startup layout also stops automatic relaunch. If layout repair reports the maximum log-entry count or repair depth, archive or remove old retained logs from a trusted host-side recovery environment, then stop and start the sandbox. For symbolic links, hard links, unsafe entry types, or paths that changed during repair, do not repair the path in place. Restore a trusted snapshot into a recreated sandbox or recreate from host-side onboarding configuration.
 

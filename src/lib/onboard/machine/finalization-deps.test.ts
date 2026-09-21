@@ -910,6 +910,13 @@ describe("finalization process-recovery refusal propagation", () => {
       waitForRecreatedSandboxOpenShellReady: vi.fn(async () => true),
       waitForStartedNativeGatewayProcess: vi.fn(async () => true),
     });
+    vi.spyOn(finalizationHandlerRuntime, "loadGatewayRestart").mockReturnValue({
+      restartSandboxGateway: vi.fn(async () => ({
+        ok: false as const,
+        failureLayer: "native agent command" as const,
+        detail: "restart failed",
+      })),
+    });
     await expect(
       finalizationHandlerDeps.checkAndRecoverSandboxProcesses(
         "fresh-hermes",

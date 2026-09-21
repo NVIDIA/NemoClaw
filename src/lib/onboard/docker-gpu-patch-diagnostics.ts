@@ -13,7 +13,7 @@ import { createDockerGpuDiagnosticRedactor } from "./docker-gpu-diagnostic-redac
 import { fullDockerContainerId } from "./docker-gpu-patch-clone";
 import { DOCKER_GPU_PATCH_TIMEOUT_MS } from "./docker-gpu-patch-constants";
 import { getDockerGpuPatchFailureContext } from "./docker-gpu-patch-recreate";
-import { formatDockerContainerState } from "./managed-bootstrap/docker-container-failure-evidence";
+import { formatDockerContainerState } from "./compute/docker-container-failure-evidence";
 import type {
   DockerContainerInspect,
   DockerGpuPatchDeps,

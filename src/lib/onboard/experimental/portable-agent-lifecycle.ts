@@ -303,6 +303,50 @@ export function qualifyPortableAgentLifecycleAuthority(
   return { ...disposition, entry };
 }
 
+/** Admit only an exact retained Hermes receipt for legacy profile compatibility. */
+export function qualifyLegacyHermesPortableLifecycleProfile(
+  sandboxName: string,
+  deps: PortableAgentLifecycleAuthorityDeps,
+): boolean {
+  const authority = qualifyPortableAgentLifecycleAuthority(sandboxName, deps);
+  return authority.kind === "hermes" && authority.phase === "active" && authority.entry !== null;
+}
+
+export type RegisteredPortableAgentLifecycleClassification =
+  | { readonly kind: "standard" }
+  | { readonly kind: "portable"; readonly agent: "hermes" | "openclaw" };
+
+/** Give start and stop one owner for classifying persisted Portable authority. */
+export function classifyRegisteredPortableAgentLifecycle(
+  sandboxName: string,
+  providerId: string,
+  sandbox: SandboxEntry,
+  deps: PortableAgentLifecycleAuthorityDeps & {
+    readonly qualifyLegacyHermes?: typeof qualifyLegacyHermesPortableLifecycleProfile;
+  },
+): RegisteredPortableAgentLifecycleClassification {
+  if (providerId !== "docker") return { kind: "standard" };
+  if (sandbox.portableLifecycleProfile === "hermes" && sandbox.agent === "hermes") {
+    return { kind: "portable", agent: "hermes" };
+  }
+  if (sandbox.portableLifecycleProfile === "openclaw" && sandbox.agent === "openclaw") {
+    return { kind: "portable", agent: "openclaw" };
+  }
+  if (
+    sandbox.portableLifecycleProfile !== undefined ||
+    sandbox.agent !== "hermes" ||
+    typeof sandbox.lifecycleGeneration !== "string"
+  ) {
+    return { kind: "standard" };
+  }
+  return (deps.qualifyLegacyHermes ?? qualifyLegacyHermesPortableLifecycleProfile)(
+    sandboxName,
+    deps,
+  )
+    ? { kind: "portable", agent: "hermes" }
+    : { kind: "standard" };
+}
+
 /** Require active Hermes receipt and exact registry authority. */
 export function requireHermesPortableActiveLifecycleAuthority(
   sandboxName: string,

@@ -1,18 +1,25 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import fs, { existsSync, readFileSync, writeFileSync } from "node:fs";
+import os from "node:os";
+import path, { join } from "node:path";
+
 import { describe, expect, it, vi } from "vitest";
 import { createHostProcessWorkspace } from "../../helpers/host-process-harness.ts";
+import { ArtifactSink } from "../fixtures/artifacts.ts";
 import {
   captureManagedImageOnboardPairingDiagnostics,
+  collectOnboardFailureDockerDiagnostics,
   managedActivationPostRestartAgentTurnScript,
   managedActivationOpenClawPluginScript,
   managedHermesBoundaryPoisonCommand,
   managedOpenClawSubagentCommand,
+  ONBOARD_FAILURE_LOG_ARTIFACT_OPTIONS,
   preclean,
   summarizeOnboardFailureStartupSignals,
+  waitForManagedActivationSandboxDeletion,
+  waitForManagedActivationSandboxAbsence,
 } from "../live/managed-image-activation-e2e-helpers.ts";
 
 function runPostRestartAgentTurnFixture(statuses: string[], times: number[]) {
@@ -104,6 +111,141 @@ printf '%s\n' "$@" >"$MANAGED_ACTIVATION_FIXTURE/openclaw-args"
 }
 
 describe("managed image activation failure diagnostics", () => {
+  it("waits only for the exact OpenShell Deleting phase and records each observation", async () => {
+    const list = vi
+      .fn()
+      .mockResolvedValueOnce({
+        exitCode: 0,
+        stderr: "",
+        stdout: "NAME CREATED PHASE\nmi-act-dcode now Deleting\n",
+      })
+      .mockResolvedValueOnce({
+        exitCode: 0,
+        stderr: "",
+        stdout: "NAME CREATED PHASE\nmi-act-dcode now Deleting\n",
+      })
+      .mockResolvedValueOnce({ exitCode: 0, stderr: "", stdout: "NAME CREATED PHASE\n" });
+    const settleSleep = vi.fn(async () => {});
+
+    const result = await waitForManagedActivationSandboxDeletion(
+      { list } as never,
+      "mi-act-dcode",
+      { OPENSHELL_GATEWAY: "nemoclaw" },
+      { sleep: settleSleep },
+    );
+
+    expect(result.stdout).not.toContain("mi-act-dcode");
+    expect(settleSleep.mock.calls).toEqual([[1_000], [1_000]]);
+    expect(list.mock.calls.map((call) => call[0]?.artifactName)).toEqual([
+      "post-destroy-openshell-list-mi-act-dcode-attempt-1",
+      "post-destroy-openshell-list-mi-act-dcode-attempt-2",
+      "post-destroy-openshell-list-mi-act-dcode-attempt-3",
+    ]);
+  });
+
+  it("does not retry a live sandbox or hide a persistent deletion", async () => {
+    const ready = {
+      exitCode: 0,
+      stderr: "",
+      stdout: "NAME CREATED PHASE\nmi-act-dcode now Ready\n",
+    };
+    const readyList = vi.fn(async () => ready);
+    const readySleep = vi.fn(async () => {});
+    await expect(
+      waitForManagedActivationSandboxDeletion(
+        { list: readyList } as never,
+        "mi-act-dcode",
+        {},
+        { sleep: readySleep },
+      ),
+    ).resolves.toBe(ready);
+    expect(readyList).toHaveBeenCalledOnce();
+    expect(readySleep).not.toHaveBeenCalled();
+
+    const deleting = {
+      exitCode: 0,
+      stderr: "",
+      stdout: "NAME CREATED PHASE\nmi-act-dcode now Deleting\n",
+    };
+    const deletingList = vi.fn(async () => deleting);
+    const deletingSleep = vi.fn(async () => {});
+    await expect(
+      waitForManagedActivationSandboxDeletion(
+        { list: deletingList } as never,
+        "mi-act-dcode",
+        {},
+        { sleep: deletingSleep },
+      ),
+    ).resolves.toBe(deleting);
+    expect(deletingList).toHaveBeenCalledTimes(4);
+    expect(deletingSleep.mock.calls).toEqual([[1_000], [1_000], [1_000]]);
+
+    const failed = {
+      exitCode: 1,
+      stderr: "gateway unavailable",
+      stdout: "mi-act-dcode now Deleting\n",
+    };
+    const failedList = vi.fn(async () => failed);
+    const failedSleep = vi.fn(async () => {});
+    await expect(
+      waitForManagedActivationSandboxDeletion(
+        { list: failedList } as never,
+        "mi-act-dcode",
+        {},
+        { sleep: failedSleep },
+      ),
+    ).resolves.toBe(failed);
+    expect(failedList).toHaveBeenCalledOnce();
+    expect(failedSleep).not.toHaveBeenCalled();
+  });
+
+  it("retains redacted Docker logs for failed startup diagnosis", () => {
+    expect(ONBOARD_FAILURE_LOG_ARTIFACT_OPTIONS).toEqual({ persistArtifacts: true });
+  });
+
+  it("redacts a copied failed-startup log before artifact publication", async () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-startup-diagnostics-"));
+    const secret = "supplied-startup-diagnostic-secret";
+    const containerId = "a".repeat(64);
+    const artifacts = new ArtifactSink(directory);
+    const command = vi.fn(async (executable: string, args: readonly string[]) => {
+      switch (`${executable}:${String(args[0])}`) {
+        case "docker:ps":
+          return {
+            exitCode: 0,
+            stdout: `${containerId}\tmanaged-container\timage\tExited\n`,
+            stderr: "",
+          };
+        case "docker:cp":
+          fs.writeFileSync(String(args[2]), `startup log contains ${secret}\n`);
+          break;
+      }
+      return { exitCode: 0, stdout: "", stderr: "" };
+    });
+
+    try {
+      await collectOnboardFailureDockerDiagnostics(
+        artifacts,
+        { command } as never,
+        "openclaw",
+        "managed-openclaw",
+        {},
+        [secret],
+      );
+
+      const published = fs.readFileSync(
+        artifacts.pathFor(
+          "managed-activation-onboard-failure-openclaw-container-1-nemoclaw-start.log",
+        ),
+        "utf8",
+      );
+      expect(published).toContain("[REDACTED]");
+      expect(published).not.toContain(secret);
+    } finally {
+      fs.rmSync(directory, { force: true, recursive: true });
+    }
+  });
+
   it("installs activation proof plugins through native OpenClaw ownership", () => {
     const script = managedActivationOpenClawPluginScript();
 
@@ -256,5 +398,82 @@ describe("managed image activation failure diagnostics", () => {
       }),
     ).rejects.toThrow("startup failed");
     expect(calls).toEqual([]);
+  });
+
+  it("waits for a deleting managed activation sandbox to become absent", async () => {
+    vi.useFakeTimers();
+    const list = vi
+      .fn()
+      .mockResolvedValueOnce({
+        exitCode: 0,
+        stderr: "",
+        stdout: "NAME            CREATED   PHASE\nmi-act-hermes   1m        Deleting\n",
+      })
+      .mockResolvedValueOnce({
+        exitCode: 0,
+        stderr: "",
+        stdout: "NAME   CREATED   PHASE\n",
+      });
+
+    try {
+      const absence = waitForManagedActivationSandboxAbsence({ list } as never, "mi-act-hermes", {
+        OPENSHELL_GATEWAY: "nemoclaw",
+      });
+      await vi.advanceTimersByTimeAsync(1_000);
+      await absence;
+    } finally {
+      vi.useRealTimers();
+    }
+
+    expect(list).toHaveBeenCalledTimes(2);
+    expect(list).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        artifactName: "post-destroy-openshell-list-mi-act-hermes-attempt-01",
+      }),
+    );
+    expect(list).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        artifactName: "post-destroy-openshell-list-mi-act-hermes-attempt-02",
+      }),
+    );
+  });
+
+  it("fails when OpenShell still lists the managed activation sandbox at the cleanup deadline", async () => {
+    vi.useFakeTimers();
+    const list = vi.fn(async () => ({
+      exitCode: 0,
+      stderr: "",
+      stdout: "NAME            CREATED   PHASE\nmi-act-hermes   1m        Deleting\n",
+    }));
+
+    try {
+      const absence = waitForManagedActivationSandboxAbsence({ list } as never, "mi-act-hermes", {
+        OPENSHELL_GATEWAY: "nemoclaw",
+      });
+      const assertion = expect(absence).rejects.toThrow("polling exhausted its configured bound");
+      await vi.advanceTimersByTimeAsync(30_000);
+      await assertion;
+    } finally {
+      vi.useRealTimers();
+    }
+
+    expect(list.mock.calls.length).toBeGreaterThan(1);
+  });
+
+  it("stops when OpenShell cannot list sandboxes during cleanup verification", async () => {
+    const list = vi.fn(async () => ({
+      exitCode: 1,
+      stderr: "gateway transport unavailable",
+      stdout: "",
+    }));
+
+    await expect(
+      waitForManagedActivationSandboxAbsence({ list } as never, "mi-act-hermes", {
+        OPENSHELL_GATEWAY: "nemoclaw",
+      }),
+    ).rejects.toThrow("list OpenShell sandboxes after managed activation destroy failed");
+    expect(list).toHaveBeenCalledOnce();
   });
 });
