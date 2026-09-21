@@ -6,7 +6,6 @@ import {
   parseNemoClawConfigDocumentName,
   parseNemoClawConfigDocumentUid,
 } from "../../config/model";
-import { exportedAgentList } from "../../../../test/support/config-export-document";
 import { buildExportConfig } from "./export-document";
 import type { VerifiedExportSource } from "./export-evidence";
 
@@ -50,6 +49,20 @@ const source = {
 } as unknown as VerifiedExportSource;
 
 describe("export config builder", () => {
+  it.each(["openclaw", "hermes"] as const)(
+    "emits one singular %s agent for the v1alpha1 consumer (#12131)",
+    (agent) => {
+      const result = buildExportConfig(
+        { ...source, agent, interfaces: undefined },
+        { documentName: alphaDocumentName, documentUid: firstUid },
+      );
+      const sandbox = result.spec.sandboxes[0]!;
+
+      expect(sandbox).toHaveProperty("agent");
+      expect(sandbox).not.toHaveProperty("agents");
+    },
+  );
+
   it("maps a verified source into one aggregate (#10938)", () => {
     const result = buildExportConfig(source, {
       documentName: workAgentsDocumentName,
@@ -91,20 +104,18 @@ describe("export config builder", () => {
               },
             },
             harness: { kind: "openclaw" },
-            agents: [
-              {
-                name: "primary",
-                inference: {
-                  routes: [
-                    {
-                      name: "primary",
-                      providerRef: "hosted-openai-api",
-                      overrides: { model: "gpt-5" },
-                    },
-                  ],
-                },
+            agent: {
+              name: "primary",
+              inference: {
+                routes: [
+                  {
+                    name: "primary",
+                    providerRef: "hosted-openai-api",
+                    overrides: { model: "gpt-5" },
+                  },
+                ],
               },
-            ],
+            },
           },
         ],
       },
@@ -132,40 +143,13 @@ describe("export config builder", () => {
       },
     });
     const sandbox = document.spec.sandboxes[0]!;
-    expect("agents" in sandbox).toBe(true);
-    expect(exportedAgentList(sandbox)[0]!.integrationRefs).toEqual(["brave-search"]);
+    expect("agent" in sandbox).toBe(true);
+    expect(sandbox.agent.integrationRefs).toEqual(["brave-search"]);
     expect(document.spec.inferenceProviders).toHaveLength(1);
     expect(
       buildExportConfig(source, { documentName: alphaDocumentName, documentUid: firstUid }).spec
         .sandboxes[0],
     ).not.toHaveProperty("integrations");
-  });
-
-  it("grants Brave only to the declared primary agent", () => {
-    const document = buildExportConfig(
-      {
-        ...source,
-        webSearch: {
-          provider: "brave",
-          agentRefs: ["primary"],
-          credential: { env: "BRAVE_API_KEY" },
-        },
-        additionalAgents: [{ name: "researcher", tools: { allow: ["read"] } }],
-      } as unknown as VerifiedExportSource,
-      {
-        documentName: alphaDocumentName,
-        documentUid: firstUid,
-      },
-    );
-
-    const sandbox = document.spec.sandboxes[0]!;
-    expect("agents" in sandbox).toBe(true);
-    const agents = exportedAgentList(sandbox);
-    expect(agents).toMatchObject([
-      { name: "primary", integrationRefs: ["brave-search"] },
-      { name: "researcher" },
-    ]);
-    expect(agents[1]).not.toHaveProperty("integrationRefs");
   });
 
   it("uses the supplied identity and keeps derived references deterministic (#10938)", () => {
@@ -183,10 +167,8 @@ describe("export config builder", () => {
     expect(second.spec).toEqual(first.spec);
     expect(second.spec.inferenceProviders[0]?.name).toBe("hosted-openai-api");
     const sandbox = second.spec.sandboxes[0]!;
-    expect("agents" in sandbox).toBe(true);
-    expect(exportedAgentList(sandbox)[0]?.inference.routes[0]?.providerRef).toBe(
-      "hosted-openai-api",
-    );
+    expect("agent" in sandbox).toBe(true);
+    expect(sandbox.agent.inference.routes[0]?.providerRef).toBe("hosted-openai-api");
   });
 
   it("preserves the verified Hermes agent type (#11286)", () => {
@@ -230,8 +212,8 @@ describe("export config builder", () => {
     );
 
     const sandbox = result.spec.sandboxes[0]!;
-    expect("agents" in sandbox).toBe(true);
-    expect(exportedAgentList(sandbox)[0]?.auth).toEqual({
+    expect("agent" in sandbox).toBe(true);
+    expect(sandbox.agent.auth).toEqual({
       method: "api-key",
     });
   });
