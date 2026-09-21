@@ -32,8 +32,8 @@ COPY --from=rust /usr/local/rustup /usr/local/rustup
 COPY --from=uv /uv /usr/local/bin/uv
 ENV CARGO_HOME=/usr/local/cargo RUSTUP_HOME=/usr/local/rustup PATH=/usr/local/cargo/bin:$PATH
 ARG SOURCE_DATE_EPOCH=1789516800
-ARG FABRIC_REVISION=6e155bfbe9e740fb8ce1e1fda900d96f1435a23c
-ARG FABRIC_SHA256=3f0c8faa48499decb14afa6119c43f47ea08ef01cf8b5c461ae0d3c8ea4b69b7
+ARG FABRIC_REVISION=6c08337bcb11d6c0f2d5118f8f0c98a5b2a1a421
+ARG FABRIC_SHA256=d3d75f7292e35e948db7fe3b2b11613e52cb42b8947f2bbda373d8e0b8f3d576
 ADD --checksum=sha256:${FABRIC_SHA256} https://codeload.github.com/NVIDIA/NeMo-Fabric/tar.gz/${FABRIC_REVISION} /sources/fabric.tar.gz
 RUN apt-get update && apt-get install -y --no-install-recommends build-essential pkg-config libssl-dev \
     && rm -rf /var/lib/apt/lists/* \
@@ -129,7 +129,9 @@ COPY --from=node-check-tools /checks/node_modules /checks/node_modules
 COPY image/tsconfig.json image/tsconfig.pi.json /checks/
 COPY image/fabric/test_pi_model.mts /checks/fabric/
 RUN --network=none /checks/node_modules/.bin/tsc -p /checks/tsconfig.pi.json \
-    && node /checks/fabric/test_pi_model.mts
+    && node /checks/fabric/test_pi_model.mts \
+    && node --test /opt/fabric-source/adapters/typescript/pi/test/pi-sdk.test.mjs \
+        /opt/fabric-source/adapters/typescript/pi/test/runtime.test.mjs
 
 FROM runtime-base AS pi
 COPY --from=pi-build /opt/fabric-source /opt/fabric-source
