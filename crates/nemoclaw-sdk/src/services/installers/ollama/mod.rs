@@ -28,11 +28,9 @@ pub use backend::ProxyBackend;
 use crate::managed::{Process, Spec, Storage};
 use crate::{
     Error,
-    backend::Backend,
     compile::{Generations, Target},
     config::Document,
     services::contract::{InstallPlan, Installer, RemovePlan, validate_image},
-    state::StateBinding,
 };
 use std::{collections::BTreeMap, net::IpAddr, sync::LazyLock};
 use url::Url;
@@ -242,25 +240,6 @@ impl ManagedOllama {
 }
 
 impl OllamaProxy {
-    pub(in crate::services) async fn check_running(
-        &self,
-        document: &Document,
-        name: &str,
-        generations: &Generations,
-        connections: &crate::docker::Connections,
-        bindings: &BTreeMap<String, StateBinding>,
-        cancel: &crate::CancellationToken,
-    ) -> Result<(), Error> {
-        let plan = self.install(document, name, generations)?;
-        tokio::select! {
-            () = cancel.cancelled() => Err(Error::Cancelled),
-            result = check_targets(plan.targets, connections, bindings) => {
-                result?;
-                Ok(())
-            }
-        }
-    }
-
     pub(crate) fn engine<'a>(
         &'a self,
         document: &'a Document,
@@ -416,67 +395,6 @@ fn managed_targets(
         });
     }
     Ok(targets)
-}
-
-async fn check_targets(
-    targets: Vec<Target>,
-    connections: &crate::docker::Connections,
-    bindings: &BTreeMap<String, StateBinding>,
-) -> Result<(), Error> {
-    let check = async {
-        for target in targets {
-            if target.kind == proxy::PROXY {
-                let binding = bindings
-                    .get(&crate::docker_compute::address(&target.address))
-                    .ok_or(Error::State("proxy has no established provider identity"))?;
-                let engine = connections.resolve(&target.values["engine"])?;
-                let observed = engine
-                    .container(&binding.id)
-                    .await?
-                    .ok_or(Error::State("proxy runtime is absent"))?;
-                if observed.id.as_deref() != Some(binding.id.as_str())
-                    || observed
-                        .name
-                        .as_deref()
-                        .map(|name| name.trim_start_matches('/'))
-                        != Some(target.values["name"].as_str())
-                {
-                    return Err(crate::ObservationError::BindingMismatch.into());
-                }
-                if !observed
-                    .state
-                    .and_then(|state| state.running)
-                    .unwrap_or(false)
-                {
-                    return Err(Error::State(
-                        "proxy runtime is not running; explicitly reapply",
-                    ));
-                }
-                crate::services::authentication::read_key(&engine, &binding.id).await?;
-                continue;
-            }
-            let mut row = target.values;
-            row.insert(
-                "id".into(),
-                bindings
-                    .get(&target.address)
-                    .ok_or(Error::State("service has no established identity"))?
-                    .id
-                    .clone(),
-            );
-            let backend = crate::services::BackendRegistry::new(connections)
-                .resolve(&target.kind, &row)?
-                .ok_or(Error::State("service backend is unavailable"))?;
-            backend
-                .read(&target.kind, &row, false)
-                .await?
-                .ok_or(Error::State("installed service is absent"))?;
-        }
-        Ok(())
-    };
-    tokio::time::timeout(std::time::Duration::from_secs(30), check)
-        .await
-        .map_err(|_| Error::State("service readiness check timed out"))?
 }
 
 impl Installer for ManagedOllama {

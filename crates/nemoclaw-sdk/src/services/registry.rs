@@ -13,7 +13,6 @@ use crate::{
     backend::{Backend, Row},
     compile::{Generations, Target},
     config::{ConfigError, Document, Gateway, InferenceProvider},
-    state::StateBinding,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -582,23 +581,6 @@ pub(crate) fn required_storage_address(
             (candidate == process || crate::docker_compute::address(&candidate) == process)
                 .then_some(storage)
         }))
-}
-
-pub(crate) async fn check_deployment_services(
-    document: &Document,
-    generations: &Generations,
-    connections: &crate::docker::Connections,
-    bindings: &BTreeMap<String, StateBinding>,
-    cancel: &crate::CancellationToken,
-) -> Result<(), crate::Error> {
-    for (name, definition) in &document.spec.services {
-        if let ServiceDefinition::OllamaProxy(proxy) = definition {
-            proxy
-                .check_running(document, name, generations, connections, bindings, cancel)
-                .await?;
-        }
-    }
-    Ok(())
 }
 
 /// Resolves a provider resource row to its package-owned backend.

@@ -296,14 +296,6 @@ impl Deployment {
             )
             .await?;
         (self.progress)(Progress::Readiness);
-        crate::services::check_deployment_services(
-            &document,
-            &record.generations,
-            &self.engines,
-            &bindings,
-            cancel,
-        )
-        .await?;
         for target in targets.iter().filter(|target| target.kind == "sandbox") {
             let definition = document.sandbox(&target.values["name"])?;
             let mut sandbox = target.values.clone();

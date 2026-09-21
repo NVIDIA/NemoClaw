@@ -308,6 +308,8 @@ pub fn compile(
     let raw = targets_with_plans(document, generations, &service_plans)?;
     crate::docker_compute::configure(&mut graph, &raw)
         .map_err(|_| ConfigError::new("invalid Docker compute graph"))?;
+    crate::services::configure_proxy_readiness(&mut graph, &raw)
+        .map_err(|_| ConfigError::new("invalid proxy readiness graph"))?;
     Ok(graph)
 }
 
