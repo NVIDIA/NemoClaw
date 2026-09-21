@@ -165,11 +165,6 @@ export function nativeOpenClawOptions(options: NativeOptions) {
       // the user selected during setup.
       profile: "minimal",
       alsoAllow: [
-        "read",
-        "write",
-        "edit",
-        "exec",
-        "process",
         ...(options.search ? ["web_search", "web_fetch"] : []),
         ...(Object.keys(options.messaging ?? {}).length ? ["message"] : []),
       ],

@@ -411,7 +411,17 @@ writeFileSync(join(configDirectory, "openclaw.json"), JSON.stringify({
       maxTokens: 4096,
     }],
   } } },
-  agents: { defaults: { model: { primary: "nemoclawNative/" + modelId }, timeoutSeconds: 180, skipBootstrap: true, thinkingDefault: "off" }, list: [{ id: "main", default: true, skills: [] }] },
+  agents: {
+    defaults: {
+      model: { primary: "nemoclawNative/" + modelId },
+      timeoutSeconds: 180,
+      skipBootstrap: true,
+      contextInjection: "never",
+      heartbeat: { every: "0m" },
+      thinkingDefault: "off",
+    },
+    list: [{ id: "main", default: true, skills: [] }],
+  },
 }), "utf8");
 Object.assign(process.env, {
   HOME: home,

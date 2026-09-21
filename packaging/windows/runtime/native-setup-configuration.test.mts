@@ -52,23 +52,14 @@ test("prebuilt OpenClaw factories materialize the exported workers as valid Java
 test("native OpenClaw uses a bounded tool surface and adds only selected capabilities", () => {
   assert.deepEqual(nativeOpenClawOptions({}).tools, {
     profile: "minimal",
-    alsoAllow: ["read", "write", "edit", "exec", "process"],
+    alsoAllow: [],
     web: { search: { enabled: false } },
   });
   const selected = nativeOpenClawOptions({
     search: { provider: "brave", credentialStored: true },
     messaging: { telegram: { credentialStored: true, allowedUsers: [] } },
   });
-  assert.deepEqual(selected.tools.alsoAllow, [
-    "read",
-    "write",
-    "edit",
-    "exec",
-    "process",
-    "web_search",
-    "web_fetch",
-    "message",
-  ]);
+  assert.deepEqual(selected.tools.alsoAllow, ["web_search", "web_fetch", "message"]);
 });
 
 test("native OpenClaw advertises the actual model context and opens a fresh chat", () => {
@@ -80,6 +71,8 @@ test("native OpenClaw advertises the actual model context and opens a fresh chat
   assert(source.includes('thinkingLevelMap: { off: "none"'));
   assert(source.includes("supportsReasoningEffort: true"));
   assert(source.includes('thinkingDefault: "off"'));
+  assert(source.includes('contextInjection: "never"'));
+  assert(source.includes('heartbeat: { every: "0m" }'));
   assert(source.includes('lastTouchedVersion: "2026.7.1"'));
   assert(source.includes("lastTouchedAt: new Date().toISOString()"));
   assert(
