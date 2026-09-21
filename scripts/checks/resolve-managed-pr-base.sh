@@ -97,9 +97,28 @@ build_local_base() {
     "$DISPLAY_NAME" "$BASE_DOCKERFILE" "$CANDIDATE_SHA" "$reason" \
     >>"$GITHUB_STEP_SUMMARY"
 }
+read_dcode_base_inputs() {
+  local dockerfile="$1" line instruction source destination extra
+  DCODE_BASE_INPUTS=("$dockerfile" .dockerignore)
+  while IFS= read -r line || [ -n "$line" ]; do
+    [[ "$line" =~ ^[[:space:]]*ADD[[:space:]]+ ]] && return 1
+    [[ "$line" =~ ^[[:space:]]*COPY[[:space:]]+ ]] || continue
+    read -r instruction source destination extra <<<"$line"
+    [ "$instruction" = "COPY" ] || return 1
+    [[ "$source" == --from=* ]] && continue
+    [ -n "$source" ] && [ -n "$destination" ] && [ -z "$extra" ] || return 1
+    [[ "$source" =~ ^[A-Za-z0-9._/-]+$ ]] || return 1
+    case "/$source/" in
+      */../*) return 1 ;;
+    esac
+    git cat-file -e "${CANDIDATE_SHA}:${source}" 2>/dev/null || return 1
+    DCODE_BASE_INPUTS+=("$source")
+  done <"$dockerfile"
+  [ "${#DCODE_BASE_INPUTS[@]}" -gt 1 ]
+}
 published_dcode_base_matches_candidate_contract() {
   [ "$AGENT" = "langchain-deepagents-code" ] || return 0
-  local reference="$1" image_json source_revision contract_diff_status
+  local reference="$1" image_json source_revision changed_inputs
   docker pull --platform "$PLATFORM" "$reference" >/dev/null || return 1
   image_json="$(docker image inspect "$reference")" || return 1
   source_revision="$(
@@ -111,16 +130,17 @@ published_dcode_base_matches_candidate_contract() {
     ' <<<"$image_json"
   )" || return 1
   [[ "$source_revision" =~ ^[0-9a-f]{40}$ ]] || return 1
+  PUBLISHED_DCODE_SOURCE_REVISION="$source_revision"
   if ! git cat-file -e "${source_revision}^{commit}" 2>/dev/null; then
     git fetch --no-tags --depth=1 origin "$source_revision" || return 1
   fi
-  contract_diff_status=0
-  git diff --quiet "$source_revision" "$CANDIDATE_SHA" -- \
-    "$BASE_DOCKERFILE" \
-    agents/langchain-deepagents-code/requirements.lock \
-    agents/langchain-deepagents-code/validate-runtime-contract.py \
-    || contract_diff_status=$?
-  [ "$contract_diff_status" -eq 0 ]
+  read_dcode_base_inputs "$BASE_DOCKERFILE" || return 1
+  changed_inputs="$(
+    git diff --name-only "$source_revision" "$CANDIDATE_SHA" -- \
+      "${DCODE_BASE_INPUTS[@]}"
+  )" || return 1
+  PUBLISHED_DCODE_CHANGED_INPUTS="${changed_inputs//$'\n'/, }"
+  [ -z "$changed_inputs" ]
 }
 if [[ ! "$BASE_SHA" =~ ^[0-9a-f]{40}$ || ! "$CANDIDATE_SHA" =~ ^[0-9a-f]{40}$ ]]; then
   echo "ERROR: PR base resolution requires exact base and candidate commit SHAs." >&2
@@ -175,8 +195,14 @@ if [ "$actual" != "$digest" ]; then
   echo "ERROR: exact PR base bytes do not match the selected descriptor digest." >&2
   exit 1
 fi
+PUBLISHED_DCODE_SOURCE_REVISION=""
+PUBLISHED_DCODE_CHANGED_INPUTS=""
 if ! published_dcode_base_matches_candidate_contract "$reference"; then
-  build_local_base "published base was built from different DCode runtime contract inputs"
+  reason="published base ${reference} could not be proven compatible with candidate ${CANDIDATE_SHA}"
+  if [ -n "$PUBLISHED_DCODE_SOURCE_REVISION" ] && [ -n "$PUBLISHED_DCODE_CHANGED_INPUTS" ]; then
+    reason="published base ${reference} from ${PUBLISHED_DCODE_SOURCE_REVISION} differs from candidate ${CANDIDATE_SHA} at ${PUBLISHED_DCODE_CHANGED_INPUTS}"
+  fi
+  build_local_base "$reason"
   exit 0
 fi
 {

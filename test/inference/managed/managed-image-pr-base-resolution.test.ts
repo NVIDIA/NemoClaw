@@ -128,6 +128,12 @@ it.each([
     expectedLocal: true,
     title: "builds the DCode base locally when its published source predates the runtime contract",
   },
+  {
+    candidateContents: "security patch v2\n",
+    candidatePath: "scripts/security/patches/libssh2-1.11.1-cve-2026.patch",
+    expectedLocal: true,
+    title: "builds the DCode base locally when a copied security input changed",
+  },
 ])("$title", ({ candidateContents, candidatePath, expectedLocal }) => {
   const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-pr-base-"));
   const fakeBin = path.join(temporaryRoot, "bin");
@@ -150,13 +156,21 @@ it.each([
   runGit("config", "user.name", "NemoClaw Test");
   runGit("config", "user.email", "nemoclaw-test@example.invalid");
   const agentRoot = path.join(temporaryRoot, "agents/langchain-deepagents-code");
+  const securityPatch = "scripts/security/patches/libssh2-1.11.1-cve-2026.patch";
   fs.mkdirSync(agentRoot, { recursive: true });
-  fs.writeFileSync(path.join(agentRoot, "Dockerfile.base"), "FROM scratch\n");
+  fs.mkdirSync(path.join(temporaryRoot, path.dirname(securityPatch)), { recursive: true });
+  fs.writeFileSync(
+    path.join(agentRoot, "Dockerfile.base"),
+    `FROM scratch\nCOPY ${securityPatch} /tmp/libssh2.patch\nCOPY agents/langchain-deepagents-code/requirements.lock /tmp/requirements.lock\nCOPY agents/langchain-deepagents-code/validate-runtime-contract.py /tmp/validate-runtime-contract.py\n`,
+  );
   fs.writeFileSync(path.join(agentRoot, "requirements.lock"), "deepagents==0.7.5\n");
   fs.writeFileSync(path.join(agentRoot, "validate-runtime-contract.py"), "print('ok')\n");
-  runGit("add", "agents/langchain-deepagents-code");
+  fs.writeFileSync(path.join(temporaryRoot, securityPatch), "security patch v1\n");
+  fs.writeFileSync(path.join(temporaryRoot, ".dockerignore"), ".git\n");
+  runGit("add", ".dockerignore", "agents/langchain-deepagents-code", securityPatch);
   runGit("commit", "--quiet", "-m", "test: add base");
   const publishedSourceSha = runGit("rev-parse", "HEAD");
+  fs.mkdirSync(path.dirname(path.join(temporaryRoot, candidatePath)), { recursive: true });
   fs.writeFileSync(path.join(temporaryRoot, candidatePath), candidateContents);
   runGit("add", candidatePath);
   runGit("commit", "--quiet", "-m", "test: create candidate");
@@ -245,11 +259,10 @@ exit 90
     const dockerCommands = fs.readFileSync(dockerLog, "utf8");
     expect(dockerCommands.includes("buildx build")).toBe(expectedLocal);
     expect(dockerCommands).not.toContain("validate-dcode-runtime-contract.py");
-    expect(
-      fs
-        .readFileSync(summary, "utf8")
-        .includes("Reason: published base was built from different DCode runtime contract inputs."),
-    ).toBe(expectedLocal);
+    const summaryContents = fs.readFileSync(summary, "utf8");
+    expect(summaryContents.includes("Reason: published base ")).toBe(expectedLocal);
+    expect(summaryContents.includes(publishedSourceSha)).toBe(expectedLocal);
+    expect(summaryContents.includes(candidatePath)).toBe(expectedLocal);
   } finally {
     fs.rmSync(temporaryRoot, { recursive: true, force: true });
   }
