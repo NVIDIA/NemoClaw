@@ -80,6 +80,7 @@ test.runIf(RUN_MANAGED_IMAGE_SECURITY)(
         "test -x /usr/sbin/iptables",
         "test -x /usr/bin/chattr",
         "test -x /usr/local/bin/openclaw",
+        `HOME=/sandbox openclaw config get agents.defaults.compaction --json | node -e 'const assert=require("node:assert/strict"); let input=""; process.stdin.on("data", chunk => input += chunk); process.stdin.on("end", () => assert.deepStrictEqual(JSON.parse(input), {mode:"safeguard",timeoutSeconds:120,recentTurnsPreserve:1,qualityGuard:{enabled:true,maxRetries:0},notifyUser:true}));'`,
         `python3 -c 'import json; assert "update" not in json.load(open("/sandbox/.openclaw/openclaw.json"))'`,
         'printf "%s:%s:%s\\n" "$gateway_uid" "$sandbox_uid" "$sandbox_gid"',
       ].join("\n"),
