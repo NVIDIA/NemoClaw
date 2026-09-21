@@ -1,9 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { AgentConfigTarget } from "../sandbox/config";
+import { setOpenClawConfigValue } from "../sandbox/config";
 import type { ConfigObject } from "../security/credential-filter";
 // Import source directly so tests cannot pass against a stale build.
 import {
@@ -13,6 +14,8 @@ import {
   registerTunnelOrigin,
   tunnelUrlToOrigin,
 } from "./allowed-origins";
+
+vi.mock("../sandbox/config", () => ({ setOpenClawConfigValue: vi.fn() }));
 
 const LOOPBACK = "http://127.0.0.1:18789";
 
@@ -24,10 +27,13 @@ const OPENCLAW_TARGET: AgentConfigTarget = {
   configFile: "openclaw.json",
 };
 
+beforeEach(() => {
+  vi.mocked(setOpenClawConfigValue).mockClear();
+});
+
 /**
- * Build a fully-injected dep set backed by spies. Passing every dep keeps
- * `resolveDeps` from requiring the real sandbox/config module, so no test here
- * ever touches openshell/docker.
+ * Build a fully-injected dep set backed by spies so no test here touches
+ * openshell/docker.
  */
 function makeDeps(config: ConfigObject, target: AgentConfigTarget = OPENCLAW_TARGET) {
   const resolveAgentConfig = vi.fn((_sb: string): AgentConfigTarget => target);
@@ -146,6 +152,27 @@ describe("computeTunnelAllowedOrigins", () => {
 });
 
 describe("registerTunnelOrigin", () => {
+  it("routes the default write through the shared native config owner", async () => {
+    const config: ConfigObject = {
+      gateway: { controlUi: { allowedOrigins: [LOOPBACK] } },
+    };
+    const { resolveAgentConfig, readConfig, reloadGateway, info, warn } = makeDeps(config);
+
+    await registerTunnelOrigin("sb", "https://good.trycloudflare.com/route", {
+      resolveAgentConfig,
+      readConfig,
+      reloadGateway,
+      info,
+      warn,
+    });
+
+    expect(setOpenClawConfigValue).toHaveBeenCalledWith("sb", "gateway.controlUi.allowedOrigins", [
+      LOOPBACK,
+      "https://good.trycloudflare.com",
+    ]);
+    expect(reloadGateway).toHaveBeenCalledTimes(1);
+  });
+
   // Scenario 8
   it("writes the tunnel origin through native config and reloads once", async () => {
     const config: ConfigObject = {

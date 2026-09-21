@@ -1,10 +1,14 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { AgentConfigTarget } from "../sandbox/config";
+import {
+  type AgentConfigTarget,
+  readSandboxConfig,
+  resolveAgentConfig,
+  setOpenClawConfigValue,
+} from "../sandbox/config";
 import type { ConfigObject } from "../security/credential-filter";
 import { isConfigObject } from "../security/credential-filter";
-import { createCliOpenShellSandboxCommandExecutor } from "../adapters/openshell/sandbox-command-cli";
 
 const TRYCLOUDFLARE_HOST = "trycloudflare.com";
 
@@ -85,35 +89,11 @@ export interface RegisterTunnelOriginDeps {
   warn?: (msg: string) => void;
 }
 
-type SandboxConfigModule = {
-  resolveAgentConfig: RegisterTunnelOriginDeps["resolveAgentConfig"];
-  readSandboxConfig: RegisterTunnelOriginDeps["readConfig"];
-};
-
 async function writeNativeOpenClawAllowedOrigins(
   sandboxName: string,
   origins: string[],
 ): Promise<void> {
-  const completed = await createCliOpenShellSandboxCommandExecutor().runBuffered({
-    sandboxName,
-    target: { kind: "selected" },
-    command: [
-      "openclaw",
-      "config",
-      "set",
-      "gateway.controlUi.allowedOrigins",
-      JSON.stringify(origins),
-      "--strict-json",
-    ],
-    sandboxEnvironment: { HOME: "/sandbox" },
-    timeoutMilliseconds: 30_000,
-  });
-  if (completed.outcome.kind === "failed") {
-    throw new Error(completed.outcome.error.message);
-  }
-  if (completed.outcome.exitCode !== 0) {
-    throw new Error(completed.stderr.trim() || "native OpenClaw config write failed");
-  }
+  setOpenClawConfigValue(sandboxName, "gateway.controlUi.allowedOrigins", origins);
 }
 
 /**
@@ -128,11 +108,9 @@ async function defaultReloadGateway(sandboxName: string): Promise<void> {
 }
 
 function resolveDeps(deps: Partial<RegisterTunnelOriginDeps>): Required<RegisterTunnelOriginDeps> {
-  const needsConfig = !deps.resolveAgentConfig || !deps.readConfig;
-  const config = needsConfig ? (require("../sandbox/config") as SandboxConfigModule) : undefined;
   return {
-    resolveAgentConfig: deps.resolveAgentConfig ?? config!.resolveAgentConfig,
-    readConfig: deps.readConfig ?? config!.readSandboxConfig,
+    resolveAgentConfig: deps.resolveAgentConfig ?? resolveAgentConfig,
+    readConfig: deps.readConfig ?? readSandboxConfig,
     writeAllowedOrigins: deps.writeAllowedOrigins ?? writeNativeOpenClawAllowedOrigins,
     reloadGateway: deps.reloadGateway ?? defaultReloadGateway,
     info: deps.info ?? (() => {}),
