@@ -120,21 +120,31 @@ it.each([
     candidateContents: "unrelated candidate change\n",
     candidatePath: "README.md",
     expectedLocal: false,
+    failPublishedPull: false,
     title: "reuses a published DCode base built from the same runtime contract inputs",
   },
   {
     candidateContents: "print('new contract')\n",
     candidatePath: "agents/langchain-deepagents-code/validate-runtime-contract.py",
     expectedLocal: true,
+    failPublishedPull: false,
     title: "builds the DCode base locally when its published source predates the runtime contract",
   },
   {
     candidateContents: "security patch v2\n",
     candidatePath: "scripts/security/patches/libssh2-1.11.1-cve-2026.patch",
     expectedLocal: true,
+    failPublishedPull: false,
     title: "builds the DCode base locally when a copied security input changed",
   },
-])("$title", ({ candidateContents, candidatePath, expectedLocal }) => {
+  {
+    candidateContents: "unrelated candidate change\n",
+    candidatePath: "README.md",
+    expectedLocal: true,
+    failPublishedPull: true,
+    title: "builds the DCode base locally when the published base cannot be verified",
+  },
+])("$title", ({ candidateContents, candidatePath, expectedLocal, failPublishedPull }) => {
   const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-pr-base-"));
   const fakeBin = path.join(temporaryRoot, "bin");
   const output = path.join(temporaryRoot, "output");
@@ -142,6 +152,7 @@ it.each([
   const dockerLog = path.join(temporaryRoot, "docker.log");
   const exactRaw = '{"schemaVersion":2,"config":{"digest":"sha256:base"}}';
   const digest = `sha256:${createHash("sha256").update(exactRaw).digest("hex")}`;
+  const baseRepository = "ghcr.io/nvidia/nemoclaw/langchain-deepagents-code-sandbox-base";
   const aliasRaw = JSON.stringify({
     manifests: [{ digest, platform: { architecture: "amd64", os: "linux" } }],
     mediaType: "application/vnd.oci.image.index.v1+json",
@@ -206,7 +217,11 @@ if [ "\${1:-} \${2:-}" = "buildx build" ]; then
   tar -C "$oci_root" -cf "$oci_archive" index.json
   exit 0
 fi
-if [ "\${1:-} \${2:-}" = "load --input" ] || [ "\${1:-}" = pull ]; then
+if [ "\${1:-} \${2:-}" = "load --input" ]; then
+  exit 0
+fi
+if [ "\${1:-}" = pull ]; then
+  [ "$FAIL_PUBLISHED_PULL" = false ] || exit 89
   exit 0
 fi
 if [ "\${1:-} \${2:-}" = "image inspect" ]; then
@@ -230,14 +245,15 @@ exit 90
     ...process.env,
     AGENT: "langchain-deepagents-code",
     ALIAS_RAW: aliasRaw,
-    BASE_ALIAS: "ghcr.io/nvidia/nemoclaw/langchain-deepagents-code-sandbox-base:latest",
+    BASE_ALIAS: `${baseRepository}:latest`,
     BASE_DOCKERFILE: "agents/langchain-deepagents-code/Dockerfile.base",
-    BASE_REPOSITORY: "ghcr.io/nvidia/nemoclaw/langchain-deepagents-code-sandbox-base",
+    BASE_REPOSITORY: baseRepository,
     BASE_SHA: candidateSha,
     CANDIDATE_SHA: candidateSha,
     DISPLAY_NAME: "Deep Agents Code",
     DOCKER_LOG: dockerLog,
     EXACT_RAW: exactRaw,
+    FAIL_PUBLISHED_PULL: String(failPublishedPull),
     GITHUB_OUTPUT: output,
     GITHUB_STEP_SUMMARY: summary,
     LOCAL_BASE_REFERENCE: "nemoclaw-managed-pr/langchain-deepagents-code-base:test",
@@ -261,8 +277,12 @@ exit 90
     expect(dockerCommands).not.toContain("validate-dcode-runtime-contract.py");
     const summaryContents = fs.readFileSync(summary, "utf8");
     expect(summaryContents.includes("Reason: published base ")).toBe(expectedLocal);
-    expect(summaryContents.includes(publishedSourceSha)).toBe(expectedLocal);
-    expect(summaryContents.includes(candidatePath)).toBe(expectedLocal);
+    expect(summaryContents.includes(candidateSha)).toBe(expectedLocal);
+    expect(summaryContents.includes(`Reason: published base ${baseRepository}@${digest}`)).toBe(
+      expectedLocal,
+    );
+    expect(summaryContents.includes(publishedSourceSha)).toBe(expectedLocal && !failPublishedPull);
+    expect(summaryContents.includes(candidatePath)).toBe(expectedLocal && !failPublishedPull);
   } finally {
     fs.rmSync(temporaryRoot, { recursive: true, force: true });
   }
