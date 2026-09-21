@@ -10,6 +10,32 @@ repo="${root}/source"
 evidence="${root}/evidence"
 mkdir -p "${evidence}"
 
+diagnose_failure() {
+  status=$?
+  trap - ERR
+  set +e
+  echo "::group::Sanitized Brev guest diagnostics"
+  docker ps --all --format 'container={{.Names}} status={{.Status}} image={{.Image}}'
+  redactor='import re,sys
+secret=open(sys.argv[1]).read()
+text=sys.stdin.read().replace(secret,"[REDACTED]") if secret else sys.stdin.read()
+text=re.sub(r"(?i)(authorization[=: ]+bearer[ ]+)[^ ]+",r"\1[REDACTED]",text)
+text=re.sub(r"nvapi-[A-Za-z0-9_-]+","[REDACTED]",text)
+text=re.sub(r"(?i)(api[_-]?key[=:\" ]+)[^, \"}]+",r"\1[REDACTED]",text)
+sys.stdout.write(text)'
+  while IFS= read -r container; do
+    test -n "${container}" || continue
+    echo "--- ${container} state ---"
+    docker inspect --format 'status={{.State.Status}} exit={{.State.ExitCode}} error={{.State.Error}} health={{if .State.Health}}{{.State.Health.Status}}{{end}}' "${container}"
+    echo "--- ${container} logs (last 200 lines, redacted) ---"
+    docker logs --tail 200 "${container}" 2>&1 \
+      | python3 -c "${redactor}" "${root}/nvidia-api-key"
+  done < <(docker ps --all --format '{{.Names}}')
+  echo "::endgroup::"
+  return "${status}"
+}
+trap diagnose_failure ERR
+
 test "$(uname -m)" = x86_64
 command -v docker >/dev/null
 docker info >/dev/null
