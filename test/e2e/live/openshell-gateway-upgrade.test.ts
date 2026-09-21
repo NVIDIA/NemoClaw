@@ -440,7 +440,11 @@ async function installCurrentNemoclawUpgrade(
     NEMOCLAW_MODEL: "test-model",
     NEMOCLAW_SANDBOX_NAME: SURVIVOR_SANDBOX,
     NEMOCLAW_POLICY_MODE: "skip",
-    NEMOCLAW_DASHBOARD_PORT: "",
+    NEMOCLAW_DASHBOARD_PORT: legacyGatewayUpgradeBaseImageOverrideEnabled(
+      OLD_SANDBOX_BASE_IMAGE_REF,
+    )
+      ? ""
+      : DASHBOARD_PORT,
     CHAT_UI_URL: "",
   });
   const currentEnv = withoutEnvKeys(
