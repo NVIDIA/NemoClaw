@@ -23,6 +23,12 @@ summary. It has read-only repository permissions. It evaluates the same P0/P1 le
 trigger, mergeability, commit verification, and product-scope evidence that a later writer would use,
 but it never performs the proposed review action.
 
+The shadow rollout collector is event-driven rather than scheduled. After the Advisor completes, it
+captures the first five distinct PR decisions in a serialized, artifact-backed sample and then stays
+quiet. Duplicate runs for one PR do not consume another slot. The collector has read-only repository
+permissions, posts no comments or reviews, and retains each sample for maintainers to compare with the
+expected outcome before phase 2 enables selected changes-requested reviews.
+
 Automatic runs inherit a passing required-check state only from the successful exact-head CI trigger;
 manual dispatches remain pending and cannot propose a review. The trusted aggregate makes surviving
 exact-head P0/P1 ledger entries eligible for the shadow decision. A `product-scope` finding keeps the

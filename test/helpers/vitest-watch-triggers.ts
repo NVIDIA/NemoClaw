@@ -391,6 +391,12 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
     testsToRun: runTests("test/e2e/support/pr-review-advisor-workflow-boundary.test.ts"),
   },
   {
+    pattern: /(?:^|\/)\.github\/workflows\/pr-review-coordinator-shadow-sample\.yaml$/,
+    testsToRun: runTests(
+      "test/automation/pull-requests/pr-review-coordinator-shadow-sample-workflow.test.ts",
+    ),
+  },
+  {
     pattern: /(?:^|\/)tools\/pr-review-advisor\/openshell-policy\.yaml$/,
     testsToRun: runTests("test/automation/pull-requests/pr-review-advisor-openshell.test.ts"),
   },
