@@ -347,8 +347,15 @@ export async function prepareHermesPortableLaunchForwards(
         if (started.state === "refused" && started.observation.state === "foreign") {
           failure("forward-occupied", { cause: "port-occupied", port: forward.port });
         }
-        if (started.state === "cleanup_uncertain") failure("restoration-unproved");
         const startupFailure = "failure" in started ? started.failure : undefined;
+        if (started.state === "cleanup_uncertain") {
+          failure("restoration-unproved", {
+            cause: "forward-mutation-failed",
+            operation: "start",
+            port: forward.port,
+            ...(startupFailure ? { startupFailure } : {}),
+          });
+        }
         failure("recovery-failed", {
           cause: "forward-mutation-failed",
           operation: "start",
