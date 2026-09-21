@@ -26,6 +26,15 @@ const harness = vi.hoisted(() => {
     getLatestBackup: vi.fn(),
     captureSnapshotRestoreAuthority: vi.fn(),
     restoreSandboxState: vi.fn(),
+    beginOpenClawBackupQuiesce: vi.fn(async () => {
+      events.push("begin-openclaw-backup-quiesce");
+      return { ok: true as const, window: { sandboxName: "alpha", kind: "backup" as const } };
+    }),
+    finishOpenClawPostRestoreDoctor: vi.fn(async () => {
+      events.push("finish-openclaw-native-start");
+      return { ok: true as const };
+    }),
+    abortOpenClawPostRestoreDoctor: vi.fn(async () => ({ ok: true as const })),
     preserveForRebuild: vi.fn((receipt: unknown) => {
       events.push("reprove");
       return receipt;
@@ -126,6 +135,13 @@ vi.mock("./sandbox-gateway-routing", () => ({
 
 vi.mock("./snapshot/dependencies", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./snapshot/dependencies")>()),
+  abortOpenClawPostRestoreDoctor: harness.abortOpenClawPostRestoreDoctor,
+  beginOpenClawBackupQuiesce: harness.beginOpenClawBackupQuiesce,
+  finishOpenClawPostRestoreDoctor: harness.finishOpenClawPostRestoreDoctor,
+  getMcpProviderInspectionRuntimeSelection: vi.fn(() => ({
+    gatewayName: "nemoclaw",
+    workspace: "default",
+  })),
   requireCurrentSnapshotRuntimeProvider: vi.fn(() => provider),
 }));
 
@@ -210,10 +226,12 @@ describe("snapshot command host-local inference authority", () => {
     expect(harness.events).toEqual([
       "reprove",
       "reprove",
+      "begin-openclaw-backup-quiesce",
       "restore-start",
       "reprove",
       "restore-complete",
       "reprove",
+      "finish-openclaw-native-start",
     ]);
     expect(harness.restoreSandboxState).toHaveBeenCalledWith(
       "alpha",
