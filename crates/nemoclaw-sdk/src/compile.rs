@@ -352,10 +352,10 @@ pub(super) fn compile_with_plans(
         provider["tls_key_env"] = json!(tls.key.env);
     }
     let mut resources = json!({});
-    let provider_dependencies: Vec<_> = targets
+    let provider_dependencies: BTreeMap<_, _> = targets
         .iter()
         .filter(|target| target.kind == "provider")
-        .map(|target| target.address.clone())
+        .map(|target| (target.values["name"].clone(), target.address.clone()))
         .collect();
     for target in targets {
         let mut attributes = serde_json::to_value(&target.values).expect("string map");
@@ -378,7 +378,17 @@ pub(super) fn compile_with_plans(
                     attributes[field] = json!(value.replace("${", "$${").replace("%{", "%%{"));
                 }
             }
-            attributes["depends_on"] = json!(provider_dependencies);
+            let sandbox = document.sandbox(&target.values["name"])?;
+            let mut dependencies: Vec<_> = document
+                .sandbox_inference_providers(sandbox)?
+                .into_iter()
+                .map(|provider| provider_dependencies[&provider.key].clone())
+                .collect();
+            if let Some(search) = document.sandbox_runtime_settings(sandbox)?.web_search {
+                let name = crate::config::search_provider_name(&search.credential.env);
+                dependencies.push(provider_dependencies[&name].clone());
+            }
+            attributes["depends_on"] = json!(dependencies);
         }
         if let Some(dependencies) = service_plans.dependencies(&target.address) {
             attributes["depends_on"] = json!(dependencies);

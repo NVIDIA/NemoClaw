@@ -98,6 +98,13 @@ fn a_sandbox_attaches_the_union_of_selected_providers_with_bound_credentials() {
         json!(dependencies)
     );
     assert_eq!(
+        graph["resource"]["nemoclaw_sandbox"]["other"]["depends_on"],
+        json!([
+            "nemoclaw_provider.inference_local",
+            "data.nemoclaw_gateway_capabilities.apply"
+        ])
+    );
+    assert_eq!(
         Document::parse(doc.yaml().unwrap().as_bytes()).unwrap(),
         doc
     );

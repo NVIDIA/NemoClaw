@@ -106,6 +106,14 @@ fn shared_integration_references_grant_only_the_selected_agents() {
     let generations = ["workspace", "provider", "sandbox"]
         .map(|key| (key.into(), "a".repeat(32)))
         .into();
+    let graph = compile(&doc, &generations, "0.1.0").unwrap();
+    assert_eq!(
+        graph["resource"]["nemoclaw_sandbox"]["reader"]["depends_on"],
+        json!([
+            "nemoclaw_provider.inference_local",
+            "data.nemoclaw_gateway_capabilities.apply"
+        ])
+    );
     let rows = targets(&doc, &generations).unwrap();
     assert_eq!(
         rows.iter()
@@ -310,6 +318,21 @@ fn sandboxes_share_search_registration_only_for_the_same_credential() {
         })
         .collect();
     assert_eq!(search.len(), 2);
+    let graph = compile(&doc, &generations, "0.1.0").unwrap();
+    for (sandbox, credential) in [("assistant", "SEARCH_KEY"), ("other", "OTHER_KEY")] {
+        let selected = search
+            .iter()
+            .find(|provider| provider.values["credential_env"] == credential)
+            .unwrap();
+        assert_eq!(
+            graph["resource"]["nemoclaw_sandbox"][sandbox]["depends_on"],
+            json!([
+                "nemoclaw_provider.inference_local",
+                selected.address,
+                "data.nemoclaw_gateway_capabilities.apply"
+            ])
+        );
+    }
     assert_ne!(search[0].values["name"], search[1].values["name"]);
     assert_ne!(
         search[0].values["credential_env"],
