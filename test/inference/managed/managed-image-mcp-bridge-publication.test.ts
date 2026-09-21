@@ -8,7 +8,7 @@ import {
 } from "../../../tools/e2e/base-image-publication.mts";
 import { readWorkflow } from "../../helpers/managed-image-publication-workflow";
 
-const MCP_BRIDGE_SUPPORT_PATH = "test/e2e/support/mcp-bridge*.ts";
+const MCP_BRIDGE_SUPPORT_PATH = "test/e2e/support/mcp-bridge-portable-lock-barrier.ts";
 
 it("keeps MCP bridge support in both image triggers and the publication selector (#12084)", () => {
   const managedPaths = readWorkflow("managed-images.yaml").on?.pull_request?.paths ?? [];

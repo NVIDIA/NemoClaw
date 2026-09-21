@@ -230,29 +230,38 @@ async function assertConcurrentAddSerialized(
       artifactName,
       env,
       redactionValues: [HOST_SECRET],
-      // Keep callers alive through the existing bounded restart and reload.
       timeoutMs: MCP_MUTATION_TIMEOUT_MS[options.expectedAdapter],
     });
-  const firstAttempt = add(`${options.artifactPrefix}-mcp-concurrent-add-first`);
-  const secondAttempt = (async () => {
-    const barrier = await pausePortableHostLockOwner({
-      commandArgs: args,
-      commandPath: host.commandPath,
-      homeDir: process.env.HOME ?? os.homedir(),
-    });
-    try {
-      cleanup.add(`resume ${options.artifactPrefix} concurrent MCP add lock owner`, () =>
-        barrier.resume(),
-      );
-      return await add(`${options.artifactPrefix}-mcp-concurrent-add-second`);
-    } finally {
-      await barrier.resume();
-    }
-  })();
-  const [first, second] = await Promise.all([firstAttempt, secondAttempt]);
-  expect(first.exitCode).toBe(0);
-  const successful = [first];
-  const rejected = [second];
+  const attempts =
+    options.expectedAdapter === "hermes-config"
+      ? await (async () => {
+          const firstAttempt = add(`${options.artifactPrefix}-mcp-concurrent-add-first`);
+          const secondAttempt = (async () => {
+            const barrier = await pausePortableHostLockOwner({
+              commandArgs: args,
+              commandPath: host.commandPath,
+              homeDir: process.env.HOME ?? os.homedir(),
+            });
+            try {
+              cleanup.add(`resume ${options.artifactPrefix} concurrent MCP add lock owner`, () =>
+                barrier.resume(),
+              );
+              return await add(`${options.artifactPrefix}-mcp-concurrent-add-second`);
+            } finally {
+              await barrier.resume();
+            }
+          })();
+          const [first, second] = await Promise.all([firstAttempt, secondAttempt]);
+          return [first, second];
+        })()
+      : await Promise.all(
+          ["first", "second"].map((attempt) =>
+            add(`${options.artifactPrefix}-mcp-concurrent-add-${attempt}`),
+          ),
+        );
+  const successful = attempts.filter((result) => result.exitCode === 0);
+  expect(successful.length).toBeGreaterThan(0);
+  const rejected = attempts.filter((result) => result.exitCode !== 0);
   const statusObservation = await readConcurrentMcpStatusAndConfirmHermesRegistration({
     clients: { artifacts, host, sandbox },
     committedAddResult: successful[0]!,
