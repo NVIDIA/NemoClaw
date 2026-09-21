@@ -197,8 +197,7 @@ pub(crate) fn bindings(directory: &Path) -> Result<BTreeMap<String, StateBinding
             return Err(Error::State("unexpected resource instances in state"));
         }
         if resource.mode.as_deref() == Some("data") {
-            let known = if format!("data.{address}") == crate::compile::GATEWAY_CAPABILITIES_ADDRESS
-            {
+            let known = if crate::compile::is_gateway_observation(&format!("data.{address}")) {
                 true
             } else if resource.r#type == "nemoclaw_service_capacity" {
                 instance.attributes["engine"]

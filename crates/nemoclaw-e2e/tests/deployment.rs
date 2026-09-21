@@ -2,7 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 use nemoclaw_sdk::config::HarnessKind;
 
-use nemoclaw_e2e::{assert_same_deployment_state, openshell::Fixture};
+use nemoclaw_e2e::{
+    assert_same_deployment_state, assert_same_managed_resources, openshell::Fixture,
+};
 use nemoclaw_sdk::{CancellationToken, Deployment, Outcome, config::Document};
 use std::{fs, path::PathBuf, process::Command};
 
@@ -55,15 +57,20 @@ async fn gateway_change_between_plan_and_apply_preserves_resources_and_allows_te
     ));
     let error = guarded.apply(&document, &cancel).await.unwrap_err();
     assert!(
+        matches!(&error, nemoclaw_sdk::Error::Execution { operation, .. } if operation == "apply"),
+        "{error}"
+    );
+    assert!(
         error
             .to_string()
+            .to_ascii_lowercase()
             .contains("gateway version or compute driver"),
         "{error}"
     );
     assert_eq!(fixture.state.lock().unwrap().effects, effects);
-    assert_eq!(
-        fs::read(directory.path().join("terraform.tfstate")).unwrap(),
-        prior
+    assert_same_managed_resources(
+        &fs::read(directory.path().join("terraform.tfstate")).unwrap(),
+        &prior,
     );
     // Resume the same intent after restoring compatibility, then verify that
     // capability drift alone cannot prevent explicit teardown.

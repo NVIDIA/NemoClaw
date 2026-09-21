@@ -19,6 +19,8 @@ pub(crate) struct GatewayDataSource(pub Arc<ConfiguredBackend>);
 pub(crate) struct GatewayState {
     required_compute_drivers: Value<Vec<Value<String>>>,
     wait_timeout_seconds: Value<u64>,
+    // An unknown scheduling input makes OpenTofu defer this read until apply.
+    read_trigger: Value<bool>,
     gateway_version: Value<String>,
     compute_drivers: Value<BTreeSet<String>>,
     compute_driver_count: Value<u64>,
@@ -96,6 +98,11 @@ impl DataSource for GatewayDataSource {
                         AttributeConstraint::Optional,
                     ),
                     (
+                        "read_trigger",
+                        AttributeType::Bool,
+                        AttributeConstraint::Optional,
+                    ),
+                    (
                         "required_compute_drivers",
                         AttributeType::Set(Box::new(AttributeType::String)),
                         AttributeConstraint::Required,
@@ -149,6 +156,10 @@ impl DataSource for GatewayDataSource {
         _: ValueEmpty,
     ) -> Option<GatewayState> {
         requirements(diags, &config)?;
+        if matches!(config.read_trigger, Value::Unknown) {
+            diags.root_error_short("Gateway read trigger is not yet known");
+            return None;
+        }
         let drivers = match &config.required_compute_drivers {
             Value::Value(drivers) => drivers
                 .iter()
@@ -220,6 +231,7 @@ mod tests {
             let config = GatewayState {
                 required_compute_drivers: drivers,
                 wait_timeout_seconds: Value::Null,
+                read_trigger: Value::Null,
                 gateway_version: Value::Null,
                 compute_drivers: Value::Null,
                 compute_driver_count: Value::Null,
@@ -252,6 +264,7 @@ mod wait_tests {
             let config = GatewayState {
                 required_compute_drivers: Value::Value(vec![Value::Value("docker".into())]),
                 wait_timeout_seconds: timeout,
+                read_trigger: Value::Null,
                 gateway_version: Value::Null,
                 compute_drivers: Value::Null,
                 compute_driver_count: Value::Null,

@@ -44,11 +44,18 @@ fn search_uses_owned_profile_and_provider_without_exporting_secrets() {
     assert!(graph["resource"]["nemoclaw_provider"]["inference_local"].is_object());
     assert_eq!(
         graph["resource"]["nemoclaw_provider"][search.address.split_once('.').unwrap().1]["depends_on"],
-        json!(["nemoclaw_provider_profile.web_search"])
+        json!([
+            "nemoclaw_provider_profile.web_search",
+            "data.nemoclaw_gateway_capabilities.apply"
+        ])
     );
     assert_eq!(
         graph["resource"]["nemoclaw_sandbox"]["assistant"]["depends_on"],
-        json!(["nemoclaw_provider.inference_local", search.address])
+        json!([
+            "nemoclaw_provider.inference_local",
+            search.address,
+            "data.nemoclaw_gateway_capabilities.apply"
+        ])
     );
 }
 #[test]

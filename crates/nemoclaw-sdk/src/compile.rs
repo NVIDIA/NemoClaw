@@ -312,6 +312,16 @@ pub fn compile(
 }
 
 pub(crate) const GATEWAY_CAPABILITIES_ADDRESS: &str = "data.nemoclaw_gateway_capabilities.current";
+pub(crate) const GATEWAY_APPLY_CAPABILITIES_ADDRESS: &str =
+    "data.nemoclaw_gateway_capabilities.apply";
+
+pub(crate) fn is_gateway_observation(address: &str) -> bool {
+    [
+        GATEWAY_CAPABILITIES_ADDRESS,
+        GATEWAY_APPLY_CAPABILITIES_ADDRESS,
+    ]
+    .contains(&address)
+}
 
 // Both graphs report the provider's observation through OpenTofu conditions.
 pub(super) fn gateway_error_message(reference: &str) -> String {
@@ -398,6 +408,14 @@ pub(super) fn compile_with_plans(
         {
             attributes["depends_on"] = json!(["nemoclaw_provider_profile.web_search"]);
         }
+        attributes
+            .as_object_mut()
+            .expect("resource attributes")
+            .entry("depends_on")
+            .or_insert_with(|| json!([]))
+            .as_array_mut()
+            .expect("resource dependencies")
+            .push(json!(GATEWAY_APPLY_CAPABILITIES_ADDRESS));
         attributes["lifecycle"] = json!({"prevent_destroy":true, "precondition":[{
             "condition":format!("${{{GATEWAY_CAPABILITIES_ADDRESS}.compatible}}"),
             "error_message":gateway_error_message(GATEWAY_CAPABILITIES_ADDRESS)
@@ -418,10 +436,23 @@ pub(super) fn compile_with_plans(
         .iter()
         .map(|sandbox| &sandbox.runtime.provider)
         .collect();
+    // timestamp() is unknown while planning. Its nonempty test becomes a
+    // stable true at apply, forcing a fresh read without perpetual state drift.
+    let apply_readiness = json!({
+        "required_compute_drivers":drivers,
+        "read_trigger":"${timestamp() != \"\"}",
+        "lifecycle":{"postcondition":[{
+            "condition":"${self.compatible}",
+            "error_message":gateway_error_message("self")
+        }]}
+    });
     Ok(json!({
         "terraform":{"required_version":format!("= {OPENTOFU_VERSION}"),"required_providers":{"nemoclaw":{"source":PROVIDER_ADDRESS,"version":format!("= {version}")}}},
         "provider":{"nemoclaw":provider}, "resource":resources,
-        "data":{"nemoclaw_gateway_capabilities":{"current":{"required_compute_drivers":drivers}}}
+        "data":{"nemoclaw_gateway_capabilities":{
+            "current":{"required_compute_drivers":drivers},
+            "apply":apply_readiness
+        }}
     }))
 }
 

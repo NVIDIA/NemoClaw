@@ -156,6 +156,31 @@ async fn harness_preserves_conversations_and_rejects_runtime_drift(harness: &str
                 document.spec.sandboxes[0].name
             )));
         assert_eq!(writes(), initial_writes, "plan must not configure Pi");
+        let before = fs::read(directory.path().join("terraform.tfstate")).unwrap();
+        let state = fixture.state.clone();
+        let guarded = Deployment::new(directory.path(), &bundle).with_progress(
+            std::sync::Arc::new(move |event| {
+                if event == nemoclaw_sdk::Progress::Applying {
+                    state.lock().unwrap().driver = Some("podman".into());
+                }
+            }),
+        );
+        let error = guarded.apply(&changed_model, &cancel).await.unwrap_err();
+        assert!(
+            matches!(&error, nemoclaw_sdk::Error::Execution { operation, .. } if operation == "apply"),
+            "{error}"
+        );
+        assert_eq!(
+            writes(),
+            initial_writes,
+            "incompatible gateway must block Pi writes"
+        );
+        nemoclaw_e2e::assert_same_managed_resources(
+            &fs::read(directory.path().join("terraform.tfstate")).unwrap(),
+            &before,
+        );
+        fixture.state.lock().unwrap().driver = None;
+
         let applied = deployment.apply(&changed_model, &cancel).await.unwrap();
         assert_eq!(
             writes(),
