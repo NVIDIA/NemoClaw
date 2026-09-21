@@ -20,6 +20,7 @@ import { buildSubprocessEnv } from "../../../subprocess-env";
 import { findSandboxAcrossGatewayRoots } from "../../../state/registry/cross-port";
 import { getMessagingPlanFromEntry } from "../../../state/registry-messaging";
 import type { SandboxEntry } from "../../../state/registry/types";
+import { confirmDelegatedRebuildIntent } from "../rebuild-preflight-confirmation";
 import type { RebuildSandboxExecutionOptions } from "../rebuild-prepared-recovery";
 import { readRebuildRecoveryRoute } from "../rebuild-recreate-journal";
 
@@ -63,6 +64,7 @@ function assertWorkerPlatformSupported(platform: NodeJS.Platform): void {
 
 type RebuildOwningRegistryDependencies = {
   assertWorkerPlatformSupported: typeof assertWorkerPlatformSupported;
+  confirmInteractiveRebuild: typeof confirmDelegatedRebuildIntent;
   findSandbox: typeof findSandboxAcrossGatewayRoots;
   findRecoveryRoot: typeof findRebuildRecoveryStorageRoot;
   isHostFenceHeld: typeof isCurrentPortableHostFenceHeld;
@@ -319,6 +321,10 @@ async function runWorker(
         timeout,
         interrupted,
       ]);
+    } catch (error) {
+      await terminateWorkerProcessGroup(child, dedicatedProcessGroup, terminationGraceMs);
+      await settleWorkerPromises([inputWritten, exited, result], REBUILD_WORKER_REAP_TIMEOUT_MS);
+      throw error;
     } finally {
       if (deadline) clearTimeout(deadline);
     }
@@ -378,6 +384,7 @@ async function runWorker(
 
 export const rebuildOwningRegistryDependencies: RebuildOwningRegistryDependencies = {
   assertWorkerPlatformSupported,
+  confirmInteractiveRebuild: confirmDelegatedRebuildIntent,
   findSandbox: findSandboxAcrossGatewayRoots,
   findRecoveryRoot: findRebuildRecoveryStorageRoot,
   isHostFenceHeld: isCurrentPortableHostFenceHeld,
@@ -459,13 +466,17 @@ export async function delegateRebuildToOwningRegistry(
       `Cannot transfer rebuild for '${input.sandboxName}' while another lifecycle command owns the host fence. Run 'nemoclaw ${input.sandboxName} rebuild' directly.`,
     );
   }
+  let workerInput = input;
   if (!input.options.yes && !input.options.force) {
-    throw new Error(
-      `Cannot transfer an interactive rebuild for '${input.sandboxName}' to its owning gateway registry. Re-run with '--yes' or '--force'.`,
+    const confirmed = await rebuildOwningRegistryDependencies.confirmInteractiveRebuild(
+      input.sandboxName,
+      input.options.dcodeAutoApprovalMode,
     );
+    if (!confirmed) return true;
+    workerInput = { ...input, options: { ...input.options, yes: true } };
   }
   await rebuildOwningRegistryDependencies.runWorker(
-    { operation: "rebuild", ...input },
+    { operation: "rebuild", ...workerInput },
     hit.registryGatewayPort,
     { credentialEnvNames: rebuildCredentialEnvNames(hit.entry) },
   );

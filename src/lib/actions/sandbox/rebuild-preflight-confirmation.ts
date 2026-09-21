@@ -159,6 +159,31 @@ async function ensureRebuildUsageNoticeOrBail(bail: RebuildBail): Promise<void> 
   );
 }
 
+/** Confirm a sibling-root rebuild before its detached worker is started. */
+export async function confirmDelegatedRebuildIntent(
+  sandboxName: string,
+  requestedDcodeAutoApprovalMode?: DcodeAutoApprovalMode,
+): Promise<boolean> {
+  const activeSessionCount = countActiveSandboxSessionsForRebuild(sandboxName);
+  console.log("");
+  console.log(`  ${B}Rebuild sandbox '${sandboxName}'${R}`);
+  console.log("");
+  if (
+    !(await confirmSandboxRebuildIfNeeded(
+      false,
+      activeSessionCount,
+      askPrompt,
+      requestedDcodeAutoApprovalMode,
+    ))
+  ) {
+    return false;
+  }
+  await ensureRebuildUsageNoticeOrBail((message) => {
+    throw new Error(message);
+  });
+  return true;
+}
+
 export async function confirmRebuildIntent(
   sandboxName: string,
   agentName: string,

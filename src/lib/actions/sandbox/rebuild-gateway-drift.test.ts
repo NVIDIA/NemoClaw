@@ -467,7 +467,7 @@ describe("rebuild owning registry routing", () => {
     expect(runWorker).not.toHaveBeenCalled();
   });
 
-  it("refuses to prompt inside a detached sibling-root rebuild worker", async () => {
+  it("confirms a sibling-root rebuild in the parent before starting its detached worker", async () => {
     const entry = makeSandboxEntry("nemoclaw-9000", 9000);
     vi.spyOn(rebuildOwningRegistryDependencies, "findSandbox").mockReturnValue({
       entry,
@@ -476,6 +476,46 @@ describe("rebuild owning registry routing", () => {
       registryFile: "/home/test/.nemoclaw/gateways/9000/sandboxes.json",
     });
     vi.spyOn(rebuildOwningRegistryDependencies, "isHostFenceHeld").mockReturnValue(false);
+    const confirmInteractiveRebuild = vi
+      .spyOn(rebuildOwningRegistryDependencies, "confirmInteractiveRebuild")
+      .mockResolvedValue(true);
+    const runWorker = vi
+      .spyOn(rebuildOwningRegistryDependencies, "runWorker")
+      .mockResolvedValue(undefined);
+
+    await expect(
+      delegateRebuildToOwningRegistry(
+        { sandboxName: "alpha", options: {}, executionOptions: {} },
+        "/home/test",
+        "/home/test/.nemoclaw/sandboxes.json",
+      ),
+    ).resolves.toBe(true);
+
+    expect(confirmInteractiveRebuild).toHaveBeenCalledWith("alpha", undefined);
+    expect(runWorker).toHaveBeenCalledWith(
+      {
+        operation: "rebuild",
+        sandboxName: "alpha",
+        options: { yes: true },
+        executionOptions: {},
+      },
+      9000,
+      { credentialEnvNames: [] },
+    );
+  });
+
+  it("keeps a cancelled sibling-root rebuild non-mutating", async () => {
+    const entry = makeSandboxEntry("nemoclaw-9000", 9000);
+    vi.spyOn(rebuildOwningRegistryDependencies, "findSandbox").mockReturnValue({
+      entry,
+      gatewayPort: 9000,
+      registryGatewayPort: 9000,
+      registryFile: "/home/test/.nemoclaw/gateways/9000/sandboxes.json",
+    });
+    vi.spyOn(rebuildOwningRegistryDependencies, "isHostFenceHeld").mockReturnValue(false);
+    vi.spyOn(rebuildOwningRegistryDependencies, "confirmInteractiveRebuild").mockResolvedValue(
+      false,
+    );
     const runWorker = vi.spyOn(rebuildOwningRegistryDependencies, "runWorker");
 
     await expect(
@@ -484,9 +524,7 @@ describe("rebuild owning registry routing", () => {
         "/home/test",
         "/home/test/.nemoclaw/sandboxes.json",
       ),
-    ).rejects.toThrow(
-      "Cannot transfer an interactive rebuild for 'alpha' to its owning gateway registry. Re-run with '--yes' or '--force'.",
-    );
+    ).resolves.toBe(true);
 
     expect(runWorker).not.toHaveBeenCalled();
   });
