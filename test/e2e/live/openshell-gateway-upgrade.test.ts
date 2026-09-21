@@ -471,7 +471,11 @@ async function installCurrentNemoclawUpgrade(
           }),
           bash(
             host,
-            `openshell logs -g nemoclaw ${shellQuote(SURVIVOR_SANDBOX)} -n 2000 --source all`,
+            `container_id="$(docker ps -aq --filter ${shellQuote(`label=openshell.ai/sandbox-name=${SURVIVOR_SANDBOX}`)} | head -n 1)"
+start_log="$(mktemp)"
+trap 'rm -f -- "$start_log"' EXIT
+docker cp "$container_id:/tmp/nemoclaw-start.log" "$start_log"
+tail -n 500 "$start_log"`,
             {
               artifactName: "current-install-failure-start-log",
               env: currentEnv,
