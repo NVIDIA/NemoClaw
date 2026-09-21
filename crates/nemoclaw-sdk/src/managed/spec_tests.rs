@@ -240,6 +240,20 @@ fn runtime_launch_preserves_declared_bindings_limits_and_isolation() {
 }
 
 #[test]
+fn managed_gateway_tells_sandbox_supervisors_how_to_reach_its_listener() {
+    let fixtures: Vec<serde_json::Value> =
+        serde_json::from_str(include_str!("reference.json")).unwrap();
+    for fixture in fixtures {
+        let spec: Spec = serde_json::from_str(fixture["spec"].as_str().unwrap()).unwrap();
+        let configuration = spec.gateway_config("/owned-data");
+        assert!(
+            configuration.contains(&format!("grpc_endpoint = {:?}", spec.gateway.endpoint)),
+            "managed gateway supervisors need an explicit callback endpoint"
+        );
+    }
+}
+
+#[test]
 fn managed_specs_reject_missing_ownership_or_unknown_runtime_layout() {
     let fixtures: Vec<serde_json::Value> =
         serde_json::from_str(include_str!("reference.json")).unwrap();
