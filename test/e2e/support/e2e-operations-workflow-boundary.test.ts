@@ -23,6 +23,7 @@ const COLD_ONBOARD_PERFORMANCE_EVIDENCE_PATH =
   "e2e-artifacts/live/${{ matrix.id }}/onboard-progress-budget.json";
 const CONFIG_EXPORT_EVIDENCE_PATH =
   "e2e-artifacts/live/${{ matrix.id }}/config-export-evidence.v1.json";
+const CONFIG_EXPORT_YAML_PATH = "e2e-artifacts/live/${{ matrix.id }}/config-export.yaml";
 
 function workflowScript(jobName: string, stepName: string): string {
   const workflow = readE2eOperationsWorkflow();
@@ -70,8 +71,25 @@ describe("E2E operations workflow", testTimeoutOptions(15_000), () => {
       "live E2E must upload automatic config export evidence",
     );
   });
+  it("requires validated config export YAML in retained live artifacts (#12132)", () => {
+    const workflow = readE2eOperationsWorkflow();
+    const upload = workflow.jobs.live.steps!.find((step) => step.name === "Upload E2E artifacts")!;
+    upload.with!.path = String(upload.with!.path)
+      .split("\n")
+      .filter((line) => line.trim() !== CONFIG_EXPORT_YAML_PATH)
+      .join("\n");
+
+    expect(validateE2eOperationsWorkflow(workflow)).toContain(
+      "live E2E must upload the validated config export YAML",
+    );
+  });
   it.each([
     { mode: "removed check", run: "true", continueOnError: false },
+    {
+      mode: "missing YAML check",
+      run: `test -f "${CONFIG_EXPORT_EVIDENCE_PATH}"`,
+      continueOnError: false,
+    },
     {
       mode: "ignored shell failure",
       run: `test -f "${CONFIG_EXPORT_EVIDENCE_PATH}" || true`,

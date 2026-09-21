@@ -39,6 +39,7 @@ const COLD_ONBOARD_PERFORMANCE_EVIDENCE_PATH =
   "e2e-artifacts/live/${{ matrix.id }}/onboard-progress-budget.json";
 const CONFIG_EXPORT_EVIDENCE_PATH =
   "e2e-artifacts/live/${{ matrix.id }}/config-export-evidence.v1.json";
+const CONFIG_EXPORT_YAML_PATH = "e2e-artifacts/live/${{ matrix.id }}/config-export.yaml";
 const MANAGED_SOURCE_CONDITION =
   "${{ inputs.pr_number == '' || steps.select_pr_source.outputs.selection == 'base-cohort' }}";
 const BASE_PUBLICATION_CONDITION =
@@ -1020,11 +1021,16 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
   if (!uploadPaths.includes(CONFIG_EXPORT_EVIDENCE_PATH)) {
     errors.push("live E2E must upload automatic config export evidence");
   }
+  if (!uploadPaths.includes(CONFIG_EXPORT_YAML_PATH)) {
+    errors.push("live E2E must upload the validated config export YAML");
+  }
   if (
     requireConfigExportEvidence.if !== "${{ success() }}" ||
     requireConfigExportEvidence.shell !== "bash" ||
     String(requireConfigExportEvidence.run ?? "").trim() !==
-      `test -f "${CONFIG_EXPORT_EVIDENCE_PATH}"` ||
+      [`test -f "${CONFIG_EXPORT_EVIDENCE_PATH}"`, `test -f "${CONFIG_EXPORT_YAML_PATH}"`].join(
+        "\n",
+      ) ||
     (requireConfigExportEvidence["continue-on-error"] !== undefined &&
       requireConfigExportEvidence["continue-on-error"] !== false) ||
     liveSteps.indexOf(requireConfigExportEvidence) <=

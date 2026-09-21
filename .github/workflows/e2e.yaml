@@ -2955,7 +2955,9 @@ jobs:
       - name: Require automatic config export evidence
         if: ${{ success() }}
         shell: bash
-        run: test -f "e2e-artifacts/live/${{ matrix.id }}/config-export-evidence.v1.json"
+        run: |
+          test -f "e2e-artifacts/live/${{ matrix.id }}/config-export-evidence.v1.json"
+          test -f "e2e-artifacts/live/${{ matrix.id }}/config-export.yaml"
 
       - name: Upload E2E artifacts
         if: always()
@@ -2971,6 +2973,7 @@ jobs:
             e2e-artifacts/live/${{ matrix.id }}/onboarding.result.json
             e2e-artifacts/live/${{ matrix.id }}/state-validation.result.json
             e2e-artifacts/live/${{ matrix.id }}/config-export-evidence.v1.json
+            e2e-artifacts/live/${{ matrix.id }}/config-export.yaml
             e2e-artifacts/live/${{ matrix.id }}/dcode-base-image.json
             e2e-artifacts/live/${{ matrix.id }}/cloud-onboard-trace-timing-summary.json
             e2e-artifacts/live/${{ matrix.id }}/onboard-progress-budget.json

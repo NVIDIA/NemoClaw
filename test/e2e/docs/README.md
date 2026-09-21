@@ -145,10 +145,10 @@ secrets and internal credential transport markers before publication.
 The secret scan covers registered fixture values, not arbitrary unregistered
 secrets. Review selected exports before retaining them as migration fixtures.
 
-After a live target succeeds, the E2E workflow requires
-`config-export-evidence.v1.json` before artifact upload. A missing file fails
-the target job. The workflow uploads the file with the target's retained
-artifacts.
+After a live target succeeds, the E2E workflow requires both
+`config-export-evidence.v1.json` and `config-export.yaml` before artifact
+upload. A missing file fails the target job. The workflow uploads both files
+with the target's retained artifacts.
 
 `suiteIds` remain metadata for reporting and migration planning. They do not
 dispatch shell validation suites.
