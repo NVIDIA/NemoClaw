@@ -23,7 +23,10 @@ import type { HostCliClient } from "./clients/host.ts";
 import { trustedSandboxShellScript, type SandboxClient } from "./clients/sandbox.ts";
 import type { CleanupRegistry } from "./cleanup.ts";
 import { CLI_ENTRYPOINT, REPO_ROOT } from "./paths.ts";
-import { publishValidatedConfigExportYaml } from "./phases/config-export-validation.ts";
+import {
+  publishValidatedConfigExportYaml,
+  readConfigExportFileSafely,
+} from "./phases/config-export-validation.ts";
 
 interface HermesConfigExportLiveInput {
   readonly artifacts: ArtifactSink;
@@ -245,8 +248,8 @@ export async function verifyHermesConfigExportLive(
   );
 
   const launchersSucceeded = nemoclaw.exitCode === 0 && nemohermes.exitCode === 0;
-  const nemoclawRaw = nemoclaw.exitCode === 0 ? fs.readFileSync(nemoclawPath, "utf8") : "";
-  const nemohermesRaw = nemohermes.exitCode === 0 ? fs.readFileSync(nemohermesPath, "utf8") : "";
+  const nemoclawRaw = nemoclaw.exitCode === 0 ? readConfigExportFileSafely(nemoclawPath) : "";
+  const nemohermesRaw = nemohermes.exitCode === 0 ? readConfigExportFileSafely(nemohermesPath) : "";
   const nemoclawDiagnostics = normalizeCommandDiagnostics(nemoclaw.stdout, nemoclaw.stderr);
   const nemohermesDiagnostics = normalizeCommandDiagnostics(nemohermes.stdout, nemohermes.stderr);
   const containsCredential = input.redactionValues.some(

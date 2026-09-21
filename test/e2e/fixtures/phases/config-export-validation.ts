@@ -398,6 +398,49 @@ const DEFAULT_DEPENDENCIES: ConfigExportValidationDependencies = {
   removeDirectory: (directory) => fs.rmSync(directory, { force: true, recursive: true }),
 };
 
+/** Read one bounded regular export file without following or racing a replacement link. */
+export function readConfigExportFileSafely(
+  filePath: string,
+  dependencies: Pick<
+    ConfigExportValidationDependencies,
+    "closeFile" | "inspectFile" | "inspectOpenFile" | "openFileNoFollow" | "readOpenFile"
+  > = DEFAULT_DEPENDENCIES,
+): string {
+  const file = dependencies.openFileNoFollow(filePath);
+  try {
+    const opened = dependencies.inspectOpenFile(file);
+    if (!opened.isFile) {
+      throw new Error("config export output is not a regular file");
+    }
+    if (opened.linkCount !== 1) {
+      throw new Error("config export output must have exactly one hard link");
+    }
+    if (opened.size > CONFIG_EXPORT_FILE_LIMIT_BYTES) {
+      throw new Error(
+        `config export output exceeds the ${CONFIG_EXPORT_FILE_LIMIT_BYTES}-byte limit`,
+      );
+    }
+    const raw = dependencies.readOpenFile(file, CONFIG_EXPORT_FILE_LIMIT_BYTES);
+    if (Buffer.byteLength(raw, "utf8") > CONFIG_EXPORT_FILE_LIMIT_BYTES) {
+      throw new Error(
+        `config export output exceeds the ${CONFIG_EXPORT_FILE_LIMIT_BYTES}-byte limit`,
+      );
+    }
+    const published = dependencies.inspectFile(filePath);
+    if (
+      !published.isFile ||
+      published.linkCount !== 1 ||
+      published.device !== opened.device ||
+      published.inode !== opened.inode
+    ) {
+      throw new Error("config export output changed while it was being read");
+    }
+    return raw;
+  } finally {
+    dependencies.closeFile(file);
+  }
+}
+
 function requiredRecord(value: unknown, field: string): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new Error(`exported configuration field '${field}' must be an object`);
@@ -975,38 +1018,7 @@ export class ConfigExportValidationPhaseFixture {
         if (result.exitCode !== 0 || !outputExists) {
           throw new Error(`config export failed: ${resultText(result)}`);
         }
-        const outputFile = this.dependencies.openFileNoFollow(outputPath);
-        try {
-          const output = this.dependencies.inspectOpenFile(outputFile);
-          if (!output.isFile) {
-            throw new Error("config export output is not a regular file");
-          }
-          if (output.linkCount !== 1) {
-            throw new Error("config export output must have exactly one hard link");
-          }
-          if (output.size > CONFIG_EXPORT_FILE_LIMIT_BYTES) {
-            throw new Error(
-              `config export output exceeds the ${CONFIG_EXPORT_FILE_LIMIT_BYTES}-byte limit`,
-            );
-          }
-          raw = this.dependencies.readOpenFile(outputFile, CONFIG_EXPORT_FILE_LIMIT_BYTES);
-          if (Buffer.byteLength(raw, "utf8") > CONFIG_EXPORT_FILE_LIMIT_BYTES) {
-            throw new Error(
-              `config export output exceeds the ${CONFIG_EXPORT_FILE_LIMIT_BYTES}-byte limit`,
-            );
-          }
-          const published = this.dependencies.inspectFile(outputPath);
-          if (
-            !published.isFile ||
-            published.linkCount !== 1 ||
-            published.device !== output.device ||
-            published.inode !== output.inode
-          ) {
-            throw new Error("config export output changed while it was being read");
-          }
-        } finally {
-          this.dependencies.closeFile(outputFile);
-        }
+        raw = readConfigExportFileSafely(outputPath, this.dependencies);
         failureStage = "security";
         const secretValues = this.secrets.redactionValues();
         failureStage = "verification";

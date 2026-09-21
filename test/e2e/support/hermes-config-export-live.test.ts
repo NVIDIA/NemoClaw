@@ -346,6 +346,26 @@ describe("Hermes config export live evidence", () => {
     expect(mocks.writeText).not.toHaveBeenCalled();
   });
 
+  it("withholds retained YAML when an exporter replaces output with a symlink", async () => {
+    const replaceExportWithSymlink = async (_command: string, args: string[]) => {
+      const outputPath = args.at(args.indexOf("--output") + 1)!;
+      const linkTarget = `${outputPath}.target`;
+      fs.writeFileSync(linkTarget, "{}");
+      fs.symlinkSync(linkTarget, outputPath);
+      return { exitCode: 0, stderr: "", stdout: "" };
+    };
+    const writeExport = async (_command: string, args: string[]) => {
+      fs.writeFileSync(args.at(args.indexOf("--output") + 1)!, "{}");
+      return { exitCode: 0, stderr: "", stdout: "" };
+    };
+    mocks.command
+      .mockImplementationOnce(replaceExportWithSymlink)
+      .mockImplementationOnce(writeExport);
+
+    await expect(runEnabledFixture()).rejects.toThrow();
+    expect(mocks.writeText).not.toHaveBeenCalled();
+  });
+
   it("rejects drift evidence when only one launcher reports identity drift (#11286)", async () => {
     const writeExport = async (_command: string, args: string[]) => {
       const outputPath = args.at(args.indexOf("--output") + 1)!;
