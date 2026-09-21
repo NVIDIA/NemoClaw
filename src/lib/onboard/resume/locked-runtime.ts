@@ -25,6 +25,7 @@ export interface LockedOnboardRuntimePreparation {
   readonly portableRuntimeContext: PortableOnboardRuntimeContext | null;
 }
 
+/** Stop onboarding on denied consent; the caller owns its ordering relative to runtime preparation. */
 async function ensureNoticeAccepted(
   options: OnboardOptions,
   nonInteractive: boolean,
@@ -82,6 +83,7 @@ function resolveCheckpointProfile(
   return { checkpointProfile, expectedPortableAuthority };
 }
 
+/** Restore scoped environment values if Portable host preparation fails. */
 function prepareEnvironment(
   options: OnboardOptions,
   resume: boolean,
