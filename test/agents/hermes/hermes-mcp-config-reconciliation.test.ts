@@ -30,6 +30,27 @@ function runPython(source: string, args: string[] = []) {
 }
 
 describe("Hermes managed MCP config reconciliation", () => {
+  it("advertises versioned reconcile-finality support without mutating config", () => {
+    const result = runPython(`
+import contextlib, importlib.util, json, sys
+spec = importlib.util.spec_from_file_location("mcp_tx", sys.argv[1])
+module = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = module
+spec.loader.exec_module(module)
+module.os.geteuid = lambda: 0
+module._configure_gateway_public_port = lambda: None
+module._mcp_transaction_lock = contextlib.nullcontext
+module.apply_transaction_and_reload = lambda action, payload: (_ for _ in ()).throw(RuntimeError("must not mutate"))
+print(json.dumps(module.probe(), sort_keys=True))
+`);
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(JSON.parse(result.stdout)).toEqual({
+      capabilities: { reconcile_finality: 1 },
+      ok: true,
+    });
+  });
+
   it("proves committed and absent state through stable managed gateway health", () => {
     const result = runPython(`
 import contextlib, importlib.util, json, sys
