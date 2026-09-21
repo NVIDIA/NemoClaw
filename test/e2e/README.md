@@ -391,17 +391,14 @@ This keeps the private optional dependency available for SDK-backed commands suc
 
 The `network-policy` target also owns live configuration-export evidence for #10938, #11854, and PR #11065.
 After restricted OpenClaw onboarding with two read-only agents, it invokes the candidate `config export` command through the real SDK connection.
-It compares the ordered agent roster, sandbox name, immutable managed image, hosted endpoint, and explicit policy with the fixture's registered and effective state.
-It then changes the fixture's recorded sandbox fingerprint and requires export to fail without creating a file.
+It requires the command to reject the secondary-agent roster without producing a document.
+It then changes the fixture's recorded sandbox fingerprint and again requires export to fail without creating a file.
 The fixture restores the registry in `finally` and removes private export files through its existing cleanup registry.
-The exported effective policy comes from the SDK configuration response and is compared with the
-independent CLI policy observation. This covers the SDK connection and complete export observation boundary; the deterministic adapter tests remain the owners of individual wire shapes and malformed responses.
-The assertion budget is unchanged. Nine export assertions replace nine redundant checks in the same target:
-
-- Two CLI-file and two OpenShell-version checks are covered by the retained successful onboarding checks.
-- Two intermediate process-start comparisons are covered by the retained comparison after all policy and traffic probes.
-- The approved HTTP status check is redundant with the marker server response, which always returns that marker with status 200.
-- Two web-fetch success-marker checks duplicate the retained probe exit-status check; the probe rejects missing approved content and unexpected denied-port access.
+This proves that the real SDK connection reaches the fail-closed secondary-agent and identity-drift
+boundaries. It does not qualify successful export or effective-policy preservation. Deterministic
+adapter tests own individual wire shapes and malformed responses, while successful single-agent
+export evidence remains with its owning scenarios. The assertion budget is lowered with the removed
+successful-export checks.
 
 The `security-posture-hermes` target owns the corresponding live Hermes export evidence for #11286.
 After canonical hosted-inference onboarding, it invokes `config export` through both the `nemoclaw`

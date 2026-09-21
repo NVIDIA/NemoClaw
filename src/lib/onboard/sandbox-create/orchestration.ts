@@ -955,10 +955,6 @@ type CreatedHermesCredentialEnvReconciliationDeps = {
     readonly stdout: string;
     readonly stderr: string;
   } | null>;
-  readonly waitForGateway: (
-    sandboxName: string,
-    revalidateSandboxIdentity: (operation: string) => void,
-  ) => Promise<boolean>;
   readonly revalidateSandboxIdentity: (operation: string) => void;
 };
 
@@ -991,11 +987,6 @@ export async function reconcileCreatedHermesCredentialEnvironment(
     if (!restart || restart.status !== 0) {
       throw new Error(
         `Hermes messaging credential reconciliation changed the gateway environment for sandbox '${input.sandboxName}', but the native Hermes restart failed.`,
-      );
-    }
-    if (!(await deps.waitForGateway(input.sandboxName, deps.revalidateSandboxIdentity))) {
-      throw new Error(
-        `Hermes messaging credential reconciliation restarted sandbox '${input.sandboxName}', but the native gateway did not remain healthy.`,
       );
     }
     deps.revalidateSandboxIdentity(
