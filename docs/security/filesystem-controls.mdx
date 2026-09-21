@@ -41,8 +41,8 @@ This directory remains writable so the agent can manage its own config, install 
 NemoClaw does not provide post-provisioning immutability for the OpenClaw config or state tree.
 
 - **DAC permissions (default).**
-  When the existing process checks verify that the agent and gateway share the sandbox identity, `/sandbox/.openclaw` uses native mode `0700` and `openclaw.json` uses `0600`.
-  Separate gateway identities and unverified layouts retain `2770` (setgid `sandbox:sandbox`) and `0660` so existing shared access continues.
+  Sandbox-user images create `/sandbox/.openclaw` with native mode `0700` and `openclaw.json` with `0600`.
+  Root-mode images use `2770` (setgid `sandbox:sandbox`) and `0660` for the separate gateway identity.
   Rebuild existing sandboxes after updating NemoClaw to apply these defaults.
 - **Native config ownership.**
   OpenClaw owns `openclaw.json` after first launch.

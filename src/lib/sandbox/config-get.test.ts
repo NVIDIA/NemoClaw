@@ -181,14 +181,14 @@ describe("configGet output redaction and gateway omission (#config-get)", () => 
     expect(() => configGet("alpha", { key: "gateway.token" })).toThrow(/not found/i);
   });
 
-  it("does not echo credential-bearing source text from malformed JSON", () => {
+  it("does not echo credential-bearing source text from malformed JSON5", () => {
     const secret = "nvapi-jsonabcdefghijklmnopqrstuvwxyz0123456789";
     const sourceLine = `{"provider":{"apiKey":"${secret}"}} trailing-text`;
     stubSandboxRawRead(sourceLine);
 
     const error = captureError(() => loadConfigGet()("alpha"));
 
-    expect(error.message).toContain("Invalid JSON configuration syntax.");
+    expect(error.message).toContain("Invalid JSON5 configuration syntax.");
     expect(error.message).not.toContain(secret);
     expect(error.message).not.toContain(sourceLine);
   });

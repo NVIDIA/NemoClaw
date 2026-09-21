@@ -68,7 +68,7 @@ const MANAGED_AGENT_STATE_ROOTS = Object.freeze({
         }),
       uidAuthority: "agent",
       gidAuthority: "agent",
-      mode: 0o2770,
+      mode: 0o700,
       readWrite: true,
     } satisfies ManagedStartupStateRootDeclaration),
   ]),

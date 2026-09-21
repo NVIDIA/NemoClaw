@@ -2279,10 +2279,11 @@ RUN if id gateway >/dev/null 2>&1 && id sandbox >/dev/null 2>&1; then \
         fi; \
     fi
 
-# Keep the image readable to the root entrypoint after capabilities are dropped.
-# Current base images already have a unified .openclaw tree. Avoid walking
-# plugin-runtime-deps on every build; only fall back to the broad repair when
-# the stale .openclaw-data migration path actually ran.
+# Keep the image readable to the root entrypoint. Current bases have a unified .openclaw tree.
+# Avoid walking plugin-runtime-deps on every build; only fall back to broad repair when
+# the stale .openclaw-data migration path actually ran. The sandbox-user image
+# starts with OpenClaw's native private modes. Root-mode images retain shared
+# access for the separate gateway identity.
 RUN set -eu; \
     if [ -e /tmp/nemoclaw-legacy-openclaw-layout ]; then \
         chown -R sandbox:sandbox /sandbox/.openclaw; \
@@ -2294,7 +2295,13 @@ RUN set -eu; \
             /sandbox/.openclaw \
             /sandbox/.openclaw/openclaw.json \
             /sandbox/.openclaw/plugin-runtime-deps; \
-        chmod 2770 /sandbox/.openclaw /sandbox/.openclaw/plugin-runtime-deps; \
+    fi; \
+    chmod 2770 /sandbox/.openclaw/plugin-runtime-deps; \
+    if [ "$NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER" = "sandbox" ]; then \
+        chmod 700 /sandbox/.openclaw; \
+        chmod 600 /sandbox/.openclaw/openclaw.json; \
+    else \
+        chmod 2770 /sandbox/.openclaw; \
         chmod 660 /sandbox/.openclaw/openclaw.json; \
     fi
 
