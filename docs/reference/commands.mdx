@@ -298,7 +298,7 @@ For a Docker-managed OpenClaw sandbox with hosted inference, the export can incl
 Each secondary agent has a unique name, uses only `tools.allow: [read]`, and shares the primary hosted route, selected model, and retained route tuning.
 The export rejects the complete document when any secondary agent has a model that differs from the primary model, unsupported tools, execution, interfaces, observability, a primary-agent override, or a default subagent setting.
 For OpenClaw, it retains an `interfaces.dashboard` marker because an absent target dashboard disables the interface.
-The marker includes a nondefault managed dashboard port or bind address.
+For the managed default port and loopback bind, the marker includes `port: 18789`; otherwise, it includes each retained port or bind value that differs from the target default.
 When managed OpenClaw uses direct tool disclosure, the export includes `tools.disclosure: direct`.
 It omits the default progressive disclosure setting.
 When OpenClaw conversation diagnostics are enabled, the export includes the fixed local OTLP endpoint, service name, and sample rate under agent observability.
