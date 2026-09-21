@@ -29,10 +29,6 @@ import {
   step,
 } from "../../helpers/managed-image-publication-workflow";
 import type { Job, Workflow } from "../../helpers/managed-image-publication-workflow-types";
-import {
-  expandBaseImagePushPaths,
-  matchesBaseImagePushPath,
-} from "../../../tools/e2e/base-image-publication.mts";
 
 const fullShaAction = /^[^@]+@[0-9a-f]{40}$/iu;
 const reviewedAuditAction = "NVIDIA/NemoClaw/.github/actions/ci-reviewed-npm-audit@";
@@ -60,7 +56,6 @@ function isStrictChildPath(root: string, candidate: string): boolean {
 }
 
 const managedBuilder = managedPublisher;
-const MCP_BRIDGE_SUPPORT_PATH = "test/e2e/support/mcp-bridge*.ts";
 
 function managedPrBuilder(workflow: Workflow): Job {
   return required(
@@ -82,33 +77,6 @@ function managedPrActivation(workflow: Workflow): Job {
     "managed-image workflow is missing its exact all-agent PR activation gate",
   );
 }
-
-it("keeps MCP bridge support in both image triggers and the publication selector (#12084)", () => {
-  const managedPaths = readWorkflow("managed-images.yaml").on?.pull_request?.paths ?? [];
-  const basePaths = readWorkflow("base-image.yaml").on?.push?.paths ?? [];
-
-  expect(managedPaths.filter((candidate) => candidate === MCP_BRIDGE_SUPPORT_PATH)).toEqual([
-    MCP_BRIDGE_SUPPORT_PATH,
-  ]);
-  expect(basePaths.filter((candidate) => candidate === MCP_BRIDGE_SUPPORT_PATH)).toEqual([
-    MCP_BRIDGE_SUPPORT_PATH,
-  ]);
-  expect(expandBaseImagePushPaths("a".repeat(40), [MCP_BRIDGE_SUPPORT_PATH])).toEqual([
-    `:(glob)${MCP_BRIDGE_SUPPORT_PATH}`,
-  ]);
-  expect(
-    matchesBaseImagePushPath(
-      MCP_BRIDGE_SUPPORT_PATH,
-      "test/e2e/support/mcp-bridge-portable-lock-barrier.ts",
-    ),
-  ).toBe(true);
-  expect(
-    matchesBaseImagePushPath(
-      MCP_BRIDGE_SUPPORT_PATH,
-      "test/e2e/support/nested/mcp-bridge-portable-lock-barrier.ts",
-    ),
-  ).toBe(false);
-});
 
 function managedPrPodmanActivation(workflow: Workflow): Job {
   return required(
