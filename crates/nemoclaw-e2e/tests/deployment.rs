@@ -15,7 +15,7 @@ async fn incompatible_gateway_is_reported_by_opentofu_plan_without_sdk_preflight
         include_str!("../../nemoclaw-sdk/tests/fixtures/config/local.yaml").as_bytes(),
     )
     .unwrap();
-    document.spec.gateway.endpoint = fixture.endpoint.clone();
+    *document.spec.gateway.endpoint_mut() = fixture.endpoint.clone();
     fixture.state.lock().unwrap().driver = Some("podman".into());
     let error = Deployment::new(directory.path(), &bundle)
         .plan(&document, &CancellationToken::new())
@@ -38,7 +38,7 @@ async fn gateway_change_between_plan_and_apply_preserves_resources_and_allows_te
         include_str!("../../nemoclaw-sdk/tests/fixtures/config/local.yaml").as_bytes(),
     )
     .unwrap();
-    document.spec.gateway.endpoint = fixture.endpoint.clone();
+    *document.spec.gateway.endpoint_mut() = fixture.endpoint.clone();
     let cancel = CancellationToken::new();
     let deployment = Deployment::new(directory.path(), &bundle);
     deployment.apply(&document, &cancel).await.unwrap();
@@ -91,7 +91,7 @@ async fn interrupted_create_requires_original_intent_and_destroy_allows_recreati
         include_str!("../../nemoclaw-sdk/tests/fixtures/config/local.yaml").as_bytes(),
     )
     .unwrap();
-    document.spec.gateway.endpoint = fixture.endpoint.clone();
+    *document.spec.gateway.endpoint_mut() = fixture.endpoint.clone();
     let deployment = Deployment::new(directory.path(), &bundle);
     let cancel = CancellationToken::new();
     fixture.state.lock().unwrap().lose_create = true;
@@ -344,7 +344,7 @@ async fn lifecycle_with_rejected_annotations(input: &str, reject_annotations: bo
             .allow
             .path = Some("/docs/${file}/%{literal}".into());
     }
-    document.spec.gateway.endpoint = fixture.endpoint.clone();
+    *document.spec.gateway.endpoint_mut() = fixture.endpoint.clone();
     let has_search = !document.spec.sandboxes[0]
         .integration_bindings(&document.spec.integrations)
         .unwrap()
@@ -718,7 +718,7 @@ async fn readiness_and_observation_failures_retain_bindings_and_recover_without_
         include_str!("../../nemoclaw-sdk/tests/fixtures/config/local.yaml").as_bytes(),
     )
     .unwrap();
-    document.spec.gateway.endpoint = fixture.endpoint.clone();
+    *document.spec.gateway.endpoint_mut() = fixture.endpoint.clone();
     let deployment = Deployment::new(directory.path(), &bundle);
     let cancel = CancellationToken::new();
     fixture.state.lock().unwrap().sandbox_phase = Some(openshell_core::proto::SandboxPhase::Error);
@@ -807,7 +807,7 @@ async fn destroy_does_not_require_the_inference_credential_or_rewrite_its_refere
         include_str!("../../nemoclaw-sdk/tests/fixtures/config/local.yaml").as_bytes(),
     )
     .unwrap();
-    document.spec.gateway.endpoint = fixture.endpoint.clone();
+    *document.spec.gateway.endpoint_mut() = fixture.endpoint.clone();
     document.spec.inference_providers[0].endpoint = "https://inference.example.test/v1".into();
     document.spec.inference_providers[0].credential = Some(nemoclaw_sdk::config::Credential {
         env: "NEMOCLAW_TEST_REMOVED_INFERENCE_KEY".into(),
@@ -858,7 +858,7 @@ async fn apply_preserves_bindings_without_generating_inference() {
         include_str!("../../nemoclaw-sdk/tests/fixtures/config/local.yaml").as_bytes(),
     )
     .unwrap();
-    document.spec.gateway.endpoint = fixture.endpoint.clone();
+    *document.spec.gateway.endpoint_mut() = fixture.endpoint.clone();
     document.spec.inference_providers[0].endpoint = "https://unreachable.invalid/v1".into();
     document.spec.inference_providers[0].credential = Some(nemoclaw_sdk::config::Credential {
         env: "MODEL_TOKEN".into(),
@@ -916,7 +916,7 @@ async fn destroy_waits_for_graceful_sandbox_stop_without_retrying() {
         include_str!("../../nemoclaw-sdk/tests/fixtures/config/local.yaml").as_bytes(),
     )
     .unwrap();
-    document.spec.gateway.endpoint = fixture.endpoint.clone();
+    *document.spec.gateway.endpoint_mut() = fixture.endpoint.clone();
     let deployment = Deployment::new(directory.path(), &bundle);
     let cancel = CancellationToken::new();
     deployment.apply(&document, &cancel).await.unwrap();
@@ -941,7 +941,7 @@ async fn apply_health_failure_retains_resources_and_unchanged_apply_checks_again
         include_str!("../../nemoclaw-sdk/tests/fixtures/config/local.yaml").as_bytes(),
     )
     .unwrap();
-    document.spec.gateway.endpoint = fixture.endpoint.clone();
+    *document.spec.gateway.endpoint_mut() = fixture.endpoint.clone();
     let deployment = Deployment::new(directory.path(), &bundle);
     let cancel = CancellationToken::new();
     fixture.state.lock().unwrap().health_report = Some(serde_json::json!({
@@ -1031,7 +1031,7 @@ async fn mixed_sandboxes_reorder_add_recover_export_and_destroy_independently() 
         include_str!("../../nemoclaw-sdk/tests/fixtures/config/local.yaml").as_bytes(),
     )
     .unwrap();
-    document.spec.gateway.endpoint = fixture.endpoint.clone();
+    *document.spec.gateway.endpoint_mut() = fixture.endpoint.clone();
     let mut other = document.spec.sandboxes[0].clone();
     other.name = "research".into();
     other.harness.as_mut().unwrap().kind = "deepagents".into();

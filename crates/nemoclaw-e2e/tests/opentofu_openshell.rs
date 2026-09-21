@@ -38,7 +38,7 @@ async fn production_provider_applies_refreshes_and_destroys_the_reference_graph(
         include_str!("../../nemoclaw-sdk/tests/fixtures/config/local.yaml").as_bytes(),
     )
     .unwrap();
-    document.spec.gateway.endpoint = fixture.endpoint.clone();
+    *document.spec.gateway.endpoint_mut() = fixture.endpoint.clone();
     let generations: Generations = ["workspace", "provider", "sandbox"]
         .into_iter()
         .map(|k| (k.into(), format!("{k}-generation")))
@@ -156,10 +156,10 @@ async fn gateway_capability_observations_preserve_metadata_and_fail_closed_witho
     };
     let fixture = Fixture::start().await;
     let client = OpenShell::connect(
-        &Gateway {
+        &Gateway::External(nemoclaw_sdk::config::ExternalGateway {
             endpoint: fixture.endpoint.clone(),
             ..Default::default()
-        },
+        }),
         std::sync::Arc::new(EnvironmentSecrets),
     )
     .unwrap();

@@ -114,11 +114,7 @@ impl Document {
             "metadata requires a lowercase name and immutable UUID",
         )?;
         let gateway = &self.spec.gateway;
-        require(
-            constraints::MANAGEMENT.contains(&gateway.management.as_str()),
-            "gateway management must be external or managed",
-        )?;
-        if gateway.management == "managed" {
+        if let Gateway::Managed(gateway) = gateway {
             gateway.validate_managed()?;
             if self
                 .spec
@@ -128,18 +124,12 @@ impl Document {
             {
                 super::ImagePullPolicy::validate_service(gateway.image_pull_policy)?;
             }
-        } else {
-            require(
-                gateway.engine.is_empty()
-                    && gateway.image.is_empty()
-                    && gateway.image_pull_policy.is_none()
-                    && gateway.network_cidr.is_empty(),
-                "external gateway cannot declare managed runtime settings",
-            )?;
         }
-        validate_endpoint(&gateway.endpoint, true)?;
-        credential(&gateway.credential)?;
-        if let Some(tls) = &gateway.tls {
+        validate_endpoint(gateway.endpoint(), true)?;
+        if let Gateway::External(gateway) = gateway {
+            credential(&gateway.credential)?;
+        }
+        if let Some(tls) = gateway.tls() {
             for c in [&tls.ca, &tls.certificate, &tls.key] {
                 require(
                     ENV.is_match(&c.env),
@@ -148,8 +138,8 @@ impl Document {
             }
         }
         require(
-            !gateway.endpoint.starts_with("http:")
-                || (gateway.credential.is_none() && gateway.tls.is_none()),
+            !gateway.endpoint().starts_with("http:")
+                || (gateway.credential().is_none() && gateway.tls().is_none()),
             "gateway credentials require HTTPS",
         )?;
         require(
@@ -178,7 +168,7 @@ impl Document {
                 "sandbox runtime must be docker or podman",
             )?;
             require(
-                gateway.management != "managed"
+                gateway.as_managed().is_none()
                     || self
                         .spec
                         .sandboxes
@@ -260,7 +250,7 @@ impl Document {
         Ok(())
     }
 }
-impl Gateway {
+impl super::ManagedGateway {
     pub fn validate_managed(&self) -> Result<(), ConfigError> {
         let url =
             Url::parse(&self.endpoint).map_err(|_| ConfigError::new("invalid gateway endpoint"))?;
@@ -276,8 +266,6 @@ impl Gateway {
             url.scheme() == "http"
                 && url.host_str() == Some("127.0.0.1")
                 && bind.is_some_and(|a| a.port() >= 1024)
-                && self.credential.is_none()
-                && self.tls.is_none()
                 && self.engine.starts_with("unix:///")
                 && crate::docker::Engine::validate_endpoint(&self.engine).is_ok()
                 && self.image == DEFAULT_GATEWAY_IMAGE,

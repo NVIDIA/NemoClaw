@@ -184,8 +184,9 @@ impl Deployment {
             ));
         }
         if record.document.metadata.uid != document.metadata.uid
-            || record.document.spec.gateway.endpoint != document.spec.gateway.endpoint
-            || record.document.spec.gateway.management != document.spec.gateway.management
+            || record.document.spec.gateway.endpoint() != document.spec.gateway.endpoint()
+            || std::mem::discriminant(&record.document.spec.gateway)
+                != std::mem::discriminant(&document.spec.gateway)
         {
             return Err(Error::Conflict(
                 "state is bound to a different deployment UID or gateway",

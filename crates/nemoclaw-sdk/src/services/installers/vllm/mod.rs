@@ -169,26 +169,22 @@ fn targets(
             "bearer-v1".into(),
         );
     }
-    let network_cidr = service
-        .placement
-        .as_ref()
-        .map_or(document.spec.gateway.network_cidr.clone(), |placement| {
-            placement.network_cidr.clone()
-        });
+    let (engine, network_cidr) = match &service.placement {
+        Some(placement) => (&placement.engine, &placement.network_cidr),
+        None => {
+            let gateway = document.spec.gateway.managed()?;
+            (&gateway.engine, &gateway.network_cidr)
+        }
+    };
     let bind_address = service.publication.as_ref().map_or_else(
-        || document.spec.gateway.bridge(),
+        || document.spec.gateway.managed()?.bridge(),
         |publication| Ok(publication.bind_address.clone()),
     )?;
     let architecture = service.architecture()?.to_owned();
     let process = Process {
-        engine: service
-            .placement
-            .as_ref()
-            .map_or(document.spec.gateway.engine.clone(), |placement| {
-                placement.engine.clone()
-            }),
+        engine: engine.clone(),
         image: service.image.clone(),
-        network_cidr,
+        network_cidr: network_cidr.clone(),
         create_network: service.placement.is_some(),
         architecture,
         image_labels,
@@ -225,7 +221,7 @@ fn targets(
         gateway: if service.placement.is_some() {
             Default::default()
         } else {
-            document.spec.gateway.runtime_settings()
+            document.spec.gateway.managed()?.runtime_settings()
         },
         process: Some(process),
     };
@@ -277,7 +273,7 @@ impl Installer for Service {
         if self.authentication.is_some() {
             service_dependencies.push(address(STORAGE_KIND, &format!("{name}_auth")));
         }
-        if document.spec.gateway.management == "managed" && self.placement.is_none() {
+        if document.spec.gateway.as_managed().is_some() && self.placement.is_none() {
             service_dependencies.insert(0, "nemoclaw_managed_gateway.runtime".into());
         }
         Ok(InstallPlan {

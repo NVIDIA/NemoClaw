@@ -4,7 +4,7 @@
 #[path = "spec_tests.rs"]
 mod tests;
 
-use crate::{Error, config::Gateway};
+use crate::{Error, config::ManagedGateway};
 use bollard::models::ContainerCreateBody;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -27,7 +27,7 @@ pub struct Spec {
     pub name: String,
     pub owner: String,
     pub generation: String,
-    pub gateway: Gateway,
+    pub gateway: ManagedGateway,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub process: Option<Process>,
 }

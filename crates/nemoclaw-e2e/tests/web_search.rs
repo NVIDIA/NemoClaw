@@ -21,7 +21,7 @@ async fn search_stores_credentials_in_openshell_omits_them_from_state_and_reject
     let fixture = Fixture::start().await;
     let mut doc =
         Document::parse(include_str!("../../../examples/fabric-openclaw.yaml").as_bytes()).unwrap();
-    doc.spec.gateway.endpoint = fixture.endpoint.clone();
+    *doc.spec.gateway.endpoint_mut() = fixture.endpoint.clone();
     doc.spec.integrations = serde_json::from_value(serde_json::json!({
         "search":{"kind":"webSearch","provider":"brave","credential":{"env":"SEARCH_KEY"}}
     }))
@@ -131,7 +131,7 @@ async fn separate_search_credentials_reach_only_their_selected_sandbox_attachmen
     let fixture = Fixture::start().await;
     let mut doc =
         Document::parse(include_str!("../../../examples/fabric-openclaw.yaml").as_bytes()).unwrap();
-    doc.spec.gateway.endpoint = fixture.endpoint.clone();
+    *doc.spec.gateway.endpoint_mut() = fixture.endpoint.clone();
     let mut other = doc.spec.sandboxes[0].clone();
     other.name = "other".into();
     doc.spec.sandboxes.push(other);

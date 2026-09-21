@@ -33,7 +33,7 @@ fn explicit_proxy_engine_works_with_an_external_gateway() {
             .unwrap()
             .is_valid(&value)
     );
-    assert!(document.spec.gateway.engine.is_empty());
+    assert!(document.spec.gateway.as_managed().is_none());
     assert_eq!(
         Document::parse(document.yaml().unwrap().as_bytes()).unwrap(),
         document

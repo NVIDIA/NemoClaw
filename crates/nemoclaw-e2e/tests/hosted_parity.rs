@@ -66,7 +66,8 @@ fn hosted_openclaw_scenario_rejects_legacy_export_and_preserves_authored_intent(
         include_bytes!("../fixtures/openclaw-nvidia-hosted/v1.yaml"),
     );
     let gateway = &v1.spec.gateway;
-    assert_eq!(gateway.management, "managed");
+    assert!(gateway.as_managed().is_some());
+    let gateway = gateway.as_managed().unwrap();
     assert_eq!(gateway.engine, "unix:///var/run/docker.sock");
     assert_eq!(gateway.image, nemoclaw_sdk::config::DEFAULT_GATEWAY_IMAGE);
 

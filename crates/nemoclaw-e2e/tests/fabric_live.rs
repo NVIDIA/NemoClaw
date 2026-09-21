@@ -179,7 +179,7 @@ async fn fabric_native_access_and_reconciliation_preserve_the_hosted_runtime() {
     let bundle = explicit("NEMOCLAW_TEST_BUNDLE");
     let provider = document.inference_provider().unwrap();
     let agent = &document.spec.sandboxes[0].agent;
-    assert_eq!(document.spec.gateway.management, "external");
+    assert!(document.spec.gateway.as_managed().is_none());
     // Managed-service installation is qualified separately; this live target
     // exercises only an external inference provider.
     assert!(provider.service_ref.is_none());

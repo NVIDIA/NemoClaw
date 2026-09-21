@@ -20,7 +20,7 @@ async fn provider_union_export_reapply_drift_and_destroy_remain_scoped_to_each_s
     let mut first =
         Document::parse(include_str!("../../../examples/multiple-providers.yaml").as_bytes())
             .unwrap();
-    first.spec.gateway.endpoint = fixture.endpoint.clone();
+    *first.spec.gateway.endpoint_mut() = fixture.endpoint.clone();
     let mut second = first.clone();
     second.metadata.uid = "7db61f79-1965-45ac-824a-1c3f3b26aa5d".into();
     second.spec.sandboxes.remove(0);

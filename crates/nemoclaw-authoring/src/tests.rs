@@ -46,9 +46,9 @@ fn fixed_hosted_openclaw_answers_project_to_parser_accepted_intent() {
     let document = first.document();
     assert_eq!(document.metadata.name, "openclaw-nvidia-hosted");
     assert_eq!(document.metadata.uid, UID);
-    assert_eq!(document.spec.gateway.management, "managed");
+    assert!(document.spec.gateway.as_managed().is_some());
     assert_eq!(
-        document.spec.gateway.image,
+        document.spec.gateway.as_managed().unwrap().image,
         nemoclaw_sdk::config::DEFAULT_GATEWAY_IMAGE
     );
     let provider = document.inference_provider().unwrap();
@@ -255,7 +255,7 @@ fn representable_scenarios_share_one_parser_validated_table() {
         assert_eq!(review.api(), scenario.expected_api, "{}", scenario.name);
         assert_eq!(reparsed.metadata.name, direct_answers.deployment_name);
         assert_eq!(reparsed.metadata.uid, UID);
-        assert_eq!(reparsed.spec.gateway.management, "managed");
+        assert!(reparsed.spec.gateway.as_managed().is_some());
         let provider = reparsed.inference_provider().unwrap();
         assert_eq!(provider.name, direct_answers.provider_name);
         assert_eq!(provider.provider, "openai");

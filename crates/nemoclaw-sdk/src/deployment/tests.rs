@@ -153,7 +153,7 @@ async fn managed_gateway_plan_apply_noop_destroy_and_recovery_use_real_opentofu(
         |name| PathBuf::from(std::env::var_os(name).expect("explicit managed qualification path"));
     let mut document =
         Document::parse(fs::File::open(path("NEMOCLAW_TEST_GATEWAY_DOCUMENT")).unwrap()).unwrap();
-    assert_eq!(document.spec.gateway.management, "managed");
+    assert!(document.spec.gateway.as_managed().is_some());
     assert!(document.spec.inference_providers[0].service_ref.is_none());
     assert!(document.spec.services.is_empty());
     let deployment = Deployment::new(
@@ -167,7 +167,9 @@ async fn managed_gateway_plan_apply_noop_destroy_and_recovery_use_real_opentofu(
         .unwrap()
         .unwrap_or(Record::new(document.clone()).unwrap());
     assert_eq!(record.document.metadata.uid, document.metadata.uid);
-    let engine = crate::docker::Engine::connect(&document.spec.gateway.engine).unwrap();
+    let engine =
+        crate::docker::Engine::connect(&document.spec.gateway.as_managed().unwrap().engine)
+            .unwrap();
     let name = format!("{}-gateway", document.workspace());
     let container_before = engine.container(&name).await.unwrap().map(|c| c.id);
     let volume_before = engine
@@ -258,7 +260,7 @@ async fn managed_gateway_plan_apply_noop_destroy_and_recovery_use_real_opentofu(
         let port = listener.local_addr().unwrap().port();
         drop(listener);
         let old = engine.container(&name).await.unwrap().unwrap().id;
-        document.spec.gateway.endpoint = format!("http://127.0.0.1:{port}");
+        *document.spec.gateway.endpoint_mut() = format!("http://127.0.0.1:{port}");
         deployment
             .runtime_stage(&bundle, &store, &document, &mut record, true, &cancel)
             .await
@@ -470,7 +472,9 @@ fn runtime_plans_accept_only_declared_local_image_observations_and_teardown_dele
             valid
         );
     }
-    let foreign = crate::services::capacity::observation_address(&document.spec.gateway.engine);
+    let foreign = crate::services::capacity::observation_address(
+        &document.spec.gateway.as_managed().unwrap().engine,
+    );
     for (address, valid) in [(address.as_str(), true), (foreign.as_str(), false)] {
         let plan: Plan = serde_json::from_value(json!({"resource_changes":[{"mode":"data", "address":address, "change":{"actions":["delete"]}}]})).unwrap();
         assert_eq!(

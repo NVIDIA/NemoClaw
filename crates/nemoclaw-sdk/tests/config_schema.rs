@@ -506,3 +506,29 @@ fn every_sandbox_requires_one_singular_agent_and_rejects_legacy_lists() {
     value["spec"]["sandboxes"][0]["agents"] = legacy["spec"]["sandboxes"][0]["agents"].clone();
     agrees(&validator, &value, false);
 }
+
+#[test]
+fn gateway_variants_reject_fields_owned_by_the_other_mode() {
+    let validator = jsonschema::validator_for(&input_schema()).unwrap();
+    for (field, value) in [
+        ("engine", json!("")),
+        ("image", json!("")),
+        ("networkCIDR", json!("")),
+        ("imagePullPolicy", json!("Never")),
+    ] {
+        let mut external = input("local.yaml");
+        external["spec"]["gateway"][field] = value;
+        agrees(&validator, &external, false);
+    }
+    for (field, value) in [
+        ("credential", json!({"env": "TOKEN"})),
+        (
+            "tls",
+            json!({"ca": {"env": "CA"}, "certificate": {"env": "CERT"}, "key": {"env": "KEY"}}),
+        ),
+    ] {
+        let mut managed = input("spark/spark-inline.yaml");
+        managed["spec"]["gateway"][field] = value;
+        agrees(&validator, &managed, false);
+    }
+}

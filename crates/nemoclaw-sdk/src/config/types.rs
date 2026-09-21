@@ -99,35 +99,42 @@ pub struct TLS {
     pub key: Credential,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(tag = "management", rename_all = "lowercase")]
+/// Install a local gateway or connect to an existing gateway.
+pub enum Gateway {
+    /// A gateway installed and managed by this deployment.
+    /// Managed Podman targets local rootless Linux; rootful, remote, and other platforms are unqualified.
+    #[schemars(title = "Managed gateway")]
+    Managed(ManagedGateway),
+    /// An existing gateway managed outside this deployment.
+    #[schemars(title = "External gateway")]
+    External(ExternalGateway),
+}
+
+impl Default for Gateway {
+    fn default() -> Self {
+        Self::External(ExternalGateway::default())
+    }
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[schemars(!default)]
 #[serde(default, deny_unknown_fields)]
 /// Managed Podman targets local rootless Linux; rootful, remote, and other platforms are unqualified.
-/// Choose a managed local Docker or Podman gateway or connect to an external gateway. Credentials and TLS require HTTPS.
-pub struct Gateway {
-    #[serde(rename = "management")]
-    /// Whether the SDK manages the gateway or connects to an existing one.
-    pub management: String,
+/// Installation settings for a managed local gateway.
+pub struct ManagedGateway {
     #[serde(rename = "endpoint")]
     #[schemars(default)]
-    /// Gateway HTTP(S) origin, without a path. Required for an external gateway; managed gateways use unprivileged loopback HTTP ports.
-    #[schemars(extend("x-nemoclaw-required" = "When external"))]
+    /// Local gateway HTTP origin with an unprivileged loopback port.
     pub endpoint: String,
-    #[serde(rename = "credential", skip_serializing_if = "Option::is_none")]
-    #[schemars(default, with = "Credential")]
-    /// Optional bearer credential reference for an external HTTPS gateway.
-    pub credential: Option<Credential>,
-    #[serde(rename = "tls", skip_serializing_if = "Option::is_none")]
-    #[schemars(default, with = "TLS")]
-    /// Optional mutual TLS references for an external HTTPS gateway.
-    pub tls: Option<TLS>,
     #[serde(rename = "engine", skip_serializing_if = "String::is_empty")]
     #[schemars(default)]
-    /// Managed gateway Unix engine socket; Podman requires its API service socket. Omit or leave empty for an external gateway.
+    /// Managed gateway Unix engine socket; Podman requires its API service socket.
     pub engine: String,
     #[serde(rename = "image", skip_serializing_if = "String::is_empty")]
     #[schemars(default)]
-    /// Managed gateway image pinned by the SDK. Omit or leave empty for an external gateway.
+    /// Managed gateway image pinned by the SDK.
     pub image: String,
     #[serde(
         rename = "imagePullPolicy",
@@ -139,8 +146,25 @@ pub struct Gateway {
     pub image_pull_policy: Option<super::ImagePullPolicy>,
     #[serde(rename = "networkCIDR", skip_serializing_if = "String::is_empty")]
     #[schemars(default)]
-    /// Canonical private IPv4 /24 for a managed gateway. Omit or leave empty for an external gateway.
+    /// Canonical private IPv4 /24 for a managed gateway.
     pub network_cidr: String,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[schemars(!default)]
+#[serde(default, deny_unknown_fields)]
+/// Connection settings for an existing gateway. Credentials and TLS require HTTPS.
+pub struct ExternalGateway {
+    /// Gateway HTTP(S) origin, without a path.
+    pub endpoint: String,
+    #[serde(rename = "credential", skip_serializing_if = "Option::is_none")]
+    #[schemars(default, with = "Credential")]
+    /// Optional bearer credential reference for an external HTTPS gateway.
+    pub credential: Option<Credential>,
+    #[serde(rename = "tls", skip_serializing_if = "Option::is_none")]
+    #[schemars(default, with = "TLS")]
+    /// Optional mutual TLS references for an external HTTPS gateway.
+    pub tls: Option<TLS>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
