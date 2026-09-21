@@ -115,6 +115,19 @@ export function guardWindowsInstallerUpdate(relative: string, text: string) {
     text.replace(validation, validation + "\n" + refusal)
   );
 }
+
+export function defaultWindowsOpenAiReasoningOff(relative: string, text: string) {
+  if (relative !== "dist/openai-transport-stream-D1R-kt0Q.js") return text;
+  if (sha256(text) !== "bb1d7f1e503e0da9a993f42ca2206b5a36a3c2a377b310f42bdaef00d16a9f8a")
+    throw new Error("The reviewed OpenAI-compatible reasoning transport changed.");
+  const original = 'return options?.reasoningEffort ?? options?.reasoning ?? "high";';
+  if (text.split(original).length !== 2)
+    throw new Error("The OpenAI-compatible reasoning default seam changed.");
+  // OpenClaw intentionally omits an explicit option for its Off selection. Its
+  // generic transport otherwise changes that omission back to High. Preserve
+  // explicit user levels, but make the omitted/default state genuinely Off.
+  return text.replace(original, 'return options?.reasoningEffort ?? options?.reasoning ?? "none";');
+}
 export const PREBUILT_CHOICE_PLUGINS = {
   brave: {
     package: "@openclaw/brave-plugin",
@@ -265,7 +278,10 @@ Object.defineProperty(globalThis,Symbol.for("nemoclaw.compiled-openclaw.plugins.
           sourceRelative,
           guardWindowsInstallerUpdate(
             sourceRelative,
-            normalizeWindowsNativePluginRequire(sourceRelative, original),
+            defaultWindowsOpenAiReasoningOff(
+              sourceRelative,
+              normalizeWindowsNativePluginRequire(sourceRelative, original),
+            ),
           ),
         );
         if (
@@ -312,6 +328,31 @@ export function publishPluginFacades(app: string, entries: Entry[]) {
     fs.mkdirSync(path.dirname(target), { recursive: true });
     fs.writeFileSync(target, content, { flag: "wx" });
   }
+}
+
+export function applyWindowsReasoningLabel(app: string) {
+  const root = path.join(app, "dist", "control-ui", "assets");
+  const marker = "thinkingLevel:`Chat thinking level`";
+  const reviewedSha256 = "d9dc5b2572a0183c65617f5931debf6d2af85f7818b2e19005b3d76e01350824";
+  const candidates = filesBelow(root).filter((file) => {
+    if (!file.endsWith(".js")) return false;
+    const source = fs.readFileSync(file, "utf8");
+    return source.includes(marker) && sha256(source) === reviewedSha256;
+  });
+  if (candidates.length !== 1) throw new Error("The reviewed English OpenClaw labels changed.");
+  const file = candidates[0];
+  const source = fs.readFileSync(file, "utf8");
+  const sourceSha256 = sha256(source);
+  const updated = source.replace(marker, "thinkingLevel:`Reasoning`");
+  if (updated === source || updated.includes(marker))
+    throw new Error("The OpenClaw reasoning label was not updated exactly once.");
+  fs.writeFileSync(file, updated);
+  return {
+    file: portablePath(path.relative(app, file)),
+    sourceSha256,
+    outputSha256: sha256(updated),
+    label: "Reasoning",
+  };
 }
 function resolvePackage(source: string, importer: string, name: string) {
   packageName(name);

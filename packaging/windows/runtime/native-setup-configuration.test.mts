@@ -76,6 +76,24 @@ test("native OpenClaw advertises the actual model context and opens a fresh chat
   assert(source.includes('required("NEMOCLAW_MXC_MODEL_CONTEXT")'));
   assert(source.includes("contextWindow: modelContext"));
   assert(source.includes("skills: []"));
+  assert(source.includes("reasoning: true"));
+  assert(source.includes('thinkingLevelMap: { off: "none"'));
+  assert(source.includes("supportsReasoningEffort: true"));
+  assert(source.includes('thinkingDefault: "off"'));
+  const inferenceOwner = fs.readFileSync(
+    new URL("./native-inference.mts", import.meta.url),
+    "utf8",
+  );
+  assert(
+    inferenceOwner.includes(
+      "await downloadLocalModelAssets(downloaded, state, signal, onProgress)",
+    ),
+  );
+  assert(
+    !inferenceOwner.includes(
+      "await verifyLocalModelAssets(downloaded.id, state, signal, onProgress)",
+    ),
+  );
   const owner = fs.readFileSync(
     new URL("./run-installed-native-web-ui.mts", import.meta.url),
     "utf8",

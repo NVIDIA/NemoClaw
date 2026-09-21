@@ -14,7 +14,7 @@ if (args.SequenceEqual(new[] { "--hold-inherited-output" }))
     Thread.Sleep(TimeSpan.FromSeconds(4));
     return;
 }
-if (args.Length == 4 && args[0] == "--native-inference" && args[1] is "install" or "ensure-ready" && args[2] == "--model")
+if (args.Length == 4 && args[0] == "--native-inference" && args[1] is "install" or "install-ready" or "ensure-ready" && args[2] == "--model")
 {
     var scenario = Environment.GetEnvironmentVariable("NEMOCLAW_TEST_DOWNLOAD_HELPER");
     if (scenario == "oversized") Console.WriteLine(new string('x', 4097));
@@ -117,6 +117,27 @@ Pass("local configuration refuses a placeholder endpoint", () =>
 {
     var configuration = new NativeSetupConfiguration("openclaw", "local", "http://127.0.0.1:8000/v1", NativeExpressSetup.Model, false) { LocalModel = NativeExpressSetup.Id };
     Rejected(() => configuration.Serialize());
+});
+Pass("model chooser copy identifies the recommendation, size, reuse, and credential-free setup", () =>
+{
+    var recommended = NativeDownloadedModelSetup.Description(NativeDownloadedModelSetup.DefaultModel);
+    var alternative = NativeDownloadedModelSetup.Description("qwen3.6-35b-a3b");
+    Require(recommended.StartsWith("Recommended for this PC.", StringComparison.Ordinal));
+    Require(recommended.Contains("16.5 GB", StringComparison.Ordinal) && recommended.Contains("No endpoint, model ID, or API key", StringComparison.Ordinal));
+    Require(alternative.StartsWith("Larger alternative.", StringComparison.Ordinal) && alternative.Contains("22.7 GB", StringComparison.Ordinal));
+});
+Pass("an incomplete cache cannot bypass first-time model storage admission", () =>
+{
+    var root = Path.Combine(Path.GetTempPath(), "nemoclaw-model-admission-" + Guid.NewGuid().ToString("N"));
+    var model = NativeDownloadedModelSetup.Model(NativeDownloadedModelSetup.DefaultModel);
+    var directory = Path.Combine(root, $"model-{NativeDownloadedModelSetup.DefaultModel}-{model.GetProperty("revision").GetString()}");
+    Directory.CreateDirectory(directory);
+    try
+    {
+        File.WriteAllText(Path.Combine(directory, model.GetProperty("weights").GetProperty("name").GetString()!), "incomplete");
+        Require(!NativeDownloadedModelSetup.HasReusableCacheCandidate(NativeDownloadedModelSetup.DefaultModel, root));
+    }
+    finally { Directory.Delete(root, true); }
 });
 foreach (var model in NativeDownloadedModelSetup.Models)
 {

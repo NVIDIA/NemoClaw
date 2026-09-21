@@ -103,10 +103,13 @@ internal static class NativeExpressSetup
             if (!GlobalMemoryStatusEx(ref memory) || memory.TotalPhysical < minimumMemory || memory.AvailablePhysical < minimumMemory)
                 return new(true, false, $"Free at least {minimumMemory / 1_000_000_000d:0.0} GB of memory to use N1X Express.");
             var systemDrive = new DriveInfo(Path.GetPathRoot(Environment.SystemDirectory)!);
-            if (download && systemDrive.AvailableFreeSpace < NativeDownloadedModelSetup.RequiredFreeBytes(NativeDownloadedModelSetup.DefaultModel))
+            var reusableDownload = download && NativeDownloadedModelSetup.HasReusableCacheCandidate(NativeDownloadedModelSetup.DefaultModel);
+            if (download && !reusableDownload && systemDrive.AvailableFreeSpace < NativeDownloadedModelSetup.RequiredFreeBytes(NativeDownloadedModelSetup.DefaultModel))
                 return new(true, false, $"Free at least {NativeDownloadedModelSetup.RequiredFreeBytes(NativeDownloadedModelSetup.DefaultModel) / 1_000_000_000d:0.0} GB on {systemDrive.Name} before downloading the local model.");
             return new(true, true, download
-                ? $"Local setup is available · driver {driver} · CUDA {cuda} · {systemDrive.AvailableFreeSpace / 1_000_000_000d:0.0} GB free on {systemDrive.Name.TrimEnd('\\')}. Continue, then review the local model download."
+                ? reusableDownload
+                    ? $"Local setup is available · existing model download found · driver {driver} · CUDA {cuda}. Setup will verify the model before using it."
+                    : $"Local setup is available · driver {driver} · CUDA {cuda} · {systemDrive.AvailableFreeSpace / 1_000_000_000d:0.0} GB free on {systemDrive.Name.TrimEnd('\\')}. Continue, then review the local model download."
                 : $"The included local model is compatible · driver {driver} · CUDA {cuda}.", driver, cuda, systemDrive.AvailableFreeSpace);
         }
         catch (Exception) { return new(true, false, "The NVIDIA driver check did not complete. You can use hosted inference."); }

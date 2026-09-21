@@ -76,9 +76,17 @@ public partial class MainWindow : Window
                     ComboBoxItem? recommended = null;
                     foreach (var model in NativeDownloadedModelSetup.Models)
                     {
-                        var item = new ComboBoxItem { Tag = model.GetProperty("id").GetString(), Content = "Run locally · " + model.GetProperty("displayName").GetString() };
+                        var id = model.GetProperty("id").GetString()!;
+                        var reusable = NativeDownloadedModelSetup.HasReusableCacheCandidate(id);
+                        var enoughSpace = eligibility.AvailableStorageBytes >= NativeDownloadedModelSetup.RequiredFreeBytes(id);
+                        var available = reusable || enoughSpace;
+                        var suffix = reusable ? " · already downloaded" : id == NativeDownloadedModelSetup.DefaultModel
+                            ? " · recommended" : available ? " · larger option" : " · more disk space needed";
+                        var size = NativeDownloadedModelSetup.DownloadBytes(id) / 1_000_000_000d;
+                        var displayName = model.GetProperty("displayName").GetString()!.Replace(" (alternative)", string.Empty, StringComparison.Ordinal);
+                        var item = new ComboBoxItem { Tag = id, Content = $"On-device GPU · {displayName} · {size:0.0} GB{suffix}", IsEnabled = available };
                         this.ProviderChoice.Items.Add(item);
-                        recommended ??= item;
+                        if (id == NativeDownloadedModelSetup.DefaultModel && available) recommended = item;
                     }
                     if (this.SelectedAgent == "openclaw" && recommended is not null) this.ProviderChoice.SelectedItem = recommended;
                 }
@@ -329,7 +337,7 @@ public partial class MainWindow : Window
             this.SuccessTitle.Text = this.configurationSaved ? $"{agentName} is ready." : "NemoClaw is installed.";
             this.SuccessDetail.Text = this.configurationSaved
                 ? this.Configuration?.LocalModel is not null
-                    ? $"Setup loaded {this.Configuration.Model} on the NVIDIA GPU and received a real model response. Launching starts a fresh chat; the first visible reply can still take longer than later replies."
+                    ? $"Setup loaded {this.Configuration.Model} on the NVIDIA GPU and received a real model response. OpenClaw starts in fast mode with Reasoning off; turn Reasoning on in chat for complex work."
                     : "Setup is complete. Your settings are saved for your Windows account. Launch your agent when you are ready."
                 : "The native application is installed. Your agent configuration has not been saved.";
             this.SuccessSummary.Text = this.Configuration?.LocalModel is not null
@@ -431,7 +439,7 @@ public partial class MainWindow : Window
         this.HidePanels();
         this.SetJourneyStage(2);
         this.ConfigurationPanel.Visibility = Visibility.Visible;
-        this.ConfigurationDetail.Text = $"Choose on-device inference when available, a hosted provider, or an existing local server for {AgentNames[this.SelectedAgent]}.";
+        this.ConfigurationDetail.Text = $"Choose the detected NVIDIA GPU, a hosted provider, or your own server for {AgentNames[this.SelectedAgent]}. The recommended on-device choice needs no endpoint, model ID, or API key.";
         this.UpdateSetupAction();
         this.ProviderChoice.Focus();
     }
@@ -482,7 +490,7 @@ public partial class MainWindow : Window
         this.ModelLabel.Visibility = this.ModelBox.Visibility = managed ? Visibility.Collapsed : Visibility.Visible;
         this.ModelBox.IsReadOnly = managed;
         this.ModelDownloadNotice.Visibility = managed ? Visibility.Visible : Visibility.Collapsed;
-        this.ModelDownloadNotice.Text = download ? NativeDownloadedModelSetup.Description(provider) : "Uses the prebuilt on-device model in this distribution. Saving only records your choice; its service starts when you launch the agent.";
+        this.ModelDownloadNotice.Text = download ? NativeDownloadedModelSetup.Description(provider) : "Uses the prebuilt on-device model in this distribution. Saving records your choice; the model starts when you launch the agent.";
         this.EndpointBox.Text = provider switch
         {
             "nvidia" => "https://integrate.api.nvidia.com/v1",
@@ -517,7 +525,7 @@ public partial class MainWindow : Window
         try
         {
             if (this.LicenseCheck.IsChecked != true) return;
-            if (this.ProviderChoice.SelectedItem is not ComboBoxItem { Tag: string provider }) throw new InvalidOperationException("Choose an inference provider.");
+            if (this.ProviderChoice.SelectedItem is not ComboBoxItem { Tag: string provider }) throw new InvalidOperationException("Choose a model source.");
             var selectedLocalModel = NativeDownloadedModelSetup.IsModel(provider) ? provider : NativeExpressSetup.Id;
             var express = provider == "n1x" || NativeDownloadedModelSetup.IsModel(provider);
             if (express) provider = "local";

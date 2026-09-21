@@ -449,8 +449,10 @@ fn main() {
         let model_start = if provisional { 3 } else { 2 };
         let selected_model = if forwarded.len() == model_start + 2
             && forwarded[model_start] == "--model"
-            && matches!(action, "install" | "ensure-ready" | "serve")
-        {
+            && matches!(
+                action,
+                "install" | "install-ready" | "ensure-ready" | "serve"
+            ) {
             match forwarded[model_start + 1].to_str() {
                 Some(model @ ("qwen3.8-27b" | "qwen3.6-35b-a3b")) => Some(model),
                 _ => credential_error("The native local model is invalid."),
@@ -461,7 +463,7 @@ fn main() {
         if (forwarded.len() != model_start && selected_model.is_none())
             || !matches!(
                 action,
-                "catalog" | "install" | "ensure-ready" | "stop" | "serve"
+                "catalog" | "install" | "install-ready" | "ensure-ready" | "stop" | "serve"
             )
         {
             credential_error("The native local inference action is invalid.");

@@ -4,6 +4,7 @@
 using System.Diagnostics;
 using System.IO;
 using System.Reflection;
+using System.Security.Principal;
 using System.Text;
 using System.Text.Json;
 
@@ -21,10 +22,41 @@ internal static class NativeDownloadedModelSetup
     {
         var model = Model(id);
         var size = DownloadBytes(id);
-        return $"Setup downloads {size / 1_000_000_000d:0.0} GB for text chat and keeps about {RequiredFreeBytes(id) / 1_000_000_000d:0.0} GB free during setup. No API key or manual server setup is needed. Setup will load the model on the GPU and test a real response before reporting success.";
+        var recommended = id == DefaultModel ? "Recommended for this PC. " : "Larger alternative. ";
+        var cache = HasReusableCacheCandidate(id)
+            ? "An existing complete-size download was found; setup will verify and reuse it."
+            : $"Setup downloads or safely resumes it and needs about {RequiredFreeBytes(id) / 1_000_000_000d:0.0} GB free.";
+        return $"{recommended}{model.GetProperty("displayName").GetString()!.Replace(" (alternative)", string.Empty, StringComparison.Ordinal)} · {model.GetProperty("quantization").GetString()} · {size / 1_000_000_000d:0.0} GB. {cache} It then loads the model on the GPU and tests a real response. No endpoint, model ID, or API key is needed.";
     }
     internal static long DownloadBytes(string id) => Model(id).GetProperty("weights").GetProperty("bytes").GetInt64();
     internal static long RequiredFreeBytes(string id) => DownloadBytes(id) + 1024L * 1024 * 1024;
+    internal static bool HasReusableCacheCandidate(string id, string? stateRoot = null)
+    {
+        try
+        {
+            var model = Model(id);
+            if (stateRoot is null)
+            {
+                if (!OperatingSystem.IsWindows()) return false;
+                var sid = WindowsIdentity.GetCurrent().User?.Value;
+                if (string.IsNullOrWhiteSpace(sid)) return false;
+                stateRoot = Path.Combine(Path.GetPathRoot(Environment.SystemDirectory)!, $"NemoClawRtxSparkPreviewState-{sid}-inference");
+            }
+            var directory = Path.Combine(stateRoot, $"model-{id}-{model.GetProperty("revision").GetString()}");
+            var file = new FileInfo(Path.Combine(directory, model.GetProperty("weights").GetProperty("name").GetString()!));
+            foreach (var path in new[] { stateRoot, directory })
+            {
+                var info = new DirectoryInfo(path);
+                if (!info.Exists || (info.Attributes & FileAttributes.ReparsePoint) != 0) return false;
+            }
+            return file.Exists && file.Length == DownloadBytes(id) &&
+                (file.Attributes & FileAttributes.ReparsePoint) == 0 && file.LinkTarget is null;
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException or System.Security.SecurityException)
+        {
+            return false;
+        }
+    }
     private static JsonElement Load()
     {
         using var stream = Assembly.GetExecutingAssembly().GetManifestResourceStream("Nvidia.NemoClaw.NativeLocalModels.json") ?? throw new NativeModelSetupException("The local model catalog is missing.");
@@ -58,7 +90,7 @@ internal static class NativeDownloadedModelSetup
         RunAsync(launcher, selected, "install", "downloaded", TimeSpan.FromHours(2), progress, cancellation);
 
     internal static Task EnsureReadyAsync(string launcher, string selected, Action<NativeExpressProgress>? progress, CancellationToken cancellation) =>
-        RunAsync(launcher, selected, "ensure-ready", "ready", TimeSpan.FromMinutes(30), progress, cancellation);
+        RunAsync(launcher, selected, "install-ready", "ready", TimeSpan.FromHours(2), progress, cancellation);
 
     private static async Task RunAsync(string launcher, string selected, string action, string completionEvent, TimeSpan timeout, Action<NativeExpressProgress>? progress, CancellationToken cancellation)
     {
@@ -137,14 +169,14 @@ internal static class NativeDownloadedModelSetup
             else _ = readers.ContinueWith(static task => { _ = task.Exception; }, CancellationToken.None,
                 TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
             cancellation.ThrowIfCancellationRequested();
-            if (process.ExitCode != 0 || !completed) throw new NativeModelSetupException(action == "install"
-                ? "The model download did not finish. Check disk space and connectivity, then retry."
+            if (process.ExitCode != 0 || !completed) throw new NativeModelSetupException(action is "install" or "install-ready"
+                ? "Local model setup did not finish. Check disk space, connectivity, the NVIDIA driver, and available memory, then retry."
                 : "The GPU readiness test did not finish. Check the NVIDIA driver and available memory, then retry.");
         }
         catch (OperationCanceledException) when (!cancellation.IsCancellationRequested)
         {
-            throw new NativeModelSetupException(action == "install"
-                ? "The model download exceeded its time limit. Check connectivity, then retry."
+            throw new NativeModelSetupException(action is "install" or "install-ready"
+                ? "Local model setup exceeded its time limit. Check connectivity and retry."
                 : "The GPU readiness test exceeded its time limit. Check the NVIDIA driver and available memory, then retry.");
         }
         finally

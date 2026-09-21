@@ -394,7 +394,17 @@ writeFileSync(join(configDirectory, "openclaw.json"), JSON.stringify({
     apiKey: modelToken,
     api: "openai-completions",
     timeoutSeconds: 180,
-    models: [{ id: modelId, name: modelId, reasoning: false, input: ["text"], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: modelContext, maxTokens: 4096 }],
+    models: [{
+      id: modelId,
+      name: modelId,
+      reasoning: true,
+      thinkingLevelMap: { off: "none", minimal: "low", low: "low", medium: "medium", high: "high", xhigh: "high", max: "high" },
+      compat: { supportsReasoningEffort: true, supportedReasoningEfforts: ["none", "low", "medium", "high"] },
+      input: ["text"],
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      contextWindow: modelContext,
+      maxTokens: 4096,
+    }],
   } } },
   agents: { defaults: { model: { primary: "nemoclawNative/" + modelId }, timeoutSeconds: 180, skipBootstrap: true, thinkingDefault: "off" }, list: [{ id: "main", default: true, skills: [] }] },
 }), "utf8");

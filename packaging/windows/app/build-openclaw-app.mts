@@ -13,6 +13,7 @@ import {
   resourceInventory,
   PREBUILT_CHOICE_PLUGINS,
   prebuiltPluginRegistrationSource,
+  applyWindowsReasoningLabel,
 } from "./openclaw-app-resources.mts";
 
 const require = createRequire(import.meta.url);
@@ -254,6 +255,7 @@ try {
     app,
     portable ? process.platform : "win32",
   );
+  const reasoningControl = applyWindowsReasoningLabel(app);
   const workerResult = await compiler.build({
     entryPoints: [path.join(source, "dist/audit/audit-event-writer.worker.js")],
     outfile: path.join(app, "dist/audit/audit-event-writer.worker.js"),
@@ -349,6 +351,7 @@ try {
       pluginPlan.entries.map((entry) => entry.path),
     ),
     controlUiRoot: "dist/control-ui",
+    reasoningControl,
     canonicalPluginEntries: pluginPlan.entries,
     admittedPackages,
     additionalInputArchives: materialization.additionalPackages.map(

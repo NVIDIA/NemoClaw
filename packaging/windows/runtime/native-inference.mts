@@ -42,7 +42,6 @@ import {
   isDownloadedLocalModel,
   selectLocalModel,
   downloadLocalModelAssets,
-  verifyLocalModelAssets,
   downloadedModelArguments,
 } from "./native-local-models.mts";
 
@@ -51,6 +50,7 @@ export type NativeInferenceOptions = {
   installRoot: string;
   signal?: AbortSignal;
   onProgress?: ProgressSink;
+  readinessTimeoutMs?: number;
 };
 export type NativeInferenceConnection = {
   endpoint: string;
@@ -217,9 +217,16 @@ export async function ensureNativeInference(
 ): Promise<NativeInferenceConnection> {
   const selected = options.localModel ?? NATIVE_EXPRESS.id;
   if (selected !== NATIVE_EXPRESS.id) selectLocalModel(selected);
+  const readinessTimeoutMs = options.readinessTimeoutMs ?? NATIVE_EXPRESS.readinessTimeoutMs;
+  if (
+    !Number.isSafeInteger(readinessTimeoutMs) ||
+    readinessTimeoutMs < 1 ||
+    readinessTimeoutMs > 7_200_000
+  )
+    throw new Error("The native model readiness time limit is invalid.");
   const signal = AbortSignal.any([
     options.signal ?? new AbortController().signal,
-    AbortSignal.timeout(NATIVE_EXPRESS.readinessTimeoutMs),
+    AbortSignal.timeout(readinessTimeoutMs),
   ]);
   const layout = installLayout(options.installRoot);
   const progress = options.onProgress ?? quiet;
@@ -496,7 +503,11 @@ async function servePrebuiltNativeInference(
     );
     prepared = { ...pack, environment, device };
     if (downloaded) {
-      const files = await verifyLocalModelAssets(downloaded.id, state, signal, onProgress);
+      // One owned pass verifies and reuses the cache or safely resumes the
+      // pinned download, then hands the already-verified file to llama.cpp.
+      // Installer setup previously hashed a multi-GB model here immediately
+      // after hashing it in a separate download helper.
+      const files = await downloadLocalModelAssets(downloaded, state, signal, onProgress);
       prepared.modelPath = files.weights;
     }
     upstreamPort = await nativeFreePort();

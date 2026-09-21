@@ -721,6 +721,10 @@ jobs:
             --source-root "$env:RUNNER_TEMP\compiled-windows-app\inputs\openclaw"
           if ($LASTEXITCODE -ne 0) { throw 'Installer-owned update controls failed.' }
           & "$env:RUNNER_TEMP\compiled-windows-app\node\node.exe" `
+            --experimental-strip-types packaging/windows/app/test-windows-reasoning-default.mts `
+            --source-root "$env:RUNNER_TEMP\compiled-windows-app\inputs\openclaw"
+          if ($LASTEXITCODE -ne 0) { throw 'Windows reasoning defaults failed.' }
+          & "$env:RUNNER_TEMP\compiled-windows-app\node\node.exe" `
             --experimental-strip-types packaging/windows/app/test-windows-configured-plugin-install.mts `
             --source-root "$env:RUNNER_TEMP\compiled-windows-app\inputs\openclaw"
           if ($LASTEXITCODE -ne 0) { throw 'Installer-owned configured-plugin controls failed.' }

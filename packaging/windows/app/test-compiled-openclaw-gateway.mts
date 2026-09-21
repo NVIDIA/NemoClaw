@@ -383,6 +383,12 @@ try {
     staticFileHashesMatched: true,
     indexCanonicalTransformationMatched: true,
   };
+  const reasoningLabels = ui.filter((file) => {
+    if (!file.path.endsWith(".js")) return false;
+    return fs.readFileSync(path.join(app, file.path), "utf8").includes("thinkingLevel:`Reasoning`");
+  });
+  assert.equal(reasoningLabels.length, 1, "The chat reasoning control must use product wording.");
+  result.reasoningControl = { label: "Reasoning", default: "off" };
   await delay(5_000);
   assert.equal(closed, false, "The gateway must remain alive through post-startup sidecars.");
   const pluginLine = stdout

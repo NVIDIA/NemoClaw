@@ -31,6 +31,7 @@ type NativeExpressManifest = {
 // Shared with the embedded WPF catalog. The packaged, immutable JSON is the
 // single source for native downloads, capacity thresholds, and model settings.
 const manifest = manifestJson as NativeExpressManifest;
+const LOCAL_REASONING_EFFORTS = new Set(["none", "low", "medium", "high"]);
 if (manifest.schemaVersion !== 1)
   throw new Error("The installed native inference manifest version is invalid.");
 export const NATIVE_EXPRESS = Object.freeze({
@@ -299,6 +300,9 @@ export function guardedNativeChat(
     if (!allowed.has(key)) throw new Error(`Unsupported local inference parameter: ${key}`);
   if (body.store !== undefined && body.store !== false)
     throw new Error("Server-side conversation storage is not enabled for this local model.");
+  const reasoningEffort = body.reasoning_effort ?? "none";
+  if (typeof reasoningEffort !== "string" || !LOCAL_REASONING_EFFORTS.has(reasoningEffort))
+    throw new Error("Choose a supported local reasoning level.");
   const { store: _store, ...request } = body;
   const limit = Math.min(Number(output), NATIVE_EXPRESS.maxOutputTokens);
   return {
@@ -307,6 +311,7 @@ export function guardedNativeChat(
     max_tokens: limit,
     max_completion_tokens: limit,
     parallel_tool_calls: false,
+    reasoning_effort: reasoningEffort,
     n: 1,
   };
 }

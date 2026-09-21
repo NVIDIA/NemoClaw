@@ -34,11 +34,7 @@ internal static class NativeSetupOperations
             var preparation = await RunSetupHelperAsync(launcher, new[] { "--configure-native", "--prepare-all" }, configurationBytes, captureOutput: true);
             var bindings = ReadBindings(preparation, requiredServices, configuration.LocalModel);
             if (NativeDownloadedModelSetup.IsModel(configuration.LocalModel))
-            {
-                await NativeDownloadedModelSetup.DownloadAsync(launcher, configuration.LocalModel!, progress, cancellation);
-                cancellation.ThrowIfCancellationRequested();
                 progress?.Invoke(new("configuration", "Saving your local model selection.", null, null));
-            }
             var binding = bindings.Inference;
             var serviceBindings = bindings.Services;
             if (binding is not null)
@@ -49,7 +45,7 @@ internal static class NativeSetupOperations
             NativeDesktopIntegration.Ensure(configuration.Agent, launcher);
             if (NativeDownloadedModelSetup.IsModel(configuration.LocalModel))
             {
-                progress?.Invoke(new("loading", "Starting the selected model on the NVIDIA GPU.", null, null));
+                progress?.Invoke(new("checking", "Checking or resuming the selected model before GPU startup.", null, null));
                 await NativeDownloadedModelSetup.EnsureReadyAsync(launcher, configuration.LocalModel!, progress, cancellation);
             }
         }

@@ -36,7 +36,12 @@ const calls = [
   { name: "exec", args: { command: shellCommand, timeout: 10 }, expect: "SHELL_" + nonce },
   { name: "exec", args: { command: codeCommand, timeout: 10 }, expect: "CODE_" + nonce + ":42" },
 ];
-const observations: { path: string; model: string; toolResults: unknown[] }[] = [];
+const observations: {
+  path: string;
+  model: string;
+  reasoningEffort: unknown;
+  toolResults: unknown[];
+}[] = [];
 let serverError: unknown;
 const server = http.createServer(async (request, response) => {
   try {
@@ -53,7 +58,12 @@ const server = http.createServer(async (request, response) => {
     assert.equal(body.model, "fixture");
     assert.equal(body.stream, true);
     const results = body.messages.filter((message: { role: string }) => message.role === "tool");
-    observations.push({ path: request.url!, model: body.model, toolResults: results });
+    observations.push({
+      path: request.url!,
+      model: body.model,
+      reasoningEffort: body.reasoning_effort,
+      toolResults: results,
+    });
     assert(observations.length <= 5);
     if (results.length) {
       const prior = calls[results.length - 1];
@@ -115,7 +125,12 @@ const config = {
           {
             id: "fixture",
             name: "fixture",
-            reasoning: false,
+            reasoning: true,
+            thinkingLevelMap: { off: "none" },
+            compat: {
+              supportsReasoningEffort: true,
+              supportedReasoningEfforts: ["none", "low", "medium", "high"],
+            },
             input: ["text"],
             contextWindow: 131072,
             maxTokens: 4096,
@@ -141,7 +156,7 @@ const entry = path.join(app, "openclaw-app.cjs"),
   driver = path.join(output, "driver.cjs");
 fs.writeFileSync(
   driver,
-  `const cp=require("node:child_process"),fs=require("node:fs"),Module=require("node:module");const loaded=new Set();const originalLoad=Module._load;Module._load=function(request,...rest){const value=originalLoad.call(this,request,...rest);if(request==="undici")loaded.add(value);return value;};for(const name of ["spawn","spawnSync","execFile","execFileSync"]){const original=cp[name];cp[name]=function(...args){if(/(?:npm|npx|pnpm|yarn|pip)(?:\\b|[-.])/i.test(JSON.stringify(args.slice(0,2)))){fs.writeFileSync(${JSON.stringify(path.join(output, "package-manager-attempt"))},name);throw Error("Unexpected package-manager invocation");}return original.apply(this,args);};}Module.syncBuiltinESMExports();process.on("exit",()=>fs.writeFileSync(${JSON.stringify(path.join(output, "undici-instances.json"))},JSON.stringify({instances:loaded.size})));const entry=${JSON.stringify(entry)};process.argv=[process.execPath,entry,"agent","--local","--agent","main","--session-id",${JSON.stringify(nonce)},"--message",${JSON.stringify("Run the controlled test tools then reply " + marker)},"--json"];require(entry).runCli(process.argv).catch(error=>{console.error(error);process.exitCode=1;});`,
+  `const cp=require("node:child_process"),fs=require("node:fs"),Module=require("node:module");const loaded=new Set();const originalLoad=Module._load;Module._load=function(request,...rest){const value=originalLoad.call(this,request,...rest);if(request==="undici")loaded.add(value);return value;};for(const name of ["spawn","spawnSync","execFile","execFileSync"]){const original=cp[name];cp[name]=function(...args){if(/(?:npm|npx|pnpm|yarn|pip)(?:\\b|[-.])/i.test(JSON.stringify(args.slice(0,2)))){fs.writeFileSync(${JSON.stringify(path.join(output, "package-manager-attempt"))},name);throw Error("Unexpected package-manager invocation");}return original.apply(this,args);};}Module.syncBuiltinESMExports();process.on("exit",()=>fs.writeFileSync(${JSON.stringify(path.join(output, "undici-instances.json"))},JSON.stringify({instances:loaded.size})));const entry=${JSON.stringify(entry)};process.argv=[process.execPath,entry,"agent","--local","--agent","main","--session-id",${JSON.stringify(nonce)},"--message",${JSON.stringify("Run the controlled test tools then reply " + marker)},"--thinking","off","--json"];require(entry).runCli(process.argv).catch(error=>{console.error(error);process.exitCode=1;});`,
 );
 const env: NodeJS.ProcessEnv = {};
 for (const [key, value] of Object.entries(process.env))
@@ -213,6 +228,7 @@ try {
   assert.equal(code, 0);
   if (serverError) throw serverError;
   assert.equal(observations.length, 5);
+  assert.deepEqual([...new Set(observations.map((request) => request.reasoningEffort))], ["none"]);
   const reply = JSON.parse(stdout);
   assert.equal(reply.payloads?.[0]?.text, marker);
   const transcript = fs
@@ -259,6 +275,7 @@ try {
         verdict: primary ? "fail" : "pass",
         exitCode: code,
         requests: observations.length,
+        reasoningEfforts: [...new Set(observations.map((request) => request.reasoningEffort))],
         tools: ["write", "read", "shell", "node-code"],
         singleUndiciInstance: fs.existsSync(path.join(output, "undici-instances.json"))
           ? JSON.parse(fs.readFileSync(path.join(output, "undici-instances.json"), "utf8"))

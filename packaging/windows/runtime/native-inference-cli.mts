@@ -22,11 +22,11 @@ async function main() {
     args.length === 2 &&
     args[0] === "--model" &&
     isDownloadedLocalModel(args[1]) &&
-    ["install", "ensure-ready", "serve"].includes(action)
+    ["install", "install-ready", "ensure-ready", "serve"].includes(action)
       ? args[1]
       : undefined;
   if (
-    !["catalog", "install", "ensure-ready", "stop", "serve"].includes(action) ||
+    !["catalog", "install", "install-ready", "ensure-ready", "stop", "serve"].includes(action) ||
     (action === "serve" ? ownership !== "--owned-host" : ownership !== undefined) ||
     (args.length !== 0 && localModel === undefined)
   )
@@ -75,6 +75,7 @@ async function main() {
     localModel,
     installRoot,
     signal: controller.signal,
+    ...(action === "install-ready" ? { readinessTimeoutMs: 2 * 60 * 60 * 1000 } : {}),
     onProgress: (event: unknown) => {
       if (action !== "serve") process.stdout.write(JSON.stringify(event) + "\n");
     },

@@ -146,7 +146,17 @@ test("new model aliases do not bypass the existing inference request restriction
       messages: [{ role: "user", content: "Hello" }],
       max_tokens: 16,
     };
-    assert.equal(guardedNativeChat(request, model.id).model, model.id);
+    const fast = guardedNativeChat(request, model.id);
+    assert.equal(fast.model, model.id);
+    assert.equal(fast.reasoning_effort, "none");
+    assert.equal(
+      guardedNativeChat({ ...request, reasoning_effort: "high" }, model.id).reasoning_effort,
+      "high",
+    );
+    assert.throws(
+      () => guardedNativeChat({ ...request, reasoning_effort: "extreme" }, model.id),
+      /supported local reasoning level/u,
+    );
     assert.throws(() => guardedNativeChat({ ...request, model: "foreign" }, model.id));
     assert.throws(() =>
       guardedNativeChat(

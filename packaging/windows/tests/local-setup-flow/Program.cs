@@ -67,6 +67,12 @@ internal static class Program
                 Require(Find<TextBlock>("CredentialHelp").Visibility == (bundled ? Visibility.Collapsed : Visibility.Visible));
                 Require(Find<TextBox>("ModelBox").Visibility == (bundled ? Visibility.Collapsed : Visibility.Visible));
                 Require((string)Find<Button>("InstallButton").Content == (bundled && agent == "openclaw" ? "Set up for me" : "Install NemoClaw"));
+                if (bundled)
+                {
+                    Require(Find<TextBlock>("ModelDownloadNotice").Text.Contains("No endpoint, model ID, or API key", StringComparison.Ordinal));
+                    var summary = Find<TextBlock>("LocalSetupSummary").Text;
+                    Require(summary.Contains("Reasoning off", StringComparison.Ordinal) && summary.Contains("Reasoning on", StringComparison.Ordinal));
+                }
                 if (!bundled) { Find<TextBox>("ModelBox").Text = "fixture-model"; Find<TextBox>("EndpointBox").Text = provider == "local" ? "http://127.0.0.1:8000/v1" : "https://example.invalid/v1"; }
                 var installs = 0;
                 var launches = 0;
@@ -88,6 +94,7 @@ internal static class Program
                 {
                     window.ShowConfiguredSuccess();
                     Require(launches == (autoLaunch ? 1 : 0));
+                    if (bundled) Require(Find<TextBlock>("SuccessDetail").Text.Contains("Reasoning off", StringComparison.Ordinal));
                     window.ShowConfiguredSuccess();
                     Require(launches == (autoLaunch ? 1 : 0));
                 }
