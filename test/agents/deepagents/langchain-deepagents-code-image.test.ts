@@ -30,7 +30,6 @@ import {
   runWrapper,
 } from "../../helpers/langchain-deepagents-code-image.ts";
 import { dcodeStateDir, makeStartScriptFixture } from "../../support/dcode-start-script-fixture.ts";
-import { expectManagedBootstrapNativeImageContract } from "../../support/managed-bootstrap-image-contract";
 
 function containsTokenShapedSecret(value: string): boolean {
   return TOKEN_PREFIX_PATTERNS.some((pattern) => {
@@ -224,7 +223,7 @@ describe("LangChain Deep Agents Code image contracts", () => {
     ].join("\n");
     const managedRuntimeDirectory = "&& install -d -o root -g root -m 0755 /run/nemoclaw";
     const runtimeModeReplay =
-      "&& chmod 444 /opt/nemoclaw-deepagents-code/generate-config.ts /opt/nemoclaw-deepagents-code/agents/langchain-deepagents-code/generate-config.ts";
+      "RUN chmod 444 /opt/nemoclaw-deepagents-code/generate-config.ts /opt/nemoclaw-deepagents-code/agents/langchain-deepagents-code/generate-config.ts";
 
     expect(dockerfile).toContain("ARG BASE_IMAGE\n");
     expect(dockerfile).toContain("ARG NEMOCLAW_MODEL=nvidia/nemotron-3-ultra-550b-a55b");
@@ -256,7 +255,6 @@ describe("LangChain Deep Agents Code image contracts", () => {
       dockerfile.indexOf(managedRuntimeDirectory),
     );
     expect(dockerfile).toContain(finalRuntimeRoot);
-    expectManagedBootstrapNativeImageContract(dockerfile);
     expect(dockerfile.indexOf(finalRuntimeRoot)).toBeLessThan(
       dockerfile.indexOf(managedRuntimeDirectory),
     );
@@ -264,20 +262,9 @@ describe("LangChain Deep Agents Code image contracts", () => {
       dockerfile.indexOf(runtimeModeReplay),
     );
     expect(dockerfile).toContain(
-      "COPY tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/managed-startup-image-runtime.bundle /out/managed-startup-image-runtime.cjs",
+      "COPY tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/managed-startup-direct-image-runtime.bundle /out/managed-startup-image-runtime.cjs",
     );
-    expect(dockerfile).not.toContain(
-      "COPY src/lib/onboard/managed-bootstrap/ ./src/lib/onboard/managed-bootstrap/",
-    );
-    expect(dockerfile).toContain(
-      "COPY --from=managed-bootstrap-entrypoint-builder /out/usr/local/bin/nemoclaw-managed-bootstrap /usr/local/bin/nemoclaw-managed-bootstrap",
-    );
-    expect(dockerfile).toContain(
-      "COPY --from=managed-bootstrap-entrypoint-builder /out/usr/local/lib/nemoclaw/managed-bootstrap-trampoline.sh /usr/local/lib/nemoclaw/managed-bootstrap-trampoline.sh",
-    );
-    expect(dockerfile).toContain(
-      "chmod 755 /usr/local/bin/nemoclaw-start /usr/local/bin/nemoclaw-managed-startup-hold /usr/local/bin/nemoclaw-managed-bootstrap",
-    );
+    expect(dockerfile).not.toContain("nemoclaw-managed-bootstrap");
     expect(dockerfile).toContain("ARG NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=sandbox");
     expect(dockerfile).toContain("root|sandbox) ;; \\");
     expect(dockerfile).toContain("&& command -v setpriv >/dev/null 2>&1");
@@ -840,7 +827,9 @@ describe("LangChain Deep Agents Code image contracts", () => {
       'append_marker $markers "NEMOCLAW_TUI_UNEXPECTED_FIRST_RUN"',
       "choose a recommended model",
       "terminate_failed_tui $markers $sandbox 24",
-      'send -- "\\003"\nafter 250\ncatch {send -- "\\003"}',
+      'send -- "\\004"\n\nset timeout 20',
+      'append_marker $markers "NEMOCLAW_TUI_EXIT_RETRY"',
+      'catch {send -- "\\004"}',
       'append_marker $markers "$expect_out(0,string)"',
       'append_marker $markers "NEMOCLAW_TUI_READY"',
       'append_marker $markers "NEMOCLAW_TUI_MODEL_TURN_COMPLETE"',
@@ -909,9 +898,9 @@ describe("LangChain Deep Agents Code image contracts", () => {
       "test/e2e/e2e-cloud-experimental/checks/07-deepagents-code-headless-inference.sh",
       "test/e2e/e2e-cloud-experimental/checks/08-deepagents-code-secret-boundary.sh",
       "test/e2e/e2e-cloud-experimental/checks/09-deepagents-code-tavily-opt-in.sh",
-      "test/e2e/e2e-cloud-experimental/checks/10-deepagents-code-tui-startup.sh",
       "test/e2e/e2e-cloud-experimental/checks/11-deepagents-code-observability.sh",
       "test/e2e/e2e-cloud-experimental/checks/12-deepagents-code-thread-auto-approval.sh",
+      "test/e2e/e2e-cloud-experimental/checks/10-deepagents-code-tui-startup.sh",
     ]);
   }
 

@@ -64,7 +64,7 @@ The following endpoint groups are allowed by default:
 | --- | --- | --- | --- |
 | `nvidia` | `integrate.api.nvidia.com:443` | `/usr/local/bin/openclaw` | POST to inference and embedding paths, GET to model listings |
 | `clawhub` | `clawhub.ai:443` | `/usr/local/bin/openclaw`, `/usr/local/bin/node` | GET, POST, including scoped package paths |
-| `openclaw_api` | `openclaw.ai:443` | `/usr/local/bin/openclaw`, `/usr/local/bin/node` | GET, POST |
+| `openclaw_api` | `openclaw.ai:443`, `catalog.openclaw.ai:443` | `/usr/local/bin/openclaw`, `/usr/local/bin/node` | GET and POST to `openclaw.ai`; GET only to `catalog.openclaw.ai` |
 | `openclaw_docs` | `docs.openclaw.ai:443` | `/usr/local/bin/openclaw` | GET only |
 | `npm_registry` | `registry.npmjs.org:443` | `/usr/local/bin/openclaw` only (openclaw plugins install) | GET only; while the broader `npm` preset is active, its reviewed L4 transport metadata temporarily applies to this overlapping route |
 

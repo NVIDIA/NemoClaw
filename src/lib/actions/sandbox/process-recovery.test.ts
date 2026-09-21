@@ -36,6 +36,9 @@ const OPENSHELL_SUPERVISOR_RELAY_CHANNEL_TIMED_OUT_STDERR = `Error:   × code: '
 const OPENSHELL_RELAY_CHANNEL_DROPPED_STDERR = `Error:   × status: Unavailable, message: "relay
   │ channel dropped", details: [], metadata: MetadataMap { headers: {} }
 `;
+const OPENSHELL_EXEC_RELAY_CLOSED_STDERR = `Error:   × code: 'The service is currently unavailable', message: "exec relay closed
+  │ before the command reported an exit status"
+`;
 const OPENSHELL_RELAY_TARGET_NOT_FOUND_STDERR = `Error:   × code: 'The service is currently unavailable', message: "No such file
   │ or directory (os error 2)"
 `;
@@ -283,6 +286,26 @@ describe("recreated sandbox OpenShell readiness", () => {
       }),
     ).toBe(true);
     expect(beforeProbe).toHaveBeenCalledTimes(2);
+    expect(commandExecutor.runBuffered).toHaveBeenCalledTimes(2);
+    expect(sleeps).toEqual([3]);
+  });
+
+  it("retries when the replacement exec relay closes during control-plane convergence", async () => {
+    const commandExecutor = sequencedExecutor(
+      completed(1, OPENSHELL_EXEC_RELAY_CLOSED_STDERR),
+      completed(0),
+    );
+    const sleeps: number[] = [];
+
+    expect(
+      await waitForRecreatedSandboxOpenShellReady("recreated-box", {
+        beforeProbe: () => true,
+        commandExecutor,
+        intervalSeconds: 3,
+        sleepImpl: (seconds) => sleeps.push(seconds),
+        timeoutSeconds: 30,
+      }),
+    ).toBe(true);
     expect(commandExecutor.runBuffered).toHaveBeenCalledTimes(2);
     expect(sleeps).toEqual([3]);
   });

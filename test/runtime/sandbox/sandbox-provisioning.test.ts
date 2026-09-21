@@ -78,7 +78,12 @@ function dockerHealthCommandBetween(
   return command.trim();
 }
 
-function runOpenclawRepairLayoutCase(legacy: boolean) {
+function runOpenclawRepairLayoutCase(
+  legacy: boolean,
+  options: {
+    prepareLegacyFixture?: (tmp: string, dataDir: string) => void;
+  } = {},
+) {
   const dockerfile = fs.readFileSync(DOCKERFILE, "utf-8");
   const cleanupBlock = dockerRunCommandBetween(
     dockerfile,
@@ -134,6 +139,8 @@ function runOpenclawRepairLayoutCase(legacy: boolean) {
   if (legacy) {
     fs.mkdirSync(path.join(dataDir, "extensions"), { recursive: true });
     fs.writeFileSync(path.join(dataDir, "extensions", "legacy-plugin.json"), "{}\n");
+    fs.writeFileSync(path.join(dataDir, ".legacy-state"), "preserved\n");
+    options.prepareLegacyFixture?.(tmp, dataDir);
   }
 
   const cleanup = runLoggedDockerShell(rewrite(cleanupBlock), tmp, functionDefs);
@@ -208,7 +215,10 @@ describe("sandbox provisioning: runtime npm online state", () => {
     const scriptPath = path.join(tmp, "replay.sh");
     try {
       fs.writeFileSync(scriptPath, probe, { mode: 0o700 });
-      const result = spawnSync("bash", [scriptPath], { encoding: "utf-8", timeout: 5000 });
+      const result = spawnSync("bash", [scriptPath], {
+        encoding: "utf-8",
+        timeout: 5000,
+      });
       expect(result.status, `stderr: ${result.stderr}`).toBe(0);
       expect(result.stdout.trim().split("\n")).toEqual(["false", "unset"]);
     } finally {
@@ -217,7 +227,10 @@ describe("sandbox provisioning: runtime npm online state", () => {
   });
 
   it("exercises the staged plugin install with the offline lock still applied", () => {
-    const stage = stageDockerfileUntil(DOCKERFILE, "openclaw plugins install /opt/nemoclaw");
+    const stage = stageDockerfileUntil(
+      DOCKERFILE,
+      "openclaw plugins install --force --accept-capabilities /opt/nemoclaw",
+    );
     const probe = [
       "#!/usr/bin/env bash",
       "set -eo pipefail",
@@ -228,7 +241,10 @@ describe("sandbox provisioning: runtime npm online state", () => {
     const scriptPath = path.join(tmp, "staged.sh");
     try {
       fs.writeFileSync(scriptPath, probe, { mode: 0o700 });
-      const result = spawnSync("bash", [scriptPath], { encoding: "utf-8", timeout: 5000 });
+      const result = spawnSync("bash", [scriptPath], {
+        encoding: "utf-8",
+        timeout: 5000,
+      });
       expect(result.status, `stderr: ${result.stderr}`).toBe(0);
       expect(result.stdout.trim()).toBe("true");
     } finally {
@@ -453,12 +469,18 @@ describe("sandbox provisioning: image health checks (#1430)", () => {
       // A connect timeout means a listener exists but is not responding,
       // e.g. a wedged HTTP server. We deliberately do not fall back to the
       // process check there — Docker should restart the container.
-      const probe = runProductionHealthProbe({ curlExit: 28, gatewayCmdline: null });
+      const probe = runProductionHealthProbe({
+        curlExit: 28,
+        gatewayCmdline: null,
+      });
       expect(probe.result.status).toBe(1);
     });
 
     it("reports unhealthy when curl gets connection refused and openclaw is not running", () => {
-      const probe = runProductionHealthProbe({ curlExit: 7, gatewayCmdline: null });
+      const probe = runProductionHealthProbe({
+        curlExit: 7,
+        gatewayCmdline: null,
+      });
       expect(probe.result.status).toBe(1);
     });
 
@@ -468,7 +490,10 @@ describe("sandbox provisioning: image health checks (#1430)", () => {
     });
 
     it("does not fall back when curl reports an HTTP error (gateway answered with failure)", () => {
-      const probe = runProductionHealthProbe({ curlExit: 22, gatewayCmdline: null });
+      const probe = runProductionHealthProbe({
+        curlExit: 22,
+        gatewayCmdline: null,
+      });
       expect(probe.result.status).toBe(1);
       // HTTP errors from the in-container probe should bypass the fallback;
       // a 4xx/5xx means the gateway is reachable and unhappy, not a
@@ -799,7 +824,7 @@ describe("sandbox provisioning: unified .openclaw layout (#2227)", () => {
       "wechat",
       "workspace",
     ]);
-    expect(modern.filesAfterCleanup).toEqual(["exec-approvals.json"]);
+    expect(modern.filesAfterCleanup).toEqual([]);
     expect(modern.cleanup.calls.split("\n").filter(Boolean)).not.toEqual(
       expect.arrayContaining([expect.stringMatching(/^find /)]),
     );
@@ -817,6 +842,9 @@ describe("sandbox provisioning: unified .openclaw layout (#2227)", () => {
     expect(legacy.permission.result.status).toBe(0);
     expect(legacy.markerExistsAfterCleanup).toBe(true);
     expect(legacy.markerExistsAfterPermission).toBe(false);
+    expect(legacy.filesAfterCleanup).toEqual(
+      expect.arrayContaining([".legacy-state", "extensions/legacy-plugin.json"]),
+    );
     expect(legacy.cleanup.calls.split("\n").filter(Boolean)).toEqual(
       expect.arrayContaining([`find ${legacy.openclawDir} -type l -print`]),
     );
@@ -827,6 +855,17 @@ describe("sandbox provisioning: unified .openclaw layout (#2227)", () => {
         `find ${legacy.openclawDir} -type d -exec chmod g+s {} +`,
       ]),
     );
+
+    const unsafeLegacy = runOpenclawRepairLayoutCase(true, {
+      prepareLegacyFixture: (tmp, dataDir) => {
+        const outsideState = path.join(tmp, "outside-state");
+        fs.writeFileSync(outsideState, "outside\n");
+        fs.symlinkSync(outsideState, path.join(dataDir, "extensions", "unsafe-link"));
+      },
+    });
+    expect(unsafeLegacy.cleanup.result.status).not.toBe(0);
+    expect(unsafeLegacy.cleanup.result.stderr).toContain("refusing legacy layout cleanup because");
+    expect(unsafeLegacy.cleanup.result.stderr).toContain("unsafe-link is a symlink");
   });
 
   it("provisions unified mutable .openclaw layout and editable personal profiles", () => {
@@ -847,7 +886,7 @@ describe("sandbox provisioning: unified .openclaw layout (#2227)", () => {
       expect(layout.result.status).toBe(0);
       const openclawDir = path.join(sandboxRoot, ".openclaw");
       expect(fs.statSync(openclawDir).isDirectory()).toBe(true);
-      expect(fs.statSync(path.join(openclawDir, "exec-approvals.json")).isFile()).toBe(true);
+      expect(fs.existsSync(path.join(openclawDir, "exec-approvals.json"))).toBe(false);
       expect(fs.existsSync(path.join(openclawDir, "update-check.json"))).toBe(false);
       ["credentials", "devices", "identity", "logs", "state", "telegram"].forEach((dir) => {
         const stateDir = path.join(openclawDir, dir);
@@ -857,9 +896,6 @@ describe("sandbox provisioning: unified .openclaw layout (#2227)", () => {
         expect(fs.statSync(stateDir).mode & 0o2000).toBe(0o2000);
       });
       expect(fs.existsSync(path.join(sandboxRoot, ".openclaw-data"))).toBe(false);
-      expect(fs.lstatSync(path.join(openclawDir, "exec-approvals.json")).isSymbolicLink()).toBe(
-        false,
-      );
       expect(layout.calls).toContain(`chown -R sandbox:sandbox ${openclawDir}`);
 
       const rc = runDockerShell(
@@ -986,12 +1022,13 @@ describe("sandbox provisioning: base runtime tools", () => {
     expect(aptInstall).toBeDefined();
     expect(aptInstall).toContain("nftables=1.1.3-1");
   });
-  it("runtime hardening installs procps and e2fsprogs when a stale base lacks ps and chattr", () => {
+  it("runtime hardening restores required tools when a stale base lacks them", () => {
     const dockerfile = fs.readFileSync(DOCKERFILE, "utf-8");
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-procps-"));
     const log = path.join(tmp, "calls.log");
     const marker = path.join(tmp, "ps-installed");
     const chattrMarker = path.join(tmp, "chattr-installed");
+    const lsofMarker = path.join(tmp, "lsof-installed");
     const tmuxMarker = path.join(tmp, "tmux-installed");
     const lists = path.join(tmp, "apt-lists");
     fs.mkdirSync(lists);
@@ -1006,24 +1043,29 @@ describe("sandbox provisioning: base runtime tools", () => {
       `call_log=${JSON.stringify(log)}`,
       `ps_marker=${JSON.stringify(marker)}`,
       `chattr_marker=${JSON.stringify(chattrMarker)}`,
+      `lsof_marker=${JSON.stringify(lsofMarker)}`,
       `tmux_marker=${JSON.stringify(tmuxMarker)}`,
       'apt-mark() { printf "apt-mark %s\\n" "$*" >> "$call_log"; }',
-      'apt-get() { printf "apt-get %s\\n" "$*" >> "$call_log"; if [[ "$*" == *"install"* && "$*" == *"procps=2:4.0.4-9"* ]]; then touch "$ps_marker"; fi; if [[ "$*" == *"install"* && "$*" == *"e2fsprogs=1.47.2-3+b12"* ]]; then touch "$chattr_marker"; fi; if [[ "$*" == *"install"* && "$*" == *"tmux=3.5a-3"* ]]; then touch "$tmux_marker"; fi; }',
-      'command() { if [ "${1:-}" = "-v" ] && [ "${2:-}" = "ps" ]; then [ -f "$ps_marker" ]; elif [ "${1:-}" = "-v" ] && [ "${2:-}" = "chattr" ]; then [ -f "$chattr_marker" ]; elif [ "${1:-}" = "-v" ] && [ "${2:-}" = "tmux" ]; then [ -f "$tmux_marker" ]; else builtin command "$@"; fi; }',
+      'apt-get() { printf "apt-get %s\\n" "$*" >> "$call_log"; if [[ "$*" == *"install"* && "$*" == *"procps=2:4.0.4-9"* ]]; then touch "$ps_marker"; fi; if [[ "$*" == *"install"* && "$*" == *"e2fsprogs=1.47.2-3+b12"* ]]; then touch "$chattr_marker"; fi; if [[ "$*" == *"install"* && "$*" == *"lsof=4.99.4+dfsg-2"* ]]; then touch "$lsof_marker"; fi; if [[ "$*" == *"install"* && "$*" == *"tmux=3.5a-3"* ]]; then touch "$tmux_marker"; fi; }',
+      'command() { if [ "${1:-}" = "-v" ] && [ "${2:-}" = "ps" ]; then [ -f "$ps_marker" ]; elif [ "${1:-}" = "-v" ] && [ "${2:-}" = "chattr" ]; then [ -f "$chattr_marker" ]; elif [ "${1:-}" = "-v" ] && [ "${2:-}" = "lsof" ]; then [ -f "$lsof_marker" ]; elif [ "${1:-}" = "-v" ] && [ "${2:-}" = "tmux" ]; then [ -f "$tmux_marker" ]; else builtin command "$@"; fi; }',
       'ps() { [ -f "$ps_marker" ] || return 127; printf "procps test version\\n"; }',
       command,
     ].join("\n");
     const scriptPath = path.join(tmp, "run.sh");
     try {
       fs.writeFileSync(scriptPath, script, { mode: 0o700 });
-      const result = spawnSync("bash", [scriptPath], { encoding: "utf-8", timeout: 5000 });
+      const result = spawnSync("bash", [scriptPath], {
+        encoding: "utf-8",
+        timeout: 5000,
+      });
       expect(result.status).toBe(0);
       const calls = fs.readFileSync(log, "utf-8");
-      expect(calls).toContain("apt-mark manual procps e2fsprogs");
+      expect(calls).toContain("apt-mark manual procps e2fsprogs lsof tmux");
       expect(calls).toContain("apt-get autoremove --purge -y");
       expect(calls).toContain("apt-get update");
       expect(calls).toContain("apt-get install -y --no-install-recommends procps=2:4.0.4-9");
       expect(calls).toContain("apt-get install -y --no-install-recommends e2fsprogs=1.47.2-3+b12");
+      expect(calls).toContain("apt-get install -y --no-install-recommends lsof=4.99.4+dfsg-2");
       expect(result.stdout).toContain("procps test version");
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });

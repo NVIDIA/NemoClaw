@@ -69,6 +69,7 @@ import {
   prepareSandboxWorkloadForPortableLifecycle,
   resolveOnboardSandboxWorkloadReceipt,
   shouldActivateStockManagedRuntime,
+  shouldUseManagedOpenclawStartup,
 } from "./onboard-orchestration";
 
 function createFreshOnboardingRuntime(
@@ -150,6 +151,25 @@ async function expectUnsupportedHermesPortableSources(
 }
 
 describe("managed workload onboard orchestration", () => {
+  it.each([
+    [true, "identity-bound", true],
+    [true, "legacy-unbound", false],
+    [false, "identity-bound", false],
+  ] as const)(
+    "selects managed OpenClaw finalization default=%s protocol=%s",
+    (defaultOpenclawSelected, managedStartupProtocol, expected) => {
+      expect(
+        shouldUseManagedOpenclawStartup(defaultOpenclawSelected, {
+          managedStartupProtocol,
+          workload: {
+            schemaVersion: 1,
+            kind: "managed-image",
+          } as never,
+        }),
+      ).toBe(expected);
+    },
+  );
+
   afterAll(() => {
     fs.rmSync(releaseRoot, { force: true, recursive: true });
   });

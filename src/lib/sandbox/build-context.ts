@@ -114,7 +114,7 @@ function stageMcpToolDiscoveryRuntime(rootDir: string, buildCtx: string): void {
     });
   }
   for (const relativePath of [
-    "managed-startup-image-runtime.bundle",
+    "managed-startup-direct-image-runtime.bundle",
     path.join("mcp-tool-discovery", "BUNDLED_PACKAGES.json"),
     path.join("mcp-tool-discovery", "THIRD_PARTY_LICENSES.txt"),
     path.join("mcp-tool-discovery", "mcp-tool-discovery.bundle"),
@@ -140,11 +140,6 @@ function stageManagedStartupRuntimeSources(rootDir: string, buildCtx: string): v
     fs.mkdirSync(path.dirname(target), { recursive: true });
     fs.copyFileSync(source, target);
   }
-  fs.cpSync(
-    path.join(rootDir, "src", "lib", "onboard", "managed-bootstrap"),
-    path.join(buildCtx, "src", "lib", "onboard", "managed-bootstrap"),
-    { recursive: true },
-  );
   fs.cpSync(
     path.join(rootDir, "src", "lib", "onboard", "managed-startup"),
     path.join(buildCtx, "src", "lib", "onboard", "managed-startup"),
@@ -249,10 +244,12 @@ function stageOptimizedSandboxBuildContext(
   normalizeReadModesForDockerCopy(stagedNemoclawDir);
 
   fs.mkdirSync(stagedBlueprintDir, { recursive: true });
-  fs.copyFileSync(
-    path.join(sourceBlueprintDir, "blueprint.yaml"),
-    path.join(stagedBlueprintDir, "blueprint.yaml"),
-  );
+  for (const fileName of ["blueprint.yaml", "private-networks.yaml"]) {
+    fs.copyFileSync(
+      path.join(sourceBlueprintDir, fileName),
+      path.join(stagedBlueprintDir, fileName),
+    );
+  }
   fs.cpSync(path.join(sourceBlueprintDir, "policies"), path.join(stagedBlueprintDir, "policies"), {
     recursive: true,
   });
@@ -273,6 +270,16 @@ function stageOptimizedSandboxBuildContext(
       recursive: true,
     },
   );
+  fs.cpSync(
+    path.join(sourceBlueprintDir, "provider-profiles"),
+    path.join(stagedBlueprintDir, "provider-profiles"),
+    { recursive: true },
+  );
+  fs.mkdirSync(path.join(stagedBlueprintDir, "router"), { recursive: true });
+  fs.copyFileSync(
+    path.join(sourceBlueprintDir, "router", "pool-config.yaml"),
+    path.join(stagedBlueprintDir, "router", "pool-config.yaml"),
+  );
   normalizeReadModesForDockerCopy(stagedBlueprintDir);
 
   fs.mkdirSync(stagedScriptsDir, { recursive: true });
@@ -286,6 +293,10 @@ function stageOptimizedSandboxBuildContext(
     path.join(stagedScriptsDir, "checks", "materialize-locked-npm-cache-seed.mts"),
   );
   fs.copyFileSync(
+    path.join(rootDir, "scripts", "checks", "verify-managed-messaging-offline-install.mts"),
+    path.join(stagedScriptsDir, "checks", "verify-managed-messaging-offline-install.mts"),
+  );
+  fs.copyFileSync(
     path.join(rootDir, "scripts", "nemoclaw-start.sh"),
     path.join(stagedScriptsDir, "nemoclaw-start.sh"),
   );
@@ -294,16 +305,12 @@ function stageOptimizedSandboxBuildContext(
     path.join(stagedScriptsDir, "managed-startup-hold.sh"),
   );
   fs.copyFileSync(
-    path.join(rootDir, "scripts", "managed-bootstrap-entrypoint.c"),
-    path.join(stagedScriptsDir, "managed-bootstrap-entrypoint.c"),
-  );
-  fs.copyFileSync(
-    path.join(rootDir, "scripts", "managed-bootstrap-trampoline.sh"),
-    path.join(stagedScriptsDir, "managed-bootstrap-trampoline.sh"),
-  );
-  fs.copyFileSync(
     path.join(rootDir, "scripts", "openclaw-config-guard.py"),
     path.join(stagedScriptsDir, "openclaw-config-guard.py"),
+  );
+  fs.copyFileSync(
+    path.join(rootDir, "scripts", "openclaw-cli-wrapper.sh"),
+    path.join(stagedScriptsDir, "openclaw-cli-wrapper.sh"),
   );
   fs.copyFileSync(
     path.join(rootDir, "scripts", "codex-acp-wrapper.sh"),
@@ -338,6 +345,10 @@ function stageOptimizedSandboxBuildContext(
   fs.copyFileSync(
     path.join(rootDir, "scripts", "lib", "openclaw_device_approval_policy.py"),
     path.join(stagedScriptsDir, "lib", "openclaw_device_approval_policy.py"),
+  );
+  fs.copyFileSync(
+    path.join(rootDir, "scripts", "lib", "openclaw_pairing_state.py"),
+    path.join(stagedScriptsDir, "lib", "openclaw_pairing_state.py"),
   );
   fs.copyFileSync(
     path.join(rootDir, "scripts", "lib", "normalize_mutable_config_perms.py"),
@@ -399,6 +410,10 @@ function stageOptimizedSandboxBuildContext(
   fs.copyFileSync(
     path.join(rootDir, "scripts", "patch-openclaw-device-self-approval.mts"),
     path.join(stagedScriptsDir, "patch-openclaw-device-self-approval.mts"),
+  );
+  fs.copyFileSync(
+    path.join(rootDir, "scripts", "lib", "patch-openclaw-secondary-main-session-delete.mts"),
+    path.join(stagedScriptsDir, "lib", "patch-openclaw-secondary-main-session-delete.mts"),
   );
   fs.copyFileSync(
     path.join(rootDir, "scripts", "extract-semver.sh"),

@@ -320,6 +320,21 @@ function readAgentPrimaryModelRef(config: Record<string, unknown>): string | und
  * its `model` is a string routing reference.
  */
 function updateMainAgentListModel(agents: Record<string, unknown>, primaryModelRef: string): void {
+  const entries = agents.entries;
+  if (isPlainObject(entries)) {
+    const main = entries.main;
+    if (isPlainObject(main) && typeof main.model === "string") {
+      main.model = primaryModelRef;
+      return;
+    }
+    for (const entry of Object.values(entries)) {
+      if (isPlainObject(entry) && entry.default === true && typeof entry.model === "string") {
+        entry.model = primaryModelRef;
+        return;
+      }
+    }
+    return;
+  }
   const list = agents.list;
   if (!Array.isArray(list)) return;
   let defaultAgent: Record<string, unknown> | undefined;
@@ -343,7 +358,7 @@ function updateMainAgentListModel(agents: Record<string, unknown>, primaryModelR
  * from the snapshot — including a stale `model.primary` captured before a
  * managed-model switch. `models.providers` routing is already refreshed, but
  * the agent routes on `agents.defaults.model.primary` (and the matching
- * main/default `agents.list[].model`), so without this the rebuilt sandbox
+ * main/default `agents.entries.*.model`), so without this the rebuilt sandbox
  * keeps labelling/routing the previous model. This is issue #7210 (the
  * `rebuild --tool-disclosure progressive` config-binding variant, where an
  * MCP-present sandbox is switched via rebuild instead of a full recreate);

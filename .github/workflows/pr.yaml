@@ -148,6 +148,10 @@ jobs:
           path: ${{ runner.temp }}/openshell-sdk
 
       - name: Run static checks
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         uses: ./.trusted-ci-actions/.github/actions/ci-static-checks
 
   hugging-face-models:
@@ -515,11 +519,48 @@ jobs:
           sparse-checkout-cone-mode: false
 
       - name: Audit reviewed production npm graphs
-        uses: NVIDIA/NemoClaw/.github/actions/ci-reviewed-npm-audit@98669f24d35f18e49b6b2769cd68709509ea24f2
+        uses: NVIDIA/NemoClaw/.github/actions/ci-reviewed-npm-audit@5310ad0a5c25d49f06910525456ea2529506b3ae
         with:
           target-root: ${{ github.workspace }}
           report-dir: artifacts/reviewed-npm-audit
           cache-directory: ${{ runner.temp }}/reviewed-npm-audit-cache
+
+  real-openclaw-dist-harness:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      # This required proof reads reviewed npm metadata/tarballs. Keep npm's
+      # transient-registry retry policy explicit at the pre-merge boundary.
+      npm_config_fetch_retries: "3"
+      npm_config_fetch_retry_mintimeout: "10000"
+      npm_config_fetch_retry_maxtimeout: "60000"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24.18.1"
+          cache: npm
+
+      - name: Install reviewed npm
+        uses: ./.github/actions/setup-reviewed-npm
+
+      - name: Install test dependencies
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Build generated harness inputs
+        run: npm run build:policy-boundary && npm run catalog:compile
+
+      - name: Audit the real patched OpenClaw distribution
+        env:
+          NEMOCLAW_REAL_OPENCLAW_DIST_HARNESS: "1"
+        run: npx vitest run --project integration test/agents/openclaw/openclaw-real-patched-dist-harness.test.ts --silent=false --reporter=default
 
   cli-test-shards:
     needs: [changes, compile-artifacts, openshell-sdk-package]
@@ -590,6 +631,10 @@ jobs:
           test -s nemoclaw/dist/shared/sandbox-name.cjs
 
       - name: Run CLI coverage shard
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         uses: ./.trusted-ci-actions/.github/actions/ci-cli-coverage-shard
         with:
           shard: ${{ matrix.shard }}
@@ -769,6 +814,7 @@ jobs:
       - build-typecheck
       - installer-integration
       - reviewed-npm-audit
+      - real-openclaw-dist-harness
       - openshell-sdk-package
       - cli-tests
       - plugin-tests
@@ -790,6 +836,7 @@ jobs:
           BUILD_TYPECHECK_RESULT: ${{ needs['build-typecheck'].result }}
           INSTALLER_INTEGRATION_RESULT: ${{ needs['installer-integration'].result }}
           REVIEWED_NPM_AUDIT_RESULT: ${{ needs['reviewed-npm-audit'].result }}
+          REAL_OPENCLAW_DIST_HARNESS_RESULT: ${{ needs['real-openclaw-dist-harness'].result }}
           OPEN_SHELL_SDK_PACKAGE_RESULT: ${{ needs['openshell-sdk-package'].result }}
           CLI_TESTS_RESULT: ${{ needs['cli-tests'].result }}
           GH_TOKEN: ${{ github.token }}
@@ -836,7 +883,7 @@ jobs:
             local job_id=""
             dependency_url="$RUN_URL"
             case "$name" in
-              changes|docs-only-checks|static-checks|hugging-face-models|build-typecheck|installer-integration|reviewed-npm-audit|openshell-sdk-package|cli-tests|plugin-tests) ;;
+              changes|docs-only-checks|static-checks|hugging-face-models|build-typecheck|installer-integration|reviewed-npm-audit|real-openclaw-dist-harness|openshell-sdk-package|cli-tests|plugin-tests) ;;
               *) return ;;
             esac
             load_job_listing
@@ -897,6 +944,7 @@ jobs:
             require_success "build-typecheck" "$BUILD_TYPECHECK_RESULT"
             require_success "installer-integration" "$INSTALLER_INTEGRATION_RESULT"
             require_success "reviewed-npm-audit" "$REVIEWED_NPM_AUDIT_RESULT"
+            require_success "real-openclaw-dist-harness" "$REAL_OPENCLAW_DIST_HARNESS_RESULT"
             require_success "openshell-sdk-package" "$OPEN_SHELL_SDK_PACKAGE_RESULT"
             require_success "cli-tests" "$CLI_TESTS_RESULT"
             require_success "plugin-tests" "$PLUGIN_TESTS_RESULT"
@@ -907,6 +955,7 @@ jobs:
             allow_success_or_skipped "build-typecheck" "$BUILD_TYPECHECK_RESULT"
             allow_success_or_skipped "installer-integration" "$INSTALLER_INTEGRATION_RESULT"
             allow_success_or_skipped "reviewed-npm-audit" "$REVIEWED_NPM_AUDIT_RESULT"
+            allow_success_or_skipped "real-openclaw-dist-harness" "$REAL_OPENCLAW_DIST_HARNESS_RESULT"
             allow_success_or_skipped "openshell-sdk-package" "$OPEN_SHELL_SDK_PACKAGE_RESULT"
             allow_success_or_skipped "cli-tests" "$CLI_TESTS_RESULT"
             allow_success_or_skipped "plugin-tests" "$PLUGIN_TESTS_RESULT"

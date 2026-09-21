@@ -1258,11 +1258,20 @@ function mockManagedStateVolumeOnboardLifecycle() {
   const managedWorkloadOnboard = require(
     path.resolve(__dirname, "../../src/lib/onboard/managed-workload/onboard-orchestration.ts"),
   );
+  const managedStartupRootApply = require(
+    path.resolve(__dirname, "../../src/lib/onboard/managed-startup/provider-root-apply.ts"),
+  );
   managedWorkloadOnboard.createManagedStateVolumeOnboardLifecycle = ({ roots }) => ({
     roots,
     materializeSandboxCreatePlan: (input, materialize) => materialize(input),
     commit: () => {},
   });
+  managedStartupRootApply.applyProviderManagedStartupRootRequest = () => null;
+  managedStartupRootApply.finalizeProviderManagedStartupSharedState = ({ supervisorReady }) => ({
+    supervisorReady,
+    failure: null,
+  });
+  managedStartupRootApply.releaseProviderManagedStartupHold = () => {};
 }
 
 function mockIsolatedDockerSandboxLifecycleFromRunner() {
@@ -1284,10 +1293,11 @@ function mockDockerSandboxLifecycleReleaseFromRunner() {
       normalized.includes("label=openshell.ai/sandbox-name=my-assistant") &&
       normalized.includes("openshell.ai/sandbox-id")
     ) {
-      const row = `${ONBOARD_SANDBOX_NEW_CONTAINER_ID}\topenshell\talpha\t${state.sandboxId || ONBOARD_READY_SANDBOX_ID}\n`;
-      return state.finalCommitReleased || state.legacyRecoverySandboxId
-        ? row
-        : `${ONBOARD_SANDBOX_OLD_CONTAINER_ID}\topenshell\talpha\t${state.sandboxId || ONBOARD_READY_SANDBOX_ID}\n${row}`;
+      const containerId =
+        state.finalCommitReleased || state.legacyRecoverySandboxId
+          ? ONBOARD_SANDBOX_NEW_CONTAINER_ID
+          : ONBOARD_SANDBOX_OLD_CONTAINER_ID;
+      return `${containerId}\topenshell\tdefault\t${state.sandboxId || ONBOARD_READY_SANDBOX_ID}\n`;
     }
     if (
       (state.finalCommitReleased || state.legacyRecoverySandboxId) &&
@@ -1403,163 +1413,8 @@ function mockManagedImageCatalog() {
     );
 }
 
-function mockManagedImageBootstrap() {
-  const crypto = require("node:crypto");
-  const adapter = require(
-    path.resolve(__dirname, "../../src/lib/onboard/managed-bootstrap/adapter.ts"),
-  );
-  const bootstrap = require(
-    path.resolve(__dirname, "../../src/lib/onboard/managed-bootstrap/docker.ts"),
-  );
-  const authorityStore = require(
-    path.resolve(__dirname, "../../src/lib/onboard/managed-bootstrap/docker-authority-store.ts"),
-  );
-
-  authorityStore.createDockerManagedBootstrapAuthorityStore = () => ({
-    async recordPreparedAuthority(authority) {
-      return {
-        schemaVersion: authority.schemaVersion,
-        sandbox: authority.sandbox,
-        bootstrapIdentity: authority.bootstrapIdentity,
-        authorityFingerprint: authority.authorityFingerprint,
-        recordId: "test-managed-onboard-authority",
-        recordedAt: "2026-08-04T12:00:00.000Z",
-      };
-    },
-  });
-  bootstrap.createDockerManagedBootstrapAdapter = () => {
-    const runtimeId = "a".repeat(64);
-    const replacementRuntimeId = "c".repeat(64);
-    const runtimeImageContentId = `sha256:${"b".repeat(64)}`;
-    const originalSpecCanonicalJson = '{"runtime":"original"}\n';
-    const preparedSpecCanonicalJson = '{"runtime":"prepared"}\n';
-    const replacementSpecCanonicalJson = '{"runtime":"replacement"}\n';
-    const digest = (value) => crypto.createHash("sha256").update(value, "utf8").digest("hex");
-    const originalSpecHash = digest(originalSpecCanonicalJson);
-    const preparedSpecHash = digest(preparedSpecCanonicalJson);
-    const replacementSpecHash = digest(replacementSpecCanonicalJson);
-    return {
-      async recoverUnfinishedTransactions() {
-        return { receipts: [], failures: [] };
-      },
-      async createHeldWorkload(input) {
-        const bootstrapIdentity = input.bootstrapIdentity;
-        const heldWorkloadArgv = adapter.renderManagedBootstrapHeldCommand(
-          input.request,
-          bootstrapIdentity,
-          input.plan.intendedWorkloadArgv,
-        );
-        const createReceipt = await input.launch({ heldWorkloadArgv, bootstrapIdentity });
-        return {
-          schemaVersion: 1,
-          sandbox: createReceipt.sandbox,
-          bootstrapIdentity,
-          heldWorkloadArgv,
-          intendedWorkloadArgv: input.plan.intendedWorkloadArgv,
-          plan: input.plan,
-          createReceipt,
-        };
-      },
-      async cleanupIncompleteCreate({ createReceipt, bootstrapIdentity }) {
-        return {
-          schemaVersion: 1,
-          sandbox: createReceipt.sandbox,
-          bootstrapIdentity,
-          outcome: "rolled-back",
-          restoredRuntimeId: null,
-          restoredSpecHash: null,
-          heldWorkloadRemoved: true,
-          alreadyRolledBack: false,
-          finalizedAt: "2026-08-04T12:00:00.000Z",
-        };
-      },
-      async discoverHeldWorkload(input) {
-        return { sandbox: input.sandbox, runtimeId, bootstrapIdentity: input.bootstrapIdentity };
-      },
-      async inspectHeldWorkload({ handle, discovered }) {
-        return {
-          schemaVersion: 1,
-          sandbox: handle.sandbox,
-          runtimeId: discovered.runtimeId,
-          bootstrapIdentity: handle.bootstrapIdentity,
-          image: handle.plan.image,
-          runtimeImageContentId,
-          specHash: originalSpecHash,
-          specCanonicalJson: originalSpecCanonicalJson,
-          agentIdentity: handle.plan.agentIdentity,
-          supervisorArgv: handle.plan.expectedSupervisorArgv,
-          heldWorkloadArgv: handle.heldWorkloadArgv,
-          metadata: handle.plan.metadata,
-        };
-      },
-      async prepareBootstrapReplacement({ handle, snapshot, request }) {
-        return {
-          schemaVersion: 1,
-          sandbox: handle.sandbox,
-          bootstrapIdentity: handle.bootstrapIdentity,
-          originalRuntimeId: snapshot.runtimeId,
-          preparedRuntimeId: replacementRuntimeId,
-          image: handle.plan.image,
-          runtimeImageContentId,
-          originalSpecHash,
-          preparedSpecHash,
-          preparedSpecCanonicalJson,
-          expectedActivatedSpecHash: replacementSpecHash,
-          expectedActivatedSpecCanonicalJson: replacementSpecCanonicalJson,
-          profileFingerprint: request.profileFingerprint,
-          rollbackAuthority: "test-managed-onboard-rollback-authority",
-        };
-      },
-      async activateBootstrapReplacement({ handle, prepared }) {
-        return {
-          schemaVersion: 1,
-          sandbox: handle.sandbox,
-          bootstrapIdentity: handle.bootstrapIdentity,
-          originalRuntimeId: prepared.originalRuntimeId,
-          replacementRuntimeId: prepared.preparedRuntimeId,
-          image: prepared.image,
-          runtimeImageContentId: prepared.runtimeImageContentId,
-          originalSpecHash: prepared.originalSpecHash,
-          replacementSpecHash,
-          replacementSpecCanonicalJson,
-          profileFingerprint: prepared.profileFingerprint,
-        };
-      },
-      async awaitBootstrap({ handle, replacement }) {
-        return {
-          schemaVersion: 1,
-          sandbox: handle.sandbox,
-          runtimeId: replacement.replacementRuntimeId,
-          image: handle.plan.image,
-          runtimeImageContentId,
-          originalSpecHash,
-          replacementSpecHash,
-          profileFingerprint: handle.plan.profile.fingerprint,
-          bootstrapIdentity: handle.bootstrapIdentity,
-          transactionPending: true,
-          completedAt: "2026-07-29T12:01:00.000Z",
-        };
-      },
-      async finalizeBootstrap({ outcome, handle, snapshot }) {
-        return {
-          schemaVersion: 1,
-          sandbox: handle.sandbox,
-          bootstrapIdentity: handle.bootstrapIdentity,
-          outcome: outcome === "commit" ? "committed" : "rolled-back",
-          restoredRuntimeId: outcome === "rollback" ? (snapshot?.runtimeId ?? null) : null,
-          restoredSpecHash: outcome === "rollback" ? (snapshot?.specHash ?? null) : null,
-          heldWorkloadRemoved: false,
-          alreadyRolledBack: false,
-          finalizedAt: "2026-07-29T12:02:00.000Z",
-        };
-      },
-    };
-  };
-}
-
 if (process.env.NEMOCLAW_TEST_MANAGED_IMAGE_CATALOG === "1") {
   mockManagedImageCatalog();
-  mockManagedImageBootstrap();
 }
 
 module.exports = {
