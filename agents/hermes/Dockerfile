@@ -567,7 +567,7 @@ RUN /usr/bin/python3 -I \
     && printf '%s  %s\n' \
         "$NEMOCLAW_HERMES_MCP_HTTP_TRANSPORT_PATCHED_SHA256" /opt/hermes/tools/mcp_tool_transport.py \
     | sha256sum -c - \
-    && env -u all_proxy -u http_proxy -u https_proxy -u no_proxy \
+    && env -u SSL_CERT_FILE -u all_proxy -u http_proxy -u https_proxy -u no_proxy \
         ALL_PROXY= HTTP_PROXY= HTTPS_PROXY=http://10.200.0.1:3128 \
         NO_PROXY=direct.example \
         /opt/hermes/.venv/bin/python -I -c \
