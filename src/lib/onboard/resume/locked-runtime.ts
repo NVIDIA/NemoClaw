@@ -9,6 +9,7 @@ import type {
 import { requireReadOnlyHostMountRuntimeSupport } from "../host-mount";
 import {
   assertLockedResumeIntentSnapshot,
+  assertPortableOnboardProviderIntent,
   createDefaultResumeProfileEnvironmentScope,
   createPortableOnboardEnvironmentScope,
   preparePortableExperimentalHost,
@@ -122,6 +123,7 @@ function prepareEnvironment(
   }
 }
 
+/** Prepare runtime authority with the consent ordering required by fresh and resumed runs. */
 export async function prepare(
   options: OnboardOptions,
   resume: boolean,
@@ -141,6 +143,11 @@ export async function prepare(
     options.hostMounts?.length ? options.hostMounts : storedSession?.metadata?.hostMounts,
     { experimentalProfile: checkpointProfile === "portable" ? "portable" : null },
   );
+  if (checkpointProfile === "portable") {
+    assertPortableOnboardProviderIntent(process.env, options.portableInferenceActivation ?? null, {
+      resume,
+    });
+  }
   let environmentScope: PortableOnboardEnvironmentScope | null = null;
   try {
     // Fresh runs obtain consent before bounded host preparation writes. Resumes

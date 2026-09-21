@@ -18,6 +18,7 @@ const CLEARED_PORTABLE_RUNTIME_ENV_KEYS = PORTABLE_RUNTIME_ENV_KEYS.filter(
   (key) => key !== "NEMOCLAW_EXPERIMENTAL_PROFILE",
 );
 
+/** Build a current-user runtime authority for environment-scope tests. */
 function portableRuntimeAuthority(): CheckpointPortableRuntimeAuthority {
   const uid = process.getuid!();
   return {
