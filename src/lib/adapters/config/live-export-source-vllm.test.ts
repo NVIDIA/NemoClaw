@@ -9,6 +9,11 @@ import {
 } from "../../../../test/support/config-export-harness";
 import { createHash } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
+import YAML from "yaml";
+import {
+  asExportedConfig,
+  exportedAgentList,
+} from "../../../../test/support/config-export-document";
 import { runConfigExport } from "../../actions/config/export";
 import {
   parseNemoClawConfigDocumentName,
@@ -150,7 +155,7 @@ describe("managed vLLM export pipeline", () => {
     { count: 2, names: ["researcher", "reviewer"] },
     { count: 128, names: Array.from({ length: 128 }, (_, index) => `reader-${index}`) },
   ])(
-    "admits all $count fixed-profile secondaries before the deferred target mapping (#11859)",
+    "refuses all $count fixed-profile secondaries that current v1 cannot represent (#11859, #12012)",
     async ({ names }) => {
       mockManagedVllmSource({
         NEMOCLAW_EXTRA_AGENTS_JSON: JSON.stringify(
@@ -173,18 +178,17 @@ describe("managed vLLM export pipeline", () => {
           writeStdout: output,
         },
       );
-      expect(result).toEqual({
+      expect(result).toMatchObject({
         ok: false,
         failure: {
           kind: "observation",
-          attempts: 1,
           findings: [
-            {
-              field: "spec.inferenceProviders",
+            expect.objectContaining({
+              field: "spec.sandboxes[].agent",
               category: "unsupported",
               diagnostic:
-                "V1alpha1 export currently supports hosted and attached Ollama inference; managed vLLM compatibility is deferred.",
-            },
+                "Current-v1 local inference export supports one OpenClaw agent per sandbox.",
+            }),
           ],
         },
       });
@@ -219,21 +223,32 @@ describe("managed vLLM export pipeline", () => {
     Object.assign(liveSandbox.sandbox.spec, { providers: ["vllm-local", "alpha-brave-search"] });
     raw.getSandbox.mockResolvedValue(liveSandbox);
     const { result, writeStdout, publish } = await exportLiveSource();
-    expect(result).toMatchObject({
-      ok: false,
-      failure: {
-        kind: "observation",
-        findings: [
-          {
-            field: "spec.inferenceProviders",
-            category: "unsupported",
-            diagnostic:
-              "V1alpha1 export currently supports hosted and attached Ollama inference; managed vLLM compatibility is deferred.",
+    expect(result).toEqual({ ok: true, completion: { kind: "stdout" } });
+    const document = asExportedConfig(YAML.parse(writeStdout.mock.calls[0]![0]));
+    expect(document.spec.services?.vllm).toMatchObject({ kind: "vllm", image: null });
+    expect(document.spec.sandboxes[0]).toMatchObject({
+      integrations: {
+        "brave-search": {
+          kind: "webSearch",
+          provider: "brave",
+          credential: { env: "BRAVE_API_KEY" },
+        },
+      },
+      harness: {
+        observability: {
+          otlp: {
+            enabled: true,
+            endpoint: "http://host.openshell.internal:4318",
+            serviceName: "research-assistant",
+            sampleRate: 0.5,
           },
-        ],
+        },
       },
     });
-    expect(writeStdout).not.toHaveBeenCalled();
+    expect(exportedAgentList(document.spec.sandboxes[0]!)[0]).toMatchObject({
+      tools: { disclosure: "direct" },
+      integrationRefs: ["brave-search"],
+    });
     expect(search.readCredential).not.toHaveBeenCalled();
     expect(publish).not.toHaveBeenCalled();
   });
@@ -277,28 +292,23 @@ describe("managed vLLM export pipeline", () => {
     },
   ])(
     "exports retained $label with the fixed managed deployment (#11855, #11856)",
-    async ({ environment }) => {
+    async ({ environment, execution, overrides }) => {
       mockManagedVllmSource(environment);
       vi.stubEnv("NEMOCLAW_AGENT_TIMEOUT", "1200");
       vi.stubEnv("NEMOCLAW_AGENT_HEARTBEAT_EVERY", "1h");
       vi.stubEnv("NEMOCLAW_MAX_TOKENS", "42");
       vi.stubEnv("NEMOCLAW_REASONING", "true");
       const { result, writeStdout, publish } = await exportLiveSource();
-      expect(result).toMatchObject({
-        ok: false,
-        failure: {
-          kind: "observation",
-          findings: [
-            {
-              field: "spec.inferenceProviders",
-              category: "unsupported",
-              diagnostic:
-                "V1alpha1 export currently supports hosted and attached Ollama inference; managed vLLM compatibility is deferred.",
-            },
-          ],
-        },
+      expect(result).toEqual({ ok: true, completion: { kind: "stdout" } });
+      const document = asExportedConfig(YAML.parse(writeStdout.mock.calls[0]![0]));
+      expect(document.spec.sandboxes[0]!.harness.execution).toEqual(execution);
+      expect(
+        exportedAgentList(document.spec.sandboxes[0]!)[0]!.inference.routes[0]!.overrides,
+      ).toEqual({
+        model: "nvidia-nemotron-3.5-lightning-30b-a3b-nvfp4",
+        ...overrides,
       });
-      expect(writeStdout).not.toHaveBeenCalled();
+      expect(document.spec.services?.vllm).toMatchObject({ kind: "vllm", image: null });
       expect(publish).not.toHaveBeenCalled();
     },
   );

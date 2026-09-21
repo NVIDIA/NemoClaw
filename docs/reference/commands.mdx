@@ -286,7 +286,15 @@ Do not remove the requested output file to clean up a temporary link.
 
 Version 1 exports Docker-managed OpenClaw sandboxes and canonical managed Hermes or LangChain Deep Agents Code sandboxes in the default workspace.
 Supported sandboxes use hosted external inference or the native NVIDIA hosted provider with its default endpoint, an immutable managed image, a NemoClaw-owned gateway, and an explicit representable policy.
-Managed vLLM, local Ollama, and Podman exports are deferred. The command reports these sources as unsupported instead of producing a partial document.
+Docker-managed OpenClaw sandboxes can also export an attached local Ollama runtime or the fixed managed vLLM profile.
+These local-inference exports contain a named service with `image: null` because v0 does not own an official v1 service image digest.
+The placeholder document is not runnable v1 input. Before using it with v1, replace only the service's `image` value with an official immutable `repository@sha256:<64-hex-digest>` reference.
+Do not substitute a mutable tag, the source runtime image, or an invented digest.
+The current v1 local-inference shape supports one OpenClaw agent per sandbox, so the command rejects a local-inference source with additional agents.
+Ollama export retains the selected model digest, external daemon ownership, and NemoClaw-managed proxy ownership.
+Managed vLLM export retains the fixed model repository, revision, and serving settings.
+Its catalog, profile, recipe, and runtime-image provenance qualify the observed source but do not become source-specific fields in the v1 YAML.
+Podman local-inference export remains deferred. The command reports it as unsupported instead of producing a partial document.
 Deep Agents export requires hosted OpenAI Completions inference and explicitly disabled automatic approval, observability, and web search.
 It emits the immutable image as `image.ref`, the `deepagents` harness, and one `agent`.
 The command rejects other Deep Agents settings instead of omitting them.

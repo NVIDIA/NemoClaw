@@ -31,12 +31,42 @@ interface V1Alpha1OllamaInferenceProvider {
 
 export interface V1Alpha1OllamaProxyService {
   readonly kind: "ollamaProxy";
+  readonly image: null;
   readonly endpoint: string;
   readonly upstream: Readonly<{
     endpoint: string;
     model: Readonly<{ name: string; digest: string }>;
   }>;
 }
+
+export interface V1Alpha1VllmService {
+  readonly kind: "vllm";
+  readonly authentication: "bearer";
+  readonly hardware: Readonly<{
+    architecture: "amd64";
+    minComputeCapability: 90;
+    minGpuMemoryBytes: 96_000_000_000;
+    minDriverMajor: 580;
+  }>;
+  readonly container: Readonly<{ ipc: "host"; sharedMemoryGiB: 32 }>;
+  readonly image: null;
+  readonly model: Readonly<{ repository: string; revision: string }>;
+  readonly serving: Readonly<{
+    modelName: string;
+    mambaBackend: "flashinfer";
+    enforceEager: false;
+    toolParser: "qwen3_coder";
+    reasoningParser: "nemotron_v3";
+    port: number;
+    contextTokens: 65_536;
+    maxSequences: 1;
+    batchTokens: 4096;
+    startupTimeoutSeconds: 1800;
+  }>;
+  readonly memory: Readonly<{ gpuMemoryUtilization: 0.75 }>;
+}
+
+export type V1Alpha1ExportService = V1Alpha1OllamaProxyService | V1Alpha1VllmService;
 
 export interface V1Alpha1ExportAgent {
   readonly name: string;
@@ -100,8 +130,8 @@ export interface V1Alpha1Export {
   readonly kind: typeof NEMOCLAW_CONFIG_KIND;
   readonly metadata: Readonly<{ name: string; uid: string }>;
   readonly spec: Readonly<{
-    gateway: Readonly<{ management: "managed"; endpoint: string }>;
-    services?: Readonly<Record<string, Readonly<V1Alpha1OllamaProxyService>>>;
+    gateway: Readonly<{ management: "managed"; endpoint: string; networkCIDR: string }>;
+    services?: Readonly<Record<string, Readonly<V1Alpha1ExportService>>>;
     inferenceProviders: readonly Readonly<
       V1Alpha1HostedInferenceProvider | V1Alpha1OllamaInferenceProvider
     >[];

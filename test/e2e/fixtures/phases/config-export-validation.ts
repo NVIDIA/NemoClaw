@@ -208,6 +208,7 @@ const OllamaInferenceProviderSchema = Type.Object(
 const OllamaProxyServiceSchema = Type.Object(
   {
     kind: Type.Literal("ollamaProxy"),
+    image: Type.Null(),
     endpoint: NonEmptyStringSchema,
     upstream: Type.Object(
       {
@@ -220,6 +221,53 @@ const OllamaProxyServiceSchema = Type.Object(
           { additionalProperties: false },
         ),
       },
+      { additionalProperties: false },
+    ),
+  },
+  { additionalProperties: false },
+);
+const VllmServiceSchema = Type.Object(
+  {
+    kind: Type.Literal("vllm"),
+    authentication: Type.Literal("bearer"),
+    hardware: Type.Object(
+      {
+        architecture: Type.Literal("amd64"),
+        minComputeCapability: Type.Literal(90),
+        minGpuMemoryBytes: Type.Literal(96_000_000_000),
+        minDriverMajor: Type.Literal(580),
+      },
+      { additionalProperties: false },
+    ),
+    container: Type.Object(
+      { ipc: Type.Literal("host"), sharedMemoryGiB: Type.Literal(32) },
+      { additionalProperties: false },
+    ),
+    image: Type.Null(),
+    model: Type.Object(
+      {
+        repository: NonEmptyStringSchema,
+        revision: Type.String({ pattern: "^[a-f0-9]{40}$" }),
+      },
+      { additionalProperties: false },
+    ),
+    serving: Type.Object(
+      {
+        modelName: NonEmptyStringSchema,
+        mambaBackend: Type.Literal("flashinfer"),
+        enforceEager: Type.Literal(false),
+        toolParser: Type.Literal("qwen3_coder"),
+        reasoningParser: Type.Literal("nemotron_v3"),
+        port: Type.Integer({ minimum: 1024, maximum: 65_535 }),
+        contextTokens: Type.Literal(65_536),
+        maxSequences: Type.Literal(1),
+        batchTokens: Type.Literal(4096),
+        startupTimeoutSeconds: Type.Literal(1800),
+      },
+      { additionalProperties: false },
+    ),
+    memory: Type.Object(
+      { gpuMemoryUtilization: Type.Literal(0.75) },
       { additionalProperties: false },
     ),
   },
@@ -242,6 +290,7 @@ const ConfigExportDocumentSchema = Type.Object(
           {
             management: Type.Literal("managed"),
             endpoint: NonEmptyStringSchema,
+            networkCIDR: Type.String({ pattern: "^172\\.30\\.[0-9]{1,3}\\.0/24$" }),
           },
           { additionalProperties: false },
         ),
@@ -249,7 +298,9 @@ const ConfigExportDocumentSchema = Type.Object(
           Type.Union([HostedInferenceProviderSchema, OllamaInferenceProviderSchema]),
           { minItems: 1 },
         ),
-        services: Type.Optional(Type.Record(LocalNameSchema, OllamaProxyServiceSchema)),
+        services: Type.Optional(
+          Type.Record(LocalNameSchema, Type.Union([OllamaProxyServiceSchema, VllmServiceSchema])),
+        ),
         sandboxes: Type.Array(
           Type.Union([
             DeepAgentsExportSandboxSchema,
@@ -494,6 +545,8 @@ function exportedHarnessKind(agent: string | null | undefined): string | null {
 
 function exportedProviderName(provider: string | null | undefined): string | null {
   if (!provider) return null;
+  if (provider === "vllm-local") return "managed-vllm";
+  if (provider === "ollama-local") return "local";
   const normalized = provider
     .toLowerCase()
     .replace(/[^a-z0-9-]+/gu, "-")
@@ -638,7 +691,9 @@ function semanticsFromDocument(document: ConfigExportDocument): ConfigExportSema
     inferenceEndpoint:
       provider && "endpoint" in provider && typeof provider.endpoint === "string"
         ? provider.endpoint
-        : (service?.endpoint ?? null),
+        : service && "endpoint" in service
+          ? service.endpoint
+          : null,
     model: route?.overrides?.model ?? null,
     credentialReference:
       provider && "credential" in provider ? (provider.credential?.env ?? null) : null,
@@ -717,7 +772,10 @@ async function expectedSemantics(
     inferenceProvider:
       entry.preferredInferenceApi === "anthropic-messages" ? "anthropic" : "openai",
     inferenceApi: entry.preferredInferenceApi ?? null,
-    inferenceEndpoint: entry.endpointUrl ?? null,
+    inferenceEndpoint:
+      entry.provider === "vllm-local" || entry.provider === "ollama-local"
+        ? null
+        : (entry.endpointUrl ?? null),
     model: entry.model ?? null,
     credentialReference,
     routeName: "primary",
@@ -1113,6 +1171,7 @@ export class ConfigExportValidationPhaseFixture {
       ...(classification === "failure" ? { failureStage } : {}),
       ...(diagnostic ? { diagnostic } : {}),
     };
+    if (evidence.passed && raw) await this.artifacts.writeText("config-export.yaml", raw);
     await this.artifacts.writeJson(EVIDENCE_FILE, evidence);
     if (!evidence.passed) {
       throw new Error(

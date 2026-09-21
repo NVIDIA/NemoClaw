@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { createHash } from "node:crypto";
 import type { NemoClawConfigDocumentName, NemoClawConfigDocumentUid } from "../../config/model";
 import type {
   V1Alpha1Export,
@@ -10,6 +11,15 @@ import type {
 import type { VerifiedExportSource } from "./export-evidence";
 
 const OLLAMA_SERVICE_NAME = "ollama-auth";
+const VLLM_SERVICE_NAME = "vllm";
+
+function targetNetwork(sandboxName: string) {
+  const subnet = createHash("sha256").update(sandboxName).digest()[0]!;
+  return {
+    networkCIDR: `172.30.${subnet}.0/24`,
+    bridgeAddress: `172.30.${subnet}.1`,
+  };
+}
 
 function providerLocalName(provider: string): string {
   const normalized = provider
@@ -36,13 +46,12 @@ function inferenceProvider(
   name: string,
 ): V1Alpha1Export["spec"]["inferenceProviders"][number] {
   if ("serving" in source.inference) {
-    if (source.inference.serving.backend !== "ollama")
-      throw new Error("Deferred managed inference cannot be exported to v1alpha1.");
     return {
       name,
       provider: "openai",
       api: "openai-completions",
-      serviceRef: OLLAMA_SERVICE_NAME,
+      serviceRef:
+        source.inference.serving.backend === "ollama" ? OLLAMA_SERVICE_NAME : VLLM_SERVICE_NAME,
     };
   }
   const driver: "anthropic" | "openai" =
@@ -60,6 +69,7 @@ function inferenceProvider(
 
 function ollamaService(
   source: VerifiedExportSource,
+  bridgeAddress: string,
 ): NonNullable<V1Alpha1Export["spec"]["services"]>[string] {
   if (!("serving" in source.inference) || source.inference.serving.backend !== "ollama") {
     throw new Error("Only verified attached Ollama inference can create an Ollama proxy service.");
@@ -67,12 +77,59 @@ function ollamaService(
   const { daemon, proxy, model } = source.inference.serving;
   return {
     kind: "ollamaProxy",
-    endpoint: `http://host.openshell.internal:${proxy.hostPort}/v1`,
+    image: null,
+    endpoint: `http://${bridgeAddress}:${proxy.hostPort}/v1`,
     upstream: {
       endpoint: `http://127.0.0.1:${daemon.hostPort}/v1`,
       model: { name: model.servedName, digest: bareSha256Digest(model.digest) },
     },
   };
+}
+
+function vllmService(
+  source: VerifiedExportSource,
+): NonNullable<V1Alpha1Export["spec"]["services"]>[string] {
+  if (!("serving" in source.inference) || source.inference.serving.backend !== "vllm") {
+    throw new Error("Only verified managed vLLM inference can create a vLLM service.");
+  }
+  const { model, hostPort } = source.inference.serving;
+  return {
+    kind: "vllm",
+    authentication: "bearer",
+    hardware: {
+      architecture: "amd64",
+      minComputeCapability: 90,
+      minGpuMemoryBytes: 96_000_000_000,
+      minDriverMajor: 580,
+    },
+    container: { ipc: "host", sharedMemoryGiB: 32 },
+    image: null,
+    model: { repository: model.id, revision: model.revision },
+    serving: {
+      modelName: model.servedName,
+      mambaBackend: "flashinfer",
+      enforceEager: false,
+      toolParser: "qwen3_coder",
+      reasoningParser: "nemotron_v3",
+      port: hostPort,
+      contextTokens: 65_536,
+      maxSequences: 1,
+      batchTokens: 4096,
+      startupTimeoutSeconds: 1800,
+    },
+    memory: { gpuMemoryUtilization: 0.75 },
+  };
+}
+
+function exportServices(
+  source: VerifiedExportSource,
+  bridgeAddress: string,
+): V1Alpha1Export["spec"]["services"] | undefined {
+  if (!("serving" in source.inference)) return undefined;
+  if (source.inference.serving.backend === "ollama") {
+    return { [OLLAMA_SERVICE_NAME]: ollamaService(source, bridgeAddress) };
+  }
+  return { [VLLM_SERVICE_NAME]: vllmService(source) };
 }
 
 function agentSettings(source: VerifiedExportSource) {
@@ -175,7 +232,7 @@ function targetPolicy(source: VerifiedExportSource): Record<string, unknown> {
 function exportSandbox(
   source: VerifiedExportSource,
   providerName: string,
-  attachedOllama: boolean,
+  singletonLocalInference: boolean,
 ): V1Alpha1ExportSandbox {
   const sandboxBase = {
     name: source.sandboxName,
@@ -206,7 +263,7 @@ function exportSandbox(
       agent: exportAgent(source, providerName, { name: "primary", primary: true }),
     };
   }
-  if (attachedOllama) {
+  if (singletonLocalInference) {
     return {
       ...sandboxBase,
       harness: { kind: "openclaw", ...agentSettings(source) },
@@ -231,9 +288,10 @@ export function buildExportConfig(
   identity: ExportConfigBuildIdentity,
 ): V1Alpha1Export {
   const providerName = exportedProviderName(source.inference);
-  const attachedOllama =
-    "serving" in source.inference && source.inference.serving.backend === "ollama";
-  const sandbox = exportSandbox(source, providerName, attachedOllama);
+  const singletonLocalInference = "serving" in source.inference;
+  const network = targetNetwork(source.sandboxName);
+  const services = exportServices(source, network.bridgeAddress);
+  const sandbox = exportSandbox(source, providerName, singletonLocalInference);
   const candidate = {
     apiVersion: "nemoclaw.nvidia.com/v1alpha1",
     kind: "NemoClawConfig",
@@ -242,8 +300,9 @@ export function buildExportConfig(
       gateway: {
         management: "managed",
         endpoint: `http://127.0.0.1:${source.gateway.port}`,
+        networkCIDR: network.networkCIDR,
       },
-      ...(attachedOllama ? { services: { [OLLAMA_SERVICE_NAME]: ollamaService(source) } } : {}),
+      ...(services ? { services } : {}),
       inferenceProviders: [inferenceProvider(source, providerName)],
       sandboxes: [sandbox],
     },

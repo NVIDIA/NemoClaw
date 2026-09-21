@@ -513,20 +513,34 @@ inference through the managed route and backend, replacing two duplicate raw cha
 The GPU memory-offload assertion also rejects a missing matching process because its memory value
 is then `NaN`; a separate process-existence assertion is unnecessary. Authentication denial,
 runtime ownership, Ready state, and cleanup assertions remain unchanged.
-The `gpu-e2e` target also qualifies configuration export for an attached native Linux Ollama daemon.
+The `gpu-e2e` target also qualifies configuration export for attached Ollama and fixed managed vLLM
+on native Linux Docker.
 A separate OpenClaw scenario disables direct sandbox GPU and uses normal onboarding to create the
 managed proxy on the target's shared port. It stops the installer service before starting a fixture-owned
 daemon on port 11439 and preparing the selected `qwen2.5:0.5b` model.
 It exports twice through the candidate CLI and real SDK, validates both documents through the public
 export schema, compares their specs, and checks the selected model digest, named proxy service,
-and omission of credentials and proxy image metadata. It then stops the daemon
+`image: null`, and omission of credentials. It then stops the daemon
 and requires export to fail without publishing a file.
 Private YAML files are removed through the cleanup registry. The retained evidence contains the exact
-validated YAML bytes, byte count, SHA-256 hash, selected model, ports, and qualification results.
-The current v1 contract represents one agent in each sandbox, so attached-Ollama export refuses a
-live sandbox that contains additional agents.
+validated YAML as a standalone artifact and in a summary with its byte count, SHA-256 hash, selected
+model, ports, and qualification results.
+
+The managed-vLLM scenario selects the exact exportable catalog profile, downloads and starts its
+fixed model server, onboards OpenClaw, and exports twice. It verifies the named `vllm` service,
+`image: null`, model revision, fixed serving settings, singular agent, network CIDR, stable output,
+and credential omission. Retained evidence includes the standalone YAML plus the catalog, profile,
+recipe, source runtime-image, and export hashes used to qualify the source. The API key is registered
+with the artifact redactor before any evidence write. Cleanup first destroys the sandbox and gateway,
+then removes only the exact container ID after rechecking its managed label, API key fingerprint,
+persisted key, and runtime receipt.
+
+The current v1 contract represents one agent in each local-inference sandbox, so both local exporters
+refuse a live sandbox that contains additional agents. Their `image: null` output becomes runnable
+only after a human replaces that field with an official immutable v1 service image digest.
 The existing CUDA, authentication, and inference lifecycle scenarios remain separate.
-Onboarding and model preparation each have a 20-minute limit within the 75-minute test timeout; the catalogue allows 90 minutes for the target.
+Ollama onboarding and model preparation each have a 20-minute limit within the 75-minute test timeout.
+The fixed vLLM scenario has a 90-minute test timeout. The catalogue allows 150 minutes for the target.
 The fixture retries read-only daemon readiness checks on connection refusal or curl
 timeout, for at most 20 reads. It records each attempt and stops on any other failure; model
 preparation, onboarding, and export mutations are not retried.

@@ -27,6 +27,7 @@ import {
   isValidNemoClawRuntimeProvider,
   isValidNemoClawSandboxName,
   isSupportedInferenceApi,
+  NemoClawManagedVllmServingSchema,
   NemoClawAgentToolsConfigSchema,
   NemoClawAdditionalAgentSchema,
   NemoClawOpenClawObservabilitySchema,
@@ -1124,10 +1125,30 @@ function validateInferenceSelection(snapshot: QualifiedExportSnapshot): ExportFi
   return findings;
 }
 
-function validateInferenceRepresentation(snapshot: QualifiedExportSnapshot): ExportFinding[] {
+function validateManagedVllmRepresentation(snapshot: QualifiedExportSnapshot): ExportFinding[] {
   const { inference } = snapshot;
-  if (inference.provider === "ollama-local" || inference.ollamaServing)
-    return validateOllamaServing(snapshot);
+  const serving = inference.managedServing?.serving;
+  if (
+    inference.provider !== "vllm-local" ||
+    inference.api !== "openai-completions" ||
+    inference.credentialEnv !== null ||
+    !serving ||
+    !Check(NemoClawManagedVllmServingSchema, serving) ||
+    inference.model !== serving.model.servedName
+  ) {
+    return [
+      finding(
+        "spec.services",
+        "missing-provenance",
+        "Managed vLLM export requires the fixed verified serving deployment.",
+      ),
+    ];
+  }
+  return [];
+}
+
+function validateHostedInferenceRepresentation(snapshot: QualifiedExportSnapshot): ExportFinding[] {
+  const { inference } = snapshot;
   const findings: ExportFinding[] = [];
   if (
     [inference.provider, inference.model, inference.api, inference.endpoint].some((value) => !value)
@@ -1163,17 +1184,12 @@ function validateInferenceRepresentation(snapshot: QualifiedExportSnapshot): Exp
   return findings;
 }
 
-function validateInitialCompatibility(snapshot: QualifiedExportSnapshot): ExportFinding[] {
+function validateInferenceRepresentation(snapshot: QualifiedExportSnapshot): ExportFinding[] {
   const { inference } = snapshot;
-  if (inference.topology === "managed")
-    return [
-      finding(
-        "spec.inferenceProviders",
-        "unsupported",
-        "V1alpha1 export currently supports hosted and attached Ollama inference; managed vLLM compatibility is deferred.",
-      ),
-    ];
-  return [];
+  if (inference.provider === "ollama-local" || inference.ollamaServing)
+    return validateOllamaServing(snapshot);
+  if (inference.topology === "managed") return validateManagedVllmRepresentation(snapshot);
+  return validateHostedInferenceRepresentation(snapshot);
 }
 
 function validateEndpointEvidence(snapshot: QualifiedExportSnapshot): ExportFinding[] {
@@ -1323,8 +1339,6 @@ function validateAgreement(
   requestedSandboxName: string,
   snapshot: QualifiedExportSnapshot,
 ): ExportFinding[] {
-  const compatibilityFindings = validateInitialCompatibility(snapshot);
-  if (compatibilityFindings.length > 0) return compatibilityFindings;
   return [
     ...classifyExportRegistry(snapshot.registry),
     ...validateSandboxIdentity(requestedSandboxName, snapshot),
@@ -1495,13 +1509,15 @@ export function verifyExportSource(
   findings.push(...workloadFindings);
   if (
     additionalAgents &&
-    (snapshot.inference.provider === "ollama-local" || snapshot.inference.ollamaServing)
+    (snapshot.inference.topology === "managed" ||
+      snapshot.inference.provider === "ollama-local" ||
+      snapshot.inference.ollamaServing)
   ) {
     findings.push(
       finding(
         "spec.sandboxes[].agent",
         "unsupported",
-        "Attached Ollama export currently supports one OpenClaw agent per sandbox.",
+        "Current-v1 local inference export supports one OpenClaw agent per sandbox.",
       ),
     );
   }

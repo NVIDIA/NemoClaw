@@ -159,7 +159,8 @@ describe("attached Ollama export pipeline", () => {
       expect(document.spec.services).toEqual({
         "ollama-auth": {
           kind: "ollamaProxy",
-          endpoint: "http://host.openshell.internal:11440/v1",
+          image: null,
+          endpoint: "http://172.30.142.1:11440/v1",
           upstream: {
             endpoint: "http://127.0.0.1:11439/v1",
             model: {
@@ -175,7 +176,7 @@ describe("attached Ollama export pipeline", () => {
         overrides: { model },
       });
       expect(writeStdout.mock.calls[0]![0]).not.toContain("credential");
-      expect(writeStdout.mock.calls[0]![0]).not.toContain("image:");
+      expect(writeStdout.mock.calls[0]![0]).toContain("image: null");
       expect(probe.readActiveConfig).toHaveBeenCalledWith(11440);
       expect(probe.readDaemonModels).toHaveBeenCalledWith(11439);
       expect(readCredential).not.toHaveBeenCalled();

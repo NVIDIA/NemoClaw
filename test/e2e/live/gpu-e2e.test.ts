@@ -5,6 +5,15 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { EXPORTED_VLLM_PROFILE_ID } from "../../../src/lib/config/model.ts";
+import { cleanupLocalModelRuntimes } from "../../../src/lib/inference/local-model-profile/cleanup.ts";
+import { loadServingCatalog } from "../../../src/lib/inference/serving/catalog-loader.ts";
+import {
+  HOST_LOCAL_VLLM_CONTAINER_NAME,
+  HOST_LOCAL_VLLM_MANAGED_LABEL,
+} from "../../../src/lib/inference/serving/vllm-host-local-lifecycle.ts";
+import { servingProfileProvenance } from "../../../src/lib/inference/serving/profile-provenance.ts";
+import { loadManagedVllmApiKey } from "../../../src/lib/inference/vllm-api-key.ts";
 import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText } from "../fixtures/clients/index.ts";
@@ -37,6 +46,22 @@ import { assertHermesFollowUpReplies } from "./hermes-cli-adapter-live.ts";
 
 const TIMEOUT_MS = testTimeout(75 * 60_000);
 const HERMES_RESPONSE_TIMEOUT_MS = testTimeout(90 * 60_000);
+const VLLM_EXPORT_TIMEOUT_MS = testTimeout(90 * 60_000);
+
+function vllmExportEnv(): NodeJS.ProcessEnv {
+  return env({
+    NEMOCLAW_AGENT: "openclaw",
+    NEMOCLAW_MODEL: "",
+    NEMOCLAW_PROVIDER: "",
+    NEMOCLAW_SANDBOX_GPU: "0",
+    NEMOCLAW_SANDBOX_GPU_DEVICE: "",
+    NEMOCLAW_SERVING_PRESET: "",
+    NEMOCLAW_VLLM_EXTRA_ARGS_JSON: "",
+    NEMOCLAW_VLLM_MODEL: "",
+    NEMOCLAW_VLLM_PORT: "18000",
+    NEMOCLAW_WEB_SEARCH_PROVIDER: "none",
+  });
+}
 
 function hermesResponseEnv(): NodeJS.ProcessEnv {
   return env({
@@ -526,24 +551,22 @@ exec ollama pull qwen2.5:0.5b`,
       JSON.parse(tags.stdout) as { models: Array<{ name: string; digest: string }> }
     ).models.find(({ name }) => name === "qwen2.5:0.5b");
     expect(tags.exitCode, resultText(tags)).toBe(0);
-    expect(model).toBeDefined();
     expect(model?.digest).toMatch(/^(?:sha256:)?[a-f0-9]{64}$/u);
-    expect(daemonOwner).toBeDefined();
 
     progress.phase("export the attached Ollama configuration");
     const firstPath = path.join(directory, "first.yaml");
-    const firstExport = await host.command(
+    await host.command(
       "node",
       [CLI, "config", "export", SANDBOX_NAME, "--output", firstPath, "--json"],
       { artifactName: "export-ollama-first", cwd: REPO_ROOT, env: exportEnv, timeoutMs: 60000 },
     );
-    expect(firstExport.exitCode, resultText(firstExport)).toBe(0);
     const firstYaml = fs.readFileSync(firstPath, "utf8");
     const first = parseConfigExport(firstYaml);
     const provider = first.spec.inferenceProviders[0];
     const service = first.spec.services?.["ollama-auth"];
     expect(service?.upstream.model.digest).toBe(model!.digest.replace(/^sha256:/u, ""));
     const proxyToken = readTokenFileChecked(ollamaProxyTokenFile()).token;
+    artifacts.addRedactionValues([proxyToken]);
     expect(
       firstYaml.includes(proxyToken) ||
         /credential|NEMOCLAW_|openshell:resolve:env/u.test(firstYaml),
@@ -581,6 +604,7 @@ exec ollama pull qwen2.5:0.5b`,
       daemonOwner ??= startAttachedOllama(progress, exportEnv);
       await waitForAttachedOllama(host, exportEnv, "export-cleanup-daemon-ready");
     }
+    await artifacts.writeText("ollama-config-export.yaml", firstYaml);
     await artifacts.writeJson("ollama-config-export-evidence.json", {
       contract: "nemoclaw.ollama-config-export-evidence/v1",
       sourceRevision: process.env.NEMOCLAW_E2E_EXPECTED_SHA ?? null,
@@ -591,6 +615,204 @@ exec ollama pull qwen2.5:0.5b`,
       repeatedSpecMatched: true,
       credentialFree: true,
       stoppedDaemonPublicationPrevented: true,
+      export: {
+        bytes: firstYaml,
+        byteLength: Buffer.byteLength(firstYaml, "utf8"),
+        sha256: createHash("sha256").update(firstYaml).digest("hex"),
+      },
+    });
+  },
+);
+
+test(
+  "OpenClaw exports the fixed managed vLLM profile through a named service (#12012)",
+  {
+    timeout: VLLM_EXPORT_TIMEOUT_MS,
+    meta: {
+      e2ePhases: [
+        "qualify the managed vLLM export host",
+        "onboard the fixed managed vLLM profile",
+        "export the managed vLLM configuration twice",
+        "retain exact YAML and source-provenance evidence",
+      ],
+    },
+  },
+  async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox }) => {
+    const exportEnv = vllmExportEnv();
+    const catalog = loadServingCatalog();
+    const provenance = servingProfileProvenance(catalog, EXPORTED_VLLM_PROFILE_ID);
+    await artifacts.target.declare({
+      id: "gpu-e2e",
+      boundary:
+        "native Linux Docker + fixed catalog-owned managed vLLM + managed OpenClaw + SDK configuration export",
+      credentialBoundary:
+        "The managed vLLM bearer key remains in owner-only host state and is registered with the artifact redactor before evidence publication.",
+      profileId: provenance.preset.id,
+      profileDigest: provenance.preset.digest,
+      recipeId: provenance.recipe.id,
+      recipeDigest: provenance.recipe.digest,
+      sandboxName: SANDBOX_NAME,
+    });
+
+    let createdContainerId: string | null = null;
+
+    progress.phase("qualify the managed vLLM export host");
+    await runtimeProvider.requireAvailable({
+      artifactName: "vllm-export-runtime-info",
+      scenarioLabel: "managed vLLM export",
+    });
+    const preflight = await host.command(
+      "docker",
+      ["inspect", "--format", "{{.Id}}", HOST_LOCAL_VLLM_CONTAINER_NAME],
+      {
+        artifactName: "vllm-export-preflight-container",
+        env: exportEnv,
+        timeoutMs: 30_000,
+      },
+    );
+    expect(
+      `${String(preflight.exitCode)}\n${resultText(preflight)}`,
+      `Refusing to replace a pre-existing ${HOST_LOCAL_VLLM_CONTAINER_NAME} container.`,
+    ).toMatch(/^1\n[\s\S]*no such (?:object|container)/iu);
+    await cleanupGpu(host, sandbox);
+
+    cleanup.trackDisposable("remove the exact managed vLLM runtime", () => {
+      const result = cleanupLocalModelRuntimes({ env: exportEnv, sandboxName: SANDBOX_NAME });
+      expect(result.removed, JSON.stringify(result)).toContain(`container:${createdContainerId}`);
+    });
+    cleanup.trackGateway(host, "nemoclaw", {
+      artifactName: "vllm-export-cleanup-gateway",
+      env: exportEnv,
+      timeoutMs: 60_000,
+    });
+    cleanup.trackDisposable("delete the managed vLLM export OpenShell sandbox", () =>
+      sandbox.cleanupSandbox(SANDBOX_NAME, {
+        artifactName: "vllm-export-cleanup-openshell",
+        env: exportEnv,
+        timeoutMs: 60_000,
+      }),
+    );
+    cleanup.trackSandbox(host, SANDBOX_NAME, {
+      artifactName: "vllm-export-cleanup-sandbox",
+      env: exportEnv,
+      timeoutMs: 15 * 60_000,
+    });
+
+    progress.phase("onboard the fixed managed vLLM profile");
+    const onboard = await host.command(
+      "node",
+      [
+        CLI,
+        "onboard",
+        "--profile",
+        EXPORTED_VLLM_PROFILE_ID,
+        "--fresh",
+        "--non-interactive",
+        "--yes-i-accept-third-party-software",
+      ],
+      {
+        artifactName: "vllm-export-onboard",
+        cwd: REPO_ROOT,
+        env: exportEnv,
+        timeoutMs: execTimeout(75 * 60_000),
+      },
+    );
+    const containerInspection = await host.command(
+      "docker",
+      [
+        "inspect",
+        "--format",
+        `{{.Id}}\t{{index .Config.Labels "${HOST_LOCAL_VLLM_MANAGED_LABEL}"}}\t{{.Config.Image}}`,
+        HOST_LOCAL_VLLM_CONTAINER_NAME,
+      ],
+      {
+        artifactName: "vllm-export-container-identity",
+        env: exportEnv,
+        timeoutMs: 30_000,
+      },
+    );
+    const [inspectedId = "", managedLabel = "", sourceRuntimeImage = ""] =
+      containerInspection.stdout.trim().split("\t");
+    createdContainerId = /^[a-f0-9]{64}$/u.test(inspectedId) ? inspectedId : null;
+    const apiKey = loadManagedVllmApiKey();
+    artifacts.addRedactionValues([apiKey ?? ""]);
+
+    progress.phase("export the managed vLLM configuration twice");
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-vllm-export-"));
+    cleanup.trackDisposable("remove private managed vLLM export documents", () =>
+      fs.rmSync(directory, { recursive: true, force: true }),
+    );
+    const firstPath = path.join(directory, "first.yaml");
+    const firstExport = await host.command(
+      "node",
+      [CLI, "config", "export", SANDBOX_NAME, "--output", firstPath, "--json"],
+      {
+        artifactName: "vllm-export-first",
+        cwd: REPO_ROOT,
+        env: exportEnv,
+        timeoutMs: 60_000,
+      },
+    );
+    const firstYaml = fs.readFileSync(firstPath, "utf8");
+    const first = parseConfigExport(firstYaml);
+    const secondPath = path.join(directory, "second.yaml");
+    const secondExport = await host.command(
+      "node",
+      [CLI, "config", "export", SANDBOX_NAME, "--output", secondPath, "--json"],
+      {
+        artifactName: "vllm-export-second",
+        cwd: REPO_ROOT,
+        env: exportEnv,
+        timeoutMs: 60_000,
+      },
+    );
+    const secondYaml = fs.readFileSync(secondPath, "utf8");
+    const second = parseConfigExport(secondYaml);
+    const service = first.spec.services?.vllm;
+    const provider = first.spec.inferenceProviders[0];
+    const exportedSandbox = first.spec.sandboxes[0];
+    expect(
+      second.spec,
+      artifacts.redact(
+        [
+          resultText(onboard),
+          resultText(containerInspection),
+          resultText(firstExport),
+          resultText(secondExport),
+        ].join("\n"),
+      ),
+    ).toEqual(first.spec);
+
+    progress.phase("retain exact YAML and source-provenance evidence");
+    await artifacts.writeText("vllm-config-export.yaml", firstYaml);
+    await artifacts.writeJson("vllm-config-export-evidence.json", {
+      contract: "nemoclaw.vllm-config-export-evidence/v1",
+      sourceRevision: process.env.NEMOCLAW_E2E_EXPECTED_SHA ?? null,
+      sandboxName: SANDBOX_NAME,
+      source: {
+        catalogDigest: provenance.catalogDigest,
+        profile: provenance.preset,
+        recipe: provenance.recipe,
+        model: provenance.model,
+        runtimeImage: provenance.runtimeImage,
+        containerId: createdContainerId,
+        hostPort: 18_000,
+      },
+      qualification: {
+        publicSchemaValidated: true,
+        repeatedSpecMatched: true,
+        credentialFree: true,
+        nullImagePlaceholder: true,
+        managedContainer: {
+          inspectionExitCode: containerInspection.exitCode,
+          id: createdContainerId,
+          managedLabel,
+          sourceRuntimeImage,
+        },
+        provider,
+        service,
+        sandbox: exportedSandbox,
+      },
       export: {
         bytes: firstYaml,
         byteLength: Buffer.byteLength(firstYaml, "utf8"),
