@@ -37,6 +37,27 @@ const REBIND_PUBLIC_IP = "1.1.1.1";
 const REBIND_CREDENTIAL_KEY = "REBIND_MCP_SECRET";
 const REBIND_HOST_SECRET = MCP_BRIDGE_TEST_CREDENTIALS.rebindHost;
 
+export async function captureTrustedPrivateMcpFailure(
+  host: Pick<HostCliClient, "command" | "openshellCommandPath">,
+  status: { exitCode: number | null; timedOut: boolean },
+  options: { sandboxName: string; artifactPrefix: string },
+): Promise<void> {
+  if (status.exitCode === 0 && !status.timedOut) return;
+  await host
+    .command(
+      host.openshellCommandPath,
+      ["logs", options.sandboxName, "-n", "200", "--source", "all", "--since", "2m"],
+      {
+        artifactName: `${options.artifactPrefix}-mcp-trusted-private-failure-logs`,
+        env: buildAvailabilityProbeEnv(),
+        redactionValues: Object.values(MCP_BRIDGE_TEST_CREDENTIALS),
+        captureLimitBytes: 32 * 1024,
+        timeoutMs: 30_000,
+      },
+    )
+    .catch(() => undefined);
+}
+
 export async function assertTrustedPrivateMcpRebindingDenied(
   host: HostCliClient,
   sandbox: SandboxClient,
@@ -149,6 +170,7 @@ export async function assertTrustedPrivateMcpRebindingDenied(
       timeoutMs: 60_000,
     },
   );
+  await captureTrustedPrivateMcpFailure(host, status, options);
   await options.artifacts.writeJson(
     `${options.artifactPrefix}-mcp-trusted-private-status-requests.json`,
     buildMcpStatusRequestEvidence(
