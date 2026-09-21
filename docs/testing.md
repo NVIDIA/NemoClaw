@@ -36,7 +36,8 @@ Nextest does not run doctests, so the separate Cargo command remains required.
 
 ## Dependency Policy
 
-The [dependency workflow](../.github/workflows/dependencies.yml) checks changed Rust manifests, lockfiles, toolchain, and policy on pull requests and pushes to `v1`.
+The [dependency workflow](../.github/workflows/dependencies.yml) runs on every pull request targeting `v1`, so its required check is available even when no dependencies change.
+Pushes to `v1` run it only when Rust manifests, lockfiles, the toolchain, the policy, or the workflow change.
 It runs once on Linux, outside the native build matrix, without compiling the workspace or caching build artifacts.
 The [policy](../deny.toml) permits the current license inventory and the two existing Git sources; dependency revisions remain pinned in the manifests and lockfile.
 
@@ -48,7 +49,7 @@ cargo deny --locked check licenses sources
 cargo deny --locked check advisories
 ```
 
-Advisories use the current advisory database and are a manual check, separate from dependency-change CI.
+Advisories use the current advisory database and are a manual check, separate from the required license and source checks.
 The workflow also defines a manual advisory step, but GitHub requires the workflow file on the repository's default branch before it accepts manual dispatch.
 Until that requirement is met, run the advisory command locally on `v1`.
 There is no scheduled advisory run on this branch.
