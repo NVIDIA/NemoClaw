@@ -66,8 +66,8 @@ Rebuild a bundle from the recorded source revision if the removed tools are need
 ## Build Agent Images
 
 Use Docker with Buildx on a native host that matches the selected image target.
-Agent builds default to Linux ARM64.
-Set `AGENT_PLATFORM=linux/amd64` to select the native AMD64 locks and stages for Deep Agents or OpenClaw.
+Set `AGENT_PLATFORM=linux/arm64` or `AGENT_PLATFORM=linux/amd64` explicitly; Bake rejects an omitted or unsupported platform.
+ARM64 selects all ten harnesses; AMD64 selects the native locks and stages for Deep Agents and OpenClaw.
 The remaining harnesses are ARM64-only until their pinned native dependencies have matching AMD64 artifacts and qualification.
 Agent images use Node.js 24.21.0 LTS and Python 3.14.7.
 The `nooa`, `nooa-bench`, and `hermes` targets use Python 3.13.15 because their pinned upstream releases require Python below 3.14.
@@ -75,11 +75,11 @@ Build stages use pinned Rust, Node, Python, and uv images, so the host needs no 
 Initial builds need network access to fetch the pinned base images, source archives, and package dependencies.
 Digest-based sandbox use requires a Docker image store that retains repository digests for local builds, such as the tested containerd store.
 
-From the repository root:
+On a native Linux ARM64 host, run from the repository root:
 
 ```sh
 mkdir -p .build
-docker buildx bake openclaw --load --metadata-file .build/agent-images.json
+AGENT_PLATFORM=linux/arm64 docker buildx bake openclaw --load --metadata-file .build/agent-images.json
 docker image inspect nc-fabric:openclaw --format '{{index .RepoDigests 0}}'
 ```
 
@@ -102,8 +102,9 @@ Replace `deepagents` with `openclaw` to build the other qualified AMD64 harness.
 Run `AGENT_PLATFORM=linux/amd64 docker buildx bake agents --load` to build both.
 The AMD64 builds and image tests do not establish successful gateway provisioning or an end-to-end agent response.
 
-Select `hermes`, `pi`, or another name from the [harness matrix](reference/fabric-harnesses.md), or build every agent with `docker buildx bake agents --load`.
-`docker buildx bake ollama-proxy --load` builds the separate proxy image as `nc-fabric:ollama-proxy`.
+On ARM64, select `hermes`, `pi`, or another name from the [harness matrix](reference/fabric-harnesses.md), or build every agent with `AGENT_PLATFORM=linux/arm64 docker buildx bake agents --load`.
+`AGENT_PLATFORM=linux/arm64 docker buildx bake ollama-proxy --load` builds the separate proxy image as `nc-fabric:ollama-proxy`; select `linux/amd64` on an AMD64 host.
+The proxy and its `proxy-tests` target use the same explicit platform selector.
 Set `IMAGE_PREFIX=nc-my-build` before Bake to use your own local repository name without replacing another build's tags.
 
 [The Bake file](../docker-bake.hcl) selects the target platform, qualified harnesses, dependency locks, and named stages in the [shared agent Dockerfile](../image/fabric/Dockerfile).
@@ -116,15 +117,20 @@ Run [image checks](testing.md#image-source-checks) before changing or using an i
 
 ## Build a Runtime Image
 
-Runtime image builds require Linux, Docker, and Buildx.
-The build host must match the artifact manifest's `platform`; omission selects `linux_arm64`, and `linux_amd64` requires a native AMD64 host.
+Runtime image builds require Linux, Buildx, and a Docker daemon using the containerd image store.
+Run `docker info --format '{{json .DriverStatus}}'` against the selected daemon and check for `["driver-type","io.containerd.snapshotter.v1"]`.
+The builder checks this requirement before downloading sources or compiling the supervisor.
+Docker's classic image store is unsupported; use a daemon configured with the [containerd image store](https://docs.docker.com/engine/storage/containerd/) before retrying.
+The builder does not change Docker configuration.
+The artifact manifest must set `platform` to `linux_arm64` or `linux_amd64`; omission is rejected.
+The build host must match that platform, which selects both the supervisor's Rust compilation target and the image platform.
 The builder rejects a mismatched host before building the supervisor or loading an image.
 The artifact manifest selects its Dockerfile, local inputs, immutable source downloads, image name, and reproducible timestamp.
-It downloads pinned sources and dependencies, builds locally, and loads the image into the selected local Docker daemon.
+It downloads pinned sources and dependencies, builds locally, and loads the image into the selected Docker daemon.
 
 It does not launch inference or publish an image.
 
-For ordinary safetensors models, run:
+For ordinary safetensors models on Linux ARM64, run:
 
 ```sh
 cargo run -p nemoclaw-build -- runtime runtimes/vllm/build.json
@@ -154,9 +160,10 @@ This build exports `.build/qwen38/runtime.tar` and loads `nc-prototype-qwen38:sp
 Its Dockerfile applies pinned patches and retains original and modified sources.
 Use [the inline recipe guide](recipes.md) to declare preparation and serving requirements.
 
-Use the immutable OCI manifest digest in the build output for `service.image`.
+The builder exports an OCI archive, loads it, and verifies access by its exported digest and target platform.
+Use the immutable image reference printed as `Runtime image loaded: NAME@sha256:DIGEST` for `spec.services.<name>.image`.
 Do not substitute a mutable tag or a digest copied from another build.
-If the selected daemon is remote, load the archive into that daemon before apply; a local image is not available there automatically.
+If deployment uses a different Docker daemon, load the archive into that daemon before apply; images are not transferred automatically.
 
 ## Retained Sources and Compatibility
 
@@ -173,6 +180,6 @@ Generated bundles, build inputs, and images are ignored by Git.
 Model snapshots and prepared data belong to the deployment’s persistent volume, outside the build context.
 
 The image contains `nemoclaw-runtime`.
-The inline recipe supplies preparation and verification tools; `backend: vllm` selects serving behavior.
+The inline recipe supplies preparation and verification tools; `kind: vllm` selects the service installer and serving behavior.
 Managed containers use `/usr/local/bin/nemoclaw-runtime` and `NEMOCLAW_RUNTIME_SPEC`.
 The former `nemoclaw-spark` entrypoint and `NEMOCLAW_SPARK_SPEC` environment alias are no longer accepted.

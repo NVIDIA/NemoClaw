@@ -1,6 +1,34 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-use super::{Agent, ConfigError, Document, Harness, Inference, Route, Sandbox};
+use super::{ConfigError, Document, Harness, Inference, Route, Sandbox};
+
+// Borrow authored inference together with its declaration scope and diagnostic path.
+// A shared deployment definition cannot see a consuming sandbox's local providers.
+pub(super) struct ScopedInference<'a> {
+    pub inference: &'a Inference,
+    pub sandbox: Option<&'a Sandbox>,
+    pub path: String,
+}
+impl<'a> ScopedInference<'a> {
+    fn new(inference: &'a Inference, sandbox: Option<&'a Sandbox>, name: Option<&str>) -> Self {
+        let base = sandbox.map_or_else(
+            || "spec".into(),
+            |s| format!("spec.sandboxes[{}]", diagnostic_name(&s.name)),
+        );
+        let path = name.map_or_else(
+            || format!("{base}.agent.inference"),
+            |name| format!("{base}.inferences[{}]", diagnostic_name(name)),
+        );
+        Self {
+            inference,
+            sandbox,
+            path,
+        }
+    }
+    pub fn route_path(&self, route: &Route) -> String {
+        format!("{}.routes[{}]", self.path, diagnostic_name(&route.name))
+    }
+}
 
 impl Document {
     pub fn sandbox(&self, name: &str) -> Result<&Sandbox, ConfigError> {
@@ -11,32 +39,30 @@ impl Document {
             .ok_or(ConfigError::new("sandbox name has no definition"))
     }
 
-    /// Resolve an agent's inference without replacing its authored reference.
-    pub fn agent_inference<'a>(&'a self, agent: &'a Agent) -> Result<&'a Inference, ConfigError> {
-        Ok(self.scoped_inference(agent)?.0)
+    /// Resolve inference using the supplied sandbox's definitions and this deployment's definitions.
+    /// Authored references are preserved; resolution does not depend on object addresses.
+    pub fn sandbox_inference<'a>(
+        &'a self,
+        sandbox: &'a Sandbox,
+    ) -> Result<&'a Inference, ConfigError> {
+        Ok(self.scoped_inference(sandbox)?.inference)
     }
 
-    // An enclosing sandbox supplies local definitions; deployment definitions have no sandbox scope.
     pub(super) fn scoped_inference<'a>(
         &'a self,
-        agent: &'a Agent,
-    ) -> Result<(&'a Inference, Option<&'a Sandbox>), ConfigError> {
-        let sandbox = self
-            .spec
-            .sandboxes
-            .iter()
-            .find(|sandbox| std::ptr::eq(&sandbox.agent, agent))
-            .ok_or(ConfigError::new("agent does not belong to this document"))?;
+        sandbox: &'a Sandbox,
+    ) -> Result<ScopedInference<'a>, ConfigError> {
+        let agent = &sandbox.agent;
         match (&agent.inference, &agent.inference_ref) {
-            (Some(inference), None) => Ok((inference, Some(sandbox))),
+            (Some(inference), None) => Ok(ScopedInference::new(inference, Some(sandbox), None)),
             (None, Some(name)) => {
                 if let Some(inference) = self.spec.inferences.get(name) {
-                    return Ok((inference, None));
+                    return Ok(ScopedInference::new(inference, None, Some(name)));
                 }
                 sandbox
                     .inferences
                     .get(name)
-                    .map(move |inference| (inference, Some(sandbox)))
+                    .map(|inference| ScopedInference::new(inference, Some(sandbox), Some(name)))
                     .ok_or_else(|| {
                         missing_reference(
                             &format!(
@@ -59,19 +85,23 @@ impl Document {
         }
     }
 
-    pub(super) fn inference_definitions(
-        &self,
-    ) -> impl Iterator<Item = (&Inference, Option<&Sandbox>)> {
+    pub(super) fn inference_definitions(&self) -> impl Iterator<Item = ScopedInference<'_>> {
         self.spec
             .inferences
-            .values()
-            .map(|inference| (inference, None))
+            .iter()
+            .map(|(name, inference)| ScopedInference::new(inference, None, Some(name)))
             .chain(self.spec.sandboxes.iter().flat_map(|sandbox| {
                 sandbox
                     .inferences
-                    .values()
-                    .chain(sandbox.agent.inference.iter())
-                    .map(move |inference| (inference, Some(sandbox)))
+                    .iter()
+                    .map(move |(name, inference)| {
+                        ScopedInference::new(inference, Some(sandbox), Some(name))
+                    })
+                    .chain(
+                        sandbox.agent.inference.iter().map(move |inference| {
+                            ScopedInference::new(inference, Some(sandbox), None)
+                        }),
+                    )
             }))
     }
 
@@ -93,13 +123,12 @@ impl Document {
                     "inference names must not shadow enclosing definitions",
                 ));
             }
-            let agent = &sandbox.agent;
-            self.agent_inference(agent)?;
+            self.sandbox_inference(sandbox)?;
         }
-        for (inference, sandbox_visible) in self.inference_definitions() {
-            inference.validate_choices()?;
-            for route in &inference.routes {
-                self.route_provider(route, sandbox_visible)?;
+        for selection in self.inference_definitions() {
+            selection.inference.validate_choices()?;
+            for route in &selection.inference.routes {
+                self.route_provider(route, &selection)?;
             }
         }
         Ok(())
@@ -250,7 +279,7 @@ pub(super) fn diagnostic_name(name: &str) -> &str {
         "<invalid name>"
     }
 }
-pub(super) fn missing_reference<'a>(
+pub(crate) fn missing_reference<'a>(
     path: &str,
     kind: &str,
     name: &str,
@@ -266,41 +295,4 @@ pub(super) fn missing_reference<'a>(
         "{path}: unknown {kind} {name:?}; visible definitions: {choices}",
         name = diagnostic_name(name)
     ))
-}
-impl Document {
-    pub(super) fn route_path(&self, route: &Route) -> String {
-        for (name, inference) in &self.spec.inferences {
-            if inference.routes.iter().any(|r| std::ptr::eq(r, route)) {
-                return format!(
-                    "spec.inferences[{}].routes[{}]",
-                    diagnostic_name(name),
-                    diagnostic_name(&route.name)
-                );
-            }
-        }
-        for sandbox in &self.spec.sandboxes {
-            let base = format!("spec.sandboxes[{}]", diagnostic_name(&sandbox.name));
-            for (name, inference) in &sandbox.inferences {
-                if inference.routes.iter().any(|r| std::ptr::eq(r, route)) {
-                    return format!(
-                        "{base}.inferences[{}].routes[{}]",
-                        diagnostic_name(name),
-                        diagnostic_name(&route.name)
-                    );
-                }
-            }
-            let agent = &sandbox.agent;
-            if agent
-                .inference
-                .as_ref()
-                .is_some_and(|i| i.routes.iter().any(|r| std::ptr::eq(r, route)))
-            {
-                return format!(
-                    "{base}.agent.inference.routes[{}]",
-                    diagnostic_name(&route.name)
-                );
-            }
-        }
-        "inference.routes".into()
-    }
 }

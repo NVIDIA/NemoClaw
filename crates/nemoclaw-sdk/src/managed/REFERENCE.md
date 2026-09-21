@@ -5,15 +5,15 @@
 
 `reference.json` records expected managed specifications, ownership labels, container configuration, host configuration, and gateway TOML for the Spark fixture.
 
-The retained cases cover gateway process layout 2 and the inference service.
+The retained cases cover gateway process layout 2 and a managed service process.
 Obsolete gateway process layouts 0 and 1 are rejected before engine access.
 Gateway storage retains its separate layout-0 specification and durable identity.
 Generation is the synthetic 32-character value `bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb`.
 The fixture does not authorize access to any existing deployment.
 
-Tests compare exact specification strings and label hashes.
-Launch comparisons normalize omitted versus null optional maps because Docker treats them equivalently.
-All non-null selected launch settings remain exact.
+Tests check that serialization preserves typed intent and ownership, and that changed configuration changes its identity without selecting new storage.
+Launch checks cover declared network and storage bindings, resource limits, GPU access, privilege restrictions, and the no-restart policy rather than comparing complete output snapshots.
+Observation and mutation fixtures retain independent Docker responses for ownership, drift, and failure checks.
 
 The fixture now uses `/usr/local/bin/nemoclaw-runtime` and `NEMOCLAW_RUNTIME_SPEC`.
 These launch fields were updated after the legacy aliases were removed.

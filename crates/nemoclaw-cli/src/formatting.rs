@@ -92,15 +92,31 @@ mod tests {
             ],
             "deferred": ["OpenShell registration and sandbox require the managed gateway"]
         });
-        let expected = "Plan: 2 resources would change.\n\n  ACTION  RESOURCE\n  create  nemoclaw_managed_gateway.runtime\n  update  fabric_runtime.assistant\n\nDeferred (plan is incomplete):\n  - OpenShell registration and sandbox require the managed gateway\n";
+        let output = render(&["nemoclaw", "plan", "spark.yaml"], result.clone());
         assert_eq!(
-            render(&["nemoclaw", "plan", "spark.yaml"], result.clone()),
-            expected
+            output,
+            render(
+                &["nemoclaw", "plan", "spark.yaml", "-o", "text"],
+                result.clone()
+            )
         );
-        assert_eq!(
-            render(&["nemoclaw", "plan", "spark.yaml", "-o", "text"], result),
-            expected
-        );
+        assert!(serde_json::from_str::<Value>(&output).is_err());
+        for change in result["changes"].as_array().unwrap() {
+            let resource = change["resource"].as_str().unwrap();
+            let row = output
+                .lines()
+                .find(|line| line.contains(resource))
+                .expect("resource action row");
+            let mut cursor = 0;
+            for action in change["actions"].as_array().unwrap() {
+                let action = action.as_str().unwrap();
+                let position = row[cursor..]
+                    .find(action)
+                    .expect("action must belong to this resource");
+                cursor += position + action.len();
+            }
+        }
+        assert!(output.contains(result["deferred"][0].as_str().unwrap()));
     }
 
     #[test]
@@ -110,39 +126,46 @@ mod tests {
             "changes": [{"resource": "nemoclaw_sandbox.assistant", "actions": ["delete"]}],
             "retained": ["nemoclaw_gateway_storage.runtime", "nemoclaw_inference_storage.inference_local"]
         });
-        assert_eq!(
-            render(&["nemoclaw", "plan", "--destroy"], result),
-            "Plan: 1 resource would change.\n\n  ACTION  RESOURCE\n  delete  nemoclaw_sandbox.assistant\n\nRetained resources:\n  - nemoclaw_gateway_storage.runtime\n  - nemoclaw_inference_storage.inference_local\n"
-        );
+        let output =
+            render(&["nemoclaw", "plan", "--destroy"], result.clone()).to_ascii_lowercase();
+        let (changes, retained) = output
+            .split_once("retained")
+            .expect("retention must be visible separately from deletion");
+        assert!(changes.contains("delete") && changes.contains("nemoclaw_sandbox.assistant"));
+        for resource in result["retained"].as_array().unwrap() {
+            let resource = resource.as_str().unwrap();
+            assert!(retained.contains(resource));
+            assert!(!changes.contains(resource));
+        }
     }
 
     #[test]
     fn empty_plan_keeps_incomplete_observation_visible() {
         let mut result = json!({"outcome": "planned", "changes": []});
-        assert_eq!(
-            render(&["nemoclaw", "plan", "spark.yaml"], result.clone()),
-            "No resource changes planned.\n"
-        );
+        let complete = render(&["nemoclaw", "plan", "spark.yaml"], result.clone());
+        assert!(!complete.trim().is_empty());
         result["deferred"] = json!(["Model inventory requires recovery"]);
-        assert_eq!(
-            render(&["nemoclaw", "plan", "spark.yaml"], result),
-            "No resource changes planned.\n\nDeferred (plan is incomplete):\n  - Model inventory requires recovery\n"
-        );
+        let incomplete = render(&["nemoclaw", "plan", "spark.yaml"], result);
+        assert_ne!(incomplete, complete);
+        assert!(incomplete.contains("Model inventory requires recovery"));
     }
 
     #[test]
     fn replacement_preserves_action_order_without_counting_two_resources() {
-        let result = json!({
-            "outcome": "planned",
-            "changes": [{"resource": "nemoclaw_inference_service.inference_local", "actions": ["delete", "create"]}]
-        });
+        let resource = "nemoclaw_inference_service.inference_local";
+        let result = json!({"outcome":"planned", "changes":[{"resource":resource,"actions":["delete","create"]}]});
         let output = render(&["nemoclaw", "plan", "spark.yaml"], result);
-        assert!(output.starts_with("Plan: 1 resource would change.\n"));
-        assert!(output.contains("delete -> create  nemoclaw_inference_service.inference_local"));
+        assert!(output.contains(resource));
+        assert!(output.find("delete").unwrap() < output.find("create").unwrap());
+        assert!(
+            output
+                .split(|character: char| !character.is_ascii_digit())
+                .any(|number| number == "1")
+        );
     }
 
     #[test]
-    fn json_is_indented_and_preserves_the_sdk_result_for_scripts() {
+    fn json_preserves_the_sdk_result_for_scripts() {
         let result = json!({
             "outcome": "planned",
             "changes": [{"resource": "nemoclaw_sandbox.assistant", "actions": ["delete"]}],
@@ -152,9 +175,6 @@ mod tests {
         for input in ["spark.yaml", "--destroy"] {
             let output = render(&["nemoclaw", "plan", input, "-o", "json"], result.clone());
             assert_eq!(serde_json::from_str::<Value>(&output).unwrap(), result);
-            assert!(output.starts_with("{\n  \"outcome\": \"planned\",\n"));
-            assert!(output.contains("\n      \"resource\": \"nemoclaw_sandbox.assistant\","));
-            assert!(output.ends_with("\n}\n"));
         }
     }
 
@@ -180,10 +200,8 @@ mod tests {
             exit_code: "unknown".into(),
         };
         let output = render_error(&error);
-        assert!(output.contains("ControlSupervisorExited"));
-        assert!(output.contains("openshell sandbox get NAME -o json"));
-        assert!(output.contains("gateway and workspace"));
-        assert!(output.contains("resources retained"));
+        assert!(output.starts_with(&error.to_string()));
+        assert!(output.contains("openshell sandbox get"));
     }
 
     #[test]

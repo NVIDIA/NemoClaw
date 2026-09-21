@@ -43,15 +43,15 @@ Run it explicitly for candidate dependency upgrades, outside the default build; 
 
 ## Retained Storage Observations
 
-The read-only live storage test requires an explicit OpenTofu runtime state file containing the test deployment's retained inference volume binding:
+The read-only live storage test requires an explicit OpenTofu runtime state file containing the test deployment's retained inference credential-volume binding from an authenticated vLLM service:
 
 ```sh
 NEMOCLAW_TEST_RUNTIME_STATE=/absolute/path/to/runtime/terraform.tfstate \
   cargo test -p nemoclaw-sdk --test managed_live \
-  retained_inference_volume_preserves_its_reference_binding -- --ignored
+  retained_inference_credentials_preserve_their_reference_binding -- --ignored
 ```
 
-The separate `existing_spark_runtime_bindings_are_observed_without_mutations` test requires both gateway and inference container bindings to exist.
+The separate `existing_spark_runtime_bindings_are_observed_without_mutations` test requires both gateway and inference container bindings to exist and `NEMOCLAW_TEST_RUNTIME_ENGINE` to select their Docker engine.
 Neither read-only test creates resources or establishes live agent inference.
 Refer to [recorded volume-retention results](../validation/rust-storage-linux-arm64.json).
 
@@ -71,7 +71,7 @@ NEMOCLAW_TEST_BUNDLE=/absolute/path/to/immutable/bundle \
   cargo test -p nemoclaw-e2e --test spark spark_yaml_plans_and_applies_expected_resources -- --ignored
 ```
 
-The first plan must create four runtime resources and defer OpenShell registration until the gateway exists.
+The first plan must create gateway and inference compute, retained storage, and the service image resource, deferring OpenShell registration until the gateway exists.
 Apply must create those resources plus the provider profile, provider registration, sandbox, and workspace.
 A second plan and apply must report no changes.
 The test checks readiness without requesting a model response and leaves workloads running.
@@ -80,7 +80,7 @@ After failure, retain state for [explicit recovery](../usage.md#updates-and-reco
 
 Run `spark_image_change_plans_and_applies_replacement` separately with the same three variables and an established, running deployment.
 Change only the inference image pin in the YAML.
-The test compares the input with exported configuration, then requires plan and apply to replace only `nemoclaw_inference_service.inference_qwen`.
+The test compares the input with exported configuration, then requires plan and apply to replace `docker_container.inference_service_inference_qwen` and reconcile its image resource while retaining storage.
 Storage retention and watchdog recovery have separate tests under [runtime boundaries](fixtures.md#runtime-boundaries) and [generic models](#generic-models).
 
 Use an immutable bundle copy for a long live run.
@@ -140,7 +140,7 @@ NEMOCLAW_LIVE_MODEL_STATE=/absolute/path/to/state \
 ```
 
 It checks initial apply, a separately requested agent reply, unchanged apply, export and reapply, absence of PLE preparation, and an operator-triggered watchdog stop.
-Explicit recovery must preserve resource identities and the model manifest.
+Explicit recovery must preserve durable storage bindings and the model manifest; the Docker provider may replace inference compute.
 Successful completion destroys workloads and retains storage.
 Assertions report failures through the test runner; the test writes no separate report.
 
@@ -171,10 +171,35 @@ The `ssh_upload` test additionally requires `NEMOCLAW_TEST_SSH_CONTAINER`, the f
 It writes `/tmp/ssh-transfer-test` and checks the streamed archive and unchanged identity.
 The caller owns fixture setup and cleanup; never target an unrelated container.
 
-The SDK `ssh_capacity` live test exercises the fixed collector on an explicitly selected Linux ARM64 NVIDIA host without provisioning resources.
+The SDK `ssh_capacity` live test exercises the fixed collector on an explicitly selected Linux ARM64 or AMD64 NVIDIA host without provisioning resources.
+It checks that the collected architecture matches the selected Docker daemon's reported architecture.
 
 The existing `fabric_live` test also accepts an external gateway with a managed SSH inference service.
 The live test requests an agent reply separately from apply.
 The test checks managed runtime bindings as well as the hosted agent identity across export/reapply and destroys only the supplied deployment.
 
-The [two-daemon test results](../validation/rust-dual-daemon-linux-arm64.json) describe the live rootless Podman run, controlled download interruption, watchdog stop, engine retarget rejection, and retained model data.
+The [two-daemon test results](../validation/rust-dual-daemon-linux-arm64.json) describe the earlier custom-controller path, including live rootless Podman, controlled download interruption, watchdog stop, engine retarget rejection, and retained model data.
+They do not qualify the current Docker-provider path on GPU hardware.
+
+## Docker Gateway Recovery
+
+The SDK's `managed_gateway_plan_apply_noop_destroy_and_recovery_use_real_opentofu` test exercises only the managed runtime stage with a real gateway, Docker, both providers, and OpenTofu.
+Supply a verified bundle and an owned configuration with a fresh UID, free gateway port/subnet, Docker sandboxes, external inference, and no managed services.
+The test does not create sandboxes or request inference.
+It removes its gateway process on completion but retains the database, keys, initializer, bridge, and state.
+
+From the repository root:
+
+```sh
+NEMOCLAW_TEST_BUNDLE=/absolute/path/to/bundle \
+NEMOCLAW_TEST_GATEWAY_DOCUMENT=/absolute/path/to/gateway.yaml \
+NEMOCLAW_TEST_GATEWAY_STATE=/absolute/path/to/new-state \
+cargo test -p nemoclaw-sdk \
+  managed_gateway_plan_apply_noop_destroy_and_recovery_use_real_opentofu \
+  --lib -- --ignored
+```
+
+The test checks read-only planning, unchanged apply, stopped/deleted process recovery, retained credential identity, and destroy/reapply.
+It also replaces the listen port inside the runtime-stage test and temporarily substitutes the owned encryption key to verify rejection without state changes, then restores the original key.
+That internal replacement test does not authorize retargeting an established public deployment endpoint; the SDK still rejects that operation.
+The gateway image remains pinned by the SDK.

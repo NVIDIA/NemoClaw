@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+mod support;
 use async_trait::async_trait;
 use nemoclaw_provider::{Backend, Definition, Mutation, ResourceAdapter, Row, State};
 use nemoclaw_sdk::ObservationError;
@@ -36,6 +37,76 @@ fn state(row: Row) -> State {
 }
 
 #[tokio::test]
+async fn omitted_optional_computed_values_get_defaults_when_the_proposed_value_is_unknown() {
+    let resource = ResourceAdapter::new(
+        Definition::new(
+            "provider",
+            &["name", "endpoint", "credential_env"],
+            &["endpoint", "credential_env"],
+        ),
+        Arc::new(Fixture(Ok(None))),
+    );
+    let config = State::from([
+        ("name".into(), Value::Value("inference".into())),
+        (
+            "endpoint".into(),
+            Value::Value("https://example.test/v1".into()),
+        ),
+        ("credential_env".into(), Value::Null),
+    ]);
+    let mut proposed = config.clone();
+    proposed.insert("credential_env".into(), Value::Unknown);
+    let mut diagnostics = Diagnostics::default();
+    let result = resource
+        .plan_create(&mut diagnostics, proposed, config, Value::Null)
+        .await;
+    assert!(diagnostics.errors.is_empty(), "{diagnostics:?}");
+    assert_eq!(
+        result.unwrap().0["credential_env"],
+        Value::Value(String::new())
+    );
+}
+
+#[tokio::test]
+async fn removing_image_pull_policy_restores_the_default_without_replacement() {
+    let resource = ResourceAdapter::new(
+        Definition::new(
+            "inference_service",
+            &["spec", "running", "image_pull_policy"],
+            &["running", "image_pull_policy"],
+        ),
+        Arc::new(Fixture(Ok(None))),
+    );
+    let encoded = support::specification().to_string();
+    let prior: State = [
+        ("id", "physical"),
+        ("spec", encoded.as_str()),
+        ("running", "true"),
+        ("image_pull_policy", "Always"),
+    ]
+    .map(|(key, value)| (key.into(), Value::Value(value.into())))
+    .into();
+    let mut config = prior.clone();
+    config.insert("image_pull_policy".into(), Value::Null);
+    let mut diagnostics = Diagnostics::default();
+    let (planned, _, replacements) = resource
+        .plan_update(
+            &mut diagnostics,
+            prior.clone(),
+            prior.clone(),
+            config,
+            Value::Null,
+            Value::Null,
+        )
+        .await
+        .unwrap();
+    assert!(diagnostics.errors.is_empty());
+    assert!(replacements.is_empty());
+    assert_eq!(planned["id"], prior["id"]);
+    assert_eq!(planned["image_pull_policy"], Value::Value(String::new()));
+}
+
+#[tokio::test]
 async fn failed_and_partial_observations_retain_protocol_state() {
     let mut partial = row();
     partial.remove("id");
@@ -61,19 +132,30 @@ async fn failed_and_partial_observations_retain_protocol_state() {
 }
 
 #[tokio::test]
-async fn confirmed_absence_has_no_error_and_returns_null_state() {
-    let resource = ResourceAdapter::new(
-        Definition::new("workspace", &["name", "owner", "generation"], &[]),
-        Arc::new(Fixture(Ok(None))),
-    );
-    let mut diagnostics = Diagnostics::default();
-    assert!(
-        resource
-            .read(&mut diagnostics, state(row()), Value::Null, Value::Null)
-            .await
-            .is_none()
-    );
-    assert!(diagnostics.errors.is_empty());
+async fn missing_openshell_bindings_are_preserved_except_during_non_workspace_teardown() {
+    for kind in ["workspace", "provider_profile", "provider", "sandbox"] {
+        for destroying in [false, true] {
+            let resource = ResourceAdapter::new(
+                Definition::new(kind, &["name", "owner", "generation"], &[]),
+                Arc::new(Fixture(Ok(None))),
+            );
+            resource
+                .destroying
+                .store(destroying, std::sync::atomic::Ordering::Release);
+            let mut diagnostics = Diagnostics::default();
+            let prior = state(row());
+            let result = resource
+                .read(&mut diagnostics, prior.clone(), Value::Null, Value::Null)
+                .await;
+            if destroying && kind != "workspace" {
+                assert!(result.is_none());
+                assert!(diagnostics.errors.is_empty());
+            } else {
+                assert_eq!(result.unwrap().0, prior);
+                assert!(!diagnostics.errors.is_empty());
+            }
+        }
+    }
 }
 
 struct CreatedIncomplete;
@@ -137,7 +219,10 @@ async fn immediate_exit_establishes_state_and_restart_preserves_identity() {
     );
     let mut diagnostics = Diagnostics::default();
     let configured = State::from([
-        ("spec".into(), Value::Value("pinned-spec".into())),
+        (
+            "spec".into(),
+            Value::Value(support::specification().to_string()),
+        ),
         ("running".into(), Value::Null),
         ("id".into(), Value::Null),
     ]);
@@ -189,4 +274,44 @@ async fn immediate_exit_establishes_state_and_restart_preserves_identity() {
         .unwrap();
     assert!(diagnostics.errors.is_empty());
     assert_eq!(restarted, created);
+}
+
+#[tokio::test]
+async fn openshell_planning_rejects_immutable_changes_and_requires_explicit_teardown() {
+    for kind in ["workspace", "provider_profile", "provider", "sandbox"] {
+        let resource = ResourceAdapter::new(
+            Definition::new(kind, &["name", "owner", "generation"], &[]),
+            Arc::new(Fixture(Ok(None))),
+        );
+        let prior = state(row());
+        let mut changed = prior.clone();
+        changed.insert("name".into(), Value::Value("replacement".into()));
+        let mut diagnostics = Diagnostics::default();
+        assert!(
+            resource
+                .plan_update(
+                    &mut diagnostics,
+                    prior.clone(),
+                    changed.clone(),
+                    changed,
+                    Value::Null,
+                    Value::Null
+                )
+                .await
+                .is_none()
+        );
+        assert!(!diagnostics.errors.is_empty());
+        for destroying in [false, true] {
+            resource
+                .destroying
+                .store(destroying, std::sync::atomic::Ordering::Release);
+            let mut diagnostics = Diagnostics::default();
+            let result = resource
+                .plan_destroy(&mut diagnostics, prior.clone(), Value::Null, Value::Null)
+                .await;
+            let allowed = destroying && kind != "workspace";
+            assert_eq!(result.is_some(), allowed);
+            assert_eq!(diagnostics.errors.is_empty(), allowed);
+        }
+    }
 }

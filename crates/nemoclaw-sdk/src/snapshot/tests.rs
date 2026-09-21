@@ -28,6 +28,7 @@ pub(super) async fn server(
     let client = Client {
         base_url: format!("http://{}", listener.local_addr().unwrap()),
         http: reqwest::Client::new(),
+        registry: false,
         resume_attempts: 1,
     };
     let task = tokio::spawn(async move {
@@ -165,6 +166,7 @@ async fn snapshot_bounds_parallel_streams_and_retains_manifest_order() {
     let client = Client {
         base_url: format!("http://{}", listener.local_addr().unwrap()),
         http: reqwest::Client::new(),
+        registry: false,
         resume_attempts: 1,
     };
     let permits = Arc::new(tokio::sync::Semaphore::new(0));
@@ -394,6 +396,7 @@ async fn manifest_saves_each_verified_file_before_other_downloads_finish() {
         let client = Client {
             base_url: format!("http://{}", listener.local_addr().unwrap()),
             http: reqwest::Client::new(),
+            registry: false,
             resume_attempts: 1,
         };
         let (release, wait) = tokio::sync::oneshot::channel();

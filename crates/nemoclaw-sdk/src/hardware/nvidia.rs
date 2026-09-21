@@ -33,10 +33,14 @@ pub fn inventory(gpu: &str, processes: &str) -> Result<(String, u32, usize), Err
 #[cfg(any(unix, test))]
 fn single_gpu<'a>(mut lines: impl Iterator<Item = &'a str>) -> Result<(String, u32), Error> {
     let Some(line) = lines.next() else {
-        return Err(Error::State("Spark requires exactly one observable GPU"));
+        return Err(Error::State(
+            "managed inference requires exactly one observable GPU",
+        ));
     };
     if lines.next().is_some() {
-        return Err(Error::State("Spark requires exactly one observable GPU"));
+        return Err(Error::State(
+            "managed inference requires exactly one observable GPU",
+        ));
     }
     let mut fields = line.split(',').map(str::trim);
     let (Some(name), Some(version), None) = (fields.next(), fields.next(), fields.next()) else {
@@ -53,18 +57,35 @@ fn single_gpu<'a>(mut lines: impl Iterator<Item = &'a str>) -> Result<(String, u
         .map_err(|_| Error::State("driver version is unobservable"))?;
     Ok((name.into(), major))
 }
-/// Decode one GPU's MiB memory counters and major.minor compute capability.
+/// Decode one GPU's compute capability independently of its memory counters.
 #[cfg(any(unix, test))]
-pub fn dedicated_memory(text: &str) -> Result<super::DedicatedGpu, Error> {
-    let error = || Error::State("dedicated GPU memory or compute capability is unobservable");
+pub fn compute_capability(text: &str) -> Result<u32, Error> {
+    let error = || Error::State("GPU compute capability is unobservable");
+    let (major, minor) = text.trim().split_once('.').ok_or_else(error)?;
+    let major = major.parse::<u32>().map_err(|_| error())?;
+    let minor = minor.parse::<u32>().map_err(|_| error())?;
+    if !(1..=99).contains(&major) || minor > 9 {
+        return Err(error());
+    }
+    Ok(major * 10 + minor)
+}
+
+/// Preserve unsupported framebuffer counters without inferring a memory architecture.
+/// NVIDIA documents N/A for unsupported fields: https://docs.nvidia.com/deploy/nvidia-smi/
+#[cfg(any(unix, test))]
+pub fn framebuffer_memory(text: &str) -> Result<Option<super::GpuMemory>, Error> {
+    let error = || Error::State("GPU framebuffer memory observation is incomplete");
     let mut lines = text.trim().lines();
     let line = lines.next().ok_or_else(error)?;
     if lines.next().is_some() {
         return Err(error());
     }
     let fields: Vec<_> = line.split(',').map(str::trim).collect();
-    if fields.len() != 3 {
+    if fields.len() != 2 {
         return Err(error());
+    }
+    if fields.iter().all(|field| matches!(*field, "N/A" | "[N/A]")) {
+        return Ok(None);
     }
     let bytes = |s: &str| {
         s.parse::<u64>()
@@ -75,17 +96,28 @@ pub fn dedicated_memory(text: &str) -> Result<super::DedicatedGpu, Error> {
     };
     let total = bytes(fields[0])?;
     let free = bytes(fields[1])?;
-    let (major, minor) = fields[2].split_once('.').ok_or_else(error)?;
-    let major = major.parse::<u32>().map_err(|_| error())?;
-    let minor = minor.parse::<u32>().map_err(|_| error())?;
-    if total == 0 || free > total || !(1..=99).contains(&major) || minor > 9 {
+    if total == 0 || free > total {
         return Err(error());
     }
-    Ok(super::DedicatedGpu {
-        total,
-        free,
-        compute_capability: major * 10 + minor,
-    })
+    Ok(Some(super::GpuMemory { total, free }))
+}
+
+#[cfg(unix)]
+pub(super) fn apply_observations(
+    capacity: &mut super::Capacity,
+    gpu: &str,
+    processes: &str,
+    compute: &str,
+    memory: &str,
+) -> Result<(), Error> {
+    (
+        capacity.gpu,
+        capacity.driver_major,
+        capacity.foreign_gpu_processes,
+    ) = inventory(gpu, processes)?;
+    capacity.compute_capability = compute_capability(compute)?;
+    capacity.gpu_memory = framebuffer_memory(memory)?;
+    Ok(())
 }
 
 #[cfg(target_os = "linux")]
@@ -96,40 +128,99 @@ pub async fn populate(capacity: &mut super::Capacity) -> Result<(), Error> {
         other => other,
     }
     .into();
+    populate_with(capacity, query).await
+}
+
+#[cfg(target_os = "linux")]
+async fn populate_with<F, Fut>(capacity: &mut super::Capacity, mut query: F) -> Result<(), Error>
+where
+    F: FnMut(&'static str) -> Fut,
+    Fut: std::future::Future<Output = Result<String, Error>>,
+{
     let gpu = query("--query-gpu=name,driver_version").await?;
     let processes = query("--query-compute-apps=pid").await?;
-    (
-        capacity.gpu,
-        capacity.driver_major,
-        capacity.foreign_gpu_processes,
-    ) = inventory(&gpu, &processes)?;
-    if capacity.architecture == "amd64" {
-        capacity.gpu_memory = Some(dedicated_memory(
-            &query("--query-gpu=memory.total,memory.free,compute_cap").await?,
-        )?);
-    }
-    Ok(())
+    let compute = query("--query-gpu=compute_cap").await?;
+    let memory = query("--query-gpu=memory.total,memory.free").await?;
+    apply_observations(capacity, &gpu, &processes, &compute, &memory)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn native_collector_observes_compute_with_both_memory_modes_and_propagates_query_errors()
+    {
+        for (gpu, compute, memory) in [
+            ("NVIDIA GB10, 580.0", "12.1", "[N/A], [N/A]"),
+            ("NVIDIA H100, 580.0", "9.0", "81920, 71680"),
+        ] {
+            let observations = [
+                ("--query-gpu=name,driver_version", gpu),
+                ("--query-compute-apps=pid", ""),
+                ("--query-gpu=compute_cap", compute),
+                ("--query-gpu=memory.total,memory.free", memory),
+            ];
+            let mut seen = Vec::new();
+            let mut capacity = super::super::Capacity::default();
+            populate_with(&mut capacity, |query| {
+                seen.push(query);
+                std::future::ready(Ok(observations
+                    .iter()
+                    .find(|(flag, _)| *flag == query)
+                    .unwrap()
+                    .1
+                    .into()))
+            })
+            .await
+            .unwrap();
+            assert_eq!(seen.len(), 4);
+            assert_eq!(
+                capacity.compute_capability,
+                compute_capability(compute).unwrap()
+            );
+            assert_eq!(capacity.gpu_memory, framebuffer_memory(memory).unwrap());
+            for failure in [
+                "--query-gpu=compute_cap",
+                "--query-gpu=memory.total,memory.free",
+            ] {
+                let result = populate_with(&mut capacity, |query| {
+                    std::future::ready(if query == failure {
+                        Err(Error::State("fixture query failure"))
+                    } else {
+                        Ok(observations
+                            .iter()
+                            .find(|(flag, _)| *flag == query)
+                            .unwrap()
+                            .1
+                            .into())
+                    })
+                })
+                .await;
+                assert!(result.is_err(), "{gpu}: {failure}");
+            }
+        }
+    }
     #[test]
-    fn dedicated_gpu_parser_rejects_missing_ambiguous_or_inconsistent_measurements() {
-        let gpu = dedicated_memory("98304, 90112, 9.0\n").unwrap();
+    fn framebuffer_parser_preserves_unsupported_counters_and_rejects_incomplete_observations() {
+        let gpu = framebuffer_memory("98304, 90112\n").unwrap().unwrap();
         assert_eq!(gpu.total, 96 * super::super::GIB);
-        assert_eq!(gpu.compute_capability, 90);
+        for unsupported in ["N/A, N/A\n", "[N/A], [N/A]\n"] {
+            assert_eq!(framebuffer_memory(unsupported).unwrap(), None);
+        }
         for text in [
             "",
-            "[N/A], [N/A], 9.0",
-            "1, 2, 9.0",
-            "0, 0, 9.0",
-            "98304, 90112, 9.0\n98304, 90112, 9.0",
-            "98304, 90112, 9.10",
-            "98304, 90112, 9",
-            "999999999999, 0, 9.0",
+            "[N/A], 100",
+            "100, [N/A]",
+            "Unknown, Unknown",
+            "1, 2",
+            "0, 0",
+            "98304",
+            "98304, 90112, extra",
+            "98304, 90112\n98304, 90112",
+            "999999999999, 0",
         ] {
-            assert!(dedicated_memory(text).is_err(), "{text}");
+            assert!(framebuffer_memory(text).is_err(), "{text}");
         }
     }
     #[test]

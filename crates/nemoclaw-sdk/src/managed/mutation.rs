@@ -5,7 +5,7 @@
 mod tests;
 
 use super::{
-    GATEWAY_KIND, RuntimeObservation, SERVICE_KIND, Spec,
+    GATEWAY_KIND, RuntimeObservation, Spec,
     observation::{verify_network, verify_volume},
 };
 use crate::{
@@ -18,38 +18,20 @@ use bollard::{
 };
 use futures_util::StreamExt;
 use serde_json::json;
-#[async_trait::async_trait]
-trait CapacityCheck: Sync {
-    async fn check(
-        &self,
-        engine: &Engine,
-        spec: &Spec,
-        observed: Option<&RuntimeObservation>,
-    ) -> Result<(), Error>;
-}
-struct HostCapacity;
-#[async_trait::async_trait]
-impl CapacityCheck for HostCapacity {
-    async fn check(
-        &self,
-        engine: &Engine,
-        spec: &Spec,
-        observed: Option<&RuntimeObservation>,
-    ) -> Result<(), Error> {
-        engine.check_capacity(spec, observed).await
-    }
+
+const MISSING_IMAGE: &str = "image is absent from the selected engine and imagePullPolicy is Never; load the pinned image there or allow pulling";
+
+fn image_pull_policy(spec: &Spec) -> crate::config::ImagePullPolicy {
+    spec.gateway.image_pull_policy.unwrap_or_default()
 }
 impl Engine {
-    pub async fn ensure_runtime(&self, spec: &Spec, id: &str) -> Result<RuntimeObservation, Error> {
-        self.ensure_runtime_checked(spec, id, &HostCapacity).await
-    }
-    async fn ensure_runtime_checked(
-        &self,
-        spec: &Spec,
-        id: &str,
-        capacity: &dyn CapacityCheck,
-    ) -> Result<RuntimeObservation, Error> {
-        let observed = match self.observe_runtime(spec, id).await {
+    pub async fn ensure_gateway(&self, spec: &Spec, id: &str) -> Result<RuntimeObservation, Error> {
+        if spec.kind != GATEWAY_KIND || spec.process.is_some() {
+            return Err(Error::Conflict(
+                "service lifecycle belongs to the Docker provider",
+            ));
+        }
+        let observed = match self.observe_gateway(spec, id).await {
             Err(Error::PartialRuntime) => None,
             result => result?,
         };
@@ -58,8 +40,8 @@ impl Engine {
         {
             return Ok(observed.clone());
         }
-        if spec.kind == SERVICE_KIND {
-            capacity.check(self, spec, observed.as_ref()).await?;
+        if observed.is_some() {
+            self.ensure_image(spec).await?;
         }
         if observed.is_none() {
             if !id.is_empty() {
@@ -100,7 +82,7 @@ impl Engine {
         // Start only the freshly observed immutable container ID. A lost create
         // or start reply is reconciled by the next explicit apply, never retried.
         let observed = self
-            .observe_runtime(spec, id)
+            .observe_gateway(spec, id)
             .await?
             .ok_or(Error::Conflict(
                 "runtime changed before start; retained for inspection",
@@ -111,77 +93,66 @@ impl Engine {
                 .await
                 .map_err(|error| remote(&error))?;
         }
-        self.observe_runtime(spec, id).await?.ok_or(Error::Conflict(
-            "started runtime is unobservable; retain intent",
+        self.observe_gateway(spec, id).await?.ok_or(Error::Conflict(
+            "cannot observe the runtime after starting it; keep the state directory and run apply again with the same configuration",
         ))
     }
     pub(crate) async fn ensure_image(&self, spec: &Spec) -> Result<(), Error> {
-        let mut image = self.image(spec.image()).await?;
-        if image.is_none() {
-            if spec.kind == SERVICE_KIND {
-                return Err(Error::Conflict(
-                    "pinned Spark artifact is not loaded; build the reproducible runtime locally",
-                ));
+        let image = self
+            .acquire_image(spec.image(), image_pull_policy(spec))
+            .await?;
+        self.validate_runtime_image(&image).await
+    }
+    /// Inspect the pinned local image without pulling. Apply validates it again
+    /// after acquisition, including images that are absent during planning.
+    pub(crate) async fn check_planned_image(&self, spec: &Spec) -> Result<(), Error> {
+        match self.image(spec.image()).await? {
+            Some(image) => self.validate_runtime_image(&image).await,
+            None if image_pull_policy(spec) == crate::config::ImagePullPolicy::Never => {
+                Err(Error::Conflict(MISSING_IMAGE))
             }
-            self.pull_image(spec.image()).await?;
-            image = self.image(spec.image()).await?;
+            None => Ok(()),
         }
-        let image = image.ok_or(ObservationError::Incomplete)?;
-        spec.validate_image_authentication(&image)?;
-        let architecture = image.architecture.as_deref();
-        let architecture_matches = if let Some(service) = &spec.service {
-            architecture
-                == Some(
-                    service
-                        .hardware
-                        .as_ref()
-                        .map(|hardware| hardware.architecture.as_str())
-                        .or_else(|| {
-                            service
-                                .recipe
-                                .as_ref()
-                                .map(|recipe| recipe.compatibility.architecture.as_str())
-                        })
-                        .unwrap_or("arm64"),
-                )
-        } else {
-            let engine = self.info().await?;
-            gateway_architecture_matches(architecture, engine.architecture.as_deref())
-        };
+    }
+    async fn validate_runtime_image(
+        &self,
+        image: &bollard::models::ImageInspect,
+    ) -> Result<(), Error> {
+        let engine = self.info().await?;
         if image.id.as_ref().is_none_or(String::is_empty)
-            || !architecture_matches
+            || !gateway_architecture_matches(
+                image.architecture.as_deref(),
+                engine.architecture.as_deref(),
+            )
             || image.os.as_deref() != Some("linux")
         {
             return Err(Error::Conflict(
                 "runtime image is unavailable or incompatible with the execution target",
             ));
         }
-        if let Some(service) = &spec.service {
-            let labels = image
-                .config
-                .as_ref()
-                .and_then(|config| config.labels.as_ref())
-                .ok_or(ObservationError::Incomplete)?;
-            if let Some(recipe) = &service.recipe
-                && recipe
-                    .compatibility
-                    .image_labels
-                    .iter()
-                    .any(|(key, value)| labels.get(key) != Some(value))
-            {
-                return Err(Error::Conflict(
-                    "runtime image lacks declared recipe capabilities",
-                ));
-            }
-            if labels.get("org.nemoclaw.backend") != Some(&service.backend) {
-                return Err(Error::Conflict(
-                    "image does not contain the pinned Spark backend",
-                ));
-            }
-        }
         Ok(())
     }
+    pub(crate) async fn acquire_image(
+        &self,
+        reference: &str,
+        policy: crate::config::ImagePullPolicy,
+    ) -> Result<bollard::models::ImageInspect, Error> {
+        use crate::config::ImagePullPolicy;
+        let mut image = self.image(reference).await?;
+        if policy == ImagePullPolicy::Always
+            || (policy == ImagePullPolicy::IfNotPresent && image.is_none())
+        {
+            self.pull_image(reference).await?;
+            image = self.image(reference).await?;
+        }
+        image.ok_or(Error::Conflict(MISSING_IMAGE))
+    }
     pub(crate) async fn pull_image(&self, image: &str) -> Result<(), Error> {
+        use crate::{
+            ByteProgress, DownloadPhase,
+            download::{Reporter, layer_id},
+        };
+        let mut progress = Reporter::new(image);
         let options = CreateImageOptions {
             from_image: Some(image.into()),
             ..Default::default()
@@ -194,10 +165,37 @@ impl Engine {
                     "pinned image pull failed; inspect retained engine state",
                 ));
             }
+            // Never forward registry text. Only known phases and digest-like IDs
+            // are progress; authoritative errors continue through the pull result.
+            let phase = match event.status.as_deref() {
+                Some("Downloading") => Some(DownloadPhase::Downloading),
+                Some("Extracting") => Some(DownloadPhase::Extracting),
+                Some("Verifying Checksum") => Some(DownloadPhase::Verifying),
+                Some("Pull complete" | "Already exists") => Some(DownloadPhase::Complete),
+                _ => None,
+            };
+            if let (Some(phase), Some(layer)) = (phase, layer_id(event.id.as_deref())) {
+                let bytes = event.progress_detail.and_then(|detail| {
+                    Some(ByteProgress {
+                        completed: u64::try_from(detail.current?).ok()?,
+                        total: detail
+                            .total
+                            .and_then(|total| u64::try_from(total).ok())
+                            .filter(|total| *total > 0),
+                    })
+                });
+                progress.report(Some(layer), phase, bytes);
+            }
         }
         if self.image(image).await?.is_none() {
             return Err(Error::Conflict("pinned image pull incomplete"));
         }
+        progress.complete();
+        Ok(())
+    }
+    /// Validate the gateway network and check its subnet before creation.
+    pub(crate) async fn check_planned_network(&self, spec: &Spec) -> Result<(), Error> {
+        self.checked_network(spec).await?;
         Ok(())
     }
     /// Observe an owned network, or check that its subnet is available for creation.
@@ -209,10 +207,6 @@ impl Engine {
         if let Some(network) = self.network(&spec.network()).await? {
             verify_network(spec, &network)?;
             return Ok(Some(network));
-        }
-        if spec.kind != GATEWAY_KIND && spec.service.as_ref().is_none_or(|s| s.placement.is_none())
-        {
-            return Err(Error::Conflict("managed gateway network is absent"));
         }
         let networks = self
             .api
@@ -257,14 +251,14 @@ impl Engine {
             .ok_or(ObservationError::Incomplete)?;
         verify_network(spec, &network)
     }
-    pub async fn replace_runtime(&self, spec: &Spec, id: &str) -> Result<(), Error> {
-        if !matches!(spec.kind.as_str(), GATEWAY_KIND | SERVICE_KIND) || id.is_empty() {
+    pub async fn replace_gateway(&self, spec: &Spec, id: &str) -> Result<(), Error> {
+        if spec.kind != GATEWAY_KIND || spec.process.is_some() || id.is_empty() {
             return Err(Error::Conflict(
-                "only a bound managed process container may be replaced",
+                "only a bound managed gateway container may be replaced",
             ));
         }
         let observed = self
-            .observe_runtime(spec, id)
+            .observe_gateway(spec, id)
             .await?
             .ok_or(ObservationError::Incomplete)?;
         if observed.running {
@@ -284,12 +278,17 @@ impl Engine {
             .await
             .map_err(|error| remote(&error))
     }
-    pub async fn remove_runtime(&self, spec: &Spec, id: &str) -> Result<(), Error> {
-        if self.observe_removal(spec, id).await?.is_none() {
+    pub async fn remove_gateway(&self, spec: &Spec, id: &str) -> Result<(), Error> {
+        if spec.kind != GATEWAY_KIND || spec.process.is_some() {
+            return Err(Error::Conflict(
+                "service lifecycle belongs to the Docker provider",
+            ));
+        }
+        if self.observe_gateway_removal(spec, id).await?.is_none() {
             return Ok(());
         }
-        self.replace_runtime(spec, id).await?;
-        if self.observe_removal(spec, id).await?.is_some() {
+        self.replace_gateway(spec, id).await?;
+        if self.observe_gateway_removal(spec, id).await?.is_some() {
             return Err(Error::Conflict(
                 "runtime deletion was not confirmed; retain state and rerun destroy",
             ));

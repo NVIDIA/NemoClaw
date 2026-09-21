@@ -34,10 +34,12 @@ with open("/proc/meminfo") as source:
     memory = source.read(65537)
 if len(memory) > 65536:
     raise ValueError("incomplete memory observation")
+gpu = run("nvidia-smi", "--query-gpu=name,driver_version", "--format=csv,noheader,nounits")
 print(json.dumps({
     "daemon": info["ID"], "architecture": platform.machine(), "memory": memory,
-    "gpu": run("nvidia-smi", "--query-gpu=name,driver_version", "--format=csv,noheader,nounits"),
-    "gpu_memory": run("nvidia-smi", "--query-gpu=memory.total,memory.free,compute_cap", "--format=csv,noheader,nounits") if platform.machine() in ("amd64", "x86_64") else None,
+    "gpu": gpu,
+    "compute_capability": run("nvidia-smi", "--query-gpu=compute_cap", "--format=csv,noheader,nounits"),
+    "gpu_memory": run("nvidia-smi", "--query-gpu=memory.total,memory.free", "--format=csv,noheader,nounits"),
     "processes": run("nvidia-smi", "--query-compute-apps=pid", "--format=csv,noheader,nounits"),
     "disk_free": stat.f_bavail * stat.f_frsize,
 }))

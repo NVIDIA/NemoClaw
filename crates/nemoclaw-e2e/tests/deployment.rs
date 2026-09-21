@@ -1,9 +1,85 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-use nemoclaw_e2e::openshell::Fixture;
+use nemoclaw_e2e::{assert_same_deployment_state, openshell::Fixture};
 use nemoclaw_sdk::{CancellationToken, Deployment, Outcome, config::Document};
 use std::{fs, path::PathBuf, process::Command};
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires explicit verified NEMOCLAW_TEST_BUNDLE; isolated gateway fixture"]
+async fn incompatible_gateway_is_reported_by_opentofu_plan_without_sdk_preflight() {
+    let bundle = PathBuf::from(std::env::var_os("NEMOCLAW_TEST_BUNDLE").unwrap());
+    let directory = tempfile::tempdir().unwrap();
+    let fixture = Fixture::start().await;
+    let mut document = Document::parse(
+        include_str!("../../nemoclaw-sdk/tests/fixtures/config/local.yaml").as_bytes(),
+    )
+    .unwrap();
+    document.spec.gateway.endpoint = fixture.endpoint.clone();
+    fixture.state.lock().unwrap().driver = Some("podman".into());
+    let error = Deployment::new(directory.path(), &bundle)
+        .plan(&document, &CancellationToken::new())
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(&error, nemoclaw_sdk::Error::Execution { operation, .. } if operation == "plan"),
+        "{error}"
+    );
+    assert_eq!(fixture.state.lock().unwrap().effects, 0);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires explicit verified NEMOCLAW_TEST_BUNDLE; isolated gateway fixture"]
+async fn gateway_change_between_plan_and_apply_preserves_resources_and_allows_teardown() {
+    let bundle = PathBuf::from(std::env::var_os("NEMOCLAW_TEST_BUNDLE").unwrap());
+    let directory = tempfile::tempdir().unwrap();
+    let fixture = Fixture::start().await;
+    let mut document = Document::parse(
+        include_str!("../../nemoclaw-sdk/tests/fixtures/config/local.yaml").as_bytes(),
+    )
+    .unwrap();
+    document.spec.gateway.endpoint = fixture.endpoint.clone();
+    let cancel = CancellationToken::new();
+    let deployment = Deployment::new(directory.path(), &bundle);
+    deployment.apply(&document, &cancel).await.unwrap();
+    let prior = fs::read(directory.path().join("terraform.tfstate")).unwrap();
+    let effects = fixture.state.lock().unwrap().effects;
+    let state = fixture.state.clone();
+    let guarded = Deployment::new(directory.path(), &bundle).with_progress(std::sync::Arc::new(
+        move |event| {
+            if event == nemoclaw_sdk::Progress::Applying {
+                state.lock().unwrap().driver = Some("podman".into());
+            }
+        },
+    ));
+    let error = guarded.apply(&document, &cancel).await.unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("gateway version or compute driver"),
+        "{error}"
+    );
+    assert_eq!(fixture.state.lock().unwrap().effects, effects);
+    assert_eq!(
+        fs::read(directory.path().join("terraform.tfstate")).unwrap(),
+        prior
+    );
+    // Resume the same intent after restoring compatibility, then verify that
+    // capability drift alone cannot prevent explicit teardown.
+    fixture.state.lock().unwrap().driver = None;
+    assert!(
+        deployment
+            .apply(&document, &cancel)
+            .await
+            .unwrap()
+            .changes
+            .is_empty()
+    );
+    fixture.state.lock().unwrap().driver = Some("podman".into());
+    deployment.destroy(&cancel).await.unwrap();
+    assert_eq!(fixture.state.lock().unwrap().workspaces.len(), 1);
+    assert!(fixture.state.lock().unwrap().sandboxes.is_empty());
+}
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires explicit verified NEMOCLAW_TEST_BUNDLE"]
@@ -235,16 +311,20 @@ async fn provider_definitions_export_reapply_and_destroy_in_their_authored_scope
 }
 
 async fn lifecycle(input: &str) {
-    lifecycle_with_ownership(input, false).await;
+    lifecycle_with_rejected_annotations(input, false).await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires explicit verified NEMOCLAW_TEST_BUNDLE"]
-async fn optional_management_plan_export_reapply_preserves_resources() {
-    lifecycle_with_ownership(include_str!("../../../examples/explicit-policy.yaml"), true).await;
+async fn unsupported_ownership_annotations_leave_an_applied_deployment_unchanged() {
+    lifecycle_with_rejected_annotations(
+        include_str!("../../../examples/explicit-policy.yaml"),
+        true,
+    )
+    .await;
 }
 
-async fn lifecycle_with_ownership(input: &str, declare_ownership: bool) {
+async fn lifecycle_with_rejected_annotations(input: &str, reject_annotations: bool) {
     let bundle =
         PathBuf::from(std::env::var_os("NEMOCLAW_TEST_BUNDLE").expect("explicit bundle path"));
     assert!(bundle.is_absolute());
@@ -341,31 +421,29 @@ async fn lifecycle_with_ownership(input: &str, declare_ownership: bool) {
         effects,
         document.spec.sandboxes.len() + if has_search { 5 } else { 3 }
     );
-    if declare_ownership {
-        document.inference_provider_mut().unwrap().management =
-            Some(nemoclaw_sdk::config::Management::External);
-        document.spec.sandboxes[0]
-            .network
-            .proxy
-            .as_mut()
-            .unwrap()
-            .management = Some(nemoclaw_sdk::config::ExternalManagement::External);
-        assert!(
-            deployment
-                .plan(&document, &cancel)
-                .await
-                .unwrap()
-                .changes
-                .is_empty()
-        );
-        assert!(
-            deployment
-                .apply(&document, &cancel)
-                .await
-                .unwrap()
-                .changes
-                .is_empty()
-        );
+    if reject_annotations {
+        let intent_path = directory.path().join("intent.json");
+        let state_path = directory.path().join("terraform.tfstate");
+        let before_intent = fs::read(&intent_path).unwrap();
+        let before_state = fs::read(&state_path).unwrap();
+        let mut invalid = serde_json::to_value(&document).unwrap();
+        invalid["spec"]["inferenceProviders"][0]["management"] = serde_json::json!("external");
+        let input = directory.path().join("unsupported.yaml");
+        fs::write(&input, invalid.to_string()).unwrap();
+        let rejected = Command::new(
+            bundle
+                .join("bin")
+                .join(nemoclaw_sdk::bundle::executable("nemoclaw")),
+        )
+        .args(["apply", "--state-dir"])
+        .arg(directory.path())
+        .arg(input)
+        .output()
+        .unwrap();
+        assert!(!rejected.status.success());
+        assert!(String::from_utf8_lossy(&rejected.stderr).contains("unknown field"));
+        assert_eq!(fs::read(intent_path).unwrap(), before_intent);
+        assert_eq!(fs::read(state_path).unwrap(), before_state);
         assert_eq!(fixture.state.lock().unwrap().effects, effects);
     }
     let exported = Command::new(
@@ -673,7 +751,7 @@ async fn readiness_and_observation_failures_retain_bindings_and_recover_without_
         .unwrap_err()
         .to_string();
     assert!(error.contains("ControlSupervisorExited"), "{error}");
-    assert_eq!(fs::read(&state_path).unwrap(), established);
+    assert_same_deployment_state(&fs::read(&state_path).unwrap(), &established);
     assert_eq!(fixture.state.lock().unwrap().effects, effects);
     assert!(fixture.state.lock().unwrap().exec_calls.is_empty());
     for sandbox in fixture.state.lock().unwrap().sandboxes.values_mut() {
@@ -687,12 +765,13 @@ async fn readiness_and_observation_failures_retain_bindings_and_recover_without_
             .changes
             .is_empty()
     );
-    assert_eq!(fs::read(&state_path).unwrap(), established);
+    let recovered = fs::read(&state_path).unwrap();
+    assert_same_deployment_state(&recovered, &established);
     fixture.state.lock().unwrap().fail_read = Some(("provider", tonic::Code::Unavailable));
     assert!(deployment.export(&cancel).await.is_err());
     assert!(deployment.plan(&document, &cancel).await.is_err());
     assert!(deployment.apply(&document, &cancel).await.is_err());
-    assert_eq!(fs::read(&state_path).unwrap(), established);
+    assert_eq!(fs::read(&state_path).unwrap(), recovered);
     assert_eq!(fixture.state.lock().unwrap().effects, effects);
     fixture.state.lock().unwrap().fail_read = None;
     fixture.state.lock().unwrap().exec_truncated = true;
@@ -808,7 +887,7 @@ async fn apply_preserves_bindings_without_generating_inference() {
             .changes
             .is_empty()
     );
-    assert_eq!(fs::read(&state_path).unwrap(), bound);
+    assert_same_deployment_state(&fs::read(&state_path).unwrap(), &bound);
     assert_eq!(fixture.state.lock().unwrap().effects, effects);
     assert_eq!(deployment.export(&cancel).await.unwrap(), document);
     assert!(
@@ -889,9 +968,9 @@ async fn apply_health_failure_retains_resources_and_unchanged_apply_checks_again
             .all(|cmd| cmd.last().unwrap() != "health")
     );
     assert!(deployment.apply(&document, &cancel).await.is_err());
-    assert_eq!(
-        fs::read(directory.path().join("terraform.tfstate")).unwrap(),
-        before
+    assert_same_deployment_state(
+        &fs::read(directory.path().join("terraform.tfstate")).unwrap(),
+        &before,
     );
     let input = directory.path().join("deployment.yaml");
     fs::write(&input, document.yaml().unwrap()).unwrap();

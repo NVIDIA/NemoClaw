@@ -13,7 +13,6 @@ use bollard::models::VolumeCreateRequest;
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, time::Duration};
 
-pub const STORAGE_KIND: &str = "inference_storage";
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase", deny_unknown_fields)]
 pub struct Storage {
@@ -24,7 +23,7 @@ pub struct Storage {
 }
 impl Storage {
     pub fn validate(&self) -> Result<(), Error> {
-        if !regex::Regex::new(r"^nc-[a-f0-9]{16}-inference(?:-[a-z][a-z0-9-]{0,62})?-data$")
+        if !regex::Regex::new(r"^nc-[a-f0-9]{16}-[a-z][a-z0-9-]{0,72}-(data|auth)$")
             .unwrap()
             .is_match(&self.name)
             || !regex::Regex::new(r"^[a-f0-9-]{36}$")
@@ -67,7 +66,7 @@ impl Storage {
                     Ok(None)
                 } else {
                     Err(Error::Conflict(
-                        "bound model storage is absent; recreation forbidden",
+                        "bound persistent storage is absent; recreation forbidden",
                     ))
                 };
             };
@@ -82,7 +81,7 @@ impl Storage {
                 .filter(|value| !value.is_empty())
                 .ok_or(ObservationError::Incomplete)?;
             if volume.name != self.name || volume.driver != "local" || !volume.options.is_empty() {
-                return Err(Error::Conflict("model storage configuration drifted"));
+                return Err(Error::Conflict("persistent storage configuration drifted"));
             }
             let actual = format!(
                 "{}/{}/{}",
@@ -116,7 +115,7 @@ impl Storage {
             .await
             .map_err(|error| remote(&error))?;
         self.observe(engine, id).await?.ok_or(Error::Conflict(
-            "created model storage is unobservable; retain intent and reconcile",
+            "cannot observe persistent storage after creation; keep the state directory and run apply again with the same configuration",
         ))
     }
 }

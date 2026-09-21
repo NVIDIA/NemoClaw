@@ -4,18 +4,13 @@
 #[path = "spec_tests.rs"]
 mod tests;
 
-use crate::{
-    Error,
-    config::{Gateway, Service},
-    hardware::GIB,
-};
+use crate::{Error, config::Gateway};
 use bollard::models::ContainerCreateBody;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 pub const GATEWAY_KIND: &str = "managed_gateway";
-pub const SERVICE_KIND: &str = "inference_service";
 pub const OWNER_LABEL: &str = "nemoclaw.nvidia.com/uid";
 pub const GENERATION_LABEL: &str = "nemoclaw.nvidia.com/generation";
 pub const SPEC_LABEL: &str = "nemoclaw.nvidia.com/runtime-spec";
@@ -34,7 +29,35 @@ pub struct Spec {
     pub generation: String,
     pub gateway: Gateway,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub service: Option<Service>,
+    pub process: Option<Process>,
+}
+
+/// Package-neutral container process compiled by a service installer.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Process {
+    pub engine: String,
+    pub image: String,
+    pub network_cidr: String,
+    pub create_network: bool,
+    pub architecture: String,
+    #[serde(default)]
+    pub image_labels: std::collections::BTreeMap<String, String>,
+    pub pull_image: bool,
+    /// Mutable acquisition policy supplied by the provider, excluded from identity.
+    #[serde(skip)]
+    pub image_pull_policy: Option<crate::config::ImagePullPolicy>,
+    pub configuration: String,
+    pub entrypoint: Vec<String>,
+    #[serde(default)]
+    pub command: Vec<String>,
+    pub mount_target: String,
+    pub bind_address: String,
+    pub port: u16,
+    pub shared_memory_bytes: u64,
+    pub host_ipc: bool,
+    pub memory_bytes: u64,
+    pub gpu: bool,
 }
 fn docker_driver() -> String {
     "docker".into()
@@ -58,7 +81,7 @@ impl Spec {
     /// # Errors
     /// Returns an error if any of these contracts is invalid.
     pub fn validate(&self) -> Result<(), Error> {
-        if !regex::Regex::new(r"^nc-[a-f0-9]{16}-(gateway|inference(?:-[a-z][a-z0-9-]{0,62})?)$")
+        if !regex::Regex::new(r"^nc-[a-f0-9]{16}-[a-z][a-z0-9-]{0,72}$")
             .unwrap()
             .is_match(&self.name)
             || !regex::Regex::new(r"^[a-f0-9-]{36}$")
@@ -73,21 +96,48 @@ impl Spec {
             ));
         }
         if !matches!(self.compute_driver.as_str(), "docker" | "podman")
-            || self.kind == SERVICE_KIND && self.compute_driver != "docker"
+            || self.process.is_some() && self.compute_driver != "docker"
         {
             return Err(Error::Conflict("unsupported managed compute driver"));
         }
-        if self.service.as_ref().is_none_or(|s| s.placement.is_none()) {
+        if self
+            .process
+            .as_ref()
+            .is_none_or(|process| !process.create_network)
+        {
             self.gateway.validate_managed()?;
         }
-        if self.kind == GATEWAY_KIND && self.service.is_none() && matches!(self.layout, 0 | 2) {
+        if self.kind == GATEWAY_KIND && self.process.is_none() && matches!(self.layout, 0..=2) {
             return Ok(());
         }
-        if self.kind == SERVICE_KIND
+        if self.kind != GATEWAY_KIND
             && self.layout == 0
-            && let Some(service) = &self.service
+            && let Some(process) = &self.process
         {
-            return service.validate().map_err(Into::into);
+            let valid_token = |value: &str| {
+                !value.is_empty() && !value.contains(['\0', '\r', '\n']) && value.len() <= 1 << 20
+            };
+            if self
+                .kind
+                .bytes()
+                .all(|byte| byte.is_ascii_lowercase() || byte == b'_')
+                && crate::docker::Engine::validate_endpoint(&process.engine).is_ok()
+                && (process.engine.starts_with("unix://") || process.engine.starts_with("ssh://"))
+                && process.image.contains("@sha256:")
+                && valid_token(&process.configuration)
+                && !process.entrypoint.is_empty()
+                && process.entrypoint.iter().all(|value| valid_token(value))
+                && process.command.iter().all(|value| valid_token(value))
+                && process.mount_target.starts_with('/')
+                && !process.mount_target.contains("..")
+                && !process.bind_address.is_empty()
+                && process.port != 0
+                && !process.architecture.is_empty()
+                && process.memory_bytes > 0
+            {
+                return Ok(());
+            }
+            return Err(Error::Conflict("invalid managed service process"));
         }
         Err(Error::Conflict("invalid managed runtime kind or layout"))
     }
@@ -96,28 +146,6 @@ impl Spec {
         if self.kind == GATEWAY_KIND && self.layout != 2 {
             return Err(Error::Conflict(
                 "unsupported managed gateway process layout; resources retained",
-            ));
-        }
-        Ok(())
-    }
-    pub(crate) fn validate_image_authentication(
-        &self,
-        image: &bollard::models::ImageInspect,
-    ) -> Result<(), Error> {
-        if self
-            .service
-            .as_ref()
-            .is_some_and(|s| s.authentication.is_some())
-            && image
-                .config
-                .as_ref()
-                .and_then(|c| c.labels.as_ref())
-                .and_then(|l| l.get("org.nemoclaw.inference.authentication"))
-                .map(String::as_str)
-                != Some("bearer-v1")
-        {
-            return Err(Error::Conflict(
-                "runtime image lacks managed bearer authentication; rebuild the runtime image",
             ));
         }
         Ok(())
@@ -142,16 +170,14 @@ impl Spec {
         }
     }
     pub fn engine(&self) -> &str {
-        self.service
+        self.process
             .as_ref()
-            .and_then(|s| s.placement.as_ref())
-            .map_or(&self.gateway.engine, |p| &p.engine)
+            .map_or(&self.gateway.engine, |process| &process.engine)
     }
     pub fn network_cidr(&self) -> &str {
-        self.service
+        self.process
             .as_ref()
-            .and_then(|s| s.placement.as_ref())
-            .map_or(&self.gateway.network_cidr, |p| &p.network_cidr)
+            .map_or(&self.gateway.network_cidr, |process| &process.network_cidr)
     }
     /// Resolve the bridge for service placement or the gateway network.
     ///
@@ -164,15 +190,15 @@ impl Spec {
     ///
     /// # Errors
     /// Returns an error for invalid ownership, configuration, kind, or layout,
-    /// or when no inference service is present.
-    pub fn runtime_service(&self) -> Result<Service, Error> {
+    /// or when no managed service process is present.
+    pub fn runtime_configuration(&self) -> Result<&str, Error> {
         self.validate_runtime()?;
-        let mut service = self.service.clone().ok_or(Error::Conflict(
-            "runtime specification has no inference service",
-        ))?;
-        service.placement = None;
-        service.publication = None;
-        Ok(service)
+        self.process
+            .as_ref()
+            .map(|process| process.configuration.as_str())
+            .ok_or(Error::Conflict(
+                "runtime specification has no managed service process",
+            ))
     }
     /// Serialize a validated runtime specification.
     ///
@@ -188,10 +214,13 @@ impl Spec {
     /// # Errors
     /// Returns validation or serialization errors from `json`.
     pub fn labels(&self) -> Result<HashMap<String, String>, Error> {
+        let mut identity = self.clone();
+        identity.gateway.image_pull_policy = None;
+
         Ok([
             (OWNER_LABEL.into(), self.owner.clone()),
             (GENERATION_LABEL.into(), self.generation.clone()),
-            (SPEC_LABEL.into(), hex(Sha256::digest(self.json()?))),
+            (SPEC_LABEL.into(), hex(Sha256::digest(identity.json()?))),
         ]
         .into())
     }
@@ -205,9 +234,9 @@ impl Spec {
         )
     }
     pub fn image(&self) -> &str {
-        self.service
+        self.process
             .as_ref()
-            .map(|service| service.image.as_str())
+            .map(|process| process.image.as_str())
             .unwrap_or(&self.gateway.image)
     }
     /// Compile the container launch configuration for the runtime.
@@ -255,41 +284,29 @@ impl Spec {
             }
             host["Mounts"] = json!([{"Type":"volume","Source":self.volume(),"Target":data_path},{"Type":"bind","Source":self.gateway.engine.strip_prefix("unix://").ok_or(Error::Conflict("managed gateway requires a Unix socket"))?,"Target":"/var/run/docker.sock"}]);
         } else {
-            let service = self.service.as_ref().ok_or(Error::Conflict(
-                "runtime specification has no inference service",
+            let process = self.process.as_ref().ok_or(Error::Conflict(
+                "runtime specification has no managed service process",
             ))?;
-            config["Entrypoint"] = json!(["/usr/local/bin/nemoclaw-runtime"]);
-            config["Cmd"] = json!([]);
+            config["Entrypoint"] = json!(process.entrypoint);
+            config["Cmd"] = json!(process.command);
             config["Env"] = json!([format!(
                 "NEMOCLAW_RUNTIME_SPEC={}",
-                serde_json::to_string(&self.runtime_service()?)
-                    .map_err(|_| Error::State("cannot serialize runtime service"))?
+                self.runtime_configuration()?
             )]);
             host["NetworkMode"] = json!(self.network());
-            host["Mounts"] = json!([{"Type":"volume","Source":self.volume(),"Target":"/data"}]);
-            host["ShmSize"] = json!(
-                service
-                    .container
-                    .as_ref()
-                    .map_or(8, |c| c.shared_memory_gi_b)
-                    * GIB
-            );
-            if service
-                .container
-                .as_ref()
-                .is_some_and(|c| c.ipc == crate::config::ServiceIpc::Host)
-            {
+            host["Mounts"] =
+                json!([{"Type":"volume","Source":self.volume(),"Target":process.mount_target}]);
+            host["ShmSize"] = json!(process.shared_memory_bytes);
+            if process.host_ipc {
                 host["IpcMode"] = json!("host");
             }
-            host["Memory"] = json!(104 * GIB);
-            host["MemorySwap"] = json!(104 * GIB);
-            host["DeviceRequests"] = json!([{"Driver":"","Count":-1,"Capabilities":[["gpu"]]}]);
+            host["Memory"] = json!(process.memory_bytes);
+            host["MemorySwap"] = json!(process.memory_bytes);
+            if process.gpu {
+                host["DeviceRequests"] = json!([{"Driver":"","Count":-1,"Capabilities":[["gpu"]]}]);
+            }
             host["Ulimits"] = json!([{"Name":"memlock","Soft":-1,"Hard":-1},{"Name":"stack","Soft":67108864,"Hard":67108864}]);
-            let bind_address = match &service.publication {
-                Some(publication) => publication.bind_address.clone(),
-                None => self.bridge()?,
-            };
-            host["PortBindings"] = json!({format!("{}/tcp",service.serving.port):[{"HostIp":bind_address,"HostPort":service.serving.port.to_string()}]});
+            host["PortBindings"] = json!({format!("{}/tcp",process.port):[{"HostIp":process.bind_address,"HostPort":process.port.to_string()}]});
         }
         config["HostConfig"] = host;
         serde_json::from_value(config)

@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 //! Authored YAML represented as JSON, before Document::defaults runs.
-mod validation;
+pub(crate) mod validation;
 
 pub const SCHEMA_PATH: &str = "schemas/nemoclaw-v1alpha1.schema.json";
 

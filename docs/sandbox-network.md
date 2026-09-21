@@ -32,7 +32,7 @@ The pinned OpenShell parser and validator check protocol-specific rules, destina
 See the [generated field reference](reference/configuration.md#explicitpolicy) for the complete input surface.
 
 `landlock.compatibility: best_effort` permits startup when the host cannot enforce Landlock restrictions.
-Use `hard_requirement` to require enforcement; the `strict` spelling used by main's exported schema maps to `hard_requirement`.
+Use `hard_requirement` to require enforcement.
 Kernel enforcement still requires qualification on the deployment host.
 
 ## Runtime Filesystem Access

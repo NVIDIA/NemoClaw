@@ -15,11 +15,9 @@ spec:
     engine: unix:///var/run/docker.sock
     image: ghcr.io/nvidia/openshell/gateway@sha256:ec2b0efea84fff198e888e97c85befb9c908acde92e8256f9b527877ed182d66
     networkCIDR: 172.30.125.0/24
-  inferenceProviders:
-  - name: qwen
-    provider: openai
-    service:
-      backend: vllm
+  services:
+    qwen:
+      kind: vllm
       image: nc-prototype-qwen38@sha256:f031d87311acb3d29114897d08b44374b3475d5445c9927e762042df2125302f
       model:
         repository: Mia-AiLab/Qwen3.8-Flash-Next-NVFP4
@@ -248,6 +246,10 @@ spec:
           - name: vocab.json
             size: 6722759
             sha256: ce99b4cb2983d118806ce0a8b777a35b093e2000a503ebde25853284c9dfa003
+  inferenceProviders:
+  - name: qwen
+    provider: openai
+    serviceRef: qwen
   sandboxes:
   - name: assistant
     runtime:

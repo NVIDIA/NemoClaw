@@ -25,12 +25,19 @@ impl ResourceAdapter {
             destroying: Arc::new(AtomicBool::new(false)),
         }
     }
+    fn openshell(&self) -> bool {
+        matches!(
+            self.definition.kind,
+            "workspace" | "provider_profile" | "provider" | "sandbox"
+        )
+    }
     fn optional(&self, field: &str) -> bool {
         (self.definition.kind == "provider_profile"
             && matches!(field, "endpoint" | "authenticated"))
             || matches!(
                 field,
-                "credential_source"
+                "image_pull_policy"
+                    | "credential_source"
                     | "credential_env"
                     | "agent_runtime"
                     | "provider_type"
@@ -41,13 +48,84 @@ impl ResourceAdapter {
             )
     }
     fn computed_digest(&self) -> bool {
-        self.definition.kind == "ollama_model"
+        self.definition.computed_digest
     }
     fn observed_running(&self) -> bool {
-        matches!(
-            self.definition.kind,
-            "managed_gateway" | "inference_service"
-        )
+        self.definition.observed_running
+    }
+    fn observed_data_path(&self) -> bool {
+        self.definition.kind == "gateway_storage"
+    }
+    fn validate_config(&self, diags: &mut Diagnostics, config: &State) -> Option<()> {
+        if self.definition.fields.contains(&"spec") {
+            match config.get("spec") {
+                Some(Value::Unknown) => {}
+                Some(Value::Value(encoded)) => {
+                    if let Err(error) = nemoclaw_sdk::services::validate_resource_spec(
+                        self.definition.kind,
+                        encoded,
+                    ) {
+                        diags.error(
+                            "Invalid resource specification",
+                            error.to_string(),
+                            AttributePath::new("spec"),
+                        );
+                        return None;
+                    }
+                }
+                _ => {
+                    diags.error_short(
+                        "Resource specification is required",
+                        AttributePath::new("spec"),
+                    );
+                    return None;
+                }
+            }
+        }
+        Some(())
+    }
+
+    async fn check_plan(
+        &self,
+        diags: &mut Diagnostics,
+        proposed: &State,
+        config: &State,
+        prior: Option<&State>,
+    ) -> Option<()> {
+        self.validate_config(diags, config)?;
+        // Unknown inputs may depend on upstream resources. OpenTofu will call
+        // planning again with resolved configuration before applying changes.
+        if self
+            .definition
+            .fields
+            .iter()
+            .any(|field| matches!(config.get(*field), Some(Value::Unknown)))
+        {
+            return Some(());
+        }
+        let result = async {
+            let desired = self.row(proposed, true)?;
+            let prior = prior.map(|state| self.row(state, false)).transpose()?;
+            self.backend
+                .plan(self.definition.kind, &desired, prior.as_ref())
+                .await
+        }
+        .await;
+        match result {
+            Ok(()) => Some(()),
+            Err(error) => {
+                if self.definition.fields.contains(&"spec") {
+                    diags.error(
+                        "Resource planning failed",
+                        error.to_string(),
+                        AttributePath::new("spec"),
+                    );
+                } else {
+                    diags.root_error("Resource planning failed", error.to_string());
+                }
+                None
+            }
+        }
     }
     fn row(&self, state: &State, creating: bool) -> Result<Row, ObservationError> {
         state
@@ -56,7 +134,8 @@ impl ResourceAdapter {
                 Value::Value(v) => Ok((k.clone(), v.clone())),
                 Value::Unknown | Value::Null
                     if (k == "running" && self.observed_running())
-                        || (k == "digest" && self.computed_digest()) =>
+                        || (k == "digest" && self.computed_digest())
+                        || (k == "data_path" && self.observed_data_path()) =>
                 {
                     Ok((k.clone(), String::new()))
                 }
@@ -76,6 +155,7 @@ impl ResourceAdapter {
             .copied()
             .chain(["id"])
             .chain(self.computed_digest().then_some("digest"))
+            .chain(self.observed_data_path().then_some("data_path"))
         {
             if observed
                 .get(field)
@@ -149,6 +229,10 @@ impl Resource for ResourceAdapter {
     type PrivateState<'a> = ValueEmpty;
     type ProviderMetaState<'a> = ValueEmpty;
 
+    async fn validate<'a>(&self, diags: &mut Diagnostics, config: State) -> Option<()> {
+        self.validate_config(diags, &config)
+    }
+
     fn schema(&self, _: &mut Diagnostics) -> Option<Schema> {
         let attributes = self
             .definition
@@ -157,6 +241,7 @@ impl Resource for ResourceAdapter {
             .copied()
             .chain(["id"])
             .chain(self.computed_digest().then_some("digest"))
+            .chain(self.observed_data_path().then_some("data_path"))
             .map(|name| {
                 (
                     name.into(),
@@ -165,6 +250,7 @@ impl Resource for ResourceAdapter {
                         constraint: if name == "id"
                             || (name == "digest" && self.computed_digest())
                             || (name == "running" && self.observed_running())
+                            || (name == "data_path" && self.observed_data_path())
                         {
                             AttributeConstraint::Computed
                         } else if self.optional(name) {
@@ -202,6 +288,13 @@ impl Resource for ResourceAdapter {
                 )
                 .await
             {
+                Ok(None)
+                    if self.openshell()
+                        && (self.definition.kind == "workspace"
+                            || !self.destroying.load(Ordering::Acquire)) =>
+                {
+                    Err(ObservationError::BindingMismatch)
+                }
                 Ok(Some(row)) => self.checked(&prior, row).map(Some),
                 other => other,
             },
@@ -221,40 +314,58 @@ impl Resource for ResourceAdapter {
     }
     async fn plan_create<'a>(
         &self,
-        _: &mut Diagnostics,
+        diags: &mut Diagnostics,
         mut proposed: State,
-        _: State,
+        config: State,
         _: ValueEmpty,
     ) -> Option<(State, ValueEmpty)> {
+        if self.destroying.load(Ordering::Acquire) {
+            diags.root_error_short("Creation forbidden during destroy");
+            return None;
+        }
         proposed.insert("id".into(), Value::Unknown);
         if self.computed_digest() {
             proposed.insert("digest".into(), Value::Unknown);
+        }
+        if self.observed_data_path() {
+            proposed.insert("data_path".into(), Value::Unknown);
         }
         if self.observed_running() {
             proposed.insert("running".into(), Value::Unknown);
         }
         for field in &self.definition.fields {
-            if self.optional(field)
-                && matches!(
-                    proposed.get(*field),
-                    Some(Value::Null | Value::Unknown) | None
-                )
-            {
+            // Core may propose unknown for an omitted OptionalComputed value.
+            // Choose its default only when the configuration itself is null.
+            if self.optional(field) && matches!(config.get(*field), Some(Value::Null) | None) {
                 proposed.insert((*field).into(), Value::Value(String::new()));
             }
         }
+        self.check_plan(diags, &proposed, &config, None).await?;
         Some((proposed, Value::Null))
     }
     async fn plan_update<'a>(
         &self,
-        _: &mut Diagnostics,
+        diags: &mut Diagnostics,
         prior: State,
-        proposed: State,
-        _: State,
+        mut proposed: State,
+        config: State,
         private: ValueEmpty,
         _: ValueEmpty,
     ) -> Option<(State, ValueEmpty, Vec<AttributePath>)> {
+        // OptionalComputed normally carries the prior value forward. Omission
+        // here means the runtime's default policy, not the previous selection.
+        if self.definition.fields.contains(&"image_pull_policy")
+            && matches!(config.get("image_pull_policy"), None | Some(Value::Null))
+        {
+            proposed.insert("image_pull_policy".into(), Value::Value(String::new()));
+        }
+        self.check_plan(diags, &proposed, &config, Some(&prior))
+            .await?;
         let (state, replacements) = plan_update(&self.definition, &prior, proposed);
+        if self.openshell() && !replacements.is_empty() {
+            diags.root_error_short("OpenShell resource replacement is forbidden; use explicit teardown and a new resource identity");
+            return None;
+        }
         Some((
             state,
             private,
@@ -263,11 +374,19 @@ impl Resource for ResourceAdapter {
     }
     async fn plan_destroy<'a>(
         &self,
-        _: &mut Diagnostics,
+        diags: &mut Diagnostics,
         _: State,
         private: ValueEmpty,
         _: ValueEmpty,
     ) -> Option<ValueEmpty> {
+        if self.openshell()
+            && (self.definition.kind == "workspace" || !self.destroying.load(Ordering::Acquire))
+        {
+            diags.root_error_short(
+                "OpenShell deletion requires destroy = true; workspaces must be retained",
+            );
+            return None;
+        }
         Some(private)
     }
     async fn create<'a>(
@@ -289,7 +408,11 @@ impl Resource for ResourceAdapter {
                 return None;
             }
         };
-        let mutation = self.backend.ensure(self.definition.kind, &row).await;
+        let mutation = nemoclaw_sdk::with_provider_download_progress(
+            download_resource(self.definition.kind, &row),
+            self.backend.ensure(self.definition.kind, &row),
+        )
+        .await;
         self.finish(diags, mutation, &row, None)
             .map(|state| (state, private))
     }
@@ -313,7 +436,11 @@ impl Resource for ResourceAdapter {
                 return Some((prior, private));
             }
         };
-        let mutation = self.backend.ensure(self.definition.kind, &row).await;
+        let mutation = nemoclaw_sdk::with_provider_download_progress(
+            download_resource(self.definition.kind, &row),
+            self.backend.ensure(self.definition.kind, &row),
+        )
+        .await;
         self.finish(diags, mutation, &row, Some(prior))
             .map(|state| (state, private))
     }
@@ -346,5 +473,43 @@ impl Resource for ResourceAdapter {
                 None
             }
         }
+    }
+}
+
+fn download_resource(kind: &str, row: &Row) -> String {
+    #[derive(serde::Deserialize)]
+    struct NamedSpec {
+        name: String,
+    }
+    let name = row
+        .get("name")
+        .or_else(|| row.get("model"))
+        .cloned()
+        .or_else(|| {
+            serde_json::from_str::<NamedSpec>(row.get("spec")?)
+                .ok()
+                .map(|spec| spec.name)
+        })
+        .unwrap_or_else(|| "resource".into());
+    format!("{kind}.{name}")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn download_labels_distinguish_named_specs_and_models() {
+        for name in ["first", "second"] {
+            let row = Row::from([("spec".into(), serde_json::json!({"name":name}).to_string())]);
+            assert_eq!(
+                download_resource("inference_service", &row),
+                format!("inference_service.{name}")
+            );
+        }
+        let row = Row::from([("model".into(), "llama3:latest".into())]);
+        assert_eq!(
+            download_resource("model_snapshot", &row),
+            "model_snapshot.llama3:latest"
+        );
     }
 }

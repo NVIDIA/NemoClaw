@@ -17,8 +17,14 @@ Keeping those decisions separate lets an ordinary fixture process exercise the s
 The [supervisor extraction](https://github.com/NVIDIA/NemoClaw/commit/4fee9768e2) removed its need for a complete DGX Spark service configuration.
 The [module separation](https://github.com/NVIDIA/NemoClaw/commit/8d998e02d2) then assigned artifact preparation, hardware rules, and backend behavior to their respective owners.
 An inline recipe supplies model-specific tools; vLLM is the serving backend.
-Direct hardware checks use recipe-declared compatibility or the qualified Spark defaults for ordinary models.
-Both paths retain the qualified Spark memory-policy bounds.
+Direct hardware checks use recipe-declared compatibility or an explicit `spec.services.<name>.hardware` contract for ordinary models.
+Every named profile validates GPU family and observed compute capability independently of memory accounting.
+The catalog declares unified or dedicated memory: unified profiles budget host RAM with a reserve, while dedicated profiles require GPU total/free counters and check host RAM separately.
+Both collectors preserve unsupported framebuffer counters without guessing a memory architecture; failed queries or incomplete observations stop the operation.
+GPU-only profiles require an explicit host architecture, while system profiles fix ARM64.
+Custom dedicated GPU requirements retain their Linux AMD64 contract.
+Hardware identity does not select device placement or parallelism: current collectors require one GPU and the backend uses tensor parallel size 1.
+All paths retain resident memory protection; see [hardware profiles](../models.md#choose-a-hardware-profile) for configuration and qualification limits.
 
 For example, changing a recipe's preparation executable should not change how the supervisor terminates a process group.
 Changing a memory threshold should not change the model snapshot's identity.
@@ -53,16 +59,17 @@ stateDiagram-v2
 
 The startup deadline applies while the backend is loading; download and preparation have separate limits.
 A failed readiness check does not prove that the container was never created.
-The SDK retains its identity so recovery can restart the verified resource instead of allocating another one.
+The SDK retains provider state and persistent storage so recovery can reconcile the service without discarding data.
+The Docker provider may restart or replace disposable compute during explicit apply.
 
 After a protective stop, Docker does not automatically restart inference.
 An immediate restart could repeat the same memory demand before the operator changes the condition that caused shutdown.
-Explicit apply rechecks capacity and retained identities before recovery.
+Explicit apply verifies retained storage and reconciles compute; the hosted runtime rechecks startup capacity before serving.
 
 The [watchdog diagnostic correction](https://github.com/NVIDIA/NemoClaw/commit/35199ef56d) shows why the reason for a stop also matters.
 A memory parser incorrectly assumed that Linux `MemAvailable` must exceed `MemFree`.
 That observation failure required a different fix from real memory pressure, but the original diagnostic did not distinguish them.
-The [supervisor](../../crates/nemoclaw-runtime/src/supervisor.rs) now reports pressure, failed observations, closed sample streams, and operator trips separately.
+The [supervisor](../../crates/nemoclaw-sdk/src/services/runtime/supervisor.rs) now reports pressure, failed observations, closed sample streams, and operator trips separately.
 The parser validates free and available memory independently against total memory; refer to the [kernel memory field definitions](https://www.kernel.org/doc/html/v6.5/filesystems/proc.html).
 
 ## Why Fabric Owns the Agent Process
@@ -94,8 +101,8 @@ Within the existing crates:
 | Launch arguments and readiness probe | Backend modules |
 
 The recipe selects a qualified backend/hardware combination.
-The existing YAML backend identifier remains unchanged for compatibility; this refactor does not add supported combinations or an arbitrary launch-argument mechanism.
-A new hardware profile or backend normally adds a module and qualification evidence.
+The named service selects its installer with `kind: vllm`; this does not add supported combinations or an arbitrary launch-argument mechanism.
+A new hardware profile or backend normally adds a module and records test results for the new configuration.
 
 A crate is justified by a dependency or deployment boundary, not a new GPU name.
 
@@ -141,9 +148,11 @@ Runtime image compatibility is bound to the backend, not to a model revision lab
 The served model name follows the repository, and model storage identity includes both repository and revision.
 
 The model resolver discovers a checksummed inference snapshot.
-Plan may read remote metadata but cannot download weights into runtime storage or prepare a model.
+The default service plan does not read model metadata, download weights, or prepare a model.
+The runtime resolves and validates the snapshot during startup.
 Apply retains resumable downloads and one model manifest containing expected files and their verification metadata.
-Subsequent observation uses that manifest; [retained model files](../models.md#retained-model-files) describes recovery and format compatibility.
+Runtime preparation and recovery use that manifest; [retained model files](../models.md#retained-model-files) describes format compatibility.
+Orchestration consumes the runtime's current status instead of repeating its artifact verification.
 
 Authentication, transport, partial inventories and changed artifacts are errors, never resource absence.
 
@@ -165,4 +174,4 @@ With the corrected settings, Qwen3-4B passed actual Fabric OpenClaw replies, unc
 Resource identities and snapshot completion records stayed stable during recovery; intentional destroy retained storage, and a later apply reused it.
 The same generic runtime image served both tested models.
 
-See the [retained evidence](../validation/rust-selected-model-linux-arm64.json).
+See the [recorded test results](../validation/rust-selected-model-linux-arm64.json).

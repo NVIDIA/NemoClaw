@@ -24,6 +24,8 @@ jobs:
   images:
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 60
+    env:
+      AGENT_PLATFORM: linux/arm64
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -78,9 +80,11 @@ jobs:
       - name: Validate AMD64 agent builds
         run: |
           python3 -B -m unittest discover -s image -p test_builds.py
-          docker buildx bake --check agents
+          docker buildx bake --check agents ollama-proxy
       - name: Build qualified AMD64 agent images locally
-        run: docker buildx bake agents --load
+        run: |
+          docker buildx bake proxy-tests
+          docker buildx bake agents ollama-proxy --load
       - name: Verify assembled AMD64 images and retained source hashes
         run: |
           for harness in deepagents openclaw; do

@@ -1,15 +1,15 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::authoring::{
-    Answers, ApiChoice, AuthoredDocument, Capabilities, DirectInputs, HarnessChoice, Session,
+use nemoclaw_authoring::{
+    AnswerOverrides, Answers, ApiChoice, AuthoredDocument, Capabilities, HarnessChoice, Session,
 };
 use nemoclaw_sdk::config::{Document, MAX_DOCUMENT_BYTES};
 use serde_json::{Value, json};
 
 #[test]
 fn default_onboarding_authors_openclaw_with_hosted_nvidia() {
-    let authored = author_onboarding(DirectInputs::default());
+    let authored = author_onboarding(AnswerOverrides::default());
     let reparsed = Document::parse(authored.yaml().as_bytes()).unwrap();
     let desired = normalized(&reparsed);
     assert!(authored.yaml().len() as u64 <= MAX_DOCUMENT_BYTES);
@@ -40,11 +40,11 @@ fn default_onboarding_authors_openclaw_with_hosted_nvidia() {
 
 #[test]
 fn onboarding_authors_openclaw_with_the_responses_api() {
-    let authored = author_onboarding(DirectInputs {
+    let authored = author_onboarding(AnswerOverrides {
         deployment_name: Some("openclaw-responses".into()),
         api: Some(ApiChoice::OpenAiResponses),
         credential_env: Some("NVIDIA_RESPONSES_API_KEY".into()),
-        ..DirectInputs::default()
+        ..AnswerOverrides::default()
     });
     let document = Document::parse(authored.yaml().as_bytes()).unwrap();
     let desired = normalized(&document);
@@ -62,10 +62,10 @@ fn onboarding_authors_openclaw_with_the_responses_api() {
 
 #[test]
 fn onboarding_authors_hermes_with_hosted_nvidia() {
-    let authored = author_onboarding(DirectInputs {
+    let authored = author_onboarding(AnswerOverrides {
         deployment_name: Some("hermes-nvidia-hosted".into()),
         harness: Some(HarnessChoice::Hermes),
-        ..DirectInputs::default()
+        ..AnswerOverrides::default()
     });
     let document = Document::parse(authored.yaml().as_bytes()).unwrap();
     let desired = normalized(&document);
@@ -225,7 +225,10 @@ fn managed_ollama_should_work() {
     let yaml = include_bytes!("../../../examples/managed-ollama.yaml");
     let document = Document::parse(yaml.as_slice()).unwrap();
     let desired = normalized(&document);
-    assert!(desired["spec"]["inferenceProviders"][0]["ollama"].is_object());
+    let service = desired["spec"]["inferenceProviders"][0]["serviceRef"]
+        .as_str()
+        .unwrap();
+    assert_eq!(desired["spec"]["services"][service]["kind"], "ollama");
 }
 
 #[test]
@@ -233,12 +236,12 @@ fn managed_vllm_should_work() {
     let yaml = include_bytes!("../../../examples/nemotron-amd64.yaml");
     let document = Document::parse(yaml.as_slice()).unwrap();
     let desired = normalized(&document);
+    let service = desired["spec"]["inferenceProviders"][0]["serviceRef"]
+        .as_str()
+        .unwrap();
+    assert_eq!(desired["spec"]["services"][service]["kind"], "vllm");
     assert_eq!(
-        desired["spec"]["inferenceProviders"][0]["service"]["backend"],
-        "vllm"
-    );
-    assert_eq!(
-        desired["spec"]["inferenceProviders"][0]["service"]["hardware"]["minComputeCapability"],
+        desired["spec"]["services"][service]["hardware"]["minComputeCapability"],
         90
     );
 }
@@ -249,12 +252,15 @@ fn external_ollama_proxy_should_work() {
         .external_ollama_proxy();
     let document = Document::parse(desired.yaml().as_bytes()).unwrap();
     let desired = normalized(&document);
+    let service = desired["spec"]["inferenceProviders"][0]["serviceRef"]
+        .as_str()
+        .unwrap();
     assert_eq!(
-        desired["spec"]["inferenceProviders"][0]["endpoint"],
+        desired["spec"]["services"][service]["upstream"]["endpoint"],
         "http://127.0.0.1:11434/v1"
     );
     assert_eq!(
-        desired["spec"]["inferenceProviders"][0]["ollamaProxy"]["endpoint"],
+        desired["spec"]["services"][service]["endpoint"],
         "http://172.20.0.1:11435/v1"
     );
 }
@@ -456,12 +462,12 @@ fn messaging_channels_are_not_supported_yet() {
 
 const UID: &str = "12345678-1234-4234-9234-123456789abc";
 
-fn author_onboarding(inputs: DirectInputs) -> AuthoredDocument {
+fn author_onboarding(inputs: AnswerOverrides) -> AuthoredDocument {
     Session::with_uid(UID)
         .unwrap()
         .project(
             &Capabilities::available(),
-            &Answers::from_direct(Answers::onboarding_defaults(), inputs),
+            &Answers::onboarding_defaults().with_overrides(inputs),
         )
         .unwrap()
 }
@@ -476,7 +482,11 @@ struct DesiredState {
 
 impl DesiredState {
     fn from_onboarding() -> Self {
-        Self::from_yaml(author_onboarding(DirectInputs::default()).yaml().as_bytes())
+        Self::from_yaml(
+            author_onboarding(AnswerOverrides::default())
+                .yaml()
+                .as_bytes(),
+        )
     }
 
     fn from_yaml(yaml: &[u8]) -> Self {
@@ -514,7 +524,11 @@ impl DesiredState {
     }
 
     fn service_backend(mut self, backend: &str) -> Self {
-        self.value["spec"]["inferenceProviders"][0]["service"]["backend"] = json!(backend);
+        let service = self.value["spec"]["inferenceProviders"][0]["serviceRef"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        self.value["spec"]["services"][service]["kind"] = json!(backend);
         self
     }
 
@@ -578,15 +592,16 @@ impl DesiredState {
     }
 
     fn external_ollama_proxy(mut self) -> Self {
-        let provider = &mut self.value["spec"]["inferenceProviders"][0];
-        provider.as_object_mut().unwrap().remove("ollama");
-        provider["management"] = json!("external");
-        provider["endpoint"] = json!("http://127.0.0.1:11434/v1");
-        provider["ollamaProxy"] = json!({
-            "engine": "unix:///var/run/docker.sock",
+        let service = &mut self.value["spec"]["services"]["ollama-server"];
+        let model = service["model"]["name"].clone();
+        *service = json!({
+            "kind": "ollamaProxy",
             "image": format!("nc-ollama-proxy@sha256:{}", "a".repeat(64)),
             "endpoint": "http://172.20.0.1:11435/v1",
-            "model": {"digest": "a".repeat(64)}
+            "upstream": {
+                "endpoint": "http://127.0.0.1:11434/v1",
+                "model": {"name": model, "digest": "a".repeat(64)},
+            }
         });
         self
     }

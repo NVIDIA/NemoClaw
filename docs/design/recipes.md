@@ -51,7 +51,7 @@ flowchart TD
 For example, a preparation tool can finish writing a file and then return malformed verification output.
 The file remains a candidate; it does not become an accepted preparation merely because it exists.
 The [verification failure tests](https://github.com/NVIDIA/NemoClaw/commit/d14bd994bf) cover malformed output, duplicate paths, traversal, oversized output, and wrong hashes.
-The current [preparation lifecycle](../../crates/nemoclaw-sdk/src/recipes/preparation.rs) performs the final checks and directory rename.
+The current [preparation lifecycle](../../crates/nemoclaw-sdk/src/services/installers/vllm/recipes/preparation.rs) performs the final checks and directory rename.
 
 An explicit cache import follows the same rule.
 It offers old files to the new verifier as candidates; it does not transfer trust from an old output manifest.
@@ -65,8 +65,8 @@ They do not need an independently running controller or a separate OpenTofu reso
 The runtime can prepare and verify them before backend startup while the provider retains the service and storage bindings.
 
 The [inline live validation](https://github.com/NVIDIA/NemoClaw/commit/b402353743) reused Qwen packed files after verification and preserved identities across unchanged apply and export/reapply.
-That evidence supported keeping preparation inside the runtime stage.
-It remains evidence for the recorded images and DGX Spark setup, rather than a qualification of every recipe or later image rebuild.
+Those test results supported keeping preparation inside the runtime stage.
+The results apply to the recorded images and DGX Spark setup; they do not qualify every recipe or later image rebuild.
 
 The build boundary follows the same ownership rule.
 The [artifact-manifest refactor](https://github.com/NVIDIA/NemoClaw/commit/47d00d62a6) fixed an ordinary vLLM build that still read Qwen-specific pins.
@@ -78,7 +78,7 @@ Recipe executables remain trusted image code; their hashes verify identity and d
 The inline recipe validation kept one inference-service resource and independent retained storage.
 Both the Qwen recipe and ordinary Qwen3-4B returned actual Fabric OpenClaw responses on DGX Spark.
 The Qwen import required verification but no download or repack; unchanged apply and export/reapply preserved runtime identities, start time, and cache metadata.
-[The retained evidence](../validation/rust-inline-recipes-linux-arm64.json) identifies the tested revisions and excludes native-agent state migration and other GPUs.
+[The recorded test results](../validation/rust-inline-recipes-linux-arm64.json) identify the tested revisions and exclude native-agent state migration and other GPUs.
 
 The declaration includes resource requirements and typed vLLM settings so model-specific assumptions are explicit in YAML.
 Image labels declare required capabilities and protocol support.

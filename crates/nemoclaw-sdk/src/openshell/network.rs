@@ -115,7 +115,6 @@ pub(super) fn row_proxy(row: &Row) -> Result<Option<Proxy>, ObservationError> {
         return Ok(None);
     }
     let proxy = Proxy {
-        management: None,
         host: host.into(),
         port: port.parse().map_err(|_| ObservationError::Query)?,
     };
@@ -175,7 +174,6 @@ mod tests {
     #[test]
     fn proxy_selection_overrides_injected_environment_at_exec_without_a_shell() {
         let proxy = Proxy {
-            management: None,
             host: "proxy.internal".into(),
             port: 3129,
         };

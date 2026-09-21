@@ -26,10 +26,10 @@ Page count is therefore not a measure of published route coverage.
 
 The [source inventory](documentation-migration-inventory.md) assigns every non-changelog MDX source a disposition, destination, and work package.
 It also identifies release history and supporting publication inputs.
-The inventory now separates source disposition from authoring coverage, cites current owners/evidence, and names remaining gates.
+The inventory now separates source disposition from authoring coverage, identifies current owners and links to implementations and test results, and names remaining gates.
 A held feature has no promised implementation date.
 
-The branch already has useful [task guides](../README.md), [generated configuration reference](../reference/configuration.md), [examples](../../examples/), and [qualification evidence](../validation/README.md).
+The branch already has useful [task guides](../README.md), [generated configuration reference](../reference/configuration.md), [examples](../../examples/), and [recorded test results](../validation/README.md).
 Extend those owners and extract overloaded sections where needed.
 At the baseline revision, the branch had no Fern publishing or general link-checking job.
 The [documentation build](../AUTOMATION.md) now defines Cargo-generated Fern pages, source and route validation, isolated v1 previews, and guarded release publication.
@@ -57,7 +57,7 @@ No migration procedure may infer that retained model storage also preserves an a
 ## Reader Journeys and Page Ownership
 
 These destinations define page ownership.
-New guide scaffolds contain supported facts and **TBD** sections where evidence or a verified procedure is missing.
+New guide scaffolds contain supported facts and **TBD** sections where implementation checks or a verified procedure are missing.
 A scaffold does not satisfy the completion criteria below by its existence alone.
 Keep canonical prose in repository Markdown; select publication tooling in D00.
 
@@ -77,8 +77,8 @@ Keep canonical prose in repository Markdown; select publication tooling in D00.
 | Use coding-agent documentation or find project resources | [resources.md](../resources.md); version-specific starter prompt and routing skill if retained | HTML, Markdown, search, prompts, and skills select the same product version |
 | Understand release changes | [release-notes.md](../release-notes.md); preserved previous-release history | State breaking changes, removed workflows, tested configurations, known limits, and migration route |
 
-Keep [design rationale](architecture.md), [test procedures](../testing.md), and [retained evidence](../validation/README.md) distinct from getting-started instructions.
-Link evidence from support claims; do not make users read internal qualification records to discover basic prerequisites.
+Keep [design rationale](architecture.md), [test procedures](../testing.md), and [recorded test results](../validation/README.md) distinct from getting-started instructions.
+Link support claims to implementations and test results; do not make users read internal qualification records to discover basic prerequisites.
 When extracting content, remove the duplicate procedure and update inbound links and consumed anchors.
 
 ## Decisions Before Authoring
@@ -89,12 +89,12 @@ The defaults below allow planning to proceed; they are not accepted product or r
 | Decision | Proposed default | Needed before |
 |---|---|---|
 | Release milestone, staffing, and assignments | Relative milestones; one primary author with engineering and independent review time | Committing calendar dates |
-| Primary first-deployment configuration | Start from a Linux ARM64 configuration with retained evidence; rehearse the entire path at the release candidate | D03 quickstart and platform claims |
+| Primary first-deployment configuration | Start from a Linux ARM64 configuration with recorded test results; rehearse the entire path at the release candidate | D03 quickstart and platform claims |
 | Installation/distribution promise | Document the existing source-built bundle and local image process for preview; document downloads only when a verified release artifact exists | Public prerequisites and installation copy |
 | Public next-version and previous-version URLs | Preserve previous-release docs and add a separately labeled next-version preview; choose final version slugs explicitly | D01 route implementation |
 | Publishing tool | Assess reuse of Fern's existing site integration with Markdown as canonical source; isolate any docs-only toolchain | D01 implementation |
 | Provider audience | Document its shipped contract; confirm whether direct user-authored OpenTofu configurations are a release workflow | D07 examples; provider existence alone does not settle this |
-| Release capability matrix | Approve explicit harness × API × management × host configurations using current evidence | Named-provider, platform, and integration claims |
+| Release capability matrix | Approve explicit harness × API × management × host configurations using current test results | Named-provider, platform, and integration claims |
 | Old-to-new native-data transfer | Require a verified transfer procedure for any claimed continuity; otherwise explain fresh start and retaining the old deployment | Migration guide and release notes |
 
 Unresolved feature parity becomes an engineering decision with an owner and a documentation consequence.
@@ -107,14 +107,14 @@ They exclude new product features, new platform qualification, publishing access
 Assign a named responsible person to each role at D00; cvillela owns accepted product scope.
 Split packages into small green `docs:` changes; changes to validators also need behavioral tests that fail before implementation.
 
-| ID | Deliverable and method | Responsible role | Depends on | Estimate | Exit evidence |
+| ID | Deliverable and method | Responsible role | Depends on | Estimate | Completion criteria |
 |---|---|---|---|---|---|
 | D00 | Confirm decisions, page ownership, source inventory, launch configurations, and release gates | Maintainer + docs lead | None | 2–3 | Reviewed dispositions; named owners; no unsupported workflow assigned as a how-to |
 | D01 | Implement versioned preview and build, preserve old publication inputs, derive route/anchor inventory, add link and redirect validation | Docs tooling engineer | D00 URL/tooling decisions | 3–5 | One canonical source renders; old docs remain reachable; representative old routes resolve correctly; CI runs without publishing credentials |
-| D02 | Write product overview, task navigation, CLI reference, and harness/capability matrix structure | Docs lead + SDK engineer | D00 | 2–3 | Reviewed conceptual model; every current command documented; proposed claims linked to implementation/evidence |
+| D02 | Write product overview, task navigation, CLI reference, and harness/capability matrix structure | Docs lead + SDK engineer | D00 | 2–3 | Reviewed conceptual model; every current command documented; proposed claims linked to implementations and test results |
 | D03 | Write prerequisites and first deployment; adapt examples; separate client, engine, and inference hosts | Docs lead + runtime engineer | D02; D00 artifact/configuration decisions | 4–6 | A reviewer follows the selected configuration from a clean environment to an actual agent reply and cleanup preview |
 | D04 | Write migration, state/data inventory, change-impact table, recovery, and troubleshooting | Lifecycle engineer + docs lead | D02; D03 walkthrough for rehearsal | 4–6 | Rehearsed old/new coexistence, failed update/recovery, retained-data checks, and return to the untouched old deployment |
-| D05 | Consolidate inference/vendor pages into API and service guides; cover managed Ollama/vLLM, models, SSH placement, recipes | Runtime engineer + docs lead | D02 | 3–5 | Each configuration has a maintained example and explicit evidence level; unsupported multi-host and managed-server claims are excluded |
+| D05 | Consolidate inference/vendor pages into API and service guides; cover managed Ollama/vLLM, models, SSH placement, recipes | Runtime engineer + docs lead | D02 | 3–5 | Each configuration has a maintained example and explicit description of what has been tested; unsupported multi-host and managed-server claims are excluded |
 | D06 | Reconcile agent pages, native access, interfaces, tools/heartbeats, and held integrations | Agent engineer + docs lead | D02; D05 for final examples | 2–4 | Every accepted harness has a matrix row; OpenClaw/Hermes procedures reviewed; unsupported integrations have a clear destination |
 | D07 | Expand SDK documentation and define provider documentation; verify programmatic examples | SDK/provider engineer | D02; D00 provider decision | 3–5 | SDK snippets compile and exercise meaningful lifecycle behavior; provider reference matches schema and qualified OpenTofu usage |
 | D08 | Consolidate security guidance; update notices, project links, starter prompt, skill, and version-aware docs discovery | Security reviewer + docs lead | D03–D06 for security; D01 for discovery | 2–3 | Reviewed credential/data lifetimes and isolation claims; agent entry points select the intended docs version |
@@ -154,18 +154,18 @@ If a configuration lacks qualification, narrow the claim or keep it out of the r
 
 1. Read the entire old page, its applicable variants, generated content, and incoming routes.
 2. Identify the reader task and the owning destination in the inventory.
-3. Check current behavior against types, parsers, tests, image recipes, and retained evidence.
+3. Check current behavior against types, parsers, tests, image recipes, and recorded test results.
    Mark facts as implemented, fixture-tested, live-qualified at a named revision, or unsupported.
 4. Write the current procedure with prerequisites, named working directory, effects, commands, expected result, verification, and recovery.
    Keep old commands only in explicitly labeled previous-version migration material.
 5. Validate examples and changed commands; render affected pages and check navigation, links, and consumed anchors.
-6. Obtain independent documentation review with the reader task, changed text, evidence, and [writing guide](../../WRITING.md).
+6. Obtain independent documentation review with the reader task, changed text, validation results, and [writing guide](../../WRITING.md).
 7. Update the source-to-destination and route mapping in the same change.
    A page is complete only when content, links, and its old-route disposition agree.
 
 For held topics, publish a concise capability limitation or preserve the previous-version page as appropriate.
 Do not create one empty new page for each unavailable old feature.
-Preserve source notices and historical evidence without relabeling old test results as current qualification.
+Preserve source notices and historical records without relabeling old test results as current qualification.
 
 ## Publication and Link Migration
 
@@ -211,7 +211,7 @@ The v1 build uses Cargo for generation and schema freshness, with the pinned Fer
 - Operations: cover unchanged apply, export/reapply, drift, refused replacement, interrupted operations, retained storage, and deletion effects.
 - Runtime claims: separate native bundle validation, protocol fixtures, real inference, browser use, GPU capacity, kernel enforcement, and separate-host qualification.
 
-Use [fixture qualification](../testing/fixtures.md) and [live qualification](../testing/live.md) for the appropriate evidence.
+Use [integration tests](../testing/fixtures.md) and [live tests](../testing/live.md) to check the relevant behavior.
 Live rehearsals require explicit configuration and owned resources.
 Fixture success does not turn every harness/provider/platform combination into a supported deployment.
 

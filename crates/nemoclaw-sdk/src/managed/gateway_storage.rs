@@ -83,8 +83,22 @@ impl Engine {
         id: &str,
         create: bool,
     ) -> Result<Option<String>, Error> {
+        Ok(self
+            .gateway_storage_binding(spec, id, create)
+            .await?
+            .map(|(id, _)| id))
+    }
+    pub(crate) async fn gateway_storage_binding(
+        &self,
+        spec: &Spec,
+        id: &str,
+        create: bool,
+    ) -> Result<Option<(String, String)>, Error> {
         spec.validate()?;
-        if spec.kind != GATEWAY_KIND || spec.layout != 0 || self.endpoint() != spec.engine() {
+        if spec.kind != GATEWAY_KIND
+            || !matches!(spec.layout, 0 | 1)
+            || self.endpoint() != spec.engine()
+        {
             return Err(Error::Conflict(
                 "invalid gateway storage specification or engine",
             ));
@@ -147,7 +161,9 @@ impl Engine {
             };
         }
         if missing && create {
-            self.ensure_image(spec).await?;
+            if spec.layout == 0 {
+                self.ensure_image(spec).await?;
+            }
             self.ensure_network(spec).await?;
             if volume.is_none() {
                 self.api
@@ -182,8 +198,11 @@ impl Engine {
             ));
         }
         if create && (missing || created) {
+            if !missing && spec.layout == 0 {
+                self.ensure_image(spec).await?;
+            }
             self.initialize_gateway(spec, data_path).await?;
-            return Box::pin(self.gateway_storage(spec, id, false)).await;
+            return Box::pin(self.gateway_storage_binding(spec, id, false)).await;
         }
         if created && id.is_empty() {
             return Err(Error::PartialRuntime);
@@ -201,7 +220,7 @@ impl Engine {
             .await?;
         if config.is_none() && create && id.is_empty() {
             self.initialize_gateway(spec, data_path).await?;
-            return Box::pin(self.gateway_storage(spec, id, false)).await;
+            return Box::pin(self.gateway_storage_binding(spec, id, false)).await;
         }
         if config.is_none() && id.is_empty() {
             return Err(Error::PartialRuntime);
@@ -220,11 +239,12 @@ impl Engine {
             .await?
             .filter(|key| !key.is_empty())
             .ok_or(Error::Conflict("gateway signing identity is unobservable"))?;
-        self.credential_key(spec, helper_id, data_path, !id.is_empty(), create)
+        let encryption = self
+            .credential_key(spec, helper_id, data_path, !id.is_empty(), create)
             .await?;
         let volume = volume.ok_or(ObservationError::Incomplete)?;
         let network = network.ok_or(ObservationError::Incomplete)?;
-        let actual = format!(
+        let mut actual = format!(
             "{}/{}/{}/{}/{}",
             spec.binding_namespace(info.id.as_deref(), network.id.as_deref())?,
             volume.name,
@@ -232,10 +252,14 @@ impl Engine {
             network.id.ok_or(ObservationError::Incomplete)?,
             hash(&public)
         );
+        if spec.layout == 1 {
+            actual.push('/');
+            actual.push_str(&hash(&encryption));
+        }
         if !id.is_empty() && id != actual {
             return Err(ObservationError::BindingMismatch.into());
         }
-        Ok(Some(actual))
+        Ok(Some((actual, volume.mountpoint)))
     }
     async fn credential_key(
         &self,

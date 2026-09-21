@@ -8,33 +8,42 @@ Maintainer cvillela owns this design and its acceptance, recorded on 2026-09-14.
 
 NemoClaw provides a public desired-state SDK, its CLI, and an OpenTofu provider.
 The SDK owns deployment behavior; the CLI owns arguments, terminal output, and exit codes.
-OpenTofu owns graph execution and resource state, with the provider adapting its protocol to shared typed backend operations.
+OpenTofu owns graph execution and resource state.
+The Docker provider owns Docker gateway, inference, and proxy containers, their images, model-cache volumes, and service-owned networks.
+The NemoClaw provider owns OpenShell operations, Podman gateway processes, gateway initialization and retained bridges, and resources with application-specific persistence contracts.
 Add a crate only when it has a consumer and a dependency or deployment boundary that justifies it.
 
-The [architecture](architecture.md), [runtime](runtime.md), [execution-target](execution-targets.md), and [recipe](recipes.md) guides explain these boundaries and the evidence behind them.
+The [architecture](architecture.md), [runtime](runtime.md), [execution-target](execution-targets.md), and [recipe](recipes.md) guides explain these boundaries and the implementation and tests behind them.
 
 ## Ownership and Recovery
 
 Backward compatibility with earlier schemas, SDK APIs, or state formats is not required.
 Reject unsupported state without silently adopting, replacing, or deleting its resources.
 
-- Validate configuration strictly and retain intent, ownership generations, durable identities, configuration digests, and secret references across operations.
-- Lock deployment state while coordinating an operation and preserve enough evidence to recover from partial creation or deletion.
-- Verify ownership, generation, and durable identity before modifying an existing resource; keep configuration and policy drift observable.
+- Validate configuration strictly and retain intent, configuration digests, secret references, and durable data bindings across operations.
+- Lock deployment state while coordinating an operation and retain provider state and operation progress to recover from partial creation or deletion.
+- Treat Docker gateway, inference, and proxy containers and service-owned networks as disposable compute; the Docker provider may recreate or replace them during explicit apply.
+- Verify ownership, generation, and durable identity for gateway storage, credentials, Podman gateway processes, and OpenShell resources before modification.
+- Use provider resource identities and reconciliation for disposable compute and reproducible model caches instead of requiring stable physical IDs across recovery.
 - Only confirmed absence may remove a resource from state.
 - Authentication, transport, extension, query, and incomplete-observation failures must stop planning and preserve prior bindings.
 - Plan must not create or mutate runtime resources.
-- Apply checks resources, configuration, and readiness without requesting model or agent responses; generation verification is explicit.
+- Apply checks resources, configuration, and readiness without requesting model or agent responses; checking model responses requires an explicit request.
 - Fabric owns runtime health semantics and adapter checks; NemoClaw transports and reports observations from the hosted runtime, preserving unknown and unsupported results.
-- Storage survives destroy by default; failed readiness must preserve established identities and persistent data.
+- Storage survives destroy by default; failed readiness must retain persistent data and recorded provider state, without requiring the next apply to reuse the same container.
 
 ## Runtime and Observation
 
 Refresh and export share typed observations.
-Choose collectors from implementation evidence.
+Verify each collector against the API or host interface it reads.
 Mutations, conditional-write checks, active probes, and local credential or state reads remain direct.
 
 Memory protection stays active beside inference after the CLI exits and must not trigger an automatic restart loop.
+The hosted runtime owns startup capacity checks, model preparation, and application health.
+Container resource limits and image acquisition belong to the engine and its provider; orchestration consumes application readiness rather than implementing model execution.
+Model caches use Docker-provider volume reconciliation and survive destroy by default.
+A missing cache may be recreated during explicit apply; the runtime rebuilds its model artifacts.
+Credentials use separate durable volumes; missing or substituted bound credential storage stops planning before compute changes.
 Model-specific tools belong to versioned recipe artifacts; retain applicable upstream licenses and source notices.
 SDK errors and progress must not expose secret values.
 

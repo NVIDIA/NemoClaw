@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex};
 async fn retained_gateway_storage_requires_complete_owned_credentials_without_mutations() {
     let fixtures: Vec<Value> = serde_json::from_str(include_str!("reference.json")).unwrap();
     let mut spec: Spec = serde_json::from_str(fixtures[0]["spec"].as_str().unwrap()).unwrap();
-    spec.layout = 0;
+    spec.layout = 1;
     let data_path = "/var/lib/docker/volumes/fixture/_data";
     let create = serde_json::to_value(initializer(&spec, data_path).unwrap()).unwrap();
     let helper = json!({"Id":"helper","Config":create,"HostConfig":create["HostConfig"],"State":{"Status":"exited","Running":false,"ExitCode":0},"Mounts":[{"Type":"volume","Name":spec.volume(),"Destination":data_path,"RW":true}]});
@@ -18,6 +18,7 @@ async fn retained_gateway_storage_requires_complete_owned_credentials_without_mu
         Some(helper),
         Some(volume),
         Some(network),
+        false,
         false,
         false,
     )));
@@ -53,7 +54,7 @@ async fn retained_gateway_storage_requires_complete_owned_credentials_without_mu
                 if state.4 {
                     b"short".to_vec()
                 } else {
-                    vec![7; 32]
+                    vec![if state.5 { 8 } else { 7 }; 32]
                 }
             } else {
                 panic!("unexpected archive {path}")
@@ -108,6 +109,10 @@ async fn retained_gateway_storage_requires_complete_owned_credentials_without_mu
             .as_deref(),
         Some(id.as_str())
     );
+    state.lock().unwrap().5 = true;
+    assert!(engine.gateway_storage(&spec, &id, false).await.is_err());
+    assert!(engine.gateway_storage(&spec, &id, true).await.is_err());
+    state.lock().unwrap().5 = false;
     state.lock().unwrap().0.as_mut().unwrap()["State"]["Status"] = json!("created");
     assert!(engine.gateway_storage(&spec, &id, false).await.is_err());
     assert!(engine.gateway_storage(&spec, &id, true).await.is_err());

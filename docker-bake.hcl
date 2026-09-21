@@ -6,7 +6,11 @@ variable "IMAGE_PREFIX" {
 }
 
 variable "AGENT_PLATFORM" {
-  default = "linux/arm64"
+  default = ""
+  validation {
+    condition = contains(["linux/arm64", "linux/amd64"], AGENT_PLATFORM)
+    error_message = "Set AGENT_PLATFORM to linux/arm64 or linux/amd64."
+  }
 }
 
 variable "PLATFORM_LOCKS" {
@@ -74,7 +78,7 @@ target "agents" {
 target "ollama-proxy" {
   context = "."
   dockerfile = "image/ollama-proxy/Dockerfile"
-  platforms = ["linux/arm64"]
+  platforms = [AGENT_PLATFORM]
   target = "runtime"
   tags = ["${IMAGE_PREFIX}:ollama-proxy"]
 }

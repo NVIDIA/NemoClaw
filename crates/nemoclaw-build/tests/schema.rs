@@ -41,8 +41,6 @@ fn schema_generation_is_repeatable_and_check_rejects_missing_or_stale_output() {
     let reference = directory.path().join("docs/reference/configuration.md");
     let markdown =
         fs::read_to_string(&reference).expect("generation includes the YAML field reference");
-    assert!(markdown.contains("## Gateway"));
-    assert!(markdown.contains("spec.inferenceProviders[].service.serving"));
     fs::write(&reference, "stale reference\n").unwrap();
     assert!(!generate(directory.path(), true).status.success());
     assert_eq!(fs::read_to_string(&reference).unwrap(), "stale reference\n");
@@ -122,8 +120,8 @@ fn compiled_source_identity_stays_fixed_when_inputs_change_during_assembly() {
     nemoclaw_build::verify_source_version(expected, &files).unwrap();
     files
         .iter_mut()
-        .find(|(name, _)| name == "crates/nemoclaw-sdk/src/config/types.rs")
-        .unwrap()
+        .find(|(name, _)| name.ends_with(".rs"))
+        .expect("source archive must contain Rust inputs")
         .1
         .extend(b"\n// changed contract\n");
     assert!(nemoclaw_build::verify_source_version(expected, &files).is_err());

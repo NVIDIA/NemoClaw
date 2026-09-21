@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 mod args;
-mod authoring;
 mod credentials;
 mod deployment;
 mod dispatch;
