@@ -6,6 +6,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { EXPORTED_VLLM_PROFILE_ID } from "../../../src/lib/config/model.ts";
+import type { V1Alpha1OllamaProxyService } from "../../../src/lib/config/v1alpha1-export.ts";
 import { cleanupLocalModelRuntimes } from "../../../src/lib/inference/local-model-profile/cleanup.ts";
 import { loadServingCatalog } from "../../../src/lib/inference/serving/catalog-loader.ts";
 import {
@@ -563,7 +564,7 @@ exec ollama pull qwen2.5:0.5b`,
     const firstYaml = fs.readFileSync(firstPath, "utf8");
     const first = parseConfigExport(firstYaml);
     const provider = first.spec.inferenceProviders[0];
-    const service = first.spec.services?.["ollama-auth"];
+    const service = first.spec.services?.["ollama-auth"] as V1Alpha1OllamaProxyService | undefined;
     expect(service?.upstream.model.digest).toBe(model!.digest.replace(/^sha256:/u, ""));
     const proxyToken = readTokenFileChecked(ollamaProxyTokenFile()).token;
     artifacts.addRedactionValues([proxyToken]);
