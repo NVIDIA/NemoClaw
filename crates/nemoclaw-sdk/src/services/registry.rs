@@ -24,6 +24,7 @@ use std::collections::{BTreeMap, BTreeSet};
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ResolvedInference {
     pub endpoint: String,
+    pub destination_ip: Option<String>,
     pub served_model: String,
     pub requires_authentication: bool,
     pub resource_dependencies: Vec<String>,
@@ -187,8 +188,17 @@ impl ServiceDefinition {
             Self::Ollama(service) => (service.placement.as_ref(), "Ollama"),
             Self::Vllm(service) => (service.placement.as_ref(), "vLLM"),
             Self::OllamaProxy(service) => {
+                let reserved = installers::ollama::reserved_proxy_port(&service.endpoint).is_some();
                 return crate::config::validation::require(
-                    local_docker || service.engine.is_some(),
+                    if reserved {
+                        local_docker
+                            && service
+                                .engine
+                                .as_deref()
+                                .is_none_or(|engine| engine == gateway.engine)
+                    } else {
+                        local_docker || service.engine.is_some()
+                    },
                     "Ollama proxy requires a managed local Docker gateway or explicit local engine",
                 );
             }
@@ -305,12 +315,16 @@ impl InferenceCapability for ServiceDefinition {
                         service.serving.port
                     ),
                 },
+                destination_ip: None,
                 served_model: service.model.name.clone(),
                 requires_authentication: false,
                 resource_dependencies: Vec::new(),
             },
             ServiceDefinition::OllamaProxy(service) => ResolvedInference {
                 endpoint: service.endpoint.clone(),
+                destination_ip: installers::ollama::reserved_proxy_port(&service.endpoint)
+                    .map(|_| document.spec.gateway.bridge())
+                    .transpose()?,
                 served_model: service.upstream.model.name.clone(),
                 requires_authentication: true,
                 resource_dependencies: vec![format!("nemoclaw_ollama_proxy.{name}")],
@@ -324,6 +338,7 @@ impl InferenceCapability for ServiceDefinition {
                         service.serving.port
                     ),
                 },
+                destination_ip: None,
                 served_model: service.served_model().into(),
                 requires_authentication: service.authentication.is_some(),
                 resource_dependencies: Vec::new(),
@@ -344,7 +359,9 @@ impl InferenceCapability for ServiceDefinition {
                     || provider.api == Some(crate::config::InferenceApi::OpenaiCompletions),
                 "managed Ollama requires the OpenAI Completions API",
             ),
-            ServiceDefinition::OllamaProxy(service) => service.validate(provider, model, harness),
+            ServiceDefinition::OllamaProxy(service) => {
+                service.validate(provider, model, harness, sandbox_runtime)
+            }
             ServiceDefinition::Vllm(service) => crate::config::validation::require(
                 sandbox_runtime == "docker" || service.placement.is_some(),
                 "vLLM service requires compatible sandbox placement",

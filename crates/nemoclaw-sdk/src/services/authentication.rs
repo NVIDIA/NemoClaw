@@ -58,6 +58,8 @@ impl Source {
         };
         let namespace = format!("{prefix}{kind}");
         let name = container.strip_prefix(&namespace);
+        let reserved = matches!(source, Self::OllamaProxy { .. })
+            && crate::services::installers::ollama::reserved_proxy_port(published).is_some();
         let address = published
             .strip_prefix("http://")
             .and_then(|s| s.strip_suffix("/v1"))
@@ -72,7 +74,7 @@ impl Source {
         if storage.validate().is_err()
             || storage.owner != owner
             || published != endpoint
-            || !private
+            || (!private && !reserved)
             || (local && !storage.engine.starts_with("unix:///"))
             || !name.is_some_and(|name| {
                 regex::Regex::new(r"^[a-z][a-z0-9-]*$")

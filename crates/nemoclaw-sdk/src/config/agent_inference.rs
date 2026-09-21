@@ -200,21 +200,30 @@ pub(crate) struct RuntimeAuth {
 }
 impl RuntimeConnection {
     fn validate(&self, provider: &str, harness: &str) -> Result<(), ConfigError> {
-        super::validate_endpoint(&self.base_url, false)?;
-        let profile = crate::openshell::inference_profile(
-            provider,
-            &self.base_url,
-            &self.provider,
-            self.api_key_env != "NEMOCLAW_ANONYMOUS_API_KEY",
-        )
-        .map_err(|_| ConfigError::new("invalid native inference connection"))?;
-        if profile
-            .credentials
-            .first()
-            .map(|c| c.name.as_str())
-            .unwrap_or("NEMOCLAW_ANONYMOUS_API_KEY")
-            != self.api_key_env
-        {
+        let expected_credential =
+            if crate::services::installers::ollama::reserved_proxy_port(&self.base_url).is_some() {
+                crate::openshell::inference_credential_name(
+                    provider,
+                    &self.provider,
+                    self.api_key_env != "NEMOCLAW_ANONYMOUS_API_KEY",
+                )
+                .map_err(|_| ConfigError::new("invalid native inference connection"))?
+            } else {
+                super::validate_endpoint(&self.base_url, false)?;
+                let profile = crate::openshell::inference_profile(
+                    provider,
+                    &self.base_url,
+                    &self.provider,
+                    self.api_key_env != "NEMOCLAW_ANONYMOUS_API_KEY",
+                )
+                .map_err(|_| ConfigError::new("invalid native inference connection"))?;
+                profile
+                    .credentials
+                    .first()
+                    .map(|credential| credential.name.clone())
+                    .unwrap_or_else(|| "NEMOCLAW_ANONYMOUS_API_KEY".into())
+            };
+        if expected_credential != self.api_key_env {
             return Err(ConfigError::new(
                 "inference credential does not match its provider",
             ));
@@ -325,11 +334,12 @@ impl Document {
     ) -> Result<RuntimeModel, ConfigError> {
         let provider = selected.definition;
         let connection = self.provider_connection(provider)?;
-        let profile = crate::openshell::inference_profile(
+        let profile = crate::openshell::inference_profile_with_destination(
             &selected.key,
             &connection.endpoint,
             &provider.provider,
             crate::services::provider_authenticated(self, provider)?,
+            connection.destination_ip.as_deref(),
         )
         .map_err(|_| ConfigError::new("invalid native inference profile"))?;
         Ok(RuntimeModel {

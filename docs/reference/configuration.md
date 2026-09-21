@@ -1240,9 +1240,9 @@ Managed authentication proxy for an external Ollama daemon and model.
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
-| `endpoint` | string | Yes | — | Private or loopback HTTP IPv4:port/v1 published by the proxy and reachable by OpenShell. |
+| `endpoint` | string | Yes | — | Reserved sandbox-facing host route, or an explicit private or loopback IPv4 route. Constraints: pattern `^http://host\.openshell\.internal:[0-9]+/v1$` or pattern `^http://(?:[0-9]{1,3}\.){3}[0-9]{1,3}:[0-9]+/v1$`. |
 | `engine` | string | No | — | Local Docker Unix socket. Omission uses the managed gateway engine. Constraints: pattern `^unix:///[^?#\x00]*$`. |
-| `image` | string | Yes | — | Immutable NemoClaw proxy image. The external daemon runs on the selected Docker host. Constraints: pattern `^[a-zA-Z0-9][a-zA-Z0-9._:/-]*@sha256:[a-f0-9]{64}$`. |
+| `image` | string | No | `""` | Optional immutable proxy image. Omission resolves the current local NemoClaw build before planning. Constraints: `""` or pattern `^[a-zA-Z0-9][a-zA-Z0-9._:/-]*@sha256:[a-f0-9]{64}$`. Omission resolves the current local nc-fabric:ollama-proxy build to one immutable RepoDigest before planning. |
 | `imagePullPolicy` | [ImagePullPolicy](#imagepullpolicy) | No | — | Image acquisition before container creation. Omission means IfNotPresent. Constraints: `"IfNotPresent"` or `"Never"`. |
 | `kind` | string | Yes | — | Supported installer selected by this service definition. Constraints: `"ollamaProxy"`. |
 | `upstream` | [ExternalOllama](#externalollama) | Yes | — | External loopback-only daemon and already-installed model. |

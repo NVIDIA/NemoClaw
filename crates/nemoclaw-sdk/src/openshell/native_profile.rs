@@ -4,13 +4,7 @@
 use crate::ObservationError;
 use openshell_core::proto;
 
-/// Build the endpoint and credential boundary for a native inference provider.
-pub fn definition(
-    name: &str,
-    endpoint: &str,
-    api: &str,
-    authenticated: bool,
-) -> Result<proto::ProviderProfile, ObservationError> {
+fn identity(name: &str, api: &str) -> Result<(String, String), ObservationError> {
     if name.is_empty()
         || name.len() > 40
         || !name.as_bytes()[0].is_ascii_lowercase()
@@ -21,7 +15,61 @@ pub fn definition(
     {
         return Err(ObservationError::Query);
     }
-    crate::config::validate_endpoint(endpoint, false).map_err(|_| ObservationError::Query)?;
+    Ok((
+        format!("nemoclaw-inference-{name}"),
+        format!(
+            "NEMOCLAW_INFERENCE_{}_KEY",
+            name.replace('-', "_").to_ascii_uppercase()
+        ),
+    ))
+}
+
+pub(crate) fn credential_name(
+    name: &str,
+    api: &str,
+    authenticated: bool,
+) -> Result<String, ObservationError> {
+    let (_, key) = identity(name, api)?;
+    Ok(if authenticated {
+        key
+    } else {
+        "NEMOCLAW_ANONYMOUS_API_KEY".into()
+    })
+}
+
+/// Build the endpoint and credential boundary for a native inference provider.
+pub fn definition(
+    name: &str,
+    endpoint: &str,
+    api: &str,
+    authenticated: bool,
+) -> Result<proto::ProviderProfile, ObservationError> {
+    definition_with_destination(name, endpoint, api, authenticated, None)
+}
+
+pub(crate) fn definition_with_destination(
+    name: &str,
+    endpoint: &str,
+    api: &str,
+    authenticated: bool,
+    destination_ip: Option<&str>,
+) -> Result<proto::ProviderProfile, ObservationError> {
+    let (id, key) = identity(name, api)?;
+    let reserved = crate::services::installers::ollama::reserved_proxy_port(endpoint).is_some();
+    if reserved {
+        let address: std::net::Ipv4Addr = destination_ip
+            .ok_or(ObservationError::Query)?
+            .parse()
+            .map_err(|_| ObservationError::Query)?;
+        if !address.is_private() || address.is_loopback() {
+            return Err(ObservationError::Query);
+        }
+    } else {
+        if destination_ip.is_some() {
+            return Err(ObservationError::Query);
+        }
+        crate::config::validate_endpoint(endpoint, false).map_err(|_| ObservationError::Query)?;
+    }
     let url = url::Url::parse(endpoint).map_err(|_| ObservationError::Query)?;
     if url.query().is_some()
         || url.fragment().is_some()
@@ -31,18 +79,16 @@ pub fn definition(
     }
     let host = url.host_str().ok_or(ObservationError::Query)?;
     let port = url.port_or_known_default().ok_or(ObservationError::Query)?;
-    let id = format!("nemoclaw-inference-{name}");
-    let key = format!(
-        "NEMOCLAW_INFERENCE_{}_KEY",
-        name.replace('-', "_").to_ascii_uppercase()
-    );
     let path = format!("{}/**", url.path().trim_end_matches('/'));
     // Private addresses require an explicit destination-validation grant. Grant
     // only the selected literal address, never a whole private network.
-    let allowed_ips: Vec<String> = host
-        .parse::<std::net::IpAddr>()
-        .ok()
-        .map(|ip| format!("{ip}/{}", if ip.is_ipv4() { 32 } else { 128 }))
+    let allowed_ips: Vec<String> = destination_ip
+        .map(|ip| format!("{ip}/32"))
+        .or_else(|| {
+            host.parse::<std::net::IpAddr>()
+                .ok()
+                .map(|ip| format!("{ip}/{}", if ip.is_ipv4() { 32 } else { 128 }))
+        })
         .into_iter()
         .collect();
     let policy = openshell_policy::parse_sandbox_policy(
@@ -167,5 +213,33 @@ mod tests {
         ] {
             assert!(definition("local", endpoint, "openai", true).is_err());
         }
+    }
+
+    #[test]
+    fn reserved_proxy_route_is_pinned_to_one_private_gateway_address() {
+        let endpoint = "http://host.openshell.internal:11435/v1";
+        assert!(definition("local", endpoint, "openai", true).is_err());
+        let profile =
+            definition_with_destination("local", endpoint, "openai", true, Some("172.30.4.1"))
+                .unwrap();
+        assert_eq!(profile.endpoints[0].host, "host.openshell.internal");
+        assert_eq!(profile.endpoints[0].port, 11435);
+        assert_eq!(profile.endpoints[0].allowed_ips, ["172.30.4.1/32"]);
+        for destination in [None, Some("127.0.0.1"), Some("8.8.8.8"), Some("bad")] {
+            assert!(
+                definition_with_destination("local", endpoint, "openai", true, destination)
+                    .is_err()
+            );
+        }
+        assert!(
+            definition_with_destination(
+                "local",
+                "https://api.example.com/v1",
+                "openai",
+                true,
+                Some("172.30.4.1")
+            )
+            .is_err()
+        );
     }
 }

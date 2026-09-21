@@ -4,6 +4,7 @@
 mod config;
 #[cfg(target_os = "linux")]
 pub(in crate::services) mod runtime;
+pub(crate) use config::reserved_proxy_port;
 pub use config::{
     ExternalOllama, ExternalOllamaModel, ManagedOllama, OllamaMemory, OllamaModel, OllamaProxy,
     OllamaServing,
@@ -84,7 +85,19 @@ pub(crate) fn constrain_schema(defs: &mut serde_json::Map<String, serde_json::Va
     crate::config::schema::validation::property(
         proxy,
         "image",
-        serde_json::json!({"pattern":crate::config::constraints::IMAGE}),
+        serde_json::json!({
+            "anyOf":[{"const":""},{"pattern":crate::config::constraints::IMAGE}],
+            "default":"",
+            "x-nemoclaw-default-rule":"Omission resolves the current local nc-fabric:ollama-proxy build to one immutable RepoDigest before planning."
+        }),
+    );
+    crate::config::schema::validation::property(
+        proxy,
+        "endpoint",
+        serde_json::json!({"anyOf":[
+            {"pattern":"^http://host\\.openshell\\.internal:[0-9]+/v1$"},
+            {"pattern":"^http://(?:[0-9]{1,3}\\.){3}[0-9]{1,3}:[0-9]+/v1$"}
+        ]}),
     );
     for (name, field, minimum, maximum, default) in [
         ("OllamaServing", "port", 1024, 65535, 18888),
@@ -249,7 +262,9 @@ impl OllamaProxy {
 
     pub(crate) fn validate_definition(&self) -> Result<(), crate::config::ConfigError> {
         use crate::config::validation::require;
-        validate_image(&self.image)?;
+        if !self.image.is_empty() {
+            validate_image(&self.image)?;
+        }
         crate::config::ImagePullPolicy::validate_service(self.image_pull_policy)?;
         require(
             self.engine.as_ref().is_none_or(|engine| {
@@ -258,7 +273,10 @@ impl OllamaProxy {
             }),
             "proxy engine must be a local Unix socket",
         )?;
-        crate::config::validate_endpoint(&self.endpoint, false)?;
+        let reserved_endpoint = reserved_proxy_port(&self.endpoint).is_some();
+        if !reserved_endpoint {
+            crate::config::validate_endpoint(&self.endpoint, false)?;
+        }
         crate::config::validate_endpoint(&self.upstream.endpoint, false)?;
         let upstream = Url::parse(&self.upstream.endpoint)
             .map_err(|_| crate::config::ConfigError::new("invalid Ollama upstream"))?;
@@ -273,10 +291,12 @@ impl OllamaProxy {
                     url::Host::Ipv6(ip) => ip.is_loopback(),
                     _ => false,
                 })
-                && endpoint.scheme() == "http"
-                && endpoint.path() == "/v1"
-                && endpoint.port().is_some()
-                && matches!(endpoint.host(), Some(url::Host::Ipv4(_)))
+                && (reserved_endpoint
+                    || (endpoint.scheme() == "http"
+                        && endpoint.path() == "/v1"
+                        && endpoint.port().is_some()
+                        && matches!(endpoint.host(), Some(url::Host::Ipv4(_)))))
+                && (reserved_endpoint || !self.image.is_empty())
                 && self.endpoint != self.upstream.endpoint
                 && OLLAMA_MODEL.is_match(&self.upstream.model.name)
                 && regex::Regex::new("^[a-f0-9]{64}$")

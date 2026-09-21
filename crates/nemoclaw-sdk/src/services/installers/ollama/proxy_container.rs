@@ -55,7 +55,11 @@ impl ProxySpec {
             let proxy = &self.settings;
             let upstream = url::Url::parse(&proxy.upstream)
                 .map_err(|_| Error::Conflict("invalid proxy upstream"))?;
-            if proxy.endpoint != format!("http://{}/v1", self.bind_address)
+            let endpoint_matches = super::reserved_proxy_port(&proxy.endpoint).map_or_else(
+                || proxy.endpoint == format!("http://{}/v1", self.bind_address),
+                |port| port == bind.port(),
+            );
+            if !endpoint_matches
                 || upstream.scheme() != "http"
                 || upstream.path() != "/v1"
                 || upstream.port().is_none()

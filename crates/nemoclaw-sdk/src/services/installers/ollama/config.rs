@@ -211,7 +211,9 @@ pub struct OllamaProxy {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(with = "String", regex(pattern = r"^unix:///[^?#\x00]*$"))]
     pub engine: Option<String>,
-    /// Immutable NemoClaw proxy image. The external daemon runs on the selected Docker host.
+    /// Optional immutable proxy image. Omission resolves the current local NemoClaw build before planning.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    #[schemars(default)]
     pub image: String,
     /// Image acquisition before container creation. Omission means IfNotPresent.
     #[serde(
@@ -221,7 +223,7 @@ pub struct OllamaProxy {
     )]
     #[schemars(default, with = "ImagePullPolicy")]
     pub image_pull_policy: Option<ImagePullPolicy>,
-    /// Private or loopback HTTP IPv4:port/v1 published by the proxy and reachable by OpenShell.
+    /// Reserved sandbox-facing host route, or an explicit private or loopback IPv4 route.
     pub endpoint: String,
     /// External loopback-only daemon and already-installed model.
     pub upstream: ExternalOllama,
@@ -251,12 +253,19 @@ impl OllamaProxy {
         provider: &InferenceProvider,
         model: &str,
         harness: &str,
+        sandbox_runtime: &str,
     ) -> Result<(), ConfigError> {
-        validate_endpoint(&self.endpoint, false)?;
         let upstream = url::Url::parse(&self.upstream.endpoint)
             .map_err(|_| ConfigError::new("invalid Ollama upstream"))?;
-        let endpoint = url::Url::parse(&self.endpoint)
-            .map_err(|_| ConfigError::new("invalid proxy endpoint"))?;
+        let reserved_endpoint = reserved_proxy_port(&self.endpoint).is_some();
+        let legacy_endpoint = !reserved_endpoint
+            && validate_endpoint(&self.endpoint, false).is_ok()
+            && url::Url::parse(&self.endpoint).is_ok_and(|endpoint| {
+                matches!(endpoint.host(), Some(url::Host::Ipv4(_)))
+                    && endpoint.scheme() == "http"
+                    && endpoint.path() == "/v1"
+                    && endpoint.port().is_some()
+            });
         let loopback = match upstream.host() {
             Some(url::Host::Ipv4(ip)) => ip.is_loopback(),
             Some(url::Host::Ipv6(ip)) => ip.is_loopback(),
@@ -269,19 +278,21 @@ impl OllamaProxy {
             || provider
                 .api
                 .is_some_and(|api| api != InferenceApi::OpenaiCompletions)
-            || !matches!(harness, "openclaw" | "hermes" | "deepagents" | "pi")
+            || if reserved_endpoint {
+                harness != "openclaw" || sandbox_runtime != "docker"
+            } else {
+                !matches!(harness, "openclaw" | "hermes" | "deepagents" | "pi")
+            }
             || !loopback
             || upstream.scheme() != "http"
             || upstream.path() != "/v1"
             || upstream.port().is_none()
-            || !matches!(endpoint.host(), Some(url::Host::Ipv4(_)))
-            || endpoint.scheme() != "http"
-            || endpoint.path() != "/v1"
-            || endpoint.port().is_none()
+            || (!reserved_endpoint && (!legacy_endpoint || self.image.is_empty()))
             || self.endpoint == self.upstream.endpoint
-            || !regex::Regex::new(constraints::IMAGE)
-                .unwrap()
-                .is_match(&self.image)
+            || (!self.image.is_empty()
+                && !regex::Regex::new(constraints::IMAGE)
+                    .unwrap()
+                    .is_match(&self.image))
             || !regex::Regex::new("^[a-f0-9]{64}$")
                 .unwrap()
                 .is_match(&self.upstream.model.digest)
@@ -296,4 +307,22 @@ impl OllamaProxy {
         }
         Ok(())
     }
+}
+
+pub(crate) fn reserved_proxy_port(raw: &str) -> Option<u16> {
+    if raw.contains(['\r', '\n', '\t', '$', '%', '{', '}', '\\']) {
+        return None;
+    }
+    let endpoint = url::Url::parse(raw).ok()?;
+    let port = endpoint.port()?;
+    (endpoint.scheme() == "http"
+        && endpoint.host_str() == Some("host.openshell.internal")
+        && endpoint.username().is_empty()
+        && endpoint.password().is_none()
+        && endpoint.path() == "/v1"
+        && endpoint.query().is_none()
+        && endpoint.fragment().is_none()
+        && port >= 1024
+        && raw == format!("http://host.openshell.internal:{port}/v1"))
+    .then_some(port)
 }

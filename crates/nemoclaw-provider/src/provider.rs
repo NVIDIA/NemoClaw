@@ -287,6 +287,7 @@ impl Provider for NemoClawProvider {
                     "endpoint",
                     "provider_type",
                     "authenticated",
+                    "destination_ip",
                 ],
                 &[],
             ),

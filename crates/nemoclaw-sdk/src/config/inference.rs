@@ -7,6 +7,7 @@ use super::{ConfigError, Credential, Document, InferenceProvider};
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct InferenceConnection {
     pub endpoint: String,
+    pub(crate) destination_ip: Option<String>,
     pub credential: Option<Credential>,
 }
 impl Document {
@@ -29,10 +30,13 @@ impl Document {
         &self,
         provider: &InferenceProvider,
     ) -> Result<InferenceConnection, ConfigError> {
-        let endpoint = crate::services::resolve(self, provider)?
-            .map_or_else(|| provider.endpoint.clone(), |service| service.endpoint);
+        let resolved = crate::services::resolve(self, provider)?;
         Ok(InferenceConnection {
-            endpoint,
+            endpoint: resolved.as_ref().map_or_else(
+                || provider.endpoint.clone(),
+                |service| service.endpoint.clone(),
+            ),
+            destination_ip: resolved.and_then(|service| service.destination_ip),
             credential: provider.credential.clone(),
         })
     }

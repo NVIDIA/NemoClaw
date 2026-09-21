@@ -45,7 +45,11 @@ fn native_definition(want: &Row) -> Result<proto::ProviderProfile, ObservationEr
         Some("false") => false,
         _ => return Err(ObservationError::Query),
     };
-    let mut profile = inference_profile(
+    let destination_ip = want
+        .get("destination_ip")
+        .filter(|value| !value.is_empty())
+        .map(String::as_str);
+    let mut profile = inference_profile_with_destination(
         name,
         &want["endpoint"],
         if want.get("provider_type").is_some_and(|s| s == "anthropic") {
@@ -54,6 +58,7 @@ fn native_definition(want: &Row) -> Result<proto::ProviderProfile, ObservationEr
             "openai"
         },
         authenticated,
+        destination_ip,
     )?;
     for key in [
         "owner",
@@ -65,6 +70,12 @@ fn native_definition(want: &Row) -> Result<proto::ProviderProfile, ObservationEr
         profile.annotations.insert(
             format!("nemoclaw.nvidia.com/{key}"),
             want.get(key).cloned().unwrap_or_default(),
+        );
+    }
+    if let Some(destination_ip) = destination_ip {
+        profile.annotations.insert(
+            "nemoclaw.nvidia.com/destination_ip".into(),
+            destination_ip.into(),
         );
     }
     profile
@@ -105,23 +116,37 @@ fn row(
     profile.resource_version = 0;
     profile.source.clear();
     profile.scope.clear();
-    let mut fields: Row = ["endpoint", "provider_type", "authenticated"]
-        .map(|key| (key.into(), String::new()))
-        .into();
+    let mut fields: Row = [
+        "endpoint",
+        "provider_type",
+        "authenticated",
+        "destination_ip",
+    ]
+    .map(|key| (key.into(), String::new()))
+    .into();
     let expected = if name.starts_with("nemoclaw-inference-") {
         fields.extend([
             ("name".into(), name.into()),
             ("owner".into(), owner.clone()),
             ("generation".into(), generation.clone()),
         ]);
-        for key in ["endpoint", "provider_type", "authenticated"] {
+        for key in [
+            "endpoint",
+            "provider_type",
+            "authenticated",
+            "destination_ip",
+        ] {
+            let annotation = profile
+                .annotations
+                .get(&format!("nemoclaw.nvidia.com/{key}"))
+                .cloned();
             fields.insert(
                 key.into(),
-                profile
-                    .annotations
-                    .get(&format!("nemoclaw.nvidia.com/{key}"))
-                    .cloned()
-                    .ok_or(ObservationError::Incomplete)?,
+                if key == "destination_ip" {
+                    annotation.unwrap_or_default()
+                } else {
+                    annotation.ok_or(ObservationError::Incomplete)?
+                },
             );
         }
         native_definition(&fields)?

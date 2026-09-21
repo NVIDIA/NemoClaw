@@ -13,6 +13,7 @@ fn main() {
         ("DEFAULT_GATEWAY_IMAGE", "/images/gateway"),
         ("SANDBOX_RUNTIME_IMAGE", "/images/sandboxRuntime"),
         ("SUPERVISOR_IMAGE", "/images/supervisor"),
+        ("LOCAL_OLLAMA_PROXY_IMAGE", "/localImages/ollamaProxy"),
         ("OPENSHELL_VERSION", "/openshell"),
         ("OPENTOFU_VERSION", "/opentofu"),
     ] {

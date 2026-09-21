@@ -35,6 +35,8 @@ pub const API_VERSION: &str = "nemoclaw.nvidia.com/v1alpha1";
 pub const MAX_DOCUMENT_BYTES: u64 = 1 << 20;
 pub use crate::artifact_pins::DEFAULT_AGENT_IMAGE;
 pub use crate::artifact_pins::DEFAULT_GATEWAY_IMAGE;
+#[doc(hidden)]
+pub use crate::artifact_pins::LOCAL_OLLAMA_PROXY_IMAGE;
 
 /// Configuration diagnostics omit credentials and arbitrary source values.
 #[derive(Clone, Debug, PartialEq, Eq)]

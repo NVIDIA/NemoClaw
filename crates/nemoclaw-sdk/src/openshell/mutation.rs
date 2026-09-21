@@ -37,20 +37,22 @@ impl OpenShell {
         let native = kind != "nemoclaw-brave";
         let source = value(want, "credential_source");
         let profile = if native {
-            Some(inference_profile(
+            let profile_id = format!("nemoclaw-inference-{}", value(want, "name"));
+            let bound = self
+                .observe_profile(value(want, "workspace"), &profile_id)
+                .await?
+                .ok_or(ObservationError::BindingMismatch)?;
+            let destination_ip = bound
+                .get("destination_ip")
+                .filter(|destination| !destination.is_empty())
+                .map(String::as_str);
+            let profile = inference_profile_with_destination(
                 value(want, "name"),
                 value(want, "endpoint"),
                 kind,
                 !source.is_empty() || !value(want, "credential_env").is_empty(),
-            )?)
-        } else {
-            None
-        };
-        if let Some(profile) = &profile {
-            let bound = self
-                .observe_profile(value(want, "workspace"), &profile.id)
-                .await?
-                .ok_or(ObservationError::BindingMismatch)?;
+                destination_ip,
+            )?;
             if ["owner", "generation", "endpoint", "provider_type"]
                 .iter()
                 .any(|key| value(&bound, key) != value(want, key))
@@ -63,7 +65,10 @@ impl OpenShell {
             {
                 return Err(ObservationError::BindingMismatch);
             }
-        }
+            Some(profile)
+        } else {
+            None
+        };
         let credential = if !source.is_empty() {
             if !value(want, "credential_env").is_empty() {
                 return Err(ObservationError::BindingMismatch);

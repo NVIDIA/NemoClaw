@@ -171,6 +171,9 @@ impl Deployment {
         if cancel.is_cancelled() {
             return Err(Error::Cancelled);
         }
+        crate::services::installers::ollama::proxy::resolve_images(&mut document, &self.engines)
+            .await?;
+        document.validate()?;
         let (bundle, store) = self.open()?;
         let prior = store.load()?;
         let fresh = prior.is_none();

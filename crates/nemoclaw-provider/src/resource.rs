@@ -33,7 +33,7 @@ impl ResourceAdapter {
     }
     fn optional(&self, field: &str) -> bool {
         (self.definition.kind == "provider_profile"
-            && matches!(field, "endpoint" | "authenticated"))
+            && matches!(field, "endpoint" | "authenticated" | "destination_ip"))
             || matches!(
                 field,
                 "image_pull_policy"

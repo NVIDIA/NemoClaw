@@ -110,11 +110,12 @@ fn targets_with_plans(
         )?;
         for provider in document.sandbox_inference_providers(sandbox)? {
             let connection = document.provider_connection(provider.definition)?;
-            let profile = crate::openshell::inference_profile(
+            let profile = crate::openshell::inference_profile_with_destination(
                 &provider.key,
                 &connection.endpoint,
                 &provider.definition.provider,
                 false,
+                connection.destination_ip.as_deref(),
             )
             .map_err(|_| ConfigError::new("invalid native inference policy"))?;
             if policy.network_policies.contains_key(&profile.id) {
@@ -248,6 +249,9 @@ fn inference_targets(
         "authenticated".into(),
         crate::services::provider_authenticated(document, provider)?.to_string(),
     );
+    if let Some(destination_ip) = connection.destination_ip {
+        profile.insert("destination_ip".into(), destination_ip);
+    }
     Ok([
         Target {
             kind: "provider_profile".into(),

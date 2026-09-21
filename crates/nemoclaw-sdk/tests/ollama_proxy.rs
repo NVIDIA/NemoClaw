@@ -20,6 +20,112 @@ fn input() -> Value {
     value
 }
 
+fn exported_attached_ollama() -> Value {
+    let mut value = input();
+    let service = &mut value["spec"]["services"]["ollama-auth"];
+    service.as_object_mut().unwrap().remove("image");
+    service["endpoint"] = json!("http://host.openshell.internal:11435/v1");
+    value
+}
+
+#[test]
+fn exported_attached_ollama_accepts_the_reserved_route_without_an_image() {
+    let value = exported_attached_ollama();
+    let document = Document::parse(value.to_string().as_bytes()).unwrap();
+    assert!(
+        jsonschema::validator_for(&input_schema())
+            .unwrap()
+            .is_valid(&value)
+    );
+    let rendered: Value = serde_saphyr::from_str(&document.yaml().unwrap()).unwrap();
+    assert!(
+        rendered["spec"]["services"]["ollama-auth"]
+            .get("image")
+            .is_none()
+    );
+    assert_eq!(
+        document.inference_endpoint().unwrap(),
+        "http://host.openshell.internal:11435/v1"
+    );
+}
+
+#[test]
+fn exported_attached_ollama_restricts_the_reserved_route_to_the_accepted_topology() {
+    for endpoint in [
+        "http://host.openshell.internal:1023/v1",
+        "http://host.openshell.internal:11435/",
+        "http://host.openshell.internal:11435/v1/",
+        "http://host.openshell.internal:11435/v1?token=secret",
+        "http://user@host.openshell.internal:11435/v1",
+        "https://host.openshell.internal:11435/v1",
+        "http://evil.host.openshell.internal:11435/v1",
+        "http://host.openshell.internal.evil:11435/v1",
+        "http://172.30.1.1:11435/v1",
+    ] {
+        let mut value = exported_attached_ollama();
+        value["spec"]["services"]["ollama-auth"]["endpoint"] = json!(endpoint);
+        assert!(
+            Document::parse(value.to_string().as_bytes()).is_err(),
+            "accepted {endpoint}"
+        );
+    }
+    let mut external = exported_attached_ollama();
+    external["spec"]["gateway"] =
+        json!({"management":"external", "endpoint":"http://127.0.0.1:17671"});
+    assert!(Document::parse(external.to_string().as_bytes()).is_err());
+    let mut podman = exported_attached_ollama();
+    podman["spec"]["sandboxes"][0]["runtime"]["provider"] = json!("podman");
+    assert!(Document::parse(podman.to_string().as_bytes()).is_err());
+    let mut other_engine = exported_attached_ollama();
+    other_engine["spec"]["services"]["ollama-auth"]["engine"] = json!("unix:///tmp/other.sock");
+    assert!(Document::parse(other_engine.to_string().as_bytes()).is_err());
+    let mut hermes = exported_attached_ollama();
+    hermes["spec"]["sandboxes"][0]["harness"]["kind"] = json!("hermes");
+    assert!(Document::parse(hermes.to_string().as_bytes()).is_err());
+    let mut mutable = exported_attached_ollama();
+    mutable["spec"]["services"]["ollama-auth"]["image"] = json!("nc-fabric:latest");
+    assert!(Document::parse(mutable.to_string().as_bytes()).is_err());
+}
+
+#[test]
+fn resolved_attached_ollama_separates_the_advertised_route_from_the_bridge_binding() {
+    let mut value = exported_attached_ollama();
+    value["spec"]["services"]["ollama-auth"]["image"] =
+        json!(format!("nc-fabric@sha256:{}", "a".repeat(64)));
+    let document = Document::parse(value.to_string().as_bytes()).unwrap();
+    let generations: Generations = ["workspace", "provider", "sandbox", "ollama_proxy"]
+        .map(|key| (key.into(), "a".repeat(32)))
+        .into();
+    let bridge = document.spec.gateway.bridge().unwrap();
+    let graph = compile(&document, &generations, "test").unwrap();
+    let container = &graph["resource"]["docker_container"]["ollama_proxy_ollama-auth"];
+    let settings: Value = serde_json::from_str(
+        container["env"][0]
+            .as_str()
+            .unwrap()
+            .strip_prefix("NEMOCLAW_OLLAMA_PROXY=")
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(settings["endpoint"], format!("http://{bridge}:11435/v1"));
+    let profile = &graph["resource"]["nemoclaw_provider_profile"]["inference_local"];
+    assert_eq!(
+        profile["endpoint"],
+        "http://host.openshell.internal:11435/v1"
+    );
+    assert_eq!(profile["destination_ip"], bridge);
+    let policy: Value = serde_json::from_str(
+        graph["resource"]["nemoclaw_sandbox"]["assistant"]["policy_json"]
+            .as_str()
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        policy["network_policies"]["nemoclaw-inference-local"]["endpoints"][0]["allowed_ips"],
+        json!([format!("{bridge}/32")])
+    );
+}
+
 #[test]
 fn explicit_proxy_engine_works_with_an_external_gateway() {
     let mut value = input();

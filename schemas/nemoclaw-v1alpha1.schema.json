@@ -2793,7 +2793,15 @@
           "description": "Managed authentication proxy for an external Ollama daemon and model.",
           "properties": {
             "endpoint": {
-              "description": "Private or loopback HTTP IPv4:port/v1 published by the proxy and reachable by OpenShell.",
+              "anyOf": [
+                {
+                  "pattern": "^http://host\\.openshell\\.internal:[0-9]+/v1$"
+                },
+                {
+                  "pattern": "^http://(?:[0-9]{1,3}\\.){3}[0-9]{1,3}:[0-9]+/v1$"
+                }
+              ],
+              "description": "Reserved sandbox-facing host route, or an explicit private or loopback IPv4 route.",
               "type": "string"
             },
             "engine": {
@@ -2802,9 +2810,18 @@
               "type": "string"
             },
             "image": {
-              "description": "Immutable NemoClaw proxy image. The external daemon runs on the selected Docker host.",
-              "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:/-]*@sha256:[a-f0-9]{64}$",
-              "type": "string"
+              "anyOf": [
+                {
+                  "const": ""
+                },
+                {
+                  "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:/-]*@sha256:[a-f0-9]{64}$"
+                }
+              ],
+              "default": "",
+              "description": "Optional immutable proxy image. Omission resolves the current local NemoClaw build before planning.",
+              "type": "string",
+              "x-nemoclaw-default-rule": "Omission resolves the current local nc-fabric:ollama-proxy build to one immutable RepoDigest before planning."
             },
             "imagePullPolicy": {
               "$ref": "#/$defs/ImagePullPolicy",
@@ -2826,7 +2843,6 @@
           },
           "required": [
             "kind",
-            "image",
             "endpoint",
             "upstream"
           ],
