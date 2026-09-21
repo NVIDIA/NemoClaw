@@ -79,6 +79,21 @@ async fn harness_preserves_conversations_and_rejects_runtime_drift(harness: &str
     let state = fs::read(directory.path().join("terraform.tfstate")).unwrap();
     let effects = fixture.state.lock().unwrap().effects;
     assert_eq!(effects, 4);
+    let writes = || {
+        fixture
+            .state
+            .lock()
+            .unwrap()
+            .exec_calls
+            .iter()
+            .filter(|command| {
+                command
+                    .get(2)
+                    .is_some_and(|arg| arg == "configure" || arg == "prepare")
+            })
+            .count()
+    };
+    let initial_writes = writes();
     assert!(
         deployment
             .apply(&document, &cancel)
@@ -89,6 +104,11 @@ async fn harness_preserves_conversations_and_rejects_runtime_drift(harness: &str
     );
     assert_eq!(deployment.export(&cancel).await.unwrap(), document);
     assert_eq!(fixture.state.lock().unwrap().effects, effects);
+    assert_eq!(
+        writes(),
+        initial_writes,
+        "unchanged apply must not rewrite runtime configuration"
+    );
     nemoclaw_e2e::assert_same_deployment_state(
         &fs::read(directory.path().join("terraform.tfstate")).unwrap(),
         &state,
@@ -114,10 +134,33 @@ async fn harness_preserves_conversations_and_rejects_runtime_drift(harness: &str
             .routes[0]
             .overrides
             .model = "another-custom-model".into();
+        changed_model.spec.sandboxes[0]
+            .agent
+            .inference
+            .as_mut()
+            .unwrap()
+            .routes[0]
+            .overrides
+            .pi_model
+            .as_mut()
+            .unwrap()
+            .insert(
+                "annotation".into(),
+                serde_json::json!("${runtime.value} %{native}"),
+            );
         let planned = deployment.plan(&changed_model, &cancel).await.unwrap();
         assert!(planned.changes.iter().any(|change| change.resource
-            == format!("fabric_runtime.{}", document.spec.sandboxes[0].name)));
+            == format!(
+                "nemoclaw_pi_configuration.{}",
+                document.spec.sandboxes[0].name
+            )));
+        assert_eq!(writes(), initial_writes, "plan must not configure Pi");
         let applied = deployment.apply(&changed_model, &cancel).await.unwrap();
+        assert_eq!(
+            writes(),
+            initial_writes + 1,
+            "apply configures Pi exactly once"
+        );
         assert!(applied.changes.iter().all(|change| {
             !change
                 .actions
@@ -133,8 +176,9 @@ async fn harness_preserves_conversations_and_rejects_runtime_drift(harness: &str
             .unwrap();
         let model: serde_json::Value = serde_json::from_str(&configured[5]).unwrap();
         assert_eq!(model["model"], "another-custom-model");
+        assert_eq!(model["piModel"]["annotation"], "${runtime.value} %{native}");
         assert!(
-            calls
+            !calls
                 .iter()
                 .any(|command| command.get(2).is_some_and(|arg| arg == "prepare"))
         );

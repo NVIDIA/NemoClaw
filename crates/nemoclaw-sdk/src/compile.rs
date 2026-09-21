@@ -138,6 +138,36 @@ fn targets_with_plans(
             values.insert("proxy_host".into(), proxy.host.clone());
             values.insert("proxy_port".into(), proxy.port.to_string());
         }
+        if harness.kind == "pi" {
+            result.push(Target {
+                kind: "pi_configuration".into(),
+                address: format!("nemoclaw_pi_configuration.{}", sandbox.name),
+                values: [
+                    ("workspace".into(), workspace.clone()),
+                    ("name".into(), sandbox.name.clone()),
+                    ("owner".into(), document.metadata.uid.clone()),
+                    (
+                        "generation".into(),
+                        generation(generations, "sandbox")?.into(),
+                    ),
+                    (
+                        "sandbox_id".into(),
+                        format!("${{nemoclaw_sandbox.{}.id}}", sandbox.name),
+                    ),
+                    (
+                        "model_json".into(),
+                        serde_json::to_string(
+                            &document
+                                .sandbox_inference(sandbox)?
+                                .default_route()?
+                                .overrides,
+                        )
+                        .expect("typed Pi model settings"),
+                    ),
+                ]
+                .into(),
+            });
+        }
         result.push(Target {
             kind: "sandbox".into(),
             address: format!("nemoclaw_sandbox.{}", sandbox.name),
@@ -325,6 +355,10 @@ pub(super) fn compile_with_plans(
         if let Some(value) = attributes["credential_source"].as_str() {
             attributes["credential_source"] =
                 json!(value.replace("${", "$${").replace("%{", "%%{"));
+        }
+        if target.kind == "pi_configuration" {
+            let model = attributes["model_json"].as_str().expect("Pi model JSON");
+            attributes["model_json"] = json!(model.replace("${", "$${").replace("%{", "%%{"));
         }
         if target.kind == "sandbox" {
             // JSON configuration strings are still OpenTofu templates. Preserve

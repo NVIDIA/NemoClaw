@@ -91,6 +91,16 @@ impl Deployment {
                     .id
                     .clone(),
             );
+            if target.kind == "pi_configuration" {
+                expected.insert(
+                    "sandbox_id".into(),
+                    bindings
+                        .get(&format!("nemoclaw_sandbox.{}", expected["name"]))
+                        .ok_or(Error::Conflict("Pi configuration has no saved sandbox ID"))?
+                        .id
+                        .clone(),
+                );
+            }
             let observed = if let Some(backend) =
                 crate::services::BackendRegistry::new(&self.engines)
                     .resolve(&target.kind, &expected)?

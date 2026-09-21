@@ -246,29 +246,6 @@ impl Deployment {
             .await?;
         let mut changes = runtime_changes;
         changes.extend(check_plan(&plan, &allowed, &bindings)?);
-        if !fresh {
-            for sandbox in &document.spec.sandboxes {
-                if document.sandbox_harness(sandbox)?.kind != "pi" {
-                    continue;
-                }
-                if let Ok(previous) = record.document.sandbox(&sandbox.name)
-                    && document
-                        .sandbox_inference(sandbox)?
-                        .default_route()?
-                        .overrides
-                        != record
-                            .document
-                            .sandbox_inference(previous)?
-                            .default_route()?
-                            .overrides
-                {
-                    changes.push(Change {
-                        resource: format!("fabric_runtime.{}", sandbox.name),
-                        actions: vec!["update".into()],
-                    });
-                }
-            }
-        }
         let mut result = OperationResult::planned(changes);
         if !apply {
             if fresh {
@@ -286,28 +263,8 @@ impl Deployment {
         store.save(&record)?;
         (self.progress)(Progress::Applying);
         // Known data-source results can be cached in a saved plan. Re-observe
-        // before direct configuration writes or OpenTofu resource mutations.
+        // before OpenTofu resource mutations.
         tokio::select! {()=cancel.cancelled()=>return Err(Error::Cancelled),result=validate_gateway(&client,&document)=>result?}
-        for target in targets.iter().filter(|target| target.kind == "sandbox") {
-            let definition = document.sandbox(&target.values["name"])?;
-            if document.sandbox_harness(definition)?.kind == "pi"
-                && let Some(binding) = bindings.get(&target.address)
-            {
-                let mut sandbox = target.values.clone();
-                sandbox.insert("id".into(), binding.id.clone());
-                sandbox.insert(
-                    "pi_model_config".into(),
-                    serde_json::to_string(
-                        &document
-                            .sandbox_inference(definition)?
-                            .default_route()?
-                            .overrides,
-                    )
-                    .map_err(|_| Error::State("cannot encode Pi model configuration"))?,
-                );
-                tokio::select! {()=cancel.cancelled()=>return Err(Error::Cancelled),result=client.configure_pi(&sandbox, true)=>result?}
-            }
-        }
         self.tofu(
             &bundle,
             &store,
@@ -349,13 +306,21 @@ impl Deployment {
             (self.progress)(Progress::Readiness);
             self.timed("sandbox.ready", async {
                 if document.sandbox_harness(definition)?.kind == "pi" {
-                    sandbox.insert("pi_model_config".into(), serde_json::to_string(&document.sandbox_inference(definition)?.default_route()?.overrides)
-                        .map_err(|_| Error::State("cannot encode Pi model configuration"))?);
-                    tokio::select! {()=cancel.cancelled()=>return Err(Error::Cancelled),result=client.configure_pi(&sandbox, false)=>result?}
+                    sandbox.insert(
+                        "pi_model_config".into(),
+                        serde_json::to_string(
+                            &document
+                                .sandbox_inference(definition)?
+                                .default_route()?
+                                .overrides,
+                        )
+                        .map_err(|_| Error::State("cannot encode Pi model configuration"))?,
+                    );
                 }
                 client.ready(&sandbox, cancel).await?;
                 Ok(())
-            }).await?;
+            })
+            .await?;
             {
                 let agents = vec![definition.agent.name.clone()];
                 let health = self.timed("fabric.health", async {

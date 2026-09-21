@@ -334,7 +334,21 @@ fn pi_model_updates_leave_the_sandbox_connection_unchanged() {
         .routes[0]
         .overrides
         .model = "another-custom-model".into();
-    assert_eq!(targets(&document, &generations).unwrap(), before);
+    let mut after = targets(&document, &generations).unwrap();
+    let configuration = after
+        .iter_mut()
+        .find(|target| target.kind == "pi_configuration")
+        .unwrap();
+    let model: Value = serde_json::from_str(&configuration.values["model_json"]).unwrap();
+    assert_eq!(model["model"], "another-custom-model");
+    let prior = before
+        .iter()
+        .find(|target| target.address == configuration.address)
+        .unwrap();
+    configuration
+        .values
+        .insert("model_json".into(), prior.values["model_json"].clone());
+    assert_eq!(after, before);
 }
 
 #[test]
