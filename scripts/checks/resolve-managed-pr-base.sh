@@ -98,22 +98,23 @@ build_local_base() {
     >>"$GITHUB_STEP_SUMMARY"
 }
 read_dcode_base_inputs() {
-  local dockerfile="$1" line instruction source destination extra
+  local dockerfile="$1" parser parsed_inputs source
+  parser="${BASH_SOURCE[0]%/*}/../lib/dockerfile-copy-sources.mts"
   DCODE_BASE_INPUTS=("$dockerfile" .dockerignore)
-  while IFS= read -r line || [ -n "$line" ]; do
-    [[ "$line" =~ ^[[:space:]]*ADD[[:space:]]+ ]] && return 1
-    [[ "$line" =~ ^[[:space:]]*COPY[[:space:]]+ ]] || continue
-    read -r instruction source destination extra <<<"$line"
-    [ "$instruction" = "COPY" ] || return 1
-    [[ "$source" == --from=* ]] && continue
-    [ -n "$source" ] && [ -n "$destination" ] && [ -z "$extra" ] || return 1
-    [[ "$source" =~ ^[A-Za-z0-9._/-]+$ ]] || return 1
-    case "/$source/" in
-      */../*) return 1 ;;
-    esac
+  parsed_inputs="$(
+    node --experimental-strip-types --input-type=module -e '
+      import { pathToFileURL } from "node:url";
+      const { directDockerfileCopySources } = await import(pathToFileURL(process.argv[1]).href);
+      for (const { source } of directDockerfileCopySources(process.argv[2])) {
+        console.log(source);
+      }
+    ' "$parser" "$dockerfile"
+  )" || return 1
+  while IFS= read -r source; do
+    [ -n "$source" ] || continue
     git cat-file -e "${CANDIDATE_SHA}:${source}" 2>/dev/null || return 1
     DCODE_BASE_INPUTS+=("$source")
-  done <"$dockerfile"
+  done <<<"$parsed_inputs"
   [ "${#DCODE_BASE_INPUTS[@]}" -gt 1 ]
 }
 published_dcode_base_matches_candidate_contract() {
