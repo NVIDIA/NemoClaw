@@ -152,6 +152,7 @@ export function createFinalOnboardFlowPhases<
       portableProfileSelected: context.session?.checkpoint?.profile.value === "portable",
       externalComponent: context.externalComponent,
       providerless: isProviderlessComponentOnboarding(context),
+      deferRuntimeVerification: options.preserveRebuildLivePolicy === true,
       deps: finalizationDeps,
     });
     if (
@@ -191,6 +192,7 @@ export function createFinalOnboardFlowPhases<
           : null,
       portableProfileSelected: context.session?.checkpoint?.profile.value === "portable",
       externalComponent: null,
+      deferRuntimeVerification: options.preserveRebuildLivePolicy === true,
       deps: finalizationDeps,
     });
     return { result: postVerifyResult.stateResult };

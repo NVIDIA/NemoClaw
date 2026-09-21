@@ -468,7 +468,7 @@ describe("rebuildSandbox flow: recovery", () => {
     );
   });
 
-  it("rejects prepared recovery without an MCP observation before deletion", async () => {
+  it("records an empty observation for a live prepared recovery before deletion", async () => {
     const recoveryManifest = makePreparedRecoveryManifest();
     delete (recoveryManifest as Partial<typeof recoveryManifest>).rebuildMcpHandoff;
     const harness = createRebuildFlowHarness({
@@ -480,9 +480,34 @@ describe("rebuildSandbox flow: recovery", () => {
         throwOnError: true,
         recoveryManifest,
       }),
-    ).rejects.toThrow("MCP recovery observation is unavailable");
+    ).resolves.toBeUndefined();
 
     expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
+    expect(harness.prepareMcpBridgesForRebuildSpy).toHaveBeenCalledWith("alpha", undefined, []);
+    expect(harness.runOpenshellSpy).toHaveBeenCalledWith(
+      ["sandbox", "delete", "-g", "nemoclaw", "alpha"],
+      expect.objectContaining({ ignoreError: true }),
+    );
+    expect(harness.onboardSpy).toHaveBeenCalledOnce();
+  });
+
+  it("keeps live prepared recovery fail-closed when source observation is unavailable", async () => {
+    const recoveryManifest = makePreparedRecoveryManifest();
+    delete (recoveryManifest as Partial<typeof recoveryManifest>).rebuildMcpHandoff;
+    const harness = createRebuildFlowHarness({
+      preDeleteLatestManifest: recoveryManifest,
+    });
+    vi.mocked(mcpBridgeSource.inspectAgentMcpSources).mockRejectedValueOnce(
+      new Error("source observation unavailable"),
+    );
+
+    await expect(
+      harness.rebuildSandbox("alpha", ["--yes"], {
+        throwOnError: true,
+        recoveryManifest,
+      }),
+    ).rejects.toThrow("source observation unavailable");
+
     expectNoSandboxDelete(harness.runOpenshellSpy);
     expect(harness.onboardSpy).not.toHaveBeenCalled();
   });
