@@ -51,7 +51,7 @@ impl Engine {
         #[cfg(not(unix))]
         {
             Err(Error::Conflict(
-                "local managed runtime topology is not qualified on this platform",
+                "local container-engine connections are unsupported on this platform",
             ))
         }
     }

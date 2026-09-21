@@ -56,6 +56,17 @@ impl Mutation {
 /// Only authoritative absence may return `Ok(None)` from read.
 #[async_trait]
 pub trait Backend: Send + Sync {
+    /// Check a proposed configuration against current observations without
+    /// changing resources. Prior bindings are separate from desired intent.
+    async fn plan(
+        &self,
+        _kind: &str,
+        _desired: &Row,
+        _prior: Option<&Row>,
+    ) -> Result<(), crate::Error> {
+        Ok(())
+    }
+
     async fn read(
         &self,
         kind: &str,

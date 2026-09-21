@@ -15,7 +15,7 @@ It is not an adapter supplied by upstream Fabric.
 Original source headers are retained.
 
 The harness fixtures use local protocol servers with networking disabled.
-Fixture evidence does not establish model quality or live inference.
+Fixture results do not establish model quality or live inference.
 
 The Pi recipe applies the local `fabric/patch_pi.py` correction to the verified Fabric source.
 It retains upstream headers and adds model resolution from the NemoClaw configuration, opaque native model configuration, and a matching inference probe.

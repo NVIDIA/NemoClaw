@@ -4,9 +4,9 @@
 # Documentation
 
 These guides describe the v1 development branch.
-Sections marked **TBD** need implementation evidence, qualification, or a completed procedure before they can describe supported use.
+Sections marked **TBD** need a verified implementation, test results, or a completed procedure before they can describe supported use.
 TBD is not a support claim or a delivery commitment.
-Use the [validation matrix](validation/README.md) to distinguish tested configurations from remaining qualification gates.
+Use the [validation matrix](validation/README.md) to distinguish tested configurations from checks still required.
 
 ## Get Started
 
@@ -16,7 +16,7 @@ Use the [validation matrix](validation/README.md) to distinguish tested configur
 | Check client, runtime, and model-host requirements | [Prerequisites](prerequisites.md) |
 | Deploy OpenClaw with existing gateway and inference services | [Get started](get-started.md) |
 | Assess a move from an earlier version | [Migration](migration.md) |
-| Find release information and qualification gaps | [Release notes](release-notes.md) |
+| Find release information and untested configurations | [Release notes](release-notes.md) |
 
 ## Build and Deploy
 
@@ -27,7 +27,7 @@ Use the [validation matrix](validation/README.md) to distinguish tested configur
 | Choose inline configuration or shared definitions | [Definitions and references](configuration-references.md) |
 | Locate deployment state and understand backup limits | [Deployment state](state.md) |
 | Diagnose a failed operation | [Troubleshooting](troubleshooting.md) |
-| Review trust, credential custody, and isolation | [Security](security.md) |
+| Review trust, credential storage and access, and isolation | [Security](security.md) |
 | Declare sandbox filesystem, process, egress, and proxy settings | [Sandbox policy and proxy](sandbox-network.md) |
 
 ## Agents and Inference
@@ -57,9 +57,9 @@ Use the [validation matrix](validation/README.md) to distinguish tested configur
 | Task | Guide |
 |---|---|
 | Run workspace checks and collect coverage | [Tests](testing.md) |
-| Exercise OpenTofu and bundles with local fixtures | [Run fixture qualification](testing/fixtures.md) |
-| Qualify explicitly owned live resources | [Run live qualification](testing/live.md) |
-| Inspect retained results and their limits | [Validation evidence](validation/README.md) |
+| Exercise OpenTofu and bundles with local fixtures | [Run integration tests](testing/fixtures.md) |
+| Test explicitly owned live resources | [Run live tests](testing/live.md) |
+| Inspect retained results and their limits | [Recorded test results](validation/README.md) |
 | Write or reorganize documentation | [Contribute documentation](CONTRIBUTING.md) |
 | Validate, preview, or publish the v1 site | [Documentation build](AUTOMATION.md) |
 | Update the generated schema and field reference | [Schema maintenance](configuration-schema.md) |
@@ -68,7 +68,7 @@ Use the [validation matrix](validation/README.md) to distinguish tested configur
 
 Start with the architecture page to follow one deployment through the SDK, OpenTofu, and backend APIs.
 Then use the runtime, execution-target, and recipe pages to understand decisions inside that lifecycle.
-Each explanation includes diagrams and links to the commits that established its boundaries; historical findings retain their original qualification limits.
+Each explanation includes diagrams and links to the commits that established its boundaries; historical findings apply only to their recorded revisions and environments.
 
 | Topic | Owner |
 |---|---|
@@ -76,7 +76,7 @@ Each explanation includes diagrams and links to the commits that established its
 | SDK ownership, durable state, staged apply, and retained storage | [Architecture](design/architecture.md) |
 | Process lifetime, watchdog recovery, and agent ownership | [Runtime design](design/runtime.md) |
 | Connections, engine identity, inference traffic, and host capacity | [Execution targets](design/execution-targets.md) |
-| Artifact ownership, preparation verification, and receipt publication | [Recipe design](design/recipes.md) |
+| Artifact ownership, preparation verification, and output manifests | [Recipe design](design/recipes.md) |
 | Current engine constraints and source locations | [Execution-engine assumptions](engine-assumptions.md) |
 | Proposed migration of previous user guides, public routes, and release documentation | [Documentation migration plan](design/documentation-migration.md) |
 

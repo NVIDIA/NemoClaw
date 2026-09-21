@@ -1,13 +1,23 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-use nemoclaw_sdk::config::Document;
+use nemoclaw_sdk::{
+    config::{Document, ServiceDefinition},
+    services::installers::vllm::Service,
+};
+
+fn service(document: &Document) -> &Service {
+    let ServiceDefinition::Vllm(service) = &document.spec.services["qwen"] else {
+        panic!("expected vLLM service");
+    };
+    service
+}
 
 fn example() -> serde_json::Value {
-    let mut value: serde_json::Value =
-        serde_json::from_str(include_str!("fixtures/config/spark.yaml.json")).unwrap();
-    let mut value = value["document"].take();
-    let service = &mut value["spec"]["inferenceProviders"][0]["service"];
-    service["backend"] = "vllm".into();
+    let mut value = serde_json::to_value(
+        Document::parse(include_str!("fixtures/config/spark.yaml").as_bytes()).unwrap(),
+    )
+    .unwrap();
+    let service = &mut value["spec"]["services"]["qwen"];
     service["recipe"] = serde_json::json!({
         "apiVersion":"nemoclaw.nvidia.com/recipe/v1",
         "compatibility":{"architecture":"arm64","gpu":"NVIDIA GB10","minDriverMajor":580,"minHostMemoryGiB":118,"imageLabels":{"org.nemoclaw.feature.example":"1","org.nemoclaw.recipe.protocol":"v1"}},
@@ -31,17 +41,16 @@ fn inline_recipe_round_trips_without_a_builtin_model_identifier() {
     );
     for path in ["../escape", "/opt/recipe/../escape", "sh -c bad"] {
         let mut invalid = value.clone();
-        invalid["spec"]["inferenceProviders"][0]["service"]["recipe"]["preparation"]["executable"] =
-            path.into();
+        invalid["spec"]["services"]["qwen"]["recipe"]["preparation"]["executable"] = path.into();
         assert!(Document::parse(serde_json::to_vec(&invalid).unwrap().as_slice()).is_err());
     }
 }
 
 #[tokio::test]
-async fn preparation_recovers_staging_reuses_completion_and_rejects_changed_data() {
+async fn preparation_recovers_staging_reuses_output_and_rejects_changed_data() {
     use nemoclaw_sdk::{
         CancellationToken, Error,
-        recipes::preparation::{self, Action, Request, Runner},
+        services::installers::vllm::recipes::preparation::{self, Action, Request, Runner},
     };
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     struct Fixture {
@@ -72,7 +81,7 @@ async fn preparation_recovers_staging_reuses_completion_and_rejects_changed_data
         }
     }
     let d = Document::parse(serde_json::to_vec(&example()).unwrap().as_slice()).unwrap();
-    let service = d.spec.inference_providers[0].service.as_ref().unwrap();
+    let service = service(&d);
     let root = tempfile::tempdir().unwrap();
     let runner = Fixture {
         fail: AtomicBool::new(true),
@@ -84,17 +93,28 @@ async fn preparation_recovers_staging_reuses_completion_and_rejects_changed_data
             .await
             .is_err()
     );
-    let receipt = preparation::prepare(root.path(), root.path(), service, &runner, &cancel)
+    let output = preparation::prepare(root.path(), root.path(), service, &runner, &cancel)
         .await
         .unwrap();
     assert_eq!(
         preparation::prepare(root.path(), root.path(), service, &runner, &cancel)
             .await
             .unwrap(),
-        receipt
+        output
     );
     assert_eq!(runner.calls.load(Ordering::SeqCst), 3);
-    std::fs::write(root.path().join(receipt.key).join("packed"), b"changed").unwrap();
+    let published = root.path().join(&output.key);
+    let mut names: Vec<_> = std::fs::read_dir(&published)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+        .collect();
+    names.sort();
+    assert_eq!(names, ["manifest.json", "packed"]);
+    let saved: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(published.join("manifest.json")).unwrap()).unwrap();
+    assert_eq!(saved["key"], output.key);
+    assert_eq!(saved["files"][0]["name"], "packed");
+    std::fs::write(published.join("packed"), b"changed").unwrap();
     assert!(
         preparation::prepare(root.path(), root.path(), service, &runner, &cancel)
             .await
@@ -106,10 +126,7 @@ async fn preparation_recovers_staging_reuses_completion_and_rejects_changed_data
 #[test]
 fn preparation_keys_track_model_and_tool_identity() {
     let document = Document::parse(serde_json::to_vec(&example()).unwrap().as_slice()).unwrap();
-    let mut service = document.spec.inference_providers[0]
-        .service
-        .clone()
-        .unwrap();
+    let mut service = service(&document).clone();
     let original = service.clone();
     let key = service.recipe.as_ref().unwrap().key(&service);
     service.model.repository = "another/model".into();
@@ -120,14 +137,14 @@ fn preparation_keys_track_model_and_tool_identity() {
 }
 
 #[tokio::test]
-async fn failed_verification_never_publishes_a_completion_receipt() {
+async fn failed_verification_never_publishes_an_output_manifest() {
     use nemoclaw_sdk::{
         CancellationToken, Error,
-        recipes::preparation::{self, Action, Request, Runner},
+        services::installers::vllm::recipes::preparation::{self, Action, Request, Runner},
     };
-    struct UntrustedEvidence(Vec<u8>);
+    struct InvalidVerification(Vec<u8>);
     #[async_trait::async_trait]
-    impl Runner for UntrustedEvidence {
+    impl Runner for InvalidVerification {
         async fn run(
             &self,
             action: Action,
@@ -145,12 +162,9 @@ async fn failed_verification_never_publishes_a_completion_receipt() {
         }
     }
     let document = Document::parse(serde_json::to_vec(&example()).unwrap().as_slice()).unwrap();
-    let service = document.spec.inference_providers[0]
-        .service
-        .as_ref()
-        .unwrap();
+    let service = service(&document);
     let file = serde_json::json!({"name":"packed","size":12,"sha256":"a".repeat(64)});
-    for evidence in [
+    for verification in [
         b"not JSON".to_vec(),
         vec![b' '; (1 << 20) + 1],
         serde_json::to_vec(&serde_json::json!({"files":[]})).unwrap(),
@@ -163,16 +177,21 @@ async fn failed_verification_never_publishes_a_completion_receipt() {
     ] {
         let root = tempfile::tempdir().unwrap();
         let key = service.recipe.as_ref().unwrap().key(service);
+        let error = preparation::prepare(
+            root.path(),
+            root.path(),
+            service,
+            &InvalidVerification(verification),
+            &CancellationToken::new(),
+        )
+        .await
+        .unwrap_err();
         assert!(
-            preparation::prepare(
-                root.path(),
-                root.path(),
-                service,
-                &UntrustedEvidence(evidence),
-                &CancellationToken::new()
-            )
-            .await
-            .is_err()
+            matches!(
+                error,
+                Error::State("recipe preparation is incomplete or changed")
+            ),
+            "{error}"
         );
         assert!(!root.path().join(&key).exists());
         let staging = root.path().join(format!("{key}.preparing"));
@@ -180,7 +199,7 @@ async fn failed_verification_never_publishes_a_completion_receipt() {
             std::fs::read(staging.join("packed")).unwrap(),
             b"packed bytes"
         );
-        assert!(!staging.join("complete.json").exists());
+        assert!(!staging.join("manifest.json").exists());
     }
 }
 
@@ -191,17 +210,17 @@ fn model_specific_backend_names_are_rejected() {
             .unwrap(),
     )
     .unwrap();
-    let service = &mut document["spec"]["inferenceProviders"][0]["service"];
+    let service = &mut document["spec"]["services"]["qwen"];
     service.as_object_mut().unwrap().remove("recipe");
-    service["backend"] = "vllm-qwen38-spark-v1".into();
+    service["kind"] = "vllm-qwen38-spark-v1".into();
     assert!(Document::parse(serde_json::to_vec(&document).unwrap().as_slice()).is_err());
 }
 
 #[tokio::test]
-async fn published_directory_without_a_receipt_is_not_rebuilt() {
+async fn published_directory_without_an_output_manifest_is_not_rebuilt() {
     use nemoclaw_sdk::{
         CancellationToken, Error,
-        recipes::preparation::{self, Action, Request, Runner},
+        services::installers::vllm::recipes::preparation::{self, Action, Request, Runner},
     };
     struct NoTools;
     #[async_trait::async_trait]
@@ -216,10 +235,7 @@ async fn published_directory_without_a_receipt_is_not_rebuilt() {
         }
     }
     let document = Document::parse(serde_json::to_vec(&example()).unwrap().as_slice()).unwrap();
-    let service = document.spec.inference_providers[0]
-        .service
-        .as_ref()
-        .unwrap();
+    let service = service(&document);
     let root = tempfile::tempdir().unwrap();
     let published = root
         .path()
@@ -238,5 +254,23 @@ async fn published_directory_without_a_receipt_is_not_rebuilt() {
         .is_err()
     );
     assert_eq!(std::fs::read(published.join("retained")).unwrap(), b"keep");
-    assert!(!published.join("complete.json").exists());
+    assert!(!published.join("manifest.json").exists());
+    // A legacy completion file cannot silently become a new output manifest.
+    std::fs::write(published.join("complete.json"), b"legacy").unwrap();
+    assert!(
+        preparation::prepare(
+            root.path(),
+            root.path(),
+            service,
+            &NoTools,
+            &CancellationToken::new()
+        )
+        .await
+        .is_err()
+    );
+    assert_eq!(
+        std::fs::read(published.join("complete.json")).unwrap(),
+        b"legacy"
+    );
+    assert!(!published.join("manifest.json").exists());
 }

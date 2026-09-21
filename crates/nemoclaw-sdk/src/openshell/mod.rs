@@ -14,9 +14,11 @@ pub use network::policy_json;
 mod inference;
 use inference::{INFERENCE_ENV, inference_environment, inference_settings};
 use network::{launch_command, launch_environment, observed_proxy, row_policy, row_proxy};
+mod gateway;
 mod transport;
 use crate::{ObservationError, backend::Row};
 pub use agent::{command, environment, policy, policy_matches};
+pub use gateway::GatewayCapabilities;
 use openshell_core::proto;
 pub use transport::{EnvironmentSecrets, OpenShell, Secrets};
 
@@ -130,7 +132,7 @@ fn provider_row(
         if !credential.is_empty() {
             return Err(ObservationError::BindingMismatch);
         }
-        crate::inference_auth::Source::parse(&source, &row["owner"], endpoint)?;
+        crate::services::authentication::Source::parse(&source, &row["owner"], endpoint)?;
     }
     row.insert("credential_source".into(), source);
     row.insert("endpoint".into(), endpoint.clone());

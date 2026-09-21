@@ -1,8 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 #![cfg(target_os = "linux")]
+
 use nemoclaw_sdk::{
-    CancellationToken, Change, Deployment, OperationResult, Outcome, config::Document,
+    CancellationToken, Change, Deployment, OperationResult, Outcome,
+    config::{Document, ServiceDefinition},
+    services::installers::vllm::Service,
 };
 use std::{fs, path::PathBuf};
 
@@ -10,6 +13,28 @@ fn explicit_path(name: &str) -> PathBuf {
     let path = PathBuf::from(std::env::var_os(name).expect(name));
     assert!(path.is_absolute(), "{name} must be an absolute path");
     path
+}
+
+fn vllm(document: &Document) -> &Service {
+    let name = document.spec.inference_providers[0]
+        .service_ref
+        .as_ref()
+        .unwrap();
+    let ServiceDefinition::Vllm(service) = &document.spec.services[name] else {
+        panic!("expected vLLM service");
+    };
+    service
+}
+
+fn vllm_mut(document: &mut Document) -> &mut Service {
+    let name = document.spec.inference_providers[0]
+        .service_ref
+        .clone()
+        .unwrap();
+    let ServiceDefinition::Vllm(service) = document.spec.services.get_mut(&name).unwrap() else {
+        panic!("expected vLLM service");
+    };
+    service
 }
 
 fn creates(resources: &[&str]) -> Vec<Change> {
@@ -47,12 +72,23 @@ async fn spark_yaml_plans_and_applies_expected_resources() {
     let deployment = Deployment::new(&directory, &bundle);
     let cancel = CancellationToken::new();
 
-    let expected_runtime = creates(&[
-        "nemoclaw_gateway_storage.runtime",
-        "nemoclaw_inference_service.inference_qwen",
-        "nemoclaw_inference_storage.inference_qwen",
-        "nemoclaw_managed_gateway.runtime",
-    ]);
+    let generations = [
+        "workspace",
+        "provider",
+        "sandbox",
+        "managed_gateway",
+        "inference_service",
+    ]
+    .map(|kind| (kind.into(), "a".repeat(32)))
+    .into();
+    let runtime = nemoclaw_sdk::compile::runtime_targets(&document, &generations).unwrap();
+    let mut addresses: Vec<_> = runtime
+        .iter()
+        .filter(|target| !target.address.starts_with("data."))
+        .map(|target| target.address.as_str())
+        .collect();
+    addresses.sort();
+    let expected_runtime = creates(&addresses);
     let plan = deployment.plan(&document, &cancel).await.unwrap();
     assert_eq!(
         plan,
@@ -103,27 +139,41 @@ async fn spark_image_change_plans_and_applies_replacement() {
 
     let previous = deployment.export(&cancel).await.unwrap();
     let mut comparison = document.clone();
-    let old_image = &previous.spec.inference_providers[0]
-        .service
-        .as_ref()
-        .unwrap()
-        .image;
-    let new_image = &mut comparison.spec.inference_providers[0]
-        .service
-        .as_mut()
-        .unwrap()
-        .image;
+    let old_image = vllm(&previous).image.clone();
+    let new_image = vllm(&comparison).image.clone();
     assert_ne!(new_image, old_image);
-    new_image.clone_from(old_image);
+    vllm_mut(&mut comparison).image = old_image;
     assert_eq!(
         comparison, previous,
         "only the inference image pin may change"
     );
 
-    let expected_changes = vec![Change {
-        resource: "nemoclaw_inference_service.inference_qwen".into(),
+    let mut expected_changes = vec![Change {
+        resource: "docker_container.inference_service_inference_qwen".into(),
         actions: vec!["delete".into(), "create".into()],
     }];
+    let generations = [
+        "workspace",
+        "provider",
+        "sandbox",
+        "managed_gateway",
+        "inference_service",
+    ]
+    .map(|kind| (kind.into(), "a".repeat(32)))
+    .into();
+    for (config, action) in [(&previous, "delete"), (&document, "create")] {
+        for target in nemoclaw_sdk::compile::runtime_targets(config, &generations)
+            .unwrap()
+            .into_iter()
+            .filter(|target| target.kind == "docker_image")
+        {
+            expected_changes.push(Change {
+                resource: target.address,
+                actions: vec![action.into()],
+            });
+        }
+    }
+    expected_changes.sort_by(|a, b| a.resource.cmp(&b.resource));
     let plan = deployment.plan(&document, &cancel).await.unwrap();
     assert_eq!(
         plan,

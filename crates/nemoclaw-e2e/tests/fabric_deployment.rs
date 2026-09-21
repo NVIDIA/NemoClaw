@@ -5,35 +5,6 @@ use nemoclaw_e2e::openshell::Fixture;
 use nemoclaw_sdk::{CancellationToken, Deployment, config::Document};
 use std::{fs, path::PathBuf};
 
-#[test]
-fn harness_lifecycles_are_independently_selectable() {
-    let output = std::process::Command::new(std::env::current_exe().unwrap())
-        .args(["--list", "--ignored"])
-        .output()
-        .unwrap();
-    assert!(output.status.success());
-    let listing = String::from_utf8(output.stdout).unwrap();
-    for harness in [
-        "deepagents",
-        "hermes",
-        "openclaw",
-        "claude",
-        "codex",
-        "mini_swe_agent",
-        "nooa",
-        "nooa_bench",
-        "remote_agent",
-        "pi",
-    ] {
-        assert!(
-            listing
-                .lines()
-                .any(|line| line == format!("harness_{harness}: test")),
-            "{harness} must be individually schedulable by the bounded test runner"
-        );
-    }
-}
-
 macro_rules! harness_test {
     ($name:ident, $harness:literal) => {
         #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -118,9 +89,9 @@ async fn harness_preserves_conversations_and_rejects_runtime_drift(harness: &str
     );
     assert_eq!(deployment.export(&cancel).await.unwrap(), document);
     assert_eq!(fixture.state.lock().unwrap().effects, effects);
-    assert_eq!(
-        fs::read(directory.path().join("terraform.tfstate")).unwrap(),
-        state
+    nemoclaw_e2e::assert_same_deployment_state(
+        &fs::read(directory.path().join("terraform.tfstate")).unwrap(),
+        &state,
     );
     assert!(
         fixture

@@ -8,25 +8,24 @@ pub(crate) mod integration_policy;
 mod integrations;
 pub use integrations::*;
 mod observability;
-mod ollama_proxy;
 pub use observability::*;
-pub use ollama_proxy::*;
 mod inference;
 mod interfaces;
 mod providers;
-mod references;
+pub(crate) mod references;
+pub use crate::services::ServiceDefinition;
 pub use agent_inference::*;
 pub use execution::*;
 pub use interfaces::*;
-mod management;
-pub use management::*;
+mod image_pull_policy;
+pub use image_pull_policy::ImagePullPolicy;
 mod network;
 pub use network::*;
 #[doc(hidden)]
 pub mod schema;
 mod types;
 pub use inference::InferenceConnection;
-mod validation;
+pub(crate) mod validation;
 use sha2::{Digest, Sha256};
 use std::{fmt, io::Read};
 pub use types::*;
@@ -249,10 +248,8 @@ impl Document {
                 ),
             );
         }
-        for provider in self.provider_definitions_mut() {
-            if let Some(service) = &mut provider.service {
-                service.defaults();
-            }
+        for service in self.spec.services.values_mut() {
+            crate::services::defaults(service);
         }
         let harnesses = &self.spec.harnesses;
         for sandbox in &mut self.spec.sandboxes {
@@ -289,6 +286,12 @@ pub(crate) fn bridge_address(cidr: &str) -> Result<String, ConfigError> {
     Ok(std::net::Ipv4Addr::from(address).to_string())
 }
 impl Gateway {
+    pub(crate) fn runtime_settings(&self) -> Self {
+        let mut settings = self.clone();
+        // Acquisition policy is a mutable provider attribute, not container identity.
+        settings.image_pull_policy = None;
+        settings
+    }
     /// Resolve the first address after the configured network address.
     ///
     /// # Errors
@@ -297,73 +300,6 @@ impl Gateway {
         bridge_address(&self.network_cidr)
     }
 }
-impl Service {
-    pub fn served_model(&self) -> &str {
-        if let Some(recipe) = &self.recipe {
-            return &recipe.serving.model_name;
-        }
-        if self.serving.model_name.is_empty() {
-            &self.model.repository
-        } else {
-            &self.serving.model_name
-        }
-    }
-
-    pub fn defaults(&mut self) {
-        for (value, default) in [
-            (&mut self.serving.port, constraints::PORT.default),
-            (
-                &mut self.serving.context_tokens,
-                constraints::CONTEXT_TOKENS.default,
-            ),
-            (
-                &mut self.serving.max_sequences,
-                constraints::MAX_SEQUENCES.default,
-            ),
-            (
-                &mut self.serving.batch_tokens,
-                constraints::BATCH_TOKENS.default,
-            ),
-            (
-                &mut self.serving.startup_timeout_seconds,
-                constraints::STARTUP_TIMEOUT.default,
-            ),
-            (
-                &mut self.memory.host_reserve_gib,
-                constraints::HOST_RESERVE.default,
-            ),
-            (
-                &mut self.memory.kv_cache_gib,
-                if self.memory.gpu_memory_utilization.is_some() {
-                    0
-                } else {
-                    constraints::KV_CACHE.default
-                },
-            ),
-            (
-                &mut self.memory.min_available_gib,
-                constraints::MIN_AVAILABLE.default,
-            ),
-            (&mut self.memory.min_free_gib, constraints::MIN_FREE.default),
-            (
-                &mut self.memory.free_gate_gib,
-                constraints::FREE_GATE.default,
-            ),
-            (
-                &mut self.memory.consecutive_samples,
-                constraints::CONSECUTIVE_SAMPLES.default,
-            ),
-        ] {
-            if *value == 0 {
-                *value = default;
-            }
-        }
-    }
-}
-
 fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
-
-mod service_hardware;
-pub use service_hardware::{ServiceContainer, ServiceHardware, ServiceIpc};

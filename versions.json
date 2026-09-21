@@ -12,6 +12,10 @@
       "protoc": {
         "url": "https://github.com/protocolbuffers/protobuf/releases/download/v36.1/protoc-36.1-linux-aarch_64.zip",
         "sha256": "237a68856edf1bd28b6204bddd0596c1cf46d298bc29c620012540b2e44c73e7"
+      },
+      "dockerProvider": {
+        "url": "https://github.com/kreuzwerker/terraform-provider-docker/releases/download/v4.6.0/terraform-provider-docker_4.6.0_linux_arm64.zip",
+        "sha256": "d60fc2d42da1d567f28b6267dde57af03d7333033d8246c6880944f24d641556"
       }
     },
     "linux_amd64": {
@@ -22,6 +26,10 @@
       "protoc": {
         "url": "https://github.com/protocolbuffers/protobuf/releases/download/v36.1/protoc-36.1-linux-x86_64.zip",
         "sha256": "c4bc672d9d49214dc8cafdceadf4df92182d6ca8e3ec65a56b2d7de5602669b4"
+      },
+      "dockerProvider": {
+        "url": "https://github.com/kreuzwerker/terraform-provider-docker/releases/download/v4.6.0/terraform-provider-docker_4.6.0_linux_amd64.zip",
+        "sha256": "866046fa4938ac1ed5cc58b3c4d36e27433dac1aae50256911e6f28184dcf82e"
       }
     },
     "darwin_arm64": {
@@ -32,6 +40,10 @@
       "protoc": {
         "url": "https://github.com/protocolbuffers/protobuf/releases/download/v36.1/protoc-36.1-osx-aarch_64.zip",
         "sha256": "de56d57afe30c5d191b11d24ff93dd4025728d7fb43b773886b2d3613e0bdbb2"
+      },
+      "dockerProvider": {
+        "url": "https://github.com/kreuzwerker/terraform-provider-docker/releases/download/v4.6.0/terraform-provider-docker_4.6.0_darwin_arm64.zip",
+        "sha256": "e4f8d82f2a5171dd5cb9d5813a49d7d7221d09c10482c2c819d6b2a899e30c5f"
       }
     },
     "darwin_amd64": {
@@ -42,6 +54,10 @@
       "protoc": {
         "url": "https://github.com/protocolbuffers/protobuf/releases/download/v36.1/protoc-36.1-osx-x86_64.zip",
         "sha256": "ee2c5496e4af0aa6a224894bc0f7025145260e004d890487d510725ce8b473eb"
+      },
+      "dockerProvider": {
+        "url": "https://github.com/kreuzwerker/terraform-provider-docker/releases/download/v4.6.0/terraform-provider-docker_4.6.0_darwin_amd64.zip",
+        "sha256": "c14b8d122bd12cc84aed5eb62cc0a965b5a9807b5a2257a51be5460d2f69b437"
       }
     },
     "windows_amd64": {
@@ -52,6 +68,10 @@
       "protoc": {
         "url": "https://github.com/protocolbuffers/protobuf/releases/download/v36.1/protoc-36.1-win64.zip",
         "sha256": "390e515cb456e6a978553bdb57baf087b054885077fd6da7f7ff0160279c07d6"
+      },
+      "dockerProvider": {
+        "url": "https://github.com/kreuzwerker/terraform-provider-docker/releases/download/v4.6.0/terraform-provider-docker_4.6.0_windows_amd64.zip",
+        "sha256": "bad00d59d082dcad2be2582660aae6f7683ffb3bba226cc627fb910008f27411"
       }
     }
   },
@@ -64,5 +84,6 @@
     "gateway": "ghcr.io/nvidia/openshell/gateway@sha256:ec2b0efea84fff198e888e97c85befb9c908acde92e8256f9b527877ed182d66",
     "supervisor": "ghcr.io/nvidia/openshell/supervisor@sha256:d039ba7f9a0c3e6788cb04c17fc7738f06db42002fcaaef01e0d2dda375938d1",
     "sandboxRuntime": "ghcr.io/nvidia/openshell/sandbox@sha256:5b2131ff985a0ab7b3bb2fd21cba5a18819431134fce9f17ceffde20970ec736"
-  }
+  },
+  "dockerProvider": "4.6.0"
 }

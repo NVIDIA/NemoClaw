@@ -1,11 +1,13 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 mod hub;
+mod manifest;
+pub use manifest::{MANIFEST_FILE, ModelFile, ModelManifest};
 #[cfg(test)]
 mod tests;
 
 use crate::{CancellationToken, Error, state::save_json};
-use futures_util::{StreamExt, TryStreamExt};
+use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
@@ -44,12 +46,6 @@ pub struct VerifiedFile {
     pub file: File,
     pub modified: u64,
 }
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct Receipt {
-    pub manifest: String,
-    pub files: Vec<VerifiedFile>,
-}
 fn hex(bytes: impl AsRef<[u8]>) -> String {
     bytes.as_ref().iter().map(|b| format!("{b:02x}")).collect()
 }
@@ -65,7 +61,7 @@ impl Manifest {
                 .repository
                 .split('/')
                 .any(|part| part == "." || part == "..")
-            || !regex::Regex::new(r"^[a-f0-9]{40}$")
+            || !regex::Regex::new(r"^(?:[a-f0-9]{40}|[a-f0-9]{64})$")
                 .unwrap()
                 .is_match(&self.revision)
             || self.files.is_empty()
@@ -155,32 +151,27 @@ fn safe_path(root: &Path, relative: &str, create: bool) -> Result<PathBuf, Error
     }
     Ok(directory.join(file))
 }
-pub fn observe(directory: &Path, manifest: &Manifest) -> Result<Receipt, Error> {
-    manifest.validate()?;
-    let marker = safe_path(directory, ".nemoclaw-complete.json", false)?;
-    if !fs::symlink_metadata(&marker).is_ok_and(|m| m.is_file()) {
-        return Err(failure("snapshot completion receipt unavailable"));
+pub fn observe(directory: &Path, manifest: &Manifest) -> Result<ModelManifest, Error> {
+    let local = ModelManifest::read(directory)?.ok_or(failure("model manifest unavailable"))?;
+    local.validate_for(manifest)?;
+    for verified in local.verified_files()? {
+        check_verified(directory, &verified.file, verified.modified)?;
     }
-    let receipt: Receipt = serde_json::from_slice(
-        &fs::read(marker).map_err(|_| failure("snapshot completion receipt unavailable"))?,
-    )
-    .map_err(|_| failure("invalid snapshot completion receipt"))?;
-    if receipt.manifest != manifest.key() || receipt.files.len() != manifest.files.len() {
+    Ok(local)
+}
+fn check_verified(directory: &Path, file: &File, expected_modified: u64) -> Result<(), Error> {
+    let path = safe_path(directory, &file.name, false)?;
+    if modified(&path, file.size)? != expected_modified {
         return Err(failure(
-            "snapshot completion conflicts with pinned manifest",
+            "verified model file changed; retained for inspection",
         ));
     }
-    for (verified, file) in receipt.files.iter().zip(&manifest.files) {
-        let path = safe_path(directory, &file.name, false)?;
-        if verified.file != *file || modified(&path, file.size)? != verified.modified {
-            return Err(failure("verified model snapshot changed or is incomplete"));
-        }
-    }
-    Ok(receipt)
+    Ok(())
 }
 
 pub struct Client {
     base_url: String,
+    registry: bool,
     http: reqwest::Client,
     resume_attempts: usize,
 }
@@ -216,9 +207,85 @@ impl Client {
             .map_err(|_| failure("cannot initialize model transport"))?;
         Ok(Self {
             base_url: "https://huggingface.co".into(),
+            registry: false,
             http,
             resume_attempts: 4,
         })
+    }
+    /// An OCI-style registry adapter uses the same checksummed, resumable file lifecycle.
+    pub(crate) fn registry(origin: &str) -> Result<Self, Error> {
+        let mut client = Self::new()?;
+        let url = reqwest::Url::parse(origin).map_err(|_| failure("invalid registry origin"))?;
+        if url.scheme() != "https" || url.host_str().is_none() || url.path() != "/" {
+            return Err(failure("invalid registry origin"));
+        }
+        client.base_url = origin.trim_end_matches('/').into();
+        client.registry = true;
+        Ok(client)
+    }
+    fn file_url(&self, manifest: &Manifest, file: &File) -> Result<reqwest::Url, Error> {
+        if self.registry {
+            manifest.validate()?;
+            let mut url = reqwest::Url::parse(&self.base_url)
+                .map_err(|_| failure("invalid registry origin"))?;
+            let mut path = url
+                .path_segments_mut()
+                .map_err(|_| failure("invalid registry origin"))?;
+            path.push("v2").extend(manifest.repository.split('/'));
+            if file.name == format!("blobs/sha256-{}", file.sha256) {
+                path.extend(["blobs", &format!("sha256:{}", file.sha256)]);
+            } else if file.sha256 == manifest.revision {
+                let reference = file
+                    .name
+                    .rsplit_once('/')
+                    .map(|(_, reference)| reference)
+                    .filter(|reference| !reference.is_empty())
+                    .ok_or(failure("invalid registry manifest path"))?;
+                path.extend(["manifests", reference]);
+            } else {
+                return Err(failure("invalid registry snapshot path"));
+            }
+            drop(path);
+            return Ok(url);
+        }
+        let mut url =
+            reqwest::Url::parse(&self.base_url).map_err(|_| failure("invalid model origin"))?;
+        url.path_segments_mut()
+            .map_err(|_| failure("invalid model origin"))?
+            .extend(manifest.repository.split('/'))
+            .push("resolve")
+            .push(&manifest.revision)
+            .extend(file.name.split('/'));
+        Ok(url)
+    }
+
+    pub(crate) async fn registry_manifest(
+        &self,
+        repository: &str,
+        reference: &str,
+        limit: usize,
+    ) -> Result<Vec<u8>, Error> {
+        if !self.registry {
+            return Err(failure("registry metadata requires a registry client"));
+        }
+        let mut url =
+            reqwest::Url::parse(&self.base_url).map_err(|_| failure("invalid registry origin"))?;
+        url.path_segments_mut()
+            .map_err(|_| failure("invalid registry origin"))?
+            .push("v2")
+            .extend(repository.split('/'))
+            .extend(["manifests", reference]);
+        self.bounded(url, limit).await
+    }
+
+    pub(crate) async fn registry_file(
+        &self,
+        manifest: &Manifest,
+        file: &File,
+        limit: usize,
+    ) -> Result<Vec<u8>, Error> {
+        let url = self.file_url(manifest, file)?;
+        self.bounded(url, limit).await
     }
     /// Only explicit apply calls ensure. Interrupted body streams get at most
     /// four attempts with 1/2/4 second delays. Other failures never retry.
@@ -228,16 +295,43 @@ impl Client {
         manifest: &Manifest,
         cancel: &CancellationToken,
         progress: &(dyn Fn(&str) + Sync),
-    ) -> Result<Receipt, Error> {
+    ) -> Result<ModelManifest, Error> {
         manifest.validate()?;
         if cancel.is_cancelled() {
             return Err(Error::Cancelled);
         }
-        if let Ok(receipt) = observe(directory, manifest) {
-            return Ok(receipt);
+        let saved = ModelManifest::read(directory)?;
+        let is_new = saved.is_none();
+        let mut local = saved.unwrap_or_else(|| ModelManifest::new(manifest));
+        local.validate_for(manifest)?;
+        // Check established files before starting any remaining downloads.
+        for entry in &local.files {
+            if let Some(modified) = entry.modified {
+                check_verified(directory, &entry.file, modified)?;
+            }
         }
-        let work = futures_util::stream::iter(manifest.files.iter().enumerate())
-            .map(|(index, file)| async move {
+        let pending: Vec<_> = local
+            .files
+            .iter()
+            .enumerate()
+            .filter(|(_, entry)| entry.modified.is_none())
+            .map(|(index, _)| index)
+            .collect();
+        if pending.is_empty() {
+            return Ok(local);
+        }
+        if is_new {
+            if fs::symlink_metadata(directory.join(".nemoclaw-complete.json")).is_ok() {
+                return Err(failure(
+                    "unsupported legacy model metadata; retained for inspection",
+                ));
+            }
+            let path = safe_path(directory, MANIFEST_FILE, true)?;
+            save_json(&path, &local)?;
+        }
+        let work = futures_util::stream::iter(pending)
+            .map(|index| async move {
+                let file = &manifest.files[index];
                 progress(&file.name);
                 let mut result = Err(failure(
                     "model stream incomplete; partial download retained",
@@ -249,7 +343,7 @@ impl Client {
                     }
                     match self.ensure_file(directory, manifest, file, cancel).await {
                         Ok(file) => {
-                            result = Ok((index, file));
+                            result = Ok(file);
                             break;
                         }
                         Err(AttemptFailure::Other(error)) => {
@@ -259,18 +353,20 @@ impl Client {
                         Err(AttemptFailure::Interrupted) => {}
                     }
                 }
-                result
+                (index, result)
             })
-            .buffer_unordered(4)
-            .try_collect::<Vec<_>>();
-        let mut files = tokio::select! { ()=cancel.cancelled()=>return Err(Error::Cancelled), result=work=>result? };
-        files.sort_by_key(|(index, _)| *index);
-        let receipt = Receipt {
-            manifest: manifest.key(),
-            files: files.into_iter().map(|(_, file)| file).collect(),
-        };
-        save_json(&directory.join(".nemoclaw-complete.json"), &receipt)?;
-        Ok(receipt)
+            .buffer_unordered(4);
+        tokio::pin!(work);
+        // One writer saves each completed file, including during a partial download.
+        // Concurrent transfers never overwrite each other's manifest updates.
+        while let Some((index, result)) = tokio::select! {
+            () = cancel.cancelled() => return Err(Error::Cancelled),
+            result = work.next() => result,
+        } {
+            local.files[index].modified = Some(result?.modified);
+            save_json(&directory.join(MANIFEST_FILE), &local)?;
+        }
+        observe(directory, manifest)
     }
     async fn ensure_file(
         &self,
@@ -280,24 +376,16 @@ impl Client {
         cancel: &CancellationToken,
     ) -> Result<VerifiedFile, AttemptFailure> {
         let path = safe_path(directory, &want.name, true)?;
-        let marker = path.with_file_name(format!(
-            "{}.nemoclaw-verified.json",
-            path.file_name().unwrap().to_string_lossy()
-        ));
-        if let Ok(bytes) = fs::read(&marker)
-            && let Ok(verified) = serde_json::from_slice::<VerifiedFile>(&bytes)
-            && verified.file == *want
-            && modified(&path, want.size).is_ok_and(|m| m == verified.modified)
-        {
-            return Ok(verified);
-        }
         match fs::symlink_metadata(&path) {
             Ok(metadata) => {
                 if !metadata.is_file() {
                     return Err(failure("snapshot path is not a regular file").into());
                 }
-                verify(&path, want, cancel).await?;
-                return record(&path, &marker, want).map_err(Into::into);
+                let modified = verify(&path, want, cancel).await?;
+                return Ok(VerifiedFile {
+                    file: want.clone(),
+                    modified,
+                });
             }
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
             Err(_) => return Err(failure("cannot inspect snapshot file").into()),
@@ -332,14 +420,7 @@ impl Client {
             return Err(failure("partial snapshot exceeds pinned size").into());
         }
         if offset < want.size {
-            let mut url =
-                reqwest::Url::parse(&self.base_url).map_err(|_| failure("invalid model origin"))?;
-            url.path_segments_mut()
-                .map_err(|_| failure("invalid model origin"))?
-                .extend(manifest.repository.split('/'))
-                .push("resolve")
-                .push(&manifest.revision)
-                .extend(want.name.split('/'));
+            let url = self.file_url(manifest, want)?;
             let mut request = self.http.get(url);
             if offset > 0 {
                 request = request.header(reqwest::header::RANGE, format!("bytes={offset}-"));
@@ -391,15 +472,29 @@ impl Client {
                 .map_err(|_| failure("cannot sync model data"))?;
         }
         drop(file);
-        verify(&partial, want, cancel).await?;
+        let verified_modified = verify(&partial, want, cancel).await?;
         tokio::fs::rename(&partial, &path)
             .await
             .map_err(|_| failure("cannot commit verified model file"))?;
-        record(&path, &marker, want).map_err(Into::into)
+        #[cfg(unix)]
+        fs::File::open(path.parent().ok_or(failure("invalid model file path"))?)
+            .and_then(|parent| parent.sync_all())
+            .map_err(|_| failure("cannot sync model file directory"))?;
+        check_verified(directory, want, verified_modified)?;
+        Ok(VerifiedFile {
+            file: want.clone(),
+            modified: verified_modified,
+        })
     }
 }
-async fn verify(path: &Path, want: &File, cancel: &CancellationToken) -> Result<(), Error> {
-    let mut file = tokio::fs::File::open(path)
+async fn verify(path: &Path, want: &File, cancel: &CancellationToken) -> Result<u64, Error> {
+    let before = modified(path, want.size)?;
+    let mut options = tokio::fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(windows)]
+    options.write(true);
+    let mut file = options
+        .open(path)
         .await
         .map_err(|_| failure("cannot verify model file"))?;
     let mut digest = Sha256::new();
@@ -424,15 +519,13 @@ async fn verify(path: &Path, want: &File, cancel: &CancellationToken) -> Result<
             "model file does not match pinned size and SHA-256; retained for inspection",
         ));
     }
-    Ok(())
-}
-fn record(path: &Path, marker: &Path, want: &File) -> Result<VerifiedFile, Error> {
-    let verified = VerifiedFile {
-        file: want.clone(),
-        modified: modified(path, want.size)?,
-    };
-    save_json(marker, &verified)?;
-    Ok(verified)
+    if modified(path, want.size)? != before {
+        return Err(failure("model file changed during verification"));
+    }
+    file.sync_all()
+        .await
+        .map_err(|_| failure("cannot sync verified model file"))?;
+    Ok(before)
 }
 
 /// Create only real directories under the owned storage root.

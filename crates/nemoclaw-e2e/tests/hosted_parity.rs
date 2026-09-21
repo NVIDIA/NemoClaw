@@ -86,8 +86,7 @@ fn assert_hosted_document(document: &Document, harness: &str, runtime_root: &str
         provider.credential.as_ref().unwrap().env,
         "NVIDIA_INFERENCE_API_KEY"
     );
-    assert!(provider.service.is_none());
-    assert!(provider.ollama.is_none());
+    assert!(provider.service_ref.is_none());
 
     let sandbox = &document.spec.sandboxes[0];
     let expected_image = if harness == "hermes" {
@@ -115,9 +114,8 @@ fn assert_hosted_document(document: &Document, harness: &str, runtime_root: &str
             "raw export policy must grant the v1 runtime root {root}"
         );
     }
-    let agent = &sandbox.agent;
     assert_eq!(document.sandbox_harness(sandbox).unwrap().kind, harness);
-    let inference = document.agent_inference(agent).unwrap();
+    let inference = document.sandbox_inference(sandbox).unwrap();
     assert_eq!(
         inference.routes[0].provider_ref.as_deref(),
         Some(provider.name.as_str())
@@ -239,14 +237,26 @@ mod live {
         (ids, sandbox)
     }
 
-    fn initial_plan() -> OperationResult {
+    fn runtime_resources(document: &Document) -> Vec<String> {
+        let generations = ["workspace", "provider", "sandbox", "managed_gateway"]
+            .map(|kind| (kind.into(), "a".repeat(32)))
+            .into();
+        let mut runtime: Vec<_> = nemoclaw_sdk::compile::runtime_targets(document, &generations)
+            .unwrap()
+            .into_iter()
+            .filter(|target| !target.address.starts_with("data."))
+            .map(|target| target.address)
+            .collect();
+        runtime.sort();
+        runtime
+    }
+
+    fn initial_plan(document: &Document) -> OperationResult {
+        let runtime = runtime_resources(document);
         OperationResult {
             outcome: Outcome::Planned,
             changes: changes(
-                &[
-                    "nemoclaw_gateway_storage.runtime",
-                    "nemoclaw_managed_gateway.runtime",
-                ],
+                &runtime.iter().map(String::as_str).collect::<Vec<_>>(),
                 "create",
             ),
             deferred: vec!["OpenShell registration and sandbox require the managed gateway".into()],
@@ -255,16 +265,25 @@ mod live {
         }
     }
 
-    fn removed_resources() -> Vec<Change> {
-        changes(
+    fn removed_resources(document: &Document) -> Vec<Change> {
+        let mut removed = changes(
             &[
                 "nemoclaw_provider.inference_hosted-nvidia-prod",
                 "nemoclaw_provider_profile.inference_hosted-nvidia-prod",
                 "nemoclaw_sandbox.assistant",
-                "nemoclaw_managed_gateway.runtime",
             ],
             "delete",
-        )
+        );
+        let runtime = runtime_resources(document);
+        removed.extend(changes(
+            &runtime
+                .iter()
+                .filter(|address| address.as_str() != "nemoclaw_gateway_storage.runtime")
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+            "delete",
+        ));
+        removed
     }
 
     fn retained_resources() -> Vec<String> {
@@ -281,24 +300,25 @@ mod live {
     ) {
         assert_eq!(
             deployment.plan(document, cancel).await.unwrap(),
-            initial_plan()
+            initial_plan(document)
         );
         let applied = deployment.apply(document, cancel).await.unwrap();
         assert_eq!(applied.outcome, Outcome::Succeeded);
-        assert_eq!(
-            applied.changes,
-            changes(
-                &[
-                    "nemoclaw_gateway_storage.runtime",
-                    "nemoclaw_managed_gateway.runtime",
-                    "nemoclaw_provider.inference_hosted-nvidia-prod",
-                    "nemoclaw_provider_profile.inference_hosted-nvidia-prod",
-                    "nemoclaw_sandbox.assistant",
-                    "nemoclaw_workspace.deployment",
-                ],
-                "create",
-            )
+        let runtime = runtime_resources(document);
+        let mut expected = changes(
+            &runtime.iter().map(String::as_str).collect::<Vec<_>>(),
+            "create",
         );
+        expected.extend(changes(
+            &[
+                "nemoclaw_provider.inference_hosted-nvidia-prod",
+                "nemoclaw_provider_profile.inference_hosted-nvidia-prod",
+                "nemoclaw_sandbox.assistant",
+                "nemoclaw_workspace.deployment",
+            ],
+            "create",
+        ));
+        assert_eq!(applied.changes, expected);
         assert!(applied.deferred.is_empty());
         assert!(applied.retained.is_empty());
         assert_eq!(applied.health.len(), 1);
@@ -307,8 +327,12 @@ mod live {
         assert!(applied.health[0].health.allows_apply_completion());
     }
 
-    async fn destroy(deployment: &Deployment, cancel: &CancellationToken) -> Vec<String> {
-        let removed = removed_resources();
+    async fn destroy(
+        deployment: &Deployment,
+        document: &Document,
+        cancel: &CancellationToken,
+    ) -> Vec<String> {
+        let removed = removed_resources(document);
         let retained = retained_resources();
         assert_eq!(
             deployment.plan_destroy(cancel).await.unwrap(),
@@ -362,7 +386,7 @@ mod live {
         assert_eq!(reapplied.outcome, Outcome::Succeeded);
         assert!(reapplied.changes.is_empty());
         assert!(reapplied.deferred.is_empty());
-        destroy(&deployment, &cancel).await;
+        destroy(&deployment, &document, &cancel).await;
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -380,16 +404,20 @@ mod live {
 
         apply_initial(&deployment, &document, &cancel).await;
         let (before, sandbox) = state_bindings(&directory);
-        assert_eq!(
-            before.keys().map(String::as_str).collect::<Vec<_>>(),
+        let mut expected = runtime_resources(&document);
+        expected.extend(
             [
-                "nemoclaw_gateway_storage.runtime",
-                "nemoclaw_managed_gateway.runtime",
                 "nemoclaw_provider.inference_hosted-nvidia-prod",
                 "nemoclaw_provider_profile.inference_hosted-nvidia-prod",
                 "nemoclaw_sandbox.assistant",
                 "nemoclaw_workspace.deployment",
             ]
+            .map(String::from),
+        );
+        expected.sort();
+        assert_eq!(
+            before.keys().map(String::as_str).collect::<Vec<_>>(),
+            expected.iter().map(String::as_str).collect::<Vec<_>>()
         );
         let client =
             OpenShell::connect(&document.spec.gateway, Arc::new(EnvironmentSecrets)).unwrap();
@@ -420,7 +448,7 @@ mod live {
         assert!(reapplied.deferred.is_empty());
         assert_eq!(state_bindings(&directory).0, before);
 
-        let retained = destroy(&deployment, &cancel).await;
+        let retained = destroy(&deployment, &document, &cancel).await;
         let (after, sandbox) = state_bindings(&directory);
         assert!(sandbox.is_none());
         assert_eq!(

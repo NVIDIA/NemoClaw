@@ -60,9 +60,9 @@ async fn provider_union_export_reapply_drift_and_destroy_remain_scoped_to_each_s
             .is_empty()
     );
     assert_eq!(fixture.state.lock().unwrap().effects, effects);
-    assert_eq!(
-        fs::read(first_state.path().join("terraform.tfstate")).unwrap(),
-        state
+    nemoclaw_e2e::assert_same_deployment_state(
+        &fs::read(first_state.path().join("terraform.tfstate")).unwrap(),
+        &state,
     );
     let first_key = format!("{}/{}", first.workspace(), first.spec.sandboxes[0].name);
     let second_key = format!("{}/{}", second.workspace(), second.spec.sandboxes[0].name);

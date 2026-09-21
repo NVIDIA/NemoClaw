@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 #![cfg(unix)]
 use nemoclaw_e2e::openshell::Fixture;
-use nemoclaw_sdk::{config::Document, recipes::huggingface};
+use nemoclaw_sdk::config::{Document, ServiceDefinition};
 use serde_json::{Value, json};
 use std::{
     fs,
@@ -19,9 +19,13 @@ fn read(root: &Path, name: &str) -> Value {
 async fn run(root: &Path, bundle: &Path, command: &str, file: &str, success: bool) -> Vec<u8> {
     let mut process = tokio::process::Command::new(bundle.join("bin/nemoclaw"));
     process
+        .arg("--verbose")
         .arg("--state-dir")
         .arg(root.join("deployment"))
         .arg(command);
+    if command == "plan" {
+        process.args(["-o", "json"]);
+    }
     if !file.is_empty() {
         process.arg(root.join(file));
     }
@@ -41,35 +45,63 @@ async fn run(root: &Path, bundle: &Path, command: &str, file: &str, success: boo
     if !output.status.success() {
         eprintln!("{command}: {}", String::from_utf8_lossy(&output.stderr));
     }
+    if output.status.success() != success {
+        eprintln!(
+            "fixture host config: {}",
+            read(root, "engine.json")["container"]["HostConfig"]
+        );
+    }
     assert_eq!(
         output.status.success(),
         success,
         "{command}: {}",
         String::from_utf8_lossy(&output.stderr)
     );
+    if success && command == "apply" {
+        let result: Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(result["outcome"], "succeeded");
+    }
     output.stdout
 }
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires explicit NEMOCLAW_TEST_BUNDLE; isolated SSH/Docker and OpenShell fixtures"]
 async fn remote_model_lifecycle_preserves_data_and_stops_on_observation_failure() {
-    lifecycle("openclaw", false).await;
+    lifecycle("openclaw", false, "vllm", false).await;
 }
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires explicit verified NEMOCLAW_TEST_BUNDLE; isolated fixtures"]
 async fn managed_hermes_model_lifecycle_preserves_data_without_generation() {
-    lifecycle("hermes", false).await;
+    lifecycle("hermes", false, "vllm", false).await;
 }
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires explicit verified NEMOCLAW_TEST_BUNDLE; isolated credential and SSH fixtures"]
 async fn managed_bearer_credentials_survive_export_reapply_and_destroy() {
-    lifecycle("hermes", true).await;
+    lifecycle("hermes", true, "vllm", false).await;
 }
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires explicit verified NEMOCLAW_TEST_BUNDLE; isolated SSH/Docker and OpenShell fixtures"]
 async fn managed_pi_model_lifecycle_preserves_data_without_generation() {
-    lifecycle("pi", false).await;
+    lifecycle("pi", false, "vllm", false).await;
 }
-async fn lifecycle(harness: &str, authenticated: bool) {
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires NEMOCLAW_TEST_BUNDLE; isolated Docker and application-health fixtures"]
+async fn remote_ollama_lifecycle_preserves_data_and_stops_on_observation_failure() {
+    lifecycle("openclaw", false, "ollama", false).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires explicit verified NEMOCLAW_TEST_BUNDLE; protocol-only partial deployment fixtures"]
+async fn partial_runtime_destroy_retains_storage_without_creating_network() {
+    lifecycle("openclaw", false, "vllm", true).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires NEMOCLAW_TEST_BUNDLE; isolated partial deployment fixtures"]
+async fn partial_ollama_destroy_retains_storage_without_creating_network() {
+    lifecycle("openclaw", false, "ollama", true).await;
+}
+
+async fn lifecycle(harness: &str, authenticated: bool, kind: &str, partial_destroy: bool) {
     let bundle = PathBuf::from(std::env::var_os("NEMOCLAW_TEST_BUNDLE").unwrap());
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path();
@@ -88,68 +120,117 @@ async fn lifecycle(harness: &str, authenticated: bool) {
     )
     .unwrap();
     let mut value = serde_json::to_value(document).unwrap();
+    if kind == "ollama" {
+        let source: Value = serde_saphyr::from_str(include_str!(
+            "../../nemoclaw-sdk/tests/fixtures/config/managed-ollama.yaml"
+        ))
+        .unwrap();
+        value["spec"]["services"]["qwen"] = source["spec"]["services"]["ollama-server"].clone();
+        value["spec"]["sandboxes"][0]["agent"]["inference"]["routes"][0]["overrides"]["model"] =
+            json!("qwen3:0.6b");
+    }
+    let check_pulls = harness == "openclaw" && !authenticated;
+    if check_pulls {
+        value["spec"]["services"]["qwen"]["imagePullPolicy"] = json!("IfNotPresent");
+    }
     value["spec"]["sandboxes"][0]["harness"]["kind"] = harness.into();
     value["spec"]["gateway"] = json!({"management":"external","endpoint":gateway.endpoint});
     value["spec"]["sandboxes"][0]["runtime"]["provider"] = json!("podman");
-    value["spec"]["inferenceProviders"][0]["service"]["placement"] =
+    value["spec"]["services"]["qwen"]["placement"] =
         json!({"engine":"ssh://operator@gpu-box","networkCidr":"172.30.119.0/24"});
-    value["spec"]["inferenceProviders"][0]["service"]["publication"] =
+    value["spec"]["services"]["qwen"]["publication"] =
         json!({"endpoint":"http://10.0.0.8:18888/v1","bindAddress":"10.0.0.8"});
     if authenticated {
-        value["spec"]["inferenceProviders"][0]["service"]["authentication"] = "bearer".into();
+        value["spec"]["services"]["qwen"]["authentication"] = "bearer".into();
         value["spec"]["sandboxes"][0]["agent"]["auth"] = json!({"method":"api-key"});
     }
     save(root, "config.yaml", &value);
-    let parsed = Document::parse(serde_json::to_vec(&value).unwrap().as_slice()).unwrap();
-    let service = parsed.spec.inference_providers[0].service.as_ref().unwrap();
-    let recipe = service.recipe.as_ref().unwrap();
-    let manifest = recipe.snapshot.as_ref().unwrap();
-    let model = huggingface::directory(service);
-    let key = recipe.key(service);
     let mut files = json!({});
     let mut stats = json!({});
     let bearer = "d".repeat(64);
     if authenticated {
-        files["/data/inference-key"] = json!({"raw":bearer});
-        stats["/data/inference-key"] = json!({"name":"inference-key","size":64,"mode":384,"mtime":"2026-09-15T00:00:00Z","linkTarget":""});
+        files["/credentials/inference-key"] = json!({"raw":bearer});
+        stats["/credentials/inference-key"] = json!({"name":"inference-key","size":64,"mode":384,"mtime":"2026-09-15T00:00:00Z","linkTarget":""});
     }
-    let mut receipt = serde_json::to_value(&manifest.files).unwrap();
-    for file in receipt.as_array_mut().unwrap() {
-        file["modified"] = json!(1);
-        let path = format!("/data/{}/{}", model, file["name"].as_str().unwrap());
-        stats[path] = json!({"name":file["name"],"size":file["size"],"mode":420,"mtime":"1970-01-01T00:00:00.000000001Z","linkTarget":""});
-    }
-    files[format!("/data/{}/.nemoclaw-complete.json", model)] =
-        json!({"manifest":manifest.key(),"files":receipt});
-    let mut prepared = Vec::new();
-    for name in ["prepared.bin".to_string(), "prepared.json".to_string()] {
-        prepared.push(json!({"name":name,"size":1,"sha256":"a".repeat(64),"modified":1}));
-        stats[format!("/data/prepared/{}/{name}", key)] = json!({"name":name,"size":1,"mode":420,"mtime":"1970-01-01T00:00:00.000000001Z","linkTarget":""});
-    }
-    files[format!("/data/prepared/{}/complete.json", key)] = json!({"key":key,"files":prepared});
-    files[format!("/data/{model}/{}", huggingface::MANIFEST_FILE)] =
-        serde_json::to_value(manifest).unwrap();
     files["/data/status.json"] =
         json!({"phase":"ready","detail":"","updated":"2026-09-15T00:00:00Z","pid":42});
-    let service = &value["spec"]["inferenceProviders"][0]["service"];
+    let service = &value["spec"]["services"]["qwen"];
     save(
         root,
         "fixture.json",
-        &json!({"files":files,"stats":stats,"image":{"Id":"sha256:runtime","Architecture":"arm64","Os":"linux","Config":{"Env":[],"Labels":{"org.nemoclaw.recipe.protocol":"v1","org.nemoclaw.inference.authentication":"bearer-v1","org.nemoclaw.backend":service["backend"],"org.nemoclaw.model":service["model"]["revision"]}}}}),
+        &json!({"files":files,"stats":stats,"image_refs":[service["image"]],"image":{"Id":"sha256:runtime","Architecture":"arm64","Os":"linux","Config":{"Env":[],"Labels":{"org.nemoclaw.recipe.protocol":"v1","org.nemoclaw.inference.authentication":"bearer-v1","org.nemoclaw.backend":kind,"org.nemoclaw.model":service["model"]["revision"].as_str().or(service["model"]["digest"].as_str()).unwrap()}}}}),
     );
-    save(root, "engine.json", &json!({"effects":0,"creates":0}));
+    save(
+        root,
+        "engine.json",
+        &json!({"effects":0,"creates":0,"image_missing":check_pulls,"pulls":0}),
+    );
+    // Runtime-owned admission means planning needs no SSH host collector,
+    // model registry access, or retained artifact inventory.
     save(root, "control.json", &json!({"capacity_failure":true}));
-    run(root, &bundle, "plan", "config.yaml", false).await;
-    assert_eq!(read(root, "engine.json")["effects"], 0);
-    save(root, "control.json", &json!({"low_capacity":true}));
-    run(root, &bundle, "plan", "config.yaml", false).await;
-    assert_eq!(read(root, "engine.json")["effects"], 0);
-    save(root, "control.json", &json!({}));
     run(root, &bundle, "plan", "config.yaml", true).await;
     assert_eq!(read(root, "engine.json")["effects"], 0);
+    assert!(!root.join("capacity_reads").exists());
+    if partial_destroy {
+        save(
+            root,
+            "control.json",
+            &json!({"network_create_failure":true}),
+        );
+        run(root, &bundle, "apply", "config.yaml", false).await;
+        let partial = read(root, "engine.json");
+        assert!(partial["volume"].is_object());
+        assert!(partial["network"].is_null());
+        assert!(partial["container"].is_null());
+        let partial_state = fs::read(root.join("deployment/runtime/terraform.tfstate")).unwrap();
+        let partial_record = fs::read(root.join("deployment/intent.json")).ok();
+        save(root, "control.json", &json!({}));
+        // An unfinished apply has unknown identities, so the existing SDK
+        // policy requires recovery before destroy. Refusal must not create the
+        // missing network merely because the compiler knows its desired shape.
+        run(root, &bundle, "destroy", "", false).await;
+        let destroyed = read(root, "engine.json");
+        assert_eq!(destroyed["volume"], partial["volume"]);
+        assert!(destroyed["network"].is_null());
+        assert!(destroyed["container"].is_null());
+        assert_eq!(destroyed["effects"], partial["effects"]);
+        assert_eq!(
+            fs::read(root.join("deployment/runtime/terraform.tfstate")).unwrap(),
+            partial_state
+        );
+        assert_eq!(
+            fs::read(root.join("deployment/intent.json")).ok(),
+            partial_record
+        );
+        return;
+    }
+    // Fail before a process exists: the provider has already committed the
+    // volume/network, and SDK recovery must reuse those exact identities.
+    save(root, "control.json", &json!({"create_failure":true}));
+    run(root, &bundle, "apply", "config.yaml", false).await;
+    let partial = read(root, "engine.json");
+    assert!(partial["volume"].is_object());
+    assert!(partial["network"].is_object());
+    assert!(partial["container"].is_null());
+    assert_eq!(partial["creates"], 0);
     save(root, "control.json", &json!({"startup_failure":true}));
     run(root, &bundle, "apply", "config.yaml", false).await;
     assert_eq!(read(root, "engine.json")["creates"], 1);
+    let runtime_state = read(root, "deployment/runtime/terraform.tfstate");
+    let resources = runtime_state["resources"].as_array().unwrap();
+    for expected in ["docker_container", "docker_network"] {
+        assert!(
+            resources
+                .iter()
+                .any(|resource| resource["type"] == expected)
+        );
+    }
+    assert!(!resources.iter().any(|resource| matches!(
+        resource["type"].as_str(),
+        Some("nemoclaw_ollama_service" | "nemoclaw_inference_service")
+    )));
+    assert_eq!(read(root, "engine.json")["volume"], partial["volume"]);
+    assert_eq!(read(root, "engine.json")["network"], partial["network"]);
     let volume = read(root, "engine.json")["volume"].clone();
     save(root, "control.json", &json!({}));
     run(root, &bundle, "apply", "config.yaml", true).await;
@@ -178,18 +259,93 @@ async fn lifecycle(harness: &str, authenticated: bool) {
             );
         }
     }
-    let stable = read(root, "engine.json");
-    let state = fs::read(root.join("deployment/runtime/terraform.tfstate")).unwrap();
+    if check_pulls {
+        assert_eq!(read(root, "engine.json")["pulls"], 1);
+        let original = read(root, "config.yaml");
+        let mut changed = original.clone();
+        changed["spec"]["services"]["qwen"]["imagePullPolicy"] = json!("Always");
+        save(root, "config.yaml", &changed);
+        let before = read(root, "engine.json");
+        run(root, &bundle, "plan", "config.yaml", false).await;
+        assert_eq!(read(root, "engine.json"), before);
+        save(root, "config.yaml", &original);
+    }
+    // Process recovery preserves both cache and credentials.
+    let before_loss = read(root, "engine.json");
+    let mut missing = before_loss.clone();
+    missing["container"] = Value::Null;
+    save(root, "engine.json", &missing);
+    run(root, &bundle, "apply", "config.yaml", true).await;
+    let recreated = read(root, "engine.json");
+    assert_ne!(recreated["container"]["Id"], before_loss["container"]["Id"]);
+    assert_eq!(recreated["volume"], volume);
+    assert_eq!(
+        recreated["creates"].as_u64().unwrap(),
+        before_loss["creates"].as_u64().unwrap() + 1
+    );
+    // Cache loss is recoverable independently of durable credentials.
+    let before_cache_loss = read(root, "engine.json");
+    let mut missing = before_cache_loss.clone();
+    missing["container"] = Value::Null;
+    missing["volume"] = Value::Null;
+    save(root, "engine.json", &missing);
+    run(root, &bundle, "apply", "config.yaml", true).await;
+    let rebuilt = read(root, "engine.json");
+    assert!(rebuilt["volume"].is_object());
+    assert_eq!(rebuilt["auth_volume"], before_cache_loss["auth_volume"]);
+    assert_eq!(
+        rebuilt["creates"].as_u64().unwrap(),
+        before_cache_loss["creates"].as_u64().unwrap() + 1
+    );
+    let volume = rebuilt["volume"].clone();
+    let stable = rebuilt;
     run(root, &bundle, "apply", "config.yaml", true).await;
     let exported = run(root, &bundle, "export", "", true).await;
     assert!(!String::from_utf8_lossy(&exported).contains(&bearer));
+    if check_pulls {
+        let document = Document::parse(exported.as_slice()).unwrap();
+        let policy = match &document.spec.services["qwen"] {
+            ServiceDefinition::Vllm(service) => service.image_pull_policy,
+            ServiceDefinition::Ollama(service) => service.image_pull_policy,
+            _ => panic!("expected managed runtime"),
+        };
+        assert_eq!(
+            policy,
+            Some(nemoclaw_sdk::config::ImagePullPolicy::IfNotPresent)
+        );
+    }
     fs::write(root.join("export.yaml"), exported).unwrap();
     run(root, &bundle, "apply", "export.yaml", true).await;
     assert_eq!(read(root, "engine.json"), stable);
-    for control in [
-        json!({"transport_failure":true}),
-        json!({"daemon":"other-engine"}),
-    ] {
+    let state = fs::read(root.join("deployment/runtime/terraform.tfstate")).unwrap();
+    if harness == "openclaw" && !authenticated {
+        let original = read(root, "config.yaml");
+        let mut changed = original.clone();
+        changed["spec"]["services"]["qwen"]["image"] =
+            json!(format!("runtime@sha256:{}", "f".repeat(64)));
+        save(root, "config.yaml", &changed);
+        let output = run(root, &bundle, "plan", "config.yaml", true).await;
+        let plan: Value = serde_json::from_slice(&output).unwrap();
+        assert!(
+            plan["changes"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|change| { change["actions"] == json!(["delete", "create"]) }),
+            "{plan}"
+        );
+        assert_eq!(read(root, "engine.json"), stable);
+        assert_eq!(
+            fs::read(root.join("deployment/runtime/terraform.tfstate")).unwrap(),
+            state
+        );
+        save(root, "config.yaml", &original);
+    }
+    let mut failures = vec![json!({"transport_failure":true})];
+    if authenticated {
+        failures.push(json!({"daemon":"other-engine"}));
+    }
+    for control in failures {
         save(root, "control.json", &control);
         run(root, &bundle, "plan", "config.yaml", false).await;
         assert_eq!(
@@ -199,12 +355,43 @@ async fn lifecycle(harness: &str, authenticated: bool) {
         assert_eq!(read(root, "engine.json"), stable);
     }
     save(root, "control.json", &json!({}));
+    for storage in if authenticated {
+        vec!["auth_volume"]
+    } else {
+        vec![]
+    } {
+        for fault in ["missing", "foreign", "substituted"] {
+            let mut damaged = stable.clone();
+            match fault {
+                "missing" => damaged[storage] = Value::Null,
+                "foreign" => {
+                    damaged[storage]["Labels"]["nemoclaw.nvidia.com/uid"] =
+                        json!("ffffffff-ffff-ffff-ffff-ffffffffffff");
+                }
+                "substituted" => {
+                    damaged[storage]["CreatedAt"] = json!("2026-09-16T00:00:00Z");
+                }
+                _ => unreachable!(),
+            }
+            save(root, "engine.json", &damaged);
+            run(root, &bundle, "plan", "config.yaml", false).await;
+            run(root, &bundle, "apply", "config.yaml", false).await;
+            assert_eq!(read(root, "engine.json"), damaged);
+            assert_eq!(
+                fs::read(root.join("deployment/runtime/terraform.tfstate")).unwrap(),
+                state
+            );
+        }
+    }
+    save(root, "engine.json", &stable);
     if authenticated {
         let original = read(root, "fixture.json");
         let mut corrupt = original.clone();
-        corrupt["stats"]["/data/inference-key"]["mode"] = json!(420);
+        corrupt["stats"]["/credentials/inference-key"]["mode"] = json!(420);
         save(root, "fixture.json", &corrupt);
-        run(root, &bundle, "export", "", false).await;
+        // Export does not load the generated credential. Apply must reject an insecure key.
+        run(root, &bundle, "export", "", true).await;
+        run(root, &bundle, "apply", "config.yaml", false).await;
         assert_eq!(
             fs::read(root.join("deployment/runtime/terraform.tfstate")).unwrap(),
             state
@@ -224,10 +411,52 @@ async fn lifecycle(harness: &str, authenticated: bool) {
                 || arg == "probe"
                 || arg == "--message")
     );
+    if check_pulls {
+        let mut changed = read(root, "config.yaml");
+        changed["spec"]["services"]["qwen"]
+            .as_object_mut()
+            .unwrap()
+            .remove("imagePullPolicy");
+        save(root, "config.yaml", &changed);
+        run(root, &bundle, "apply", "config.yaml", true).await;
+        assert_eq!(read(root, "engine.json"), stable);
+        let mut stopped = stable.clone();
+        stopped["container"]["State"]["Running"] = json!(false);
+        save(root, "engine.json", &stopped);
+        save(root, "control.json", &json!({"pull_failure":true}));
+        run(root, &bundle, "apply", "config.yaml", true).await;
+        assert_eq!(read(root, "engine.json")["pulls"], stable["pulls"]);
+        assert_eq!(read(root, "engine.json")["volume"], volume);
+    }
+    if authenticated {
+        // Compute image changes must not change the identity of retained credentials.
+        let before = read(root, "engine.json");
+        let effects = gateway.state.lock().unwrap().effects;
+        let mut changed = read(root, "config.yaml");
+        let replacement = format!("runtime@sha256:{}", "e".repeat(64));
+        changed["spec"]["services"]["qwen"]["image"] = json!(replacement);
+        save(root, "config.yaml", &changed);
+        let mut fixture = read(root, "fixture.json");
+        fixture["image"]["Id"] = json!("sha256:replacement-runtime");
+        fixture["image_refs"] = json!([replacement]);
+        save(root, "fixture.json", &fixture);
+        run(root, &bundle, "apply", "config.yaml", true).await;
+        let replaced = read(root, "engine.json");
+        assert_ne!(replaced["container"]["Id"], before["container"]["Id"]);
+        assert_eq!(replaced["volume"], volume);
+        let state = gateway.state.lock().unwrap();
+        assert_eq!(state.effects, effects);
+        assert!(
+            state
+                .providers
+                .values()
+                .any(|provider| provider.credentials.values().any(|value| value == &bearer))
+        );
+    }
     run(root, &bundle, "destroy", "", true).await;
     let after = read(root, "engine.json");
     assert!(after["container"].is_null());
     assert_eq!(after["volume"], volume);
-    assert_eq!(after["creates"], 1);
-    assert_eq!(after["network"], stable["network"]);
+    assert!(after["network"].is_null());
+    assert!(!root.join("capacity_reads").exists());
 }

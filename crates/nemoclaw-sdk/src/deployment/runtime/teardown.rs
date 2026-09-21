@@ -37,11 +37,13 @@ impl Deployment {
             None
         };
         let mut result = OperationResult::planned(Vec::new());
-        result.retained.extend(retained_bindings(&bindings, false));
+        result
+            .retained
+            .extend(retained_bindings(&record, &bindings, false)?);
         if let Some(stage) = &runtime {
             result
                 .retained
-                .extend(retained_bindings(&stage.bindings()?, true));
+                .extend(retained_bindings(&record, &stage.bindings()?, true)?);
         }
         if record.destroyed {
             if !preview {
@@ -119,13 +121,14 @@ impl Deployment {
             return Ok((Vec::new(), false));
         }
         let expected = teardown_expected(record, &bindings, runtime)?;
-        let retained = retained_addresses(runtime, &bindings);
+        let retained = retained_addresses(record, &bindings, runtime)?;
         let graph = teardown_graph(
             record,
             &bundle.manifest.version,
             &expected,
             &bindings,
             &retained,
+            runtime,
         )?;
         self.prepare(bundle, store, &graph)?;
         self.tofu(
@@ -153,26 +156,23 @@ impl Deployment {
 }
 
 fn retained_addresses(
-    runtime: bool,
+    record: &Record,
     bindings: &BTreeMap<String, StateBinding>,
-) -> BTreeSet<String> {
-    if runtime {
-        bindings
-            .keys()
-            .filter(|address| {
-                address.as_str() == GATEWAY_STORAGE
-                    || address.starts_with("nemoclaw_inference_storage.")
-            })
-            .cloned()
-            .collect()
+    runtime: bool,
+) -> Result<BTreeSet<String>, Error> {
+    let mut retained: BTreeSet<_> =
+        crate::services::remove_plans(&record.document, &record.generations)?
+            .into_iter()
+            .flat_map(|plan| plan.retained)
+            .filter(|address| bindings.contains_key(address))
+            .collect();
+    retained.insert(if runtime {
+        GATEWAY_STORAGE.into()
     } else {
-        [
-            "nemoclaw_workspace.deployment".into(),
-            crate::deployment::ollama::STORAGE.into(),
-            "nemoclaw_ollama_proxy_storage.credentials".into(),
-        ]
-        .into()
-    }
+        "nemoclaw_workspace.deployment".into()
+    });
+    retained.retain(|address| bindings.contains_key(address));
+    Ok(retained)
 }
 
 fn teardown_expected(
@@ -186,25 +186,22 @@ fn teardown_expected(
         compile::targets(&record.document, &record.generations)?
     };
     if runtime {
-        bind_teardown_processes(&mut targets, bindings)?;
+        bind_teardown_processes(record, &mut targets, bindings)?;
     } else if !bindings.contains_key("nemoclaw_workspace.deployment") {
         return Err(Error::Conflict(
             "destroy requires the retained workspace binding",
         ));
     }
     let mut expected = allowed(&targets);
-    if !runtime {
-        crate::deployment::ollama::extend_allowed(
-            &record.document,
-            &record.generations,
-            &mut expected,
-        )?;
-    }
     for (address, binding) in bindings {
+        if plan::disposable(address) {
+            expected.entry(address.clone()).or_default();
+            continue;
+        }
         let want = expected.get(address).ok_or(Error::Conflict(
             "destroy encountered an undeclared resource binding",
         ))?;
-        if runtime && want["spec"] != binding.spec {
+        if runtime && !plan::disposable(address) && want["spec"] != binding.spec {
             return Err(Error::Conflict(
                 "destroy storage configuration disagrees with retained intent",
             ));
@@ -219,15 +216,23 @@ fn teardown_expected(
 }
 
 fn bind_teardown_processes(
+    record: &Record,
     targets: &mut [Target],
     bindings: &BTreeMap<String, StateBinding>,
 ) -> Result<(), Error> {
     for target in targets {
-        let storage = match target.kind.as_str() {
-            GATEWAY_KIND => GATEWAY_STORAGE.to_owned(),
-            SERVICE_KIND => model_storage(&target.address),
-            _ => continue,
+        let storage = if target.kind == GATEWAY_KIND {
+            Some(GATEWAY_STORAGE.to_owned())
+        } else if crate::services::resource_behavior(&target.kind).runtime_process {
+            crate::services::required_storage_address(
+                &record.document,
+                &record.generations,
+                &target.address,
+            )?
+        } else {
+            None
         };
+        let Some(storage) = storage else { continue };
         if bindings.contains_key(&target.address) && !bindings.contains_key(&storage) {
             return Err(Error::Conflict(
                 "destroy requires independent storage bindings before removing a managed process",
@@ -235,6 +240,9 @@ fn bind_teardown_processes(
         }
         let want: Spec = serde_json::from_str(&target.values["spec"])
             .map_err(|_| Error::State("invalid runtime intent"))?;
+        if plan::disposable(&target.address) {
+            continue;
+        }
         target.values.insert(
             "spec".into(),
             bound_spec(&want, bindings.get(&target.address))?.json()?,
@@ -249,18 +257,25 @@ fn teardown_graph(
     expected: &BTreeMap<String, Row>,
     bindings: &BTreeMap<String, StateBinding>,
     retained: &BTreeSet<String>,
+    runtime: bool,
 ) -> Result<Value, Error> {
-    let mut graph = compile::compile(&record.document, &record.generations, version)?;
+    let mut graph = if runtime {
+        compile::compile_runtime(&record.document, &record.generations, version)?
+    } else {
+        compile::compile(&record.document, &record.generations, version)?
+    };
+    // Teardown must remain available when gateway capabilities or host capacity change.
+    graph.as_object_mut().unwrap().remove("data");
     graph["provider"]["nemoclaw"]["destroy"] = json!(true);
-    let resources = graph["resource"].take();
+    let compiled_resources = graph["resource"].take();
     graph["resource"] = json!({});
     for address in retained {
         if bindings.contains_key(address) {
             let (kind, name) = address
                 .split_once('.')
                 .ok_or(Error::State("invalid resource address"))?;
-            let retained_values = if address == crate::deployment::ollama::STORAGE {
-                resources["nemoclaw_ollama_storage"]["models"].clone()
+            let retained_values = if address.starts_with("docker_volume.") {
+                compiled_resources[kind][name].clone()
             } else {
                 serde_json::to_value(&expected[address])
                     .map_err(|_| Error::State("cannot encode retained resource"))?
@@ -279,46 +294,79 @@ fn validate_teardown_state(
 ) -> Result<(), Error> {
     if record.pending {
         return Err(Error::Conflict(
-            "unfinished apply may have unbound effects; reconcile its original configuration before destroy",
+            "unfinished apply may have created resources whose IDs were not saved; apply the original configuration again before destroy",
         ));
     }
-    if record.document.lifecycle_provider()?.ollama.is_some()
-        && bindings.contains_key("nemoclaw_ollama.service")
-        && !bindings.contains_key(crate::deployment::ollama::STORAGE)
+    for (service, storage) in crate::services::remove_plans(&record.document, &record.generations)?
+        .into_iter()
+        .flat_map(|plan| plan.required_storage)
     {
-        return Err(Error::Conflict(
-            "apply once to establish independent Ollama storage binding before destroy",
-        ));
+        if bindings.contains_key(&crate::docker_compute::address(&service))
+            && !bindings.contains_key(&storage)
+        {
+            return Err(Error::Conflict(
+                "apply once to establish independent service storage binding before destroy",
+            ));
+        }
     }
     Ok(())
 }
 
-fn retained_bindings(bindings: &BTreeMap<String, StateBinding>, runtime: bool) -> Vec<String> {
-    retained_addresses(runtime, bindings)
+fn retained_bindings(
+    record: &Record,
+    bindings: &BTreeMap<String, StateBinding>,
+    runtime: bool,
+) -> Result<Vec<String>, Error> {
+    Ok(retained_addresses(record, bindings, runtime)?
         .into_iter()
         .filter(|address| bindings.contains_key(address))
-        .collect()
+        .collect())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    const MODEL_STORAGE: &str = "nemoclaw_inference_storage.inference_qwen";
+
+    #[test]
+    fn unfinished_apply_explains_how_to_recover_before_destroy() {
+        let document = Document::parse(
+            include_bytes!("../../../../../examples/fabric-openclaw.yaml").as_slice(),
+        )
+        .unwrap();
+        let mut record = Record::new(document).unwrap();
+        let bindings = BTreeMap::new();
+        validate_teardown_state(&record, &bindings).unwrap();
+        record.pending = true;
+        assert_eq!(
+            validate_teardown_state(&record, &bindings)
+                .unwrap_err()
+                .to_string(),
+            "unfinished apply may have created resources whose IDs were not saved; apply the original configuration again before destroy"
+        );
+    }
 
     fn runtime_state() -> (Record, BTreeMap<String, StateBinding>) {
         let document =
             Document::parse(include_str!("../../../tests/fixtures/config/spark.yaml").as_bytes())
                 .unwrap();
+        let mut value = serde_json::to_value(document).unwrap();
+        value["spec"]["services"]["qwen"]["authentication"] = json!("bearer");
+        let document = Document::parse(value.to_string().as_bytes()).unwrap();
         let record = Record::new(document).unwrap();
         let bindings = compile::runtime_targets(&record.document, &record.generations)
             .unwrap()
             .into_iter()
+            .filter(|target| !target.address.starts_with("data."))
             .map(|target| {
                 (
                     target.address.clone(),
                     StateBinding {
                         id: format!("id-{}", target.address),
-                        spec: target.values["spec"].clone(),
+                        spec: if plan::disposable(&target.address) {
+                            String::new()
+                        } else {
+                            target.values.get("spec").cloned().unwrap_or_default()
+                        },
                     },
                 )
             })
@@ -326,12 +374,52 @@ mod tests {
         (record, bindings)
     }
 
+    fn service_resource(record: &Record, select: impl Fn(&str) -> bool) -> String {
+        compile::runtime_targets(&record.document, &record.generations)
+            .unwrap()
+            .into_iter()
+            .find(|target| select(&target.kind))
+            .unwrap()
+            .address
+    }
+
+    fn service_process(record: &Record) -> String {
+        service_resource(record, |kind| {
+            crate::services::resource_behavior(kind).runtime_process
+        })
+    }
+
+    fn service_storage(record: &Record) -> String {
+        service_resource(record, |kind| {
+            crate::services::resource_behavior(kind).retained_storage
+        })
+    }
+
+    fn update_service(
+        definition: &mut crate::services::ServiceDefinition,
+        pointer: &str,
+        update: impl FnOnce(&mut serde_json::Value),
+    ) {
+        let mut value = serde_json::to_value(&*definition).unwrap();
+        update(value.pointer_mut(pointer).unwrap());
+        *definition = serde_json::from_value(value).unwrap();
+    }
+
     #[test]
     fn multiple_services_retain_each_volume_and_require_its_own_binding() {
         let (mut record, _) = runtime_state();
         let mut provider = record.document.spec.inference_providers[0].clone();
         provider.name = "other".into();
-        provider.service.as_mut().unwrap().serving.port += 1;
+        provider.service_ref = Some("other".into());
+        let mut definition = record.document.spec.services["qwen"].clone();
+        update_service(&mut definition, "/serving/port", |port| {
+            *port = serde_json::json!(port.as_i64().unwrap() + 1);
+        });
+        record
+            .document
+            .spec
+            .services
+            .insert("other".into(), definition);
         record.document.spec.inference_providers.push(provider);
         let mut sandbox = record.document.spec.sandboxes[0].clone();
         sandbox.name = "other".into();
@@ -341,33 +429,45 @@ mod tests {
             compile::runtime_targets(&record.document, &record.generations)
                 .unwrap()
                 .into_iter()
+                .filter(|target| !target.address.starts_with("data."))
                 .map(|target| {
                     (
                         target.address.clone(),
                         StateBinding {
                             id: format!("id-{}", target.address),
-                            spec: target.values["spec"].clone(),
+                            spec: if plan::disposable(&target.address) {
+                                String::new()
+                            } else {
+                                target.values.get("spec").cloned().unwrap_or_default()
+                            },
                         },
                     )
                 })
                 .collect();
         let expected = teardown_expected(&record, &bindings, true).unwrap();
-        let retained = retained_addresses(true, &bindings);
-        assert_eq!(retained.len(), 3);
-        let graph = teardown_graph(&record, "0.1.0", &expected, &bindings, &retained).unwrap();
+        let retained = retained_addresses(&record, &bindings, true).unwrap();
+        assert_eq!(retained.len(), 5);
+        let storage_kind = service_storage(&record)
+            .split_once('.')
+            .unwrap()
+            .0
+            .to_owned();
+        let process_kind = service_process(&record)
+            .split_once('.')
+            .unwrap()
+            .0
+            .to_owned();
+        let graph =
+            teardown_graph(&record, "0.1.0", &expected, &bindings, &retained, true).unwrap();
         assert_eq!(
-            graph["resource"]["nemoclaw_inference_storage"]
-                .as_object()
-                .unwrap()
-                .len(),
+            graph["resource"][&storage_kind].as_object().unwrap().len(),
             2
         );
-        assert!(
-            graph["resource"]
-                .get("nemoclaw_inference_service")
-                .is_none()
-        );
-        for address in retained {
+        assert!(graph["resource"].get(&process_kind).is_none());
+        for address in retained
+            .into_iter()
+            .filter(|address| !address.starts_with("docker_volume."))
+        {
             let mut missing = bindings.clone();
             missing.remove(&address);
             assert!(
@@ -380,7 +480,8 @@ mod tests {
     #[test]
     fn teardown_requires_independent_storage_for_each_bound_process() {
         let (record, bindings) = runtime_state();
-        for missing in [GATEWAY_STORAGE, MODEL_STORAGE] {
+        let retained_storage = service_storage(&record);
+        for missing in [GATEWAY_STORAGE, retained_storage.as_str()] {
             let mut incomplete = bindings.clone();
             incomplete.remove(missing);
             assert!(
@@ -394,19 +495,23 @@ mod tests {
     #[test]
     fn teardown_preserves_bound_process_specs_and_retains_only_storage_in_the_graph() {
         let (mut record, bindings) = runtime_state();
-        record.document.spec.inference_providers[0]
-            .service
-            .as_mut()
-            .unwrap()
-            .image = format!("local@sha256:{}", "a".repeat(64));
+        update_service(
+            record.document.spec.services.get_mut("qwen").unwrap(),
+            "/image",
+            |image| *image = serde_json::json!(format!("local@sha256:{}", "a".repeat(64))),
+        );
         let expected = teardown_expected(&record, &bindings, true).unwrap();
-        let process = "nemoclaw_inference_service.inference_qwen";
-        assert_eq!(expected[process]["spec"], bindings[process].spec);
-        let retained = retained_addresses(true, &bindings);
-        let graph = teardown_graph(&record, "0.1.0", &expected, &bindings, &retained).unwrap();
+        let process = service_process(&record);
+        let retained_storage = service_storage(&record);
+        assert!(bindings[&process].spec.is_empty());
+        assert!(!expected[&process]["spec"].is_empty());
+        let retained = retained_addresses(&record, &bindings, true).unwrap();
+        let graph =
+            teardown_graph(&record, "0.1.0", &expected, &bindings, &retained, true).unwrap();
+        assert!(graph.get("data").is_none());
         assert_eq!(graph["provider"]["nemoclaw"]["destroy"], true);
-        assert_eq!(graph["resource"].as_object().unwrap().len(), 2);
-        for address in [GATEWAY_STORAGE, MODEL_STORAGE] {
+        assert_eq!(graph["resource"].as_object().unwrap().len(), 3);
+        for address in [GATEWAY_STORAGE, retained_storage.as_str()] {
             let (kind, name) = address.split_once('.').unwrap();
             assert_eq!(
                 graph["resource"][kind][name]["spec"],
@@ -426,15 +531,14 @@ mod tests {
         undeclared.insert("foreign.resource".into(), StateBinding::default());
         assert!(teardown_expected(&record, &undeclared, true).is_err());
         let mut changed_storage = bindings.clone();
-        changed_storage.get_mut(MODEL_STORAGE).unwrap().spec = "{}".into();
+        let retained_storage = service_storage(&record);
+        changed_storage.get_mut(&retained_storage).unwrap().spec = "{}".into();
         assert!(teardown_expected(&record, &changed_storage, true).is_err());
-        let mut changed_owner = bindings;
-        let binding = changed_owner
-            .get_mut("nemoclaw_inference_service.inference_qwen")
-            .unwrap();
-        let mut spec: Spec = serde_json::from_str(&binding.spec).unwrap();
-        spec.generation = "a".repeat(32);
-        binding.spec = spec.json().unwrap();
-        assert!(teardown_expected(&record, &changed_owner, true).is_err());
+        let mut changed_compute = bindings;
+        changed_compute
+            .get_mut(&service_process(&record))
+            .unwrap()
+            .id = "replacement-provider-id".into();
+        assert!(teardown_expected(&record, &changed_compute, true).is_ok());
     }
 }

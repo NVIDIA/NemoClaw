@@ -95,27 +95,6 @@ fn response_text(bytes: &[u8]) -> Result<String, Error> {
     Ok(text.into())
 }
 impl OpenShell {
-    pub async fn verify_gateway(&self, driver: &str) -> Result<(), Error> {
-        let info = self
-            .grpc()
-            .get_gateway_info(self.request(proto::GetGatewayInfoRequest {}))
-            .await
-            .map_err(|error| remote_error(&error))?
-            .into_inner();
-        if info.gateway_version != crate::artifact_pins::OPENSHELL_VERSION
-            || info.compute_drivers.len() != 1
-            || (info.compute_drivers[0].name != driver
-                && info.compute_drivers[0]
-                    .capabilities
-                    .as_ref()
-                    .is_none_or(|capability| capability.driver_name != driver))
-        {
-            return Err(Error::Conflict(
-                "gateway version or compute driver does not satisfy the configuration",
-            ));
-        }
-        Ok(())
-    }
     async fn bound_sandbox(&self, binding: &Row) -> Result<proto::Sandbox, Error> {
         let sandbox = self
             .grpc()

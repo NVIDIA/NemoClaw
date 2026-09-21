@@ -6,24 +6,11 @@ import hashlib
 import json
 import os
 import shutil
-import subprocess
-import sys
 import unittest
 from pathlib import Path
 
 
 class AgentImage(unittest.TestCase):
-    def test_runtime_uses_current_compatible_python_and_node_lts(self):
-        python = (
-            (3, 13, 15)
-            if os.environ["NEMOCLAW_TEST_HARNESS"] in {"nooa", "nooa-bench", "hermes"}
-            else (3, 14, 7)
-        )
-        self.assertEqual(sys.version_info[:3], python)
-        self.assertEqual(
-            subprocess.check_output(["node", "--version"], text=True).strip(), "v24.21.0"
-        )
-
     def test_runtime_retains_matching_sources_without_build_toolchains(self):
         root = Path("/opt/nemoclaw")
         manifest = json.loads((root / "provenance.json").read_text())

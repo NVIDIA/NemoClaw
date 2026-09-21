@@ -59,7 +59,7 @@ impl Engine {
         }
         #[cfg(not(unix))]
         Err(Error::Conflict(
-            "SSH engine transport is not qualified on this platform",
+            "SSH container-engine connections are unsupported on this platform",
         ))
     }
 }

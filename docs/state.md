@@ -7,12 +7,22 @@ Keep the desired-state YAML, its matching bundle, and the entire deployment stat
 The CLI defaults to `.nemoclaw` in the working directory; use `--state-dir` to select another directory.
 Separate deployments need separate state directories and deployment UUIDs.
 
+## Provider-managed Service Compute
+
+Intent version 7 delegates model caches to Docker volumes, separates vLLM credentials from model data, and records Docker gateway, inference, and proxy compute through native Docker-provider resource IDs.
+Docker gateway storage binds both signing and encryption-key identity independently of the process.
+Containers and service-owned networks may be recreated during explicit apply while credentials retain their independent durable bindings.
+Missing model-cache volumes may be recreated; downloads and preparation run again, without replacing credentials.
+Intent versions 1 through 6 are rejected without rewriting state or adopting resources.
+Keep the matching original bundle and entire state directory for existing deployments' export, recovery, or teardown.
+Use a fresh deployment UUID and state directory for this contract; editing an intent version is not migration.
+
 ## Named Sandbox Resources
 
-Intent version 3 identifies sandboxes and providers by name rather than their position in the document.
+Intent version 3 introduced sandboxes and providers identified by name rather than their position in the document.
 Reordering sandboxes, providers, or model choices does not change their resource addresses or the intent digest.
 Sandbox-local providers receive identities derived from their sandbox and provider names; moving a definition between scopes can change its identity.
-Intent versions 1 and 2 are rejected without rewriting state.
+The current format retains those named identities.
 Keep the original bundle for recovery or teardown, then use a fresh UUID and state directory with the new bundle.
 Do not edit the intent version to bypass this check.
 Existing agent files and conversations are not migrated.
@@ -103,8 +113,9 @@ There is no current purge command.
 | Deployment provider profiles and registrations, including declared Brave integration resources | Removed; upstream keys are not revoked |
 | External gateway, inference service, external Ollama daemon/model, and externally owned engine/network | Remain under their operators' control |
 | OpenShell workspace | Retained and tracked; does not preserve the deleted sandbox's files |
-| Managed vLLM/Ollama process containers | Removed; model storage remains tracked |
-| Managed model downloads and prepared data | Retained; authenticated vLLM storage can also contain its generated key |
+| Managed vLLM/Ollama process containers and service-owned networks | Removed; model storage remains tracked |
+| Managed model downloads and prepared data | Native Docker volumes retained by default; missing caches may be reconstructed separately from credentials |
+| Managed vLLM credentials | Separate tracked credential volume retained |
 | Managed Ollama proxy | Container removed; tracked credential volume retained |
 | Managed gateway | Process removed; database, signing/encryption keys, bridge, and stopped initializer retained |
 | Local deployment state, bundle, and container images | Remain; removing the CLI bundle is separate from destroying its deployment |

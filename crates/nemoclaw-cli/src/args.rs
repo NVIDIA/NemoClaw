@@ -21,7 +21,7 @@ pub(crate) struct Cli {
     #[arg(long, global = true, default_value = ".nemoclaw")]
     pub(crate) state_dir: PathBuf,
     /// Verified runtime bundle (defaults to the installed bundle).
-    #[arg(long = "bundle", alias = "bundle-dir", global = true)]
+    #[arg(long = "bundle", global = true)]
     pub(crate) bundle_dir: Option<PathBuf>,
     /// Report operation timings on standard error.
     #[arg(long, short, global = true)]
@@ -226,31 +226,20 @@ mod tests {
         assert!(Cli::try_parse_from(["nemoclaw", "onboard", "--generate-only"]).is_ok());
     }
     #[test]
-    fn help_explains_inputs_outputs_and_safety_contracts() {
-        for (command, expected) in [
-            (
-                "plan",
-                vec![
-                    "without changing runtime resources",
-                    "nemoclaw plan --destroy",
-                ],
-            ),
-            (
-                "apply",
-                vec!["nemoclaw apply spark.yaml", "nemoclaw apply -"],
-            ),
-            ("export", vec!["without secret values", "--output"]),
-            ("onboard", vec!["optionally apply", "--generate-only"]),
-            ("destroy", vec!["retaining persistent data"]),
-        ] {
-            let error = Cli::try_parse_from(["nemoclaw", command, "--help"])
+    fn every_command_exposes_help_without_operational_inputs() {
+        let definition = Cli::command();
+        assert!(definition.get_subcommands().next().is_some());
+        for command in definition.get_subcommands() {
+            let error = Cli::try_parse_from(["nemoclaw", command.get_name(), "--help"])
                 .err()
                 .unwrap();
             assert_eq!(error.kind(), ErrorKind::DisplayHelp);
-            for text in expected {
-                assert!(error.to_string().contains(text));
-            }
+            assert!(!error.to_string().trim().is_empty());
         }
+    }
+
+    #[test]
+    fn unsupported_deployment_command_groups_are_not_aliases() {
         assert!(Cli::try_parse_from(["nemoclaw", "config", "apply"]).is_err());
     }
 

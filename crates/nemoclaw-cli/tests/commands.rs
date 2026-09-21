@@ -410,7 +410,10 @@ fn interactive_onboarding_saves_the_same_configuration() {
     assert_eq!(document.metadata.name, "interactive-deployment");
     assert_eq!(document.credential_names(), ["NVIDIA_INFERENCE_API_KEY"]);
     let stderr = String::from_utf8(output.stderr).unwrap();
-    assert!(stderr.contains("Review authored configuration"));
+    assert!(stderr.contains(&format!(
+        "Review authored configuration:\nDeployment: interactive-deployment\nUID: {}\nSandbox: assistant\nHarness: openclaw\nAgent: primary\nProvider: hosted-nvidia-prod\nAPI: openai-completions\nModel: nvidia/nemotron-3-super-120b-a12b\nCredential references: NVIDIA_INFERENCE_API_KEY\n",
+        document.metadata.uid,
+    )));
     assert!(stderr.contains("apiVersion: nemoclaw.nvidia.com/v1alpha1"));
     assert!(!stderr.contains("interactive-secret"));
 }
@@ -521,4 +524,19 @@ fn exiting_review_does_not_save_and_failed_write_preserves_target() {
         .unwrap();
     assert!(!failed.status.success());
     assert!(!missing_target.exists());
+}
+
+#[test]
+fn removed_bundle_dir_flag_is_a_usage_error() {
+    let root = tempfile::tempdir().unwrap();
+    let state = root.path().join("state");
+    let output = Command::new(env!("CARGO_BIN_EXE_nemoclaw"))
+        .args(["export", "--bundle-dir"])
+        .arg(root.path())
+        .arg("--state-dir")
+        .arg(&state)
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(2));
+    assert!(!state.exists());
 }

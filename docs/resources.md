@@ -36,7 +36,7 @@ Read docs/README.md, docs/overview.md, and the guide for my task from this check
 Use docs/reference/cli.md and docs/reference/configuration.md from the same revision as my bundle.
 For hosted documentation, use the v1 (Development) selector and /nemoclaw/v1/llms.txt.
 Keep main-version commands and procedures separate from v1 guidance.
-Treat TBD as missing implementation evidence or an unverified procedure, not a promised feature.
+Treat TBD as an implementation or procedure that still needs verification, not a promised feature.
 Identify the client, sandbox engine, inference host, image digests, and deployment state path before deployment work.
 Describe which resources an operation changes or retains and how to verify its result.
 Use credential references; do not request secret values in chat or put them in YAML or command arguments.
@@ -51,7 +51,7 @@ This prompt routes documentation; it does not supply missing installers, native-
 The repository includes a [NemoClaw user-guide skill](../.agents/skills/nemoclaw-user-guide/SKILL.md) for version selection and task routing.
 For an assistant with access to this checkout, ask it to read `.agents/skills/nemoclaw-user-guide/SKILL.md` before answering your NemoClaw task.
 Keep the skill in the checkout so its relative links resolve to the same revision's guides.
-It checks the intended product version and executable surface before choosing commands, and refuses to substitute main guidance when a v1 source is unavailable.
+It checks the intended product version and available commands and options before choosing commands, and refuses to substitute main guidance when a v1 source is unavailable.
 Review the cited version and task guide in its answer before operational work.
 
 The skill only routes documentation; reading it does not install software or change deployment resources.

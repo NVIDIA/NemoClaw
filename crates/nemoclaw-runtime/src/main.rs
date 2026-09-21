@@ -1,24 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 #[cfg(target_os = "linux")]
-mod authentication;
-#[cfg(target_os = "linux")]
-mod backend;
-#[cfg(target_os = "linux")]
-mod hardware;
-#[cfg(target_os = "linux")]
-mod inline_recipe;
-#[cfg(target_os = "linux")]
-mod recipe;
-#[cfg(target_os = "linux")]
-mod runtime;
-#[cfg(target_os = "linux")]
-mod supervisor;
-
-#[cfg(target_os = "linux")]
 #[tokio::main]
 async fn main() -> std::process::ExitCode {
-    use nemoclaw_sdk::{CancellationToken, Error, config::Service};
+    use nemoclaw_sdk::{CancellationToken, Error};
     let cancel = CancellationToken::new();
     let trip = CancellationToken::new();
     let signals=async {
@@ -32,19 +17,7 @@ async fn main() -> std::process::ExitCode {
     }.await;
     let result = async {
         let _signals = signals?;
-        let read = |name| match std::env::var(name) {
-            Ok(value) => Ok(Some(value)),
-            Err(std::env::VarError::NotPresent) => Ok(None),
-            Err(std::env::VarError::NotUnicode(_)) => {
-                Err(Error::State("runtime specification is not UTF-8"))
-            }
-        };
-        let text =
-            read("NEMOCLAW_RUNTIME_SPEC")?.ok_or(Error::State("missing runtime specification"))?;
-        let spec: Service = serde_json::from_str(&text)
-            .map_err(|_| Error::State("invalid pinned runtime specification"))?;
-        spec.validate()?;
-        runtime::run(&spec, &cancel, &trip).await
+        nemoclaw_sdk::services::run_runtime(&cancel, &trip).await
     }
     .await;
     if let Err(error) = result {
@@ -55,8 +28,6 @@ async fn main() -> std::process::ExitCode {
 }
 #[cfg(not(target_os = "linux"))]
 fn main() -> std::process::ExitCode {
-    eprintln!(
-        "the inference runtime requires Linux; hardware support depends on the selected recipe"
-    );
+    eprintln!("managed service runtimes require Linux");
     std::process::ExitCode::FAILURE
 }

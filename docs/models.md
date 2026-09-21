@@ -3,9 +3,12 @@
 
 # Select a Managed Model
 
-Use `service.backend: vllm` for a public Hugging Face model that the pinned vLLM image can load natively.
-Set `service.model.repository` and an exact 40-character commit in `service.model.revision`.
+Declare a named service under `spec.services` with `kind: vllm` for a public Hugging Face model that the pinned vLLM image can load natively.
+Set its `model.repository` and an exact 40-character commit in `model.revision`.
+Select it from an inference provider with `serviceRef: <name>`.
+The fields below belong to that named service.
 There is no repository allowlist.
+For Ollama registry models, use [managed Ollama](inference.md#run-managed-ollama); it shares the `service` hardware, placement, memory, and lifecycle contract described here.
 
 ## Choose a Model and Capacity
 
@@ -18,8 +21,8 @@ There is no repository allowlist.
 | Capacity and context | Weight size, runtime memory, KV cache, context length, and concurrency fit the configured host/GPU budget |
 | Agent limits and tools | Native agent context/output/reasoning settings agree with the server and model; parser acceptance is not a tool-use qualification |
 
-Start with a model/configuration covered by [retained evidence](validation/README.md), then verify it against your current images and host.
-Older evidence is not a release-wide support matrix.
+Start with a model/configuration covered by [recorded test results](validation/README.md), then verify it against your current images and host.
+Older test results do not establish support across an entire release.
 For an external endpoint, its operator owns installation and capacity; use [external inference configuration](inference.md#prepare-an-external-endpoint) instead of the managed-model fields below.
 
 ## Pin and Serve the Model
@@ -29,7 +32,8 @@ The OpenShell route's model must match `serving.modelName` when declared, or the
 
 Choose a scenario from the [DGX Spark examples](../examples/spark/README.md), including small Pi, multiple agents, shared inference, two local models, and a hosted model.
 The original ordinary-vLLM configuration is [examples/spark/vllm.yaml](../examples/spark/vllm.yaml).
-Its image digest refers to a locally built artifact, not a published registry image.
+For the exact single-GB300 configuration tested on DGX Station, use the [Station example](../examples/station/README.md) and preserve its qualification boundary.
+The runtime image digest in each example refers to a locally built artifact, not a published registry image.
 Build the runtime locally and use the digest reported by your build.
 
 Follow [the runtime image build procedure](build.md#build-a-runtime-image) and use the immutable OCI manifest digest from the build output.
@@ -46,7 +50,21 @@ Gated repositories, custom remote-code models, GGUF, and nested checkpoint layou
 `memory.gpuMemoryGiB` budgets the model, runtime and KV cache together; its default is 16 GiB.
 `kvCacheGiB` is part of that budget.
 Capacity checks reject snapshots whose weights cannot fit the declared budget.
-Without `service.hardware` or an inline recipe, the host must satisfy the existing Linux ARM64 GB10 Spark contract.
+Declare exactly one of `hardware` or `recipe`; there is no implicit hardware profile.
+For ordinary models on DGX Spark, select the existing Linux ARM64 contract explicitly:
+
+```yaml
+# Under spec.services.<name>:
+hardware:
+  profile: dgx-spark
+```
+
+This profile requires one NVIDIA GB10 with observed compute capability at least 12.1, at least 118 GiB host RAM, and driver major 580 or newer.
+For other hardware, select a [named profile](#choose-a-hardware-profile) or declare [dedicated GPU requirements](#configure-nemotron-on-an-amd64-gpu-host).
+An inline recipe supplies its own compatibility requirements and excludes `hardware`.
+
+Older YAML that omitted both fields or used `profile: spark` is rejected; use `profile: dgx-spark` when preserving that configuration's hardware contract.
+Retained intent is not migrated by editing input YAML; keep the matching previous bundle for existing deployments' export or teardown.
 
 Backend startup still establishes actual model compatibility.
 
@@ -57,17 +75,113 @@ Unsupported names are rejected.
 Inline recipes supply their own model name and execution settings and reject these ordinary-service overrides.
 There are no shell hooks, extra command arguments, or implicit model-specific settings.
 
+### Retained Model Files
+
 Snapshot directories include both repository and revision in their identity.
-The runtime retains the manifest, resumable partial files and completion receipt.
-Unchanged apply and export verify local receipts and file metadata without fetching the inventory or weights again.
+Each directory stores one `.nemoclaw-manifest.json` with format `version: 1`, repository, revision, and expected files.
+Each file entry contains its name, size, SHA-256, and a `modified` timestamp after verification; `null` means unfinished.
+Download progress does not change the model's identity.
+
+The runtime saves the manifest atomically after each file passes checksum verification.
+Interrupted downloads retain partial files for explicit apply to resume.
+If a file was renamed before its manifest update was saved, apply verifies its checksum again without downloading it.
+There are no separate per-file verification records or completion files.
+
+The hosted runtime checks the manifest and file metadata during preparation and recovery without refetching verified weights.
+These size and timestamp checks reuse earlier verification; they do not rehash all model data.
+A missing or changed verified file stops runtime preparation without silently replacing an established artifact.
+SDK plan and export do not inspect model-file inventories; apply consumes the runtime's current readiness result.
+
+The model and recipe metadata formats require a matching CLI/provider bundle and runtime image built from this checkout.
+Use a fresh deployment for these formats; older model manifests without a version and recipe `complete.json` files are not migrated automatically.
+Keep the original bundle, runtime image, and state for existing deployments; do not delete metadata to bypass a format error.
 
 Model changes replace the inference process while preserving its storage volume and previous snapshots.
-Failed observation stops planning; failed startup retains the established container and model data.
+Failed provider observation stops planning; failed startup retains model data and provider state.
+Explicit recovery may recreate the container using that retained data.
 A watchdog stop requires [explicit recovery](#diagnose-and-recover-a-stopped-runtime).
 
-For models requiring preparation or patches, keep `backend: vllm` and declare an [inline recipe](recipes.md).
+For models requiring preparation or patches, keep `kind: vllm` and declare an [inline recipe](recipes.md).
 Package the recipe’s tools in the pinned runtime image.
 There are no built-in model-specific backends.
+
+## Choose a Hardware Profile
+
+The hosted runtime checks named profiles against its GPU family, CPU architecture, driver, and memory.
+Configuration parsing validates the profile declaration without collecting host measurements.
+They do not choose a model, runtime image, or GPU count.
+Every profile currently requires Linux, driver major 580 or newer, and exactly one GPU reported by the execution host's `nvidia-smi`; multi-GPU and multi-host serving are not implemented.
+The collectors do not filter devices, so a DGX Station with an additional RTX/display GPU is rejected even when `CUDA_VISIBLE_DEVICES` selects only GB300.
+The backend uses tensor parallel size 1.
+GB200/GB300 profiles describe one observed GPU in a Grace Blackwell system; they do not enable a full compute tray or NVL72 rack.
+
+| Profile | Hardware identity | Host architecture |
+|---|---|---|
+| `dgx-spark` | GB10 with unified host/GPU memory | ARM64 |
+| `dgx-station` | GB300 GPU on ARM64; intended for current DGX Station | ARM64 |
+| `gb200`, `gb300`, `gh200` | Corresponding Grace Blackwell or Grace Hopper GPU family | ARM64 |
+| `h100`, `h200`, `a100`, `a10`, `a10g`, `a40` | Corresponding NVIDIA GPU family | Explicit `amd64` or `arm64` |
+| `l4`, `l40`, `l40s`, `t4` | Corresponding NVIDIA GPU family | Explicit `amd64` or `arm64` |
+| `rtx-6000-ada`, `rtx-pro-6000-blackwell` | RTX 6000 Ada or RTX PRO 6000 Blackwell | Explicit `amd64` or `arm64` |
+| `rtx-3090`, `rtx-4090`, `rtx-5090` | Corresponding GeForce RTX GPU family | Explicit `amd64` or `arm64` |
+
+System profiles fix ARM64; an optional `architecture` must agree.
+They check GPU family and CPU architecture, not chassis identity; `dgx-station` shares the `gb300` checks and excludes earlier Volta and A100 Stations.
+GPU-only profiles require `architecture` because GPU identity does not determine the host CPU.
+There are no `spark`, `gb100`, or B100/B200/B300 profile names.
+
+For example, declare an H100 on an AMD64 host and a fixed serving budget:
+
+```yaml
+# Under spec.services.<name>:
+hardware:
+  profile: h100
+  architecture: amd64
+memory:
+  gpuMemoryGiB: 48
+```
+
+Every named profile requires an observed compute capability that meets its catalog minimum, including 12.1 for `dgx-spark`.
+The runtime queries compute capability independently of GPU memory counters on its execution host.
+Missing, unsupported, or malformed compute capability stops the operation.
+
+The profile's memory architecture determines capacity accounting:
+
+| Memory architecture | Serving budget and observations |
+|---|---|
+| Unified (`dgx-spark`) | CPU and GPU share system RAM; use host total/available memory and preserve the host reserve. Dedicated framebuffer counters may report `N/A`. |
+| Dedicated (the other current profiles) | Use GPU total/free counters for serving and measure host RAM separately, including on ARM64 Grace systems. Unsupported GPU counters reject the configuration; host RAM is never substituted. |
+
+The collectors preserve an explicit unsupported-counter result; they do not infer unified memory from `N/A` or from a GPU name.
+Failed queries and malformed or partial counter responses stop the operation for either memory architecture.
+NVIDIA documents why [DGX Spark has no dedicated framebuffer memory](https://docs.nvidia.com/dgx/dgx-spark/known-issues.html#nvidia-smi-reports-memory-usage-not-supported).
+DGX Station's coherent CPU/GPU address space is not treated as a combined serving budget.
+Its [memory mode](https://docs.nvidia.com/dgx/dgx-station-development-guide/coherency.html) must expose the dedicated counters; NemoClaw does not change the host's driver or memory mode.
+
+Dedicated-memory profiles require at least 4 GiB of GPU memory, but do not assume a SKU's advertised capacity.
+Set `hardware.minGpuMemoryBytes` to require more.
+This field is required with fractional allocation so snapshot validation has a declared minimum:
+
+```yaml
+# Under spec.services.<name>:
+hardware:
+  profile: h100
+  architecture: amd64
+  minGpuMemoryBytes: 68719476736 # 64 GiB
+memory:
+  gpuMemoryUtilization: 0.75
+```
+
+This example checks weights against a 48 GiB budget derived from the declared minimum, then uses 75% of observed GPU capacity for serving.
+It rejects GPUs below the declared 64 GiB minimum.
+Omit fixed GPU and KV-cache budgets in fractional mode.
+Unified-memory profiles reject both `minGpuMemoryBytes` and fractional allocation and retain host-memory reserve checks.
+All profiles retain the resident host-memory watchdog.
+
+The [profile catalog](../crates/nemoclaw-sdk/src/services/installers/vllm/hardware_profile.rs) uses NVIDIA's [compute-capability table](https://developer.nvidia.com/cuda/gpus) and current [DGX Station specification](https://www.nvidia.com/en-us/products/workstations/dgx-station/), checked on 2026-09-18.
+[Profile tests](../crates/nemoclaw-sdk/tests/hardware_profiles.rs) cover schema/parser agreement, GPU-family mismatches, architecture selection, and memory checks using fixtures.
+One Qwen3-4B and OpenClaw lifecycle is retained in the [DGX Station test record](validation/dgx-station-qwen3-openclaw-linux-arm64.md).
+That result does not establish successful inference for another candidate, model, agent, GPU count, or host configuration; those qualification checks remain **TBD**.
 
 ## Diagnose and Recover a Stopped Runtime
 
@@ -84,13 +198,13 @@ From any directory, set the engine socket and container name for this deployment
 
 ```sh
 model_engine=unix:///var/run/docker.sock
-model_container=REPLACE_WITH_WORKSPACE-inference
+model_container=REPLACE_WITH_WORKSPACE-inference-SERVICE_NAME
 docker --host "$model_engine" inspect "$model_container" --format '{{.Id}} {{json .Config.Labels}}'
 ```
 
-Replace the socket when your selected daemon uses another path, and use the [UID-derived workspace](interfaces.md#select-the-gateway-and-workspace) in the container name.
+Replace the socket when your selected daemon uses another path, and use the [UID-derived workspace](interfaces.md#select-the-gateway-and-workspace) and the service name in the container name.
 Confirm the `nemoclaw.nvidia.com/uid` label matches your YAML before collecting its output.
-This name/label check helps select diagnostics; it does not replace the SDK's generation and durable-identity checks or authorize manual mutation.
+This name/label check helps select diagnostics; it does not authorize manual mutation or adoption of persistent data.
 
 ```sh
 diagnostic_dir=$(mktemp -d)
@@ -108,7 +222,7 @@ If status is missing or the engine is unreachable, retain the original apply err
 | Host memory pressure | Restore host headroom; reduce only workloads you own or ask the host operator; do not disable protection |
 | Memory observation failed or sample stream closed | Restore the host observation prerequisites; increasing a timeout does not fix an unreadable memory source |
 | Loading exceeded startup budget | Inspect backend output for loading/capacity errors before considering a supported startup-budget change |
-| Inference process exited | Resolve the native error using the selected model, runtime image, and recipe evidence |
+| Inference process exited | Diagnose the native error using runtime logs, the selected model and image, and the recipe configuration |
 | Operator stop or protection trip | Establish why the stop was requested before explicitly resuming inference |
 
 After correcting the conditions, follow [interrupted-operation recovery](usage.md#recover-an-interrupted-operation) from the client with the original YAML, bundle, and state directory.
@@ -116,15 +230,15 @@ An unfinished apply must first reconcile that exact intent; do not change its ti
 For a completed deployment, preview any proposed configuration change and follow the normal runtime replacement rules.
 Successful recovery must pass configuration and service readiness checks.
 Verify a native agent reply separately using [inference verification](inference.md#verify-the-result).
-No recovery step requires deleting receipts, keys, volumes, or ownership bindings.
+No recovery step requires deleting manifests, keys, volumes, or ownership bindings.
 
-The [runtime reporter](../crates/nemoclaw-runtime/src/runtime.rs), [supervisor](../crates/nemoclaw-runtime/src/supervisor.rs), and [SDK status reader](../crates/nemoclaw-sdk/src/managed/artifacts.rs) define these diagnostics and failure boundaries.
+The [runtime reporter](../crates/nemoclaw-sdk/src/services/installers/vllm/runtime/mod.rs), [supervisor](../crates/nemoclaw-sdk/src/services/runtime/supervisor.rs), and [SDK artifact reader](../crates/nemoclaw-sdk/src/services/installers/vllm/artifacts.rs) define these diagnostics and failure boundaries.
 
 ## Configure Nemotron on an AMD64 GPU Host
 
 [The Nemotron example](../examples/nemotron-amd64.yaml) declares the pinned NVIDIA Nemotron 3.5 Lightning 30B-A3B NVFP4 model, served name, native parsers, 65,536-token context, one sequence, and 4,096-token batch.
 Its source pins and adaptation are recorded in the [AMD64 runtime notice](../runtimes/vllm-amd64/NOTICE.md).
-It uses ordinary `backend: vllm` serving with no preparation recipe.
+It uses ordinary `kind: vllm` serving with no preparation recipe.
 
 The example requires an existing OpenShell gateway and a Linux AMD64 Docker host reached through SSH.
 That host must expose exactly one NVIDIA GPU with compute capability at least 9.0, at least 96,000,000,000 bytes of dedicated GPU memory, and driver major 580 or newer.
@@ -132,10 +246,10 @@ Follow the [SSH placement prerequisites](remote-service.md), build the [AMD64 ru
 Replace the zero image digest, SSH alias, gateway endpoint, private publication address, and deployment UID before applying.
 Build a compatible OpenClaw sandbox image using the [Fabric image procedure](inference.md#build-an-image-with-the-configuration-interface), replace `sandboxes[].image.ref` with its immutable digest, and load that image into the gateway's Podman daemon.
 
-`service.hardware` declares the dedicated-GPU requirements.
+`hardware` declares the dedicated-GPU requirements.
 `memory.gpuMemoryUtilization: 0.75` allocates a fraction of the observed GPU memory and leaves KV-cache sizing to vLLM.
 Omit `gpuMemoryGiB` and `kvCacheGiB` in this mode; nonzero fixed budgets are rejected.
-The SDK checks snapshot weight size against the fraction of the declared minimum GPU memory and checks startup allocation against the observed total and free GPU memory.
+The hosted runtime checks snapshot weight size against the fraction of the declared minimum GPU memory and checks startup allocation against observed total and free GPU memory.
 Host RAM is measured separately: the default 32 GiB reserve plus 20 GiB startup headroom must be available, and the resident host-memory watchdog remains active.
 A running service's allocation does not count as missing startup headroom during refresh.
 

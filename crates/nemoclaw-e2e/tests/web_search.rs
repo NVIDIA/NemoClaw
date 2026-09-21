@@ -17,7 +17,7 @@ impl Secrets for Key {
     }
 }
 #[tokio::test]
-async fn search_owns_profile_and_provider_preserves_secret_custody_and_rejects_profile_drift() {
+async fn search_stores_credentials_in_openshell_omits_them_from_state_and_rejects_profile_drift() {
     let fixture = Fixture::start().await;
     let mut doc =
         Document::parse(include_str!("../../../examples/fabric-openclaw.yaml").as_bytes()).unwrap();

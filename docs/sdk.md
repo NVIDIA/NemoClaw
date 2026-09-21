@@ -55,12 +55,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 Inspect both `changes` and `deferred` in the result.
 An empty change list with deferred checks is not a complete no-change plan.
-The progress callback reports phase changes, `Progress::Resource`, `Progress::Waiting`, and `Progress::Completed` events.
+The progress callback reports phase changes, `Progress::Resource`, `Progress::Waiting`, `Progress::Download`, and `Progress::Completed` events.
 Resource events adapt OpenTofu's machine-readable UI into fixed resource-kind, action, and status labels with an `elapsed` duration; raw messages, addresses, IDs, and output values are omitted.
 Resources of the same kind share a label.
 Waiting events report a fixed operation label when a timed step starts and every 10 seconds while it remains pending.
 Completed events contain a fixed `operation` label, an `elapsed` duration, and a `StepOutcome` of `Succeeded`, `Failed`, or `Cancelled`.
 They cover bundle verification, OpenTofu commands, sandbox/runtime readiness, and the `fabric.health` request, and contain no diagnostic payloads.
+Download events contain the backend resource kind and name, requested image or model, optional layer ID, phase, and optional completed/total byte counts.
+Each event replaces the previous counts for that resource, artifact, and layer; counts are not increments.
+Provider downloads reach the callback through a local channel; updates can be dropped and never determine the operation result.
+Direct SDK calls to image or Ollama model operations can use `with_download_progress(resource, callback, future)` to report through the same callback type.
 Callbacks run synchronously; keep them short.
 A timed step reports when it returns, including cooperative cancellation; dropping its future does not emit a completed event.
 
@@ -141,7 +145,7 @@ The remote user must be able to run Docker against the intended daemon.
 
 Host keys must already be trusted.
 Authentication is noninteractive and uses OpenSSH configuration, keys or its agent.
-Passwords in URLs, remote socket paths, URL options and IPv6 literals are not supported in this slice; an SSH config alias can select the host.
+Passwords in URLs, remote socket paths, URL options and IPv6 literals are not supported; an SSH config alias can select the host.
 
 Each API request has its own SSH connection, with a 10-second connection timeout and a 120-second transport bound.
 There is no connection pool or automatic mutation retry.
@@ -152,7 +156,7 @@ Supply a typed `HostObserver` with `with_host_observer` when remote measurements
 Existing engine ID and resource ownership checks apply to observations obtained over SSH.
 
 Managed service placement now selects this transport independently of the OpenShell gateway.
-For an explicit SSH service, both SDK preflight and the provider subprocess use the fixed `SshHost` collector, unless an in-process SDK caller supplies its own observer.
+For an explicit SSH service, both SDK runtime validation and the provider subprocess use the fixed `SshHost` collector, unless an in-process SDK caller supplies its own observer.
 Plain `Engine::connect` retains the unavailable default.
 
 The collector reads the SSH host's Linux memory, NVIDIA inventory and Docker storage filesystem, rejects a Docker context pointing to another host, and tags measurements with the daemon identity for comparison.

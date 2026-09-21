@@ -8,14 +8,58 @@ impl Deployment {
         Box::pin(self.export_inner(cancel)).await
     }
 
+    pub(super) async fn export_compute(
+        &self,
+        target: &Target,
+        binding: &StateBinding,
+    ) -> Result<(), Error> {
+        if !target.address.starts_with("docker_container.") {
+            return Ok(());
+        }
+        let (endpoint, name) = if target.kind == "ollama_proxy" {
+            (
+                target.values["engine"].clone(),
+                target.values["name"].clone(),
+            )
+        } else {
+            let spec: crate::managed::Spec = serde_json::from_str(&target.values["spec"])
+                .map_err(|_| Error::State("invalid runtime intent"))?;
+            (spec.engine().to_owned(), spec.name)
+        };
+        let engine = self.engines.resolve(&endpoint)?;
+        let observed = engine.container(&binding.id).await?.ok_or(Error::Conflict(
+            "managed container is absent; no YAML exported",
+        ))?;
+        if observed.id.as_deref() != Some(binding.id.as_str())
+            || observed
+                .name
+                .as_deref()
+                .map(|name| name.trim_start_matches('/'))
+                != Some(name.as_str())
+        {
+            return Err(crate::ObservationError::BindingMismatch.into());
+        }
+        Ok(())
+    }
+
     async fn export_inner(&self, cancel: &CancellationToken) -> Result<Document, Error> {
         let (_, store) = self.open()?;
         let record = store.load()?.ok_or(Error::Conflict(
-            "export requires established resource bindings",
+            "no saved deployment configuration; apply a configuration before exporting",
         ))?;
-        if record.pending || record.destroying || record.destroyed {
+        if record.pending {
             return Err(Error::Conflict(
-                "export requires established bindings; reconcile unfinished operations first",
+                "cannot export while apply is unfinished; run apply again with the same configuration and state directory",
+            ));
+        }
+        if record.destroying {
+            return Err(Error::Conflict(
+                "cannot export while destroy is unfinished; run destroy again with the same state directory",
+            ));
+        }
+        if record.destroyed {
+            return Err(Error::Conflict(
+                "cannot export a destroyed deployment; apply its configuration again using the same state directory before exporting",
             ));
         }
 
@@ -28,24 +72,30 @@ impl Deployment {
             if cancel.is_cancelled() {
                 return Err(Error::Cancelled);
             }
+            if target.address.starts_with("data.") {
+                continue;
+            }
+            if plan::disposable(&target.address) {
+                let binding = bindings
+                    .get(&target.address)
+                    .ok_or(Error::Conflict("resource has no saved ID"))?;
+                self.export_compute(&target, binding).await?;
+                continue;
+            }
             let mut expected = target.values;
             expected.insert(
                 "id".into(),
                 bindings
                     .get(&target.address)
-                    .ok_or(Error::Conflict("resource has no durable state identity"))?
+                    .ok_or(Error::Conflict("resource has no saved ID"))?
                     .id
                     .clone(),
             );
-            let observed = if crate::ollama::proxy::supports(&target.kind) {
-                let proxy = document
-                    .lifecycle_provider()?
-                    .ollama_proxy
-                    .as_ref()
-                    .ok_or(Error::State("missing proxy settings"))?;
-                crate::ollama::OllamaBackend::new(self.engines.resolve(&proxy.engine)?)
-                    .read(&target.kind, &expected, false)
-                    .await?
+            let observed = if let Some(backend) =
+                crate::services::BackendRegistry::new(&self.engines)
+                    .resolve(&target.kind, &expected)?
+            {
+                backend.read(&target.kind, &expected, false).await?
             } else {
                 client.read(&target.kind, &expected, false).await?
             }
@@ -73,7 +123,6 @@ impl Deployment {
                 _ => {}
             }
         }
-        tokio::select! { ()=cancel.cancelled()=>return Err(Error::Cancelled), result=self.export_ollama(&document, &record.generations, &bindings)=>result? }
         document.validate()?;
         Ok(document)
     }
@@ -103,11 +152,12 @@ fn export_provider(document: &mut Document, expected: &Row, observed: &Row) -> R
         return Ok(());
     }
     let provider = document
-        .selected_inference_providers()?
+        .selected_providers()?
         .into_iter()
-        .find(|provider| document.provider_key(provider) == expected["name"])
+        .find(|provider| provider.key == expected["name"])
         .ok_or(Error::Conflict("observed provider is not selected"))?;
-    let managed = provider.service.is_some();
+    let provider = provider.definition;
+    let managed = provider.service_ref.is_some();
     if managed
         && (observed["endpoint"] != document.provider_connection(provider)?.endpoint
             || !observed["credential_env"].is_empty())
@@ -151,7 +201,7 @@ async fn export_sandbox(
             "pi_model_config".into(),
             serde_json::to_string(
                 &document
-                    .agent_inference(&definition.agent)?
+                    .sandbox_inference(definition)?
                     .default_route()?
                     .overrides,
             )
@@ -165,6 +215,99 @@ async fn export_sandbox(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    #[cfg(unix)]
+    async fn exporting_compute_observes_namespace_without_reading_credentials_or_readiness() {
+        let fixture = crate::docker::fixture::Fixture::start(|request| {
+            assert_eq!(request.method, "GET");
+            assert_eq!(request.path, "/containers/provider-id/json");
+            Some((
+                200,
+                serde_json::to_vec(&json!({"Id":"provider-id","Name":"/proxy"})).unwrap(),
+            ))
+        })
+        .await;
+        let target = Target {
+            address: "docker_container.ollama_proxy_model".into(),
+            kind: "ollama_proxy".into(),
+            values: Row::from([
+                ("engine".into(), fixture.endpoint.clone()),
+                ("name".into(), "proxy".into()),
+            ]),
+        };
+        let binding = StateBinding {
+            id: "provider-id".into(),
+            spec: String::new(),
+        };
+        Deployment::new(Path::new("unused"), Path::new("unused"))
+            .export_compute(&target, &binding)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn export_reports_recovery_for_each_saved_operation_state_without_changing_files() {
+        let bundle = tempfile::tempdir().unwrap();
+        let mut manifest = crate::bundle::Manifest {
+            version: "0.1.0".into(),
+            rust: "fixture".into(),
+            opentofu: compile::OPENTOFU_VERSION.into(),
+            files: BTreeMap::new(),
+        };
+        for name in crate::bundle::required_files(&manifest.version).unwrap() {
+            let path = bundle.path().join(&name);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(&path, b"not an executable").unwrap();
+            manifest
+                .files
+                .insert(name, crate::bundle::hash_file(&path).unwrap());
+        }
+        save_json(&bundle.path().join("manifest.json"), &manifest).unwrap();
+        let document =
+            Document::parse(include_bytes!("../../tests/fixtures/config/local.yaml").as_slice())
+                .unwrap();
+        for (flags, expected) in [
+            (
+                None,
+                "no saved deployment configuration; apply a configuration before exporting",
+            ),
+            (
+                Some((true, false, false)),
+                "cannot export while apply is unfinished; run apply again with the same configuration and state directory",
+            ),
+            (
+                Some((false, true, false)),
+                "cannot export while destroy is unfinished; run destroy again with the same state directory",
+            ),
+            (
+                Some((false, false, true)),
+                "cannot export a destroyed deployment; apply its configuration again using the same state directory before exporting",
+            ),
+        ] {
+            let state = tempfile::tempdir().unwrap();
+            let intent = state.path().join("intent.json");
+            if let Some((pending, destroying, destroyed)) = flags {
+                let mut record = Record::new(document.clone()).unwrap();
+                record.pending = pending;
+                record.destroying = destroying;
+                record.destroyed = destroyed;
+                Store::open(state.path()).unwrap().save(&record).unwrap();
+            }
+            let before = fs::read(&intent).ok();
+            let resource_state = state.path().join("terraform.tfstate");
+            fs::write(&resource_state, br#"{"version":4,"resources":[]}"#).unwrap();
+            let before_resources = fs::read(&resource_state).unwrap();
+            let deployment = Deployment::new(state.path(), bundle.path());
+            let error = deployment
+                .export(&CancellationToken::new())
+                .await
+                .unwrap_err();
+            assert_eq!(error.to_string(), expected, "{flags:?}");
+            assert_eq!(fs::read(&intent).ok(), before);
+            assert_eq!(fs::read(&resource_state).unwrap(), before_resources);
+        }
+    }
 
     fn provider_row(document: &Document) -> Row {
         let record = Record::new(document.clone()).unwrap();
@@ -245,17 +388,17 @@ mod tests {
                 .unwrap(),
         )
         .unwrap();
-        value["spec"]["inferenceProviders"].as_array_mut().unwrap().push(serde_json::json!({"name":"oracle","provider":"openai","endpoint":"https://oracle.example/v1","credential":{"env":"OLD_KEY"}}));
+        value["spec"]["inferenceProviders"].as_array_mut().unwrap().push(serde_json::json!({"name":"hosted","provider":"openai","endpoint":"https://hosted.example/v1","credential":{"env":"OLD_KEY"}}));
         let inference = &mut value["spec"]["sandboxes"][0]["agent"]["inference"];
         inference["default"] = serde_json::json!("primary");
-        inference["routes"].as_array_mut().unwrap().push(serde_json::json!({"name":"smart","providerRef":"oracle","overrides":{"model":"smart"}}));
+        inference["routes"].as_array_mut().unwrap().push(serde_json::json!({"name":"smart","providerRef":"hosted","overrides":{"model":"smart"}}));
         let mut document = Document::parse(value.to_string().as_bytes()).unwrap();
         let original = document.spec.inference_providers[0].clone();
         let record = Record::new(document.clone()).unwrap();
         let expected = compile::targets(&document, &record.generations)
             .unwrap()
             .into_iter()
-            .find(|target| target.kind == "provider" && target.values["name"] == "oracle")
+            .find(|target| target.kind == "provider" && target.values["name"] == "hosted")
             .unwrap()
             .values;
         let mut observed = expected.clone();

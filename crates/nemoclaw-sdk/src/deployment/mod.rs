@@ -5,7 +5,6 @@
 mod tests;
 
 mod export;
-mod ollama;
 mod plan;
 mod runtime;
 mod timing;
@@ -27,10 +26,20 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
+
+async fn validate_gateway(client: &OpenShell, document: &Document) -> Result<(), Error> {
+    let capabilities = client.gateway_capabilities().await?;
+    for sandbox in &document.spec.sandboxes {
+        capabilities.require(&sandbox.runtime.provider)?;
+    }
+    Ok(())
+}
+
 pub use timing::StepOutcome;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Progress {
+    Download(crate::DownloadProgress),
     /// A resource operation observed in OpenTofu's machine-readable UI.
     Resource {
         resource: &'static str,
@@ -187,17 +196,13 @@ impl Deployment {
                 "unfinished apply has different intent; reapply its original configuration",
             ));
         }
-        if (document.lifecycle_provider()?.ollama.is_some()
-            || document.lifecycle_provider()?.ollama_proxy.is_some())
-            && record
-                .generations
-                .get("ollama")
-                .is_none_or(String::is_empty)
-        {
-            record.generations.insert(
-                "ollama".into(),
-                Record::new(document.clone())?.generations["ollama"].clone(),
-            );
+        for kind in crate::services::generation_kinds(&document)? {
+            if record.generations.get(kind).is_none_or(String::is_empty) {
+                record.generations.insert(
+                    kind.into(),
+                    Record::new(document.clone())?.generations[kind].clone(),
+                );
+            }
         }
         let (runtime_changes, deferred) = self
             .runtime_stage(&bundle, &store, &document, &mut record, apply, cancel)
@@ -212,19 +217,16 @@ impl Deployment {
         let client = OpenShell::connect(&document.spec.gateway, self.secrets.clone())?;
         let bindings = store.bindings()?;
         let targets = compile::targets(&document, &record.generations)?;
-        let mut allowed = allowed(&targets);
-        ollama::extend_allowed(&document, &record.generations, &mut allowed)?;
-        if bindings
-            .iter()
-            .any(|(address, binding)| !allowed.contains_key(address) || !binding.spec.is_empty())
-        {
+        let allowed = allowed(&targets);
+        if bindings.iter().any(|(address, binding)| {
+            (!allowed.contains_key(address) && !plan::disposable(address))
+                || !binding.spec.is_empty()
+        }) {
             return Err(Error::Conflict(
                 "undeclared resource binding in deployment state",
             ));
         }
-        tokio::select! { ()=cancel.cancelled()=>return Err(Error::Cancelled), result=self.validate_ollama_environment(&document, &record.generations, &bindings)=>result? }
         (self.progress)(Progress::Validating);
-        tokio::select! {()=cancel.cancelled()=>return Err(Error::Cancelled),result=self.validate_deployment_resources(&client,&document,&targets,&bindings)=>result?}
         self.prepare(
             &bundle,
             &store,
@@ -238,16 +240,6 @@ impl Deployment {
             cancel,
         )
         .await?;
-        let (recovery_changes, deferred) = self
-            .recover_ollama(&bundle, &store, &document, &mut record, apply, cancel)
-            .await?;
-        let mut runtime_changes = runtime_changes;
-        runtime_changes.extend(recovery_changes);
-        if deferred {
-            let mut result = OperationResult::planned(runtime_changes);
-            result.deferred.push("Model inventory and the complete deployment plan require recovery of the stopped Ollama service".into());
-            return Ok(result);
-        }
         (self.progress)(Progress::Planning);
         let plan = self
             .saved_plan(&bundle, &store, &document, "apply.plan", cancel)
@@ -261,12 +253,12 @@ impl Deployment {
                 }
                 if let Ok(previous) = record.document.sandbox(&sandbox.name)
                     && document
-                        .agent_inference(&sandbox.agent)?
+                        .sandbox_inference(sandbox)?
                         .default_route()?
                         .overrides
                         != record
                             .document
-                            .agent_inference(&previous.agent)?
+                            .sandbox_inference(previous)?
                             .default_route()?
                             .overrides
                 {
@@ -294,6 +286,9 @@ impl Deployment {
         record.plan_digest = crate::bundle::hash_file(&store.directory.join("apply.plan"))?;
         store.save(&record)?;
         (self.progress)(Progress::Applying);
+        // Known data-source results can be cached in a saved plan. Re-observe
+        // before direct configuration writes or OpenTofu resource mutations.
+        tokio::select! {()=cancel.cancelled()=>return Err(Error::Cancelled),result=validate_gateway(&client,&document)=>result?}
         for target in targets.iter().filter(|target| target.kind == "sandbox") {
             let definition = document.sandbox(&target.values["name"])?;
             if document.sandbox_harness(definition)?.kind == "pi"
@@ -305,7 +300,7 @@ impl Deployment {
                     "pi_model_config".into(),
                     serde_json::to_string(
                         &document
-                            .agent_inference(&definition.agent)?
+                            .sandbox_inference(definition)?
                             .default_route()?
                             .overrides,
                     )
@@ -331,6 +326,16 @@ impl Deployment {
         record.pending = false;
         store.save(&record)?;
         let bindings = store.bindings()?;
+        (self.progress)(Progress::Readiness);
+        crate::services::check_running(
+            &document,
+            &record.generations,
+            crate::services::InstallStage::Deployment,
+            &self.engines,
+            &bindings,
+            cancel,
+        )
+        .await?;
         for target in targets.iter().filter(|target| target.kind == "sandbox") {
             let definition = document.sandbox(&target.values["name"])?;
             let mut sandbox = target.values.clone();
@@ -346,7 +351,7 @@ impl Deployment {
                 (self.progress)(Progress::Readiness);
                 self.timed("sandbox.ready", async {
                     if document.sandbox_harness(definition)?.kind == "pi" {
-                        sandbox.insert("pi_model_config".into(), serde_json::to_string(&document.agent_inference(&definition.agent)?.default_route()?.overrides)
+                        sandbox.insert("pi_model_config".into(), serde_json::to_string(&document.sandbox_inference(definition)?.default_route()?.overrides)
                             .map_err(|_| Error::State("cannot encode Pi model configuration"))?);
                         tokio::select! {()=cancel.cancelled()=>return Err(Error::Cancelled),result=client.configure_pi(&sandbox, false)=>result?}
                     }
@@ -376,56 +381,6 @@ impl Deployment {
         store.save(&record)?;
         result.outcome = Outcome::Succeeded;
         Ok(result)
-    }
-    async fn validate_deployment_resources(
-        &self,
-        client: &OpenShell,
-        document: &Document,
-        targets: &[Target],
-        bindings: &BTreeMap<String, StateBinding>,
-    ) -> Result<(), Error> {
-        for driver in document
-            .spec
-            .sandboxes
-            .iter()
-            .map(|sandbox| &sandbox.runtime.provider)
-            .collect::<std::collections::BTreeSet<_>>()
-        {
-            client.verify_gateway(driver).await?;
-        }
-        for target in targets {
-            let mut expected = target.values.clone();
-            if let Some(binding) = bindings.get(&target.address) {
-                expected.insert("id".into(), binding.id.clone());
-                if target.kind == "sandbox" {
-                    // A terminal sandbox cannot answer native configuration
-                    // checks. Report its verified lifecycle failure first.
-                    client.check_sandbox_phase(&expected).await?;
-                }
-            }
-            let observed = if crate::ollama::proxy::supports(&target.kind) {
-                let config = document
-                    .lifecycle_provider()?
-                    .ollama_proxy
-                    .as_ref()
-                    .ok_or(Error::State("missing proxy settings"))?;
-                crate::ollama::OllamaBackend::new(self.engines.resolve(&config.engine)?)
-                    .read(&target.kind, &expected, false)
-                    .await?
-            } else {
-                client.read(&target.kind, &expected, false).await?
-            };
-            match observed {
-                Some(observed) => verify_identity(&expected, &observed)?,
-                None if bindings.contains_key(&target.address) => {
-                    return Err(Error::Conflict(
-                        "managed resource disappeared; automatic replacement is forbidden",
-                    ));
-                }
-                None => {}
-            }
-        }
-        Ok(())
     }
     fn prepare(&self, bundle: &Bundle, store: &Store, graph: &Value) -> Result<(), Error> {
         for entry in fs::read_dir(&store.directory)

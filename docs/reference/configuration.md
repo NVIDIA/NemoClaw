@@ -24,9 +24,9 @@ Empty or zero selects a default only where stated.
 - The parser checks uniquely named model choices with an explicit default for multiple choices, multiple choices for OpenClaw and Pi, and the OpenClaw disclosure mode; omitted disclosure means progressive.
 - The parser resolves integrationRefs only from enclosing deployment or sandbox definitions, rejects name shadowing and incompatible agent grants, and permits at most one attached Brave search definition per sandbox. Agent-inline definitions attach directly; unused enclosing definitions grant no access.
 - The parser requires exactly one sandbox harness or harnessRef, resolves visible harnesses without shadowing, and rejects agent-level harness selection. Each sandbox requires one agent and hosts one Fabric runtime using the sandbox-selected implementation. Shared definitions reuse configuration across sandboxes.
-- The parser permits non-default reasoningEffort values only on the initial default choice. Managed Ollama and its proxy currently manage one selected model; vLLM choices must match its served model.
+- The parser permits non-default reasoningEffort values only on the initial default choice. Managed inference services may constrain routes to their declared served model.
 - The parser resolves inferenceRef from enclosing inferences, preserves declaration scope for nested provider references, and rejects missing names, shadowing, and inline/reference ambiguity.
-- The parser resolves providerRef from enclosing inferenceProviders, rejects shadowing, conflicting selected names, more than 32 selected providers, and more than one selected provider with managed Ollama or proxy dependencies, and compares route models and authentication with the selected provider. With multiple named definitions, provider/agent compatibility is a parser check. Unselected definitions create no resources. Snapshot identity must match the service model.
+- The parser resolves providerRef from enclosing inferenceProviders, rejects shadowing, conflicting selected names, more than 32 selected providers, incompatible managed-service combinations, and compares route models and authentication with the selected provider. With multiple named definitions, provider/agent compatibility is a parser check. Unselected definitions create no resources. Snapshot identity must match the service model.
 - The parser checks memory threshold ordering and GPU/KV budget relationships; recipe path safety, byte-length limits, environment-map conflicts, snapshot file uniqueness, directory conflicts, and total-size overflow.
 - Schema validation does not observe hardware, image labels, model weights, credentials, ownership, connectivity, or inference readiness. Those checks run during the relevant SDK operation.
 
@@ -139,7 +139,7 @@ Paths:
 
 - `spec.sandboxes[].agent.tools`
 
-Accepted input: object or object.
+Accepted input: object.
 
 ### Alternative 1
 
@@ -195,11 +195,7 @@ Guide: [Inline model recipes](../recipes.md).
 
 Paths:
 
-- `spec.inferenceProviders[].service.recipe.compatibility`
-- `spec.inferences.{key}.routes[].provider.service.recipe.compatibility`
-- `spec.sandboxes[].agent.inference.routes[].provider.service.recipe.compatibility`
-- `spec.sandboxes[].inferenceProviders[].service.recipe.compatibility`
-- `spec.sandboxes[].inferences.{key}.routes[].provider.service.recipe.compatibility`
+- `spec.services.{key}.recipe.compatibility`
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
@@ -217,11 +213,7 @@ Guide: [Inline model recipes](../recipes.md).
 
 Paths:
 
-- `spec.inferenceProviders[].service.recipe.serving.compilation`
-- `spec.inferences.{key}.routes[].provider.service.recipe.serving.compilation`
-- `spec.sandboxes[].agent.inference.routes[].provider.service.recipe.serving.compilation`
-- `spec.sandboxes[].inferenceProviders[].service.recipe.serving.compilation`
-- `spec.sandboxes[].inferences.{key}.routes[].provider.service.recipe.serving.compilation`
+- `spec.services.{key}.recipe.serving.compilation`
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
@@ -270,6 +262,23 @@ Accepted input: string.
 
 Constraints: `"127.0.0.1"` or `"0.0.0.0"`.
 
+## DedicatedHardware
+
+Requirements for one NVIDIA GPU with dedicated memory on Linux AMD64. Declaring requirements does not qualify a model or host.
+
+Guide: [Managed models](../models.md).
+
+Paths:
+
+- `spec.services.{key}.hardware`
+
+| Field | Input type | Required | Default | Description and constraints |
+|---|---|---|---|---|
+| `architecture` | string | Yes | — | CPU architecture; this dedicated-memory contract requires amd64. Constraints: `"amd64"`. |
+| `minComputeCapability` | integer | Yes | — | Minimum NVIDIA compute capability, encoded as major times ten plus minor; 90 means 9.0. Constraints: minimum 10; maximum 999. |
+| `minDriverMajor` | integer | Yes | — | Minimum installed NVIDIA driver major version. Constraints: minimum 1; maximum 9999. |
+| `minGpuMemoryBytes` | integer | Yes | — | Minimum total dedicated GPU memory in bytes. Host RAM is measured separately. Constraints: minimum 4294967296; maximum 4398046511104. |
+
 ## ExplicitPolicy
 
 Credential-free OpenShell policy. Validation and protocol conversion use the pinned OpenShell policy library.
@@ -302,48 +311,20 @@ Paths:
 |---|---|---|---|---|
 | `explicit` | [ExplicitPolicy](#explicitpolicy) | Yes | — | Complete sandbox policy in OpenShell YAML field names. |
 
-## ExternalManagement
+## ExternalOllama
 
-NemoClaw uses this resource without managing its lifecycle or administrative configuration.
+External Ollama daemon observed by the managed proxy installer.
 
-Guide: [Resource ownership](../usage.md#resource-ownership).
-
-Paths:
-
-- `spec.inferenceProviders[].ollama.network.management`
-- `spec.inferenceProviders[].ollamaProxy.model.management`
-- `spec.inferences.{key}.routes[].provider.ollama.network.management`
-- `spec.inferences.{key}.routes[].provider.ollamaProxy.model.management`
-- `spec.sandboxes[].agent.inference.routes[].provider.ollama.network.management`
-- `spec.sandboxes[].agent.inference.routes[].provider.ollamaProxy.model.management`
-- `spec.sandboxes[].inferenceProviders[].ollama.network.management`
-- `spec.sandboxes[].inferenceProviders[].ollamaProxy.model.management`
-- `spec.sandboxes[].inferences.{key}.routes[].provider.ollama.network.management`
-- `spec.sandboxes[].inferences.{key}.routes[].provider.ollamaProxy.model.management`
-- `spec.sandboxes[].network.proxy.management`
-
-Accepted input: string.
-
-Constraints: `"external"`.
-
-## ExternalNetwork
-
-Identify a network owned outside this deployment.
-
-Guide: [Resource ownership](../usage.md#resource-ownership).
+Guide: [Configuration and credentials](../usage.md#configuration-and-credentials).
 
 Paths:
 
-- `spec.inferenceProviders[].ollama.network`
-- `spec.inferences.{key}.routes[].provider.ollama.network`
-- `spec.sandboxes[].agent.inference.routes[].provider.ollama.network`
-- `spec.sandboxes[].inferenceProviders[].ollama.network`
-- `spec.sandboxes[].inferences.{key}.routes[].provider.ollama.network`
+- `spec.services.{key}.upstream`
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
-| `management` | [ExternalManagement](#externalmanagement) | No | — | Optional external ownership declaration. Omission means external. |
-| `name` | string | Yes | — | Existing network name on the Ollama Docker engine. Constraints: pattern `^[a-z][a-z0-9-]{0,39}$`. |
+| `endpoint` | string | Yes | — | Loopback-only Ollama HTTP endpoint ending in /v1. |
+| `model` | [ExternalOllamaModel](#externalollamamodel) | Yes | — | Existing model verified before the proxy starts. |
 
 ## ExternalOllamaModel
 
@@ -353,16 +334,12 @@ Guide: [Inference configuration](../inference.md).
 
 Paths:
 
-- `spec.inferenceProviders[].ollamaProxy.model`
-- `spec.inferences.{key}.routes[].provider.ollamaProxy.model`
-- `spec.sandboxes[].agent.inference.routes[].provider.ollamaProxy.model`
-- `spec.sandboxes[].inferenceProviders[].ollamaProxy.model`
-- `spec.sandboxes[].inferences.{key}.routes[].provider.ollamaProxy.model`
+- `spec.services.{key}.upstream.model`
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
 | `digest` | string | Yes | — | Lowercase 64-character model digest reported by Ollama's /api/tags API. Constraints: pattern `^[a-f0-9]{64}$`. |
-| `management` | [ExternalManagement](#externalmanagement) | No | — | Optional ownership declaration; omission means external. |
+| `name` | string | Yes | — | Installed Ollama model name including its tag. Constraints: pattern `^[a-z0-9][a-z0-9._-]*:[a-z0-9][a-z0-9._-]*$`. |
 
 ## File
 
@@ -372,11 +349,7 @@ Guide: [Inline model recipes](../recipes.md).
 
 Paths:
 
-- `spec.inferenceProviders[].service.recipe.snapshot.files[]`
-- `spec.inferences.{key}.routes[].provider.service.recipe.snapshot.files[]`
-- `spec.sandboxes[].agent.inference.routes[].provider.service.recipe.snapshot.files[]`
-- `spec.sandboxes[].inferenceProviders[].service.recipe.snapshot.files[]`
-- `spec.sandboxes[].inferences.{key}.routes[].provider.service.recipe.snapshot.files[]`
+- `spec.services.{key}.recipe.snapshot.files[]`
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
@@ -401,11 +374,24 @@ Paths:
 | `endpoint` | string | When external | — | Gateway HTTP(S) origin, without a path. Required for an external gateway; managed gateways use unprivileged loopback HTTP ports. Managed only: omitted or empty selects http://127.0.0.1:17681. |
 | `engine` | string | No | — | Managed gateway Unix engine socket; Podman requires its API service socket. Omit or leave empty for an external gateway. Managed only: omitted or empty selects unix:///var/run/docker.sock. |
 | `image` | string | No | — | Managed gateway image pinned by the SDK. Omit or leave empty for an external gateway. Managed only: omitted or empty selects ghcr.io/nvidia/openshell/gateway@sha256:ec2b0efea84fff198e888e97c85befb9c908acde92e8256f9b527877ed182d66. |
+| `imagePullPolicy` | [ImagePullPolicy](#imagepullpolicy) | No | — | Image acquisition before container creation. Docker accepts IfNotPresent (the default) or Never; Podman also accepts Always before creation or restart. |
 | `management` | string | Yes | — | Whether the SDK manages the gateway or connects to an existing one. Constraints: `"managed"` or `"external"`. |
-| `network` | [ManagedResource](#managedresource) | No | — | Optional ownership declaration for the gateway network configured by networkCIDR. Omission means managed for a managed gateway. |
 | `networkCIDR` | string | No | — | Canonical private IPv4 /24 for a managed gateway. Omit or leave empty for an external gateway. Managed only: omitted or empty selects 172.30.N.0/24, where N is the first byte of SHA-256(metadata.uid). |
-| `storage` | [ManagedResource](#managedresource) | No | — | Optional ownership declaration for gateway storage. Omission means managed for a managed gateway; external gateways cannot declare storage. |
 | `tls` | [TLS](#tls) | No | — | Optional mutual TLS references for an external HTTPS gateway. |
+
+## HardwareProfile
+
+GPU-family contracts, not model or whole-system qualifications. System profiles fix ARM64; GPU profiles require architecture. Each currently requires one visible GPU.
+
+Guide: [Managed models](../models.md).
+
+Paths:
+
+- `spec.services.{key}.hardware.profile`
+
+Accepted input: string.
+
+Constraints: `"dgx-spark"` or `"dgx-station"` or `"gb200"` or `"gb300"` or `"gh200"` or `"h100"` or `"h200"` or `"a100"` or `"a10"` or `"a10g"` or `"a40"` or `"l4"` or `"l40"` or `"l40s"` or `"t4"` or `"rtx-6000-ada"` or `"rtx-pro-6000-blackwell"` or `"rtx-3090"` or `"rtx-4090"` or `"rtx-5090"`.
 
 ## Harness
 
@@ -508,6 +494,21 @@ Paths:
 |---|---|---|---|---|
 | `ref` | string | No | — | Immutable image reference. Omitted or empty selects the SDK pin for the selected harness. Constraints: `""` or pattern `^[a-zA-Z0-9][a-zA-Z0-9._:/-]*@sha256:[a-f0-9]{64}$`. Omitted or empty selects the SDK pin for the selected harness. |
 
+## ImagePullPolicy
+
+Controls image acquisition on the selected container engine. Does not control model downloads or OpenShell sandbox images.
+
+Guide: [Container image downloads](../usage.md#control-container-image-downloads).
+
+Paths:
+
+- `spec.gateway.imagePullPolicy`
+- `spec.services.{key}.imagePullPolicy`
+
+Accepted input: string.
+
+Constraints: `"Always"` or `"IfNotPresent"` or `"Never"`.
+
 ## Inference
 
 Agent inference routing.
@@ -545,7 +546,7 @@ Constraints: `"openai-completions"` or `"openai-responses"` or `"anthropic-messa
 
 ## InferenceProvider
 
-Choose endpoint for external inference, endpoint plus ollama for managed Ollama, or service for managed vLLM.
+Choose an endpoint for external inference or serviceRef for a managed service.
 
 Guide: [Inference configuration](../inference.md).
 
@@ -560,14 +561,11 @@ Paths:
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
 | `api` | [InferenceApi](#inferenceapi) | No | — | Request API. Omission selects anthropic-messages for Claude, openai-responses for Codex, and openai-completions for other non-Pi harnesses. Pi requires omission and selects its API through native model metadata. |
-| `credential` | [Credential](#credential) | No | — | Optional API credential reference for an external HTTPS endpoint. Excluded by service and ollama. |
-| `endpoint` | string | Without service | — | Inference HTTP(S) URL. Required without service; omit or leave empty with service. HTTP requires a literal private or loopback address. |
-| `management` | [Management](#management) | No | — | Optional server ownership. Omission means managed with service or ollama, external with endpoint alone. The OpenShell provider registration remains deployment-owned in either mode. |
+| `credential` | [Credential](#credential) | No | — | Optional API credential reference for an external HTTPS endpoint. Excluded by serviceRef. |
+| `endpoint` | string | Without serviceRef | — | Inference HTTP(S) URL owned outside the deployment. Required without serviceRef and excluded with serviceRef. |
 | `name` | string | Yes | — | Provider name referenced by model choices. Constraints: pattern `^[a-z][a-z0-9-]{0,39}$`. |
-| `ollama` | [ManagedOllama](#managedollama) | No | — | Manage Ollama through a local Unix Docker socket and an existing network. Requires an explicit private or loopback IP:port/v1 HTTP endpoint. |
-| `ollamaProxy` | [OllamaProxy](#ollamaproxy) | No | — | Manage an authenticated proxy while leaving the endpoint's Ollama daemon and installed model external. |
 | `provider` | string | Yes | — | OpenShell provider implementation. Must match the selected API family. Constraints: `"openai"` or `"anthropic"`. |
-| `service` | [Service](#service) | No | — | Manage vLLM from a pinned runtime image and model. Excludes ollama and credential; endpoint must be omitted or empty. |
+| `serviceRef` | string | No | — | Name of a managed service in spec.services. Excludes endpoint and credential. Constraints: pattern `^[a-z][a-z0-9-]{0,39}$`. |
 
 ## InlineRecipe
 
@@ -577,11 +575,7 @@ Guide: [Inline model recipes](../recipes.md).
 
 Paths:
 
-- `spec.inferenceProviders[].service.recipe`
-- `spec.inferences.{key}.routes[].provider.service.recipe`
-- `spec.sandboxes[].agent.inference.routes[].provider.service.recipe`
-- `spec.sandboxes[].inferenceProviders[].service.recipe`
-- `spec.sandboxes[].inferences.{key}.routes[].provider.service.recipe`
+- `spec.services.{key}.recipe`
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
@@ -621,137 +615,6 @@ Brave Search with gateway-held credentials and explicit agent grants.
 | `kind` | string | Yes | — | Integration implementation selected by this definition. Constraints: `"webSearch"`. |
 | `provider` | [SearchProvider](#searchprovider) | Yes | — | Supported search service. |
 
-## ManagedManagement
-
-NemoClaw manages this resource's lifecycle. Storage retention is independent of ownership.
-
-Guide: [Resource ownership](../usage.md#resource-ownership).
-
-Paths:
-
-- `spec.gateway.network.management`
-- `spec.gateway.storage.management`
-- `spec.inferenceProviders[].ollama.management`
-- `spec.inferenceProviders[].ollama.model.management`
-- `spec.inferenceProviders[].ollama.storage.management`
-- `spec.inferenceProviders[].ollamaProxy.management`
-- `spec.inferenceProviders[].service.management`
-- `spec.inferenceProviders[].service.model.management`
-- `spec.inferenceProviders[].service.placement.network.management`
-- `spec.inferenceProviders[].service.storage.management`
-- `spec.inferences.{key}.routes[].provider.ollama.management`
-- `spec.inferences.{key}.routes[].provider.ollama.model.management`
-- `spec.inferences.{key}.routes[].provider.ollama.storage.management`
-- `spec.inferences.{key}.routes[].provider.ollamaProxy.management`
-- `spec.inferences.{key}.routes[].provider.service.management`
-- `spec.inferences.{key}.routes[].provider.service.model.management`
-- `spec.inferences.{key}.routes[].provider.service.placement.network.management`
-- `spec.inferences.{key}.routes[].provider.service.storage.management`
-- `spec.sandboxes[].agent.inference.routes[].provider.ollama.management`
-- `spec.sandboxes[].agent.inference.routes[].provider.ollama.model.management`
-- `spec.sandboxes[].agent.inference.routes[].provider.ollama.storage.management`
-- `spec.sandboxes[].agent.inference.routes[].provider.ollamaProxy.management`
-- `spec.sandboxes[].agent.inference.routes[].provider.service.management`
-- `spec.sandboxes[].agent.inference.routes[].provider.service.model.management`
-- `spec.sandboxes[].agent.inference.routes[].provider.service.placement.network.management`
-- `spec.sandboxes[].agent.inference.routes[].provider.service.storage.management`
-- `spec.sandboxes[].inferenceProviders[].ollama.management`
-- `spec.sandboxes[].inferenceProviders[].ollama.model.management`
-- `spec.sandboxes[].inferenceProviders[].ollama.storage.management`
-- `spec.sandboxes[].inferenceProviders[].ollamaProxy.management`
-- `spec.sandboxes[].inferenceProviders[].service.management`
-- `spec.sandboxes[].inferenceProviders[].service.model.management`
-- `spec.sandboxes[].inferenceProviders[].service.placement.network.management`
-- `spec.sandboxes[].inferenceProviders[].service.storage.management`
-- `spec.sandboxes[].inferences.{key}.routes[].provider.ollama.management`
-- `spec.sandboxes[].inferences.{key}.routes[].provider.ollama.model.management`
-- `spec.sandboxes[].inferences.{key}.routes[].provider.ollama.storage.management`
-- `spec.sandboxes[].inferences.{key}.routes[].provider.ollamaProxy.management`
-- `spec.sandboxes[].inferences.{key}.routes[].provider.service.management`
-- `spec.sandboxes[].inferences.{key}.routes[].provider.service.model.management`
-- `spec.sandboxes[].inferences.{key}.routes[].provider.service.placement.network.management`
-- `spec.sandboxes[].inferences.{key}.routes[].provider.service.storage.management`
-
-Accepted input: string.
-
-Constraints: `"managed"`.
-
-## ManagedOllama
-
-Managed Ollama uses a pinned image, an existing Docker network, and an explicit model:tag on the route.
-
-Guide: [Configuration and credentials](../usage.md#configuration-and-credentials).
-
-Paths:
-
-- `spec.inferenceProviders[].ollama`
-- `spec.inferences.{key}.routes[].provider.ollama`
-- `spec.sandboxes[].agent.inference.routes[].provider.ollama`
-- `spec.sandboxes[].inferenceProviders[].ollama`
-- `spec.sandboxes[].inferences.{key}.routes[].provider.ollama`
-
-| Field | Input type | Required | Default | Description and constraints |
-|---|---|---|---|---|
-| `engine` | string | Yes | — | Local Unix Docker socket URL. Constraints: pattern `^unix:///`. |
-| `image` | string | Yes | — | Immutable ollama/ollama image reference. Constraints: pattern `^ollama/ollama@sha256:[a-f0-9]{64}$`. |
-| `management` | [ManagedManagement](#managedmanagement) | No | — | Optional ownership declaration for the Ollama daemon container. Omission means managed. |
-| `model` | [ManagedResource](#managedresource) | No | — | Optional ownership declaration for installing the route model. Omission means managed; this does not change the selected model. |
-| `network` | [NetworkReference](#networkreference) | Yes | — | Name of the existing Docker network. |
-| `storage` | [ManagedResource](#managedresource) | No | — | Optional model-volume ownership declaration. Omission means managed; the volume survives destroy. |
-
-## ManagedResource
-
-Explicit ownership for a dependency whose creation settings remain on its parent. Only managed ownership is implemented.
-
-Guide: [Resource ownership](../usage.md#resource-ownership).
-
-Paths:
-
-- `spec.gateway.network`
-- `spec.gateway.storage`
-- `spec.inferenceProviders[].ollama.model`
-- `spec.inferenceProviders[].ollama.storage`
-- `spec.inferenceProviders[].service.placement.network`
-- `spec.inferenceProviders[].service.storage`
-- `spec.inferences.{key}.routes[].provider.ollama.model`
-- `spec.inferences.{key}.routes[].provider.ollama.storage`
-- `spec.inferences.{key}.routes[].provider.service.placement.network`
-- `spec.inferences.{key}.routes[].provider.service.storage`
-- `spec.sandboxes[].agent.inference.routes[].provider.ollama.model`
-- `spec.sandboxes[].agent.inference.routes[].provider.ollama.storage`
-- `spec.sandboxes[].agent.inference.routes[].provider.service.placement.network`
-- `spec.sandboxes[].agent.inference.routes[].provider.service.storage`
-- `spec.sandboxes[].inferenceProviders[].ollama.model`
-- `spec.sandboxes[].inferenceProviders[].ollama.storage`
-- `spec.sandboxes[].inferenceProviders[].service.placement.network`
-- `spec.sandboxes[].inferenceProviders[].service.storage`
-- `spec.sandboxes[].inferences.{key}.routes[].provider.ollama.model`
-- `spec.sandboxes[].inferences.{key}.routes[].provider.ollama.storage`
-- `spec.sandboxes[].inferences.{key}.routes[].provider.service.placement.network`
-- `spec.sandboxes[].inferences.{key}.routes[].provider.service.storage`
-
-| Field | Input type | Required | Default | Description and constraints |
-|---|---|---|---|---|
-| `management` | [ManagedManagement](#managedmanagement) | Yes | — | Managed ownership. Omit the enclosing object to keep the same behavior. |
-
-## Management
-
-Ownership of the inference server, separate from NemoClaw's owned routing registration.
-
-Guide: [Resource ownership](../usage.md#resource-ownership).
-
-Paths:
-
-- `spec.inferenceProviders[].management`
-- `spec.inferences.{key}.routes[].provider.management`
-- `spec.sandboxes[].agent.inference.routes[].provider.management`
-- `spec.sandboxes[].inferenceProviders[].management`
-- `spec.sandboxes[].inferences.{key}.routes[].provider.management`
-
-Accepted input: string or string.
-
-Constraints: `"managed"` or `"external"`.
-
 ## Manifest
 
 Pinned model snapshot inventory. The parser rejects duplicate files and file/directory conflicts.
@@ -760,11 +623,7 @@ Guide: [Inline model recipes](../recipes.md).
 
 Paths:
 
-- `spec.inferenceProviders[].service.recipe.snapshot`
-- `spec.inferences.{key}.routes[].provider.service.recipe.snapshot`
-- `spec.sandboxes[].agent.inference.routes[].provider.service.recipe.snapshot`
-- `spec.sandboxes[].inferenceProviders[].service.recipe.snapshot`
-- `spec.sandboxes[].inferences.{key}.routes[].provider.service.recipe.snapshot`
+- `spec.services.{key}.recipe.snapshot`
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
@@ -780,18 +639,14 @@ Guide: [Managed models](../models.md).
 
 Paths:
 
-- `spec.inferenceProviders[].service.memory`
-- `spec.inferences.{key}.routes[].provider.service.memory`
-- `spec.sandboxes[].agent.inference.routes[].provider.service.memory`
-- `spec.sandboxes[].inferenceProviders[].service.memory`
-- `spec.sandboxes[].inferences.{key}.routes[].provider.service.memory`
+- `spec.services.{key}.memory`
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
 | `consecutiveSamples` | integer | No | `5` | Consecutive low-memory samples before the watchdog stops the owned process. Constraints: `0` or minimum 1; maximum 5. Omitted or zero selects the default. |
 | `freeGateGiB` | integer | No | `12` | Available-memory gate in GiB for minFreeGiB. Must be at least minAvailableGiB after defaults. Constraints: `0` or minimum 6; maximum 24. Omitted or zero selects the default. |
 | `gpuMemoryGiB` | integer | No | — | Total GPU budget in GiB without a recipe. Must be omitted or zero with a recipe, which supplies its own byte budget. Constraints: minimum 0; maximum 96. Omitted or zero stays zero in the document. Without a recipe or gpuMemoryUtilization, the backend uses 16 GiB. A recipe supplies resources.gpuMemoryBytes; gpuMemoryUtilization requires zero here. |
-| `gpuMemoryUtilization` | number | No | — | Optional fraction of observed dedicated GPU memory, from 0.05 through 0.95. Requires service.hardware and excludes a recipe, gpuMemoryGiB and explicit KV-cache allocation; vLLM sizes its cache natively. Constraints: minimum 0.05; maximum 0.95. |
+| `gpuMemoryUtilization` | number | No | — | Optional fraction of observed dedicated GPU memory, from 0.05 through 0.95. Requires hardware with explicit minGpuMemoryBytes, including dedicated-memory named profiles. Excludes unified-memory profiles, recipe, fixed gpuMemoryGiB and explicit KV-cache allocation; vLLM sizes its cache natively. Constraints: minimum 0.05; maximum 0.95. |
 | `hostReserveGiB` | integer | No | `32` | Host memory reserve in GiB excluded from the serving budget. Constraints: `0` or minimum 28; maximum 64. Omitted or zero selects the default. |
 | `kvCacheGiB` | integer | No | `8` | KV cache allocation in GiB for ordinary vLLM. Omitted or zero defaults to 8, except gpuMemoryUtilization requires zero and lets vLLM allocate its cache. Recipe serving does not emit this flag. Constraints: minimum 0. Omitted or zero selects 8 GiB, except gpuMemoryUtilization keeps zero and lets vLLM allocate its cache. |
 | `minAvailableGiB` | integer | No | `8` | Available-memory threshold in GiB that contributes a low-memory sample. Constraints: `0` or minimum 6; maximum 16. Omitted or zero selects the default. |
@@ -820,15 +675,10 @@ Guide: [Managed models](../models.md).
 
 Paths:
 
-- `spec.inferenceProviders[].service.model`
-- `spec.inferences.{key}.routes[].provider.service.model`
-- `spec.sandboxes[].agent.inference.routes[].provider.service.model`
-- `spec.sandboxes[].inferenceProviders[].service.model`
-- `spec.sandboxes[].inferences.{key}.routes[].provider.service.model`
+- `spec.services.{key}.model`
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
-| `management` | [ManagedManagement](#managedmanagement) | No | — | Optional ownership declaration for downloading and preparing this model installation. Omission means managed. |
 | `repository` | string | Yes | — | Public Hugging Face owner/repository name. Constraints: pattern `^[a-zA-Z0-9][a-zA-Z0-9._-]*/[a-zA-Z0-9][a-zA-Z0-9._-]*$`; maximum characters 200. |
 | `revision` | string | Yes | — | Full lowercase 40-hex commit revision; branches and tags are rejected. Constraints: pattern `^[a-f0-9]{40}$`. |
 
@@ -848,45 +698,57 @@ Paths:
 | `proxy` | [Proxy](#proxy) | No | — | HTTP proxy address used by the agent process. Does not create a proxy or change gateway networking. |
 | `tier` | string | No | `"isolated"` | Isolated policy preset. Omit when declaring policy.explicit; omission without policy selects isolated. Constraints: `""` or `"isolated"`. Omitted or empty selects isolated only without policy.explicit. |
 
-## NetworkReference
+## OllamaMemory
 
-An existing container network on the selected engine. NemoClaw attaches its container but does not create or delete the network.
+Ollama GPU budget and host memory protection.
 
-Guide: [Resource ownership](../usage.md#resource-ownership).
-
-Paths:
-
-- `spec.inferenceProviders[].ollama.network`
-- `spec.inferences.{key}.routes[].provider.ollama.network`
-- `spec.sandboxes[].agent.inference.routes[].provider.ollama.network`
-- `spec.sandboxes[].inferenceProviders[].ollama.network`
-- `spec.sandboxes[].inferences.{key}.routes[].provider.ollama.network`
-
-Accepted input: string or [ExternalNetwork](#externalnetwork).
-
-Constraints: pattern `^[a-z][a-z0-9-]{0,39}$`.
-
-## OllamaProxy
-
-Managed authenticated proxy for an external, loopback-only Ollama daemon and installed model.
-
-Guide: [Inference configuration](../inference.md).
+Guide: [Configuration and credentials](../usage.md#configuration-and-credentials).
 
 Paths:
 
-- `spec.inferenceProviders[].ollamaProxy`
-- `spec.inferences.{key}.routes[].provider.ollamaProxy`
-- `spec.sandboxes[].agent.inference.routes[].provider.ollamaProxy`
-- `spec.sandboxes[].inferenceProviders[].ollamaProxy`
-- `spec.sandboxes[].inferences.{key}.routes[].provider.ollamaProxy`
+- `spec.services.{key}.memory`
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
-| `endpoint` | string | Yes | — | Private or loopback HTTP IPv4:port/v1 published by the proxy and reachable by OpenShell. |
-| `engine` | string | Yes | — | Local Unix Docker socket. The external daemon runs on this same Linux host. Constraints: pattern `^unix:///`. |
-| `image` | string | Yes | — | Immutable NemoClaw Ollama proxy image built locally. Constraints: pattern `^[a-zA-Z0-9][a-zA-Z0-9._:/-]*@sha256:[a-f0-9]{64}$`. |
-| `management` | [ManagedManagement](#managedmanagement) | No | — | Optional ownership declaration; omission means managed. |
-| `model` | [ExternalOllamaModel](#externalollamamodel) | Yes | — | Digest of the already-installed route model. NemoClaw never installs or deletes it. |
+| `consecutiveSamples` | integer | No | `5` | Consecutive low-memory samples before stopping the owned process. Constraints: `0` or minimum 1; maximum 5. Omitted or zero selects the default. |
+| `freeGateGiB` | integer | No | `12` | Available-memory gate for the free-memory threshold. Constraints: `0` or minimum 6; maximum 24. Omitted or zero selects the default. |
+| `gpuMemoryGiB` | integer | No | `0` | Fixed serving budget in GiB when utilization is omitted. Omission or zero selects 16 GiB. Constraints: `0` or minimum 0; maximum 96. Omitted or zero stays zero in the document. Without gpuMemoryUtilization, the installer uses 16 GiB. |
+| `gpuMemoryUtilization` | number | No | — | Optional fraction of observed dedicated GPU memory. Constraints: minimum 0.05; maximum 0.95. |
+| `hostReserveGiB` | integer | No | `32` | Host memory reserve excluded from serving. Constraints: `0` or minimum 28; maximum 64. Omitted or zero selects the default. |
+| `minAvailableGiB` | integer | No | `8` | Available-memory threshold used by the bounded runtime watchdog. Constraints: `0` or minimum 6; maximum 16. Omitted or zero selects the default. |
+| `minFreeGiB` | integer | No | `3` | Free-memory threshold used below freeGateGiB. Constraints: `0` or minimum 2; maximum 8. Omitted or zero selects the default. |
+
+## OllamaModel
+
+One immutable Ollama registry model installation.
+
+Guide: [Configuration and credentials](../usage.md#configuration-and-credentials).
+
+Paths:
+
+- `spec.services.{key}.model`
+
+| Field | Input type | Required | Default | Description and constraints |
+|---|---|---|---|---|
+| `digest` | string | Yes | — | Lowercase SHA-256 of the registry manifest selected for that tag. Constraints: pattern `^[a-f0-9]{64}$`. |
+| `name` | string | Yes | — | Public library model name including its tag. Constraints: pattern `^[a-z0-9][a-z0-9._-]*:[a-z0-9][a-z0-9._-]*$`. |
+
+## OllamaServing
+
+Native Ollama serving controls supported by the managed installer.
+
+Guide: [Configuration and credentials](../usage.md#configuration-and-credentials).
+
+Paths:
+
+- `spec.services.{key}.serving`
+
+| Field | Input type | Required | Default | Description and constraints |
+|---|---|---|---|---|
+| `contextTokens` | integer | No | `32768` | Maximum model context length. Constraints: `0` or minimum 8192; maximum 65536. Omitted or zero selects the default. |
+| `maxSequences` | integer | No | `1` | Maximum concurrent sequences. Constraints: `0` or minimum 1; maximum 2. Omitted or zero selects the default. |
+| `port` | integer | No | `18888` | Inference listening port. Constraints: `0` or minimum 1024; maximum 65535. Omitted or zero selects the default. |
+| `startupTimeoutSeconds` | integer | No | `1800` | Seconds allowed for model loading and readiness. Constraints: `0` or minimum 60; maximum 3600. Omitted or zero selects the default. |
 
 ## OpenClawDashboard
 
@@ -1077,7 +939,7 @@ Paths:
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
-| `compatibility` | string | Yes | — | best_effort or hard_requirement. The main-branch spelling strict maps to hard_requirement. Constraints: `"best_effort"` or `"hard_requirement"` or `"strict"`. |
+| `compatibility` | string | Yes | — | best_effort or hard_requirement. Constraints: `"best_effort"` or `"hard_requirement"`. |
 
 ## PolicyMatcher
 
@@ -1162,7 +1024,7 @@ Accepted input: string or [PolicyAnyMatcher](#policyanymatcher).
 
 ## Proxy
 
-Agent HTTP proxy, reachable from inside the sandbox. Credentials and URL syntax are excluded.
+Existing agent HTTP proxy, reachable from inside the sandbox. NemoClaw does not manage it. Credentials and URL syntax are excluded.
 
 Guide: [Sandbox policy and proxy](../sandbox-network.md).
 
@@ -1173,7 +1035,6 @@ Paths:
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
 | `host` | string | Yes | — | Proxy hostname or IPv4 address, without scheme, path, or credentials. Constraints: pattern `^[A-Za-z0-9._-]+$`; minimum characters 1; maximum characters 256. |
-| `management` | [ExternalManagement](#externalmanagement) | No | — | Optional external ownership declaration. Omission means external; NemoClaw does not create this proxy. |
 | `port` | integer | Yes | — | Proxy TCP port, from 1 through 65535. Constraints: minimum 1; maximum 65535. |
 
 ## ReasoningEffort
@@ -1216,11 +1077,7 @@ Guide: [Inline model recipes](../recipes.md).
 
 Paths:
 
-- `spec.inferenceProviders[].service.recipe.resources`
-- `spec.inferences.{key}.routes[].provider.service.recipe.resources`
-- `spec.sandboxes[].agent.inference.routes[].provider.service.recipe.resources`
-- `spec.sandboxes[].inferenceProviders[].service.recipe.resources`
-- `spec.sandboxes[].inferences.{key}.routes[].provider.service.recipe.resources`
+- `spec.services.{key}.recipe.resources`
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
@@ -1237,11 +1094,7 @@ Guide: [Inline model recipes](../recipes.md).
 
 Paths:
 
-- `spec.inferenceProviders[].service.recipe.reuse`
-- `spec.inferences.{key}.routes[].provider.service.recipe.reuse`
-- `spec.sandboxes[].agent.inference.routes[].provider.service.recipe.reuse`
-- `spec.sandboxes[].inferenceProviders[].service.recipe.reuse`
-- `spec.sandboxes[].inferences.{key}.routes[].provider.service.recipe.reuse`
+- `spec.services.{key}.recipe.reuse`
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
@@ -1321,36 +1174,6 @@ Accepted input: string.
 
 Constraints: `"brave"`.
 
-## Service
-
-Managed vLLM service. Explicit placement and publication must appear together.
-
-Guide: [Managed models](../models.md).
-
-Paths:
-
-- `spec.inferenceProviders[].service`
-- `spec.inferences.{key}.routes[].provider.service`
-- `spec.sandboxes[].agent.inference.routes[].provider.service`
-- `spec.sandboxes[].inferenceProviders[].service`
-- `spec.sandboxes[].inferences.{key}.routes[].provider.service`
-
-| Field | Input type | Required | Default | Description and constraints |
-|---|---|---|---|---|
-| `authentication` | [ServiceAuthentication](#serviceauthentication) | No | — | Optional native bearer authentication. The runtime generates and retains the key; omission preserves unauthenticated serving. |
-| `backend` | string | Yes | — | Managed inference backend. Constraints: `"vllm"`. |
-| `container` | [ServiceContainer](#servicecontainer) | No | — | Optional managed container IPC and shared-memory settings. Omission uses private IPC and 8 GiB of shared memory. |
-| `hardware` | [ServiceHardware](#servicehardware) | No | — | Optional single NVIDIA GPU requirements on Linux AMD64 with dedicated GPU memory. Omission keeps the existing Spark or inline-recipe host contract. |
-| `image` | string | Yes | — | Immutable runtime image containing vLLM, the supervisor, and any declared recipe tools. Constraints: pattern `^[a-zA-Z0-9][a-zA-Z0-9._:/-]*@sha256:[a-f0-9]{64}$`. |
-| `management` | [ManagedManagement](#managedmanagement) | No | — | Optional managed ownership declaration. Omission means managed. |
-| `memory` | [Memory](#memory) | No | — | GPU budget and resident watchdog thresholds. Omission selects the SDK defaults. |
-| `model` | [Model](#model) | Yes | — | Public Hugging Face repository and immutable commit. |
-| `placement` | [ServicePlacement](#serviceplacement) | With external gateway or Podman; paired with publication | — | SSH Docker placement. Required with an external gateway or Podman sandbox; requires publication. |
-| `publication` | [ServicePublication](#servicepublication) | With placement | — | Private inference address reachable by OpenShell. Required with placement. |
-| `recipe` | [InlineRecipe](#inlinerecipe) | No | — | Optional inline preparation and serving contract supplied by the pinned runtime image. |
-| `serving` | [Serving](#serving) | No | — | Service limits. Omission selects the SDK defaults; recipe serving settings select recipe-specific parsers and execution options. |
-| `storage` | [ManagedResource](#managedresource) | No | — | Optional ownership declaration for model storage. Omission means managed; existing retention behavior is unchanged. |
-
 ## ServiceAuthentication
 
 Generated bearer authentication for a managed inference service.
@@ -1359,11 +1182,7 @@ Guide: [Configuration and credentials](../usage.md#configuration-and-credentials
 
 Paths:
 
-- `spec.inferenceProviders[].service.authentication`
-- `spec.inferences.{key}.routes[].provider.service.authentication`
-- `spec.sandboxes[].agent.inference.routes[].provider.service.authentication`
-- `spec.sandboxes[].inferenceProviders[].service.authentication`
-- `spec.sandboxes[].inferences.{key}.routes[].provider.service.authentication`
+- `spec.services.{key}.authentication`
 
 Accepted input: string.
 
@@ -1377,37 +1196,99 @@ Guide: [Managed models](../models.md).
 
 Paths:
 
-- `spec.inferenceProviders[].service.container`
-- `spec.inferences.{key}.routes[].provider.service.container`
-- `spec.sandboxes[].agent.inference.routes[].provider.service.container`
-- `spec.sandboxes[].inferenceProviders[].service.container`
-- `spec.sandboxes[].inferences.{key}.routes[].provider.service.container`
+- `spec.services.{key}.container`
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
 | `ipc` | [ServiceIpc](#serviceipc) | No | — | IPC namespace. Omission uses private; host shares the execution host's IPC namespace. |
 | `sharedMemoryGiB` | integer | No | — | Shared-memory size in GiB, from 1 through 64. Omission uses 8; host IPC uses the host's existing shared-memory mount instead. Constraints: minimum 1; maximum 64. |
 
+## ServiceDefinition
+
+One explicitly supported managed container package.
+
+Guide: [Configuration and credentials](../usage.md#configuration-and-credentials).
+
+Paths:
+
+- `spec.services.{key}`
+
+Accepted input: object.
+
+### Alternative 1
+
+Managed Ollama daemon and selected model.
+
+
+| Field | Input type | Required | Default | Description and constraints |
+|---|---|---|---|---|
+| `container` | [ServiceContainer](#servicecontainer) | No | — | Optional IPC and shared-memory settings for the runtime container. |
+| `hardware` | [ServiceHardware](#servicehardware) | Yes | — | Explicit supported GPU or system profile. |
+| `image` | string | Yes | — | Immutable runtime image containing Ollama and the NemoClaw supervisor. Constraints: pattern `^[a-zA-Z0-9][a-zA-Z0-9._:/-]*@sha256:[a-f0-9]{64}$`. |
+| `imagePullPolicy` | [ImagePullPolicy](#imagepullpolicy) | No | — | Image acquisition before container creation. Omission means IfNotPresent. Constraints: `"IfNotPresent"` or `"Never"`. |
+| `kind` | string | Yes | — | Supported installer selected by this service definition. Constraints: `"ollama"`. |
+| `memory` | [OllamaMemory](#ollamamemory) | No | — | GPU budget and resident memory-protection thresholds. |
+| `model` | [OllamaModel](#ollamamodel) | Yes | — | Selected immutable Ollama registry model. |
+| `placement` | [ServicePlacement](#serviceplacement) | No | — | Optional remote Docker placement. Requires publication. |
+| `publication` | [ServicePublication](#servicepublication) | No | — | Private inference address for an explicitly placed service. |
+| `serving` | [OllamaServing](#ollamaserving) | No | — | Ollama serving limits. |
+
+### Alternative 2
+
+Managed authentication proxy for an external Ollama daemon and model.
+
+
+| Field | Input type | Required | Default | Description and constraints |
+|---|---|---|---|---|
+| `endpoint` | string | Yes | — | Private or loopback HTTP IPv4:port/v1 published by the proxy and reachable by OpenShell. |
+| `engine` | string | No | — | Local Docker Unix socket. Omission uses the managed gateway engine. Constraints: pattern `^unix:///[^?#\x00]*$`. |
+| `image` | string | Yes | — | Immutable NemoClaw proxy image. The external daemon runs on the selected Docker host. Constraints: pattern `^[a-zA-Z0-9][a-zA-Z0-9._:/-]*@sha256:[a-f0-9]{64}$`. |
+| `imagePullPolicy` | [ImagePullPolicy](#imagepullpolicy) | No | — | Image acquisition before container creation. Omission means IfNotPresent. Constraints: `"IfNotPresent"` or `"Never"`. |
+| `kind` | string | Yes | — | Supported installer selected by this service definition. Constraints: `"ollamaProxy"`. |
+| `upstream` | [ExternalOllama](#externalollama) | Yes | — | External loopback-only daemon and already-installed model. |
+
+### Alternative 3
+
+Managed vLLM runtime and immutable model snapshot.
+
+
+| Field | Input type | Required | Default | Description and constraints |
+|---|---|---|---|---|
+| `authentication` | [ServiceAuthentication](#serviceauthentication) | No | — | Optional native bearer authentication. The runtime generates and retains the key; omission preserves unauthenticated serving. |
+| `container` | [ServiceContainer](#servicecontainer) | No | — | Optional managed container IPC and shared-memory settings. Omission uses private IPC and 8 GiB of shared memory. |
+| `hardware` | [ServiceHardware](#servicehardware) | Without recipe | — | Explicit hardware contract: a named GPU or system profile, or dedicated GPU requirements for Linux AMD64. Required without an inline recipe; excludes recipe. |
+| `image` | string | Yes | — | Immutable runtime image containing vLLM, the NemoClaw supervisor, and any declared recipe tools. Constraints: pattern `^[a-zA-Z0-9][a-zA-Z0-9._:/-]*@sha256:[a-f0-9]{64}$`. |
+| `imagePullPolicy` | [ImagePullPolicy](#imagepullpolicy) | No | — | Image acquisition before container creation. Omission means IfNotPresent. Constraints: `"IfNotPresent"` or `"Never"`. |
+| `kind` | string | Yes | — | Supported installer selected by this service definition. Constraints: `"vllm"`. |
+| `memory` | [Memory](#memory) | No | — | GPU budget and resident watchdog thresholds. Omission selects the SDK defaults. |
+| `model` | [Model](#model) | Yes | — | Public Hugging Face repository and immutable commit. |
+| `placement` | [ServicePlacement](#serviceplacement) | With external gateway or Podman; paired with publication | — | SSH Docker placement. Required with an external gateway or Podman sandbox; requires publication. |
+| `publication` | [ServicePublication](#servicepublication) | With placement | — | Private inference address reachable by OpenShell. Required with placement. |
+| `recipe` | [InlineRecipe](#inlinerecipe) | Without hardware | — | Inline preparation and serving contract supplied by the pinned runtime image. Required without hardware; excludes hardware. |
+| `serving` | [Serving](#serving) | No | — | Service limits. Omission selects the SDK defaults; recipe serving settings select recipe-specific parsers and execution options. |
+
 ## ServiceHardware
 
-Requirements for one NVIDIA GPU with dedicated memory on Linux AMD64. Declaring requirements does not qualify a model or host.
+Explicit execution hardware: a named profile or dedicated GPU requirements. Excludes an inline recipe.
 
 Guide: [Managed models](../models.md).
 
 Paths:
 
-- `spec.inferenceProviders[].service.hardware`
-- `spec.inferences.{key}.routes[].provider.service.hardware`
-- `spec.sandboxes[].agent.inference.routes[].provider.service.hardware`
-- `spec.sandboxes[].inferenceProviders[].service.hardware`
-- `spec.sandboxes[].inferences.{key}.routes[].provider.service.hardware`
+- `spec.services.{key}.hardware`
+
+Accepted input: [DedicatedHardware](#dedicatedhardware) or object.
+
+### Alternative 2
+
+A named hardware contract with fixed compatibility requirements.
+
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
-| `architecture` | string | Yes | — | CPU architecture; this dedicated-memory contract requires amd64. Constraints: `"amd64"`. |
-| `minComputeCapability` | integer | Yes | — | Minimum NVIDIA compute capability, encoded as major times ten plus minor; 90 means 9.0. Constraints: minimum 10; maximum 999. |
-| `minDriverMajor` | integer | Yes | — | Minimum installed NVIDIA driver major version. Constraints: minimum 1; maximum 9999. |
-| `minGpuMemoryBytes` | integer | Yes | — | Minimum total dedicated GPU memory in bytes. Host RAM is measured separately. Constraints: minimum 4294967296; maximum 4398046511104. |
+| `architecture` | string | No | — | Host CPU architecture: amd64 or arm64. Required for GPU profiles; system profiles fix arm64 and reject a conflicting value. Constraints: `"amd64"` or `"arm64"`. |
+| `minGpuMemoryBytes` | integer | No | — | Minimum dedicated GPU memory in bytes, from 4 GiB through 4 TiB. Required with gpuMemoryUtilization; forbidden for unified-memory profiles. Fixed budgets otherwise use observed capacity. Constraints: minimum 4294967296; maximum 4398046511104. |
+| `profile` | [HardwareProfile](#hardwareprofile) | Yes | — | GPU family and memory architecture. Every profile requires observed compute capability and driver major 580 or newer. Unified-memory profiles budget host RAM; dedicated-memory profiles require GPU total/free counters. |
 
 ## ServiceIpc
 
@@ -1417,11 +1298,7 @@ Guide: [Managed models](../models.md).
 
 Paths:
 
-- `spec.inferenceProviders[].service.container.ipc`
-- `spec.inferences.{key}.routes[].provider.service.container.ipc`
-- `spec.sandboxes[].agent.inference.routes[].provider.service.container.ipc`
-- `spec.sandboxes[].inferenceProviders[].service.container.ipc`
-- `spec.sandboxes[].inferences.{key}.routes[].provider.service.container.ipc`
+- `spec.services.{key}.container.ipc`
 
 Accepted input: string.
 
@@ -1435,16 +1312,11 @@ Guide: [SSH model service](../remote-service.md).
 
 Paths:
 
-- `spec.inferenceProviders[].service.placement`
-- `spec.inferences.{key}.routes[].provider.service.placement`
-- `spec.sandboxes[].agent.inference.routes[].provider.service.placement`
-- `spec.sandboxes[].inferenceProviders[].service.placement`
-- `spec.sandboxes[].inferences.{key}.routes[].provider.service.placement`
+- `spec.services.{key}.placement`
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
-| `engine` | string | Yes | — | SSH Docker endpoint, for example ssh://gpu-box. Constraints: pattern `^ssh://`. |
-| `network` | [ManagedResource](#managedresource) | No | — | Optional ownership declaration for the network configured by networkCIDR. Omission means managed. |
+| `engine` | string | Yes | — | SSH Docker endpoint used for an explicitly placed service. Constraints: pattern `^ssh://`. |
 | `networkCidr` | string | Yes | — | Canonical private IPv4 /24 on the selected Docker engine. Constraints: pattern `/24$`. |
 
 ## ServicePublication
@@ -1455,11 +1327,7 @@ Guide: [SSH model service](../remote-service.md).
 
 Paths:
 
-- `spec.inferenceProviders[].service.publication`
-- `spec.inferences.{key}.routes[].provider.service.publication`
-- `spec.sandboxes[].agent.inference.routes[].provider.service.publication`
-- `spec.sandboxes[].inferenceProviders[].service.publication`
-- `spec.sandboxes[].inferences.{key}.routes[].provider.service.publication`
+- `spec.services.{key}.publication`
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
@@ -1474,11 +1342,7 @@ Guide: [Managed models](../models.md).
 
 Paths:
 
-- `spec.inferenceProviders[].service.serving`
-- `spec.inferences.{key}.routes[].provider.service.serving`
-- `spec.sandboxes[].agent.inference.routes[].provider.service.serving`
-- `spec.sandboxes[].inferenceProviders[].service.serving`
-- `spec.sandboxes[].inferences.{key}.routes[].provider.service.serving`
+- `spec.services.{key}.serving`
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
@@ -1502,11 +1366,7 @@ Guide: [Inline model recipes](../recipes.md).
 
 Paths:
 
-- `spec.inferenceProviders[].service.recipe.serving`
-- `spec.inferences.{key}.routes[].provider.service.recipe.serving`
-- `spec.sandboxes[].agent.inference.routes[].provider.service.recipe.serving`
-- `spec.sandboxes[].inferenceProviders[].service.recipe.serving`
-- `spec.sandboxes[].inferences.{key}.routes[].provider.service.recipe.serving`
+- `spec.services.{key}.recipe.serving`
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
@@ -1523,7 +1383,7 @@ Paths:
 
 ## Spec
 
-The configuration requires one to 32 named sandboxes and at least one selected inference provider. At most one selected provider may have managed inference dependencies.
+The configuration requires one to 32 named sandboxes and at least one selected inference provider. Managed packages declared under services are installed independently of their consumers.
 
 Guide: [Configuration and credentials](../usage.md#configuration-and-credentials).
 
@@ -1539,6 +1399,7 @@ Paths:
 | `inferences` | map of [Inference](#inference) | No | — | Named inference configurations available through inferenceRef. Definitions resolve providers in their own scope and create no resources until selected. Constraints: keys: pattern `^[a-z][a-z0-9-]{0,39}$`. |
 | `integrations` | map of [Integration](#integration) | No | — | Named integration definitions shared by agents through integrationRefs. Definitions alone grant no access. Constraints: keys: pattern `^[a-z][a-z0-9-]{0,39}$`. |
 | `sandboxes` | array of [Sandbox](#sandbox) | Yes | — | One to 32 uniquely named sandboxes. Each selects one harness: one or more OpenClaw or Deep Agents instances, or one agent of another harness. Declaration order does not select a default sandbox or agent. Constraints: minimum items 1; maximum items 32. |
+| `services` | map of [ServiceDefinition](#servicedefinition) | No | — | Named managed container services to install, verify once, and remove during destroy. Inference providers may consume their connection through serviceRef. Constraints: keys: pattern `^[a-z][a-z0-9-]{0,39}$`. |
 
 ## TLS
 
@@ -1564,16 +1425,8 @@ Guide: [Inline model recipes](../recipes.md).
 
 Paths:
 
-- `spec.inferenceProviders[].service.recipe.preparation`
-- `spec.inferenceProviders[].service.recipe.verification`
-- `spec.inferences.{key}.routes[].provider.service.recipe.preparation`
-- `spec.inferences.{key}.routes[].provider.service.recipe.verification`
-- `spec.sandboxes[].agent.inference.routes[].provider.service.recipe.preparation`
-- `spec.sandboxes[].agent.inference.routes[].provider.service.recipe.verification`
-- `spec.sandboxes[].inferenceProviders[].service.recipe.preparation`
-- `spec.sandboxes[].inferenceProviders[].service.recipe.verification`
-- `spec.sandboxes[].inferences.{key}.routes[].provider.service.recipe.preparation`
-- `spec.sandboxes[].inferences.{key}.routes[].provider.service.recipe.verification`
+- `spec.services.{key}.recipe.preparation`
+- `spec.services.{key}.recipe.verification`
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
@@ -1590,6 +1443,6 @@ Paths:
 
 - `spec.sandboxes[].agent.tools.disclosure`
 
-Accepted input: string or string.
+Accepted input: string.
 
 Constraints: `"progressive"` or `"direct"`.

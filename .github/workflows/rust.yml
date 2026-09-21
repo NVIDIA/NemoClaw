@@ -4,6 +4,8 @@ name: Rust desired-state
 on:
   push:
     branches: [v1]
+  pull_request:
+    branches: [v1]
   workflow_dispatch:
 permissions:
   contents: read
@@ -109,10 +111,7 @@ jobs:
           if [ "$TEST_PLATFORM" = windows_amd64 ]; then suffix=.exe; fi
           export NEMOCLAW_TEST_TOFU="$NEMOCLAW_TEST_BUNDLE/libexec/tofu$suffix"
           export NEMOCLAW_TEST_PROVIDER="$PWD/target/debug/terraform-provider-nemoclaw$suffix"
-          tests=(--test provider_protocol --test opentofu_openshell --test deployment --test fabric_deployment --test multiple_providers)
-          if [ "$TEST_PLATFORM" != windows_amd64 ]; then
-            tests+=(--test ollama)
-          fi
+          tests=(--test provider_protocol --test service_capacity --test opentofu_openshell --test deployment --test fabric_deployment --test multiple_providers --test remote_service)
           if [ "$TEST_PLATFORM" = linux_arm64 ]; then
             cargo nextest run --locked --workspace --profile lifecycle "${tests[@]}" --run-ignored only
           else

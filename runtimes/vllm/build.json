@@ -1,5 +1,6 @@
 {
   "name": "vllm",
+  "platform": "linux_arm64",
   "image": "nc-prototype-vllm:rust-v1",
   "sourceDateEpoch": 1788974180,
   "files": [

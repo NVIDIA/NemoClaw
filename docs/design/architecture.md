@@ -7,6 +7,26 @@ The SDK turns a deployment document into checked OpenTofu operations and preserv
 The [accepted scope](scope.md) governs implementation changes.
 The explanations below describe the current boundaries; the later findings retain intermediate results and their limits.
 
+## Configuration Authoring
+
+The CLI uses [nemoclaw-authoring](../../crates/nemoclaw-authoring/src/lib.rs) to turn onboarding answers into desired-state YAML.
+This unpublished library owns authoring presets, draft edits, stable draft identity, structured reviews, and field diagnostics.
+The CLI is its current consumer; the crate boundary keeps terminal and argument-handling dependencies out of the authoring model so other frontends can use it.
+Both prompted answers and command-line overrides use the same projection and SDK parser.
+The SDK remains the authority for configuration validity and deployment behavior.
+
+The authoring library exposes its supported combinations but does not discover runtime capabilities or claim to cover every SDK configuration.
+Draft edits currently change deployment, sandbox, agent, and provider names, the model, and the credential environment-variable name.
+The current edit methods cannot change harness, runtime, inference type, or API choices.
+Rejected edits leave the previous answers intact.
+Reopening YAML requires the authoring model to reproduce the parsed document; it rejects unsupported customizations and does not preserve comments or formatting.
+The [public API tests](../../crates/nemoclaw-authoring/tests/public_api.rs) check these boundaries and compare default YAML against the pre-extraction output with a fixed UID.
+
+The CLI owns prompts, review rendering, file I/O, credential acquisition, and apply confirmation.
+Authoring retains credential environment-variable names, not credential values, and never calls deployment operations.
+Planning, apply, ownership checks, and recovery remain in the SDK.
+The library still depends on the SDK; this separation does not remove the SDK's build dependencies.
+
 ## Why the SDK Owns the Operation
 
 An application and a CLI user need the same answer to an interrupted apply: which resources exist, who owns them, and what can resume?
@@ -20,7 +40,9 @@ flowchart TD
     CLI[CLI arguments and output] --> SDK[SDK deployment orchestration]
     App[Application] --> SDK
     SDK -->|compile and check saved plans| Tofu[OpenTofu child process]
-    Tofu -->|provider protocol| Provider[Provider process]
+    Tofu -->|provider protocol| Provider[NemoClaw provider]
+    Tofu -->|compute lifecycle| DockerProvider[Docker provider]
+    DockerProvider --> Docker[Docker API]
     Provider --> Backend[Shared SDK backend operations]
     SDK -->|validation, export, and active probes| Backend
     Backend --> OpenShell[OpenShell API]
@@ -31,7 +53,8 @@ flowchart TD
 The shared backend code is compiled into its callers; it is not another server.
 The provider translates the OpenTofu protocol into those operations.
 The SDK also checks proposed changes against its deployment contract before asking OpenTofu to execute a saved plan.
-For example, an undeclared resource or an unverified replacement stops apply even if OpenTofu can express that change.
+For example, an undeclared resource or changed durable storage binding stops apply even if OpenTofu can express that change.
+The Docker provider may recreate Docker gateway, inference, and proxy containers and service-owned networks; their physical identities are not recovery invariants.
 
 The [public SDK lifecycle commit](https://github.com/NVIDIA/NemoClaw/commit/bd45fa3297) tested SDK apply followed by CLI export and destroy.
 That mixed-client test established that recovery belongs below the CLI boundary.
@@ -42,15 +65,16 @@ The current implementation is in [Deployment](../../crates/nemoclaw-sdk/src/depl
 Desired configuration answers “what should exist?”
 A durable binding answers “which existing resource did this deployment establish?”
 Keeping both matters when a process replacement is requested but the old process still exists.
-Deletion must verify the old bound specification, even though the new YAML describes its replacement.
+Durable resources retain their verified bindings.
+Disposable compute uses the Docker provider's state and reconciliation instead of a second composite identity.
 
-The local state directory retains distinct kinds of evidence:
+The local state directory retains these records:
 
 | Record | Meaning | Why recovery needs it |
 |---|---|---|
 | Deployment UID and generation tokens | Deployment ownership and creation identity | Matching a resource name alone cannot authorize adoption. |
 | Intent document and digest | Configuration selected for an operation | An interrupted graph mutation rejects different intent until reconciled. |
-| OpenTofu state and saved resource specifications | Established physical IDs and configurations | A failed readiness check must not erase a created container. |
+| OpenTofu state and saved resource specifications | Established physical IDs and configurations | A failed readiness check retains state; explicit recovery may replace disposable compute. |
 | Operation flags and saved-plan digest | Apply or destroy progress | Recovery can verify intent and resume the remaining resource operations. |
 
 An observation has three outcomes, with different consequences:
@@ -58,7 +82,7 @@ An observation has three outcomes, with different consequences:
 | Observation | Meaning | Consequence |
 |---|---|---|
 | Present and verified | The owning API returned a complete result with matching identity | Compare configuration and plan permitted changes. |
-| Confirmed absent | The owning API established that the resource is missing | The provider can report absence; deployment rules still forbid automatic recreation of bound storage. |
+| Confirmed absent | The owning API established that the resource is missing | The provider can report absence; deployment rules still forbid automatic recreation of bound credentials and gateway storage; model caches may be reconstructed. |
 | Failed or incomplete | The resource may exist, but the client cannot verify it | Stop and preserve the prior binding. |
 
 For example, an authentication error from Docker cannot mean that a model volume disappeared.
@@ -103,18 +127,19 @@ A later readiness failure still retains bindings, but revised intent can proceed
 
 Destroy reverses the dependency direction: remove OpenShell workloads before stopping the gateway that owns them.
 It checks both saved plans before deletion and records when the OpenShell stage finishes.
-That checkpoint lets an interrupted destroy continue even after the gateway becomes unavailable.
+That saved progress lets an interrupted destroy continue even after the gateway becomes unavailable.
 The [managed orchestration commit](https://github.com/NVIDIA/NemoClaw/commit/b18e282837) records the failure cases behind this order.
 
-Ollama has a related dependency: a stopped service cannot return authoritative model inventory.
-Its [recovery stage](https://github.com/NVIDIA/NemoClaw/commit/ca2ece58e8) repairs the verified service, waits for the API, and then requests a complete plan.
-It does not treat unavailable inventory as an empty model list.
+Managed services use one installer contract: install, a bounded post-install readiness check, and remove.
+Apply completes the installer-owned resource graph before it runs the readiness check once.
+A stopped service remains bound, and an explicit apply can reconcile it without a package-specific recovery operation or an automatic restart loop.
 
 ## Why Storage Has Its Own Binding
 
 A runtime process and its data have different lifetimes.
 Updating an image can require a new container while model files, prepared artifacts, or gateway signing keys must remain intact.
-Separate storage bindings let the SDK verify those dependencies before authorizing process replacement.
+Separate credential bindings let the provider reject lost durable storage during planning before process replacement.
+Reproducible model caches use Docker volume resources, without a second SDK physical-identity check.
 
 This distinction also changed Ollama teardown.
 The [storage separation commit](https://github.com/NVIDIA/NemoClaw/commit/8040b1ef99) made it possible to remove the verified service container while retaining model bytes.
@@ -135,14 +160,15 @@ There are no shell hooks or arbitrary argument fields.
 
 ## What the Implementation Has Confirmed
 
-The CLI bundle contains the CLI, OpenTofu, and one provider executable in a known mirror path.
+The CLI bundle contains the CLI, OpenTofu, and the NemoClaw and Docker provider executables in a verified filesystem mirror.
 Source-derived provider versions prevent stale installations from being reused after a build.
 
 The public SDK does not embed OpenTofu or expose its raw graph as a user configuration mechanism.
 
 Refresh and export share typed readers.
 Observations use the owning OpenShell, Docker, and model APIs.
-The relevant observations are resource identities, configuration, policy, and complete model inventories.
+The relevant orchestration observations are provider resource identities, configuration, policy, and application status.
+Model inventories and preparation verification belong to the hosted runtime.
 
 A host inventory collector would not replace the owning APIs for these checks.
 Capacity uses observations from the selected execution host; credential references, intent, and OpenTofu state remain client-side.
@@ -151,15 +177,17 @@ Mutations and active readiness or inference probes remain direct.
 Export writes YAML only after all required observations succeed.
 
 The managed graph separates gateway storage, gateway process, model storage, and inference process.
-The gateway storage binding covers its database volume, bridge, initializer and signing identity.
-The gateway process additionally binds the persisted encryption key.
+The Docker gateway storage binding covers its database volume, bridge, initializer, signing identity, and persisted encryption key.
+Its process uses a native Docker-provider ID and the verified storage mountpoint.
+Podman retains its existing composite process identity and storage binding.
 
 A bound initializer cannot generate credentials again.
 Inference storage retains both the exact model snapshot and prepared data.
 
 Configuration and readiness are separate.
 A process can exit immediately after start while retaining valid identity and storage.
-Managed `running` is computed and becomes unknown during create or an explicit restart, so OpenTofu does not taint a valid resource merely because startup failed.
+Service containers are created without provider health waiting; the SDK consumes application readiness after infrastructure state is recorded.
+An application readiness failure does not roll back persistent data.
 
 The [runtime lifecycle](runtime.md#why-the-watchdog-lives-with-inference) explains loading deadlines and protective shutdown.
 Destroy cannot infer ownership from missing local state or delete a whole workspace with an unverified cascading operation.
@@ -180,7 +208,7 @@ Native bundles and protocol/lifecycle fixtures pass on Linux ARM64/x64, macOS AR
 Managed gateway and GPU execution are qualified on Linux ARM64.
 
 Native CLI availability does not establish container or GPU backend support on every platform.
-[Managed Podman evidence](../validation/rust-managed-podman-linux-arm64.md) qualifies the local rootless Linux ARM64 gateway and sandbox topology; inference remains independently hosted.
+[Managed Podman test results](../validation/rust-managed-podman-linux-arm64.md) qualify the local rootless Linux ARM64 gateway and sandbox topology; inference remains independently hosted.
 
 The model runtime retains the recipe archive, original and patched sources, preparation tools, licenses, supervisor source and vendored dependency licenses.
 The builder normalizes timestamps and rejects changing source inputs during a build.
@@ -189,28 +217,23 @@ An independent offline rebuild from another extraction directory produced an ide
 The archive must include OpenShell protobuf inputs omitted by Cargo vendoring, and the build must use that exact vendor layout to avoid dependency-path differences.
 Source packaging and dependency maintenance count toward the architecture's cost.
 
-Ollama recovery separates the service from its storage.
-`nemoclaw_ollama_storage.models` now tracks persistent storage independently; the existing service and model addresses remain unchanged.
-Existing deployments must apply once to establish the independently verified storage binding before destroy.
-Storage still uses the original labels and configuration digest, so this change does not establish image or network migration semantics.
+Managed Ollama uses the same service-installer boundary and retained-storage model as managed vLLM.
+Package-specific model download, runtime arguments, and bounded readiness checks stay in the Ollama installer.
+Deployment orchestration consumes only the installer plan and the resolved provider connection.
 
-Only startup connection refusal is polled, within the existing 30-second budget; authentication, transport and partial-inventory failures stop the operation.
-No refresh is disabled and no stale inventory is substituted.
-The ordinary provider refresh and export remain strict when the service is stopped.
-
-Destroy retains the volume resource and its data, releases the model installation binding, and removes the verified container after dependent OpenShell resources.
-Its model-binding check verifies the parent and storage rather than asserting current model inventory: no model bytes are deleted.
-A missing container is confirmed only after checking the bound engine and retained storage identity.
+Destroy retains the volume resource and its data, then removes the provider-managed container and service-owned network after dependent OpenShell resources.
+The Ollama installer declares a native Docker cache volume and retains it during teardown.
+Credential and gateway storage verify durable identity independently of disposable container state; model caches use native provider reconciliation.
 
 A lost deletion response leaves state for explicit reconciliation.
-The fixture also checks volume replacement and engine failure before any deletion, and reapply after destroy keeps model data without another pull.
+The fixture checks credential-volume replacement and engine failures before compute changes, cache reconstruction, and retained teardown.
 This is deterministic Docker/HTTP/OpenShell fixture qualification with the real provider and OpenTofu; it does not establish a new live Ollama hardware qualification.
 
 Managed apply also exposed an async allocation cost that the release CLI hid: composing several debug-build SDK calls overflowed a normal executor thread stack.
 Public plan/apply now heap-allocate their orchestration future, with a tested per-operation stack-size budget.
 SDK qualification must exercise its public API directly as well as its CLI consumer.
 
-## Acceptance Evidence
+## Recorded Test Results
 
 [Validation records](../validation/) distinguish deterministic failure tests, protocol qualification, native runtime execution, and remaining platform limits.
 Gateway lifecycle validation passed initial create, no-op, retained-storage destroy, and explicit recovery.
@@ -227,4 +250,4 @@ Live qualification also found a compatibility boundary absent from YAML shape: H
 Its Ollama/Qwen3 path passed a short native response; that does not establish long-context capability.
 Do not falsify model metadata or widen isolation policy to make readiness pass.
 
-Backend/agent compatibility needs evidence beyond successful provider registration.
+Backend/agent compatibility requires successful inference tests in addition to provider registration.

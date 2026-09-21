@@ -72,7 +72,7 @@ class InferenceConfiguration(unittest.TestCase):
             "provider": "openai",
             "model": "real-model",
             "base_url": "https://models.example.com/v1",
-            "api_key_env": "NEMOCLAW_INFERENCE_ORACLE_KEY",
+            "api_key_env": "NEMOCLAW_INFERENCE_HOSTED_KEY",
         }
         options = {"api": "openai-completions", "tuning": {}, "connection": connection}
         with patch.dict("os.environ", {connection["api_key_env"]: "opaque-test-placeholder"}):
@@ -83,7 +83,7 @@ class InferenceConfiguration(unittest.TestCase):
             provider = native["models"]["providers"]["openshell"]
             self.assertEqual(provider["baseUrl"], connection["base_url"])
             self.assertEqual(provider["models"][0]["id"], "real-model")
-            self.assertEqual(provider["apiKey"], "${NEMOCLAW_INFERENCE_ORACLE_KEY}")
+            self.assertEqual(provider["apiKey"], "${NEMOCLAW_INFERENCE_HOSTED_KEY}")
             self.assertEqual(
                 native["agents"]["defaults"]["model"]["primary"], "openshell/real-model"
             )
@@ -234,12 +234,12 @@ class MultipleModels(unittest.TestCase):
             "tuning": {"contextWindow": 8192},
         }
         smart = {
-            "provider": "oracle",
+            "provider": "hosted",
             "connection": {
                 "provider": "anthropic",
                 "model": "smart-model",
-                "base_url": "https://oracle.example/v1",
-                "api_key_env": "NEMOCLAW_INFERENCE_ORACLE_KEY",
+                "base_url": "https://hosted.example/v1",
+                "api_key_env": "NEMOCLAW_INFERENCE_HOSTED_KEY",
             },
             "api": "anthropic-messages",
             "tuning": {"maxTokens": 8192, "reasoningEffort": "high"},
@@ -256,10 +256,10 @@ class MultipleModels(unittest.TestCase):
         native = native_configuration("researcher", options)
         providers = native["models"]["providers"]
         self.assertEqual(len(providers), 2)
-        oracle = providers["nemoclaw_researcher_smart"]
-        self.assertEqual(oracle["api"], "anthropic-messages")
-        self.assertEqual(oracle["apiKey"], "${NEMOCLAW_INFERENCE_ORACLE_KEY}")
-        self.assertEqual(oracle["models"][0]["id"], "smart-model")
+        hosted = providers["nemoclaw_researcher_smart"]
+        self.assertEqual(hosted["api"], "anthropic-messages")
+        self.assertEqual(hosted["apiKey"], "${NEMOCLAW_INFERENCE_HOSTED_KEY}")
+        self.assertEqual(hosted["models"][0]["id"], "smart-model")
         entries = native["agents"]["entries"]
         self.assertEqual(
             entries["researcher"]["model"]["primary"], "nemoclaw_researcher_smart/smart-model"

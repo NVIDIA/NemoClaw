@@ -1,0 +1,16 @@
+{
+  "name": "ollama-amd64",
+  "platform": "linux_amd64",
+  "image": "nc-prototype-ollama-amd64:rust-v1",
+  "sourceDateEpoch": 1789689600,
+  "files": [
+    "Dockerfile",
+    "NOTICE.md"
+  ],
+  "downloads": {
+    "ollama-LICENSE": {
+      "url": "https://raw.githubusercontent.com/ollama/ollama/9b0c7cc7b90562b370ce6a30efdc667326799223/LICENSE",
+      "sha256": "5934ed2ce0d15154bcdb9c85203210abac0da4314af34081e36df4599f90b226"
+    }
+  }
+}

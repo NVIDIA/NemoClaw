@@ -309,8 +309,8 @@ The experiment checks ordered invocations and trace artifacts against local prot
 Use [the Relay fixture procedure](testing/fixtures.md#hermes-relay-tracing-fixture) to reproduce those checks without a live endpoint.
 
 The current image recipe pins Hermes 0.21.0 and Relay 0.7.3, matching the Fabric adapter's declared Relay range.
-Treat this as a tracing proof, not the production Relay 0.8 path.
-Production migration remains gated on a released Fabric adapter compatible with the released Hermes and Relay tuple, followed by the normal security and live end-to-end qualification.
+This experimental tracing integration does not use Relay 0.8.
+Production migration requires a released Fabric adapter that works with the selected released versions of Hermes and Relay, followed by security checks and live end-to-end tests.
 
 ## Define and Attach Integrations
 
@@ -419,7 +419,7 @@ The explicit Hermes agent probe invokes the already-running Fabric runtime with 
 The probe does not extend the Fabric conversation or store a Responses continuation; native session records may remain.
 Apply checks configuration and readiness without invoking this probe.
 Managed support does not establish that a particular model has enough context or reliable tool behavior.
-Follow the [image prerequisites](inference.md#build-an-image-with-the-configuration-interface), then build with `docker buildx bake hermes --load` and use its immutable digest.
+Follow the [image prerequisites](inference.md#build-an-image-with-the-configuration-interface), then build with `AGENT_PLATFORM=linux/arm64 docker buildx bake hermes --load` and use its immutable digest.
 Existing images and native state are not automatically migrated; use a fresh deployment UID and state directory when switching from the embedded Hermes adapter.
 
 ## Pi Model Selection
@@ -474,7 +474,7 @@ Existing sandbox images are immutable, so use a separate deployment to move from
 The [Pi example](../examples/fabric-pi.yaml) includes explicit custom-model metadata.
 
 ```sh
-docker buildx bake pi --load
+AGENT_PLATFORM=linux/arm64 docker buildx bake pi --load
 python3 tools/fabric-adapter-experiment.py --harness pi
 python3 tools/fabric-adapter-experiment.py --harness pi --pi-catalog
 ```
@@ -497,7 +497,7 @@ Changing YAML alone does not migrate agent files or conversations.
 Build a local Linux ARM64 image with:
 
 ```sh
-docker buildx bake openclaw --load
+AGENT_PLATFORM=linux/arm64 docker buildx bake openclaw --load
 ```
 
 The [agent image builder](build.md#build-agent-images) runs the pinned toolchains inside Docker.
@@ -514,14 +514,14 @@ The adapter preserves unrelated native configuration and rejects conflicts in de
 With the [offline fixture prerequisites](testing/fixtures.md#inference-api-fixtures), run from the repository root:
 
 ```sh
-docker buildx bake check
+AGENT_PLATFORM=linux/arm64 docker buildx bake check
 python3 tools/fabric-adapter-experiment.py --harness openclaw --interfaces --inference-api openai-responses
 ```
 
 The check targets provide their verified source and dependencies inside disposable build stages.
 The harness tests use disposable containers and report failures through assertions and subprocess output.
 They do not send external messages.
-[Harness evidence](validation/rust-fabric-adapters-linux-arm64.json) distinguishes protocol fixtures from complete live inference qualification.
+[Harness test results](validation/rust-fabric-adapters-linux-arm64.json) distinguish protocol fixtures from complete live inference qualification.
 The [historical native messaging result](validation/rust-native-openclaw-linux-arm64.json) records the retired Telegram fixture with its source hashes; current tests leave messaging-channel pairing and message delivery to OpenClaw.
 
 Real messaging deployment still needs generic egress, mounted secrets, and retained sandbox storage that this desired-state schema does not provision.
@@ -548,7 +548,7 @@ Native agent capabilities do not by themselves establish a complete NemoClaw dep
 | Gmail with an app password | **TBD** — needs a verified native client, protected credential delivery, egress policy, and file-retention procedure |
 | Managed MCP bridge and server add/update/remove | **TBD** — no equivalent current NemoClaw CLI workflow |
 | Arbitrary OpenClaw or Hermes plugin installation | **TBD** — requires a verified image, configuration, and lifecycle procedure; the declared Brave integration is documented above |
-| Memory search and embedding-service setup | **TBD** — needs evidence for the endpoint, credentials, policy, and native settings |
+| Memory search and embedding-service setup | **TBD** — needs tests of the endpoint, credentials, policy, and native settings |
 | Context compaction configuration | **TBD** — verify behavior against the pinned native runtime before reusing earlier guidance |
 | Auxiliary-model sub-agents | **TBD** — model choices are configurable, but delegation and consultation behavior are not configured |
 | Deep Agents tracing and managed collector lifecycle | **TBD** — the implemented OpenClaw tracing profile uses an existing local collector |
