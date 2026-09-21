@@ -77,6 +77,23 @@ describe("printSandboxCreateRecoveryHints", () => {
     expect(stderr()).toContain("runtime environment omitted");
   });
 
+  it("keeps semantic upload recovery on the supported NemoClaw path", () => {
+    printSandboxCreateRecoveryHints("failed to upload image tar into container", {
+      createContext: {
+        sourceReference: "/tmp/Dockerfile",
+        policyAttached: true,
+        providers: [],
+        gpuRequested: false,
+        gpuDevice: null,
+        cpu: null,
+        memory: null,
+      },
+    });
+
+    expect(stderr()).toContain("onboard --resume");
+    expect(stderr()).not.toContain("openshell sandbox create");
+  });
+
   it("prints progress-specific resume guidance when upload reached the gateway", () => {
     printSandboxCreateRecoveryHints(
       ["[progress] Uploaded to gateway", "failed to read image export stream"].join("\n"),

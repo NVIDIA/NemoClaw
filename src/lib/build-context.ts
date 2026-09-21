@@ -181,7 +181,7 @@ export function printSandboxCreateRecoveryHints(
         "       runtime env placeholder with the env NemoClaw set (dashboard port, proxy):",
       );
       console.error(`         ${reconstructImageRefCreateCommand(createArgs, registryRef)}`);
-    } else {
+    } else if (!createContext) {
       console.error("    3. Re-run the sandbox create OpenShell just attempted, but replace the");
       console.error(
         `       \`--from <…/Dockerfile>\` argument with \`--from ${registryRef}\` (this skips`,
