@@ -58,6 +58,7 @@ const LOCAL_COPY_SOURCES = [
   "agents/hermes/patch-gateway-runtime-metadata.py",
   "agents/hermes/patch-hermes-sqlite-temp-store.py",
   "agents/hermes/patch-langfuse-credentials.mts",
+  "agents/hermes/patch-mcp-http-proxy.py",
   "agents/hermes/patch-profile-policy-defaults.py",
   "agents/hermes/patch-session-list-preview.py",
   "agents/hermes/plugin/__init__.py",
