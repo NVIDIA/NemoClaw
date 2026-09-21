@@ -15,12 +15,61 @@ pub(crate) fn constrain(defs: &mut serde_json::Map<String, Value>) {
         .iter_mut()
         .find(|variant| variant["properties"]["kind"]["const"] == "vllm")
         .expect("vLLM service variant");
-    property(service, "image", json!({"pattern":constraints::IMAGE}));
+    let image = service["properties"]["image"]
+        .as_object_mut()
+        .expect("derived image property");
+    image.remove("type");
+    image.insert(
+        "anyOf".into(),
+        json!([
+            {"type":"string", "pattern":constraints::IMAGE},
+            {"type":"null"}
+        ]),
+    );
+    property(
+        service,
+        "source",
+        json!({"description":"Verified source runtime identity retained by the fixed-profile exporter. Required when image is null."}),
+    );
     service["allOf"] = json!([
         {"oneOf":[{"required":["hardware"]},{"required":["recipe"]}]},
         {"if":{"required":["hardware"]},"then":forbid(&["recipe"])},
         {"if":at("memory/gpuMemoryUtilization",json!({}),true),"then":{"required":["hardware"],"allOf":[at("hardware/minGpuMemoryBytes",json!({}),true),at("hardware/profile",json!({"not":{"enum":super::HardwareProfile::UNIFIED_MEMORY}}),false),forbid(&["recipe"]),at("memory/gpuMemoryGiB",json!({"const":0}),false),at("memory/kvCacheGiB",json!({"const":0}),false)]}},
-        {"if":{"required":["recipe"]},"then":{"allOf":[at("serving/modelName",json!({"const":""}),false),at("serving/mambaBackend",json!({"const":""}),false),at("serving",forbid(&["enforceEager"]),false)]}}
+        {"if":{"required":["recipe"]},"then":{"allOf":[at("serving/modelName",json!({"const":""}),false),at("serving/mambaBackend",json!({"const":""}),false),at("serving",forbid(&["enforceEager"]),false)]}},
+        {"if":{"required":["image"],"properties":{"image":{"type":"null"}}},"then":{
+            "required":["source","authentication","hardware","container","serving","memory"],
+            "allOf":[
+                at("authentication",json!({"const":"bearer"}),true),
+                at("hardware/architecture",json!({"const":"amd64"}),true),
+                at("hardware/minComputeCapability",json!({"const":90}),true),
+                at("hardware/minGpuMemoryBytes",json!({"const":96_000_000_000_u64}),true),
+                at("hardware/minDriverMajor",json!({"const":580}),true),
+                at("container/ipc",json!({"const":"host"}),true),
+                at("container/sharedMemoryGiB",json!({"const":32}),true),
+                at("model/repository",json!({"const":super::config::EXPORTED_MODEL_REPOSITORY}),true),
+                at("model/revision",json!({"const":super::config::EXPORTED_MODEL_REVISION}),true),
+                at("serving/modelName",json!({"const":super::config::EXPORTED_MODEL_NAME}),true),
+                at("serving/mambaBackend",json!({"const":"flashinfer"}),true),
+                at("serving/enforceEager",json!({"const":false}),true),
+                at("serving/toolParser",json!({"const":"qwen3_coder"}),true),
+                at("serving/reasoningParser",json!({"const":"nemotron_v3"}),true),
+                at("serving/port",json!({}),true),
+                at("serving/contextTokens",json!({"const":65_536}),true),
+                at("serving/maxSequences",json!({"const":1}),true),
+                at("serving/batchTokens",json!({"const":4_096}),true),
+                at("serving/startupTimeoutSeconds",json!({"const":1_800}),true),
+                at("memory/gpuMemoryUtilization",json!({"const":0.75}),true),
+                at("memory/hostReserveGiB",json!({"const":32}),false),
+                at("memory/kvCacheGiB",json!({"const":0}),false),
+                at("memory/minAvailableGiB",json!({"const":8}),false),
+                at("memory/minFreeGiB",json!({"const":3}),false),
+                at("memory/freeGateGiB",json!({"const":12}),false),
+                at("memory/consecutiveSamples",json!({"const":5}),false),
+                forbid(&["imagePullPolicy","recipe","placement","publication"])
+            ]
+        }},
+        at("source/profile/id",json!({"const":super::config::EXPORTED_PROFILE_ID}),false),
+        at("source/recipe/id",json!({"const":super::config::EXPORTED_RECIPE_ID}),false)
     ]);
     service["dependentRequired"] =
         json!({"placement": ["publication"], "publication": ["placement"]});
@@ -151,6 +200,29 @@ pub(crate) fn constrain(defs: &mut serde_json::Map<String, Value>) {
         "gpuMemoryUtilization",
         json!({"minimum":0.05,"maximum":0.95}),
     );
+    for name in ["ExportSource", "ExportSourceIdentity"] {
+        let definition = defs
+            .get_mut(name)
+            .unwrap_or_else(|| panic!("derived {name} definition"));
+        if name == "ExportSource" {
+            property(
+                definition,
+                "catalogDigest",
+                json!({"pattern":"^sha256:[a-f0-9]{64}$"}),
+            );
+            property(
+                definition,
+                "runtimeImage",
+                json!({"pattern":constraints::IMAGE}),
+            );
+        } else {
+            property(
+                definition,
+                "digest",
+                json!({"pattern":"^sha256:[a-f0-9]{64}$"}),
+            );
+        }
+    }
     defs["Memory"]["properties"]["kvCacheGiB"]
         .as_object_mut()
         .unwrap()

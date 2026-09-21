@@ -5,7 +5,37 @@
 
 use super::{ServiceContainer, ServiceHardware, constraints};
 use crate::config::ImagePullPolicy;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use std::sync::LazyLock;
+
+pub const EXPORTED_PROFILE_ID: &str =
+    "vllm.linux-amd64-nvidia.single.nemotron-3.5-lightning-30b-a3b-nvfp4";
+pub const EXPORTED_RECIPE_ID: &str =
+    "vllm.nemotron-3.5-lightning-30b-a3b-nvfp4.linux-amd64-single.v1";
+pub const EXPORTED_MODEL_REPOSITORY: &str = "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4";
+pub const EXPORTED_MODEL_REVISION: &str = "0dcd680e5585c791728c83342b311d0a0026dbeb";
+pub const EXPORTED_MODEL_NAME: &str = "nvidia-nemotron-3.5-lightning-30b-a3b-nvfp4";
+
+static SHA256: LazyLock<regex::Regex> =
+    LazyLock::new(|| regex::Regex::new(r"^sha256:[a-f0-9]{64}$").unwrap());
+
+fn deserialize_target_image<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    Ok(Option::<String>::deserialize(deserializer)?.unwrap_or_default())
+}
+
+fn serialize_target_image<S>(image: &str, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    if image.is_empty() {
+        serializer.serialize_none()
+    } else {
+        serializer.serialize_str(image)
+    }
+}
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[schemars(!default)]
@@ -25,8 +55,16 @@ pub struct Service {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(with = "ServiceAuthentication")]
     pub authentication: Option<ServiceAuthentication>,
-    /// Immutable runtime image containing vLLM, the NemoClaw supervisor, and any declared recipe tools.
+    /// Immutable runtime image containing vLLM and the NemoClaw supervisor. A fixed-profile export may use explicit null until an official v1 image is selected; planning rejects that unresolved template.
+    #[serde(
+        deserialize_with = "deserialize_target_image",
+        serialize_with = "serialize_target_image"
+    )]
     pub image: String,
+    /// Verified source runtime identity retained by the fixed-profile exporter. Required when image is null.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(default, with = "ExportSource")]
+    pub source: Option<Box<ExportSource>>,
     /// Image acquisition before container creation. Omission means IfNotPresent.
     #[serde(
         rename = "imagePullPolicy",
@@ -58,6 +96,49 @@ pub struct Service {
     #[schemars(default)]
     /// GPU budget and resident watchdog thresholds. Omission selects the SDK defaults.
     pub memory: Memory,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+/// Verified source identity for the temporary fixed-profile export template.
+pub struct ExportSource {
+    /// Digest of the catalog used to select the installed source runtime.
+    pub catalog_digest: String,
+    /// Fixed source serving profile identity.
+    pub profile: ExportSourceIdentity,
+    /// Fixed source recipe identity.
+    pub recipe: ExportSourceIdentity,
+    /// Immutable upstream image observed for the installed source runtime.
+    pub runtime_image: String,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+/// Identifier and digest for one verified source catalog object.
+pub struct ExportSourceIdentity {
+    /// Catalog-owned identifier for the fixed source object.
+    pub id: String,
+    /// Immutable SHA-256 digest of the fixed source object.
+    pub digest: String,
+}
+
+impl ExportSource {
+    pub(crate) fn validate(&self) -> Result<(), crate::config::ConfigError> {
+        use crate::config::validation::require;
+        require(
+            SHA256.is_match(&self.catalog_digest)
+                && self.profile.id == EXPORTED_PROFILE_ID
+                && SHA256.is_match(&self.profile.digest)
+                && self.recipe.id == EXPORTED_RECIPE_ID
+                && SHA256.is_match(&self.recipe.digest),
+            "vLLM export source provenance must identify the fixed catalog profile and recipe",
+        )?;
+        crate::services::contract::validate_image(&self.runtime_image).map_err(|_| {
+            crate::config::ConfigError::new(
+                "vLLM export source runtime image must be pinned by a SHA-256 digest",
+            )
+        })
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -195,6 +276,57 @@ pub struct ServicePublication {
 }
 
 impl Service {
+    pub(crate) fn is_fixed_unresolved_export(&self) -> bool {
+        let dedicated_hardware = matches!(
+            &self.hardware,
+            Some(ServiceHardware::Dedicated(hardware))
+                if hardware.architecture == "amd64"
+                    && hardware.min_compute_capability == 90
+                    && hardware.min_gpu_memory_bytes == 96_000_000_000
+                    && hardware.min_driver_major == 580
+        );
+        let container = matches!(
+            &self.container,
+            Some(container)
+                if container.ipc == super::ServiceIpc::Host
+                    && container.shared_memory_gi_b == 32
+        );
+        let serving = &self.serving;
+        let memory = &self.memory;
+        self.source.is_some()
+            && self.authentication == Some(ServiceAuthentication::Bearer)
+            && self.image_pull_policy.is_none()
+            && self.recipe.is_none()
+            && self.placement.is_none()
+            && self.publication.is_none()
+            && dedicated_hardware
+            && container
+            && self.model.repository == EXPORTED_MODEL_REPOSITORY
+            && self.model.revision == EXPORTED_MODEL_REVISION
+            && serving.model_name == EXPORTED_MODEL_NAME
+            && serving.mamba_backend == "flashinfer"
+            && serving.enforce_eager == Some(false)
+            && serving.tool_parser == "qwen3_coder"
+            && serving.reasoning_parser == "nemotron_v3"
+            && serving.context_tokens == 65_536
+            && serving.max_sequences == 1
+            && serving.batch_tokens == 4_096
+            && serving.speculative_tokens == 0
+            && serving.startup_timeout_seconds == 1_800
+            && memory
+                .gpu_memory_utilization
+                .as_ref()
+                .and_then(serde_json::Number::as_f64)
+                == Some(0.75)
+            && memory.gpu_memory_gib == 0
+            && memory.host_reserve_gib == 32
+            && memory.kv_cache_gib == 0
+            && memory.min_available_gib == 8
+            && memory.min_free_gib == 3
+            && memory.free_gate_gib == 12
+            && memory.consecutive_samples == 5
+    }
+
     pub fn served_model(&self) -> &str {
         if let Some(recipe) = &self.recipe {
             return &recipe.serving.model_name;

@@ -424,6 +424,57 @@
       ],
       "type": "object"
     },
+    "ExportSource": {
+      "additionalProperties": false,
+      "description": "Verified source identity for the temporary fixed-profile export template.",
+      "properties": {
+        "catalogDigest": {
+          "description": "Digest of the catalog used to select the installed source runtime.",
+          "pattern": "^sha256:[a-f0-9]{64}$",
+          "type": "string"
+        },
+        "profile": {
+          "$ref": "#/$defs/ExportSourceIdentity",
+          "description": "Fixed source serving profile identity."
+        },
+        "recipe": {
+          "$ref": "#/$defs/ExportSourceIdentity",
+          "description": "Fixed source recipe identity."
+        },
+        "runtimeImage": {
+          "description": "Immutable upstream image observed for the installed source runtime.",
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:/-]*@sha256:[a-f0-9]{64}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "catalogDigest",
+        "profile",
+        "recipe",
+        "runtimeImage"
+      ],
+      "type": "object"
+    },
+    "ExportSourceIdentity": {
+      "additionalProperties": false,
+      "description": "Identifier and digest for one verified source catalog object.",
+      "properties": {
+        "digest": {
+          "description": "Immutable SHA-256 digest of the fixed source object.",
+          "pattern": "^sha256:[a-f0-9]{64}$",
+          "type": "string"
+        },
+        "id": {
+          "description": "Catalog-owned identifier for the fixed source object.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "digest"
+      ],
+      "type": "object"
+    },
     "ExternalOllama": {
       "additionalProperties": false,
       "description": "External Ollama daemon observed by the managed proxy installer.",
@@ -3017,6 +3068,483 @@
                   }
                 ]
               }
+            },
+            {
+              "if": {
+                "properties": {
+                  "image": {
+                    "type": "null"
+                  }
+                },
+                "required": [
+                  "image"
+                ]
+              },
+              "then": {
+                "allOf": [
+                  {
+                    "properties": {
+                      "authentication": {
+                        "const": "bearer"
+                      }
+                    },
+                    "required": [
+                      "authentication"
+                    ]
+                  },
+                  {
+                    "properties": {
+                      "hardware": {
+                        "properties": {
+                          "architecture": {
+                            "const": "amd64"
+                          }
+                        },
+                        "required": [
+                          "architecture"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "hardware"
+                    ]
+                  },
+                  {
+                    "properties": {
+                      "hardware": {
+                        "properties": {
+                          "minComputeCapability": {
+                            "const": 90
+                          }
+                        },
+                        "required": [
+                          "minComputeCapability"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "hardware"
+                    ]
+                  },
+                  {
+                    "properties": {
+                      "hardware": {
+                        "properties": {
+                          "minGpuMemoryBytes": {
+                            "const": 96000000000
+                          }
+                        },
+                        "required": [
+                          "minGpuMemoryBytes"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "hardware"
+                    ]
+                  },
+                  {
+                    "properties": {
+                      "hardware": {
+                        "properties": {
+                          "minDriverMajor": {
+                            "const": 580
+                          }
+                        },
+                        "required": [
+                          "minDriverMajor"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "hardware"
+                    ]
+                  },
+                  {
+                    "properties": {
+                      "container": {
+                        "properties": {
+                          "ipc": {
+                            "const": "host"
+                          }
+                        },
+                        "required": [
+                          "ipc"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "container"
+                    ]
+                  },
+                  {
+                    "properties": {
+                      "container": {
+                        "properties": {
+                          "sharedMemoryGiB": {
+                            "const": 32
+                          }
+                        },
+                        "required": [
+                          "sharedMemoryGiB"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "container"
+                    ]
+                  },
+                  {
+                    "properties": {
+                      "model": {
+                        "properties": {
+                          "repository": {
+                            "const": "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4"
+                          }
+                        },
+                        "required": [
+                          "repository"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "model"
+                    ]
+                  },
+                  {
+                    "properties": {
+                      "model": {
+                        "properties": {
+                          "revision": {
+                            "const": "0dcd680e5585c791728c83342b311d0a0026dbeb"
+                          }
+                        },
+                        "required": [
+                          "revision"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "model"
+                    ]
+                  },
+                  {
+                    "properties": {
+                      "serving": {
+                        "properties": {
+                          "modelName": {
+                            "const": "nvidia-nemotron-3.5-lightning-30b-a3b-nvfp4"
+                          }
+                        },
+                        "required": [
+                          "modelName"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "serving"
+                    ]
+                  },
+                  {
+                    "properties": {
+                      "serving": {
+                        "properties": {
+                          "mambaBackend": {
+                            "const": "flashinfer"
+                          }
+                        },
+                        "required": [
+                          "mambaBackend"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "serving"
+                    ]
+                  },
+                  {
+                    "properties": {
+                      "serving": {
+                        "properties": {
+                          "enforceEager": {
+                            "const": false
+                          }
+                        },
+                        "required": [
+                          "enforceEager"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "serving"
+                    ]
+                  },
+                  {
+                    "properties": {
+                      "serving": {
+                        "properties": {
+                          "toolParser": {
+                            "const": "qwen3_coder"
+                          }
+                        },
+                        "required": [
+                          "toolParser"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "serving"
+                    ]
+                  },
+                  {
+                    "properties": {
+                      "serving": {
+                        "properties": {
+                          "reasoningParser": {
+                            "const": "nemotron_v3"
+                          }
+                        },
+                        "required": [
+                          "reasoningParser"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "serving"
+                    ]
+                  },
+                  {
+                    "properties": {
+                      "serving": {
+                        "properties": {
+                          "port": {}
+                        },
+                        "required": [
+                          "port"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "serving"
+                    ]
+                  },
+                  {
+                    "properties": {
+                      "serving": {
+                        "properties": {
+                          "contextTokens": {
+                            "const": 65536
+                          }
+                        },
+                        "required": [
+                          "contextTokens"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "serving"
+                    ]
+                  },
+                  {
+                    "properties": {
+                      "serving": {
+                        "properties": {
+                          "maxSequences": {
+                            "const": 1
+                          }
+                        },
+                        "required": [
+                          "maxSequences"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "serving"
+                    ]
+                  },
+                  {
+                    "properties": {
+                      "serving": {
+                        "properties": {
+                          "batchTokens": {
+                            "const": 4096
+                          }
+                        },
+                        "required": [
+                          "batchTokens"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "serving"
+                    ]
+                  },
+                  {
+                    "properties": {
+                      "serving": {
+                        "properties": {
+                          "startupTimeoutSeconds": {
+                            "const": 1800
+                          }
+                        },
+                        "required": [
+                          "startupTimeoutSeconds"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "serving"
+                    ]
+                  },
+                  {
+                    "properties": {
+                      "memory": {
+                        "properties": {
+                          "gpuMemoryUtilization": {
+                            "const": 0.75
+                          }
+                        },
+                        "required": [
+                          "gpuMemoryUtilization"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "memory"
+                    ]
+                  },
+                  {
+                    "properties": {
+                      "memory": {
+                        "properties": {
+                          "hostReserveGiB": {
+                            "const": 32
+                          }
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "properties": {
+                      "memory": {
+                        "properties": {
+                          "kvCacheGiB": {
+                            "const": 0
+                          }
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "properties": {
+                      "memory": {
+                        "properties": {
+                          "minAvailableGiB": {
+                            "const": 8
+                          }
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "properties": {
+                      "memory": {
+                        "properties": {
+                          "minFreeGiB": {
+                            "const": 3
+                          }
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "properties": {
+                      "memory": {
+                        "properties": {
+                          "freeGateGiB": {
+                            "const": 12
+                          }
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "properties": {
+                      "memory": {
+                        "properties": {
+                          "consecutiveSamples": {
+                            "const": 5
+                          }
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "not": {
+                      "anyOf": [
+                        {
+                          "required": [
+                            "imagePullPolicy"
+                          ]
+                        },
+                        {
+                          "required": [
+                            "recipe"
+                          ]
+                        },
+                        {
+                          "required": [
+                            "placement"
+                          ]
+                        },
+                        {
+                          "required": [
+                            "publication"
+                          ]
+                        }
+                      ]
+                    }
+                  }
+                ],
+                "required": [
+                  "source",
+                  "authentication",
+                  "hardware",
+                  "container",
+                  "serving",
+                  "memory"
+                ]
+              }
+            },
+            {
+              "properties": {
+                "source": {
+                  "properties": {
+                    "profile": {
+                      "properties": {
+                        "id": {
+                          "const": "vllm.linux-amd64-nvidia.single.nemotron-3.5-lightning-30b-a3b-nvfp4"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            {
+              "properties": {
+                "source": {
+                  "properties": {
+                    "recipe": {
+                      "properties": {
+                        "id": {
+                          "const": "vllm.nemotron-3.5-lightning-30b-a3b-nvfp4.linux-amd64-single.v1"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
             }
           ],
           "dependentRequired": {
@@ -3059,9 +3587,16 @@
               "x-nemoclaw-required": "Without recipe"
             },
             "image": {
-              "description": "Immutable runtime image containing vLLM, the NemoClaw supervisor, and any declared recipe tools.",
-              "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:/-]*@sha256:[a-f0-9]{64}$",
-              "type": "string"
+              "anyOf": [
+                {
+                  "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:/-]*@sha256:[a-f0-9]{64}$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Immutable runtime image containing vLLM and the NemoClaw supervisor. A fixed-profile export may use explicit null until an official v1 image is selected; planning rejects that unresolved template."
             },
             "imagePullPolicy": {
               "$ref": "#/$defs/ImagePullPolicy",
@@ -3102,6 +3637,10 @@
             "serving": {
               "$ref": "#/$defs/Serving",
               "description": "Service limits. Omission selects the SDK defaults; recipe serving settings select recipe-specific parsers and execution options."
+            },
+            "source": {
+              "$ref": "#/$defs/ExportSource",
+              "description": "Verified source runtime identity retained by the fixed-profile exporter. Required when image is null."
             }
           },
           "required": [

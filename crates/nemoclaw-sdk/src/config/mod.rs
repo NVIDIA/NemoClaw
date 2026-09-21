@@ -117,9 +117,35 @@ impl Document {
                 }
             }
         }
+        fn omit_unresolved_vllm_images(spec: &mut serde_json::Value) -> Result<(), ConfigError> {
+            let Some(services) = spec
+                .get_mut("services")
+                .and_then(serde_json::Value::as_object_mut)
+            else {
+                return Ok(());
+            };
+            for service in services.values_mut() {
+                let Some(object) = service.as_object_mut() else {
+                    continue;
+                };
+                if object.get("kind").and_then(serde_json::Value::as_str) != Some("vllm") {
+                    continue;
+                }
+                let Some(image) = object.get("image") else {
+                    return Err(ConfigError::new(
+                        "vLLM target image must be an immutable reference or explicit null",
+                    ));
+                };
+                if image.is_null() {
+                    object.remove("image");
+                }
+            }
+            Ok(())
+        }
         let mut structural = tree.clone();
         if let Some(spec) = structural.get_mut("spec") {
             omit_shared_metadata(spec);
+            omit_unresolved_vllm_images(spec)?;
             if let Some(sandboxes) = spec
                 .get_mut("sandboxes")
                 .and_then(serde_json::Value::as_array_mut)

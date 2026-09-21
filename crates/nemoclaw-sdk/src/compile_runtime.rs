@@ -5,11 +5,25 @@ use crate::{
     Error,
     managed::{GATEWAY_KIND, GATEWAY_STORAGE_KIND, Spec},
 };
+
+fn require_resolved_service_images(document: &Document) -> Result<(), Error> {
+    if document.spec.services.values().any(|definition| {
+        matches!(definition, crate::services::ServiceDefinition::Vllm(service) if service.image.is_empty())
+    }) {
+        return Err(ConfigError::new(
+            "vLLM target image is unresolved; replace null with an immutable v1 runtime image reference",
+        )
+        .into());
+    }
+    Ok(())
+}
+
 pub fn runtime_targets(
     document: &Document,
     generations: &Generations,
 ) -> Result<Vec<Target>, Error> {
     document.validate()?;
+    require_resolved_service_images(document)?;
     let service_plans = service_plans(
         document,
         generations,
@@ -80,6 +94,7 @@ pub(crate) fn runtime_graph(
     version: &str,
 ) -> Result<(Value, Vec<Target>), Error> {
     document.validate()?;
+    require_resolved_service_images(document)?;
     let service_plans = service_plans(
         document,
         generations,

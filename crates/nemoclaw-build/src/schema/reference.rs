@@ -21,7 +21,7 @@ pub fn render_reference(schema: &Value) -> Result<String, String> {
         "Paths use `[]` for an array element and `{key}` for a map entry.\n",
         "Required fields must appear when their containing object is present; conditional requirements are stated in the table or description.\n",
         "An optional object can contain required fields if you choose to declare it.\n",
-        "Omit optional fields instead of assigning `null`; only nested values inside a Pi `piModel` object may be null.\n",
+        "Omit optional fields instead of assigning `null`. The fixed-profile vLLM export uses `image: null` until an official target image is selected; nested values inside a Pi `piModel` object may also be null.\n",
         "Defaults describe SDK normalization or backend behavior; JSON Schema validation does not insert values.\n",
         "Empty or zero selects a default only where stated.\n\n",
         "## Validation Beyond the Schema\n\n"

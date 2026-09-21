@@ -9,7 +9,8 @@ pub(in crate::services) mod runtime;
 mod service_hardware;
 use crate::Error;
 pub use config::{
-    Memory, Model, Service, ServiceAuthentication, ServicePlacement, ServicePublication, Serving,
+    ExportSource, ExportSourceIdentity, Memory, Model, Service, ServiceAuthentication,
+    ServicePlacement, ServicePublication, Serving,
 };
 pub use hardware_profile::HardwareProfile;
 pub(crate) use hardware_profile::MemoryArchitecture;
@@ -92,7 +93,17 @@ fn private(ip: std::net::IpAddr) -> bool {
 impl Service {
     pub fn validate(&self) -> Result<(), ConfigError> {
         use crate::config::validation::require;
-        validate_image(&self.image)?;
+        if self.image.is_empty() {
+            require(
+                self.is_fixed_unresolved_export(),
+                "unresolved vLLM target image is limited to the fixed exported profile",
+            )?;
+        } else {
+            validate_image(&self.image)?;
+        }
+        if let Some(source) = &self.source {
+            source.validate()?;
+        }
         crate::config::ImagePullPolicy::validate_service(self.image_pull_policy)?;
         require(
             self.placement.is_some() == self.publication.is_some(),
@@ -148,6 +159,12 @@ fn targets(
     service: &Service,
     generations: &Generations,
 ) -> Result<(Vec<Target>, Spec), Error> {
+    if service.image.is_empty() {
+        return Err(ConfigError::new(
+            "vLLM target image is unresolved; replace null with an immutable v1 runtime image reference",
+        )
+        .into());
+    }
     let generation = generations
         .get(SERVICE_KIND)
         .filter(|value| !value.is_empty())

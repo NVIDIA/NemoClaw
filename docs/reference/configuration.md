@@ -11,7 +11,7 @@ See [schema maintenance](../configuration-schema.md) for generation and validati
 Paths use `[]` for an array element and `{key}` for a map entry.
 Required fields must appear when their containing object is present; conditional requirements are stated in the table or description.
 An optional object can contain required fields if you choose to declare it.
-Omit optional fields instead of assigning `null`; only nested values inside a Pi `piModel` object may be null.
+Omit optional fields instead of assigning `null`. The fixed-profile vLLM export uses `image: null` until an official target image is selected; nested values inside a Pi `piModel` object may also be null.
 Defaults describe SDK normalization or backend behavior; JSON Schema validation does not insert values.
 Empty or zero selects a default only where stated.
 
@@ -310,6 +310,39 @@ Paths:
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
 | `explicit` | [ExplicitPolicy](#explicitpolicy) | Yes | — | Complete sandbox policy in OpenShell YAML field names. |
+
+## ExportSource
+
+Verified source identity for the temporary fixed-profile export template.
+
+Guide: [Configuration and credentials](../usage.md#configuration-and-credentials).
+
+Paths:
+
+- `spec.services.{key}.source`
+
+| Field | Input type | Required | Default | Description and constraints |
+|---|---|---|---|---|
+| `catalogDigest` | string | Yes | — | Digest of the catalog used to select the installed source runtime. Constraints: pattern `^sha256:[a-f0-9]{64}$`. |
+| `profile` | [ExportSourceIdentity](#exportsourceidentity) | Yes | — | Fixed source serving profile identity. |
+| `recipe` | [ExportSourceIdentity](#exportsourceidentity) | Yes | — | Fixed source recipe identity. |
+| `runtimeImage` | string | Yes | — | Immutable upstream image observed for the installed source runtime. Constraints: pattern `^[a-zA-Z0-9][a-zA-Z0-9._:/-]*@sha256:[a-f0-9]{64}$`. |
+
+## ExportSourceIdentity
+
+Identifier and digest for one verified source catalog object.
+
+Guide: [Configuration and credentials](../usage.md#configuration-and-credentials).
+
+Paths:
+
+- `spec.services.{key}.source.profile`
+- `spec.services.{key}.source.recipe`
+
+| Field | Input type | Required | Default | Description and constraints |
+|---|---|---|---|---|
+| `digest` | string | Yes | — | Immutable SHA-256 digest of the fixed source object. Constraints: pattern `^sha256:[a-f0-9]{64}$`. |
+| `id` | string | Yes | — | Catalog-owned identifier for the fixed source object. |
 
 ## ExternalOllama
 
@@ -1257,7 +1290,7 @@ Managed vLLM runtime and immutable model snapshot.
 | `authentication` | [ServiceAuthentication](#serviceauthentication) | No | — | Optional native bearer authentication. The runtime generates and retains the key; omission preserves unauthenticated serving. |
 | `container` | [ServiceContainer](#servicecontainer) | No | — | Optional managed container IPC and shared-memory settings. Omission uses private IPC and 8 GiB of shared memory. |
 | `hardware` | [ServiceHardware](#servicehardware) | Without recipe | — | Explicit hardware contract: a named GPU or system profile, or dedicated GPU requirements for Linux AMD64. Required without an inline recipe; excludes recipe. |
-| `image` | string | Yes | — | Immutable runtime image containing vLLM, the NemoClaw supervisor, and any declared recipe tools. Constraints: pattern `^[a-zA-Z0-9][a-zA-Z0-9._:/-]*@sha256:[a-f0-9]{64}$`. |
+| `image` | string or null | Yes | — | Immutable runtime image containing vLLM and the NemoClaw supervisor. A fixed-profile export may use explicit null until an official v1 image is selected; planning rejects that unresolved template. Constraints: pattern `^[a-zA-Z0-9][a-zA-Z0-9._:/-]*@sha256:[a-f0-9]{64}$`. |
 | `imagePullPolicy` | [ImagePullPolicy](#imagepullpolicy) | No | — | Image acquisition before container creation. Omission means IfNotPresent. Constraints: `"IfNotPresent"` or `"Never"`. |
 | `kind` | string | Yes | — | Supported installer selected by this service definition. Constraints: `"vllm"`. |
 | `memory` | [Memory](#memory) | No | — | GPU budget and resident watchdog thresholds. Omission selects the SDK defaults. |
@@ -1266,6 +1299,7 @@ Managed vLLM runtime and immutable model snapshot.
 | `publication` | [ServicePublication](#servicepublication) | With placement | — | Private inference address reachable by OpenShell. Required with placement. |
 | `recipe` | [InlineRecipe](#inlinerecipe) | Without hardware | — | Inline preparation and serving contract supplied by the pinned runtime image. Required without hardware; excludes hardware. |
 | `serving` | [Serving](#serving) | No | — | Service limits. Omission selects the SDK defaults; recipe serving settings select recipe-specific parsers and execution options. |
+| `source` | [ExportSource](#exportsource) | No | — | Verified source runtime identity retained by the fixed-profile exporter. Required when image is null. |
 
 ## ServiceHardware
 
