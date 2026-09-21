@@ -809,7 +809,10 @@ describe("destroySandbox flow", () => {
     await expect(harness.destroySandbox("alpha", { yes: true })).resolves.toBeUndefined();
 
     expect(harness.removeSandboxSpy).toHaveBeenCalledWith("alpha");
-    expect(harness.withGatewayRouteMutationLockSpy).not.toHaveBeenCalled();
+    // The gateway route lock no longer identifies the routed teardown on its own. The
+    // final gateway cleanup takes the same lock, and it keys on an absent registry entry
+    // and an empty registry rather than on this removal's result, so it still runs here.
+    // Assert the teardown that #9098 protects instead of the lock that guards it.
     expect(harness.stopModelRouterForDestroyedSandboxSpy).not.toHaveBeenCalled();
   });
 
