@@ -215,6 +215,61 @@ describe("CLI OpenShell direct forward startup failures", () => {
     expect(terminate).toHaveBeenCalledTimes(testCase.terminationCount);
   });
 
+  it("preserves a child exit recorded as the polling deadline expires", async () => {
+    const events = new EventEmitter();
+    const child = eventChild(events);
+    let time = 0;
+    const { adapter, terminate } = createHarness({
+      now: () => time,
+      spawn: () => child,
+      sleep: async () => {
+        time = 19;
+        events.emit("exit", 17, null);
+        time = 20;
+      },
+    });
+
+    await expect(adapter.startForward({ forward, timeoutMs: 20 })).resolves.toEqual({
+      state: "failed",
+      forward,
+      effect: "none",
+      error: errors.timeout,
+      failure: { stage: "startup", reason: "child_exited", exitStatus: 17 },
+    });
+    expect(terminate).toHaveBeenCalledOnce();
+  });
+
+  it("preserves a child exit recorded as the post-spawn fence reaches its deadline", async () => {
+    const events = new EventEmitter();
+    const child = eventChild(events);
+    let time = 0;
+    let afterFence = () => undefined;
+    const assertCurrent = vi.fn(async () => {
+      afterFence();
+    });
+    const { adapter, terminate } = createHarness({
+      now: () => time,
+      spawn: () => {
+        afterFence = () => {
+          afterFence = () => undefined;
+          time = 19;
+          events.emit("exit", 17, null);
+          time = 20;
+        };
+        return child;
+      },
+    });
+
+    await expect(adapter.startForward({ forward, timeoutMs: 20, assertCurrent })).resolves.toEqual({
+      state: "failed",
+      forward,
+      effect: "none",
+      error: errors.timeout,
+      failure: { stage: "startup", reason: "child_exited", exitStatus: 17 },
+    });
+    expect(terminate).toHaveBeenCalledOnce();
+  });
+
   it.each([
     {
       failure: { stage: "startup", reason: "child_exited", exitStatus: 17 } as const,

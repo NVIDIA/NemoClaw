@@ -1734,6 +1734,7 @@ export function createCliOpenShellForwardAdapter(
       );
     }
     const afterSpawn = await runFence(assertCurrent, deadline);
+    const afterSpawnChildFailure = observedChildFailure(child, eventFailure);
     const pid = child.pid;
     if (!Number.isSafeInteger(pid) || Number(pid) <= 1 || pid === process.pid) {
       await settleWithin(
@@ -1780,7 +1781,7 @@ export function createCliOpenShellForwardAdapter(
           };
     };
 
-    if (afterSpawn) return failAfterSpawn(afterSpawn, false);
+    if (afterSpawn) return failAfterSpawn(afterSpawn, false, afterSpawnChildFailure);
 
     const cleanupStartedForward = async (
       request: {
@@ -1853,6 +1854,7 @@ export function createCliOpenShellForwardAdapter(
         break;
       }
     } while (now() < deadline);
+    failure ??= observedChildFailure(child, eventFailure);
     return failAfterSpawn(failureError, foreign, failure);
   }
 
