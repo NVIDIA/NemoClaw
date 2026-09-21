@@ -43,7 +43,7 @@ impl Deployment {
     }
 
     async fn export_inner(&self, cancel: &CancellationToken) -> Result<Document, Error> {
-        let (_, store) = self.open()?;
+        let (bundle, store) = self.open()?;
         let record = store.load()?.ok_or(Error::Conflict(
             "no saved deployment configuration; apply a configuration before exporting",
         ))?;
@@ -63,10 +63,20 @@ impl Deployment {
             ));
         }
 
-        self.export_runtime(&store, &record, cancel).await?;
+        self.export_runtime(&bundle, &store, &record, cancel)
+            .await?;
         (self.progress)(Progress::Exporting);
         let client = OpenShell::connect(&record.document.spec.gateway, self.secrets.clone())?;
-        let bindings = store.bindings()?;
+        let bindings = self
+            .state_bindings(
+                &bundle,
+                &store,
+                &record.document,
+                &record.generations,
+                false,
+                cancel,
+            )
+            .await?;
         let mut document = record.document;
         for target in compile::targets(&document, &record.generations)? {
             if cancel.is_cancelled() {

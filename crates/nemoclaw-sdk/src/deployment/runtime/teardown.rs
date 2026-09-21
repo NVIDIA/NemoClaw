@@ -29,7 +29,16 @@ impl Deployment {
         let mut record = store.load()?.ok_or(Error::Conflict(
             "destroy requires existing deployment state",
         ))?;
-        let bindings = store.bindings()?;
+        let bindings = self
+            .state_bindings(
+                &bundle,
+                &store,
+                &record.document,
+                &record.generations,
+                false,
+                cancel,
+            )
+            .await?;
         validate_teardown_state(&record, &bindings)?;
         let runtime = if record.document.has_runtime() {
             Some(Store::open(&store.directory.join("runtime"))?)
@@ -41,9 +50,20 @@ impl Deployment {
             .retained
             .extend(retained_bindings(&record, &bindings, false)?);
         if let Some(stage) = &runtime {
-            result
-                .retained
-                .extend(retained_bindings(&record, &stage.bindings()?, true)?);
+            result.retained.extend(retained_bindings(
+                &record,
+                &self
+                    .state_bindings(
+                        &bundle,
+                        stage,
+                        &record.document,
+                        &record.generations,
+                        true,
+                        cancel,
+                    )
+                    .await?,
+                true,
+            )?);
         }
         if record.destroyed {
             if !preview {
@@ -111,7 +131,16 @@ impl Deployment {
         runtime: bool,
         cancel: &CancellationToken,
     ) -> Result<(Vec<Change>, bool), Error> {
-        let bindings = store.bindings()?;
+        let bindings = self
+            .state_bindings(
+                bundle,
+                store,
+                &record.document,
+                &record.generations,
+                runtime,
+                cancel,
+            )
+            .await?;
         if bindings.is_empty() {
             if record.succeeded || record.destroying {
                 return Err(Error::Conflict(

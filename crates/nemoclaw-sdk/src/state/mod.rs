@@ -144,85 +144,113 @@ impl Store {
         record.validate()?;
         save_json(&self.directory.join("intent.json"), record)
     }
-    pub fn bindings(&self) -> Result<BTreeMap<String, StateBinding>, Error> {
-        bindings(&self.directory)
+    pub async fn bindings(
+        &self,
+        tofu: &Path,
+        cancel: &crate::CancellationToken,
+    ) -> Result<BTreeMap<String, StateBinding>, Error> {
+        bindings(&self.directory, tofu, cancel).await
     }
 }
-pub(crate) fn bindings(directory: &Path) -> Result<BTreeMap<String, StateBinding>, Error> {
-    let bytes = match fs::read(directory.join("terraform.tfstate")) {
-        Ok(bytes) => bytes,
-        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(BTreeMap::new()),
-        Err(_) => return Err(Error::State("cannot read OpenTofu state")),
-    };
-    #[derive(Deserialize)]
-    struct Instance {
+pub(crate) fn schema_environment(directory: &Path) -> BTreeMap<String, String> {
+    BTreeMap::from([
+        ("TF_IN_AUTOMATION".into(), "1".into()),
+        ("TF_INPUT".into(), "0".into()),
+        ("CHECKPOINT_DISABLE".into(), "1".into()),
+        (
+            "TF_CLI_CONFIG_FILE".into(),
+            directory
+                .join("providers.tfrc")
+                .to_string_lossy()
+                .into_owned(),
+        ),
+    ])
+}
+pub(crate) async fn bindings(
+    directory: &Path,
+    tofu: &Path,
+    cancel: &crate::CancellationToken,
+) -> Result<BTreeMap<String, StateBinding>, Error> {
+    if !directory
+        .join("terraform.tfstate")
+        .try_exists()
+        .map_err(|_| Error::State("cannot inspect OpenTofu state"))?
+    {
+        return Ok(BTreeMap::new());
+    }
+    let bytes = crate::process::run(
+        directory,
+        tofu,
+        &["show", "-json"],
+        &schema_environment(directory),
+        cancel,
+    )
+    .await?;
+    parse_bindings(&bytes)
+}
+fn parse_bindings(bytes: &[u8]) -> Result<BTreeMap<String, StateBinding>, Error> {
+    #[derive(Deserialize, Default)]
+    struct Module {
         #[serde(default)]
-        index_key: serde_json::Value,
+        resources: Vec<Resource>,
         #[serde(default)]
-        deposed: serde_json::Value,
-        attributes: serde_json::Value,
+        child_modules: Vec<Module>,
     }
     #[derive(Deserialize)]
     struct Resource {
+        address: String,
+        mode: String,
         #[serde(default)]
-        module: Option<String>,
-        #[serde(default)]
-        mode: Option<String>,
-        r#type: String,
-        name: String,
-        instances: Vec<Instance>,
+        deposed_key: Option<String>,
+        values: serde_json::Value,
+    }
+    #[derive(Deserialize)]
+    struct Values {
+        root_module: Module,
     }
     #[derive(Deserialize)]
     struct State {
-        resources: Vec<Resource>,
+        format_version: String,
+        values: Option<Values>,
     }
-    let state: State = serde_json::from_slice(&bytes)
-        .map_err(|_| Error::State("OpenTofu state is unreadable; retain it for recovery"))?;
+    let state: State = serde_json::from_slice(bytes)
+        .map_err(|_| Error::State("invalid OpenTofu state JSON; retain state for recovery"))?;
+    if state.format_version.split('.').next() != Some("1") {
+        return Err(Error::State("unsupported OpenTofu state JSON version"));
+    }
     let mut bindings = BTreeMap::new();
-    let mut observations = std::collections::BTreeSet::new();
-    for resource in state.resources {
-        if resource.instances.len() != 1 || resource.module.is_some() {
-            return Err(Error::State("unexpected resource instances in state"));
-        }
-        let instance = resource
-            .instances
-            .into_iter()
-            .next()
-            .expect("checked length");
-        let address = format!("{}.{}", resource.r#type, resource.name);
-        if !instance.index_key.is_null()
-            || !instance.deposed.is_null()
-            || !instance.attributes.is_object()
-        {
-            return Err(Error::State("unexpected resource instances in state"));
-        }
-        if resource.mode.as_deref() == Some("data") {
-            let known = if crate::compile::is_gateway_observation(&format!("data.{address}")) {
-                true
-            } else if resource.r#type == "nemoclaw_service_capacity" {
-                instance.attributes["engine"]
-                    .as_str()
-                    .is_some_and(|engine| {
-                        crate::docker::Engine::validate_endpoint(engine).is_ok()
-                            && resource.name == crate::services::capacity::observation_name(engine)
-                    })
-            } else if resource.r#type == "docker_image" {
-                resource.name.starts_with("image_")
-            } else {
-                false
-            };
-            if !known || !observations.insert(address) {
-                return Err(Error::State("unexpected or duplicate observation in state"));
+    let mut seen = std::collections::BTreeSet::new();
+    let mut modules = state
+        .values
+        .map(|values| vec![values.root_module])
+        .unwrap_or_default();
+    while let Some(module) = modules.pop() {
+        modules.extend(module.child_modules);
+        for resource in module.resources {
+            if resource.address.is_empty()
+                || !seen.insert(resource.address.clone())
+                || resource.deposed_key.is_some()
+                || !resource.values.is_object()
+            {
+                return Err(Error::State(
+                    "duplicate, deposed, or incomplete OpenTofu state object",
+                ));
             }
-            continue;
-        }
-        if resource.mode.as_ref().is_some_and(|mode| mode != "managed") {
-            return Err(Error::State("unexpected resource instances in state"));
-        }
-        let attributes: StateBinding = serde_json::from_value(instance.attributes)
-            .map_err(|_| Error::State("OpenTofu state is unreadable; retain it for recovery"))?;
-        if attributes.id.is_empty() || bindings.insert(address, attributes).is_some() {
-            return Err(Error::State("duplicate or unbound resource in state"));
+            match resource.mode.as_str() {
+                // Data observations carry no managed binding. Their contracts are
+                // validated by their provider and by the generated plan.
+                "data" => continue,
+                "managed" => {}
+                _ => return Err(Error::State("unsupported OpenTofu resource mode")),
+            }
+            let attributes: StateBinding =
+                serde_json::from_value(resource.values).map_err(|_| {
+                    Error::State("OpenTofu binding is unreadable; retain state for recovery")
+                })?;
+            if attributes.id.is_empty() {
+                return Err(Error::State("unbound resource in OpenTofu state"));
+            }
+            bindings.insert(resource.address, attributes);
         }
     }
     Ok(bindings)

@@ -208,7 +208,16 @@ impl Deployment {
             return Ok(result);
         }
         let client = OpenShell::connect(&document.spec.gateway, self.secrets.clone())?;
-        let bindings = store.bindings()?;
+        let bindings = self
+            .state_bindings(
+                &bundle,
+                &store,
+                &document,
+                &record.generations,
+                false,
+                cancel,
+            )
+            .await?;
         let targets = compile::targets(&document, &record.generations)?;
         let allowed = allowed(&targets);
         if bindings.iter().any(|(address, binding)| {
@@ -271,7 +280,16 @@ impl Deployment {
         .await?;
         record.pending = false;
         store.save(&record)?;
-        let bindings = store.bindings()?;
+        let bindings = self
+            .state_bindings(
+                &bundle,
+                &store,
+                &document,
+                &record.generations,
+                false,
+                cancel,
+            )
+            .await?;
         (self.progress)(Progress::Readiness);
         crate::services::check_running(
             &document,
@@ -333,6 +351,41 @@ impl Deployment {
         store.save(&record)?;
         result.outcome = Outcome::Succeeded;
         Ok(result)
+    }
+    async fn state_bindings(
+        &self,
+        bundle: &Bundle,
+        store: &Store,
+        document: &Document,
+        generations: &compile::Generations,
+        runtime: bool,
+        cancel: &CancellationToken,
+    ) -> Result<BTreeMap<String, StateBinding>, Error> {
+        if !store
+            .directory
+            .join("terraform.tfstate")
+            .try_exists()
+            .map_err(|_| Error::State("cannot inspect OpenTofu state"))?
+        {
+            return Ok(BTreeMap::new());
+        }
+        // show needs the exact provider schemas. Reinitialize from the current
+        // verified bundle, including after an SDK upgrade or state-directory move.
+        let graph = if runtime {
+            compile::compile_runtime(document, generations, &bundle.manifest.version)?
+        } else {
+            compile::compile(document, generations, &bundle.manifest.version)?
+        };
+        self.prepare(bundle, store, &graph)?;
+        crate::process::run(
+            &store.directory,
+            &bundle.tofu(),
+            &["init", "-upgrade", "-input=false", "-no-color"],
+            &crate::state::schema_environment(&store.directory),
+            cancel,
+        )
+        .await?;
+        store.bindings(&bundle.tofu(), cancel).await
     }
     fn prepare(&self, bundle: &Bundle, store: &Store, graph: &Value) -> Result<(), Error> {
         for entry in fs::read_dir(&store.directory)

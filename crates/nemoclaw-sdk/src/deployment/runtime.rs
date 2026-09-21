@@ -231,7 +231,19 @@ impl Deployment {
     ) -> Result<(Vec<Change>, bool), Error> {
         if !document.has_runtime() {
             let directory = store.directory.join("runtime");
-            if directory.exists() && !Store::open(&directory)?.bindings()?.is_empty() {
+            if directory.exists()
+                && !self
+                    .state_bindings(
+                        bundle,
+                        &Store::open(&directory)?,
+                        &record.document,
+                        &record.generations,
+                        true,
+                        cancel,
+                    )
+                    .await?
+                    .is_empty()
+            {
                 return Err(Error::Conflict(
                     "a configuration without runtime requires a new state directory; retain the existing runtime configuration and state for recovery or destroy",
                 ));
@@ -245,7 +257,9 @@ impl Deployment {
             }
         }
         let stage = Store::open(&store.directory.join("runtime"))?;
-        let bindings = stage.bindings()?;
+        let bindings = self
+            .state_bindings(bundle, &stage, document, &record.generations, true, cancel)
+            .await?;
         let targets = compile::runtime_targets(document, &record.generations)?;
         runtime_bindings(&targets, &bindings)?;
         self.prepare(
@@ -269,7 +283,12 @@ impl Deployment {
         let changes =
             check_runtime_plan(&plan, &checked.expected, &bindings, &checked.replacements)?;
         if !apply {
-            if !checked.gateway_running && !store.bindings()?.is_empty() {
+            if !checked.gateway_running
+                && !self
+                    .state_bindings(bundle, store, document, &record.generations, false, cancel)
+                    .await?
+                    .is_empty()
+            {
                 return Err(Error::Conflict(
                     "the managed gateway is not running, so plan cannot inspect OpenShell resources; run apply with the same configuration and state directory to restore the gateway",
                 ));
@@ -301,12 +320,13 @@ impl Deployment {
         .await?;
         record.pending = false;
         store.save(record)?;
-        self.wait_runtime_services(document, &record.generations, &stage, cancel)
+        self.wait_runtime_services(bundle, document, &record.generations, &stage, cancel)
             .await?;
         Ok((changes, false))
     }
     async fn wait_runtime_services(
         &self,
+        bundle: &Bundle,
         document: &Document,
         generations: &crate::compile::Generations,
         stage: &Store,
@@ -314,7 +334,7 @@ impl Deployment {
     ) -> Result<(), Error> {
         (self.progress)(Progress::Readiness);
         self.timed("runtime.ready", async {
-            let bindings = stage.bindings()?;
+            let bindings = stage.bindings(&bundle.tofu(), cancel).await?;
             crate::services::check_running(
                 document,
                 generations,
@@ -330,6 +350,7 @@ impl Deployment {
     }
     pub(super) async fn export_runtime(
         &self,
+        bundle: &Bundle,
         store: &Store,
         record: &Record,
         cancel: &CancellationToken,
@@ -338,7 +359,16 @@ impl Deployment {
             return Ok(());
         }
         let stage = Store::open(&store.directory.join("runtime"))?;
-        let bindings = stage.bindings()?;
+        let bindings = self
+            .state_bindings(
+                bundle,
+                &stage,
+                &record.document,
+                &record.generations,
+                true,
+                cancel,
+            )
+            .await?;
         let targets = compile::runtime_targets(&record.document, &record.generations)?;
         if bindings.len()
             != targets

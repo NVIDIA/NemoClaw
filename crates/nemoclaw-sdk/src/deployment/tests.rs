@@ -205,7 +205,7 @@ async fn managed_gateway_plan_apply_noop_destroy_and_recovery_use_real_opentofu(
         .await
         .unwrap();
     let stage = Store::open(&store.directory.join("runtime")).unwrap();
-    let first = stage.bindings().unwrap();
+    let first = stage.bindings(&bundle.tofu(), &cancel).await.unwrap();
     let state: Value =
         serde_json::from_slice(&fs::read(stage.directory.join("terraform.tfstate")).unwrap())
             .unwrap();
@@ -232,7 +232,7 @@ async fn managed_gateway_plan_apply_noop_destroy_and_recovery_use_real_opentofu(
         .unwrap();
     assert!(changes.is_empty() && !deferred);
     let stage = Store::open(&store.directory.join("runtime")).unwrap();
-    for (address, binding) in stage.bindings().unwrap() {
+    for (address, binding) in stage.bindings(&bundle.tofu(), &cancel).await.unwrap() {
         assert_eq!(binding.id, first[&address].id);
     }
     drop(stage);
@@ -255,7 +255,8 @@ async fn managed_gateway_plan_apply_noop_destroy_and_recovery_use_real_opentofu(
             assert_eq!(
                 Store::open(&store.directory.join("runtime"))
                     .unwrap()
-                    .bindings()
+                    .bindings(&bundle.tofu(), &cancel)
+                    .await
                     .unwrap()["nemoclaw_gateway_storage.runtime"]
                     .id,
                 first["nemoclaw_gateway_storage.runtime"].id
@@ -273,7 +274,7 @@ async fn managed_gateway_plan_apply_noop_destroy_and_recovery_use_real_opentofu(
         assert_ne!(engine.container(&name).await.unwrap().unwrap().id, old);
         let stage = Store::open(&store.directory.join("runtime")).unwrap();
         assert_eq!(
-            stage.bindings().unwrap()["nemoclaw_gateway_storage.runtime"].id,
+            stage.bindings(&bundle.tofu(), &cancel).await.unwrap()["nemoclaw_gateway_storage.runtime"].id,
             first["nemoclaw_gateway_storage.runtime"].id
         );
         let state_path = stage.directory.join("terraform.tfstate");
@@ -334,7 +335,7 @@ async fn managed_gateway_plan_apply_noop_destroy_and_recovery_use_real_opentofu(
         .await
         .unwrap();
     let stage = Store::open(&store.directory.join("runtime")).unwrap();
-    let recovered = stage.bindings().unwrap();
+    let recovered = stage.bindings(&bundle.tofu(), &cancel).await.unwrap();
     assert_eq!(
         recovered["nemoclaw_gateway_storage.runtime"].id,
         first["nemoclaw_gateway_storage.runtime"].id
