@@ -221,7 +221,7 @@ process.stdout.write("__RESULT__" + JSON.stringify({ gatewayPresets }));
     fs.chmodSync(openshellPath, 0o755);
     const script = String.raw`
 (async () => {
-const policies = require(${POLICIES_PATH});
+const policies = (await import(${POLICIES_PATH})).default;
 const gatewayPresets = await policies.getGatewayPresets("sibling-sandbox", undefined, {
   name: "sibling-sandbox",
   agent: "openclaw",
@@ -237,10 +237,10 @@ process.stdout.write("__RESULT__" + JSON.stringify({ gatewayPresets }));
       encoding: "utf-8",
       env: { ...process.env, HOME: tmpDir, NEMOCLAW_OPENSHELL_BIN: openshellPath },
     });
+    expect(result.status, result.stderr).toBe(0);
     const calls = fs.readFileSync(openshellLog, "utf8");
     fs.rmSync(tmpDir, { recursive: true, force: true });
 
-    expect(result.status, result.stderr).toBe(0);
     expect(JSON.parse(result.stdout.split("__RESULT__")[1].trim())).toEqual({
       gatewayPresets: ["npm"],
     });

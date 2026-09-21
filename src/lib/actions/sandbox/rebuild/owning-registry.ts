@@ -231,39 +231,6 @@ async function runWorker(
   }
   assertWorkerPlatformSupported(process.platform);
   const dedicatedProcessGroup = true;
-  const child = spawn(process.execPath, [WORKER_PATH], {
-    detached: dedicatedProcessGroup,
-    env: rebuildWorkerEnv(gatewayPort),
-    stdio: ["inherit", "inherit", "inherit", "pipe", "pipe"],
-  });
-  const inputStream = child.stdio[3];
-  if (!inputStream || !("end" in inputStream)) {
-    child.kill();
-    throw new Error("Cannot route rebuild input to the owning gateway registry.");
-  }
-  const inputWritten = new Promise<void>((resolve, reject) => {
-    inputStream.once("error", reject);
-    inputStream.end(JSON.stringify(input), resolve);
-  });
-  const resultStream = child.stdio[4] as Readable | null;
-  if (!resultStream) {
-    child.kill();
-    throw new Error("Cannot read the rebuild worker result.");
-  }
-  const result = readWorkerResult(resultStream);
-  const exited = new Promise<Readonly<{ code: number | null; signal: NodeJS.Signals | null }>>(
-    (resolve, reject) => {
-      child.once("error", reject);
-      child.once("exit", (code, signal) => {
-        resolve({ code, signal });
-      });
-    },
-  );
-  const completion = Promise.all([inputWritten, exited, result] as const);
-  let deadline: NodeJS.Timeout | undefined;
-  const timeout = new Promise<Readonly<{ kind: "timeout" }>>((resolve) => {
-    deadline = setTimeout(() => resolve({ kind: "timeout" }), timeoutMs);
-  });
   let resolveInterrupted:
     | ((outcome: Readonly<{ kind: "interrupted"; signal: NodeJS.Signals }>) => void)
     | undefined;
@@ -276,75 +243,109 @@ async function runWorker(
   const onSigterm = () => resolveInterrupted?.({ kind: "interrupted", signal: "SIGTERM" });
   process.on("SIGINT", onSigint);
   process.on("SIGTERM", onSigterm);
-  let outcome:
-    | Readonly<{
-        kind: "completed";
-        value: Awaited<typeof completion>;
-      }>
-    | Readonly<{ kind: "timeout" }>
-    | Readonly<{ kind: "interrupted"; signal: NodeJS.Signals }>
-    | undefined;
   try {
-    outcome = await Promise.race([
-      completion.then((value) => ({ kind: "completed" as const, value })),
-      timeout,
-      interrupted,
-    ]);
-  } finally {
-    if (deadline) clearTimeout(deadline);
-    if (outcome?.kind !== "interrupted") {
-      process.removeListener("SIGINT", onSigint);
-      process.removeListener("SIGTERM", onSigterm);
+    const child = spawn(process.execPath, [WORKER_PATH], {
+      detached: dedicatedProcessGroup,
+      env: rebuildWorkerEnv(gatewayPort),
+      stdio: ["inherit", "inherit", "inherit", "pipe", "pipe"],
+    });
+    const inputStream = child.stdio[3];
+    if (!inputStream || !("end" in inputStream)) {
+      child.kill();
+      throw new Error("Cannot route rebuild input to the owning gateway registry.");
     }
-  }
-  if (!outcome) throw new Error("Rebuild in the owning gateway registry did not complete.");
-  if (outcome.kind !== "completed") {
-    const workerReaped = await terminateWorkerProcessGroup(
-      child,
-      dedicatedProcessGroup,
-      terminationGraceMs,
+    const inputWritten = new Promise<void>((resolve, reject) => {
+      inputStream.once("error", reject);
+      inputStream.end(JSON.stringify(input), resolve);
+    });
+    const resultStream = child.stdio[4] as Readable | null;
+    if (!resultStream) {
+      child.kill();
+      throw new Error("Cannot read the rebuild worker result.");
+    }
+    const result = readWorkerResult(resultStream);
+    const exited = new Promise<Readonly<{ code: number | null; signal: NodeJS.Signals | null }>>(
+      (resolve, reject) => {
+        child.once("error", reject);
+        child.once("exit", (code, signal) => {
+          resolve({ code, signal });
+        });
+      },
     );
-    await settleWorkerPromises([inputWritten, exited, result], REBUILD_WORKER_REAP_TIMEOUT_MS);
-    const operation = input.operation === "rebuild" ? "rebuild" : "recovery retirement";
-    if (outcome.kind === "interrupted") {
+    const completion = Promise.all([inputWritten, exited, result] as const);
+    let deadline: NodeJS.Timeout | undefined;
+    const timeout = new Promise<Readonly<{ kind: "timeout" }>>((resolve) => {
+      deadline = setTimeout(() => resolve({ kind: "timeout" }), timeoutMs);
+    });
+    let outcome:
+      | Readonly<{
+          kind: "completed";
+          value: Awaited<typeof completion>;
+        }>
+      | Readonly<{ kind: "timeout" }>
+      | Readonly<{ kind: "interrupted"; signal: NodeJS.Signals }>
+      | undefined;
+    try {
+      outcome = await Promise.race([
+        completion.then((value) => ({ kind: "completed" as const, value })),
+        timeout,
+        interrupted,
+      ]);
+    } finally {
+      if (deadline) clearTimeout(deadline);
+    }
+    if (!outcome) throw new Error("Rebuild in the owning gateway registry did not complete.");
+    if (outcome.kind !== "completed") {
+      const workerReaped = await terminateWorkerProcessGroup(
+        child,
+        dedicatedProcessGroup,
+        terminationGraceMs,
+      );
+      await settleWorkerPromises([inputWritten, exited, result], REBUILD_WORKER_REAP_TIMEOUT_MS);
+      const operation = input.operation === "rebuild" ? "rebuild" : "recovery retirement";
+      if (outcome.kind === "interrupted") {
+        if (!workerReaped) {
+          const workerPid = typeof child.pid === "number" ? String(child.pid) : "unavailable";
+          console.error(
+            `Delegated ${operation} for sandbox '${input.sandboxName}' was interrupted, but termination is unconfirmed for worker PID ${workerPid}. The operation outcome is unknown; inspect that worker, the sandbox, and retained recovery state before retrying.`,
+          );
+        }
+        process.removeListener("SIGINT", onSigint);
+        process.removeListener("SIGTERM", onSigterm);
+        process.kill(process.pid, outcome.signal);
+        throw new Error(`Delegated ${operation} was interrupted by ${outcome.signal}.`);
+      }
       if (!workerReaped) {
         const workerPid = typeof child.pid === "number" ? String(child.pid) : "unavailable";
-        console.error(
-          `Delegated ${operation} for sandbox '${input.sandboxName}' was interrupted, but termination is unconfirmed for worker PID ${workerPid}. The operation outcome is unknown; inspect that worker, the sandbox, and retained recovery state before retrying.`,
+        throw new Error(
+          `Delegated ${operation} for sandbox '${input.sandboxName}' on owning gateway port ${String(gatewayPort)} exceeded its ${String(timeoutMs)} ms deadline. Termination is unconfirmed for worker PID ${workerPid}, so the worker or one of its descendants may still be active and the operation outcome is unknown. NemoClaw did not remove retained recovery state; inspect that worker, the sandbox, and recovery state before retrying.`,
         );
       }
-      process.removeListener("SIGINT", onSigint);
-      process.removeListener("SIGTERM", onSigterm);
-      process.kill(process.pid, outcome.signal);
-      throw new Error(`Delegated ${operation} was interrupted by ${outcome.signal}.`);
-    }
-    if (!workerReaped) {
-      const workerPid = typeof child.pid === "number" ? String(child.pid) : "unavailable";
       throw new Error(
-        `Delegated ${operation} for sandbox '${input.sandboxName}' on owning gateway port ${String(gatewayPort)} exceeded its ${String(timeoutMs)} ms deadline. Termination is unconfirmed for worker PID ${workerPid}, so the worker or one of its descendants may still be active and the operation outcome is unknown. NemoClaw did not remove retained recovery state; inspect that worker, the sandbox, and recovery state before retrying.`,
+        `Delegated ${operation} for sandbox '${input.sandboxName}' on owning gateway port ${String(gatewayPort)} exceeded its ${String(timeoutMs)} ms deadline. The worker was terminated, but the operation outcome is unknown. NemoClaw did not remove retained recovery state; inspect the sandbox and recovery state before retrying.`,
       );
     }
-    throw new Error(
-      `Delegated ${operation} for sandbox '${input.sandboxName}' on owning gateway port ${String(gatewayPort)} exceeded its ${String(timeoutMs)} ms deadline. The worker was terminated, but the operation outcome is unknown. NemoClaw did not remove retained recovery state; inspect the sandbox and recovery state before retrying.`,
-    );
+    const [, exit, workerResult] = outcome.value;
+    const resultMatchesRequest =
+      workerResult?.operation === input.operation &&
+      workerResult.sandboxName === input.sandboxName &&
+      workerResult.gatewayPort === gatewayPort;
+    if (
+      exit.code === 0 &&
+      exit.signal === null &&
+      workerResult?.ok === true &&
+      resultMatchesRequest
+    ) {
+      return;
+    }
+    if (workerResult?.ok === false && resultMatchesRequest && workerResult.message) {
+      throw new Error(workerResult.message, { cause: workerResult });
+    }
+    throw new Error("Rebuild in the owning gateway registry did not complete successfully.");
+  } finally {
+    process.removeListener("SIGINT", onSigint);
+    process.removeListener("SIGTERM", onSigterm);
   }
-  const [, exit, workerResult] = outcome.value;
-  const resultMatchesRequest =
-    workerResult?.operation === input.operation &&
-    workerResult.sandboxName === input.sandboxName &&
-    workerResult.gatewayPort === gatewayPort;
-  if (
-    exit.code === 0 &&
-    exit.signal === null &&
-    workerResult?.ok === true &&
-    resultMatchesRequest
-  ) {
-    return;
-  }
-  if (workerResult?.ok === false && resultMatchesRequest && workerResult.message) {
-    throw new Error(workerResult.message, { cause: workerResult });
-  }
-  throw new Error("Rebuild in the owning gateway registry did not complete successfully.");
 }
 
 export const rebuildOwningRegistryDependencies: RebuildOwningRegistryDependencies = {
