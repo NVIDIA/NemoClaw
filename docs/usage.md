@@ -295,6 +295,11 @@ A later explicit apply may replace or recreate disposable service compute.
 Authentication, transport, and incomplete observations remain failures; missing or changed bound credentials and gateway storage never authorize their automatic recreation.
 A missing model-cache volume may be recreated during apply, followed by model download and preparation; its separate credential volume must still match.
 
+To retire instead of recover an apply that stopped during the managed-runtime stage, first run `nemoclaw plan --destroy` with the same state directory.
+This path is available only when the saved plan digest matches the runtime-stage plan, validated bindings account for every declared runtime resource, and no OpenShell resource is bound.
+Incomplete or mismatched bindings and unfinished OpenShell-stage applies still require reapplying the exact original YAML before destroy.
+Destroy changes the operation to resumable teardown only after both resource graphs are planned, so a planning failure leaves the unfinished-apply recovery state in place.
+
 Export requires complete observations and agent configuration checks, but does not invoke inference.
 It preserves references and desired settings, not model weights, histories, native settings, or agent files.
 Shell redirection can leave an empty file on failure; check the exit status before using a new export.
