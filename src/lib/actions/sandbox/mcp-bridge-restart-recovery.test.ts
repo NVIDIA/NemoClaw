@@ -4,6 +4,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
+  assertMutationCapabilities: vi.fn(),
   register: vi.fn(),
   inspectAdapter: vi.fn(),
   reloadHermes: vi.fn(),
@@ -55,7 +56,7 @@ vi.mock("./mcp-bridge-provider", () => ({
   waitForDetachedMcpCredential: vi.fn(),
 }));
 vi.mock("./mcp-bridge-runtime-capabilities", () => ({
-  assertMcpAdapterMutationRuntimeCapabilities: vi.fn(),
+  assertMcpAdapterMutationRuntimeCapabilities: mocks.assertMutationCapabilities,
   assertMcpAdapterTeardownRuntimeCapabilities: vi.fn(),
 }));
 vi.mock("./mcp-bridge-state", async (importOriginal) => ({
@@ -97,6 +98,7 @@ const entries = ["first", "second"].map((server) => ({
 describe("OpenClaw MCP partial-mutation recovery", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.assertMutationCapabilities.mockReset().mockResolvedValue(undefined);
     mocks.observe.mockReset().mockResolvedValue("v1");
     mocks.inspectAdapter.mockReset().mockResolvedValue({ state: "registered" });
     mocks.reloadHermes.mockReset();
@@ -229,6 +231,30 @@ describe("OpenClaw MCP partial-mutation recovery", () => {
     expect(mocks.register).toHaveBeenCalledTimes(2);
     expect(mocks.reload).toHaveBeenCalledOnce();
     expect(mocks.reload).toHaveBeenCalledWith("alpha", ["openclaw-config", "openclaw-config"]);
+  });
+
+  it("requires current Hermes mutation capability before replacement restore", async () => {
+    const hermesEntry = {
+      ...entries[0],
+      agent: "hermes",
+      adapter: "hermes-config" as const,
+    };
+    mocks.getBridgeAdapter.mockReturnValue("hermes-config");
+    mocks.getSandboxAgent.mockReturnValue({
+      name: "hermes",
+      mcpCapability: { support: "bridge", adapter: "hermes-config" },
+    });
+    mocks.register.mockReset().mockResolvedValue("v1");
+
+    await restoreExistingMcpBridgeRuntime("alpha", [hermesEntry]);
+
+    expect(mocks.assertMutationCapabilities).toHaveBeenCalledWith(
+      "alpha",
+      expect.objectContaining({ name: "alpha" }),
+      [hermesEntry],
+      { gatewayName: "nemoclaw", workspace: "default" },
+    );
+    expect(mocks.register).toHaveBeenCalledOnce();
   });
 
   it("rejects an ambiguous recovery batch before target preflight or mutation", async () => {

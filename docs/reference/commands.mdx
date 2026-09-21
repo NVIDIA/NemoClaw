@@ -294,9 +294,8 @@ When a managed OpenClaw sandbox uses Brave Search, the export includes its `webS
 When retained managed proxy settings differ from the default, the export includes the validated host and port under `network.proxy`.
 For hosted OpenClaw inference, the export preserves nondefault managed context-window, maximum-token, reasoning, and reasoning-effort settings as route overrides.
 It preserves nondefault agent timeout and heartbeat settings under `execution`.
-For a Docker-managed OpenClaw sandbox with hosted inference, the export can include one or more read-only secondary agents in runtime order.
-Each secondary agent has a unique name, uses only `tools.allow: [read]`, and shares the primary hosted route, selected model, and retained route tuning.
-The export rejects the complete document when any secondary agent has a model that differs from the primary model, unsupported tools, execution, interfaces, observability, a primary-agent override, or a default subagent setting.
+The command rejects a managed OpenClaw sandbox with secondary agents and produces no document.
+Secondary-agent export remains deferred until the v1 schema defines that representation.
 For OpenClaw, it preserves a nondefault managed dashboard port or bind address under `interfaces.dashboard`.
 When managed OpenClaw uses direct tool disclosure, the export includes `tools.disclosure: direct`.
 It omits the default progressive disclosure setting.
@@ -662,12 +661,29 @@ For a non-interactive install, set `NEMOCLAW_CONFIRM_LEGACY_MANAGED_RECREATE` to
 The confirmation permits those legacy entries to recover onto the current managed image, but it does not override recorded custom-image evidence.
 After confirmed recovery, the installer skips generic onboarding unless DGX Station reconciliation remains necessary.
 Required DGX Station reconciliation still passes host admission before onboarding.
-For any registered-sandbox upgrade that you already prepared manually, set `NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1` only after backing up every registered sandbox and retiring the old gateway.
-This environment variable asserts that those steps are complete, so the installer skips the repeated backup and gateway-retirement phase before it checks whether OpenShell is installed or whether its version is in range.
+For any registered-sandbox upgrade that you prepare manually, use the current prepared NemoClaw CLI to require strict backup and retire all applicable registered legacy forwards before you retire the old gateway.
+Strict backup can report a confirmed stranded registry sandbox without creating a backup for it because both the selected gateway and the container provider prove that no sandbox runtime remains.
+That record requires the cleanup or recreation action printed by `$$nemoclaw backup-all`, but it does not block a prepared upgrade after the strict command succeeds:
+
+```bash
+selected_port=8080
+gateway_name=nemoclaw
+retire_legacy_forwards_flag=--retire-legacy-forwards
+NEMOCLAW_GATEWAY_PORT="$selected_port" NEMOCLAW_REQUIRE_ALL_SANDBOX_BACKUPS=1 $$nemoclaw backup-all "$retire_legacy_forwards_flag" && \
+  openshell gateway destroy -g "$gateway_name"
+```
+
+For a non-default gateway, replace `8080` with its port and set `gateway_name` to `nemoclaw-<selected-port>`.
+If an older OpenShell release rejects the named destroy command for the default `nemoclaw` gateway, run `openshell gateway destroy` instead.
+Do not substitute `openshell gateway remove`: removal can unregister a gateway without stopping its process.
+Set `NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1` only after both commands succeed and the backup command reports a complete result.
+A confirmed stranded record has no backup to reuse; complete the reported cleanup or recreation action during recovery.
+If backup, forward retirement, or gateway retirement fails, resolve the failure while the completed backups remain intact.
+This environment variable asserts that strict backup, legacy-forward retirement, and gateway retirement are complete, so the installer skips that repeated preparation phase before it checks whether OpenShell is installed or whether its version is in range.
 For a non-default gateway, preserve the selected port on the `bash` side of the install pipeline.
 
 ```bash
-curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_GATEWAY_PORT=<selected-port> NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1 bash
+curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_GATEWAY_PORT="$selected_port" NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1 bash
 ```
 
 It reuses the latest backups, forces the pinned OpenShell installation, and starts recovery only after that installation succeeds. If the installation fails, rerun the same install-pipeline command to preserve `NEMOCLAW_GATEWAY_PORT` and `NEMOCLAW_OPENSHELL_UPGRADE_PREPARED`.
@@ -3124,7 +3140,7 @@ A backup failure marks that sandbox as failed, and `backup-all` continues with t
 $$nemoclaw backup-all
 ```
 
-Before an OpenShell upgrade, the installer prepares the current release CLI and uses it to run `backup-all` in strict mode. Strict mode requires every registered sandbox to produce a fresh backup and aborts before gateway changes if any sandbox is skipped or fails. When strict mode reports a skipped sandbox, start that sandbox or its container and rerun the installer or `$$nemoclaw backup-all`.
+Before an OpenShell upgrade, the installer prepares the current release CLI and uses it to run `backup-all` in strict mode. Strict mode requires every registered sandbox that still has a runtime to produce a fresh backup and aborts before gateway changes if an ordinary sandbox is skipped or fails. When strict mode reports an ordinary skipped sandbox, start that sandbox or its container and rerun the installer or `$$nemoclaw backup-all`. A registry record that the selected gateway and container provider both prove has no remaining runtime is reported as confirmed stranded, produces no backup, and does not fail strict mode. Follow the reported cleanup or recreation action in [Resume a Manually Prepared Upgrade](../manage-sandboxes/operate-sandboxes/update-sandboxes#resume-a-manually-prepared-upgrade) before recovery.
 
 A running sandbox whose in-sandbox SSH endpoint does not answer fails its backup and aborts the run. For a standalone `$$nemoclaw backup-all` run, set `NEMOCLAW_SKIP_UNREACHABLE_SANDBOX_BACKUP=1` exactly to skip such sandboxes instead of failing. Other values such as `true`, `yes`, or `0` are not accepted. This variable does not weaken the installer's strict pre-upgrade requirement. A skipped sandbox's uncommitted state is not included in its last successful backup.
 

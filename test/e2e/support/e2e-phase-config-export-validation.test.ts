@@ -164,20 +164,18 @@ function document(
                 }
               : {}),
           },
-          agents: [
-            {
-              name: "primary",
-              inference: {
-                routes: [
-                  {
-                    name: "primary",
-                    providerRef: "hosted-compatible-endpoint",
-                    overrides: { model: overrides.model ?? "nvidia/model" },
-                  },
-                ],
-              },
+          agent: {
+            name: "primary",
+            inference: {
+              routes: [
+                {
+                  name: "primary",
+                  providerRef: "hosted-compatible-endpoint",
+                  overrides: { model: overrides.model ?? "nvidia/model" },
+                },
+              ],
             },
-          ],
+          },
         },
       ],
     },
@@ -783,10 +781,8 @@ process.stdout.write("x".repeat(1024 * 1024 + 2048 - Buffer.byteLength(suffix, "
   it("validates the current v1alpha1 Deep Agents document (#11860)", () => {
     const candidate = structuredClone(document());
     const sandbox = candidate.spec.sandboxes[0]!;
-    const agents = Reflect.get(sandbox, "agents") as unknown[];
     const image = { ref: IMAGE_REF };
-    Object.assign(sandbox, { harness: { kind: "deepagents" }, image, agent: agents[0] });
-    Reflect.deleteProperty(sandbox, "agents");
+    Object.assign(sandbox, { harness: { kind: "deepagents" }, image });
     expect(parseConfigExport(JSON.stringify(candidate)).spec.sandboxes[0]).toMatchObject({
       image: { ref: IMAGE_REF },
       harness: { kind: "deepagents" },
@@ -800,6 +796,10 @@ process.stdout.write("x".repeat(1024 * 1024 + 2048 - Buffer.byteLength(suffix, "
     const missingEndpoint = structuredClone(candidate);
     Reflect.deleteProperty(missingEndpoint.spec.gateway, "endpoint");
     expect(() => parseConfigExport(JSON.stringify(missingEndpoint))).toThrow(
+      "complete v1alpha1 export contract",
+    );
+    Object.assign(sandbox, { agents: [sandbox.agent], agent: undefined });
+    expect(() => parseConfigExport(JSON.stringify(candidate))).toThrow(
       "complete v1alpha1 export contract",
     );
   });

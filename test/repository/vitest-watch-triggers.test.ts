@@ -56,6 +56,7 @@ const OPAQUE_INPUTS = [
   "agents/hermes/Dockerfile.base",
   "agents/hermes/patch-external-supervisor-recovery.py",
   "agents/hermes/patch-external-supervisor-restart.py",
+  "agents/hermes/patch-mcp-http-proxy.py",
   "agents/hermes/patch-session-list-preview.py",
   "agents/hermes/Dockerfile",
   "agents/langchain-deepagents-code/Dockerfile",
@@ -220,6 +221,9 @@ describe("Vitest opaque-input watch triggers", () => {
     expect(triggeredBy("agents/hermes/patch-external-supervisor-restart.py")).toEqual([
       "test/agents/hermes/hermes-external-supervisor-restart-patch.test.ts",
     ]);
+    expect(triggeredBy("agents/hermes/patch-mcp-http-proxy.py")).toEqual([
+      "test/agents/hermes/hermes-mcp-http-proxy-patch.test.ts",
+    ]);
     expect(triggeredBy("nemoclaw-blueprint/policies/presets/nous-browser.yaml")).toEqual([
       "test/onboarding/effective-policy-contracts.test.ts",
     ]);
@@ -270,10 +274,12 @@ describe("Vitest opaque-input watch triggers", () => {
     ]);
     expect(triggeredBy(".github/workflows/base-image.yaml")).toEqual([
       "test/inference/managed/managed-base-image-contract.test.ts",
+      "test/inference/managed/managed-image-mcp-bridge-publication.test.ts",
       "test/inference/managed/managed-image-publication-workflow.test.ts",
       "test/agents/deepagents/dcode-base-image-workflow.test.ts",
     ]);
     expect(triggeredBy(".github/workflows/managed-images.yaml")).toEqual([
+      "test/inference/managed/managed-image-mcp-bridge-publication.test.ts",
       "test/inference/managed/managed-image-publication-workflow.test.ts",
       "test/e2e-runtime/pull-public-exact-digest.test.ts",
     ]);
