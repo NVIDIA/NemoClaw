@@ -240,21 +240,22 @@ fn runtime_launch_preserves_declared_bindings_limits_and_isolation() {
 }
 
 #[test]
-fn managed_gateway_tells_sandbox_supervisors_how_to_reach_its_listener() {
+fn managed_gateway_uses_driver_derived_docker_supervisor_callback() {
     let fixtures: Vec<serde_json::Value> =
         serde_json::from_str(include_str!("reference.json")).unwrap();
     for fixture in fixtures {
         let spec: Spec = serde_json::from_str(fixture["spec"].as_str().unwrap()).unwrap();
         let configuration = spec.gateway_config("/owned-data");
-        let port = url::Url::parse(&spec.gateway.endpoint)
-            .unwrap()
-            .port()
-            .unwrap();
-        let callback = format!("http://{}:{port}", spec.bridge().unwrap());
-        assert!(
-            configuration.contains(&format!("grpc_endpoint = {callback:?}")),
-            "Docker supervisors need the managed bridge callback endpoint"
-        );
+        if spec.compute_driver == "docker" {
+            assert!(
+                !configuration.contains("grpc_endpoint ="),
+                "Docker must derive the supervisor callback and host alias"
+            );
+        } else {
+            assert!(
+                configuration.contains(&format!("grpc_endpoint = {:?}", spec.gateway.endpoint))
+            );
+        }
     }
 }
 
