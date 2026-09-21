@@ -162,27 +162,8 @@ pub(crate) fn constrain_schema(defs: &mut serde_json::Map<String, serde_json::Va
             .as_array_mut()
             .unwrap()
             .push(local_image);
-        if service["properties"]["kind"]["const"] == "voiceclaw" {
-            crate::config::schema::validation::property(
-                service,
-                "image",
-                serde_json::json!({"pattern":crate::config::constraints::LOCAL_IMAGE_ID}),
-            );
-            crate::config::schema::validation::property(
-                service,
-                "imagePullPolicy",
-                serde_json::json!({"const":"Never"}),
-            );
-            service["properties"]["imagePullPolicy"]
-                .as_object_mut()
-                .unwrap()
-                .remove("enum");
-            service["required"]
-                .as_array_mut()
-                .expect("derived VoiceClaw required fields")
-                .push(serde_json::json!("imagePullPolicy"));
-        }
     }
+    installers::voiceclaw::constrain_schema(defs);
 }
 
 fn active_service_names(document: &Document) -> Result<BTreeSet<String>, ConfigError> {
@@ -484,9 +465,7 @@ pub(crate) fn defaults(definition: &mut ServiceDefinition) {
         ServiceDefinition::Vllm(service) => {
             service.defaults();
         }
-        ServiceDefinition::Voiceclaw(service) => {
-            service.defaults();
-        }
+        ServiceDefinition::Voiceclaw(_) => {}
     }
 }
 

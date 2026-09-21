@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 mod config;
-pub use config::{Service, Serving, Speech, SpeechProvider};
+pub use config::{PullPolicy, Service, Serving, Speech, SpeechProvider};
 
 use crate::{
     Error,
@@ -18,6 +18,29 @@ use serde::Serialize;
 use std::{collections::BTreeMap, time::Duration};
 
 const DATA_PATH: &str = "/var/lib/voiceclaw";
+
+pub(crate) fn constrain_schema(defs: &mut serde_json::Map<String, serde_json::Value>) {
+    let service = defs["ServiceDefinition"]["oneOf"]
+        .as_array_mut()
+        .expect("tagged service variants")
+        .iter_mut()
+        .find(|variant| variant["properties"]["kind"]["const"] == "voiceclaw")
+        .expect("VoiceClaw service schema");
+    crate::config::schema::validation::property(
+        service,
+        "image",
+        serde_json::json!({"pattern":crate::config::constraints::LOCAL_IMAGE_ID}),
+    );
+    crate::config::schema::validation::property(
+        service,
+        "imagePullPolicy",
+        serde_json::json!({"const":"Never"}),
+    );
+    service["properties"]["imagePullPolicy"]
+        .as_object_mut()
+        .expect("VoiceClaw pull policy schema")
+        .remove("enum");
+}
 
 fn address(kind: &str, name: &str) -> String {
     format!("nemoclaw_{kind}.{name}")

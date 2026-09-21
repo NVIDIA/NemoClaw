@@ -23,12 +23,12 @@ pub struct WebSearch {
     pub credential: Credential,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[schemars(!default)]
-#[serde(default, rename_all = "camelCase", deny_unknown_fields)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 /// Select one managed VoiceClaw service. Agent identity comes only from integrationRefs.
 pub struct VoiceclawIntegration {
     /// Name of a VoiceClaw service in spec.services.
+    #[schemars(regex(pattern = r"^[a-z][a-z0-9-]{0,39}$"))]
     pub service_ref: String,
 }
 

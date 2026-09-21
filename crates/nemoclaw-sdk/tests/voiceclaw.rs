@@ -53,8 +53,6 @@ fn selected_voiceclaw_integration_compiles_one_package_neutral_runtime() {
             .unwrap()
             .is_valid(&value)
     );
-    assert_eq!(document.credential_names(), vec!["NVIDIA_API_KEY"]);
-
     let targets = targets(&document, &generations()).expect("VoiceClaw deployment targets");
     assert!(targets.iter().any(|target| {
         target.address == "docker_container.managed_service_voice-server"
@@ -89,11 +87,10 @@ fn selected_voiceclaw_integration_compiles_one_package_neutral_runtime() {
 }
 
 #[test]
-fn unused_voiceclaw_definition_creates_no_runtime_or_credential_requirement() {
+fn unused_voiceclaw_definition_creates_no_runtime() {
     let mut value = input();
     value["spec"]["sandboxes"][0]["agent"]["integrationRefs"] = json!([]);
     let document = Document::parse(value.to_string().as_bytes()).unwrap();
-    assert!(!document.credential_names().contains(&"NVIDIA_API_KEY"));
     assert!(
         targets(&document, &generations())
             .unwrap()
