@@ -141,10 +141,10 @@ jobs:
           done
           echo "Host prerequisites are ready"
           # The startup script can run as root without knowing which account Brev
-          # will use for SSH. Add the actual login account, then use a fresh SSH
-          # session so its supplementary docker group is applied.
+          # will use for SSH. Brev may also multiplex SSH connections, so explicitly
+          # enter the docker group instead of relying on a later login to refresh it.
           ssh -T "${INSTANCE_NAME}" 'sudo usermod -aG docker "$(id -un)"'
-          ssh -T "${INSTANCE_NAME}" 'docker info >/dev/null'
+          ssh -T "${INSTANCE_NAME}" 'sg docker -c "docker info >/dev/null"'
           # shellcheck disable=SC2029
           remote_home="$(ssh -T "${INSTANCE_NAME}" 'printf %s "$HOME"')"
           remote_root="${remote_home}/nemoclaw-brev-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
@@ -158,7 +158,7 @@ jobs:
           rsync -a "${RUNNER_TEMP}/nvidia-api-key" "${INSTANCE_NAME}:${remote_root}/nvidia-api-key"
           echo "Candidate bundle transferred; starting lifecycle qualification"
           # shellcheck disable=SC2029
-          ssh -T "${INSTANCE_NAME}" "tar -xzf '${remote_root}/candidate-source.tar.gz' -C '${remote_root}/source' && chmod 700 '${remote_root}/brev-test' && NEMOCLAW_BREV_ROOT='${remote_root}' bash '${remote_root}/source/tools/e2e/brev-v1-guest.sh'"
+          ssh -T "${INSTANCE_NAME}" "tar -xzf '${remote_root}/candidate-source.tar.gz' -C '${remote_root}/source' && chmod 700 '${remote_root}/brev-test' && sg docker -c \"NEMOCLAW_BREV_ROOT='${remote_root}' bash '${remote_root}/source/tools/e2e/brev-v1-guest.sh'\""
           echo "Lifecycle qualification passed; collecting evidence"
           mkdir -p "${RUNNER_TEMP}/brev-evidence"
           rsync -a "${INSTANCE_NAME}:${remote_root}/evidence/brev-proof.json" "${RUNNER_TEMP}/brev-evidence/"
