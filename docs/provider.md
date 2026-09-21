@@ -29,7 +29,7 @@ The generated graphs manage these objects and observations:
 | NemoClaw provider | OpenShell workspace, provider, profile, sandbox, and Pi runtime configuration |
 | NemoClaw provider | Podman gateway process (`nemoclaw_managed_gateway`); gateway storage, initialization, and retained bridge (`nemoclaw_gateway_storage`) |
 | NemoClaw provider | Retained inference credentials and proxy storage; external Ollama model observation |
-| NemoClaw provider data source | Gateway capabilities and managed vLLM/Ollama application readiness |
+| NemoClaw provider data source | Gateway capabilities and vLLM/Ollama service or proxy readiness |
 | Docker provider | Docker gateway, inference, and proxy containers; model-cache volumes, service-owned networks and acquired images |
 | Docker provider data source | Local images selected with `imagePullPolicy: Never` |
 
@@ -87,7 +87,11 @@ Successful reads return `ready: true`; unsuccessful reads report an error.
 The optional `read_trigger` has the same scheduling semantics as the gateway trigger above.
 The compiler references the container's `id` and uses `timestamp() != ""` to defer readiness until apply, including unchanged apply.
 The runtime graph must succeed before the SDK proceeds to the OpenShell graph.
-The SDK no longer runs a separate managed vLLM/Ollama readiness loop; proxy and sandbox checks remain separate.
+The OpenShell graph uses the same data source for Ollama proxies, with a 30-second wait and dependencies from their selected provider registrations.
+A proxy specification contains `kind: "ollama_proxy"`, an engine endpoint, and the compiled `proxy` specification.
+Its observation verifies the recorded container ID and name, running state, credential file permissions, and the upstream model digest through read-only metadata.
+It waits for an initially missing key only while the container runs and the volume has no initialization marker; initialized missing keys and invalid permissions fail immediately.
+The SDK no longer runs service readiness loops; sandbox configuration and readiness checks remain separate.
 
 The [standalone readiness fixture](testing/fixtures.md#standalone-service-readiness) exercises this contract without SDK deployment orchestration.
 A failed read retains managed bindings, and SDK teardown omits readiness gates.

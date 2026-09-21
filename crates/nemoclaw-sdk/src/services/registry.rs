@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 //! Dispatch for service definitions and installer-owned resource backends.
-use crate::config::{ComputeDriver, HarnessKind, InferenceProviderKind};
+use crate::config::{ComputeDriver, HarnessKind};
 
 use super::{
     ManagedOllama, OllamaProxy,
@@ -13,7 +13,6 @@ use crate::{
     backend::{Backend, Row},
     compile::{Generations, Target},
     config::{ConfigError, Document, Gateway, InferenceProvider},
-    state::StateBinding,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -120,10 +119,20 @@ pub(crate) fn resource_label(kind: &str) -> Option<&'static str> {
     }
 }
 
-pub(crate) fn constrain_schema(defs: &mut serde_json::Map<String, serde_json::Value>) {
-    installers::ollama::constrain_schema(defs);
-    installers::vllm::schema::constrain(defs);
+pub(crate) fn constrain_schema(
+    defs: &mut serde_json::Map<String, serde_json::Value>,
+    normalized: bool,
+) {
+    installers::ollama::constrain_schema(defs, normalized);
+    installers::vllm::schema::constrain(defs, normalized);
     for service in defs["ServiceDefinition"]["oneOf"].as_array_mut().unwrap() {
+        crate::config::schema::validation::property(
+            service,
+            "image",
+            serde_json::json!({
+                "x-nemoclaw-error": "service image must be pinned by a SHA-256 digest"
+            }),
+        );
         crate::config::schema::validation::property(
             service,
             "imagePullPolicy",
@@ -446,9 +455,8 @@ pub(crate) fn has_runtime(document: &Document) -> bool {
 }
 
 pub(crate) fn validate(document: &Document) -> Result<(), ConfigError> {
-    use crate::config::validation::{SLUG, require};
-    for (name, definition) in &document.spec.services {
-        require(SLUG.is_match(name), "service names must be lowercase slugs")?;
+    use crate::config::validation::require;
+    for definition in document.spec.services.values() {
         definition.validate_definition()?;
         definition.validate_installation(document)?;
     }
@@ -487,14 +495,6 @@ pub(crate) fn validate_provider(
     require(
         definition.inference().is_some(),
         "serviceRef must name an inference-capable service",
-    )?;
-    require(
-        provider.endpoint.is_empty() && provider.credential.is_none(),
-        "serviceRef excludes endpoint and external credentials",
-    )?;
-    require(
-        provider.provider == InferenceProviderKind::Openai,
-        "managed services require the OpenAI provider implementation",
     )?;
     Ok(true)
 }
@@ -582,23 +582,6 @@ pub(crate) fn required_storage_address(
             (candidate == process || crate::docker_compute::address(&candidate) == process)
                 .then_some(storage)
         }))
-}
-
-pub(crate) async fn check_deployment_services(
-    document: &Document,
-    generations: &Generations,
-    connections: &crate::docker::Connections,
-    bindings: &BTreeMap<String, StateBinding>,
-    cancel: &crate::CancellationToken,
-) -> Result<(), crate::Error> {
-    for (name, definition) in &document.spec.services {
-        if let ServiceDefinition::OllamaProxy(proxy) = definition {
-            proxy
-                .check_running(document, name, generations, connections, bindings, cancel)
-                .await?;
-        }
-    }
-    Ok(())
 }
 
 /// Resolves a provider resource row to its package-owned backend.

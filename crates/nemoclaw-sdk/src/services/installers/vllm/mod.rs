@@ -58,7 +58,7 @@ use crate::{
     compile::{Generations, Target},
     config::{ConfigError, Document},
     managed::{Process, Spec, Storage},
-    services::contract::{InstallPlan, Installer, RemovePlan, validate_image},
+    services::contract::{InstallPlan, Installer, RemovePlan},
 };
 use std::collections::BTreeMap;
 use url::Url;
@@ -92,12 +92,7 @@ fn private(ip: std::net::IpAddr) -> bool {
 impl Service {
     pub fn validate(&self) -> Result<(), ConfigError> {
         use crate::config::validation::require;
-        validate_image(&self.image)?;
-        crate::config::ImagePullPolicy::validate_service(self.image_pull_policy)?;
-        require(
-            self.placement.is_some() == self.publication.is_some(),
-            "service placement and publication must be declared together",
-        )?;
+        crate::config::schema::validate_service("vllm", self)?;
         if let (Some(placement), Some(publication)) = (&self.placement, &self.publication) {
             require(
                 placement.engine.starts_with("ssh://"),

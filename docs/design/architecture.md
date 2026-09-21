@@ -125,7 +125,8 @@ Automatic rollback could delete useful data or repeat an operation whose respons
 
 An unfinished OpenShell mutation still requires its original intent before another change or destroy.
 Runtime failures retain an unfinished-operation marker for export, but allow revised intent or teardown using OpenTofu's recorded bindings and the existing durable-storage checks.
-Runtime reconciliation cannot clear an earlier unfinished OpenShell operation.
+An OpenShell-graph apply that only observes resources or changes disposable compute uses the same recovery rule.
+An apply that may mutate other resource bindings remains guarded; reconciliation cannot clear an earlier unfinished OpenShell operation.
 Gateway and managed vLLM/Ollama readiness run inside the runtime graph; a failed read retains compute and storage state without rolling them back.
 
 Destroy reverses the dependency direction: remove OpenShell workloads before stopping the gateway that owns them.
@@ -134,8 +135,9 @@ That saved progress lets an interrupted destroy continue even after the gateway 
 The [managed orchestration commit](https://github.com/NVIDIA/NemoClaw/commit/b18e282837) records the failure cases behind this order.
 
 The installer contract declares install and removal plans.
-Managed vLLM/Ollama readiness is an independent provider data source ordered after its container and deferred until every apply.
-The SDK still checks proxy and sandbox configuration and readiness separately.
+Managed vLLM/Ollama and proxy readiness use an independent provider data source ordered after the container and deferred until every apply.
+Proxy consumers depend on this observation; unrelated provider registrations remain independent.
+The SDK still checks sandbox configuration and readiness separately, pending the [Fabric management contract](fabric-management.md#result-and-adoption-gates).
 A stopped service remains bound, and an explicit apply can reconcile it without a package-specific recovery operation or an automatic restart loop.
 
 ## Why Storage Has Its Own Binding

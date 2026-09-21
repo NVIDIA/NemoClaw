@@ -155,19 +155,7 @@ impl Document {
 }
 
 fn validate_definitions(definitions: &BTreeMap<String, Integration>) -> Result<(), ConfigError> {
-    for (name, definition) in definitions {
-        if !super::validation::SLUG.is_match(name) {
-            return Err(ConfigError::new(
-                "integration names must be lowercase names",
-            ));
-        }
-        match definition {
-            Integration::WebSearch(search) => {
-                super::validation::credential(&Some(search.credential.clone()))?;
-            }
-        }
-    }
-    Ok(())
+    super::schema::validate_property("Spec", "integrations", &definitions)
 }
 
 // Preserve the native adapter wire contract while deriving grants from agent references.

@@ -158,39 +158,13 @@ pub struct HermesTui {
 }
 impl AgentInterfaces {
     pub fn validate(&self, harness: HarnessKind) -> Result<(), ConfigError> {
-        let valid = match self {
-            Self::OpenClaw(i) => {
-                let d = &i.dashboard;
-                harness == HarnessKind::OpenClaw
-                    && (d.port.is_some() || d.bind.is_some())
-                    && d.port
-                        .is_none_or(|p| p >= 1024 && !(8642..=8652).contains(&p))
-            }
-            Self::Hermes(i) => {
-                harness == HarnessKind::Hermes
-                    && (i.dashboard.is_some() || i.api.is_some())
-                    && i.api
-                        .as_ref()
-                        .is_none_or(|a| (8642..=8652).contains(&a.port))
-                    && i.dashboard.as_ref().is_none_or(|d| {
-                        let HermesDashboard::Enabled(d) = d else {
-                            return true;
-                        };
-                        let port = d.port.unwrap_or(18789);
-                        let internal = d.internal_port.unwrap_or(19119);
-                        port != internal
-                            && [port, internal]
-                                .into_iter()
-                                .all(|p| p >= 1024 && !(8642..=8652).contains(&p) && p != 18642)
-                    })
-            }
-        };
-        if valid {
-            Ok(())
-        } else {
-            Err(ConfigError::new(
-                "invalid or unsupported native interface settings",
-            ))
+        super::schema::validate_harness_field("interfaces", self, harness)?;
+        if let Self::Hermes(interfaces) = self
+            && let Some(HermesDashboard::Enabled(dashboard)) = &interfaces.dashboard
+            && dashboard.port.unwrap_or(18789) == dashboard.internal_port.unwrap_or(19119)
+        {
+            return Err(ConfigError::new("Hermes dashboard ports must differ"));
         }
+        Ok(())
     }
 }

@@ -1,11 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 //! Pinned model identity and snapshot resolution.
-use super::super::{Service, constraints as c};
+use super::super::Service;
 pub use crate::snapshot::MANIFEST_FILE;
 use crate::{
     Error,
-    config::ConfigError,
     snapshot::{Manifest, ModelManifest},
 };
 use sha2::{Digest, Sha256};
@@ -21,22 +20,6 @@ pub fn directory(service: &Service) -> String {
         "models/{}",
         hash.iter().map(|b| format!("{b:02x}")).collect::<String>()
     )
-}
-pub(crate) fn validate_model(service: &Service) -> Result<(), ConfigError> {
-    let repository = &service.model.repository;
-    if !regex::Regex::new(c::REPOSITORY)
-        .unwrap()
-        .is_match(repository)
-        || repository.len() > 200
-        || !regex::Regex::new(c::REVISION)
-            .unwrap()
-            .is_match(&service.model.revision)
-    {
-        return Err(ConfigError::new(
-            "model requires a repository and immutable commit revision",
-        ));
-    }
-    Ok(())
 }
 pub fn validate_manifest(service: &Service, manifest: &Manifest) -> Result<(), Error> {
     service.validate()?;

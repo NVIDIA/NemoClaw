@@ -344,19 +344,7 @@ pub struct PolicyMcp {
 
 impl Proxy {
     pub fn validate(&self) -> Result<(), ConfigError> {
-        if self.port == 0
-            || self.host.is_empty()
-            || self.host.len() > 256
-            || !self
-                .host
-                .bytes()
-                .all(|c| c.is_ascii_alphanumeric() || b"._-".contains(&c))
-        {
-            return Err(ConfigError::new(
-                "proxy requires a hostname or IPv4 address and a port from 1 through 65535",
-            ));
-        }
-        Ok(())
+        super::schema::validate_definition("Proxy", self)
     }
 }
 impl Network {
@@ -393,11 +381,9 @@ impl Network {
     }
 
     pub fn validate(&self) -> Result<(), ConfigError> {
+        super::schema::validate_definition("Network", self)?;
         if let NetworkPolicy::Explicit(policy) = &self.policy {
             policy.to_proto()?;
-        }
-        if let Some(proxy) = &self.proxy {
-            proxy.validate()?;
         }
         Ok(())
     }
@@ -413,68 +399,11 @@ pub(crate) const POLICY_TLS: &[&str] = &["terminate", "passthrough", "skip"];
 pub(crate) const POLICY_ENFORCEMENT: &[&str] = &["enforce", "audit"];
 pub(crate) const POLICY_ACCESS: &[&str] = &["full", "read-only"];
 pub(crate) const POLICY_BODY_MAX: u32 = 1_048_576;
-impl PolicyEndpoint {
-    fn validate(&self) -> Result<(), ConfigError> {
-        let invalid = self.port.is_some() == self.ports.is_some()
-            || self.port == Some(0)
-            || self.ports.as_ref().is_some_and(|p| {
-                p.is_empty()
-                    || p.contains(&0)
-                    || p.iter().collect::<std::collections::BTreeSet<_>>().len() != p.len()
-            })
-            || (self.host.as_ref().is_none_or(String::is_empty)
-                && self.allowed_ips.as_ref().is_none_or(Vec::is_empty))
-            || self.rules.as_ref().is_some_and(Vec::is_empty)
-            || self.deny_rules.as_ref().is_some_and(Vec::is_empty)
-            || (self.access.is_some() && self.rules.is_some())
-            || self
-                .json_rpc
-                .as_ref()
-                .and_then(|r| r.max_body_bytes)
-                .is_some_and(|v| v == 0 || v > POLICY_BODY_MAX)
-            || self
-                .mcp
-                .as_ref()
-                .and_then(|r| r.max_body_bytes)
-                .is_some_and(|v| v == 0 || v > POLICY_BODY_MAX);
-        if invalid
-            || [
-                (&self.protocol, POLICY_PROTOCOLS),
-                (&self.tls, POLICY_TLS),
-                (&self.enforcement, POLICY_ENFORCEMENT),
-                (&self.access, POLICY_ACCESS),
-            ]
-            .iter()
-            .any(|(value, choices)| {
-                value
-                    .as_ref()
-                    .is_some_and(|v| !choices.contains(&v.as_str()))
-            })
-        {
-            return Err(ConfigError::new(
-                "invalid or conflicting policy endpoint options",
-            ));
-        }
-        Ok(())
-    }
-}
 impl ExplicitPolicy {
     pub fn to_proto(&self) -> Result<proto::SandboxPolicy, ConfigError> {
-        if self.version != 1 {
-            return Err(ConfigError::new("explicit policy requires version 1"));
-        }
-        for rule in self.network_policies.values() {
-            for endpoint in &rule.endpoints {
-                endpoint.validate()?;
-            }
-        }
+        super::schema::validate_definition("ExplicitPolicy", self)?;
         let input = serde_json::to_value(self)
             .map_err(|_| ConfigError::new("cannot encode sandbox policy"))?;
-        if self.landlock.as_ref().is_some_and(|l| {
-            !["best_effort", "hard_requirement"].contains(&l.compatibility.as_str())
-        }) {
-            return Err(ConfigError::new("unsupported Landlock compatibility"));
-        }
         let policy = openshell_policy::parse_sandbox_policy(&input.to_string())
             .map_err(|_| ConfigError::new("invalid or unsupported explicit sandbox policy"))?;
         openshell_policy::validate_sandbox_policy(&policy)

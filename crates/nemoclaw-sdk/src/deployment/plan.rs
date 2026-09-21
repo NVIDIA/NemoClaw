@@ -38,7 +38,8 @@ pub(super) fn observation(
         || (gateway && crate::compile::is_gateway_observation(&change.address))
         || allowed.keys().any(|address| {
             (address.starts_with("docker_container.inference_service_")
-                || address.starts_with("docker_container.ollama_service_"))
+                || address.starts_with("docker_container.ollama_service_")
+                || address.starts_with("docker_container.ollama_proxy_"))
                 && change.address
                     == format!(
                         "data.nemoclaw_service_readiness.{}",

@@ -79,67 +79,7 @@ impl Document {
         options.reject_unsupported_tags = true;
         let tree: serde_json::Value = serde_saphyr::from_str_with_options(text, options)
             .map_err(|_| ConfigError::new("invalid or unsupported YAML document"))?;
-        fn has_null(value: &serde_json::Value) -> bool {
-            match value {
-                serde_json::Value::Null => true,
-                serde_json::Value::Array(values) => values.iter().any(has_null),
-                serde_json::Value::Object(values) => values.values().any(has_null),
-                _ => false,
-            }
-        }
-        // The agent owns values inside its opaque model object, including null.
-        // Keep the existing null policy everywhere else in deployment intent.
-        fn omit_model_metadata(inference: &mut serde_json::Value) {
-            if let Some(routes) = inference
-                .get_mut("routes")
-                .and_then(serde_json::Value::as_array_mut)
-            {
-                for route in routes {
-                    if let Some(overrides) = route
-                        .get_mut("overrides")
-                        .and_then(serde_json::Value::as_object_mut)
-                        && overrides
-                            .get("piModel")
-                            .is_some_and(serde_json::Value::is_object)
-                    {
-                        overrides.remove("piModel");
-                    }
-                }
-            }
-        }
-        fn omit_shared_metadata(scope: &mut serde_json::Value) {
-            if let Some(inferences) = scope
-                .get_mut("inferences")
-                .and_then(serde_json::Value::as_object_mut)
-            {
-                for inference in inferences.values_mut() {
-                    omit_model_metadata(inference);
-                }
-            }
-        }
-        let mut structural = tree.clone();
-        if let Some(spec) = structural.get_mut("spec") {
-            omit_shared_metadata(spec);
-            if let Some(sandboxes) = spec
-                .get_mut("sandboxes")
-                .and_then(serde_json::Value::as_array_mut)
-            {
-                for sandbox in sandboxes {
-                    omit_shared_metadata(sandbox);
-                    if let Some(inference) = sandbox
-                        .get_mut("agent")
-                        .and_then(|agent| agent.get_mut("inference"))
-                    {
-                        omit_model_metadata(inference);
-                    }
-                }
-            }
-        }
-        if has_null(&structural) {
-            return Err(ConfigError::new(
-                "omit optional fields instead of using null",
-            ));
-        }
+        schema::validate_input(&tree)?;
         let mut document: Self = serde_json::from_value(tree).map_err(|_| {
             ConfigError::new("configuration contains an unknown field or invalid field type")
         })?;

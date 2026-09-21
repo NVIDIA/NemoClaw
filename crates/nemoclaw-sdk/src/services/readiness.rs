@@ -3,16 +3,83 @@
 
 use super::installers::{ollama, vllm};
 use crate::{CancellationToken, Error, docker::Connections, managed::Spec};
+use serde::Deserialize;
+use serde_json::{Value, json};
 use std::time::Duration;
 
-fn parse(encoded: &str) -> Result<Spec, Error> {
+#[derive(Deserialize)]
+#[serde(tag = "kind", deny_unknown_fields)]
+enum ProxyReadiness {
+    #[serde(rename = "ollama_proxy")]
+    Proxy {
+        engine: String,
+        proxy: Box<ollama::ProxySpec>,
+    },
+}
+enum ReadinessSpec {
+    Managed(Box<Spec>),
+    Proxy(ProxyReadiness),
+}
+impl ReadinessSpec {
+    fn engine(&self) -> &str {
+        match self {
+            Self::Managed(spec) => spec.engine(),
+            Self::Proxy(ProxyReadiness::Proxy { engine, .. }) => engine,
+        }
+    }
+}
+
+pub(crate) fn configure_proxy_readiness(
+    graph: &mut Value,
+    targets: &[crate::compile::Target],
+) -> Result<(), Error> {
+    for target in targets
+        .iter()
+        .filter(|target| target.kind == ollama::proxy::PROXY)
+    {
+        let container = crate::docker_compute::address(&target.address);
+        let logical = container.split_once('.').unwrap().1;
+        let address = format!("data.nemoclaw_service_readiness.{logical}");
+        let mut proxy = ollama::proxy::row_spec(&target.values)?;
+        proxy.image_pull_policy = None;
+        let encoded = json!({"kind":ollama::proxy::PROXY,"engine":target.values["engine"],
+            "proxy":proxy})
+        .to_string();
+        graph["data"]["nemoclaw_service_readiness"][logical] = json!({
+            "spec":encoded.replace("${", "$${").replace("%{", "%%{"),
+            "container_id":format!("${{{container}.id}}"),
+            "read_trigger":"${timestamp() != \"\"}", "wait_timeout_seconds":30
+        });
+        for instances in graph["resource"].as_object_mut().unwrap().values_mut() {
+            for resource in instances.as_object_mut().unwrap().values_mut() {
+                if let Some(dependencies) = resource["depends_on"].as_array_mut()
+                    && dependencies.contains(&json!(container))
+                {
+                    dependencies.push(json!(address));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn parse(encoded: &str) -> Result<ReadinessSpec, Error> {
+    if let Ok(proxy) = serde_json::from_str::<ProxyReadiness>(encoded) {
+        let ProxyReadiness::Proxy {
+            engine,
+            proxy: spec,
+        } = &proxy;
+        crate::docker::Engine::validate_endpoint(engine)?;
+        spec.validate()?;
+        return Ok(ReadinessSpec::Proxy(proxy));
+    }
     let spec: Spec = serde_json::from_str(encoded)
         .map_err(|_| Error::State("invalid service readiness specification"))?;
     if !matches!(spec.kind.as_str(), "inference_service" | "ollama_service") {
         return Err(Error::State("runtime has no service readiness contract"));
     }
     super::validate_resource_spec(&spec.kind, encoded)?;
-    Ok(spec)
+    Ok(ReadinessSpec::Managed(Box::new(spec)))
 }
 
 /// Validate readiness inputs without contacting an engine or loading credentials.
@@ -41,9 +108,43 @@ pub async fn wait_service_ready(
     }
     let engine = crate::managed::service_engine(connections, spec.engine())?;
     let check = async {
+        let spec = match &spec {
+            ReadinessSpec::Managed(spec) => spec,
+            ReadinessSpec::Proxy(ProxyReadiness::Proxy { proxy, .. }) => {
+                let observed = engine
+                    .container(container_id)
+                    .await?
+                    .ok_or(Error::State("proxy runtime is absent"))?;
+                if observed.id.as_deref() != Some(container_id)
+                    || observed
+                        .name
+                        .as_deref()
+                        .map(|name| name.trim_start_matches('/'))
+                        != Some(proxy.name.as_str())
+                {
+                    return Err(crate::ObservationError::BindingMismatch.into());
+                }
+                if !observed
+                    .state
+                    .and_then(|state| state.running)
+                    .unwrap_or(false)
+                {
+                    return Err(Error::State(
+                        "proxy runtime is not running; explicitly reapply",
+                    ));
+                }
+                if timeout.is_zero() {
+                    super::authentication::read_key(&engine, container_id).await?;
+                } else {
+                    super::authentication::read_proxy_key(&engine, container_id).await?;
+                }
+                ollama::proxy::verify_model(&proxy.settings).await?;
+                return Ok(());
+            }
+        };
         loop {
             let observed = engine
-                .observe_service(&spec, container_id)
+                .observe_service(spec, container_id)
                 .await?
                 .ok_or(Error::State("service runtime is unobservable"))?;
             if !observed.running {
@@ -61,7 +162,7 @@ pub async fn wait_service_ready(
             match phase.as_str() {
                 "ready" => {
                     if spec.kind == vllm::SERVICE_KIND
-                        && vllm::configured_service(&spec)?.authentication.is_some()
+                        && vllm::configured_service(spec)?.authentication.is_some()
                     {
                         super::authentication::read_service_key(&engine, container_id).await?;
                     }

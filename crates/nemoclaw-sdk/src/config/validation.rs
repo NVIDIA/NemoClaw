@@ -2,18 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::*;
-use regex::Regex;
-use std::{
-    net::{IpAddr, SocketAddr},
-    sync::LazyLock,
-};
+use std::net::{IpAddr, SocketAddr};
 use url::Url;
 
-pub(crate) static SLUG: LazyLock<Regex> = LazyLock::new(|| Regex::new(constraints::SLUG).unwrap());
-static UUID: LazyLock<Regex> = LazyLock::new(|| Regex::new(constraints::UUID).unwrap());
-static ENV: LazyLock<Regex> = LazyLock::new(|| Regex::new(constraints::ENV).unwrap());
-static MODEL: LazyLock<Regex> = LazyLock::new(|| Regex::new(constraints::MODEL).unwrap());
-static IMAGE: LazyLock<Regex> = LazyLock::new(|| Regex::new(constraints::IMAGE).unwrap());
 pub(crate) fn require(valid: bool, reason: &'static str) -> Result<(), ConfigError> {
     if valid {
         Ok(())
@@ -31,10 +22,10 @@ fn host_ip(url: &Url) -> Option<IpAddr> {
     url.host_str()?.trim_matches(['[', ']']).parse().ok()
 }
 pub(super) fn credential(value: &Option<Credential>) -> Result<(), ConfigError> {
-    require(
-        value.as_ref().is_none_or(|c| ENV.is_match(&c.env)),
-        "credential references require an uppercase environment variable name",
-    )
+    if let Some(credential) = value {
+        schema::validate_definition("Credential", credential)?;
+    }
+    Ok(())
 }
 
 pub fn validate_endpoint(raw: &str, gateway: bool) -> Result<(), ConfigError> {
@@ -105,47 +96,12 @@ pub fn is_fabric_harness(harness: &str) -> bool {
 }
 impl Document {
     pub fn validate(&self) -> Result<(), ConfigError> {
-        require(
-            self.api_version == API_VERSION && self.kind == constraints::KIND,
-            "expected nemoclaw.nvidia.com/v1alpha1 NemoClawConfig",
-        )?;
-        require(
-            SLUG.is_match(&self.metadata.name) && UUID.is_match(&self.metadata.uid),
-            "metadata requires a lowercase name and immutable UUID",
-        )?;
+        schema::validate_document(self)?;
         let gateway = &self.spec.gateway;
         if let Gateway::Managed(gateway) = gateway {
             gateway.validate_managed()?;
-            if self
-                .spec
-                .sandboxes
-                .iter()
-                .any(|sandbox| sandbox.runtime.provider == ComputeDriver::Docker)
-            {
-                super::ImagePullPolicy::validate_service(gateway.image_pull_policy)?;
-            }
         }
         validate_endpoint(gateway.endpoint(), true)?;
-        if let Gateway::External(gateway) = gateway {
-            credential(&gateway.credential)?;
-        }
-        if let Some(tls) = gateway.tls() {
-            for c in [&tls.ca, &tls.certificate, &tls.key] {
-                require(
-                    ENV.is_match(&c.env),
-                    "TLS requires environment variable references",
-                )?;
-            }
-        }
-        require(
-            !gateway.endpoint().starts_with("http:")
-                || (gateway.credential().is_none() && gateway.tls().is_none()),
-            "gateway credentials require HTTPS",
-        )?;
-        require(
-            !self.spec.sandboxes.is_empty() && self.spec.sandboxes.len() <= 32,
-            "between one and 32 sandboxes are required",
-        )?;
         self.validate_harness_references()?;
         let selected_providers = self.selected_inference_providers()?;
         crate::services::validate(self)?;
@@ -158,19 +114,6 @@ impl Document {
             require(
                 sandbox_names.insert(&sandbox.name),
                 "sandbox names must be unique",
-            )?;
-            require(
-                SLUG.is_match(&sandbox.name) && IMAGE.is_match(&sandbox.image.ref_),
-                "sandbox requires a lowercase name and image pinned by SHA-256 digest",
-            )?;
-            require(
-                gateway.as_managed().is_none()
-                    || self
-                        .spec
-                        .sandboxes
-                        .iter()
-                        .all(|other| other.runtime.provider == sandbox.runtime.provider),
-                "managed gateway requires every sandbox to select the same runtime driver",
             )?;
             sandbox.network.validate()?;
             let harness = self.sandbox_harness(sandbox)?;
@@ -196,11 +139,6 @@ impl Document {
                 tools.validate(harness.kind)?;
             }
             require(
-                SLUG.is_match(&agent.name),
-                "agent requires a lowercase name",
-            )?;
-
-            require(
                 self.sandbox_inference(sandbox)?.routes.len() == 1
                     || matches!(harness.kind, HarnessKind::OpenClaw | HarnessKind::Pi),
                 "multiple model choices require OpenClaw or Pi",
@@ -218,8 +156,9 @@ impl Document {
                     .unwrap_or(InferenceApi::for_harness(harness.kind));
                 require(
                     api.supported(harness.kind)
-                        && (api == InferenceApi::AnthropicMessages)
-                            == (provider.provider == InferenceProviderKind::Anthropic),
+                        && (provider.api.is_some()
+                            || (api == InferenceApi::AnthropicMessages)
+                                == (provider.provider == InferenceProviderKind::Anthropic)),
                     "API must match the provider implementation and be supported by the harness",
                 )?;
                 if agent.auth.is_some() {
@@ -248,8 +187,7 @@ impl Document {
 }
 impl super::ManagedGateway {
     pub fn validate_managed(&self) -> Result<(), ConfigError> {
-        let url =
-            Url::parse(&self.endpoint).map_err(|_| ConfigError::new("invalid gateway endpoint"))?;
+        schema::validate_definition("Gateway", &Gateway::Managed(self.clone()))?;
         let authority = self
             .endpoint
             .strip_prefix("http://")
@@ -259,12 +197,8 @@ impl super::ManagedGateway {
             .unwrap_or("");
         let bind = authority.parse::<SocketAddr>().ok();
         require(
-            url.scheme() == "http"
-                && url.host_str() == Some("127.0.0.1")
-                && bind.is_some_and(|a| a.port() >= 1024)
-                && self.engine.starts_with("unix:///")
-                && crate::docker::Engine::validate_endpoint(&self.engine).is_ok()
-                && self.image == DEFAULT_GATEWAY_IMAGE,
+            bind.is_some_and(|a| a.port() >= 1024)
+                && crate::docker::Engine::validate_endpoint(&self.engine).is_ok(),
             "managed gateway requires pinned image, a local engine socket, and unprivileged loopback HTTP port without credentials",
         )?;
         let net = self.network_cidr.parse::<ipnet::Ipv4Net>().ok();
@@ -279,22 +213,17 @@ impl super::ManagedGateway {
 impl Document {
     fn validate_provider(&self, provider: &InferenceProvider) -> Result<(), ConfigError> {
         let managed = crate::services::validate_provider(self, provider)?;
-        require(
-            SLUG.is_match(&provider.name),
-            "provider requires a lowercase name and openai or anthropic implementation",
-        )?;
         if !managed {
             validate_endpoint(&provider.endpoint, false)?;
         }
-        credential(&provider.credential)?;
-        require(
-            provider.credential.is_none() || !provider.endpoint.starts_with("http:"),
-            "inference credentials require HTTPS",
-        )?;
         Ok(())
     }
 }
 
 pub(crate) fn valid_model(model: &str) -> bool {
-    MODEL.is_match(model)
+    schema::validate_property("Overrides", "model", &model).is_ok()
+}
+
+pub(crate) fn valid_name(name: &str) -> bool {
+    schema::validate_property("Metadata", "name", &name).is_ok()
 }

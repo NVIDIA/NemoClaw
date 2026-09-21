@@ -287,6 +287,7 @@ There is no lost-state adoption, migration, pruning, or purge command.
 After an interrupted apply, keep the original YAML and entire state directory, including `runtime/`, and explicitly reapply.
 If the error says an unfinished apply has different intent, use the exact configuration from that unfinished operation before attempting a new change.
 If managed gateway or inference runtime apply fails, revised intent or teardown can proceed using recorded bindings and the existing ownership checks.
+The same applies when an OpenShell-graph apply only observes resources or changes disposable compute; other resource mutations retain the original-intent guard.
 An unfinished OpenShell mutation still requires its original intent; runtime recovery does not clear that guard.
 Export remains unavailable while either operation is unfinished.
 If readiness fails after resource creation, provider state and persistent data remain recorded.
@@ -299,7 +300,7 @@ It preserves references and desired settings, not model weights, histories, nati
 Shell redirection can leave an empty file on failure; check the exit status before using a new export.
 
 When a managed service is stopped, plan observes the stopped resource without starting it.
-An explicit apply reconciles the resource graph and performs bounded readiness checks, including the managed vLLM/Ollama data-source reads.
+An explicit apply reconciles the resource graph and performs bounded readiness checks, including vLLM/Ollama service and proxy data-source reads.
 The installer contract has no separate recovery operation and does not create an automatic restart loop.
 Export preserves retained intent and validates required resource bindings without another readiness or model-inventory check.
 Destroy uses native provider compute/cache state and separately verified credential and gateway storage; it does not inspect model inventories.

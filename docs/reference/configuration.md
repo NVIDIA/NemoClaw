@@ -17,16 +17,16 @@ Empty or zero selects a default only where stated.
 
 ## Validation Beyond the Schema
 
-- Document::parse remains authoritative. It rejects YAML aliases, anchors, merge keys, unsupported tags, duplicate keys, multiple documents, and input larger than 1 MiB.
-- The parser checks endpoint transport and address policy, managed gateway port bounds, canonical private IPv4 /24 networks, local engine socket syntax, one compute driver per managed gateway, and publication address/port/network agreement.
+- Document::parse rejects YAML aliases, anchors, merge keys, unsupported tags, duplicate keys, multiple documents, and input larger than 1 MiB. It applies the compiled input schema before defaulting; Document::validate applies the normalized schema and semantic checks, including for directly constructed Rust values.
+- The parser checks endpoint transport and address policy, managed gateway port bounds, canonical private IPv4 /24 networks, local engine socket syntax, and publication address/port/network agreement.
 - Explicit sandbox policies are also checked by the pinned OpenShell policy parser and validator, including protocol-specific rule semantics, process identities, filesystem paths, and destination address restrictions.
 - Explicit filesystem grants must permit reads of the selected harness runtime directories; parent and read-write grants count. This parser check does not inspect images, resolve symlinks, or establish runtime permissions.
-- The parser checks uniquely named model choices with an explicit default for multiple choices, multiple choices for OpenClaw and Pi, and the OpenClaw disclosure mode; omitted disclosure means progressive.
+- The schema requires an explicit default for multiple model choices. Rust checks unique route names, that the default names a route, and that the resolved harness supports the selected model count, tuning, and tools; omitted disclosure means progressive.
 - The parser resolves integrationRefs only from enclosing deployment or sandbox definitions, rejects name shadowing and incompatible agent grants, and permits at most one attached Brave search definition per sandbox. Agent-inline definitions attach directly; unused enclosing definitions grant no access.
-- The parser requires exactly one sandbox harness or harnessRef, resolves visible harnesses without shadowing, and rejects agent-level harness selection. Each sandbox requires one agent and hosts one Fabric runtime using the sandbox-selected implementation. Shared definitions reuse configuration across sandboxes.
+- The schema requires exactly one sandbox harness or harnessRef and rejects agent-level harness selection. Rust resolves visible harnesses without shadowing. Each sandbox requires one agent and hosts one Fabric runtime using the sandbox-selected implementation. Shared definitions reuse configuration across sandboxes.
 - The parser permits non-default reasoningEffort values only on the initial default choice. Managed inference services may constrain routes to their declared served model.
-- The parser resolves inferenceRef from enclosing inferences, preserves declaration scope for nested provider references, and rejects missing names, shadowing, and inline/reference ambiguity.
-- The parser resolves providerRef from enclosing inferenceProviders, rejects shadowing, conflicting selected names, more than 32 selected providers, incompatible managed-service combinations, and compares route models and authentication with the selected provider. With multiple named definitions, provider/agent compatibility is a parser check. Unselected definitions create no resources. Snapshot identity must match the service model.
+- Rust resolves inferenceRef from enclosing inferences, preserves declaration scope for nested provider references, and rejects missing names and shadowing. The schema rejects inline/reference ambiguity.
+- The parser resolves providerRef from enclosing inferenceProviders, rejects shadowing, conflicting selected names, more than 32 selected providers, incompatible managed-service combinations, and compares route models and authentication with the selected provider. Provider/agent compatibility is checked after reference resolution for both inline and shared definitions. Unselected definitions create no resources. Snapshot identity must match the service model.
 - The parser checks memory threshold ordering and GPU/KV budget relationships; recipe path safety, byte-length limits, environment-map conflicts, snapshot file uniqueness, directory conflicts, and total-size overflow.
 - Schema validation does not observe hardware, image labels, model weights, credentials, ownership, connectivity, or inference readiness. Those checks run during the relevant SDK operation.
 
@@ -915,7 +915,7 @@ Paths:
 | `access` | string | No | — | full or read-only preset; mutually exclusive with rules. Constraints: `"full"` or `"read-only"`. |
 | `allow_encoded_slash` | boolean | No | — | Allow encoded slash path segments when required by the upstream API. |
 | `allowed_ips` | array of string | No | — | Resolved IP addresses or CIDRs allowed by OpenShell destination validation. |
-| `deny_rules` | array of [PolicyMatcher](#policymatcher) | No | — | Application-protocol deny rules, evaluated before allow rules. |
+| `deny_rules` | array of [PolicyMatcher](#policymatcher) | No | — | Application-protocol deny rules, evaluated before allow rules. Constraints: minimum items 1. |
 | `enforcement` | string | No | — | enforce or audit; omission follows OpenShell defaults. Constraints: `"enforce"` or `"audit"`. |
 | `host` | string | No | — | Destination hostname or DNS glob; may be omitted with allowed_ips. |
 | `json_rpc` | [PolicyJsonRpc](#policyjsonrpc) | No | — | JSON-RPC inspection limits. |
@@ -925,7 +925,7 @@ Paths:
 | `ports` | array of integer | No | — | Nonempty unique TCP ports; mutually exclusive with port. Constraints: minimum items 1; items: minimum 1; maximum 65535. |
 | `protocol` | string | No | — | rest, websocket, json-rpc, or mcp; omit for TCP. Constraints: `"rest"` or `"websocket"` or `"json-rpc"` or `"mcp"`. |
 | `request_body_credential_rewrite` | boolean | No | — | Enable OpenShell placeholder rewriting in supported REST request bodies. |
-| `rules` | array of [PolicyAllowRule](#policyallowrule) | No | — | Application-protocol allow rules. |
+| `rules` | array of [PolicyAllowRule](#policyallowrule) | No | — | Application-protocol allow rules. Constraints: minimum items 1. |
 | `tls` | string | No | — | terminate, passthrough, or skip, subject to protocol validation. Constraints: `"terminate"` or `"passthrough"` or `"skip"`. |
 | `websocket_credential_rewrite` | boolean | No | — | Enable OpenShell placeholder rewriting after an allowed REST WebSocket upgrade. |
 

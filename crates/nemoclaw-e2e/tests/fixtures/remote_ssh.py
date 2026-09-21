@@ -107,6 +107,9 @@ with (root / "lock").open("w") as lock:
             code = 404
         elif method == "HEAD":
             item = fixture["stats"].get(name)
+            if name == "/data/inference-key" and control.pop("defer_key_once", False):
+                (root / "control.json").write_text(json.dumps(control))
+                item = None
             if item is None:
                 code = 404
             else:

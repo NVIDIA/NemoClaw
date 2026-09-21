@@ -43,27 +43,7 @@ pub struct RelayTracing {
 }
 impl AgentObservability {
     pub(crate) fn validate(&self, harness: HarnessKind) -> Result<(), ConfigError> {
-        match self {
-            Self::Otlp(otlp)
-                if harness == HarnessKind::OpenClaw
-                    && otlp.enabled
-                    && otlp.endpoint == OTLP_ENDPOINT
-                    && !otlp.service_name.is_empty()
-                    && otlp.service_name.len() <= 256
-                    && otlp.service_name.trim() == otlp.service_name
-                    && otlp.service_name.bytes().all(|b| (32..=126).contains(&b))
-                    && otlp
-                        .sample_rate
-                        .as_f64()
-                        .is_some_and(|n| (0.0..=1.0).contains(&n)) => {}
-            Self::Relay(relay) if harness == HarnessKind::Hermes && relay.enabled => {}
-            _ => {
-                return Err(ConfigError::new(
-                    "observability requires exactly one supported harness-native integration",
-                ));
-            }
-        }
-        Ok(())
+        super::schema::validate_harness_field("observability", self, harness)
     }
 
     pub(crate) fn uses_otlp(&self) -> bool {
