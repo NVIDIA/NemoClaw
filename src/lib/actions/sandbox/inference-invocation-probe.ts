@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { SandboxCommandTransportError } from "../../adapters/sandbox/command-transport";
 import type {
   OpenShellSandboxBufferedCommandExecutor,
   OpenShellSandboxBufferedCommandRequest,
@@ -220,7 +221,10 @@ export async function probeSandboxInferenceInvocation(
       buildSandboxInferenceInvocationCommand(input),
       timeoutMs,
       execOptions,
-    );
+    ).catch((error: unknown) => {
+      if (!(error instanceof SandboxCommandTransportError)) throw error;
+      return null;
+    });
   }
   if (!result) {
     return {

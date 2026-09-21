@@ -1,10 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import type {
-  OpenShellForwardAdapter,
-  OpenShellForwardIdentity,
-  OpenShellForwardObservation,
+import {
+  formatOpenShellForwardStartFailure,
+  type OpenShellForwardAdapter,
+  type OpenShellForwardIdentity,
+  type OpenShellForwardObservation,
 } from "../../adapters/openshell/forward";
 import {
   createOpenShellForwardAdapterForAuthority,
@@ -633,7 +634,11 @@ function forwardOperationFailureMessage(
     | Awaited<ReturnType<OpenShellForwardAdapter["startForward"]>>
     | Awaited<ReturnType<OpenShellForwardAdapter["retireLegacyForward"]>>,
 ): string {
-  if ("error" in result) return result.error.message;
+  if ("error" in result) {
+    const failure = "failure" in result ? result.failure : undefined;
+    const suffix = failure ? ` [${formatOpenShellForwardStartFailure(failure)}]` : "";
+    return `${result.error.message}${suffix}`;
+  }
   if ("observation" in result && result.observation.state === "foreign") {
     return "The host port is owned by a foreign listener.";
   }

@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { SandboxCommandTransportError } from "../../adapters/sandbox/command-transport";
 import { spawnSync } from "node:child_process";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -763,40 +764,56 @@ describe("OpenShell MCP provider state", () => {
   });
 
   it.each([
-    ["unavailable", null, "transport-unavailable"],
-    ["malformed", { status: 0, stdout: "raw-secret", stderr: "" }, "invalid-bounded-output"],
-    ["rejected", { status: 1, stdout: "", stderr: "" }, "proof-command-exit-1"],
-  ])("does not refresh when a credential observation is %s", async (_case, result, diagnostic) => {
-    vi.stubEnv("NEMOCLAW_MCP_PROVIDER_SYNC_TIMEOUT_SECONDS", "1");
-    vi.spyOn(processRecovery, "executeSandboxExecCommand").mockResolvedValue(result);
-    vi.spyOn(Date, "now").mockReturnValueOnce(0).mockReturnValueOnce(0).mockReturnValue(1_000);
-    const refreshAfterObservedAbsence = vi.fn();
+    ["unavailable", () => Promise.resolve(null), "transport-unavailable"],
+    [
+      "transport rejection",
+      () => Promise.reject(new SandboxCommandTransportError("unavailable")),
+      "transport-unavailable",
+    ],
+    [
+      "malformed",
+      () => Promise.resolve({ status: 0, stdout: "raw-secret", stderr: "" }),
+      "invalid-bounded-output",
+    ],
+    [
+      "rejected",
+      () => Promise.resolve({ status: 1, stdout: "", stderr: "" }),
+      "proof-command-exit-1",
+    ],
+  ] as const)(
+    "does not refresh when a credential observation is %s",
+    async (_case, result, diagnostic) => {
+      vi.stubEnv("NEMOCLAW_MCP_PROVIDER_SYNC_TIMEOUT_SECONDS", "1");
+      vi.spyOn(processRecovery, "executeSandboxExecCommand").mockImplementation(result);
+      vi.spyOn(Date, "now").mockReturnValueOnce(0).mockReturnValueOnce(0).mockReturnValue(1_000);
+      const refreshAfterObservedAbsence = vi.fn();
 
-    let failure: unknown;
-    try {
-      await waitForAttachedMcpCredential(
-        "alpha",
-        {
-          server: "github",
-          agent: "openclaw",
-          adapter: "openclaw-config",
-          url: "https://mcp.example.test/mcp",
-          env: ["GITHUB_TOKEN"],
-          providerName: "alpha-mcp-github-0123456789abcdef",
-          providerId: "11111111-2222-4333-8444-555555555555",
-          policyName: "mcp-bridge-github",
-        },
-        runtimeSelection,
-        { refreshAfterObservedAbsence },
-      );
-    } catch (error) {
-      failure = error;
-    }
-    expect(failure).toBeInstanceOf(Error);
-    expect((failure as Error).message).toContain(`last bounded observation: ${diagnostic}`);
-    expect((failure as Error).message).not.toContain("raw-secret");
-    expect(refreshAfterObservedAbsence).not.toHaveBeenCalled();
-  });
+      let failure: unknown;
+      try {
+        await waitForAttachedMcpCredential(
+          "alpha",
+          {
+            server: "github",
+            agent: "openclaw",
+            adapter: "openclaw-config",
+            url: "https://mcp.example.test/mcp",
+            env: ["GITHUB_TOKEN"],
+            providerName: "alpha-mcp-github-0123456789abcdef",
+            providerId: "11111111-2222-4333-8444-555555555555",
+            policyName: "mcp-bridge-github",
+          },
+          runtimeSelection,
+          { refreshAfterObservedAbsence },
+        );
+      } catch (error) {
+        failure = error;
+      }
+      expect(failure).toBeInstanceOf(Error);
+      expect((failure as Error).message).toContain(`last bounded observation: ${diagnostic}`);
+      expect((failure as Error).message).not.toContain("raw-secret");
+      expect(refreshAfterObservedAbsence).not.toHaveBeenCalled();
+    },
+  );
 
   it("propagates a provider refresh failure after observed absence", async () => {
     vi.spyOn(processRecovery, "executeSandboxExecCommand").mockResolvedValue({
@@ -860,35 +877,43 @@ describe("OpenShell MCP provider state", () => {
     expect(exec).toHaveBeenCalledTimes(2);
   });
 
-  it("fails detach verification when the strict OpenShell exec is unavailable", async () => {
-    vi.stubEnv("NEMOCLAW_MCP_PROVIDER_SYNC_TIMEOUT_SECONDS", "1");
-    const exec = vi.spyOn(processRecovery, "executeSandboxExecCommand").mockResolvedValue(null);
-    vi.spyOn(Date, "now").mockReturnValueOnce(0).mockReturnValueOnce(0).mockReturnValue(1_000);
+  it.each([
+    ["missing output", () => Promise.resolve(null)],
+    ["transport rejection", () => Promise.reject(new SandboxCommandTransportError("unavailable"))],
+  ] as const)(
+    "fails detach verification on unavailable exec (rejection: %s)",
+    async (_case, execute) => {
+      vi.stubEnv("NEMOCLAW_MCP_PROVIDER_SYNC_TIMEOUT_SECONDS", "1");
+      const exec = vi
+        .spyOn(processRecovery, "executeSandboxExecCommand")
+        .mockImplementation(execute);
+      vi.spyOn(Date, "now").mockReturnValueOnce(0).mockReturnValueOnce(0).mockReturnValue(1_000);
 
-    await expect(
-      waitForDetachedMcpCredential(
-        "alpha",
-        {
-          server: "github",
-          agent: "openclaw",
-          adapter: "openclaw-config",
-          url: "https://mcp.example.test/mcp",
-          env: ["GITHUB_TOKEN"],
-          providerName: "alpha-mcp-github-0123456789abcdef",
-          providerId: "11111111-2222-4333-8444-555555555555",
-          policyName: "mcp-bridge-github",
-        },
+      await expect(
+        waitForDetachedMcpCredential(
+          "alpha",
+          {
+            server: "github",
+            agent: "openclaw",
+            adapter: "openclaw-config",
+            url: "https://mcp.example.test/mcp",
+            env: ["GITHUB_TOKEN"],
+            providerName: "alpha-mcp-github-0123456789abcdef",
+            providerId: "11111111-2222-4333-8444-555555555555",
+            policyName: "mcp-bridge-github",
+          },
+          runtimeSelection,
+        ),
+      ).rejects.toThrow(/did not confirm credential 'GITHUB_TOKEN' was revoked/);
+
+      const proofCommand = exec.mock.calls[0]?.[1] ?? "";
+      expect(proofCommand).toContain("GITHUB_TOKEN+x");
+      expect(proofCommand).not.toContain("base64 -d");
+      expect(exec).toHaveBeenCalledWith("alpha", proofCommand, undefined, {
         runtimeSelection,
-      ),
-    ).rejects.toThrow(/did not confirm credential 'GITHUB_TOKEN' was revoked/);
-
-    const proofCommand = exec.mock.calls[0]?.[1] ?? "";
-    expect(proofCommand).toContain("GITHUB_TOKEN+x");
-    expect(proofCommand).not.toContain("base64 -d");
-    expect(exec).toHaveBeenCalledWith("alpha", proofCommand, undefined, {
-      runtimeSelection,
-    });
-  });
+      });
+    },
+  );
 
   it("requires a changed credential revision after provider updates", async () => {
     const entry: McpSourceEntry = {

@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { SandboxCommandTransportError } from "../../adapters/sandbox/command-transport";
 import { spawnSync } from "node:child_process";
 import {
   existsSync,
@@ -579,4 +580,25 @@ describe("sandbox inference invocation probe", () => {
       expect(Number(budget?.[1])).toBeGreaterThanOrEqual(endpointMinimumReplyTokens);
     },
   );
+});
+
+describe("native inference transport failures", () => {
+  it.each(["cancelled", "capture", "invocation", "timeout", "unavailable", "malformed"] as const)(
+    "returns unavailable for %s without retry",
+    async (kind) => {
+      const execute = vi.fn().mockRejectedValue(new SandboxCommandTransportError(kind));
+      await expect(probeSandboxInferenceInvocation(input, { execute })).resolves.toMatchObject({
+        ok: false,
+        detail: "sandbox inference invocation probe was unavailable",
+        httpStatus: null,
+      });
+      expect(execute).toHaveBeenCalledOnce();
+    },
+  );
+  it("propagates unexpected errors", async () => {
+    const error = new Error("authority refusal");
+    await expect(
+      probeSandboxInferenceInvocation(input, { execute: vi.fn().mockRejectedValue(error) }),
+    ).rejects.toBe(error);
+  });
 });

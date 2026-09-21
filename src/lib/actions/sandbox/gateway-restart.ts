@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { SandboxCommandTransportError } from "../../adapters/sandbox/command-transport";
 import { GATEWAY_RESTART_MARKERS as MARKERS } from "../../agent/gateway-restart-markers";
 import * as agentRuntime from "../../agent/runtime";
 import { G, R } from "../../cli/terminal-style";
@@ -304,7 +305,12 @@ async function hermesGatewayLogTail(
   sandboxName: string,
   exec: (sandboxName: string, command: string) => Promise<GatewayRestartCommandResult | null>,
 ): Promise<string[]> {
-  const result = await exec(sandboxName, HERMES_GATEWAY_LOG_TAIL_COMMAND);
+  const result = await exec(sandboxName, HERMES_GATEWAY_LOG_TAIL_COMMAND).catch(
+    (error: unknown) => {
+      if (!(error instanceof SandboxCommandTransportError)) throw error;
+      return null;
+    },
+  );
   if (!result || result.status !== 0) return [];
   return sanitizeGatewayRestartFailureDetail(result.stdout)
     .split(/\r?\n/)
@@ -429,7 +435,15 @@ export async function restartSandboxGatewayWithDeps(
     agentName === "openclaw"
       ? "env -u OPENCLAW_HOME -u OPENCLAW_STATE_DIR -u OPENCLAW_CONFIG_PATH openclaw gateway restart --safe --skip-deferral --json"
       : `${agentName} gateway restart`;
-  const restartResult = await deps.executeSandboxExecCommand(sandboxName, nativeCommand, 210000);
+  let restartResult: GatewayRestartCommandResult | null;
+  try {
+    restartResult = await deps.executeSandboxExecCommand(sandboxName, nativeCommand, 210000);
+  } catch (error) {
+    if (!(error instanceof SandboxCommandTransportError)) throw error;
+    const detail = sanitizeGatewayRestartFailureDetail(error.message);
+    printGatewayRestartFailure(sandboxName, "native agent command", detail);
+    return { ok: false, failureLayer: "native agent command", detail };
+  }
   if (!restartResult) {
     const detail = `${nativeCommand} did not return command output`;
     const gatewayLogTail =

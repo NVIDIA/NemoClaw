@@ -91,8 +91,9 @@ type ExecutorLoad =
  *
  * Once the loader returns `ok`, ownership of the actual subprocess call
  * lives in `process-recovery`'s {@link executeSandboxCommand}, which is
- * the single source of truth for sandbox SSH spawning. This function
- * does not invent a parallel spawn pipeline.
+ * the single native OpenShell command path. Custom-agent recovery retains
+ * its separate explicit SSH operation. This function does not invent a
+ * parallel spawn pipeline.
  */
 function loadExecutor(): ExecutorLoad {
   if (process.env.VITEST === "true") return { kind: "vitest" };
