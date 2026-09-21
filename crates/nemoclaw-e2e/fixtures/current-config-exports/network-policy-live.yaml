@@ -2,7 +2,7 @@ apiVersion: nemoclaw.nvidia.com/v1alpha1
 kind: NemoClawConfig
 metadata:
   name: e2e-net-policy
-  uid: 5e6c27a5-6d56-4434-8884-620ca162a239
+  uid: b279fb8f-952a-4745-918a-a23f98d939ea
 spec:
   gateway:
     endpoint: http://127.0.0.1:8080
