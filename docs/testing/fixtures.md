@@ -79,7 +79,8 @@ NEMOCLAW_TEST_PROVIDER=/absolute/path/to/terraform-provider-nemoclaw \
 
 The fixture uses an isolated SSH/Docker simulator and a builtin OpenTofu consumer, without SDK deployment orchestration or a reachable OpenShell gateway.
 It checks offline validation, apply-time reads, saved-plan failure, unchanged-service rechecks, bounded timeout, recovery, and teardown without readiness.
-It changes only temporary files and does not create containers or execute a model.
+The proxy case also uses an isolated HTTP model-metadata fixture and checks delayed initial credentials, container identity, credential permissions, and upstream model drift.
+It uses temporary files and loopback listeners; it does not create containers or execute a model.
 A failed assertion reports the OpenTofu diagnostic; rerun after correcting the matching provider or fixture inputs.
 
 ## Ollama and Platform Fixtures
