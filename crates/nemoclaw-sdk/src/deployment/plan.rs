@@ -14,6 +14,8 @@ pub(super) struct ResourceChange {
     #[serde(default)]
     pub mode: Option<String>,
     pub address: String,
+    #[serde(default)]
+    pub deposed: Option<String>,
     pub change: PlannedChange,
 }
 pub(super) fn observation(
@@ -39,7 +41,8 @@ pub(super) fn observation(
         )?
         .keys()
         .any(|engine| change.address == crate::services::capacity::observation_address(engine));
-    if !expected
+    if change.deposed.is_some()
+        || !expected
         || !seen.insert(change.address.clone())
         || !(change.change.actions == ["no-op"]
             || (!destroying && change.change.actions == ["read"])
@@ -54,6 +57,8 @@ pub(super) struct PlannedChange {
     pub actions: Vec<String>,
     #[serde(default)]
     pub before: Value,
+    #[serde(default)]
+    pub after: Value,
 }
 fn identity(change: &ResourceChange, expected: &Row, binding: &StateBinding) -> Result<(), Error> {
     if change.change.before["id"] != binding.id {
@@ -74,6 +79,38 @@ pub(super) fn disposable(address: &str) -> bool {
     crate::docker_compute::is_disposable(address)
 }
 
+// OpenTofu may retain an old object after create-before-destroy replacement.
+// It owns retrying that deletion; the SDK only verifies the recorded identity.
+fn cleanup(
+    change: &ResourceChange,
+    bindings: &BTreeMap<String, StateBinding>,
+    seen: &mut BTreeSet<(String, String)>,
+) -> Result<Option<Change>, Error> {
+    let Some(key) = &change.deposed else {
+        return Ok(None);
+    };
+    let id = bindings
+        .get(&change.address)
+        .and_then(|binding| binding.deposed.get(key));
+    let absent = change.change.actions == ["no-op"]
+        && change.change.before.is_null()
+        && change.change.after.is_null();
+    if !disposable(&change.address)
+        || change.address.starts_with("docker_volume.")
+        || id.is_none()
+        || (!absent
+            && (id.is_some_and(|id| change.change.before["id"] != *id)
+                || change.change.actions != ["delete"]))
+        || !seen.insert((change.address.clone(), key.clone()))
+    {
+        return Err(Error::Conflict("plan contains invalid replacement cleanup"));
+    }
+    Ok(Some(Change {
+        resource: format!("{} (deposed {key})", change.address),
+        actions: change.change.actions.clone(),
+    }))
+}
+
 pub(super) fn check_plan(
     plan: &Plan,
     allowed: &BTreeMap<String, Row>,
@@ -82,8 +119,15 @@ pub(super) fn check_plan(
     let mut seen = BTreeSet::new();
     let mut changes = Vec::new();
     let mut observations = BTreeSet::new();
+    let mut cleanup_seen = BTreeSet::new();
     for change in &plan.resource_changes {
         if observation(change, &mut observations, allowed, true, false)? {
+            continue;
+        }
+        if let Some(cleanup) = cleanup(change, bindings, &mut cleanup_seen)? {
+            if cleanup.actions != ["no-op"] {
+                changes.push(cleanup);
+            }
             continue;
         }
         if disposable(&change.address) {
@@ -163,8 +207,12 @@ pub(super) fn check_destroy_plan(
     let mut seen = BTreeSet::new();
     let mut changes = Vec::new();
     let mut observations = BTreeSet::new();
+    let mut cleanup_absent = BTreeSet::new();
     for drift in &plan.resource_drift {
         if observation(drift, &mut observations, allowed, true, true)? {
+            continue;
+        }
+        if cleanup(drift, bindings, &mut cleanup_absent)?.is_some() {
             continue;
         }
         if !allowed.contains_key(&drift.address) {
@@ -188,8 +236,20 @@ pub(super) fn check_destroy_plan(
         }
     }
     let mut observations = BTreeSet::new();
+    let mut cleanup_seen = BTreeSet::new();
     for change in &plan.resource_changes {
         if observation(change, &mut observations, allowed, true, true)? {
+            continue;
+        }
+        if let Some(cleanup) = cleanup(change, bindings, &mut cleanup_seen)? {
+            if cleanup_absent.contains(&(change.address.clone(), change.deposed.clone().unwrap())) {
+                return Err(Error::Conflict(
+                    "destroy plan duplicated replacement cleanup",
+                ));
+            }
+            if cleanup.actions != ["no-op"] {
+                changes.push(cleanup);
+            }
             continue;
         }
         let expected = allowed.get(&change.address).ok_or(Error::Conflict(
@@ -223,10 +283,9 @@ pub(super) fn check_destroy_plan(
             });
         }
     }
-    if bindings
-        .keys()
-        .any(|key| !seen.contains(key) && !absent.contains(key))
-    {
+    if bindings.iter().any(|(key, binding)| {
+        !binding.id.is_empty() && !seen.contains(key) && !absent.contains(key)
+    }) {
         return Err(Error::Conflict(
             "destroy plan omitted a resource without confirmed absence",
         ));

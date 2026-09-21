@@ -183,6 +183,7 @@ async fn managed_installers_accept_current_runtime_readiness_without_collecting_
             crate::state::StateBinding {
                 id: "provider-container".into(),
                 spec: String::new(),
+                ..Default::default()
             },
         )]);
         assert!(
@@ -611,6 +612,7 @@ async fn authenticated_vllm_readiness_rechecks_key_permissions() {
             crate::state::StateBinding {
                 id: "provider-container".into(),
                 spec: String::new(),
+                ..Default::default()
             },
         )]
         .into();

@@ -46,6 +46,20 @@ async fn run(root: &Path, bundle: &Path, command: &str, file: &str, success: boo
         eprintln!("{command}: {}", String::from_utf8_lossy(&output.stderr));
     }
     if output.status.success() != success {
+        let shown = tokio::process::Command::new(bundle.join("libexec/tofu"))
+            .args(["show", "-json", "apply.plan"])
+            .current_dir(root.join("deployment/runtime"))
+            .output()
+            .await
+            .unwrap();
+        if let Ok(plan) = serde_json::from_slice::<Value>(&shown.stdout) {
+            for change in plan["resource_changes"].as_array().unwrap() {
+                eprintln!(
+                    "planned cleanup: {}",
+                    json!({"address":change["address"],"deposed":change["deposed"],"actions":change["change"]["actions"],"id":change["change"]["before"]["id"]})
+                );
+            }
+        }
         eprintln!(
             "fixture host config: {}",
             read(root, "engine.json")["container"]["HostConfig"]
@@ -453,10 +467,75 @@ async fn lifecycle(harness: &str, authenticated: bool, kind: &str, partial_destr
                 .any(|provider| provider.credentials.values().any(|value| value == &bearer))
         );
     }
+    if authenticated {
+        replacement_cleanup(root, &bundle).await;
+    }
     run(root, &bundle, "destroy", "", true).await;
     let after = read(root, "engine.json");
     assert!(after["container"].is_null());
+    assert!(after["deposed_container"].is_null());
     assert_eq!(after["volume"], volume);
     assert!(after["network"].is_null());
     assert!(!root.join("capacity_reads").exists());
+}
+
+// Fault injection reproduces the state persisted after a replacement creates
+// its current object but fails to delete the old one. Only this owned fixture
+// writes the private state format; the SDK must consume OpenTofu's public JSON.
+fn interrupt_cleanup(root: &Path, old_present: bool) {
+    let mut state = read(root, "deployment/runtime/terraform.tfstate");
+    let container = state["resources"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|resource| resource["type"] == "docker_container")
+        .unwrap();
+    let mut old = container["instances"][0].clone();
+    old["deposed"] = json!("deadbeef");
+    old["attributes"]["id"] = json!("old-container");
+    old["attributes"]["name"] = json!("old-container");
+    container["instances"].as_array_mut().unwrap().push(old);
+    save(root, "deployment/runtime/terraform.tfstate", &state);
+    let mut engine = read(root, "engine.json");
+    let mut old = engine["container"].clone();
+    old["Id"] = json!("old-container");
+    old["Name"] = json!("/old-container");
+    old["State"]["Running"] = json!(true);
+    engine["deposed_container"] = if old_present { old } else { Value::Null };
+    save(root, "engine.json", &engine);
+}
+
+async fn replacement_cleanup(root: &Path, bundle: &Path) {
+    let before = read(root, "engine.json");
+    interrupt_cleanup(root, true);
+    save(root, "control.json", &json!({"cleanup_failure":true}));
+    run(root, bundle, "apply", "config.yaml", false).await;
+    assert!(read(root, "engine.json")["deposed_container"].is_object());
+    let state = read(root, "deployment/runtime/terraform.tfstate");
+    assert!(
+        state["resources"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|resource| resource["instances"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|instance| instance["deposed"] == "deadbeef"))
+    );
+    run(root, bundle, "export", "", false).await;
+    save(root, "control.json", &json!({}));
+    run(root, bundle, "apply", "config.yaml", true).await;
+    let recovered = read(root, "engine.json");
+    assert!(recovered["deposed_container"].is_null());
+    for key in ["container", "volume", "auth_volume", "creates"] {
+        assert_eq!(recovered[key], before[key], "cleanup changed {key}");
+    }
+    run(root, bundle, "export", "", true).await;
+    // A lost delete response leaves an already absent old object in state.
+    interrupt_cleanup(root, false);
+    run(root, bundle, "apply", "config.yaml", true).await;
+    assert_eq!(read(root, "engine.json")["container"], before["container"]);
+    // Teardown must also accept both current and pending-delete identities.
+    interrupt_cleanup(root, true);
 }

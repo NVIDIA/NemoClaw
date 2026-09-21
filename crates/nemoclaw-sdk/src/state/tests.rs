@@ -126,7 +126,7 @@ fn malformed_duplicate_and_unsupported_state_is_not_empty() {
         state(serde_json::json!([{"address":"x.y", "mode":"unknown", "values":{"id":"x"}}])),
         state(serde_json::json!([{"address":"x.y", "mode":"managed", "values":null}])),
         state(
-            serde_json::json!([{"address":"x.y", "mode":"managed", "values":{"id":"x"}, "deposed_key":"old"}]),
+            serde_json::json!([{"address":"x.y", "mode":"managed", "values":{"id":"x"}, "deposed_key":""}]),
         ),
     ] {
         assert!(read(&value).is_err(), "{value}");
@@ -193,4 +193,21 @@ async fn native_state_json_preserves_module_and_instance_identity_without_refres
     fs::write(&path, b"broken").unwrap();
     assert!(bindings(root, &bundle.tofu(), &cancel).await.is_err());
     assert_eq!(fs::read(path).unwrap(), b"broken");
+}
+
+#[test]
+fn replacement_cleanup_keeps_current_and_deposed_objects_distinct() {
+    let address = "docker_container.runtime";
+    let current = object(address, "current");
+    let mut old = object(address, "old");
+    old["deposed_key"] = serde_json::json!("deadbeef");
+    let observed = read(&state(serde_json::json!([old, current]))).unwrap();
+    assert_eq!(observed[address].id, "current");
+    assert_eq!(observed[address].deposed["deadbeef"], "old");
+    // The second instance is a recorded cleanup task, not a duplicate address.
+    assert!(read(&state(serde_json::json!([old]))).is_ok());
+    assert!(read(&state(serde_json::json!([old, old]))).is_err());
+    let mut duplicate = old.clone();
+    duplicate["values"]["id"] = serde_json::json!("current");
+    assert!(read(&state(serde_json::json!([current, duplicate]))).is_err());
 }

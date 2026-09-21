@@ -124,6 +124,7 @@ fn runtime_replacement_requires_retained_storage_and_preserves_the_old_binding()
         StateBinding {
             id: "physical".into(),
             spec: "old".into(),
+            ..Default::default()
         },
     )]
     .into();
@@ -370,6 +371,7 @@ fn ollama_runtime_plan_allows_native_compute_and_cache_recovery() {
         StateBinding {
             id: "engine/volume/created".into(),
             spec: String::new(),
+            ..Default::default()
         },
     );
     assert!(check_plan(&plan, &expected, &bindings).is_ok());
@@ -499,6 +501,7 @@ fn disposable_docker_compute_reconciles_while_durable_storage_does_not_recreate(
         StateBinding {
             id: "old-container".into(),
             spec: String::new(),
+            ..Default::default()
         },
     )]
     .into();
@@ -518,6 +521,7 @@ fn disposable_docker_compute_reconciles_while_durable_storage_does_not_recreate(
         StateBinding {
             id: "daemon/data/created".into(),
             spec: String::new(),
+            ..Default::default()
         },
     )]
     .into();
@@ -577,5 +581,109 @@ async fn changing_gateway_management_at_the_same_endpoint_preserves_saved_state(
             ));
             assert_eq!(fs::read(&intent).unwrap(), before);
         }
+    }
+}
+
+#[test]
+fn replacement_cleanup_is_bound_to_the_recorded_old_compute_object() {
+    let address = "docker_container.runtime";
+    let allowed = BTreeMap::from([(address.into(), Row::new())]);
+    let bindings = BTreeMap::from([(
+        address.into(),
+        StateBinding {
+            id: "current".into(),
+            deposed: BTreeMap::from([("deadbeef".into(), "old".into())]),
+            ..Default::default()
+        },
+    )]);
+    let current =
+        json!({"address":address,"change":{"actions":["no-op"],"before":{"id":"current"}}});
+    let old = json!({"address":address,"deposed":"deadbeef","change":{"actions":["delete"],"before":{"id":"old"}}});
+    let plan =
+        |resources| serde_json::from_value::<Plan>(json!({"resource_changes":resources})).unwrap();
+    let apply = plan(json!([current, old]));
+    assert_eq!(check_plan(&apply, &allowed, &bindings).unwrap().len(), 1);
+    assert_eq!(
+        runtime::check_runtime_plan(&apply, &allowed, &bindings, &BTreeSet::new())
+            .unwrap()
+            .len(),
+        1
+    );
+    assert!(export::settled(&bindings).is_err());
+    for (field, value) in [
+        ("deposed", json!("unknown")),
+        ("address", json!("docker_volume.cache")),
+    ] {
+        let mut invalid = old.clone();
+        invalid[field] = value;
+        assert!(check_plan(&plan(json!([current, invalid])), &allowed, &bindings).is_err());
+    }
+    for change in [
+        json!({"actions":["delete"],"before":{"id":"current"}}),
+        json!({"actions":["update"],"before":{"id":"old"}}),
+    ] {
+        let mut invalid = old.clone();
+        invalid["change"] = change;
+        assert!(check_plan(&plan(json!([current, invalid])), &allowed, &bindings).is_err());
+    }
+    assert!(check_plan(&plan(json!([current, old, old])), &allowed, &bindings).is_err());
+    let mut delete = current.clone();
+    delete["change"]["actions"] = json!(["delete"]);
+    assert_eq!(
+        check_destroy_plan(
+            &plan(json!([delete, old])),
+            &allowed,
+            &bindings,
+            &BTreeSet::new()
+        )
+        .unwrap()
+        .len(),
+        2
+    );
+    let mut only_old = bindings.clone();
+    only_old.get_mut(address).unwrap().id.clear();
+    assert_eq!(
+        check_destroy_plan(&plan(json!([old])), &allowed, &only_old, &BTreeSet::new())
+            .unwrap()
+            .len(),
+        1
+    );
+    // Refresh may confirm the old disposable object is already absent.
+    let absent = json!({"address":address,"deposed":"deadbeef","change":{"actions":["no-op"],"before":null,"after":null}});
+    assert!(
+        check_plan(&plan(json!([current, absent])), &allowed, &bindings)
+            .unwrap()
+            .is_empty()
+    );
+    assert!(
+        check_destroy_plan(
+            &plan(json!([absent])),
+            &allowed,
+            &only_old,
+            &BTreeSet::new()
+        )
+        .unwrap()
+        .is_empty()
+    );
+    let mut invalid = absent.clone();
+    invalid["change"]["after"] = json!({"id":"unrecorded"});
+    assert!(check_plan(&plan(json!([current, invalid])), &allowed, &bindings).is_err());
+    assert!(check_plan(&plan(json!([current])), &allowed, &bindings).is_ok());
+    for durable in [
+        "docker_volume.cache",
+        "nemoclaw_inference_storage.credentials",
+    ] {
+        let bound = BTreeMap::from([(durable.into(), bindings[address].clone())]);
+        let mut forbidden = old.clone();
+        forbidden["address"] = json!(durable);
+        assert!(
+            check_destroy_plan(
+                &plan(json!([forbidden])),
+                &BTreeMap::from([(durable.into(), Row::new())]),
+                &bound,
+                &BTreeSet::from([durable.into()])
+            )
+            .is_err()
+        );
     }
 }

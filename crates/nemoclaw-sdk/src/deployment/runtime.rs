@@ -21,19 +21,21 @@ pub(super) fn check_runtime_plan(
         if plan::observation(change, &mut observations, allowed, true, false)? {
             continue;
         }
-        if !seen.insert(&change.address) {
-            return Err(Error::Conflict("runtime plan duplicated a resource"));
-        }
-        if plan::disposable(&change.address) {
+        if plan::disposable(&change.address) || change.deposed.is_some() {
             ordinary.resource_changes.push(plan::ResourceChange {
                 mode: change.mode.clone(),
                 address: change.address.clone(),
+                deposed: change.deposed.clone(),
                 change: plan::PlannedChange {
                     actions: change.change.actions.clone(),
                     before: change.change.before.clone(),
+                    after: change.change.after.clone(),
                 },
             });
             continue;
+        }
+        if !seen.insert(&change.address) {
+            return Err(Error::Conflict("runtime plan duplicated a resource"));
         }
         let expected = allowed.get(&change.address).ok_or(Error::Conflict(
             "runtime plan contains an undeclared resource",
@@ -61,18 +63,22 @@ pub(super) fn check_runtime_plan(
             ordinary.resource_changes.push(plan::ResourceChange {
                 mode: change.mode.clone(),
                 address: change.address.clone(),
+                deposed: change.deposed.clone(),
                 change: plan::PlannedChange {
                     actions: vec!["no-op".into()],
                     before: change.change.before.clone(),
+                    after: change.change.after.clone(),
                 },
             });
         } else {
             ordinary.resource_changes.push(plan::ResourceChange {
                 mode: change.mode.clone(),
                 address: change.address.clone(),
+                deposed: change.deposed.clone(),
                 change: plan::PlannedChange {
                     actions: change.change.actions.clone(),
                     before: change.change.before.clone(),
+                    after: change.change.after.clone(),
                 },
             });
         }
@@ -369,6 +375,7 @@ impl Deployment {
                 cancel,
             )
             .await?;
+        super::export::settled(&bindings)?;
         let targets = compile::runtime_targets(&record.document, &record.generations)?;
         if bindings.len()
             != targets

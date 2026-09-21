@@ -92,6 +92,8 @@ pub(crate) struct StateBinding {
     pub id: String,
     #[serde(default)]
     pub spec: String,
+    #[serde(skip)]
+    pub deposed: BTreeMap<String, String>,
 }
 
 pub(crate) struct Store {
@@ -218,7 +220,7 @@ fn parse_bindings(bytes: &[u8]) -> Result<BTreeMap<String, StateBinding>, Error>
     if state.format_version.split('.').next() != Some("1") {
         return Err(Error::State("unsupported OpenTofu state JSON version"));
     }
-    let mut bindings = BTreeMap::new();
+    let mut bindings: BTreeMap<String, StateBinding> = BTreeMap::new();
     let mut seen = std::collections::BTreeSet::new();
     let mut modules = state
         .values
@@ -228,12 +230,12 @@ fn parse_bindings(bytes: &[u8]) -> Result<BTreeMap<String, StateBinding>, Error>
         modules.extend(module.child_modules);
         for resource in module.resources {
             if resource.address.is_empty()
-                || !seen.insert(resource.address.clone())
-                || resource.deposed_key.is_some()
+                || !seen.insert((resource.address.clone(), resource.deposed_key.clone()))
+                || resource.deposed_key.as_ref().is_some_and(String::is_empty)
                 || !resource.values.is_object()
             {
                 return Err(Error::State(
-                    "duplicate, deposed, or incomplete OpenTofu state object",
+                    "duplicate or incomplete OpenTofu state object",
                 ));
             }
             match resource.mode.as_str() {
@@ -250,7 +252,20 @@ fn parse_bindings(bytes: &[u8]) -> Result<BTreeMap<String, StateBinding>, Error>
             if attributes.id.is_empty() {
                 return Err(Error::State("unbound resource in OpenTofu state"));
             }
-            bindings.insert(resource.address, attributes);
+            let binding = bindings.entry(resource.address).or_default();
+            if binding.id == attributes.id
+                || binding.deposed.values().any(|id| id == &attributes.id)
+            {
+                return Err(Error::State(
+                    "current and deposed objects share a physical identity",
+                ));
+            }
+            if let Some(key) = resource.deposed_key {
+                binding.deposed.insert(key, attributes.id);
+            } else {
+                binding.id = attributes.id;
+                binding.spec = attributes.spec;
+            }
         }
     }
     Ok(bindings)

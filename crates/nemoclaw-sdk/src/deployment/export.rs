@@ -4,6 +4,15 @@ use crate::config::HarnessKind;
 
 use super::*;
 
+pub(super) fn settled(bindings: &BTreeMap<String, StateBinding>) -> Result<(), Error> {
+    if bindings.values().any(|binding| !binding.deposed.is_empty()) {
+        return Err(Error::Conflict(
+            "replacement cleanup is unfinished; apply again before exporting",
+        ));
+    }
+    Ok(())
+}
+
 impl Deployment {
     pub async fn export(&self, cancel: &CancellationToken) -> Result<Document, Error> {
         Box::pin(self.export_inner(cancel)).await
@@ -78,6 +87,7 @@ impl Deployment {
                 cancel,
             )
             .await?;
+        settled(&bindings)?;
         let mut document = record.document;
         for target in compile::targets(&document, &record.generations)? {
             if cancel.is_cancelled() {
@@ -260,6 +270,7 @@ mod tests {
         let binding = StateBinding {
             id: "provider-id".into(),
             spec: String::new(),
+            ..Default::default()
         };
         Deployment::new(Path::new("unused"), Path::new("unused"))
             .export_compute(&target, &binding)

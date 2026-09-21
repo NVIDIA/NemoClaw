@@ -396,6 +396,7 @@ mod tests {
                         } else {
                             target.values.get("spec").cloned().unwrap_or_default()
                         },
+                        ..Default::default()
                     },
                 )
             })
@@ -469,6 +470,7 @@ mod tests {
                             } else {
                                 target.values.get("spec").cloned().unwrap_or_default()
                             },
+                            ..Default::default()
                         },
                     )
                 })
