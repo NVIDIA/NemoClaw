@@ -353,9 +353,11 @@ public partial class MainWindow : Window
     public void MarkLaunched()
     {
         if (this.Configuration?.LaunchAfterSetup == true) this.SuccessTitle.Text = "Starting OpenClaw";
-        this.SuccessDetail.Text = this.SelectedAgent is "openclaw" or "hermes"
-            ? "The session window is opening. It shows preparation progress and opens the browser after the agent's Web UI becomes available. You can close Setup."
-            : "Your configured agent's own window is opening. You can close this setup window.";
+        this.SuccessDetail.Text = this.Configuration?.LocalModel is not null
+            ? $"Setup loaded {this.Configuration.Model} on the NVIDIA GPU and received a real model response. OpenClaw starts in fast mode with Reasoning off; turn Reasoning on in chat for complex work. The session window is opening and will open the browser when its Web UI becomes available. You can close Setup."
+            : this.SelectedAgent is "openclaw" or "hermes"
+                ? "The session window is opening. It shows preparation progress and opens the browser after the agent's Web UI becomes available. You can close Setup."
+                : "Your configured agent's own window is opening. You can close this setup window.";
         this.LaunchButton.IsEnabled = false;
     }
 

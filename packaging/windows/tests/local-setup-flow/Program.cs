@@ -77,7 +77,7 @@ internal static class Program
                 var installs = 0;
                 var launches = 0;
                 window.InstallRequested += (_, _) => installs++;
-                window.LaunchRequested += (_, _) => launches++;
+                window.LaunchRequested += (_, _) => { launches++; window.MarkLaunched(); };
                 Find<Button>("InstallButton").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
                 Require(installs == 0 && launches == 0);
                 Find<CheckBox>("LicenseCheck").IsChecked = true;
@@ -94,7 +94,11 @@ internal static class Program
                 {
                     window.ShowConfiguredSuccess();
                     Require(launches == (autoLaunch ? 1 : 0));
-                    if (bundled) Require(Find<TextBlock>("SuccessDetail").Text.Contains("Reasoning off", StringComparison.Ordinal));
+                    if (bundled)
+                    {
+                        var detail = Find<TextBlock>("SuccessDetail").Text;
+                        Require(detail.Contains("real model response", StringComparison.Ordinal) && detail.Contains("Reasoning off", StringComparison.Ordinal));
+                    }
                     window.ShowConfiguredSuccess();
                     Require(launches == (autoLaunch ? 1 : 0));
                 }

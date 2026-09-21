@@ -80,6 +80,8 @@ test("native OpenClaw advertises the actual model context and opens a fresh chat
   assert(source.includes('thinkingLevelMap: { off: "none"'));
   assert(source.includes("supportsReasoningEffort: true"));
   assert(source.includes('thinkingDefault: "off"'));
+  assert(source.includes('lastTouchedVersion: "2026.7.1"'));
+  assert(source.includes("lastTouchedAt: new Date().toISOString()"));
   assert(
     source.includes('store: join(configDirectory, "agents", "main", "sessions", "sessions.json")'),
   );

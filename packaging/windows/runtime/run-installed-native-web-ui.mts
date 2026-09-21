@@ -382,6 +382,7 @@ if (configured) {
 }
 writeFileSync(join(configDirectory, "openclaw.json"), JSON.stringify({
   ...serviceConfiguration,
+  meta: { lastTouchedVersion: "2026.7.1", lastTouchedAt: new Date().toISOString() },
   update: { checkOnStart: false, auto: { enabled: false } },
   session: {
     ...serviceConfiguration.session,
