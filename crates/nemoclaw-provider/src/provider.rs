@@ -133,6 +133,11 @@ impl Provider for NemoClawProvider {
     ) -> Option<HashMap<String, Box<dyn DynamicDataSource>>> {
         Some(HashMap::from([
             (
+                "service_readiness".into(),
+                Box::new(crate::readiness::ReadinessDataSource(self.backend.clone()))
+                    as Box<dyn DynamicDataSource>,
+            ),
+            (
                 "service_capacity".into(),
                 Box::new(crate::capacity::CapacityDataSource(self.backend.clone()))
                     as Box<dyn DynamicDataSource>,

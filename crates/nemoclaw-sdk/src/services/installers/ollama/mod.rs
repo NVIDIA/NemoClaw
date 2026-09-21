@@ -11,7 +11,7 @@ pub use config::{
 };
 mod models;
 pub use models::*;
-mod artifacts;
+pub(in crate::services) mod artifacts;
 #[doc(hidden)]
 pub mod hardware_capacity;
 #[doc(hidden)]

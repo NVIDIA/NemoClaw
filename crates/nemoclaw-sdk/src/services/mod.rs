@@ -11,7 +11,9 @@ pub(crate) mod capacity;
 mod contract;
 pub use capacity::{ServiceCapacity, observe_service_capacity, validate_capacity_specs};
 pub mod installers;
+mod readiness;
 mod registry;
+pub use readiness::{validate_readiness_spec, wait_service_ready};
 #[cfg(target_os = "linux")]
 mod runtime;
 mod validation;
