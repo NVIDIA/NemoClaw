@@ -22,6 +22,7 @@ import {
   captureGatewayUpgradeProbeEvidence,
   currentGatewayUpgradeInstallerArgs,
   currentNemoclawUpgradeRef,
+  gatewayCredentialNonExposureScript,
   gatewayUpgradeRecoverySucceeded,
   GATEWAY_UPGRADE_INSTALL_TIMEOUT_MS,
   isolateGatewayUpgradeFixtureEnv,
@@ -183,6 +184,31 @@ describe("OpenShell gateway upgrade boundary", () => {
       ).toBe(expected);
     },
   );
+
+  it("fails credential custody when managed-file inspection errors", () => {
+    const temporaryDirectory = fs.mkdtempSync(
+      path.join(os.tmpdir(), "nemoclaw-gateway-credential-inspection-"),
+    );
+    const missingPath = path.join(temporaryDirectory, "missing-openclaw.json");
+    try {
+      const result = spawnSync(
+        "bash",
+        ["-c", gatewayCredentialNonExposureScript("credential-not-in-environment", [missingPath])],
+        {
+          encoding: "utf8",
+          env: { PATH: process.env.PATH },
+        },
+      );
+
+      expect({ status: result.status, stderr: result.stderr }).toEqual({
+        status: 2,
+        stderr: expect.stringContaining("managed OpenClaw credential inspection failed"),
+      });
+      expect(result.stderr).toContain(missingPath);
+    } finally {
+      fs.rmSync(temporaryDirectory, { force: true, recursive: true });
+    }
+  });
 
   it("freshens only the retryable old fixture install", () => {
     expect(oldGatewayUpgradeInstallerArgs("old-install.sh")).toEqual([

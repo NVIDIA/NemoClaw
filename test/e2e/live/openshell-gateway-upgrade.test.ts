@@ -41,6 +41,7 @@ import {
   captureGatewayUpgradeFailureDiagnostics,
   currentGatewayUpgradeInstallerArgs,
   currentNemoclawUpgradeRef,
+  gatewayCredentialNonExposureScript,
   gatewayUpgradeRecoverySucceeded,
   GATEWAY_UPGRADE_INSTALL_TIMEOUT_MS,
   isolateGatewayUpgradeFixtureEnv,
@@ -213,7 +214,7 @@ async function collectOpenClawCredentialBoundary(
 ): Promise<CredentialBoundaryEvidence> {
   const secretNonExposure = await runInSurvivorSandbox(
     host,
-    `! env | grep -F -- ${shellQuote(GATEWAY_CREDENTIAL)} && ! grep -rF -- ${shellQuote(GATEWAY_CREDENTIAL)} /sandbox/.openclaw/openclaw.json /sandbox/.openclaw/agents 2>/dev/null`,
+    gatewayCredentialNonExposureScript(GATEWAY_CREDENTIAL),
     {
       artifactName: `state-upgrade-${phase}-secret-non-exposure`,
       currentCli: phase === "upgraded",
