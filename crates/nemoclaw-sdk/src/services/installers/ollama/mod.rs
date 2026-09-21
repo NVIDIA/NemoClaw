@@ -34,7 +34,7 @@ use crate::{
     services::contract::{InstallPlan, Installer, RemovePlan, validate_image},
     state::StateBinding,
 };
-use std::{collections::BTreeMap, net::IpAddr, sync::LazyLock, time::Duration};
+use std::{collections::BTreeMap, net::IpAddr, sync::LazyLock};
 use url::Url;
 
 pub(crate) const MODEL_PATTERN: &str = r"^[a-z0-9][a-z0-9._-]*:[a-z0-9][a-z0-9._-]*$";
@@ -242,6 +242,25 @@ impl ManagedOllama {
 }
 
 impl OllamaProxy {
+    pub(in crate::services) async fn check_running(
+        &self,
+        document: &Document,
+        name: &str,
+        generations: &Generations,
+        connections: &crate::docker::Connections,
+        bindings: &BTreeMap<String, StateBinding>,
+        cancel: &crate::CancellationToken,
+    ) -> Result<(), Error> {
+        let plan = self.install(document, name, generations)?;
+        tokio::select! {
+            () = cancel.cancelled() => Err(Error::Cancelled),
+            result = check_targets(plan.targets, connections, bindings) => {
+                result?;
+                Ok(())
+            }
+        }
+    }
+
     pub(crate) fn engine<'a>(
         &'a self,
         document: &'a Document,
@@ -478,58 +497,6 @@ impl Installer for ManagedOllama {
         })
     }
 
-    async fn check_running(
-        &self,
-        document: &Document,
-        name: &str,
-        generations: &Generations,
-        connections: &crate::docker::Connections,
-        bindings: &BTreeMap<String, StateBinding>,
-        cancel: &crate::CancellationToken,
-    ) -> Result<(), Error> {
-        let target = self
-            .install(document, name, generations)?
-            .targets
-            .into_iter()
-            .find(|target| target.kind == SERVICE_KIND)
-            .ok_or(Error::State("Ollama install plan is incomplete"))?;
-        let spec: Spec = serde_json::from_str(&target.values["spec"])
-            .map_err(|_| Error::State("invalid Ollama runtime specification"))?;
-        let binding = bindings
-            .get(&crate::docker_compute::address(&target.address))
-            .ok_or(Error::State("Ollama has no established identity"))?;
-        let engine = crate::managed::runtime_engine(connections, &target.kind, &target.values)?;
-        let check = async {
-            loop {
-                let observed = engine
-                    .observe_service(&spec, &binding.id)
-                    .await?
-                    .ok_or(Error::State("Ollama runtime is unobservable"))?;
-                if !observed.running {
-                    return Err(Error::State(
-                        "Ollama stopped during readiness; inspect logs and explicitly reapply",
-                    ));
-                }
-                let status = artifacts::runtime_status(&engine, &observed).await?;
-                if status.phase == "ready" {
-                    return Ok(());
-                }
-                if status.phase == "stopped" {
-                    return Err(Error::State(
-                        "Ollama protection stopped the service; explicit reapply is required",
-                    ));
-                }
-                tokio::time::sleep(Duration::from_secs(5)).await;
-            }
-        };
-        tokio::select! {
-            () = cancel.cancelled() => Err(Error::Cancelled),
-            result = tokio::time::timeout(Duration::from_secs(9 * 3600), check) => {
-                result.map_err(|_| Error::State("Ollama readiness check timed out"))?
-            }
-        }
-    }
-
     fn remove(
         &self,
         _document: &Document,
@@ -558,25 +525,6 @@ impl Installer for OllamaProxy {
                 vec![address(proxy::STORAGE, name), address(proxy::MODEL, name)],
             )]),
         })
-    }
-
-    async fn check_running(
-        &self,
-        document: &Document,
-        name: &str,
-        generations: &Generations,
-        connections: &crate::docker::Connections,
-        bindings: &BTreeMap<String, StateBinding>,
-        cancel: &crate::CancellationToken,
-    ) -> Result<(), Error> {
-        let plan = self.install(document, name, generations)?;
-        tokio::select! {
-            () = cancel.cancelled() => Err(Error::Cancelled),
-            result = check_targets(plan.targets, connections, bindings) => {
-                result?;
-                Ok(())
-            }
-        }
     }
 
     fn remove(

@@ -60,11 +60,27 @@ Each Fabric harness is an independent ignored test with its own temporary state 
 To test one harness, append its test name, for example `-- --ignored harness_codex`; to run all harnesses with CI's concurrency bound, use `-- --ignored --test-threads=2`.
 
 These tests cover shared SDK/CLI state, interrupted creation, unchanged apply, readiness failure without replacement, failed observation without state loss, export/reapply, interrupted destroy, and retained workspace recovery.
+The `independent_sandboxes_reconcile_concurrently_and_retain_shared_dependencies` fixture checks overlapping sandbox creates, unchanged reapply, and teardown with a retained shared workspace.
 The `gateway_change_between_plan_and_apply_preserves_resources_and_allows_teardown` fixture changes the gateway driver after planning to verify OpenTofu's fresh apply-time check, recovery, and teardown after capability drift.
 The direct provider fixture checks saved plans with both unchanged and newly created resources; incompatible or unavailable gateways stop dependent mutations without losing managed-resource bindings.
 The Pi lifecycle fixture verifies that this gate also blocks model configuration writes, and that unchanged apply performs no configuration writes.
 The multiple-provider fixture also verifies two independent deployments, each sandbox’s selected provider attachments, export/reapply, and drift in one deployment without changes to the other.
 The fixture returns protocol responses; it does not establish live agent inference.
+
+## Standalone Service Readiness
+
+On Unix with `python3` on `PATH`, build the production provider as above and run from the repository root:
+
+```sh
+NEMOCLAW_TEST_TOFU=/absolute/path/to/tofu \
+NEMOCLAW_TEST_PROVIDER=/absolute/path/to/terraform-provider-nemoclaw \
+  cargo test -p nemoclaw-e2e --test service_readiness -- --ignored
+```
+
+The fixture uses an isolated SSH/Docker simulator and a builtin OpenTofu consumer, without SDK deployment orchestration or a reachable OpenShell gateway.
+It checks offline validation, apply-time reads, saved-plan failure, unchanged-service rechecks, bounded timeout, recovery, and teardown without readiness.
+It changes only temporary files and does not create containers or execute a model.
+A failed assertion reports the OpenTofu diagnostic; rerun after correcting the matching provider or fixture inputs.
 
 ## Ollama and Platform Fixtures
 
@@ -128,6 +144,7 @@ The `remote_service` E2E fixture exercises the bundled CLI/provider boundary wit
 Run `cargo test -p nemoclaw-e2e --test remote_service -- --ignored` with `NEMOCLAW_TEST_BUNDLE` set.
 It checks read-only planning without host-capacity collection, failed startup recovery, missing-container replacement, no-op, export/reapply, cache reconstruction with unchanged credentials, and failed observation or credential-daemon retargeting without lost bindings.
 Destroy removes disposable containers and service networks while retaining storage.
+The partial-runtime fixtures verify teardown after failed creation without first creating the missing compute; failed readiness also permits corrected intent while retaining bindings.
 
 Native CI runs these isolated fixtures on Unix, including managed OpenClaw, Hermes, Pi, and bearer-credential lifecycles.
 Its runtime status and Docker responses are simulated; it does not download or serve a model.

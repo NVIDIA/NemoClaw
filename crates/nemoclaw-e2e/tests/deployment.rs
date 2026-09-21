@@ -10,6 +10,52 @@ use std::{fs, path::PathBuf, process::Command};
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires explicit verified NEMOCLAW_TEST_BUNDLE; isolated gateway fixture"]
+async fn independent_sandboxes_reconcile_concurrently_and_retain_shared_dependencies() {
+    let bundle = PathBuf::from(std::env::var_os("NEMOCLAW_TEST_BUNDLE").unwrap());
+    let directory = tempfile::tempdir().unwrap();
+    let fixture = Fixture::start().await;
+    let mut document = Document::parse(
+        include_str!("../../nemoclaw-sdk/tests/fixtures/config/local.yaml").as_bytes(),
+    )
+    .unwrap();
+    *document.spec.gateway.endpoint_mut() = fixture.endpoint.clone();
+    let mut second = document.spec.sandboxes[0].clone();
+    second.name = "independent".into();
+    document.spec.sandboxes.push(second);
+    fixture.state.lock().unwrap().sandbox_create_delay = std::time::Duration::from_secs(2);
+    let deployment = Deployment::new(directory.path(), &bundle);
+    let cancel = CancellationToken::new();
+    deployment.apply(&document, &cancel).await.unwrap();
+    {
+        let state = fixture.state.lock().unwrap();
+        assert_eq!(
+            state.peak_sandbox_creates, 2,
+            "independent creates must overlap"
+        );
+        assert_eq!(state.active_sandbox_creates, 0);
+        assert_eq!(state.sandboxes.len(), 2);
+        assert_eq!(state.workspaces.len(), 1);
+        assert_eq!(state.providers.len(), 1);
+    }
+    let effects = fixture.state.lock().unwrap().effects;
+    assert!(
+        deployment
+            .apply(&document, &cancel)
+            .await
+            .unwrap()
+            .changes
+            .is_empty()
+    );
+    assert_eq!(fixture.state.lock().unwrap().effects, effects);
+    deployment.destroy(&cancel).await.unwrap();
+    let state = fixture.state.lock().unwrap();
+    assert!(state.sandboxes.is_empty());
+    assert!(state.providers.is_empty());
+    assert_eq!(state.workspaces.len(), 1);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires explicit verified NEMOCLAW_TEST_BUNDLE; isolated gateway fixture"]
 async fn incompatible_gateway_is_reported_by_opentofu_plan_without_sdk_preflight() {
     let bundle = PathBuf::from(std::env::var_os("NEMOCLAW_TEST_BUNDLE").unwrap());
     let directory = tempfile::tempdir().unwrap();

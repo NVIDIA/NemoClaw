@@ -178,14 +178,6 @@ async fn managed_installers_accept_current_runtime_readiness_without_collecting_
         .await;
         let connections =
             crate::docker::Connections::fixed([fixture.engine_for(spec.engine())]).unwrap();
-        let bindings = BTreeMap::from([(
-            crate::docker_compute::address(&target.address),
-            crate::state::StateBinding {
-                id: "provider-container".into(),
-                spec: String::new(),
-                ..Default::default()
-            },
-        )]);
         assert!(
             crate::services::required_storage_address(
                 &document,
@@ -197,24 +189,22 @@ async fn managed_installers_accept_current_runtime_readiness_without_collecting_
             "unauthenticated compute must not require immutable cache identity"
         );
         let cancel = crate::CancellationToken::new();
-        crate::services::check_running(
-            &document,
-            &generations,
-            crate::services::InstallStage::Runtime,
+        crate::services::wait_service_ready(
             &connections,
-            &bindings,
+            &target.values["spec"],
+            "provider-container",
+            std::time::Duration::from_secs(2),
             &cancel,
         )
         .await
         .unwrap();
         status.lock().unwrap()["phase"] = json!("stopped");
         assert!(
-            crate::services::check_running(
-                &document,
-                &generations,
-                crate::services::InstallStage::Runtime,
+            crate::services::wait_service_ready(
                 &connections,
-                &bindings,
+                &target.values["spec"],
+                "provider-container",
+                std::time::Duration::from_secs(2),
                 &cancel
             )
             .await
@@ -607,21 +597,11 @@ async fn authenticated_vllm_readiness_rechecks_key_permissions() {
         });
         let engine = Engine::connect(spec.engine()).unwrap();
         let connections = crate::docker::Connections::fixed([engine]).unwrap();
-        let bindings = [(
-            crate::docker_compute::address(&target.address),
-            crate::state::StateBinding {
-                id: "provider-container".into(),
-                spec: String::new(),
-                ..Default::default()
-            },
-        )]
-        .into();
-        let result = crate::services::check_running(
-            &document,
-            &generations,
-            crate::services::InstallStage::Runtime,
+        let result = crate::services::wait_service_ready(
             &connections,
-            &bindings,
+            &target.values["spec"],
+            "provider-container",
+            std::time::Duration::from_secs(2),
             &crate::CancellationToken::new(),
         )
         .await;

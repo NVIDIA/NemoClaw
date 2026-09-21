@@ -304,7 +304,7 @@ impl Deployment {
         }
         record.document = document.clone();
         record.digest = document.digest();
-        record.pending = true;
+        record.begin_runtime_apply();
         record.succeeded = false;
         record.destroyed = false;
         record.destroy_runtime = false;
@@ -314,45 +314,13 @@ impl Deployment {
             bundle,
             &stage,
             document,
-            &[
-                "apply",
-                "-input=false",
-                "-no-color",
-                "-parallelism=1",
-                "apply.plan",
-            ],
+            &["apply", "-input=false", "-no-color", "apply.plan"],
             cancel,
         )
         .await?;
-        record.pending = false;
+        record.finish_runtime_apply();
         store.save(record)?;
-        self.wait_runtime_services(bundle, document, &record.generations, &stage, cancel)
-            .await?;
         Ok((changes, false))
-    }
-    async fn wait_runtime_services(
-        &self,
-        bundle: &Bundle,
-        document: &Document,
-        generations: &crate::compile::Generations,
-        stage: &Store,
-        cancel: &CancellationToken,
-    ) -> Result<(), Error> {
-        (self.progress)(Progress::Readiness);
-        self.timed("runtime.ready", async {
-            let bindings = stage.bindings(&bundle.tofu(), cancel).await?;
-            crate::services::check_running(
-                document,
-                generations,
-                crate::services::InstallStage::Runtime,
-                &self.engines,
-                &bindings,
-                cancel,
-            )
-            .await?;
-            Ok(())
-        })
-        .await
     }
     pub(super) async fn export_runtime(
         &self,

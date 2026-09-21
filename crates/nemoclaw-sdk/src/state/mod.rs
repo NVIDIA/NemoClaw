@@ -20,6 +20,8 @@ pub(crate) struct Record {
     pub document: Document,
     pub generations: Generations,
     pub pending: bool,
+    #[serde(skip_serializing_if = "is_false")]
+    pub runtime_pending: bool,
     pub succeeded: bool,
     pub digest: String,
     #[serde(skip_serializing_if = "String::is_empty")]
@@ -58,6 +60,19 @@ impl Record {
             generations,
             ..Default::default()
         })
+    }
+    pub fn begin_runtime_apply(&mut self) {
+        // Runtime recovery must not clear an earlier ambiguous OpenShell mutation.
+        if !self.pending {
+            self.pending = true;
+            self.runtime_pending = true;
+        }
+    }
+    pub fn finish_runtime_apply(&mut self) {
+        if self.runtime_pending {
+            self.pending = false;
+            self.runtime_pending = false;
+        }
     }
     fn validate(&self) -> Result<(), Error> {
         if self.version != 7 {

@@ -251,34 +251,6 @@ impl Installer for ServiceDefinition {
         }
     }
 
-    async fn check_running(
-        &self,
-        document: &Document,
-        name: &str,
-        generations: &Generations,
-        connections: &crate::docker::Connections,
-        bindings: &BTreeMap<String, StateBinding>,
-        cancel: &crate::CancellationToken,
-    ) -> Result<(), crate::Error> {
-        match self {
-            Self::Ollama(service) => {
-                service
-                    .check_running(document, name, generations, connections, bindings, cancel)
-                    .await
-            }
-            Self::OllamaProxy(service) => {
-                service
-                    .check_running(document, name, generations, connections, bindings, cancel)
-                    .await
-            }
-            Self::Vllm(service) => {
-                service
-                    .check_running(document, name, generations, connections, bindings, cancel)
-                    .await
-            }
-        }
-    }
-
     fn remove(
         &self,
         document: &Document,
@@ -612,17 +584,16 @@ pub(crate) fn required_storage_address(
         }))
 }
 
-pub(crate) async fn check_running(
+pub(crate) async fn check_deployment_services(
     document: &Document,
     generations: &Generations,
-    stage: InstallStage,
     connections: &crate::docker::Connections,
     bindings: &BTreeMap<String, StateBinding>,
     cancel: &crate::CancellationToken,
 ) -> Result<(), crate::Error> {
     for (name, definition) in &document.spec.services {
-        if definition.stage() == stage {
-            definition
+        if let ServiceDefinition::OllamaProxy(proxy) = definition {
+            proxy
                 .check_running(document, name, generations, connections, bindings, cancel)
                 .await?;
         }

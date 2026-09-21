@@ -100,13 +100,7 @@ impl Deployment {
                     &bundle,
                     stage,
                     &destroy_environment(&record.document),
-                    &[
-                        "apply",
-                        "-input=false",
-                        "-no-color",
-                        "-parallelism=1",
-                        "destroy.plan",
-                    ],
+                    &["apply", "-input=false", "-no-color", "destroy.plan"],
                     cancel,
                 )
                 .await?;
@@ -116,6 +110,8 @@ impl Deployment {
                 store.save(&record)?;
             }
         }
+        record.pending = false;
+        record.runtime_pending = false;
         record.destroying = false;
         record.destroyed = true;
         record.plan_digest.clear();
@@ -321,7 +317,7 @@ fn validate_teardown_state(
     record: &Record,
     bindings: &BTreeMap<String, StateBinding>,
 ) -> Result<(), Error> {
-    if record.pending {
+    if record.pending && !record.runtime_pending {
         return Err(Error::Conflict(
             "unfinished apply may have created resources whose IDs were not saved; apply the original configuration again before destroy",
         ));

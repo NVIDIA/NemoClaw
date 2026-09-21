@@ -247,3 +247,27 @@ fn docker_provider_owns_disposable_compute_and_image_acquisition() {
         && target.kind == "inference_service"));
     assert!(targets.iter().any(|target| target.kind == "docker_image"));
 }
+
+#[test]
+fn service_readiness_follows_provider_identity_and_is_fresh_on_unchanged_apply() {
+    let document =
+        Document::parse(include_bytes!("fixtures/config/spark.yaml").as_slice()).unwrap();
+    let generations = [
+        "workspace",
+        "provider",
+        "sandbox",
+        "managed_gateway",
+        "inference_service",
+    ]
+    .map(|kind| (kind.into(), "a".repeat(32)))
+    .into();
+    let graph = compile_runtime(&document, &generations, "0.1.0").unwrap();
+    let readiness =
+        &graph["data"]["nemoclaw_service_readiness"]["inference_service_inference_qwen"];
+    assert_eq!(
+        readiness["container_id"],
+        "${docker_container.inference_service_inference_qwen.id}"
+    );
+    assert_eq!(readiness["read_trigger"], "${timestamp() != \"\"}");
+    assert!(readiness["spec"].is_string());
+}

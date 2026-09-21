@@ -36,6 +36,15 @@ pub(super) fn observation(
     let expected = (change.address.starts_with("data.docker_image.")
         && allowed.contains_key(&change.address))
         || (gateway && crate::compile::is_gateway_observation(&change.address))
+        || allowed.keys().any(|address| {
+            (address.starts_with("docker_container.inference_service_")
+                || address.starts_with("docker_container.ollama_service_"))
+                && change.address
+                    == format!(
+                        "data.nemoclaw_service_readiness.{}",
+                        address.split_once('.').unwrap().1
+                    )
+        })
         || crate::services::capacity::groups(
             allowed.iter().map(|(address, row)| (address.as_str(), row)),
         )?

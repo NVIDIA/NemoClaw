@@ -185,7 +185,7 @@ impl Deployment {
                 "state is bound to a different deployment UID or gateway",
             ));
         }
-        if record.pending && record.digest != document.digest() {
+        if record.pending && !record.runtime_pending && record.digest != document.digest() {
             return Err(Error::Conflict(
                 "unfinished apply has different intent; reapply its original configuration",
             ));
@@ -259,6 +259,7 @@ impl Deployment {
         record.document = document.clone();
         record.digest = document.digest();
         record.pending = true;
+        record.runtime_pending = false;
         record.succeeded = false;
         record.destroyed = false;
         record.destroy_runtime = false;
@@ -269,13 +270,7 @@ impl Deployment {
             &bundle,
             &store,
             &document,
-            &[
-                "apply",
-                "-input=false",
-                "-no-color",
-                "-parallelism=1",
-                "apply.plan",
-            ],
+            &["apply", "-input=false", "-no-color", "apply.plan"],
             cancel,
         )
         .await?;
@@ -292,10 +287,9 @@ impl Deployment {
             )
             .await?;
         (self.progress)(Progress::Readiness);
-        crate::services::check_running(
+        crate::services::check_deployment_services(
             &document,
             &record.generations,
-            crate::services::InstallStage::Deployment,
             &self.engines,
             &bindings,
             cancel,
@@ -465,13 +459,7 @@ impl Deployment {
             bundle,
             store,
             document,
-            &[
-                "plan",
-                "-input=false",
-                "-no-color",
-                "-parallelism=1",
-                &format!("-out={name}"),
-            ],
+            &["plan", "-input=false", "-no-color", &format!("-out={name}")],
             cancel,
         )
         .await?;

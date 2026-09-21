@@ -211,3 +211,21 @@ fn replacement_cleanup_keeps_current_and_deposed_objects_distinct() {
     duplicate["values"]["id"] = serde_json::json!("current");
     assert!(read(&state(serde_json::json!([current, duplicate]))).is_err());
 }
+
+#[test]
+fn runtime_reconciliation_does_not_clear_unfinished_openshell_recovery() {
+    let document = crate::config::Document::parse(
+        include_bytes!("../../tests/fixtures/config/local.yaml").as_slice(),
+    )
+    .unwrap();
+    let mut record = Record::new(document).unwrap();
+    record.begin_runtime_apply();
+    assert!(record.pending && record.runtime_pending);
+    record.finish_runtime_apply();
+    assert!(!record.pending && !record.runtime_pending);
+    record.pending = true;
+    record.begin_runtime_apply();
+    assert!(!record.runtime_pending);
+    record.finish_runtime_apply();
+    assert!(record.pending && !record.runtime_pending);
+}
