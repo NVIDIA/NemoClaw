@@ -32,6 +32,8 @@ The library still depends on the SDK; this separation does not remove the SDK's 
 An application and a CLI user need the same answer to an interrupted apply: which resources exist, who owns them, and what can resume?
 Putting locking or recovery in the CLI would leave programmatic callers to implement those rules again.
 The SDK therefore owns the complete deployment operation, while OpenTofu owns dependency ordering and resource state.
+Within each graph, OpenTofu uses its default parallelism to reconcile independent resources concurrently.
+Explicit dependencies order gateway checks, selected provider registrations, sandbox creation, and configuration.
 
 The diagram shows logical responsibilities across the SDK and its child processes:
 
