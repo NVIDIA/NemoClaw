@@ -33,7 +33,7 @@ pub(super) fn observation(
     }
     let expected = (change.address.starts_with("data.docker_image.")
         && allowed.contains_key(&change.address))
-        || (gateway && change.address == crate::compile::GATEWAY_CAPABILITIES_ADDRESS)
+        || (gateway && crate::compile::is_gateway_observation(&change.address))
         || crate::services::capacity::groups(
             allowed.iter().map(|(address, row)| (address.as_str(), row)),
         )?

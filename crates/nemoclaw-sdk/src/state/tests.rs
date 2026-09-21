@@ -5,27 +5,29 @@ use super::*;
 
 #[test]
 fn gateway_capability_data_never_becomes_a_durable_resource_binding() {
-    let directory = tempfile::tempdir().unwrap();
-    let data = serde_json::json!({"mode":"data", "type":"nemoclaw_gateway_capabilities", "name":"current", "instances":[{"attributes":{"gateway_version":"observed", "compatible":true, "compute_drivers":["docker"], "required_compute_drivers":["docker"]}}]});
-    let managed = serde_json::json!({"mode":"managed", "type":"nemoclaw_workspace", "name":"deployment", "instances":[{"attributes":{"id":"physical"}}]});
-    let write = |resources| {
-        std::fs::write(
-            directory.path().join("terraform.tfstate"),
-            serde_json::json!({"resources":resources}).to_string(),
-        )
-        .unwrap()
-    };
-    write(serde_json::json!([data, managed]));
-    let observed = bindings(directory.path()).unwrap();
-    assert_eq!(observed.len(), 1);
-    assert_eq!(observed["nemoclaw_workspace.deployment"].id, "physical");
-    write(serde_json::json!([data, data, managed]));
-    assert!(bindings(directory.path()).is_err());
-    for field in ["name", "type", "module"] {
-        let mut invalid = data.clone();
-        invalid[field] = serde_json::json!("foreign");
-        write(serde_json::json!([invalid, managed]));
-        assert!(bindings(directory.path()).is_err(), "{field}");
+    for name in ["current", "apply"] {
+        let directory = tempfile::tempdir().unwrap();
+        let data = serde_json::json!({"mode":"data", "type":"nemoclaw_gateway_capabilities", "name":name, "instances":[{"attributes":{"gateway_version":"observed", "compatible":true, "compute_drivers":["docker"], "required_compute_drivers":["docker"]}}]});
+        let managed = serde_json::json!({"mode":"managed", "type":"nemoclaw_workspace", "name":"deployment", "instances":[{"attributes":{"id":"physical"}}]});
+        let write = |resources| {
+            std::fs::write(
+                directory.path().join("terraform.tfstate"),
+                serde_json::json!({"resources":resources}).to_string(),
+            )
+            .unwrap()
+        };
+        write(serde_json::json!([data, managed]));
+        let observed = bindings(directory.path()).unwrap();
+        assert_eq!(observed.len(), 1);
+        assert_eq!(observed["nemoclaw_workspace.deployment"].id, "physical");
+        write(serde_json::json!([data, data, managed]));
+        assert!(bindings(directory.path()).is_err());
+        for field in ["name", "type", "module"] {
+            let mut invalid = data.clone();
+            invalid[field] = serde_json::json!("foreign");
+            write(serde_json::json!([invalid, managed]));
+            assert!(bindings(directory.path()).is_err(), "{field}");
+        }
     }
 }
 #[test]

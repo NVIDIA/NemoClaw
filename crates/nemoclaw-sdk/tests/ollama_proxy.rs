@@ -202,7 +202,8 @@ fn external_ollama_compiles_only_proxy_and_external_model_observation() {
         resources["nemoclaw_provider"]["inference_local"]["depends_on"],
         json!([
             "nemoclaw_provider_profile.inference_local",
-            "docker_container.ollama_proxy_ollama-auth"
+            "docker_container.ollama_proxy_ollama-auth",
+            "data.nemoclaw_gateway_capabilities.apply"
         ])
     );
     assert!(

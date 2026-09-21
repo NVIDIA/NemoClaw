@@ -95,3 +95,53 @@ fn unchanged_state_comparison_preserves_bindings_and_check_outcomes() {
         );
     }
 }
+
+/// Failed apply may record new data-source observations and condition results.
+/// Its managed resources and deployment lineage must still be preserved.
+pub fn assert_same_managed_resources(actual: &[u8], expected: &[u8]) {
+    fn managed(bytes: &[u8]) -> (String, Vec<serde_json::Value>) {
+        let state: serde_json::Value = serde_json::from_slice(bytes).unwrap();
+        let resources = state["resources"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|resource| match resource["mode"].as_str() {
+                Some("managed") => true,
+                Some("data") => false,
+                _ => panic!("unexpected resource mode"),
+            })
+            .cloned()
+            .collect();
+        (state["lineage"].as_str().unwrap().into(), resources)
+    }
+    assert_eq!(managed(actual), managed(expected));
+}
+
+#[test]
+fn failed_apply_preserves_managed_resources_but_may_record_failed_observations() {
+    let before = serde_json::json!({
+        "lineage":"owned",
+        "resources":[
+            {"mode":"managed","instances":[{"attributes":{"id":"owned"}}]},
+            {"mode":"data","instances":[{"attributes":{"compatible":true}}]}
+        ]
+    });
+    let mut observed = before.clone();
+    observed["resources"][1]["instances"][0]["attributes"]["compatible"] = serde_json::json!(false);
+    assert_same_managed_resources(
+        observed.to_string().as_bytes(),
+        before.to_string().as_bytes(),
+    );
+    for path in ["/lineage", "/resources/0/instances/0/attributes/id"] {
+        let mut changed = observed.clone();
+        *changed.pointer_mut(path).unwrap() = serde_json::json!("foreign");
+        assert!(
+            std::panic::catch_unwind(|| assert_same_managed_resources(
+                changed.to_string().as_bytes(),
+                before.to_string().as_bytes()
+            ))
+            .is_err(),
+            "{path}"
+        );
+    }
+}

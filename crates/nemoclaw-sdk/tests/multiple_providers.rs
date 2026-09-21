@@ -87,12 +87,15 @@ fn a_sandbox_attaches_the_union_of_selected_providers_with_bound_credentials() {
     let policy: Value = serde_json::from_str(&sandbox.values["policy_json"]).unwrap();
     assert_eq!(policy["network_policies"].as_object().unwrap().len(), 2);
     let graph = compile(&doc, &generations(), "0.1.0").unwrap();
+    let mut dependencies: Vec<_> = rows
+        .iter()
+        .filter(|row| row.kind == "provider")
+        .map(|row| json!(row.address))
+        .collect();
+    dependencies.push(json!("data.nemoclaw_gateway_capabilities.apply"));
     assert_eq!(
-        graph["resource"]["nemoclaw_sandbox"]["assistant"]["depends_on"]
-            .as_array()
-            .unwrap()
-            .len(),
-        2
+        graph["resource"]["nemoclaw_sandbox"]["assistant"]["depends_on"],
+        json!(dependencies)
     );
     assert_eq!(
         Document::parse(doc.yaml().unwrap().as_bytes()).unwrap(),
@@ -153,7 +156,10 @@ fn managed_ollama_installs_while_an_external_provider_is_the_default() {
             .unwrap();
     assert_eq!(
         dependencies,
-        &[json!("nemoclaw_provider_profile.inference_local")]
+        &[
+            json!("nemoclaw_provider_profile.inference_local"),
+            json!("data.nemoclaw_gateway_capabilities.apply")
+        ]
     );
 }
 
