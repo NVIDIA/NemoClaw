@@ -325,6 +325,27 @@ describe("Hermes config export live evidence", () => {
     expect(mocks.writeText).not.toHaveBeenCalled();
   });
 
+  it("withholds retained YAML when an encoded credential crosses the Hermes boundary", async () => {
+    const secret = "synthetic-hermes-secret";
+    const encodedSecret = Buffer.from(secret, "utf8").toString("base64");
+    const document = mocks.asExportedConfig.getMockImplementation()!();
+    document.spec.sandboxes[0].harness.interfaces = { dashboard: { enabled: false } };
+    mocks.asExportedConfig.mockReturnValue(document);
+    const writeExport = async (_command: string, args: string[]) => {
+      fs.writeFileSync(args.at(args.indexOf("--output") + 1)!, `value: ${encodedSecret}\n`);
+      return { exitCode: 0, stderr: "", stdout: "" };
+    };
+    mocks.command
+      .mockImplementationOnce(writeExport)
+      .mockImplementationOnce(writeExport)
+      .mockResolvedValue({ exitCode: 1, stderr: "sandbox identity drifted", stdout: "" });
+
+    await expect(runEnabledFixture([secret])).rejects.toThrow(
+      "config export exposed a known fixture secret",
+    );
+    expect(mocks.writeText).not.toHaveBeenCalled();
+  });
+
   it("rejects drift evidence when only one launcher reports identity drift (#11286)", async () => {
     const writeExport = async (_command: string, args: string[]) => {
       const outputPath = args.at(args.indexOf("--output") + 1)!;

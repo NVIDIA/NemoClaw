@@ -23,6 +23,7 @@ import type { HostCliClient } from "./clients/host.ts";
 import { trustedSandboxShellScript, type SandboxClient } from "./clients/sandbox.ts";
 import type { CleanupRegistry } from "./cleanup.ts";
 import { CLI_ENTRYPOINT, REPO_ROOT } from "./paths.ts";
+import { publishValidatedConfigExportYaml } from "./phases/config-export-validation.ts";
 
 interface HermesConfigExportLiveInput {
   readonly artifacts: ArtifactSink;
@@ -381,6 +382,13 @@ export async function verifyHermesConfigExportLive(
   };
   const passed = passesHermesConfigExportLiveEvidence(evidence);
   await input.artifacts.writeJson("hermes-config-export-live-evidence.json", evidence);
-  if (passed) await input.artifacts.writeText("hermes-config-export.yaml", nemoclawRaw);
+  if (passed) {
+    await publishValidatedConfigExportYaml(
+      input.artifacts,
+      "hermes-config-export.yaml",
+      nemoclawRaw,
+      input.redactionValues,
+    );
+  }
   return { checked: true, passed };
 }

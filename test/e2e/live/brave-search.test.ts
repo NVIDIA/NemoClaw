@@ -10,6 +10,7 @@ import { parseOpenShellSandboxId } from "../../../src/lib/adapters/openshell/san
 import { resultText } from "../fixtures/clients/index.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { parseOpenClawAgentText } from "../fixtures/openclaw-agent-output.ts";
+import { publishValidatedConfigExportYaml } from "../fixtures/phases/config-export-validation.ts";
 import { testTimeout } from "../../helpers/timeouts.ts";
 import {
   assertBraveConfig,
@@ -127,7 +128,12 @@ test(
       "Export must omit internal environment transports and credential placeholders",
     ).toBe(false);
     expect(repeatSpec).toEqual(firstSpec);
-    await artifacts.writeText("brave-config-export.yaml", firstRaw);
+    await publishValidatedConfigExportYaml(
+      artifacts,
+      "brave-config-export.yaml",
+      firstRaw,
+      redactionValues,
+    );
     await artifacts.writeJson("brave-config-export-evidence.json", {
       sandboxName: SANDBOX_NAME,
       provider: "brave",
