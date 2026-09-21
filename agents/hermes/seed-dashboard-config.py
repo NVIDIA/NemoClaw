@@ -530,7 +530,7 @@ def _normalized_routing(gateway: dict, routing_keys: list[str], policy: dict) ->
         raise InvalidDashboardSeedDocumentError(
             "gateway model routing contains a non-policy credential reference"
         )
-    model["provider"] = provider_key
+    model["provider"] = "custom"
     return routing
 
 
