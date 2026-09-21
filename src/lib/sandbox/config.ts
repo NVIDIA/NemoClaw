@@ -599,23 +599,7 @@ function buildOpenClawNativeConfigSetInvocation(
   dotpath: string,
   value: ConfigValue,
 ): { args: string[]; input: string } {
-  return {
-    args: [
-      "sandbox",
-      "exec",
-      "--name",
-      sandboxName,
-      "--env",
-      "HOME=/sandbox",
-      "--",
-      "sh",
-      "-c",
-      'value=$(cat) || exit $?; exec openclaw config set "$1" "$value" --strict-json',
-      "nemoclaw-openclaw-config-set",
-      dotpath,
-    ],
-    input: JSON.stringify(value),
-  };
+  return buildOpenClawNativeConfigBatchInvocation(sandboxName, [{ dotpath, value }]);
 }
 
 export interface OpenClawConfigUpdate {
@@ -638,7 +622,7 @@ function buildOpenClawNativeConfigBatchInvocation(
       "--",
       "sh",
       "-c",
-      'value=$(cat) || exit $?; exec openclaw config set --batch-json "$value"',
+      'umask 077; file=$(mktemp /tmp/nemoclaw-openclaw-config.XXXXXX) || exit $?; trap \'rm -f "$file"\' EXIT; cat >"$file" || exit $?; openclaw config set --batch-file "$file"',
       "nemoclaw-openclaw-config-set-batch",
     ],
     input: JSON.stringify(updates.map(({ dotpath, value }) => ({ path: dotpath, value }))),

@@ -7,6 +7,60 @@ import { runInferenceSet } from "./inference-set";
 import { baseSession, createDeps } from "./inference-set.test-support";
 
 describe("runInferenceSet OpenClaw routing", () => {
+  it("keeps a large unrelated agent roster out of the native config transaction", async () => {
+    const oversizedInstructions = "x".repeat(1_100_000);
+    const config: ConfigObject = {
+      agents: {
+        defaults: { model: { primary: "inference/nvidia/old-model" } },
+        list: [
+          { id: "main", model: "inference/nvidia/old-model" },
+          {
+            id: "research",
+            model: "inference/nvidia/secondary-model",
+            instructions: oversizedInstructions,
+          },
+        ],
+      },
+      models: {
+        providers: {
+          inference: {
+            api: "openai-completions",
+            models: [{ id: "old-model", name: "inference/nvidia/old-model" }],
+          },
+        },
+      },
+    };
+    const deps = createDeps({ config, session: baseSession() });
+
+    await runInferenceSet(
+      {
+        provider: "nvidia-prod",
+        model: "nvidia/new-model",
+        noVerify: true,
+      },
+      deps,
+    );
+
+    const updates = deps.calls.setOpenClawConfigValues.mock.calls[0]?.[1];
+    expect(updates).toContainEqual({
+      dotpath: "agents.list[0].model",
+      value: "inference/nvidia/new-model",
+    });
+    expect(updates).not.toContainEqual(expect.objectContaining({ dotpath: "agents.list" }));
+    expect(Buffer.byteLength(JSON.stringify(updates), "utf8")).toBeLessThan(16 * 1024);
+    expect(config.agents).toEqual({
+      defaults: { model: { primary: "inference/nvidia/new-model" } },
+      list: [
+        { id: "main", model: "inference/nvidia/new-model" },
+        {
+          id: "research",
+          model: "inference/nvidia/secondary-model",
+          instructions: oversizedInstructions,
+        },
+      ],
+    });
+  });
+
   it("completes a same-API switch and pairing when audit persistence initially fails (#9527)", async () => {
     const config: ConfigObject = {
       agents: {

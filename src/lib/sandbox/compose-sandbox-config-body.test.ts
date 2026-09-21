@@ -107,8 +107,17 @@ describe("composeSandboxConfigBody", () => {
     );
 
     expect(invocation.args.join(" ")).not.toContain("sandbox-only-secret");
-    expect(invocation.args).toContain("models.providers.inference");
+    expect(invocation.args.join(" ")).toContain("openclaw config set --batch-file");
+    expect(invocation.args.join(" ")).toContain("umask 077");
+    expect(invocation.args.join(" ")).not.toContain("--batch-json");
+    expect(invocation.args.join(" ")).not.toContain("models.providers.inference");
     expect(invocation.input).toContain("sandbox-only-secret");
+    expect(JSON.parse(invocation.input)).toEqual([
+      {
+        path: "models.providers.inference",
+        value: { apiKey: "sandbox-only-secret", models: [{ id: "model-a" }] },
+      },
+    ]);
   });
 
   it("sends related native OpenClaw config changes as one batch transaction", () => {
@@ -120,7 +129,8 @@ describe("composeSandboxConfigBody", () => {
       },
     ]);
 
-    expect(invocation.args.join(" ")).toContain("openclaw config set --batch-json");
+    expect(invocation.args.join(" ")).toContain("openclaw config set --batch-file");
+    expect(invocation.args.join(" ")).not.toContain("--batch-json");
     expect(invocation.args.join(" ")).not.toContain("sandbox-only-secret");
     expect(JSON.parse(invocation.input)).toEqual([
       { path: "agents.defaults.model.primary", value: "inference/model-a" },
