@@ -519,3 +519,58 @@ fn disposable_docker_compute_reconciles_while_durable_storage_does_not_recreate(
     let plan: Plan = serde_json::from_value(json!({"resource_changes":[{"address":storage,"change":{"actions":["create"],"before":null}}]})).unwrap();
     assert!(check_plan(&plan, &allowed, &bound).is_err());
 }
+
+#[tokio::test]
+async fn changing_gateway_management_at_the_same_endpoint_preserves_saved_state() {
+    let bundle_directory = tempfile::tempdir().unwrap();
+    let mut manifest = crate::bundle::Manifest {
+        version: "0.1.0".into(),
+        rust: "1.98.1".into(),
+        opentofu: crate::compile::OPENTOFU_VERSION.into(),
+        files: Default::default(),
+    };
+    // Valid bundle hashes let the request reach the state guard. These bytes
+    // cannot execute, so a regression cannot start an actual deployment.
+    for name in crate::bundle::required_files(&manifest.version).unwrap() {
+        let path = bundle_directory.path().join(&name);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(&path, b"non-executable fixture").unwrap();
+        manifest
+            .files
+            .insert(name, crate::bundle::hash_file(&path).unwrap());
+    }
+    fs::write(
+        bundle_directory.path().join("manifest.json"),
+        serde_json::to_vec(&manifest).unwrap(),
+    )
+    .unwrap();
+    let external =
+        Document::parse(include_str!("../../tests/fixtures/config/local.yaml").as_bytes()).unwrap();
+    let mut managed = external.clone();
+    managed.spec.gateway = Gateway::Managed(crate::config::ManagedGateway {
+        endpoint: external.spec.gateway.endpoint().into(),
+        ..Default::default()
+    });
+    managed.defaults();
+    managed.validate().unwrap();
+    for (original, changed) in [(&external, &managed), (&managed, &external)] {
+        let state_directory = tempfile::tempdir().unwrap();
+        let store = Store::open(state_directory.path()).unwrap();
+        store.save(&Record::new(original.clone()).unwrap()).unwrap();
+        drop(store);
+        let intent = state_directory.path().join("intent.json");
+        let before = fs::read(&intent).unwrap();
+        let deployment = Deployment::new(state_directory.path(), bundle_directory.path());
+        for apply in [false, true] {
+            let error = deployment
+                .run(changed, &CancellationToken::new(), apply)
+                .await
+                .unwrap_err();
+            assert!(matches!(
+                error,
+                Error::Conflict("state is bound to a different deployment UID or gateway")
+            ));
+            assert_eq!(fs::read(&intent).unwrap(), before);
+        }
+    }
+}
