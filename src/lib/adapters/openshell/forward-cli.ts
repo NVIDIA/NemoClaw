@@ -112,6 +112,7 @@ export interface CliOpenShellForwardChild {
 export type CliOpenShellForwardInspection =
   | Readonly<{ state: "unbound" }>
   | Readonly<{ state: "owned"; pid: number }>
+  | Readonly<{ state: "pre_endpoint"; pid: number }>
   | Readonly<{ state: "foreign"; pids: readonly number[] }>
   | Readonly<{ state: "indeterminate" }>;
 
@@ -776,6 +777,7 @@ async function inspectForward(
     procRoot: string;
     procWorkLimit: number;
     run: CliOpenShellForwardCommandRunner;
+    acceptPreEndpoint?: boolean;
   }>,
 ): Promise<CliOpenShellForwardInspection> {
   if (options.platform === "win32") return { state: "indeterminate" };
@@ -795,7 +797,7 @@ async function inspectForward(
   const [pid] = listener.pids;
   if (pid === undefined) return { state: "indeterminate" };
   if (options.now() >= deadline) return { state: "indeterminate" };
-  let processState: "owned" | "foreign" | "indeterminate" =
+  let processState: "owned" | "pre_endpoint" | "foreign" | "indeterminate" =
     expectedPid === undefined || pid === expectedPid ? "owned" : "foreign";
 
   if (processState === "owned") {
@@ -831,7 +833,29 @@ async function inspectForward(
         options.executable,
         ...buildCliOpenShellForwardServiceArgs(forward),
       ].join(" ");
-      if (command.stdout.trim() !== expectedCommand) processState = "foreign";
+      const preEndpointCommand = [
+        options.executable,
+        "--gateway",
+        forward.gatewayName,
+        "--workspace",
+        forward.workspace,
+        "forward",
+        "service",
+        forward.sandboxName,
+        "--target-port",
+        String(forward.port),
+        "--target-host",
+        "127.0.0.1",
+        "--local",
+        `${forward.localHost}:${String(forward.port)}`,
+      ].join(" ");
+      if (command.stdout.trim() === expectedCommand) {
+        processState = "owned";
+      } else if (options.acceptPreEndpoint && command.stdout.trim() === preEndpointCommand) {
+        processState = "pre_endpoint";
+      } else {
+        processState = "foreign";
+      }
     }
   }
 
@@ -849,6 +873,7 @@ async function inspectForward(
   }
   if (options.now() >= deadline) return { state: "indeterminate" };
   if (processState === "owned") return { state: "owned", pid };
+  if (processState === "pre_endpoint") return { state: "pre_endpoint", pid };
   if (processState === "foreign") return { state: "foreign", pids: [pid] };
   return { state: "indeterminate" };
 }
@@ -1098,18 +1123,24 @@ export function createCliOpenShellForwardAdapter(
     ((pid: number, signal: NodeJS.Signals) => {
       process.kill(pid, signal);
     });
-  const inspect =
-    deps.inspect ??
-    ((forward, expectedPid, timeoutMs) =>
-      inspectForward(forward, expectedPid, timeoutMs, {
-        environment: hostEnvironment,
-        executable,
-        now,
-        platform,
-        procRoot: deps.procRoot ?? "/proc",
-        procWorkLimit: deps.procWorkLimit ?? DEFAULT_PROC_WORK_LIMIT,
-        run: hostProbe,
-      }));
+  const inspect = (
+    forward: OpenShellForwardIdentity,
+    expectedPid: number | undefined,
+    timeoutMs: number,
+    acceptPreEndpoint = false,
+  ) =>
+    deps.inspect
+      ? deps.inspect(forward, expectedPid, timeoutMs)
+      : inspectForward(forward, expectedPid, timeoutMs, {
+          environment: hostEnvironment,
+          executable,
+          now,
+          platform,
+          procRoot: deps.procRoot ?? "/proc",
+          procWorkLimit: deps.procWorkLimit ?? DEFAULT_PROC_WORK_LIMIT,
+          run: hostProbe,
+          acceptPreEndpoint,
+        });
   const inspectLegacy =
     deps.inspectLegacy ??
     ((forward, expectedPid, timeoutMs) =>
@@ -1206,8 +1237,12 @@ export function createCliOpenShellForwardAdapter(
     forward: OpenShellForwardIdentity,
     expectedPid: number | undefined,
     timeoutMs: number,
+    acceptPreEndpoint = false,
   ): Promise<CliOpenShellForwardInspection> => {
-    const settled = await settleWithin(() => inspect(forward, expectedPid, timeoutMs), timeoutMs);
+    const settled = await settleWithin(
+      () => inspect(forward, expectedPid, timeoutMs, acceptPreEndpoint),
+      timeoutMs,
+    );
     return settled.state === "value" ? settled.value : { state: "indeterminate" };
   };
   const inspectLegacySafely = async (
@@ -1248,10 +1283,12 @@ export function createCliOpenShellForwardAdapter(
     observations: readonly OpenShellForwardObservation[];
     legacyPids: ReadonlyMap<number, number>;
     ownedPids: ReadonlyMap<number, number>;
+    preEndpointPids: ReadonlyMap<number, number>;
   }>;
 
   async function observeWithEvidence(
     request: ObserveOpenShellForwardsRequest,
+    acceptPreEndpoint = false,
   ): Promise<ObservationEvidence> {
     const forwards = snapshotForwards(request.forwards);
     const requestedTimeoutMs = request.timeoutMs;
@@ -1260,6 +1297,7 @@ export function createCliOpenShellForwardAdapter(
       observations,
       legacyPids: new Map<number, number>(),
       ownedPids: new Map<number, number>(),
+      preEndpointPids: new Map<number, number>(),
     });
     if (forwards.length === 0) return emptyEvidence([]);
     if (
@@ -1329,7 +1367,16 @@ export function createCliOpenShellForwardAdapter(
           forward,
           request.expectedListenerPidsByPort?.get(forward.port),
           remaining(deadline, now),
+          acceptPreEndpoint,
         );
+        if (direct.state === "pre_endpoint") {
+          return acceptPreEndpoint
+            ? {
+                observation: { state: "stale", forward } as const,
+                preEndpointPid: direct.pid,
+              }
+            : { observation: { state: "foreign", forward } as const };
+        }
         if (direct.state === "unbound") {
           const beforeReachability = await runFence(assertCurrent, deadline);
           if (beforeReachability) {
@@ -1378,6 +1425,14 @@ export function createCliOpenShellForwardAdapter(
           return item.ownedPid === undefined || target === undefined
             ? []
             : [[target.port, item.ownedPid] as const];
+        }),
+      ),
+      preEndpointPids: new Map(
+        evidence.flatMap((item, index) => {
+          const target = forwards[index];
+          return item.preEndpointPid === undefined || target === undefined
+            ? []
+            : [[target.port, item.preEndpointPid] as const];
         }),
       ),
     };
@@ -1725,11 +1780,14 @@ export function createCliOpenShellForwardAdapter(
       return { state: "failed", effect: "none", error: VALIDATION_ERROR };
     }
     const deadline = now() + timeoutMs;
-    const observedEvidence = await observeWithEvidence({
-      forwards: [forward],
-      timeoutMs: Math.min(remaining(deadline, now), OPENSHELL_PROBE_TIMEOUT_MS),
-      assertCurrent,
-    });
+    const observedEvidence = await observeWithEvidence(
+      {
+        forwards: [forward],
+        timeoutMs: Math.min(remaining(deadline, now), OPENSHELL_PROBE_TIMEOUT_MS),
+        assertCurrent,
+      },
+      true,
+    );
     const [observed] = observedEvidence.observations;
     if (!observed) {
       return { state: "failed", forward, effect: "none", error: OWNERSHIP_ERROR };
@@ -1742,7 +1800,8 @@ export function createCliOpenShellForwardAdapter(
         ? { state: "not_needed", observation: observed }
         : { state: "refused", observation: observed };
     }
-    const observedPid = observedEvidence.legacyPids.get(forward.port);
+    const preEndpointPid = observedEvidence.preEndpointPids.get(forward.port);
+    const observedPid = observedEvidence.legacyPids.get(forward.port) ?? preEndpointPid;
     if (observedPid === undefined) {
       return { state: "failed", forward, effect: "none", error: OWNERSHIP_ERROR };
     }
@@ -1750,11 +1809,14 @@ export function createCliOpenShellForwardAdapter(
     if (initialAuthority) {
       return { state: "failed", forward, effect: "none", error: initialAuthority };
     }
-    const confirmedEvidence = await observeWithEvidence({
-      forwards: [forward],
-      timeoutMs: Math.min(remaining(deadline, now), OPENSHELL_PROBE_TIMEOUT_MS),
-      assertCurrent,
-    });
+    const confirmedEvidence = await observeWithEvidence(
+      {
+        forwards: [forward],
+        timeoutMs: Math.min(remaining(deadline, now), OPENSHELL_PROBE_TIMEOUT_MS),
+        assertCurrent,
+      },
+      true,
+    );
     const [confirmed] = confirmedEvidence.observations;
     if (!confirmed) {
       return { state: "failed", forward, effect: "none", error: OWNERSHIP_ERROR };
@@ -1767,7 +1829,11 @@ export function createCliOpenShellForwardAdapter(
         ? { state: "not_needed", observation: confirmed }
         : { state: "refused", observation: confirmed };
     }
-    if (confirmedEvidence.legacyPids.get(forward.port) !== observedPid) {
+    const confirmedPreEndpointPid = confirmedEvidence.preEndpointPids.get(forward.port);
+    if (
+      (confirmedEvidence.legacyPids.get(forward.port) ?? confirmedPreEndpointPid) !== observedPid ||
+      (preEndpointPid !== undefined) !== (confirmedPreEndpointPid !== undefined)
+    ) {
       return { state: "failed", forward, effect: "none", error: OWNERSHIP_ERROR };
     }
     if (!environment || now() >= deadline) {
@@ -1785,32 +1851,50 @@ export function createCliOpenShellForwardAdapter(
     if (finalCurrentness) {
       return { state: "failed", forward, effect: "none", error: finalCurrentness };
     }
-    const result = await runSafely(
-      buildCliOpenShellLegacyForwardStopArgs(forward, legacyForwardWorkspaceSelection),
-      remaining(deadline, now),
-    );
-    const error = commandError(result);
-    if (error) {
-      const invocationFailure =
-        (result.error as NodeJS.ErrnoException | undefined)?.code === "ENOENT" ||
-        (result.error as NodeJS.ErrnoException | undefined)?.code === "EACCES";
-      if (invocationFailure) {
-        return { state: "failed", forward, effect: "none", error };
+    let result: CliOpenShellForwardCommandResult | null = null;
+    if (preEndpointPid !== undefined) {
+      try {
+        signalProcess(preEndpointPid, "SIGKILL");
+      } catch (error) {
+        if (!noSuchProcess(error)) {
+          return {
+            state: "mutation_uncertain",
+            forward,
+            effect: "possible",
+            error: CLEANUP_ERROR,
+          };
+        }
       }
-      await runFence(assertCurrent, now() + DEFAULT_RELEASE_TIMEOUT_MS);
-      await observeWithEvidence({
-        forwards: [forward],
-        timeoutMs: DEFAULT_RELEASE_TIMEOUT_MS,
-      });
-      if (assertCurrent) {
+    } else {
+      result = await runSafely(
+        buildCliOpenShellLegacyForwardStopArgs(forward, legacyForwardWorkspaceSelection),
+        remaining(deadline, now),
+      );
+    }
+    if (result) {
+      const error = commandError(result);
+      if (error) {
+        const invocationFailure =
+          (result.error as NodeJS.ErrnoException | undefined)?.code === "ENOENT" ||
+          (result.error as NodeJS.ErrnoException | undefined)?.code === "EACCES";
+        if (invocationFailure) {
+          return { state: "failed", forward, effect: "none", error };
+        }
         await runFence(assertCurrent, now() + DEFAULT_RELEASE_TIMEOUT_MS);
+        await observeWithEvidence({
+          forwards: [forward],
+          timeoutMs: DEFAULT_RELEASE_TIMEOUT_MS,
+        });
+        if (assertCurrent) {
+          await runFence(assertCurrent, now() + DEFAULT_RELEASE_TIMEOUT_MS);
+        }
+        return {
+          state: "mutation_uncertain",
+          forward,
+          effect: "possible",
+          error,
+        };
       }
-      return {
-        state: "mutation_uncertain",
-        forward,
-        effect: "possible",
-        error,
-      };
     }
     const afterStop = await runFence(assertCurrent, now() + DEFAULT_RELEASE_TIMEOUT_MS);
     const released = await verifyForwardRelease({

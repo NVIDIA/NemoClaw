@@ -111,6 +111,7 @@ type HarnessOverrides = Readonly<{
   probePort?: ProbePort;
   run?: RunCommand;
   runtimeSelection?: OpenShellRuntimeSelection;
+  signalProcess?: SignalProcess;
   sleep?: (milliseconds: number) => Promise<void>;
   spawn?: SpawnForward;
   terminate?: TerminateForward;
@@ -262,6 +263,7 @@ export function createHarness(overrides: HarnessOverrides = {}) {
     probePort,
     run,
     runtimeSelection: overrides.runtimeSelection ?? runtimeSelection,
+    ...(overrides.signalProcess ? { signalProcess: overrides.signalProcess } : {}),
     sleep,
     spawn,
     terminate,

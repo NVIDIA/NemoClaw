@@ -17,10 +17,6 @@ import {
   packReviewedNpmArchive,
   removeReviewedNpmArchive,
 } from "../../../scripts/lib/reviewed-npm-archive.mts";
-import {
-  parseCliOpenShellForwardList,
-  type CliOpenShellLegacyForwardRow,
-} from "../../../src/lib/adapters/openshell/forward-cli";
 import { shellQuote } from "../../../src/lib/core/shell-quote";
 import {
   REVIEWED_GATEWAY_UPGRADE_FIXTURE,
@@ -102,6 +98,7 @@ const SURVIVOR_SANDBOX =
 const LEGACY_SANDBOXES = Object.freeze([SURVIVOR_SANDBOX]);
 const SURVIVOR_MARKER = `gateway-upgrade-survivor-${Date.now()}`;
 const SURVIVOR_MARKER_PATH = "/sandbox/.openclaw/workspace/nemoclaw-gateway-upgrade-marker";
+const DASHBOARD_PORT = "18789";
 const GATEWAY_CREDENTIAL = "nemoclaw-gateway-upgrade-fixture-key";
 const TEST_TIMEOUT_MS = 65 * 60_000;
 const OPENSHELL_TIMEOUT_MS = 2 * 60_000;
@@ -322,53 +319,6 @@ async function runInstallerPayload(
   return result;
 }
 
-async function captureLegacyDashboardForward(
-  host: HostCliClient,
-  artifacts: ArtifactSink,
-): Promise<CliOpenShellLegacyForwardRow | null> {
-  const result = await bash(host, "openshell forward list", {
-    artifactName: "legacy-dashboard-forward-before-upgrade",
-    timeoutMs: 30_000,
-  });
-  const parsed = parseCliOpenShellForwardList(result.stdout, result.stderr);
-  const forward =
-    result.exitCode === 0 && parsed.ok
-      ? (parsed.rows.find((row) => row.sandboxName === SURVIVOR_SANDBOX) ?? null)
-      : null;
-  await artifacts.writeJson("legacy-dashboard-forward-before-upgrade.json", forward);
-  return forward;
-}
-
-async function legacyDashboardForwardWasRetired(
-  host: HostCliClient,
-  artifacts: ArtifactSink,
-  legacyForward: CliOpenShellLegacyForwardRow | null,
-): Promise<boolean> {
-  const result = await bash(host, "openshell forward list", {
-    artifactName: "legacy-dashboard-forward-after-upgrade",
-    timeoutMs: 30_000,
-  });
-  const parsed = parseCliOpenShellForwardList(result.stdout, result.stderr);
-  const currentForwards = parsed.ok ? parsed.rows : [];
-  const exactLegacyForwardRemains = legacyForward
-    ? currentForwards.some(
-        (row) =>
-          row.sandboxName === legacyForward.sandboxName &&
-          row.bind === legacyForward.bind &&
-          row.port === legacyForward.port &&
-          row.pid === legacyForward.pid,
-      )
-    : true;
-  const retired = result.exitCode === 0 && parsed.ok && !exactLegacyForwardRemains;
-  await artifacts.writeJson("legacy-dashboard-forward-retirement.json", {
-    legacyForward,
-    currentForwards,
-    exactLegacyForwardRemains,
-    retired,
-  });
-  return retired;
-}
-
 async function preCleanUpgradeGateway(host: HostCliClient, artifactName: string): Promise<void> {
   const result = await bash(host, upgradeGatewayCleanupScript(PID_FILE), {
     artifactName,
@@ -476,7 +426,6 @@ async function installCurrentNemoclawUpgrade(
   host: HostCliClient,
   artifacts: ArtifactSink,
   fakeBaseUrl: string,
-  legacyDashboardForward: CliOpenShellLegacyForwardRow | null,
 ): Promise<void> {
   const currentRef = currentNemoclawUpgradeRef(process.env);
   const currentEnv = withoutEnvKeys(
@@ -510,11 +459,6 @@ async function installCurrentNemoclawUpgrade(
     currentEnv,
     { redactionValues },
   );
-  expect(
-    await legacyDashboardForwardWasRetired(host, artifacts, legacyDashboardForward),
-    "the exact legacy dashboard forward must be absent after upgrade",
-  ).toBe(true);
-
   const openshellVersion = await bash(
     host,
     `openshell --version | grep -F -- ${shellQuote(CURRENT_OPENSHELL_VERSION)}`,
@@ -537,6 +481,12 @@ async function assertSurvivorSandboxAfterUpgrade(host: HostCliClient): Promise<v
   );
   expectExitZero(marker, "read survivor marker after gateway upgrade");
 
+  const forward = await host.inspectOpenShellForwardListener(DASHBOARD_PORT, SURVIVOR_SANDBOX, {
+    artifactName: "post-upgrade-dashboard-forward",
+    env: liveEnv(),
+  });
+  expect(forward.valid, forward.output).toBe(true);
+
   const agent = await runInSurvivorSandbox(
     host,
     `openclaw agent --agent main --json --thinking off --session-id ${shellQuote(`e2e-upgrade-${process.pid}`)} -m ${shellQuote("Reply with only: ok")}`,
@@ -557,8 +507,7 @@ runOpenShellGatewayUpgrade(
         "clear the prior gateway and start compatible inference",
         "install pinned legacy NemoClaw and its sandbox",
         "write durable workspace state before upgrade",
-        "record the exact legacy dashboard forward",
-        "upgrade to the current OpenShell gateway and verify the exact legacy forward was retired",
+        "upgrade to the current OpenShell gateway",
         "verify preserved workspace state and one upgraded agent turn",
       ],
     },
@@ -569,10 +518,10 @@ runOpenShellGatewayUpgrade(
       runner: "vitest",
       boundary: [
         `real old install.sh fetched from ${OLD_NEMOCLAW_REF}`,
-        "real Docker/OpenShell gateway and OpenClaw sandbox",
+        "real Docker/OpenShell gateway, dashboard forward, and OpenClaw sandbox",
         "exact-name confirmation for the known-managed legacy fixture",
         "current scripts/install.sh gateway upgrade path",
-        "exact legacy dashboard-forward identity absent after upgrade preparation",
+        "equivalent current-owned dashboard forward after upgrade",
         "durable workspace restore and survivor discovery through the current CLI",
       ],
       oldNemoclawRef: OLD_NEMOCLAW_REF,
@@ -652,13 +601,8 @@ runOpenShellGatewayUpgrade(
     progress.phase("write durable workspace state before upgrade");
     await writeSurvivorMarker(host);
 
-    progress.phase("record the exact legacy dashboard forward");
-    const legacyDashboardForward = await captureLegacyDashboardForward(host, artifacts);
-
-    progress.phase(
-      "upgrade to the current OpenShell gateway and verify the exact legacy forward was retired",
-    );
-    await installCurrentNemoclawUpgrade(host, artifacts, fake.baseUrl, legacyDashboardForward);
+    progress.phase("upgrade to the current OpenShell gateway");
+    await installCurrentNemoclawUpgrade(host, artifacts, fake.baseUrl);
 
     progress.phase("verify preserved workspace state and one upgraded agent turn");
     await assertSurvivorSandboxAfterUpgrade(host);
