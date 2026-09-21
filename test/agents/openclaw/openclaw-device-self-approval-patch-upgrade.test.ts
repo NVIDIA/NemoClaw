@@ -145,7 +145,9 @@ describe("OpenClaw device self-approval patch upgrades (#4462)", () => {
       fs.writeFileSync(file, source.replace(current, legacy));
 
       expect(runPatch(dist).status).toBe(0);
-      expect(fs.readFileSync(file, "utf8")).toContain(current);
+      const upgraded = fs.readFileSync(file, "utf8");
+      expect(upgraded).toContain(current);
+      expect(upgraded).not.toContain(legacy);
       expect(runPatch(dist).status).toBe(0);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
