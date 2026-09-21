@@ -285,7 +285,6 @@ export interface ConfigExportEvidenceEnvelope {
   verifications: ConfigExportVerification[];
   command?: ConfigExportCommandOutcome;
   export?: {
-    bytes: string;
     byteLength: number;
     sha256: string;
   };
@@ -1093,7 +1092,6 @@ export class ConfigExportValidationPhaseFixture {
       ...(passed && cleanupSucceeded && raw
         ? {
             export: {
-              bytes: raw,
               byteLength: Buffer.byteLength(raw, "utf8"),
               sha256: sha256(raw),
             },
@@ -1110,11 +1108,11 @@ export class ConfigExportValidationPhaseFixture {
       ...(diagnostic ? { diagnostic } : {}),
     };
     await this.artifacts.writeJson(EVIDENCE_FILE, evidence);
-    if (evidence.classification === "success" && evidence.export) {
+    if (evidence.classification === "success" && evidence.export && raw) {
       await publishValidatedConfigExportYaml(
         this.artifacts,
         EXPORT_FILE,
-        evidence.export.bytes,
+        raw,
         this.secrets.redactionValues(),
       );
     }

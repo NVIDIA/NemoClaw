@@ -292,7 +292,7 @@ It emits the immutable image as `image.ref`, the `deepagents` harness, and one `
 The command rejects other Deep Agents settings instead of omitting them.
 When a managed OpenClaw sandbox uses Brave Search, the export includes its `webSearch` integration and the `BRAVE_API_KEY` environment-variable reference, never the key.
 When retained managed proxy settings differ from the default, the export includes the validated host and port under `network.proxy`.
-For hosted OpenClaw inference, the export preserves nondefault managed context-window, maximum-token, reasoning, and reasoning-effort settings as route overrides.
+For hosted OpenClaw inference, export preserves each context-window, maximum-token, reasoning, and reasoning-effort setting as a route override when omitting it would change the target's effective behavior.
 It preserves nondefault agent timeout and heartbeat settings under `execution`.
 For a Docker-managed OpenClaw sandbox with hosted inference, the export can include one or more read-only secondary agents in runtime order.
 Each secondary agent has a unique name, uses only `tools.allow: [read]`, and shares the primary hosted route, selected model, and retained route tuning.

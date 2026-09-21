@@ -511,8 +511,9 @@ if (process.argv.includes("--output")) {
     },
   );
 
-  it("publishes the exact validated bytes and digest after cleanup passes (#11485)", async () => {
+  it("publishes the exact validated YAML and digest after cleanup passes (#11485)", async () => {
     const raw = `${JSON.stringify(document())}\n`;
+    const byteLength = Buffer.byteLength(raw, "utf8");
     const artifactRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-config-export-evidence-"));
     artifactDirectories.push(artifactRoot);
     const independentDependencies = dependencies();
@@ -533,15 +534,14 @@ if (process.argv.includes("--output")) {
       passed: true,
       command: { exitCode: 0, signal: null, timedOut: false, outputPublished: true },
       cleanup: { registeredBeforeExport: true, succeeded: true },
-      export: { bytes: raw, byteLength: Buffer.byteLength(raw, "utf8"), sha256: sha256(raw) },
+      export: { byteLength, sha256: sha256(raw) },
       security: { knownSecretsAbsent: true, internalTransportsAbsent: true },
     });
-    expect(fs.readFileSync(path.join(artifactRoot, "config-export.yaml"), "utf8")).toBe(raw);
-    expect(persistedEvidence.export).toEqual({
-      bytes: raw,
-      byteLength: Buffer.byteLength(raw, "utf8"),
-      sha256: sha256(raw),
-    });
+    const persistedYaml = fs.readFileSync(path.join(artifactRoot, "config-export.yaml"), "utf8");
+    expect(persistedYaml).toBe(raw);
+    expect(persistedEvidence.export).toEqual({ byteLength, sha256: sha256(raw) });
+    expect(persistedEvidence.export).not.toHaveProperty("bytes");
+    expect(persistedEvidence.export?.sha256).toBe(sha256(persistedYaml));
     expect(persistedEvidence.verifications.map((entry) => entry.id)).toEqual(
       expect.arrayContaining([
         "sandboxName",
