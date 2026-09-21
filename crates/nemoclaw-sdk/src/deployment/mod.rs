@@ -429,7 +429,11 @@ impl Deployment {
             _ => "tofu.command",
         };
         self.timed(operation, async {
-            let env = command_environment(document, self.secrets.as_ref(), &store.directory)?;
+            let env = if matches!(args.first(), Some(&"init" | &"show")) {
+                crate::state::schema_environment(&store.directory)
+            } else {
+                command_environment(document, self.secrets.as_ref(), &store.directory)?
+            };
             if matches!(args.first(), Some(&"plan" | &"apply")) {
                 let mut args = args.to_vec();
                 args.insert(1, "-json");

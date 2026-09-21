@@ -115,6 +115,72 @@ fn credential_references_cannot_override_opentofu_control_variables() {
     assert!(command_environment(&document, &Values, Path::new("state")).is_err());
 }
 
+#[cfg(unix)]
+#[tokio::test]
+async fn schema_commands_do_not_require_inference_credentials() {
+    use std::os::unix::fs::PermissionsExt;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    #[derive(Default)]
+    struct Unavailable(AtomicUsize);
+    impl Secrets for Unavailable {
+        fn resolve(&self, _: &str) -> Result<String, crate::ObservationError> {
+            self.0.fetch_add(1, Ordering::SeqCst);
+            Err(crate::ObservationError::Authentication)
+        }
+    }
+    let bundle_directory = tempfile::tempdir().unwrap();
+    let bundle = Bundle {
+        directory: bundle_directory.path().into(),
+        manifest: crate::bundle::Manifest {
+            version: "0.1.0".into(),
+            rust: "fixture".into(),
+            opentofu: crate::compile::OPENTOFU_VERSION.into(),
+            files: BTreeMap::new(),
+        },
+    };
+    fs::create_dir_all(bundle.tofu().parent().unwrap()).unwrap();
+    fs::write(
+        bundle.tofu(),
+        b"#!/bin/sh\n[ \"$TF_IN_AUTOMATION\" = 1 ] && [ \"$TF_INPUT\" = 0 ] && [ \"$CHECKPOINT_DISABLE\" = 1 ] && [ \"$TF_CLI_CONFIG_FILE\" = \"$PWD/providers.tfrc\" ] || exit 1\nprintf '{}\\n'\n",
+    )
+    .unwrap();
+    fs::set_permissions(bundle.tofu(), fs::Permissions::from_mode(0o700)).unwrap();
+    let state_directory = tempfile::tempdir().unwrap();
+    let store = Store::open(state_directory.path()).unwrap();
+    let secrets = Arc::new(Unavailable::default());
+    let deployment = Deployment::new(state_directory.path(), bundle_directory.path())
+        .with_secrets(secrets.clone());
+    let mut document =
+        Document::parse(include_str!("../../tests/fixtures/config/local.yaml").as_bytes()).unwrap();
+    document.spec.inference_providers[0].credential = Some(Credential {
+        env: "TEST_INFERENCE_CREDENTIAL".into(),
+    });
+    let cancel = CancellationToken::new();
+    for args in [
+        vec!["init", "-input=false"],
+        vec!["show", "-json", "apply.plan"],
+    ] {
+        assert_eq!(
+            deployment
+                .tofu(&bundle, &store, &document, &args, &cancel)
+                .await
+                .unwrap(),
+            b"{}\n"
+        );
+    }
+    assert_eq!(secrets.0.load(Ordering::SeqCst), 0);
+    for operation in ["plan", "apply"] {
+        assert!(
+            deployment
+                .tofu(&bundle, &store, &document, &[operation], &cancel)
+                .await
+                .is_err()
+        );
+    }
+    assert_eq!(secrets.0.load(Ordering::SeqCst), 2);
+}
+
 #[test]
 fn runtime_replacement_requires_retained_storage_and_preserves_the_old_binding() {
     let address = "nemoclaw_inference_service.runtime";
