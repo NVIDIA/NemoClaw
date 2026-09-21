@@ -118,9 +118,10 @@ async fn gateway_change_between_plan_and_apply_preserves_resources_and_allows_te
         &fs::read(directory.path().join("terraform.tfstate")).unwrap(),
         &prior,
     );
-    // Resume the same intent after restoring compatibility, then verify that
-    // capability drift alone cannot prevent explicit teardown.
+    // This apply planned no managed-resource mutations, so a failed read
+    // must not impose the original-intent guard for ambiguous OpenShell writes.
     fixture.state.lock().unwrap().driver = None;
+    document.metadata.name = "corrected-observation-intent".into();
     assert!(
         deployment
             .apply(&document, &cancel)

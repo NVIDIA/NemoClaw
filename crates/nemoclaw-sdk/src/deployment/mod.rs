@@ -247,8 +247,12 @@ impl Deployment {
         let plan = self
             .saved_plan(&bundle, &store, &document, "apply.plan", cancel)
             .await?;
+        let root_changes = check_plan(&plan, &allowed, &bindings)?;
+        let durable_mutations = root_changes
+            .iter()
+            .any(|change| !plan::disposable(&change.resource));
         let mut changes = runtime_changes;
-        changes.extend(check_plan(&plan, &allowed, &bindings)?);
+        changes.extend(root_changes);
         let mut result = OperationResult::planned(changes);
         if !apply {
             if fresh {
@@ -258,8 +262,12 @@ impl Deployment {
         }
         record.document = document.clone();
         record.digest = document.digest();
-        record.pending = true;
-        record.runtime_pending = false;
+        if durable_mutations {
+            record.pending = true;
+            record.runtime_pending = false;
+        } else {
+            record.begin_runtime_apply();
+        }
         record.succeeded = false;
         record.destroyed = false;
         record.destroy_runtime = false;
@@ -275,6 +283,7 @@ impl Deployment {
         )
         .await?;
         record.pending = false;
+        record.runtime_pending = false;
         store.save(&record)?;
         let bindings = self
             .state_bindings(
