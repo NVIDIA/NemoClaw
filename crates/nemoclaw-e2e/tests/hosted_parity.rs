@@ -6,6 +6,106 @@ use sha2::{Digest, Sha256};
 
 const V0_REVISION: &str = "f47724f29838fe08898993fad1c8c6b7fcb3e080";
 const V0_MANIFEST_SHA256: &str = "35c28e708e5a89a77a52fd91cbd587c1c39621014bed096464c36bbc37409b9b";
+const CURRENT_EXPORT_SOURCE_REVISION: &str = "0a361a239c18dd4a56c34b4ca66dc32a3139bddd";
+const TARGET_PARSER_REVISION: &str = "9d446d51803ea6e3c6aaa286cee57c611173f214";
+const CURRENT_OPENCLAW_EXPORT_SHA256: &str =
+    "ec8f98186b2e18982bfce180627ecb79e35719b6a52088ad527282825f1705f4";
+const CURRENT_HERMES_EXPORT_SHA256: &str =
+    "f178a06e9638ba2406850ad0abc1e2dd6eafe51823807f1348b071146f4dd151";
+
+fn sha256(raw: &[u8]) -> String {
+    Sha256::digest(raw)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
+#[test]
+fn current_single_agent_exports_parse_without_rewriting() {
+    assert_eq!(CURRENT_EXPORT_SOURCE_REVISION.len(), 40);
+    assert_eq!(TARGET_PARSER_REVISION.len(), 40);
+
+    let openclaw_raw = include_bytes!("../fixtures/current-config-exports/openclaw.yaml");
+    assert_eq!(sha256(openclaw_raw), CURRENT_OPENCLAW_EXPORT_SHA256);
+    let openclaw =
+        Document::parse(openclaw_raw.as_slice()).expect("current OpenClaw export must parse raw");
+    let openclaw_sandbox = &openclaw.spec.sandboxes[0];
+    assert_eq!(
+        openclaw.sandbox_harness(openclaw_sandbox).unwrap().kind,
+        "openclaw"
+    );
+    assert_eq!(openclaw_sandbox.agent.name, "primary");
+    let openclaw_policy = &openclaw_sandbox.network.policy.as_ref().unwrap().explicit;
+    assert_eq!(openclaw_policy.version, 1);
+    assert!(openclaw_policy.network_policies.contains_key("api"));
+    assert!(
+        openclaw_policy
+            .filesystem_policy
+            .as_ref()
+            .unwrap()
+            .read_only
+            .as_ref()
+            .unwrap()
+            .iter()
+            .any(|path| path == "/app")
+    );
+    assert_eq!(
+        openclaw.sandbox_inference(openclaw_sandbox).unwrap().routes[0]
+            .overrides
+            .model,
+        "gpt-5"
+    );
+    assert_eq!(
+        openclaw.spec.inference_providers[0]
+            .credential
+            .as_ref()
+            .unwrap()
+            .env,
+        "OPENAI_API_KEY"
+    );
+
+    let hermes_raw = include_bytes!("../fixtures/current-config-exports/hermes.yaml");
+    assert_eq!(sha256(hermes_raw), CURRENT_HERMES_EXPORT_SHA256);
+    let hermes =
+        Document::parse(hermes_raw.as_slice()).expect("current Hermes export must parse raw");
+    let hermes_sandbox = &hermes.spec.sandboxes[0];
+    assert_eq!(
+        hermes.sandbox_harness(hermes_sandbox).unwrap().kind,
+        "hermes"
+    );
+    assert_eq!(hermes_sandbox.agent.name, "primary");
+    assert!(hermes_sandbox.agent.auth.is_some());
+    assert!(
+        hermes_sandbox
+            .network
+            .policy
+            .as_ref()
+            .unwrap()
+            .explicit
+            .filesystem_policy
+            .as_ref()
+            .unwrap()
+            .read_only
+            .as_ref()
+            .unwrap()
+            .iter()
+            .any(|path| path == "/opt/hermes")
+    );
+    assert_eq!(
+        hermes.sandbox_inference(hermes_sandbox).unwrap().routes[0]
+            .overrides
+            .model,
+        "moonshotai/kimi-k2.6"
+    );
+    assert_eq!(
+        hermes.spec.inference_providers[0]
+            .credential
+            .as_ref()
+            .unwrap()
+            .env,
+        "NOUS_API_KEY"
+    );
+}
 
 // This scenario compares separately authored current intent with a test-only
 // projection. The raw export remains unchanged and never reaches deployment.
@@ -49,10 +149,7 @@ fn live_inputs_preserve_raw_export_and_require_matching_authored_intent() {
 #[test]
 fn hosted_openclaw_scenario_rejects_legacy_export_and_preserves_authored_intent() {
     let v0 = include_bytes!("../fixtures/openclaw-nvidia-hosted/v0.yaml");
-    let digest = Sha256::digest(v0)
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect::<String>();
+    let digest = sha256(v0);
     assert_eq!(digest, V0_MANIFEST_SHA256);
     assert_eq!(V0_REVISION.len(), 40);
 

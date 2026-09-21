@@ -1,0 +1,56 @@
+apiVersion: nemoclaw.nvidia.com/v1alpha1
+kind: NemoClawConfig
+metadata:
+  name: hermes-current-export
+  uid: 018f47e2-9d93-7d15-9c41-3ecf70b2550f
+spec:
+  gateway:
+    endpoint: http://127.0.0.1:8080
+    management: managed
+  inferenceProviders:
+    - api: openai-completions
+      credential:
+        env: NOUS_API_KEY
+      endpoint: https://inference-api.nousresearch.com/v1
+      name: hosted-hermes-provider
+      provider: openai
+  sandboxes:
+    - agent:
+        auth:
+          method: api-key
+        inference:
+          routes:
+            - name: primary
+              overrides:
+                model: moonshotai/kimi-k2.6
+              providerRef: hosted-hermes-provider
+        name: primary
+      harness:
+        kind: hermes
+      name: alpha
+      network:
+        policy:
+          explicit:
+            filesystem_policy:
+              include_workdir: false
+              read_only:
+                - /usr
+                - /opt/fabric
+                - /opt/nemoclaw
+                - /opt/hermes
+              read_write:
+                - /sandbox
+            network_policies:
+              api:
+                binaries:
+                  - path: /usr/bin/curl
+                endpoints:
+                  - host: api.example.com
+                    port: 443
+                name: api
+            process:
+              run_as_group: "1000"
+              run_as_user: "1000"
+            version: 1
+      runtime:
+        provider: docker
