@@ -1,12 +1,14 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createSession, type SessionUpdates } from "../../../state/onboard-session";
 import { handleAgentSetupState, type AgentSetupStateOptions } from "./agent-setup";
 
 type Agent = { name: string; displayName: string };
+
+afterEach(() => vi.restoreAllMocks());
 
 function createDeps(overrides: Partial<AgentSetupStateOptions<Agent>["deps"]> = {}) {
   let session = createSession();
@@ -20,9 +22,11 @@ function createDeps(overrides: Partial<AgentSetupStateOptions<Agent>["deps"]> = 
       return session;
     }),
     openclawReady: vi.fn(async () => false),
+    controlPlaneReady: vi.fn(async () => true),
     skippedMessage: vi.fn(),
     recordSkip: vi.fn(async () => createSession()),
     startStep: vi.fn(async () => undefined),
+    announceOpenclawSetup: vi.fn(),
     setupOpenclaw: vi.fn(async () => undefined),
     configureOpenclaw: vi.fn(async () => undefined),
     complete: vi.fn(async (stepName: string, updates: SessionUpdates = {}) => {
@@ -40,9 +44,11 @@ function createDeps(overrides: Partial<AgentSetupStateOptions<Agent>["deps"]> = 
       persistDashboardPort: calls.persistDashboardPort,
       recordStepSkipped: calls.skipped,
       isOpenclawReady: calls.openclawReady,
+      waitForSandboxControlPlaneReady: calls.controlPlaneReady,
       skippedStepMessage: calls.skippedMessage,
       recordStateSkipped: calls.recordSkip,
       startRecordedStep: calls.startStep,
+      announceOpenclawSetup: calls.announceOpenclawSetup,
       setupOpenclaw: calls.setupOpenclaw,
       configureOpenclawSandbox: calls.configureOpenclaw,
       recordStepComplete: calls.complete,
@@ -126,11 +132,16 @@ describe("handleAgentSetupState", () => {
   });
 
   it("skips OpenClaw setup on resume when OpenClaw is ready", async () => {
-    const { deps, calls } = createDeps({ isOpenclawReady: vi.fn(async () => true) });
+    const { deps, calls } = createDeps();
+    calls.openclawReady.mockResolvedValue(true);
 
     const result = await handleAgentSetupState({ ...baseOptions(deps), resume: true });
 
     expect(calls.skippedMessage).toHaveBeenCalledWith("openclaw", "my-assistant");
+    expect(calls.controlPlaneReady).toHaveBeenCalledExactlyOnceWith("my-assistant");
+    expect(calls.controlPlaneReady.mock.invocationCallOrder[0]).toBeLessThan(
+      calls.configureOpenclaw.mock.invocationCallOrder[0],
+    );
     expect(calls.recordSkip).toHaveBeenCalledWith("openclaw", {
       reason: "resume",
       sandboxName: "my-assistant",
@@ -143,6 +154,7 @@ describe("handleAgentSetupState", () => {
       "provider",
       null,
       undefined,
+      false,
     );
     expect(calls.complete).toHaveBeenCalledWith(
       "openclaw",
@@ -168,6 +180,20 @@ describe("handleAgentSetupState", () => {
       model: "model",
       steps: { openclaw: { status: "complete" }, agent_setup: { status: "skipped" } },
     });
+  });
+
+  it("does not configure a resumed OpenClaw sandbox before its exec relay converges", async () => {
+    const { deps, calls } = createDeps({
+      isOpenclawReady: vi.fn(async () => true),
+      waitForSandboxControlPlaneReady: vi.fn(async () => false),
+    });
+
+    await expect(handleAgentSetupState({ ...baseOptions(deps), resume: true })).rejects.toThrow(
+      "Sandbox 'my-assistant' did not re-register with OpenShell before OpenClaw resume configuration.",
+    );
+    expect(calls.configureOpenclaw).not.toHaveBeenCalled();
+    expect(calls.recordSkip).not.toHaveBeenCalled();
+    expect(calls.complete).not.toHaveBeenCalled();
   });
 
   it("waits for resumed OpenClaw readiness before choosing setup", async () => {
@@ -216,6 +242,7 @@ describe("handleAgentSetupState", () => {
       "provider",
       { fetchEnabled: false },
       revalidateSandboxIdentity,
+      false,
     );
     expect(calls.configureOpenclaw.mock.invocationCallOrder[0]).toBeLessThan(
       calls.recordSkip.mock.invocationCallOrder[0],
@@ -223,6 +250,26 @@ describe("handleAgentSetupState", () => {
     expect(calls.configureOpenclaw.mock.invocationCallOrder[0]).toBeLessThan(
       calls.complete.mock.invocationCallOrder[0],
     );
+  });
+
+  it("keeps a ready managed resume on the managed profile path", async () => {
+    const { deps, calls } = createDeps({ isOpenclawReady: vi.fn(async () => true) });
+
+    await handleAgentSetupState({
+      ...baseOptions(deps),
+      managedOpenclawStartup: true,
+      resume: true,
+    });
+
+    expect(calls.configureOpenclaw).toHaveBeenCalledExactlyOnceWith(
+      "my-assistant",
+      "model",
+      "provider",
+      null,
+      undefined,
+      true,
+    );
+    expect(calls.controlPlaneReady).toHaveBeenCalledExactlyOnceWith("my-assistant");
   });
 
   it("does not complete ready resume when config-sync authority revalidation fails", async () => {
@@ -311,6 +358,48 @@ describe("handleAgentSetupState", () => {
       hermesToolGateways: ["github"],
       steps: { openclaw: { status: "complete" }, agent_setup: { status: "skipped" } },
     });
+  });
+
+  it("waits for managed OpenClaw before syncing selection metadata without legacy setup", async () => {
+    const { deps, calls } = createDeps();
+    calls.controlPlaneReady.mockResolvedValue(true);
+    const revalidateSandboxIdentity = vi.fn();
+
+    await handleAgentSetupState({
+      ...baseOptions(deps),
+      managedOpenclawStartup: true,
+      revalidateSandboxIdentity,
+    });
+
+    expect(calls.controlPlaneReady).toHaveBeenCalledExactlyOnceWith("my-assistant");
+    expect(calls.announceOpenclawSetup).toHaveBeenCalledOnce();
+    expect(calls.setupOpenclaw).not.toHaveBeenCalled();
+    expect(calls.configureOpenclaw).toHaveBeenCalledExactlyOnceWith(
+      "my-assistant",
+      "model",
+      "provider",
+      null,
+      revalidateSandboxIdentity,
+      true,
+    );
+    expect(calls.complete).toHaveBeenCalledWith(
+      "openclaw",
+      expect.objectContaining({ sandboxName: "my-assistant" }),
+    );
+  });
+
+  it("does not sync managed OpenClaw metadata before native readiness", async () => {
+    const { deps, calls } = createDeps();
+    calls.controlPlaneReady.mockResolvedValue(false);
+
+    await expect(
+      handleAgentSetupState({ ...baseOptions(deps), managedOpenclawStartup: true }),
+    ).rejects.toThrow(/did not re-register with OpenShell/u);
+
+    expect(calls.setupOpenclaw).not.toHaveBeenCalled();
+    expect(calls.configureOpenclaw).not.toHaveBeenCalled();
+    expect(calls.complete).not.toHaveBeenCalled();
+    expect(calls.controlPlaneReady).toHaveBeenCalledExactlyOnceWith("my-assistant");
   });
 
   it("returns a session when the input session is null", async () => {

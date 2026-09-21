@@ -257,10 +257,10 @@ Run `$$nemoclaw backup-all` before broad maintenance such as `$$nemoclaw update`
 $$nemoclaw backup-all
 ```
 
-`backup-all` walks the sandboxes registered on the host, creates a snapshot for each eligible running or temporarily started sandbox, and stores the snapshot bundles under `~/.nemoclaw/rebuild-backups/<name>/`. If a registered docker-driver sandbox's container is stopped, `backup-all` starts the container for the duration of the backup and returns it to its stopped state afterward. If the container cannot be returned to the stopped state, the backup run fails and reports that the container was left running. If a sandbox is not running and its container cannot be started this way, start the sandbox or its container and rerun `$$nemoclaw backup-all`.
+`backup-all` walks the sandboxes registered on the host, creates a snapshot for each eligible running or temporarily started sandbox, and stores the snapshot bundles under `~/.nemoclaw/rebuild-backups/<name>/`. If a registered standard sandbox is stopped, `backup-all` asks OpenShell to start that exact sandbox for the duration of the backup and asks OpenShell to return it to `Stopped` afterward. If either lifecycle transition fails, the backup run fails with the affected sandbox named. Correct the reported OpenShell lifecycle problem, run `$$nemoclaw <name> start` when appropriate, and rerun `$$nemoclaw backup-all`; do not start or stop the provider container directly.
 
 For each eligible sandbox, `backup-all` holds one lifecycle transaction through the complete backup.
-Within that transaction, it starts a stopped container when required, copies sandbox state, and returns any container it started to the stopped state.
+Within that transaction, it asks OpenShell to start a stopped sandbox when required, copies sandbox state, and asks OpenShell to return that sandbox to `Stopped`.
 A backup failure marks that sandbox as failed, and `backup-all` continues with the next sandbox.
 
 When a backup fails, NemoClaw identifies the affected state item and reports `permission denied`, `tar read error`, or `absent after extraction` when available. Use `$$nemoclaw <name> snapshot list` and `$$nemoclaw <name> snapshot restore` to inspect or restore one sandbox's bundles later.

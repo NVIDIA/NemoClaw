@@ -403,6 +403,7 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
     CHECKOUT_REPOSITORY: "${{ inputs.checkout_repository }}",
     CHECKOUT_SHA: "${{ inputs.checkout_sha }}",
     EXPECTED_WORKFLOW_SHA: "${{ inputs.workflow_sha }}",
+    GITHUB_TOKEN: "${{ github.token }}",
     INCLUDE_LAUNCHABLE: "${{ inputs.include_staging_brev_launchable && 'true' || 'false' }}",
     JOBS: "${{ inputs.jobs }}",
     PR_NUMBER: "${{ inputs.pr_number }}",
@@ -416,9 +417,6 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
       errors.push(`Manual PR authentication must bind ${name}`);
   }
   const authSource = String(authentication.run ?? "");
-  if (authentication.env?.GITHUB_TOKEN !== undefined || authSource.includes("Authorization:")) {
-    errors.push("Manual PR authentication must use the public PR metadata endpoint");
-  }
   for (const fragment of [
     '"$WORKFLOW_EVENT" == "workflow_dispatch"',
     '"$WORKFLOW_REF" == refs/heads/*',
@@ -427,6 +425,8 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
     '"$CHECKOUT_SHA" =~ ^[a-f0-9]{40}$',
     '"$BASE_SHA" =~ ^[a-f0-9]{40}$',
     '"$EXPECTED_WORKFLOW_SHA" == "$WORKFLOW_SHA"',
+    '[[ -n "$GITHUB_TOKEN" ]]',
+    '--header "Authorization: Bearer ${GITHUB_TOKEN}"',
     "https://api.github.com/repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}",
     `[[ "$(jq -r '.base.repo.full_name // ""' <<< "$pull_json")" == "NVIDIA/NemoClaw" ]]`,
     `[[ "$(jq -r '.base.ref // ""' <<< "$pull_json")" == "main" ]]`,
@@ -458,13 +458,6 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
     if (!authSource.includes(fragment))
       errors.push(`Manual PR authentication must retain ${fragment}`);
   }
-  if (
-    authSource.includes("Authorization: Bearer") ||
-    Object.hasOwn(authentication.env ?? {}, "GITHUB_TOKEN")
-  ) {
-    errors.push("Manual PR authentication must use public PR metadata without a job token");
-  }
-
   const qualificationPlanName = "native-runtime-qualification-producer-plan";
   const qualificationPlan = workflow.jobs[qualificationPlanName] ?? {};
   const trustedMainPlanCondition =
@@ -996,7 +989,7 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
   }
   if (
     live.env?.NEMOCLAW_LANGCHAIN_DEEPAGENTS_CODE_SANDBOX_BASE_IMAGE_REF !==
-    "${{ needs.generate-matrix.outputs.workload_source == 'managed-image' && needs.base-image-publication.outputs.managed_image_catalog == '' && needs.base-image-publication.outputs.dcode_base_ref || '' }}"
+    "${{ needs.generate-matrix.outputs.workload_source == 'managed-image' && needs.base-image-publication.outputs.dcode_base_ref || '' }}"
   ) {
     errors.push("live DCode must use one selected immutable image authority");
   }

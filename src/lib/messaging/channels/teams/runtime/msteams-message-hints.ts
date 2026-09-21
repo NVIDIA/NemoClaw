@@ -103,13 +103,20 @@ type MSTeamsModuleLike = {
     parent?: MSTeamsModuleLoadParent,
   ): boolean {
     var normalizedRequest = normalizePathLike(request);
-    if (normalizedRequest === "@openclaw/msteams/dist/channel-plugin-api.js") return true;
-    if (normalizedRequest.endsWith("/node_modules/@openclaw/msteams/dist/channel-plugin-api.js")) {
+    if (/^@openclaw\/msteams\/dist\/channel-plugin-api\.(?:cjs|js)$/.test(normalizedRequest)) {
+      return true;
+    }
+    if (
+      /\/node_modules\/@openclaw\/msteams\/dist\/channel-plugin-api\.(?:cjs|js)$/.test(
+        normalizedRequest,
+      )
+    ) {
       return true;
     }
     var parentFile = normalizePathLike(parent && parent.filename);
     return (
-      normalizedRequest === "./channel-plugin-api.js" && isOpenClawMSTeamsPackagePath(parentFile)
+      /^\.\/channel-plugin-api\.(?:cjs|js)$/.test(normalizedRequest) &&
+      isOpenClawMSTeamsPackagePath(parentFile)
     );
   }
 

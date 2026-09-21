@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { isDeepStrictEqual } from "node:util";
-import { createCliOpenShellInferenceRouteObserver } from "../../adapters/openshell/inference-route-cli";
+import { createSynchronousCliOpenShellInferenceRouteObserver } from "../../adapters/openshell/inference-route-cli";
 import {
   createCliOpenShellSandboxCommandExecutor,
   createCurrentnessBoundCliOpenShellSandboxBufferedCommandExecutor,
@@ -98,6 +98,7 @@ import {
   requalifyPortableAgentSandboxAuthority,
   recoverPortableDemoSandboxLifecycleForConnect,
   isTerminalSandboxPhase,
+  sandboxPhaseNeedsLifecycleStart,
   TERMINAL_SANDBOX_PHASES,
   requireHermesPortableActiveLifecycleAuthority,
   startStoppedSandboxContainerForProbeRecovery,
@@ -172,6 +173,7 @@ async function publishHermesLaunchReadinessWithSettlement(
 }
 
 export type SandboxConnectOptions = {
+  managedHermesGatewayProcessObserved?: true;
   probeOnly?: boolean;
   requireLaunchReadinessPublication?: boolean;
 };
@@ -364,12 +366,14 @@ async function runSandboxConnectProbe(
   {
     hermesPortable = false,
     hermesPortableCommandAuthority,
+    managedHermesGatewayProcessObserved = false,
     startedStoppedContainer = false,
     probeOnly,
     probeTiming,
   }: {
     hermesPortable?: boolean;
     hermesPortableCommandAuthority?: HermesPortableReadinessCommandAuthority;
+    managedHermesGatewayProcessObserved?: boolean;
     startedStoppedContainer?: boolean;
     probeOnly: true;
     probeTiming?: ProbeTimingRecorder;
@@ -433,6 +437,8 @@ async function runSandboxConnectProbe(
     return;
   }
 
+  let settledHermesGatewayObserved =
+    managedHermesGatewayProcessObserved === true && agent?.name === "hermes";
   if (startedStoppedContainer && agent?.name === "hermes") {
     const gatewayProcess = await measureAsync("processes", () =>
       waitForStartedHermesGatewayProcess(sandboxName, getSandboxTargetGatewayName(sandboxName), {
@@ -446,6 +452,7 @@ async function runSandboxConnectProbe(
       );
       process.exit(1);
     }
+    settledHermesGatewayObserved = settledHermesGatewayObserved || gatewayProcess === true;
   }
 
   // Managed recovery runs quiet here, so its classified failure layer is the
@@ -455,6 +462,12 @@ async function runSandboxConnectProbe(
   const processCheck = await checkAndRecoverSandboxProcesses(sandboxName, {
     quiet: true,
     probeTiming,
+    // Reuse the accepted managed-supervisor observation in this probe. A
+    // second sandbox-exec observation can be temporarily unavailable while
+    // the just-started sandbox finishes reopening its command transport.
+    ...(settledHermesGatewayObserved
+      ? { isSandboxGatewayRunningImpl: async () => true as const }
+      : {}),
     onRecoveryFailureLayer: (layer) => {
       recoveryFailureLayer = layer;
     },
@@ -638,7 +651,7 @@ function failHermesPortableReadinessAuthority(sandboxName: string): never {
 function captureHermesPortableOpenShell(
   sandboxName: string,
   args: string[],
-  options: { readonly includeStreams?: boolean; readonly timeout: number },
+  options: NonNullable<Parameters<typeof captureResolvedOpenshell>[1]>,
 ) {
   const commandAuthority = buildHermesPortableCommandAuthority(sandboxName);
   return captureResolvedOpenshell(args, {
@@ -931,12 +944,14 @@ async function verifyHermesPortableInferenceRoute(
   } as const;
   const capture = (
     args: string[],
-    options: { readonly includeStreams?: boolean; readonly timeout: number },
+    options: NonNullable<Parameters<typeof captureResolvedOpenshell>[1]>,
   ) =>
     commandAuthority
       ? captureHermesPortableReadinessObservation(commandAuthority, args, options)
       : captureHermesPortableOpenShell(sandboxName, args, options);
-  const liveResult = await createCliOpenShellInferenceRouteObserver(capture).observeInferenceRoute({
+  const liveResult = await createSynchronousCliOpenShellInferenceRouteObserver(
+    capture,
+  ).observeInferenceRoute({
     target: namedOpenShellGateway(authority.gatewayName),
     timeoutMs: OPENSHELL_PROBE_TIMEOUT_MS,
   });
@@ -1640,7 +1655,7 @@ async function ensureSandboxInferenceRouteUnlocked(
     // The live route exposes only provider/model. Prove the target's durable
     // custom endpoint/API identity before any route read, probe, or mutation.
     assertSandboxGatewayRouteCompatible(sandboxName, sb, gatewayName);
-    const liveResult = await createCliOpenShellInferenceRouteObserver(
+    const liveResult = await createSynchronousCliOpenShellInferenceRouteObserver(
       captureOpenshell,
     ).observeInferenceRoute({
       target: namedOpenShellGateway(gatewayName),
@@ -2264,6 +2279,7 @@ async function runConnectEntryPreflight(
         livePhase &&
         livePhase !== "Ready" &&
         livePhase !== "Running" &&
+        !sandboxPhaseNeedsLifecycleStart(livePhase) &&
         !isTerminalSandboxPhase(livePhase) &&
         isDockerRuntimeDown(sandboxName)
       ) {
@@ -2477,7 +2493,11 @@ type PreparedConnectSession = {
 
 async function prepareConnectSandboxWithinLifecycleFence(
   sandboxName: string,
-  { probeOnly = false, requireLaunchReadinessPublication = true }: SandboxConnectOptions,
+  {
+    managedHermesGatewayProcessObserved,
+    probeOnly = false,
+    requireLaunchReadinessPublication = true,
+  }: SandboxConnectOptions,
   probeTiming?: ProbeTimingRecorder,
 ): Promise<PreparedConnectSession | null> {
   if (probeOnly) {
@@ -2853,8 +2873,10 @@ async function prepareConnectSandboxWithinLifecycleFence(
             // OpenShell keeps reporting the stopped sandbox until the wait expires (#8967).
             const startedStoppedContainer = hermesPortable
               ? false
-              : probeTiming!.measure("lifecycle", () =>
-                  startStoppedSandboxContainerForProbeRecovery(sandboxName),
+              : await probeTiming!.measureAsync("lifecycle", () =>
+                  startStoppedSandboxContainerForProbeRecovery(sandboxName, {
+                    getSandbox: registry.getSandbox,
+                  }),
                 );
             if (
               startedStoppedContainer &&
@@ -2900,6 +2922,9 @@ async function prepareConnectSandboxWithinLifecycleFence(
             await runSandboxConnectProbe(sandboxName, {
               hermesPortable,
               ...(hermesPortableCommandAuthority ? { hermesPortableCommandAuthority } : {}),
+              ...(managedHermesGatewayProcessObserved
+                ? { managedHermesGatewayProcessObserved }
+                : {}),
               startedStoppedContainer,
               probeOnly: true,
               probeTiming,
