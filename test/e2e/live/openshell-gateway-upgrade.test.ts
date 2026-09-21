@@ -471,9 +471,9 @@ async function installCurrentNemoclawUpgrade(
           }),
           bash(
             host,
-            `openshell logs -g nemoclaw ${shellQuote(SURVIVOR_SANDBOX)} -n 240 --source all`,
+            `openshell sandbox exec -g nemoclaw -n ${shellQuote(SURVIVOR_SANDBOX)} -- tail -n 300 /tmp/nemoclaw-start.log`,
             {
-              artifactName: "current-install-failure-sandbox-logs",
+              artifactName: "current-install-failure-start-log",
               env: currentEnv,
               redactionValues,
               timeoutMs: 30_000,
