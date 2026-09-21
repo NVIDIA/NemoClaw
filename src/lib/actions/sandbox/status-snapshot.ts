@@ -853,7 +853,7 @@ async function buildSandboxStatusReport(
   // without that boundary report policy availability honestly instead of
   // reaching into policy state through a second orchestration path.
   const livePolicies =
-    sb && deps.getGatewayPresets ? await deps.getGatewayPresets(sandboxName) : [];
+    sb && deps.getGatewayPresets ? await deps.getGatewayPresets(sandboxName, undefined, sb) : [];
   const agent = resolveSandboxStatusAgent(sb?.agent || "openclaw");
   return {
     schemaVersion: 1,

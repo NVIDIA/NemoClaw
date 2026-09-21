@@ -462,6 +462,30 @@ describe("rebuild owning registry routing", () => {
     expect(runWorker).not.toHaveBeenCalled();
   });
 
+  it("refuses to prompt inside a detached sibling-root rebuild worker", async () => {
+    const entry = makeSandboxEntry("nemoclaw-9000", 9000);
+    vi.spyOn(rebuildOwningRegistryDependencies, "findSandbox").mockReturnValue({
+      entry,
+      gatewayPort: 9000,
+      registryGatewayPort: 9000,
+      registryFile: "/home/test/.nemoclaw/gateways/9000/sandboxes.json",
+    });
+    vi.spyOn(rebuildOwningRegistryDependencies, "isHostFenceHeld").mockReturnValue(false);
+    const runWorker = vi.spyOn(rebuildOwningRegistryDependencies, "runWorker");
+
+    await expect(
+      delegateRebuildToOwningRegistry(
+        { sandboxName: "alpha", options: {}, executionOptions: {} },
+        "/home/test",
+        "/home/test/.nemoclaw/sandboxes.json",
+      ),
+    ).rejects.toThrow(
+      "Cannot transfer an interactive rebuild for 'alpha' to its owning gateway registry. Re-run with '--yes' or '--force'.",
+    );
+
+    expect(runWorker).not.toHaveBeenCalled();
+  });
+
   it("rejects duplicate exact recovery records across gateway roots", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-recovery-roots-"));
     const transactionId = "11111111-1111-4111-8111-111111111111";

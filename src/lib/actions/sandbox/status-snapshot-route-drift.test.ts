@@ -250,6 +250,35 @@ describe("collectSandboxStatusSnapshot route drift", () => {
 
     expect(report.routeDrift).toMatchObject({ canConnect: false });
   });
+
+  it("reads policies with the sandbox entry resolved from its owning gateway root", async () => {
+    const target: SandboxEntry = {
+      name: "alpha",
+      agent: "openclaw",
+      gatewayName: "nemoclaw-9090",
+      gatewayPort: 9090,
+      provider: "compatible-endpoint",
+      model: "recorded/model",
+    };
+    const options = snapshotDeps(target);
+    const { getSandbox: _getSandbox, ...deps } = options.deps;
+    const getGatewayPresets = vi.fn(async () => ["npm"]);
+
+    const report = await getSandboxStatusReport("alpha", {
+      ...deps,
+      findSandboxAcrossGatewayRoots: () => ({
+        entry: target,
+        gatewayPort: 9090,
+        registryGatewayPort: 9090,
+        registryFile: "/test/.nemoclaw/gateways/9090/sandboxes.json",
+      }),
+      getGatewayPresets,
+    });
+
+    expect(report.policies).toEqual(["npm"]);
+    expect(report.policiesAvailable).toBe(true);
+    expect(getGatewayPresets).toHaveBeenCalledWith("alpha", undefined, target);
+  });
 });
 
 describe("getSandboxStatusReport llama.cpp attribution on drift (#10256)", () => {

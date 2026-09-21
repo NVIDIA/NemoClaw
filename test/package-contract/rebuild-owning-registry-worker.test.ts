@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { createHash } from "node:crypto";
+import { spawn } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -9,6 +10,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { rebuildOwningRegistryDependencies } from "../../dist/lib/actions/sandbox/rebuild/owning-registry";
+import { testTimeout } from "../helpers/timeouts";
 
 const TRANSACTION_ID = "11111111-1111-4111-8111-111111111111";
 const TIMESTAMP = "2026-09-17T00-00-00-000Z";
@@ -321,6 +323,74 @@ describe("compiled rebuild owning-registry worker", () => {
       fs.rmSync(home, { recursive: true, force: true });
     }
   });
+
+  it(
+    "reaps a delegated worker process group before preserving parent SIGINT semantics",
+    async () => {
+      const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-worker-sigint-"));
+      const descendantMarker = path.join(home, "descendant.pid");
+      const modulePath = path.join(
+        import.meta.dirname,
+        "../../dist/lib/actions/sandbox/rebuild/owning-registry.js",
+      );
+      let descendantPid: number | undefined;
+      writeRecoveryFixture(home);
+      const harness = spawn(
+        process.execPath,
+        [
+          "-e",
+          [
+            `const { rebuildOwningRegistryDependencies } = require(${JSON.stringify(modulePath)});`,
+            "void rebuildOwningRegistryDependencies.runWorker(",
+            `  { operation: "retire-recovery", sandboxName: "alpha", transactionId: ${JSON.stringify(TRANSACTION_ID)}, confirmDataRecovered: true },`,
+            "  9000,",
+            "  { timeoutMs: 30000, terminationGraceMs: 100 },",
+            ").catch((error) => { console.error(error); process.exitCode = 1; });",
+          ].join("\n"),
+        ],
+        {
+          env: {
+            ...process.env,
+            HOME: home,
+            NEMOCLAW_OPENSHELL_BIN: writeBlockingOpenShell(home, descendantMarker),
+          },
+          stdio: ["ignore", "pipe", "pipe"],
+        },
+      );
+      const output: Buffer[] = [];
+      harness.stdout.on("data", (chunk: Buffer) => output.push(chunk));
+      harness.stderr.on("data", (chunk: Buffer) => output.push(chunk));
+      const exited = new Promise<Readonly<{ code: number | null; signal: NodeJS.Signals | null }>>(
+        (resolve, reject) => {
+          harness.once("error", reject);
+          harness.once("exit", (code, signal) => resolve({ code, signal }));
+        },
+      );
+      try {
+        await vi.waitFor(() => expect(fs.existsSync(descendantMarker)).toBe(true), {
+          timeout: testTimeout(20_000),
+        });
+        descendantPid = Number(fs.readFileSync(descendantMarker, "utf8"));
+
+        expect(harness.kill("SIGINT")).toBe(true);
+        await expect(exited).resolves.toEqual({ code: null, signal: "SIGINT" });
+        expect(() => process.kill(descendantPid!, 0)).toThrow(
+          expect.objectContaining({ code: "ESRCH" }),
+        );
+      } catch (error) {
+        throw new Error(`${String(error)}\n${Buffer.concat(output).toString("utf8")}`);
+      } finally {
+        harness.kill("SIGKILL");
+        try {
+          process.kill(descendantPid as number, "SIGKILL");
+        } catch {
+          // The delegated worker cleanup succeeded or the marker was never written.
+        }
+        fs.rmSync(home, { recursive: true, force: true });
+      }
+    },
+    testTimeout(30_000),
+  );
 
   it("reports an unreaped worker as potentially active", async () => {
     const kill = process.kill.bind(process);

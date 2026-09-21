@@ -194,6 +194,28 @@ async function settleWorkerPromises(
   }
 }
 
+async function terminateWorkerProcessGroup(
+  child: ChildProcess,
+  dedicatedProcessGroup: boolean,
+  terminationGraceMs: number,
+): Promise<boolean> {
+  signalWorkerProcessGroup(child, dedicatedProcessGroup, "SIGTERM");
+  let workerReaped = await waitForWorkerProcessGroupExit(
+    child,
+    dedicatedProcessGroup,
+    terminationGraceMs,
+  );
+  if (!workerReaped) {
+    signalWorkerProcessGroup(child, dedicatedProcessGroup, "SIGKILL");
+    workerReaped = await waitForWorkerProcessGroupExit(
+      child,
+      dedicatedProcessGroup,
+      REBUILD_WORKER_REAP_TIMEOUT_MS,
+    );
+  }
+  return workerReaped;
+}
+
 async function runWorker(
   input: OwningRegistryWorkerInput,
   gatewayPort: number,
@@ -242,37 +264,60 @@ async function runWorker(
   const timeout = new Promise<Readonly<{ kind: "timeout" }>>((resolve) => {
     deadline = setTimeout(() => resolve({ kind: "timeout" }), timeoutMs);
   });
+  let resolveInterrupted:
+    | ((outcome: Readonly<{ kind: "interrupted"; signal: NodeJS.Signals }>) => void)
+    | undefined;
+  const interrupted = new Promise<Readonly<{ kind: "interrupted"; signal: NodeJS.Signals }>>(
+    (resolve) => {
+      resolveInterrupted = resolve;
+    },
+  );
+  const onSigint = () => resolveInterrupted?.({ kind: "interrupted", signal: "SIGINT" });
+  const onSigterm = () => resolveInterrupted?.({ kind: "interrupted", signal: "SIGTERM" });
+  process.on("SIGINT", onSigint);
+  process.on("SIGTERM", onSigterm);
   let outcome:
     | Readonly<{
         kind: "completed";
         value: Awaited<typeof completion>;
       }>
-    | Readonly<{ kind: "timeout" }>;
+    | Readonly<{ kind: "timeout" }>
+    | Readonly<{ kind: "interrupted"; signal: NodeJS.Signals }>
+    | undefined;
   try {
     outcome = await Promise.race([
       completion.then((value) => ({ kind: "completed" as const, value })),
       timeout,
+      interrupted,
     ]);
   } finally {
     if (deadline) clearTimeout(deadline);
+    if (outcome?.kind !== "interrupted") {
+      process.removeListener("SIGINT", onSigint);
+      process.removeListener("SIGTERM", onSigterm);
+    }
   }
-  if (outcome.kind === "timeout") {
-    signalWorkerProcessGroup(child, dedicatedProcessGroup, "SIGTERM");
-    let workerReaped = await waitForWorkerProcessGroupExit(
+  if (!outcome) throw new Error("Rebuild in the owning gateway registry did not complete.");
+  if (outcome.kind !== "completed") {
+    const workerReaped = await terminateWorkerProcessGroup(
       child,
       dedicatedProcessGroup,
       terminationGraceMs,
     );
-    if (!workerReaped) {
-      signalWorkerProcessGroup(child, dedicatedProcessGroup, "SIGKILL");
-      workerReaped = await waitForWorkerProcessGroupExit(
-        child,
-        dedicatedProcessGroup,
-        REBUILD_WORKER_REAP_TIMEOUT_MS,
-      );
-    }
     await settleWorkerPromises([inputWritten, exited, result], REBUILD_WORKER_REAP_TIMEOUT_MS);
     const operation = input.operation === "rebuild" ? "rebuild" : "recovery retirement";
+    if (outcome.kind === "interrupted") {
+      if (!workerReaped) {
+        const workerPid = typeof child.pid === "number" ? String(child.pid) : "unavailable";
+        console.error(
+          `Delegated ${operation} for sandbox '${input.sandboxName}' was interrupted, but termination is unconfirmed for worker PID ${workerPid}. The operation outcome is unknown; inspect that worker, the sandbox, and retained recovery state before retrying.`,
+        );
+      }
+      process.removeListener("SIGINT", onSigint);
+      process.removeListener("SIGTERM", onSigterm);
+      process.kill(process.pid, outcome.signal);
+      throw new Error(`Delegated ${operation} was interrupted by ${outcome.signal}.`);
+    }
     if (!workerReaped) {
       const workerPid = typeof child.pid === "number" ? String(child.pid) : "unavailable";
       throw new Error(
@@ -383,6 +428,11 @@ export async function delegateRebuildToOwningRegistry(
   if (rebuildOwningRegistryDependencies.isHostFenceHeld(homeDir)) {
     throw new Error(
       `Cannot transfer rebuild for '${input.sandboxName}' while another lifecycle command owns the host fence. Run 'nemoclaw ${input.sandboxName} rebuild' directly.`,
+    );
+  }
+  if (!input.options.yes && !input.options.force) {
+    throw new Error(
+      `Cannot transfer an interactive rebuild for '${input.sandboxName}' to its owning gateway registry. Re-run with '--yes' or '--force'.`,
     );
   }
   await rebuildOwningRegistryDependencies.runWorker(
