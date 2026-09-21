@@ -462,12 +462,24 @@ async function installCurrentNemoclawUpgrade(
     currentEnv,
     {
       onFailure: async () => {
-        await bash(host, `nemoclaw ${shellQuote(SURVIVOR_SANDBOX)} doctor`, {
-          artifactName: "current-install-failure-doctor",
-          env: currentEnv,
-          redactionValues,
-          timeoutMs: 120_000,
-        });
+        await Promise.allSettled([
+          bash(host, `nemoclaw ${shellQuote(SURVIVOR_SANDBOX)} doctor`, {
+            artifactName: "current-install-failure-doctor",
+            env: currentEnv,
+            redactionValues,
+            timeoutMs: 120_000,
+          }),
+          bash(
+            host,
+            `openshell logs -g nemoclaw ${shellQuote(SURVIVOR_SANDBOX)} -n 240 --source all`,
+            {
+              artifactName: "current-install-failure-sandbox-logs",
+              env: currentEnv,
+              redactionValues,
+              timeoutMs: 30_000,
+            },
+          ),
+        ]);
       },
       redactionValues,
     },
@@ -507,7 +519,11 @@ async function assertSurvivorSandboxAfterUpgrade(host: HostCliClient): Promise<v
   const agent = await runInSurvivorSandbox(
     host,
     `openclaw agent --agent main --json --thinking off --session-id ${shellQuote(`e2e-upgrade-${process.pid}`)} -m ${shellQuote("Reply with only: ok")}`,
-    { artifactName: "post-upgrade-agent", currentCli: true, timeoutMs: 120_000 },
+    {
+      artifactName: "post-upgrade-agent",
+      currentCli: true,
+      timeoutMs: 120_000,
+    },
   );
   expectExitZero(agent, "post-upgrade OpenClaw agent turn");
   expect(parseOpenClawAgentText(agent.stdout).trim().toLowerCase()).toBe("ok");
