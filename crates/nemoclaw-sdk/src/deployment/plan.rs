@@ -37,6 +37,13 @@ pub(super) fn observation(
         && allowed.contains_key(&change.address))
         || (gateway && crate::compile::is_gateway_observation(&change.address))
         || allowed.keys().any(|address| {
+            address
+                .strip_prefix("nemoclaw_sandbox.")
+                .is_some_and(|name| {
+                    change.address == format!("data.nemoclaw_sandbox_readiness.{name}")
+                })
+        })
+        || allowed.keys().any(|address| {
             (address.starts_with("docker_container.inference_service_")
                 || address.starts_with("docker_container.ollama_service_")
                 || address.starts_with("docker_container.ollama_proxy_"))

@@ -45,10 +45,12 @@ pub(in crate::services) async fn supervise(
                     Some(Ok(memory)) if !watch.sample(memory.available,memory.free)=>{},
                     Some(Ok(memory))=>break Err(Error::Execution {
                         operation: "memory protection".into(),
+                        postcondition_failures: None,
                         diagnostic: format!("host memory pressure stopped the managed service: available={} free={}; explicit apply required", memory.available, memory.free),
                     }),
                     Some(Err(error))=>break Err(Error::Execution {
                         operation: "memory protection".into(),
+                        postcondition_failures: None,
                         diagnostic: format!("memory observation failed: {error}; managed service stopped; explicit apply required"),
                     }),
                     None=>break Err(Error::Conflict("memory sample stream closed; managed service stopped; explicit apply required")),
