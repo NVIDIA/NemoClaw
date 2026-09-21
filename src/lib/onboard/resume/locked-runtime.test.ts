@@ -78,9 +78,11 @@ describe("locked onboarding runtime preparation", () => {
   it("keeps fresh host preparation blocked when consent is denied (#11718)", async () => {
     vi.stubEnv("NEMOCLAW_PROVIDER", "ollama");
     vi.mocked(ensureUsageNoticeConsent).mockResolvedValue(false);
-    vi.spyOn(process, "exit").mockImplementation(() => {
+    /** Observe denied consent without terminating the test process. */
+    function rejectConsentExit(): never {
       throw new Error("Consent denied");
-    });
+    }
+    vi.spyOn(process, "exit").mockImplementation(rejectConsentExit);
     const before = { ...process.env };
     const preparePortableHost = vi.fn();
 
@@ -96,10 +98,12 @@ describe("locked onboarding runtime preparation", () => {
     vi.stubEnv("NEMOCLAW_PROVIDER", "ollama");
     vi.mocked(ensureUsageNoticeConsent).mockResolvedValue(true);
     const before = { ...process.env };
-    const preparePortableHost = vi.fn(() => {
+    /** Verify consent precedes host preparation, then exercise failure cleanup. */
+    function failAfterConsent(): never {
       expect(ensureUsageNoticeConsent).toHaveBeenCalledOnce();
       throw new Error("Host preparation reached");
-    });
+    }
+    const preparePortableHost = vi.fn(failAfterConsent);
 
     await expect(
       prepare({ experimentalProfile: "portable", preparePortableHost }, false, true, () => null),
