@@ -499,9 +499,14 @@ describe("resolveSandboxCreateIntent", () => {
 
   it("keeps Portable OpenClaw on its raw create plan", async () => {
     const { intent, messagingTokenDefs } = resolveDiscordCreateIntent({ selected: true });
+    const portableIntent = {
+      ...intent,
+      gpuCreateArgs: ["--gpus", "all"],
+      resourceCreateArgs: ["--cpus", "4"],
+    };
 
     const plan = await materializeSandboxCreatePlan({
-      intent,
+      intent: portableIntent,
       fromRef: "/tmp/Dockerfile",
       portableLifecycle: true,
       messagingTokenDefs,
@@ -519,6 +524,10 @@ describe("resolveSandboxCreateIntent", () => {
         "sandbox",
         "--provider",
         discordProviderName,
+        "--gpus",
+        "all",
+        "--cpus",
+        "4",
       ]),
     );
     plan.initialSandboxPolicy.cleanup?.();

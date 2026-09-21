@@ -59,6 +59,7 @@ import {
   prepareSandboxCreateLaunchWithPrebuild,
   prepareSandboxRuntimeLaunch,
   prebuildSandboxImageIfEligible,
+  requiresLocalSandboxBuildKit,
   type SandboxCreateLaunchInput,
   type SandboxCreateLaunchWithPrebuild,
   type SandboxRuntimeLaunchWithPrebuild,
@@ -538,7 +539,16 @@ export async function prepareOnboardSandboxWorkloadLaunch(
 
   let buildId = String(Date.now());
   let dashboardRemoteBindPrepared = false;
-  let launch: SandboxRuntimeLaunchWithPrebuild | SandboxCreateLaunchWithPrebuild;
+  let prepared:
+    | {
+        readonly kind: "runtime";
+        readonly createRequest: PlannedOpenShellSandboxCreateRequest;
+        readonly launch: SandboxRuntimeLaunchWithPrebuild;
+      }
+    | {
+        readonly kind: "portable";
+        readonly launch: SandboxCreateLaunchWithPrebuild;
+      };
   if (input.workload.source.kind === "managed-image") {
     if (!createPlan.createRequest) {
       throw new Error("Portable sandbox creation cannot use a managed-image workload.");
@@ -575,9 +585,13 @@ export async function prepareOnboardSandboxWorkloadLaunch(
       policyAttached: Boolean(createPlan.createRequest.policyPath),
       managedStartupRootApplyRequest: rootApplyRequest,
     });
-    launch = {
-      ...managedLaunch,
-      prebuild: { imageRef: null, imageId: null },
+    prepared = {
+      kind: "runtime",
+      createRequest: createPlan.createRequest,
+      launch: {
+        ...managedLaunch,
+        prebuild: { imageRef: null, imageId: null },
+      },
     };
   } else {
     const buildContext = requireLegacyBuildContext(legacyBuildContext);
@@ -611,24 +625,30 @@ export async function prepareOnboardSandboxWorkloadLaunch(
         origin: buildContext.origin,
         sourceReference: createPlan.createRequest.source.reference,
         sandboxName: input.launchInput.sandboxName,
-        requiresLocalBuildKit:
-          buildContext.origin === "generated" &&
-          (input.legacy.agent == null ||
-            input.legacy.agent.name === "openclaw" ||
-            input.legacy.agent.name === "hermes"),
+        requiresLocalBuildKit: requiresLocalSandboxBuildKit(
+          buildContext.origin,
+          input.legacy.agent,
+        ),
       });
-      launch = { ...runtimeLaunch, prebuild };
+      prepared = {
+        kind: "runtime",
+        createRequest: createPlan.createRequest,
+        launch: { ...runtimeLaunch, prebuild },
+      };
     } else {
-      launch = await prepareSandboxCreateLaunchWithPrebuild({
-        ...launchInput,
-        createArgs: portableCreateArgs!,
-        prebuild: {
-          buildCtx: buildContext.buildCtx,
-          buildId,
-          dockerDriverGateway: input.gpu.dockerDriverGateway,
-          origin: buildContext.origin,
-        },
-      });
+      prepared = {
+        kind: "portable",
+        launch: await prepareSandboxCreateLaunchWithPrebuild({
+          ...launchInput,
+          createArgs: portableCreateArgs!,
+          prebuild: {
+            buildCtx: buildContext.buildCtx,
+            buildId,
+            dockerDriverGateway: input.gpu.dockerDriverGateway,
+            origin: buildContext.origin,
+          },
+        }),
+      };
     }
   }
 
@@ -644,22 +664,23 @@ export async function prepareOnboardSandboxWorkloadLaunch(
     dashboardRemoteBindPrepared,
     legacyBuildContext,
   };
-  if (!createPlan.createRequest) {
+  if (prepared.kind === "portable") {
     return {
       ...sharedLaunch,
       createRequestPlan: null,
-      launch: launch as SandboxCreateLaunchWithPrebuild,
+      launch: prepared.launch,
     };
   }
   return {
     ...sharedLaunch,
     createRequestPlan: Object.freeze({
-      ...createPlan.createRequest,
+      ...prepared.createRequest,
       source: Object.freeze({
-        reference: launch.prebuild.sourceReference ?? createPlan.createRequest.source.reference,
+        reference:
+          prepared.launch.prebuild.sourceReference ?? prepared.createRequest.source.reference,
       }),
     }),
-    launch: launch as SandboxRuntimeLaunchWithPrebuild,
+    launch: prepared.launch,
   };
 }
 

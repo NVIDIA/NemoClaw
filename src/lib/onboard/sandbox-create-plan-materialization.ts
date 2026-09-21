@@ -395,8 +395,6 @@ export async function materializeSandboxCreatePlan({
     managedStateMounts,
     managedStateMountDriverId,
   );
-  const resources = materializeCreateResources(intent.resourceCreateArgs);
-  const gpu = materializeCreateGpu(intent.gpuCreateArgs);
   const { initialSandboxPolicy, compatibilityPolicyPath } = prepareSandboxCreatePolicy(
     intent,
     prepareInitialSandboxCreatePolicy,
@@ -506,6 +504,8 @@ export async function materializeSandboxCreatePlan({
       ],
     };
   }
+  const resources = materializeCreateResources(intent.resourceCreateArgs);
+  const gpu = materializeCreateGpu(intent.gpuCreateArgs);
   return {
     ...sharedPlan,
     createRequest: Object.freeze({
