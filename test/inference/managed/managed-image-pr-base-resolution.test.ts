@@ -145,6 +145,13 @@ it.each([
     title: "builds the DCode base locally when its COPY parser changed",
   },
   {
+    candidateContents: "adversarial contract v2\n",
+    candidatePath: ":security-contract",
+    expectedLocal: true,
+    failPublishedPull: false,
+    title: "treats a leading-colon COPY source as a literal Git path",
+  },
+  {
     candidateContents: "unrelated candidate change\n",
     candidatePath: "README.md",
     expectedLocal: true,
@@ -174,6 +181,7 @@ it.each([
   runGit("config", "user.name", "NemoClaw Test");
   runGit("config", "user.email", "nemoclaw-test@example.invalid");
   const agentRoot = path.join(temporaryRoot, "agents/langchain-deepagents-code");
+  const adversarialInput = ":security-contract";
   const copyParser = "scripts/lib/dockerfile-copy-sources.mts";
   const securityPatch = "scripts/security/patches/libssh2-1.11.1-cve-2026.patch";
   fs.mkdirSync(agentRoot, { recursive: true });
@@ -181,19 +189,28 @@ it.each([
   fs.mkdirSync(path.join(temporaryRoot, path.dirname(securityPatch)), { recursive: true });
   fs.writeFileSync(
     path.join(agentRoot, "Dockerfile.base"),
-    `FROM scratch\nCOPY --chmod=0444 ${securityPatch} /tmp/libssh2.patch\nCOPY agents/langchain-deepagents-code/requirements.lock /tmp/requirements.lock\nCOPY agents/langchain-deepagents-code/validate-runtime-contract.py /tmp/validate-runtime-contract.py\n`,
+    `FROM scratch\nCOPY --chmod=0444 ${securityPatch} /tmp/libssh2.patch\nCOPY agents/langchain-deepagents-code/requirements.lock /tmp/requirements.lock\nCOPY agents/langchain-deepagents-code/validate-runtime-contract.py /tmp/validate-runtime-contract.py\nCOPY ${adversarialInput} /tmp/security-contract\n`,
   );
   fs.writeFileSync(path.join(agentRoot, "requirements.lock"), "deepagents==0.7.5\n");
   fs.writeFileSync(path.join(agentRoot, "validate-runtime-contract.py"), "print('ok')\n");
+  fs.writeFileSync(path.join(temporaryRoot, adversarialInput), "adversarial contract v1\n");
   fs.writeFileSync(path.join(temporaryRoot, copyParser), "export const fixture = true;\n");
   fs.writeFileSync(path.join(temporaryRoot, securityPatch), "security patch v1\n");
   fs.writeFileSync(path.join(temporaryRoot, ".dockerignore"), ".git\n");
-  runGit("add", ".dockerignore", "agents/langchain-deepagents-code", copyParser, securityPatch);
+  runGit(
+    "add",
+    "--",
+    ".dockerignore",
+    "agents/langchain-deepagents-code",
+    `:(literal)${adversarialInput}`,
+    copyParser,
+    securityPatch,
+  );
   runGit("commit", "--quiet", "-m", "test: add base");
   const publishedSourceSha = runGit("rev-parse", "HEAD");
   fs.mkdirSync(path.dirname(path.join(temporaryRoot, candidatePath)), { recursive: true });
   fs.writeFileSync(path.join(temporaryRoot, candidatePath), candidateContents);
-  runGit("add", candidatePath);
+  runGit("add", "--", candidatePath.startsWith(":") ? `:(literal)${candidatePath}` : candidatePath);
   runGit("commit", "--quiet", "-m", "test: create candidate");
   const candidateSha = runGit("rev-parse", "HEAD");
   fs.writeFileSync(

@@ -120,7 +120,8 @@ read_dcode_base_inputs() {
 }
 published_dcode_base_matches_candidate_contract() {
   [ "$AGENT" = "langchain-deepagents-code" ] || return 0
-  local reference="$1" image_json source_revision changed_inputs
+  local reference="$1" image_json source_revision changed_inputs input
+  local literal_inputs=()
   docker pull --platform "$PLATFORM" "$reference" >/dev/null || return 1
   image_json="$(docker image inspect "$reference")" || return 1
   source_revision="$(
@@ -137,9 +138,12 @@ published_dcode_base_matches_candidate_contract() {
     git fetch --no-tags --depth=1 origin "$source_revision" || return 1
   fi
   read_dcode_base_inputs "$BASE_DOCKERFILE" || return 1
+  for input in "${DCODE_BASE_INPUTS[@]}"; do
+    literal_inputs+=(":(literal)${input}")
+  done
   changed_inputs="$(
     git diff --name-only "$source_revision" "$CANDIDATE_SHA" -- \
-      "${DCODE_BASE_INPUTS[@]}"
+      "${literal_inputs[@]}"
   )" || return 1
   PUBLISHED_DCODE_CHANGED_INPUTS="${changed_inputs//$'\n'/, }"
   [ -z "$changed_inputs" ]
