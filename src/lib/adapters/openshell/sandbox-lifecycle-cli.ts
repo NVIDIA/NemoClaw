@@ -198,12 +198,18 @@ function validCreateText(value: string | undefined): value is string {
 /** Own the child environment allowlist for OpenShell create processes. */
 export function buildOpenShellSandboxCreateEnvironment(
   source: NodeJS.ProcessEnv,
-  options: { readonly policyAttached: boolean },
+  options: {
+    readonly policyAttached: boolean;
+    readonly dockerClientConfigDirectory?: string;
+  },
 ): Record<string, string> {
   const environment = buildSubprocessEnvFrom(source);
   delete environment.KUBECONFIG;
   delete environment.SSH_AUTH_SOCK;
   if (!options.policyAttached) delete environment.OPENSHELL_SANDBOX_POLICY;
+  if (options.dockerClientConfigDirectory) {
+    environment.DOCKER_CONFIG = options.dockerClientConfigDirectory;
+  }
   return environment;
 }
 
@@ -226,6 +232,7 @@ function validCreateRequest(request: CreateOpenShellSandboxRequest): boolean {
     request.gpu?.device,
     request.resources?.cpu,
     request.resources?.memory,
+    request.dockerClientConfigDirectory,
     request.workingDirectory,
     ...Object.keys(request.labels ?? {}),
     ...Object.values(request.labels ?? {}),
@@ -376,6 +383,9 @@ export function createCliOpenShellSandboxLifecycle(input: {
         const stream = input.streamCreate ?? streamSandboxCreate;
         const filteredEnvironment = buildOpenShellSandboxCreateEnvironment(request.environment, {
           policyAttached: Boolean(request.policyPath),
+          ...(request.dockerClientConfigDirectory
+            ? { dockerClientConfigDirectory: request.dockerClientConfigDirectory }
+            : {}),
         });
         const environment = request.runtimeSelection
           ? buildOpenShellRuntimeSelectionEnv(filteredEnvironment, request.runtimeSelection)

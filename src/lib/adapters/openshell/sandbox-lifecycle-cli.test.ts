@@ -99,6 +99,21 @@ describe("OpenShell sandbox lifecycle CLI", () => {
     expect(environment).not.toHaveProperty("SSH_AUTH_SOCK");
   });
 
+  it("preserves only the explicitly prepared credential-free Docker config", async () => {
+    const streamCreate = vi.fn().mockResolvedValue({ status: 0, output: "created" });
+
+    await createCliOpenShellSandboxLifecycle({ capture: vi.fn(), streamCreate }).createSandbox({
+      ...createRequest,
+      environment: { ...createRequest.environment, DOCKER_CONFIG: "/host/docker-config" },
+      dockerClientConfigDirectory: "/tmp/nemoclaw-credential-free-docker",
+    });
+
+    expect(streamCreate.mock.calls[0]![2]).toMatchObject({
+      DOCKER_CONFIG: "/tmp/nemoclaw-credential-free-docker",
+    });
+    expect(streamCreate.mock.calls[0]![2].DOCKER_CONFIG).not.toBe("/host/docker-config");
+  });
+
   it("rejects malformed create input and ambient endpoint overrides before spawn", async () => {
     const streamCreate = vi.fn();
     const lifecycle = createCliOpenShellSandboxLifecycle({ capture: vi.fn(), streamCreate });

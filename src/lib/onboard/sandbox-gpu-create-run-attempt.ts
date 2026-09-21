@@ -87,9 +87,12 @@ async function streamSandboxCreateWithPublicImageCredentialIsolation(
   isolate: boolean,
   sandboxName: string,
   sandboxEnv: NodeJS.ProcessEnv,
-  run: (env: NodeJS.ProcessEnv) => Promise<StreamSandboxCreateResult>,
+  run: (
+    env: NodeJS.ProcessEnv,
+    dockerClientConfigDirectory: string | null,
+  ) => Promise<StreamSandboxCreateResult>,
 ): Promise<StreamSandboxCreateResult> {
-  if (!isolate) return run(sandboxEnv);
+  if (!isolate) return run(sandboxEnv, null);
   // Detect against the same environment the create command runs with. The
   // sandbox env drops DOCKER_CONFIG and DOCKER_CONTEXT, so process.env can
   // report a credential store or a context the create never uses.
@@ -103,7 +106,10 @@ async function streamSandboxCreateWithPublicImageCredentialIsolation(
         "  Docker Desktop credential helper is unavailable in this WSL session; using an isolated credential-free config for the managed sandbox image pull.",
       );
     }
-    return await run(mergeIsolatedDockerClientEnv(sandboxEnv, prepared));
+    return await run(
+      mergeIsolatedDockerClientEnv(sandboxEnv, prepared),
+      prepared.isolatedCredentialConfig ? (prepared.env.DOCKER_CONFIG ?? null) : null,
+    );
   } finally {
     warnIfDockerBuildEnvironmentCleanupFailed(
       prepared.cleanup(),
@@ -810,7 +816,7 @@ export function createSandboxGpuCreateAttemptRunner(
         input.managedImage === true,
         input.sandboxName,
         input.sandboxEnv,
-        (createEnv) => {
+        (createEnv, dockerClientConfigDirectory) => {
           const createOptions = {
             ...(input.createWorkingDirectory ? { cwd: input.createWorkingDirectory } : {}),
             readyCheck: () => {
@@ -901,7 +907,11 @@ export function createSandboxGpuCreateAttemptRunner(
             throw new Error("Ordinary sandbox creation has no semantic create request.");
           }
           return deps.createSandbox(
-            Object.freeze({ ...attemptRequest, environment: Object.freeze({ ...createEnv }) }),
+            Object.freeze({
+              ...attemptRequest,
+              environment: Object.freeze({ ...createEnv }),
+              ...(dockerClientConfigDirectory ? { dockerClientConfigDirectory } : {}),
+            }),
             createOptions,
           );
         },

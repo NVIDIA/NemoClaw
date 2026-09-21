@@ -20,6 +20,8 @@ export type CreateOpenShellSandboxRequest = Readonly<{
   labels?: Readonly<Record<string, string>>;
   startupCommand: readonly string[];
   environment: NodeJS.ProcessEnv;
+  /** Credential-free Docker client config prepared for this create process only. */
+  dockerClientConfigDirectory?: string;
   workingDirectory?: string;
   runtimeSelection?: OpenShellRuntimeSelection;
 }>;

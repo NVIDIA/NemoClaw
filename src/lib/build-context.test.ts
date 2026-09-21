@@ -92,6 +92,9 @@ describe("printSandboxCreateRecoveryHints", () => {
 
     expect(stderr()).toContain("onboard --resume");
     expect(stderr()).not.toContain("openshell sandbox create");
+    expect(stderr()).not.toContain("registry:2");
+    expect(stderr()).not.toContain("docker push");
+    expect(stderr()).not.toContain("buildah push");
   });
 
   it("prints progress-specific resume guidance when upload reached the gateway", () => {
