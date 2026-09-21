@@ -11,11 +11,8 @@ import {
 import { redactCredentialText } from "../../security/credential-filter";
 import { redact } from "../../security/redact";
 import { waitUntilAsync } from "../../core/wait";
-import {
-  buildOpenShellCommandEnv,
-  resolveOpenshellBinary,
-  withSelectedOpenShellCommandOptions,
-} from "./command-argv";
+import { resolveOpenshellBinary, withSelectedOpenShellCommandOptions } from "./command-argv";
+import { buildOpenShellRuntimeSelectionEnv } from "./runtime-selection";
 import { assertNoOpenShellGatewayEndpointOverride } from "./gateway-scope";
 import type {
   CreateOpenShellSandboxRequest,
@@ -381,7 +378,7 @@ export function createCliOpenShellSandboxLifecycle(input: {
           policyAttached: Boolean(request.policyPath),
         });
         const environment = request.runtimeSelection
-          ? buildOpenShellCommandEnv(request.runtimeSelection, filteredEnvironment)
+          ? buildOpenShellRuntimeSelectionEnv(filteredEnvironment, request.runtimeSelection)
           : filteredEnvironment;
         const executable = input.resolveBinary?.() ?? resolveOpenshellBinary();
         submitted = true;

@@ -80,6 +80,25 @@ describe("OpenShell sandbox lifecycle CLI", () => {
     expect(options).toMatchObject({ initialPhase: "create" });
   });
 
+  it("does not restore ambient credentials while pinning create runtime selection", async () => {
+    vi.stubEnv("KUBECONFIG", "/host/kubeconfig");
+    vi.stubEnv("SSH_AUTH_SOCK", "/host/ssh.sock");
+    const streamCreate = vi.fn().mockResolvedValue({ status: 0, output: "created" });
+
+    await createCliOpenShellSandboxLifecycle({ capture: vi.fn(), streamCreate }).createSandbox({
+      ...createRequest,
+      runtimeSelection: { gatewayName: "nemoclaw-8091", workspace: "recorded" },
+    });
+
+    const environment = streamCreate.mock.calls[0]![2];
+    expect(environment).toMatchObject({
+      OPENSHELL_GATEWAY: "nemoclaw-8091",
+      OPENSHELL_WORKSPACE: "recorded",
+    });
+    expect(environment).not.toHaveProperty("KUBECONFIG");
+    expect(environment).not.toHaveProperty("SSH_AUTH_SOCK");
+  });
+
   it("rejects malformed create input and ambient endpoint overrides before spawn", async () => {
     const streamCreate = vi.fn();
     const lifecycle = createCliOpenShellSandboxLifecycle({ capture: vi.fn(), streamCreate });

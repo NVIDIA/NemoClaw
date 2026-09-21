@@ -153,26 +153,25 @@ function selectRebuildCreateRequestPlan(input: {
   );
 }
 
-function finalizeOrdinaryCreateRequest(input: {
-  readonly portableLifecycle: boolean;
+/** Bind runtime fields to the semantic ordinary create request handed to the create flow. */
+export function finalizeOrdinaryCreateRequest(input: {
   readonly plan: PlannedOpenShellSandboxCreateRequest | null;
   readonly gatewayName: string;
   readonly startupCommand: readonly string[];
   readonly environment: NodeJS.ProcessEnv;
+  readonly workingDirectory?: string;
   readonly compatibilityPolicyPath: string | null;
   readonly compatibility: boolean;
 }) {
   if (!input.plan) {
-    if (!input.portableLifecycle) {
-      throw new Error("Ordinary sandbox creation is missing its typed create request.");
-    }
-    return null;
+    throw new Error("Ordinary sandbox creation is missing its typed create request.");
   }
   return sandboxCreatePlanMaterialization.finalizeOpenShellSandboxCreateRequest({
     plan: input.plan,
     gatewayName: input.gatewayName,
     startupCommand: input.startupCommand,
     environment: input.environment,
+    ...(input.workingDirectory ? { workingDirectory: input.workingDirectory } : {}),
     ...(input.compatibility ? { compatibilityPolicyPath: input.compatibilityPolicyPath } : {}),
   });
 }
@@ -3546,15 +3545,16 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       });
       cleanupBuildContext();
     } else {
-      const routedOrdinaryCreateRequest = finalizeOrdinaryCreateRequest({
-        portableLifecycle: agentCreateInput.portableLifecycle,
-        plan: createRequestPlan,
-        gatewayName: GATEWAY_NAME,
-        startupCommand: sandboxStartupCommand,
-        environment: createFlowEnvironment,
-        compatibilityPolicyPath,
-        compatibility: initialGpuRoute === "compatibility",
-      });
+      const routedOrdinaryCreateRequest = agentCreateInput.portableLifecycle
+        ? null
+        : finalizeOrdinaryCreateRequest({
+            plan: createRequestPlan,
+            gatewayName: GATEWAY_NAME,
+            startupCommand: sandboxStartupCommand,
+            environment: createFlowEnvironment,
+            compatibilityPolicyPath,
+            compatibility: initialGpuRoute === "compatibility",
+          });
       const created = await runSandboxCreateWithProviderEffects({
         resumingVerifiedCreate: Boolean(resumeVerifiedCreateInput),
         providerEffectBoundary,
@@ -3562,10 +3562,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
           runCreateFlow(
             agentCreateInput.portableLifecycle
               ? { kind: "portable", argv: requirePortableCreateArgv() }
-              : {
-                  kind: "ordinary",
-                  request: routedOrdinaryCreateRequest!,
-                },
+              : { kind: "ordinary", request: routedOrdinaryCreateRequest! },
             undefined,
             undefined,
             undefined,
