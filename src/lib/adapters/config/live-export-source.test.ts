@@ -16,10 +16,7 @@ import {
   parseNemoClawConfigDocumentName,
   parseNemoClawConfigDocumentUid,
 } from "../../config/model";
-import {
-  asExportedConfig,
-  exportedAgentList,
-} from "../../../../test/support/config-export-document";
+import { asExportedConfig } from "../../../../test/support/config-export-document";
 
 import { resolveGatewayStateDirForPort } from "../../onboard/gateway/state-dir";
 import { buildManagedStartupProfile } from "../../onboard/managed-startup/profile-builder";
@@ -915,7 +912,7 @@ describe("dashboard export observation", () => {
       kind: "openclaw",
       interfaces: { dashboard: { port: 19000, bind: "0.0.0.0" } },
     });
-    expect(exportedAgentList(document.spec.sandboxes[0]!)[0]).toMatchObject({
+    expect(document.spec.sandboxes[0]!.agent).toMatchObject({
       tools: { disclosure: "direct" },
     });
   });

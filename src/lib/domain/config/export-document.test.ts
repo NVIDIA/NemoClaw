@@ -6,7 +6,6 @@ import {
   parseNemoClawConfigDocumentName,
   parseNemoClawConfigDocumentUid,
 } from "../../config/model";
-import { exportedAgentList } from "../../../../test/support/config-export-document";
 import { buildExportConfig } from "./export-document";
 import type { VerifiedExportSource } from "./export-evidence";
 
@@ -145,7 +144,7 @@ describe("export config builder", () => {
     });
     const sandbox = document.spec.sandboxes[0]!;
     expect("agent" in sandbox).toBe(true);
-    expect(exportedAgentList(sandbox)[0]!.integrationRefs).toEqual(["brave-search"]);
+    expect(sandbox.agent.integrationRefs).toEqual(["brave-search"]);
     expect(document.spec.inferenceProviders).toHaveLength(1);
     expect(
       buildExportConfig(source, { documentName: alphaDocumentName, documentUid: firstUid }).spec
@@ -169,9 +168,7 @@ describe("export config builder", () => {
     expect(second.spec.inferenceProviders[0]?.name).toBe("hosted-openai-api");
     const sandbox = second.spec.sandboxes[0]!;
     expect("agent" in sandbox).toBe(true);
-    expect(exportedAgentList(sandbox)[0]?.inference.routes[0]?.providerRef).toBe(
-      "hosted-openai-api",
-    );
+    expect(sandbox.agent.inference.routes[0]?.providerRef).toBe("hosted-openai-api");
   });
 
   it("preserves the verified Hermes agent type (#11286)", () => {
@@ -216,7 +213,7 @@ describe("export config builder", () => {
 
     const sandbox = result.spec.sandboxes[0]!;
     expect("agent" in sandbox).toBe(true);
-    expect(exportedAgentList(sandbox)[0]?.auth).toEqual({
+    expect(sandbox.agent.auth).toEqual({
       method: "api-key",
     });
   });
