@@ -27,10 +27,27 @@ sys.stdout.write(text)'
     test -n "${container}" || continue
     echo "--- ${container} state ---"
     docker inspect --format 'status={{.State.Status}} exit={{.State.ExitCode}} error={{.State.Error}} health={{if .State.Health}}{{.State.Health.Status}}{{end}}' "${container}"
+    docker inspect --format 'network_mode={{.HostConfig.NetworkMode}} ports={{json .HostConfig.PortBindings}} networks={{json .NetworkSettings.Networks}}' "${container}"
     echo "--- ${container} logs (last 200 lines, redacted) ---"
     docker logs --tail 200 "${container}" 2>&1 \
       | python3 -c "${redactor}" "${root}/nvidia-api-key"
   done < <(docker ps --all --format '{{.Names}}')
+  gateway_container="$(docker ps --filter 'name=-gateway$' --format '{{.Names}}' | head -1)"
+  if test -n "${gateway_container}"; then
+    gateway_network="$(docker inspect --format '{{.HostConfig.NetworkMode}}' "${gateway_container}")"
+    gateway_port="$(docker inspect --format '{{range $port, $bindings := .HostConfig.PortBindings}}{{println $port}}{{end}}' "${gateway_container}" | sed -n 's#/tcp$##p' | head -1)"
+    bridge_address="$(docker network inspect --format '{{(index .IPAM.Config 0).Gateway}}' "${gateway_network}")"
+    echo "gateway_probe network=${gateway_network} bridge=${bridge_address} port=${gateway_port}"
+    curl --silent --show-error --max-time 3 "http://127.0.0.1:${gateway_port}" >/dev/null \
+      && echo "gateway_loopback_probe=ok" || echo "gateway_loopback_probe=failed"
+    curl --silent --show-error --max-time 3 "http://${bridge_address}:${gateway_port}" >/dev/null \
+      && echo "gateway_bridge_probe=ok" || echo "gateway_bridge_probe=failed"
+    docker run --rm --network "${gateway_network}" \
+      --add-host "host.openshell.internal:${bridge_address}" \
+      --entrypoint node nc-fabric:openclaw \
+      -e "fetch('http://host.openshell.internal:${gateway_port}').then(() => console.log('gateway_container_probe=ok')).catch(error => { console.error('gateway_container_probe=failed', error.cause?.code || error.message); process.exit(1) })" \
+      || true
+  fi
   echo "::endgroup::"
   return "${status}"
 }
