@@ -445,3 +445,125 @@ async fn gateway_readiness_dependency_waits_for_startup_before_workspace_creatio
     startup.await.unwrap();
     tofu.noop();
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires explicit NEMOCLAW_TEST_TOFU and NEMOCLAW_TEST_PROVIDER; isolated Pi fixture"]
+async fn standalone_pi_configuration_updates_without_replacing_the_sandbox() {
+    let fixture = Fixture::start().await;
+    let tofu = Standalone::new(&fixture.endpoint);
+    let source = fs::read_to_string(tofu.root.path().join("main.tf"))
+        .unwrap()
+        .replace("fabric-openclaw", "fabric-pi")
+        .replace("      model       = \"fixture-model\"\n", "");
+    fs::write(
+        tofu.root.path().join("main.tf"),
+        source
+            + r#"
+variable "model" { default = "first-model" }
+resource "nemoclaw_pi_configuration" "agent" {
+  count = var.enabled ? 1 : 0
+  workspace = nemoclaw_sandbox.agent[0].workspace
+  name = nemoclaw_sandbox.agent[0].name
+  owner = nemoclaw_sandbox.agent[0].owner
+  generation = nemoclaw_sandbox.agent[0].generation
+  sandbox_id = nemoclaw_sandbox.agent[0].id
+  model_json = jsonencode({ model = var.model })
+}
+"#,
+    )
+    .unwrap();
+    tofu.run(&["plan", "-input=false"], true);
+    assert!(fixture.state.lock().unwrap().exec_calls.is_empty());
+    tofu.apply();
+    let effects = fixture.state.lock().unwrap().effects;
+    let writes = || {
+        fixture
+            .state
+            .lock()
+            .unwrap()
+            .exec_calls
+            .iter()
+            .filter(|command| {
+                command
+                    .get(2)
+                    .is_some_and(|arg| arg == "configure" || arg == "prepare")
+            })
+            .count()
+    };
+    assert_eq!(writes(), 1);
+    tofu.noop();
+    assert_eq!(writes(), 1, "no-op must not reconfigure Pi");
+    tofu.run(
+        &[
+            "plan",
+            "-input=false",
+            "-var=model=second-model",
+            "-out=change.plan",
+        ],
+        true,
+    );
+    assert_eq!(writes(), 1, "plan must not configure Pi");
+    tofu.run(&["apply", "-input=false", "change.plan"], true);
+    assert_eq!(writes(), 2);
+    assert_eq!(fixture.state.lock().unwrap().effects, effects);
+    // A stopped host is observed as drift; explicit apply reconfigures it.
+    fixture.state.lock().unwrap().pi_stopped = true;
+    tofu.run(
+        &[
+            "apply",
+            "-auto-approve",
+            "-input=false",
+            "-var=model=second-model",
+        ],
+        true,
+    );
+    assert_eq!(writes(), 3);
+    assert!(!fixture.state.lock().unwrap().pi_stopped);
+    // Lose the exec response after the host accepted a configuration. Never
+    // retry the mutation automatically; the next refresh observes the outcome.
+    tofu.run(
+        &[
+            "plan",
+            "-input=false",
+            "-var=model=third-model",
+            "-out=ambiguous.plan",
+        ],
+        true,
+    );
+    fixture.state.lock().unwrap().exec_truncated = true;
+    tofu.run(&["apply", "-input=false", "ambiguous.plan"], false);
+    assert_eq!(writes(), 4);
+    fixture.state.lock().unwrap().exec_truncated = false;
+    tofu.run(
+        &[
+            "apply",
+            "-auto-approve",
+            "-input=false",
+            "-var=model=third-model",
+        ],
+        true,
+    );
+    assert_eq!(
+        writes(),
+        4,
+        "confirmed configuration must not be written again"
+    );
+    let prior = tofu.state();
+    fixture.state.lock().unwrap().exec_truncated = true;
+    tofu.run(&["plan", "-input=false", "-var=model=second-model"], false);
+    assert_eq!(tofu.state(), prior);
+    assert_eq!(writes(), 4);
+    fixture.state.lock().unwrap().exec_truncated = false;
+    tofu.run(
+        &[
+            "apply",
+            "-auto-approve",
+            "-input=false",
+            "-var=enabled=false",
+            "-var=destroying=true",
+        ],
+        true,
+    );
+    assert!(fixture.state.lock().unwrap().sandboxes.is_empty());
+    assert_eq!(writes(), 4, "destroy must not reconfigure Pi");
+}

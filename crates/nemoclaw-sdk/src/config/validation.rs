@@ -312,6 +312,6 @@ impl Document {
     }
 }
 
-pub(super) fn valid_model(model: &str) -> bool {
+pub(crate) fn valid_model(model: &str) -> bool {
     MODEL.is_match(model)
 }

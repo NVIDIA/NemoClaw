@@ -27,7 +27,8 @@ impl Definition {
             fields: fields.to_vec(),
             mutable: mutable.to_vec(),
             computed_digest: behavior.computed_digest,
-            observed_running: behavior.observed_running || kind == "managed_gateway",
+            observed_running: behavior.observed_running
+                || matches!(kind, "managed_gateway" | "pi_configuration"),
         }
     }
 }

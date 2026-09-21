@@ -28,7 +28,7 @@ impl ResourceAdapter {
     fn openshell(&self) -> bool {
         matches!(
             self.definition.kind,
-            "workspace" | "provider_profile" | "provider" | "sandbox"
+            "workspace" | "provider_profile" | "provider" | "sandbox" | "pi_configuration"
         )
     }
     fn optional(&self, field: &str) -> bool {

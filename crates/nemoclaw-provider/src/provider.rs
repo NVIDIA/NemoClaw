@@ -290,6 +290,19 @@ impl Provider for NemoClawProvider {
                 ],
                 &[],
             ),
+            Definition::new(
+                "pi_configuration",
+                &[
+                    "workspace",
+                    "name",
+                    "owner",
+                    "generation",
+                    "sandbox_id",
+                    "model_json",
+                    "running",
+                ],
+                &["model_json", "running"],
+            ),
             Definition::new("workspace", &["name", "owner", "generation"], &[]),
             Definition::new(
                 "provider",
