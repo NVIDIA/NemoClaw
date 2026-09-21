@@ -77,6 +77,32 @@ describe("CLI OpenShell forward observations", () => {
     expect(inspect).toHaveBeenCalledExactlyOnceWith(forward, undefined, 15_000);
   });
 
+  it.each([
+    [4_321, { state: "owned", forward }],
+    [9_876, { state: "foreign", forward }],
+  ] as const)(
+    "binds forward ownership to expected listener PID %s",
+    async (expectedPid, expected) => {
+      const inspect = vi.fn<InspectListener>(async (_forward, listenerPid) =>
+        listenerPid === 4_321
+          ? { state: "owned", pid: 4_321 }
+          : { state: "foreign", pids: [4_321] },
+      );
+      const { adapter } = createHarness({
+        inspect,
+        run: async () => capturedForwardList(noActiveForwards),
+      });
+
+      await expect(
+        adapter.observeForwards({
+          forwards: [forward],
+          expectedListenerPidsByPort: new Map([[forward.port, expectedPid]]),
+        }),
+      ).resolves.toEqual([expected]);
+      expect(inspect).toHaveBeenCalledExactlyOnceWith(forward, expectedPid, 15_000);
+    },
+  );
+
   it("returns stale only when the legacy inspector owns the listed PID", async () => {
     const { adapter, inspect, inspectLegacy } = createHarness({
       run: async () => captured(0, legacyForwardList),

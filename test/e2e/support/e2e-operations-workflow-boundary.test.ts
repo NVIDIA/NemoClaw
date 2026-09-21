@@ -507,8 +507,8 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
         );
         expect(authentication.run).not.toContain("collaborators/");
         expect(authentication.run).not.toContain("role_name");
-        expect(authentication.env).not.toHaveProperty("GITHUB_TOKEN");
-        expect(authentication.run).not.toContain("Authorization:");
+        expect(authentication.env?.GITHUB_TOKEN).toBe("${{ github.token }}");
+        expect(authentication.run).toContain('--header "Authorization: Bearer ${GITHUB_TOKEN}"');
       } finally {
         rmSync(directory, { force: true, recursive: true });
       }
@@ -516,8 +516,8 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
   );
 
   it.each([
-    ["a denied public PR metadata request", "return 22"],
-    ["malformed public PR metadata", `printf '%s' '{'`],
+    ["a denied authenticated PR metadata request", "return 22"],
+    ["malformed authenticated PR metadata", `printf '%s' '{'`],
   ])("fails closed for %s", (_caseName, curlResult) => {
     const workflow = readE2eOperationsWorkflow();
     const authentication = workflow.jobs["generate-matrix"].steps!.find(

@@ -6,6 +6,10 @@ import {
   parseNemoClawConfigDocumentName,
   parseNemoClawConfigDocumentUid,
 } from "../../config/model";
+import {
+  exportedAgentList,
+  exportedSingletonSandbox,
+} from "../../../../test/support/config-export-document";
 import { buildExportConfig } from "./export-document";
 import type { VerifiedExportSource } from "./export-evidence";
 
@@ -130,7 +134,9 @@ describe("export config builder", () => {
         credential: { env: "BRAVE_API_KEY" },
       },
     });
-    expect(document.spec.sandboxes[0]!.agents[0]!.integrationRefs).toEqual(["brave-search"]);
+    const sandbox = document.spec.sandboxes[0]!;
+    expect("agents" in sandbox).toBe(true);
+    expect(exportedAgentList(sandbox)[0]!.integrationRefs).toEqual(["brave-search"]);
     expect(document.spec.inferenceProviders).toHaveLength(1);
     expect(
       buildExportConfig(source, { documentName: alphaDocumentName, documentUid: firstUid }).spec
@@ -155,11 +161,14 @@ describe("export config builder", () => {
       },
     );
 
-    expect(document.spec.sandboxes[0]!.agents).toMatchObject([
+    const sandbox = document.spec.sandboxes[0]!;
+    expect("agents" in sandbox).toBe(true);
+    const agents = exportedAgentList(sandbox);
+    expect(agents).toMatchObject([
       { name: "primary", integrationRefs: ["brave-search"] },
       { name: "researcher" },
     ]);
-    expect(document.spec.sandboxes[0]!.agents[1]).not.toHaveProperty("integrationRefs");
+    expect(agents[1]).not.toHaveProperty("integrationRefs");
   });
 
   it("uses the supplied identity and keeps derived references deterministic (#10938)", () => {
@@ -176,7 +185,9 @@ describe("export config builder", () => {
     expect(second.metadata.uid).not.toBe(first.metadata.uid);
     expect(second.spec).toEqual(first.spec);
     expect(second.spec.inferenceProviders[0]?.name).toBe("hosted-openai-api");
-    expect(second.spec.sandboxes[0]?.agents[0]?.inference.routes[0]?.providerRef).toBe(
+    const sandbox = second.spec.sandboxes[0]!;
+    expect("agents" in sandbox).toBe(true);
+    expect(exportedAgentList(sandbox)[0]?.inference.routes[0]?.providerRef).toBe(
       "hosted-openai-api",
     );
   });
@@ -221,7 +232,9 @@ describe("export config builder", () => {
       },
     );
 
-    expect(result.spec.sandboxes[0]?.agents[0]?.auth).toEqual({
+    const sandbox = result.spec.sandboxes[0]!;
+    expect("agents" in sandbox).toBe(true);
+    expect(exportedAgentList(sandbox)[0]?.auth).toEqual({
       method: "api-key",
     });
   });
@@ -279,22 +292,26 @@ describe("export config builder", () => {
           name: "local",
           provider: "openai",
           api: "openai-completions",
-          management: "external",
-          endpoint: `http://127.0.0.1:${daemonPort}/v1`,
-          ollamaProxy: {
-            management: "managed",
-            engine: "unix:///var/run/docker.sock",
-            endpoint: `http://host.openshell.internal:${proxyPort}/v1`,
+          serviceRef: "ollama-auth",
+        },
+      ]);
+      expect(result.spec.services).toEqual({
+        "ollama-auth": {
+          kind: "ollamaProxy",
+          endpoint: `http://host.openshell.internal:${proxyPort}/v1`,
+          upstream: {
+            endpoint: `http://127.0.0.1:${daemonPort}/v1`,
             model: {
-              management: "external",
+              name: model,
               digest: "a".repeat(64),
             },
           },
         },
-      ]);
+      });
       expect(result.spec.inferenceProviders[0]).not.toHaveProperty("credential");
-      expect(result.spec.inferenceProviders[0]!.ollamaProxy).not.toHaveProperty("image");
-      expect(result.spec.sandboxes[0]!.agents[0]!.inference.routes[0]).toEqual({
+      expect(result.spec.services!["ollama-auth"]).not.toHaveProperty("image");
+      const sandbox = exportedSingletonSandbox(result.spec.sandboxes[0]!);
+      expect(sandbox.agent.inference.routes[0]).toEqual({
         name: "primary",
         providerRef: "local",
         overrides: { model, contextWindow: 32_768, maxTokens: 4096 },

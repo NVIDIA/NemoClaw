@@ -63,6 +63,8 @@ The boundary validator derives artifact consumers from jobs that use the pinned 
 It excludes `generate-matrix` and the no-build and trusted-build jobs in `E2E_JOB_POLICY`.
 Each selected consumer restores the artifact instead of running `npm run build:cli`.
 Each consumer runs the pinned preparation action with `build-cli: "false"` to install Node.js and project dependencies.
+The `managed-image-multiarch-startup` no-build job keeps that setting and builds only the candidate shared policy boundary.
+It rejects preexisting output, verifies the required shared modules, and then starts the direct managed-image contracts.
 The shared compiler uses native GitHub caching of `dist/` and `nemoclaw/dist/`
 for main CI, PR CI, and E2E candidate preparation. Its key includes the checkout
 SHA, trusted recipe revision, action content, Node version, and runner platform.
@@ -409,6 +411,14 @@ credential values. It then changes the fixture's recorded sandbox fingerprint an
 launchers to fail without publishing a file before restoring the registry. The assertion budget is
 unchanged because this contract replaces a redundant nonempty-log assertion in the same scenario.
 
+The `ubuntu-repo-cloud-langchain-deepagents-code` target owns live Deep Agents export evidence for
+Issue #11860. Its ordered checks first exercise opt-in observability and thread approval, then restore
+the disabled baseline. The TUI check then runs without changing that registry baseline. The installed
+CLI must emit a v1alpha1 document with the `deepagents` harness, hosted OpenAI-compatible route,
+credential reference, and independently observed effective policy.
+The fixture compares the registry before and after export, and state validation confirms that the
+sandbox remains ready after the read-only command.
+
 The `sandbox-operations` target owns live final-gateway cleanup on the Docker-backed OpenShell
 boundary. It leaves one sandbox live after removing only its local registry entry, then requires a
 `destroy --cleanup-gateway` of the registered sandbox to preserve the gateway, report the live
@@ -506,19 +516,23 @@ runtime ownership, Ready state, and cleanup assertions remain unchanged.
 The `gpu-e2e` target also qualifies configuration export for an attached native Linux Ollama daemon.
 A separate OpenClaw scenario disables direct sandbox GPU and uses normal onboarding to create the
 managed proxy on the target's shared port. It stops the installer service before starting a fixture-owned
-daemon on port 11439 and preparing the selected `qwen2.5:0.5b` model. It exports twice through
-the candidate CLI and real SDK, validates both documents, compares their specs, selected model name and digest,
-checks credential omission, and requires a stopped daemon to prevent publication. Inference-provider
-definitions omit internal endpoints; the sandbox's explicit network policy is preserved. Private YAML is
-removed through the cleanup registry; retained evidence contains only the selected model, ports,
-managed image, and result booleans. The existing CUDA, authentication, and inference lifecycle
-scenarios remain separate. The export fixture requires service shutdown and model preparation to succeed
-before export. Onboarding and model preparation each have a 20-minute limit within the 75-minute
-scenario. It retries read-only daemon readiness checks on connection refusal or curl
+daemon on port 11439 and preparing the selected `qwen2.5:0.5b` model.
+It exports twice through the candidate CLI and real SDK, validates both documents through the public
+export schema, compares their specs, and checks the selected model digest, named proxy service,
+and omission of credentials and proxy image metadata. It then stops the daemon
+and requires export to fail without publishing a file.
+Private YAML files are removed through the cleanup registry. The retained evidence contains the exact
+validated YAML bytes, byte count, SHA-256 hash, selected model, ports, and qualification results.
+The current v1 contract represents one agent in each sandbox, so attached-Ollama export refuses a
+live sandbox that contains additional agents.
+The existing CUDA, authentication, and inference lifecycle scenarios remain separate.
+Onboarding and model preparation each have a 20-minute limit within the 75-minute test timeout; the catalogue allows 90 minutes for the target.
+The fixture retries read-only daemon readiness checks on connection refusal or curl
 timeout, for at most 20 reads. It records each attempt and stops on any other failure; model
 preparation, onboarding, and export mutations are not retried.
 After stopped-daemon refusal, cleanup restores the fixture daemon so sandbox destruction can unload
-models through the saved endpoint. It destroys the sandbox before stopping that daemon.
+models through the saved endpoint. Cleanup destroys the sandbox before stopping that daemon and
+removes the private output directory.
 Retained workflow jobs are exceptions to the catalogue shape.
 Keep one only for a multi-job handoff, an unrepresented credential boundary, or an execution contract the reusable profile cannot represent.
 

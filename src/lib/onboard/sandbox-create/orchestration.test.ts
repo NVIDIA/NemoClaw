@@ -23,6 +23,7 @@ import {
   readManagedDcodeCreateSelectionDrift,
   readSandboxRecreateRegistryEntry,
   reconcileCreatedHermesCredentialEnvironment,
+  releaseManagedStartupHoldWithRetry,
   runAuthorityBoundProviderCleanup,
   runAsyncWithPostCreateRecovery,
   runSandboxCreateWithIdentityVerification,
@@ -35,6 +36,29 @@ const UNVERIFIED_RECOVERY_CONTEXT = {
   lifecycleGeneration: "generation-1",
   createAttemptNonce: "a".repeat(62),
 } as const;
+
+describe("managed startup hold release", () => {
+  it("retries a transient exact-container release failure before retained recovery", () => {
+    const release = vi
+      .fn()
+      .mockImplementationOnce(() => {
+        throw new Error("release unavailable");
+      })
+      .mockImplementationOnce(() => undefined);
+
+    expect(() => releaseManagedStartupHoldWithRetry(release)).not.toThrow();
+    expect(release).toHaveBeenCalledTimes(2);
+  });
+
+  it("bounds persistent release failures", () => {
+    const release = vi.fn(() => {
+      throw new Error("release unavailable");
+    });
+
+    expect(() => releaseManagedStartupHoldWithRetry(release)).toThrow("release unavailable");
+    expect(release).toHaveBeenCalledTimes(3);
+  });
+});
 
 describe("created Hermes credential environment reconciliation", () => {
   const plan = { agent: "hermes" } as never;
@@ -1189,7 +1213,9 @@ describe("sandbox create identity checks", () => {
       revalidate: (sandboxIsLive) => events.push(sandboxIsLive ? "identity" : "preflight"),
       create: async (verifyCreatedSandbox) => {
         events.push("create");
-        await verifyCreatedSandbox({ sandboxName: "alpha" });
+        await verifyCreatedSandbox({ sandboxName: "alpha" }, () => {
+          events.push("pre-effects-cutover");
+        });
         return "complete";
       },
       runVerifiedCreateEffects: async () => {
@@ -1221,6 +1247,7 @@ describe("sandbox create identity checks", () => {
       "identity",
       "checkpoint",
       "checkpoint-revalidate",
+      "pre-effects-cutover",
       "provider-effects",
       "identity",
       "identity",

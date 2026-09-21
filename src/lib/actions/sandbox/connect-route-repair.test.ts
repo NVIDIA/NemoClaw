@@ -12,7 +12,8 @@ const runBuffered = vi.hoisted(() =>
   vi.fn<OpenShellSandboxBufferedCommandExecutor["runBuffered"]>(),
 );
 
-vi.mock("../../adapters/openshell/sandbox-command-cli", () => ({
+vi.mock("../../adapters/openshell/sandbox-command-cli", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../adapters/openshell/sandbox-command-cli")>()),
   createCliOpenShellSandboxCommandExecutor: vi.fn(() => ({ runBuffered })),
 }));
 

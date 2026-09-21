@@ -2,8 +2,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { NemoClawConfigDocumentName, NemoClawConfigDocumentUid } from "../../config/model";
-import type { V1Alpha1Export } from "../../config/v1alpha1-export";
+import type {
+  V1Alpha1Export,
+  V1Alpha1ExportAgent,
+  V1Alpha1ExportSandbox,
+} from "../../config/v1alpha1-export";
 import type { VerifiedExportSource } from "./export-evidence";
+
+const OLLAMA_SERVICE_NAME = "ollama-auth";
 
 function providerLocalName(provider: string): string {
   const normalized = provider
@@ -32,22 +38,11 @@ function inferenceProvider(
   if ("serving" in source.inference) {
     if (source.inference.serving.backend !== "ollama")
       throw new Error("Deferred managed inference cannot be exported to v1alpha1.");
-    const { daemon, proxy, model } = source.inference.serving;
     return {
       name,
       provider: "openai",
       api: "openai-completions",
-      management: "external",
-      endpoint: `http://127.0.0.1:${daemon.hostPort}/v1`,
-      ollamaProxy: {
-        management: "managed",
-        engine: "unix:///var/run/docker.sock",
-        endpoint: `http://host.openshell.internal:${proxy.hostPort}/v1`,
-        model: {
-          management: "external",
-          digest: bareSha256Digest(model.digest),
-        },
-      },
+      serviceRef: OLLAMA_SERVICE_NAME,
     };
   }
   const driver: "anthropic" | "openai" =
@@ -61,6 +56,23 @@ function inferenceProvider(
   return source.inference.credentialEnv === undefined
     ? provider
     : { ...provider, credential: { env: source.inference.credentialEnv } };
+}
+
+function ollamaService(
+  source: VerifiedExportSource,
+): NonNullable<V1Alpha1Export["spec"]["services"]>[string] {
+  if (!("serving" in source.inference) || source.inference.serving.backend !== "ollama") {
+    throw new Error("Only verified attached Ollama inference can create an Ollama proxy service.");
+  }
+  const { daemon, proxy, model } = source.inference.serving;
+  return {
+    kind: "ollamaProxy",
+    endpoint: `http://host.openshell.internal:${proxy.hostPort}/v1`,
+    upstream: {
+      endpoint: `http://127.0.0.1:${daemon.hostPort}/v1`,
+      model: { name: model.servedName, digest: bareSha256Digest(model.digest) },
+    },
+  };
 }
 
 function agentSettings(source: VerifiedExportSource) {
@@ -85,7 +97,7 @@ function exportAgent(
     primary: boolean;
     tools?: Readonly<{ allow: readonly "read"[] }>;
   }>,
-): V1Alpha1Export["spec"]["sandboxes"][number]["agents"][number] {
+): V1Alpha1ExportAgent {
   const tools = agent.primary ? source.tools : agent.tools;
   return {
     name: agent.name,
@@ -112,7 +124,7 @@ function exportAgent(
 function exportAgents(
   source: VerifiedExportSource,
   providerName: string,
-): V1Alpha1Export["spec"]["sandboxes"][number]["agents"] {
+): readonly V1Alpha1ExportAgent[] {
   const primary = exportAgent(source, providerName, { name: "primary", primary: true });
   return [
     primary,
@@ -132,6 +144,12 @@ function targetProcess(policy: Record<string, unknown>): void {
   if (process?.run_as_group === "sandbox") process.run_as_group = "1000";
 }
 
+function agentFilesystemRoots(agent: VerifiedExportSource["agent"]): string[] {
+  if (agent === "openclaw") return ["/app"];
+  if (agent === "hermes") return ["/opt/hermes"];
+  return [];
+}
+
 function targetFilesystem(
   policy: Record<string, unknown>,
   agent: VerifiedExportSource["agent"],
@@ -140,7 +158,7 @@ function targetFilesystem(
   if (!filesystem) return;
   const readOnly = Array.isArray(filesystem.read_only) ? [...filesystem.read_only] : [];
   const readWrite = Array.isArray(filesystem.read_write) ? filesystem.read_write : [];
-  const roots = ["/opt/fabric", "/opt/nemoclaw", agent === "openclaw" ? "/app" : "/opt/hermes"];
+  const roots = ["/opt/fabric", "/opt/nemoclaw", ...agentFilesystemRoots(agent)];
   for (const root of roots) {
     if (!readOnly.includes(root) && !readWrite.includes(root)) readOnly.push(root);
   }
@@ -154,6 +172,54 @@ function targetPolicy(source: VerifiedExportSource): Record<string, unknown> {
   return policy;
 }
 
+function exportSandbox(
+  source: VerifiedExportSource,
+  providerName: string,
+  attachedOllama: boolean,
+): V1Alpha1ExportSandbox {
+  const sandboxBase = {
+    name: source.sandboxName,
+    runtime: {
+      provider: "docker" as const,
+    },
+    network: {
+      policy: { explicit: targetPolicy(source) },
+      ...(source.proxy === undefined ? {} : { proxy: source.proxy }),
+    },
+    ...(source.webSearch === undefined
+      ? {}
+      : {
+          integrations: {
+            "brave-search": {
+              kind: "webSearch" as const,
+              provider: source.webSearch.provider,
+              credential: source.webSearch.credential,
+            },
+          },
+        }),
+  };
+  if (source.agent === "langchain-deepagents-code") {
+    return {
+      ...sandboxBase,
+      image: { ref: source.runtime.imageRef },
+      harness: { kind: "deepagents", ...agentSettings(source) },
+      agent: exportAgent(source, providerName, { name: "primary", primary: true }),
+    };
+  }
+  if (attachedOllama) {
+    return {
+      ...sandboxBase,
+      harness: { kind: "openclaw", ...agentSettings(source) },
+      agent: exportAgent(source, providerName, { name: "primary", primary: true }),
+    };
+  }
+  return {
+    ...sandboxBase,
+    harness: { kind: source.agent, ...agentSettings(source) },
+    agents: exportAgents(source, providerName),
+  };
+}
+
 export interface ExportConfigBuildIdentity {
   readonly documentName: NemoClawConfigDocumentName;
   readonly documentUid: NemoClawConfigDocumentUid;
@@ -165,6 +231,9 @@ export function buildExportConfig(
   identity: ExportConfigBuildIdentity,
 ): V1Alpha1Export {
   const providerName = exportedProviderName(source.inference);
+  const attachedOllama =
+    "serving" in source.inference && source.inference.serving.backend === "ollama";
+  const sandbox = exportSandbox(source, providerName, attachedOllama);
   const candidate = {
     apiVersion: "nemoclaw.nvidia.com/v1alpha1",
     kind: "NemoClawConfig",
@@ -174,32 +243,9 @@ export function buildExportConfig(
         management: "managed",
         endpoint: `http://127.0.0.1:${source.gateway.port}`,
       },
+      ...(attachedOllama ? { services: { [OLLAMA_SERVICE_NAME]: ollamaService(source) } } : {}),
       inferenceProviders: [inferenceProvider(source, providerName)],
-      sandboxes: [
-        {
-          name: source.sandboxName,
-          runtime: {
-            provider: "docker" as const,
-          },
-          network: {
-            policy: { explicit: targetPolicy(source) },
-            ...(source.proxy === undefined ? {} : { proxy: source.proxy }),
-          },
-          ...(source.webSearch === undefined
-            ? {}
-            : {
-                integrations: {
-                  "brave-search": {
-                    kind: "webSearch",
-                    provider: source.webSearch.provider,
-                    credential: source.webSearch.credential,
-                  },
-                },
-              }),
-          harness: { kind: source.agent, ...agentSettings(source) },
-          agents: exportAgents(source, providerName),
-        },
-      ],
+      sandboxes: [sandbox],
     },
   } satisfies V1Alpha1Export;
   return candidate;

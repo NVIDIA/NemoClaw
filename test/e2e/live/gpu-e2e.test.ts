@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -9,6 +10,7 @@ import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText } from "../fixtures/clients/index.ts";
 import { trustedSandboxShellScript } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
+import { parseConfigExport } from "../fixtures/phases/config-export-validation.ts";
 import {
   assertAgentExecutionSucceeded,
   assertGpuInstallProofs,
@@ -402,7 +404,7 @@ test(
 );
 
 test(
-  "OpenClaw defers attached Ollama export until v1 compatibility is implemented (#11435, #11977)",
+  "OpenClaw exports attached Ollama through a named proxy service (#11435, #11977, #12012)",
   {
     timeout: TIMEOUT_MS,
     meta: {
@@ -410,7 +412,8 @@ test(
         "prepare the Ollama export host",
         "onboard OpenClaw without sandbox GPU",
         "attach the export daemon",
-        "refuse the deferred attached Ollama configuration",
+        "export the attached Ollama configuration",
+        "refuse export while the attached daemon is stopped",
       ],
     },
   },
@@ -527,23 +530,72 @@ exec ollama pull qwen2.5:0.5b`,
     expect(model?.digest).toMatch(/^(?:sha256:)?[a-f0-9]{64}$/u);
     expect(daemonOwner).toBeDefined();
 
-    progress.phase("refuse the deferred attached Ollama configuration");
+    progress.phase("export the attached Ollama configuration");
     const firstPath = path.join(directory, "first.yaml");
-    const exported = await host.command(
+    const firstExport = await host.command(
       "node",
       [CLI, "config", "export", SANDBOX_NAME, "--output", firstPath, "--json"],
       { artifactName: "export-ollama-first", cwd: REPO_ROOT, env: exportEnv, timeoutMs: 60000 },
     );
-    expect(exported.exitCode, resultText(exported)).not.toBe(0);
-    expect(resultText(exported)).toContain("managed vLLM and Ollama compatibility are deferred");
-    expect(resultText(exported)).not.toContain("spec.inferenceProviders");
-    expect(resultText(exported)).toContain("unsupported");
-    expect(resultText(exported)).toContain("Config export failed");
-    expect(fs.existsSync(firstPath), "Deferred compatibility must prevent publication").toBe(false);
+    expect(firstExport.exitCode, resultText(firstExport)).toBe(0);
+    const firstYaml = fs.readFileSync(firstPath, "utf8");
+    const first = parseConfigExport(firstYaml);
+    const provider = first.spec.inferenceProviders[0];
+    const service = first.spec.services?.["ollama-auth"];
+    expect(service?.upstream.model.digest).toBe(model!.digest.replace(/^sha256:/u, ""));
+    const proxyToken = readTokenFileChecked(ollamaProxyTokenFile()).token;
+    expect(
+      firstYaml.includes(proxyToken) ||
+        /credential|NEMOCLAW_|openshell:resolve:env/u.test(firstYaml),
+    ).toBe(false);
+
+    const secondPath = path.join(directory, "second.yaml");
+    await host.command(
+      "node",
+      [CLI, "config", "export", SANDBOX_NAME, "--output", secondPath, "--json"],
+      { artifactName: "export-ollama-second", cwd: REPO_ROOT, env: exportEnv, timeoutMs: 60000 },
+    );
+    const secondYaml = fs.readFileSync(secondPath, "utf8");
+    const second = parseConfigExport(secondYaml);
+    expect(second.spec).toEqual(first.spec);
+
+    progress.phase("refuse export while the attached daemon is stopped");
+    const activeDaemon = daemonOwner!;
+    const stoppedPath = path.join(directory, "stopped.yaml");
+    try {
+      await activeDaemon.terminate();
+      daemonOwner = undefined;
+      const stoppedExport = await host.command(
+        "node",
+        [CLI, "config", "export", SANDBOX_NAME, "--output", stoppedPath, "--json"],
+        {
+          artifactName: "export-ollama-stopped",
+          cwd: REPO_ROOT,
+          env: exportEnv,
+          timeoutMs: 60000,
+        },
+      );
+      expect(stoppedExport.exitCode, resultText(stoppedExport)).not.toBe(0);
+      expect(fs.existsSync(stoppedPath), "A stopped daemon must prevent publication").toBe(false);
+    } finally {
+      daemonOwner ??= startAttachedOllama(progress, exportEnv);
+      await waitForAttachedOllama(host, exportEnv, "export-cleanup-daemon-ready");
+    }
     await artifacts.writeJson("ollama-config-export-evidence.json", {
+      contract: "nemoclaw.ollama-config-export-evidence/v1",
+      sourceRevision: process.env.NEMOCLAW_E2E_EXPECTED_SHA ?? null,
       sandboxName: SANDBOX_NAME,
-      compatibility: "deferred",
-      publicationPrevented: true,
+      model: service?.upstream.model,
+      provider,
+      ports: { daemon: 11439, proxy: 11440 },
+      repeatedSpecMatched: true,
+      credentialFree: true,
+      stoppedDaemonPublicationPrevented: true,
+      export: {
+        bytes: firstYaml,
+        byteLength: Buffer.byteLength(firstYaml, "utf8"),
+        sha256: createHash("sha256").update(firstYaml).digest("hex"),
+      },
     });
   },
 );

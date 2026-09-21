@@ -5,7 +5,7 @@ import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import YAML from "yaml";
-import { asExportedConfig } from "../../support/config-export-document.ts";
+import { asExportedConfig, exportedAgentList } from "../../support/config-export-document.ts";
 import { fingerprintOpenShellSandboxId } from "../../../src/lib/adapters/openshell/sandbox-identity.ts";
 import {
   namedOpenShellGateway,
@@ -202,15 +202,22 @@ const candidates = fs
   .readdirSync(distDir)
   .filter((name) => /^openclaw-tools-(?!serve-config-).+\.js$/.test(name))
   .sort();
-if (candidates.length !== 1) {
-  fail("expected one OpenClaw tools module, found " + candidates.join(", "));
+const factories = [];
+for (const candidate of candidates) {
+  const mod = await import(pathToFileURL(path.join(distDir, candidate)).href);
+  const factory = mod.createOpenClawTools || mod.t;
+  if (typeof factory === "function") factories.push(factory);
 }
-
-const mod = await import(pathToFileURL(path.join(distDir, candidates[0])).href);
-const createOpenClawTools = mod.t || mod.createOpenClawTools;
-if (typeof createOpenClawTools !== "function") {
-  fail("OpenClaw tools export is missing");
+const uniqueFactories = [...new Set(factories)];
+if (uniqueFactories.length !== 1) {
+  fail(
+    "expected one OpenClaw tools implementation across " +
+      candidates.join(", ") +
+      "; found " +
+      uniqueFactories.length,
+  );
 }
+const createOpenClawTools = uniqueFactories[0];
 const tools = createOpenClawTools({
   config,
   sandboxed: true,
@@ -226,6 +233,20 @@ if (!webFetch || typeof webFetch.execute !== "function") {
 
 function summary(value) {
   return JSON.stringify(value).slice(0, 2000);
+}
+
+function errorChainDetail(error) {
+  const details = [];
+  const seen = new Set();
+  let current = error;
+  for (let depth = 0; depth < 8 && current !== undefined && !seen.has(current); depth += 1) {
+    const detail =
+      current && (current.stack || current.message) ? current.stack || current.message : current;
+    details.push(String(detail));
+    seen.add(current);
+    current = current && typeof current === "object" ? current.cause : undefined;
+  }
+  return details.join("\nCaused by: ");
 }
 
 const approved = await webFetch.execute("e2e-approved-host-gateway", {
@@ -251,7 +272,7 @@ try {
   }
   fail("E2E_FAIL_DENIED_PORT_UNEXPECTED_SUCCESS: " + deniedText);
 } catch (error) {
-  const detail = String(error && (error.stack || error.message) ? error.stack || error.message : error);
+  const detail = errorChainDetail(error);
   if (/E2E_FAIL_DENIED_PORT_|SsrFBlockedError|Blocked hostname|private\/internal\/special-use/i.test(detail)) {
     throw error;
   }
@@ -367,9 +388,10 @@ test(
     expect(raw.includes(apiKey), "Export must omit credential values").toBe(false);
     const document = asExportedConfig(YAML.parse(raw));
     const exportedSandbox = document.spec.sandboxes[0];
-    const [primary] = exportedSandbox.agents;
+    const agents = exportedAgentList(exportedSandbox);
+    const [primary] = agents;
     const primaryInference = JSON.stringify(primary?.inference);
-    const roster = exportedSandbox.agents.map((agent) => {
+    const roster = agents.map((agent) => {
       const toolsConfig = "tools" in agent ? agent.tools : undefined;
       const tools = toolsConfig && "allow" in toolsConfig ? toolsConfig.allow.join(",") : "primary";
       const route = JSON.stringify(agent.inference) === primaryInference ? "shared" : "different";
@@ -378,7 +400,7 @@ test(
     expect(`${exportedSandbox.name}|${roster.join("|")}`).toBe(
       `${SANDBOX_NAME}|primary:primary:shared|researcher:read:shared|reviewer:read:shared`,
     );
-    expect(document.spec.sandboxes[0]).not.toHaveProperty("image");
+    expect(exportedSandbox).not.toHaveProperty("image");
     const exportedProvider = document.spec.inferenceProviders[0];
     const exportedEndpoint = "endpoint" in exportedProvider ? exportedProvider.endpoint : undefined;
     expect(exportedEndpoint).toBe(requireHostedInferenceConfig(secrets).endpointUrl);
@@ -416,7 +438,7 @@ test(
     }
     await artifacts.writeJson("config-export-live-evidence.json", {
       sandboxName: SANDBOX_NAME,
-      agentNames: exportedSandbox.agents.map((agent) => agent.name),
+      agentNames: agents.map((agent) => agent.name),
       image: "v1-default",
       endpoint: exportedEndpoint,
       effectivePolicyMatches: true,

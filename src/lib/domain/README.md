@@ -40,12 +40,19 @@ profile is unsupported even when those two sources agree.
 One or more uniquely named read-only secondary OpenClaw agents can share the primary hosted route
 on Docker and export in runtime order. Runtime `main` remains the sole default and exports as
 `primary`; each secondary keeps its compatible, nonreserved ID and exports
-`tools: {allow: [read]}`. Execution, interfaces, and observability remain primary-owned. The
+`tools: {allow: [read]}`. Execution, interfaces, authentication, and observability remain primary-owned. The
 generator and exporter use the same manifest normalizer in `src/lib/extra-agents-validation.ts`.
 Canonical workspace paths stay implicit. Verify the whole retained manifest before
 admitting that leaf in the residual profile comparison; other agent settings still
 need their own supported projection. Apply the roster and route constraints only
 to documents using `tools.allow`, preserving existing v1 agent shapes.
+
+The attached-Ollama source model admits the same roster constraints, but this does not authorize
+v1alpha1 publication. `config/verify-export-source.ts` rejects Ollama sources at the compatibility
+gate, and `config/export-document.ts` rejects local serving providers. Successful publication
+depends on the named-service contract in #11928 and the exporter mapping in #12012.
+The source checks retain the selected model, shared tuning, external daemon ownership, and
+NemoClaw-managed proxy ownership. Export does not change either resource.
 
 Managed OpenClaw exports `agents[].interfaces.dashboard` when the retained port agrees with the
 registry and remote bind agrees with recorded preparation. Port 18789 and loopback bind are omitted.

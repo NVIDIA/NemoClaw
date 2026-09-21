@@ -12,7 +12,7 @@ import { readYaml, type WorkflowJob, type WorkflowStep } from "../../helpers/e2e
 const REPO_ROOT = path.join(import.meta.dirname, "../../..");
 const CODEX_ACP_TARBALL =
   "https://registry.npmjs.org/@zed-industries/codex-acp/-/codex-acp-0.11.1.tgz";
-const OPENCLAW_TARBALL = "https://registry.npmjs.org/openclaw/-/openclaw-2026.7.1.tgz";
+const OPENCLAW_TARBALL = "https://registry.npmjs.org/openclaw/-/openclaw-2026.9.1.tgz";
 const MESSAGING_BUILD_APPLIER = path.join(
   REPO_ROOT,
   "src",
@@ -127,7 +127,7 @@ function runBaseImageBuildArgGuard(
   }
 }
 
-describe("OpenClaw 2026.6.10 dependency review contract", () => {
+describe("OpenClaw 2026.9.1 dependency review contract", () => {
   it("keeps every reviewed archive boundary on the shared invariant matrix (#5896)", () => {
     const result = spawnSync(
       "bash",
@@ -179,8 +179,8 @@ for dockerfile in Dockerfile Dockerfile.base; do
     Dockerfile) end_marker='# Patch OpenClaw media fetch' ;;
     Dockerfile.base) end_marker='# Baseline health check.' ;;
   esac
-  openclaw_block="$(sed -n "/ARG OPENCLAW_VERSION=2026.7.1/,/$end_marker/p" "$dockerfile")"
-  check_contains "$openclaw_block" "ARG OPENCLAW_2026_7_1_TARBALL=${OPENCLAW_TARBALL}" "$dockerfile tarball arg"
+  openclaw_block="$(sed -n "/ARG OPENCLAW_VERSION=2026.9.1/,/$end_marker/p" "$dockerfile")"
+  check_contains "$openclaw_block" "ARG OPENCLAW_2026_9_1_TARBALL=${OPENCLAW_TARBALL}" "$dockerfile tarball arg"
   check_contains "$openclaw_block" '/scripts/lib/reviewed-npm-archive.mts' "$dockerfile shared helper"
   check_contains "$openclaw_block" '--package-spec "openclaw@\${OPENCLAW_VERSION}" --integrity "$EXPECTED_INTEGRITY"' "$dockerfile reviewed identity"
   check_contains "$openclaw_block" '--tarball-url "$EXPECTED_TARBALL"' "$dockerfile reviewed tarball"
@@ -225,20 +225,17 @@ optional_plugin_block="$(sed -n '/# Install non-messaging OpenClaw plugins that 
 check_contains "$optional_plugin_block" '/scripts/lib/reviewed-npm-archive.mts' "optional plugin shared helper"
 check_contains "$optional_plugin_block" '--package-spec "$plugin_spec" --integrity "$expected_integrity"' "optional plugin reviewed identity"
 check_contains "$optional_plugin_block" '--tarball-url "$expected_tarball"' "optional plugin reviewed tarball"
-check_contains "$optional_plugin_block" '/scripts/lib/openclaw-npm-remediation.mts' "optional plugin remediation helper"
-check_contains "$optional_plugin_block" '"@openclaw/diagnostics-otel@2026.7.1")' "diagnostics remediation identity"
-check_contains "$optional_plugin_block" '--working-directory "$plugin_work_root"' "diagnostics remediation workspace"
-check_contains "$optional_plugin_block" 'if (!value.remediated || typeof value.archivePath !== "string")' "diagnostics remediation result guard"
+check_not_contains "$optional_plugin_block" '/scripts/lib/openclaw-npm-remediation.mts' "optional plugin remediation helper"
 check_contains "$optional_plugin_block" 'plugin_source_root="$(dirname "$plugin_archive")"' "optional plugin source root"
-check_contains "$optional_plugin_block" 'plugin_work_root="$(mktemp -d /tmp/nemoclaw-openclaw-plugin.XXXXXX)"' "optional plugin writable workspace"
 check_contains "$optional_plugin_block" 'plugin_install_archive="$plugin_archive"' "optional plugin default archive"
-check_contains "$optional_plugin_block" 'openclaw plugins install "npm-pack:\${plugin_install_archive}"' "optional plugin npm-pack install"
-check_contains "$optional_plugin_block" 'rm -rf "$plugin_work_root"' "optional plugin workspace cleanup"
+check_contains "$optional_plugin_block" 'openclaw plugins install --force --accept-capabilities "npm-pack:\${plugin_install_archive}"' "optional plugin reviewed npm-pack install confirmation"
 check_contains "$optional_plugin_block" 'if [ -z "\${NEMOCLAW_REVIEWED_NPM_ARCHIVE_DIR:-}" ]; then rm -rf "$plugin_source_root"; fi' "optional plugin fallback source cleanup"
 check_not_contains "$optional_plugin_block" 'pack_reviewed_npm_tarball' "optional plugin inline pack helper"
 
 	grep -Fq 'packReviewedNpmArchive({' "$messaging_build_applier"
-	grep -Fq '["openclaw", "plugins", "install", \`npm-pack:\${packed.archivePath}\`]' "$messaging_build_applier"
+	grep -Fq '"--force",' "$messaging_build_applier"
+	grep -Fq '"--accept-capabilities",' "$messaging_build_applier"
+	grep -Fq '\`npm-pack:\${packed.archivePath}\`' "$messaging_build_applier"
 	grep -Fq 'rmSync(packed.rootDir, { recursive: true, force: true })' "$messaging_build_applier"
 	grep -Fq 'from "../../../../../scripts/lib/reviewed-npm-archive.mts"' "$messaging_build_applier"
 	grep -Fq 'from "../../../../../scripts/lib/openclaw-npm-remediation.mts"' "$messaging_build_applier"
@@ -288,7 +285,7 @@ check_not_contains "$optional_plugin_block" 'pack_reviewed_npm_tarball' "optiona
 	shared_state_permissions_patch=${JSON.stringify(SHARED_STATE_PERMISSIONS_PATCH)}
 	grep -Fq 'nemoclaw: group-shared OpenClaw state' "$shared_state_permissions_patch"
 	grep -Fq 'nemoclaw: group-shared OpenClaw agent state' "$shared_state_permissions_patch"
-	grep -Fq 'keep generic credential and identity stores owner-only' "$shared_state_permissions_patch"
+	grep -Fq 'Generic credential and identity stores remain owner-only' "$shared_state_permissions_patch"
 	! grep -Fq 'nemoclaw: group-shared OpenClaw private store' "$shared_state_permissions_patch"
 	! grep -Fq 'nemoclaw: group-shared OpenClaw file-store defaults' "$shared_state_permissions_patch"
 	grep -Fq 'nemoclaw: group-shared OpenClaw models file' "$shared_state_permissions_patch"
@@ -309,11 +306,9 @@ check_not_contains "$optional_plugin_block" 'pack_reviewed_npm_tarball' "optiona
 	grep -Fq 'node /usr/local/lib/nemoclaw/patch-openclaw-mcp-tools-list-timeout.mts \\' Dockerfile
 	! grep -Fq 'patch-openclaw-mcp-tools-list-timeout.js' Dockerfile
 
-	phase_count="$(grep -Ec -- '--phase (runtime-setup|agent-install|post-agent-install)' Dockerfile)"
-test "$phase_count" -eq 3
-grep -Fq -- '--phase runtime-setup' Dockerfile
-grep -Fq -- '--phase agent-install' Dockerfile
-grep -Fq -- '--phase post-agent-install' Dockerfile
+	test "$(grep -Fc -- '--phase runtime-setup' Dockerfile)" -eq 1
+	grep -Fq -- 'messaging_phase=agent-install;' Dockerfile
+	test "$(grep -Fc -- '--phase post-agent-install' Dockerfile)" -eq 1
 `,
       ],
       {

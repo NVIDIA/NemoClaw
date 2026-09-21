@@ -220,7 +220,10 @@ describe("prepareSandboxCreatePolicy", () => {
     const messagingConfig = { WECHAT_BASE_URL: "https://idc-37.weixin.qq.com" };
     prepareSandboxCreatePolicy(intent, preparePolicy, messagingConfig);
 
-    expect(seenOptions[0]).toMatchObject({ sandboxName: "bound-sandbox", messagingConfig });
+    expect(seenOptions[0]).toMatchObject({
+      sandboxName: "bound-sandbox",
+      messagingConfig,
+    });
   });
 
   it("materializes the captured exact WeChat IDC endpoint in the create policy (#10606)", async () => {

@@ -10,12 +10,15 @@ import {
 import os from "node:os";
 import YAML from "yaml";
 import { describe, expect, it, vi } from "vitest";
-import { asExportedConfig } from "../../../../test/support/config-export-document";
+import {
+  asExportedConfig,
+  exportedSingletonSandbox,
+} from "../../../../test/support/config-export-document";
 import { createOllamaExportProbe } from "../../inference/ollama/proxy";
 import { OLLAMA_LOCAL_CREDENTIAL_ENV } from "../../inference/ollama/contract";
 import type { ObservedOllamaProxy } from "../../inference/ollama/proxy-observation";
 import { getSandboxEntryInference } from "../../state/registry-entry-view";
-import { getLiveGatewayInference } from "../../inference/live";
+import { captureSanitizedResolvedOpenshell } from "../openshell/sanitized-capture";
 import {
   readFailureCanary,
   inventory,
@@ -69,11 +72,9 @@ function mockOllamaSource(model: string = "qwen3.5:9b", environment: NodeJS.Proc
     provider: "ollama-local",
     model,
   });
-  vi.mocked(getLiveGatewayInference).mockReturnValue({
-    failure: null,
-    inference: { provider: "ollama-local", model },
-    output: "",
+  vi.mocked(captureSanitizedResolvedOpenshell).mockReturnValue({
     status: 0,
+    output: `Gateway inference:\n  Provider: ollama-local\n  Model: ${model}\n`,
   });
   const liveSandbox = inventory();
   Object.assign(liveSandbox.sandbox.spec, { providers: ["ollama-local"] });
@@ -152,20 +153,24 @@ describe("attached Ollama export pipeline", () => {
           name: "local",
           provider: "openai",
           api: "openai-completions",
-          management: "external",
-          endpoint: "http://127.0.0.1:11439/v1",
-          ollamaProxy: {
-            management: "managed",
-            engine: "unix:///var/run/docker.sock",
-            endpoint: "http://host.openshell.internal:11440/v1",
+          serviceRef: "ollama-auth",
+        },
+      ]);
+      expect(document.spec.services).toEqual({
+        "ollama-auth": {
+          kind: "ollamaProxy",
+          endpoint: "http://host.openshell.internal:11440/v1",
+          upstream: {
+            endpoint: "http://127.0.0.1:11439/v1",
             model: {
-              management: "external",
+              name: model,
               digest: "a".repeat(64),
             },
           },
         },
-      ]);
-      expect(document.spec.sandboxes[0]!.agents[0]!.inference.routes[0]).toMatchObject({
+      });
+      const sandbox = exportedSingletonSandbox(document.spec.sandboxes[0]!);
+      expect(sandbox.agent.inference.routes[0]).toMatchObject({
         providerRef: "local",
         overrides: { model },
       });
@@ -188,7 +193,8 @@ describe("attached Ollama export pipeline", () => {
     const { result, writeStdout } = await exportLiveSource();
     expect(result).toEqual({ ok: true, completion: { kind: "stdout" } });
     const document = asExportedConfig(YAML.parse(writeStdout.mock.calls[0]![0]));
-    expect(document.spec.sandboxes[0]!.agents[0]!.inference.routes[0]!.overrides).toEqual({
+    const sandbox = exportedSingletonSandbox(document.spec.sandboxes[0]!);
+    expect(sandbox.agent.inference.routes[0]!.overrides).toEqual({
       model: "qwen2.5:0.5b",
       contextWindow: 32_768,
       maxTokens: 2048,
@@ -196,6 +202,19 @@ describe("attached Ollama export pipeline", () => {
       reasoningEffort: "medium",
     });
     expect(document.spec.inferenceProviders[0]).not.toHaveProperty("credential");
+  });
+
+  it("refuses attached Ollama when one live sandbox contains additional agents (#12012)", async () => {
+    mockOllamaSource("qwen2.5:0.5b", {
+      NEMOCLAW_EXTRA_AGENTS_JSON: JSON.stringify([
+        { id: "researcher", tools: { allow: ["read"] } },
+      ]),
+    });
+
+    expectExportRefusal(await exportLiveSource(), {
+      field: "spec.sandboxes[].agent",
+      category: "unsupported",
+    });
   });
 
   it("refuses attached Ollama without retained workload authority (#12012)", async () => {
@@ -209,7 +228,7 @@ describe("attached Ollama export pipeline", () => {
     observed.serving.proxy.hostPort = 21_435;
     vi.mocked(createOllamaExportProbe).mockReturnValue(ollamaProbe(observed));
     expectExportRefusal(await exportLiveSource(), {
-      field: "spec.inferenceProviders[].ollamaProxy",
+      field: "spec.services[].upstream",
       category: "drifted",
     });
   });
@@ -226,11 +245,9 @@ describe("attached Ollama export pipeline", () => {
       authority: "live route",
       category: "live-verification-failed",
       change: () => {
-        vi.mocked(getLiveGatewayInference).mockReturnValue({
-          failure: null,
-          inference: { provider: "ollama-local", model: "qwen3.5:9b" },
-          output: "",
+        vi.mocked(captureSanitizedResolvedOpenshell).mockReturnValue({
           status: 0,
+          output: "Gateway inference:\n  Provider: ollama-local\n  Model: qwen3.5:9b\n",
         });
       },
     },

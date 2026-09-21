@@ -17,24 +17,82 @@ interface V1Alpha1HostedInferenceProvider {
   readonly api: "anthropic-messages" | "openai-completions" | "openai-responses";
   readonly endpoint: string;
   readonly credential?: Readonly<{ env: string }>;
-  readonly management?: never;
-  readonly ollamaProxy?: never;
+  readonly serviceRef?: never;
 }
 
 interface V1Alpha1OllamaInferenceProvider {
   readonly name: string;
   readonly provider: "openai";
   readonly api: "openai-completions";
-  readonly management: "external";
-  readonly endpoint: string;
+  readonly serviceRef: string;
+  readonly endpoint?: never;
   readonly credential?: never;
-  readonly ollamaProxy: Readonly<{
-    management: "managed";
-    engine: "unix:///var/run/docker.sock";
+}
+
+export interface V1Alpha1OllamaProxyService {
+  readonly kind: "ollamaProxy";
+  readonly endpoint: string;
+  readonly upstream: Readonly<{
     endpoint: string;
-    model: Readonly<{ management: "external"; digest: string }>;
+    model: Readonly<{ name: string; digest: string }>;
   }>;
 }
+
+export interface V1Alpha1ExportAgent {
+  readonly name: string;
+  readonly inference: Readonly<{
+    routes: readonly Readonly<{
+      name: string;
+      providerRef: string;
+      overrides: Readonly<Record<string, unknown> & { model: string }>;
+    }>[];
+  }>;
+  readonly auth?: Readonly<{ method: "api-key" }>;
+  readonly tools?:
+    | Readonly<{ disclosure: "direct" | "progressive" }>
+    | Readonly<{ allow: readonly "read"[] }>;
+  readonly integrationRefs?: readonly "brave-search"[];
+}
+
+interface V1Alpha1ExportSandboxBase {
+  readonly name: string;
+  readonly runtime: Readonly<{ provider: "docker" }>;
+  readonly network: Readonly<{
+    policy: Readonly<{ explicit: Readonly<Record<string, unknown>> }>;
+    proxy?: Readonly<{ host: string; port: number }>;
+  }>;
+  readonly integrations?: Readonly<{
+    "brave-search": Readonly<{
+      kind: "webSearch";
+      provider: "brave";
+      credential: Readonly<{ env: string }>;
+    }>;
+  }>;
+}
+
+interface V1Alpha1ExportHarness {
+  readonly kind: "deepagents" | "hermes" | "openclaw";
+  readonly execution?: Readonly<{ timeoutSeconds?: number; heartbeatEvery?: string }>;
+  readonly interfaces?: Readonly<Record<string, unknown>>;
+  readonly observability?: Readonly<Record<string, unknown>>;
+}
+
+export type V1Alpha1ExportSandbox = V1Alpha1ExportSandboxBase &
+  (
+    | Readonly<{
+        harness: V1Alpha1ExportHarness & Readonly<{ kind: "deepagents" }>;
+        image: Readonly<{ ref: string }>;
+        agent: Readonly<V1Alpha1ExportAgent>;
+      }>
+    | Readonly<{
+        harness: V1Alpha1ExportHarness & Readonly<{ kind: "openclaw" }>;
+        agent: Readonly<V1Alpha1ExportAgent>;
+      }>
+    | Readonly<{
+        harness: V1Alpha1ExportHarness & Readonly<{ kind: "hermes" | "openclaw" }>;
+        agents: readonly Readonly<V1Alpha1ExportAgent>[];
+      }>
+  );
 
 /** Producer-owned shape emitted by v0. The v1 Rust parser remains the target contract authority. */
 export interface V1Alpha1Export {
@@ -43,44 +101,10 @@ export interface V1Alpha1Export {
   readonly metadata: Readonly<{ name: string; uid: string }>;
   readonly spec: Readonly<{
     gateway: Readonly<{ management: "managed"; endpoint: string }>;
+    services?: Readonly<Record<string, Readonly<V1Alpha1OllamaProxyService>>>;
     inferenceProviders: readonly Readonly<
       V1Alpha1HostedInferenceProvider | V1Alpha1OllamaInferenceProvider
     >[];
-    sandboxes: readonly Readonly<{
-      name: string;
-      runtime: Readonly<{ provider: "docker" }>;
-      network: Readonly<{
-        policy: Readonly<{ explicit: Readonly<Record<string, unknown>> }>;
-        proxy?: Readonly<{ host: string; port: number }>;
-      }>;
-      harness: Readonly<{
-        kind: "hermes" | "openclaw";
-        execution?: Readonly<{ timeoutSeconds?: number; heartbeatEvery?: string }>;
-        interfaces?: Readonly<Record<string, unknown>>;
-        observability?: Readonly<Record<string, unknown>>;
-      }>;
-      agents: readonly Readonly<{
-        name: string;
-        inference: Readonly<{
-          routes: readonly Readonly<{
-            name: string;
-            providerRef: string;
-            overrides: Readonly<Record<string, unknown> & { model: string }>;
-          }>[];
-        }>;
-        auth?: Readonly<{ method: "api-key" }>;
-        tools?:
-          | Readonly<{ disclosure: "direct" | "progressive" }>
-          | Readonly<{ allow: readonly "read"[] }>;
-        integrationRefs?: readonly "brave-search"[];
-      }>[];
-      integrations?: Readonly<{
-        "brave-search": Readonly<{
-          kind: "webSearch";
-          provider: "brave";
-          credential: Readonly<{ env: string }>;
-        }>;
-      }>;
-    }>[];
+    sandboxes: readonly V1Alpha1ExportSandbox[];
   }>;
 }

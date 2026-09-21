@@ -12,6 +12,16 @@ export interface NemoClawRefFidelityEvidence {
   source: "workflow-checkout";
 }
 
+export function resolveExpectedOpenClawVersion({
+  override,
+  manifestVersion,
+}: {
+  override?: string;
+  manifestVersion?: string | null;
+}): string {
+  return override ?? manifestVersion ?? "";
+}
+
 /**
  * Attests the checkout-built CLI used by this TUI target. If the job moves to
  * a public install, replace the checkout probe with the installed clone's HEAD.

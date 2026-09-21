@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import YAML from "yaml";
-import { asExportedConfig } from "../../support/config-export-document.ts";
+import { asExportedConfig, exportedAgentList } from "../../support/config-export-document.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { resultText } from "../fixtures/clients/index.ts";
@@ -191,7 +191,8 @@ export function assertBraveExport(raw: string, credentialValues: readonly string
   const webSearch = document.spec.sandboxes[0]?.integrations?.["brave-search"];
   expect(webSearch?.provider).toBe("brave");
   expect(webSearch?.credential.env).toBe("BRAVE_API_KEY");
-  expect(document.spec.sandboxes[0]?.agents[0]?.integrationRefs).toEqual(["brave-search"]);
+  const sandbox = document.spec.sandboxes[0]!;
+  expect(exportedAgentList(sandbox)[0]?.integrationRefs).toEqual(["brave-search"]);
   return document.spec;
 }
 

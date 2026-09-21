@@ -5,10 +5,11 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { ConfigObject } from "../../security/credential-filter";
 import * as sandboxConfig from "../../sandbox/config";
+import * as restoreWindow from "./runtime/openclaw-lifecycle";
 import { serializeHermesOperatorConfigSnapshot } from "./rebuild-durable-config";
 import { runRebuildRestorePhase } from "./rebuild-restore-phase";
 import * as snapshotRestore from "./snapshot/restore-authority";
@@ -19,6 +20,18 @@ const backupManifest = {
 } as never;
 
 describe("rebuild filesystem restore", () => {
+  beforeEach(() => {
+    vi.spyOn(restoreWindow, "beginOpenClawBackupQuiesce").mockResolvedValue({
+      ok: true,
+      window: { sandboxName: "alpha", kind: "backup" },
+    });
+    vi.spyOn(restoreWindow, "promoteOpenClawBackupQuiesceToPostRestoreDoctor").mockResolvedValue({
+      ok: true,
+      window: { sandboxName: "alpha" },
+    });
+    vi.spyOn(restoreWindow, "abortOpenClawPostRestoreDoctor").mockResolvedValue({ ok: true });
+  });
+
   afterEach(() => {
     vi.restoreAllMocks();
   });
@@ -49,7 +62,24 @@ describe("rebuild filesystem restore", () => {
       { targetAgentType: "openclaw" },
       { getSandbox: expect.any(Function) },
     );
-    expect(result).toEqual({ restoreSucceeded: true });
+    expect(result).toEqual({
+      restoreSucceeded: true,
+      openClawDoctorWindow: { sandboxName: "alpha" },
+    });
+    expect(restoreWindow.beginOpenClawBackupQuiesce).toHaveBeenCalledExactlyOnceWith(
+      "alpha",
+      undefined,
+    );
+    expect(
+      vi.mocked(restoreWindow.beginOpenClawBackupQuiesce).mock.invocationCallOrder[0],
+    ).toBeLessThan(restore.mock.invocationCallOrder[0]!);
+    expect(restore.mock.invocationCallOrder[0]).toBeLessThan(
+      vi.mocked(restoreWindow.promoteOpenClawBackupQuiesceToPostRestoreDoctor).mock
+        .invocationCallOrder[0]!,
+    );
+    expect(
+      restoreWindow.promoteOpenClawBackupQuiesceToPostRestoreDoctor,
+    ).toHaveBeenCalledExactlyOnceWith({ sandboxName: "alpha", kind: "backup" });
   });
 
   it("allows whole-state file restore only for an explicit custom image", async () => {

@@ -98,7 +98,7 @@ export function validateOllamaServing(snapshot: QualifiedExportSnapshot): Export
     return [];
   return [
     {
-      field: "spec.inferenceProviders[].ollamaProxy",
+      field: "spec.services[].upstream",
       category: "drifted",
       diagnostic:
         "The attached Ollama daemon, managed proxy, model, or sandbox route could not be verified.",

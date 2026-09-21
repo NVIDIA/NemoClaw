@@ -4079,6 +4079,10 @@ if (args[0] === "inference" && args[1] === "set") {
   fs.writeFileSync(stateFile, JSON.stringify(state));
   process.exit(0);
 }
+if (args[0] === "inference" && args[1] === "get") {
+  process.stdout.write("Gateway inference:\\n  Provider: compatible-endpoint\\n  Model: qwen3.6:35b\\n");
+  process.exit(0);
+}
 if (args[0] === "provider" && args[1] === "profile" && args.includes("export")) { process.stdout.write(JSON.stringify({ id: "openai", credentials: [], endpoints: [], binaries: [], inference_capable: true })); process.exit(0); }
 if (args[0] === "provider" && args[1] === "get") { process.stderr.write("provider 'compatible-endpoint' not found"); process.exit(1); } // Force provider creation.
 process.exit(0);
@@ -4088,15 +4092,6 @@ process.exit(0);
 
     const script = String.raw`
 ${onboardChildRuntimeSource}
-const runner = require(${runnerPath});
-// Mock runCapture before onboard.js is required so the destructured reference picks up the mock.
-runner.runCapture = (cmd) => {
-  const args = Array.isArray(cmd) ? cmd : [];
-  if (args[1] === "inference" && args[2] === "get") {
-    return "Gateway inference:\n  Provider: compatible-endpoint\n  Model: qwen3.6:35b\n";
-  }
-  return "";
-};
 process.env.COMPATIBLE_API_KEY = "test-key";
 const { setupInference } = require(${onboardPath});
 (async () => {

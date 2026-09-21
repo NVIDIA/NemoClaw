@@ -119,11 +119,9 @@ describe("full E2E gateway ownership", () => {
       );
       expect(install?.[2]?.env).toMatchObject({
         OPENSHELL_GATEWAY: preinstalled ? "nemoclaw-18080" : "nemoclaw",
+        NEMOCLAW_GATEWAY_PORT: preinstalled ? "18080" : "8080",
         ...(preinstalled
-          ? {
-              NEMOCLAW_GATEWAY_PORT: "18080",
-              NEMOCLAW_GATEWAY_MANAGEMENT: process.env.NEMOCLAW_GATEWAY_MANAGEMENT,
-            }
+          ? { NEMOCLAW_GATEWAY_MANAGEMENT: process.env.NEMOCLAW_GATEWAY_MANAGEMENT }
           : {}),
       });
       expect(cleanup.trackGateway).toHaveBeenCalledTimes(preinstalled ? 0 : 1);
@@ -168,11 +166,11 @@ describe("full E2E gateway ownership", () => {
   it("retains source-install gateway ownership and respects its selected port (#9851)", () => {
     expect(fullE2eGateway(false, {})).toEqual({
       owned: true,
-      env: { OPENSHELL_GATEWAY: "nemoclaw" },
+      env: { NEMOCLAW_GATEWAY_PORT: "8080", OPENSHELL_GATEWAY: "nemoclaw" },
     });
     expect(fullE2eGateway(false, { NEMOCLAW_GATEWAY_PORT: "19090" })).toEqual({
       owned: true,
-      env: { OPENSHELL_GATEWAY: "nemoclaw-19090" },
+      env: { NEMOCLAW_GATEWAY_PORT: "19090", OPENSHELL_GATEWAY: "nemoclaw-19090" },
     });
   });
   it("refuses conflicting Launchable ports before cleanup can be registered (#9851)", () => {

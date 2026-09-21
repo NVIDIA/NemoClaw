@@ -173,7 +173,7 @@ describe("sandbox build context staging", () => {
       writeFixture(path.join("tools", "mcp-tool-discovery-runtime", seedDirectory, ".gitkeep"));
     }
     for (const relativePath of [
-      "managed-startup-image-runtime.bundle",
+      "managed-startup-direct-image-runtime.bundle",
       path.join("mcp-tool-discovery", "BUNDLED_PACKAGES.json"),
       path.join("mcp-tool-discovery", "THIRD_PARTY_LICENSES.txt"),
       path.join("mcp-tool-discovery", "mcp-tool-discovery.bundle"),
@@ -203,7 +203,10 @@ describe("sandbox build context staging", () => {
     fs.chmodSync(path.join(sourceRoot, "nemoclaw"), 0o700);
     fs.chmodSync(path.join(sourceRoot, "nemoclaw", "src"), 0o700);
     writeFixture(path.join("nemoclaw-blueprint", "blueprint.yaml"));
+    writeFixture(path.join("nemoclaw-blueprint", "private-networks.yaml"));
     writeFixture(path.join("nemoclaw-blueprint", "policies", "openclaw-sandbox.yaml"));
+    writeFixture(path.join("nemoclaw-blueprint", "provider-profiles", "okta-runtime-v1.yaml"));
+    writeFixture(path.join("nemoclaw-blueprint", "router", "pool-config.yaml"));
     writeFixture(path.join("nemoclaw-blueprint", "scripts", "http-proxy-fix.js"));
     writeFixture(
       path.join(
@@ -232,12 +235,11 @@ describe("sandbox build context staging", () => {
     fs.chmodSync(path.join(sourceRoot, "nemoclaw-blueprint", "model-specific-setup"), 0o700);
     fs.chmodSync(blueprintManifestDir, 0o700);
     writeFixture(path.join("scripts", "nemoclaw-start.sh"));
-    writeFixture(path.join("scripts", "managed-startup-hold.sh"));
-    writeFixture(path.join("scripts", "managed-bootstrap-entrypoint.c"));
-    writeFixture(path.join("scripts", "managed-bootstrap-trampoline.sh"));
+    writeFixture(path.join("scripts", "managed-startup-hold.sh"), "#!/bin/sh\n", 0o755);
     writeFixture(path.join("scripts", "gateway-control.sh"));
     writeFixture(path.join("scripts", "managed-gateway-control.py"));
     writeFixture(path.join("scripts", "openclaw-config-guard.py"));
+    writeFixture(path.join("scripts", "openclaw-cli-wrapper.sh"));
     writeFixture(path.join("scripts", "codex-acp-wrapper.sh"));
     writeFixture(path.join("scripts", "generate-openclaw-config.mts"));
     writeFixture(path.join("scripts", "validate-openclaw-tool-search.mts"));
@@ -245,12 +247,14 @@ describe("sandbox build context staging", () => {
       path.join("scripts", "checks", "verify-openshell-policy-boundary-dependencies.mts"),
     );
     writeFixture(path.join("scripts", "checks", "materialize-locked-npm-cache-seed.mts"));
+    writeFixture(path.join("scripts", "checks", "verify-managed-messaging-offline-install.mts"));
     writeFixture(path.join("scripts", "lib", "sandbox-init.sh"));
     writeFixture(path.join("scripts", "lib", "corporate-ca-runtime.sh"));
     writeFixture(path.join("scripts", "lib", "entrypoint-env-wrapper.sh"));
     writeFixture(path.join("scripts", "lib", "gateway-supervisor.sh"));
     writeFixture(path.join("scripts", "lib", "sandbox-rlimits.sh"));
     writeFixture(path.join("scripts", "lib", "openclaw_device_approval_policy.py"));
+    writeFixture(path.join("scripts", "lib", "openclaw_pairing_state.py"));
     writeFixture(path.join("scripts", "lib", "normalize_mutable_config_perms.py"));
     writeFixture(path.join("scripts", "lib", "refresh-openclaw-wechat-placeholder.py"));
     writeFixture(
@@ -265,8 +269,6 @@ describe("sandbox build context staging", () => {
       "extra-agents-validation.ts",
       path.join("core", "json-types.ts"),
       path.join("core", "ports.ts"),
-      path.join("onboard", "managed-bootstrap", "envelope.ts"),
-      path.join("onboard", "managed-bootstrap", "image-runtime.ts"),
       path.join("onboard", "managed-startup", "image-runtime.ts"),
       path.join("security", "credential-hash.ts"),
       path.join("state", "paths.ts"),
@@ -283,6 +285,7 @@ describe("sandbox build context staging", () => {
     writeFixture(path.join("scripts", "patch-openclaw-issue-4434-diagnostics.mts"));
     writeFixture(path.join("scripts", "patch-openclaw-managed-transport-diagnostics.mts"));
     writeFixture(path.join("scripts", "patch-openclaw-device-self-approval.mts"));
+    writeFixture(path.join("scripts", "lib", "patch-openclaw-secondary-main-session-delete.mts"));
     writeFixture(path.join("scripts", "extract-semver.sh"));
     writeFixture(path.join("scripts", "patch-openclaw-shared-state-permissions.mts"));
     writeFixture(path.join("scripts", "patch-bundled-npm-brace-expansion.mts"));
@@ -346,6 +349,15 @@ describe("sandbox build context staging", () => {
     expect(stagedManifestDirMode & 0o002).toBe(0);
     expect((fs.statSync(stagedManifest).mode & 0o777).toString(8)).toBe("644");
     expect((fs.statSync(stagedPlugin).mode & 0o777).toString(8)).toBe("644");
+    for (const relativePath of [
+      "private-networks.yaml",
+      path.join("provider-profiles", "okta-runtime-v1.yaml"),
+      path.join("router", "pool-config.yaml"),
+    ]) {
+      const stagedPath = path.join(stagedBlueprint, relativePath);
+      expect(fs.readFileSync(stagedPath, "utf8"), relativePath).toBe("fixture\n");
+      expect((fs.statSync(stagedPath).mode & 0o777).toString(8), relativePath).toBe("644");
+    }
   }
 
   function expectStagedOpenClawRuntimeGraphs(buildCtx: string, sourceRoot: string) {
@@ -459,11 +471,11 @@ describe("sandbox build context staging", () => {
 
     const reviewedRuntimeDir = path.join(runtimeDir, "reviewed-runtime-bundle");
     expect(fs.readdirSync(reviewedRuntimeDir).sort()).toEqual([
-      "managed-startup-image-runtime.bundle",
+      "managed-startup-direct-image-runtime.bundle",
       "mcp-tool-discovery",
     ]);
     const reviewedRuntimeFiles = [
-      "managed-startup-image-runtime.bundle",
+      "managed-startup-direct-image-runtime.bundle",
       path.join("mcp-tool-discovery", "BUNDLED_PACKAGES.json"),
       path.join("mcp-tool-discovery", "THIRD_PARTY_LICENSES.txt"),
       path.join("mcp-tool-discovery", "mcp-tool-discovery.bundle"),
@@ -505,8 +517,6 @@ describe("sandbox build context staging", () => {
       path.join("src", "lib", "extra-agents-validation.ts"),
       path.join("src", "lib", "core", "json-types.ts"),
       path.join("src", "lib", "core", "ports.ts"),
-      path.join("src", "lib", "onboard", "managed-bootstrap", "envelope.ts"),
-      path.join("src", "lib", "onboard", "managed-bootstrap", "image-runtime.ts"),
       path.join("src", "lib", "onboard", "managed-startup", "image-runtime.ts"),
       path.join("src", "lib", "security", "credential-hash.ts"),
       path.join("src", "lib", "state", "paths.ts"),
@@ -530,6 +540,11 @@ describe("sandbox build context staging", () => {
 
     expect((fs.statSync(stagedScripts).mode & 0o777).toString(8)).toBe("755");
     expect((fs.statSync(stagedLib).mode & 0o777).toString(8)).toBe("755");
+    const stagedOpenClawWrapper = path.join(stagedScripts, "openclaw-cli-wrapper.sh");
+    expect(fs.readFileSync(stagedOpenClawWrapper, "utf8")).toBe(
+      fs.readFileSync(path.join(sourceRoot, "scripts", "openclaw-cli-wrapper.sh"), "utf8"),
+    );
+    expect((fs.statSync(stagedOpenClawWrapper).mode & 0o777).toString(8)).toBe("644");
     expect((fs.statSync(stagedHelper).mode & 0o777).toString(8)).toBe("755");
     expect(fs.readFileSync(stagedIdentity, "utf8")).toBe(
       fs.readFileSync(path.join(sourceRoot, "scripts", "lib", "reviewed-npm-identity.mts"), "utf8"),
@@ -869,7 +884,7 @@ describe("sandbox build context staging", () => {
                 path.join("opt", "mcp-tool-discovery-runtime", "dist", "mcp-tool-discovery.mjs"),
               ],
               [
-                "managed-startup-image-runtime.bundle",
+                "managed-startup-direct-image-runtime.bundle",
                 path.join("out", "managed-startup-image-runtime.cjs"),
               ],
             ] as const) {
