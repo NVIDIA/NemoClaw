@@ -96,6 +96,7 @@ function expectProbeStatusWithoutBody(result: ReturnType<typeof spawnSync>, stat
 function runNodeProbeWithLocalServer(
   authorization: string,
   status = 200,
+  responseMode: "complete" | "headers-only" = "complete",
 ): ReturnType<typeof spawnSync> {
   const probeSource = mcpAdapterHttpProbeSource("openclaw-config", {
     authorization,
@@ -111,7 +112,8 @@ function runNodeProbeWithLocalServer(
     "  req.resume();",
     '  req.on("end", () => {',
     `    res.writeHead(${String(status)}, { "content-type": "application/json" });`,
-    "    res.end(secret);",
+    '    res.on("close", () => server.close());',
+    responseMode === "headers-only" ? "    res.flushHeaders();" : "    res.end(secret);",
     "  });",
     "});",
     'server.listen(0, "127.0.0.1", () => {',
@@ -155,6 +157,17 @@ describe("MCP adapter HTTP probe client", () => {
   it("emits a Node probe status after headers without buffering the body (#12065)", () => {
     expectProbeStatusWithoutBody(
       runNodeProbeWithLocalServer("Bearer openshell:resolve:env:v11_GITHUB_TOKEN"),
+      "200",
+    );
+  });
+
+  it("flushes the Node probe status before cancelling a headers-only response (#12065)", () => {
+    expectProbeStatusWithoutBody(
+      runNodeProbeWithLocalServer(
+        "Bearer openshell:resolve:env:v11_GITHUB_TOKEN",
+        200,
+        "headers-only",
+      ),
       "200",
     );
   });

@@ -76,7 +76,7 @@ export function mcpAdapterHttpProbeSource(
         "function fail(err) {",
         '  const text = [err, err && err.message, err && err.cause, err && err.cause && err.cause.message].map(String).join("\\n");',
         '  process.stderr.write(text + "\\n");',
-        "  process.exit(/timed out|timeout|aborted/i.test(text) ? 28 : 56);",
+        "  process.exitCode = /timed out|timeout|aborted/i.test(text) ? 28 : 56;",
         "}",
         "fetch(url, {",
         '  method: "POST",',
@@ -84,10 +84,10 @@ export function mcpAdapterHttpProbeSource(
         "  body,",
         '  redirect: "manual",',
         "  signal: AbortSignal.timeout(timeoutMs),",
-        "}).then((res) => {",
+        "}).then(async (res) => {",
         '  process.stdout.write("\\n" + httpMarker + String(res.status) + "\\n");',
-        "  try { res.body && res.body.cancel(); } catch {}",
-        "  process.exit(0);",
+        "  try { await res.body?.cancel(); } catch {}",
+        "  process.exitCode = 0;",
         "}, fail);",
       ].join("\n");
     case "hermes-config":
