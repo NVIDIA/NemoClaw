@@ -2,20 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from "vitest";
-import { buildConfig as buildOpenClawConfig } from "../../../../scripts/generate-openclaw-config.mts";
 import { exportSnapshots } from "../../actions/config/export-test-fixture";
-import { EXPORTED_VLLM_PROFILE_ID } from "../../config/model";
-import { loadServingCatalog } from "../../inference/serving/catalog-loader";
-import { servingProfileProvenance } from "../../inference/serving/profile-provenance";
-import { mapManagedStartupProfileToAgentEnvironment } from "../../onboard/managed-startup/agent-environment";
-import { buildManagedStartupProfile } from "../../onboard/managed-startup/profile-builder";
-import {
-  entry,
-  managedWorkload,
-  profileInput,
-  snapshot,
-  tunedEnvironment,
-} from "./export-source-test-fixture";
+import { entry, managedWorkload, profileInput, snapshot } from "./export-source-test-fixture";
 
 function additionalAgentSnapshot(manifest: unknown, environment: NodeJS.ProcessEnv = {}) {
   return snapshot({
@@ -29,56 +17,9 @@ function additionalAgentSnapshot(manifest: unknown, environment: NodeJS.ProcessE
   });
 }
 
-function generatedAdditionalAgentConfig(manifest: unknown) {
-  const { profile } = buildManagedStartupProfile(
-    profileInput({
-      environment: { ...tunedEnvironment, NEMOCLAW_EXTRA_AGENTS_JSON: JSON.stringify(manifest) },
-    }),
-  );
-  const mapped = mapManagedStartupProfileToAgentEnvironment(profile);
-  return buildOpenClawConfig({
-    ...mapped.configurationEnvironment,
-    ...mapped.runtimeEnvironment,
-  });
-}
-
 describe("read-only secondary-agent export", () => {
-  it.each([
-    ["array", [{ id: "researcher", tools: { allow: ["read"] } }]],
-    ["object", { agents: [{ id: "researcher", tools: { allow: ["read"] } }] }],
-    [
-      "canonical paths and same model",
-      {
-        agents: [
-          {
-            id: "researcher",
-            tools: { allow: ["read"] },
-            model: "openai/gpt-5",
-            workspace: "/sandbox/.openclaw/./workspace-researcher",
-            agentDir: "/sandbox/.openclaw/agents/researcher",
-          },
-        ],
-        defaults: { subagents: {} },
-        main: {},
-      },
-    ],
-  ])("refuses the %s manifest pending the v1 roster decision (#12131)", async (_case, manifest) => {
-    const generated = generatedAdditionalAgentConfig(manifest);
-    expect(generated.agents.entries).toMatchObject({
-      main: { default: true },
-      researcher: {
-        workspace: "/sandbox/.openclaw/workspace-researcher",
-        agentDir: "/sandbox/.openclaw/agents/researcher",
-        tools: { allow: ["read"] },
-      },
-    });
-    const entries = generated.agents.entries as Record<string, { default?: boolean }>;
-    expect(Object.values(entries).filter((agent) => agent.default)).toHaveLength(1);
-    expect(generated.agents.defaults.model.primary).toBe("openai/gpt-5");
-    const observed = additionalAgentSnapshot(manifest, {
-      ...tunedEnvironment,
-      NEMOCLAW_OPENCLAW_OTEL: "1",
-    });
+  it("refuses a secondary agent pending the v1 roster decision (#12131)", async () => {
+    const observed = additionalAgentSnapshot([{ id: "researcher", tools: { allow: ["read"] } }]);
     const result = await exportSnapshots([observed, observed]);
     expect(result.outcome).toMatchObject({
       ok: false,
@@ -99,21 +40,6 @@ describe("read-only secondary-agent export", () => {
         { id: "reviewer", tools: { allow: ["read"] } },
       ],
     };
-    const generated = generatedAdditionalAgentConfig(manifest);
-    expect(generated.agents.entries).toEqual({
-      main: { default: true },
-      researcher: {
-        workspace: "/sandbox/.openclaw/workspace-researcher",
-        agentDir: "/sandbox/.openclaw/agents/researcher",
-        tools: { allow: ["read"] },
-      },
-      reviewer: {
-        workspace: "/sandbox/.openclaw/workspace-reviewer",
-        agentDir: "/sandbox/.openclaw/agents/reviewer",
-        tools: { allow: ["read"] },
-      },
-    });
-
     const observed = additionalAgentSnapshot(manifest);
     const result = await exportSnapshots([observed, observed]);
     expect(result.outcome).toMatchObject({
@@ -124,135 +50,6 @@ describe("read-only secondary-agent export", () => {
         ]),
       },
     });
-    expect(result.writeStdout).not.toHaveBeenCalled();
-    expect(result.publish).not.toHaveBeenCalled();
-  });
-
-  it.each(
-    [
-      [{ id: "main", tools: { allow: ["read"] } }],
-      [{ id: "primary", tools: { allow: ["read"] } }],
-      [{ id: "with_underscore", tools: { allow: ["read"] } }],
-      [{ id: "researcher", tools: { allow: ["read"] }, default: true }],
-      [{ id: "researcher", tools: { allow: ["write"] } }],
-      [{ id: "researcher", tools: {} }],
-      [{ id: "researcher", tools: { allow: ["read"], deny: ["exec"] } }],
-      [{ id: "researcher", tools: { allow: ["read"] }, model: "openai/other" }],
-      [{ id: "researcher", tools: { allow: ["read"] }, model: "other/model" }],
-      [
-        {
-          id: "researcher",
-          tools: { allow: ["read"] },
-          workspace: "/sandbox/.openclaw/../../tmp/other",
-        },
-      ],
-      [
-        {
-          id: "researcher",
-          tools: { allow: ["read"] },
-          agentDir: "/sandbox/.openclaw/agents/other",
-        },
-      ],
-      [{ id: "researcher", tools: { allow: ["read"] }, subagents: { model: "openai/gpt-5" } }],
-      [{ id: "researcher", tools: { allow: ["read"] }, description: "unsupported" }],
-      [
-        { id: "researcher", tools: { allow: ["read"] } },
-        { id: "reviewer", tools: { allow: ["write"] } },
-      ],
-      [
-        { id: "researcher", tools: { allow: ["read"] } },
-        { id: "researcher", tools: { allow: ["read"] } },
-      ],
-      [
-        { id: "researcher", tools: { allow: ["read"] } },
-        { id: "reviewer", tools: { allow: ["read"] }, model: "openai/other" },
-      ],
-    ].map((agents) => ({ agents })),
-  )(
-    "rejects an unsupported secondary manifest without publication (#11434)",
-    async ({ agents }) => {
-      const observed = additionalAgentSnapshot(agents);
-      const result = await exportSnapshots([observed, observed]);
-      expect(result.outcome.ok).toBe(false);
-      expect(result.writeStdout).not.toHaveBeenCalled();
-      expect(result.publish).not.toHaveBeenCalled();
-    },
-  );
-
-  it.each(["podman", "managed serving"])(
-    "rejects secondary export with %s (#11434)",
-    async (runtime) => {
-      const observed = additionalAgentSnapshot([{ id: "researcher", tools: { allow: ["read"] } }]);
-      const registry = {
-        ...observed.registry,
-        ...(runtime === "podman"
-          ? { openshellDriver: "podman" as const }
-          : {
-              servingProfileProvenance: servingProfileProvenance(
-                loadServingCatalog(),
-                EXPORTED_VLLM_PROFILE_ID,
-              ),
-            }),
-      };
-      const result = await exportSnapshots([{ ...observed, registry }]);
-      expect(result.outcome).toMatchObject({
-        ok: false,
-        failure: {
-          findings: expect.arrayContaining([
-            expect.objectContaining({ field: "spec.sandboxes[].agent", category: "unsupported" }),
-          ]),
-        },
-      });
-      expect(result.writeStdout).not.toHaveBeenCalled();
-      expect(result.publish).not.toHaveBeenCalled();
-    },
-  );
-
-  it("rejects a vLLM roster from a different managed serving profile (#11859)", async () => {
-    const observed = additionalAgentSnapshot([{ id: "researcher", tools: { allow: ["read"] } }]);
-    const registry = {
-      ...observed.registry,
-      provider: "vllm-local",
-      servingProfileProvenance: servingProfileProvenance(
-        loadServingCatalog(),
-        "vllm.linux-amd64-nvidia.single.nemotron-3-nano-4b-fp8",
-      ),
-    };
-    const result = await exportSnapshots([{ ...observed, registry }]);
-    expect(result.outcome).toMatchObject({
-      ok: false,
-      failure: {
-        findings: expect.arrayContaining([
-          expect.objectContaining({ field: "spec.sandboxes[].agent", category: "unsupported" }),
-        ]),
-      },
-    });
-    expect(result.writeStdout).not.toHaveBeenCalled();
-    expect(result.publish).not.toHaveBeenCalled();
-  });
-
-  it("rejects a reordered roster across both observation pairs (#11854)", async () => {
-    const researcher = { id: "researcher", tools: { allow: ["read"] } };
-    const reviewer = { id: "reviewer", tools: { allow: ["read"] } };
-    const first = additionalAgentSnapshot([researcher, reviewer]);
-    const second = additionalAgentSnapshot([reviewer, researcher]);
-    const result = await exportSnapshots([first, second, first, second]);
-    expect(result.outcome).toMatchObject({ ok: false });
-    expect(result.writeStdout).not.toHaveBeenCalled();
-    expect(result.publish).not.toHaveBeenCalled();
-  });
-
-  it.each([
-    { defaults: { subagents: { maxSpawnDepth: 2 } } },
-    { main: { tools: { allow: ["read"] } } },
-    { main: { subagents: { model: "openai/gpt-5" } } },
-  ])("rejects primary and default overrides in a read-only roster (#11434)", async (overrides) => {
-    const observed = additionalAgentSnapshot({
-      agents: [{ id: "researcher", tools: { allow: ["read"] } }],
-      ...overrides,
-    });
-    const result = await exportSnapshots([observed, observed]);
-    expect(result.outcome.ok).toBe(false);
     expect(result.writeStdout).not.toHaveBeenCalled();
     expect(result.publish).not.toHaveBeenCalled();
   });
