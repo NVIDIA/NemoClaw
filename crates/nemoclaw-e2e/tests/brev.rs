@@ -179,11 +179,7 @@ async fn bare_brev_hosted_openclaw_lifecycle() {
     );
     let providers = document.selected_inference_providers().unwrap();
     assert_eq!(providers.len(), 1);
-    assert!(
-        providers[0].service.is_none()
-            && providers[0].ollama.is_none()
-            && providers[0].ollama_proxy.is_none()
-    );
+    assert!(providers[0].service_ref.is_none());
     fs::create_dir(&directory).expect("Brev test requires a new state directory");
     let deployment = Deployment::new(&directory, &bundle);
     let cancel = CancellationToken::new();
