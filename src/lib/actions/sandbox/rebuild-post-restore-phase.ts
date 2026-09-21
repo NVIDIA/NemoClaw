@@ -41,9 +41,9 @@ import {
   reapplyMessagingManifestBeforeOpenClawStart,
 } from "./rebuild-messaging-phase";
 import {
-  abortOpenClawPostRestoreDoctor,
-  beginOpenClawPostRestoreDoctor,
-  finishOpenClawPostRestoreDoctor,
+  abortUnregisteredOpenClawPostRestoreDoctor,
+  beginUnregisteredOpenClawPostRestoreDoctor,
+  finishUnregisteredOpenClawPostRestoreDoctor,
   type OpenClawPostRestoreDoctorWindow,
 } from "./runtime/openclaw-lifecycle";
 import { reconcileStalePinnedSessionModelsAfterRebuild } from "./reconcile-session-models";
@@ -194,7 +194,10 @@ async function resolveOpenClawPostRestoreWindow(
   // not carry the pre-restore window. Preserve their established recovery
   // path while every current restore supplies the window before mutation.
   log("Entering verified OpenClaw post-upgrade maintenance window");
-  const doctorWindow = await beginOpenClawPostRestoreDoctor(sandboxName, runtimeSelection);
+  const doctorWindow = await beginUnregisteredOpenClawPostRestoreDoctor(
+    sandboxName,
+    runtimeSelection,
+  );
   log(
     `Post-upgrade doctor maintenance window: ${doctorWindow.ok ? "verified" : doctorWindow.stage}`,
   );
@@ -210,7 +213,7 @@ async function abortOpenClawPostRestoreWindowAfterFailure(
 ): Promise<void> {
   log("Aborting OpenClaw post-upgrade maintenance window after rebuild failure");
   try {
-    const abortResult = await abortOpenClawPostRestoreDoctor(doctorWindow);
+    const abortResult = await abortUnregisteredOpenClawPostRestoreDoctor(doctorWindow);
     log(`Post-upgrade doctor maintenance abort: ${abortResult.ok ? "verified" : "unverified"}`);
     if (!abortResult.ok) {
       console.error(
@@ -424,7 +427,7 @@ export async function runRebuildPostRestorePhase(
         return;
       }
       log("Releasing OpenClaw for one final start after all offline post-restore writes");
-      const doctorResult = await finishOpenClawPostRestoreDoctor(openClawDoctorWindow);
+      const doctorResult = await finishUnregisteredOpenClawPostRestoreDoctor(openClawDoctorWindow);
       log(`Post-upgrade doctor final start: ${doctorResult.ok ? "verified" : doctorResult.stage}`);
       if (!doctorResult.ok) {
         console.log(`  ${D}Post-upgrade structure repair failed during final sandbox start${R}`);

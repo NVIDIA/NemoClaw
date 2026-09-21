@@ -5,9 +5,9 @@ import { createHash } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 
 import { captureOpenshell } from "../../adapters/openshell/runtime";
+import { buildGatewayScopedSandboxCommand } from "../../adapters/openshell/sanitized-capture";
 import type { SandboxRuntimeSnapshot } from "../../state/registry/runtime-snapshot";
 import type { SandboxEntry } from "../../state/registry/types";
-import { resolveSandboxGatewayName } from "../gateway-binding";
 import {
   type OpenShellDockerSandboxRuntimeSnapshotQuery,
   queryOpenShellDockerSandboxRuntimeSnapshot,
@@ -104,10 +104,7 @@ export class RuntimeProviderSnapshotError extends Error {
 }
 
 function gatewayScopedSandboxGetArgs(sandbox: SandboxEntry): string[] {
-  const gatewayName = resolveSandboxGatewayName(sandbox);
-  return gatewayName
-    ? ["sandbox", "get", "-g", gatewayName, sandbox.name]
-    : ["sandbox", "get", sandbox.name];
+  return buildGatewayScopedSandboxCommand(sandbox, "get").args;
 }
 
 function cleanOutput(value: string): string {

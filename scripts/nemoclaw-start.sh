@@ -653,14 +653,15 @@ PY_CLASSIFY_MUTABLE_CONFIG
 
 # OpenClaw 2026.9.1 requires its startup migration checkpoint to complete
 # without warnings before the gateway reports readiness. Older NemoClaw images
-# persisted update-check.json as update polling and notification cache. Empty
-# placeholders fail JSON parsing, while nonempty files cannot be archived by
-# the separate gateway user when a stale root-owned parent remains.
-# NemoClaw pins OpenClaw in the image, so discard only a descriptor-pinned,
-# stable regular cache file before the mandatory checkpoint.
+# persisted update-check.json as update polling and notification cache, and
+# older managed images created an empty exec-approvals.json placeholder. Empty
+# placeholders fail current migration parsing, while nonempty files can carry
+# real approvals and must remain for Doctor. NemoClaw pins OpenClaw in the
+# image, so discard only descriptor-pinned stable cache state and the exactly
+# empty approvals placeholder before the mandatory checkpoint.
 # Remove this repair after every supported upgrade source stops seeding the
 # cache or OpenClaw can migrate it across split users and a protected parent.
-remove_openclaw_legacy_update_check_state() {
+remove_openclaw_legacy_startup_state() {
   local config_dir="/sandbox/.openclaw"
   if [ ! -e "$config_dir" ] && [ ! -L "$config_dir" ]; then
     return 0
@@ -673,6 +674,10 @@ remove_openclaw_legacy_update_check_state() {
   fi
   if ! python3 -I "$normalizer" remove-legacy-update-check "$config_dir"; then
     printf '[SECURITY] Refusing legacy update-check repair — expected a stable regular file or no file\n' >&2
+    return 1
+  fi
+  if ! python3 -I "$normalizer" remove-empty-legacy-exec-approvals "$config_dir"; then
+    printf '[SECURITY] Refusing legacy exec-approvals repair — expected a stable regular file or no file\n' >&2
     return 1
   fi
 }
@@ -5359,7 +5364,7 @@ fi
 
 # Migrate legacy symlink layout before anything else reads .openclaw
 migrate_legacy_layout "/sandbox/.openclaw" "/sandbox/.openclaw-data" "openclaw" || exit 1
-remove_openclaw_legacy_update_check_state || exit 1
+remove_openclaw_legacy_startup_state || exit 1
 
 echo 'Setting up NemoClaw...' >&2
 # Best-effort: .env may not exist.

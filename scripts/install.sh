@@ -1111,7 +1111,12 @@ usage() {
   printf "    NEMOCLAW_ACCEPT_EXPERIMENTAL_OPENSHELL_UPGRADE=1\n"
   printf "                                  Allow automatic pre-0.0.37 OpenShell gateway upgrade\n"
   printf "    NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1\n"
-  printf "                                  Continue after manually backing up and retiring old gateway\n"
+  printf "                                  Continue only after the current CLI completes strict backup and forward retirement:\n"
+  printf "                                  NEMOCLAW_REQUIRE_ALL_SANDBOX_BACKUPS=1 nemoclaw backup-all --retire-legacy-forwards\n"
+  printf "                                  Then retire the selected gateway process:\n"
+  printf "                                  openshell gateway destroy -g nemoclaw || openshell gateway destroy\n"
+  printf "                                  For NEMOCLAW_GATEWAY_PORT=<port>, destroy nemoclaw-<port> with -g and omit the unnamed fallback\n"
+  printf "                                  Resolve any failure before setting this variable\n"
   printf "    NEMOCLAW_CONFIRM_LEGACY_MANAGED_RECREATE\n"
   printf "                                  Exact JSON array of pre-fingerprint managed sandbox names\n"
   printf "    NEMOCLAW_RECREATE_SANDBOX=1   Recreate an existing sandbox\n"
@@ -3642,6 +3647,7 @@ resolve_prepared_cli_runner() {
 }
 
 run_preupgrade_backup() {
+  local retire_legacy_forwards="${1:-false}"
   if ! prepare_current_cli_for_preupgrade_backup; then
     warn "Could not prepare the current ${_CLI_DISPLAY} CLI for pre-upgrade backup."
     return 1
@@ -3653,7 +3659,11 @@ run_preupgrade_backup() {
     return 1
   fi
 
-  NEMOCLAW_REQUIRE_ALL_SANDBOX_BACKUPS=1 "$current_cli_runner" backup-all 2>&1
+  local backup_args=(backup-all)
+  if [[ "$retire_legacy_forwards" == true ]]; then
+    backup_args+=(--retire-legacy-forwards)
+  fi
+  NEMOCLAW_REQUIRE_ALL_SANDBOX_BACKUPS=1 "$current_cli_runner" "${backup_args[@]}" 2>&1
 }
 
 force_fresh_install_has_existing_state() {
@@ -4069,16 +4079,19 @@ EOF
 }
 
 print_openshell_upgrade_manual_commands() {
-  local gateway_port gateway_name gateway_port_env=""
+  local gateway_port gateway_name gateway_port_env="" gateway_retire_command=""
   gateway_port="$(resolve_nemoclaw_gateway_port)" || return 1
   gateway_name="$(nemoclaw_gateway_name)" || return 1
   if [ "$gateway_port" -ne 8080 ]; then
     gateway_port_env="NEMOCLAW_GATEWAY_PORT=${gateway_port} "
+    gateway_retire_command="openshell gateway destroy -g ${gateway_name}"
+  else
+    gateway_retire_command="openshell gateway destroy -g ${gateway_name} || openshell gateway destroy"
   fi
   cat <<EOF
   Manual upgrade path (after installing the current CLI with OpenShell deferred):
-    ${gateway_port_env}NEMOCLAW_REQUIRE_ALL_SANDBOX_BACKUPS=1 ${_CLI_BIN} backup-all
-    openshell gateway remove ${gateway_name} || openshell gateway destroy -g ${gateway_name}
+    ${gateway_port_env}NEMOCLAW_REQUIRE_ALL_SANDBOX_BACKUPS=1 ${_CLI_BIN} backup-all --retire-legacy-forwards
+    ${gateway_retire_command}
     curl -fsSL https://www.nvidia.com/nemoclaw.sh | ${gateway_port_env}NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1 bash
     ${gateway_port_env}${_CLI_BIN} upgrade-sandboxes --check
 
@@ -4679,10 +4692,21 @@ preinstall_backup_and_retire_legacy_gateway() {
   fi
 
   confirm_legacy_managed_image_recovery "$reg_file"
+  local supported_range="" min_openshell_version="" max_openshell_version=""
+  supported_range="$(resolve_current_openshell_version_range || true)"
+  if [[ -n "$supported_range" ]]; then
+    read -r min_openshell_version max_openshell_version <<<"$supported_range"
+  fi
+  local retire_legacy_forwards=false
+  if [[ -n "$old_openshell_version" && -n "$supported_range" ]] \
+    && { ! version_gte "$old_openshell_version" "$min_openshell_version" \
+      || ! version_gte "$max_openshell_version" "$old_openshell_version"; }; then
+    retire_legacy_forwards=true
+  fi
   info "Backing up ${sandbox_count} sandbox(es) before upgrading OpenShell…"
-  if ! run_preupgrade_backup; then
-    if legacy_openshell_gateway_upgrade_needed "$old_openshell_version"; then
-      error "Pre-upgrade backup failed. Aborting before retiring the legacy OpenShell gateway."
+  if ! run_preupgrade_backup "$retire_legacy_forwards"; then
+    if [[ "$retire_legacy_forwards" == true ]]; then
+      error "Pre-upgrade backup failed, or exact legacy dashboard forward retirement could not be proved. The gateway was not retired, and sandbox backups were preserved if they completed."
     fi
     error "Pre-upgrade backup stopped the installer. Resolve every reported sandbox backup failure or skipped sandbox using the CLI output above, then rerun the installer."
   fi
@@ -4694,11 +4718,9 @@ preinstall_backup_and_retire_legacy_gateway() {
   # Retire a backed-up gateway before install-openshell replaces an out-of-range
   # component set. Leaving the old gateway process alive makes the new CLI's
   # schema preflight fail before sandbox recovery can recreate it.
-  local supported_range="" min_openshell_version="" max_openshell_version=""
-  if ! supported_range="$(resolve_current_openshell_version_range)"; then
+  if [[ -z "$supported_range" ]]; then
     error "Could not resolve the current OpenShell version range. Existing gateway and sandbox state were left unchanged after backup."
   fi
-  read -r min_openshell_version max_openshell_version <<<"$supported_range"
   [ -n "$old_openshell_version" ] \
     || error "Could not determine the installed OpenShell version. The installer stopped after backup without retiring the gateway."
   if ! version_gte "$old_openshell_version" "$min_openshell_version" \
