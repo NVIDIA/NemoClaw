@@ -21,6 +21,7 @@ pub(crate) struct GatewayState {
     wait_timeout_seconds: Value<u64>,
     gateway_version: Value<String>,
     compute_drivers: Value<BTreeSet<String>>,
+    compute_driver_count: Value<u64>,
     compatible: Value<bool>,
 }
 
@@ -108,6 +109,11 @@ impl DataSource for GatewayDataSource {
                         AttributeConstraint::Computed,
                     ),
                     (
+                        "compute_driver_count",
+                        AttributeType::Number,
+                        AttributeConstraint::Computed,
+                    ),
+                    (
                         "compatible",
                         AttributeType::Bool,
                         AttributeConstraint::Computed,
@@ -176,6 +182,7 @@ impl DataSource for GatewayDataSource {
             Ok(observed) => {
                 config.compatible =
                     Value::Value(drivers.iter().all(|driver| observed.supports(driver)));
+                config.compute_driver_count = Value::Value(observed.compute_drivers.len() as u64);
                 config.gateway_version = Value::Value(observed.gateway_version);
                 config.compute_drivers =
                     Value::Value(observed.compute_drivers.into_iter().flatten().collect());
@@ -213,6 +220,7 @@ mod tests {
                 wait_timeout_seconds: Value::Null,
                 gateway_version: Value::Null,
                 compute_drivers: Value::Null,
+                compute_driver_count: Value::Null,
                 compatible: Value::Null,
             };
             let mut diagnostics = Diagnostics::default();
@@ -244,6 +252,7 @@ mod wait_tests {
                 wait_timeout_seconds: timeout,
                 gateway_version: Value::Null,
                 compute_drivers: Value::Null,
+                compute_driver_count: Value::Null,
                 compatible: Value::Null,
             };
             let mut diagnostics = Diagnostics::default();

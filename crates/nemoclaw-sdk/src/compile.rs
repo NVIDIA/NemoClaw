@@ -283,6 +283,16 @@ pub fn compile(
 
 pub(crate) const GATEWAY_CAPABILITIES_ADDRESS: &str = "data.nemoclaw_gateway_capabilities.current";
 
+// Both graphs report the provider's observation through OpenTofu conditions.
+pub(super) fn gateway_error_message(reference: &str) -> String {
+    let message = "Gateway version or compute driver does not satisfy the configuration. Required version: %s; observed version: %s. Required drivers: %s; observed entries: %d; names: %s. Retain state, correct gateway compatibility, and reapply the same configuration.";
+    format!(
+        "${{format({}, {}, {reference}.gateway_version, jsonencode({reference}.required_compute_drivers), {reference}.compute_driver_count, jsonencode({reference}.compute_drivers))}}",
+        serde_json::to_string(message).expect("literal diagnostic"),
+        serde_json::to_string(crate::artifact_pins::OPENSHELL_VERSION).expect("pinned version"),
+    )
+}
+
 pub(super) fn compile_with_plans(
     document: &Document,
     generations: &Generations,
@@ -356,7 +366,7 @@ pub(super) fn compile_with_plans(
         }
         attributes["lifecycle"] = json!({"prevent_destroy":true, "precondition":[{
             "condition":format!("${{{GATEWAY_CAPABILITIES_ADDRESS}.compatible}}"),
-            "error_message":"Gateway version or compute driver does not satisfy the configuration."
+            "error_message":gateway_error_message(GATEWAY_CAPABILITIES_ADDRESS)
         }]});
         let (kind, name) = target
             .address

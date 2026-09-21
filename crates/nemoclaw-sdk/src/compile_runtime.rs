@@ -92,7 +92,7 @@ pub(crate) fn runtime_graph(
     readiness["wait_timeout_seconds"] = json!(90);
     readiness["lifecycle"] = json!({"postcondition":[{
         "condition":"${self.compatible}",
-        "error_message":"Gateway version or compute driver does not satisfy the configuration."
+        "error_message":super::gateway_error_message("self")
     }]});
     if document.spec.gateway.management == "managed" {
         readiness["depends_on"] = json!(["nemoclaw_managed_gateway.runtime"]);

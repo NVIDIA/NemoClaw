@@ -65,7 +65,9 @@ async fn production_provider_applies_refreshes_and_destroys_the_reference_graph(
         );
         output
     };
-    for failure in ["version", "driver", "unavailable", "incomplete"] {
+    let versions: Value = serde_json::from_str(include_str!("../../../versions.json")).unwrap();
+    let version = versions["openshell"].as_str().unwrap();
+    for failure in ["version", "driver", "multiple", "unavailable", "incomplete"] {
         {
             let mut state = fixture.state.lock().unwrap();
             match failure {
@@ -80,6 +82,19 @@ async fn production_provider_applies_refreshes_and_destroys_the_reference_graph(
                     })
                 }
                 "driver" => state.driver = Some("podman".into()),
+                "multiple" => {
+                    state.gateway_info = Some(openshell_core::proto::GetGatewayInfoResponse {
+                        gateway_version: version.into(),
+                        compute_drivers: vec![
+                            openshell_core::proto::ComputeDriverInfo {
+                                name: "docker".into(),
+                                ..Default::default()
+                            };
+                            2
+                        ],
+                        ..Default::default()
+                    });
+                }
                 "unavailable" => state.fail_read = Some(("gateway", tonic::Code::Unavailable)),
                 _ => state.gateway_info = Some(Default::default()),
             }
@@ -88,13 +103,39 @@ async fn production_provider_applies_refreshes_and_destroys_the_reference_graph(
         assert!(!output.status.success(), "{failure} gateway was accepted");
         let diagnostic = String::from_utf8_lossy(&output.stderr);
         assert!(
-            diagnostic.contains(if matches!(failure, "version" | "driver") {
+            diagnostic.contains(if matches!(failure, "version" | "driver" | "multiple") {
                 "Resource precondition failed"
             } else {
                 "Gateway capability observation failed"
             }),
             "{diagnostic}"
         );
+        if matches!(failure, "version" | "driver" | "multiple") {
+            let normalized = diagnostic.split_whitespace().collect::<Vec<_>>().join(" ");
+            let observed = if failure == "version" {
+                "incompatible-version"
+            } else {
+                version
+            };
+            let driver = if failure == "driver" {
+                "podman"
+            } else {
+                "docker"
+            };
+            let count = if failure == "multiple" { 2 } else { 1 };
+            for expected in [
+                format!("Required version: {version}"),
+                format!("observed version: {observed}"),
+                "Required drivers: [\"docker\"]".into(),
+                format!("observed entries: {count}"),
+                format!("names: [\"{driver}\"]"),
+            ] {
+                assert!(
+                    normalized.contains(&expected),
+                    "missing {expected}: {diagnostic}"
+                );
+            }
+        }
         assert!(!diagnostic.contains("secret-sentinel"));
         let mut state = fixture.state.lock().unwrap();
         assert_eq!(
