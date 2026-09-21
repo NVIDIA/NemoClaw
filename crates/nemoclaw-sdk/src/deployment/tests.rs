@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::*;
+use crate::config::Gateway;
 
 #[test]
 fn gateway_observations_are_read_only_in_plans_and_discardable_during_teardown() {
@@ -153,7 +154,7 @@ async fn managed_gateway_plan_apply_noop_destroy_and_recovery_use_real_opentofu(
         |name| PathBuf::from(std::env::var_os(name).expect("explicit managed qualification path"));
     let mut document =
         Document::parse(fs::File::open(path("NEMOCLAW_TEST_GATEWAY_DOCUMENT")).unwrap()).unwrap();
-    assert!(document.spec.gateway.as_managed().is_some());
+    assert!(matches!(document.spec.gateway, Gateway::Managed(_)));
     assert!(document.spec.inference_providers[0].service_ref.is_none());
     assert!(document.spec.services.is_empty());
     let deployment = Deployment::new(

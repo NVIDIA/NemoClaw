@@ -4,7 +4,7 @@
 use nemoclaw_sdk::{
     CancellationToken, Deployment, OperationResult, Outcome,
     backend::Row,
-    config::Document,
+    config::{Document, Gateway},
     openshell::{EnvironmentSecrets, OpenShell},
 };
 use serde_json::{Value, json};
@@ -179,7 +179,7 @@ async fn fabric_native_access_and_reconciliation_preserve_the_hosted_runtime() {
     let bundle = explicit("NEMOCLAW_TEST_BUNDLE");
     let provider = document.inference_provider().unwrap();
     let agent = &document.spec.sandboxes[0].agent;
-    assert!(document.spec.gateway.as_managed().is_none());
+    assert!(matches!(document.spec.gateway, Gateway::External(_)));
     // Managed-service installation is qualified separately; this live target
     // exercises only an external inference provider.
     assert!(provider.service_ref.is_none());

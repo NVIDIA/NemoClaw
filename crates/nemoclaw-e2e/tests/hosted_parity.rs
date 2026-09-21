@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-use nemoclaw_sdk::config::Document;
+use nemoclaw_sdk::config::{Document, Gateway};
 use sha2::{Digest, Sha256};
 
 const V0_REVISION: &str = "f47724f29838fe08898993fad1c8c6b7fcb3e080";
@@ -66,7 +66,7 @@ fn hosted_openclaw_scenario_rejects_legacy_export_and_preserves_authored_intent(
         include_bytes!("../fixtures/openclaw-nvidia-hosted/v1.yaml"),
     );
     let gateway = &v1.spec.gateway;
-    assert!(gateway.as_managed().is_some());
+    assert!(matches!(gateway, Gateway::Managed(_)));
     let gateway = gateway.as_managed().unwrap();
     assert_eq!(gateway.engine, "unix:///var/run/docker.sock");
     assert_eq!(gateway.image, nemoclaw_sdk::config::DEFAULT_GATEWAY_IMAGE);
