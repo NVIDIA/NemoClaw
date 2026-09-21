@@ -1,29 +1,35 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 use super::*;
+use crate::config::SearchProvider;
 
-fn definition(owner: &str, generation: &str) -> proto::ProviderProfile {
-    let rule = crate::config::integration_policy::brave_policy();
+fn definition(provider: SearchProvider, owner: &str, generation: &str) -> proto::ProviderProfile {
+    let rule = crate::config::integration_policy::search_policy(provider);
+    let name = provider.profile();
     let policy = openshell_policy::parse_sandbox_policy(
         &serde_json::json!({
-            "version": 1, "network_policies": {"nemoclaw-brave": rule}
+            "version": 1, "network_policies": {name: rule}
         })
         .to_string(),
     )
-    .expect("static Brave policy");
-    let network = &policy.network_policies["nemoclaw-brave"];
+    .expect("static search policy");
+    let network = &policy.network_policies[name];
+    let (display, auth_style, header_name) = match provider {
+        SearchProvider::Brave => ("Brave", "header", "X-Subscription-Token"),
+        SearchProvider::Tavily => ("Tavily", "bearer", "authorization"),
+    };
     proto::ProviderProfile {
-        id: "nemoclaw-brave".into(),
-        display_name: "NemoClaw Brave Search".into(),
-        description: "Declared Brave web search".into(),
+        id: name.into(),
+        display_name: format!("NemoClaw {display} Search"),
+        description: format!("Declared {display} web search"),
         category: proto::ProviderProfileCategory::Knowledge as i32,
         credentials: vec![proto::ProviderProfileCredential {
-            name: "BRAVE_API_KEY".into(),
-            description: "Brave Search API key".into(),
-            env_vars: vec!["BRAVE_API_KEY".into()],
+            name: provider.credential_env().into(),
+            description: format!("{display} Search API key"),
+            env_vars: vec![provider.credential_env().into()],
             required: true,
-            auth_style: "header".into(),
-            header_name: "X-Subscription-Token".into(),
+            auth_style: auth_style.into(),
+            header_name: header_name.into(),
             ..Default::default()
         }],
         endpoints: network.endpoints.clone(),
@@ -88,7 +94,8 @@ fn row(
         .get(GENERATION)
         .cloned()
         .unwrap_or_default();
-    if (!name.starts_with("nemoclaw-inference-") && name != "nemoclaw-brave")
+    let search = SearchProvider::from_profile(name);
+    if (!name.starts_with("nemoclaw-inference-") && search.is_none())
         || profile.id != name
         || profile.resource_version == 0
         || if catalog_entry {
@@ -126,7 +133,7 @@ fn row(
         }
         native_definition(&fields)?
     } else {
-        definition(&owner, &generation)
+        definition(search.ok_or(ObservationError::Query)?, &owner, &generation)
     };
     if profile != expected {
         return Err(ObservationError::BindingMismatch);
@@ -149,6 +156,8 @@ pub(super) fn provider_row(
     name: &str,
     removing: bool,
 ) -> Result<Row, ObservationError> {
+    let search =
+        SearchProvider::from_profile(&provider.r#type).ok_or(ObservationError::BindingMismatch)?;
     let metadata = provider
         .metadata
         .as_ref()
@@ -165,14 +174,14 @@ pub(super) fn provider_row(
         .filter(|s| !s.is_empty())
         .ok_or(ObservationError::Incomplete)?
         .clone();
-    if name != crate::config::search_provider_name(&credential) {
+    if name != crate::config::search_provider_name(search, &credential) {
         return Err(ObservationError::BindingMismatch);
     }
     let mut result = base(provider.metadata, name, removing)?;
     result.insert("credential_source".into(), String::new());
     result.extend([
-        ("endpoint".into(), "https://api.search.brave.com".into()),
-        ("provider_type".into(), "brave".into()),
+        ("endpoint".into(), search.endpoint().into()),
+        ("provider_type".into(), search.name().into()),
         ("credential_env".into(), credential),
     ]);
     Ok(result)
@@ -202,7 +211,8 @@ impl OpenShell {
         .transpose()
     }
     pub(super) async fn create_profile(&self, want: &Row) -> Result<String, ObservationError> {
-        if want["name"] != "nemoclaw-brave" && !want["name"].starts_with("nemoclaw-inference-") {
+        let search = SearchProvider::from_profile(&want["name"]);
+        if search.is_none() && !want["name"].starts_with("nemoclaw-inference-") {
             return Err(ObservationError::Query);
         }
         let response = self
@@ -210,8 +220,8 @@ impl OpenShell {
             .import_provider_profiles(self.request(proto::ImportProviderProfilesRequest {
                 workspace: want["workspace"].clone(),
                 profiles: vec![proto::ProviderProfileImportItem {
-                    profile: Some(if want["name"] == "nemoclaw-brave" {
-                        definition(&want["owner"], &want["generation"])
+                    profile: Some(if let Some(search) = search {
+                        definition(search, &want["owner"], &want["generation"])
                     } else {
                         native_definition(want)?
                     }),
@@ -233,5 +243,57 @@ impl OpenShell {
         )?;
         verify_identity(want, &row)?;
         Ok(row["id"].clone())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn search_profiles_define_provider_auth_and_reject_endpoint_or_credential_drift() {
+        for (provider, auth, header, env) in [
+            (
+                SearchProvider::Brave,
+                "header",
+                "X-Subscription-Token",
+                "BRAVE_API_KEY",
+            ),
+            (
+                SearchProvider::Tavily,
+                "bearer",
+                "authorization",
+                "TAVILY_API_KEY",
+            ),
+        ] {
+            let mut profile = definition(provider, "deployment", "generation");
+            assert_eq!(profile.credentials.len(), 1);
+            assert_eq!(profile.credentials[0].auth_style, auth);
+            assert_eq!(profile.credentials[0].header_name, header);
+            assert_eq!(profile.credentials[0].env_vars, [env]);
+            assert!(profile.credentials[0].required);
+            assert_eq!(profile.endpoints.len(), 1);
+            assert_eq!(
+                format!("https://{}", profile.endpoints[0].host),
+                provider.endpoint()
+            );
+            profile.resource_version = 1;
+            profile.source = "user".into();
+            profile.scope = "workspace".into();
+            let observed = row(profile.clone(), "workspace", provider.profile(), true).unwrap();
+            assert_eq!(observed["owner"], "deployment");
+            assert_eq!(
+                observed["id"],
+                format!("workspace/{}/1", provider.profile())
+            );
+            let mut changed = profile.clone();
+            changed.endpoints[0].host = "other.example".into();
+            assert!(row(changed, "workspace", provider.profile(), true).is_err());
+            let mut changed = profile.clone();
+            changed.credentials[0].env_vars = vec!["OTHER_KEY".into()];
+            assert!(row(changed, "workspace", provider.profile(), true).is_err());
+            profile.credentials[0].auth_style = "none".into();
+            assert!(row(profile, "workspace", provider.profile(), true).is_err());
+        }
     }
 }

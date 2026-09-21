@@ -183,7 +183,10 @@ def configuration(name, harness="deepagents", model=None, inference=None):
         "remote-agent": "nvidia.fabric.remote-agent",
         "pi": "nvidia.fabric.pi",
     }[harness]
-    native_interfaces = harness == "hermes" and (inference or {}).get("interfaces") is not None
+    native_interfaces = harness == "hermes" and (
+        (inference or {}).get("interfaces") is not None
+        or (inference or {}).get("webSearch") is not None
+    )
     if relay and not native_interfaces:
         adapter = "nvidia.fabric.hermes"
     config = {

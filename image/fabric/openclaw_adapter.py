@@ -131,7 +131,11 @@ def native_configuration(name, inference=None):
             "exec": {"host": "gateway", "mode": "full"},
             "toolSearch": tool_search(inference),
             **(
-                {"web": {"search": {"enabled": True, "provider": "brave"}}}
+                {
+                    "web": {
+                        "search": {"enabled": True, "provider": inference["webSearch"]["provider"]}
+                    }
+                }
                 if search_agents(inference)
                 else {}
             ),
