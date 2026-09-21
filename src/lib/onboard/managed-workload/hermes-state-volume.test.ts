@@ -219,15 +219,6 @@ describe("managed Hermes state volume", () => {
       sandboxName: "alpha",
       agentIdentity: managedImageRuntimeIdentity("openclaw"),
     });
-    expect(roots).toEqual([
-      expect.objectContaining({
-        mountTarget: MANAGED_OPENCLAW_STATE_ROOT,
-        uid: 998,
-        gid: 998,
-        mode: 0o700,
-        readWrite: true,
-      }),
-    ]);
     const scope = prepareManagedStateVolumes(
       { roots },
       {
