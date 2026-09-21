@@ -246,9 +246,14 @@ fn managed_gateway_tells_sandbox_supervisors_how_to_reach_its_listener() {
     for fixture in fixtures {
         let spec: Spec = serde_json::from_str(fixture["spec"].as_str().unwrap()).unwrap();
         let configuration = spec.gateway_config("/owned-data");
+        let port = url::Url::parse(&spec.gateway.endpoint)
+            .unwrap()
+            .port()
+            .unwrap();
+        let callback = format!("http://{}:{port}", spec.bridge().unwrap());
         assert!(
-            configuration.contains(&format!("grpc_endpoint = {:?}", spec.gateway.endpoint)),
-            "managed gateway supervisors need an explicit callback endpoint"
+            configuration.contains(&format!("grpc_endpoint = {callback:?}")),
+            "Docker supervisors need the managed bridge callback endpoint"
         );
     }
 }
