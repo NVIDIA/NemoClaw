@@ -748,6 +748,7 @@ describe("managed workload onboard orchestration", () => {
       preparedBuildContext: null,
       expectedFromDockerfile: null,
       expectedStageCalls: 1,
+      expectedRawCreate: false,
     },
     {
       behavior: "passes the original Dockerfile to patch resolution for a prepared Hermes rebuild",
@@ -756,6 +757,17 @@ describe("managed workload onboard orchestration", () => {
       preparedBuildContext: preparedHermesContext,
       expectedFromDockerfile: hermesDockerfile,
       expectedStageCalls: 0,
+      expectedRawCreate: false,
+    },
+    {
+      behavior: "keeps Portable OpenClaw on the raw create launch",
+      agentName: "openclaw",
+      fromDockerfile: path.join(process.cwd(), "Dockerfile"),
+      preparedBuildContext: null,
+      expectedFromDockerfile: null,
+      expectedStageCalls: 1,
+      portableLifecycle: true,
+      expectedRawCreate: true,
     },
   ])("$behavior", async (testCase) => {
     const { agentName, fromDockerfile, preparedBuildContext } = testCase;
@@ -779,23 +791,29 @@ describe("managed workload onboard orchestration", () => {
       expect(input.stagedDockerfile).toBe(stagedContext.stagedDockerfile);
       return { buildId: "image-build", dashboardRemoteBindPrepared: false };
     });
-    const materializeSandboxCreatePlan = vi.fn(() => ({
-      activeMessagingChannels: [],
-      compatibilityPolicyPath: null,
-      createArgs: null,
-      createRequest: {
-        sandboxName: "dcode",
-        source: { reference: stagedContext.stagedDockerfile },
-        policyPath: "/tmp/nemoclaw-policy.yaml",
-      },
-      gpuRoutePlan: "none",
-      initialSandboxPolicy: {
-        appliedPresets: [],
-        policyPath: "/tmp/nemoclaw-policy.yaml",
-      },
-      messagingProviders: [],
-      sandboxGpuLogMessage: null,
-    }));
+    const materializeSandboxCreatePlan = vi.fn(
+      (input: { readonly portableLifecycle?: boolean }) => ({
+        activeMessagingChannels: [],
+        compatibilityPolicyPath: null,
+        createArgs: input.portableLifecycle
+          ? ["--from", stagedContext.stagedDockerfile, "--name", "dcode"]
+          : null,
+        createRequest: input.portableLifecycle
+          ? null
+          : {
+              sandboxName: "dcode",
+              source: { reference: stagedContext.stagedDockerfile },
+              policyPath: "/tmp/nemoclaw-policy.yaml",
+            },
+        gpuRoutePlan: "none",
+        initialSandboxPolicy: {
+          appliedPresets: [],
+          policyPath: "/tmp/nemoclaw-policy.yaml",
+        },
+        messagingProviders: [],
+        sandboxGpuLogMessage: null,
+      }),
+    );
 
     const preparedLaunch = await prepareOnboardSandboxWorkloadLaunch({
       runtime: {
@@ -821,6 +839,7 @@ describe("managed workload onboard orchestration", () => {
       },
       plan: {
         intent: {},
+        portableLifecycle: testCase.portableLifecycle === true,
         rebindMessagingTokenDefs: async () => [],
         runProviderPreDeleteCleanup: vi.fn(async () => {}),
         upsertMessagingProviders: vi.fn(() => []),
@@ -837,6 +856,7 @@ describe("managed workload onboard orchestration", () => {
         hermesDashboardState: {},
         manageDashboard: false,
         openshellShellCommand: () => "openshell sandbox create",
+        openshellArgv: (args: string[]) => ["openshell", ...args],
       },
       plannedMessagingPlan: null,
       gpu: {
@@ -863,9 +883,17 @@ describe("managed workload onboard orchestration", () => {
 
     expect(resolvePatchInput).toHaveBeenCalledOnce();
     expect(resolveSandboxBuildPatch).toHaveBeenCalledOnce();
-    expect(preparedLaunch.createRequestPlan).not.toBeNull();
-    expect(preparedLaunch.launch).not.toHaveProperty("createCommand");
-    expect(preparedLaunch.launch).not.toHaveProperty("createArgv");
-    expect(preparedLaunch.launch.prebuild).not.toHaveProperty("createArgs");
+    expect(materializeSandboxCreatePlan).toHaveBeenCalledWith(
+      expect.objectContaining({ portableLifecycle: testCase.expectedRawCreate }),
+    );
+    expect(preparedLaunch.createRequestPlan === null).toBe(testCase.expectedRawCreate);
+    expect(Object.hasOwn(preparedLaunch.launch, "createCommand")).toBe(testCase.expectedRawCreate);
+    expect(Object.hasOwn(preparedLaunch.launch, "createArgv")).toBe(testCase.expectedRawCreate);
+    expect(Object.hasOwn(preparedLaunch.launch.prebuild, "createArgs")).toBe(
+      testCase.expectedRawCreate,
+    );
+    expect("createArgv" in preparedLaunch.launch ? preparedLaunch.launch.createArgv : []).toEqual(
+      testCase.expectedRawCreate ? expect.arrayContaining(["openshell", "sandbox", "create"]) : [],
+    );
   });
 });

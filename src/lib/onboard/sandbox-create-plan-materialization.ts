@@ -358,9 +358,24 @@ function assertDeferredProviderPlanSupported(
 }
 
 /** Materialize policy, route metadata, resources, and providers from a secretless intent. */
+export function materializeSandboxCreatePlan(
+  input: MaterializeSandboxCreatePlanInput & { readonly portableLifecycle: true },
+): Promise<SandboxCreatePlan & { readonly createRequest: null; readonly createArgs: string[] }>;
+export function materializeSandboxCreatePlan(
+  input: MaterializeSandboxCreatePlanInput & { readonly portableLifecycle?: false },
+): Promise<
+  SandboxCreatePlan & {
+    readonly createRequest: PlannedOpenShellSandboxCreateRequest;
+    readonly createArgs: null;
+  }
+>;
+export function materializeSandboxCreatePlan(
+  input: MaterializeSandboxCreatePlanInput,
+): Promise<SandboxCreatePlan>;
 export async function materializeSandboxCreatePlan({
   intent,
   fromRef,
+  portableLifecycle = false,
   managedStateMounts,
   managedStateMountDriverId,
   policylessCreate = false,
@@ -373,12 +388,7 @@ export async function materializeSandboxCreatePlan({
   getHermesToolGatewayProviderName,
   discloseInitialSandboxPolicy,
   prepareInitialSandboxCreatePolicy = getInitialSandboxCreatePolicy,
-}: MaterializeSandboxCreatePlanInput): Promise<
-  SandboxCreatePlan & {
-    readonly createRequest: PlannedOpenShellSandboxCreateRequest;
-    readonly createArgs: null;
-  }
-> {
+}: MaterializeSandboxCreatePlanInput): Promise<SandboxCreatePlan> {
   const enabledMessagingTokenDefs = validateSandboxCreateIntentBindings(intent, messagingTokenDefs);
   const driverConfig = buildSandboxDriverConfig(
     intent,
@@ -468,9 +478,36 @@ export async function materializeSandboxCreatePlan({
       throw error;
     }
   }
-  return {
+  const sharedPlan = {
     activeMessagingChannels: [...intent.policy.activeMessagingChannels],
     initialSandboxPolicy,
+    messagingProviders: plannedMessagingProviders,
+    gpuRoutePlan: intent.gpuRoutePlan,
+    compatibilityPolicyPath,
+    sandboxGpuLogMessage: intent.sandboxGpuLogMessage,
+    activateDeferredProviderEffects: deferSandboxEffectsUntilIdentityVerification
+      ? activateProviderEffects
+      : null,
+  };
+  if (portableLifecycle) {
+    return {
+      ...sharedPlan,
+      createRequest: null,
+      createArgs: [
+        "--from",
+        fromRef,
+        "--name",
+        intent.sandboxName,
+        ...(!policylessCreate ? ["--policy", initialSandboxPolicy.policyPath] : []),
+        ...(driverConfig ? ["--driver-config-json", driverConfig] : []),
+        ...intent.gpuCreateArgs,
+        ...intent.resourceCreateArgs,
+        ...createProviders.flatMap((provider) => ["--provider", provider]),
+      ],
+    };
+  }
+  return {
+    ...sharedPlan,
     createRequest: Object.freeze({
       sandboxName: intent.sandboxName,
       source: Object.freeze({ reference: fromRef }),
@@ -481,13 +518,6 @@ export async function materializeSandboxCreatePlan({
       ...(createProviders.length > 0 ? { providers: Object.freeze(createProviders) } : {}),
     }),
     createArgs: null,
-    messagingProviders: plannedMessagingProviders,
-    gpuRoutePlan: intent.gpuRoutePlan,
-    compatibilityPolicyPath,
-    sandboxGpuLogMessage: intent.sandboxGpuLogMessage,
-    activateDeferredProviderEffects: deferSandboxEffectsUntilIdentityVerification
-      ? activateProviderEffects
-      : null,
   };
 }
 

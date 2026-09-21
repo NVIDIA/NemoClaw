@@ -56,6 +56,7 @@ import {
 } from "../sandbox-create-plan-materialization";
 import {
   prepareSandboxCreateLaunch,
+  prepareSandboxCreateLaunchWithPrebuild,
   prepareSandboxRuntimeLaunch,
   prebuildSandboxImageIfEligible,
   type SandboxCreateLaunchInput,
@@ -409,6 +410,7 @@ export interface PrepareOnboardSandboxWorkloadLaunchInput {
   };
   readonly plan: {
     readonly intent: SandboxCreateIntent;
+    readonly portableLifecycle?: boolean;
     readonly policylessCreate?: boolean;
     readonly deferSandboxEffectsUntilIdentityVerification?: boolean;
     readonly skipProviderEffects?: boolean;
@@ -431,7 +433,9 @@ export interface PrepareOnboardSandboxWorkloadLaunchInput {
     readonly gatewayPort: number;
   };
   readonly dependencies: {
-    readonly materializeSandboxCreatePlan: typeof import("../sandbox-create-plan-materialization").materializeSandboxCreatePlan;
+    readonly materializeSandboxCreatePlan: (
+      input: MaterializeSandboxCreatePlanInput,
+    ) => Promise<SandboxCreatePlan>;
     readonly prepareSandboxBuildPatchConfig: typeof import("../sandbox-build-patch-config").prepareSandboxBuildPatchConfig;
     readonly resolveSandboxBuildPatch?: typeof import("../prepared-dcode-rebuild").resolveSandboxBuildPatch;
   };
@@ -499,6 +503,7 @@ export async function prepareOnboardSandboxWorkloadLaunch(
   const createPlan = await input.dependencies.materializeSandboxCreatePlan({
     intent: input.plan.intent,
     fromRef,
+    portableLifecycle: input.plan.portableLifecycle,
     policylessCreate: input.plan.policylessCreate,
     deferSandboxEffectsUntilIdentityVerification:
       input.plan.deferSandboxEffectsUntilIdentityVerification,
@@ -525,15 +530,19 @@ export async function prepareOnboardSandboxWorkloadLaunch(
     getChannelsFromPlan(input.plannedMessagingPlan) ?? createPlan.activeMessagingChannels;
   const initialGpuRoute = initialDockerGpuRoute(createPlan.gpuRoutePlan);
   const sandboxReadyTimeoutSecs = getSandboxReadyTimeoutSecs(input.gpu.config);
-  if (!createPlan.createRequest) {
-    throw new Error("Ordinary sandbox workload is missing its typed create plan.");
+  const portableCreateArgs = createPlan.createArgs ? [...createPlan.createArgs] : null;
+  if (!createPlan.createRequest && !portableCreateArgs) {
+    throw new Error("Sandbox workload is missing its create plan.");
   }
   const launchInput = input.launchInput;
 
   let buildId = String(Date.now());
   let dashboardRemoteBindPrepared = false;
-  let launch: SandboxRuntimeLaunchWithPrebuild;
+  let launch: SandboxRuntimeLaunchWithPrebuild | SandboxCreateLaunchWithPrebuild;
   if (input.workload.source.kind === "managed-image") {
+    if (!createPlan.createRequest) {
+      throw new Error("Portable sandbox creation cannot use a managed-image workload.");
+    }
     const runtimeProvider = requireManagedRuntimeProvider(input.runtime.runtimeProvider);
     const gatewayRuntime = runtimeProvider.gateway.prepareHostRuntime({
       environment: process.env,
@@ -590,34 +599,40 @@ export async function prepareOnboardSandboxWorkloadLaunch(
     });
     buildId = patch.buildId;
     dashboardRemoteBindPrepared = patch.dashboardRemoteBindPrepared;
-    const runtimeLaunch = prepareSandboxRuntimeLaunch({
-      ...launchInput,
-      policyAttached: Boolean(createPlan.createRequest.policyPath),
-    });
-    const { createArgs: _portableCreateArgs, ...prebuild } = await prebuildSandboxImageIfEligible({
-      buildCtx: buildContext.buildCtx,
-      buildId,
-      dockerDriverGateway: input.gpu.dockerDriverGateway,
-      origin: buildContext.origin,
-      sourceReference: createPlan.createRequest.source.reference,
-      sandboxName: input.launchInput.sandboxName,
-      requiresLocalBuildKit:
-        buildContext.origin === "generated" &&
-        (input.legacy.agent == null ||
-          input.legacy.agent.name === "openclaw" ||
-          input.legacy.agent.name === "hermes"),
-    });
-    launch = { ...runtimeLaunch, prebuild };
+    if (createPlan.createRequest) {
+      const runtimeLaunch = prepareSandboxRuntimeLaunch({
+        ...launchInput,
+        policyAttached: Boolean(createPlan.createRequest.policyPath),
+      });
+      const { createArgs: _portableArgs, ...prebuild } = await prebuildSandboxImageIfEligible({
+        buildCtx: buildContext.buildCtx,
+        buildId,
+        dockerDriverGateway: input.gpu.dockerDriverGateway,
+        origin: buildContext.origin,
+        sourceReference: createPlan.createRequest.source.reference,
+        sandboxName: input.launchInput.sandboxName,
+        requiresLocalBuildKit:
+          buildContext.origin === "generated" &&
+          (input.legacy.agent == null ||
+            input.legacy.agent.name === "openclaw" ||
+            input.legacy.agent.name === "hermes"),
+      });
+      launch = { ...runtimeLaunch, prebuild };
+    } else {
+      launch = await prepareSandboxCreateLaunchWithPrebuild({
+        ...launchInput,
+        createArgs: portableCreateArgs!,
+        prebuild: {
+          buildCtx: buildContext.buildCtx,
+          buildId,
+          dockerDriverGateway: input.gpu.dockerDriverGateway,
+          origin: buildContext.origin,
+        },
+      });
+    }
   }
 
-  const createRequestPlan = Object.freeze({
-    ...createPlan.createRequest,
-    source: Object.freeze({
-      reference: launch.prebuild.sourceReference ?? createPlan.createRequest.source.reference,
-    }),
-  });
-
-  return {
+  const sharedLaunch = {
     initialSandboxPolicy: createPlan.initialSandboxPolicy,
     messagingProviders: createPlan.messagingProviders,
     gpuRoutePlan: createPlan.gpuRoutePlan,
@@ -628,8 +643,23 @@ export async function prepareOnboardSandboxWorkloadLaunch(
     buildId,
     dashboardRemoteBindPrepared,
     legacyBuildContext,
-    createRequestPlan,
-    launch,
+  };
+  if (!createPlan.createRequest) {
+    return {
+      ...sharedLaunch,
+      createRequestPlan: null,
+      launch: launch as SandboxCreateLaunchWithPrebuild,
+    };
+  }
+  return {
+    ...sharedLaunch,
+    createRequestPlan: Object.freeze({
+      ...createPlan.createRequest,
+      source: Object.freeze({
+        reference: launch.prebuild.sourceReference ?? createPlan.createRequest.source.reference,
+      }),
+    }),
+    launch: launch as SandboxRuntimeLaunchWithPrebuild,
   };
 }
 

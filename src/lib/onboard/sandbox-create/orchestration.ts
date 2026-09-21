@@ -2530,6 +2530,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
             },
             plan: {
               intent: resolvedCreateIntent,
+              portableLifecycle: agentCreateInput.portableLifecycle,
               policylessCreate: apfInterceptorRequested,
               deferSandboxEffectsUntilIdentityVerification:
                 createIntent?.deferSandboxEffectsUntilIdentityVerification === true,

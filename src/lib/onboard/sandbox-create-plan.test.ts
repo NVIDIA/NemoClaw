@@ -497,6 +497,33 @@ describe("resolveSandboxCreateIntent", () => {
     plan.initialSandboxPolicy.cleanup?.();
   });
 
+  it("keeps Portable OpenClaw on its raw create plan", async () => {
+    const { intent, messagingTokenDefs } = resolveDiscordCreateIntent({ selected: true });
+
+    const plan = await materializeSandboxCreatePlan({
+      intent,
+      fromRef: "/tmp/Dockerfile",
+      portableLifecycle: true,
+      messagingTokenDefs,
+      runProviderPreDeleteCleanup: vi.fn(async () => {}),
+      upsertMessagingProviders: vi.fn(() => [discordProviderName]),
+      getHermesToolGatewayProviderName: vi.fn(),
+    });
+
+    expect(plan.createRequest).toBeNull();
+    expect(plan.createArgs).toEqual(
+      expect.arrayContaining([
+        "--from",
+        "/tmp/Dockerfile",
+        "--name",
+        "sandbox",
+        "--provider",
+        discordProviderName,
+      ]),
+    );
+    plan.initialSandboxPolicy.cleanup?.();
+  });
+
   it("rejects selected Discord when its provider cannot be prepared", async () => {
     const { intent, messagingTokenDefs } = resolveDiscordCreateIntent({
       selected: true,
