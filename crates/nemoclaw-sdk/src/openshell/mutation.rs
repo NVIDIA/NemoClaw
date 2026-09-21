@@ -40,7 +40,7 @@ impl OpenShell {
             Some(inference_profile(
                 value(want, "name"),
                 value(want, "endpoint"),
-                kind,
+                kind.parse().map_err(|_| ObservationError::Query)?,
                 !source.is_empty() || !value(want, "credential_env").is_empty(),
             )?)
         } else {

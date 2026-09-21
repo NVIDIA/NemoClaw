@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-use nemoclaw_sdk::config::{Document, Gateway};
+use nemoclaw_sdk::config::{ComputeDriver, Document, Gateway, HarnessKind, InferenceProviderKind};
 use sha2::{Digest, Sha256};
 
 const V0_REVISION: &str = "f47724f29838fe08898993fad1c8c6b7fcb3e080";
@@ -73,7 +73,7 @@ fn hosted_openclaw_scenario_rejects_legacy_export_and_preserves_authored_intent(
 
     let provider = &v1.spec.inference_providers[0];
     assert_eq!(provider.name, "hosted-nvidia-prod");
-    assert_eq!(provider.provider, "openai");
+    assert_eq!(provider.provider, InferenceProviderKind::Openai);
     assert_eq!(provider.endpoint, "https://integrate.api.nvidia.com/v1");
     assert_eq!(
         provider.credential.as_ref().unwrap().env,
@@ -86,7 +86,7 @@ fn hosted_openclaw_scenario_rejects_legacy_export_and_preserves_authored_intent(
         sandbox.image.ref_,
         nemoclaw_sdk::config::DEFAULT_AGENT_IMAGE
     );
-    assert_eq!(sandbox.runtime.provider, "docker");
+    assert_eq!(sandbox.runtime.provider, ComputeDriver::Docker);
     assert!(sandbox.network.tier.is_empty());
     let process = sandbox
         .network
@@ -117,7 +117,10 @@ fn hosted_openclaw_scenario_rejects_legacy_export_and_preserves_authored_intent(
             "raw export policy must grant the v1 runtime root {runtime_root}"
         );
     }
-    assert_eq!(v1.sandbox_harness(sandbox).unwrap().kind, "openclaw");
+    assert_eq!(
+        v1.sandbox_harness(sandbox).unwrap().kind,
+        HarnessKind::OpenClaw
+    );
     let inference = v1.sandbox_inference(sandbox).unwrap();
     assert_eq!(
         inference.routes[0].provider_ref.as_deref(),

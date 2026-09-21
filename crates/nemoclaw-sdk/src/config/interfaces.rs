@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 use super::ConfigError;
+use crate::config::HarnessKind;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -86,17 +87,17 @@ pub struct HermesTui {
     pub enabled: bool,
 }
 impl AgentInterfaces {
-    pub fn validate(&self, harness: &str) -> Result<(), ConfigError> {
+    pub fn validate(&self, harness: HarnessKind) -> Result<(), ConfigError> {
         let valid = match self {
             Self::OpenClaw(i) => {
                 let d = &i.dashboard;
-                harness == "openclaw"
+                harness == HarnessKind::OpenClaw
                     && (d.port.is_some() || d.bind.is_some())
                     && d.port
                         .is_none_or(|p| p >= 1024 && !(8642..=8652).contains(&p))
             }
             Self::Hermes(i) => {
-                harness == "hermes"
+                harness == HarnessKind::Hermes
                     && (i.dashboard.is_some() || i.api.is_some())
                     && i.api
                         .as_ref()

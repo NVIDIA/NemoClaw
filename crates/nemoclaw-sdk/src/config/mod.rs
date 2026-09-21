@@ -21,8 +21,10 @@ mod image_pull_policy;
 pub use image_pull_policy::ImagePullPolicy;
 mod network;
 pub use network::*;
+mod kinds;
 #[doc(hidden)]
 pub mod schema;
+pub use kinds::{ComputeDriver, HarnessKind, InferenceProviderKind};
 mod types;
 pub use inference::InferenceConnection;
 pub(crate) mod validation;
@@ -252,7 +254,6 @@ impl Document {
         }
         for sandbox in &mut self.spec.sandboxes {
             default_string(&mut sandbox.image.ref_, DEFAULT_AGENT_IMAGE);
-            default_string(&mut sandbox.runtime.provider, constraints::RUNTIME);
             if sandbox.network.policy.is_none() {
                 default_string(&mut sandbox.network.tier, constraints::NETWORK_TIER);
             }

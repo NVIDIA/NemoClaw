@@ -167,9 +167,8 @@ pub struct ExternalGateway {
     pub tls: Option<TLS>,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[schemars(!default)]
-#[serde(default, deny_unknown_fields)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 /// Choose an endpoint for external inference or serviceRef for a managed service.
 pub struct InferenceProvider {
     #[serde(rename = "name")]
@@ -177,12 +176,12 @@ pub struct InferenceProvider {
     pub name: String,
     #[serde(rename = "provider")]
     /// OpenShell provider implementation. Must match the selected API family.
-    pub provider: String,
+    pub provider: super::InferenceProviderKind,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(default, with = "super::InferenceApi")]
     /// Request API. Omission selects anthropic-messages for Claude, openai-responses for Codex, and openai-completions for other non-Pi harnesses. Pi requires omission and selects its API through native model metadata.
     pub api: Option<super::InferenceApi>,
-    #[serde(rename = "endpoint", skip_serializing_if = "String::is_empty")]
+    #[serde(default, rename = "endpoint", skip_serializing_if = "String::is_empty")]
     #[schemars(default)]
     /// Inference HTTP(S) URL owned outside the deployment. Required without serviceRef and excluded with serviceRef.
     #[schemars(extend("x-nemoclaw-required" = "Without serviceRef"))]
@@ -274,10 +273,10 @@ pub struct Image {
 #[serde(default, deny_unknown_fields)]
 /// Sandbox runtime selected through OpenShell.
 pub struct Runtime {
-    #[serde(rename = "provider")]
+    #[serde(rename = "provider", deserialize_with = "super::kinds::runtime_driver")]
     #[schemars(default)]
     /// Docker or Podman driver. A managed service with Podman requires explicit service placement.
-    pub provider: String,
+    pub provider: super::ComputeDriver,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -398,13 +397,12 @@ pub struct Overrides {
     pub pi_model: Option<serde_json::Map<String, serde_json::Value>>,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[schemars(!default)]
-#[serde(default, deny_unknown_fields)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 /// One harness runtime configuration. Every sandbox runs its own instance for its configured agent.
 pub struct Harness {
     /// Fabric harness implementation for the sandbox agent.
-    pub kind: String,
+    pub kind: super::HarnessKind,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(default, with = "super::AgentObservability")]
     /// Harness-native tracing shared by the sandbox.

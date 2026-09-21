@@ -1,5 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
+use crate::config::{HarnessKind, InferenceProviderKind};
 
 use crate::{
     backend::Row,
@@ -82,7 +83,7 @@ fn targets_with_plans(
         let settings = document.sandbox_runtime_settings(sandbox)?;
         // OpenClaw's hosted runtime identity remains the sandbox name; its native agent
         // identity is carried separately in the runtime settings.
-        let agent_name = if harness.kind == "openclaw" {
+        let agent_name = if harness.kind == HarnessKind::OpenClaw {
             &sandbox.name
         } else {
             &sandbox.agent.name
@@ -113,7 +114,7 @@ fn targets_with_plans(
             let profile = crate::openshell::inference_profile(
                 &provider.key,
                 &connection.endpoint,
-                &provider.definition.provider,
+                provider.definition.provider,
                 false,
             )
             .map_err(|_| ConfigError::new("invalid native inference policy"))?;
@@ -138,7 +139,7 @@ fn targets_with_plans(
             values.insert("proxy_host".into(), proxy.host.clone());
             values.insert("proxy_port".into(), proxy.port.to_string());
         }
-        if harness.kind == "pi" {
+        if harness.kind == HarnessKind::Pi {
             result.push(Target {
                 kind: "pi_configuration".into(),
                 address: format!("nemoclaw_pi_configuration.{}", sandbox.name),
@@ -263,10 +264,9 @@ fn inference_targets(
         ),
         (
             "provider_type".into(),
-            if provider.provider == "anthropic" {
-                "anthropic".into()
-            } else {
-                String::new()
+            match provider.provider {
+                InferenceProviderKind::Anthropic => "anthropic".into(),
+                InferenceProviderKind::Openai => String::new(),
             },
         ),
     ]

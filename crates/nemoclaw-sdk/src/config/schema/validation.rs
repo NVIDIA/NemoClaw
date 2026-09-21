@@ -144,11 +144,16 @@ pub(super) fn constrain(root: &mut Value) {
         DEFAULT_AGENT_IMAGE,
         &json!({"pattern": c::IMAGE}),
     );
+    let driver_values = defs["Runtime"]["properties"]["provider"]
+        .as_object_mut()
+        .unwrap()
+        .remove("enum")
+        .expect("derived compute driver choices");
     optional_string(
         &mut defs["Runtime"],
         "provider",
         c::RUNTIME,
-        &json!({"enum": c::RUNTIMES}),
+        &json!({"enum": driver_values}),
     );
     optional_string(
         &mut defs["Network"],
@@ -201,7 +206,6 @@ pub(super) fn constrain(root: &mut Value) {
             json!({"minimum": 1, "maximum": n::POLICY_BODY_MAX}),
         );
     }
-    property(&mut defs["Harness"], "kind", json!({"enum": c::HARNESSES}));
     property(
         &mut defs["Sandbox"],
         "harnessRef",
@@ -288,7 +292,6 @@ pub(super) fn constrain(root: &mut Value) {
     }
 
     let provider = &mut defs["InferenceProvider"];
-    property(provider, "provider", json!({"enum": c::PROVIDERS}));
     property(provider, "serviceRef", json!({"pattern": c::SLUG}));
     provider["if"] = json!({"required": ["serviceRef"]});
     provider["then"] = json!({"properties": {"provider":{"const":"openai"},"endpoint": {"const": ""}}, "allOf": [forbid(&["credential"])]});

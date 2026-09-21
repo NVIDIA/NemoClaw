@@ -1,5 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
+use crate::config::HarnessKind;
 
 #[cfg(test)]
 mod tests;
@@ -313,7 +314,7 @@ impl Deployment {
             );
             (self.progress)(Progress::Readiness);
             self.timed("sandbox.ready", async {
-                if document.sandbox_harness(definition)?.kind == "pi" {
+                if document.sandbox_harness(definition)?.kind == HarnessKind::Pi {
                     sandbox.insert(
                         "pi_model_config".into(),
                         serde_json::to_string(

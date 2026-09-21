@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 use super::ConfigError;
+use crate::config::HarnessKind;
 use serde::{Deserialize, Serialize};
 
 pub(crate) const OTLP_ENDPOINT: &str = "http://host.openshell.internal:4318";
@@ -39,10 +40,10 @@ pub struct RelayTracing {
     pub enabled: bool,
 }
 impl AgentObservability {
-    pub(crate) fn validate(&self, harness: &str) -> Result<(), ConfigError> {
+    pub(crate) fn validate(&self, harness: HarnessKind) -> Result<(), ConfigError> {
         match (&self.otlp, &self.relay) {
             (Some(otlp), None)
-                if harness == "openclaw"
+                if harness == HarnessKind::OpenClaw
                     && otlp.enabled
                     && otlp.endpoint == OTLP_ENDPOINT
                     && !otlp.service_name.is_empty()
@@ -53,7 +54,7 @@ impl AgentObservability {
                         .sample_rate
                         .as_f64()
                         .is_some_and(|n| (0.0..=1.0).contains(&n)) => {}
-            (None, Some(relay)) if harness == "hermes" && relay.enabled => {}
+            (None, Some(relay)) if harness == HarnessKind::Hermes && relay.enabled => {}
             _ => {
                 return Err(ConfigError::new(
                     "observability requires exactly one supported harness-native integration",

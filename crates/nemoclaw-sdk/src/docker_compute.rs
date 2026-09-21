@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 //! Compile disposable service compute into standard Docker provider resources.
+use crate::config::ComputeDriver;
 use crate::{Error, backend::Row, compile::Target, config::ImagePullPolicy, managed::Spec};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -9,7 +10,7 @@ use std::collections::BTreeMap;
 pub(crate) const VERSION: &str = "4.6.0";
 fn process(target: &Target) -> bool {
     (target.kind == crate::managed::GATEWAY_KIND
-        && spec(target).is_ok_and(|spec| spec.compute_driver == "docker"))
+        && spec(target).is_ok_and(|spec| spec.compute_driver == ComputeDriver::Docker))
         || matches!(
             target.kind.as_str(),
             "inference_service" | "ollama_service" | "ollama_proxy"
@@ -486,7 +487,7 @@ mod tests {
             .as_managed_mut()
             .unwrap()
             .image_pull_policy = Some(ImagePullPolicy::Always);
-        document.spec.sandboxes[0].runtime.provider = "podman".into();
+        document.spec.sandboxes[0].runtime.provider = ComputeDriver::Podman;
         let generations = crate::state::Record::new(document.clone())
             .unwrap()
             .generations;

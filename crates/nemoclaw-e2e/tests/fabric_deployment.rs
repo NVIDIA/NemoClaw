@@ -1,5 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
+use nemoclaw_sdk::config::InferenceProviderKind;
 
 use nemoclaw_e2e::openshell::Fixture;
 use nemoclaw_sdk::{CancellationToken, Deployment, config::Document};
@@ -35,7 +36,7 @@ async fn harness_preserves_conversations_and_rejects_runtime_drift(harness: &str
     )
     .unwrap();
     *document.spec.gateway.endpoint_mut() = fixture.endpoint.clone();
-    document.spec.sandboxes[0].harness.as_mut().unwrap().kind = harness.into();
+    document.spec.sandboxes[0].harness.as_mut().unwrap().kind = harness.parse().unwrap();
     if harness == "pi" {
         let pi = Document::parse(
             include_str!("../../nemoclaw-sdk/tests/fixtures/config/fabric-pi.yaml").as_bytes(),
@@ -57,7 +58,7 @@ async fn harness_preserves_conversations_and_rejects_runtime_drift(harness: &str
             .clone();
     }
     if harness == "claude" {
-        document.spec.inference_providers[0].provider = "anthropic".into();
+        document.spec.inference_providers[0].provider = InferenceProviderKind::Anthropic;
     }
     let deployment = Deployment::new(directory.path(), &bundle);
     let cancel = CancellationToken::new();
@@ -213,12 +214,11 @@ async fn harness_preserves_conversations_and_rejects_runtime_drift(harness: &str
     let state = fs::read(directory.path().join("terraform.tfstate")).unwrap();
     let mut changed = document.clone();
     changed.spec.sandboxes[0].harness.as_mut().unwrap().kind = if harness == "deepagents" {
-        "hermes"
+        nemoclaw_sdk::config::HarnessKind::Hermes
     } else {
-        "deepagents"
-    }
-    .into();
-    changed.spec.inference_providers[0].provider = "openai".into();
+        nemoclaw_sdk::config::HarnessKind::DeepAgents
+    };
+    changed.spec.inference_providers[0].provider = InferenceProviderKind::Openai;
     assert!(
         deployment.apply(&changed, &cancel).await.is_err(),
         "{harness} replacement must be refused"

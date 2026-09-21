@@ -1,5 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
+use nemoclaw_sdk::config::ComputeDriver;
 use nemoclaw_sdk::config::{Credential, Document};
 
 #[test]
@@ -37,7 +38,7 @@ fn inference_connection_is_resolved_independently_of_the_sandbox_engine() {
         env: "MODEL_TOKEN".into(),
     });
     let first = remote.inference_connection().unwrap();
-    remote.spec.sandboxes[0].runtime.provider = "podman".into();
+    remote.spec.sandboxes[0].runtime.provider = ComputeDriver::Podman;
     remote.validate().unwrap();
     assert_eq!(remote.inference_connection().unwrap(), first);
     assert_eq!(first.endpoint, "https://inference.example.test:9443/v1");

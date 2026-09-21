@@ -1,5 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
+use crate::config::ComputeDriver;
 #[cfg(test)]
 #[path = "spec_tests.rs"]
 mod tests;
@@ -21,8 +22,8 @@ pub use crate::artifact_pins::SUPERVISOR_IMAGE;
 pub struct Spec {
     #[serde(default, skip_serializing_if = "is_zero")]
     pub layout: u32,
-    #[serde(default = "docker_driver", skip_serializing_if = "is_docker_driver")]
-    pub compute_driver: String,
+    #[serde(default, skip_serializing_if = "is_docker_driver")]
+    pub compute_driver: ComputeDriver,
     pub kind: String,
     pub name: String,
     pub owner: String,
@@ -59,11 +60,8 @@ pub struct Process {
     pub memory_bytes: u64,
     pub gpu: bool,
 }
-fn docker_driver() -> String {
-    "docker".into()
-}
-fn is_docker_driver(value: &str) -> bool {
-    value == "docker"
+fn is_docker_driver(value: &ComputeDriver) -> bool {
+    *value == ComputeDriver::Docker
 }
 fn is_zero(value: &u32) -> bool {
     *value == 0
@@ -95,9 +93,7 @@ impl Spec {
                 "managed resource lacks ownership or generation",
             ));
         }
-        if !matches!(self.compute_driver.as_str(), "docker" | "podman")
-            || self.process.is_some() && self.compute_driver != "docker"
-        {
+        if self.process.is_some() && self.compute_driver != ComputeDriver::Docker {
             return Err(Error::Conflict("unsupported managed compute driver"));
         }
         if self
@@ -155,7 +151,7 @@ impl Spec {
         engine_id: Option<&str>,
         network_id: Option<&str>,
     ) -> Result<String, Error> {
-        if self.compute_driver == "podman" {
+        if self.compute_driver == ComputeDriver::Podman {
             let network = network_id
                 .filter(|id| id.len() == 64 && id.bytes().all(|c| c.is_ascii_hexdigit()))
                 .ok_or(crate::ObservationError::Incomplete)?;
@@ -270,7 +266,7 @@ impl Spec {
                     .to_string()
             ]);
             host["NetworkMode"] = json!("host");
-            if self.compute_driver == "podman" {
+            if self.compute_driver == ComputeDriver::Podman {
                 config["Hostname"] = json!(self.name);
                 config["Env"].as_array_mut().unwrap().extend([
                     json!("container=podman"),
@@ -315,9 +311,9 @@ impl Spec {
     pub fn gateway_config(&self, data_path: &str) -> String {
         format!(
             "[openshell]\nversion = 2\n\n[openshell.gateway]\ncompute_driver = {:?}\ndisable_tls = true\n\n[openshell.drivers.{}]{}\nnetwork_name = {:?}\nsandbox_runtime_image = {:?}\nsupervisor_image = {:?}\n\n[openshell.gateway.gateway_jwt]\nsigning_key_path = {:?}\npublic_key_path = {:?}\nkid_path = {:?}\ngateway_id = {:?}\n\n[openshell.gateway.auth]\nallow_unauthenticated_users = true\n",
+            self.compute_driver.as_str(),
             self.compute_driver,
-            self.compute_driver,
-            if self.compute_driver == "podman" {
+            if self.compute_driver == ComputeDriver::Podman {
                 "\nsocket_path = \"/var/run/docker.sock\""
             } else {
                 ""

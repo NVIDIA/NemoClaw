@@ -101,7 +101,7 @@ pub fn validate_endpoint(raw: &str, gateway: bool) -> Result<(), ConfigError> {
 }
 
 pub fn is_fabric_harness(harness: &str) -> bool {
-    constraints::HARNESSES.contains(&harness)
+    harness.parse::<super::HarnessKind>().is_ok()
 }
 impl Document {
     pub fn validate(&self) -> Result<(), ConfigError> {
@@ -120,7 +120,7 @@ impl Document {
                 .spec
                 .sandboxes
                 .iter()
-                .any(|sandbox| sandbox.runtime.provider == "docker")
+                .any(|sandbox| sandbox.runtime.provider == ComputeDriver::Docker)
             {
                 super::ImagePullPolicy::validate_service(gateway.image_pull_policy)?;
             }
@@ -164,10 +164,6 @@ impl Document {
                 "sandbox requires a lowercase name and image pinned by SHA-256 digest",
             )?;
             require(
-                constraints::RUNTIMES.contains(&sandbox.runtime.provider.as_str()),
-                "sandbox runtime must be docker or podman",
-            )?;
-            require(
                 gateway.as_managed().is_none()
                     || self
                         .spec
@@ -178,7 +174,7 @@ impl Document {
             )?;
             sandbox.network.validate()?;
             let harness = self.sandbox_harness(sandbox)?;
-            sandbox.network.validate_runtime_access(&harness.kind)?;
+            sandbox.network.validate_runtime_access(harness.kind)?;
             let web_search = self.web_search(sandbox)?;
             sandbox.policy_proto(web_search.is_some(), harness.observability.as_ref())?;
             if let Some(search) = web_search {
@@ -190,14 +186,14 @@ impl Document {
                     "brave-search names are reserved for web search",
                 )?;
                 search.validate(
-                    &harness.kind,
+                    harness.kind,
                     std::iter::once((sandbox.agent.name.as_str(), sandbox.agent.tools.as_ref())),
                 )?;
             }
             let agent = &sandbox.agent;
 
             if let Some(tools) = &agent.tools {
-                tools.validate(&harness.kind)?;
+                tools.validate(harness.kind)?;
             }
             require(
                 SLUG.is_match(&agent.name),
@@ -206,7 +202,7 @@ impl Document {
 
             require(
                 self.sandbox_inference(sandbox)?.routes.len() == 1
-                    || matches!(harness.kind.as_str(), "openclaw" | "pi"),
+                    || matches!(harness.kind, HarnessKind::OpenClaw | HarnessKind::Pi),
                 "multiple model choices require OpenClaw or Pi",
             )?;
             let inference = self.scoped_inference(sandbox)?;
@@ -214,35 +210,35 @@ impl Document {
                 let selected = self.route_provider(route, &inference)?;
                 let provider = selected.definition;
                 require(
-                    harness.kind != "pi" || provider.api.is_none(),
+                    harness.kind != HarnessKind::Pi || provider.api.is_none(),
                     "Pi selects its API through model metadata; omit provider api",
                 )?;
                 let api = provider
                     .api
-                    .unwrap_or(InferenceApi::for_harness(&harness.kind));
+                    .unwrap_or(InferenceApi::for_harness(harness.kind));
                 require(
-                    api.supported(&harness.kind)
+                    api.supported(harness.kind)
                         && (api == InferenceApi::AnthropicMessages)
-                            == (provider.provider == "anthropic"),
+                            == (provider.provider == InferenceProviderKind::Anthropic),
                     "API must match the provider implementation and be supported by the harness",
                 )?;
                 if agent.auth.is_some() {
                     require(
-                        harness.kind == "hermes"
+                        harness.kind == HarnessKind::Hermes
                             && crate::services::provider_authenticated(self, provider)?,
                         "Hermes API-key auth must reference the routed provider with a credential",
                     )?;
                 }
-                route.overrides.tuning.validate(&harness.kind)?;
+                route.overrides.tuning.validate(harness.kind)?;
                 require(
-                    route.overrides.pi_model.is_none() || harness.kind == "pi",
+                    route.overrides.pi_model.is_none() || harness.kind == HarnessKind::Pi,
                     "piModel is supported only by the Pi harness",
                 )?;
                 crate::services::validate_route(
                     self,
                     provider,
-                    &sandbox.runtime.provider,
-                    &harness.kind,
+                    sandbox.runtime.provider,
+                    harness.kind,
                     &route.overrides.model,
                 )?;
             }
@@ -284,8 +280,7 @@ impl Document {
     fn validate_provider(&self, provider: &InferenceProvider) -> Result<(), ConfigError> {
         let managed = crate::services::validate_provider(self, provider)?;
         require(
-            SLUG.is_match(&provider.name)
-                && constraints::PROVIDERS.contains(&provider.provider.as_str()),
+            SLUG.is_match(&provider.name),
             "provider requires a lowercase name and openai or anthropic implementation",
         )?;
         if !managed {
