@@ -54,6 +54,8 @@ const OPAQUE_INPUTS = [
   ".github/actions/resolve-reviewed-hermes-platform/action.yaml",
   "Dockerfile",
   "agents/hermes/Dockerfile.base",
+  "agents/hermes/patch-external-supervisor-recovery.py",
+  "agents/hermes/patch-external-supervisor-restart.py",
   "agents/hermes/patch-session-list-preview.py",
   "agents/hermes/Dockerfile",
   "agents/langchain-deepagents-code/Dockerfile",
@@ -119,7 +121,6 @@ describe("Vitest opaque-input watch triggers", () => {
         "test/onboarding/onboard-extra-provider-reconciliation.test.ts",
         "test/onboarding/onboard-fresh-create-identity.test.ts",
         "test/onboarding/onboard-installer-restore-intent.test.ts",
-        "test/onboarding/onboard-managed-image-buildless-e2e.test.ts",
         "test/onboarding/onboard-messaging.test.ts",
         "test/onboarding/onboard-prepared-build-context.test.ts",
         "test/onboarding/onboard-reservation-recreate.test.ts",
@@ -212,6 +213,12 @@ describe("Vitest opaque-input watch triggers", () => {
     ]);
     expect(triggeredBy("agents/hermes/patch-session-list-preview.py")).toEqual([
       "test/agents/hermes/hermes-session-list-preview-patch.test.ts",
+    ]);
+    expect(triggeredBy("agents/hermes/patch-external-supervisor-recovery.py")).toEqual([
+      "test/agents/hermes/hermes-external-supervisor-recovery-patch.test.ts",
+    ]);
+    expect(triggeredBy("agents/hermes/patch-external-supervisor-restart.py")).toEqual([
+      "test/agents/hermes/hermes-external-supervisor-restart-patch.test.ts",
     ]);
     expect(triggeredBy("nemoclaw-blueprint/policies/presets/nous-browser.yaml")).toEqual([
       "test/onboarding/effective-policy-contracts.test.ts",

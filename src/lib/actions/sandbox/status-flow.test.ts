@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
@@ -23,8 +24,11 @@ function hermesPortableDisposition(phase: "pending" | "configuring" | "active") 
 
 describe("showSandboxStatus flow", () => {
   let exitSpy: MockInstance;
+  let testHome: string;
 
   beforeEach(() => {
+    testHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-status-flow-"));
+    vi.stubEnv("HOME", testHome);
     process.exitCode = undefined;
     exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number | string | null) => {
       throw new Error(`process.exit(${code ?? 0})`);
@@ -33,8 +37,10 @@ describe("showSandboxStatus flow", () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
+    vi.unstubAllEnvs();
     process.exitCode = undefined;
     resetStatusFlowModuleCache();
+    fs.rmSync(testHome, { force: true, recursive: true });
   });
 
   it.each(["pending", "configuring", "active"] as const)(

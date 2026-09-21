@@ -102,6 +102,7 @@ function writeSiblingRegistry(home: string): string {
           dashboardPort: 18_789,
           gatewayName: "nemoclaw-9000",
           gatewayPort: 9000,
+          stopped: true,
         },
       },
     })}\n`,
@@ -110,33 +111,90 @@ function writeSiblingRegistry(home: string): string {
   return registryPath;
 }
 
+function writeSuccessfulRebuildWorkerPreload(home: string): {
+  markerPath: string;
+  preloadPath: string;
+} {
+  const siblingStateRoot = path.join(home, ".nemoclaw", "gateways", "9000");
+  const markerPath = path.join(siblingStateRoot, "rebuild-worker-success.json");
+  const preloadPath = path.join(home, "successful-rebuild-worker.cjs");
+  fs.writeFileSync(
+    preloadPath,
+    [
+      'const childProcess = require("node:child_process");',
+      'const fs = require("node:fs");',
+      'const path = require("node:path");',
+      'const Module = require("node:module");',
+      "const originalSpawn = childProcess.spawn;",
+      "childProcess.spawn = function spawnWithWorkerPreload(command, args, options) {",
+      '  const isOwningRegistryWorker = Array.isArray(args) && args.some((arg) => String(arg).endsWith("owning-registry-worker.js"));',
+      "  if (isOwningRegistryWorker) {",
+      "    options = {",
+      "      ...options,",
+      `      env: { ...options.env, NODE_OPTIONS: ${JSON.stringify(`--require=${preloadPath}`)} },`,
+      "    };",
+      "  }",
+      "  return originalSpawn.call(this, command, args, options);",
+      "};",
+      "const originalLoad = Module._load;",
+      "Module._load = function loadSuccessfulRebuildFixture(request, parent, isMain) {",
+      '  if (process.env.NEMOCLAW_GATEWAY_PORT === "9000" && request === "../rebuild-pipeline") {',
+      "    return {",
+      "      rebuildSandbox: async (sandboxName, options, executionOptions) => {",
+      '        if (sandboxName !== "gw1-sb" || options?.yes !== true || executionOptions?.throwOnError !== true) {',
+      '          throw new Error("compiled worker received an invalid rebuild descriptor");',
+      "        }",
+      '        const stateRoot = path.join(process.env.HOME, ".nemoclaw", "gateways", process.env.NEMOCLAW_GATEWAY_PORT);',
+      '        const registryPath = path.join(stateRoot, "sandboxes.json");',
+      '        const registry = JSON.parse(fs.readFileSync(registryPath, "utf8"));',
+      "        registry.sandboxes[sandboxName].stopped = false;",
+      "        fs.writeFileSync(registryPath, `${JSON.stringify(registry)}\\n`, { mode: 0o600 });",
+      `        fs.writeFileSync(${JSON.stringify(markerPath)}, JSON.stringify({`,
+      "          sandboxName,",
+      "          gatewayPort: Number(process.env.NEMOCLAW_GATEWAY_PORT),",
+      "          yes: options.yes,",
+      "          throwOnError: executionOptions.throwOnError,",
+      "        }), { mode: 0o600 });",
+      "      },",
+      "    };",
+      "  }",
+      "  return originalLoad.call(this, request, parent, isMain);",
+      "};",
+    ].join("\n"),
+    { mode: 0o600 },
+  );
+  return { markerPath, preloadPath };
+}
+
 describe("CLI rebuild recovery routing", () => {
   it(
-    "routes a valid sibling-root rebuild through the compiled worker",
+    "completes a sibling-root rebuild through the compiled worker",
     testTimeoutOptions(35_000),
     () => {
       const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-rebuild-sibling-"));
       try {
         const registryPath = writeSiblingRegistry(home);
+        const { markerPath, preloadPath } = writeSuccessfulRebuildWorkerPreload(home);
 
         const result = runWithEnv(
           "gw1-sb rebuild --yes",
           {
             HOME: home,
-            NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
-            DOCKER_HOST: `unix://${path.join(home, "missing-docker.sock")}`,
+            NODE_OPTIONS: `--require=${preloadPath}`,
           },
           30_000,
         );
 
-        expect(result.code).toBe(1);
-        expect(result.out).toMatch(
-          /Rebuild sandbox 'gw1-sb'|openshell CLI not found\. Install OpenShell before using sandbox commands\./,
+        expect(result.code, result.out).toBe(0);
+        expect(JSON.parse(fs.readFileSync(markerPath, "utf8"))).toEqual({
+          sandboxName: "gw1-sb",
+          gatewayPort: 9000,
+          yes: true,
+          throwOnError: true,
+        });
+        expect(JSON.parse(fs.readFileSync(registryPath, "utf8")).sandboxes["gw1-sb"].stopped).toBe(
+          false,
         );
-        expect(result.out).toMatch(
-          /Error: (?:Replacement onboarding preflight failed|Rebuild in the owning gateway registry did not complete successfully\.)/,
-        );
-        expect(fs.existsSync(registryPath)).toBe(true);
         expect(fs.existsSync(path.join(home, ".nemoclaw", "sandboxes.json"))).toBe(false);
       } finally {
         fs.rmSync(home, { recursive: true, force: true });

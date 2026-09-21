@@ -367,15 +367,14 @@ describe("rebuildSandbox flow: lifecycle", () => {
     expect(harness.registryUpdateSpy).toHaveBeenCalledWith("alpha", {
       agentVersion: "0.2.0",
     });
-    expect(harness.executeSandboxExecCommandSpy).toHaveBeenCalledWith(
-      "alpha",
-      "openclaw doctor --fix",
-      300_000,
-      {
-        localDockerFallbackPolicy: "never",
-        runtimeSelection: { gatewayName: "nemoclaw", workspace: "default" },
+    expect(harness.runOpenClawPostRestoreDoctorSpy).toHaveBeenCalledWith({
+      sandboxName: "alpha",
+      kind: "backup",
+      runtimeSelection: {
+        gatewayName: "nemoclaw",
+        workspace: "default",
       },
-    );
+    });
     expect(harness.retireRemovedImmutabilityStateRecordSpy).toHaveBeenCalledWith(
       "alpha",
       "mutable-rebuild",
@@ -767,6 +766,29 @@ describe("rebuildSandbox flow: lifecycle", () => {
 
     expect(harness.prepareMcpBridgesForRebuildSpy).toHaveBeenCalledWith("alpha", undefined, []);
     expect(harness.onboardSpy).toHaveBeenCalledOnce();
+  });
+
+  it("stops a legacy-only MCP rebuild before teardown or sandbox deletion", async () => {
+    const harness = createRebuildFlowHarness({
+      mcpLegacySources: [
+        {
+          server: "github",
+          agent: "openclaw",
+          adapter: "mcporter-config",
+          url: "https://mcp.example.test/mcp",
+          env: ["GITHUB_TOKEN"],
+        },
+      ],
+    });
+
+    await expect(
+      harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+    ).rejects.toThrow("Legacy MCP agent configuration requires explicit migration for 'github'");
+
+    expect(harness.prepareMcpBridgesForRebuildSpy).not.toHaveBeenCalled();
+    expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
+    expect(harness.onboardSpy).not.toHaveBeenCalled();
+    expectNoSandboxDelete(harness.runOpenshellSpy);
   });
 
   it("keeps the journaled row when replacement creation fails (#7734)", async () => {

@@ -33,8 +33,10 @@ import {
   CURRENT_RUNTIME_PROVIDER_BUNDLES,
   normalizeRuntimeProviderIdentity,
   type RuntimeProviderBundleRegistry,
+  type RuntimeProviderChannelStopTransport,
   type RuntimeProviderWorkloadCleanupResult,
   requireRuntimeProviderDestructiveCleanupAuthority,
+  resolveRuntimeProviderBundle,
 } from "../../onboard/runtime-provider/access";
 import {
   emitProviderDetachResidualHint,
@@ -109,6 +111,7 @@ function selectRetainedSandboxRecoveryAuthority(
   sandboxName: string,
   sandbox: registry.SandboxEntry | null,
   records: readonly onboardSession.RetainedSandboxRecoveryRecord[],
+  session: Pick<onboardSession.Session, "sessionId" | "cancellationRecovery"> | null,
 ): onboardSession.RetainedSandboxRecoveryRecord | null {
   const candidates = records.filter((record) => record.sandboxName === sandboxName);
   if (!sandbox) {
@@ -148,6 +151,18 @@ function selectRetainedSandboxRecoveryAuthority(
           record.createAttemptNonce === pending.createAttemptNonce)
       );
     }
+    const sessionOwnedUnpublishedReservation =
+      record.sandboxIdentityFingerprint !== null &&
+      session?.cancellationRecovery?.reason === record.reason &&
+      registry.isPendingReservationForSession(sandbox, session?.sessionId) &&
+      sandbox.name === record.sandboxName &&
+      sandbox.gatewayName === record.gatewayName &&
+      sandbox.gatewayPort === record.gatewayPort &&
+      sandbox.pendingCreateIdentity === undefined &&
+      sandbox.lifecycleGeneration === undefined &&
+      sandbox.lifecycleLiveIdentityFingerprint === undefined &&
+      onboardSession.retainedSandboxRecoveryMatchesSession(record, session);
+    if (sessionOwnedUnpublishedReservation) return true;
     return (
       record.gatewayName === sandbox.gatewayName &&
       record.gatewayPort === sandbox.gatewayPort &&
@@ -190,6 +205,7 @@ export type CleanupSandboxServicesDeps = {
   listSandboxes?: typeof registry.listSandboxes;
   stopAll?: (opts: {
     sandboxName: string;
+    channelStopTransport?: RuntimeProviderChannelStopTransport;
     cleanupOllamaModels?: boolean;
     unloadOllamaModels?: () => OllamaUnloadResult | void;
   }) => OllamaUnloadResult | void;
@@ -261,7 +277,13 @@ function reportFinalGatewayLeftRunning(
 
 export async function cleanupSandboxServices(
   sandboxName: string,
-  { stopHostServices = false }: { stopHostServices?: boolean } = {},
+  {
+    stopHostServices = false,
+    channelStopTransport,
+  }: {
+    stopHostServices?: boolean;
+    channelStopTransport?: RuntimeProviderChannelStopTransport;
+  } = {},
   deps: CleanupSandboxServicesDeps = {},
 ): Promise<void> {
   // Source boundary: this exported helper can be called independently of CLI
@@ -278,12 +300,14 @@ export async function cleanupSandboxServices(
     deps.stopAll ??
     ((opts: {
       sandboxName: string;
+      channelStopTransport?: RuntimeProviderChannelStopTransport;
       cleanupOllamaModels?: boolean;
       unloadOllamaModels?: () => OllamaUnloadResult | void;
     }) => {
       const services = require("../../tunnel/services") as {
         stopAll: (opts: {
           sandboxName: string;
+          channelStopTransport?: RuntimeProviderChannelStopTransport;
           cleanupOllamaModels?: boolean;
           unloadOllamaModels?: () => OllamaUnloadResult | void;
         }) => OllamaUnloadResult | void;
@@ -396,6 +420,7 @@ export async function cleanupSandboxServices(
         );
         return stopAll({
           sandboxName: validatedSandboxName,
+          ...(channelStopTransport ? { channelStopTransport } : {}),
           cleanupOllamaModels,
           unloadOllamaModels: () => unloadOllamaModels(),
         });
@@ -676,13 +701,28 @@ async function destroySandboxUnlocked(
     sandboxName,
     registeredSandbox,
     retainedRecoveryRecords,
+    destroySession,
   );
   if (
     !retainedRecoveryAuthority &&
     retainedRecoveryRecords.some((record) => record.sandboxName === sandboxName)
   ) {
+    const diagnosticRecordIds = retainedRecoveryRecords
+      .filter((record) => record.sandboxName === sandboxName)
+      .map((record) => record.recordId)
+      .sort()
+      .join(", ");
     console.error(
-      `  Refusing to destroy retained sandbox '${sandboxName}': NemoClaw could not select exactly one recovery record from the current immutable registry and Docker identities. No sandbox resources were removed. Resolve the identity conflict, then rerun '${CLI_NAME} ${sandboxName} destroy'.`,
+      `  Cause: Refusing to destroy retained sandbox '${sandboxName}' because NemoClaw could not select exactly one recovery record from the current registry, onboarding session, and immutable recovery evidence.`,
+    );
+    console.error(
+      "  Retained state: No sandbox resources were removed. The registry, onboarding session, and recovery records remain unchanged.",
+    );
+    console.error(
+      "  Next action: Preserve this state and do not delete by mutable sandbox name. This build has no supported automatic repair for conflicting recovery authority.",
+    );
+    console.error(
+      `  Diagnostic reference: retained recovery record ID${diagnosticRecordIds.includes(",") ? "s" : ""} ${diagnosticRecordIds}.`,
     );
     requestSandboxDestroyExit(1);
   }
@@ -697,6 +737,14 @@ async function destroySandboxUnlocked(
     destroyGatewayName,
     registeredSandbox?.openshellDriver,
   );
+  const destroyRuntimeProvider = resolveRuntimeProviderBundle(
+    destroyRuntimeProviderId,
+    CURRENT_RUNTIME_PROVIDER_BUNDLES,
+  );
+  const destroyChannelStopTransport =
+    destroyRuntimeProvider?.lifecycle.supported === true
+      ? destroyRuntimeProvider.lifecycle.channelStopTransport
+      : undefined;
   let portableContainerAuthority: ReturnType<typeof preparePortableDemoSandboxDestroyAuthority>;
   try {
     portableContainerAuthority = preparePortableDemoSandboxDestroyAuthority(sandboxName, () => {
@@ -1060,6 +1108,9 @@ async function destroySandboxUnlocked(
       sandboxName,
       {
         stopHostServices: shouldStopHostServices,
+        ...(destroyChannelStopTransport
+          ? { channelStopTransport: destroyChannelStopTransport }
+          : {}),
       },
       {
         getSandbox: getRegisteredSandbox,
@@ -1119,7 +1170,8 @@ async function destroySandboxUnlocked(
   // A retry after successful registry removal still owns final gateway cleanup.
   // The gateway runtime marker captured its provider before the first delete.
   const registryEntryAbsent =
-    removalOutcome.status === "complete" || removalOutcome.status === "not-found";
+    removalOutcome.status === "complete" ||
+    (removalOutcome.status === "not-found" && !getRegisteredSandbox(sandboxName));
   if (removalOutcome.status === "blocked") {
     const providerId = normalizeRuntimeProviderIdentity(
       (getRegisteredSandbox(sandboxName) ?? sandbox)?.openshellDriver,

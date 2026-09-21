@@ -9,8 +9,11 @@ import type { Readable } from "node:stream";
 import type { RebuildSandboxOptions } from "../../../domain/lifecycle/options";
 import { resolveGatewayName } from "../../../gateway-runtime-action";
 import { snapshotKnownCredentialEnv } from "../../../onboard/credential-env";
-import { isValidName } from "../../../sandbox-name-contract";
-import { assertGatewayStatePathSafe, listGatewayStateRoots } from "../../../state/gateway-registry";
+import {
+  assertGatewayStatePathSafe,
+  isValidName,
+  listGatewayStateRoots,
+} from "../../../state/gateway-registry";
 import { isCurrentPortableHostFenceHeld } from "../../../state/portable-uninstall-retirement";
 import { buildSubprocessEnv } from "../../../subprocess-env";
 import { findSandboxAcrossGatewayRoots } from "../../../state/registry/cross-port";

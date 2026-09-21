@@ -296,7 +296,7 @@ const PI_IMAGE_SOURCE_OWNING_PATHS = [
   "scripts/security/patches/perl-5.44.0-net-ping-capability-tests.patch",
   "scripts/security/patches/python3.13-htmlparser-cve-2026-15308.patch",
   "scripts/upgrade-bundled-npm.mts",
-  "tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/managed-startup-image-runtime.bundle",
+  "tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/managed-startup-direct-image-runtime.bundle",
 ] as const;
 
 function commonEgressTarget(options: {
@@ -372,6 +372,8 @@ const GATEWAY_UPGRADE_TARGET = dockerOnlyTarget("openshell-gateway-upgrade-v0-0-
     NEMOCLAW_OLD_SANDBOX_BASE_IMAGE_REF: REVIEWED_GATEWAY_UPGRADE_FIXTURE.sandboxBaseImageRef,
     NEMOCLAW_OLD_OPENSHELL_VERSION: REVIEWED_GATEWAY_UPGRADE_FIXTURE.openShellVersion,
     NEMOCLAW_OLD_OPENCLAW_VERSION: REVIEWED_GATEWAY_UPGRADE_FIXTURE.openclawVersion,
+    // This target upgrades only the host gateway. Its survivor intentionally
+    // keeps the reviewed historical OpenClaw image and state format.
     OPENSHELL_GATEWAY: "nemoclaw",
   },
 });

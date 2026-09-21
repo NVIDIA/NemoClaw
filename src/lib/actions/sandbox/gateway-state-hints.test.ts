@@ -28,11 +28,11 @@ const requireDist = createRequire(import.meta.url);
 describe("printGatewayLifecycleHint multi-instance hints", () => {
   let gatewayState: GatewayStateModule;
   let captureOpenshellSpy: MockInstance;
-  let getSandboxDockerRuntimeSpy: MockInstance;
   let getNamedGatewayLifecycleStateSpy: MockInstance;
   let getSandboxSpy: MockInstance;
   let findSandboxAcrossGatewayRootsSpy: MockInstance;
   let listPublishedSandboxNamesAcrossGatewayRootsSpy: MockInstance;
+  let getSandboxDockerRuntimeSpy: MockInstance;
   let listPublishedSandboxNamesForDockerRuntime: () => string[];
   let recoverNamedGatewayRuntimeSpy: MockInstance;
   let dockerInfoSpy: MockInstance;
@@ -240,7 +240,43 @@ describe("printGatewayLifecycleHint multi-instance hints", () => {
     );
   });
 
-  it("reports a stopped container without crash guidance (#8695)", async () => {
+  it.each([
+    {
+      phase: "Stopped",
+      expected: "Sandbox 'instance-a' is stopped.",
+      rejected: "rebuild --yes",
+    },
+    {
+      phase: "Error",
+      expected: "nemoclaw instance-a start",
+      rejected: "docker unpause",
+    },
+    {
+      phase: "Failed",
+      expected: "nemoclaw instance-a rebuild --yes",
+      rejected: "docker unpause",
+    },
+  ])("uses the OpenShell $phase phase for recovery guidance", async (testCase) => {
+    mockSandboxPhase(testCase.phase);
+    const lines: string[] = [];
+    vi.spyOn(console, "error").mockImplementation((line = "") => {
+      lines.push(String(line));
+    });
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+      throw new Error(`process.exit(${code ?? 0})`);
+    }) as never);
+
+    await expect(gatewayState.ensureLiveSandboxOrExit("instance-a")).rejects.toThrow(
+      "process.exit(1)",
+    );
+
+    const output = lines.join("\n");
+    expect(output).toContain(testCase.expected);
+    expect(output).not.toContain(testCase.rejected);
+    expect(exitSpy).toHaveBeenCalledWith(1);
+  });
+
+  it("uses stopped guidance when a Docker container is not running during Error", async () => {
     mockSandboxPhase("Error");
     getSandboxDockerRuntimeSpy.mockReturnValue({
       health: "none",

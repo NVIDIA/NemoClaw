@@ -169,9 +169,11 @@ describe("shell runtime helpers", () => {
     { name: "NEMOCLAW_VLLM_PORT", value: "99999" },
     { name: "NEMOCLAW_VLLM_PORT", value: "0" },
     { name: "NEMOCLAW_VLLM_PORT", value: "abc" },
+    { name: "NEMOCLAW_VLLM_PORT", value: "08000" },
     { name: "NEMOCLAW_OLLAMA_PORT", value: "99999" },
     { name: "NEMOCLAW_OLLAMA_PORT", value: "0" },
     { name: "NEMOCLAW_OLLAMA_PORT", value: "abc" },
+    { name: "NEMOCLAW_OLLAMA_PORT", value: "011434" },
   ])("get_local_provider_base_url fails closed on invalid $name=$value", ({ name, value }) => {
     const provider = name === "NEMOCLAW_VLLM_PORT" ? "vllm-local" : "ollama-local";
     const result = runShell(`source "${RUNTIME_SH}"; get_local_provider_base_url ${provider}`, {
@@ -202,9 +204,7 @@ describe("shell runtime helpers", () => {
 
   it.each([
     { name: "NEMOCLAW_VLLM_PORT", value: "8081", provider: "vllm-local" },
-    { name: "NEMOCLAW_VLLM_PORT", value: "08081", provider: "vllm-local" },
     { name: "NEMOCLAW_OLLAMA_PORT", value: "8081", provider: "ollama-local" },
-    { name: "NEMOCLAW_OLLAMA_PORT", value: "08081", provider: "ollama-local" },
   ])("rejects reserved llama.cpp port $value for $name", ({ name, value, provider }) => {
     const result = runShell(`source "${RUNTIME_SH}"; get_local_provider_base_url ${provider}`, {
       [name]: value,

@@ -13,6 +13,7 @@ import { GATEWAYS_SUBDIR, nemoclawStateRoot } from "./state-root";
 
 export { GATEWAYS_SUBDIR, resolveHome } from "./state-root";
 export { DEFAULT_GATEWAY_PORT } from "../core/ports";
+export { isValidName } from "../name-validation";
 export {
   releaseManagedGatewayStateLifecycleLock,
   tryAcquireManagedGatewayStateLifecycleLock,

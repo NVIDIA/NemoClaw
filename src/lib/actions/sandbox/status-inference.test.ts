@@ -1,7 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it, vi } from "vitest";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { buildSandboxInferenceInvocationCommand } from "./inference-invocation-probe";
 import {
   collectSandboxStatusSnapshot,
@@ -11,6 +15,18 @@ import {
 } from "./status";
 
 describe("sandbox status inference.local route health (#6192)", () => {
+  let testHome: string;
+
+  beforeEach(() => {
+    testHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-status-inference-"));
+    vi.stubEnv("HOME", testHome);
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    fs.rmSync(testHome, { force: true, recursive: true });
+  });
+
   function snapshotDeps(options: {
     agent?: string;
     confirmedStopped?: boolean;

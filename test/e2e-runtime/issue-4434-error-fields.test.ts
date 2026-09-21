@@ -12,8 +12,8 @@ import {
 
 const REPO_ROOT = path.join(import.meta.dirname, "../..");
 const DOCKERFILE = path.join(REPO_ROOT, "Dockerfile");
-const CURRENT_REVIEWED_OPENCLAW_VERSION = "2026.7.1";
-const PATCHED_OPENCLAW_2026_7_1_ISSUE_4434_TUI_ERROR_OUTPUT = [
+const CURRENT_REVIEWED_OPENCLAW_VERSION = "2026.9.1";
+const PATCHED_OPENCLAW_2026_9_1_ISSUE_4434_TUI_ERROR_OUTPUT = [
   "run error: LLM request timed out.",
   "Cause: timed out while reaching the upstream API.",
   "Reporting layer: gateway proxy / upstream API.",
@@ -21,7 +21,7 @@ const PATCHED_OPENCLAW_2026_7_1_ISSUE_4434_TUI_ERROR_OUTPUT = [
   "1m 04s | error",
 ].join("\n");
 
-const UPSTREAM_OPENCLAW_2026_7_1_ISSUE_4434_TUI_ERROR_OUTPUT = [
+const UPSTREAM_OPENCLAW_2026_9_1_ISSUE_4434_TUI_ERROR_OUTPUT = [
   "run error: LLM request timed out.",
   "1m 04s | error",
 ].join("\n");
@@ -49,17 +49,17 @@ describe("full OpenClaw TUI error guard (#4434)", () => {
   it("requires the reviewed patched output to include all full-acceptance fields", () => {
     expect(readDockerfileOpenClawVersion()).toBe(CURRENT_REVIEWED_OPENCLAW_VERSION);
     expect(
-      detectIssue4434AcceptanceFields(PATCHED_OPENCLAW_2026_7_1_ISSUE_4434_TUI_ERROR_OUTPUT),
+      detectIssue4434AcceptanceFields(PATCHED_OPENCLAW_2026_9_1_ISSUE_4434_TUI_ERROR_OUTPUT),
     ).toEqual({
       httpStatusOrCause: true,
       reportingLayer: true,
       recoveryHint: true,
     });
     expect(
-      missingIssue4434AcceptanceFields(PATCHED_OPENCLAW_2026_7_1_ISSUE_4434_TUI_ERROR_OUTPUT),
+      missingIssue4434AcceptanceFields(PATCHED_OPENCLAW_2026_9_1_ISSUE_4434_TUI_ERROR_OUTPUT),
     ).toEqual([]);
     expect(
-      missingIssue4434AcceptanceFields(UPSTREAM_OPENCLAW_2026_7_1_ISSUE_4434_TUI_ERROR_OUTPUT),
+      missingIssue4434AcceptanceFields(UPSTREAM_OPENCLAW_2026_9_1_ISSUE_4434_TUI_ERROR_OUTPUT),
     ).toEqual(["httpStatusOrCause", "reportingLayer", "recoveryHint"]);
   });
 });

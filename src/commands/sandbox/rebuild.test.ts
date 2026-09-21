@@ -1,7 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   delegateRebuildToOwningRegistry: vi.fn(async () => false),
@@ -23,10 +27,18 @@ vi.mock("../../lib/actions/sandbox/rebuild/owning-registry", () => ({
 import RebuildCliCommand from "./rebuild";
 
 const rootDir = process.cwd();
+let home: string;
 
 describe("sandbox:rebuild command", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-rebuild-command-"));
+    vi.stubEnv("HOME", home);
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    fs.rmSync(home, { force: true, recursive: true });
   });
 
   it("routes exact confirmed recovery retirement without starting a rebuild", async () => {

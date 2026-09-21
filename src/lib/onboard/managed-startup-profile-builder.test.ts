@@ -412,8 +412,6 @@ describe("buildManagedStartupProfile", () => {
         NEMOCLAW_AGENT_TIMEOUT: "900",
         NEMOCLAW_AGENT_HEARTBEAT_EVERY: "30m",
         NEMOCLAW_EXTRA_AGENTS_JSON: JSON.stringify(extraAgents),
-        NEMOCLAW_DISABLE_DEVICE_AUTH: "1",
-        NEMOCLAW_DEVICE_AUTH_OPT_OUT_SOURCE: "managed-onboard",
         NEMOCLAW_WEB_SEARCH_ENABLED: "1",
         NEMOCLAW_WEB_SEARCH_PROVIDER: "tavily",
         NEMOCLAW_OPENCLAW_OTEL: "yes",
@@ -461,9 +459,9 @@ describe("buildManagedStartupProfile", () => {
       agentTimeoutSeconds: 900,
       heartbeatEvery: "30m",
       extraAgents,
-      deviceAuth: { disabled: true, optOutSource: "managed-onboard" },
       minimalBootstrap: true,
     });
+    expect(built.profile.agentConfig).not.toHaveProperty("deviceAuth");
     expect(built.profile.proxy).toMatchObject({
       managedHost: "host.containers.internal",
       managedPort: 3129,
@@ -691,9 +689,9 @@ describe("buildManagedStartupProfile", () => {
         defaults: { subagents: {} },
         main: {},
       },
-      deviceAuth: { disabled: true, optOutSource: "managed-onboard" },
       minimalBootstrap: false,
     });
+    expect(built.profile.agentConfig).not.toHaveProperty("deviceAuth");
     expect(built.profile.tuning).toEqual({
       contextWindow: 131_072,
       maxTokens: 4096,

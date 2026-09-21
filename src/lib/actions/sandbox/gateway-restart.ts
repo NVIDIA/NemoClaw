@@ -88,6 +88,7 @@ export type GatewayRestartDeps = {
   getSandbox: SandboxAgentLookup;
   resolveSandboxDashboardPort: (sandboxName: string) => number;
   executeSandboxExecCommand: SandboxExec;
+  waitForSandboxControlPlaneReady: (sandboxName: string) => Promise<boolean>;
   waitForRecoveredSandboxGateway: (
     sandboxName: string,
     options?: {
@@ -130,6 +131,20 @@ export function sandboxAgentName(
 
 function gatewayRestartOutput(result: GatewayRestartCommandResult): string {
   return [result.stdout, result.stderr].filter(Boolean).join("\n");
+}
+
+/** Hermes can replace its gateway successfully while closing the exec relay that issued restart. */
+const HERMES_RESTART_RELAY_CLOSED = "exec relay closed before the command reported an exit status";
+const OPENSHELL_SERVICE_UNAVAILABLE = "code: 'The service is currently unavailable'";
+
+export function isExpectedHermesRestartRelayClosure(
+  result: GatewayRestartCommandResult | null,
+): boolean {
+  if (!result || result.status === 0) return false;
+  const output = gatewayRestartOutput(result).replace(/[\s│]+/gu, " ");
+  return (
+    output.includes(OPENSHELL_SERVICE_UNAVAILABLE) && output.includes(HERMES_RESTART_RELAY_CLOSED)
+  );
 }
 
 const ANSI_CONTROL_RE =
@@ -410,24 +425,43 @@ export async function restartSandboxGatewayWithDeps(
       `  Restarting ${agentRuntime.getAgentDisplayName(agent)} gateway in '${sandboxName}'...`,
     );
   }
-  const nativeCommand = `${agentName} gateway restart`;
+  const nativeCommand =
+    agentName === "openclaw"
+      ? "env -u OPENCLAW_HOME -u OPENCLAW_STATE_DIR -u OPENCLAW_CONFIG_PATH openclaw gateway restart --safe --skip-deferral --json"
+      : `${agentName} gateway restart`;
   const restartResult = await deps.executeSandboxExecCommand(sandboxName, nativeCommand, 210000);
-  if (!restartResult || restartResult.status !== 0) {
-    const classified = classifyGatewayRestartFailure(restartResult);
-    if (agentName === "hermes" && classified.layer === "secret-boundary refusal") {
-      printGatewayRestartFailure(sandboxName, classified.layer, classified.detail);
-      return { ok: false, failureLayer: classified.layer, detail: classified.detail };
-    }
-    const detail = restartResult
-      ? sanitizeGatewayRestartFailureDetail(gatewayRestartOutput(restartResult)) ||
-        `${nativeCommand} exited ${restartResult.status}`
-      : `${nativeCommand} did not return command output`;
+  if (!restartResult) {
+    const detail = `${nativeCommand} did not return command output`;
     const gatewayLogTail =
       agentName === "hermes"
         ? await hermesGatewayLogTail(sandboxName, deps.executeSandboxExecCommand)
         : [];
     printGatewayRestartFailure(sandboxName, "native agent command", detail, gatewayLogTail);
     return { ok: false, failureLayer: "native agent command", detail };
+  }
+  const hermesRelayClosed =
+    agentName === "hermes" && isExpectedHermesRestartRelayClosure(restartResult);
+  if (restartResult.status !== 0 && !hermesRelayClosed) {
+    const classified = classifyGatewayRestartFailure(restartResult);
+    if (agentName === "hermes" && classified.layer === "secret-boundary refusal") {
+      printGatewayRestartFailure(sandboxName, classified.layer, classified.detail);
+      return { ok: false, failureLayer: classified.layer, detail: classified.detail };
+    }
+    const detail =
+      sanitizeGatewayRestartFailureDetail(gatewayRestartOutput(restartResult)) ||
+      `${nativeCommand} exited ${restartResult.status}`;
+    const gatewayLogTail =
+      agentName === "hermes"
+        ? await hermesGatewayLogTail(sandboxName, deps.executeSandboxExecCommand)
+        : [];
+    printGatewayRestartFailure(sandboxName, "native agent command", detail, gatewayLogTail);
+    return { ok: false, failureLayer: "native agent command", detail };
+  }
+
+  if (hermesRelayClosed && !(await deps.waitForSandboxControlPlaneReady(sandboxName))) {
+    const detail = "Hermes restarted, but its OpenShell exec relay did not re-register";
+    printGatewayRestartFailure(sandboxName, "health timeout", detail);
+    return { ok: false, failureLayer: "health timeout", detail };
   }
 
   if (

@@ -8,12 +8,16 @@ import { resolveOpenshellBinary } from "../../../adapters/openshell/command-argv
 import type { LaunchReadinessOpenClawSessionQualification } from "../../../state/launch-readiness-lease";
 import { ROOT } from "../../../state/paths";
 import { WARMUP_TIMEOUT_MS, WATCHER_STATUS_TIMEOUT_MS } from "../auto-pair-warmup";
-import { readAutoPairApprovalPolicyModule } from "../auto-pair-approval";
+import {
+  readAutoPairApprovalPolicyModule,
+  readOpenClawPairingStateModule,
+} from "../auto-pair-approval";
 
 const QUALIFICATION_MARKER = "__NEMOCLAW_OPENCLAW_PAIRING_QUALIFICATION__=";
 const SETTLEMENT_MARKER = "__NEMOCLAW_OPENCLAW_PAIRING_SETTLEMENT__=";
 const RETRYABLE_OBSERVATION_EXIT_STATUS = 3;
 const SHA256_RE = /^[a-f0-9]{64}$/;
+const OPENCLAW_VERSION_RE = /\bopenclaw\b[^\r\n0-9]*([0-9]+\.[0-9]+\.[0-9]+)(?![0-9.])/i;
 export const OPENCLAW_PAIRING_OBSERVATION_TIMEOUT_MS = 3_000;
 // Reuse one fixed pairing lifecycle across ordinary onboarding and Portable.
 // A contended gateway list can consume the watcher's complete child bound, so
@@ -43,6 +47,10 @@ export const OPENCLAW_PAIRING_REQUIRED_SCOPES = [
 ] as const;
 
 export type OpenClawPairingQualification = LaunchReadinessOpenClawSessionQualification;
+
+export function parseOpenClawVersionFromText(value: string): string | null {
+  return value.match(OPENCLAW_VERSION_RE)?.[1] ?? null;
+}
 
 export type OpenClawPairingSettlementObservation = {
   readonly state: "pairing-only" | "scope-upgrade-pending" | "settled";
@@ -191,6 +199,7 @@ export function buildOpenClawPairingObservationScript(
     | "repair-settlement"
     | "settlement" = "qualification",
 ): string {
+  const pairingStateModule = readOpenClawPairingStateModule();
   if (!path.posix.isAbsolute(stateDirectory)) {
     throw new OpenClawPairingQualificationError();
   }
@@ -198,6 +207,9 @@ export function buildOpenClawPairingObservationScript(
     !approvalPolicyModuleB64 ||
     Buffer.from(approvalPolicyModuleB64, "base64").toString("base64") !== approvalPolicyModuleB64
   ) {
+    throw new OpenClawPairingQualificationError();
+  }
+  if (!pairingStateModule) {
     throw new OpenClawPairingQualificationError();
   }
   const stateDirectoryB64 = Buffer.from(stateDirectory, "utf8").toString("base64");
@@ -217,15 +229,23 @@ import hashlib
 import json
 import os
 import re
+import sqlite3
 import stat
+import subprocess
 import sys
+
+${pairingStateModule}
 
 MARKER = ${JSON.stringify(marker)}
 MAX_ENTRY_BYTES = 512 * 1024
+MAX_SAFE_INTEGER = 9007199254740991
 REQUIRED_ROLES = ['operator']
 PAIRING_ONLY_SCOPES = ['operator.pairing']
 REQUEST_SCOPES = ['operator.pairing', 'operator.write']
 TOKEN_SCOPES = ['operator.pairing', 'operator.read', 'operator.write']
+ADMIN_REQUEST_SCOPES = ['operator.admin', 'operator.pairing', 'operator.write']
+ADMIN_PAIRED_TOKEN_SCOPES = ['operator.admin', 'operator.pairing', 'operator.read', 'operator.write']
+ADMIN_AUTH_TOKEN_SCOPES = ['operator.admin', 'operator.read', 'operator.write']
 ALLOW_CANONICAL_PENDING = ${mode === "ordinary-settlement" || mode === "repair-settlement" ? "True" : "False"}
 ORDINARY_SETTLEMENT = ${mode === "ordinary-settlement" ? "True" : "False"}
 REPORT_CANONICAL_PENDING = ${mode === "repair-settlement" ? "True" : "False"}
@@ -337,7 +357,7 @@ def directory_is_current(parent_fd, name, fd):
     )
 
 def open_directory(parent_fd, name):
-    if name not in ('devices', 'identity'):
+    if name not in ('devices', 'identity', 'state'):
         raise OSError('unsupported directory')
     fd = os.open(name, directory_flags, dir_fd=parent_fd)
     directory_metadata(fd)
@@ -378,8 +398,30 @@ def read_entry(directory_fd, name):
     finally:
         os.close(fd)
 
-def read_snapshot():
+def assert_sqlite_database_absent(state_fd):
+    sqlite_state_fd = -1
+    try:
+        try:
+            sqlite_state_fd = open_directory(state_fd, 'state')
+        except FileNotFoundError:
+            return
+        try:
+            os.stat('openclaw.sqlite', dir_fd=sqlite_state_fd, follow_symlinks=False)
+        except FileNotFoundError:
+            return
+        raise StateChangedError('sqlite database appeared')
+    finally:
+        if sqlite_state_fd >= 0:
+            os.close(sqlite_state_fd)
+
+def assert_legacy_layout_current():
     state_fd = open_state_root()
+    try:
+        assert_sqlite_database_absent(state_fd)
+    finally:
+        os.close(state_fd)
+
+def read_legacy_snapshot(state_fd):
     devices_fd = -1
     identity_fd = -1
     try:
@@ -395,7 +437,9 @@ def read_snapshot():
             or not directory_is_current(state_fd, 'identity', identity_fd)
         ):
             raise StateChangedError('state root changed')
+        assert_sqlite_database_absent(state_fd)
         return {
+            'layout': 'legacy',
             'directories': [directory_metadata(state_fd), directory_metadata(devices_fd), directory_metadata(identity_fd)],
             'identity': (identity_raw, identity_metadata),
             'auth': (auth_raw, auth_metadata),
@@ -407,6 +451,107 @@ def read_snapshot():
             os.close(identity_fd)
         if devices_fd >= 0:
             os.close(devices_fd)
+
+def safe_timestamp(value):
+    return type(value) is int and 0 <= value <= MAX_SAFE_INTEGER
+
+def validate_identity_key_pair(public_key_pem, private_key_pem):
+    if not isinstance(public_key_pem, str) or not isinstance(private_key_pem, str):
+        raise ValueError('invalid identity key material')
+    openssl = '/usr/bin/openssl'
+    try:
+        openssl_metadata = os.stat(openssl, follow_symlinks=False)
+    except FileNotFoundError as error:
+        raise ValueError('openssl is unavailable') from error
+    if (
+        not stat.S_ISREG(openssl_metadata.st_mode)
+        or openssl_metadata.st_nlink != 1
+        or openssl_metadata.st_uid != 0
+        or openssl_metadata.st_mode & 0o022
+    ):
+        raise OSError('openssl is unsafe')
+    try:
+        derived_public_key = subprocess.run(
+            [openssl, 'pkey', '-pubout', '-outform', 'DER'],
+            input=private_key_pem.encode('utf-8'),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            env={
+                'LANG': 'C',
+                'OPENSSL_CONF': '/dev/null',
+                'PATH': '/usr/bin:/bin',
+            },
+            check=True,
+            timeout=2,
+        ).stdout
+    except FileNotFoundError as error:
+        raise ValueError('openssl is unavailable') from error
+    except (subprocess.SubprocessError, UnicodeError) as error:
+        raise ValueError('invalid identity private key') from error
+    match = re.fullmatch(
+        r'-----BEGIN PUBLIC KEY-----\\n([A-Za-z0-9+/]{59}=)\\n-----END PUBLIC KEY-----\\n',
+        public_key_pem,
+    )
+    if match is None:
+        raise ValueError('invalid identity public key')
+    expected_public_key = base64.b64decode(match.group(1), validate=True)
+    if derived_public_key != expected_public_key:
+        raise ValueError('identity key pair mismatch')
+
+def read_sqlite_snapshot(state_fd, sqlite_state_fd):
+    records, database_metadata = read_openclaw_pairing_state(
+        STATE_DIR,
+        timeout=0,
+        state_fd=state_fd,
+        sqlite_state_fd=sqlite_state_fd,
+    )
+    identity = records['identity']
+    identity_timestamps = records['identityTimestamps']
+    if (
+        not safe_timestamp(identity_timestamps['createdAtMs'])
+        or not safe_timestamp(identity_timestamps['updatedAtMs'])
+    ):
+        raise ValueError('invalid identity timestamps')
+    validate_identity_key_pair(
+        identity['publicKeyPem'], identity['privateKeyPem'],
+    )
+    device_id = identity['deviceId']
+    auth_tokens = records['authByDevice'].get(device_id, {})
+    return {
+        'layout': 'sqlite',
+        'directories': [directory_metadata(state_fd), directory_metadata(sqlite_state_fd)],
+        'identity': (json.dumps({
+            'deviceId': device_id,
+            'publicKeyPem': identity['publicKeyPem'],
+            'privateKeyPem': identity['privateKeyPem'],
+        }, sort_keys=True).encode('utf-8'), database_metadata),
+        'auth': (json.dumps({
+            'version': 1,
+            'deviceId': device_id,
+            'tokens': auth_tokens,
+        }, sort_keys=True).encode('utf-8'), database_metadata),
+        'paired': (json.dumps(records['paired'], sort_keys=True).encode('utf-8'), database_metadata),
+        'pending': (json.dumps(records['pending'], sort_keys=True).encode('utf-8'), database_metadata),
+    }
+
+def read_snapshot():
+    state_fd = open_state_root()
+    sqlite_state_fd = -1
+    try:
+        try:
+            sqlite_state_fd = open_directory(state_fd, 'state')
+        except FileNotFoundError:
+            return read_legacy_snapshot(state_fd)
+        try:
+            database_entry = os.stat('openclaw.sqlite', dir_fd=sqlite_state_fd, follow_symlinks=False)
+        except FileNotFoundError:
+            return read_legacy_snapshot(state_fd)
+        if not stat.S_ISREG(database_entry.st_mode):
+            raise OSError('unsafe sqlite database')
+        return read_sqlite_snapshot(state_fd, sqlite_state_fd)
+    finally:
+        if sqlite_state_fd >= 0:
+            os.close(sqlite_state_fd)
         os.close(state_fd)
 
 def parse_json(raw):
@@ -477,6 +622,8 @@ try:
     second = read_snapshot()
     if first != second:
         retry_observation()
+    if first.get('layout') == 'legacy':
+        assert_legacy_layout_current()
     identity = parse_json(first['identity'][0])
     auth = parse_json(first['auth'][0])
     paired = parse_json(first['paired'][0])
@@ -602,12 +749,24 @@ try:
         if normalized_roles(device) is None:
             reject()
 
-    settled = (
+    baseline_settled = (
         exact_string_set(paired_device.get('scopes'), REQUEST_SCOPES)
         and exact_string_set(paired_device.get('approvedScopes'), REQUEST_SCOPES)
         and exact_string_set(paired_operator.get('scopes'), TOKEN_SCOPES)
         and exact_string_set(auth_operator.get('scopes'), TOKEN_SCOPES)
     )
+    # An explicitly approved operator.admin upgrade survives an OpenShell
+    # rebuild in the canonical OpenClaw state volume. Recognize that one exact,
+    # already-settled shape as healthy state. This observer never approves or
+    # expands scopes; pending admin requests remain rejected by the approval
+    # policy above.
+    admin_settled = (
+        exact_string_set(paired_device.get('scopes'), ADMIN_REQUEST_SCOPES)
+        and exact_string_set(paired_device.get('approvedScopes'), ADMIN_REQUEST_SCOPES)
+        and exact_string_set(paired_operator.get('scopes'), ADMIN_PAIRED_TOKEN_SCOPES)
+        and exact_string_set(auth_operator.get('scopes'), ADMIN_AUTH_TOKEN_SCOPES)
+    )
+    settled = baseline_settled or admin_settled
     pairing_only = (
         exact_string_set(paired_device.get('scopes'), PAIRING_ONLY_SCOPES)
         and exact_string_set(paired_device.get('approvedScopes'), PAIRING_ONLY_SCOPES)
@@ -631,6 +790,9 @@ try:
         : "if not settled:\n        reject()"
     }
 
+    projected_request_scopes = ADMIN_REQUEST_SCOPES if admin_settled else REQUEST_SCOPES
+    projected_paired_token_scopes = ADMIN_PAIRED_TOKEN_SCOPES if admin_settled else TOKEN_SCOPES
+    projected_auth_token_scopes = ADMIN_AUTH_TOKEN_SCOPES if admin_settled else TOKEN_SCOPES
     projection = {
         'deviceIdentitySha256': device_identity_sha256,
         # Bind only the allowlisted security projection. Token values, unknown
@@ -642,18 +804,18 @@ try:
             'clientId': 'cli',
             'clientMode': 'cli',
             'roles': REQUIRED_ROLES,
-            'pairedRequestScopes': REQUEST_SCOPES,
-            'approvedRequestScopes': REQUEST_SCOPES,
+            'pairedRequestScopes': projected_request_scopes,
+            'approvedRequestScopes': projected_request_scopes,
             'pairedToken': {
                 'active': True,
                 'role': 'operator',
-                'scopes': TOKEN_SCOPES,
+                'scopes': projected_paired_token_scopes,
             },
             'clientAuth': {
                 'deviceId': device_id,
                 'matchesPairedToken': True,
                 'role': 'operator',
-                'scopes': TOKEN_SCOPES,
+                'scopes': projected_auth_token_scopes,
                 'version': 1,
             },
             'relevantPending': False,
@@ -662,9 +824,9 @@ try:
         'requiredScopes': TOKEN_SCOPES,
     }
     print(MARKER + json.dumps(projection, sort_keys=True, separators=(',', ':')))
-except (FileNotFoundError, StateChangedError):
+except (FileNotFoundError, StateChangedError, OpenClawPairingStateRetryableError):
     retry_observation()
-except (OSError, ValueError, TypeError, KeyError, binascii.Error, UnicodeError):
+except (OSError, ValueError, TypeError, KeyError, binascii.Error, UnicodeError, sqlite3.Error):
     reject()
 PYQUALIFY
 `;
