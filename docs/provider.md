@@ -11,7 +11,7 @@ Use [the SDK](sdk.md) or [CLI](reference/cli.md) for the documented deployment w
 ## Resource and State Ownership
 
 OpenTofu owns graph execution and resource state.
-The SDK retains desired intent, validates plans, coordinates runtime stages, and checks application readiness.
+The SDK retains desired intent, validates plans, coordinates runtime stages, and checks sandbox configuration and Fabric health.
 The NemoClaw provider verifies durable data and credential identity; the Docker provider reconciles its native resource state.
 
 Before planning, the SDK checks configuration, locks state, and validates retained intent and local bindings.
@@ -29,6 +29,7 @@ The generated graphs manage these objects and observations:
 | NemoClaw provider | OpenShell workspace, provider, profile, sandbox, and Pi runtime configuration |
 | NemoClaw provider | Podman gateway process (`nemoclaw_managed_gateway`); gateway storage, initialization, and retained bridge (`nemoclaw_gateway_storage`) |
 | NemoClaw provider | Retained inference credentials and proxy storage; external Ollama model observation |
+| NemoClaw provider data source | Gateway capabilities and managed vLLM/Ollama application readiness |
 | Docker provider | Docker gateway, inference, and proxy containers; model-cache volumes, service-owned networks and acquired images |
 | Docker provider data source | Local images selected with `imagePullPolicy: Never` |
 
@@ -75,7 +76,21 @@ A successful plan therefore does not establish that a model will fit or load.
 
 The hosted runtime checks its hardware, startup headroom, model artifacts, and available memory before serving.
 Its resident supervisor continues protecting host memory after the CLI exits and does not automatically restart a stopped workload.
-The SDK waits for a current application status from the provider's container ID; it does not repeat model-file verification to reinterpret a ready result.
+The runtime graph uses `nemoclaw_service_readiness` to wait for current application status from the Docker provider's container ID.
+The data source validates the runtime specification and container identity, reads the service's status contract, and checks generated vLLM credential permissions when authentication is enabled.
+It does not repeat model-file verification, collect hardware inventory, or request model responses.
+Startup phases may be polled; stopped services, failed observations, and malformed status fail the read.
+
+The data source requires `spec` and `container_id`.
+Its optional `wait_timeout_seconds` accepts zero to 32400 seconds; omission means 32400 seconds, and zero requests one bounded observation.
+Successful reads return `ready: true`; unsuccessful reads report an error.
+The optional `read_trigger` has the same scheduling semantics as the gateway trigger above.
+The compiler references the container's `id` and uses `timestamp() != ""` to defer readiness until apply, including unchanged apply.
+The runtime graph must succeed before the SDK proceeds to the OpenShell graph.
+The SDK no longer runs a separate managed vLLM/Ollama readiness loop; proxy and sandbox checks remain separate.
+
+The [standalone readiness fixture](testing/fixtures.md#standalone-service-readiness) exercises this contract without SDK deployment orchestration.
+A failed read retains managed bindings, and SDK teardown omits readiness gates.
 See [runtime ownership](design/runtime.md) and [recovery](models.md#diagnose-and-recover-a-stopped-runtime).
 
 ## Combined Service Capacity

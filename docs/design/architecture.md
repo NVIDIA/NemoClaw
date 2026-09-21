@@ -73,7 +73,7 @@ The local state directory retains these records:
 | Record | Meaning | Why recovery needs it |
 |---|---|---|
 | Deployment UID and generation tokens | Deployment ownership and creation identity | Matching a resource name alone cannot authorize adoption. |
-| Intent document and digest | Configuration selected for an operation | An interrupted graph mutation rejects different intent until reconciled. |
+| Intent document and digest | Configuration selected for an operation | An unfinished OpenShell mutation requires its original intent; runtime recovery can use revised intent subject to binding checks. |
 | OpenTofu state and saved resource specifications | Established physical IDs and configurations | A failed readiness check retains state; explicit recovery may replace disposable compute. |
 | Operation flags and saved-plan digest | Apply or destroy progress | Recovery can verify intent and resume the remaining resource operations. |
 
@@ -102,7 +102,7 @@ The successful managed apply path is:
 flowchart TD
     Input[Validate document and lock state] --> Runtime[Plan and check runtime graph]
     Runtime --> SaveRuntime[Save intent and apply runtime graph]
-    SaveRuntime --> Wait[Wait for gateway and inference readiness]
+    SaveRuntime --> Wait[Provider readiness gates inside OpenTofu]
     Wait --> Shell[Plan and check OpenShell graph]
     Shell --> SaveShell[Save intent and apply OpenShell graph]
     SaveShell --> Probe[Check agent configuration and readiness]
@@ -121,17 +121,19 @@ Suppose gateway creation succeeds but inference startup fails.
 The gateway and model-storage bindings remain recorded, and a later explicit apply can reconcile them.
 Automatic rollback could delete useful data or repeat an operation whose response was lost.
 
-The pending-intent guard applies while a graph mutation is unfinished.
-After OpenTofu apply completes, the SDK clears that guard before readiness checks.
-A later readiness failure still retains bindings, but revised intent can proceed if it satisfies validation and ownership checks.
+An unfinished OpenShell mutation still requires its original intent before another change or destroy.
+Runtime failures retain an unfinished-operation marker for export, but allow revised intent or teardown using OpenTofu's recorded bindings and the existing durable-storage checks.
+Runtime reconciliation cannot clear an earlier unfinished OpenShell operation.
+Gateway and managed vLLM/Ollama readiness run inside the runtime graph; a failed read retains compute and storage state without rolling them back.
 
 Destroy reverses the dependency direction: remove OpenShell workloads before stopping the gateway that owns them.
 It checks both saved plans before deletion and records when the OpenShell stage finishes.
 That saved progress lets an interrupted destroy continue even after the gateway becomes unavailable.
 The [managed orchestration commit](https://github.com/NVIDIA/NemoClaw/commit/b18e282837) records the failure cases behind this order.
 
-Managed services use one installer contract: install, a bounded post-install readiness check, and remove.
-Apply completes the installer-owned resource graph before it runs the readiness check once.
+The installer contract declares install and removal plans.
+Managed vLLM/Ollama readiness is an independent provider data source ordered after its container and deferred until every apply.
+The SDK still checks proxy and sandbox configuration and readiness separately.
 A stopped service remains bound, and an explicit apply can reconcile it without a package-specific recovery operation or an automatic restart loop.
 
 ## Why Storage Has Its Own Binding
@@ -186,7 +188,7 @@ Inference storage retains both the exact model snapshot and prepared data.
 
 Configuration and readiness are separate.
 A process can exit immediately after start while retaining valid identity and storage.
-Service containers are created without provider health waiting; the SDK consumes application readiness after infrastructure state is recorded.
+The Docker provider creates service containers; a separate NemoClaw data source consumes application readiness through the recorded container ID.
 An application readiness failure does not roll back persistent data.
 
 The [runtime lifecycle](runtime.md#why-the-watchdog-lives-with-inference) explains loading deadlines and protective shutdown.
@@ -218,7 +220,7 @@ The archive must include OpenShell protobuf inputs omitted by Cargo vendoring, a
 Source packaging and dependency maintenance count toward the architecture's cost.
 
 Managed Ollama uses the same service-installer boundary and retained-storage model as managed vLLM.
-Package-specific model download, runtime arguments, and bounded readiness checks stay in the Ollama installer.
+Package-specific model download and runtime arguments stay in the Ollama implementation; its status reader serves the shared provider readiness contract.
 Deployment orchestration consumes only the installer plan and the resolved provider connection.
 
 Destroy retains the volume resource and its data, then removes the provider-managed container and service-owned network after dependent OpenShell resources.
