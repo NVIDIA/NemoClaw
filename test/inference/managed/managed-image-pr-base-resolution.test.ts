@@ -117,23 +117,23 @@ exit 90
 
 it.each([
   {
-    compatible: true,
+    candidateContents: "unrelated candidate change\n",
+    candidatePath: "README.md",
     expectedLocal: false,
-    title: "reuses a published DCode base that satisfies the current runtime contract",
+    title: "reuses a published DCode base built from the same runtime contract inputs",
   },
   {
-    compatible: false,
+    candidateContents: "print('new contract')\n",
+    candidatePath: "agents/langchain-deepagents-code/validate-runtime-contract.py",
     expectedLocal: true,
-    title:
-      "builds the DCode base locally when the published base fails the current runtime contract",
+    title: "builds the DCode base locally when its published source predates the runtime contract",
   },
-])("$title", ({ compatible, expectedLocal }) => {
+])("$title", ({ candidateContents, candidatePath, expectedLocal }) => {
   const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-pr-base-"));
   const fakeBin = path.join(temporaryRoot, "bin");
   const output = path.join(temporaryRoot, "output");
   const summary = path.join(temporaryRoot, "summary");
   const dockerLog = path.join(temporaryRoot, "docker.log");
-  const nodeLog = path.join(temporaryRoot, "node.log");
   const exactRaw = '{"schemaVersion":2,"config":{"digest":"sha256:base"}}';
   const digest = `sha256:${createHash("sha256").update(exactRaw).digest("hex")}`;
   const aliasRaw = JSON.stringify({
@@ -149,19 +149,18 @@ it.each([
   runGit("init", "--quiet");
   runGit("config", "user.name", "NemoClaw Test");
   runGit("config", "user.email", "nemoclaw-test@example.invalid");
-  fs.writeFileSync(path.join(temporaryRoot, "Dockerfile.base"), "FROM scratch\n");
-  runGit("add", "Dockerfile.base");
+  const agentRoot = path.join(temporaryRoot, "agents/langchain-deepagents-code");
+  fs.mkdirSync(agentRoot, { recursive: true });
+  fs.writeFileSync(path.join(agentRoot, "Dockerfile.base"), "FROM scratch\n");
+  fs.writeFileSync(path.join(agentRoot, "requirements.lock"), "deepagents==0.7.5\n");
+  fs.writeFileSync(path.join(agentRoot, "validate-runtime-contract.py"), "print('ok')\n");
+  runGit("add", "agents/langchain-deepagents-code");
   runGit("commit", "--quiet", "-m", "test: add base");
+  const publishedSourceSha = runGit("rev-parse", "HEAD");
+  fs.writeFileSync(path.join(temporaryRoot, candidatePath), candidateContents);
+  runGit("add", candidatePath);
+  runGit("commit", "--quiet", "-m", "test: create candidate");
   const candidateSha = runGit("rev-parse", "HEAD");
-  fs.writeFileSync(
-    path.join(fakeBin, "node"),
-    `#!/bin/bash
-set -euo pipefail
-printf '%s\\n' "$*" >> "$NODE_LOG"
-[ "$DCODE_RUNTIME_COMPATIBLE" = true ]
-`,
-    { mode: 0o755 },
-  );
   fs.writeFileSync(
     path.join(fakeBin, "docker"),
     `#!/bin/bash
@@ -197,8 +196,12 @@ if [ "\${1:-} \${2:-}" = "load --input" ] || [ "\${1:-}" = pull ]; then
   exit 0
 fi
 if [ "\${1:-} \${2:-}" = "image inspect" ]; then
+  source_revision="$PUBLISHED_SOURCE_SHA"
+  if [ "\${3:-}" = "$LOCAL_BASE_REFERENCE" ]; then
+    source_revision="$CANDIDATE_SHA"
+  fi
   printf '[{"Config":{"Labels":{"org.opencontainers.image.revision":"%s"}},"Id":"sha256:%s","Os":"linux","Architecture":"amd64"}]\\n' \
-    "$CANDIDATE_SHA" "$(printf 'b%.0s' {1..64})"
+    "$source_revision" "$(printf 'b%.0s' {1..64})"
   exit 0
 fi
 if [ "\${1:-}" = run ]; then
@@ -214,20 +217,19 @@ exit 90
     AGENT: "langchain-deepagents-code",
     ALIAS_RAW: aliasRaw,
     BASE_ALIAS: "ghcr.io/nvidia/nemoclaw/langchain-deepagents-code-sandbox-base:latest",
-    BASE_DOCKERFILE: "Dockerfile.base",
+    BASE_DOCKERFILE: "agents/langchain-deepagents-code/Dockerfile.base",
     BASE_REPOSITORY: "ghcr.io/nvidia/nemoclaw/langchain-deepagents-code-sandbox-base",
     BASE_SHA: candidateSha,
     CANDIDATE_SHA: candidateSha,
-    DCODE_RUNTIME_COMPATIBLE: compatible ? "true" : "false",
     DISPLAY_NAME: "Deep Agents Code",
     DOCKER_LOG: dockerLog,
     EXACT_RAW: exactRaw,
     GITHUB_OUTPUT: output,
     GITHUB_STEP_SUMMARY: summary,
     LOCAL_BASE_REFERENCE: "nemoclaw-managed-pr/langchain-deepagents-code-base:test",
-    NODE_LOG: nodeLog,
     PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
     PLATFORM: "linux/amd64",
+    PUBLISHED_SOURCE_SHA: publishedSourceSha,
     RUNNER_TEMP: temporaryRoot,
   };
 
@@ -242,13 +244,11 @@ exit 90
     expect(resolverOutput).toContain(`local=${String(expectedLocal)}\n`);
     const dockerCommands = fs.readFileSync(dockerLog, "utf8");
     expect(dockerCommands.includes("buildx build")).toBe(expectedLocal);
-    expect(fs.readFileSync(nodeLog, "utf8")).toContain(
-      `--reference ${environment.BASE_REPOSITORY}@${digest} --platform linux/amd64`,
-    );
+    expect(dockerCommands).not.toContain("validate-dcode-runtime-contract.py");
     expect(
       fs
         .readFileSync(summary, "utf8")
-        .includes("Reason: published base does not satisfy the current runtime contract."),
+        .includes("Reason: published base was built from different DCode runtime contract inputs."),
     ).toBe(expectedLocal);
   } finally {
     fs.rmSync(temporaryRoot, { recursive: true, force: true });

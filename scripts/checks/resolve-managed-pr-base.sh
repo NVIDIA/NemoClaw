@@ -97,11 +97,30 @@ build_local_base() {
     "$DISPLAY_NAME" "$BASE_DOCKERFILE" "$CANDIDATE_SHA" "$reason" \
     >>"$GITHUB_STEP_SUMMARY"
 }
-current_dcode_runtime_compatible() {
-  [ "$AGENT" != "langchain-deepagents-code" ] || node --no-warnings \
-    scripts/checks/validate-dcode-runtime-contract.mts \
-    --reference "$1" \
-    --platform "$PLATFORM"
+published_dcode_base_matches_candidate_contract() {
+  [ "$AGENT" = "langchain-deepagents-code" ] || return 0
+  local reference="$1" image_json source_revision contract_diff_status
+  docker pull --platform "$PLATFORM" "$reference" >/dev/null || return 1
+  image_json="$(docker image inspect "$reference")" || return 1
+  source_revision="$(
+    jq -er '
+      if length == 1
+      then .[0].Config.Labels["org.opencontainers.image.revision"]
+      else error("not one image")
+      end
+    ' <<<"$image_json"
+  )" || return 1
+  [[ "$source_revision" =~ ^[0-9a-f]{40}$ ]] || return 1
+  if ! git cat-file -e "${source_revision}^{commit}" 2>/dev/null; then
+    git fetch --no-tags --depth=1 origin "$source_revision" || return 1
+  fi
+  contract_diff_status=0
+  git diff --quiet "$source_revision" "$CANDIDATE_SHA" -- \
+    "$BASE_DOCKERFILE" \
+    agents/langchain-deepagents-code/requirements.lock \
+    agents/langchain-deepagents-code/validate-runtime-contract.py \
+    || contract_diff_status=$?
+  [ "$contract_diff_status" -eq 0 ]
 }
 if [[ ! "$BASE_SHA" =~ ^[0-9a-f]{40}$ || ! "$CANDIDATE_SHA" =~ ^[0-9a-f]{40}$ ]]; then
   echo "ERROR: PR base resolution requires exact base and candidate commit SHAs." >&2
@@ -156,8 +175,8 @@ if [ "$actual" != "$digest" ]; then
   echo "ERROR: exact PR base bytes do not match the selected descriptor digest." >&2
   exit 1
 fi
-if ! current_dcode_runtime_compatible "$reference"; then
-  build_local_base "published base does not satisfy the current runtime contract"
+if ! published_dcode_base_matches_candidate_contract "$reference"; then
+  build_local_base "published base was built from different DCode runtime contract inputs"
   exit 0
 fi
 {
