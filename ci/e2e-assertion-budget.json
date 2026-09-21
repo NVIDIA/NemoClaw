@@ -15,28 +15,28 @@
     "testFileCount": 78,
     "liveFileCount": 189,
     "direct": {
-      "expectCalls": 1404,
-      "matcherAssertions": 1383,
+      "expectCalls": 1401,
+      "matcherAssertions": 1380,
       "nodeAssertions": 103,
-      "namedAssertionHelpers": 467,
+      "namedAssertionHelpers": 461,
       "failCalls": 0,
       "throwGuards": 71,
       "objectFieldAssertions": 171,
-      "assertionPoints": 2195,
-      "generatedProbeBlocks": 96,
-      "generatedProbeConditions": 250
+      "assertionPoints": 2186,
+      "generatedProbeBlocks": 95,
+      "generatedProbeConditions": 243
     },
     "unique": {
-      "expectCalls": 1847,
-      "matcherAssertions": 1821,
+      "expectCalls": 1844,
+      "matcherAssertions": 1818,
       "nodeAssertions": 112,
-      "namedAssertionHelpers": 703,
+      "namedAssertionHelpers": 697,
       "failCalls": 1,
       "throwGuards": 540,
       "objectFieldAssertions": 248,
-      "assertionPoints": 3425,
-      "generatedProbeBlocks": 237,
-      "generatedProbeConditions": 845
+      "assertionPoints": 3416,
+      "generatedProbeBlocks": 236,
+      "generatedProbeConditions": 838
     },
     "fileMetricOrder": [
       "directExpectCalls",
