@@ -24,7 +24,10 @@ import {
   ONBOARD_SINGLE_FINAL_HANDOFF_TARGET_TIMEOUT_MINUTES,
 } from "./onboard-timeout-contract.mts";
 import { HERMES_ACP_E2E_OWNING_PATHS } from "./hermes-acp-owning-paths.mts";
-import { REVIEWED_GATEWAY_UPGRADE_FIXTURE } from "./openshell-gateway-upgrade-fixture.mts";
+import {
+  REVIEWED_GATEWAY_REGISTRATION_UPGRADE_FIXTURE,
+  REVIEWED_GATEWAY_UPGRADE_FIXTURE,
+} from "./openshell-gateway-upgrade-fixture.mts";
 import { normalizeE2eSelectorId } from "./selector-aliases.mts";
 
 export const E2E_EXECUTION_PROFILES = [
@@ -344,6 +347,15 @@ function commonEgressTarget(options: {
   });
 }
 
+const GATEWAY_UPGRADE_OWNING_PATHS = Object.freeze([
+  "scripts/install.sh",
+  "src/lib/actions/global.ts",
+  "src/lib/actions/sandbox/forward-recovery.ts",
+  "tools/e2e/openshell-gateway-upgrade-fixture.mts",
+  "test/e2e/live/openshell-gateway-upgrade-helpers.ts",
+  "test/e2e/live/openshell-gateway-upgrade-old-installer.ts",
+]);
+
 const GATEWAY_UPGRADE_TARGET = dockerOnlyTarget("openshell-gateway-upgrade-v0-0-89-x86-64", {
   targetId: "openshell-gateway-upgrade",
   displayName: `Upgrade: preserves a ${REVIEWED_GATEWAY_UPGRADE_FIXTURE.nemoclawRef} sandbox on x86-64`,
@@ -358,11 +370,7 @@ const GATEWAY_UPGRADE_TARGET = dockerOnlyTarget("openshell-gateway-upgrade-v0-0-
   restoreCli: true,
   exposeCliBin: true,
   shard: "v0-0-89-x86-64",
-  owningPaths: [
-    "tools/e2e/openshell-gateway-upgrade-fixture.mts",
-    "test/e2e/live/openshell-gateway-upgrade-helpers.ts",
-    "test/e2e/live/openshell-gateway-upgrade-old-installer.ts",
-  ],
+  owningPaths: GATEWAY_UPGRADE_OWNING_PATHS,
   environment: {
     ...nonInteractive,
     NEMOCLAW_GATEWAY_UPGRADE_SURVIVOR_NAME: "e2e-gw-survivor",
@@ -377,6 +385,44 @@ const GATEWAY_UPGRADE_TARGET = dockerOnlyTarget("openshell-gateway-upgrade-v0-0-
     OPENSHELL_GATEWAY: "nemoclaw",
   },
 });
+
+const GATEWAY_REGISTRATION_UPGRADE_TARGET = dockerOnlyTarget(
+  "openshell-gateway-upgrade-v0-0-123-x86-64",
+  {
+    targetId: "openshell-gateway-upgrade",
+    displayName: `Upgrade: restores ${REVIEWED_GATEWAY_REGISTRATION_UPGRADE_FIXTURE.nemoclawRef} gateway registration and sandboxes on x86-64`,
+    agentRuntime: "openclaw",
+    environmentOrInferenceEndpoint:
+      "x86-64 Ubuntu; GitHub release artifacts; host-local compatible inference endpoint",
+    profile: "github-read",
+    runner: "ubuntu-latest",
+    testFile: "test/e2e/live/openshell-gateway-upgrade.test.ts",
+    timeoutMinutes: 120,
+    installMode: "none",
+    restoreCli: true,
+    exposeCliBin: true,
+    shard: "v0-0-123-x86-64",
+    owningPaths: GATEWAY_UPGRADE_OWNING_PATHS,
+    environment: {
+      ...nonInteractive,
+      NEMOCLAW_GATEWAY_UPGRADE_SURVIVOR_NAME: "e2e-gw-survivor",
+      NEMOCLAW_OLD_NEMOCLAW_REF: REVIEWED_GATEWAY_REGISTRATION_UPGRADE_FIXTURE.nemoclawRef,
+      NEMOCLAW_OLD_NEMOCLAW_COMMIT: REVIEWED_GATEWAY_REGISTRATION_UPGRADE_FIXTURE.nemoclawCommit,
+      NEMOCLAW_OLD_INSTALLER_SHA256: REVIEWED_GATEWAY_REGISTRATION_UPGRADE_FIXTURE.installerSha256,
+      NEMOCLAW_OLD_SANDBOX_BASE_IMAGE_REF:
+        REVIEWED_GATEWAY_REGISTRATION_UPGRADE_FIXTURE.sandboxBaseImageRef,
+      NEMOCLAW_OLD_OPENSHELL_VERSION:
+        REVIEWED_GATEWAY_REGISTRATION_UPGRADE_FIXTURE.openShellVersion,
+      NEMOCLAW_OLD_OPENCLAW_VERSION: REVIEWED_GATEWAY_REGISTRATION_UPGRADE_FIXTURE.openclawVersion,
+      OPENSHELL_GATEWAY: "nemoclaw",
+    },
+  },
+);
+
+const GATEWAY_UPGRADE_TARGETS = Object.freeze([
+  GATEWAY_UPGRADE_TARGET,
+  GATEWAY_REGISTRATION_UPGRADE_TARGET,
+]);
 
 export const E2E_CATALOGUE_EXCLUSION_REASONS = {
   "issue-4434-tui-unreachable-inference":
@@ -1144,7 +1190,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
       OPENSHELL_GATEWAY: "nemoclaw",
     },
   }),
-  GATEWAY_UPGRADE_TARGET,
+  ...GATEWAY_UPGRADE_TARGETS,
   dockerOnlyTarget("rebuild-openclaw", {
     displayName: "Rebuild: restores OpenClaw state and native readiness",
     agentRuntime: "openclaw",
@@ -1600,10 +1646,8 @@ export function validateE2eTargetCatalogue(
       entry.targetId === "openshell-gateway-upgrade" ||
       entry.id.startsWith("openshell-gateway-upgrade-")
     ) {
-      if (
-        entry.id !== GATEWAY_UPGRADE_TARGET.id ||
-        !isDeepStrictEqual(entry, GATEWAY_UPGRADE_TARGET)
-      ) {
+      const reviewedTarget = GATEWAY_UPGRADE_TARGETS.find((candidate) => candidate.id === entry.id);
+      if (!reviewedTarget || !isDeepStrictEqual(entry, reviewedTarget)) {
         throw new Error(
           `E2E target ${entry.id} must match the exact reviewed gateway-upgrade fixture`,
         );
