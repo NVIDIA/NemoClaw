@@ -21,8 +21,3 @@ pub(crate) struct DefaultedInteger {
     pub min: i64,
     pub max: i64,
 }
-impl DefaultedInteger {
-    pub fn contains(&self, value: i64) -> bool {
-        (self.min..=self.max).contains(&value)
-    }
-}

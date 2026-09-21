@@ -129,7 +129,7 @@ impl Document {
                 .iter()
                 .chain(&sandbox.inference_providers)
             {
-                if !super::validation::SLUG.is_match(&definition.name)
+                if !super::validation::valid_name(&definition.name)
                     || !names.insert(&definition.name)
                 {
                     return Err(ConfigError::new(

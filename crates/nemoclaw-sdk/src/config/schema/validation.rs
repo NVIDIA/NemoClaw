@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-//! Conditional input rules supplement the structure derived from Rust types.
+//! Shared structural contract for authored input and normalized SDK values.
 use crate::config::network as n;
 use crate::config::{API_VERSION, DEFAULT_AGENT_IMAGE, DEFAULT_GATEWAY_IMAGE, constraints as c};
 use serde_json::{Value, json};
@@ -14,23 +14,44 @@ pub(crate) fn property(schema: &mut Value, field: &str, extra: Value) {
         .expect("derived field exists")
         .extend(extra);
 }
-pub(crate) fn integer(schema: &mut Value, field: &str, rule: &c::DefaultedInteger) {
+pub(crate) fn integer(
+    schema: &mut Value,
+    field: &str,
+    rule: &c::DefaultedInteger,
+    normalized: bool,
+) {
     property(
         schema,
         field,
         json!({
-            "anyOf": [{"const": 0}, {"minimum": rule.min, "maximum": rule.max}],
+            "anyOf": if normalized { json!([{ "minimum": rule.min, "maximum": rule.max }]) } else { json!([{ "const": 0 }, { "minimum": rule.min, "maximum": rule.max }]) },
             "default": rule.default,
             "x-nemoclaw-default-rule": "Omitted or zero selects the default."
         }),
     );
 }
-fn optional_string(schema: &mut Value, field: &str, default: &str, constraint: &Value) {
+fn optional_string(
+    schema: &mut Value,
+    field: &str,
+    default: &str,
+    constraint: &Value,
+    normalized: bool,
+) {
+    if normalized {
+        schema
+            .as_object_mut()
+            .unwrap()
+            .entry("required")
+            .or_insert(json!([]))
+            .as_array_mut()
+            .unwrap()
+            .push(json!(field));
+    }
     property(
         schema,
         field,
         json!({
-            "anyOf": [{"const": ""}, constraint], "default": default,
+            "anyOf": if normalized { json!([constraint]) } else { json!([{ "const": "" }, constraint]) }, "default": default,
             "x-nemoclaw-default-rule": "Omitted or empty selects the default."
         }),
     );
@@ -52,7 +73,7 @@ pub(crate) fn at(path: &str, rule: Value, required: bool) -> Value {
     })
 }
 
-pub(super) fn constrain(root: &mut Value) {
+pub(super) fn constrain(root: &mut Value, normalized: bool) {
     property(root, "apiVersion", json!({"const": API_VERSION}));
     property(root, "kind", json!({"const": c::KIND}));
     let defs = root["$defs"].as_object_mut().unwrap();
@@ -128,21 +149,13 @@ pub(super) fn constrain(root: &mut Value) {
         "sandboxes",
         json!({"minItems":1,"maxItems":32}),
     );
-    defs["Sandbox"]["allOf"] = json!([{
-        "if": at("agent/tools/allow", json!({}), true),
-        "then": at("harness/kind",json!({"enum":["openclaw","deepagents","pi"]}),false)
-    }, {
-        "if": at("agent/tools/disclosure", json!({}), true),
-        "then": at("harness/kind",json!({"const":"openclaw"}),false)
-    }, {
-        "if": at("agent/inference/routes",json!({"minItems":2}),true),
-        "then": at("harness/kind", json!({"enum":["openclaw","pi"]}), false)
-    }]);
+    defs["Sandbox"]["allOf"] = json!([]);
     optional_string(
         &mut defs["Image"],
         "ref",
         DEFAULT_AGENT_IMAGE,
         &json!({"pattern": c::IMAGE}),
+        normalized,
     );
     let driver_values = defs["Runtime"]["properties"]["provider"]
         .as_object_mut()
@@ -154,12 +167,14 @@ pub(super) fn constrain(root: &mut Value) {
         "provider",
         c::RUNTIME,
         &json!({"enum": driver_values}),
+        normalized,
     );
     optional_string(
         &mut defs["Network"],
         "tier",
         c::NETWORK_TIER,
         &json!({"const": c::NETWORK_TIER}),
+        false,
     );
     property(
         &mut defs["Network"],
@@ -196,9 +211,12 @@ pub(super) fn constrain(root: &mut Value) {
     );
     defs["PolicyEndpoint"]["allOf"] = json!([
         {"oneOf": [{"required": ["port"], "not": {"required": ["ports"]}}, {"required": ["ports"], "not": {"required": ["port"]}}]},
-        {"anyOf": [{"required": ["host"]}, {"required": ["allowed_ips"]}]},
+        {"anyOf": [{"required": ["host"], "properties":{"host":{"minLength":1}}}, {"required": ["allowed_ips"], "properties":{"allowed_ips":{"minItems":1}}}]},
         {"not": {"required": ["access", "rules"]}}
     ]);
+    for field in ["rules", "deny_rules"] {
+        property(&mut defs["PolicyEndpoint"], field, json!({"minItems": 1}));
+    }
     for name in ["PolicyJsonRpc", "PolicyMcp"] {
         property(
             &mut defs[name],
@@ -275,6 +293,19 @@ pub(super) fn constrain(root: &mut Value) {
                     json!({"anyOf": [{"const": ""}, {"pattern": "/24$"}], "x-nemoclaw-default-rule": "Omitted or empty selects 172.30.N.0/24, where N is the first byte of SHA-256(metadata.uid)."}),
                 ),
             ] {
+                let mut rule = rule;
+                if normalized {
+                    gateway["required"]
+                        .as_array_mut()
+                        .unwrap()
+                        .push(json!(field));
+                    if let Some(choices) = rule.get_mut("anyOf").and_then(Value::as_array_mut) {
+                        choices.retain(|choice| choice.get("const") != Some(&json!("")));
+                    }
+                    if field == "image" {
+                        rule["enum"] = json!([DEFAULT_GATEWAY_IMAGE]);
+                    }
+                }
                 property(gateway, field, rule);
                 if field != "networkCIDR" {
                     property(
@@ -298,7 +329,12 @@ pub(super) fn constrain(root: &mut Value) {
     provider["else"] =
         json!({"required": ["endpoint"], "properties": {"endpoint": {"pattern": "^https?://"}}});
     provider["allOf"] = json!([
-        {"if": at("endpoint", json!({"pattern": "^http:"}), true), "then": forbid(&["credential"])}
+        {"if": at("endpoint", json!({"pattern": "^http:"}), true), "then": forbid(&["credential"])},
+        {"if": {"required":["api"]}, "then": {
+            "if": at("api", json!({"const":"anthropic-messages"}), true),
+            "then": at("provider", json!({"const":"anthropic"}), false),
+            "else": at("provider", json!({"const":"openai"}), false)
+        }}
     ]);
     property(
         &mut defs["OpenClawDashboard"],
@@ -346,77 +382,30 @@ pub(super) fn constrain(root: &mut Value) {
     defs["Harness"]["allOf"].as_array_mut().unwrap().push(json!({"if":{"required":["interfaces"]},"then":{"properties":{"kind":{"enum":["openclaw","hermes"]}},"allOf":[
         {"if":{"properties":{"kind":{"const":"openclaw"}}},"then":{"properties":{"interfaces":{"$ref":"#/$defs/OpenClawInterfaces"}}},"else":{"properties":{"interfaces":{"$ref":"#/$defs/HermesInterfaces"}}}}
     ]}}));
-    crate::services::constrain_schema(defs);
+    crate::services::constrain_schema(defs, normalized);
 
     root["allOf"] = json!([{
         "if": {"not": at("spec/sandboxes/[]/runtime/provider", json!({"const":"podman"}), true)},
         "then": at("spec/gateway/imagePullPolicy", json!({"enum":["IfNotPresent", "Never"]}), false)
     }]);
-    let route_path = "spec/sandboxes/[]/agent/inference/routes/[]";
     root["allOf"].as_array_mut().unwrap().push(json!({
-        "if": at(route_path, json!({"required":["providerRef"]}), true),
-        "then": {"anyOf":[
-            at("spec/inferenceProviders", json!({"minItems":1}), true),
-            at("spec/sandboxes/[]/inferenceProviders", json!({"minItems":1}), true)
+        "if": at("spec/gateway/management", json!({"const":"managed"}), true),
+        "then": {"anyOf": [
+            at("spec/sandboxes/[]/runtime/provider", json!({"enum":["", "docker"]}), false),
+            at("spec/sandboxes/[]/runtime/provider", json!({"const":"podman"}), true)
         ]}
     }));
-    for (provider, selection) in [
-        (
-            "spec/inferenceProviders/[]",
-            json!({"allOf": [
-                at("spec/inferenceProviders", json!({"minItems":1,"maxItems":1}), true),
-                at("spec/sandboxes/[]/inferenceProviders", json!({"maxItems":0}), false),
-                at(route_path, json!({"required":["providerRef"]}), true)
-            ]}),
-        ),
-        (
-            "spec/sandboxes/[]/inferenceProviders/[]",
-            json!({"allOf": [
-                at("spec/inferenceProviders", json!({"maxItems":0}), false),
-                at("spec/sandboxes/[]/inferenceProviders", json!({"minItems":1,"maxItems":1}), true),
-                at(route_path, json!({"required":["providerRef"]}), true)
-            ]}),
-        ),
-        (
-            "spec/sandboxes/[]/agent/inference/routes/[]/provider",
-            at(route_path, json!({"required":["provider"]}), true),
-        ),
-    ] {
-        let agent = "spec/sandboxes/[]/agent";
-        let route = format!("{agent}/inference/routes/[]/overrides");
-        let rules = json!([
-            {"if": at("spec/sandboxes/[]/harness/kind", json!({"const": "pi"}), true), "then": at(provider, forbid(&["api"]), false)},
-            {"if": {"anyOf": [at(&format!("{provider}/api"), json!({"const": "anthropic-messages"}), true),
-                {"allOf": [at("spec/sandboxes/[]/harness/kind", json!({"const": "claude"}), true), at(provider, forbid(&["api"]), true)]}]},
-             "then": at(&format!("{provider}/provider"), json!({"const": "anthropic"}), false),
-             "else": at(&format!("{provider}/provider"), json!({"const": "openai"}), false)},
-            {"if": at("spec/sandboxes/[]/harness/kind", json!({"const": "claude"}), true), "then": at(&format!("{provider}/api"), json!({"const": "anthropic-messages"}), false)},
-            {"if": at("spec/sandboxes/[]/harness/kind", json!({"const": "codex"}), true), "then": at(&format!("{provider}/api"), json!({"const": "openai-responses"}), false)},
-            {"if": at("spec/sandboxes/[]/harness/kind", json!({"not": {"enum": ["openclaw", "hermes", "claude", "codex"]}}), true), "then": at(&format!("{provider}/api"), json!({"const": "openai-completions"}), false)},
-            {"if": at("spec/sandboxes/[]/harness/kind", json!({"not": {"const": "openclaw"}}), true),
-             "then": at(&route, forbid(&["contextWindow", "reasoning", "reasoningEffort"]), false)},
-            {"if": at("spec/sandboxes/[]/harness/kind", json!({"not": {"enum": ["openclaw", "deepagents", "mini-swe-agent", "remote-agent"]}}), true),
-             "then": at(&route, forbid(&["maxTokens"]), false)},
-            {"if": at(&format!("{agent}/auth"), json!({}), true), "then": {"allOf": [at("spec/sandboxes/[]/harness/kind", json!({"const": "hermes"}), false), at(provider, json!({"anyOf":[{"required":["credential"]},{"required":["serviceRef"]}]}), true)]}},
-            {"if": at("spec/sandboxes/[]/harness/kind", json!({"not": {"const": "pi"}}), true),
-             "then": at(&route, forbid(&["piModel"]), false)}
-        ]);
-        root["allOf"]
-            .as_array_mut()
-            .unwrap()
-            .push(json!({"if":{"allOf":[selection,at("spec/sandboxes/[]/harness/kind",json!({}),true)]},"then":{"allOf":rules}}));
-    }
     root["x-nemoclaw-parser-checks"] = json!([
-        "Document::parse remains authoritative. It rejects YAML aliases, anchors, merge keys, unsupported tags, duplicate keys, multiple documents, and input larger than 1 MiB.",
-        "The parser checks endpoint transport and address policy, managed gateway port bounds, canonical private IPv4 /24 networks, local engine socket syntax, one compute driver per managed gateway, and publication address/port/network agreement.",
+        "Document::parse rejects YAML aliases, anchors, merge keys, unsupported tags, duplicate keys, multiple documents, and input larger than 1 MiB. It applies the compiled input schema before defaulting; Document::validate applies the normalized schema and semantic checks, including for directly constructed Rust values.",
+        "The parser checks endpoint transport and address policy, managed gateway port bounds, canonical private IPv4 /24 networks, local engine socket syntax, and publication address/port/network agreement.",
         "Explicit sandbox policies are also checked by the pinned OpenShell policy parser and validator, including protocol-specific rule semantics, process identities, filesystem paths, and destination address restrictions.",
         "Explicit filesystem grants must permit reads of the selected harness runtime directories; parent and read-write grants count. This parser check does not inspect images, resolve symlinks, or establish runtime permissions.",
-        "The parser checks uniquely named model choices with an explicit default for multiple choices, multiple choices for OpenClaw and Pi, and the OpenClaw disclosure mode; omitted disclosure means progressive.",
+        "The schema requires an explicit default for multiple model choices. Rust checks unique route names, that the default names a route, and that the resolved harness supports the selected model count, tuning, and tools; omitted disclosure means progressive.",
         "The parser resolves integrationRefs only from enclosing deployment or sandbox definitions, rejects name shadowing and incompatible agent grants, and permits at most one attached Brave search definition per sandbox. Agent-inline definitions attach directly; unused enclosing definitions grant no access.",
-        "The parser requires exactly one sandbox harness or harnessRef, resolves visible harnesses without shadowing, and rejects agent-level harness selection. Each sandbox requires one agent and hosts one Fabric runtime using the sandbox-selected implementation. Shared definitions reuse configuration across sandboxes.",
+        "The schema requires exactly one sandbox harness or harnessRef and rejects agent-level harness selection. Rust resolves visible harnesses without shadowing. Each sandbox requires one agent and hosts one Fabric runtime using the sandbox-selected implementation. Shared definitions reuse configuration across sandboxes.",
         "The parser permits non-default reasoningEffort values only on the initial default choice. Managed inference services may constrain routes to their declared served model.",
-        "The parser resolves inferenceRef from enclosing inferences, preserves declaration scope for nested provider references, and rejects missing names, shadowing, and inline/reference ambiguity.",
-        "The parser resolves providerRef from enclosing inferenceProviders, rejects shadowing, conflicting selected names, more than 32 selected providers, incompatible managed-service combinations, and compares route models and authentication with the selected provider. With multiple named definitions, provider/agent compatibility is a parser check. Unselected definitions create no resources. Snapshot identity must match the service model.",
+        "Rust resolves inferenceRef from enclosing inferences, preserves declaration scope for nested provider references, and rejects missing names and shadowing. The schema rejects inline/reference ambiguity.",
+        "The parser resolves providerRef from enclosing inferenceProviders, rejects shadowing, conflicting selected names, more than 32 selected providers, incompatible managed-service combinations, and compares route models and authentication with the selected provider. Provider/agent compatibility is checked after reference resolution for both inline and shared definitions. Unselected definitions create no resources. Snapshot identity must match the service model.",
         "The parser checks memory threshold ordering and GPU/KV budget relationships; recipe path safety, byte-length limits, environment-map conflicts, snapshot file uniqueness, directory conflicts, and total-size overflow.",
         "Schema validation does not observe hardware, image labels, model weights, credentials, ownership, connectivity, or inference readiness. Those checks run during the relevant SDK operation."
     ]);

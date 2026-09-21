@@ -107,13 +107,6 @@ impl Document {
 
     pub(super) fn validate_inference_references(&self) -> Result<(), ConfigError> {
         for sandbox in &self.spec.sandboxes {
-            for name in self.spec.inferences.keys().chain(sandbox.inferences.keys()) {
-                if !super::validation::SLUG.is_match(name) {
-                    return Err(ConfigError::new(
-                        "inference definitions require lowercase names",
-                    ));
-                }
-            }
             if sandbox
                 .inferences
                 .keys()
@@ -168,13 +161,6 @@ impl Document {
 
     pub(super) fn validate_harness_references(&self) -> Result<(), ConfigError> {
         for sandbox in &self.spec.sandboxes {
-            for name in self.spec.harnesses.keys().chain(sandbox.harnesses.keys()) {
-                if !super::validation::SLUG.is_match(name) {
-                    return Err(ConfigError::new(
-                        "harness definitions require lowercase names",
-                    ));
-                }
-            }
             if sandbox
                 .harnesses
                 .keys()
@@ -205,14 +191,9 @@ impl Harness {
     }
 
     pub fn validate(&self) -> Result<(), ConfigError> {
+        super::schema::validate_definition("Harness", self)?;
         if let Some(interfaces) = &self.interfaces {
             interfaces.validate(self.kind)?;
-        }
-        if let Some(execution) = &self.execution {
-            execution.validate(self.kind)?;
-        }
-        if let Some(observability) = &self.observability {
-            observability.validate(self.kind)?;
         }
         Ok(())
     }
@@ -238,18 +219,10 @@ impl Inference {
 
     fn validate_choices(&self) -> Result<(), ConfigError> {
         self.default_route()?;
-        if self.routes.len() > 32 {
-            return Err(ConfigError::new("at most 32 model choices are supported"));
-        }
         let mut names = std::collections::BTreeSet::new();
         for route in &self.routes {
-            if !super::validation::SLUG.is_match(&route.name)
-                || !names.insert(&route.name)
-                || !super::validation::valid_model(&route.overrides.model)
-            {
-                return Err(ConfigError::new(
-                    "inference choices require unique lowercase names and valid models",
-                ));
+            if !names.insert(&route.name) {
+                return Err(ConfigError::new("inference choices require unique names"));
             }
             route
                 .overrides
@@ -273,7 +246,7 @@ impl Inference {
 
 // Only bounded schema identifiers may appear in diagnostics; never echo arbitrary YAML.
 pub(super) fn diagnostic_name(name: &str) -> &str {
-    if name.len() <= 64 && super::validation::SLUG.is_match(name) {
+    if name.len() <= 64 && super::validation::valid_name(name) {
         name
     } else {
         "<invalid name>"

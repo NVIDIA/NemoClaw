@@ -24,24 +24,6 @@ pub struct AgentExecution {
 }
 impl AgentExecution {
     pub(crate) fn validate(&self, harness: HarnessKind) -> Result<(), ConfigError> {
-        if (harness != HarnessKind::OpenClaw && self.heartbeat_every.is_some())
-            || (self.timeout_seconds.is_none() && self.heartbeat_every.is_none())
-            || self
-                .timeout_seconds
-                .is_some_and(|n| !(1..=1_000_000_000).contains(&n))
-            || self.heartbeat_every.as_ref().is_some_and(|value| {
-                value.len() > 256
-                    || value.len() < 2
-                    || !value.as_bytes()[..value.len() - 1]
-                        .iter()
-                        .all(u8::is_ascii_digit)
-                    || !matches!(value.as_bytes().last(), Some(b's' | b'm' | b'h'))
-            })
-        {
-            return Err(ConfigError::new(
-                "execution requires a positive timeout; heartbeat requires OpenClaw and a duration ending in s, m, or h",
-            ));
-        }
-        Ok(())
+        super::schema::validate_harness_field("execution", self, harness)
     }
 }

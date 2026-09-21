@@ -63,6 +63,7 @@ pub struct RouteTuning {
 }
 impl RouteTuning {
     pub fn validate(&self, harness: HarnessKind) -> Result<(), ConfigError> {
+        super::schema::validate_tuning(self)?;
         let supported = harness == HarnessKind::OpenClaw
             || (matches!(
                 harness,
@@ -71,14 +72,7 @@ impl RouteTuning {
                 && self.reasoning.is_none()
                 && self.reasoning_effort.is_none())
             || self == &Self::default();
-        if !supported
-            || self
-                .context_window
-                .is_some_and(|n| !(1..=4194304).contains(&n))
-            || self
-                .max_tokens
-                .is_some_and(|n| !(1..=1000000000).contains(&n))
-        {
+        if !supported {
             return Err(ConfigError::new(
                 "route tuning requires a supported harness, option, and token bounds",
             ));
@@ -276,7 +270,7 @@ impl SandboxRuntimeSettings {
                 || self
                     .agents
                     .iter()
-                    .any(|a| !super::validation::SLUG.is_match(&a.name)))
+                    .any(|a| !super::validation::valid_name(&a.name)))
         {
             return Err(ConfigError::new("invalid harness agent roster"));
         }
@@ -293,7 +287,7 @@ impl SandboxRuntimeSettings {
                 return Err(ConfigError::new("invalid default model choice"));
             }
             for (name, model) in &selection.models {
-                if !super::validation::SLUG.is_match(name) || !model.api.supported(harness) {
+                if !super::validation::valid_name(name) || !model.api.supported(harness) {
                     return Err(ConfigError::new("invalid native model choice"));
                 }
                 model.connection.validate(&model.provider, harness)?;

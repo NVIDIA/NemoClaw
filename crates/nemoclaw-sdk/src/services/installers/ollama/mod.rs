@@ -3,6 +3,7 @@
 //! Ollama installer implementation.
 use crate::config::ComputeDriver;
 mod config;
+mod constraints;
 #[cfg(target_os = "linux")]
 pub(in crate::services) mod runtime;
 pub use config::{
@@ -30,16 +31,17 @@ use crate::{
     Error,
     compile::{Generations, Target},
     config::Document,
-    services::contract::{InstallPlan, Installer, RemovePlan, validate_image},
+    services::contract::{InstallPlan, Installer, RemovePlan},
 };
-use std::{collections::BTreeMap, net::IpAddr, sync::LazyLock};
+use std::{collections::BTreeMap, net::IpAddr};
 use url::Url;
 
 pub(crate) const MODEL_PATTERN: &str = r"^[a-z0-9][a-z0-9._-]*:[a-z0-9][a-z0-9._-]*$";
-static OLLAMA_MODEL: LazyLock<regex::Regex> =
-    LazyLock::new(|| regex::Regex::new(MODEL_PATTERN).unwrap());
 
-pub(crate) fn constrain_schema(defs: &mut serde_json::Map<String, serde_json::Value>) {
+pub(crate) fn constrain_schema(
+    defs: &mut serde_json::Map<String, serde_json::Value>,
+    normalized: bool,
+) {
     for name in ["OllamaModel", "ExternalOllamaModel"] {
         crate::config::schema::validation::property(
             &mut defs[name],
@@ -85,27 +87,42 @@ pub(crate) fn constrain_schema(defs: &mut serde_json::Map<String, serde_json::Va
         "image",
         serde_json::json!({"pattern":crate::config::constraints::IMAGE}),
     );
-    for (name, field, minimum, maximum, default) in [
-        ("OllamaServing", "port", 1024, 65535, 18888),
-        ("OllamaServing", "contextTokens", 8192, 65536, 32768),
-        ("OllamaServing", "maxSequences", 1, 2, 1),
-        ("OllamaServing", "startupTimeoutSeconds", 60, 3600, 1800),
-        ("OllamaMemory", "gpuMemoryGiB", 0, 96, 0),
-        ("OllamaMemory", "hostReserveGiB", 28, 64, 32),
-        ("OllamaMemory", "minAvailableGiB", 6, 16, 8),
-        ("OllamaMemory", "minFreeGiB", 2, 8, 3),
-        ("OllamaMemory", "freeGateGiB", 6, 24, 12),
-        ("OllamaMemory", "consecutiveSamples", 1, 5, 5),
+    crate::config::schema::validation::property(
+        proxy,
+        "engine",
+        serde_json::json!({
+            "x-nemoclaw-error": "proxy engine must be a local Unix socket"
+        }),
+    );
+    for (name, field, rule) in [
+        ("OllamaServing", "port", &constraints::PORT),
+        (
+            "OllamaServing",
+            "contextTokens",
+            &constraints::CONTEXT_TOKENS,
+        ),
+        ("OllamaServing", "maxSequences", &constraints::MAX_SEQUENCES),
+        (
+            "OllamaServing",
+            "startupTimeoutSeconds",
+            &constraints::STARTUP_TIMEOUT,
+        ),
+        ("OllamaMemory", "gpuMemoryGiB", &constraints::GPU_MEMORY),
+        ("OllamaMemory", "hostReserveGiB", &constraints::HOST_RESERVE),
+        (
+            "OllamaMemory",
+            "minAvailableGiB",
+            &constraints::MIN_AVAILABLE,
+        ),
+        ("OllamaMemory", "minFreeGiB", &constraints::MIN_FREE),
+        ("OllamaMemory", "freeGateGiB", &constraints::FREE_GATE),
+        (
+            "OllamaMemory",
+            "consecutiveSamples",
+            &constraints::CONSECUTIVE_SAMPLES,
+        ),
     ] {
-        crate::config::schema::validation::property(
-            &mut defs[name],
-            field,
-            serde_json::json!({
-                "anyOf":[{"const":0},{"minimum":minimum,"maximum":maximum}],
-                "default":default,
-                "x-nemoclaw-default-rule":"Omitted or zero selects the default."
-            }),
-        );
+        crate::config::schema::validation::integer(&mut defs[name], field, rule, normalized);
     }
     crate::config::schema::validation::property(
         &mut defs["OllamaMemory"],
@@ -131,12 +148,7 @@ fn private(ip: IpAddr) -> bool {
 impl ManagedOllama {
     pub fn validate(&self) -> Result<(), crate::config::ConfigError> {
         use crate::config::validation::require;
-        validate_image(&self.image)?;
-        crate::config::ImagePullPolicy::validate_service(self.image_pull_policy)?;
-        require(
-            self.placement.is_some() == self.publication.is_some(),
-            "Ollama placement and publication must be declared together",
-        )?;
+        crate::config::schema::validate_service("ollama", self)?;
         if let (Some(placement), Some(publication)) = (&self.placement, &self.publication) {
             require(
                 placement.engine.starts_with("ssh://"),
@@ -171,70 +183,9 @@ impl ManagedOllama {
                 "Ollama publication must match its private bind address, serving port and /v1 path",
             )?;
         }
-        let hardware = self
-            .hardware
-            .as_ref()
-            .ok_or_else(|| crate::config::ConfigError::new("Ollama requires explicit hardware"))?;
-        let architecture = hardware.architecture()?;
-        if let super::vllm::ServiceHardware::Profile {
-            profile,
-            min_gpu_memory_bytes,
-            ..
-        } = hardware
-        {
-            require(
-                min_gpu_memory_bytes.is_none_or(|bytes| {
-                    profile.memory_architecture() != super::vllm::MemoryArchitecture::Unified
-                        && (4 * (1 << 30)..=4 * (1 << 40)).contains(&bytes)
-                }),
-                "profile minimum GPU memory requires dedicated memory and 4 GiB through 4 TiB",
-            )?;
-            require(
-                self.memory.gpu_memory_utilization.is_none() || min_gpu_memory_bytes.is_some(),
-                "GPU utilization requires explicit minGpuMemoryBytes",
-            )?;
-        }
-        if let super::vllm::ServiceHardware::Dedicated(hardware) = hardware {
-            require(
-                architecture == "amd64"
-                    && (10..=999).contains(&hardware.min_compute_capability)
-                    && (4 * (1 << 30)..=4 * (1 << 40)).contains(&hardware.min_gpu_memory_bytes)
-                    && (1..=9999).contains(&hardware.min_driver_major),
-                "dedicated GPU requirements are invalid",
-            )?;
-        }
-        let memory = &self.memory;
-        let utilization_valid = memory
-            .gpu_memory_utilization
-            .as_ref()
-            .and_then(serde_json::Number::as_f64)
-            .is_none_or(|ratio| {
-                self.dedicated_hardware().is_some()
-                    && memory.gpu_memory_gib == 0
-                    && (0.05..=0.95).contains(&ratio)
-            });
         require(
-            OLLAMA_MODEL.is_match(&self.model.name)
-                && regex::Regex::new("^[a-f0-9]{64}$")
-                    .unwrap()
-                    .is_match(&self.model.digest)
-                && (1024..=65535).contains(&self.serving.port)
-                && (8192..=65536).contains(&self.serving.context_tokens)
-                && (1..=2).contains(&self.serving.max_sequences)
-                && (60..=3600).contains(&self.serving.startup_timeout_seconds)
-                && (0..=96).contains(&memory.gpu_memory_gib)
-                && (28..=64).contains(&memory.host_reserve_gib)
-                && (6..=16).contains(&memory.min_available_gib)
-                && (2..=8).contains(&memory.min_free_gib)
-                && (6..=24).contains(&memory.free_gate_gib)
-                && memory.free_gate_gib >= memory.min_available_gib
-                && (1..=5).contains(&memory.consecutive_samples)
-                && utilization_valid
-                && self
-                    .container
-                    .as_ref()
-                    .is_none_or(|container| (1..=64).contains(&container.shared_memory_gi_b)),
-            "Ollama model, serving, hardware, or memory settings are invalid",
+            self.memory.free_gate_gib >= self.memory.min_available_gib,
+            "memory free gate must be at least the available-memory threshold",
         )
     }
 }
@@ -251,8 +202,7 @@ impl OllamaProxy {
 
     pub(crate) fn validate_definition(&self) -> Result<(), crate::config::ConfigError> {
         use crate::config::validation::require;
-        validate_image(&self.image)?;
-        crate::config::ImagePullPolicy::validate_service(self.image_pull_policy)?;
+        crate::config::schema::validate_service("ollamaProxy", self)?;
         require(
             self.engine.as_ref().is_none_or(|engine| {
                 engine.starts_with("unix:///")
@@ -279,11 +229,7 @@ impl OllamaProxy {
                 && endpoint.path() == "/v1"
                 && endpoint.port().is_some()
                 && matches!(endpoint.host(), Some(url::Host::Ipv4(_)))
-                && self.endpoint != self.upstream.endpoint
-                && OLLAMA_MODEL.is_match(&self.upstream.model.name)
-                && regex::Regex::new("^[a-f0-9]{64}$")
-                    .unwrap()
-                    .is_match(&self.upstream.model.digest),
+                && self.endpoint != self.upstream.endpoint,
             "Ollama proxy requires a local external daemon, pinned installed model, private endpoint, and local Docker runner",
         )
     }

@@ -3,18 +3,6 @@
 
 //! Package-independent service installer input and output.
 
-use std::sync::LazyLock;
-
-static IMAGE: LazyLock<regex::Regex> =
-    LazyLock::new(|| regex::Regex::new(crate::config::constraints::IMAGE).unwrap());
-
-pub(super) fn validate_image(image: &str) -> Result<(), crate::config::ConfigError> {
-    crate::config::validation::require(
-        IMAGE.is_match(image),
-        "service image must be pinned by a SHA-256 digest",
-    )
-}
-
 /// OpenTofu stage that executes an installer plan.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum InstallStage {
