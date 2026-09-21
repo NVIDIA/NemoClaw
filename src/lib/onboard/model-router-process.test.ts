@@ -104,6 +104,31 @@ describe("getRouterHealthSnapshot (#8962)", () => {
     );
   });
 
+  it("aborts a pending semantic health response when startup no longer needs it (#12089)", async () => {
+    let notifyRequest: () => void = () => undefined;
+    const requestReceived = new Promise<void>((resolve) => {
+      notifyRequest = resolve;
+    });
+    const controller = new AbortController();
+
+    await withHealthServer(
+      (_req, res) => {
+        res.writeHead(200, { "content-type": "application/json" });
+        res.write('{"healthy_endpoints":[');
+        notifyRequest();
+      },
+      async (port) => {
+        const snapshotPromise = getRouterHealthSnapshot(port, 10_000, controller.signal);
+        await requestReceived;
+        controller.abort();
+        await expect(snapshotPromise).resolves.toMatchObject({
+          healthy: false,
+          outcome: "aborted",
+        });
+      },
+    );
+  });
+
   it("settles at the capture cap with the truncated body prefix", async () => {
     const oversized = `{"unhealthy_endpoints":[{"error":"big"}],"pad":"${"x".repeat(70 * 1024)}"}`;
     await withHealthServer(

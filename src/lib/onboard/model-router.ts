@@ -130,7 +130,11 @@ export type StartModelRouterDeps = {
   resolveProviderCredential: (name: string) => string | null;
   buildSubprocessEnv: (extra: Record<string, string>) => Record<string, string>;
   isRouterResponsive: (port: number, timeoutMs?: number) => Promise<boolean>;
-  getRouterHealthSnapshot: (port: number, timeoutMs?: number) => Promise<RouterHealthSnapshot>;
+  getRouterHealthSnapshot: (
+    port: number,
+    timeoutMs?: number,
+    signal?: AbortSignal,
+  ) => Promise<RouterHealthSnapshot>;
   sleep: (milliseconds: number) => Promise<void>;
   now: () => number;
   isProcessAlive: (pid: number) => boolean;
@@ -427,15 +431,22 @@ export async function startModelRouter(
   }
   let childExited = false;
   let childExitDetail = "";
+  let resolveChildExit: () => void = () => undefined;
+  const childExitSignal = new Promise<void>((resolve) => {
+    resolveChildExit = resolve;
+  });
+  const childExitObservation = childExitSignal.then(() => ({ kind: "child-exit" as const }));
   child.onError((err: Error) => {
     childExited = true;
     childExitDetail = `child failed to start: ${err.message}`;
+    resolveChildExit();
   });
   child.onExit((code: number | null, signal: string | null) => {
     childExited = true;
     if (!childExitDetail) {
       childExitDetail = `child exited with code ${code ?? "null"}${signal ? ` signal ${signal}` : ""}`;
     }
+    resolveChildExit();
   });
   child.unref();
 
@@ -460,8 +471,19 @@ export async function startModelRouter(
     // request and never completes it, do not start another server-side health
     // cycle whose upstream probes could overlap (#12089).
     const healthTimeoutMs = Math.max(1, Math.ceil(remainingMs));
+    const healthAbort = new AbortController();
+    const observation = await Promise.race([
+      deps
+        .getRouterHealthSnapshot(port, healthTimeoutMs, healthAbort.signal)
+        .then((snapshot) => ({ kind: "health" as const, snapshot })),
+      childExitObservation,
+    ]);
+    if (observation.kind === "child-exit") {
+      healthAbort.abort();
+      break;
+    }
     healthAttempts += 1;
-    lastSnapshot = await deps.getRouterHealthSnapshot(port, healthTimeoutMs);
+    lastSnapshot = observation.snapshot;
     const healthy = isRouterSnapshotReady(lastSnapshot);
     const processAlive = deps.isProcessAlive(pid);
     if (healthy && processAlive) return pid;

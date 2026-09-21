@@ -524,6 +524,57 @@ describe("onboard Model Router setup", () => {
     assert.equal(terminateProcess.mock.calls.length, 0);
   });
 
+  it("stops waiting for semantic health when the router child exits (#12089)", async () => {
+    const pid = 12_345;
+    let onExit: ((code: number | null, signal: string | null) => void) | undefined;
+    let observedSignal: AbortSignal | undefined;
+    const terminateProcess = vi.fn();
+
+    await assert.rejects(
+      startModelRouter(
+        { port: 45_678, pool_config_path: "router/test-pool.yaml" },
+        {
+          rootDir: "/test/repo",
+          homeDir: "/test/home",
+          ensureModelRouterCommand: () => "/test/model-router",
+          mkdirSync: () => undefined,
+          runProxyConfig: () => ({ status: 0 }),
+          spawnProxy: () => ({
+            pid,
+            onError: () => undefined,
+            onExit: (listener) => {
+              onExit = listener;
+            },
+            unref: () => undefined,
+          }),
+          resolveProviderCredential: () => null,
+          buildSubprocessEnv: () => ({}),
+          isRouterResponsive: async () => false,
+          getRouterHealthSnapshot: async (_port, _timeoutMs, signal) => {
+            observedSignal = signal;
+            queueMicrotask(() => onExit?.(17, null));
+            return new Promise<RouterHealthSnapshot>((resolve) => {
+              signal?.addEventListener(
+                "abort",
+                () => resolve(healthSnapshot(false, null, { outcome: "aborted" })),
+                { once: true },
+              );
+            });
+          },
+          sleep: async () => undefined,
+          now: () => 0,
+          isProcessAlive: () => true,
+          terminateProcess,
+          getProviderKey: () => "",
+        },
+      ),
+      /failed to become healthy on port 45678 within 600 seconds \(completed health checks: 0\) \(child exited with code 17\)/,
+    );
+
+    assert.equal(observedSignal?.aborted, true);
+    assert.deepEqual(terminateProcess.mock.calls, [[pid]]);
+  });
+
   it("terminates a live router whose semantic health requests exhaust the deadline (#12089)", async () => {
     const pid = 12_345;
     let nowMs = 0;
@@ -531,13 +582,15 @@ describe("onboard Model Router setup", () => {
       nowMs += milliseconds;
     });
     const terminateProcess = vi.fn();
-    const getRouterHealthSnapshot = vi.fn(async (_port: number, timeoutMs = 0) => {
-      nowMs += timeoutMs;
-      return healthSnapshot(false, null, {
-        elapsedMs: timeoutMs,
-        outcome: "timeout",
-      });
-    });
+    const getRouterHealthSnapshot = vi.fn(
+      async (_port: number, timeoutMs = 0, _signal?: AbortSignal) => {
+        nowMs += timeoutMs;
+        return healthSnapshot(false, null, {
+          elapsedMs: timeoutMs,
+          outcome: "timeout",
+        });
+      },
+    );
 
     await assert.rejects(
       startModelRouter(
@@ -570,7 +623,9 @@ describe("onboard Model Router setup", () => {
 
     assert.equal(nowMs, 600_000);
     assert.equal(getRouterHealthSnapshot.mock.calls.length, 1);
-    assert.deepEqual(getRouterHealthSnapshot.mock.calls[0], [45_680, 598_000]);
+    assert.equal(getRouterHealthSnapshot.mock.calls[0]?.[0], 45_680);
+    assert.equal(getRouterHealthSnapshot.mock.calls[0]?.[1], 598_000);
+    assert.equal(getRouterHealthSnapshot.mock.calls[0]?.[2] instanceof AbortSignal, true);
     assert.equal(sleep.mock.calls.length, 1);
     assert.deepEqual(terminateProcess.mock.calls, [[pid]]);
   });

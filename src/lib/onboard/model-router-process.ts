@@ -37,7 +37,7 @@ export type RouterHealthSnapshot = {
   body: string | null;
   capturedBodyBytes: number;
   elapsedMs: number;
-  outcome: "complete" | "timeout" | "transport_error" | "body_limit";
+  outcome: "complete" | "timeout" | "transport_error" | "body_limit" | "aborted";
   statusCode: number | null;
 };
 
@@ -52,6 +52,7 @@ const ROUTER_HEALTH_BODY_MAX_BYTES = 64 * 1024;
 export async function getRouterHealthSnapshot(
   port: number,
   timeoutMs = ROUTER_HEALTH_TIMEOUT_MS,
+  signal?: AbortSignal,
 ): Promise<RouterHealthSnapshot> {
   return new Promise<RouterHealthSnapshot>((resolve) => {
     const startedAt = performance.now();
@@ -64,6 +65,7 @@ export async function getRouterHealthSnapshot(
       if (settled) return;
       settled = true;
       clearTimeout(deadline);
+      signal?.removeEventListener("abort", abortRequest);
       resolve({
         healthy:
           outcome === "complete" && statusCode !== null && statusCode >= 200 && statusCode < 300,
@@ -96,6 +98,12 @@ export async function getRouterHealthSnapshot(
       settle("timeout");
     }, timeoutMs);
     deadline.unref?.();
+    const abortRequest = () => {
+      request.destroy();
+      settle("aborted");
+    };
+    if (signal?.aborted) abortRequest();
+    else signal?.addEventListener("abort", abortRequest, { once: true });
   });
 }
 
