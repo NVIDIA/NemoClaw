@@ -254,9 +254,6 @@ impl Document {
         }
         for sandbox in &mut self.spec.sandboxes {
             default_string(&mut sandbox.image.ref_, DEFAULT_AGENT_IMAGE);
-            if sandbox.network.policy.is_none() {
-                default_string(&mut sandbox.network.tier, constraints::NETWORK_TIER);
-            }
         }
     }
 }

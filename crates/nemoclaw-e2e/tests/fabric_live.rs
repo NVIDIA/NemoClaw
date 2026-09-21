@@ -192,7 +192,7 @@ async fn fabric_native_access_and_reconciliation_preserve_the_hosted_runtime() {
     let (before, binding) = bindings(&directory);
     let managed_before = managed_bindings(&directory);
     let client = OpenShell::connect(&document.spec.gateway, Arc::new(EnvironmentSecrets)).unwrap();
-    if document.spec.sandboxes[0].network.tier == "isolated" {
+    if document.spec.sandboxes[0].network.policy == nemoclaw_sdk::config::NetworkPolicy::Isolated {
         let denial = exec(
             &client,
             &binding,
