@@ -350,12 +350,6 @@ test(
       apiKey,
       scenarioLabel: "network-policy",
       scenarioSlug: "network-policy",
-      extraOnboardEnv: {
-        NEMOCLAW_EXTRA_AGENTS_JSON: JSON.stringify([
-          { id: "researcher", tools: { allow: ["read"] } },
-          { id: "reviewer", tools: { allow: ["read"] } },
-        ]),
-      },
       preCleanupArtifactPrefix: "pre-cleanup-nemoclaw-destroy-network-policy",
       onboardArtifactPrefix: "onboard-restricted-network-policy",
       onboardTimeoutMs: ONBOARD_TIMEOUT_MS,
@@ -398,7 +392,7 @@ test(
       return `${agent.name}:${tools}:${route}`;
     });
     expect(`${exportedSandbox.name}|${roster.join("|")}`).toBe(
-      `${SANDBOX_NAME}|primary:primary:shared|researcher:read:shared|reviewer:read:shared`,
+      `${SANDBOX_NAME}|primary:primary:shared`,
     );
     expect(exportedSandbox).not.toHaveProperty("image");
     const exportedProvider = document.spec.inferenceProviders[0];

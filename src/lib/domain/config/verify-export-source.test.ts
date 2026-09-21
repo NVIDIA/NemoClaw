@@ -735,7 +735,7 @@ describe("config export source verification (#10938)", () => {
         findings: expect.arrayContaining([
           expect.objectContaining({
             category,
-            field: "spec.sandboxes[].agents[0].auth",
+            field: "spec.sandboxes[].agent.auth",
           }),
         ]),
       },
@@ -798,15 +798,11 @@ describe("config export source verification (#10938)", () => {
   });
 
   it.each([
-    [
-      "Hermes tool gateways",
-      { hermesToolGateways: ["browser"] },
-      "spec.sandboxes[].agents[0].tools",
-    ],
+    ["Hermes tool gateways", { hermesToolGateways: ["browser"] }, "spec.sandboxes[].agent.tools"],
     [
       "Hermes inference provider",
       { hermesInferenceProvider: "hermes-provider" },
-      "spec.sandboxes[].agents[0].auth",
+      "spec.sandboxes[].agent.auth",
     ],
   ])("rejects excluded %s state (#11286)", (_case, registryOverrides, field) => {
     expect(findings(verify(hermesSnapshot(registryOverrides)))).toContainEqual(
@@ -1269,7 +1265,7 @@ describe("dashboard settings export", () => {
           findings: expect.arrayContaining([
             expect.objectContaining({
               category: "unsupported",
-              field: "spec.sandboxes[].agents[0].dashboard",
+              field: "spec.sandboxes[].agent.dashboard",
             }),
           ]),
         },

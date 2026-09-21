@@ -277,6 +277,67 @@ Configure destination CA trust separately during onboarding; export does not cha
 
 The v0 command projects verified source state into the v1alpha1 YAML shape.
 The v1 Rust parser remains authoritative for accepting that document; the v0 command does not carry a copy of the v1 schema or semantic validator.
+Each sandbox uses one singular `agent` with one inline `inference` definition.
+It also uses exactly one inline `harness` or one `harnessRef`.
+
+A hosted single-agent export has this structure:
+
+```yaml
+apiVersion: nemoclaw.nvidia.com/v1alpha1
+kind: NemoClawConfig
+metadata:
+  name: my-assistant
+  uid: 123e4567-e89b-42d3-a456-426614174000
+spec:
+  gateway:
+    management: managed
+    endpoint: http://127.0.0.1:8080
+  inferenceProviders:
+    - name: hosted-openai
+      provider: openai
+      api: openai-responses
+      endpoint: https://api.openai.com/v1
+      credential:
+        env: OPENAI_API_KEY
+  sandboxes:
+    - name: my-assistant
+      runtime:
+        provider: docker
+      network:
+        policy:
+          explicit:
+            version: 1
+            process:
+              run_as_user: "1000"
+              run_as_group: "1000"
+            network_policies:
+              inference:
+                name: inference
+                endpoints:
+                  - host: api.openai.com
+                    port: 443
+                binaries:
+                  - path: /usr/bin/openclaw
+            filesystem_policy:
+              include_workdir: false
+              read_only:
+                - /usr
+                - /opt/fabric
+                - /opt/nemoclaw
+                - /app
+              read_write:
+                - /sandbox
+      harness:
+        kind: openclaw
+      agent:
+        name: primary
+        inference:
+          routes:
+            - name: primary
+              providerRef: hosted-openai
+              overrides:
+                model: gpt-5
+```
 
 If staging cleanup fails, the diagnostic identifies the temporary file and its original directory by device and inode when that evidence is available.
 The directory can have moved from the requested output location.
@@ -294,9 +355,8 @@ When a managed OpenClaw sandbox uses Brave Search, the export includes its `webS
 When retained managed proxy settings differ from the default, the export includes the validated host and port under `network.proxy`.
 For hosted OpenClaw inference, the export preserves nondefault managed context-window, maximum-token, reasoning, and reasoning-effort settings as route overrides.
 It preserves nondefault agent timeout and heartbeat settings under `execution`.
-For a Docker-managed OpenClaw sandbox with hosted inference, the export can include one or more read-only secondary agents in runtime order.
-Each secondary agent has a unique name, uses only `tools.allow: [read]`, and shares the primary hosted route, selected model, and retained route tuning.
-The export rejects the complete document when any secondary agent has a model that differs from the primary model, unsupported tools, execution, interfaces, observability, a primary-agent override, or a default subagent setting.
+The exporter emits one primary agent for a single-agent OpenClaw sandbox.
+It rejects an OpenClaw sandbox that has retained secondary agents because the current v1 contract requires one agent per sandbox.
 For OpenClaw, it preserves a nondefault managed dashboard port or bind address under `interfaces.dashboard`.
 When managed OpenClaw uses direct tool disclosure, the export includes `tools.disclosure: direct`.
 It omits the default progressive disclosure setting.

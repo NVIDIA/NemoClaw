@@ -2,13 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from "vitest";
-import YAML from "yaml";
 import { buildConfig as buildOpenClawConfig } from "../../../../scripts/generate-openclaw-config.mts";
 import { exportSnapshots } from "../../actions/config/export-test-fixture";
-import {
-  asExportedConfig,
-  exportedAgentList,
-} from "../../../../test/support/config-export-document";
 import { EXPORTED_VLLM_PROFILE_ID } from "../../config/model";
 import { loadServingCatalog } from "../../inference/serving/catalog-loader";
 import { servingProfileProvenance } from "../../inference/serving/profile-provenance";
@@ -68,7 +63,7 @@ describe("read-only secondary-agent export", () => {
       },
     ],
   ])(
-    "exports the %s manifest with the primary route and no filesystem paths (#11434)",
+    "refuses the %s secondary-agent manifest without publishing partial YAML (#12131)",
     async (_case, manifest) => {
       const generated = generatedAdditionalAgentConfig(manifest);
       expect(generated.agents.entries).toMatchObject({
@@ -87,38 +82,24 @@ describe("read-only secondary-agent export", () => {
         NEMOCLAW_OPENCLAW_OTEL: "1",
       });
       const result = await exportSnapshots([observed, observed]);
-      expect(result.outcome.ok).toBe(true);
-      const document = asExportedConfig(YAML.parse(result.writeStdout.mock.calls[0]![0]));
-      const sandbox = document.spec.sandboxes[0]!;
-      expect("agents" in sandbox).toBe(true);
-      const [primary, secondary] = exportedAgentList(sandbox);
-      expect(primary).toMatchObject({ name: "primary" });
-      expect(sandbox.harness).toMatchObject({
-        observability: {
-          otlp: {
-            enabled: true,
-            endpoint: "http://host.openshell.internal:4318",
-            serviceName: "openclaw-gateway",
-            sampleRate: 1,
-          },
+      expect(result.outcome).toMatchObject({
+        ok: false,
+        failure: {
+          findings: expect.arrayContaining([
+            {
+              field: "spec.sandboxes[].agent",
+              category: "unsupported",
+              diagnostic: "V1alpha1 export cannot represent a retained secondary-agent roster.",
+            },
+          ]),
         },
       });
-      expect(secondary).toEqual({
-        name: "researcher",
-        tools: { allow: ["read"] },
-        inference: primary!.inference,
-      });
-      expect(primary!.inference.routes[0]!.overrides).toMatchObject({
-        model: "gpt-5",
-        contextWindow: 65536,
-        maxTokens: 8192,
-      });
-      expect(document.spec.inferenceProviders).toHaveLength(1);
-      expect(JSON.stringify(document)).not.toContain("workspace-researcher");
+      expect(result.writeStdout).not.toHaveBeenCalled();
+      expect(result.publish).not.toHaveBeenCalled();
     },
   );
 
-  it("exports every read-only agent in manifest order without filesystem paths (#11854)", async () => {
+  it("refuses multiple retained secondary agents without dropping their intent (#12131)", async () => {
     const manifest = {
       agents: [
         { id: "researcher", tools: { allow: ["read"] } },
@@ -142,24 +123,19 @@ describe("read-only secondary-agent export", () => {
 
     const observed = additionalAgentSnapshot(manifest);
     const result = await exportSnapshots([observed, observed]);
-    expect(result.outcome.ok).toBe(true);
-    const document = asExportedConfig(YAML.parse(result.writeStdout.mock.calls[0]![0]));
-    const sandbox = document.spec.sandboxes[0]!;
-    expect("agents" in sandbox).toBe(true);
-    const [primary, ...additional] = exportedAgentList(sandbox);
-    expect(additional).toEqual([
-      {
-        name: "researcher",
-        tools: { allow: ["read"] },
-        inference: primary!.inference,
+    expect(result.outcome).toMatchObject({
+      ok: false,
+      failure: {
+        findings: expect.arrayContaining([
+          expect.objectContaining({
+            field: "spec.sandboxes[].agent",
+            category: "unsupported",
+          }),
+        ]),
       },
-      {
-        name: "reviewer",
-        tools: { allow: ["read"] },
-        inference: primary!.inference,
-      },
-    ]);
-    expect(JSON.stringify(document)).not.toMatch(/workspace-(?:researcher|reviewer)/u);
+    });
+    expect(result.writeStdout).not.toHaveBeenCalled();
+    expect(result.publish).not.toHaveBeenCalled();
   });
 
   it.each(
@@ -233,7 +209,7 @@ describe("read-only secondary-agent export", () => {
         ok: false,
         failure: {
           findings: expect.arrayContaining([
-            expect.objectContaining({ field: "spec.sandboxes[].agents", category: "unsupported" }),
+            expect.objectContaining({ field: "spec.sandboxes[].agent", category: "unsupported" }),
           ]),
         },
       });
@@ -257,7 +233,7 @@ describe("read-only secondary-agent export", () => {
       ok: false,
       failure: {
         findings: expect.arrayContaining([
-          expect.objectContaining({ field: "spec.sandboxes[].agents", category: "unsupported" }),
+          expect.objectContaining({ field: "spec.sandboxes[].agent", category: "unsupported" }),
         ]),
       },
     });

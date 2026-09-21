@@ -150,7 +150,7 @@ describe("managed vLLM export pipeline", () => {
     { count: 2, names: ["researcher", "reviewer"] },
     { count: 128, names: Array.from({ length: 128 }, (_, index) => `reader-${index}`) },
   ])(
-    "admits all $count fixed-profile secondaries before the deferred target mapping (#11859)",
+    "rejects all $count fixed-profile secondaries before the deferred target mapping (#12131)",
     async ({ names }) => {
       mockManagedVllmSource({
         NEMOCLAW_EXTRA_AGENTS_JSON: JSON.stringify(
@@ -184,6 +184,11 @@ describe("managed vLLM export pipeline", () => {
               category: "unsupported",
               diagnostic:
                 "V1alpha1 export currently supports hosted inference; managed vLLM and Ollama compatibility are deferred.",
+            },
+            {
+              field: "spec.sandboxes[].agent",
+              category: "unsupported",
+              diagnostic: "V1alpha1 export cannot represent a retained secondary-agent roster.",
             },
           ],
         },

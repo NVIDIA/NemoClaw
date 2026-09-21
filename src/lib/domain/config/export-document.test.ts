@@ -91,20 +91,18 @@ describe("export config builder", () => {
               },
             },
             harness: { kind: "openclaw" },
-            agents: [
-              {
-                name: "primary",
-                inference: {
-                  routes: [
-                    {
-                      name: "primary",
-                      providerRef: "hosted-openai-api",
-                      overrides: { model: "gpt-5" },
-                    },
-                  ],
-                },
+            agent: {
+              name: "primary",
+              inference: {
+                routes: [
+                  {
+                    name: "primary",
+                    providerRef: "hosted-openai-api",
+                    overrides: { model: "gpt-5" },
+                  },
+                ],
               },
-            ],
+            },
           },
         ],
       },
@@ -132,7 +130,7 @@ describe("export config builder", () => {
       },
     });
     const sandbox = document.spec.sandboxes[0]!;
-    expect("agents" in sandbox).toBe(true);
+    expect("agent" in sandbox).toBe(true);
     expect(exportedAgentList(sandbox)[0]!.integrationRefs).toEqual(["brave-search"]);
     expect(document.spec.inferenceProviders).toHaveLength(1);
     expect(
@@ -141,7 +139,7 @@ describe("export config builder", () => {
     ).not.toHaveProperty("integrations");
   });
 
-  it("grants Brave only to the declared primary agent", () => {
+  it("grants Brave to the declared single agent (#12131)", () => {
     const document = buildExportConfig(
       {
         ...source,
@@ -150,8 +148,7 @@ describe("export config builder", () => {
           agentRefs: ["primary"],
           credential: { env: "BRAVE_API_KEY" },
         },
-        additionalAgents: [{ name: "researcher", tools: { allow: ["read"] } }],
-      } as unknown as VerifiedExportSource,
+      },
       {
         documentName: alphaDocumentName,
         documentUid: firstUid,
@@ -159,13 +156,10 @@ describe("export config builder", () => {
     );
 
     const sandbox = document.spec.sandboxes[0]!;
-    expect("agents" in sandbox).toBe(true);
-    const agents = exportedAgentList(sandbox);
-    expect(agents).toMatchObject([
-      { name: "primary", integrationRefs: ["brave-search"] },
-      { name: "researcher" },
+    expect("agent" in sandbox).toBe(true);
+    expect(exportedAgentList(sandbox)).toEqual([
+      expect.objectContaining({ name: "primary", integrationRefs: ["brave-search"] }),
     ]);
-    expect(agents[1]).not.toHaveProperty("integrationRefs");
   });
 
   it("uses the supplied identity and keeps derived references deterministic (#10938)", () => {
@@ -183,7 +177,7 @@ describe("export config builder", () => {
     expect(second.spec).toEqual(first.spec);
     expect(second.spec.inferenceProviders[0]?.name).toBe("hosted-openai-api");
     const sandbox = second.spec.sandboxes[0]!;
-    expect("agents" in sandbox).toBe(true);
+    expect("agent" in sandbox).toBe(true);
     expect(exportedAgentList(sandbox)[0]?.inference.routes[0]?.providerRef).toBe(
       "hosted-openai-api",
     );
@@ -230,7 +224,7 @@ describe("export config builder", () => {
     );
 
     const sandbox = result.spec.sandboxes[0]!;
-    expect("agents" in sandbox).toBe(true);
+    expect("agent" in sandbox).toBe(true);
     expect(exportedAgentList(sandbox)[0]?.auth).toEqual({
       method: "api-key",
     });
