@@ -33,6 +33,7 @@ import { enforceRemovedImmutabilityMigrationBoundary } from "../state/migrations
 import * as sandboxState from "../state/sandbox";
 
 type RebuildModule = typeof import("./sandbox/rebuild");
+type StopModule = typeof import("./sandbox/stop");
 
 export const upgradeSandboxesDependencies = {
   getGatewayPort(): number {
@@ -46,6 +47,15 @@ export const upgradeSandboxesDependencies = {
   ): ReturnType<RebuildModule["rebuildSandbox"]> {
     const { rebuildSandbox } = await upgradeSandboxesDependencies.loadRebuildModule();
     return rebuildSandbox(...args);
+  },
+  async loadStopModule(): Promise<StopModule> {
+    return import("./sandbox/stop");
+  },
+  async stopSandbox(
+    ...args: Parameters<StopModule["stopSandbox"]>
+  ): ReturnType<StopModule["stopSandbox"]> {
+    const { stopSandbox } = await upgradeSandboxesDependencies.loadStopModule();
+    return stopSandbox(...args);
   },
 };
 
@@ -534,7 +544,7 @@ export async function upgradeSandboxes(
   const work = [
     ...ordinaryRebuildable.map((sandbox) => ({ sandbox, manifest: null })),
     ...preparedRecoveries.map((recovery) => ({
-      sandbox: { name: recovery.sandbox.name },
+      sandbox: recovery.sandbox,
       manifest: recovery.manifest,
       ...(recovery.allowLegacyManagedImageRecovery
         ? { allowLegacyManagedImageRecovery: true as const }
@@ -560,6 +570,15 @@ export async function upgradeSandboxes(
           ? { allowLegacyManagedImageRecovery: true }
           : {}),
       });
+      if (manifest && sandbox.stopped === true) {
+        const stoppedResult = await upgradeSandboxesDependencies.stopSandbox(sandbox.name);
+        if (stoppedResult.exitCode !== 0) {
+          throw new Error(
+            stoppedResult.message ??
+              `the rebuilt sandbox could not be returned to its pre-upgrade stopped state`,
+          );
+        }
+      }
       rebuilt++;
       recoveredNames.add(sandbox.name);
     } catch (err) {

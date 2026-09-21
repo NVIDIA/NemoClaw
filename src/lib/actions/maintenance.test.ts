@@ -6,6 +6,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   listSandboxes: vi.fn(),
   getSandbox: vi.fn(),
+  recordSandboxStopIntent: vi.fn(),
+  updateSandbox: vi.fn(),
   backupSandboxState: vi.fn(),
   captureSandboxListWithGatewayPreflightOrExit: vi.fn(),
   dockerListImagesFormat: vi.fn().mockReturnValue(""),
@@ -49,6 +51,8 @@ vi.mock("../state/registry", () => ({
     entry.pendingRouteReservation !== true,
   listSandboxes: mocks.listSandboxes,
   getSandbox: mocks.getSandbox,
+  recordSandboxStopIntent: mocks.recordSandboxStopIntent,
+  updateSandbox: mocks.updateSandbox,
 }));
 vi.mock("../state/sandbox", () => ({
   backupSandboxState: mocks.backupSandboxState,
@@ -132,6 +136,7 @@ describe("backupAll", () => {
     mocks.isSandboxContainerDefinitivelyAbsent.mockReturnValue(false);
     mocks.startStoppedSandboxContainerForBackup.mockReturnValue(null);
     mocks.returnSandboxContainerToStopped.mockReturnValue(true);
+    mocks.recordSandboxStopIntent.mockReturnValue(true);
     mocks.withSandboxMutationLock.mockImplementation(runSandboxMutationAction);
     mocks.enforceRemovedImmutabilityMigrationBoundary.mockReset();
     mocks.assertNoHermesPortableHostAuthority.mockReset();
@@ -600,6 +605,11 @@ describe("backupAll", () => {
       events.push("stop:sb-stopped");
       return true;
     });
+    mocks.recordSandboxStopIntent.mockImplementation(() => {
+      expect(lockActive).toBe(true);
+      events.push("retain-stop:sb-stopped");
+      return true;
+    });
     vi.spyOn(console, "log").mockImplementation(() => undefined);
 
     await backupAll();
@@ -609,11 +619,43 @@ describe("backupAll", () => {
       "start:sb-stopped",
       "backup:sb-stopped",
       "stop:sb-stopped",
+      "retain-stop:sb-stopped",
       "lock:end:sb-stopped",
     ]);
     expect(lockActive).toBe(false);
     expect(mocks.withSandboxMutationLock).toHaveBeenCalledOnce();
     expect(mocks.withSandboxMutationLock).toHaveBeenCalledWith("sb-stopped", expect.any(Function));
+  });
+
+  it("fails strict backup when stopped-state intent cannot be retained", async () => {
+    mocks.listSandboxes.mockReturnValue({
+      sandboxes: [{ name: "sb-stopped" }],
+      defaultSandbox: null,
+    });
+    readySandboxNames = new Set();
+    mocks.startStoppedSandboxContainerForBackup.mockReturnValue({
+      containerName: "openshell-sb-stopped-abc",
+      runtimeProviderId: "docker",
+    });
+    mocks.backupStartedSandboxState.mockResolvedValue({
+      success: true,
+      backedUpDirs: ["workspace"],
+      failedDirs: [],
+      backedUpFiles: [],
+      failedFiles: [],
+      manifest: { backupPath: "/backups/sb-stopped/timestamp" },
+    });
+    mocks.recordSandboxStopIntent.mockReturnValue(false);
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    await expect(backupAll()).rejects.toThrow("could not retain that lifecycle intent");
+
+    expect(mocks.recordSandboxStopIntent).toHaveBeenCalledWith(
+      "sb-stopped",
+      true,
+      mocks.updateSandbox,
+    );
   });
 
   it("retains strict pre-upgrade recovery state inside the sandbox mutation lock", async () => {

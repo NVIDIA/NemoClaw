@@ -61,6 +61,7 @@ function createRecoveryHarness(
           nemoclawVersion: string | null;
           fromDockerfile: string | null;
           pendingRouteReservation: true;
+          stopped: boolean;
         }>
       >
     >;
@@ -71,6 +72,7 @@ function createRecoveryHarness(
 ): {
   upgradeSandboxes: UpgradeSandboxes;
   rebuildSpy: ReturnType<typeof vi.fn>;
+  stopSpy: ReturnType<typeof vi.fn>;
   latestBackupSpy: ReturnType<typeof vi.spyOn>;
   managedEvidenceSpy: ReturnType<typeof vi.spyOn>;
   checkAgentVersionSpy: ReturnType<typeof vi.spyOn>;
@@ -149,10 +151,14 @@ function createRecoveryHarness(
   const rebuildSpy = vi
     .spyOn(upgradeSandboxesDependencies, "rebuildSandbox")
     .mockResolvedValue(undefined);
+  const stopSpy = vi
+    .spyOn(upgradeSandboxesDependencies, "stopSandbox")
+    .mockResolvedValue({ exitCode: 0 });
 
   return {
     upgradeSandboxes,
     rebuildSpy,
+    stopSpy,
     latestBackupSpy,
     managedEvidenceSpy,
     checkAgentVersionSpy,
@@ -217,6 +223,50 @@ describe("upgrade-sandboxes prepared backup recovery (#6114)", () => {
       });
     },
   );
+
+  it("returns a recovered sandbox to its retained pre-upgrade stopped state", async () => {
+    const harness = createRecoveryHarness(["stopped-box", "ready-box"], {
+      registryOverrides: {
+        "stopped-box": { stopped: true },
+        "ready-box": { stopped: false },
+      },
+    });
+    const sequence: string[] = [];
+    harness.rebuildSpy.mockImplementation(async (name: string) => {
+      sequence.push(`rebuild:${name}`);
+    });
+    harness.stopSpy.mockImplementation(async (name: string) => {
+      sequence.push(`stop:${name}`);
+      return { exitCode: 0 };
+    });
+
+    await expect(harness.upgradeSandboxes({ auto: true })).resolves.toBeUndefined();
+
+    expect(sequence).toEqual(["rebuild:stopped-box", "stop:stopped-box", "rebuild:ready-box"]);
+    expect(harness.stopSpy).toHaveBeenCalledOnce();
+    expect(harness.stopSpy).toHaveBeenCalledWith("stopped-box");
+  });
+
+  it("fails recovery when the rebuilt sandbox cannot regain its stopped state", async () => {
+    const harness = createRecoveryHarness(["stopped-box"], {
+      registryOverrides: { "stopped-box": { stopped: true } },
+    });
+    harness.stopSpy.mockResolvedValue({
+      exitCode: 1,
+      message: "OpenShell did not confirm the stopped state",
+    });
+    vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+      throw new Error(`process.exit(${code})`);
+    }) as never);
+
+    await expect(harness.upgradeSandboxes({ auto: true })).rejects.toThrow("process.exit(1)");
+
+    expect(console.error).toHaveBeenCalledWith(
+      expect.stringContaining(
+        "Failed to recover 'stopped-box': OpenShell did not confirm the stopped state",
+      ),
+    );
+  });
 
   it.each([
     {
