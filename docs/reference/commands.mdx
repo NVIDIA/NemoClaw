@@ -297,15 +297,19 @@ It preserves nondefault agent timeout and heartbeat settings under `execution`.
 For a Docker-managed OpenClaw sandbox with hosted inference, the export can include one or more read-only secondary agents in runtime order.
 Each secondary agent has a unique name, uses only `tools.allow: [read]`, and shares the primary hosted route, selected model, and retained route tuning.
 The export rejects the complete document when any secondary agent has a model that differs from the primary model, unsupported tools, execution, interfaces, observability, a primary-agent override, or a default subagent setting.
-For OpenClaw, it preserves a nondefault managed dashboard port or bind address under `interfaces.dashboard`.
+For OpenClaw, it retains an `interfaces.dashboard` marker because an absent target dashboard disables the interface.
+The marker includes a nondefault managed dashboard port or bind address.
 When managed OpenClaw uses direct tool disclosure, the export includes `tools.disclosure: direct`.
 It omits the default progressive disclosure setting.
 When OpenClaw conversation diagnostics are enabled, the export includes the fixed local OTLP endpoint, service name, and sample rate under agent observability.
 It never includes collector credentials.
-It omits settings that equal the managed defaults.
+For supported settings, export compares the source behavior with the v1 target behavior when that setting is absent.
+It omits a setting only when absence gives the target the same effective behavior.
 Hermes export fails when Hermes tool gateways are enabled.
-It preserves an enabled Hermes dashboard, nondefault dashboard or internal ports, enabled browser terminal UI, and a nondefault allocated API port under `interfaces`.
-A disabled dashboard and default API port are omitted.
+It preserves Hermes dashboard and browser terminal UI behavior against the target defaults.
+A disabled dashboard or disabled browser terminal UI remains explicit because absence enables it in the target.
+It also preserves nondefault dashboard or internal ports and a nondefault allocated API port under `interfaces`.
+The default API port is omitted.
 It exports Hermes API-key authentication only when the retained authentication proof matches the managed Hermes provider, OpenAI-compatible API, endpoint, and `NOUS_API_KEY` credential reference.
 The exporter validates that source binding, then emits API-key authentication without a provider reference because v1 derives the association from the provider configuration.
 OAuth authentication and other unsupported profiles fail with a diagnostic instead of producing an incomplete document.
