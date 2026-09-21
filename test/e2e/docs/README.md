@@ -147,7 +147,8 @@ secrets. Review selected exports before retaining them as migration fixtures.
 
 After a live target succeeds, the E2E workflow always requires
 `config-export-evidence.v1.json` before artifact upload. A `success`
-classification also requires and uploads `config-export.yaml`.
+classification also requires `config-export.yaml`, verifies its SHA-256 against
+the evidence, and uploads it.
 `expected-refusal` and `no-usable-sandbox` classifications must not retain the
 YAML file. A missing required file or an unexpected YAML file fails the target
 job.

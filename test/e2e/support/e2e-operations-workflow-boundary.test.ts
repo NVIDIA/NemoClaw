@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -24,6 +25,8 @@ const COLD_ONBOARD_PERFORMANCE_EVIDENCE_PATH =
 const CONFIG_EXPORT_EVIDENCE_PATH =
   "e2e-artifacts/live/${{ matrix.id }}/config-export-evidence.v1.json";
 const CONFIG_EXPORT_YAML_PATH = "e2e-artifacts/live/${{ matrix.id }}/config-export.yaml";
+const CONFIG_EXPORT_YAML = "apiVersion: nemoclaw.nvidia.com/v1alpha1\n";
+const CONFIG_EXPORT_YAML_SHA256 = createHash("sha256").update(CONFIG_EXPORT_YAML).digest("hex");
 
 function workflowScript(jobName: string, stepName: string): string {
   const workflow = readE2eOperationsWorkflow();
@@ -121,15 +124,17 @@ describe("E2E operations workflow", testTimeoutOptions(15_000), () => {
     },
   );
   it.each([
-    ["success with YAML", "success", ["config-export.yaml"], 0],
-    ["success without YAML", "success", [], 1],
-    ["expected refusal without YAML", "expected-refusal", [], 0],
-    ["no usable sandbox without YAML", "no-usable-sandbox", [], 0],
-    ["expected refusal with YAML", "expected-refusal", ["config-export.yaml"], 1],
-    ["failed evidence without YAML", "failure", [], 1],
-  ])(
+    ["success with matching YAML", "success", ["config-export.yaml"], CONFIG_EXPORT_YAML_SHA256, 0],
+    ["success without YAML", "success", [], CONFIG_EXPORT_YAML_SHA256, 1],
+    ["success without a YAML digest", "success", ["config-export.yaml"], undefined, 1],
+    ["success with replaced YAML", "success", ["config-export.yaml"], "0".repeat(64), 1],
+    ["expected refusal without YAML", "expected-refusal", [], undefined, 0],
+    ["no usable sandbox without YAML", "no-usable-sandbox", [], undefined, 0],
+    ["expected refusal with YAML", "expected-refusal", ["config-export.yaml"], undefined, 1],
+    ["failed evidence without YAML", "failure", [], undefined, 1],
+  ] as const)(
     "checks classification-aware config export artifacts for %s (#12132)",
-    (_caseName, classification, yamlFileNames, expectedStatus) => {
+    (_caseName, classification, yamlFileNames, sha256, expectedStatus) => {
       const workflow = readE2eOperationsWorkflow();
       const requirement = workflow.jobs.live.steps!.find(
         (step) => step.name === "Require automatic config export evidence",
@@ -139,13 +144,14 @@ describe("E2E operations workflow", testTimeoutOptions(15_000), () => {
       mkdirSync(artifactDirectory, { recursive: true });
       writeFileSync(
         join(artifactDirectory, "config-export-evidence.v1.json"),
-        `${JSON.stringify({ classification, passed: classification !== "failure" })}\n`,
+        `${JSON.stringify({
+          classification,
+          passed: classification !== "failure",
+          ...(sha256 === undefined ? {} : { export: { sha256 } }),
+        })}\n`,
       );
       yamlFileNames.forEach((fileName) =>
-        writeFileSync(
-          join(artifactDirectory, fileName),
-          "apiVersion: nemoclaw.nvidia.com/v1alpha1\n",
-        ),
+        writeFileSync(join(artifactDirectory, fileName), CONFIG_EXPORT_YAML),
       );
 
       const result = spawnSync(
