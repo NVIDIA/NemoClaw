@@ -2,11 +2,12 @@
 # SPDX-License-Identifier: Apache-2.0
 """Apply NemoClaw model selection to the verified Fabric Pi adapter.
 
-Upstream: NVIDIA/NeMo-Fabric 6e155bfbe9e740fb8ce1e1fda900d96f1435a23c,
+Upstream: NVIDIA/NeMo-Fabric 6c08337bcb11d6c0f2d5118f8f0c98a5b2a1a421,
 Apache-2.0. 2026-09-15: resolve declared models through Pi's native loader,
 retain cleanup on failure and shutdown, and add a matching inference probe.
 2026-09-17: load declared model choices with separate credential namespaces and
 switch the native session model for explicit Fabric invocation selections.
+2026-09-21: rebase on upstream Relay lifecycle and retain its failure cleanup.
 """
 
 import json
@@ -25,11 +26,19 @@ def patch_pi(source):
       refreshOnCreate: false,
     });
     await modelRuntime.setRuntimeApiKey(selected.provider, apiKey);
+    const relayEnabled = input.runtimeContext.telemetry?.relay_enabled === true;
+    if (relayEnabled && selected.base_url) {
+      // Configure the provider before Relay loads so its provider-wide redirect
+      // sees a consistent catalog instead of one overlaid selected model.
+      modelRuntime.registerProvider(selected.provider, {
+        baseUrl: selected.base_url,
+      });
+    }
     const catalogModel = modelRuntime.getModel(selected.provider, selected.model);
     if (catalogModel === undefined) {
       throw new LifecycleError("pi_model_unknown", "The selected provider and model are not present in Pi's catalog");
     }
-    const model = selected.base_url ? { ...catalogModel, baseUrl: selected.base_url } : catalogModel;"""
+    const model = !relayEnabled && selected.base_url ? { ...catalogModel, baseUrl: selected.base_url } : catalogModel;"""
     if text.count(old) != 1:
         raise ValueError("pinned Pi model-selection source changed")
     text = text.replace(
@@ -47,46 +56,50 @@ def patch_pi(source):
       }
     } catch (error) { await cleanup(); throw error; }""",
     )
-    text = text.replace(
-        "      excludeTools: blocked,\n    });",
-        "      excludeTools: blocked,\n    }).catch(async (error) => { await cleanup(); throw error; });",
-    )
-    text = text.replace(
-        "    const handle = new PiSdkSessionHandle(session, state);",
-        "    const handle = new PiSdkSessionHandle(session, state);\n"
-        "    const stop = handle.stop.bind(handle);\n"
-        "    handle.stop = async () => { try { await stop(); } finally { await cleanup(); } };",
-    )
-    text = text.replace(
-        "    return handle;",
-        """    return Object.assign(handle, {
-      selectModel: async (name: string) => {
-        const choice = models[`route_${name}`];
-        if (!choice) throw new LifecycleError("pi_model_unknown", "The requested Pi model choice is not declared");
-        await session.setModel(choice);
-      },
-    });""",
-    )
+    replacements = {
+        "      handle = new PiSdkSessionHandle(session, state, relay);": (
+            "      handle = new PiSdkSessionHandle(session, state, relay);\n"
+            "      const stop = handle.stop.bind(handle);\n"
+            "      handle.stop = async () => { try { await stop(); } finally { await cleanup(); } };"
+        ),
+        "      return handle;": """      return Object.assign(handle, {
+        selectModel: async (name: string) => {
+          const choice = models[`route_${name}`];
+          if (!choice) throw new LifecycleError("pi_model_unknown", "The requested Pi model choice is not declared");
+          await session.setModel(choice);
+        },
+      });""",
+        "      throw error;\n    }\n  }\n}": "      await cleanup();\n      throw error;\n    }\n  }\n}",
+    }
+    for anchor, replacement in replacements.items():
+        if text.count(anchor) != 1:
+            raise ValueError("pinned Pi lifecycle source changed")
+        text = text.replace(anchor, replacement)
     runtime_path = directory / "runtime.ts"
     runtime = runtime_path.read_text().replace(
         "  prompt(text: string): Promise<PiPromptOutcome>;",
         "  prompt(text: string): Promise<PiPromptOutcome>;\n  selectModel?(name: string): Promise<void>;",
     )
     old_input = """    if (typeof request.input !== "string") {
-      return failed("pi_unsupported_input", "The Pi adapter accepts only plain-text input");
+      return withRelayOutput(
+        failed("pi_unsupported_input", "The Pi adapter accepts only plain-text input"),
+        this.session.relay,
+      );
     }
 
+    const relay = this.session.relay;
     const outcome = await this.session.prompt(request.input);"""
-    new_input = """    let prompt = request.input;
+    new_input = """    const relay = this.session.relay;
+    let prompt = request.input;
     if (typeof prompt === "object" && prompt !== null && !Array.isArray(prompt)
         && Object.keys(prompt).length === 2 && typeof prompt.prompt === "string"
         && typeof prompt.model === "string" && this.session.selectModel) {
       try { await this.session.selectModel(prompt.model); }
-      catch { return failed("pi_model_selection_failed", "The requested Pi model choice could not be selected"); }
+      catch { return withRelayOutput(failed("pi_model_selection_failed", "The requested Pi model choice could not be selected"), relay); }
       prompt = prompt.prompt;
     }
     if (typeof prompt !== "string") {
-      return failed("pi_unsupported_input", "Pi requires text or an object containing prompt and model");
+      return withRelayOutput(failed("pi_unsupported_input", "Pi requires text or an object containing prompt and model"), relay);
     }
     const outcome = await this.session.prompt(prompt);"""
     if runtime.count(old_input) != 1:

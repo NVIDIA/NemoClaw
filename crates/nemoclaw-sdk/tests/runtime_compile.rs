@@ -22,7 +22,17 @@ fn multiple_services_share_image_acquisition_without_custom_capacity_gates() {
     .into();
     let graph = compile_runtime(&document, &generations, "0.1.0").unwrap();
     assert!(graph["data"].get("nemoclaw_service_capacity").is_none());
-    assert!(graph["data"].get("nemoclaw_gateway_capabilities").is_none());
+    let readiness = &graph["data"]["nemoclaw_gateway_capabilities"]["current"];
+    assert_eq!(readiness["wait_timeout_seconds"], 90);
+    assert_eq!(readiness["required_compute_drivers"], json!(["docker"]));
+    assert_eq!(
+        readiness["depends_on"],
+        json!(["docker_container.managed_gateway_runtime"])
+    );
+    assert_eq!(
+        readiness["lifecycle"]["postcondition"][0]["condition"],
+        "${self.compatible}"
+    );
     let containers = graph["resource"]["docker_container"].as_object().unwrap();
     assert_eq!(containers.len(), 3);
     assert_eq!(

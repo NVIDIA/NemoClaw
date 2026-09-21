@@ -86,8 +86,17 @@ pub(crate) fn runtime_graph(
         crate::services::InstallStage::Runtime,
     )?;
     let mut graph = compile_with_plans(document, generations, version, &service_plans)?;
-    // The runtime stage bootstraps the gateway before deployment observations.
-    graph.as_object_mut().unwrap().remove("data");
+    // Readiness follows gateway reconciliation, including restart or replacement.
+    // Keeping it in this stage allows recovery before OpenShell resource refresh.
+    let readiness = &mut graph["data"]["nemoclaw_gateway_capabilities"]["current"];
+    readiness["wait_timeout_seconds"] = json!(90);
+    readiness["lifecycle"] = json!({"postcondition":[{
+        "condition":"${self.compatible}",
+        "error_message":"Gateway version or compute driver does not satisfy the configuration."
+    }]});
+    if document.spec.gateway.management == "managed" {
+        readiness["depends_on"] = json!(["nemoclaw_managed_gateway.runtime"]);
+    }
     graph["resource"] = json!({});
     let targets = runtime_targets_with_plans(document, generations, &service_plans)?;
     for target in &targets {

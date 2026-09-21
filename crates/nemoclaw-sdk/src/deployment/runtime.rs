@@ -5,11 +5,7 @@ mod teardown;
 mod tests;
 
 use super::*;
-use crate::{
-    ObservationError,
-    managed::{GATEWAY_KIND, GATEWAY_STORAGE_KIND, Spec},
-};
-use std::time::Duration;
+use crate::managed::{GATEWAY_KIND, GATEWAY_STORAGE_KIND, Spec};
 const GATEWAY_STORAGE: &str = "nemoclaw_gateway_storage.runtime";
 pub(super) fn check_runtime_plan(
     plan: &Plan,
@@ -22,7 +18,7 @@ pub(super) fn check_runtime_plan(
     let mut seen = BTreeSet::new();
     let mut observations = BTreeSet::new();
     for change in &plan.resource_changes {
-        if plan::observation(change, &mut observations, allowed, false, false)? {
+        if plan::observation(change, &mut observations, allowed, true, false)? {
             continue;
         }
         if !seen.insert(&change.address) {
@@ -305,11 +301,11 @@ impl Deployment {
         .await?;
         record.pending = false;
         store.save(record)?;
-        self.wait_runtime(document, &record.generations, &stage, cancel)
+        self.wait_runtime_services(document, &record.generations, &stage, cancel)
             .await?;
         Ok((changes, false))
     }
-    async fn wait_runtime(
+    async fn wait_runtime_services(
         &self,
         document: &Document,
         generations: &crate::compile::Generations,
@@ -318,23 +314,6 @@ impl Deployment {
     ) -> Result<(), Error> {
         (self.progress)(Progress::Readiness);
         self.timed("runtime.ready", async {
-            let client = OpenShell::connect(&document.spec.gateway, self.secrets.clone())?;
-            let gateway = async {
-                loop {
-                    match tokio::time::timeout(
-                        Duration::from_secs(2),
-                        async { for sandbox in &document.spec.sandboxes { client.verify_gateway(&sandbox.runtime.provider).await?; } Ok(()) },
-                    )
-                    .await
-                    {
-                        Ok(Ok(())) => return Ok(()),
-                        Ok(Err(Error::Observation(ObservationError::Transport))) | Err(_) => {}
-                        Ok(Err(error)) => return Err(error),
-                    }
-                    tokio::time::sleep(Duration::from_secs(1)).await;
-                }
-            };
-            tokio::select! {()=cancel.cancelled()=>return Err(Error::Cancelled),result=tokio::time::timeout(Duration::from_secs(90),gateway)=>result.map_err(|_|Error::State("managed gateway readiness failed; identity and data retained"))??};
             let bindings = stage.bindings()?;
             crate::services::check_running(
                 document,
@@ -346,7 +325,8 @@ impl Deployment {
             )
             .await?;
             Ok(())
-        }).await
+        })
+        .await
     }
     pub(super) async fn export_runtime(
         &self,

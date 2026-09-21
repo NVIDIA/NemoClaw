@@ -5,7 +5,7 @@ use nemoclaw_sdk::{compile::compile, config::Document};
 use std::collections::BTreeMap;
 
 #[test]
-fn gateway_capabilities_gate_deployment_but_do_not_query_during_bootstrap() {
+fn gateway_capabilities_gate_deployment_and_follow_bootstrap_reconciliation() {
     use nemoclaw_sdk::compile::compile_runtime;
     let document = Document::parse(include_str!("fixtures/config/spark.yaml").as_bytes()).unwrap();
     let generations = [
@@ -31,11 +31,10 @@ fn gateway_capabilities_gate_deployment_but_do_not_query_during_bootstrap() {
         }
     }
     let bootstrap = compile_runtime(&document, &generations, "0.1.0").unwrap();
-    assert!(
-        bootstrap["data"]
-            .get("nemoclaw_gateway_capabilities")
-            .is_none(),
-        "bootstrap must not require an already running gateway"
+    assert_eq!(
+        bootstrap["data"]["nemoclaw_gateway_capabilities"]["current"]["depends_on"],
+        serde_json::json!(["docker_container.managed_gateway_runtime"]),
+        "bootstrap must reconcile its gateway before observing readiness"
     );
 }
 

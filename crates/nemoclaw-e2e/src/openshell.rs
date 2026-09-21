@@ -29,6 +29,8 @@ pub struct State {
     pub exec_truncated: bool,
     pub exec_stalled: bool,
     pub exec_calls: Vec<Vec<String>>,
+    pub pi_models: HashMap<String, serde_json::Value>,
+    pub pi_stopped: bool,
     pub effects: usize,
     pub expected_bearer: Option<String>,
     pub conditional_updates: usize,
@@ -593,6 +595,42 @@ impl tonic::server::ServerStreamingService<p::ExecSandboxRequest> for Exec {
                 payload: Some(p::exec_sandbox_event::Payload::Stdout(
                     p::ExecSandboxStdout {
                         data: br#"{"status":"succeeded","output":{"response":"FOUR"}}"#.to_vec(),
+                    },
+                )),
+            }));
+        }
+        if request.command.get(2).is_some_and(|c| c == "configure")
+            && request.command.get(4).is_some_and(|c| c == "pi")
+            && state.exec_exit == 0
+        {
+            state.pi_models.insert(
+                request.sandbox_id.clone(),
+                serde_json::from_str(&request.command[5]).unwrap(),
+            );
+            state.pi_stopped = false;
+        }
+        if request
+            .command
+            .get(2)
+            .is_some_and(|c| c.contains("Read the existing Pi host status"))
+        {
+            let model = state.pi_models.get(&request.sandbox_id);
+            let sandbox = state
+                .sandboxes
+                .values()
+                .find(|s| s.metadata.as_ref().unwrap().id == request.sandbox_id)
+                .unwrap();
+            let agent = &sandbox.metadata.as_ref().unwrap().labels["nemoclaw.nvidia.com/agent"];
+            let config = model.map(|m| {
+                let mut selected = serde_json::json!({"model":m["model"]});
+                if let Some(metadata) = m.get("piModel") { selected["settings"] = serde_json::json!({"model_metadata":metadata}); }
+                serde_json::json!({"metadata":{"name":agent}, "harness":{"adapter_id":"nvidia.fabric.pi"}, "models":{"default":selected}})
+            });
+            let status = serde_json::json!({"ready":model.is_some() && !state.pi_stopped,"runtime_id":"pi-runtime","config":config});
+            events.push(Ok(p::ExecSandboxEvent {
+                payload: Some(p::exec_sandbox_event::Payload::Stdout(
+                    p::ExecSandboxStdout {
+                        data: serde_json::to_vec(&status).unwrap(),
                     },
                 )),
             }));

@@ -75,6 +75,7 @@ Each explanation includes diagrams and links to the commits that established its
 | Accepted scope, implementation boundaries, and invariants | [Design decision](design/scope.md) |
 | SDK ownership, durable state, staged apply, and retained storage | [Architecture](design/architecture.md) |
 | Process lifetime, watchdog recovery, and agent ownership | [Runtime design](design/runtime.md) |
+| Proposed shared Fabric management contract and two-adapter experiment | [Fabric management](design/fabric-management.md) |
 | Connections, engine identity, inference traffic, and host capacity | [Execution targets](design/execution-targets.md) |
 | Artifact ownership, preparation verification, and output manifests | [Recipe design](design/recipes.md) |
 | Current engine constraints and source locations | [Execution-engine assumptions](engine-assumptions.md) |
