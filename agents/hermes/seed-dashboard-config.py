@@ -498,39 +498,59 @@ def _normalized_routing(gateway: dict, routing_keys: list[str], policy: dict) ->
     # Only a providerless image policy permits completely absent routing.
     if not any(key in gateway or key in policy["config"] for key in routing_keys):
         return {}
-    if any(key not in gateway for key in routing_keys):
-        raise InvalidDashboardSeedDocumentError("gateway config has incomplete model routing")
+    missing = [key for key in routing_keys if key not in gateway]
+    if missing:
+        raise InvalidDashboardSeedDocumentError(
+            f"gateway config is missing routing keys: {', '.join(missing)}"
+        )
     routing = {key: deepcopy(gateway[key]) for key in routing_keys}
     upstream = routing.get("_nemoclaw_upstream")
     model = routing.get("model")
     providers = routing.get("providers")
     custom_providers = routing.get("custom_providers")
-    if not isinstance(upstream, dict) or not isinstance(model, dict):
-        raise InvalidDashboardSeedDocumentError("gateway config has invalid model routing")
+    if not isinstance(upstream, dict):
+        raise InvalidDashboardSeedDocumentError(
+            "gateway config _nemoclaw_upstream is not a mapping"
+        )
+    if not isinstance(model, dict):
+        raise InvalidDashboardSeedDocumentError(
+            "gateway config model is not a mapping"
+        )
     provider_key = upstream.get("provider_key")
-    if (
-        not isinstance(provider_key, str)
-        or not provider_key
-        or not isinstance(model.get("default"), str)
-        or not model.get("default")
-        or not isinstance(model.get("base_url"), str)
-        or not model.get("base_url")
-        or not isinstance(providers, dict)
-        or not isinstance(providers.get(provider_key), dict)
-        or not isinstance(custom_providers, list)
-        or not custom_providers
-    ):
-        raise InvalidDashboardSeedDocumentError("gateway config has invalid model routing")
+    if not isinstance(provider_key, str) or not provider_key:
+        raise InvalidDashboardSeedDocumentError(
+            "gateway config _nemoclaw_upstream.provider_key is missing or empty"
+        )
+    if not isinstance(model.get("default"), str) or not model.get("default"):
+        raise InvalidDashboardSeedDocumentError(
+            "gateway config model.default is missing or empty"
+        )
+    if not isinstance(model.get("base_url"), str) or not model.get("base_url"):
+        raise InvalidDashboardSeedDocumentError(
+            "gateway config model.base_url is missing or empty"
+        )
+    if not isinstance(providers, dict):
+        raise InvalidDashboardSeedDocumentError(
+            "gateway config providers is not a mapping"
+        )
+    if not isinstance(providers.get(provider_key), dict):
+        raise InvalidDashboardSeedDocumentError(
+            f"gateway config providers has no entry for key '{provider_key}'"
+        )
+    if not isinstance(custom_providers, list) or not custom_providers:
+        raise InvalidDashboardSeedDocumentError(
+            "gateway config custom_providers is missing or empty"
+        )
     expected_api_key = HERMES_PROXY_REWRITE_SENTINEL
     credential_bearing_routes = [model, *providers.values(), *custom_providers]
-    if not isinstance(expected_api_key, str) or any(
+    if any(
         not isinstance(route, dict) or route.get("api_key") != expected_api_key
         for route in credential_bearing_routes
     ):
         raise InvalidDashboardSeedDocumentError(
             "gateway model routing contains a non-policy credential reference"
         )
-    model["provider"] = provider_key
+    model["provider"] = "custom"
     return routing
 
 
