@@ -1265,7 +1265,7 @@ describe("dashboard settings export", () => {
           findings: expect.arrayContaining([
             expect.objectContaining({
               category: "unsupported",
-              field: "spec.sandboxes[].agent.dashboard",
+              field: "spec.sandboxes[].harness.interfaces.dashboard",
             }),
           ]),
         },

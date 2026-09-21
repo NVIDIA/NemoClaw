@@ -132,9 +132,6 @@ export function buildExportConfig(
   source: VerifiedExportSource,
   identity: ExportConfigBuildIdentity,
 ): V1Alpha1Export {
-  if (source.additionalAgents !== undefined) {
-    throw new Error("V1alpha1 export does not support an OpenClaw sandbox with secondary agents.");
-  }
   const providerName = exportedProviderName(source.inference);
   const sandboxBase = {
     name: source.sandboxName,

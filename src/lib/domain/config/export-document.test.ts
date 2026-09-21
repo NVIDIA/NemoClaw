@@ -153,21 +153,6 @@ describe("export config builder", () => {
     ).not.toHaveProperty("integrations");
   });
 
-  it("refuses secondary agents instead of dropping them from singular output (#12131)", () => {
-    expect(() =>
-      buildExportConfig(
-        {
-          ...source,
-          additionalAgents: [{ name: "researcher", tools: { allow: ["read"] } }],
-        } as unknown as VerifiedExportSource,
-        {
-          documentName: alphaDocumentName,
-          documentUid: firstUid,
-        },
-      ),
-    ).toThrow("V1alpha1 export does not support an OpenClaw sandbox with secondary agents.");
-  });
-
   it("uses the supplied identity and keeps derived references deterministic (#10938)", () => {
     const first = buildExportConfig(source, {
       documentName: alphaDocumentName,

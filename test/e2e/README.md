@@ -391,8 +391,8 @@ This keeps the private optional dependency available for SDK-backed commands suc
 
 The `network-policy` target also owns live configuration-export evidence for #10938, #11854, and PR #11065.
 After restricted OpenClaw onboarding with two read-only agents, it invokes the candidate `config export` command through the real SDK connection.
-It compares the ordered agent roster, sandbox name, immutable managed image, hosted endpoint, and explicit policy with the fixture's registered and effective state.
-It then changes the fixture's recorded sandbox fingerprint and requires export to fail without creating a file.
+It requires the command to reject the secondary-agent roster without producing a document.
+It then changes the fixture's recorded sandbox fingerprint and again requires export to fail without creating a file.
 The fixture restores the registry in `finally` and removes private export files through its existing cleanup registry.
 The exported effective policy comes from the SDK configuration response and is compared with the
 independent CLI policy observation. This covers the SDK connection and complete export observation boundary; the deterministic adapter tests remain the owners of individual wire shapes and malformed responses.
