@@ -53,7 +53,10 @@ test -n "${login_user}"
 wait_for_apt
 retry 3 as_root apt-get update -qq
 retry 3 as_root apt-get install -y -qq \
-  ca-certificates curl git jq rsync tar docker.io
+  ca-certificates curl git jq rsync tar
+if ! command -v docker >/dev/null 2>&1; then
+  retry 3 as_root apt-get install -y -qq docker.io
+fi
 as_root systemctl enable --now docker
 as_root usermod -aG docker "${login_user}"
 

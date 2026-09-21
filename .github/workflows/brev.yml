@@ -117,24 +117,24 @@ jobs:
                 --startup-script @tools/e2e/brev-v1-startup.sh --detached
           brev refresh || true
           for attempt in $(seq 1 90); do
-            if ssh -o BatchMode=yes -o ConnectTimeout=10 "${INSTANCE_NAME}" true 2>/dev/null; then break; fi
+            if ssh -T -o BatchMode=yes -o ConnectTimeout=10 "${INSTANCE_NAME}" true 2>/dev/null; then break; fi
             if test "${attempt}" -eq 90; then echo "Brev SSH did not become ready" >&2; exit 1; fi
             if test $((attempt % 5)) -eq 0; then brev refresh || true; fi
             sleep 10
           done
           for attempt in $(seq 1 120); do
-            if ssh "${INSTANCE_NAME}" 'test -f /var/run/nemoclaw-brev-v1-ready'; then break; fi
+            if ssh -T "${INSTANCE_NAME}" 'test -f /var/run/nemoclaw-brev-v1-ready'; then break; fi
             if test $((attempt % 10)) -eq 0; then
-              ssh "${INSTANCE_NAME}" 'tail -20 /tmp/nemoclaw-brev-v1-startup.log 2>/dev/null || true' || true
+              ssh -T "${INSTANCE_NAME}" 'tail -20 /tmp/nemoclaw-brev-v1-startup.log 2>/dev/null || true' || true
             fi
             if test "${attempt}" -eq 120; then echo "Brev startup did not become ready" >&2; exit 1; fi
             sleep 10
           done
           # shellcheck disable=SC2029
-          remote_home="$(ssh "${INSTANCE_NAME}" 'printf %s "$HOME"')"
+          remote_home="$(ssh -T "${INSTANCE_NAME}" 'printf %s "$HOME"')"
           remote_root="${remote_home}/nemoclaw-brev-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           # shellcheck disable=SC2029
-          ssh "${INSTANCE_NAME}" "install -d -m 700 '${remote_root}/source' '${remote_root}/bundle'"
+          ssh -T "${INSTANCE_NAME}" "install -d -m 700 '${remote_root}/source' '${remote_root}/bundle'"
           rsync -a "${RUNNER_TEMP}/candidate-source.tar.gz" "${INSTANCE_NAME}:${remote_root}/"
           rsync -a dist/linux_amd64/ "${INSTANCE_NAME}:${remote_root}/bundle/"
           rsync -a "$(cat "${RUNNER_TEMP}/brev-test-path")" "${INSTANCE_NAME}:${remote_root}/brev-test"
@@ -142,7 +142,7 @@ jobs:
           chmod 600 "${RUNNER_TEMP}/nvidia-api-key"
           rsync -a "${RUNNER_TEMP}/nvidia-api-key" "${INSTANCE_NAME}:${remote_root}/nvidia-api-key"
           # shellcheck disable=SC2029
-          ssh "${INSTANCE_NAME}" "tar -xzf '${remote_root}/candidate-source.tar.gz' -C '${remote_root}/source' && chmod 700 '${remote_root}/brev-test' && NEMOCLAW_BREV_ROOT='${remote_root}' bash '${remote_root}/source/tools/e2e/brev-v1-guest.sh'"
+          ssh -T "${INSTANCE_NAME}" "tar -xzf '${remote_root}/candidate-source.tar.gz' -C '${remote_root}/source' && chmod 700 '${remote_root}/brev-test' && NEMOCLAW_BREV_ROOT='${remote_root}' bash '${remote_root}/source/tools/e2e/brev-v1-guest.sh'"
           mkdir -p "${RUNNER_TEMP}/brev-evidence"
           rsync -a "${INSTANCE_NAME}:${remote_root}/evidence/brev-proof.json" "${RUNNER_TEMP}/brev-evidence/"
 
