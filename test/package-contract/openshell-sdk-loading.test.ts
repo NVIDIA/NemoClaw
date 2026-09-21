@@ -25,6 +25,7 @@ function packageFixture(): string {
       "dist/lib/inference/llama-cpp/contract.js",
       "dist/lib/config/canonical-mapping.js",
       "dist/lib/policy/sandbox-policy-validation.js",
+      "dist/lib/security/config-structure.js",
       "dist/lib/security/credential-filter.js",
       "nemoclaw/dist/shared",
       "schemas",

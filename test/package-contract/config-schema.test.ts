@@ -23,6 +23,7 @@ describe("compiled config schema consumer", () => {
         "dist/lib/sandbox-name-contract.js",
         "dist/lib/policy/sandbox-policy-validation.js",
         "dist/lib/adapters/openshell/policy-boundary.js",
+        "dist/lib/security/config-structure.js",
         "dist/lib/security/credential-filter.js",
         "nemoclaw/dist/shared",
         "schemas",
