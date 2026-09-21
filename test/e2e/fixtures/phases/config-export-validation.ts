@@ -38,6 +38,10 @@ import {
 } from "../hosted-inference.ts";
 import { CLI_DIST_ENTRYPOINT, REPO_ROOT } from "../paths.ts";
 import type { SecretStore } from "../secrets.ts";
+import {
+  containsSensitiveText,
+  encodedSensitiveValues,
+} from "../../support/config-export-secret-scan.ts";
 import type { NemoClawInstance } from "./onboarding.ts";
 
 const { Type } = require("typebox") as typeof TypeBoxModule;
@@ -739,59 +743,6 @@ function decodedScalarsMatch(
   }
   return Object.entries(value).some(
     ([key, entry]) => matches(key) || decodedScalarsMatch(entry, matches, visited),
-  );
-}
-
-function encodedSensitiveValues(values: readonly string[]): string[] {
-  const encoded = new Set<string>();
-  for (const value of values) {
-    if (value.length === 0) continue;
-    const base64 = Buffer.from(value, "utf8").toString("base64");
-    encoded.add(base64);
-    encoded.add(base64.replace(/=+$/u, ""));
-    const base64url = base64.replace(/\+/gu, "-").replace(/\//gu, "_");
-    encoded.add(base64url);
-    encoded.add(base64url.replace(/=+$/u, ""));
-  }
-  return [...encoded];
-}
-
-function decodePercentEncodedText(raw: string): string {
-  let decoded = raw;
-  for (let pass = 0; pass < 4; pass += 1) {
-    const next = decoded.replace(/(?:%[0-9a-f]{2})+/giu, (encoded) => {
-      try {
-        return decodeURIComponent(encoded);
-      } catch {
-        return encoded;
-      }
-    });
-    if (next === decoded) return decoded;
-    decoded = next;
-  }
-  return decoded;
-}
-
-function normalizedSecretScanText(raw: string): string {
-  const decodedEscapes = decodePercentEncodedText(raw)
-    .replace(/\\x([0-9a-f]{2})/giu, (_match, hex: string) =>
-      String.fromCodePoint(Number.parseInt(hex, 16)),
-    )
-    .replace(/\\u([0-9a-f]{4})/giu, (_match, hex: string) =>
-      String.fromCodePoint(Number.parseInt(hex, 16)),
-    )
-    .replace(/\\U([0-9a-f]{8})/gu, (_match, hex: string) => {
-      const codePoint = Number.parseInt(hex, 16);
-      return codePoint <= 0x10ffff ? String.fromCodePoint(codePoint) : "";
-    })
-    .replace(/\\[nrt]/gu, "");
-  return decodedEscapes.replace(/[\s#'"`>|\\]/gu, "");
-}
-
-function containsSensitiveText(raw: string, values: readonly string[]): boolean {
-  const normalizedRaw = normalizedSecretScanText(raw);
-  return [...values, ...encodedSensitiveValues(values)].some(
-    (value) => value.length > 0 && normalizedRaw.includes(normalizedSecretScanText(value)),
   );
 }
 

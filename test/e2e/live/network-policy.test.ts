@@ -32,6 +32,7 @@ import {
   buildNetworkPolicyCurlProbe,
   parseNetworkPolicyCurlOutput,
 } from "../support/network-policy-probe.ts";
+import { writeSecretFreeConfigExportArtifact } from "../support/config-export-secret-scan.ts";
 import { runRestrictedOnboardWithRetry } from "./restricted-onboard-helpers.ts";
 import { requireHostedInferenceConfig } from "../fixtures/hosted-inference.ts";
 
@@ -379,7 +380,6 @@ test(
     );
     expect(exported.exitCode, text(exported)).toBe(0);
     const raw = fs.readFileSync(outputPath, "utf8");
-    expect(artifacts.redact(raw), "Export must omit credential values").toBe(raw);
     const document = asExportedConfig(YAML.parse(raw));
     const exportedSandbox = document.spec.sandboxes[0];
     const agents = exportedAgentList(exportedSandbox);
@@ -407,7 +407,7 @@ test(
         : undefined,
     );
     const exportArtifact = "config-export-live.yaml";
-    await artifacts.writeText(exportArtifact, raw);
+    await writeSecretFreeConfigExportArtifact(artifacts, exportArtifact, raw, [apiKey]);
 
     const mismatchPath = path.join(exportDirectory, "must-not-exist.yaml");
     try {

@@ -1,8 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { parseConfigExport } from "../fixtures/phases/config-export-validation.ts";
+import { writeSecretFreeConfigExportArtifact } from "./config-export-secret-scan.ts";
 
 function currentInput() {
   return {
@@ -64,5 +65,41 @@ describe("current config export input", () => {
     expect(() => parseConfigExport(JSON.stringify(candidate))).toThrow(
       "complete v1alpha1 export contract",
     );
+  });
+});
+
+describe("config export artifact secret boundary", () => {
+  const secret = "nvapi-review-secret-123456";
+  const encodedCases = [
+    ["literal", secret],
+    [
+      "percent encoded",
+      [...Buffer.from(secret)].map((byte) => `%${byte.toString(16).padStart(2, "0")}`).join(""),
+    ],
+    [
+      "YAML escaped",
+      [...Buffer.from(secret)].map((byte) => `\\x${byte.toString(16).padStart(2, "0")}`).join(""),
+    ],
+    ["base64", Buffer.from(secret).toString("base64")],
+  ] as const;
+
+  it.each(encodedCases)("rejects a %s credential before writing evidence", async (_name, value) => {
+    const writer = { writeText: vi.fn(async () => undefined) };
+
+    await expect(
+      writeSecretFreeConfigExportArtifact(writer, "config-export-live.yaml", `value: ${value}`, [
+        secret,
+      ]),
+    ).rejects.toThrow("config export exposed a known fixture secret");
+    expect(writer.writeText).not.toHaveBeenCalled();
+  });
+
+  it("writes YAML only after the shared secret scan passes", async () => {
+    const writer = { writeText: vi.fn(async () => undefined) };
+    const raw = JSON.stringify(currentInput());
+
+    await writeSecretFreeConfigExportArtifact(writer, "config-export-live.yaml", raw, [secret]);
+
+    expect(writer.writeText).toHaveBeenCalledWith("config-export-live.yaml", raw);
   });
 });
