@@ -129,7 +129,7 @@ describe("getRouterHealthSnapshot (#8962)", () => {
     );
   });
 
-  it("settles at the capture cap with the truncated body prefix", async () => {
+  it("reports the truncated body prefix after an oversized response ends", async () => {
     const oversized = `{"unhealthy_endpoints":[{"error":"big"}],"pad":"${"x".repeat(70 * 1024)}"}`;
     await withHealthServer(
       (_req, res) => {
@@ -144,6 +144,51 @@ describe("getRouterHealthSnapshot (#8962)", () => {
         expect(snapshot).toMatchObject({
           capturedBodyBytes: 64 * 1024,
           outcome: "body_limit",
+          statusCode: 200,
+        });
+      },
+    );
+  });
+
+  it("keeps consuming an oversized response until the wall-clock deadline (#12089)", async () => {
+    let notifyBodyWritten: () => void = () => undefined;
+    const bodyWritten = new Promise<void>((resolve) => {
+      notifyBodyWritten = resolve;
+    });
+    await withHealthServer(
+      (_req, res) => {
+        res.writeHead(200, { "content-type": "text/plain" });
+        res.write("x".repeat(64 * 1024 + 1), notifyBodyWritten);
+        // Never end the response; reaching the capture cap must not settle it.
+      },
+      async (port) => {
+        const snapshotPromise = getRouterHealthSnapshot(port, 300);
+        await bodyWritten;
+        const snapshot = await snapshotPromise;
+        expect(snapshot).toMatchObject({
+          healthy: false,
+          capturedBodyBytes: 64 * 1024,
+          outcome: "timeout",
+          statusCode: 200,
+        });
+        expect(snapshot.body?.length).toBe(64 * 1024);
+      },
+    );
+  });
+
+  it("treats a response exactly at the capture cap as complete", async () => {
+    const body = "x".repeat(64 * 1024);
+    await withHealthServer(
+      (_req, res) => {
+        res.writeHead(200, { "content-type": "text/plain" });
+        res.end(body);
+      },
+      async (port) => {
+        await expect(getRouterHealthSnapshot(port)).resolves.toMatchObject({
+          healthy: true,
+          body,
+          capturedBodyBytes: 64 * 1024,
+          outcome: "complete",
           statusCode: 200,
         });
       },

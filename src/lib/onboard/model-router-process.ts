@@ -59,6 +59,7 @@ export async function getRouterHealthSnapshot(
     let settled = false;
     const chunks: Buffer[] = [];
     let size = 0;
+    let bodyLimitExceeded = false;
     let statusCode: number | null = null;
     const bufferedBody = () => (chunks.length > 0 ? Buffer.concat(chunks).toString("utf8") : null);
     const settle = (outcome: RouterHealthSnapshot["outcome"]) => {
@@ -82,14 +83,13 @@ export async function getRouterHealthSnapshot(
         res.on("data", (chunk: Buffer) => {
           const remaining = ROUTER_HEALTH_BODY_MAX_BYTES - size;
           const kept = chunk.length <= remaining ? chunk : chunk.subarray(0, remaining);
-          chunks.push(kept);
-          size += kept.length;
-          if (size >= ROUTER_HEALTH_BODY_MAX_BYTES) {
-            res.destroy();
-            settle("body_limit");
+          if (kept.length > 0) {
+            chunks.push(kept);
+            size += kept.length;
           }
+          if (chunk.length > remaining) bodyLimitExceeded = true;
         });
-        res.on("end", () => settle("complete"));
+        res.on("end", () => settle(bodyLimitExceeded ? "body_limit" : "complete"));
         res.on("error", () => settle("transport_error"));
       })
       .on("error", () => settle("transport_error"));
