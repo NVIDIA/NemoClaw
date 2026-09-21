@@ -2,7 +2,44 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use nemoclaw_sdk::config::Document;
-use std::{fs, process::Command};
+use std::{
+    fs,
+    process::{Child, Command, Output},
+    thread,
+    time::{Duration, Instant},
+};
+
+const PROCESS_TIMEOUT: Duration = Duration::from_secs(10);
+
+fn wait_with_output(mut child: Child, timeout: Duration) -> Output {
+    let deadline = Instant::now() + timeout;
+    loop {
+        match child.try_wait().unwrap() {
+            Some(_) => return child.wait_with_output().unwrap(),
+            None if Instant::now() < deadline => thread::sleep(Duration::from_millis(10)),
+            None => {
+                child.kill().unwrap();
+                let output = child.wait_with_output().unwrap();
+                panic!(
+                    "command did not exit within {timeout:?}: {}",
+                    String::from_utf8_lossy(&output.stderr)
+                );
+            }
+        }
+    }
+}
+
+#[cfg(unix)]
+fn wait_for_file(path: &std::path::Path, expected: &str, timeout: Duration) {
+    let deadline = Instant::now() + timeout;
+    while Instant::now() < deadline {
+        if fs::read_to_string(path).is_ok_and(|text| text.contains(expected)) {
+            return;
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+    panic!("command did not write {expected:?} within {timeout:?}");
+}
 #[test]
 fn invalid_configuration_fails_before_creating_state_or_echoing_secrets() {
     let directory = tempfile::tempdir().unwrap();
@@ -269,7 +306,7 @@ fn non_interactive_onboarding_saves_yaml_without_lifecycle_dependencies() {
     let output_path = directory.path().join("deployment.yaml");
     fs::write(&output_path, "complete prior file").unwrap();
     let state_path = directory.path().join("state-must-not-exist");
-    let output = Command::new(env!("CARGO_BIN_EXE_nemoclaw"))
+    let child = Command::new(env!("CARGO_BIN_EXE_nemoclaw"))
         .args([
             "onboard",
             "--generate-only",
@@ -282,8 +319,14 @@ fn non_interactive_onboarding_saves_yaml_without_lifecycle_dependencies() {
         .arg("--state-dir")
         .arg(&state_path)
         .env("NVIDIA_INFERENCE_API_KEY", "nvapi-secret-sentinel")
-        .output()
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
         .unwrap();
+    // Keep the pipe open without sending input. Scripted generation must not
+    // poll stdin or wait for EOF.
+    let output = wait_with_output(child, PROCESS_TIMEOUT);
     assert!(
         output.status.success(),
         "{}",
@@ -301,6 +344,72 @@ fn non_interactive_onboarding_saves_yaml_without_lifecycle_dependencies() {
             .contains("Credential references: NVIDIA_INFERENCE_API_KEY")
     );
     assert!(!String::from_utf8_lossy(&output.stderr).contains("secret-sentinel"));
+}
+
+#[test]
+fn interactive_onboarding_rejects_open_non_tty_input_without_writing() {
+    let directory = tempfile::tempdir().unwrap();
+    let output_path = directory.path().join("deployment.yaml");
+    fs::write(&output_path, "complete prior file").unwrap();
+    let child = Command::new(env!("CARGO_BIN_EXE_nemoclaw"))
+        .args(["onboard", "--generate-only", "--output"])
+        .arg(&output_path)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+
+    let output = wait_with_output(child, PROCESS_TIMEOUT);
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stdout.is_empty());
+    assert_eq!(
+        fs::read_to_string(output_path).unwrap(),
+        "complete prior file"
+    );
+    assert_eq!(
+        String::from_utf8(output.stderr).unwrap(),
+        "interactive onboarding requires a terminal on stdin; use --non-interactive for scripts\n"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn interactive_onboarding_exits_on_interrupt_or_termination_without_writing() {
+    use nix::{
+        pty::openpty,
+        sys::signal::{Signal, kill},
+        unistd::Pid,
+    };
+    use std::{fs::File, process::Stdio};
+
+    for signal in [Signal::SIGINT, Signal::SIGTERM] {
+        let directory = tempfile::tempdir().unwrap();
+        let output_path = directory.path().join("deployment.yaml");
+        let stderr_path = directory.path().join("stderr");
+        let terminal = openpty(None, None).unwrap();
+        let stderr = File::create(&stderr_path).unwrap();
+        let child = Command::new(env!("CARGO_BIN_EXE_nemoclaw"))
+            .args(["onboard", "--generate-only", "--output"])
+            .arg(&output_path)
+            .stdin(Stdio::from(terminal.slave))
+            .stdout(Stdio::null())
+            .stderr(Stdio::from(stderr))
+            .spawn()
+            .unwrap();
+        let _open_terminal = terminal.master;
+        wait_for_file(&stderr_path, "Deployment name", PROCESS_TIMEOUT);
+        kill(Pid::from_raw(child.id() as i32), signal).unwrap();
+
+        let output = wait_with_output(child, PROCESS_TIMEOUT);
+        assert_eq!(output.status.code(), Some(1), "{signal:?}");
+        assert!(!output_path.exists(), "{signal:?}");
+        let stderr = fs::read_to_string(&stderr_path).unwrap();
+        assert!(
+            stderr.contains("operation interrupted"),
+            "{signal:?}: {stderr}"
+        );
+    }
 }
 
 #[test]
@@ -373,128 +482,8 @@ fn composed_onboarding_saves_yaml_before_credential_or_plan_failure() {
 }
 
 #[test]
-fn interactive_onboarding_saves_the_same_configuration() {
-    use std::{io::Write, process::Stdio};
-
+fn failed_write_preserves_target() {
     let directory = tempfile::tempdir().unwrap();
-    let output_path = directory.path().join("deployment.yaml");
-    let state_path = directory.path().join("state-must-not-exist");
-    let mut child = Command::new(env!("CARGO_BIN_EXE_nemoclaw"))
-        .args(["onboard", "--generate-only", "--output"])
-        .arg(&output_path)
-        .arg("--bundle")
-        .arg(directory.path().join("missing-bundle"))
-        .arg("--state-dir")
-        .arg(&state_path)
-        .env("NVIDIA_INFERENCE_API_KEY", "nvapi-interactive-secret")
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .unwrap();
-    child
-        .stdin
-        .take()
-        .unwrap()
-        .write_all(b"interactive-deployment\n\n\n\n\n\ny\na\n")
-        .unwrap();
-    let output = child.wait_with_output().unwrap();
-    assert!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    assert!(output.stdout.is_empty());
-    assert!(!state_path.exists());
-    let document = Document::parse(fs::read(&output_path).unwrap().as_slice()).unwrap();
-    assert_eq!(document.metadata.name, "interactive-deployment");
-    assert_eq!(document.credential_names(), ["NVIDIA_INFERENCE_API_KEY"]);
-    let stderr = String::from_utf8(output.stderr).unwrap();
-    assert!(stderr.contains(&format!(
-        "Review authored configuration:\nDeployment: interactive-deployment\nUID: {}\nSandbox: assistant\nHarness: openclaw\nAgent: primary\nProvider: hosted-nvidia-prod\nAPI: openai-completions\nModel: nvidia/nemotron-3-super-120b-a12b\nCredential references: NVIDIA_INFERENCE_API_KEY\n",
-        document.metadata.uid,
-    )));
-    assert!(stderr.contains("apiVersion: nemoclaw.nvidia.com/v1alpha1"));
-    assert!(!stderr.contains("interactive-secret"));
-}
-
-#[test]
-fn existing_generated_yaml_can_be_edited_in_place_without_changing_uid() {
-    use std::{io::Write, process::Stdio};
-
-    let directory = tempfile::tempdir().unwrap();
-    let path = directory.path().join("deployment.yaml");
-    let generated = Command::new(env!("CARGO_BIN_EXE_nemoclaw"))
-        .args([
-            "onboard",
-            "--generate-only",
-            "--non-interactive",
-            "--output",
-        ])
-        .arg(&path)
-        .output()
-        .unwrap();
-    assert!(generated.status.success());
-    let before = Document::parse(fs::read(&path).unwrap().as_slice()).unwrap();
-
-    let mut child = Command::new(env!("CARGO_BIN_EXE_nemoclaw"))
-        .args(["onboard", "--generate-only", "--output"])
-        .arg(&path)
-        .arg("--edit")
-        .arg(&path)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .unwrap();
-    child
-        .stdin
-        .take()
-        .unwrap()
-        .write_all(
-            b"i\nrejected-provider\nunsupported/model\nREJECTED_KEY\ni\nedited-provider\n\nEDITED_INFERENCE_KEY\na\n",
-        )
-        .unwrap();
-    let output = child.wait_with_output().unwrap();
-    assert!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("Edit rejected: model: is not available"));
-    assert!(stderr.contains("Provider: hosted-nvidia-prod"));
-    let after = Document::parse(fs::read(&path).unwrap().as_slice()).unwrap();
-    assert_eq!(after.metadata.uid, before.metadata.uid);
-    assert_eq!(after.metadata.name, before.metadata.name);
-    assert_eq!(after.spec.sandboxes[0].name, before.spec.sandboxes[0].name);
-    assert_eq!(after.inference_provider().unwrap().name, "edited-provider");
-    assert_eq!(after.credential_names(), ["EDITED_INFERENCE_KEY"]);
-}
-
-#[test]
-fn exiting_review_does_not_save_and_failed_write_preserves_target() {
-    use std::{io::Write, process::Stdio};
-
-    let directory = tempfile::tempdir().unwrap();
-    let exited = directory.path().join("exited.yaml");
-    let mut child = Command::new(env!("CARGO_BIN_EXE_nemoclaw"))
-        .args(["onboard", "--generate-only", "--output"])
-        .arg(&exited)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .unwrap();
-    child
-        .stdin
-        .take()
-        .unwrap()
-        .write_all(b"\n\n\n\n\n\nx\n")
-        .unwrap();
-    assert!(child.wait().unwrap().success());
-    assert!(!exited.exists());
-
     let target = directory.path().join("existing-directory");
     fs::create_dir(&target).unwrap();
     let failed = Command::new(env!("CARGO_BIN_EXE_nemoclaw"))

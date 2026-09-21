@@ -52,7 +52,16 @@ Review and accept the generated configuration first.
 The CLI saves the YAML file, resolves its named credential references, prints a plan preview, and then asks separately before applying it.
 Declining apply or encountering a later failure leaves the YAML at the selected path.
 Use `--generate-only` to stop after saving the file; this mode needs no credential value or working runtime bundle, and the file can later be used with standalone `plan` and `apply`.
-Use `--non-interactive` only for explicit automation: direct flags and defaults replace authoring prompts, all credentials must be available from the environment, and a successful plan proceeds to apply without another prompt.
+Use `--non-interactive` only for explicit automation: direct flags and defaults replace authoring prompts.
+When onboarding continues through plan and apply, all credentials must be available from the environment and a successful plan proceeds to apply without another prompt.
+Scripted generation therefore uses both flags:
+
+```sh
+nemoclaw onboard --generate-only --non-interactive \
+  --output .local/first-deployment/deployment.yaml
+```
+
+Without `--non-interactive`, onboarding requires a terminal on stdin and fails immediately when input is piped or redirected.
 
 The external-gateway configuration used by the rest of this guide is outside that fixed authoring scenario, so prepare it by hand as follows.
 
