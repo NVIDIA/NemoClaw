@@ -382,9 +382,19 @@ test(
     const raw = fs.readFileSync(outputPath, "utf8");
     const document = asExportedConfig(YAML.parse(raw));
     const exportedSandbox = document.spec.sandboxes[0];
-    expect(`${exportedSandbox.name}|${exportedSandbox.agent.name}`).toBe(`${SANDBOX_NAME}|primary`);
-    expect(exportedSandbox).not.toHaveProperty("image");
+    const exportedAgent = exportedSandbox.agent;
+    const exportedRoute = exportedAgent.inference.routes[0];
     const exportedProvider = document.spec.inferenceProviders[0];
+    const exportedToolDisclosure =
+      exportedAgent.tools && "disclosure" in exportedAgent.tools
+        ? exportedAgent.tools.disclosure
+        : "progressive";
+    expect(
+      `sandbox=${exportedSandbox.name}\nagent=${exportedAgent.name}\nroute=${exportedRoute.name}\nproviderRef=${exportedRoute.providerRef}\nmodel=${exportedRoute.overrides.model}\napi=${exportedProvider.api}\nendpoint=${exportedProvider.endpoint}\ncredentialEnv=${exportedProvider.credential?.env}\ntoolDisclosure=${exportedToolDisclosure}`,
+    ).toBe(
+      `sandbox=${SANDBOX_NAME}\nagent=primary\nroute=primary\nproviderRef=${exportedProvider.name}\nmodel=${entry.model}\napi=${entry.preferredInferenceApi}\nendpoint=${entry.endpointUrl}\ncredentialEnv=${entry.credentialEnv}\ntoolDisclosure=${entry.toolDisclosure ?? "progressive"}`,
+    );
+    expect(exportedSandbox).not.toHaveProperty("image");
     const exportedEndpoint = "endpoint" in exportedProvider ? exportedProvider.endpoint : undefined;
     expect(exportedEndpoint).toBe(requireHostedInferenceConfig(secrets).endpointUrl);
     expect(
@@ -423,9 +433,11 @@ test(
     }
     await artifacts.writeJson("config-export-live-evidence.json", {
       sandboxName: SANDBOX_NAME,
-      agentNames: [exportedSandbox.agent.name],
+      agentNames: [exportedAgent.name],
       image: "v1-default",
       endpoint: exportedEndpoint,
+      model: exportedRoute.overrides.model,
+      toolDisclosure: exportedToolDisclosure,
       effectivePolicyMatches: true,
       identityDriftPreventedPublication: true,
       yaml: {
