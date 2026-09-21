@@ -35,9 +35,8 @@ export const REVIEWED_GATEWAY_REGISTRATION_UPGRADE_FIXTURE = Object.freeze({
     tarballUrl: "https://registry.npmjs.org/openclaw/-/openclaw-2026.7.1.tgz",
   }),
   openShellVersion: "0.0.106",
-  // The reported v0.0.123 install used its reviewed managed image. Supplying
-  // the legacy Dockerfile base override would select a different setup path.
-  sandboxBaseImageRef: "",
+  sandboxBaseImageRef:
+    "ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:3265d482f67c9d81ee3a59b0bbad5eb5ea6c705fea81ece8ae888ed12794f7f1",
 } as const);
 
 export const REVIEWED_GATEWAY_UPGRADE_FIXTURES = Object.freeze([

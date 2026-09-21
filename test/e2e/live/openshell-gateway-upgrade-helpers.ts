@@ -51,10 +51,7 @@ export function validateLegacyGatewayUpgradeFixture(fixture: LegacyGatewayUpgrad
   const sandboxBaseDigest = fixture.sandboxBaseImageRef.match(
     /^[^@\s]+@sha256:([0-9a-f]{64})$/,
   )?.[1];
-  if (
-    fixture.sandboxBaseImageRef !== reviewedFixture.sandboxBaseImageRef ||
-    (reviewedFixture.sandboxBaseImageRef !== "" && !sandboxBaseDigest)
-  ) {
+  if (fixture.sandboxBaseImageRef !== reviewedFixture.sandboxBaseImageRef || !sandboxBaseDigest) {
     throw new Error(
       `NEMOCLAW_OLD_SANDBOX_BASE_IMAGE_REF must match the reviewed descriptor's workload path; got ${fixture.sandboxBaseImageRef}`,
     );

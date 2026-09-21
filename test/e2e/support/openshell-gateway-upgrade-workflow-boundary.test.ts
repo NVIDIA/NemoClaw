@@ -102,7 +102,7 @@ describe("OpenShell gateway upgrade boundary", () => {
       nemoclawRef: REVIEWED_GATEWAY_REGISTRATION_UPGRADE_FIXTURE.nemoclawRef,
       commit: REVIEWED_GATEWAY_REGISTRATION_UPGRADE_FIXTURE.nemoclawCommit,
       installerSha256: REVIEWED_GATEWAY_REGISTRATION_UPGRADE_FIXTURE.installerSha256,
-      overridesBaseImage: false,
+      overridesBaseImage: true,
       sandboxBaseImageRef: REVIEWED_GATEWAY_REGISTRATION_UPGRADE_FIXTURE.sandboxBaseImageRef,
       openShellVersion: REVIEWED_GATEWAY_REGISTRATION_UPGRADE_FIXTURE.openShellVersion,
       openClawVersion: REVIEWED_GATEWAY_REGISTRATION_UPGRADE_FIXTURE.openclawVersion,
