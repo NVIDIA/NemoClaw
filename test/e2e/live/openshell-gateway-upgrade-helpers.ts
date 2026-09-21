@@ -16,6 +16,13 @@ const MANAGED_IMAGE_QUALIFICATION_ENV_KEYS = [
 ] as const;
 export const GATEWAY_UPGRADE_INSTALL_TIMEOUT_MS = 35 * 60_000;
 
+export async function captureGatewayUpgradeFailureDiagnostics(
+  exitCode: number | null,
+  capture: (() => Promise<void>) | undefined,
+): Promise<void> {
+  if (exitCode !== 0) await capture?.();
+}
+
 export interface LegacyGatewayUpgradeFixture {
   nemoclawRef: string;
   nemoclawCommit: string;
@@ -51,7 +58,10 @@ export function validateLegacyGatewayUpgradeFixture(fixture: LegacyGatewayUpgrad
   const sandboxBaseDigest = fixture.sandboxBaseImageRef.match(
     /^[^@\s]+@sha256:([0-9a-f]{64})$/,
   )?.[1];
-  if (fixture.sandboxBaseImageRef !== reviewedFixture.sandboxBaseImageRef || !sandboxBaseDigest) {
+  if (
+    fixture.sandboxBaseImageRef !== reviewedFixture.sandboxBaseImageRef ||
+    (reviewedFixture.sandboxBaseImageRef !== "" && !sandboxBaseDigest)
+  ) {
     throw new Error(
       `NEMOCLAW_OLD_SANDBOX_BASE_IMAGE_REF must match the reviewed descriptor's workload path; got ${fixture.sandboxBaseImageRef}`,
     );

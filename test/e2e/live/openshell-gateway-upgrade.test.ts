@@ -35,6 +35,7 @@ import { parseOpenClawAgentText } from "../fixtures/openclaw-agent-output.ts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import {
+  captureGatewayUpgradeFailureDiagnostics,
   currentGatewayUpgradeInstallerArgs,
   currentNemoclawUpgradeRef,
   GATEWAY_UPGRADE_INSTALL_TIMEOUT_MS,
@@ -299,6 +300,7 @@ async function runInstallerPayload(
   logName: string,
   env: NodeJS.ProcessEnv,
   options: {
+    onFailure?: () => Promise<void>;
     redactionValues?: string[];
   } = {},
 ): Promise<ShellProbeResult> {
@@ -313,6 +315,7 @@ async function runInstallerPayload(
   });
   artifacts.addRedactionValues(redactionValues);
   await artifacts.writeText(logName, resultText(result));
+  await captureGatewayUpgradeFailureDiagnostics(result.exitCode, options.onFailure);
   expect(result.exitCode === 0, `${label} NemoClaw installer failed:\n${resultText(result)}`).toBe(
     true,
   );
@@ -457,7 +460,17 @@ async function installCurrentNemoclawUpgrade(
     artifacts,
     "current-install.log",
     currentEnv,
-    { redactionValues },
+    {
+      onFailure: async () => {
+        await bash(host, `nemoclaw ${shellQuote(SURVIVOR_SANDBOX)} doctor`, {
+          artifactName: "current-install-failure-doctor",
+          env: currentEnv,
+          redactionValues,
+          timeoutMs: 120_000,
+        });
+      },
+      redactionValues,
+    },
   );
   const openshellVersion = await bash(
     host,
