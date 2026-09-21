@@ -8,6 +8,8 @@
 !test/**
 !tools/
 !tools/fabric-adapter-experiment.py
+!tools/fabric_management/
+!tools/fabric_management/**
 !ruff.toml
 !docker-bake.hcl
 **/node_modules

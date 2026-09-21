@@ -146,6 +146,7 @@ COPY ruff.toml /repo/
 COPY image/ /repo/image/
 COPY test/ /repo/test/
 COPY tools/fabric-adapter-experiment.py /repo/tools/
+COPY tools/fabric_management/ /repo/tools/fabric_management/
 RUN --mount=type=cache,target=/root/.cache/uv uv tool run --from ruff==0.16.7 ruff check /repo \
     && uv tool run --from ruff==0.16.7 ruff format --check /repo \
     && npm run lint && npm run format:check && npm run typecheck
@@ -154,5 +155,7 @@ FROM common-wheels AS unit-tests
 RUN uv pip install --python /opt/fabric/bin/python --no-deps /wheels/nemo_fabric_adapter_contract-*.whl /wheels/nemo_fabric_adapters_common-*.whl \
     && uv pip install --python /opt/fabric/bin/python PyYAML==6.0.3
 COPY image/fabric/ /tests/
+COPY tools/fabric_management/ /management/
+RUN --network=none /opt/fabric/bin/python -B -m unittest discover -s /management -p 'test_*.py'
 ENV NEMOCLAW_FABRIC_SOURCE=/src/fabric
 RUN --network=none /opt/fabric/bin/python -B -m unittest discover -s /tests -p 'test_*.py'

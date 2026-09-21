@@ -10,6 +10,7 @@ on:
       - image/**
       - test/**
       - tools/fabric-adapter-experiment.py
+      - tools/fabric_management/**
       - docker-bake.hcl
       - .dockerignore
       - ruff.toml
@@ -53,6 +54,12 @@ jobs:
           python3 tools/fabric-adapter-experiment.py --harness openclaw --interfaces --inference-api openai-responses
           python3 tools/fabric-adapter-experiment.py --harness hermes --interfaces --inference-api openai-completions
           python3 tools/fabric-adapter-experiment.py --harness hermes --hermes-relay --inference-api anthropic-messages
+      - name: Qualify the experimental Fabric management contract
+        run: |
+          for harness in pi deepagents; do
+            python3 tools/fabric_management/run.py --image "nc-fabric:$harness" \
+              --config "tools/fabric_management/fixtures/$harness.json"
+          done
       - name: Exercise OpenClaw tools, execution, search, and tracing
         run: |
           docker run --rm --runtime=runc --network none --user 0 \

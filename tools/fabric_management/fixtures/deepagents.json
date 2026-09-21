@@ -1,0 +1,12 @@
+{
+  "metadata": {"name": "management-experiment"},
+  "harness": {"adapter_id": "nvidia.fabric.langchain.deepagents"},
+  "models": {
+    "default": {
+      "provider": "openai",
+      "model": "gpt-4o-mini",
+      "api_key_env": "FABRIC_EXPERIMENT_KEY"
+    }
+  },
+  "tools": {"enabled": []}
+}
