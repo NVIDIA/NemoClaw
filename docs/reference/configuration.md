@@ -22,7 +22,7 @@ Empty or zero selects a default only where stated.
 - Explicit sandbox policies are also checked by the pinned OpenShell policy parser and validator, including protocol-specific rule semantics, process identities, filesystem paths, and destination address restrictions.
 - Explicit filesystem grants must permit reads of the selected harness runtime directories; parent and read-write grants count. This parser check does not inspect images, resolve symlinks, or establish runtime permissions.
 - The parser checks uniquely named model choices with an explicit default for multiple choices, multiple choices for OpenClaw and Pi, and the OpenClaw disclosure mode; omitted disclosure means progressive.
-- The parser resolves integrationRefs only from enclosing deployment or sandbox definitions, rejects name shadowing and incompatible agent grants, and permits at most one attached Brave search definition per sandbox. Agent-inline definitions attach directly; unused enclosing definitions grant no access.
+- The parser resolves integrationRefs only from enclosing deployment or sandbox definitions, rejects name shadowing and incompatible agent grants, permits at most one attached Brave search definition per sandbox, and binds the initial VoiceClaw profile to exactly one integrationRef-selected agent. Agent-inline definitions attach directly; unused enclosing definitions grant no access or runtime resources.
 - The parser requires exactly one sandbox harness or harnessRef, resolves visible harnesses without shadowing, and rejects agent-level harness selection. Each sandbox requires one agent and hosts one Fabric runtime using the sandbox-selected implementation. Shared definitions reuse configuration across sandboxes.
 - The parser permits non-default reasoningEffort values only on the initial default choice. Managed inference services may constrain routes to their declared served model.
 - The parser resolves inferenceRef from enclosing inferences, preserves declaration scope for nested provider references, and rejects missing names, shadowing, and inline/reference ambiguity.
@@ -241,6 +241,7 @@ Paths:
 - `spec.sandboxes[].inferenceProviders[].credential`
 - `spec.sandboxes[].inferences.{key}.routes[].provider.credential`
 - `spec.sandboxes[].integrations.{key}.credential`
+- `spec.services.{key}.speech.credential`
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
@@ -614,6 +615,16 @@ Brave Search with gateway-held credentials and explicit agent grants.
 | `credential` | [Credential](#credential) | Yes | — | Host environment reference. OpenShell supplies a BRAVE_API_KEY placeholder to the sandbox. |
 | `kind` | string | Yes | — | Integration implementation selected by this definition. Constraints: `"webSearch"`. |
 | `provider` | [SearchProvider](#searchprovider) | Yes | — | Supported search service. |
+
+### Alternative 2
+
+One managed VoiceClaw service bound to one selected sandboxed agent.
+
+
+| Field | Input type | Required | Default | Description and constraints |
+|---|---|---|---|---|
+| `kind` | string | Yes | — | Integration implementation selected by this definition. Constraints: `"voiceclaw"`. |
+| `serviceRef` | string | Yes | — | Name of a VoiceClaw service in spec.services. Constraints: pattern `^[a-z][a-z0-9-]{0,39}$`. |
 
 ## Manifest
 
@@ -1267,6 +1278,19 @@ Managed vLLM runtime and immutable model snapshot.
 | `recipe` | [InlineRecipe](#inlinerecipe) | Without hardware | — | Inline preparation and serving contract supplied by the pinned runtime image. Required without hardware; excludes hardware. |
 | `serving` | [Serving](#serving) | No | — | Service limits. Omission selects the SDK defaults; recipe serving settings select recipe-specific parsers and execution options. |
 
+### Alternative 4
+
+Managed VoiceClaw runtime selected by one agent integration.
+
+
+| Field | Input type | Required | Default | Description and constraints |
+|---|---|---|---|---|
+| `image` | string | Yes | — | Immutable local Docker image ID. VoiceClaw does not pull or build images. Constraints: pattern `^sha256:[a-f0-9]{64}$`. |
+| `imagePullPolicy` | [ImagePullPolicy](#imagepullpolicy) | Yes | — | Must be Never for the preloaded PoC image. Constraints: `"Never"`. |
+| `kind` | string | Yes | — | Supported installer selected by this service definition. Constraints: `"voiceclaw"`. |
+| `serving` | [VoiceclawServing](#voiceclawserving) | No | — | VoiceClaw listener and bounded startup settings. |
+| `speech` | [VoiceclawSpeech](#voiceclawspeech) | Yes | — | Speech provider and protected caller credential reference. |
+
 ## ServiceHardware
 
 Explicit execution hardware: a named profile or dedicated GPU requirements. Excludes an inline recipe.
@@ -1401,6 +1425,20 @@ Paths:
 | `sandboxes` | array of [Sandbox](#sandbox) | Yes | — | One to 32 uniquely named sandboxes. Each selects one harness: one or more OpenClaw or Deep Agents instances, or one agent of another harness. Declaration order does not select a default sandbox or agent. Constraints: minimum items 1; maximum items 32. |
 | `services` | map of [ServiceDefinition](#servicedefinition) | No | — | Named managed container services to install, verify once, and remove during destroy. Inference providers may consume their connection through serviceRef. Constraints: keys: pattern `^[a-z][a-z0-9-]{0,39}$`. |
 
+## SpeechProvider
+
+Speech provider supported by the initial VoiceClaw package.
+
+Guide: [Agent runtimes](../agents.md).
+
+Paths:
+
+- `spec.services.{key}.speech.provider`
+
+Accepted input: string.
+
+Constraints: `"nvidia"`.
+
 ## TLS
 
 Gateway mutual TLS file references. All three references are required when TLS is declared.
@@ -1446,3 +1484,33 @@ Paths:
 Accepted input: string.
 
 Constraints: `"progressive"` or `"direct"`.
+
+## VoiceclawServing
+
+VoiceClaw listener and readiness deadline.
+
+Guide: [Agent runtimes](../agents.md).
+
+Paths:
+
+- `spec.services.{key}.serving`
+
+| Field | Input type | Required | Default | Description and constraints |
+|---|---|---|---|---|
+| `port` | integer | No | `18790` | Single HTTP and streaming service port. Constraints: `0` or minimum 1024; maximum 65535. Omitted or zero selects the default. |
+| `startupTimeoutSeconds` | integer | No | `180` | Seconds allowed for authenticated readiness. Constraints: `0` or minimum 1; maximum 3600. Omitted or zero selects the default. |
+
+## VoiceclawSpeech
+
+Speech adapter selected for VoiceClaw.
+
+Guide: [Agent runtimes](../agents.md).
+
+Paths:
+
+- `spec.services.{key}.speech`
+
+| Field | Input type | Required | Default | Description and constraints |
+|---|---|---|---|---|
+| `credential` | [Credential](#credential) | Yes | — | Host credential reference projected through protected runtime storage. |
+| `provider` | [SpeechProvider](#speechprovider) | Yes | — | Supported speech provider. |

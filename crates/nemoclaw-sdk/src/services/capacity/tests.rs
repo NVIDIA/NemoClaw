@@ -41,6 +41,28 @@ fn capacity() -> Capacity {
         ..Default::default()
     }
 }
+
+#[test]
+fn cpu_only_managed_processes_do_not_create_gpu_capacity_requirements() {
+    let encoded = specs().into_iter().next().unwrap();
+    let mut spec: Spec = serde_json::from_str(&encoded).unwrap();
+    spec.kind = super::super::MANAGED_SERVICE_KIND.into();
+    spec.name = "nc-0123456789abcdef-voiceclaw-voice-server".into();
+    let process = spec.process.as_mut().unwrap();
+    process.gpu = false;
+    process.configuration = "{}".into();
+    process.entrypoint = vec!["/usr/local/bin/service-runtime".into()];
+    process.command = vec!["serve".into()];
+    process.mount_target = "/var/lib/service".into();
+    let encoded = spec.json().unwrap();
+    let row = Row::from([("spec".into(), encoded)]);
+
+    assert!(
+        groups([("nemoclaw_managed_service.voice-server", &row)])
+            .unwrap()
+            .is_empty()
+    );
+}
 fn vllm(service: &mut CapacityService) -> &mut installers::vllm::Service {
     match service {
         CapacityService::Vllm(service) => service,

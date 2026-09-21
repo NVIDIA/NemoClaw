@@ -10,6 +10,8 @@ use std::collections::{BTreeMap, BTreeSet};
 pub enum Integration {
     /// Brave Search with gateway-held credentials and explicit agent grants.
     WebSearch(WebSearch),
+    /// One managed VoiceClaw service bound to one selected sandboxed agent.
+    Voiceclaw(VoiceclawIntegration),
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -19,6 +21,22 @@ pub struct WebSearch {
     pub provider: SearchProvider,
     /// Host environment reference. OpenShell supplies a BRAVE_API_KEY placeholder to the sandbox.
     pub credential: Credential,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[schemars(!default)]
+#[serde(default, rename_all = "camelCase", deny_unknown_fields)]
+/// Select one managed VoiceClaw service. Agent identity comes only from integrationRefs.
+pub struct VoiceclawIntegration {
+    /// Name of a VoiceClaw service in spec.services.
+    pub service_ref: String,
+}
+
+/// Selected VoiceClaw consumer identity. It contains no credential value.
+pub(crate) struct VoiceclawBinding<'a> {
+    pub integration: &'a str,
+    pub sandbox: &'a str,
+    pub agent: &'a str,
 }
 
 /// A definition and its explicitly attached agents in one sandbox.
@@ -107,6 +125,7 @@ impl Sandbox {
                     ));
                 }
                 Integration::WebSearch(_) => {}
+                Integration::Voiceclaw(_) => {}
             }
             bindings
                 .entry((owner, name))
@@ -144,6 +163,7 @@ impl Document {
                         agent_refs: binding.agent_refs.into_iter().map(str::to_owned).collect(),
                     });
                 }
+                Integration::Voiceclaw(_) => {}
             }
         }
         if let Some(search) = &mut selected {
@@ -164,9 +184,122 @@ fn validate_definitions(definitions: &BTreeMap<String, Integration>) -> Result<(
             Integration::WebSearch(search) => {
                 super::validation::credential(&Some(search.credential.clone()))?;
             }
+            Integration::Voiceclaw(voiceclaw) => {
+                super::validation::require(
+                    super::validation::SLUG.is_match(&voiceclaw.service_ref),
+                    "VoiceClaw serviceRef must be a lowercase service name",
+                )?;
+            }
         }
     }
     Ok(())
+}
+
+impl Document {
+    pub(crate) fn validate_voiceclaw_integrations(&self) -> Result<(), ConfigError> {
+        let definitions = self
+            .spec
+            .integrations
+            .values()
+            .chain(
+                self.spec
+                    .sandboxes
+                    .iter()
+                    .flat_map(|sandbox| sandbox.integrations.values()),
+            )
+            .chain(
+                self.spec
+                    .sandboxes
+                    .iter()
+                    .flat_map(|sandbox| sandbox.agent.integrations.values()),
+            );
+        for definition in definitions {
+            let Integration::Voiceclaw(voiceclaw) = definition else {
+                continue;
+            };
+            let service = self
+                .spec
+                .services
+                .get(&voiceclaw.service_ref)
+                .ok_or_else(|| {
+                    super::references::missing_reference(
+                        "integrations[].serviceRef",
+                        "service",
+                        &voiceclaw.service_ref,
+                        self.spec.services.keys().map(String::as_str),
+                    )
+                })?;
+            if !matches!(service, crate::services::ServiceDefinition::Voiceclaw(_)) {
+                return Err(ConfigError::new(
+                    "VoiceClaw serviceRef must name a VoiceClaw service",
+                ));
+            }
+        }
+
+        let mut selected = Vec::new();
+        for sandbox in &self.spec.sandboxes {
+            for binding in sandbox.integration_bindings(&self.spec.integrations)? {
+                let Integration::Voiceclaw(voiceclaw) = binding.definition else {
+                    continue;
+                };
+                if binding.agent.is_some() || binding.agent_refs.len() != 1 {
+                    return Err(ConfigError::new(
+                        "VoiceClaw requires one integrationRef-selected agent",
+                    ));
+                }
+                selected.push((
+                    voiceclaw.service_ref.as_str(),
+                    sandbox.name.as_str(),
+                    binding.name,
+                    binding.agent_refs[0],
+                ));
+            }
+        }
+        if selected.len() > 1 {
+            return Err(ConfigError::new(
+                "the initial VoiceClaw profile supports exactly one selected agent",
+            ));
+        }
+        Ok(())
+    }
+
+    pub(crate) fn active_voiceclaw_services(&self) -> Result<BTreeSet<String>, ConfigError> {
+        let mut active = BTreeSet::new();
+        for sandbox in &self.spec.sandboxes {
+            for binding in sandbox.integration_bindings(&self.spec.integrations)? {
+                if let Integration::Voiceclaw(voiceclaw) = binding.definition {
+                    active.insert(voiceclaw.service_ref.clone());
+                }
+            }
+        }
+        Ok(active)
+    }
+
+    pub(crate) fn voiceclaw_binding(
+        &self,
+        service: &str,
+    ) -> Result<Option<VoiceclawBinding<'_>>, ConfigError> {
+        let mut selected = None;
+        for sandbox in &self.spec.sandboxes {
+            for binding in sandbox.integration_bindings(&self.spec.integrations)? {
+                let Integration::Voiceclaw(voiceclaw) = binding.definition else {
+                    continue;
+                };
+                if voiceclaw.service_ref != service {
+                    continue;
+                }
+                if selected.is_some() || binding.agent_refs.len() != 1 {
+                    return Err(ConfigError::new("VoiceClaw service selection is ambiguous"));
+                }
+                selected = Some(VoiceclawBinding {
+                    integration: binding.name,
+                    sandbox: &sandbox.name,
+                    agent: binding.agent_refs[0],
+                });
+            }
+        }
+        Ok(selected)
+    }
 }
 
 // Preserve the native adapter wire contract while deriving grants from agent references.

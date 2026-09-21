@@ -30,7 +30,7 @@ fn private(ip: IpAddr) -> bool {
 fn host_ip(url: &Url) -> Option<IpAddr> {
     url.host_str()?.trim_matches(['[', ']']).parse().ok()
 }
-pub(super) fn credential(value: &Option<Credential>) -> Result<(), ConfigError> {
+pub(crate) fn credential(value: &Option<Credential>) -> Result<(), ConfigError> {
     require(
         value.as_ref().is_none_or(|c| ENV.is_match(&c.env)),
         "credential references require an uppercase environment variable name",

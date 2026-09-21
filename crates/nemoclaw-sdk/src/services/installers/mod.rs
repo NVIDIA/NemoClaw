@@ -5,3 +5,4 @@
 
 pub mod ollama;
 pub mod vllm;
+pub mod voiceclaw;

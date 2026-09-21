@@ -60,11 +60,15 @@ pub(super) fn constrain(root: &mut Value) {
         .as_array_mut()
         .expect("tagged integration variants")
     {
+        let voiceclaw = variant["properties"]["kind"]["const"] == "voiceclaw";
         property(
             variant,
             "kind",
             json!({"description": "Integration implementation selected by this definition."}),
         );
+        if voiceclaw {
+            property(variant, "serviceRef", json!({"pattern": c::SLUG}));
+        }
     }
     for variant in defs["ServiceDefinition"]["oneOf"]
         .as_array_mut()
@@ -123,6 +127,24 @@ pub(super) fn constrain(root: &mut Value) {
     }
     property(&mut defs["Metadata"], "uid", json!({"pattern": c::UUID}));
     property(&mut defs["Credential"], "env", json!({"pattern": c::ENV}));
+    for (field, default, min, max) in [
+        ("port", 18790, 1024, 65535),
+        ("startupTimeoutSeconds", 180, 1, 3600),
+    ] {
+        property(
+            &mut defs["VoiceclawServing"],
+            field,
+            json!({
+                "anyOf": [{"const": 0}, {"minimum": min, "maximum": max}],
+                "default": default,
+                "x-nemoclaw-default-rule": "Omitted or zero selects the default."
+            }),
+        );
+    }
+    defs["VoiceclawServing"]
+        .as_object_mut()
+        .expect("derived VoiceClaw serving schema")
+        .remove("required");
     property(
         &mut defs["Spec"],
         "sandboxes",
@@ -389,7 +411,7 @@ pub(super) fn constrain(root: &mut Value) {
         "Explicit sandbox policies are also checked by the pinned OpenShell policy parser and validator, including protocol-specific rule semantics, process identities, filesystem paths, and destination address restrictions.",
         "Explicit filesystem grants must permit reads of the selected harness runtime directories; parent and read-write grants count. This parser check does not inspect images, resolve symlinks, or establish runtime permissions.",
         "The parser checks uniquely named model choices with an explicit default for multiple choices, multiple choices for OpenClaw and Pi, and the OpenClaw disclosure mode; omitted disclosure means progressive.",
-        "The parser resolves integrationRefs only from enclosing deployment or sandbox definitions, rejects name shadowing and incompatible agent grants, and permits at most one attached Brave search definition per sandbox. Agent-inline definitions attach directly; unused enclosing definitions grant no access.",
+        "The parser resolves integrationRefs only from enclosing deployment or sandbox definitions, rejects name shadowing and incompatible agent grants, permits at most one attached Brave search definition per sandbox, and binds the initial VoiceClaw profile to exactly one integrationRef-selected agent. Agent-inline definitions attach directly; unused enclosing definitions grant no access or runtime resources.",
         "The parser requires exactly one sandbox harness or harnessRef, resolves visible harnesses without shadowing, and rejects agent-level harness selection. Each sandbox requires one agent and hosts one Fabric runtime using the sandbox-selected implementation. Shared definitions reuse configuration across sandboxes.",
         "The parser permits non-default reasoningEffort values only on the initial default choice. Managed inference services may constrain routes to their declared served model.",
         "The parser resolves inferenceRef from enclosing inferences, preserves declaration scope for nested provider references, and rejects missing names, shadowing, and inline/reference ambiguity.",

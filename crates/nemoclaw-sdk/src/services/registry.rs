@@ -41,6 +41,8 @@ pub enum ServiceDefinition {
     OllamaProxy(OllamaProxy),
     /// Managed vLLM runtime and immutable model snapshot.
     Vllm(Box<installers::vllm::Service>),
+    /// Managed VoiceClaw runtime selected by one agent integration.
+    Voiceclaw(Box<installers::voiceclaw::Service>),
 }
 
 /// OpenTofu schema behavior owned by a service installer resource.
@@ -160,15 +162,37 @@ pub(crate) fn constrain_schema(defs: &mut serde_json::Map<String, serde_json::Va
             .as_array_mut()
             .unwrap()
             .push(local_image);
+        if service["properties"]["kind"]["const"] == "voiceclaw" {
+            crate::config::schema::validation::property(
+                service,
+                "image",
+                serde_json::json!({"pattern":crate::config::constraints::LOCAL_IMAGE_ID}),
+            );
+            crate::config::schema::validation::property(
+                service,
+                "imagePullPolicy",
+                serde_json::json!({"const":"Never"}),
+            );
+            service["properties"]["imagePullPolicy"]
+                .as_object_mut()
+                .unwrap()
+                .remove("enum");
+            service["required"]
+                .as_array_mut()
+                .expect("derived VoiceClaw required fields")
+                .push(serde_json::json!("imagePullPolicy"));
+        }
     }
 }
 
 fn active_service_names(document: &Document) -> Result<BTreeSet<String>, ConfigError> {
-    Ok(document
+    let mut active: BTreeSet<_> = document
         .selected_inference_providers()?
         .into_iter()
         .filter_map(|provider| provider.service_ref.clone())
-        .collect())
+        .collect();
+    active.extend(document.active_voiceclaw_services()?);
+    Ok(active)
 }
 
 trait InferenceCapability {
@@ -194,13 +218,14 @@ impl ServiceDefinition {
     fn stage(&self) -> InstallStage {
         match self {
             Self::Ollama(_) | Self::Vllm(_) => InstallStage::Runtime,
-            Self::OllamaProxy(_) => InstallStage::Deployment,
+            Self::OllamaProxy(_) | Self::Voiceclaw(_) => InstallStage::Deployment,
         }
     }
 
     fn inference(&self) -> Option<&dyn InferenceCapability> {
         match self {
             Self::Ollama(_) | Self::OllamaProxy(_) | Self::Vllm(_) => Some(self),
+            Self::Voiceclaw(_) => None,
         }
     }
 
@@ -209,6 +234,7 @@ impl ServiceDefinition {
             Self::Ollama(service) => service.validate(),
             Self::OllamaProxy(service) => service.validate_definition(),
             Self::Vllm(service) => service.validate(),
+            Self::Voiceclaw(service) => service.validate(),
         }
     }
 
@@ -231,6 +257,12 @@ impl ServiceDefinition {
                     "Ollama proxy requires a managed local Docker gateway or explicit local engine",
                 );
             }
+            Self::Voiceclaw(_) => {
+                return crate::config::validation::require(
+                    local_docker,
+                    "VoiceClaw requires a managed local Docker gateway and Docker sandboxes",
+                );
+            }
         };
         crate::config::validation::require(
             placement.is_some() || local_docker,
@@ -244,6 +276,14 @@ impl ServiceDefinition {
     }
 
     fn allocation(&self, gateway: &Gateway) -> Result<Option<NetworkAllocation>, ConfigError> {
+        if let Self::Voiceclaw(service) = self {
+            return Ok(Some(NetworkAllocation {
+                engine: gateway.engine.clone(),
+                network_cidr: gateway.network_cidr.clone(),
+                bind_address: gateway.bridge()?,
+                port: service.serving.port,
+            }));
+        }
         let (placement, publication, port) = match self {
             Self::Ollama(service) => (
                 &service.placement,
@@ -256,6 +296,7 @@ impl ServiceDefinition {
                 service.serving.port,
             ),
             Self::OllamaProxy(_) => return Ok(None),
+            Self::Voiceclaw(_) => unreachable!("VoiceClaw allocation returned above"),
         };
         Ok(Some(NetworkAllocation {
             engine: placement
@@ -287,6 +328,7 @@ impl Installer for ServiceDefinition {
             Self::Ollama(service) => service.install(document, name, generations),
             Self::OllamaProxy(service) => service.install(document, name, generations),
             Self::Vllm(service) => service.install(document, name, generations),
+            Self::Voiceclaw(service) => service.install(document, name, generations),
         }
     }
 
@@ -315,6 +357,11 @@ impl Installer for ServiceDefinition {
                     .check_running(document, name, generations, connections, bindings, cancel)
                     .await
             }
+            Self::Voiceclaw(service) => {
+                service
+                    .check_running(document, name, generations, connections, bindings, cancel)
+                    .await
+            }
         }
     }
 
@@ -328,6 +375,7 @@ impl Installer for ServiceDefinition {
             Self::Ollama(service) => service.remove(document, name, generations),
             Self::OllamaProxy(service) => service.remove(document, name, generations),
             Self::Vllm(service) => service.remove(document, name, generations),
+            Self::Voiceclaw(service) => service.remove(document, name, generations),
         }
     }
 }
@@ -367,6 +415,11 @@ impl InferenceCapability for ServiceDefinition {
                 requires_authentication: service.authentication.is_some(),
                 resource_dependencies: Vec::new(),
             },
+            ServiceDefinition::Voiceclaw(_) => {
+                return Err(ConfigError::new(
+                    "VoiceClaw is not an inference-capable service",
+                ));
+            }
         })
     }
 
@@ -388,6 +441,9 @@ impl InferenceCapability for ServiceDefinition {
                 sandbox_runtime == "docker" || service.placement.is_some(),
                 "vLLM service requires compatible sandbox placement",
             ),
+            ServiceDefinition::Voiceclaw(_) => Err(ConfigError::new(
+                "VoiceClaw is not an inference-capable service",
+            )),
         }
     }
 
@@ -405,6 +461,9 @@ impl InferenceCapability for ServiceDefinition {
             ServiceDefinition::Vllm(service) => {
                 service.credential_source(document, name, generations)
             }
+            ServiceDefinition::Voiceclaw(_) => Err(crate::Error::State(
+                "VoiceClaw is not an inference-capable service",
+            )),
         }
     }
 }
@@ -423,6 +482,9 @@ pub(crate) fn defaults(definition: &mut ServiceDefinition) {
         }
         ServiceDefinition::OllamaProxy(_) => {}
         ServiceDefinition::Vllm(service) => {
+            service.defaults();
+        }
+        ServiceDefinition::Voiceclaw(service) => {
             service.defaults();
         }
     }
@@ -520,6 +582,7 @@ pub(crate) fn validate(document: &Document) -> Result<(), ConfigError> {
         definition.validate_definition()?;
         definition.validate_installation(document)?;
     }
+    document.validate_voiceclaw_integrations()?;
     let gateway = &document.spec.gateway;
     let mut publications = BTreeSet::new();
     let mut networks = BTreeMap::new();
@@ -623,6 +686,9 @@ pub(crate) fn generation_kinds(document: &Document) -> Result<Vec<&'static str>,
             }
             ServiceDefinition::Vllm(_) => {
                 kinds.insert(installers::vllm::SERVICE_KIND);
+            }
+            ServiceDefinition::Voiceclaw(_) => {
+                kinds.insert(super::contract::MANAGED_SERVICE_KIND);
             }
         }
     }

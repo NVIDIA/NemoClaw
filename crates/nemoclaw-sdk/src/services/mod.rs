@@ -22,6 +22,10 @@ pub use installers::ollama::{
     ExternalOllama, ExternalOllamaModel, ManagedOllama, OllamaMemory, OllamaModel, OllamaProxy,
     OllamaServing,
 };
+pub use installers::voiceclaw::{
+    Service as VoiceclawService, Serving as VoiceclawServing, Speech as VoiceclawSpeech,
+    SpeechProvider as VoiceclawSpeechProvider,
+};
 pub(crate) use registry::InstallPlans;
 pub use registry::{
     BackendRegistry, RegisteredBackend, ResourceBehavior, ResourceSchema, ServiceDefinition,

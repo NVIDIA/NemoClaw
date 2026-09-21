@@ -1265,6 +1265,27 @@
             "credential"
           ],
           "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "One managed VoiceClaw service bound to one selected sandboxed agent.",
+          "properties": {
+            "kind": {
+              "const": "voiceclaw",
+              "description": "Integration implementation selected by this definition.",
+              "type": "string"
+            },
+            "serviceRef": {
+              "description": "Name of a VoiceClaw service in spec.services.",
+              "pattern": "^[a-z][a-z0-9-]{0,39}$",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "serviceRef"
+          ],
+          "type": "object"
         }
       ]
     },
@@ -3188,6 +3209,71 @@
             }
           },
           "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "allOf": [
+            {
+              "if": {
+                "properties": {
+                  "image": {
+                    "pattern": "^sha256:[a-f0-9]{64}$"
+                  }
+                },
+                "required": [
+                  "image"
+                ]
+              },
+              "then": {
+                "not": {
+                  "required": [
+                    "placement"
+                  ]
+                },
+                "properties": {
+                  "imagePullPolicy": {
+                    "const": "Never"
+                  }
+                },
+                "required": [
+                  "imagePullPolicy"
+                ]
+              }
+            }
+          ],
+          "description": "Managed VoiceClaw runtime selected by one agent integration.",
+          "properties": {
+            "image": {
+              "description": "Immutable local Docker image ID. VoiceClaw does not pull or build images.",
+              "pattern": "^sha256:[a-f0-9]{64}$",
+              "type": "string"
+            },
+            "imagePullPolicy": {
+              "$ref": "#/$defs/ImagePullPolicy",
+              "const": "Never",
+              "description": "Must be Never for the preloaded PoC image."
+            },
+            "kind": {
+              "const": "voiceclaw",
+              "description": "Supported installer selected by this service definition.",
+              "type": "string"
+            },
+            "serving": {
+              "$ref": "#/$defs/VoiceclawServing",
+              "description": "VoiceClaw listener and bounded startup settings."
+            },
+            "speech": {
+              "$ref": "#/$defs/VoiceclawSpeech",
+              "description": "Speech provider and protected caller credential reference."
+            }
+          },
+          "required": [
+            "kind",
+            "image",
+            "speech",
+            "imagePullPolicy"
+          ],
+          "type": "object"
         }
       ]
     },
@@ -3667,6 +3753,13 @@
       ],
       "type": "object"
     },
+    "SpeechProvider": {
+      "description": "Speech provider supported by the initial VoiceClaw package.",
+      "enum": [
+        "nvidia"
+      ],
+      "type": "string"
+    },
     "TLS": {
       "additionalProperties": false,
       "description": "Gateway mutual TLS file references. All three references are required when TLS is declared.",
@@ -3727,6 +3820,64 @@
           "type": "string"
         }
       ]
+    },
+    "VoiceclawServing": {
+      "additionalProperties": false,
+      "description": "VoiceClaw listener and readiness deadline.",
+      "properties": {
+        "port": {
+          "anyOf": [
+            {
+              "const": 0
+            },
+            {
+              "maximum": 65535,
+              "minimum": 1024
+            }
+          ],
+          "default": 18790,
+          "description": "Single HTTP and streaming service port.",
+          "format": "int64",
+          "type": "integer",
+          "x-nemoclaw-default-rule": "Omitted or zero selects the default."
+        },
+        "startupTimeoutSeconds": {
+          "anyOf": [
+            {
+              "const": 0
+            },
+            {
+              "maximum": 3600,
+              "minimum": 1
+            }
+          ],
+          "default": 180,
+          "description": "Seconds allowed for authenticated readiness.",
+          "format": "int64",
+          "type": "integer",
+          "x-nemoclaw-default-rule": "Omitted or zero selects the default."
+        }
+      },
+      "type": "object"
+    },
+    "VoiceclawSpeech": {
+      "additionalProperties": false,
+      "description": "Speech adapter selected for VoiceClaw.",
+      "properties": {
+        "credential": {
+          "$ref": "#/$defs/Credential",
+          "description": "Host credential reference projected through protected runtime storage."
+        },
+        "provider": {
+          "$ref": "#/$defs/SpeechProvider",
+          "description": "Supported speech provider."
+        }
+      },
+      "required": [
+        "provider",
+        "credential"
+      ],
+      "type": "object"
     }
   },
   "$id": "urn:nemoclaw:config:v1alpha1",
@@ -6554,7 +6705,7 @@
     "Explicit sandbox policies are also checked by the pinned OpenShell policy parser and validator, including protocol-specific rule semantics, process identities, filesystem paths, and destination address restrictions.",
     "Explicit filesystem grants must permit reads of the selected harness runtime directories; parent and read-write grants count. This parser check does not inspect images, resolve symlinks, or establish runtime permissions.",
     "The parser checks uniquely named model choices with an explicit default for multiple choices, multiple choices for OpenClaw and Pi, and the OpenClaw disclosure mode; omitted disclosure means progressive.",
-    "The parser resolves integrationRefs only from enclosing deployment or sandbox definitions, rejects name shadowing and incompatible agent grants, and permits at most one attached Brave search definition per sandbox. Agent-inline definitions attach directly; unused enclosing definitions grant no access.",
+    "The parser resolves integrationRefs only from enclosing deployment or sandbox definitions, rejects name shadowing and incompatible agent grants, permits at most one attached Brave search definition per sandbox, and binds the initial VoiceClaw profile to exactly one integrationRef-selected agent. Agent-inline definitions attach directly; unused enclosing definitions grant no access or runtime resources.",
     "The parser requires exactly one sandbox harness or harnessRef, resolves visible harnesses without shadowing, and rejects agent-level harness selection. Each sandbox requires one agent and hosts one Fabric runtime using the sandbox-selected implementation. Shared definitions reuse configuration across sandboxes.",
     "The parser permits non-default reasoningEffort values only on the initial default choice. Managed inference services may constrain routes to their declared served model.",
     "The parser resolves inferenceRef from enclosing inferences, preserves declaration scope for nested provider references, and rejects missing names, shadowing, and inline/reference ambiguity.",

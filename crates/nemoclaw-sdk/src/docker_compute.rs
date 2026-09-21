@@ -142,12 +142,16 @@ pub(crate) fn targets(raw: &[Target]) -> Result<Vec<Target>, Error> {
             let retained = target.kind != "managed_service_storage";
             target.address = address(&target.address);
             target.kind = "docker_volume".into();
-            target.values = Row::from([
+            let mut values = Row::from([
                 ("engine".into(), storage.engine),
                 ("name".into(), storage.name),
                 ("owner".into(), storage.owner),
                 ("retained".into(), retained.to_string()),
             ]);
+            if !retained {
+                values.insert("generation".into(), storage.generation);
+            }
+            target.values = values;
         }
     }
     let mut ancillary: BTreeMap<String, Target> = BTreeMap::new();
@@ -225,7 +229,16 @@ fn container(target: &Target) -> Result<Value, Error> {
         .as_ref()
         .ok_or(Error::State("missing runtime process"))?;
     let launch = spec.container("/data")?;
-    let mut attrs = json!({"name":spec.name,"labels":[{"label":crate::managed::OWNER_LABEL,"value":spec.owner}],"entrypoint":launch.entrypoint,"command":launch.cmd,"env":launch.env,"network_mode":spec.network(),"mounts":[{"type":"volume","source":spec.volume(),"target":process.mount_target}],"capabilities":[{"drop":["ALL"]}],"security_opts":["no-new-privileges"],"restart":"no","memory":process.memory_bytes/(1<<20),"memory_swap":process.memory_bytes/(1<<20),"shm_size":process.shared_memory_bytes/(1<<20),"ipc_mode":if process.host_ipc {"host"} else {"private"},"ulimit":[{"name":"memlock","soft":-1,"hard":-1},{"name":"stack","soft":67108864,"hard":67108864}],"ports":[{"internal":process.port,"external":process.port,"ip":process.bind_address,"protocol":"tcp"}],"log_driver":"json-file","log_opts":{"max-size":"32m","max-file":"3"},"must_run":true,"wait":false,"remove_volumes":false,"destroy_grace_seconds":60});
+    let labels = if target.kind == crate::services::MANAGED_SERVICE_KIND {
+        let labels: std::collections::BTreeMap<_, _> = spec.labels()?.into_iter().collect();
+        labels
+            .into_iter()
+            .map(|(label, value)| json!({"label":label,"value":value}))
+            .collect()
+    } else {
+        vec![json!({"label":crate::managed::OWNER_LABEL,"value":spec.owner})]
+    };
+    let mut attrs = json!({"name":spec.name,"labels":labels,"entrypoint":launch.entrypoint,"command":launch.cmd,"env":launch.env,"network_mode":spec.network(),"mounts":[{"type":"volume","source":spec.volume(),"target":process.mount_target}],"capabilities":[{"drop":["ALL"]}],"security_opts":["no-new-privileges"],"restart":"no","memory":process.memory_bytes/(1<<20),"memory_swap":process.memory_bytes/(1<<20),"shm_size":process.shared_memory_bytes/(1<<20),"ipc_mode":if process.host_ipc {"host"} else {"private"},"ulimit":[{"name":"memlock","soft":-1,"hard":-1},{"name":"stack","soft":67108864,"hard":67108864}],"ports":[{"internal":process.port,"external":process.port,"ip":process.bind_address,"protocol":"tcp"}],"log_driver":"json-file","log_opts":{"max-size":"32m","max-file":"3"},"must_run":true,"wait":false,"remove_volumes":false,"destroy_grace_seconds":60});
     if target.kind == "inference_service"
         && crate::services::installers::vllm::configured_service(&spec)?
             .authentication
@@ -253,7 +266,15 @@ pub(crate) fn configure(graph: &mut Value, raw: &[Target]) -> Result<(), Error> 
         providers.insert(alias.clone(), engine.clone());
         let mut attrs = match target.kind.as_str() {
             "docker_volume" => {
-                let mut value = json!({"name":target.values["name"],"driver":"local","labels":[{"label":crate::managed::OWNER_LABEL,"value":target.values["owner"]}]});
+                let mut labels = vec![
+                    json!({"label":crate::managed::OWNER_LABEL,"value":target.values["owner"]}),
+                ];
+                if let Some(generation) = target.values.get("generation") {
+                    labels
+                        .push(json!({"label":crate::managed::GENERATION_LABEL,"value":generation}));
+                }
+                let mut value =
+                    json!({"name":target.values["name"],"driver":"local","labels":labels});
                 if target
                     .values
                     .get("retained")
@@ -695,6 +716,9 @@ mod tests {
         assert_eq!(container["ipc_mode"], "private");
         assert_eq!(container["env"], json!([]));
         assert!(container.get("gpus").is_none());
+        assert!(container["labels"].as_array().unwrap().iter().any(|label| {
+            label["label"] == crate::managed::GENERATION_LABEL && label["value"] == spec.generation
+        }));
         assert_eq!(
             container["mounts"][0]["source"],
             "${docker_volume.managed_service_storage_voice-server.name}"
@@ -703,6 +727,16 @@ mod tests {
             graph["resource"]["docker_volume"]["managed_service_storage_voice-server"]
                 .get("lifecycle")
                 .is_none()
+        );
+        assert!(
+            graph["resource"]["docker_volume"]["managed_service_storage_voice-server"]["labels"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|label| {
+                    label["label"] == crate::managed::GENERATION_LABEL
+                        && label["value"] == spec.generation
+                })
         );
     }
     #[test]

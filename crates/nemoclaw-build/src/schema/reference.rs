@@ -180,8 +180,21 @@ fn guide(name: &str) -> &'static str {
         | "HermesInterfaces" | "HermesDashboard" | "HermesApi" | "HermesTui" => {
             "[Agent interfaces](../interfaces.md)"
         }
-        "Integration" | "WebSearch" | "SearchProvider" | "Agent" | "AgentExecution"
-        | "AgentObservability" | "OtlpTracing" | "RelayTracing" | "AgentTools" | "AllowedTool"
+        "Integration"
+        | "WebSearch"
+        | "SearchProvider"
+        | "VoiceclawIntegration"
+        | "VoiceclawService"
+        | "VoiceclawSpeech"
+        | "SpeechProvider"
+        | "VoiceclawServing"
+        | "Agent"
+        | "AgentExecution"
+        | "AgentObservability"
+        | "OtlpTracing"
+        | "RelayTracing"
+        | "AgentTools"
+        | "AllowedTool"
         | "ToolDisclosure" => "[Agent runtimes](../agents.md)",
         "ImagePullPolicy" => {
             "[Container image downloads](../usage.md#control-container-image-downloads)"

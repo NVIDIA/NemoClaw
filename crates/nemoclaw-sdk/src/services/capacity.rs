@@ -124,6 +124,9 @@ pub(crate) fn groups<'a>(
         super::validate_resource_spec(kind, encoded)?;
         let spec: Spec = serde_json::from_str(encoded)
             .map_err(|_| Error::State("invalid capacity specification"))?;
+        if spec.process.as_ref().is_some_and(|process| !process.gpu) {
+            continue;
+        }
         groups
             .entry(spec.engine().into())
             .or_default()
