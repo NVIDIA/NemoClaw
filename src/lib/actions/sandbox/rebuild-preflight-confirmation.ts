@@ -164,6 +164,12 @@ export async function confirmDelegatedRebuildIntent(
   sandboxName: string,
   requestedDcodeAutoApprovalMode?: DcodeAutoApprovalMode,
 ): Promise<boolean> {
+  if (process.stdin?.isTTY !== true) {
+    console.error(
+      "  Cannot confirm rebuild without an interactive terminal. Re-run with --yes or --force.",
+    );
+    return false;
+  }
   const activeSessionCount = countActiveSandboxSessionsForRebuild(sandboxName);
   console.log("");
   console.log(`  ${B}Rebuild sandbox '${sandboxName}'${R}`);
