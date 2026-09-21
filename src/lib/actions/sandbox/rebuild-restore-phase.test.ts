@@ -21,15 +21,20 @@ const backupManifest = {
 
 describe("rebuild filesystem restore", () => {
   beforeEach(() => {
-    vi.spyOn(restoreWindow, "beginOpenClawBackupQuiesce").mockResolvedValue({
+    vi.spyOn(restoreWindow, "beginUnregisteredOpenClawBackupQuiesce").mockResolvedValue({
       ok: true,
       window: { sandboxName: "alpha", kind: "backup" },
     });
-    vi.spyOn(restoreWindow, "promoteOpenClawBackupQuiesceToPostRestoreDoctor").mockResolvedValue({
+    vi.spyOn(
+      restoreWindow,
+      "promoteUnregisteredOpenClawBackupQuiesceToPostRestoreDoctor",
+    ).mockResolvedValue({
       ok: true,
       window: { sandboxName: "alpha" },
     });
-    vi.spyOn(restoreWindow, "abortOpenClawPostRestoreDoctor").mockResolvedValue({ ok: true });
+    vi.spyOn(restoreWindow, "abortUnregisteredOpenClawPostRestoreDoctor").mockResolvedValue({
+      ok: true,
+    });
   });
 
   afterEach(() => {
@@ -66,19 +71,19 @@ describe("rebuild filesystem restore", () => {
       restoreSucceeded: true,
       openClawDoctorWindow: { sandboxName: "alpha" },
     });
-    expect(restoreWindow.beginOpenClawBackupQuiesce).toHaveBeenCalledExactlyOnceWith(
+    expect(restoreWindow.beginUnregisteredOpenClawBackupQuiesce).toHaveBeenCalledExactlyOnceWith(
       "alpha",
       undefined,
     );
     expect(
-      vi.mocked(restoreWindow.beginOpenClawBackupQuiesce).mock.invocationCallOrder[0],
+      vi.mocked(restoreWindow.beginUnregisteredOpenClawBackupQuiesce).mock.invocationCallOrder[0],
     ).toBeLessThan(restore.mock.invocationCallOrder[0]!);
     expect(restore.mock.invocationCallOrder[0]).toBeLessThan(
-      vi.mocked(restoreWindow.promoteOpenClawBackupQuiesceToPostRestoreDoctor).mock
+      vi.mocked(restoreWindow.promoteUnregisteredOpenClawBackupQuiesceToPostRestoreDoctor).mock
         .invocationCallOrder[0]!,
     );
     expect(
-      restoreWindow.promoteOpenClawBackupQuiesceToPostRestoreDoctor,
+      restoreWindow.promoteUnregisteredOpenClawBackupQuiesceToPostRestoreDoctor,
     ).toHaveBeenCalledExactlyOnceWith({ sandboxName: "alpha", kind: "backup" });
   });
 

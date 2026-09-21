@@ -9,9 +9,9 @@ import { readHermesOperatorConfigHandoff } from "../../state/sandbox";
 import type { RebuildBackupManifest } from "./rebuild-backup-phase";
 import type { RebuildLog } from "./rebuild-credential-preflight";
 import {
-  abortOpenClawPostRestoreDoctor,
-  beginOpenClawBackupQuiesce,
-  promoteOpenClawBackupQuiesceToPostRestoreDoctor,
+  abortUnregisteredOpenClawPostRestoreDoctor,
+  beginUnregisteredOpenClawBackupQuiesce,
+  promoteUnregisteredOpenClawBackupQuiesceToPostRestoreDoctor,
   type OpenClawPostRestoreDoctorWindow,
 } from "./runtime/openclaw-lifecycle";
 import {
@@ -121,7 +121,10 @@ export async function runRebuildRestorePhase(
   } | null = null;
   if (targetAgentType === "openclaw") {
     log("Entering verified OpenClaw pre-restore quiesce window");
-    const doctorWindow = await beginOpenClawBackupQuiesce(sandboxName, runtimeSelection);
+    const doctorWindow = await beginUnregisteredOpenClawBackupQuiesce(
+      sandboxName,
+      runtimeSelection,
+    );
     log(`Pre-restore quiesce window: ${doctorWindow.ok ? "verified" : doctorWindow.stage}`);
     if (!doctorWindow.ok) {
       console.error(
@@ -150,7 +153,7 @@ export async function runRebuildRestorePhase(
       );
     } catch (error) {
       if (openClawDoctorWindow) {
-        await abortOpenClawPostRestoreDoctor(openClawDoctorWindow);
+        await abortUnregisteredOpenClawPostRestoreDoctor(openClawDoctorWindow);
       }
       throw error;
     }
@@ -181,7 +184,7 @@ export async function runRebuildRestorePhase(
     }
     if (!restore.success) {
       if (openClawDoctorWindow) {
-        await abortOpenClawPostRestoreDoctor(openClawDoctorWindow);
+        await abortUnregisteredOpenClawPostRestoreDoctor(openClawDoctorWindow);
         openClawDoctorWindow = undefined;
       }
       if (restore.error) console.error(`  Restore blocked: ${restore.error}`);
@@ -196,10 +199,11 @@ export async function runRebuildRestorePhase(
   if (targetAgentType === "openclaw" && openClawDoctorWindow) {
     const quiesceWindow = openClawDoctorWindow;
     log("Promoting restored OpenClaw state into the post-upgrade doctor window");
-    const promoted = await promoteOpenClawBackupQuiesceToPostRestoreDoctor(quiesceWindow);
+    const promoted =
+      await promoteUnregisteredOpenClawBackupQuiesceToPostRestoreDoctor(quiesceWindow);
     log(`Post-restore doctor window: ${promoted.ok ? "verified" : promoted.stage}`);
     if (!promoted.ok) {
-      await abortOpenClawPostRestoreDoctor(quiesceWindow);
+      await abortUnregisteredOpenClawPostRestoreDoctor(quiesceWindow);
       console.error(
         `  ${YW}OpenClaw restored state could not enter its post-upgrade doctor window.${R}`,
       );
