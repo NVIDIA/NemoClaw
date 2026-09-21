@@ -13,12 +13,14 @@ export function asExportedConfig(value: unknown): V1Alpha1Export {
 }
 
 export function exportedAgentList(sandbox: V1Alpha1ExportSandbox): readonly V1Alpha1ExportAgent[] {
-  return "agents" in sandbox ? sandbox.agents : [];
+  return [sandbox.agent];
 }
 
-export function exportedSingletonSandbox(
+export function exportedDeepAgentsSandbox(
   sandbox: V1Alpha1ExportSandbox,
-): Extract<V1Alpha1ExportSandbox, { readonly agent: V1Alpha1ExportAgent }> {
-  if (!("agent" in sandbox)) throw new Error("The export requires one agent");
+): Extract<V1Alpha1ExportSandbox, { readonly harness: Readonly<{ kind: "deepagents" }> }> {
+  if (!("image" in sandbox) || sandbox.harness.kind !== "deepagents") {
+    throw new Error("The export requires a Deep Agents sandbox");
+  }
   return sandbox;
 }

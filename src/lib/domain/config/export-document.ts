@@ -88,23 +88,6 @@ function exportAgent(
   };
 }
 
-function exportAgents(
-  source: VerifiedExportSource,
-  providerName: string,
-): readonly V1Alpha1ExportAgent[] {
-  const primary = exportAgent(source, providerName, { name: "primary", primary: true });
-  return [
-    primary,
-    ...(source.additionalAgents ?? []).map((agent) =>
-      exportAgent(source, providerName, {
-        name: agent.name,
-        primary: false,
-        tools: agent.tools,
-      }),
-    ),
-  ];
-}
-
 function targetProcess(policy: Record<string, unknown>): void {
   const process = policy.process as Record<string, unknown> | undefined;
   if (process?.run_as_user === "sandbox") process.run_as_user = "1000";
@@ -149,6 +132,9 @@ export function buildExportConfig(
   source: VerifiedExportSource,
   identity: ExportConfigBuildIdentity,
 ): V1Alpha1Export {
+  if (source.additionalAgents !== undefined) {
+    throw new Error("V1alpha1 export does not support an OpenClaw sandbox with secondary agents.");
+  }
   const providerName = exportedProviderName(source.inference);
   const sandboxBase = {
     name: source.sandboxName,
@@ -182,7 +168,7 @@ export function buildExportConfig(
       : {
           ...sandboxBase,
           harness: { kind: source.agent, ...agentSettings(source) },
-          agents: exportAgents(source, providerName),
+          agent: exportAgent(source, providerName, { name: "primary", primary: true }),
         };
   const candidate = {
     apiVersion: "nemoclaw.nvidia.com/v1alpha1",

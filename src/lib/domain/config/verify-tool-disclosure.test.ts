@@ -92,7 +92,7 @@ describe("managed tool-disclosure export", () => {
     expect(result.outcome).toEqual({ ok: true, completion: { kind: "stdout" } });
     const [yaml] = result.writeStdout.mock.calls[0]!;
     const sandbox = asExportedConfig(YAML.parse(yaml)).spec.sandboxes[0]!;
-    expect("agents" in sandbox).toBe(true);
+    expect("agent" in sandbox).toBe(true);
     expect(exportedAgentList(sandbox)[0]).toHaveProperty("tools", { disclosure: "direct" });
     expect(sandbox.network.proxy).toEqual({ host: "proxy.internal", port: 3129 });
   });

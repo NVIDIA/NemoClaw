@@ -157,13 +157,13 @@ function hasBraveSearch(entry: ObservedExportRegistry): boolean {
 function classifyHermesExcludedCapabilities(entry: ObservedExportRegistry): ExportFinding[] {
   const excluded: Array<[string, unknown, string]> = [
     [
-      "spec.sandboxes[].agents[0].tools.disclosure",
+      "spec.sandboxes[].agent.tools.disclosure",
       entry.agent === "hermes" && entry.toolDisclosure === "direct",
       "direct tool disclosure for Hermes",
     ],
-    ["spec.sandboxes[].agents[0].tools", entry.hermesToolGateways, "enabled Hermes tool gateways"],
+    ["spec.sandboxes[].agent.tools", entry.hermesToolGateways, "enabled Hermes tool gateways"],
     [
-      "spec.sandboxes[].agents[0].dashboard",
+      "spec.sandboxes[].agent.dashboard",
       entry.agent !== "hermes" &&
         [
           entry.hermesApiPort,
@@ -174,7 +174,7 @@ function classifyHermesExcludedCapabilities(entry: ObservedExportRegistry): Expo
         ].some(hasEntries),
       "a non-default Hermes dashboard",
     ],
-    ["spec.sandboxes[].agents[0].auth", entry.hermesInferenceProvider, "Hermes clone inference"],
+    ["spec.sandboxes[].agent.auth", entry.hermesInferenceProvider, "Hermes clone inference"],
   ];
   const present = excluded.filter(([, value]) => hasEntries(value));
   if (entry.agent !== "hermes") {
@@ -194,7 +194,7 @@ function classifyHermesExcludedCapabilities(entry: ObservedExportRegistry): Expo
   if (entry.hermesAuthMethod === "oauth")
     findings.push(
       finding(
-        "spec.sandboxes[].agents[0].auth",
+        "spec.sandboxes[].agent.auth",
         "unsupported",
         "V1 export does not support Hermes OAuth authentication.",
       ),
@@ -267,7 +267,7 @@ function classifyDeepAgentsBaseline(entry: ObservedExportRegistry): ExportFindin
     ...(entry.toolDisclosure !== undefined && entry.toolDisclosure !== "progressive"
       ? [
           finding(
-            "spec.sandboxes[].agents[0].tools",
+            "spec.sandboxes[].agent.tools",
             "unsupported",
             "Deep Agents export does not support retained tool disclosure settings.",
           ),
@@ -296,7 +296,7 @@ function validateHermesAuthentication(snapshot: QualifiedExportSnapshot): Export
     return hasNousBinding
       ? [
           finding(
-            "spec.sandboxes[].agents[0].auth",
+            "spec.sandboxes[].agent.auth",
             "missing-provenance",
             "Explicit retained Hermes API-key authentication provenance is required.",
           ),
@@ -324,7 +324,7 @@ function validateHermesAuthentication(snapshot: QualifiedExportSnapshot): Export
   ) {
     return [
       finding(
-        "spec.sandboxes[].agents[0].auth",
+        "spec.sandboxes[].agent.auth",
         "drifted",
         "Retained Hermes authentication and the verified live inference binding differ.",
       ),
@@ -354,7 +354,7 @@ function classifyExcludedCapabilities(entry: ObservedExportRegistry): ExportFind
     ],
     ["spec.sandboxes[].integrations.messaging", entry.messaging, "messaging"],
     [
-      "spec.sandboxes[].agents[0].dashboard",
+      "spec.sandboxes[].agent.dashboard",
       entry.agent !== "openclaw" && entry.dashboardRemoteBindPrepared,
       "remote dashboard exposure",
     ],
@@ -379,7 +379,7 @@ function classifyRegistryProvenance(entry: ObservedExportRegistry): ExportFindin
   )
     findings.push(
       finding(
-        "spec.sandboxes[].agents[0].tools.disclosure",
+        "spec.sandboxes[].agent.tools.disclosure",
         "unsupported",
         "The persisted tool disclosure is not a supported mode.",
       ),
@@ -622,7 +622,7 @@ function classifyReasoningAgreement(
     return [];
   return [
     finding(
-      "spec.sandboxes[].agents[0].inference.routes[].overrides",
+      "spec.sandboxes[].agent.inference.routes[].overrides",
       "drifted",
       "Registered reasoning overrides and the managed startup profile differ.",
     ),
@@ -639,7 +639,7 @@ function classifyToolDisclosureAgreement(
   }
   return [
     finding(
-      "spec.sandboxes[].agents[0].tools.disclosure",
+      "spec.sandboxes[].agent.tools.disclosure",
       entry.toolDisclosure === undefined ? "missing-provenance" : "drifted",
       "The retained tool disclosure and the registry selection do not agree.",
     ),
@@ -1344,7 +1344,6 @@ function validateAgreement(
 
 function inspectWorkload(entry: ObservedExportRegistry) {
   let authority: NonNullable<ReturnType<typeof readManagedWorkloadAuthority>> | null = null;
-  let additionalAgents: VerifiedExportSource["additionalAgents"];
   const findings: ExportFinding[] = [];
   if (entry.workload?.kind === "managed-image") {
     try {
@@ -1354,14 +1353,21 @@ function inspectWorkload(entry: ObservedExportRegistry) {
         if (projected === null) {
           findings.push(
             finding(
-              "spec.sandboxes[].agents",
+              "spec.sandboxes[].agent",
               "unsupported",
               "The retained secondary-agent manifest cannot be represented by v1 export.",
             ),
           );
+        } else if (projected !== undefined) {
+          findings.push(
+            finding(
+              "spec.sandboxes[].agent",
+              "unsupported",
+              "V1alpha1 export does not support an OpenClaw sandbox with secondary agents.",
+            ),
+          );
         } else {
-          additionalAgents = projected;
-          findings.push(...classifyManagedStartupProfile(entry, authority.profile, projected));
+          findings.push(...classifyManagedStartupProfile(entry, authority.profile));
         }
       }
     } catch {
@@ -1374,7 +1380,7 @@ function inspectWorkload(entry: ObservedExportRegistry) {
       );
     }
   }
-  return { authority, additionalAgents, findings };
+  return { authority, findings };
 }
 
 function projectVerifiedInference(
@@ -1492,7 +1498,7 @@ export function verifyExportSource(
 ): ExportSourceVerificationResult {
   const entry = snapshot.registry;
   const findings = validateAgreement(requestedSandboxName, snapshot);
-  const { authority, additionalAgents, findings: workloadFindings } = inspectWorkload(entry);
+  const { authority, findings: workloadFindings } = inspectWorkload(entry);
   findings.push(...workloadFindings);
   const policy = snapshot.policy.kind === "verified" ? snapshot.policy.canonical : undefined;
   if (snapshot.policy.kind === "not-representable") {
@@ -1506,11 +1512,5 @@ export function verifyExportSource(
   }
   if (findings.length > 0 || !policy) return { kind: "rejected", findings: nonEmpty(findings) };
 
-  return completeVerifiedSource(
-    requestedSandboxName,
-    snapshot,
-    authority,
-    policy,
-    additionalAgents,
-  );
+  return completeVerifiedSource(requestedSandboxName, snapshot, authority, policy);
 }
