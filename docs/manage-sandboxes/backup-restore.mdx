@@ -206,6 +206,8 @@ Snapshot restore performs a targeted repair for legacy `.openclaw-data` symlinks
 Snapshots preserve the complete credential-sanitized `openclaw.json` file.
 Rebuild and restore replace the generated file with that native backup instead of reconstructing selected settings.
 This preserves OpenClaw-owned providers, tools, plugins, hooks, cron jobs, and gateway settings.
+During rebuild, NemoClaw then reapplies the entries owned by the current host-side messaging plan, so restored native channel values do not replace that plan.
+Use `$$nemoclaw <sandbox> channels` commands to change messaging channels.
 If the config cannot be restored safely, NemoClaw stops the restore instead of applying a partial fallback.
 Restore does not change OpenShell policy, credential bindings, or the host-side inference route.
 Reconcile those host resources when the restored configuration expects different values, then restart the gateway when OpenClaw requires it.

@@ -49,4 +49,26 @@ describe("state-file restore modes", () => {
     expect(fs.existsSync(`${configPath}.last-good`)).toBe(false);
     expect(fs.existsSync(path.join(stateDir, ".config-hash"))).toBe(false);
   });
+
+  it("preserves private native mode for the sandbox-user runtime topology (#11764)", () => {
+    const { configPath, status } = runRestore((stateDir) => {
+      const existingConfig = path.join(stateDir, STATE_FILE.path);
+      fs.writeFileSync(existingConfig, "{}\n");
+      fs.chmodSync(existingConfig, 0o600);
+    });
+
+    expect(status).toBe(0);
+    expect(mode(configPath)).toBe(0o600);
+  });
+
+  it("preserves group-write mode for the separate gateway runtime topology (#11764)", () => {
+    const { configPath, status } = runRestore((stateDir) => {
+      const existingConfig = path.join(stateDir, STATE_FILE.path);
+      fs.writeFileSync(existingConfig, "{}\n");
+      fs.chmodSync(existingConfig, 0o660);
+    });
+
+    expect(status).toBe(0);
+    expect(mode(configPath)).toBe(0o660);
+  });
 });

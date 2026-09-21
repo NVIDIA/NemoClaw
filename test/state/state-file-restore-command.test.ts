@@ -21,7 +21,10 @@ describe("buildStateFileRestoreCommand (#5202)", () => {
     expect(cmd).not.toContain("last-good");
     expect(cmd).not.toContain("sha256sum");
     expect(cmd).toContain('mv -f "$tmp" "$dst"');
-    expect(cmd).toContain('chmod 640 "$tmp"');
+    expect(cmd).toContain("restore_mode=640");
+    expect(cmd).toContain("-rw-------) restore_mode=600");
+    expect(cmd).toContain("-rw-rw----) restore_mode=660");
+    expect(cmd).toContain('chmod "$restore_mode" "$tmp"');
   });
 
   it("isolates SQLite restore from an agent-managed Python environment (#7144)", () => {
