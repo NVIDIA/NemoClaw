@@ -22,12 +22,12 @@ Podman gateways retain their stronger process identity checks.
 Docker gateway storage independently binds signing and encryption keys; its verified mountpoint supplies the process mount through OpenTofu.
 The refreshed gateway running state determines whether the OpenShell stage can be planned or must wait for gateway creation or recovery.
 
-The generated graphs use these resource groups:
+The generated graphs manage these objects and observations:
 
-| Owner | Resources |
+| Owner | Managed objects and observations |
 |---|---|
-| NemoClaw provider | OpenShell workspace, provider, profile, route, and sandbox |
-| NemoClaw provider | Podman gateway process; gateway storage, initialization, and retained bridge |
+| NemoClaw provider | OpenShell workspace, provider, profile, sandbox, and Pi runtime configuration |
+| NemoClaw provider | Podman gateway process (`nemoclaw_managed_gateway`); gateway storage, initialization, and retained bridge (`nemoclaw_gateway_storage`) |
 | NemoClaw provider | Retained inference credentials and proxy storage; external Ollama model observation |
 | Docker provider | Docker gateway, inference, and proxy containers; model-cache volumes, service-owned networks and acquired images |
 | Docker provider data source | Local images selected with `imagePullPolicy: Never` |
@@ -38,23 +38,34 @@ Do not edit SDK-generated graphs or share a deployment state directory between i
 
 ## Gateway Capabilities
 
-The SDK's deployment graph reads `data.nemoclaw_gateway_capabilities.current` through the provider's configured OpenShell connection.
-The data source takes the required compute drivers and reports the observed gateway version, driver names and aliases, and whether they satisfy the SDK's compatibility contract.
-Compatibility requires the pinned OpenShell version and exactly one initialized driver that matches every required driver name.
-Missing metadata, authentication failures, and transport failures stop the observation.
-The read is bounded to 30 seconds and does not modify the gateway.
+The deployment graph reads `data.nemoclaw_gateway_capabilities.current` during planning through the provider's configured OpenShell connection.
+The data source reports the observed gateway version, driver names and aliases, driver-entry count, and compatibility with the required compute drivers.
+Compatibility requires the pinned OpenShell version and exactly one initialized driver matching every required name.
+OpenTofu lifecycle conditions report required and observed values when they differ.
+Missing metadata, authentication failures, and transport failures stop ordinary planning without changing runtime resources.
+Each API read is bounded to 30 seconds.
 
-NemoClaw deployment resources and translated proxy containers have a blocking precondition on the compatibility result.
-Docker image and network resources use their provider dependencies; the SDK also checks compatibility before applying the deployment graph.
-The earlier runtime graph omits this data source so managed gateway creation can finish before the deployment graph queries it.
-Unknown data-source inputs defer the read until their dependencies resolve.
+The optional `wait_timeout_seconds` accepts zero to 300 seconds; omission or zero means one bounded API read.
+A positive timeout retries only transport failures, not authentication failures, incomplete metadata, or incompatibility.
+For a managed gateway, the earlier runtime graph sets this timeout to 90 seconds and orders its capability read after gateway reconciliation.
+The capability postcondition must succeed before OpenShell resource refresh proceeds.
 
-OpenTofu can retain known data-source results in a saved plan.
-The SDK therefore checks gateway compatibility again immediately before applying deployment changes.
-Observed data never becomes a durable resource binding, and teardown omits the capability gate so a version or driver mismatch alone does not prevent cleanup.
+A known data-source result can be retained in a saved plan.
+The deployment graph also declares `data.nemoclaw_gateway_capabilities.apply`, with a `read_trigger` that is unknown during planning.
+OpenTofu defers that read until apply and checks its compatibility postcondition before dependent resources can change, including on an otherwise unchanged apply.
+The compiler uses `timestamp() != ""`: it is unknown during planning but resolves to a stable `true`, so the trigger does not create perpetual state differences.
+The optional trigger is a scheduling input, not another compatibility check; a literal `true` alone would not defer the read.
+The SDK does not make a separate pre-apply gateway request.
+This observation is not a lock against concurrent gateway administrators.
 
-[Gateway protocol tests](../crates/nemoclaw-e2e/tests/opentofu_openshell.rs) cover incompatible and incomplete observations, unchanged state after failures, and deferred reads.
-[Deployment fixtures](../crates/nemoclaw-e2e/tests/deployment.rs) cover a gateway change between plan and apply and subsequent recovery and teardown.
+Observed data never becomes a durable resource binding.
+A failed apply may record new observations and condition results while retaining managed-resource state.
+After correcting compatibility or access, reapply the same configuration with its retained state.
+Teardown omits the capability gates so a version or driver mismatch alone does not prevent cleanup.
+
+[Gateway protocol tests](../crates/nemoclaw-e2e/tests/opentofu_openshell.rs) exercise the production provider and pinned OpenTofu without SDK orchestration: early planning errors, saved-plan drift, unchanged apply, failed observation, recovery, and teardown.
+[Deployment fixtures](../crates/nemoclaw-e2e/tests/deployment.rs) and [Pi lifecycle fixtures](../crates/nemoclaw-e2e/tests/fabric_deployment.rs) verify that the SDK uses the same apply-time protection.
+Pi configuration writes are owned by `nemoclaw_pi_configuration`; unchanged apply does not rewrite the hosted runtime.
 
 ## Runtime Capacity and Readiness
 
