@@ -31,7 +31,7 @@ export const DEFAULT_AGENT_CONFIG: AgentConfigTarget = {
   agentName: "openclaw",
   configPath: "/sandbox/.openclaw/openclaw.json",
   configDir: "/sandbox/.openclaw",
-  format: "json",
+  format: "json5",
   configFile: "openclaw.json",
   sensitiveFiles: [],
 };

@@ -42,7 +42,7 @@ forward_ports:
 config:
   dir: /sandbox/.openclaw
   config_file: openclaw.json
-  format: json
+  format: json5
 
 # Static integration metadata only. OpenClaw remains the authority on which
 # skills are visible or active.

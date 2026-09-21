@@ -53,7 +53,7 @@ const OPENCLAW_TARGET: import("./config").AgentConfigTarget = {
   configPath: "/sandbox/.openclaw/openclaw.json",
   configDir: "/sandbox/.openclaw",
   configFile: "openclaw.json",
-  format: "json",
+  format: "json5",
 };
 
 describe("readSandboxConfig stopped-sandbox detail (#10251)", () => {

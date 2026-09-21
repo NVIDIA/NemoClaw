@@ -3,6 +3,7 @@
 
 import { describe, expect, it, vi } from "vitest";
 import { type AgentConfigDependencies, resolveAgentConfig } from "./agent-config";
+import { parseConfig } from "./config-format";
 
 function openClawAgent() {
   return {
@@ -10,7 +11,7 @@ function openClawAgent() {
       dir: "/sandbox/.openclaw",
       configFile: "openclaw.json",
       envFile: null,
-      format: "json",
+      format: "json5",
     },
   };
 }
@@ -26,16 +27,20 @@ function dependencies(overrides: Partial<AgentConfigDependencies> = {}): AgentCo
 }
 
 describe("agent config resolution", () => {
-  it("loads the OpenClaw contract when no agent is registered", () => {
+  it("loads the native JSON5 OpenClaw contract when no agent is registered", () => {
     const loadAgent = vi.fn(() => openClawAgent());
+    const target = resolveAgentConfig("alpha", dependencies({ loadAgent }));
 
-    expect(resolveAgentConfig("alpha", dependencies({ loadAgent }))).toEqual({
+    expect(target).toEqual({
       agentName: "openclaw",
       configPath: "/sandbox/.openclaw/openclaw.json",
       configDir: "/sandbox/.openclaw",
-      format: "json",
+      format: "json5",
       configFile: "openclaw.json",
       sensitiveFiles: [],
+    });
+    expect(parseConfig("{ // native comment\n model: 'nemotron', }", target.format)).toEqual({
+      model: "nemotron",
     });
     expect(loadAgent).toHaveBeenCalledWith("openclaw");
   });

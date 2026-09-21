@@ -37,7 +37,7 @@ describe("resolveAgentConfig", () => {
     const target = resolveAgentConfig("nonexistent-sandbox");
     expect(target.agentName).toBe("openclaw");
     expect(target.configPath).toBe("/sandbox/.openclaw/openclaw.json");
-    expect(target.format).toBe("json");
+    expect(target.format).toBe("json5");
   });
 
   it("returns a configDir that is the parent of configPath", () => {

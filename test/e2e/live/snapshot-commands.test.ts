@@ -117,6 +117,47 @@ async function expectSandboxFileContent(
   expect(result.stdout.trim()).toBe(expected);
 }
 
+async function inspectNativeGatewayOrigin(
+  sandbox: SandboxClient,
+  sandboxName: string,
+  artifactLabel: string,
+): Promise<{ ok: boolean; diagnostic: string }> {
+  const nativeConfig = await sandbox.exec(
+    sandboxName,
+    [
+      "/usr/bin/env",
+      "HOME=/sandbox",
+      "/usr/local/bin/openclaw",
+      "config",
+      "get",
+      "gateway.controlUi.allowedOrigins",
+      "--json",
+    ],
+    {
+      artifactName: `phase-4-read-${artifactLabel}-native-gateway-origins`,
+      env: commandEnv(undefined, sandboxName),
+      timeoutMs: 30_000,
+    },
+  );
+  const parsedOrigins = nativeConfig.exitCode === 0 ? JSON.parse(nativeConfig.stdout) : null;
+  const validateConfig = await sandbox.exec(
+    sandboxName,
+    ["/usr/bin/env", "HOME=/sandbox", "/usr/local/bin/openclaw", "config", "validate"],
+    {
+      artifactName: `phase-4-validate-${artifactLabel}-native-gateway-config`,
+      env: commandEnv(undefined, sandboxName),
+      timeoutMs: 30_000,
+    },
+  );
+  return {
+    ok:
+      Array.isArray(parsedOrigins) &&
+      parsedOrigins.some((origin) => origin === NATIVE_GATEWAY_ORIGIN) &&
+      validateConfig.exitCode === 0,
+    diagnostic: [nativeConfig, validateConfig].map(resultText).join("\n"),
+  };
+}
+
 async function expectAuthenticatedGatewayPairing(
   sandbox: SandboxClient,
   sandboxName: string,
@@ -124,6 +165,7 @@ async function expectAuthenticatedGatewayPairing(
   artifactName: string,
 ): Promise<string> {
   const sessionId = `snapshot-restore-verify-${randomUUID()}`;
+  const nativeConfig = await inspectNativeGatewayOrigin(sandbox, sandboxName, "clone");
   const result = await sandbox.execShell(
     sandboxName,
     trustedSandboxShellScript(`
@@ -140,7 +182,10 @@ openclaw agent --agent main --json -m "ping" \
       timeoutMs: 60_000,
     },
   );
-  expect(classifySnapshotGatewayProbe(result)).toBe("authenticated");
+  expect(
+    classifySnapshotGatewayProbe(result) === "authenticated" && nativeConfig.ok,
+    `${resultText(result)}\n${nativeConfig.diagnostic}`,
+  ).toBe(true);
   return sessionId;
 }
 
@@ -512,43 +557,14 @@ printf '%s' ${JSON.stringify(markerContent)} > ${JSON.stringify(MARKER_FILE)}`,
       markerContent,
       "phase-4-read-restored-source-marker",
     );
-    const restoredNativeConfig = await sandbox.exec(
+    const restoredNativeConfig = await inspectNativeGatewayOrigin(
+      sandbox,
       SANDBOX_NAME,
-      [
-        "/usr/bin/env",
-        "HOME=/sandbox",
-        "/usr/local/bin/openclaw",
-        "config",
-        "get",
-        "gateway.controlUi.allowedOrigins",
-        "--json",
-      ],
-      {
-        artifactName: "phase-4-read-restored-native-gateway-origins",
-        env: commandEnv(),
-        timeoutMs: 30_000,
-      },
-    );
-    const parsedRestoredOrigins =
-      restoredNativeConfig.exitCode === 0 ? JSON.parse(restoredNativeConfig.stdout) : null;
-    const restoredHasNativeOrigin =
-      Array.isArray(parsedRestoredOrigins) &&
-      parsedRestoredOrigins.some((origin) => origin === NATIVE_GATEWAY_ORIGIN);
-    const validateRestoredConfig = await sandbox.exec(
-      SANDBOX_NAME,
-      ["/usr/bin/env", "HOME=/sandbox", "/usr/local/bin/openclaw", "config", "validate"],
-      {
-        artifactName: "phase-4-validate-restored-native-gateway-config",
-        env: commandEnv(),
-        timeoutMs: 30_000,
-      },
+      "restored",
     );
     expect(
-      classifySnapshotRestoreResult(replacementRestore) === "restored" &&
-        Array.isArray(parsedRestoredOrigins) &&
-        restoredHasNativeOrigin &&
-        validateRestoredConfig.exitCode === 0,
-      [replacementRestore, restoredNativeConfig, validateRestoredConfig].map(resultText).join("\n"),
+      classifySnapshotRestoreResult(replacementRestore) === "restored" && restoredNativeConfig.ok,
+      `${resultText(replacementRestore)}\n${restoredNativeConfig.diagnostic}`,
     ).toBe(true);
     await expectLiveBaselineExcluded(
       sandbox,

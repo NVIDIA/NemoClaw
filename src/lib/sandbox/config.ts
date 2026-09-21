@@ -463,7 +463,7 @@ function readSandboxConfig(sandboxName: string, target: AgentConfigTarget): Conf
   }
 
   try {
-    const config = parseConfig(raw, target.agentName === "openclaw" ? "json5" : target.format);
+    const config = parseConfig(raw, target.format);
     Object.defineProperty(config, CONFIG_SOURCE_SHA256, {
       configurable: false,
       enumerable: false,
