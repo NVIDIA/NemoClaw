@@ -96,12 +96,20 @@ fn managed_graph_separates_retained_storage_from_replaceable_processes() {
     assert_eq!(gateway["network_mode"], gateway_spec.network());
     assert_eq!(
         gateway["ports"],
-        json!([{
-            "internal": gateway_port,
-            "external": gateway_port,
-            "ip": "127.0.0.1",
-            "protocol": "tcp"
-        }])
+        json!([
+            {
+                "internal": gateway_port,
+                "external": gateway_port,
+                "ip": "127.0.0.1",
+                "protocol": "tcp"
+            },
+            {
+                "internal": gateway_port,
+                "external": gateway_port,
+                "ip": gateway_spec.bridge().unwrap(),
+                "protocol": "tcp"
+            }
+        ])
     );
     assert_eq!(
         graph["resource"]["docker_container"]["inference_service_inference_qwen"]["depends_on"],

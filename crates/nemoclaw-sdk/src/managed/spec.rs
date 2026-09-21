@@ -286,10 +286,16 @@ impl Spec {
                 host["Ulimits"] = json!([{"Name":"nofile","Soft":65536,"Hard":65536},{"Name":"nproc","Soft":8192,"Hard":8192}]);
             } else {
                 host["NetworkMode"] = json!(self.network());
-                host["PortBindings"] = json!({format!("{port}/tcp"):[{
-                    "HostIp":url.host_str().ok_or(Error::Conflict("missing gateway host"))?,
-                    "HostPort":port.to_string()
-                }]});
+                host["PortBindings"] = json!({format!("{port}/tcp"):[
+                    {
+                        "HostIp":url.host_str().ok_or(Error::Conflict("missing gateway host"))?,
+                        "HostPort":port.to_string()
+                    },
+                    {
+                        "HostIp":self.bridge()?,
+                        "HostPort":port.to_string()
+                    }
+                ]});
                 config["ExposedPorts"] = json!({format!("{port}/tcp"): {}});
             }
             host["Mounts"] = json!([{"Type":"volume","Source":self.volume(),"Target":data_path},{"Type":"bind","Source":self.gateway.engine.strip_prefix("unix://").ok_or(Error::Conflict("managed gateway requires a Unix socket"))?,"Target":"/var/run/docker.sock"}]);
@@ -324,14 +330,7 @@ impl Spec {
     }
     pub fn gateway_config(&self, data_path: &str) -> String {
         let grpc_endpoint = if self.compute_driver == "docker" {
-            let port = url::Url::parse(&self.gateway.endpoint)
-                .expect("validated managed gateway endpoint")
-                .port()
-                .expect("validated managed gateway port");
-            format!(
-                "grpc_endpoint = {:?}\n",
-                format!("http://{}:{port}", self.name)
-            )
+            String::new()
         } else {
             format!("grpc_endpoint = {:?}\n", self.gateway.endpoint)
         };

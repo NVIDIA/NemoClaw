@@ -244,23 +244,16 @@ fn runtime_launch_preserves_declared_bindings_limits_and_isolation() {
 }
 
 #[test]
-fn managed_gateway_uses_bridge_dns_for_docker_supervisor_callback() {
+fn managed_gateway_uses_driver_derived_docker_supervisor_callback() {
     let fixtures: Vec<serde_json::Value> =
         serde_json::from_str(include_str!("reference.json")).unwrap();
     for fixture in fixtures {
         let spec: Spec = serde_json::from_str(fixture["spec"].as_str().unwrap()).unwrap();
         let configuration = spec.gateway_config("/owned-data");
         if spec.compute_driver == "docker" {
-            let port = url::Url::parse(&spec.gateway.endpoint)
-                .unwrap()
-                .port()
-                .unwrap();
             assert!(
-                configuration.contains(&format!(
-                    "grpc_endpoint = {:?}",
-                    format!("http://{}:{port}", spec.name)
-                )),
-                "Docker supervisors must call the gateway over their shared bridge"
+                !configuration.contains("grpc_endpoint ="),
+                "Docker must derive the supervisor callback from its managed bridge"
             );
         } else {
             assert!(
