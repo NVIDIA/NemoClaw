@@ -35,7 +35,7 @@ pub(crate) struct RemovePlan {
     pub required_storage: Vec<(String, String)>,
 }
 
-/// A managed package supports only install, a bounded post-install check, and remove.
+/// A managed package supports declarative install and remove.
 pub(crate) trait Installer {
     fn install(
         &self,
@@ -43,16 +43,6 @@ pub(crate) trait Installer {
         name: &str,
         generations: &crate::compile::Generations,
     ) -> Result<InstallPlan, crate::Error>;
-
-    async fn check_running(
-        &self,
-        document: &crate::config::Document,
-        name: &str,
-        generations: &crate::compile::Generations,
-        connections: &crate::docker::Connections,
-        bindings: &std::collections::BTreeMap<String, crate::state::StateBinding>,
-        cancel: &crate::CancellationToken,
-    ) -> Result<(), crate::Error>;
 
     fn remove(
         &self,

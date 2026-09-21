@@ -59,9 +59,8 @@ use crate::{
     config::{ConfigError, Document},
     managed::{Process, Spec, Storage},
     services::contract::{InstallPlan, Installer, RemovePlan, validate_image},
-    state::StateBinding,
 };
-use std::{collections::BTreeMap, time::Duration};
+use std::collections::BTreeMap;
 use url::Url;
 
 pub(crate) const SERVICE_KIND: &str = "inference_service";
@@ -281,65 +280,6 @@ impl Installer for Service {
             targets,
             dependencies: BTreeMap::from([(service, service_dependencies)]),
         })
-    }
-
-    async fn check_running(
-        &self,
-        document: &Document,
-        name: &str,
-        generations: &Generations,
-        connections: &crate::docker::Connections,
-        bindings: &BTreeMap<String, StateBinding>,
-        cancel: &crate::CancellationToken,
-    ) -> Result<(), Error> {
-        let plan = self.install(document, name, generations)?;
-        let target = plan
-            .targets
-            .iter()
-            .find(|target| target.kind == SERVICE_KIND)
-            .ok_or(Error::State("vLLM install plan is incomplete"))?;
-        let spec: Spec = serde_json::from_str(&target.values["spec"])
-            .map_err(|_| Error::State("invalid vLLM runtime specification"))?;
-        let binding = bindings
-            .get(&crate::docker_compute::address(&target.address))
-            .ok_or(Error::State("vLLM has no established identity"))?;
-        let engine = crate::managed::runtime_engine(connections, &target.kind, &target.values)?;
-        let check = async {
-            loop {
-                let observed = engine
-                    .observe_service(&spec, &binding.id)
-                    .await?
-                    .ok_or(Error::State("vLLM runtime is unobservable"))?;
-                if !observed.running {
-                    return Err(Error::State(
-                        "vLLM stopped during its readiness check; inspect logs and explicitly reapply",
-                    ));
-                }
-                let status = engine.runtime_status(&observed).await?;
-                if status.phase == "ready" {
-                    if self.authentication.is_some() {
-                        crate::services::authentication::read_service_key(
-                            &engine,
-                            &observed.container_id,
-                        )
-                        .await?;
-                    }
-                    return Ok(());
-                }
-                if status.phase == "stopped" {
-                    return Err(Error::State(
-                        "vLLM protection stopped the service; explicit reapply is required",
-                    ));
-                }
-                tokio::time::sleep(Duration::from_secs(5)).await;
-            }
-        };
-        tokio::select! {
-            () = cancel.cancelled() => Err(Error::Cancelled),
-            result = tokio::time::timeout(Duration::from_secs(9 * 3600), check) => {
-                result.map_err(|_| Error::State("vLLM readiness check timed out"))?
-            }
-        }
     }
 
     fn remove(

@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 #![cfg(unix)]
-use nemoclaw_e2e::openshell::Fixture;
+use nemoclaw_e2e::{assert_same_managed_resources, openshell::Fixture};
 use nemoclaw_sdk::config::{Document, ServiceDefinition};
 use serde_json::{Value, json};
 use std::{
@@ -196,26 +196,16 @@ async fn lifecycle(harness: &str, authenticated: bool, kind: &str, partial_destr
         assert!(partial["volume"].is_object());
         assert!(partial["network"].is_null());
         assert!(partial["container"].is_null());
-        let partial_state = fs::read(root.join("deployment/runtime/terraform.tfstate")).unwrap();
-        let partial_record = fs::read(root.join("deployment/intent.json")).ok();
         save(root, "control.json", &json!({}));
-        // An unfinished apply has unknown identities, so the existing SDK
-        // policy requires recovery before destroy. Refusal must not create the
-        // missing network merely because the compiler knows its desired shape.
-        run(root, &bundle, "destroy", "", false).await;
+        // OpenTofu can tear down the recorded subset without creating missing
+        // compute or deleting retained data after a failed runtime operation.
+        run(root, &bundle, "destroy", "", true).await;
         let destroyed = read(root, "engine.json");
         assert_eq!(destroyed["volume"], partial["volume"]);
         assert!(destroyed["network"].is_null());
         assert!(destroyed["container"].is_null());
         assert_eq!(destroyed["effects"], partial["effects"]);
-        assert_eq!(
-            fs::read(root.join("deployment/runtime/terraform.tfstate")).unwrap(),
-            partial_state
-        );
-        assert_eq!(
-            fs::read(root.join("deployment/intent.json")).ok(),
-            partial_record
-        );
+        assert_eq!(read(root, "deployment/intent.json")["destroyed"], true);
         return;
     }
     // Fail before a process exists: the provider has already committed the
@@ -230,6 +220,7 @@ async fn lifecycle(harness: &str, authenticated: bool, kind: &str, partial_destr
     save(root, "control.json", &json!({"startup_failure":true}));
     run(root, &bundle, "apply", "config.yaml", false).await;
     assert_eq!(read(root, "engine.json")["creates"], 1);
+    assert_eq!(read(root, "deployment/intent.json")["runtimePending"], true);
     let runtime_state = read(root, "deployment/runtime/terraform.tfstate");
     let resources = runtime_state["resources"].as_array().unwrap();
     for expected in ["docker_container", "docker_network"] {
@@ -247,6 +238,9 @@ async fn lifecycle(harness: &str, authenticated: bool, kind: &str, partial_destr
     assert_eq!(read(root, "engine.json")["network"], partial["network"]);
     let volume = read(root, "engine.json")["volume"].clone();
     save(root, "control.json", &json!({}));
+    let mut corrected = read(root, "config.yaml");
+    corrected["metadata"]["name"] = json!("corrected-runtime-intent");
+    save(root, "config.yaml", &corrected);
     run(root, &bundle, "apply", "config.yaml", true).await;
     if authenticated {
         {
@@ -406,10 +400,11 @@ async fn lifecycle(harness: &str, authenticated: bool, kind: &str, partial_destr
         // Export does not load the generated credential. Apply must reject an insecure key.
         run(root, &bundle, "export", "", true).await;
         run(root, &bundle, "apply", "config.yaml", false).await;
-        assert_eq!(
-            fs::read(root.join("deployment/runtime/terraform.tfstate")).unwrap(),
-            state
+        assert_same_managed_resources(
+            &fs::read(root.join("deployment/runtime/terraform.tfstate")).unwrap(),
+            &state,
         );
+        assert_eq!(read(root, "engine.json"), stable);
         save(root, "fixture.json", &original);
     }
     assert!(
