@@ -89,13 +89,17 @@ jobs:
             status=$?
             trap - EXIT INT TERM
             if ${created}; then
+              echo "::group::Delete Brev workspace ${INSTANCE_NAME}"
               brev delete "${INSTANCE_NAME}" || true
               absent=0
               for _ in $(seq 1 40); do
                 rows="$(brev ls --json 2>/dev/null | jq -c 'if type == "array" then . elif type == "object" and (.workspaces | type) == "array" then .workspaces elif type == "object" and .workspaces == null then [] else error("unexpected Brev inventory") end' 2>/dev/null || true)"
                 if test -n "${rows}" && ! jq -e --arg name "${INSTANCE_NAME}" 'any(.[]; ((.name // .workspaceName // .instanceName // "") | tostring) == $name)' <<<"${rows}" >/dev/null; then
                   absent=$((absent + 1))
-                  if test "${absent}" -ge 2; then break; fi
+                  if test "${absent}" -ge 2; then
+                    echo "Verified Brev workspace deletion"
+                    break
+                  fi
                 else
                   absent=0
                 fi
@@ -106,22 +110,27 @@ jobs:
                 echo "Brev workspace deletion was not verified" >&2
                 status=1
               fi
+              echo "::endgroup::"
             fi
             exit "${status}"
           }
           trap cleanup EXIT INT TERM
           test -n "${NVIDIA_INFERENCE_API_KEY}"
+          echo "::group::Provision Brev workspace ${INSTANCE_NAME}"
           created=true
           brev search cpu --arch x86_64 --min-vcpu 8 --min-ram 32 --min-disk 100 --sort price \
             | brev create "${INSTANCE_NAME}" \
                 --startup-script @tools/e2e/brev-v1-startup.sh --detached
           brev refresh || true
+          echo "::endgroup::"
+          echo "Waiting for Brev SSH"
           for attempt in $(seq 1 90); do
             if ssh -T -o BatchMode=yes -o ConnectTimeout=10 "${INSTANCE_NAME}" true 2>/dev/null; then break; fi
             if test "${attempt}" -eq 90; then echo "Brev SSH did not become ready" >&2; exit 1; fi
             if test $((attempt % 5)) -eq 0; then brev refresh || true; fi
             sleep 10
           done
+          echo "Brev SSH is ready; waiting for host prerequisites"
           for attempt in $(seq 1 120); do
             if ssh -T "${INSTANCE_NAME}" 'test -f /var/run/nemoclaw-brev-v1-ready'; then break; fi
             if test $((attempt % 10)) -eq 0; then
@@ -130,6 +139,12 @@ jobs:
             if test "${attempt}" -eq 120; then echo "Brev startup did not become ready" >&2; exit 1; fi
             sleep 10
           done
+          echo "Host prerequisites are ready"
+          # The startup script can run as root without knowing which account Brev
+          # will use for SSH. Add the actual login account, then use a fresh SSH
+          # session so its supplementary docker group is applied.
+          ssh -T "${INSTANCE_NAME}" 'sudo usermod -aG docker "$(id -un)"'
+          ssh -T "${INSTANCE_NAME}" 'docker info >/dev/null'
           # shellcheck disable=SC2029
           remote_home="$(ssh -T "${INSTANCE_NAME}" 'printf %s "$HOME"')"
           remote_root="${remote_home}/nemoclaw-brev-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
@@ -141,8 +156,10 @@ jobs:
           printf '%s' "${NVIDIA_INFERENCE_API_KEY}" > "${RUNNER_TEMP}/nvidia-api-key"
           chmod 600 "${RUNNER_TEMP}/nvidia-api-key"
           rsync -a "${RUNNER_TEMP}/nvidia-api-key" "${INSTANCE_NAME}:${remote_root}/nvidia-api-key"
+          echo "Candidate bundle transferred; starting lifecycle qualification"
           # shellcheck disable=SC2029
           ssh -T "${INSTANCE_NAME}" "tar -xzf '${remote_root}/candidate-source.tar.gz' -C '${remote_root}/source' && chmod 700 '${remote_root}/brev-test' && NEMOCLAW_BREV_ROOT='${remote_root}' bash '${remote_root}/source/tools/e2e/brev-v1-guest.sh'"
+          echo "Lifecycle qualification passed; collecting evidence"
           mkdir -p "${RUNNER_TEMP}/brev-evidence"
           rsync -a "${INSTANCE_NAME}:${remote_root}/evidence/brev-proof.json" "${RUNNER_TEMP}/brev-evidence/"
 
