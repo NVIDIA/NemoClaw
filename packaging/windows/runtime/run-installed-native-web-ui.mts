@@ -383,6 +383,10 @@ if (configured) {
 writeFileSync(join(configDirectory, "openclaw.json"), JSON.stringify({
   ...serviceConfiguration,
   update: { checkOnStart: false, auto: { enabled: false } },
+  session: {
+    ...serviceConfiguration.session,
+    store: join(configDirectory, "agents", "main", "sessions", "sessions.json"),
+  },
   gateway: {
     mode: "local",
     bind: "loopback",
