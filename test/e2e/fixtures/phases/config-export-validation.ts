@@ -45,6 +45,7 @@ const { Check } = require("typebox/value") as typeof TypeBoxValueModule;
 
 export const CONFIG_EXPORT_EVIDENCE_CONTRACT = "nemoclaw.config-export-evidence/v1" as const;
 const EVIDENCE_FILE = "config-export-evidence.v1.json";
+const EXPORT_FILE = "config-export.yaml";
 const CONFIG_EXPORT_CAPTURE_LIMIT_BYTES = 64 * 1024;
 const CONFIG_EXPORT_FILE_LIMIT_BYTES = 1024 * 1024;
 const MAX_DIAGNOSTIC_LENGTH = 2_048;
@@ -1061,6 +1062,9 @@ export class ConfigExportValidationPhaseFixture {
       ...(diagnostic ? { diagnostic } : {}),
     };
     await this.artifacts.writeJson(EVIDENCE_FILE, evidence);
+    if (evidence.classification === "success" && evidence.export) {
+      await this.artifacts.writeText(EXPORT_FILE, evidence.export.bytes);
+    }
     if (!evidence.passed) {
       throw new Error(
         `automatic config export validation failed for '${target.id}': ${diagnostic ?? "unknown failure"}`,

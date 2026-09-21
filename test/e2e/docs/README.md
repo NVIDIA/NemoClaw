@@ -133,7 +133,10 @@ elapsed time and a structured command outcome when the fixture invokes the
 CLI. A timed-out, signaled, or otherwise incomplete command fails as a
 transport error before refusal classification. Successful `required` evidence
 includes the exact validated export bytes, byte count, and SHA-256 hash after
-the security checks and cleanup pass. Failure evidence omits export metadata.
+the security checks and cleanup pass. It also publishes those exact bytes as
+`config-export.yaml` so reviewers can inspect and parse the exported document
+directly. Refusal and failure evidence do not publish the YAML file or export
+metadata.
 Its failure stage distinguishes transport errors from export failures, while
 cleanup has its own diagnostic so it cannot hide the primary failure. Evidence
 diagnostics are bounded and remove literal, encoded, wrapped, or escaped known

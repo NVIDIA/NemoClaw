@@ -354,6 +354,7 @@ function fixture(
         writes.push(value);
         return "evidence.json";
       }),
+      writeText: vi.fn(async () => "config-export.yaml"),
     } as unknown as ArtifactSink);
   const cleanup = new CleanupRegistry();
   const host = options.host ?? successfulHost(JSON.stringify(document()));
@@ -521,7 +522,6 @@ if (process.argv.includes("--output")) {
       dependencies: independentDependencies,
       host: successfulHost(raw),
     });
-
     const evidence = await test.phase.from(target("required"), instance());
     const persistedEvidence = JSON.parse(
       fs.readFileSync(path.join(artifactRoot, "config-export-evidence.v1.json"), "utf8"),
@@ -536,7 +536,7 @@ if (process.argv.includes("--output")) {
       export: { bytes: raw, byteLength: Buffer.byteLength(raw, "utf8"), sha256: sha256(raw) },
       security: { knownSecretsAbsent: true, internalTransportsAbsent: true },
     });
-    expect(sha256(evidence.export!.bytes)).toBe(evidence.export!.sha256);
+    expect(fs.readFileSync(path.join(artifactRoot, "config-export.yaml"), "utf8")).toBe(raw);
     expect(persistedEvidence.export).toEqual({
       bytes: raw,
       byteLength: Buffer.byteLength(raw, "utf8"),
