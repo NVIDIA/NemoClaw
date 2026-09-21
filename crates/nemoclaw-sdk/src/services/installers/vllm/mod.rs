@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 //! vLLM installer launch behavior; model and hardware qualification belongs to recipes.
+use crate::config::ComputeDriver;
 mod config;
 mod constraints;
 mod hardware_profile;
@@ -213,7 +214,7 @@ fn targets(
     };
     let spec = Spec {
         layout: 0,
-        compute_driver: "docker".into(),
+        compute_driver: ComputeDriver::Docker,
         kind: SERVICE_KIND.into(),
         name: format!("{}-inference-{name}", document.workspace()),
         owner: document.metadata.uid.clone(),

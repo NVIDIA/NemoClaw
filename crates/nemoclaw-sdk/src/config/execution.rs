@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 use super::ConfigError;
+use crate::config::HarnessKind;
 use serde::{Deserialize, Serialize};
 
 /// Execution timeout shared by the sandbox; native heartbeat settings are OpenClaw-only.
@@ -22,8 +23,8 @@ pub struct AgentExecution {
     pub heartbeat_every: Option<String>,
 }
 impl AgentExecution {
-    pub(crate) fn validate(&self, harness: &str) -> Result<(), ConfigError> {
-        if (harness != "openclaw" && self.heartbeat_every.is_some())
+    pub(crate) fn validate(&self, harness: HarnessKind) -> Result<(), ConfigError> {
+        if (harness != HarnessKind::OpenClaw && self.heartbeat_every.is_some())
             || (self.timeout_seconds.is_none() && self.heartbeat_every.is_none())
             || self
                 .timeout_seconds

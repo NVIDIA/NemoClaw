@@ -1,5 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
+use nemoclaw_sdk::config::{HarnessKind, InferenceProviderKind};
 
 use nemoclaw_sdk::config::{Document, ServiceDefinition, validate_endpoint};
 use serde_json::Value;
@@ -131,7 +132,7 @@ fn managed_defaults_and_safety_bounds_match_the_qualified_recipe() {
     service.serving = Default::default();
     service.memory = Default::default();
     defaulted.spec.sandboxes[0].image.ref_.clear();
-    defaulted.spec.sandboxes[0].runtime.provider.clear();
+    defaulted.spec.sandboxes[0].runtime = Default::default();
     defaulted.spec.sandboxes[0].network.tier.clear();
     defaulted.defaults();
     assert_eq!(defaulted, original);
@@ -171,13 +172,12 @@ fn fabric_protocol_and_managed_ollama_constraints_survive_the_port() {
         "pi",
     ] {
         let mut document = original.clone();
-        document.spec.sandboxes[0].harness.as_mut().unwrap().kind = harness.into();
+        document.spec.sandboxes[0].harness.as_mut().unwrap().kind = harness.parse().unwrap();
         document.spec.inference_providers[0].provider = if harness == "claude" {
-            "anthropic"
+            nemoclaw_sdk::config::InferenceProviderKind::Anthropic
         } else {
-            "openai"
-        }
-        .into();
+            nemoclaw_sdk::config::InferenceProviderKind::Openai
+        };
         assert!(document.validate().is_ok());
         assert_eq!(
             document
@@ -188,7 +188,7 @@ fn fabric_protocol_and_managed_ollama_constraints_survive_the_port() {
         );
     }
     let mut wrong = original;
-    wrong.spec.sandboxes[0].harness.as_mut().unwrap().kind = "claude".into();
+    wrong.spec.sandboxes[0].harness.as_mut().unwrap().kind = HarnessKind::Claude;
     assert!(wrong.validate().is_err());
     let base = include_str!("fixtures/config/managed-ollama.yaml");
     for (from, to) in [
@@ -215,7 +215,7 @@ fn openclaw_uses_only_fabric_with_external_or_managed_dependencies() {
         include_str!("fixtures/config/managed-ollama.yaml"),
     ] {
         let mut document = Document::parse(input.as_bytes()).unwrap();
-        document.spec.sandboxes[0].harness.as_mut().unwrap().kind = "openclaw".into();
+        document.spec.sandboxes[0].harness.as_mut().unwrap().kind = HarnessKind::OpenClaw;
         document.spec.sandboxes[0].image.ref_.clear();
         document.defaults();
         document.validate().unwrap();
@@ -232,13 +232,12 @@ fn openclaw_uses_only_fabric_with_external_or_managed_dependencies() {
                 .runtime(),
             "fabric-openclaw"
         );
-        document.spec.sandboxes[0]
-            .harness
-            .as_mut()
-            .unwrap()
-            .kind
-            .clear();
-        assert!(document.validate().is_err(), "a harness must be declared");
+        let mut input = serde_json::to_value(&document).unwrap();
+        input["spec"]["sandboxes"][0]["harness"]["kind"] = serde_json::json!("");
+        assert!(
+            Document::parse(input.to_string().as_bytes()).is_err(),
+            "a harness must be declared"
+        );
     }
 }
 
@@ -381,7 +380,7 @@ fn harness_selection_does_not_determine_service_ownership() {
             include_str!("fixtures/config/managed-ollama.yaml"),
         ] {
             let mut document = Document::parse(fixture.as_bytes()).unwrap();
-            document.spec.sandboxes[0].harness.as_mut().unwrap().kind = harness.into();
+            document.spec.sandboxes[0].harness.as_mut().unwrap().kind = harness.parse().unwrap();
             assert!(
                 document.validate().is_ok(),
                 "{harness}: {:?}",
@@ -391,12 +390,12 @@ fn harness_selection_does_not_determine_service_ownership() {
     }
     let mut claude =
         Document::parse(include_str!("../../../examples/spark/vllm.yaml").as_bytes()).unwrap();
-    claude.spec.sandboxes[0].harness.as_mut().unwrap().kind = "claude".into();
+    claude.spec.sandboxes[0].harness.as_mut().unwrap().kind = HarnessKind::Claude;
     assert!(
         claude.validate().is_err(),
         "managed vLLM still requires a compatible API"
     );
-    claude.spec.inference_providers[0].provider = "anthropic".into();
+    claude.spec.inference_providers[0].provider = InferenceProviderKind::Anthropic;
     assert!(
         claude.validate().is_err(),
         "managed vLLM exposes the OpenAI API regardless of harness ownership"

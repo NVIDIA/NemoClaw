@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 //! Ollama installer implementation.
+use crate::config::ComputeDriver;
 mod config;
 #[cfg(target_os = "linux")]
 pub(in crate::services) mod runtime;
@@ -360,7 +361,7 @@ fn managed_targets(
     };
     let spec = Spec {
         layout: 0,
-        compute_driver: "docker".into(),
+        compute_driver: ComputeDriver::Docker,
         kind: SERVICE_KIND.into(),
         name: format!("{}-ollama-{name}", document.workspace()),
         owner: document.metadata.uid.clone(),

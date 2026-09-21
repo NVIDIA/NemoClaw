@@ -32,7 +32,9 @@ fn requirements(diags: &mut Diagnostics, config: &GatewayState) -> Option<()> {
             !drivers.is_empty()
                 && drivers.iter().all(|driver| match driver {
                     Value::Unknown => true,
-                    Value::Value(driver) => matches!(driver.as_str(), "docker" | "podman"),
+                    Value::Value(driver) => driver
+                        .parse::<nemoclaw_sdk::config::ComputeDriver>()
+                        .is_ok(),
                     Value::Null => false,
                 })
         }

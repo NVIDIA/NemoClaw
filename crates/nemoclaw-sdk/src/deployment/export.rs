@@ -1,5 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
+use crate::config::HarnessKind;
 
 use super::*;
 
@@ -206,7 +207,7 @@ async fn export_sandbox(
         ));
     }
     let definition = document.sandbox(&expected["name"])?;
-    if document.sandbox_harness(definition)?.kind == "pi" {
+    if document.sandbox_harness(definition)?.kind == HarnessKind::Pi {
         expected.insert(
             "pi_model_config".into(),
             serde_json::to_string(

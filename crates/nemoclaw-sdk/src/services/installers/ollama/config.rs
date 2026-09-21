@@ -7,6 +7,7 @@ use super::super::vllm::{
 use crate::config::{
     ConfigError, ImagePullPolicy, InferenceApi, InferenceProvider, constraints, validate_endpoint,
 };
+use crate::config::{HarnessKind, InferenceProviderKind};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -250,7 +251,7 @@ impl OllamaProxy {
         &self,
         provider: &InferenceProvider,
         model: &str,
-        harness: &str,
+        harness: HarnessKind,
     ) -> Result<(), ConfigError> {
         validate_endpoint(&self.endpoint, false)?;
         let upstream = url::Url::parse(&self.upstream.endpoint)
@@ -262,14 +263,20 @@ impl OllamaProxy {
             Some(url::Host::Ipv6(ip)) => ip.is_loopback(),
             _ => false,
         };
-        if provider.provider != "openai"
+        if provider.provider != InferenceProviderKind::Openai
             || provider.credential.is_some()
             || !provider.endpoint.is_empty()
             || provider.service_ref.is_none()
             || provider
                 .api
                 .is_some_and(|api| api != InferenceApi::OpenaiCompletions)
-            || !matches!(harness, "openclaw" | "hermes" | "deepagents" | "pi")
+            || !matches!(
+                harness,
+                HarnessKind::OpenClaw
+                    | HarnessKind::Hermes
+                    | HarnessKind::DeepAgents
+                    | HarnessKind::Pi
+            )
             || !loopback
             || upstream.scheme() != "http"
             || upstream.path() != "/v1"

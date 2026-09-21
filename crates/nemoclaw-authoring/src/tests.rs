@@ -53,12 +53,21 @@ fn fixed_hosted_openclaw_answers_project_to_parser_accepted_intent() {
     );
     let provider = document.inference_provider().unwrap();
     assert_eq!(provider.name, "hosted-nvidia-prod");
-    assert_eq!(provider.provider, "openai");
+    assert_eq!(
+        provider.provider,
+        nemoclaw_sdk::config::InferenceProviderKind::Openai
+    );
     assert_eq!(provider.endpoint, "https://integrate.api.nvidia.com/v1");
     assert_eq!(document.credential_names(), ["NVIDIA_INFERENCE_API_KEY"]);
     let sandbox = &document.spec.sandboxes[0];
-    assert_eq!(document.sandbox_harness(sandbox).unwrap().kind, "openclaw");
-    assert_eq!(sandbox.runtime.provider, "docker");
+    assert_eq!(
+        document.sandbox_harness(sandbox).unwrap().kind,
+        nemoclaw_sdk::config::HarnessKind::OpenClaw
+    );
+    assert_eq!(
+        sandbox.runtime.provider,
+        nemoclaw_sdk::config::ComputeDriver::Docker
+    );
     assert!(first.yaml().contains("runtime:"));
     let policy = &sandbox.network.policy.as_ref().unwrap().explicit;
     let process = policy.process.as_ref().unwrap();
@@ -102,7 +111,7 @@ fn representable_scenarios_share_one_parser_validated_table() {
         direct_inputs: AnswerOverrides,
         interactive_inputs: Answers,
         available_models: &'static [&'static str],
-        expected_harness: &'static str,
+        expected_harness: nemoclaw_sdk::config::HarnessKind,
         expected_api: InferenceApi,
         expected_binary: &'static str,
         expected_read_only: &'static str,
@@ -129,7 +138,7 @@ fn representable_scenarios_share_one_parser_validated_table() {
                 credential_env: "NVIDIA_INFERENCE_API_KEY".into(),
             },
             available_models: &[NVIDIA_MODEL],
-            expected_harness: "openclaw",
+            expected_harness: nemoclaw_sdk::config::HarnessKind::OpenClaw,
             expected_api: InferenceApi::OpenaiCompletions,
             expected_binary: "/usr/bin/openclaw",
             expected_read_only: "/app",
@@ -160,7 +169,7 @@ fn representable_scenarios_share_one_parser_validated_table() {
                 credential_env: "NVIDIA_RESPONSES_API_KEY".into(),
             },
             available_models: &[NVIDIA_MODEL],
-            expected_harness: "openclaw",
+            expected_harness: nemoclaw_sdk::config::HarnessKind::OpenClaw,
             expected_api: InferenceApi::OpenaiResponses,
             expected_binary: "/usr/bin/openclaw",
             expected_read_only: "/app",
@@ -193,7 +202,7 @@ fn representable_scenarios_share_one_parser_validated_table() {
                 credential_env: "HERMES_INFERENCE_API_KEY".into(),
             },
             available_models: &[NVIDIA_MODEL],
-            expected_harness: "hermes",
+            expected_harness: nemoclaw_sdk::config::HarnessKind::Hermes,
             expected_api: InferenceApi::OpenaiCompletions,
             expected_binary: "/opt/fabric/bin/python",
             expected_read_only: "/opt/hermes",
@@ -258,7 +267,10 @@ fn representable_scenarios_share_one_parser_validated_table() {
         assert!(matches!(reparsed.spec.gateway, Gateway::Managed(_)));
         let provider = reparsed.inference_provider().unwrap();
         assert_eq!(provider.name, direct_answers.provider_name);
-        assert_eq!(provider.provider, "openai");
+        assert_eq!(
+            provider.provider,
+            nemoclaw_sdk::config::InferenceProviderKind::Openai
+        );
         assert_eq!(
             provider.api,
             Some(scenario.expected_api),
@@ -284,7 +296,10 @@ fn representable_scenarios_share_one_parser_validated_table() {
             "{}",
             scenario.name
         );
-        assert_eq!(sandbox.runtime.provider, "docker");
+        assert_eq!(
+            sandbox.runtime.provider,
+            nemoclaw_sdk::config::ComputeDriver::Docker
+        );
         let agent = &sandbox.agent;
         assert_eq!(agent.name, direct_answers.agent_name);
         let route = &reparsed.sandbox_inference(sandbox).unwrap().routes[0];

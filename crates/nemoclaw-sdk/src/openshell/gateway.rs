@@ -20,8 +20,8 @@ impl GatewayCapabilities {
             && self.compute_drivers[0].contains(driver)
     }
 
-    pub fn require(&self, driver: &str) -> Result<(), Error> {
-        if !self.supports(driver) {
+    pub fn require(&self, driver: crate::config::ComputeDriver) -> Result<(), Error> {
+        if !self.supports(driver.as_str()) {
             return Err(Error::Conflict(
                 "gateway version or compute driver does not satisfy the configuration",
             ));
@@ -80,7 +80,7 @@ impl OpenShell {
         response.into_inner().try_into()
     }
 
-    pub async fn verify_gateway(&self, driver: &str) -> Result<(), Error> {
+    pub async fn verify_gateway(&self, driver: crate::config::ComputeDriver) -> Result<(), Error> {
         self.gateway_capabilities().await?.require(driver)
     }
 }

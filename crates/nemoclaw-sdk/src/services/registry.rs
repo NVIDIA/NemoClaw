@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-
 //! Dispatch for service definitions and installer-owned resource backends.
+use crate::config::{ComputeDriver, HarnessKind, InferenceProviderKind};
 
 use super::{
     ManagedOllama, OllamaProxy,
@@ -138,8 +138,8 @@ trait InferenceCapability {
     fn validate_route(
         &self,
         provider: &InferenceProvider,
-        sandbox_runtime: &str,
-        harness: &str,
+        sandbox_runtime: ComputeDriver,
+        harness: HarnessKind,
         model: &str,
     ) -> Result<(), ConfigError>;
 
@@ -182,7 +182,7 @@ impl ServiceDefinition {
             .spec
             .sandboxes
             .iter()
-            .all(|sandbox| sandbox.runtime.provider == "docker");
+            .all(|sandbox| sandbox.runtime.provider == ComputeDriver::Docker);
         let (placement, package) = match self {
             Self::Ollama(service) => (service.placement.as_ref(), "Ollama"),
             Self::Vllm(service) => (service.placement.as_ref(), "vLLM"),
@@ -334,8 +334,8 @@ impl InferenceCapability for ServiceDefinition {
     fn validate_route(
         &self,
         provider: &InferenceProvider,
-        sandbox_runtime: &str,
-        harness: &str,
+        sandbox_runtime: ComputeDriver,
+        harness: HarnessKind,
         model: &str,
     ) -> Result<(), ConfigError> {
         match self {
@@ -346,7 +346,7 @@ impl InferenceCapability for ServiceDefinition {
             ),
             ServiceDefinition::OllamaProxy(service) => service.validate(provider, model, harness),
             ServiceDefinition::Vllm(service) => crate::config::validation::require(
-                sandbox_runtime == "docker" || service.placement.is_some(),
+                sandbox_runtime == ComputeDriver::Docker || service.placement.is_some(),
                 "vLLM service requires compatible sandbox placement",
             ),
         }
@@ -521,7 +521,7 @@ pub(crate) fn validate_provider(
         "serviceRef excludes endpoint and external credentials",
     )?;
     require(
-        provider.provider == "openai",
+        provider.provider == InferenceProviderKind::Openai,
         "managed services require the OpenAI provider implementation",
     )?;
     Ok(true)
@@ -530,8 +530,8 @@ pub(crate) fn validate_provider(
 pub(crate) fn validate_route(
     document: &Document,
     provider: &InferenceProvider,
-    sandbox_runtime: &str,
-    harness: &str,
+    sandbox_runtime: ComputeDriver,
+    harness: HarnessKind,
     model: &str,
 ) -> Result<(), ConfigError> {
     use crate::config::validation::require;

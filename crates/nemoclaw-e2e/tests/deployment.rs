@@ -1,5 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
+use nemoclaw_sdk::config::HarnessKind;
 
 use nemoclaw_e2e::{assert_same_deployment_state, openshell::Fixture};
 use nemoclaw_sdk::{CancellationToken, Deployment, Outcome, config::Document};
@@ -1034,7 +1035,7 @@ async fn mixed_sandboxes_reorder_add_recover_export_and_destroy_independently() 
     *document.spec.gateway.endpoint_mut() = fixture.endpoint.clone();
     let mut other = document.spec.sandboxes[0].clone();
     other.name = "research".into();
-    other.harness.as_mut().unwrap().kind = "deepagents".into();
+    other.harness.as_mut().unwrap().kind = HarnessKind::DeepAgents;
     document.spec.sandboxes.push(other.clone());
     let deployment = Deployment::new(directory.path(), &bundle);
     let cancel = CancellationToken::new();

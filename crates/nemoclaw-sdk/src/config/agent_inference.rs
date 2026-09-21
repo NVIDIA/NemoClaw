@@ -12,15 +12,23 @@ pub enum InferenceApi {
     AnthropicMessages,
 }
 impl InferenceApi {
-    pub fn for_harness(harness: &str) -> Self {
+    pub fn for_harness(harness: HarnessKind) -> Self {
         match harness {
-            "claude" => Self::AnthropicMessages,
-            "codex" => Self::OpenaiResponses,
-            _ => Self::OpenaiCompletions,
+            HarnessKind::Claude => Self::AnthropicMessages,
+            HarnessKind::Codex => Self::OpenaiResponses,
+            HarnessKind::DeepAgents
+            | HarnessKind::Hermes
+            | HarnessKind::OpenClaw
+            | HarnessKind::MiniSweAgent
+            | HarnessKind::Nooa
+            | HarnessKind::NooaBench
+            | HarnessKind::RemoteAgent
+            | HarnessKind::Pi => Self::OpenaiCompletions,
         }
     }
-    pub fn supported(self, harness: &str) -> bool {
-        matches!(harness, "openclaw" | "hermes") || self == Self::for_harness(harness)
+    pub fn supported(self, harness: HarnessKind) -> bool {
+        matches!(harness, HarnessKind::OpenClaw | HarnessKind::Hermes)
+            || self == Self::for_harness(harness)
     }
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -54,10 +62,12 @@ pub struct RouteTuning {
     pub reasoning_effort: Option<ReasoningEffort>,
 }
 impl RouteTuning {
-    pub fn validate(&self, harness: &str) -> Result<(), ConfigError> {
-        let supported = harness == "openclaw"
-            || (matches!(harness, "deepagents" | "mini-swe-agent" | "remote-agent")
-                && self.context_window.is_none()
+    pub fn validate(&self, harness: HarnessKind) -> Result<(), ConfigError> {
+        let supported = harness == HarnessKind::OpenClaw
+            || (matches!(
+                harness,
+                HarnessKind::DeepAgents | HarnessKind::MiniSweAgent | HarnessKind::RemoteAgent
+            ) && self.context_window.is_none()
                 && self.reasoning.is_none()
                 && self.reasoning_effort.is_none())
             || self == &Self::default();
@@ -105,9 +115,10 @@ pub enum AgentTools {
     },
 }
 impl AgentTools {
-    pub(crate) fn validate(&self, harness: &str) -> Result<(), ConfigError> {
-        if harness == "openclaw"
-            || (matches!(harness, "deepagents" | "pi") && matches!(self, Self::ReadOnly { .. }))
+    pub(crate) fn validate(&self, harness: HarnessKind) -> Result<(), ConfigError> {
+        if harness == HarnessKind::OpenClaw
+            || (matches!(harness, HarnessKind::DeepAgents | HarnessKind::Pi)
+                && matches!(self, Self::ReadOnly { .. }))
         {
             Ok(())
         } else {
@@ -167,7 +178,7 @@ pub(crate) struct SandboxRuntimeSettings {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct RuntimeConnection {
-    pub provider: String,
+    pub provider: InferenceProviderKind,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
     pub base_url: String,
@@ -199,12 +210,12 @@ pub(crate) struct RuntimeAuth {
     pub provider_ref: String,
 }
 impl RuntimeConnection {
-    fn validate(&self, provider: &str, harness: &str) -> Result<(), ConfigError> {
+    fn validate(&self, provider: &str, harness: HarnessKind) -> Result<(), ConfigError> {
         super::validate_endpoint(&self.base_url, false)?;
         let profile = crate::openshell::inference_profile(
             provider,
             &self.base_url,
-            &self.provider,
+            self.provider,
             self.api_key_env != "NEMOCLAW_ANONYMOUS_API_KEY",
         )
         .map_err(|_| ConfigError::new("invalid native inference connection"))?;
@@ -219,7 +230,7 @@ impl RuntimeConnection {
                 "inference credential does not match its provider",
             ));
         }
-        if self.model.is_none() != (harness == "pi")
+        if self.model.is_none() != (harness == HarnessKind::Pi)
             || self
                 .model
                 .as_deref()
@@ -232,7 +243,7 @@ impl RuntimeConnection {
 }
 
 impl SandboxRuntimeSettings {
-    pub fn validate(&self, harness: &str) -> Result<(), ConfigError> {
+    pub fn validate(&self, harness: HarnessKind) -> Result<(), ConfigError> {
         self.connection.validate(&self.provider, harness)?;
         self.tuning.validate(harness)?;
         if let Some(search) = &self.web_search {
@@ -258,8 +269,10 @@ impl SandboxRuntimeSettings {
             }
         }
         if !self.agents.is_empty()
-            && (!matches!(harness, "openclaw" | "pi" | "deepagents")
-                || self.agents.len() != 1
+            && (!matches!(
+                harness,
+                HarnessKind::OpenClaw | HarnessKind::Pi | HarnessKind::DeepAgents
+            ) || self.agents.len() != 1
                 || self
                     .agents
                     .iter()
@@ -272,7 +285,7 @@ impl SandboxRuntimeSettings {
             .first()
             .and_then(|agent| agent.inference.as_ref())
         {
-            if (harness == "deepagents" && selection.models.len() != 1)
+            if (harness == HarnessKind::DeepAgents && selection.models.len() != 1)
                 || selection.models.is_empty()
                 || selection.models.len() > 32
                 || !selection.models.contains_key(&selection.default)
@@ -285,7 +298,7 @@ impl SandboxRuntimeSettings {
                 }
                 model.connection.validate(&model.provider, harness)?;
                 model.tuning.validate(harness)?;
-                if (harness == "pi") != model.pi.is_some()
+                if (harness == HarnessKind::Pi) != model.pi.is_some()
                     || model
                         .pi
                         .as_ref()
@@ -309,7 +322,7 @@ impl SandboxRuntimeSettings {
             || self
                 .auth
                 .as_ref()
-                .is_some_and(|a| harness != "hermes" || a.provider_ref.is_empty())
+                .is_some_and(|a| harness != HarnessKind::Hermes || a.provider_ref.is_empty())
         {
             return Err(ConfigError::new("unsupported agent inference settings"));
         }
@@ -319,7 +332,7 @@ impl SandboxRuntimeSettings {
 impl Document {
     fn runtime_model(
         &self,
-        harness: &str,
+        harness: HarnessKind,
         selected: &super::providers::SelectedProvider<'_>,
         route: &Route,
     ) -> Result<RuntimeModel, ConfigError> {
@@ -328,16 +341,16 @@ impl Document {
         let profile = crate::openshell::inference_profile(
             &selected.key,
             &connection.endpoint,
-            &provider.provider,
+            provider.provider,
             crate::services::provider_authenticated(self, provider)?,
         )
         .map_err(|_| ConfigError::new("invalid native inference profile"))?;
         Ok(RuntimeModel {
-            pi: (harness == "pi").then(|| route.overrides.clone()),
+            pi: (harness == HarnessKind::Pi).then(|| route.overrides.clone()),
             provider: selected.key.clone(),
             connection: RuntimeConnection {
-                provider: provider.provider.clone(),
-                model: (harness != "pi").then(|| route.overrides.model.clone()),
+                provider: provider.provider,
+                model: (harness != HarnessKind::Pi).then(|| route.overrides.model.clone()),
                 base_url: connection.endpoint,
                 api_key_env: profile
                     .credentials
@@ -365,13 +378,13 @@ impl Document {
                 let provider = self.route_provider(route, &selection)?;
                 Ok((
                     route.name.clone(),
-                    self.runtime_model(&harness.kind, &provider, route)?,
+                    self.runtime_model(harness.kind, &provider, route)?,
                 ))
             })
             .collect::<Result<_, ConfigError>>()?;
         let primary = models[inference.default_route()?.name.as_str()].clone();
-        let choices = harness.kind == "openclaw"
-            || (harness.kind == "pi" && agent.tools.is_some())
+        let choices = harness.kind == HarnessKind::OpenClaw
+            || (harness.kind == HarnessKind::Pi && agent.tools.is_some())
             || models.len() > 1;
         let web_search = self.web_search(sandbox)?;
         let auth = agent.auth.as_ref().map(|auth| RuntimeAuth {
@@ -461,11 +474,14 @@ mod tests {
             .unwrap();
         let settings: SandboxRuntimeSettings =
             serde_json::from_str(&sandbox.values["inference_json"]).unwrap();
-        settings.validate("openclaw").unwrap();
+        settings.validate(HarnessKind::OpenClaw).unwrap();
         let mut changed = settings;
         changed.connection.model = Some("different-model".into());
         assert_eq!(
-            changed.validate("openclaw").unwrap_err().to_string(),
+            changed
+                .validate(HarnessKind::OpenClaw)
+                .unwrap_err()
+                .to_string(),
             "runtime inference settings differ from the agent's default model settings"
         );
     }

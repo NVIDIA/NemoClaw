@@ -1,5 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
+use nemoclaw_sdk::config::HarnessKind;
 
 use nemoclaw_sdk::{
     CancellationToken, Deployment, OperationResult, Outcome,
@@ -208,7 +209,7 @@ async fn fabric_native_access_and_reconciliation_preserve_the_hosted_runtime() {
         .sandbox_harness(&document.spec.sandboxes[0])
         .unwrap()
         .kind
-        == "openclaw"
+        == HarnessKind::OpenClaw
     {
         exec(
             &client,
@@ -245,7 +246,7 @@ async fn fabric_native_access_and_reconciliation_preserve_the_hosted_runtime() {
         .sandbox_harness(&document.spec.sandboxes[0])
         .unwrap()
         .kind
-        == "openclaw"
+        == HarnessKind::OpenClaw
     {
         let setting = exec(
             &client,
@@ -270,14 +271,15 @@ async fn fabric_native_access_and_reconciliation_preserve_the_hosted_runtime() {
     } else {
         // This is a one-shot Fabric SDK call, not a conversation injected into
         // the hosted runtime by plan/apply or a new NemoClaw invocation API.
-        exec(&client, &binding, ["/opt/fabric/bin/python", "-c", "import sys,asyncio,json; sys.path.insert(0,'/opt/nemoclaw'); from fabric import configuration; from nemo_fabric import Fabric,FabricConfig; c=configuration(sys.argv[1]) if sys.argv[2]=='deepagents' else configuration(sys.argv[1],sys.argv[2]); c['runtime']['artifacts']='/sandbox/sdk-smoke'; print(json.dumps(asyncio.run(Fabric().run(FabricConfig.model_validate(c),input='Reply with exactly the word FOUR.',base_dir='/sandbox')).to_mapping()))", &agent.name, &document.sandbox_harness(&document.spec.sandboxes[0]).unwrap().kind].map(String::from).to_vec()).await
+        exec(&client, &binding, ["/opt/fabric/bin/python", "-c", "import sys,asyncio,json; sys.path.insert(0,'/opt/nemoclaw'); from fabric import configuration; from nemo_fabric import Fabric,FabricConfig; c=configuration(sys.argv[1]) if sys.argv[2]=='deepagents' else configuration(sys.argv[1],sys.argv[2]); c['runtime']['artifacts']='/sandbox/sdk-smoke'; print(json.dumps(asyncio.run(Fabric().run(FabricConfig.model_validate(c),input='Reply with exactly the word FOUR.',base_dir='/sandbox')).to_mapping()))", &agent.name, document.sandbox_harness(&document.spec.sandboxes[0]).unwrap().kind.as_str()].map(String::from).to_vec()).await
     };
     assert!(
         confirmed_reply(
-            &document
+            document
                 .sandbox_harness(&document.spec.sandboxes[0])
                 .unwrap()
-                .kind,
+                .kind
+                .as_str(),
             &response
         ),
         "no confirmed successful native reply"
@@ -290,7 +292,7 @@ async fn fabric_native_access_and_reconciliation_preserve_the_hosted_runtime() {
 fn uses_independent_openclaw_inference(document: &Document) -> bool {
     document
         .sandbox_harness(&document.spec.sandboxes[0])
-        .is_ok_and(|harness| harness.kind == "openclaw")
+        .is_ok_and(|harness| harness.kind == HarnessKind::OpenClaw)
         && document
             .selected_inference_providers()
             .is_ok_and(|providers| {
@@ -359,7 +361,7 @@ async fn dependency_upgrade_survives_apply_process_exit() {
     let cancel = CancellationToken::new();
     let client = OpenShell::connect(&document.spec.gateway, Arc::new(EnvironmentSecrets)).unwrap();
     client
-        .verify_gateway(&document.spec.sandboxes[0].runtime.provider)
+        .verify_gateway(document.spec.sandboxes[0].runtime.provider)
         .await
         .unwrap();
     let (before, binding) = bindings(&directory);

@@ -205,17 +205,14 @@ impl Harness {
     }
 
     pub fn validate(&self) -> Result<(), ConfigError> {
-        if !super::is_fabric_harness(&self.kind) {
-            return Err(ConfigError::new("harness requires a supported kind"));
-        }
         if let Some(interfaces) = &self.interfaces {
-            interfaces.validate(&self.kind)?;
+            interfaces.validate(self.kind)?;
         }
         if let Some(execution) = &self.execution {
-            execution.validate(&self.kind)?;
+            execution.validate(self.kind)?;
         }
         if let Some(observability) = &self.observability {
-            observability.validate(&self.kind)?;
+            observability.validate(self.kind)?;
         }
         Ok(())
     }
@@ -254,7 +251,10 @@ impl Inference {
                     "inference choices require unique lowercase names and valid models",
                 ));
             }
-            route.overrides.tuning.validate("openclaw")?;
+            route
+                .overrides
+                .tuning
+                .validate(super::HarnessKind::OpenClaw)?;
             if self.default_route()?.name != route.name
                 && route
                     .overrides

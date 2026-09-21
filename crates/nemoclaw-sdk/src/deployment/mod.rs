@@ -1,5 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
+use crate::config::HarnessKind;
 
 #[cfg(test)]
 mod tests;
@@ -30,7 +31,7 @@ use std::{
 async fn validate_gateway(client: &OpenShell, document: &Document) -> Result<(), Error> {
     let capabilities = client.gateway_capabilities().await?;
     for sandbox in &document.spec.sandboxes {
-        capabilities.require(&sandbox.runtime.provider)?;
+        capabilities.require(sandbox.runtime.provider)?;
     }
     Ok(())
 }
@@ -306,7 +307,7 @@ impl Deployment {
             );
             (self.progress)(Progress::Readiness);
             self.timed("sandbox.ready", async {
-                if document.sandbox_harness(definition)?.kind == "pi" {
+                if document.sandbox_harness(definition)?.kind == HarnessKind::Pi {
                     sandbox.insert(
                         "pi_model_config".into(),
                         serde_json::to_string(

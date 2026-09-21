@@ -191,7 +191,10 @@ fn remote_example_parses_with_pinned_model_and_runtime() {
     let document =
         Document::parse(include_bytes!("../../../examples/spark/remote-vllm.yaml").as_slice())
             .unwrap();
-    assert_eq!(document.spec.sandboxes[0].runtime.provider, "podman");
+    assert_eq!(
+        document.spec.sandboxes[0].runtime.provider,
+        nemoclaw_sdk::config::ComputeDriver::Podman
+    );
     assert_eq!(
         document.inference_endpoint().unwrap(),
         "http://10.0.0.8:18898/v1"

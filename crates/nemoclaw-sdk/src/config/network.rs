@@ -1,5 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
+use crate::config::HarnessKind;
 // Input contract adapted from NVIDIA/NemoClaw at be46805b51b0d626466538e9f8fe56c8ad157549:
 // schemas/network-policy.schema.json and src/lib/config/model.ts (Apache-2.0).
 // 2026-09-15: represented the export fields as strict Rust types, added explicit
@@ -279,7 +280,7 @@ impl Proxy {
     }
 }
 impl Network {
-    pub(crate) fn validate_runtime_access(&self, harness: &str) -> Result<(), ConfigError> {
+    pub(crate) fn validate_runtime_access(&self, harness: HarnessKind) -> Result<(), ConfigError> {
         let Some(filesystem) = self
             .policy
             .as_ref()

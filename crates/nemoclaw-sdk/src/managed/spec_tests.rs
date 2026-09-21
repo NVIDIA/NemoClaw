@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 use super::*;
+use crate::config::ComputeDriver;
 #[test]
 fn image_pull_policy_does_not_change_container_configuration() {
     let fixtures: Vec<serde_json::Value> =
@@ -266,7 +267,7 @@ fn podman_gateway_namespace_survives_info_id_changes_but_not_network_replacement
     let fixtures: Vec<serde_json::Value> =
         serde_json::from_str(include_str!("reference.json")).unwrap();
     let mut spec: Spec = serde_json::from_str(fixtures[0]["spec"].as_str().unwrap()).unwrap();
-    spec.compute_driver = "podman".into();
+    spec.compute_driver = ComputeDriver::Podman;
     let network = "a".repeat(64);
     let first = spec
         .binding_namespace(Some("random-first"), Some(&network))

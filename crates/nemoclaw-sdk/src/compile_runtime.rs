@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 use super::*;
+use crate::config::ComputeDriver;
 use crate::{
     Error,
     managed::{GATEWAY_KIND, GATEWAY_STORAGE_KIND, Spec},
@@ -35,7 +36,7 @@ fn runtime_targets_with_plans(
     };
     let gateway = Spec {
         layout: 2,
-        compute_driver: document.spec.sandboxes[0].runtime.provider.clone(),
+        compute_driver: document.spec.sandboxes[0].runtime.provider,
         kind: GATEWAY_KIND.into(),
         name: format!("{}-gateway", document.workspace()),
         owner: document.metadata.uid.clone(),
@@ -44,7 +45,7 @@ fn runtime_targets_with_plans(
         process: None,
     };
     let mut storage = gateway.clone();
-    storage.layout = if gateway.compute_driver == "docker" {
+    storage.layout = if gateway.compute_driver == ComputeDriver::Docker {
         1
     } else {
         0
