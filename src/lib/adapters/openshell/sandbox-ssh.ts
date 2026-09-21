@@ -17,7 +17,6 @@ export type OpenShellSandboxSshResult =
       kind: "failed";
       reason: "configuration" | "unavailable" | "timeout" | "cancelled" | "transport" | "capture";
       signal?: NodeJS.Signals;
-      command?: Readonly<{ exitCode: number; stdout: string; stderr: string }>;
     }>;
 
 export interface OpenShellSandboxSshExecutor {

@@ -35,7 +35,6 @@ export function createCliOpenShellSandboxSshExecutor(
   deps: {
     resolveBinary?: () => string | null;
     runBuffered?: OpenShellBufferedCommandRunner;
-    commandTransport?: boolean;
   } = {},
 ): OpenShellSandboxSshExecutor {
   const run = deps.runBuffered ?? runCliOpenShellBufferedCommand;
@@ -79,10 +78,7 @@ export function createCliOpenShellSandboxSshExecutor(
         if (sshHost === null) {
           return { kind: "failed", reason: "configuration" };
         }
-        const temporary = createTempSshConfig(
-          config.stdout,
-          deps.commandTransport ? "nemoclaw-ssh-" : "nemoclaw-ver-",
-        );
+        const temporary = createTempSshConfig(config.stdout, "nemoclaw-recovery-");
         try {
           const result = await run(
             "ssh",
@@ -112,16 +108,7 @@ export function createCliOpenShellSandboxSshExecutor(
               ? { kind: "failed" as const, reason: "transport" as const }
               : null);
           if (commandFailure) {
-            return deps.commandTransport
-              ? {
-                  ...commandFailure,
-                  command: {
-                    exitCode: result.status ?? 1,
-                    stdout: result.stdout,
-                    stderr: result.stderr,
-                  },
-                }
-              : commandFailure;
+            return commandFailure;
           }
           return {
             kind: "completed",
@@ -137,11 +124,4 @@ export function createCliOpenShellSandboxSshExecutor(
       }
     },
   };
-}
-
-/** Retain legacy host aliases and command diagnostics needed during recovery. */
-export function createCliOpenShellSandboxSshCommandExecutor(
-  deps: Parameters<typeof createCliOpenShellSandboxSshExecutor>[0] = {},
-): OpenShellSandboxSshExecutor {
-  return createCliOpenShellSandboxSshExecutor({ ...deps, commandTransport: true });
 }

@@ -214,7 +214,6 @@ export async function probeSandboxInferenceInvocation(
     const execOptions: SandboxExecCommandOptions = {
       ...(input.gatewayName ? { gatewayName: input.gatewayName } : {}),
       ...(input.runtimeSelection ? { runtimeSelection: input.runtimeSelection } : {}),
-      localDockerFallbackPolicy: "never",
     };
     result = await execute(
       input.sandboxName,

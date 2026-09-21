@@ -184,7 +184,7 @@ describe("checkAndRecoverSandboxProcesses custom agent recovery", () => {
     expect(sshCommands[0]).not.toContain("gateway run");
   });
 
-  it("recovers a stopped custom gateway agent over SSH fallback", async () => {
+  it("recovers a stopped custom gateway agent through its owned SSH operation", async () => {
     const openshellRuntime = requireSource("../../src/lib/adapters/openshell/runtime.ts");
     const agentRuntime = requireSource("../../src/lib/agent/runtime.ts");
     const registry = requireSource("../../src/lib/state/registry.ts");

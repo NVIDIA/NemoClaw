@@ -90,7 +90,8 @@ import { getSandboxTargetGatewayName } from "./gateway-target";
 import { ensureMessagingHostForwardAfterRebuild } from "./messaging-host-forward-lifecycle";
 import { policyChannelDependencies } from "./policy-channel-dependencies";
 import { refreshSandboxPolicyContextFile } from "./policy-context-refresh";
-import { executeSandboxCommand, executeSandboxExecCommand } from "./process-recovery";
+import { executeSandboxExecCommand } from "./process-recovery";
+import { SandboxCommandTransportError } from "../../adapters/sandbox/command-transport";
 
 const isNonInteractive = () => isNonInteractiveSession();
 const runMessagingOpenshell: MessagingOpenShellRunner = (args, options = {}) =>
@@ -1139,9 +1140,7 @@ async function runMessagingHealthChecksAfterRebuild(
     openclawBridgeHealth: {
       sandboxName,
       executeSandboxCommand: (command, timeoutMs) =>
-        executeSandboxExecCommand(sandboxName, command, timeoutMs, {
-          localDockerFallbackPolicy: "read-only",
-        }),
+        executeSandboxExecCommand(sandboxName, command, timeoutMs, {}),
     },
   });
   try {
@@ -1813,8 +1812,8 @@ function stoppedWechatCleanupFailureGuidance(
 
 /**
  * Wipe durable channel state before rebuild can preserve an obsolete auth blob.
- * OpenShell exec runs first. A permitted reconciled runtime-provider retry runs before SSH.
- * OpenClaw WeChat stopped-state cleanup runs last.
+ * OpenShell owns running-sandbox execution.
+ * OpenClaw WeChat selects its owned stopped-state cleanup before command execution.
  * Fixes #3998.
  */
 async function clearSandboxChannelDurableState(
@@ -1832,16 +1831,14 @@ async function clearSandboxChannelDurableState(
 
   const quoted = paths.map((p) => shellQuote(p)).join(" ");
   const cmd = `rm -rf -- ${quoted} && printf '%s\\n' ${shellQuote(CHANNEL_CLEAR_SENTINEL)}`;
-  const sentinelSeen = (result: { stdout?: string | null } | null): boolean =>
-    !!result && typeof result.stdout === "string" && result.stdout.includes(CHANNEL_CLEAR_SENTINEL);
+  const sentinelSeen = (result: { status: number; stdout?: string | null } | null): boolean =>
+    !!result &&
+    result.status === 0 &&
+    typeof result.stdout === "string" &&
+    result.stdout.includes(CHANNEL_CLEAR_SENTINEL);
 
-  let result = await executeSandboxExecCommand(sandboxName, cmd, undefined, {
-    localDockerFallbackPolicy: "reconciled",
-  });
-  if (!sentinelSeen(result)) {
-    result = await executeSandboxCommand(sandboxName, cmd);
-  }
-  if (!sentinelSeen(result) && agent.name === "openclaw" && channelName === "wechat") {
+  let absentStoppedState = false;
+  if (agent.name === "openclaw" && channelName === "wechat") {
     const stoppedCleanup = policyChannelDependencies.clearStoppedSandboxStateRoots(
       sandboxName,
       paths,
@@ -1850,21 +1847,41 @@ async function clearSandboxChannelDurableState(
       console.log(`  ${G}✓${R} Cleared stopped-sandbox '${channelName}' channel state.`);
       return true;
     }
-    if (
-      options.allowAbsentStoppedState &&
+    absentStoppedState =
+      options.allowAbsentStoppedState === true &&
       [
         "sandbox-registry-unavailable",
         "provider-cleanup-unavailable",
         "no-eligible-stopped-runtime",
+      ].includes(stoppedCleanup.failure);
+    if (
+      ![
+        "runtime-not-stopped",
+        "provider-cleanup-unavailable",
+        "sandbox-registry-unavailable",
+        "no-eligible-stopped-runtime",
       ].includes(stoppedCleanup.failure)
     ) {
-      return true;
+      console.error(
+        `  ${YW}⚠${R} Stopped-runtime cleanup failed (${stoppedCleanup.failure}). ` +
+          `${stoppedWechatCleanupFailureGuidance(sandboxName, stoppedCleanup)} Then retry removal.`,
+      );
+      return false;
     }
-    console.error(
-      `  ${YW}⚠${R} Stopped-runtime cleanup failed (${stoppedCleanup.failure}). ` +
-        `${stoppedWechatCleanupFailureGuidance(sandboxName, stoppedCleanup)} Then retry removal.`,
-    );
   }
+  let result: Awaited<ReturnType<typeof executeSandboxExecCommand>>;
+  try {
+    result = await executeSandboxExecCommand(sandboxName, cmd);
+  } catch (error) {
+    if (
+      absentStoppedState &&
+      error instanceof SandboxCommandTransportError &&
+      (error.kind === "unavailable" || error.kind === "malformed")
+    )
+      return true;
+    throw error;
+  }
+  if (!sentinelSeen(result) && absentStoppedState) return true;
   if (!sentinelSeen(result)) {
     console.error(
       `  ${YW}⚠${R} Could not clear in-sandbox '${channelName}' channel state at ${paths.join(", ")}.`,

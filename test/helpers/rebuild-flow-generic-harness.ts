@@ -603,7 +603,7 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
         sandboxVersion: expectedVersion,
         isStale: false,
         verificationFailed: false,
-        detectionMethod: "ssh-exec",
+        detectionMethod: "openshell-exec",
       };
     }
     Object.assign(currentSandboxEntry, overrides.entryUpdatesAfterVersionCheck ?? {});

@@ -297,7 +297,7 @@ describe("sandbox inference invocation probe", () => {
       "dcode-workspace",
       expect.any(String),
       expect.any(Number),
-      { gatewayName: "recorded-gateway", localDockerFallbackPolicy: "never" },
+      { gatewayName: "recorded-gateway" },
     );
   });
 
@@ -323,7 +323,7 @@ describe("sandbox inference invocation probe", () => {
       "hermes-workspace",
       expect.any(String),
       expect.any(Number),
-      { gatewayName: "nemoclaw-19080", localDockerFallbackPolicy: "never" },
+      { gatewayName: "nemoclaw-19080" },
     );
     expect(execute).toHaveBeenCalledOnce();
   });

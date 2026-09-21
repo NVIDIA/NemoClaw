@@ -53,7 +53,6 @@ function executeMcpCredentialProofCommand(
   // script classifies placeholder shape/revision only and never prints a raw
   // credential value or writes sandbox state.
   return executeSandboxExecCommand(sandboxName, command, undefined, {
-    localDockerFallbackPolicy: "never",
     runtimeSelection,
   });
 }

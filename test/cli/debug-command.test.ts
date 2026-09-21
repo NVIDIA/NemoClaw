@@ -168,7 +168,10 @@ describe.concurrent("CLI debug command", () => {
       expect(r.code).toBe(0);
       const invocations = fs.readFileSync(argsLog, "utf-8");
       expect(invocations).toContain("sandbox list -g nemoclaw-18080");
-      expect(invocations).toContain("sandbox ssh-config -g nemoclaw-18080");
+      expect(invocations).toContain(
+        `sandbox exec --name ${env.NEMOCLAW_SANDBOX} -g nemoclaw-18080`,
+      );
+      expect(invocations).not.toContain("sandbox ssh-config");
     },
   );
 

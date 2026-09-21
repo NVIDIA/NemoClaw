@@ -343,9 +343,7 @@ async function exitOnGatewayRecoveryFailure(
   console.error(`  Recovery detail: ${safeDetail}${terminalPunctuation}`);
   if (showWedgeDiagnostics) {
     await printGatewayWedgeDiagnostics(sandboxName, (name, command) =>
-      executeSandboxExecCommand(name, command, undefined, {
-        localDockerFallbackPolicy: "read-only",
-      }),
+      executeSandboxExecCommand(name, command, undefined, {}),
     );
     console.error("  Check /tmp/gateway.log inside the sandbox for details.");
   }
@@ -544,9 +542,7 @@ async function runSandboxConnectProbe(
   // is the operator's only window into a gateway that served briefly and
   // then dropped its listener.
   await printGatewayWedgeDiagnostics(sandboxName, (name, command) =>
-    executeSandboxExecCommand(name, command, undefined, {
-      localDockerFallbackPolicy: "read-only",
-    }),
+    executeSandboxExecCommand(name, command, undefined, {}),
   );
   console.error("  Check /tmp/gateway.log inside the sandbox for details.");
   process.exit(1);

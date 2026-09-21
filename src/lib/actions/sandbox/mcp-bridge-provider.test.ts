@@ -547,7 +547,6 @@ describe("OpenShell MCP provider state", () => {
     expect(proofCommand).not.toMatch(/\/tmp|snapshot/);
     expect(proofCommand).not.toContain("base64 -d");
     expect(exec).toHaveBeenCalledWith("alpha", proofCommand, undefined, {
-      localDockerFallbackPolicy: "never",
       runtimeSelection,
     });
 
@@ -887,7 +886,6 @@ describe("OpenShell MCP provider state", () => {
     expect(proofCommand).toContain("GITHUB_TOKEN+x");
     expect(proofCommand).not.toContain("base64 -d");
     expect(exec).toHaveBeenCalledWith("alpha", proofCommand, undefined, {
-      localDockerFallbackPolicy: "never",
       runtimeSelection,
     });
   });

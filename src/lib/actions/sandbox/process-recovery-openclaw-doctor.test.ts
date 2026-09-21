@@ -319,7 +319,7 @@ describe("OpenClaw post-upgrade recovery doctor", () => {
       "alpha",
       expect.stringContaining("nemoclaw-openclaw-post-upgrade-doctor-v2"),
       30_000,
-      { localDockerFallbackPolicy: "never", runtimeSelection },
+      { runtimeSelection },
     );
     expect(execute.mock.calls[1]?.[1]).toContain("nemoclaw-openclaw-post-upgrade-doctor-ready-v1");
     expect(execute.mock.calls[3]?.[1]).toBe(buildOpenClawPostUpgradeDoctorReleaseCommand());
@@ -409,7 +409,7 @@ describe("OpenClaw post-upgrade recovery doctor", () => {
       "alpha",
       buildOpenClawPostUpgradeDoctorReleaseCommand(),
       30_000,
-      { localDockerFallbackPolicy: "never" },
+      {},
     );
     expect(execute.mock.calls[1]?.[1]).not.toContain("curl");
     expect(execute.mock.calls[2]?.[1]).not.toContain("curl");
@@ -435,7 +435,7 @@ describe("OpenClaw post-upgrade recovery doctor", () => {
       "alpha",
       buildOpenClawPostUpgradeDoctorDeleteRetirementCommand("nemoclaw-openclaw-backup-quiesce-v1"),
       30_000,
-      { localDockerFallbackPolicy: "never" },
+      {},
     );
     expect(capture).toHaveBeenCalledExactlyOnceWith(
       ["sandbox", "stop", "alpha"],
@@ -477,14 +477,14 @@ describe("OpenClaw post-upgrade recovery doctor", () => {
       "alpha",
       expect.not.stringContaining("curl"),
       30_000,
-      { localDockerFallbackPolicy: "never" },
+      {},
     );
     expect(execute).toHaveBeenNthCalledWith(
       2,
       "alpha",
       expect.stringContaining("curl"),
       expect.any(Number),
-      { localDockerFallbackPolicy: "never" },
+      {},
     );
     expect(executePrivileged).toHaveBeenCalledTimes(5);
     const expectedDirectCall = [

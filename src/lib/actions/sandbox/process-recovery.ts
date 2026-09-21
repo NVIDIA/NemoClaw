@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { randomBytes } from "node:crypto";
+import { createCliOpenShellSandboxSshExecutor } from "../../adapters/openshell/sandbox-ssh-cli";
 import { stripAnsi } from "../../adapters/openshell/client";
 import { createCliOpenShellSandboxCommandExecutor } from "../../adapters/openshell/sandbox-command-cli";
 import {
@@ -26,7 +27,6 @@ import {
 import {
   type CommandTransportDependencies,
   DEFAULT_SANDBOX_EXEC_TIMEOUT_MS,
-  executeSandboxCommandTransport,
   executeSandboxExecCommandTransport,
   type SandboxCommandResult,
   type SandboxExecCommandOptions,
@@ -38,7 +38,6 @@ import { resolveRegisteredRuntimeProvider } from "../../onboard/runtime-provider
 import { ROOT, shellQuote } from "../../runner";
 import {
   isDirectSandboxContainerNotFoundError,
-  isDirectSandboxFallbackUnavailableError,
   isPinnedSandboxContainerIdentityChangedError,
   executePrivilegedSandboxCommand as executeProviderPrivilegedSandboxCommand,
   resolvePrivilegedSandboxTarget,
@@ -88,6 +87,7 @@ import {
   printGatewayWedgeDiagnostics,
   sanitizeWedgeLogLine,
 } from "./gateway-wedge-diagnostics";
+import { wrapExecCommandWithRuntimeEnv } from "./runtime-env";
 import {
   buildSandboxExecMarkedCommand,
   extractSandboxExecCommandStdout,
@@ -122,8 +122,6 @@ export type RestartSandboxGatewayOptions = BaseRestartSandboxGatewayOptions & {
   runtimeSelection?: OpenShellRuntimeSelection;
 };
 
-export { buildSandboxExecMarkedCommand } from "./sandbox-exec-output";
-
 export type { SandboxCommandResult, SandboxExecCommandOptions };
 
 export type SandboxCommandExecutionOptions = {
@@ -147,12 +145,14 @@ function commandTransportDependencies(): CommandTransportDependencies {
   return {
     buildSandboxExecMarkedCommand,
     buildSubprocessEnv,
-    executePrivilegedSandboxCommand: executeProviderPrivilegedSandboxCommand,
     extractSandboxExecCommandStdout,
-    commandExecutor: createCliOpenShellSandboxCommandExecutor({
-      hostCwd: ROOT,
-    }),
-    isDirectSandboxFallbackUnavailableError,
+    commandExecutor: {
+      runBuffered: (request) =>
+        createCliOpenShellSandboxCommandExecutor({ hostCwd: ROOT }).runBuffered({
+          ...request,
+          command: wrapExecCommandWithRuntimeEnv(request.command),
+        }),
+    },
   };
 }
 
@@ -190,34 +190,39 @@ function getSandboxHealthProbeUrl(sandboxName: string): string {
   return resolveSandboxHealthProbeUrl(sandboxName);
 }
 
-/**
- * Run a command inside the sandbox via SSH and return { status, stdout, stderr }.
- * Returns null if SSH config cannot be obtained.
- */
+/** Run an ordinary command through the native OpenShell execution contract. */
 export async function executeSandboxCommand(
   sandboxName: string,
   command: string,
   timeoutOrOptions: number | SandboxCommandExecutionOptions = DEFAULT_SANDBOX_EXEC_TIMEOUT_MS,
 ): Promise<SandboxCommandResult | null> {
-  const timeout =
-    typeof timeoutOrOptions === "number"
-      ? timeoutOrOptions
-      : (timeoutOrOptions.timeout ?? DEFAULT_SANDBOX_EXEC_TIMEOUT_MS);
-  const runtimeSelection =
-    typeof timeoutOrOptions === "number" ? undefined : timeoutOrOptions.runtimeSelection;
-  const runtimeEnv = runtimeSelection
-    ? buildOpenShellRuntimeSelectionEnv(buildSubprocessEnv(), runtimeSelection)
-    : undefined;
-  return await executeSandboxCommandTransport(
-    commandTransportDependencies(),
+  const options =
+    typeof timeoutOrOptions === "number" ? { timeout: timeoutOrOptions } : timeoutOrOptions;
+  return executeSandboxExecCommand(sandboxName, command, options.timeout, {
+    runtimeSelection: options.runtimeSelection,
+  });
+}
+
+/** Custom manifests require the login user until they declare a native recovery contract. */
+async function executeCustomAgentRecoveryCommand(
+  sandboxName: string,
+  command: string,
+  runtimeSelection?: OpenShellRuntimeSelection,
+): Promise<SandboxCommandResult | null> {
+  const result = await createCliOpenShellSandboxSshExecutor().run({
     sandboxName,
     command,
-    timeout,
-    {
-      ...(runtimeSelection ? { gatewayName: runtimeSelection.gatewayName } : {}),
-      runtimeEnv,
-    },
-  );
+    target: runtimeSelection
+      ? namedOpenShellGateway(runtimeSelection.gatewayName)
+      : selectedOpenShellGateway(),
+    environment: runtimeSelection
+      ? buildOpenShellRuntimeSelectionEnv(buildSubprocessEnv(), runtimeSelection)
+      : buildSubprocessEnv(),
+    timeoutMilliseconds: DEFAULT_SANDBOX_EXEC_TIMEOUT_MS,
+  });
+  return result.kind === "completed"
+    ? { status: result.exitCode, stdout: result.stdout.trim(), stderr: result.stderr.trim() }
+    : null;
 }
 
 /** Run one root controller argv against the registry-pinned direct container. */
@@ -263,7 +268,6 @@ export async function executeSandboxExecCommand(
       ...transportOptions,
       ...(runtimeSelection
         ? {
-            localDockerFallbackPolicy: "never",
             gatewayName: runtimeSelection.gatewayName,
           }
         : {}),
@@ -340,7 +344,6 @@ async function executeOpenClawDoctorGateCommand(
 ): Promise<SandboxCommandResult | null> {
   if (!deps.executePrivilegedSandboxCommand) {
     return await deps.executeSandboxExecCommand(sandboxName, command, timeout, {
-      localDockerFallbackPolicy: "never",
       ...(runtimeSelection ? { runtimeSelection } : {}),
     });
   }
@@ -370,7 +373,6 @@ async function executeOpenClawDoctorNetworkCommand(
 ): Promise<SandboxCommandResult | null> {
   try {
     return await deps.executeSandboxExecCommand(sandboxName, command, timeout, {
-      localDockerFallbackPolicy: "never",
       ...(runtimeSelection ? { runtimeSelection } : {}),
     });
   } catch {
@@ -811,7 +813,6 @@ export async function beginOpenClawPostRestoreDoctor(
     buildOpenClawPostUpgradeDoctorMarkerCommand(markerContent),
     30_000,
     {
-      localDockerFallbackPolicy: "never",
       ...(runtimeSelection ? { runtimeSelection } : {}),
     },
   );
@@ -1349,30 +1350,12 @@ async function isSandboxGatewayRunning(
   if (agent && !agentRuntime.hasGatewayRuntime(agent)) return null;
   const probeUrl = getSandboxHealthProbeUrl(sandboxName);
   const command = sandboxGatewayRecoveryProbeCommand(probeUrl);
-  const execProbe = parseSandboxGatewayRecoveryProbe(
-    await executeSandboxExecCommand(
-      sandboxName,
-      command,
-      DEFAULT_SANDBOX_EXEC_TIMEOUT_MS,
-      runtimeSelection ? { runtimeSelection } : { localDockerFallbackPolicy: "read-only" },
-    ),
-  );
-  if (execProbe !== null) return execProbe;
-
-  // Built-in OpenClaw and Hermes lifecycle control is host-mediated through
-  // the controller for the live topology. If the trusted sandbox-exec path is
-  // unavailable or times out, do not silently cross back into the sandbox over
-  // SSH just to classify the gateway and then make a privileged recovery
-  // decision. Legacy custom gateway agents are the sole compatibility case:
-  // their recovery contract is explicitly SSH-owned until manifests can
-  // declare a trusted runtime user/supervisor.
-  if (!agent || agent.name === "openclaw" || agent.name === "hermes") return null;
   return parseSandboxGatewayRecoveryProbe(
-    await executeSandboxCommand(
-      sandboxName,
-      command,
-      runtimeSelection ? { runtimeSelection } : DEFAULT_SANDBOX_EXEC_TIMEOUT_MS,
-    ),
+    agent && agent.name !== "openclaw" && agent.name !== "hermes"
+      ? await executeCustomAgentRecoveryCommand(sandboxName, command, runtimeSelection)
+      : await executeSandboxExecCommand(sandboxName, command, DEFAULT_SANDBOX_EXEC_TIMEOUT_MS, {
+          runtimeSelection,
+        }),
   );
 }
 
@@ -1806,7 +1789,9 @@ async function recoverSandboxProcesses(
       };
     }
   }
-  const recoveredSsh = (result: SandboxCommandResult | null): SandboxProcessRecovery | null =>
+  const recoveredCustomAgent = (
+    result: SandboxCommandResult | null,
+  ): SandboxProcessRecovery | null =>
     result && result.status === 0 && hasGatewayRecoveryMarker(result) ? { kind: "custom" } : null;
 
   if (
@@ -1837,12 +1822,8 @@ async function recoverSandboxProcesses(
     // Non-Hermes custom manifests do not yet declare a supported host-side
     // runtime user. Recover them over SSH so the launch inherits the sandbox
     // login user instead of creating root-owned agent state under /sandbox.
-    return recoveredSsh(
-      await executeSandboxCommand(
-        sandboxName,
-        agentScript,
-        runtimeSelection ? { runtimeSelection } : DEFAULT_SANDBOX_EXEC_TIMEOUT_MS,
-      ),
+    return recoveredCustomAgent(
+      await executeCustomAgentRecoveryCommand(sandboxName, agentScript, runtimeSelection),
     );
   }
 
@@ -1865,7 +1846,7 @@ export async function restartSandboxGateway(
             name,
             command,
             timeout,
-            runtimeSelection ? { runtimeSelection } : { localDockerFallbackPolicy: "read-only" },
+            runtimeSelection ? { runtimeSelection } : {},
           ),
         waitForSandboxControlPlaneReady: (name) =>
           waitForRecreatedSandboxOpenShellReady(name, { runtimeSelection }),
@@ -2700,7 +2681,7 @@ async function checkAndRecoverSandboxProcessesWithoutHostLock(
             name,
             command,
             DEFAULT_SANDBOX_EXEC_TIMEOUT_MS,
-            runtimeSelection ? { runtimeSelection } : { localDockerFallbackPolicy: "read-only" },
+            runtimeSelection ? { runtimeSelection } : {},
           ),
         );
         console.error("  Check /tmp/gateway.log inside the sandbox for details.");
