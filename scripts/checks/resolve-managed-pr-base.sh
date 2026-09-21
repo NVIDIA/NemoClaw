@@ -49,41 +49,24 @@ write_dcode_resolution() {
   printf 'resolution_key=%s\n' "$key" >>"$GITHUB_OUTPUT"
   printf 'resolution_label=%s\n' "$(printf '%s' "$metadata" | base64 -w0 | tr '+/' '-_' | tr -d '=')" >>"$GITHUB_OUTPUT"
 }
-if [[ ! "$BASE_SHA" =~ ^[0-9a-f]{40}$ || ! "$CANDIDATE_SHA" =~ ^[0-9a-f]{40}$ ]]; then
-  echo "ERROR: PR base resolution requires exact base and candidate commit SHAs." >&2
-  exit 1
-fi
-if ! git cat-file -e "${BASE_SHA}^{commit}" 2>/dev/null; then
-  git fetch --no-tags --depth=1 origin "$BASE_SHA"
-fi
-diff_status=0
-git diff --quiet "$BASE_SHA" "$CANDIDATE_SHA" -- "$BASE_DOCKERFILE" || diff_status=$?
-if [ "$diff_status" -gt 1 ]; then
-  echo "ERROR: PR base Dockerfile comparison failed." >&2
-  exit "$diff_status"
-fi
-if [ "$diff_status" -eq 1 ]; then
-  echo "::notice::${DISPLAY_NAME} base Dockerfile changed; building the exact PR base locally"
-  local_base_archive="$RUNNER_TEMP/pr-base.docker.tar"
-  local_base_oci_archive="$RUNNER_TEMP/pr-base.oci.tar"
-  local_base_oci="$RUNNER_TEMP/pr-base.oci"
-  base_labels=()
-  if [ "$AGENT" = "langchain-deepagents-code" ]; then
-    base_labels+=(--label "org.opencontainers.image.revision=${CANDIDATE_SHA}")
-  fi
+build_local_base() {
+  local local_base_archive="$RUNNER_TEMP/pr-base.docker.tar"
+  local local_base_oci_archive="$RUNNER_TEMP/pr-base.oci.tar"
+  local local_base_oci="$RUNNER_TEMP/pr-base.oci"
   docker buildx build \
     --platform linux/amd64 \
     --provenance=false \
     --sbom=false \
     --file "$BASE_DOCKERFILE" \
     --tag "$LOCAL_BASE_REFERENCE" \
-    "${base_labels[@]}" \
+    --label "org.opencontainers.image.revision=${CANDIDATE_SHA}" \
     --output "type=docker,dest=${local_base_archive}" \
     --output "type=oci,dest=${local_base_oci_archive}" \
     .
   docker load --input "$local_base_archive"
   mkdir -p "$local_base_oci"
   tar -C "$local_base_oci" -xf "$local_base_oci_archive"
+  local local_base_oci_digest
   local_base_oci_digest="$(
     jq -er '
       .manifests
@@ -107,6 +90,23 @@ if [ "$diff_status" -eq 1 ]; then
   printf '### %s PR base\n\nLocally built from `%s` at `%s`.\n' \
     "$DISPLAY_NAME" "$BASE_DOCKERFILE" "$CANDIDATE_SHA" \
     >>"$GITHUB_STEP_SUMMARY"
+}
+if [[ ! "$BASE_SHA" =~ ^[0-9a-f]{40}$ || ! "$CANDIDATE_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+  echo "ERROR: PR base resolution requires exact base and candidate commit SHAs." >&2
+  exit 1
+fi
+if ! git cat-file -e "${BASE_SHA}^{commit}" 2>/dev/null; then
+  git fetch --no-tags --depth=1 origin "$BASE_SHA"
+fi
+diff_status=0
+git diff --quiet "$BASE_SHA" "$CANDIDATE_SHA" -- "$BASE_DOCKERFILE" || diff_status=$?
+if [ "$diff_status" -gt 1 ]; then
+  echo "ERROR: PR base Dockerfile comparison failed." >&2
+  exit "$diff_status"
+fi
+if [ "$diff_status" -eq 1 ]; then
+  echo "::notice::${DISPLAY_NAME} base Dockerfile changed; building the exact PR base locally"
+  build_local_base
   exit 0
 fi
 alias_raw="$RUNNER_TEMP/pr-base-alias.raw"
@@ -144,6 +144,22 @@ actual="sha256:$(sha256sum "$exact_raw" | awk '{print $1}')"
 if [ "$actual" != "$digest" ]; then
   echo "ERROR: exact PR base bytes do not match the selected descriptor digest." >&2
   exit 1
+fi
+if [ "$AGENT" = "langchain-deepagents-code" ]; then
+  docker pull --platform "$PLATFORM" "$reference" >/dev/null
+  source_revision="$(
+    docker image inspect "$reference" \
+      | jq -er 'if length == 1 then .[0].Config.Labels["org.opencontainers.image.revision"] else error("not one image") end'
+  )"
+  if [[ ! "$source_revision" =~ ^[0-9a-f]{40}$ ]]; then
+    echo "ERROR: DCode registry base has an invalid source revision." >&2
+    exit 1
+  fi
+  if [ "$source_revision" != "$BASE_SHA" ]; then
+    echo "::notice::DCode registry base does not match the PR base commit; building the exact PR base locally"
+    build_local_base
+    exit 0
+  fi
 fi
 {
   printf 'ref=%s\n' "$reference"
