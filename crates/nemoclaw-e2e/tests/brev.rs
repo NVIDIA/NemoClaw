@@ -331,8 +331,8 @@ async fn bare_brev_hosted_openclaw_lifecycle() {
         "nemoclaw_sandbox.assistant",
     ];
     let retained = vec![
-        "nemoclaw_workspace.deployment".into(),
-        "nemoclaw_gateway_storage.runtime".into(),
+        String::from("nemoclaw_workspace.deployment"),
+        String::from("nemoclaw_gateway_storage.runtime"),
     ];
     let destroy_plan = deployment.plan_destroy(&cancel).await.unwrap();
     assert_eq!(destroy_plan.outcome, Outcome::Planned);
@@ -347,8 +347,8 @@ async fn bare_brev_hosted_openclaw_lifecycle() {
     assert_eq!(
         destroyed.retained,
         vec![
-            "nemoclaw_workspace.deployment".into(),
-            "nemoclaw_gateway_storage.runtime".into(),
+            String::from("nemoclaw_workspace.deployment"),
+            String::from("nemoclaw_gateway_storage.runtime"),
         ]
     );
     assert!(destroyed.health.is_empty());
