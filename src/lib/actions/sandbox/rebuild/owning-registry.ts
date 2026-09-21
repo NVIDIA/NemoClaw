@@ -8,7 +8,8 @@ import type { Readable } from "node:stream";
 
 import type { RebuildSandboxOptions } from "../../../domain/lifecycle/options";
 import { resolveGatewayName } from "../../../gateway-runtime-action";
-import { snapshotKnownCredentialEnv } from "../../../onboard/credential-env";
+import { webSearchEnvFor } from "../../../inference/web-search";
+import { snapshotCredentialEnv } from "../../../onboard/credential-env";
 import {
   assertGatewayStatePathSafe,
   isValidName,
@@ -17,6 +18,8 @@ import {
 import { isCurrentPortableHostFenceHeld } from "../../../state/portable-uninstall-retirement";
 import { buildSubprocessEnv } from "../../../subprocess-env";
 import { findSandboxAcrossGatewayRoots } from "../../../state/registry/cross-port";
+import { getMessagingPlanFromEntry } from "../../../state/registry-messaging";
+import type { SandboxEntry } from "../../../state/registry/types";
 import type { RebuildSandboxExecutionOptions } from "../rebuild-prepared-recovery";
 import { readRebuildRecoveryRoute } from "../rebuild-recreate-journal";
 
@@ -66,9 +69,15 @@ type RebuildOwningRegistryDependencies = {
   runWorker(
     input: OwningRegistryWorkerInput,
     gatewayPort: number,
-    options?: Readonly<{ terminationGraceMs?: number; timeoutMs?: number }>,
+    options?: RebuildWorkerOptions,
   ): Promise<void>;
 };
+
+type RebuildWorkerOptions = Readonly<{
+  credentialEnvNames?: readonly string[];
+  terminationGraceMs?: number;
+  timeoutMs?: number;
+}>;
 
 const WORKER_PATH = path.join(__dirname, "owning-registry-worker.js");
 const MAX_RECOVERY_BACKUP_ENTRIES = 1024;
@@ -87,9 +96,12 @@ const REBUILD_ENV_NAMES = [
   "NEMOCLAW_SANDBOX_BASE_IMAGE_REFRESH",
 ] as const;
 
-function rebuildWorkerEnv(gatewayPort: number): Record<string, string> {
+function rebuildWorkerEnv(
+  gatewayPort: number,
+  credentialEnvNames: readonly string[],
+): Record<string, string> {
   const extra: Record<string, string> = {
-    ...snapshotKnownCredentialEnv(),
+    ...snapshotCredentialEnv(credentialEnvNames),
     NEMOCLAW_GATEWAY_PORT: String(gatewayPort),
   };
   for (const name of REBUILD_ENV_NAMES) {
@@ -97,6 +109,22 @@ function rebuildWorkerEnv(gatewayPort: number): Record<string, string> {
     if (value !== undefined) extra[name] = value;
   }
   return buildSubprocessEnv(extra);
+}
+
+function rebuildCredentialEnvNames(entry: SandboxEntry): readonly string[] {
+  const names = new Set<string>();
+  if (entry.credentialEnv) names.add(entry.credentialEnv);
+  const webSearchProvider =
+    entry.webSearchProvider === "brave" || entry.webSearchProvider === "tavily"
+      ? entry.webSearchProvider
+      : entry.webSearchEnabled === true
+        ? "brave"
+        : null;
+  if (webSearchProvider) names.add(webSearchEnvFor(webSearchProvider));
+  for (const binding of getMessagingPlanFromEntry(entry)?.credentialBindings ?? []) {
+    names.add(binding.providerEnvKey);
+  }
+  return [...names].sort();
 }
 
 async function readWorkerResult(stream: Readable): Promise<OwningRegistryWorkerResult | null> {
@@ -219,7 +247,7 @@ async function terminateWorkerProcessGroup(
 async function runWorker(
   input: OwningRegistryWorkerInput,
   gatewayPort: number,
-  options: Readonly<{ terminationGraceMs?: number; timeoutMs?: number }> = {},
+  options: RebuildWorkerOptions = {},
 ): Promise<void> {
   const timeoutMs = options.timeoutMs ?? REBUILD_WORKER_TIMEOUT_MS;
   if (!Number.isInteger(timeoutMs) || timeoutMs <= 0) {
@@ -246,7 +274,7 @@ async function runWorker(
   try {
     const child = spawn(process.execPath, [WORKER_PATH], {
       detached: dedicatedProcessGroup,
-      env: rebuildWorkerEnv(gatewayPort),
+      env: rebuildWorkerEnv(gatewayPort, options.credentialEnvNames ?? []),
       stdio: ["inherit", "inherit", "inherit", "pipe", "pipe"],
     });
     const inputStream = child.stdio[3];
@@ -439,6 +467,7 @@ export async function delegateRebuildToOwningRegistry(
   await rebuildOwningRegistryDependencies.runWorker(
     { operation: "rebuild", ...input },
     hit.registryGatewayPort,
+    { credentialEnvNames: rebuildCredentialEnvNames(hit.entry) },
   );
   return true;
 }

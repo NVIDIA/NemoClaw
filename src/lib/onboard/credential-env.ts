@@ -1,11 +1,27 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { loadCredentials, resolveProviderCredential } from "../credentials/store";
+import {
+  KNOWN_CREDENTIAL_ENV_KEYS,
+  loadCredentials,
+  resolveProviderCredential,
+} from "../credentials/store";
 
 /** Snapshot only NemoClaw's allowlisted credentials for a trusted child process. */
 export function snapshotKnownCredentialEnv(): Record<string, string> {
   return loadCredentials();
+}
+
+/** Snapshot only the named known credentials for a scoped child process. */
+export function snapshotCredentialEnv(envNames: readonly string[]): Record<string, string> {
+  const knownNames = new Set(KNOWN_CREDENTIAL_ENV_KEYS);
+  const snapshot: Record<string, string> = {};
+  for (const envName of new Set(envNames)) {
+    if (!knownNames.has(envName)) continue;
+    const value = resolveProviderCredential(envName);
+    if (value) snapshot[envName] = value;
+  }
+  return snapshot;
 }
 
 /**

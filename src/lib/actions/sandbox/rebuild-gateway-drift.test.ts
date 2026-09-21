@@ -371,7 +371,10 @@ describe("rebuild owning registry routing", () => {
   });
 
   it("delegates the complete rebuild transaction to a sibling registry root", async () => {
-    const entry = makeSandboxEntry("nemoclaw-9000", 9000);
+    const entry = {
+      ...makeSandboxEntry("nemoclaw-9000", 9000),
+      credentialEnv: "NVIDIA_INFERENCE_API_KEY",
+    };
     vi.spyOn(rebuildOwningRegistryDependencies, "findSandbox").mockReturnValue({
       entry,
       gatewayPort: 9000,
@@ -394,7 +397,9 @@ describe("rebuild owning registry routing", () => {
       rebuildSandbox(input.sandboxName, input.options, input.executionOptions),
     ).resolves.toBeUndefined();
 
-    expect(runWorker).toHaveBeenCalledWith({ operation: "rebuild", ...input }, 9000);
+    expect(runWorker).toHaveBeenCalledWith({ operation: "rebuild", ...input }, 9000, {
+      credentialEnvNames: ["NVIDIA_INFERENCE_API_KEY"],
+    });
     expect(readBaseRegistry).not.toHaveBeenCalled();
   });
 

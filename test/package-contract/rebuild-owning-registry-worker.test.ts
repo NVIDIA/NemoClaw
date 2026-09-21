@@ -194,6 +194,7 @@ describe("compiled rebuild owning-registry worker", () => {
         vi.stubEnv("NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE", "1");
         vi.stubEnv("NEMOCLAW_OPENSHELL_BIN", writeCredentialProbeOpenShell(home, marker));
         vi.stubEnv("NVIDIA_INFERENCE_API_KEY", "nvapi-worker-test-value");
+        vi.stubEnv("OPENAI_API_KEY", "openai-unrelated-test-value");
         vi.stubEnv("UNRELATED_REBUILD_SECRET", "must-not-cross-worker-boundary");
 
         worker = rebuildOwningRegistryDependencies.runWorker(
@@ -207,7 +208,11 @@ describe("compiled rebuild owning-registry worker", () => {
             },
           },
           9000,
-          { timeoutMs: 3_000, terminationGraceMs: 100 },
+          {
+            credentialEnvNames: ["NVIDIA_INFERENCE_API_KEY"],
+            timeoutMs: 3_000,
+            terminationGraceMs: 100,
+          },
         );
 
         await vi.waitFor(() => expect(fs.existsSync(marker)).toBe(true), { timeout: 2_000 });
@@ -217,6 +222,7 @@ describe("compiled rebuild owning-registry worker", () => {
           .split("\0");
 
         expect(workerEnvironment).toContain("NVIDIA_INFERENCE_API_KEY=nvapi-worker-test-value");
+        expect(workerEnvironment).not.toContain("OPENAI_API_KEY=openai-unrelated-test-value");
         expect(workerEnvironment).not.toContain(
           "UNRELATED_REBUILD_SECRET=must-not-cross-worker-boundary",
         );

@@ -3,7 +3,11 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { hydrateCredentialEnv, snapshotKnownCredentialEnv } from "./credential-env";
+import {
+  hydrateCredentialEnv,
+  snapshotCredentialEnv,
+  snapshotKnownCredentialEnv,
+} from "./credential-env";
 
 afterEach(() => {
   vi.unstubAllEnvs();
@@ -18,6 +22,17 @@ describe("snapshotKnownCredentialEnv", () => {
 
     expect(snapshot.NVIDIA_INFERENCE_API_KEY).toBe("nvapi-worker-test");
     expect(snapshot).not.toHaveProperty("UNRELATED_SECRET");
+  });
+});
+
+describe("snapshotCredentialEnv", () => {
+  it("copies only selected known credentials", () => {
+    vi.stubEnv("NVIDIA_INFERENCE_API_KEY", "nvapi-worker-test");
+    vi.stubEnv("OPENAI_API_KEY", "openai-unrelated-test");
+
+    expect(snapshotCredentialEnv(["NVIDIA_INFERENCE_API_KEY", "UNRELATED_SECRET"])).toEqual({
+      NVIDIA_INFERENCE_API_KEY: "nvapi-worker-test",
+    });
   });
 });
 
