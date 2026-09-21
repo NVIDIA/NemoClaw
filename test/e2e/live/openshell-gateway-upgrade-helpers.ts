@@ -81,6 +81,17 @@ export async function captureGatewayUpgradeProbeEvidence(
   return results.every((result) => result.status === "fulfilled" && result.value.exitCode === 0);
 }
 
+/** Accept recovery only when the command, listener, and restored sandbox checks all succeed. */
+export function gatewayUpgradeRecoverySucceeded(
+  recovery: Pick<ShellProbeResult, "exitCode">,
+  forward: { readonly valid: boolean },
+  stateChecks: readonly Pick<ShellProbeResult, "exitCode">[],
+): boolean {
+  return (
+    recovery.exitCode === 0 && forward.valid && stateChecks.every((result) => result.exitCode === 0)
+  );
+}
+
 export function oldGatewayUpgradeInstallerArgs(installer: string): string[] {
   return [installer, ...NON_INTERACTIVE_INSTALLER_ARGS, "--fresh"];
 }

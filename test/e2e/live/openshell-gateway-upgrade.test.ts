@@ -41,6 +41,7 @@ import {
   captureGatewayUpgradeFailureDiagnostics,
   currentGatewayUpgradeInstallerArgs,
   currentNemoclawUpgradeRef,
+  gatewayUpgradeRecoverySucceeded,
   GATEWAY_UPGRADE_INSTALL_TIMEOUT_MS,
   isolateGatewayUpgradeFixtureEnv,
   legacyGatewayUpgradeBaseImageOverrideEnabled,
@@ -655,7 +656,7 @@ async function assertSurvivorSandboxAfterUpgrade(host: HostCliClient): Promise<v
     env: liveEnv(),
   });
   expect(
-    forward.valid && stateChecks.every((result) => result.exitCode === 0),
+    gatewayUpgradeRecoverySucceeded(recover, forward, stateChecks),
     `${stateChecks.map(resultText).join("\n")}\n${resultText(recover)}\n${forward.output}`,
   ).toBe(true);
 }

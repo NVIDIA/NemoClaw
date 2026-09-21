@@ -22,6 +22,7 @@ import {
   captureGatewayUpgradeProbeEvidence,
   currentGatewayUpgradeInstallerArgs,
   currentNemoclawUpgradeRef,
+  gatewayUpgradeRecoverySucceeded,
   GATEWAY_UPGRADE_INSTALL_TIMEOUT_MS,
   isolateGatewayUpgradeFixtureEnv,
   legacyGatewayUpgradeBaseImageOverrideEnabled,
@@ -164,6 +165,24 @@ describe("OpenShell gateway upgrade boundary", () => {
       ["list", ["sandbox", "list", "-g", "nemoclaw", "-o", "json"]],
     ]);
   });
+
+  it.each([
+    { expected: true, forwardValid: true, recoveryExitCode: 0, stateExitCodes: [0, 0] },
+    { expected: false, forwardValid: true, recoveryExitCode: 1, stateExitCodes: [0, 0] },
+    { expected: false, forwardValid: false, recoveryExitCode: 0, stateExitCodes: [0, 0] },
+    { expected: false, forwardValid: true, recoveryExitCode: 0, stateExitCodes: [0, 1] },
+  ])(
+    "reports recovery success as $expected for command $recoveryExitCode, listener $forwardValid, and sandbox states $stateExitCodes",
+    ({ expected, forwardValid, recoveryExitCode, stateExitCodes }) => {
+      expect(
+        gatewayUpgradeRecoverySucceeded(
+          { exitCode: recoveryExitCode },
+          { valid: forwardValid },
+          stateExitCodes.map((exitCode) => ({ exitCode })),
+        ),
+      ).toBe(expected);
+    },
+  );
 
   it("freshens only the retryable old fixture install", () => {
     expect(oldGatewayUpgradeInstallerArgs("old-install.sh")).toEqual([
