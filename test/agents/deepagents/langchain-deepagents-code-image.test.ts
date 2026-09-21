@@ -219,6 +219,7 @@ describe("LangChain Deep Agents Code image contracts", () => {
       "",
       "# The supplied base may end as a non-root runtime user. Reset the build user",
       "# explicitly before installing the root-owned managed-startup handoff.",
+      "# hadolint ignore=DL3066",
       "USER root",
     ].join("\n");
     const managedRuntimeDirectory = "&& install -d -o root -g root -m 0755 /run/nemoclaw";
@@ -1122,6 +1123,15 @@ describe("LangChain Deep Agents Code image contracts", () => {
     assertEveryRequirementIsHashLocked(requirementsLock);
     expect(baseDockerfile).not.toContain("--break-system-packages");
     expect(baseDockerfile).not.toContain("--ignore-installed");
+    expect(baseDockerfile).toContain(
+      "COPY agents/langchain-deepagents-code/validate-runtime-contract.py /usr/local/lib/nemoclaw/validate-dcode-runtime-contract.py",
+    );
+    expect(baseDockerfile).toContain(
+      '"$VIRTUAL_ENV/bin/python3" -I /usr/local/lib/nemoclaw/validate-dcode-runtime-contract.py',
+    );
+    expect(baseDockerfile.indexOf('pip3" install --no-cache-dir --require-hashes')).toBeLessThan(
+      baseDockerfile.indexOf("validate-dcode-runtime-contract.py \\\n        --requirements-lock"),
+    );
 
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pip-hash-contract-"));
     try {
@@ -1177,6 +1187,10 @@ describe("LangChain Deep Agents Code image contracts", () => {
     expectVersionsMatchLock(
       requirementsLock,
       pythonStringMap(progressiveValidator, "PINNED_VERSIONS"),
+    );
+    expectVersionsMatchLock(
+      requirementsLock,
+      pythonStringMap(readAgentFile("validate-runtime-contract.py"), "EXPECTED_VERSIONS"),
     );
 
     const observabilityValidator = readAgentFile("validate-observability.py");
@@ -1296,7 +1310,13 @@ print(json.dumps(values, sort_keys=True))`,
       expect(requirementsLock).toContain("pyasn1==0.6.4");
       expect(requirementsLock).toContain("langgraph-checkpoint-sqlite==3.1.1");
       const dockerfileBase = readAgentFile("Dockerfile.base");
-      expect(dockerfileBase).toContain(`'${name}': '${expectedVersion}'`);
+      const versionSource =
+        name === "deepagents-code" ? readAgentFile("validate-runtime-contract.py") : dockerfileBase;
+      const versionLiteral =
+        name === "deepagents-code"
+          ? `"${name}": "${expectedVersion}"`
+          : `'${name}': '${expectedVersion}'`;
+      expect(versionSource).toContain(versionLiteral);
       expect(review).toContain(`Adapter module SHA-256: \`${sha256(adapterModule)}\``);
       expect(review).toContain(`Adapter project metadata SHA-256: \`${sha256(adapterMetadata)}\``);
       expect(dockerfile).toContain(
