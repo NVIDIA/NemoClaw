@@ -68,6 +68,18 @@ export function buildHermesMcpRuntimeDiagnosticsScript(): string {
     "cat /run/nemoclaw/gateway-control/status 2>&1 || true",
     "printf '%s\\n' '== gateway identity =='",
     "cat /sandbox/.hermes/runtime/gateway.pid 2>&1 || true",
+    "printf '%s\\n' '== gateway process =='",
+    'gateway_pid=$(/opt/hermes/.venv/bin/python -I -S -c \'import json; print(json.load(open("/sandbox/.hermes/runtime/gateway.pid"))["pid"])\' 2>/dev/null || true)',
+    "printf 'pid=%s start=' \"$gateway_pid\"; awk '{print $22}' \"/proc/$gateway_pid/stat\" 2>&1 || true",
+    "printf 'exe='; readlink \"/proc/$gateway_pid/exe\" 2>&1 || true",
+    "printf 'cmdline='; tr '\\0' ' ' <\"/proc/$gateway_pid/cmdline\" 2>&1 || true; printf '\\n'",
+    "printf '%s\\n' '== config identity =='",
+    "stat -c '%u:%g:%a:%i:%Y %n' /sandbox/.hermes /sandbox/.hermes/config.yaml /sandbox/.hermes/runtime/gateway.pid 2>&1 || true",
+    "sha256sum /sandbox/.hermes/config.yaml /sandbox/.hermes/.config-hash /etc/nemoclaw/hermes.config-hash 2>&1 || true",
+    "printf '%s\\n' '== MCP config shape =='",
+    "/opt/hermes/.venv/bin/python -I - <<'PY' 2>&1 || true\nimport json\nfrom pathlib import Path\nfrom urllib.parse import urlsplit\n\nimport yaml\n\nconfig = yaml.safe_load(Path('/sandbox/.hermes/config.yaml').read_text(encoding='utf-8')) or {}\nservers = config.get('mcp_servers') or {}\nentry = servers.get('fake') or {}\nheaders = entry.get('headers') or {}\nauthorization = headers.get('Authorization')\nsummary = {\n    'authorization_uses_openshell_placeholder': str(authorization or '').startswith('Bearer openshell:resolve:env:'),\n    'config_version': config.get('_config_version'),\n    'enabled': entry.get('enabled', True),\n    'header_names': sorted(map(str, headers)),\n    'keys': sorted(map(str, entry)),\n    'server_names': sorted(map(str, servers)),\n    'url_scheme': urlsplit(str(entry.get('url', ''))).scheme,\n}\nprint(json.dumps(summary, sort_keys=True))\nPY",
+    "printf '%s\\n' '== MCP runtime files =='",
+    "find /sandbox/.hermes/cache /sandbox/.hermes/logs -maxdepth 2 -type f -iname '*mcp*' -print 2>/dev/null || true",
     `} | /usr/bin/python3 -I -S -c ${shellQuote(FAILURE_BODY_EMITTER)} /dev/stdin`,
   ].join("\n");
 }
