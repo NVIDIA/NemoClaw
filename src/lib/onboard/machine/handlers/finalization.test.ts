@@ -152,6 +152,25 @@ async function runFinalizationHandlers(
 }
 
 describe("finalization handlers", () => {
+  it("defers registry-bound runtime verification to the outer rebuild transaction", async () => {
+    const { deps, calls } = createDeps();
+
+    const result = await handleFinalizationPhase({
+      ...baseOptions(deps),
+      deferRuntimeVerification: true,
+    });
+
+    expect(result.stateResult).toEqual({
+      type: "complete",
+      updates: {},
+      metadata: { state: "finalizing" },
+    });
+    expect(calls.setDefaultSandbox).toHaveBeenCalledExactlyOnceWith("my-assistant");
+    expect(calls.cleanupHost).toHaveBeenCalledOnce();
+    expect(calls.recoverProcesses).not.toHaveBeenCalled();
+    expect(calls.verify).not.toHaveBeenCalled();
+  });
+
   it("completes providerless component activation without ordinary setup (#11486)", async () => {
     const { deps, calls } = createDeps();
     const result = await handleFinalizationPhase({

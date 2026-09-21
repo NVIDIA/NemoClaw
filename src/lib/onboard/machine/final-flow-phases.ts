@@ -152,6 +152,7 @@ export function createFinalOnboardFlowPhases<
       portableProfileSelected: context.session?.checkpoint?.profile.value === "portable",
       externalComponent: context.externalComponent,
       providerless: isProviderlessComponentOnboarding(context),
+      deferRuntimeVerification: options.preserveRebuildLivePolicy === true,
       deps: finalizationDeps,
     });
     if (

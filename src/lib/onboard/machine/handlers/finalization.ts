@@ -36,6 +36,7 @@ export interface FinalizationStateOptions<Agent, VerifyChain, VerificationResult
   portableProfileSelected?: boolean;
   externalComponent?: PreparedExternalComponent | null;
   providerless?: boolean;
+  deferRuntimeVerification?: boolean;
   deps: {
     /**
      * Mark this sandbox as the default. Called here (not at sandbox creation) so
@@ -119,7 +120,7 @@ export interface FinalizationStateOptions<Agent, VerifyChain, VerificationResult
 }
 
 export interface FinalizationStateResult {
-  stateResult: OnboardStateTransitionResult | OnboardStatePauseResult;
+  stateResult: OnboardStateCompleteResult | OnboardStateTransitionResult | OnboardStatePauseResult;
   unmigratedLegacyKeys: string[];
 }
 
@@ -206,6 +207,7 @@ export async function handleFinalizationState<Agent, VerifyChain, VerificationRe
   migratedLegacyKeys,
   externalComponent = null,
   providerless = false,
+  deferRuntimeVerification = false,
   deps,
 }: FinalizationStateOptions<
   Agent,
@@ -282,6 +284,12 @@ export async function handleFinalizationState<Agent, VerifyChain, VerificationRe
 
   // Sweep stale host files left by older credential migration paths (#3105).
   deps.cleanupStaleHostFiles();
+  if (deferRuntimeVerification) {
+    return {
+      stateResult: completeOnboardMachine({}, { state: "finalizing" }),
+      unmigratedLegacyKeys,
+    };
+  }
   if (manageDashboard) {
     // Policy application can restart the sandbox; recover before verification (#3573).
     if (!(await deps.checkAndRecoverSandboxProcesses(sandboxName, { quiet: true }))) {
