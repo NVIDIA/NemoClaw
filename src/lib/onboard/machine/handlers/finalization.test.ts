@@ -161,12 +161,26 @@ describe("finalization handlers", () => {
     });
 
     expect(result.stateResult).toEqual({
-      type: "complete",
-      updates: {},
+      type: "transition",
+      next: "post_verify",
+      transitionKind: "advance",
+      updates: undefined,
       metadata: { state: "finalizing" },
     });
     expect(calls.setDefaultSandbox).toHaveBeenCalledExactlyOnceWith("my-assistant");
     expect(calls.cleanupHost).toHaveBeenCalledOnce();
+    expect(calls.recoverProcesses).not.toHaveBeenCalled();
+    expect(calls.verify).not.toHaveBeenCalled();
+
+    const postVerify = await handlePostVerifyState({
+      ...baseOptions(deps),
+      deferRuntimeVerification: true,
+    });
+    expect(postVerify).toEqual({
+      stateResult: { type: "complete", updates: {}, metadata: { state: "post_verify" } },
+      verificationDiagnostics: [],
+      deploymentHealthy: true,
+    });
     expect(calls.recoverProcesses).not.toHaveBeenCalled();
     expect(calls.verify).not.toHaveBeenCalled();
   });

@@ -120,7 +120,7 @@ export interface FinalizationStateOptions<Agent, VerifyChain, VerificationResult
 }
 
 export interface FinalizationStateResult {
-  stateResult: OnboardStateCompleteResult | OnboardStateTransitionResult | OnboardStatePauseResult;
+  stateResult: OnboardStateTransitionResult | OnboardStatePauseResult;
   unmigratedLegacyKeys: string[];
 }
 
@@ -286,7 +286,7 @@ export async function handleFinalizationState<Agent, VerifyChain, VerificationRe
   deps.cleanupStaleHostFiles();
   if (deferRuntimeVerification) {
     return {
-      stateResult: completeOnboardMachine({}, { state: "finalizing" }),
+      stateResult: advanceTo("post_verify", { metadata: { state: "finalizing" } }),
       unmigratedLegacyKeys,
     };
   }
@@ -325,12 +325,20 @@ export async function handlePostVerifyState<Agent, VerifyChain, VerificationResu
   webSearchEnabled,
   webSearchProvider,
   portableProfileSelected,
+  deferRuntimeVerification = false,
   deps,
 }: FinalizationStateOptions<
   Agent,
   VerifyChain,
   VerificationResult
 >): Promise<PostVerifyStateResult> {
+  if (deferRuntimeVerification) {
+    return {
+      stateResult: completeOnboardMachine({}, { state: "post_verify" }),
+      verificationDiagnostics: [],
+      deploymentHealthy: true,
+    };
+  }
   const manageDashboard = shouldManageDashboardForAgent(agent as DashboardRuntimeAgent);
   const portableAgent = portableAgentDisposition(
     sandboxName,

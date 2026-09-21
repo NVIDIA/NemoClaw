@@ -192,6 +192,7 @@ export function createFinalOnboardFlowPhases<
           : null,
       portableProfileSelected: context.session?.checkpoint?.profile.value === "portable",
       externalComponent: null,
+      deferRuntimeVerification: options.preserveRebuildLivePolicy === true,
       deps: finalizationDeps,
     });
     return { result: postVerifyResult.stateResult };
