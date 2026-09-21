@@ -51,7 +51,7 @@ function openClawConfigPath(root: string): string {
 function openClawConfigReadHelpers(): string[] {
   return [
     'const fs = require("node:fs");',
-    'const JSON5 = require("/opt/nemoclaw/node_modules/json5");',
+    'const JSON5 = require("/usr/local/lib/node_modules/openclaw/node_modules/json5");',
     "const MAX_BYTES = 1048576;",
     "function fingerprint(value) { return value ? [value.dev, value.ino, value.size, value.mtimeMs, value.ctimeMs, value.mode, value.nlink, value.uid] : null; }",
     "function readConfig(configPath) {",

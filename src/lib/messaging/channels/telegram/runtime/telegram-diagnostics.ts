@@ -59,7 +59,7 @@ type TelegramHttpRequestLike = (
     try {
       return JSON.parse(source);
     } catch {
-      return require("/opt/nemoclaw/node_modules/json5").parse(source);
+      return require("/usr/local/lib/node_modules/openclaw/node_modules/json5").parse(source);
     }
   }
 

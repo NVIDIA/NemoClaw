@@ -23,7 +23,7 @@ function portableRefreshHelper(tmpDir: string): string {
     helper,
     fs
       .readFileSync(REFRESH_HELPER, "utf-8")
-      .replaceAll("/opt/nemoclaw/node_modules/json5", JSON5_MODULE)
+      .replaceAll("/usr/local/lib/node_modules/openclaw/node_modules/json5", JSON5_MODULE)
       .replaceAll("/usr/local/bin/node", process.execPath),
   );
   return helper;

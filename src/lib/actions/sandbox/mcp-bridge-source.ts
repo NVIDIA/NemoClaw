@@ -247,7 +247,7 @@ function buildOpenClawSourceCommand(configDir: string): string {
   return [
     "node - <<'NODE'",
     'const fs = require("node:fs");',
-    'const JSON5 = require("/opt/nemoclaw/node_modules/json5");',
+    'const JSON5 = require("/usr/local/lib/node_modules/openclaw/node_modules/json5");',
     `const paths = JSON.parse(${sourcePayload(payload)});`,
     "const MAX_BYTES = 262144;",
     "const PREFIX = 'Bearer openshell:resolve:env:';",

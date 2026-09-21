@@ -290,11 +290,11 @@ describe("nemoclaw-start gateway token export (#1114)", () => {
 
     const readToken = extractShellFunctionFromSource(src, "_read_gateway_token")
       .replaceAll("/sandbox/.openclaw/openclaw.json", configPath)
-      .replaceAll("/opt/nemoclaw", optNemoclaw)
+      .replaceAll("/usr/local/lib/node_modules/openclaw/node_modules/json5", JSON5_MODULE)
       .replaceAll("/usr/local/bin/node", process.execPath);
     const ensureGatewayToken = extractShellFunctionFromSource(src, "ensure_gateway_token")
       .replaceAll("/sandbox/.openclaw/openclaw.json", configPath)
-      .replaceAll("/opt/nemoclaw", optNemoclaw)
+      .replaceAll("/usr/local/lib/node_modules/openclaw/node_modules/json5", JSON5_MODULE)
       .replaceAll("/usr/local/bin/node", process.execPath);
     const configWriteHelperStubs = ['run_openclaw_config_as_owner() { "$@"; }'].join("\n");
     const exportToken = extractShellFunctionFromSource(src, "export_gateway_token");
@@ -1816,7 +1816,7 @@ describe("NC-2227-01: legacy migration behavior", () => {
         extractShellFunctionFromSource(src, "chown_tree_no_symlink_follow"),
         extractShellFunctionFromSource(src, "provision_agent_workspaces")
           .replaceAll("/sandbox/.openclaw", configDir)
-          .replaceAll("/opt/nemoclaw/node_modules/json5", JSON5_MODULE),
+          .replaceAll("/usr/local/lib/node_modules/openclaw/node_modules/json5", JSON5_MODULE),
         "provision_agent_workspaces",
       ].join("\n");
       fs.writeFileSync(script, body, { mode: 0o700 });
@@ -2278,7 +2278,7 @@ describe.concurrent("provider placeholder refresh (#4251)", () => {
       const fn = extractShellFunctionFromSource(src, "refresh_openclaw_provider_placeholders")
         .replaceAll("/sandbox/.openclaw", openclawDir)
         .replaceAll("/usr/local/share/nemoclaw/messaging-runtime-plan.json", runtimePlanPath)
-        .replaceAll("/opt/nemoclaw/node_modules/json5", JSON5_MODULE)
+        .replaceAll("/usr/local/lib/node_modules/openclaw/node_modules/json5", JSON5_MODULE)
         .replaceAll("/usr/local/bin/node", process.execPath);
       fs.writeFileSync(
         scriptPath,

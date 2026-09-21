@@ -18,11 +18,42 @@ const START_SCRIPT = path.join(
   "nemoclaw-start.sh",
 );
 const JSON5_MODULE = path.join(import.meta.dirname, "../../../..", "node_modules", "json5");
+const SANDBOX_JSON5_MODULE = "/usr/local/lib/node_modules/openclaw/node_modules/json5";
+
+describe("sandbox OpenClaw config parser dependency", () => {
+  it.each([
+    START_SCRIPT,
+    path.resolve(
+      import.meta.dirname,
+      "../../../../scripts/lib/refresh-openclaw-wechat-placeholder.py",
+    ),
+    path.resolve(
+      import.meta.dirname,
+      "../../../../src/lib/messaging/channels/telegram/runtime/telegram-diagnostics.ts",
+    ),
+    path.resolve(
+      import.meta.dirname,
+      "../../../../src/lib/actions/sandbox/mcp-bridge-adapter-openclaw.ts",
+    ),
+    path.resolve(
+      import.meta.dirname,
+      "../../../../src/lib/actions/sandbox/mcp-bridge-adapter-status.ts",
+    ),
+    path.resolve(import.meta.dirname, "../../../../src/lib/actions/sandbox/mcp-bridge-source.ts"),
+  ])(
+    "loads JSON5 from the agent runtime exposed by the OpenShell filesystem policy: %s",
+    (sourcePath) => {
+      const source = fs.readFileSync(sourcePath, "utf-8");
+      expect(source, sourcePath).toContain(SANDBOX_JSON5_MODULE);
+      expect(source, sourcePath).not.toContain("/opt/nemoclaw/node_modules/json5");
+    },
+  );
+});
 
 describe("runtime model override (#759)", () => {
   const src = fs
     .readFileSync(START_SCRIPT, "utf-8")
-    .replaceAll("/opt/nemoclaw/node_modules/json5", JSON5_MODULE)
+    .replaceAll("/usr/local/lib/node_modules/openclaw/node_modules/json5", JSON5_MODULE)
     .replaceAll("/usr/local/bin/node", process.execPath);
 
   function extractShellFunction(name: string): string {
@@ -149,7 +180,7 @@ describe("runtime model override (#759)", () => {
 describe("root OpenClaw config I/O authority", () => {
   const src = fs
     .readFileSync(START_SCRIPT, "utf-8")
-    .replaceAll("/opt/nemoclaw/node_modules/json5", JSON5_MODULE)
+    .replaceAll("/usr/local/lib/node_modules/openclaw/node_modules/json5", JSON5_MODULE)
     .replaceAll("/usr/local/bin/node", process.execPath);
 
   it("drops the root environment before invoking an absolute sandbox-owned writer", () => {
@@ -227,7 +258,7 @@ describe("root OpenClaw config I/O authority", () => {
 describe("runtime CORS origin override (#719)", () => {
   const src = fs
     .readFileSync(START_SCRIPT, "utf-8")
-    .replaceAll("/opt/nemoclaw/node_modules/json5", JSON5_MODULE)
+    .replaceAll("/usr/local/lib/node_modules/openclaw/node_modules/json5", JSON5_MODULE)
     .replaceAll("/usr/local/bin/node", process.execPath);
 
   function extractShellFunction(name: string): string {

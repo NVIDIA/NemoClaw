@@ -31,7 +31,13 @@ const entry: McpSourceEntry = {
 function run(command: string) {
   return spawnSync(
     "/bin/sh",
-    ["-c", command.replaceAll("/opt/nemoclaw/node_modules/json5", JSON5_MODULE_PATH)],
+    [
+      "-c",
+      command.replaceAll(
+        "/usr/local/lib/node_modules/openclaw/node_modules/json5",
+        JSON5_MODULE_PATH,
+      ),
+    ],
     { encoding: "utf8" },
   );
 }

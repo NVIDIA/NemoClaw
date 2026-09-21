@@ -118,7 +118,7 @@ Set `VLM_DEMO_DIR` to the local `vlm-demo` directory from the demo assets, then 
 export VLM_DEMO_DIR=/path/to/nemoclaw-demos/vlm-demo
 docker exec --user sandbox -i "$SANDBOX_CTR" \
   node -e '
-const JSON5 = require("/opt/nemoclaw/node_modules/json5");
+const JSON5 = require("/usr/local/lib/node_modules/openclaw/node_modules/json5");
 
 let input = "";
 process.stdin.setEncoding("utf8");
@@ -170,7 +170,7 @@ The first process builds one minimal JSON patch, and the second process applies 
 
   docker exec --user sandbox -i "$SANDBOX_CTR" \
     node -e '
-const JSON5 = require("/opt/nemoclaw/node_modules/json5");
+const JSON5 = require("/usr/local/lib/node_modules/openclaw/node_modules/json5");
 
 let input = "";
 process.stdin.setEncoding("utf8");

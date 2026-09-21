@@ -18,7 +18,7 @@ const START_SCRIPT = path.join(
 const JSON5_MODULE = path.join(import.meta.dirname, "../../../..", "node_modules", "json5");
 const src = fs
   .readFileSync(START_SCRIPT, "utf-8")
-  .replaceAll("/opt/nemoclaw/node_modules/json5", JSON5_MODULE)
+  .replaceAll("/usr/local/lib/node_modules/openclaw/node_modules/json5", JSON5_MODULE)
   .replaceAll("/usr/local/bin/node", process.execPath);
 
 function extractShellFunction(name: string): string {

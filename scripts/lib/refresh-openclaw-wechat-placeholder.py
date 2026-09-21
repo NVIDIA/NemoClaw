@@ -29,8 +29,8 @@ def parse_openclaw_config(source):
         [
             "/usr/local/bin/node",
             "-e",
-            'const JSON5=require("/opt/nemoclaw/node_modules/json5");'
-            'process.stdout.write(JSON.stringify(JSON5.parse(require("node:fs").readFileSync(0,"utf8"))));',
+            'const JSON5=require("/usr/local/lib/node_modules/openclaw/node_modules/json5");'
+            + 'process.stdout.write(JSON.stringify(JSON5.parse(require("node:fs").readFileSync(0,"utf8"))));',
         ],
         input=source,
         text=True,

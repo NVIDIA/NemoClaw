@@ -432,7 +432,7 @@ function parseConfig(text) {
     return JSON.parse(text);
   } catch (jsonError) {
     try {
-      return require("/opt/nemoclaw/node_modules/json5").parse(text);
+      return require("/usr/local/lib/node_modules/openclaw/node_modules/json5").parse(text);
     } catch {
       throw jsonError;
     }
@@ -688,7 +688,7 @@ parsed = subprocess.run(
     [
         "/usr/local/bin/node",
         "-e",
-        'const JSON5=require("/opt/nemoclaw/node_modules/json5");'
+        'const JSON5=require("/usr/local/lib/node_modules/openclaw/node_modules/json5");'
         'process.stdout.write(JSON.stringify(JSON5.parse(require("node:fs").readFileSync(0,"utf8"))));',
     ],
     input=source,
@@ -794,7 +794,7 @@ parsed = subprocess.run(
     [
         "/usr/local/bin/node",
         "-e",
-        'const JSON5=require("/opt/nemoclaw/node_modules/json5");'
+        'const JSON5=require("/usr/local/lib/node_modules/openclaw/node_modules/json5");'
         'process.stdout.write(JSON.stringify(JSON5.parse(require("node:fs").readFileSync(0,"utf8"))));',
     ],
     input=source,
@@ -873,7 +873,7 @@ try:
         [
             "/usr/local/bin/node",
             "-e",
-            'const JSON5=require("/opt/nemoclaw/node_modules/json5");'
+            'const JSON5=require("/usr/local/lib/node_modules/openclaw/node_modules/json5");'
             'process.stdout.write(JSON.stringify(JSON5.parse(require("node:fs").readFileSync(0,"utf8"))));',
         ],
         input=source,
@@ -1092,7 +1092,7 @@ parsed = subprocess.run(
     [
         "/usr/local/bin/node",
         "-e",
-        'const JSON5=require("/opt/nemoclaw/node_modules/json5");'
+        'const JSON5=require("/usr/local/lib/node_modules/openclaw/node_modules/json5");'
         'process.stdout.write(JSON.stringify(JSON5.parse(require("node:fs").readFileSync(0,"utf8"))));',
     ],
     input=source,
@@ -1687,7 +1687,7 @@ const configPath = "/sandbox/.openclaw/openclaw.json";
 
 function loadJson5() {
   try {
-    const JSON5 = require("/opt/nemoclaw/node_modules/json5");
+    const JSON5 = require("/usr/local/lib/node_modules/openclaw/node_modules/json5");
     if (JSON5 && typeof JSON5.parse === "function") {
       return JSON5;
     }
@@ -1738,7 +1738,7 @@ const pathModule = require("path");
 const path = process.argv[2];
 
 function loadJson5() {
-  const candidate = "/opt/nemoclaw/node_modules/json5";
+  const candidate = "/usr/local/lib/node_modules/openclaw/node_modules/json5";
   const JSON5 = require(candidate);
   if (!JSON5 || typeof JSON5.parse !== "function") {
     throw new Error(`JSON5 parser at ${candidate} is missing parse()`);
@@ -3928,7 +3928,7 @@ seed_default_workspace_templates() {
   if ! command -v node >/dev/null 2>&1; then
     return 0
   fi
-  local skip_bootstrap_check='const fs = require("fs"); const configPath = process.argv[1]; const source = fs.readFileSync(configPath, "utf8"); let cfg; try { cfg = JSON.parse(source); } catch { cfg = require("/opt/nemoclaw/node_modules/json5").parse(source); } process.exit(cfg?.agents?.defaults?.skipBootstrap === true ? 0 : 1);'
+  local skip_bootstrap_check='const fs = require("fs"); const configPath = process.argv[1]; const source = fs.readFileSync(configPath, "utf8"); let cfg; try { cfg = JSON.parse(source); } catch { cfg = require("/usr/local/lib/node_modules/openclaw/node_modules/json5").parse(source); } process.exit(cfg?.agents?.defaults?.skipBootstrap === true ? 0 : 1);'
   if ! node -e "$skip_bootstrap_check" "$config_file" >/dev/null 2>&1; then
     return 0
   fi
@@ -4920,7 +4920,7 @@ provision_agent_workspaces() {
     config_names="$(
       node - "$config_dir/openclaw.json" <<'NODE' 2>/dev/null || true
   const fs = require("fs");
-  const JSON5 = require("/opt/nemoclaw/node_modules/json5");
+  const JSON5 = require("/usr/local/lib/node_modules/openclaw/node_modules/json5");
   const configPath = process.argv[2];
   const cfg = JSON5.parse(fs.readFileSync(configPath, "utf8"));
   const names = new Set();

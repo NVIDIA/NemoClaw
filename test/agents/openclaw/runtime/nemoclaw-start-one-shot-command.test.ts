@@ -23,7 +23,7 @@ describe("nemoclaw-start one-shot command setup", () => {
       source,
       "_read_configured_gateway_port",
     )
-      .replaceAll("/opt/nemoclaw/node_modules/json5", JSON5_MODULE)
+      .replaceAll("/usr/local/lib/node_modules/openclaw/node_modules/json5", JSON5_MODULE)
       .replaceAll(
         'config_path="/sandbox/.openclaw/openclaw.json"',
         'config_path="${NEMOCLAW_TEST_CONFIG_PATH:?}"',

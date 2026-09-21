@@ -152,7 +152,10 @@ network_policies:
           const program = command
             .split(`<<'${marker}'\n`)[1]
             .split(`\n${marker}`)[0]
-            .replaceAll("/opt/nemoclaw/node_modules/json5", JSON5_MODULE_PATH);
+            .replaceAll(
+              "/usr/local/lib/node_modules/openclaw/node_modules/json5",
+              JSON5_MODULE_PATH,
+            );
           const result = spawnSync(
             marker === "NODE" ? process.execPath : "python3",
             marker === "NODE" ? ["-"] : ["-I", "-S", "-"],

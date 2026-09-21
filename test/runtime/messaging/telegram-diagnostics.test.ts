@@ -42,7 +42,7 @@ function runDriver(driverBody: string, env: Record<string, string> = {}) {
     diagnosticsPath,
     fs
       .readFileSync(DIAGNOSTICS_PATH, "utf-8")
-      .replaceAll("/opt/nemoclaw/node_modules/json5", JSON5_MODULE),
+      .replaceAll("/usr/local/lib/node_modules/openclaw/node_modules/json5", JSON5_MODULE),
   );
   fs.writeFileSync(driverPath, driverBody);
   try {
