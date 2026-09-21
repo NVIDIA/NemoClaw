@@ -929,14 +929,18 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     });
   const executeSandboxCommandSpy = vi
     .spyOn(processRecovery, "executeSandboxCommand")
-    .mockImplementation(
-      overrides.executeSandboxCommand ?? (() => ({ status: 0, stdout: "doctor ok", stderr: "" })),
+    .mockImplementation(async () =>
+      (
+        overrides.executeSandboxCommand ?? (() => ({ status: 0, stdout: "doctor ok", stderr: "" }))
+      )(),
     );
   const executeSandboxExecCommandSpy = vi
     .spyOn(processRecovery, "executeSandboxExecCommand")
-    .mockImplementation(
-      overrides.executeSandboxExecCommand ??
-        (() => ({ status: 0, stdout: "doctor ok", stderr: "" })),
+    .mockImplementation(async () =>
+      (
+        overrides.executeSandboxExecCommand ??
+        (() => ({ status: 0, stdout: "doctor ok", stderr: "" }))
+      )(),
     );
   vi.spyOn(processRecovery, "beginOpenClawPostRestoreDoctor").mockImplementation(
     async (sandboxName, runtimeSelection) => ({

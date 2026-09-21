@@ -128,7 +128,7 @@ let toolDiscoveryResult = {
   tools: ["alpha", "zeta"],
   truncated: false,
 };
-processRecovery.executeSandboxExecCommand = () => {
+processRecovery.executeSandboxExecCommand = async () => {
   credentialObservationCount += 1;
   return {
     status: 0,
@@ -136,7 +136,7 @@ processRecovery.executeSandboxExecCommand = () => {
     stderr: "",
   };
 };
-processRecovery.executeSandboxCommand = (sandboxName, command) => {
+processRecovery.executeSandboxCommand = async (sandboxName, command) => {
   executedSandboxCommands.push(command);
   if (command.includes("NEMOCLAW_MCP_PROBE")) {
     const resultMarker = command.match(/__NEMOCLAW_SANDBOX_EXEC_STARTED___[0-9a-f]{32}/)?.[0];
@@ -699,7 +699,7 @@ describeConcurrentProbeSuite("MCP status wire-level credential-resolution probe"
       process.exitCode = undefined;
       logLines.length = 0;
       errorLines.length = 0;
-      processRecovery.executeSandboxCommand = (_sandboxName, command) =>
+      processRecovery.executeSandboxCommand = async (_sandboxName, command) =>
         deepAgentsFixture.runDeepAgentsConfigCommand(
           command,
           fixture.config,
@@ -803,7 +803,7 @@ describeConcurrentProbeSuite("MCP status wire-level credential-resolution probe"
     env: ["v1_TOKEN"],
   });
   let inspected = false;
-  processRecovery.executeSandboxCommand = (_sandboxName, command) => {
+  processRecovery.executeSandboxCommand = async (_sandboxName, command) => {
     inspected = true;
     return deepAgentsFixture.runDeepAgentsConfigCommand(command, { mcpServers: {} }, "v2");
   };
@@ -847,7 +847,7 @@ describeConcurrentProbeSuite("MCP status wire-level credential-resolution probe"
   });
   providerCredentialObservation = "absent";
   let inspected = false;
-  processRecovery.executeSandboxCommand = (_sandboxName, command) => {
+  processRecovery.executeSandboxCommand = async (_sandboxName, command) => {
     inspected = true;
     return deepAgentsFixture.runDeepAgentsConfigCommand(
       command,
