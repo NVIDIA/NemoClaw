@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { SandboxCommandTransportError } from "../../adapters/sandbox/command-transport";
 import type { OpenShellRuntimeSelection } from "../../adapters/openshell/runtime";
 import { R, YW } from "../../cli/terminal-style";
 import { redact } from "../../security/redact";
@@ -12,16 +13,23 @@ import {
 
 export { buildRefreshMutableOpenClawConfigHashCommand };
 
+function transportFailureResult(error: unknown) {
+  if (!(error instanceof SandboxCommandTransportError)) throw error;
+  return { status: 1, stdout: "", stderr: error.message };
+}
+
 export async function refreshMutableOpenClawConfigHashAfterPostRestoreWrites(
   sandboxName: string,
   log: (msg: string) => void,
   runtimeSelection?: OpenShellRuntimeSelection,
 ): Promise<boolean> {
-  const result = runtimeSelection
-    ? await executeSandboxCommand(sandboxName, buildRefreshMutableOpenClawConfigHashCommand(), {
-        runtimeSelection,
-      })
-    : await executeSandboxCommand(sandboxName, buildRefreshMutableOpenClawConfigHashCommand());
+  const result = await (
+    runtimeSelection
+      ? executeSandboxCommand(sandboxName, buildRefreshMutableOpenClawConfigHashCommand(), {
+          runtimeSelection,
+        })
+      : executeSandboxCommand(sandboxName, buildRefreshMutableOpenClawConfigHashCommand())
+  ).catch(transportFailureResult);
   if (result && result.status === 0) {
     log("Mutable OpenClaw config hash refreshed after post-restore config writes");
     return true;
@@ -29,7 +37,7 @@ export async function refreshMutableOpenClawConfigHashAfterPostRestoreWrites(
 
   const detail = result
     ? [result.stderr, result.stdout].filter(Boolean).join("; ") || `exit ${result.status}`
-    : "could not obtain sandbox SSH config";
+    : "could not execute sandbox command";
   console.error(`  ${YW}⚠${R} Mutable OpenClaw config hash was not refreshed: ${redact(detail)}`);
   return false;
 }
@@ -39,11 +47,13 @@ export async function verifyFinalMutableOpenClawConfigHash(
   log: (msg: string) => void,
   runtimeSelection?: OpenShellRuntimeSelection,
 ): Promise<boolean> {
-  const result = runtimeSelection
-    ? await executeSandboxCommand(sandboxName, buildVerifyMutableOpenClawConfigHashCommand(), {
-        runtimeSelection,
-      })
-    : await executeSandboxCommand(sandboxName, buildVerifyMutableOpenClawConfigHashCommand());
+  const result = await (
+    runtimeSelection
+      ? executeSandboxCommand(sandboxName, buildVerifyMutableOpenClawConfigHashCommand(), {
+          runtimeSelection,
+        })
+      : executeSandboxCommand(sandboxName, buildVerifyMutableOpenClawConfigHashCommand())
+  ).catch(transportFailureResult);
   if (result && result.status === 0) {
     log("Final mutable OpenClaw config hash verified after post-restore finalization");
     return true;
@@ -51,7 +61,7 @@ export async function verifyFinalMutableOpenClawConfigHash(
 
   const detail = result
     ? [result.stderr, result.stdout].filter(Boolean).join("; ") || `exit ${result.status}`
-    : "could not obtain sandbox SSH config";
+    : "could not execute sandbox command";
   console.error(
     `  ${YW}⚠${R} Final mutable OpenClaw config hash was not verified: ${redact(detail)}`,
   );

@@ -9,6 +9,7 @@ import path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { SandboxCommandTransportError } from "../../adapters/sandbox/command-transport";
 import * as processRecovery from "./process-recovery";
 import {
   refreshMutableOpenClawConfigHashAfterPostRestoreWrites,
@@ -76,6 +77,35 @@ describe("OpenClaw rebuild config hash target selection", () => {
       { runtimeSelection },
     );
     expect(process.env.OPENSHELL_GATEWAY).toBe("hostile-gateway");
+  });
+});
+
+describe.each([
+  { run: refreshMutableOpenClawConfigHashAfterPostRestoreWrites, diagnostic: "was not refreshed" },
+  { run: verifyFinalMutableOpenClawConfigHash, diagnostic: "was not verified" },
+])("config hash transport failure: $diagnostic", ({ run, diagnostic }) => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it.each(["cancelled", "timeout", "capture", "invocation", "unavailable", "malformed"] as const)(
+    "records %s as unverified without retrying",
+    async (kind) => {
+      const execute = vi
+        .spyOn(processRecovery, "executeSandboxCommand")
+        .mockRejectedValue(new SandboxCommandTransportError(kind));
+      const error = vi.spyOn(console, "error").mockImplementation(() => {});
+      const log = vi.fn();
+      expect(await run("alpha", log, runtimeSelection)).toBe(false);
+      expect(execute).toHaveBeenCalledOnce();
+      expect(error).toHaveBeenCalledWith(expect.stringContaining(diagnostic));
+      expect(error).toHaveBeenCalledWith(expect.stringContaining(`(${kind})`));
+      expect(log).not.toHaveBeenCalled();
+    },
+  );
+
+  it("preserves unexpected authority errors", async () => {
+    const refusal = new Error("gateway authority refused");
+    vi.spyOn(processRecovery, "executeSandboxCommand").mockRejectedValue(refusal);
+    await expect(run("alpha", vi.fn(), runtimeSelection)).rejects.toBe(refusal);
   });
 });
 
