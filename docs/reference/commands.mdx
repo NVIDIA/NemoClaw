@@ -277,8 +277,7 @@ Configure destination CA trust separately during onboarding; export does not cha
 
 The v0 command projects verified source state into the v1alpha1 YAML shape.
 The v1 Rust parser remains authoritative for accepting that document; the v0 command does not carry a copy of the v1 schema or semantic validator.
-Each sandbox uses one singular `agent` with one inline `inference` definition.
-It also uses exactly one inline `harness` or one `harnessRef`.
+Each exported sandbox contains exactly one inline `harness` and one singular `agent` with one inline `inference` definition.
 
 A hosted single-agent export has this structure:
 
