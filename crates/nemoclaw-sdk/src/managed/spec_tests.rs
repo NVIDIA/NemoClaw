@@ -206,7 +206,7 @@ fn runtime_launch_preserves_declared_bindings_limits_and_isolation() {
                 && binding.host_port.as_deref() == Some(process.port.to_string().as_str())));
         } else {
             assert_eq!(storage.target.as_deref(), Some("/owned-data"));
-            assert_eq!(host.network_mode.as_deref(), Some("host"));
+            assert_eq!(host.network_mode.as_deref(), Some(spec.network().as_str()));
             let command = launch.cmd.as_ref().unwrap();
             let bind = command
                 .windows(2)
@@ -214,10 +214,7 @@ fn runtime_launch_preserves_declared_bindings_limits_and_isolation() {
                 .unwrap()[1]
                 .parse::<std::net::IpAddr>()
                 .unwrap();
-            assert!(
-                bind.is_loopback(),
-                "managed gateway must not expose its unauthenticated API"
-            );
+            assert!(bind.is_unspecified());
             let port = command.windows(2).find(|pair| pair[0] == "--port").unwrap()[1]
                 .parse::<u16>()
                 .unwrap();
@@ -225,6 +222,13 @@ fn runtime_launch_preserves_declared_bindings_limits_and_isolation() {
                 Some(port),
                 url::Url::parse(&spec.gateway.endpoint).unwrap().port()
             );
+            let bindings = host.port_bindings.as_ref().unwrap()[&format!("{port}/tcp")]
+                .as_ref()
+                .unwrap();
+            assert!(bindings.iter().any(|binding| {
+                binding.host_ip.as_deref() == Some("127.0.0.1")
+                    && binding.host_port.as_deref() == Some(port.to_string().as_str())
+            }));
             assert!(mounts.iter().any(|mount| mount.source.as_deref()
                 == spec.gateway.engine.strip_prefix("unix://")
                 && mount.target.as_deref() == Some("/var/run/docker.sock")));
@@ -240,16 +244,23 @@ fn runtime_launch_preserves_declared_bindings_limits_and_isolation() {
 }
 
 #[test]
-fn managed_gateway_uses_driver_derived_docker_supervisor_callback() {
+fn managed_gateway_uses_bridge_dns_for_docker_supervisor_callback() {
     let fixtures: Vec<serde_json::Value> =
         serde_json::from_str(include_str!("reference.json")).unwrap();
     for fixture in fixtures {
         let spec: Spec = serde_json::from_str(fixture["spec"].as_str().unwrap()).unwrap();
         let configuration = spec.gateway_config("/owned-data");
         if spec.compute_driver == "docker" {
+            let port = url::Url::parse(&spec.gateway.endpoint)
+                .unwrap()
+                .port()
+                .unwrap();
             assert!(
-                !configuration.contains("grpc_endpoint ="),
-                "Docker must derive the supervisor callback and host alias"
+                configuration.contains(&format!(
+                    "grpc_endpoint = {:?}",
+                    format!("http://{}:{port}", spec.name)
+                )),
+                "Docker supervisors must call the gateway over their shared bridge"
             );
         } else {
             assert!(
