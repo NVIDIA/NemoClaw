@@ -62,6 +62,13 @@ describe("buildInferenceProviderMenu", () => {
     ]);
   });
 
+  it("labels the llama.cpp attachment option as an already-running server (#12155)", () => {
+    expect(buildMenu().options.at(-1)).toEqual({
+      key: "llama-cpp",
+      label: "Local llama.cpp (already running)",
+    });
+  });
+
   it("adds local, routed, and agent-scoped providers after the base remote entries", () => {
     const result = buildMenu({
       agentProviderOptions: ["hermesProvider", "build"],

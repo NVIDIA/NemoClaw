@@ -519,7 +519,10 @@ function prepareManagedLlamaCppMenu(input: {
   const { deps, gpu, requestedProvider } = input;
   const platform = gpu?.platform;
   const candidate =
-    platform === "spark" || platform === "n1x" || requestedProvider === "install-llama-cpp";
+    platform === "spark" ||
+    platform === "n1x" ||
+    platform === "linux" ||
+    requestedProvider === "install-llama-cpp";
   const runtimeProviderId = candidate ? deps.getRuntimeProvider().identity.id : undefined;
   const discovery = candidate
     ? discoverManagedLlamaCppSafely(

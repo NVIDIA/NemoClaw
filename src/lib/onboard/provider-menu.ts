@@ -133,7 +133,7 @@ export function buildInferenceProviderMenu(
 
   // Existing-server attachment stays visible without probing or claiming lifecycle ownership.
   if (!options.some((option) => option.key === "llama-cpp")) {
-    options.push({ key: "llama-cpp", label: "Local llama.cpp" });
+    options.push({ key: "llama-cpp", label: "Local llama.cpp (already running)" });
   }
 
   return {

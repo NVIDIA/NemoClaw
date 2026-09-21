@@ -163,102 +163,108 @@ function n1xProofHarness(proofPassed: boolean, requestedProvider: string | null)
 }
 
 describe("managed llama.cpp profile onboarding", () => {
-  it("installs an interactive profile despite a different recipe environment", async () => {
-    vi.stubEnv("NEMOCLAW_LLAMACPP_RECIPE", "llama-cpp.recommended.v1");
-    vi.stubEnv("NEMOCLAW_SERVING_PRESET", "llama-cpp.recommended.v1.preset");
-    const recommended = managedSelectionFixture(
-      "llama-cpp.recommended.v1",
-      "Recommended model",
-      "recommended-model",
-    );
-    const alternate = managedSelectionFixture(
-      "llama-cpp.alternate.v1",
-      "Alternate model",
-      "alternate-model",
-    );
-    const discoverManagedLlamaCppSelections = vi.fn((env?: NodeJS.ProcessEnv) => {
-      const selection =
-        env?.NEMOCLAW_LLAMACPP_RECIPE === "llama-cpp.alternate.v1" ? alternate : recommended;
-      return {
-        choices: [
-          { priority: 500, selection: recommended },
-          { priority: 450, selection: alternate },
-        ],
-        resolution: { kind: "selected" as const, selection },
-      };
-    });
-    const selectFromNumberedMenu = vi.fn<SetupNimFlowDeps["selectFromNumberedMenu"]>(
-      (_rawChoice, _defaultIndex, options) => {
-        expect(options.filter(({ key }) => key === "install-llama-cpp")).toEqual([
-          {
-            key: "install-llama-cpp",
-            label: "Managed llama.cpp: Recommended model (recommended)",
-            managedLlamaCppRecipeId: "llama-cpp.recommended.v1",
-          },
-          {
-            key: "install-llama-cpp",
-            label: "Managed llama.cpp: Alternate model",
-            managedLlamaCppRecipeId: "llama-cpp.alternate.v1",
-          },
-        ]);
-        return options.find(
-          ({ managedLlamaCppRecipeId }) => managedLlamaCppRecipeId === "llama-cpp.alternate.v1",
-        )!;
-      },
-    );
-    const installManagedLlamaCpp = vi.fn(async () => ({
-      ok: true as const,
-      apiKey: "a".repeat(64),
-      model: "alternate-model",
-      receipt: { schemaVersion: 1 } as never,
-    }));
-    const handleLlamaCppSelection = vi.fn<SetupNimFlowDeps["handleLlamaCppSelection"]>(
-      async (state, requestedModel) => {
-        state.provider = "llama-cpp-local";
-        state.model = requestedModel;
-        state.endpointUrl = "http://127.0.0.1:8081/v1";
-        state.credentialEnv = "NEMOCLAW_LLAMACPP_LOCAL_TOKEN";
-        state.preferredInferenceApi = "openai-completions";
-        return "selected";
-      },
-    );
-    const setupNim = createSetupNim(
-      makeDeps({
-        prompt: async () => "1",
-        selectFromNumberedMenu,
-        discoverManagedLlamaCppSelections,
-        installManagedLlamaCpp,
-        handleLlamaCppSelection,
-      }),
-    );
+  it.each([
+    ["spark", "spark-agent"],
+    ["linux", "linux-agent"],
+  ] as const)(
+    "installs an interactive profile on %s despite a different recipe environment (#12155)",
+    async (platform, sandboxName) => {
+      vi.stubEnv("NEMOCLAW_LLAMACPP_RECIPE", "llama-cpp.recommended.v1");
+      vi.stubEnv("NEMOCLAW_SERVING_PRESET", "llama-cpp.recommended.v1.preset");
+      const recommended = managedSelectionFixture(
+        "llama-cpp.recommended.v1",
+        "Recommended model",
+        "recommended-model",
+      );
+      const alternate = managedSelectionFixture(
+        "llama-cpp.alternate.v1",
+        "Alternate model",
+        "alternate-model",
+      );
+      const discoverManagedLlamaCppSelections = vi.fn((env?: NodeJS.ProcessEnv) => {
+        const selection =
+          env?.NEMOCLAW_LLAMACPP_RECIPE === "llama-cpp.alternate.v1" ? alternate : recommended;
+        return {
+          choices: [
+            { priority: 500, selection: recommended },
+            { priority: 450, selection: alternate },
+          ],
+          resolution: { kind: "selected" as const, selection },
+        };
+      });
+      const selectFromNumberedMenu = vi.fn<SetupNimFlowDeps["selectFromNumberedMenu"]>(
+        (_rawChoice, _defaultIndex, options) => {
+          expect(options.filter(({ key }) => key === "install-llama-cpp")).toEqual([
+            {
+              key: "install-llama-cpp",
+              label: "Managed llama.cpp: Recommended model (recommended)",
+              managedLlamaCppRecipeId: "llama-cpp.recommended.v1",
+            },
+            {
+              key: "install-llama-cpp",
+              label: "Managed llama.cpp: Alternate model",
+              managedLlamaCppRecipeId: "llama-cpp.alternate.v1",
+            },
+          ]);
+          return options.find(
+            ({ managedLlamaCppRecipeId }) => managedLlamaCppRecipeId === "llama-cpp.alternate.v1",
+          )!;
+        },
+      );
+      const installManagedLlamaCpp = vi.fn(async () => ({
+        ok: true as const,
+        apiKey: "a".repeat(64),
+        model: "alternate-model",
+        receipt: { schemaVersion: 1 } as never,
+      }));
+      const handleLlamaCppSelection = vi.fn<SetupNimFlowDeps["handleLlamaCppSelection"]>(
+        async (state, requestedModel) => {
+          state.provider = "llama-cpp-local";
+          state.model = requestedModel;
+          state.endpointUrl = "http://127.0.0.1:8081/v1";
+          state.credentialEnv = "NEMOCLAW_LLAMACPP_LOCAL_TOKEN";
+          state.preferredInferenceApi = "openai-completions";
+          return "selected";
+        },
+      );
+      const setupNim = createSetupNim(
+        makeDeps({
+          prompt: async () => "1",
+          selectFromNumberedMenu,
+          discoverManagedLlamaCppSelections,
+          installManagedLlamaCpp,
+          handleLlamaCppSelection,
+        }),
+      );
 
-    await expect(setupNim({ platform: "spark" } as never, "spark-agent")).resolves.toMatchObject({
-      provider: "llama-cpp-local",
-      model: "alternate-model",
-    });
-    expect(discoverManagedLlamaCppSelections).toHaveBeenLastCalledWith(
-      expect.objectContaining({
-        NEMOCLAW_LLAMACPP_RECIPE: "llama-cpp.alternate.v1",
-        NEMOCLAW_SERVING_PRESET: "",
-      }),
-      expect.objectContaining({ platform: "spark" }),
-      undefined,
-      undefined,
-      { runtimeProviderId: "docker" },
-    );
-    expect(discoverManagedLlamaCppSelections).toHaveBeenNthCalledWith(
-      1,
-      expect.objectContaining({ NEMOCLAW_LLAMACPP_RECIPE: "", NEMOCLAW_SERVING_PRESET: "" }),
-      expect.objectContaining({ platform: "spark" }),
-      undefined,
-      undefined,
-      { runtimeProviderId: "docker" },
-    );
-    expect(installManagedLlamaCpp).toHaveBeenCalledWith(
-      alternate,
-      expect.objectContaining({ sandboxName: "spark-agent" }),
-    );
-  });
+      await expect(setupNim({ platform } as never, sandboxName)).resolves.toMatchObject({
+        provider: "llama-cpp-local",
+        model: "alternate-model",
+      });
+      expect(discoverManagedLlamaCppSelections).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          NEMOCLAW_LLAMACPP_RECIPE: "llama-cpp.alternate.v1",
+          NEMOCLAW_SERVING_PRESET: "",
+        }),
+        expect.objectContaining({ platform }),
+        undefined,
+        undefined,
+        { runtimeProviderId: "docker" },
+      );
+      expect(discoverManagedLlamaCppSelections).toHaveBeenNthCalledWith(
+        1,
+        expect.objectContaining({ NEMOCLAW_LLAMACPP_RECIPE: "", NEMOCLAW_SERVING_PRESET: "" }),
+        expect.objectContaining({ platform }),
+        undefined,
+        undefined,
+        { runtimeProviderId: "docker" },
+      );
+      expect(installManagedLlamaCpp).toHaveBeenCalledWith(
+        alternate,
+        expect.objectContaining({ sandboxName }),
+      );
+    },
+  );
 
   it("installs the serving preset a profile request exports through the managed llama.cpp provider", async () => {
     vi.stubEnv("NEMOCLAW_SERVING_PRESET", "llama-cpp.dgx-spark-gb10.single.muse-glimmer-30b");
