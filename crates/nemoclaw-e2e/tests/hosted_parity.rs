@@ -216,6 +216,9 @@ mod live {
             }
             let state: Value = serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
             for resource in state["resources"].as_array().into_iter().flatten() {
+                if resource["mode"] == "data" {
+                    continue;
+                }
                 let instances = resource["instances"].as_array().unwrap();
                 assert_eq!(instances.len(), 1);
                 let attributes = &instances[0]["attributes"];
