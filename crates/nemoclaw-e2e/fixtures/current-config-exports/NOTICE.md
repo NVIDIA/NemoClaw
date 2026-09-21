@@ -5,10 +5,10 @@
 
 `openclaw.yaml` and `hermes.yaml` are raw deterministic outputs from the repaired v0 producer for #12131.
 `network-policy-live.yaml` is the raw installed-CLI output retained by
-[E2E run 35601381847](https://github.com/NVIDIA/NemoClaw/actions/runs/35601381847) for the
+[E2E run 35609562642](https://github.com/NVIDIA/NemoClaw/actions/runs/35609562642) for the
 restricted OpenClaw `network-policy` target.
 The deterministic fixture producer revision is `0a361a239c18dd4a56c34b4ca66dc32a3139bddd`.
-The live fixture producer revision is `26d65dedf4f72166e8ec5f66c7be2e5121f7b127`.
+The live fixture producer revision is `a6cab5209be04495a10c82af53b4082b95967675`.
 The target v1 parser revision is `9d446d51803ea6e3c6aaa286cee57c611173f214`.
 All three revisions are recorded by the parser test.
 The fixtures preserve the OpenClaw route and policy mapping and the Hermes API-key authentication mapping.
