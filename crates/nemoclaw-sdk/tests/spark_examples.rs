@@ -24,6 +24,7 @@ fn arm64_hardware_scenarios_compile_their_declared_resources() {
         ("spark", "two-models.yaml"),
         ("spark", "local-and-hosted.yaml"),
         ("station", "vllm.yaml"),
+        ("station", "shared-model.yaml"),
     ] {
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../examples")
@@ -73,8 +74,10 @@ fn arm64_hardware_scenarios_compile_their_declared_resources() {
             }
         }
         if directory == "station" {
-            let ServiceDefinition::Vllm(service) = &doc.spec.services["qwen"] else {
-                panic!("station/vllm.yaml: expected vLLM service");
+            assert_eq!(doc.spec.services.len(), 1, "station/{name}");
+            let ServiceDefinition::Vllm(service) = doc.spec.services.values().next().unwrap()
+            else {
+                panic!("station/{name}: expected vLLM service");
             };
             assert_eq!(
                 service.hardware,
@@ -85,12 +88,14 @@ fn arm64_hardware_scenarios_compile_their_declared_resources() {
                 })
             );
             assert!(service.image.starts_with("nc-prototype-vllm@sha256:"));
-            assert!(
-                doc.spec.sandboxes[0]
-                    .image
-                    .ref_
-                    .starts_with("nc-fabric@sha256:")
-            );
+            for sandbox in &doc.spec.sandboxes {
+                assert!(sandbox.image.ref_.starts_with("nc-fabric@sha256:"));
+            }
+            if name == "shared-model.yaml" {
+                assert_eq!(doc.spec.inference_providers.len(), 1);
+                assert_eq!(doc.spec.sandboxes.len(), 2);
+                assert_eq!(service.serving.max_sequences, 2);
+            }
         }
     }
 }
