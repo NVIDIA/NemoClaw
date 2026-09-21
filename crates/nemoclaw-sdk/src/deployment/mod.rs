@@ -11,11 +11,11 @@ mod runtime;
 mod timing;
 use crate::{
     CancellationToken, Error,
-    backend::{Backend, Row},
+    backend::Row,
     bundle::Bundle,
     compile::{self, Target},
     config::{Credential, Document},
-    openshell::{EnvironmentSecrets, OpenShell, Secrets, verify_identity},
+    openshell::{EnvironmentSecrets, OpenShell, Secrets},
     state::{Record, StateBinding, Store, atomic_write, save_json},
 };
 use plan::{Plan, check_destroy_plan, check_plan};
@@ -101,7 +101,6 @@ pub struct Deployment {
     bundle_directory: PathBuf,
     secrets: Arc<dyn Secrets>,
     progress: Arc<dyn Fn(Progress) + Send + Sync>,
-    engines: crate::docker::Connections,
 }
 impl Deployment {
     pub fn new(state_directory: &Path, bundle_directory: &Path) -> Self {
@@ -110,14 +109,7 @@ impl Deployment {
             bundle_directory: bundle_directory.into(),
             secrets: Arc::new(EnvironmentSecrets),
             progress: Arc::new(|_| {}),
-            engines: crate::docker::Connections::default(),
         }
-    }
-    /// Supply in-process engine connections. Provider subprocesses independently
-    /// connect to the same explicit endpoints carried by compiled resource specs.
-    pub fn with_engines(mut self, engines: crate::docker::Connections) -> Self {
-        self.engines = engines;
-        self
     }
     pub fn with_secrets(mut self, secrets: Arc<dyn Secrets>) -> Self {
         self.secrets = secrets;
@@ -499,22 +491,36 @@ fn command_environment(
     secrets: &dyn Secrets,
     directory: &Path,
 ) -> Result<BTreeMap<String, String>, Error> {
-    let mut env: BTreeMap<String, String> = [
-        ("TF_IN_AUTOMATION", "1"),
-        ("TF_INPUT", "0"),
-        ("CHECKPOINT_DISABLE", "1"),
-    ]
-    .into_iter()
-    .map(|(k, v)| (k.into(), v.into()))
-    .collect();
-    env.insert(
-        "TF_CLI_CONFIG_FILE".into(),
-        directory
-            .join("providers.tfrc")
-            .to_string_lossy()
-            .into_owned(),
-    );
-    for name in document.credential_names() {
+    credential_environment(document.credential_names(), secrets, directory)
+}
+
+fn gateway_environment(
+    document: &Document,
+    secrets: &dyn Secrets,
+    directory: &Path,
+) -> Result<BTreeMap<String, String>, Error> {
+    let gateway = &document.spec.gateway;
+    let mut names = BTreeSet::new();
+    if let Some(credential) = gateway.credential() {
+        names.insert(credential.env.as_str());
+    }
+    if let Some(tls) = gateway.tls() {
+        names.extend([
+            tls.ca.env.as_str(),
+            tls.certificate.env.as_str(),
+            tls.key.env.as_str(),
+        ]);
+    }
+    credential_environment(names, secrets, directory)
+}
+
+fn credential_environment<'a>(
+    names: impl IntoIterator<Item = &'a str>,
+    secrets: &dyn Secrets,
+    directory: &Path,
+) -> Result<BTreeMap<String, String>, Error> {
+    let mut env = crate::state::schema_environment(directory);
+    for name in names {
         if ["TF_", "TOFU_", "PLUGIN_", "NEMOCLAW_INTERNAL_"]
             .iter()
             .any(|prefix| name.starts_with(prefix))

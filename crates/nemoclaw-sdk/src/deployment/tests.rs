@@ -182,6 +182,58 @@ async fn schema_commands_do_not_require_inference_credentials() {
 }
 
 #[test]
+fn gateway_observation_resolves_only_gateway_credentials() {
+    struct GatewayValues;
+    impl Secrets for GatewayValues {
+        fn resolve(&self, name: &str) -> Result<String, crate::ObservationError> {
+            match name {
+                "GATEWAY_TOKEN" | "GATEWAY_CA" | "GATEWAY_CERT" | "GATEWAY_KEY" => {
+                    Ok(format!("test-{name}"))
+                }
+                _ => Err(crate::ObservationError::Authentication),
+            }
+        }
+    }
+    let mut document =
+        Document::parse(include_str!("../../tests/fixtures/config/local.yaml").as_bytes()).unwrap();
+    document.spec.gateway = serde_json::from_value(json!({
+        "management": "external",
+        "endpoint": "https://gateway.example.com",
+        "credential": {"env": "GATEWAY_TOKEN"},
+        "tls": {
+            "ca": {"env": "GATEWAY_CA"},
+            "certificate": {"env": "GATEWAY_CERT"},
+            "key": {"env": "GATEWAY_KEY"}
+        }
+    }))
+    .unwrap();
+    document.spec.inference_providers[0].credential = Some(Credential {
+        env: "INFERENCE_TOKEN".into(),
+    });
+    document.spec.sandboxes[0].integrations = serde_json::from_value(json!({
+        "search": {"kind": "webSearch", "provider": "brave", "credential": {"env": "SEARCH_KEY"}}
+    }))
+    .unwrap();
+    document.spec.sandboxes[0].agent.integration_refs = vec!["search".into()];
+    let environment = gateway_environment(&document, &GatewayValues, Path::new("state")).unwrap();
+    for name in ["GATEWAY_TOKEN", "GATEWAY_CA", "GATEWAY_CERT", "GATEWAY_KEY"] {
+        assert_eq!(environment[name], format!("test-{name}"));
+    }
+    assert!(!environment.contains_key("INFERENCE_TOKEN"));
+    assert!(!environment.contains_key("SEARCH_KEY"));
+    assert!(command_environment(&document, &GatewayValues, Path::new("state")).is_err());
+    if let Gateway::External(gateway) = &mut document.spec.gateway {
+        gateway.credential = Some(Credential {
+            env: "TF_CLI_CONFIG_FILE".into(),
+        });
+    }
+    assert!(matches!(
+        gateway_environment(&document, &GatewayValues, Path::new("state")),
+        Err(Error::Conflict(_))
+    ));
+}
+
+#[test]
 fn runtime_replacement_requires_retained_storage_and_preserves_the_old_binding() {
     let address = "nemoclaw_inference_service.runtime";
     let expected = [(address.into(), Row::from([("spec".into(), "old".into())]))].into();
