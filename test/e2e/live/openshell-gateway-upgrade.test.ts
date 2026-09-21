@@ -478,11 +478,15 @@ async function assertSurvivorSandboxAfterUpgrade(host: HostCliClient): Promise<v
   );
   expectExitZero(marker, "read survivor marker after gateway upgrade");
 
+  const recover = await bash(host, `nemoclaw ${shellQuote(SURVIVOR_SANDBOX)} recover`, {
+    artifactName: "post-upgrade-forward-recovery",
+  });
+
   const forward = await host.inspectOpenShellForwardListener(DASHBOARD_PORT, SURVIVOR_SANDBOX, {
     artifactName: "post-upgrade-dashboard-forward",
     env: liveEnv(),
   });
-  expect(forward.valid, forward.output).toBe(true);
+  expect(forward.valid, `${resultText(recover)}\n${forward.output}`).toBe(true);
 
   const agent = await runInSurvivorSandbox(
     host,
