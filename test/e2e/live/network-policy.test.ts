@@ -5,7 +5,7 @@ import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import YAML from "yaml";
-import { asExportedConfig, exportedAgentList } from "../../support/config-export-document.ts";
+import { asExportedConfig } from "../../support/config-export-document.ts";
 import { fingerprintOpenShellSandboxId } from "../../../src/lib/adapters/openshell/sandbox-identity.ts";
 import {
   namedOpenShellGateway,
@@ -382,18 +382,7 @@ test(
     const raw = fs.readFileSync(outputPath, "utf8");
     const document = asExportedConfig(YAML.parse(raw));
     const exportedSandbox = document.spec.sandboxes[0];
-    const agents = exportedAgentList(exportedSandbox);
-    const [primary] = agents;
-    const primaryInference = JSON.stringify(primary?.inference);
-    const roster = agents.map((agent) => {
-      const toolsConfig = "tools" in agent ? agent.tools : undefined;
-      const tools = toolsConfig && "allow" in toolsConfig ? toolsConfig.allow.join(",") : "primary";
-      const route = JSON.stringify(agent.inference) === primaryInference ? "shared" : "different";
-      return `${agent.name}:${tools}:${route}`;
-    });
-    expect(`${exportedSandbox.name}|${roster.join("|")}`).toBe(
-      `${SANDBOX_NAME}|primary:primary:shared`,
-    );
+    expect(`${exportedSandbox.name}|${exportedSandbox.agent.name}`).toBe(`${SANDBOX_NAME}|primary`);
     expect(exportedSandbox).not.toHaveProperty("image");
     const exportedProvider = document.spec.inferenceProviders[0];
     const exportedEndpoint = "endpoint" in exportedProvider ? exportedProvider.endpoint : undefined;
@@ -434,7 +423,7 @@ test(
     }
     await artifacts.writeJson("config-export-live-evidence.json", {
       sandboxName: SANDBOX_NAME,
-      agentNames: agents.map((agent) => agent.name),
+      agentNames: [exportedSandbox.agent.name],
       image: "v1-default",
       endpoint: exportedEndpoint,
       effectivePolicyMatches: true,
