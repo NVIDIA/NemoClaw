@@ -300,9 +300,10 @@ async function rebuildSandboxUnlocked(
         recoveryManifest &&
         recoveryManifest.rebuildMcpHandoff === undefined &&
         !staleRecovery &&
-        activeRecoveryTransaction?.sandboxName === sandboxName &&
-        (activeRecoveryTransaction.phase === "planned" ||
-          activeRecoveryTransaction.phase === "deleting"),
+        (preparedBackupRecovery ||
+          (activeRecoveryTransaction?.sandboxName === sandboxName &&
+            (activeRecoveryTransaction.phase === "planned" ||
+              activeRecoveryTransaction.phase === "deleting"))),
       );
       if (
         recoveryManifest &&
