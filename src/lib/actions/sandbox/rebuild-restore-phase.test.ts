@@ -32,6 +32,10 @@ describe("rebuild filesystem restore", () => {
       ok: true,
       window: { sandboxName: "alpha" },
     });
+    vi.spyOn(restoreWindow, "beginUnregisteredOpenClawPostRestoreDoctor").mockResolvedValue({
+      ok: true,
+      window: { sandboxName: "alpha" },
+    });
     vi.spyOn(restoreWindow, "abortUnregisteredOpenClawPostRestoreDoctor").mockResolvedValue({
       ok: true,
     });
@@ -85,6 +89,38 @@ describe("rebuild filesystem restore", () => {
     expect(
       restoreWindow.promoteUnregisteredOpenClawBackupQuiesceToPostRestoreDoctor,
     ).toHaveBeenCalledExactlyOnceWith({ sandboxName: "alpha", kind: "backup" });
+  });
+
+  it("opens a fresh doctor window when restored legacy state replaces the backup marker", async () => {
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    vi.mocked(
+      restoreWindow.promoteUnregisteredOpenClawBackupQuiesceToPostRestoreDoctor,
+    ).mockResolvedValue({ ok: false, stage: "doctor", detail: "backup marker replaced" });
+    vi.spyOn(snapshotRestore, "restoreRecreatedSandboxStateWithManagedAuthority").mockResolvedValue(
+      {
+        success: true,
+        restoredDirs: ["workspace"],
+        restoredFiles: ["user.md"],
+        failedDirs: [],
+        failedFiles: [],
+      },
+    );
+
+    await expect(
+      runRebuildRestorePhase({
+        sandboxName: "alpha",
+        targetAgentType: "openclaw",
+        targetImageIsCustom: false,
+        backupManifest,
+        log: vi.fn(),
+      }),
+    ).resolves.toMatchObject({
+      restoreSucceeded: true,
+      openClawDoctorWindow: { sandboxName: "alpha" },
+    });
+    expect(
+      restoreWindow.beginUnregisteredOpenClawPostRestoreDoctor,
+    ).toHaveBeenCalledExactlyOnceWith("alpha", undefined);
   });
 
   it("allows whole-state file restore only for an explicit custom image", async () => {

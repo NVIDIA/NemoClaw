@@ -11,6 +11,7 @@ import type { RebuildLog } from "./rebuild-credential-preflight";
 import {
   abortUnregisteredOpenClawPostRestoreDoctor,
   beginUnregisteredOpenClawBackupQuiesce,
+  beginUnregisteredOpenClawPostRestoreDoctor,
   promoteUnregisteredOpenClawBackupQuiesceToPostRestoreDoctor,
   type OpenClawPostRestoreDoctorWindow,
 } from "./runtime/openclaw-lifecycle";
@@ -201,15 +202,18 @@ export async function runRebuildRestorePhase(
     log("Promoting restored OpenClaw state into the post-upgrade doctor window");
     const promoted =
       await promoteUnregisteredOpenClawBackupQuiesceToPostRestoreDoctor(quiesceWindow);
-    log(`Post-restore doctor window: ${promoted.ok ? "verified" : promoted.stage}`);
-    if (!promoted.ok) {
+    const doctorWindow = promoted.ok
+      ? promoted
+      : await beginUnregisteredOpenClawPostRestoreDoctor(sandboxName, runtimeSelection);
+    log(`Post-restore doctor window: ${doctorWindow.ok ? "verified" : doctorWindow.stage}`);
+    if (!doctorWindow.ok) {
       await abortUnregisteredOpenClawPostRestoreDoctor(quiesceWindow);
       console.error(
         `  ${YW}OpenClaw restored state could not enter its post-upgrade doctor window.${R}`,
       );
       return { restoreSucceeded: false };
     }
-    openClawDoctorWindow = promoted.window;
+    openClawDoctorWindow = doctorWindow.window;
   }
   if (targetAgentType === "hermes" && hermesOperatorConfigRestore === null) {
     hermesOperatorConfigRestore = {
