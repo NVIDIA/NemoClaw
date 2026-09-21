@@ -462,7 +462,6 @@ async fn lifecycle_with_rejected_annotations(input: &str, reject_annotations: bo
         "tofu.plan",
         "tofu.show",
         "tofu.apply",
-        "sandbox.ready",
     ] {
         assert!(
             timings
@@ -497,7 +496,15 @@ async fn lifecycle_with_rejected_annotations(input: &str, reject_annotations: bo
         .output()
         .unwrap();
         assert!(!rejected.status.success());
-        assert!(String::from_utf8_lossy(&rejected.stderr).contains("unknown field"));
+        let diagnostic = String::from_utf8_lossy(&rejected.stderr);
+        assert!(
+            diagnostic.contains("configuration violates schema"),
+            "{diagnostic}"
+        );
+        assert!(
+            diagnostic.contains("/$defs/InferenceProvider/additionalProperties"),
+            "{diagnostic}"
+        );
         assert_eq!(fs::read(intent_path).unwrap(), before_intent);
         assert_eq!(fs::read(state_path).unwrap(), before_state);
         assert_eq!(fixture.state.lock().unwrap().effects, effects);
@@ -826,7 +833,16 @@ async fn readiness_and_observation_failures_retain_bindings_and_recover_without_
             .is_empty()
     );
     let recovered = fs::read(&state_path).unwrap();
-    assert_same_deployment_state(&recovered, &established);
+    assert_same_managed_resources(&recovered, &established);
+    let observed: serde_json::Value = serde_json::from_slice(&recovered).unwrap();
+    let readiness = observed["resources"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|resource| resource["type"] == "nemoclaw_sandbox_readiness")
+        .unwrap();
+    assert_eq!(readiness["instances"][0]["attributes"]["ready"], true);
+    assert!(readiness["instances"][0]["attributes"]["error_message"].is_null());
     fixture.state.lock().unwrap().fail_read = Some(("provider", tonic::Code::Unavailable));
     assert!(deployment.export(&cancel).await.is_err());
     assert!(deployment.plan(&document, &cancel).await.is_err());
@@ -1009,6 +1025,23 @@ async fn apply_health_failure_retains_resources_and_unchanged_apply_checks_again
     }));
     let error = deployment.apply(&document, &cancel).await.unwrap_err();
     assert!(matches!(error, nemoclaw_sdk::Error::Health { .. }));
+    // A later gateway failure must not be mistaken for this stored failed
+    // health report, nor clear a mutation guard based on stale observations.
+    let fixture_state = fixture.state.clone();
+    let interrupted = Deployment::new(directory.path(), &bundle).with_progress(
+        std::sync::Arc::new(move |event| {
+            if event == nemoclaw_sdk::Progress::Applying {
+                fixture_state.lock().unwrap().driver = Some("podman".into());
+            }
+        }),
+    );
+    let unrelated = interrupted.apply(&document, &cancel).await.unwrap_err();
+    assert!(matches!(unrelated, nemoclaw_sdk::Error::Execution { .. }));
+    fixture.state.lock().unwrap().driver = None;
+    assert!(matches!(
+        deployment.apply(&document, &cancel).await.unwrap_err(),
+        nemoclaw_sdk::Error::Health { .. }
+    ));
     let before = fs::read(directory.path().join("terraform.tfstate")).unwrap();
     let effects = fixture.state.lock().unwrap().effects;
     assert_eq!(effects, 4);

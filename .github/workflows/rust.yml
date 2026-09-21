@@ -112,7 +112,7 @@ jobs:
           export NEMOCLAW_TEST_TOFU="$NEMOCLAW_TEST_BUNDLE/libexec/tofu$suffix"
           export NEMOCLAW_TEST_PROVIDER="$PWD/target/debug/terraform-provider-nemoclaw$suffix"
           cargo test --locked -p nemoclaw-sdk native_state_json_preserves_module_and_instance_identity_without_refresh -- --ignored
-          tests=(--test provider_protocol --test service_capacity --test service_readiness --test opentofu_openshell --test deployment --test fabric_deployment --test multiple_providers --test remote_service)
+          tests=(--test provider_protocol --test service_capacity --test service_readiness --test sandbox_readiness --test opentofu_openshell --test deployment --test export_observations --test fabric_deployment --test multiple_providers --test remote_service)
           if [ "$TEST_PLATFORM" = linux_arm64 ]; then
             cargo nextest run --locked --workspace --profile lifecycle "${tests[@]}" --run-ignored only
           else

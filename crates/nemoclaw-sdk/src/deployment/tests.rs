@@ -115,6 +115,127 @@ fn credential_references_cannot_override_opentofu_control_variables() {
     assert!(command_environment(&document, &Values, Path::new("state")).is_err());
 }
 
+#[cfg(unix)]
+#[tokio::test]
+async fn schema_commands_do_not_require_inference_credentials() {
+    use std::os::unix::fs::PermissionsExt;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    #[derive(Default)]
+    struct Unavailable(AtomicUsize);
+    impl Secrets for Unavailable {
+        fn resolve(&self, _: &str) -> Result<String, crate::ObservationError> {
+            self.0.fetch_add(1, Ordering::SeqCst);
+            Err(crate::ObservationError::Authentication)
+        }
+    }
+    let bundle_directory = tempfile::tempdir().unwrap();
+    let bundle = Bundle {
+        directory: bundle_directory.path().into(),
+        manifest: crate::bundle::Manifest {
+            version: "0.1.0".into(),
+            rust: "fixture".into(),
+            opentofu: crate::compile::OPENTOFU_VERSION.into(),
+            files: BTreeMap::new(),
+        },
+    };
+    fs::create_dir_all(bundle.tofu().parent().unwrap()).unwrap();
+    fs::write(
+        bundle.tofu(),
+        b"#!/bin/sh\n[ \"$TF_IN_AUTOMATION\" = 1 ] && [ \"$TF_INPUT\" = 0 ] && [ \"$CHECKPOINT_DISABLE\" = 1 ] && [ \"$TF_CLI_CONFIG_FILE\" = \"$PWD/providers.tfrc\" ] || exit 1\nprintf '{}\\n'\n",
+    )
+    .unwrap();
+    fs::set_permissions(bundle.tofu(), fs::Permissions::from_mode(0o700)).unwrap();
+    let state_directory = tempfile::tempdir().unwrap();
+    // macOS temporary paths may traverse /var -> /private/var; the shell's PWD
+    // uses the physical directory when checking the fixture's environment.
+    let state_path = state_directory.path().canonicalize().unwrap();
+    let store = Store::open(&state_path).unwrap();
+    let secrets = Arc::new(Unavailable::default());
+    let deployment =
+        Deployment::new(&state_path, bundle_directory.path()).with_secrets(secrets.clone());
+    let mut document =
+        Document::parse(include_str!("../../tests/fixtures/config/local.yaml").as_bytes()).unwrap();
+    document.spec.inference_providers[0].credential = Some(Credential {
+        env: "TEST_INFERENCE_CREDENTIAL".into(),
+    });
+    let cancel = CancellationToken::new();
+    for args in [
+        vec!["init", "-input=false"],
+        vec!["show", "-json", "apply.plan"],
+    ] {
+        assert_eq!(
+            deployment
+                .tofu(&bundle, &store, &document, &args, &cancel)
+                .await
+                .unwrap(),
+            b"{}\n"
+        );
+    }
+    assert_eq!(secrets.0.load(Ordering::SeqCst), 0);
+    for operation in ["plan", "apply"] {
+        assert!(
+            deployment
+                .tofu(&bundle, &store, &document, &[operation], &cancel)
+                .await
+                .is_err()
+        );
+    }
+    assert_eq!(secrets.0.load(Ordering::SeqCst), 2);
+}
+
+#[test]
+fn gateway_observation_resolves_only_gateway_credentials() {
+    struct GatewayValues;
+    impl Secrets for GatewayValues {
+        fn resolve(&self, name: &str) -> Result<String, crate::ObservationError> {
+            match name {
+                "GATEWAY_TOKEN" | "GATEWAY_CA" | "GATEWAY_CERT" | "GATEWAY_KEY" => {
+                    Ok(format!("test-{name}"))
+                }
+                _ => Err(crate::ObservationError::Authentication),
+            }
+        }
+    }
+    let mut document =
+        Document::parse(include_str!("../../tests/fixtures/config/local.yaml").as_bytes()).unwrap();
+    document.spec.gateway = serde_json::from_value(json!({
+        "management": "external",
+        "endpoint": "https://gateway.example.com",
+        "credential": {"env": "GATEWAY_TOKEN"},
+        "tls": {
+            "ca": {"env": "GATEWAY_CA"},
+            "certificate": {"env": "GATEWAY_CERT"},
+            "key": {"env": "GATEWAY_KEY"}
+        }
+    }))
+    .unwrap();
+    document.spec.inference_providers[0].credential = Some(Credential {
+        env: "INFERENCE_TOKEN".into(),
+    });
+    document.spec.sandboxes[0].integrations = serde_json::from_value(json!({
+        "search": {"kind": "webSearch", "provider": "brave", "credential": {"env": "SEARCH_KEY"}}
+    }))
+    .unwrap();
+    document.spec.sandboxes[0].agent.integration_refs = vec!["search".into()];
+    let environment = gateway_environment(&document, &GatewayValues, Path::new("state")).unwrap();
+    for name in ["GATEWAY_TOKEN", "GATEWAY_CA", "GATEWAY_CERT", "GATEWAY_KEY"] {
+        assert_eq!(environment[name], format!("test-{name}"));
+    }
+    assert!(!environment.contains_key("INFERENCE_TOKEN"));
+    assert!(!environment.contains_key("SEARCH_KEY"));
+    assert!(command_environment(&document, &GatewayValues, Path::new("state")).is_err());
+    if let Gateway::External(gateway) = &mut document.spec.gateway {
+        gateway.credential = Some(Credential {
+            env: "TF_CLI_CONFIG_FILE".into(),
+        });
+    }
+    assert!(matches!(
+        gateway_environment(&document, &GatewayValues, Path::new("state")),
+        Err(Error::Conflict(_))
+    ));
+}
+
 #[test]
 fn runtime_replacement_requires_retained_storage_and_preserves_the_old_binding() {
     let address = "nemoclaw_inference_service.runtime";

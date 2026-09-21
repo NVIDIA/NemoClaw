@@ -11,7 +11,7 @@ Use [the SDK](sdk.md) or [CLI](reference/cli.md) for the documented deployment w
 ## Resource and State Ownership
 
 OpenTofu owns graph execution and resource state.
-The SDK retains desired intent, validates plans, coordinates runtime stages, and checks sandbox configuration and Fabric health.
+The SDK retains desired intent, validates plans, coordinates runtime stages, and reports provider observations.
 The NemoClaw provider verifies durable data and credential identity; the Docker provider reconciles its native resource state.
 
 Before planning, the SDK checks configuration, locks state, and validates retained intent and local bindings.
@@ -29,7 +29,7 @@ The generated graphs manage these objects and observations:
 | NemoClaw provider | OpenShell workspace, provider, profile, sandbox, and Pi runtime configuration |
 | NemoClaw provider | Podman gateway process (`nemoclaw_managed_gateway`); gateway storage, initialization, and retained bridge (`nemoclaw_gateway_storage`) |
 | NemoClaw provider | Retained inference credentials and proxy storage; external Ollama model observation |
-| NemoClaw provider data source | Gateway capabilities and vLLM/Ollama service or proxy readiness |
+| NemoClaw provider data source | Gateway capabilities, vLLM/Ollama service or proxy readiness, and sandbox completion |
 | Docker provider | Docker gateway, inference, and proxy containers; model-cache volumes, service-owned networks and acquired images |
 | Docker provider data source | Local images selected with `imagePullPolicy: Never` |
 
@@ -91,11 +91,30 @@ The OpenShell graph uses the same data source for Ollama proxies, with a 30-seco
 A proxy specification contains `kind: "ollama_proxy"`, an engine endpoint, and the compiled `proxy` specification.
 Its observation verifies the recorded container ID and name, running state, credential file permissions, and the upstream model digest through read-only metadata.
 It waits for an initially missing key only while the container runs and the volume has no initialization marker; initialized missing keys and invalid permissions fail immediately.
-The SDK no longer runs service readiness loops; sandbox configuration and readiness checks remain separate.
+The SDK no longer runs service readiness loops.
 
 The [standalone readiness fixture](testing/fixtures.md#standalone-service-readiness) exercises this contract without SDK deployment orchestration.
 A failed read retains managed bindings, and SDK teardown omits readiness gates.
 See [runtime ownership](design/runtime.md) and [recovery](models.md#diagnose-and-recover-a-stopped-runtime).
+
+## Sandbox Completion
+
+The OpenShell graph uses `nemoclaw_sandbox_readiness` after sandbox creation and any runtime configuration resource.
+Its required `sandbox` map carries the sandbox resource's binding and configuration; the provider checks startup and configuration before requesting Fabric health.
+It does not invoke an agent or model.
+The optional string `read_trigger` uses `uuid()` in generated graphs, making the read unknown during planning and recording a fresh token on every apply.
+
+The data source returns `ready`, nullable `health_json`, and nullable `error_message`.
+Runtime observation failures return `ready: false` with an error message; a valid Fabric response is retained in `health_json`, including unsupported health.
+The graph must enforce `ready` with a lifecycle postcondition: a data-source observation alone does not reject an unsuccessful result.
+Failed postconditions retain observations and resource bindings for recovery.
+The SDK reads these values through OpenTofu JSON and preserves structured Fabric health in its result or error.
+SDK-generated graphs defer health until apply; export and teardown omit the observation.
+Standalone configurations with known inputs may read during planning unless the trigger defers them.
+Existing sandbox resource refresh still verifies configuration.
+
+The [standalone sandbox fixture](testing/fixtures.md#standalone-sandbox-completion) checks this contract through the production provider without SDK deployment orchestration.
+The shared backend still contains harness-specific configuration checks; this observation does not implement the broader [Fabric management contract](design/fabric-management.md#result-and-adoption-gates).
 
 ## Combined Service Capacity
 
