@@ -202,10 +202,10 @@ impl Document {
     pub fn credential_names(&self) -> Vec<&str> {
         let g = &self.spec.gateway;
         let mut names = Vec::new();
-        if let Some(c) = &g.credential {
+        if let Some(c) = g.credential() {
             names.push(c.env.as_str());
         }
-        if let Some(tls) = &g.tls {
+        if let Some(tls) = g.tls() {
             names.extend([
                 tls.ca.env.as_str(),
                 tls.certificate.env.as_str(),
@@ -235,7 +235,7 @@ impl Document {
     }
     pub fn defaults(&mut self) {
         let gateway = &mut self.spec.gateway;
-        if gateway.management == "managed" {
+        if let Gateway::Managed(gateway) = gateway {
             default_string(&mut gateway.endpoint, constraints::GATEWAY_ENDPOINT);
             default_string(&mut gateway.engine, constraints::GATEWAY_ENGINE);
             default_string(&mut gateway.image, DEFAULT_GATEWAY_IMAGE);
@@ -273,7 +273,7 @@ pub(crate) fn bridge_address(cidr: &str) -> Result<String, ConfigError> {
         .ok_or(ConfigError::new("bridge address exceeds IPv4 range"))?;
     Ok(std::net::Ipv4Addr::from(address).to_string())
 }
-impl Gateway {
+impl ManagedGateway {
     pub(crate) fn runtime_settings(&self) -> Self {
         let mut settings = self.clone();
         // Acquisition policy is a mutable provider attribute, not container identity.
@@ -290,4 +290,51 @@ impl Gateway {
 }
 fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+impl Gateway {
+    /// The endpoint used to connect to either gateway configuration.
+    pub fn endpoint(&self) -> &str {
+        match self {
+            Self::Managed(gateway) => &gateway.endpoint,
+            Self::External(gateway) => &gateway.endpoint,
+        }
+    }
+    /// Change the connection endpoint without changing gateway management.
+    pub fn endpoint_mut(&mut self) -> &mut String {
+        match self {
+            Self::Managed(gateway) => &mut gateway.endpoint,
+            Self::External(gateway) => &mut gateway.endpoint,
+        }
+    }
+    /// Installation settings, when this deployment manages the gateway.
+    pub fn as_managed(&self) -> Option<&ManagedGateway> {
+        match self {
+            Self::Managed(gateway) => Some(gateway),
+            Self::External(_) => None,
+        }
+    }
+    /// Mutable installation settings, when this deployment manages the gateway.
+    pub fn as_managed_mut(&mut self) -> Option<&mut ManagedGateway> {
+        match self {
+            Self::Managed(gateway) => Some(gateway),
+            Self::External(_) => None,
+        }
+    }
+    pub(crate) fn managed(&self) -> Result<&ManagedGateway, ConfigError> {
+        self.as_managed()
+            .ok_or(ConfigError::new("operation requires a managed gateway"))
+    }
+    pub(crate) fn credential(&self) -> Option<&Credential> {
+        match self {
+            Self::Managed(_) => None,
+            Self::External(gateway) => gateway.credential.as_ref(),
+        }
+    }
+    pub(crate) fn tls(&self) -> Option<&TLS> {
+        match self {
+            Self::Managed(_) => None,
+            Self::External(gateway) => gateway.tls.as_ref(),
+        }
+    }
 }

@@ -175,14 +175,14 @@ impl ServiceDefinition {
 
     fn validate_installation(&self, document: &Document) -> Result<(), ConfigError> {
         let gateway = &document.spec.gateway;
-        let local_docker = gateway.management == "managed"
-            && gateway.engine.starts_with("unix:///")
-            && crate::docker::Engine::validate_endpoint(&gateway.engine).is_ok()
-            && document
-                .spec
-                .sandboxes
-                .iter()
-                .all(|sandbox| sandbox.runtime.provider == "docker");
+        let local_docker = gateway.as_managed().is_some_and(|gateway| {
+            gateway.engine.starts_with("unix:///")
+                && crate::docker::Engine::validate_endpoint(&gateway.engine).is_ok()
+        }) && document
+            .spec
+            .sandboxes
+            .iter()
+            .all(|sandbox| sandbox.runtime.provider == "docker");
         let (placement, package) = match self {
             Self::Ollama(service) => (service.placement.as_ref(), "Ollama"),
             Self::Vllm(service) => (service.placement.as_ref(), "vLLM"),
@@ -218,18 +218,18 @@ impl ServiceDefinition {
             ),
             Self::OllamaProxy(_) => return Ok(None),
         };
+        let (engine, network_cidr) = match placement {
+            Some(placement) => (&placement.engine, &placement.network_cidr),
+            None => {
+                let gateway = gateway.managed()?;
+                (&gateway.engine, &gateway.network_cidr)
+            }
+        };
         Ok(Some(NetworkAllocation {
-            engine: placement
-                .as_ref()
-                .map_or(gateway.engine.clone(), |placement| placement.engine.clone()),
-            network_cidr: placement
-                .as_ref()
-                .map_or(gateway.network_cidr.as_str(), |placement| {
-                    placement.network_cidr.as_str()
-                })
-                .into(),
+            engine: engine.clone(),
+            network_cidr: network_cidr.clone(),
             bind_address: publication.as_ref().map_or_else(
-                || gateway.bridge(),
+                || gateway.managed()?.bridge(),
                 |publication| Ok(publication.bind_address.clone()),
             )?,
             port,
@@ -301,7 +301,7 @@ impl InferenceCapability for ServiceDefinition {
                     Some(publication) => publication.endpoint.clone(),
                     None => format!(
                         "http://{}:{}/v1",
-                        document.spec.gateway.bridge()?,
+                        document.spec.gateway.managed()?.bridge()?,
                         service.serving.port
                     ),
                 },
@@ -320,7 +320,7 @@ impl InferenceCapability for ServiceDefinition {
                     Some(publication) => publication.endpoint.clone(),
                     None => format!(
                         "http://{}:{}/v1",
-                        document.spec.gateway.bridge()?,
+                        document.spec.gateway.managed()?.bridge()?,
                         service.serving.port
                     ),
                 },
@@ -483,7 +483,7 @@ pub(crate) fn validate(document: &Document) -> Result<(), ConfigError> {
     let gateway = &document.spec.gateway;
     let mut publications = BTreeSet::new();
     let mut networks = BTreeMap::new();
-    if gateway.management == "managed" {
+    if let Gateway::Managed(gateway) = gateway {
         networks.insert(gateway.engine.clone(), gateway.network_cidr.clone());
     }
     for definition in document.spec.services.values() {

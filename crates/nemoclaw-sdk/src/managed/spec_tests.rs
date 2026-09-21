@@ -283,3 +283,18 @@ fn podman_gateway_namespace_survives_info_id_changes_but_not_network_replacement
     );
     assert!(spec.binding_namespace(Some("random-first"), None).is_err());
 }
+
+#[test]
+fn runtime_specs_reject_legacy_gateway_management_without_reinterpreting_it() {
+    let fixtures: Vec<serde_json::Value> =
+        serde_json::from_str(include_str!("reference.json")).unwrap();
+    for fixture in fixtures {
+        let current: serde_json::Value =
+            serde_json::from_str(fixture["spec"].as_str().unwrap()).unwrap();
+        for management in ["managed", "external"] {
+            let mut legacy = current.clone();
+            legacy["gateway"]["management"] = json!(management);
+            assert!(serde_json::from_value::<Spec>(legacy).is_err());
+        }
+    }
+}

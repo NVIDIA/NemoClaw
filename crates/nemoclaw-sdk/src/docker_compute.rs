@@ -464,7 +464,7 @@ mod tests {
             "gateway bridge remains durable"
         );
         let mut changed = document.clone();
-        changed.spec.gateway.endpoint = "http://127.0.0.1:17682".into();
+        *changed.spec.gateway.endpoint_mut() = "http://127.0.0.1:17682".into();
         let updated = crate::compile::compile_runtime(&changed, &generations, "0.1.0").unwrap();
         assert_eq!(
             updated["resource"]["nemoclaw_gateway_storage"],
@@ -480,7 +480,12 @@ mod tests {
             Document::parse(include_bytes!("../tests/fixtures/config/local.yaml").as_slice())
                 .unwrap();
         document.spec.gateway = source.spec.gateway;
-        document.spec.gateway.image_pull_policy = Some(ImagePullPolicy::Always);
+        document
+            .spec
+            .gateway
+            .as_managed_mut()
+            .unwrap()
+            .image_pull_policy = Some(ImagePullPolicy::Always);
         document.spec.sandboxes[0].runtime.provider = "podman".into();
         let generations = crate::state::Record::new(document.clone())
             .unwrap()

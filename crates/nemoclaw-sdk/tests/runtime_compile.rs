@@ -121,16 +121,10 @@ fn remote_service_is_independent_of_the_external_sandbox_gateway() {
         json!({"endpoint":"http://10.0.0.8:18888/v1","bindAddress":"10.0.0.8"});
     let bytes = serde_json::to_vec(&value).unwrap();
     let document = Document::parse(bytes.as_slice()).unwrap();
-    let generations: Generations = [
-        "workspace",
-        "provider",
-        "sandbox",
-        "managed_gateway",
-        "inference_service",
-    ]
-    .into_iter()
-    .map(|k| (k.into(), "b".repeat(32)))
-    .collect();
+    let generations: Generations = ["workspace", "provider", "sandbox", "inference_service"]
+        .into_iter()
+        .map(|k| (k.into(), "b".repeat(32)))
+        .collect();
     let graph = compile_runtime(&document, &generations, "0.1.0").unwrap();
     assert_eq!(runtime_targets(&document, &generations).unwrap().len(), 4);
     assert!(graph["resource"].get("nemoclaw_managed_gateway").is_none());
@@ -154,7 +148,7 @@ fn remote_service_is_independent_of_the_external_sandbox_gateway() {
         "http://10.0.0.8:18888/v1"
     );
     let mut changed_gateway = document.clone();
-    changed_gateway.spec.gateway.endpoint = "http://127.0.0.1:17999".into();
+    *changed_gateway.spec.gateway.endpoint_mut() = "http://127.0.0.1:17999".into();
     let original_targets = runtime_targets(&document, &generations).unwrap();
     let changed_targets = runtime_targets(&changed_gateway, &generations).unwrap();
     for (original, changed) in original_targets.iter().zip(changed_targets.iter()) {

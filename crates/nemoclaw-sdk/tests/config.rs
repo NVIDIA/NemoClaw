@@ -110,9 +110,21 @@ fn endpoint_policy_rejects_credentials_metadata_and_remote_plaintext() {
 fn managed_defaults_and_safety_bounds_match_the_qualified_recipe() {
     let original = Document::parse(include_str!("fixtures/config/spark.yaml").as_bytes()).unwrap();
     let mut defaulted = original.clone();
-    defaulted.spec.gateway.endpoint.clear();
-    defaulted.spec.gateway.engine.clear();
-    defaulted.spec.gateway.image.clear();
+    defaulted.spec.gateway.endpoint_mut().clear();
+    defaulted
+        .spec
+        .gateway
+        .as_managed_mut()
+        .unwrap()
+        .engine
+        .clear();
+    defaulted
+        .spec
+        .gateway
+        .as_managed_mut()
+        .unwrap()
+        .image
+        .clear();
     let ServiceDefinition::Vllm(service) = defaulted.spec.services.get_mut("qwen").unwrap() else {
         panic!("expected vLLM service");
     };
@@ -396,4 +408,19 @@ fn harness_selection_does_not_determine_service_ownership() {
         external.validate().is_ok(),
         "gateway ownership is independent of the harness"
     );
+}
+
+#[test]
+fn external_gateways_reject_installation_fields_even_when_empty() {
+    let base = include_str!("fixtures/config/local.yaml");
+    for field in ["engine", "image", "networkCIDR"] {
+        let input = base.replace(
+            "management: external",
+            &format!("management: external\n    {field}: \"\""),
+        );
+        assert!(
+            Document::parse(input.as_bytes()).is_err(),
+            "external gateway accepted {field}"
+        );
+    }
 }

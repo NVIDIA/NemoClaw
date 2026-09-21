@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::*;
+use crate::config::Gateway;
 
 #[test]
 fn gateway_observations_are_read_only_in_plans_and_discardable_during_teardown() {
@@ -153,7 +154,7 @@ async fn managed_gateway_plan_apply_noop_destroy_and_recovery_use_real_opentofu(
         |name| PathBuf::from(std::env::var_os(name).expect("explicit managed qualification path"));
     let mut document =
         Document::parse(fs::File::open(path("NEMOCLAW_TEST_GATEWAY_DOCUMENT")).unwrap()).unwrap();
-    assert_eq!(document.spec.gateway.management, "managed");
+    assert!(matches!(document.spec.gateway, Gateway::Managed(_)));
     assert!(document.spec.inference_providers[0].service_ref.is_none());
     assert!(document.spec.services.is_empty());
     let deployment = Deployment::new(
@@ -167,7 +168,9 @@ async fn managed_gateway_plan_apply_noop_destroy_and_recovery_use_real_opentofu(
         .unwrap()
         .unwrap_or(Record::new(document.clone()).unwrap());
     assert_eq!(record.document.metadata.uid, document.metadata.uid);
-    let engine = crate::docker::Engine::connect(&document.spec.gateway.engine).unwrap();
+    let engine =
+        crate::docker::Engine::connect(&document.spec.gateway.as_managed().unwrap().engine)
+            .unwrap();
     let name = format!("{}-gateway", document.workspace());
     let container_before = engine.container(&name).await.unwrap().map(|c| c.id);
     let volume_before = engine
@@ -258,7 +261,7 @@ async fn managed_gateway_plan_apply_noop_destroy_and_recovery_use_real_opentofu(
         let port = listener.local_addr().unwrap().port();
         drop(listener);
         let old = engine.container(&name).await.unwrap().unwrap().id;
-        document.spec.gateway.endpoint = format!("http://127.0.0.1:{port}");
+        *document.spec.gateway.endpoint_mut() = format!("http://127.0.0.1:{port}");
         deployment
             .runtime_stage(&bundle, &store, &document, &mut record, true, &cancel)
             .await
@@ -470,7 +473,9 @@ fn runtime_plans_accept_only_declared_local_image_observations_and_teardown_dele
             valid
         );
     }
-    let foreign = crate::services::capacity::observation_address(&document.spec.gateway.engine);
+    let foreign = crate::services::capacity::observation_address(
+        &document.spec.gateway.as_managed().unwrap().engine,
+    );
     for (address, valid) in [(address.as_str(), true), (foreign.as_str(), false)] {
         let plan: Plan = serde_json::from_value(json!({"resource_changes":[{"mode":"data", "address":address, "change":{"actions":["delete"]}}]})).unwrap();
         assert_eq!(
@@ -513,4 +518,59 @@ fn disposable_docker_compute_reconciles_while_durable_storage_does_not_recreate(
     .into();
     let plan: Plan = serde_json::from_value(json!({"resource_changes":[{"address":storage,"change":{"actions":["create"],"before":null}}]})).unwrap();
     assert!(check_plan(&plan, &allowed, &bound).is_err());
+}
+
+#[tokio::test]
+async fn changing_gateway_management_at_the_same_endpoint_preserves_saved_state() {
+    let bundle_directory = tempfile::tempdir().unwrap();
+    let mut manifest = crate::bundle::Manifest {
+        version: "0.1.0".into(),
+        rust: "1.98.1".into(),
+        opentofu: crate::compile::OPENTOFU_VERSION.into(),
+        files: Default::default(),
+    };
+    // Valid bundle hashes let the request reach the state guard. These bytes
+    // cannot execute, so a regression cannot start an actual deployment.
+    for name in crate::bundle::required_files(&manifest.version).unwrap() {
+        let path = bundle_directory.path().join(&name);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(&path, b"non-executable fixture").unwrap();
+        manifest
+            .files
+            .insert(name, crate::bundle::hash_file(&path).unwrap());
+    }
+    fs::write(
+        bundle_directory.path().join("manifest.json"),
+        serde_json::to_vec(&manifest).unwrap(),
+    )
+    .unwrap();
+    let external =
+        Document::parse(include_str!("../../tests/fixtures/config/local.yaml").as_bytes()).unwrap();
+    let mut managed = external.clone();
+    managed.spec.gateway = Gateway::Managed(crate::config::ManagedGateway {
+        endpoint: external.spec.gateway.endpoint().into(),
+        ..Default::default()
+    });
+    managed.defaults();
+    managed.validate().unwrap();
+    for (original, changed) in [(&external, &managed), (&managed, &external)] {
+        let state_directory = tempfile::tempdir().unwrap();
+        let store = Store::open(state_directory.path()).unwrap();
+        store.save(&Record::new(original.clone()).unwrap()).unwrap();
+        drop(store);
+        let intent = state_directory.path().join("intent.json");
+        let before = fs::read(&intent).unwrap();
+        let deployment = Deployment::new(state_directory.path(), bundle_directory.path());
+        for apply in [false, true] {
+            let error = deployment
+                .run(changed, &CancellationToken::new(), apply)
+                .await
+                .unwrap_err();
+            assert!(matches!(
+                error,
+                Error::Conflict("state is bound to a different deployment UID or gateway")
+            ));
+            assert_eq!(fs::read(&intent).unwrap(), before);
+        }
+    }
 }

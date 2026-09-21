@@ -30,6 +30,9 @@ fn runtime_targets_with_plans(
     if !document.has_runtime() {
         return Ok(Vec::new());
     }
+    let Some(settings) = document.spec.gateway.as_managed() else {
+        return Ok(service_plans.targets().cloned().collect());
+    };
     let gateway = Spec {
         layout: 2,
         compute_driver: document.spec.sandboxes[0].runtime.provider.clone(),
@@ -37,7 +40,7 @@ fn runtime_targets_with_plans(
         name: format!("{}-gateway", document.workspace()),
         owner: document.metadata.uid.clone(),
         generation: generation(generations, GATEWAY_KIND)?.into(),
-        gateway: document.spec.gateway.runtime_settings(),
+        gateway: settings.runtime_settings(),
         process: None,
     };
     let mut storage = gateway.clone();
@@ -53,7 +56,7 @@ fn runtime_targets_with_plans(
     let target = |kind: &str, spec: String| {
         let mut values = Row::from([("spec".into(), spec)]);
         if (kind != GATEWAY_STORAGE_KIND || storage.layout == 0)
-            && let Some(policy) = document.spec.gateway.image_pull_policy
+            && let Some(policy) = settings.image_pull_policy
         {
             values.insert("image_pull_policy".into(), policy.as_str().into());
         }
@@ -63,14 +66,10 @@ fn runtime_targets_with_plans(
             values,
         }
     };
-    let mut result = if document.spec.gateway.management == "managed" {
-        vec![
-            target(GATEWAY_STORAGE_KIND, storage.json()?),
-            target(GATEWAY_KIND, gateway.json()?),
-        ]
-    } else {
-        Vec::new()
-    };
+    let mut result = vec![
+        target(GATEWAY_STORAGE_KIND, storage.json()?),
+        target(GATEWAY_KIND, gateway.json()?),
+    ];
     result.extend(service_plans.targets().cloned());
     Ok(result)
 }
@@ -94,7 +93,7 @@ pub(crate) fn runtime_graph(
         "condition":"${self.compatible}",
         "error_message":super::gateway_error_message("self")
     }]});
-    if document.spec.gateway.management == "managed" {
+    if document.spec.gateway.as_managed().is_some() {
         readiness["depends_on"] = json!(["nemoclaw_managed_gateway.runtime"]);
     }
     graph["resource"] = json!({});

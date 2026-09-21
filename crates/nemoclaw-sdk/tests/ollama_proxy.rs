@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 use nemoclaw_sdk::{
     compile::{Generations, compile},
-    config::{Document, schema::input_schema},
+    config::{Document, Gateway, schema::input_schema},
 };
 use serde_json::{Value, json};
 fn input() -> Value {
@@ -33,7 +33,7 @@ fn explicit_proxy_engine_works_with_an_external_gateway() {
             .unwrap()
             .is_valid(&value)
     );
-    assert!(document.spec.gateway.engine.is_empty());
+    assert!(matches!(document.spec.gateway, Gateway::External(_)));
     assert_eq!(
         Document::parse(document.yaml().unwrap().as_bytes()).unwrap(),
         document

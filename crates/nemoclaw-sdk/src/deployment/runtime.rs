@@ -162,7 +162,7 @@ fn runtime_observations(
     let mut result = RuntimeValidation {
         expected: runtime_bindings(targets, bindings)?,
         replacements: BTreeSet::new(),
-        gateway_running: document.spec.gateway.management == "external",
+        gateway_running: document.spec.gateway.as_managed().is_none(),
     };
     let retained: BTreeSet<_> = targets
         .iter()

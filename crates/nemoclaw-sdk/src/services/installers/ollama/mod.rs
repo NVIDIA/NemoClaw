@@ -241,10 +241,13 @@ impl ManagedOllama {
 }
 
 impl OllamaProxy {
-    pub(crate) fn engine<'a>(&'a self, document: &'a Document) -> &'a str {
+    pub(crate) fn engine<'a>(
+        &'a self,
+        document: &'a Document,
+    ) -> Result<&'a str, crate::config::ConfigError> {
         self.engine
             .as_deref()
-            .unwrap_or(&document.spec.gateway.engine)
+            .map_or_else(|| Ok(document.spec.gateway.managed()?.engine.as_str()), Ok)
     }
 
     pub(crate) fn validate_definition(&self) -> Result<(), crate::config::ConfigError> {
@@ -316,25 +319,21 @@ fn managed_targets(
         .filter(|value| !value.is_empty())
         .ok_or(Error::State("missing Ollama service generation"))?;
     let runtime = crate::services::ServiceDefinition::Ollama(Box::new(service.runtime_settings()));
-    let network_cidr = service
-        .placement
-        .as_ref()
-        .map_or(document.spec.gateway.network_cidr.clone(), |placement| {
-            placement.network_cidr.clone()
-        });
+    let (engine, network_cidr) = match &service.placement {
+        Some(placement) => (&placement.engine, &placement.network_cidr),
+        None => {
+            let gateway = document.spec.gateway.managed()?;
+            (&gateway.engine, &gateway.network_cidr)
+        }
+    };
     let bind_address = service.publication.as_ref().map_or_else(
-        || document.spec.gateway.bridge(),
+        || document.spec.gateway.managed()?.bridge(),
         |publication| Ok(publication.bind_address.clone()),
     )?;
     let process = Process {
-        engine: service
-            .placement
-            .as_ref()
-            .map_or(document.spec.gateway.engine.clone(), |placement| {
-                placement.engine.clone()
-            }),
+        engine: engine.clone(),
         image: service.image.clone(),
-        network_cidr,
+        network_cidr: network_cidr.clone(),
         create_network: service.placement.is_some(),
         architecture: service.architecture()?.into(),
         image_labels: BTreeMap::from([("org.nemoclaw.backend".into(), "ollama".into())]),
@@ -369,7 +368,7 @@ fn managed_targets(
         gateway: if service.placement.is_some() {
             Default::default()
         } else {
-            document.spec.gateway.runtime_settings()
+            document.spec.gateway.managed()?.runtime_settings()
         },
         process: Some(process),
     };
@@ -469,7 +468,7 @@ impl Installer for ManagedOllama {
     ) -> Result<InstallPlan, Error> {
         let service = address(SERVICE_KIND, name);
         let mut dependencies = vec![address(STORAGE_KIND, name)];
-        if document.spec.gateway.management == "managed" && self.placement.is_none() {
+        if document.spec.gateway.as_managed().is_some() && self.placement.is_none() {
             dependencies.insert(0, "nemoclaw_managed_gateway.runtime".into());
         }
         Ok(InstallPlan {
@@ -605,7 +604,7 @@ impl OllamaProxy {
                 name: spec.volume(),
                 owner: spec.owner.clone(),
                 generation: spec.generation.clone(),
-                engine: self.engine(document).into(),
+                engine: self.engine(document)?.into(),
             },
             container: spec.name.clone(),
             endpoint: spec.settings.endpoint.clone(),

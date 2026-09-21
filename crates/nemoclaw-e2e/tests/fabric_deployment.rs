@@ -34,7 +34,7 @@ async fn harness_preserves_conversations_and_rejects_runtime_drift(harness: &str
         include_str!("../../nemoclaw-sdk/tests/fixtures/config/local.yaml").as_bytes(),
     )
     .unwrap();
-    document.spec.gateway.endpoint = fixture.endpoint.clone();
+    *document.spec.gateway.endpoint_mut() = fixture.endpoint.clone();
     document.spec.sandboxes[0].harness.as_mut().unwrap().kind = harness.into();
     if harness == "pi" {
         let pi = Document::parse(
@@ -231,7 +231,7 @@ async fn missing_runtime_declaration_stops_planning_without_recreation() {
         include_str!("../../nemoclaw-sdk/tests/fixtures/config/local.yaml").as_bytes(),
     )
     .unwrap();
-    document.spec.gateway.endpoint = fixture.endpoint.clone();
+    *document.spec.gateway.endpoint_mut() = fixture.endpoint.clone();
     let deployment = Deployment::new(directory.path(), &bundle);
     let cancel = CancellationToken::new();
     deployment.apply(&document, &cancel).await.unwrap();

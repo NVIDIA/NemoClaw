@@ -3,7 +3,7 @@
 
 use super::*;
 use crate::capabilities::NVIDIA_MODEL;
-use nemoclaw_sdk::config::{Document, InferenceApi};
+use nemoclaw_sdk::config::{Document, Gateway, InferenceApi};
 
 const UID: &str = "12345678-1234-4234-9234-123456789abc";
 
@@ -46,9 +46,9 @@ fn fixed_hosted_openclaw_answers_project_to_parser_accepted_intent() {
     let document = first.document();
     assert_eq!(document.metadata.name, "openclaw-nvidia-hosted");
     assert_eq!(document.metadata.uid, UID);
-    assert_eq!(document.spec.gateway.management, "managed");
+    assert!(matches!(document.spec.gateway, Gateway::Managed(_)));
     assert_eq!(
-        document.spec.gateway.image,
+        document.spec.gateway.as_managed().unwrap().image,
         nemoclaw_sdk::config::DEFAULT_GATEWAY_IMAGE
     );
     let provider = document.inference_provider().unwrap();
@@ -255,7 +255,7 @@ fn representable_scenarios_share_one_parser_validated_table() {
         assert_eq!(review.api(), scenario.expected_api, "{}", scenario.name);
         assert_eq!(reparsed.metadata.name, direct_answers.deployment_name);
         assert_eq!(reparsed.metadata.uid, UID);
-        assert_eq!(reparsed.spec.gateway.management, "managed");
+        assert!(matches!(reparsed.spec.gateway, Gateway::Managed(_)));
         let provider = reparsed.inference_provider().unwrap();
         assert_eq!(provider.name, direct_answers.provider_name);
         assert_eq!(provider.provider, "openai");

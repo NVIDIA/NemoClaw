@@ -243,29 +243,49 @@ pub(super) fn constrain(root: &mut Value) {
         json!({"pattern": c::MODEL}),
     );
 
-    let gateway = &mut defs["Gateway"];
-    property(gateway, "management", json!({"enum": c::MANAGEMENT}));
-    gateway["oneOf"] = json!([
-        {"title": "Managed gateway", "properties": {
-            "management": {"const": "managed"},
-            "endpoint": {"anyOf": [{"const": ""}, {"pattern": "^http://127\\.0\\.0\\.1:[0-9]+/?$"}], "default": c::GATEWAY_ENDPOINT},
-            "engine": {"anyOf": [{"const":""},{"pattern":"^unix:///"}], "default": c::GATEWAY_ENGINE},
-            "image": {"enum": ["", DEFAULT_GATEWAY_IMAGE], "default": DEFAULT_GATEWAY_IMAGE},
-            "networkCIDR": {"anyOf": [{"const": ""}, {"pattern": "/24$"}]}
-        }, "allOf": [forbid(&["credential", "tls"])]},
-        {"title": "External gateway", "required": ["endpoint"], "properties": {
-            "management": {"const": "external"}, "endpoint": {"pattern": "^https?://"},
-            "engine": {"const": ""}, "image": {"const": ""}, "networkCIDR": {"const": ""}
-        }, "allOf": [forbid(&["imagePullPolicy"])]}
-    ]);
-    gateway["if"] = at("endpoint", json!({"pattern": "^http:"}), true);
-    gateway["then"] = forbid(&["credential", "tls"]);
-    for (field, description) in [
-        ("endpoint", format!("Managed only: omitted or empty selects {}.", c::GATEWAY_ENDPOINT)),
-        ("engine", format!("Managed only: omitted or empty selects {}.", c::GATEWAY_ENGINE)),
-        ("image", format!("Managed only: omitted or empty selects {DEFAULT_GATEWAY_IMAGE}.")),
-        ("networkCIDR", "Managed only: omitted or empty selects 172.30.N.0/24, where N is the first byte of SHA-256(metadata.uid).".into()),
-    ] { property(gateway, field, json!({"x-nemoclaw-default-rule": description})); }
+    for gateway in defs["Gateway"]["oneOf"]
+        .as_array_mut()
+        .expect("gateway variants")
+    {
+        property(
+            gateway,
+            "management",
+            json!({"description": "Whether this deployment manages the gateway."}),
+        );
+        if gateway["properties"]["management"]["const"] == "managed" {
+            for (field, rule) in [
+                (
+                    "endpoint",
+                    json!({"anyOf": [{"const": ""}, {"pattern": "^http://127\\.0\\.0\\.1:[0-9]+/?$"}], "default": c::GATEWAY_ENDPOINT}),
+                ),
+                (
+                    "engine",
+                    json!({"anyOf": [{"const":""},{"pattern":"^unix:///"}], "default": c::GATEWAY_ENGINE}),
+                ),
+                (
+                    "image",
+                    json!({"enum": ["", DEFAULT_GATEWAY_IMAGE], "default": DEFAULT_GATEWAY_IMAGE}),
+                ),
+                (
+                    "networkCIDR",
+                    json!({"anyOf": [{"const": ""}, {"pattern": "/24$"}], "x-nemoclaw-default-rule": "Omitted or empty selects 172.30.N.0/24, where N is the first byte of SHA-256(metadata.uid)."}),
+                ),
+            ] {
+                property(gateway, field, rule);
+                if field != "networkCIDR" {
+                    property(
+                        gateway,
+                        field,
+                        json!({"x-nemoclaw-default-rule": "Omitted or empty selects the default."}),
+                    );
+                }
+            }
+        } else {
+            property(gateway, "endpoint", json!({"pattern": "^https?://"}));
+            gateway["if"] = at("endpoint", json!({"pattern": "^http:"}), true);
+            gateway["then"] = forbid(&["credential", "tls"]);
+        }
+    }
 
     let provider = &mut defs["InferenceProvider"];
     property(provider, "provider", json!({"enum": c::PROVIDERS}));

@@ -214,8 +214,7 @@ impl Provider for NemoClawProvider {
         if deferred {
             return Some(());
         }
-        let mut gateway = Gateway {
-            management: "external".into(),
+        let mut gateway = nemoclaw_sdk::config::ExternalGateway {
             endpoint: text(config.endpoint),
             ..Default::default()
         };
@@ -237,7 +236,7 @@ impl Provider for NemoClawProvider {
                 key: Credential { env: key },
             });
         }
-        match OpenShell::connect(&gateway, Arc::new(EnvironmentSecrets)) {
+        match OpenShell::connect(&Gateway::External(gateway), Arc::new(EnvironmentSecrets)) {
             Ok(client) => {
                 match self.backend.0.write() {
                     Ok(mut slot) => *slot = Connection::Ready(client),

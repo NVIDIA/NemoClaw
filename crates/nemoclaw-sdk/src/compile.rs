@@ -332,11 +332,11 @@ pub(super) fn compile_with_plans(
     let targets = targets_with_plans(document, generations, service_plans)?;
     let providers = document.selected_providers()?;
     let gateway = &document.spec.gateway;
-    let mut provider = json!({"endpoint":gateway.endpoint});
-    if let Some(c) = &gateway.credential {
+    let mut provider = json!({"endpoint":gateway.endpoint()});
+    if let Some(c) = gateway.credential() {
         provider["credential_env"] = json!(c.env);
     }
-    if let Some(tls) = &gateway.tls {
+    if let Some(tls) = gateway.tls() {
         provider["tls_ca_env"] = json!(tls.ca.env);
         provider["tls_certificate_env"] = json!(tls.certificate.env);
         provider["tls_key_env"] = json!(tls.key.env);

@@ -10,7 +10,6 @@ pub(crate) const UUID: &str = r"^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}
 pub(crate) const ENV: &str = r"^[A-Z_][A-Z0-9_]{0,127}$";
 pub(crate) const MODEL: &str = r"^[a-zA-Z0-9][a-zA-Z0-9._:/-]{0,199}$";
 pub(crate) const IMAGE: &str = r"^[a-zA-Z0-9][a-zA-Z0-9._:/-]*@sha256:[a-f0-9]{64}$";
-pub(crate) const MANAGEMENT: &[&str] = &["managed", "external"];
 pub(crate) const PROVIDERS: &[&str] = &["openai", "anthropic"];
 pub(crate) const RUNTIMES: &[&str] = &["docker", "podman"];
 pub(crate) const HARNESSES: &[&str] = &[
