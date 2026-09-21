@@ -6,14 +6,15 @@ use sha2::{Digest, Sha256};
 
 const V0_REVISION: &str = "f47724f29838fe08898993fad1c8c6b7fcb3e080";
 const V0_MANIFEST_SHA256: &str = "35c28e708e5a89a77a52fd91cbd587c1c39621014bed096464c36bbc37409b9b";
-const CURRENT_EXPORT_SOURCE_REVISION: &str = "0a361a239c18dd4a56c34b4ca66dc32a3139bddd";
+const DETERMINISTIC_EXPORT_SOURCE_REVISION: &str = "0a361a239c18dd4a56c34b4ca66dc32a3139bddd";
+const LIVE_EXPORT_SOURCE_REVISION: &str = "11d14209469f4ea1629e603f65c9a9bb1602339b";
 const TARGET_PARSER_REVISION: &str = "9d446d51803ea6e3c6aaa286cee57c611173f214";
 const CURRENT_OPENCLAW_EXPORT_SHA256: &str =
     "ec8f98186b2e18982bfce180627ecb79e35719b6a52088ad527282825f1705f4";
 const CURRENT_HERMES_EXPORT_SHA256: &str =
     "f178a06e9638ba2406850ad0abc1e2dd6eafe51823807f1348b071146f4dd151";
 const LIVE_NETWORK_POLICY_EXPORT_SHA256: &str =
-    "fba807339f35f49e71426a22935fcc1088d53451b38272e38891b1b1f1d70560";
+    "6a05e63f491a8f938807b3fb8d390a2d4f5adea1d309b5e6ce39bde7c45a0633";
 
 fn sha256(raw: &[u8]) -> String {
     Sha256::digest(raw)
@@ -24,7 +25,8 @@ fn sha256(raw: &[u8]) -> String {
 
 #[test]
 fn current_single_agent_exports_parse_without_rewriting() {
-    assert_eq!(CURRENT_EXPORT_SOURCE_REVISION.len(), 40);
+    assert_eq!(DETERMINISTIC_EXPORT_SOURCE_REVISION.len(), 40);
+    assert_eq!(LIVE_EXPORT_SOURCE_REVISION.len(), 40);
     assert_eq!(TARGET_PARSER_REVISION.len(), 40);
 
     let openclaw_raw = include_bytes!("../fixtures/current-config-exports/openclaw.yaml");
