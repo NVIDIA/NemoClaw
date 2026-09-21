@@ -238,6 +238,12 @@ export function createPortableOnboardEnvironmentScope(
   activation: PortableInferenceActivation | null,
   options: { readonly resume?: boolean } = {},
 ): PortableOnboardEnvironmentScope {
+  const requestedProvider = env.NEMOCLAW_PROVIDER?.trim();
+  if (!options.resume && !activation && requestedProvider && requestedProvider !== "ollama") {
+    throw new Error(
+      "Portable onboarding uses Ollama. Set NEMOCLAW_PROVIDER=ollama and choose an Ollama model, or remove --experimental-profile portable to use another provider.",
+    );
+  }
   const previous = new Map<string, PreviousEnvironmentValue>();
   for (const key of PORTABLE_OWNED_ENV_KEYS) {
     previous.set(key, {

@@ -33,6 +33,49 @@ function portableRuntimeAuthority(): CheckpointPortableRuntimeAuthority {
 }
 
 describe("portable onboarding environment scope", () => {
+  it.each(["build", "nvidia", "invalid-private-provider"])(
+    "rejects non-Ollama provider intent before changing fresh environment [case %#] (#11718)",
+    (provider) => {
+      const env: NodeJS.ProcessEnv = {
+        NEMOCLAW_PROVIDER: provider,
+        NEMOCLAW_MODEL: "nvidia/example-model",
+        DOCKER_HOST: "unix:///previous.sock",
+      };
+      const before = { ...env };
+
+      expect(() => createPortableOnboardEnvironmentScope(env, null)).toThrow(
+        /NEMOCLAW_PROVIDER=ollama.*--experimental-profile portable/su,
+      );
+      expect(env).toEqual(before);
+    },
+  );
+
+  it.each(["ollama", " ollama ", "", "  "])(
+    "preserves the model for compatible fresh provider intent [case %#] (#11718)",
+    (provider) => {
+      const env: NodeJS.ProcessEnv = {
+        NEMOCLAW_PROVIDER: provider,
+        NEMOCLAW_MODEL: "qwen3.6:35b",
+      };
+      const before = { ...env };
+      const scope = createPortableOnboardEnvironmentScope(env, null);
+
+      expect(env.NEMOCLAW_PROVIDER).toBe("ollama");
+      expect(env.NEMOCLAW_MODEL).toBe("qwen3.6:35b");
+      scope.restore();
+      expect(env).toEqual(before);
+    },
+  );
+
+  it("leaves provider selection to the checkpoint during resume (#11718)", () => {
+    const env: NodeJS.ProcessEnv = { NEMOCLAW_PROVIDER: "build" };
+    const scope = createPortableOnboardEnvironmentScope(env, null, { resume: true });
+
+    expect(env.NEMOCLAW_PROVIDER).toBeUndefined();
+    scope.restore();
+    expect(env.NEMOCLAW_PROVIDER).toBe("build");
+  });
+
   it("preserves an explicit model during fresh portable onboarding (#9200)", () => {
     const env: NodeJS.ProcessEnv = { NEMOCLAW_MODEL: "qwen3.6:35b" };
     const scope = createPortableOnboardEnvironmentScope(env, null);
@@ -108,7 +151,10 @@ describe("portable onboarding environment scope", () => {
   });
 
   it("uses the activation model instead of ambient fresh model intent (#9200)", () => {
-    const env: NodeJS.ProcessEnv = { NEMOCLAW_MODEL: "ambient/model" };
+    const env: NodeJS.ProcessEnv = {
+      NEMOCLAW_PROVIDER: "build",
+      NEMOCLAW_MODEL: "ambient/model",
+    };
     const scope = createPortableOnboardEnvironmentScope(env, {
       schemaVersion: 1,
       baseUrl: "https://inference.example.test/v1",
@@ -120,7 +166,7 @@ describe("portable onboarding environment scope", () => {
     expect(env.NEMOCLAW_MODEL).toBe("activation/model");
 
     scope.restore();
-    expect(env).toEqual({ NEMOCLAW_MODEL: "ambient/model" });
+    expect(env).toEqual({ NEMOCLAW_PROVIDER: "build", NEMOCLAW_MODEL: "ambient/model" });
   });
 
   it("rejects malformed fresh model intent with the provider validator (#9200)", () => {

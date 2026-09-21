@@ -44,6 +44,28 @@ const portableCheckpointWithoutAuthority: OnboardCheckpoint = {
 };
 
 describe("locked onboarding runtime preparation", () => {
+  it("rejects a conflicting fresh provider before host preparation (#11718)", async () => {
+    vi.stubEnv("NEMOCLAW_PROVIDER", "build");
+    vi.stubEnv("NEMOCLAW_MODEL", "nvidia/example-model");
+    const before = { ...process.env };
+    const preparePortableHost = vi.fn();
+
+    await expect(
+      prepare(
+        {
+          experimentalProfile: "portable",
+          acceptThirdPartySoftware: true,
+          preparePortableHost,
+        },
+        false,
+        true,
+        () => null,
+      ),
+    ).rejects.toThrow(/NEMOCLAW_PROVIDER=ollama/u);
+    expect(preparePortableHost).not.toHaveBeenCalled();
+    expect(process.env).toEqual(before);
+  });
+
   it("rejects portable resume without selected authority before host preparation (#9035)", async () => {
     const preparePortableHost = vi.fn();
 
