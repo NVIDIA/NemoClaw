@@ -361,6 +361,8 @@ export async function upgradeSandboxes(
     (name) => versions.get(name)!,
     { currentNemoclawVersion },
   );
+  const staleNames = new Set(stale.map((sandbox) => sandbox.name));
+  const unknownNames = new Set(unknown.map((sandbox) => sandbox.name));
 
   // Source boundary (#6114): a legacy OpenShell install can leave its already-
   // registered sandboxes in Provisioning/Error after the host upgrade, or the
@@ -392,7 +394,6 @@ export async function upgradeSandboxes(
   // reconnected mid-run, so neither recovery candidates nor orphans.
   const becameReadyNames = new Set<string>();
   if (recoverPreparedBackups) {
-    const staleNames = new Set(stale.map((sandbox) => sandbox.name));
     const staleLiveNames = new Set(
       stale.filter((sandbox) => sandbox.running).map((sandbox) => sandbox.name),
     );
@@ -429,6 +430,18 @@ export async function upgradeSandboxes(
       ...confirmedAbsentCandidates,
     ];
   }
+  // A failed post-rebuild stop can leave the replacement Ready while the
+  // registry still records the requested stopped state. A failure after the
+  // runtime stopped can also leave forward cleanup incomplete. In mutating
+  // mode, repeat the idempotent stop for either observed phase. Check mode
+  // reports only a live Ready mismatch and accepts an observed Stopped phase.
+  const stoppedIntentReconciliations = sandboxes.filter(
+    (sandbox) =>
+      sandbox.stopped === true &&
+      !staleNames.has(sandbox.name) &&
+      !unknownNames.has(sandbox.name) &&
+      (liveNames.has(sandbox.name) || (!checkOnly && observedStoppedNames.has(sandbox.name))),
+  );
   const backupRecoveryAssessments = recoveryCandidates.map((sandbox) =>
     prepareBackupRecovery(
       sandbox,
@@ -463,7 +476,8 @@ export async function upgradeSandboxes(
     stale.length === 0 &&
     unknownWithoutOrphans.length === 0 &&
     preparedRecoveries.length === 0 &&
-    rejectedRecoveries.length === 0
+    rejectedRecoveries.length === 0 &&
+    stoppedIntentReconciliations.length === 0
   ) {
     if (unobservedOwnGatewaySandboxes.length > 0) {
       printOrphanedRegistrySandboxes(unobservedOwnGatewaySandboxes);
@@ -513,6 +527,13 @@ export async function upgradeSandboxes(
       console.error(`    ${recovery.sandbox.name}  ${recovery.reason}`);
     }
   }
+  if (stoppedIntentReconciliations.length > 0) {
+    console.log(`\n  ${B}Stopped-state reconciliation:${R}`);
+    for (const sandbox of stoppedIntentReconciliations) {
+      const phase = liveNames.has(sandbox.name) ? "Ready" : "Stopped";
+      console.log(`    ${sandbox.name}  ${D}${phase} with retained stopped intent${R}`);
+    }
+  }
   console.log("");
 
   if (checkOnly) {
@@ -530,9 +551,14 @@ export async function upgradeSandboxes(
     if (rejectedRecoveries.length > 0) {
       console.log(`  ${rejectedRecoveries.length} sandbox(es) cannot be recovered automatically.`);
     }
+    if (stoppedIntentReconciliations.length > 0) {
+      console.log(
+        `  ${stoppedIntentReconciliations.length} sandbox(es) need stopped-state reconciliation.`,
+      );
+    }
     // Check mode must agree with auto mode on the orphan diagnosis (#6520).
     printOrphanedRegistrySandboxes(unobservedOwnGatewaySandboxes);
-    console.log(`  Run \`${CLI_NAME} upgrade-sandboxes\` to rebuild them.`);
+    console.log(`  Run \`${CLI_NAME} upgrade-sandboxes\` to rebuild or reconcile them.`);
     // #10211: reached only when stale, unknown, a prepared recovery, or a
     // rejected recovery was found — never the "all up to date" case above.
     // `--check` is read-only, so scripts gate on the exit code.
@@ -554,7 +580,8 @@ export async function upgradeSandboxes(
   if (
     ordinaryRebuildable.length === 0 &&
     preparedRecoveries.length === 0 &&
-    rejectedRecoveries.length === 0
+    rejectedRecoveries.length === 0 &&
+    stoppedIntentReconciliations.length === 0
   ) {
     printOrphanedRegistrySandboxes(unobservedOwnGatewaySandboxes);
     console.log("  No running stale sandboxes to rebuild.");
@@ -562,6 +589,7 @@ export async function upgradeSandboxes(
   }
 
   let rebuilt = 0;
+  let stoppedReconciled = 0;
   let failed = rejectedRecoveries.length;
   const recoveredNames = new Set<string>();
   const work = [
@@ -611,12 +639,40 @@ export async function upgradeSandboxes(
       failed++;
     }
   }
+  for (const sandbox of stoppedIntentReconciliations) {
+    if (!skipConfirm) {
+      const answer = await askPrompt(`  Return '${sandbox.name}' to its stopped state? [y/N]: `);
+      if (answer.trim().toLowerCase() !== "y" && answer.trim().toLowerCase() !== "yes") {
+        console.log(`  Skipped '${sandbox.name}'.`);
+        continue;
+      }
+    }
+    try {
+      const stoppedResult = await upgradeSandboxesDependencies.stopSandbox(sandbox.name);
+      if (stoppedResult.exitCode !== 0) {
+        throw new Error(
+          stoppedResult.message ??
+            `the sandbox could not be reconciled with its retained stopped-state intent`,
+        );
+      }
+      stoppedReconciled++;
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      console.error(
+        `  ${YW}⚠${R} Failed to reconcile stopped state for '${sandbox.name}': ${errorMessage}`,
+      );
+      failed++;
+    }
+  }
 
   console.log("");
   printOrphanedRegistrySandboxes(
     unobservedOwnGatewaySandboxes.filter((sandbox) => !recoveredNames.has(sandbox.name)),
   );
   if (rebuilt > 0) console.log(`  ${G}✓${R} ${rebuilt} sandbox(es) rebuilt.`);
+  if (stoppedReconciled > 0) {
+    console.log(`  ${G}✓${R} ${stoppedReconciled} sandbox(es) reconciled to stopped state.`);
+  }
   if (failed > 0) console.log(`  ${YW}⚠${R} ${failed} sandbox(es) failed — see errors above.`);
   if (failed > 0) process.exit(1);
 }

@@ -247,7 +247,7 @@ describe("upgrade-sandboxes prepared backup recovery (#6114)", () => {
     expect(harness.stopSpy).toHaveBeenCalledWith("stopped-box");
   });
 
-  it("accepts a current intentionally stopped sandbox on the installer's verification pass", async () => {
+  it("reconciles a current stopped sandbox without rebuilding on the installer verification pass", async () => {
     const harness = createRecoveryHarness(["stopped-box"], {
       liveOutput: "stopped-box Stopped",
       registryOverrides: { "stopped-box": { stopped: true } },
@@ -257,8 +257,38 @@ describe("upgrade-sandboxes prepared backup recovery (#6114)", () => {
 
     expect(harness.latestBackupSpy).not.toHaveBeenCalled();
     expect(harness.rebuildSpy).not.toHaveBeenCalled();
+    expect(harness.stopSpy).toHaveBeenCalledWith("stopped-box");
+    expect(console.log).toHaveBeenCalledWith("  ✓ 1 sandbox(es) reconciled to stopped state.");
+  });
+
+  it("accepts an observed Stopped phase in check mode without mutating it", async () => {
+    const harness = createRecoveryHarness(["stopped-box"], {
+      liveOutput: "stopped-box Stopped",
+      registryOverrides: { "stopped-box": { stopped: true } },
+    });
+
+    await expect(harness.upgradeSandboxes({ check: true })).resolves.toBeUndefined();
+
+    expect(harness.latestBackupSpy).not.toHaveBeenCalled();
+    expect(harness.rebuildSpy).not.toHaveBeenCalled();
     expect(harness.stopSpy).not.toHaveBeenCalled();
     expect(console.log).toHaveBeenCalledWith("  All sandboxes are up to date.");
+  });
+
+  it("reports a Ready sandbox with retained stopped intent in check mode", async () => {
+    const harness = createRecoveryHarness(["stopped-box"], {
+      liveOutput: "stopped-box Ready",
+      registryOverrides: { "stopped-box": { stopped: true } },
+    });
+    vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+      throw new Error(`process.exit(${code})`);
+    }) as never);
+
+    await expect(harness.upgradeSandboxes({ check: true })).rejects.toThrow("process.exit(1)");
+
+    expect(harness.rebuildSpy).not.toHaveBeenCalled();
+    expect(harness.stopSpy).not.toHaveBeenCalled();
+    expect(console.log).toHaveBeenCalledWith("  1 sandbox(es) need stopped-state reconciliation.");
   });
 
   it("still recovers an intentionally stopped sandbox when its managed image is stale", async () => {
@@ -294,6 +324,41 @@ describe("upgrade-sandboxes prepared backup recovery (#6114)", () => {
         "Failed to recover 'stopped-box': OpenShell did not confirm the stopped state",
       ),
     );
+  });
+
+  it("retries stopped-state reconciliation without rebuilding after a post-rebuild stop failure", async () => {
+    const harness = createRecoveryHarness(["stopped-box"], {
+      liveOutput: "stopped-box Stopped",
+      registryOverrides: { "stopped-box": { stopped: true } },
+      staleNames: ["stopped-box"],
+    });
+    harness.stopSpy.mockResolvedValue({
+      exitCode: 1,
+      message: "OpenShell did not confirm the stopped state",
+    });
+    vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+      throw new Error(`process.exit(${code})`);
+    }) as never);
+
+    await expect(harness.upgradeSandboxes({ auto: true })).rejects.toThrow("process.exit(1)");
+
+    harness.liveListSpy.mockResolvedValue(sandboxInventory("stopped-box Ready"));
+    harness.checkAgentVersionSpy.mockResolvedValue({
+      sandboxVersion: "2026.5.27",
+      expectedVersion: "2026.5.27",
+      isStale: false,
+      verificationFailed: false,
+      detectionMethod: "live",
+    });
+    harness.rebuildSpy.mockClear();
+    harness.stopSpy.mockReset().mockResolvedValue({ exitCode: 0 });
+
+    await expect(harness.upgradeSandboxes({ auto: true })).resolves.toBeUndefined();
+
+    expect(harness.rebuildSpy).not.toHaveBeenCalled();
+    expect(harness.stopSpy).toHaveBeenCalledOnce();
+    expect(harness.stopSpy).toHaveBeenCalledWith("stopped-box");
+    expect(console.log).toHaveBeenCalledWith("  ✓ 1 sandbox(es) reconciled to stopped state.");
   });
 
   it.each([

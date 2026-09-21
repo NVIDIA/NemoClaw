@@ -173,6 +173,9 @@ OpenClaw's native plugin and package state is restored with the rest of its decl
 
 The installer attempts every eligible recovery and exits with a nonzero status if any recovery fails.
 Recovery preserves each sandbox's recorded GPU selection and runs before generic host admission.
+When recovery rebuilds an intentionally stopped sandbox, NemoClaw returns the replacement to `Stopped`.
+Recovery fails if OpenShell cannot confirm that phase or a required post-stop reconciliation fails.
+Rerun the installer to reconcile the stopped state without rebuilding a current replacement again.
 Fresh onboarding and required DGX Station reconciliation still require host admission.
 
 ### Interpret Automatic Recovery Results
