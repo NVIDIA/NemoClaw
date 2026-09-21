@@ -166,8 +166,11 @@ function confirmedLegacyManagedRecoveryNames(): Set<string> {
 // Under installer restore intent, a registry sandbox is eligible for prepared-
 // backup recovery only when its persisted binding resolves to the selected
 // gateway. Ready/Running sandboxes are eligible only when upgrade classification
-// also proves them stale; non-Ready or absent sandboxes remain eligible because
-// the replaced gateway may expose legacy state optimistically or not at all.
+// also proves them stale. A current sandbox observed Stopped is likewise healthy
+// when the registry retains intentional-stop state; this matters when the
+// installer's second verification pass follows a successful recovery. Other
+// non-Ready or absent sandboxes remain eligible because the replaced gateway may
+// expose legacy state optimistically or not at all.
 // Observation alone is insufficient: a sandbox bound to a different recorded
 // gateway may be Ready there, so recovering it would clobber a healthy sandbox.
 // resolveSandboxGatewayName throws on an invalid persisted
@@ -177,10 +180,18 @@ function confirmedLegacyManagedRecoveryNames(): Set<string> {
 function isPreparedRecoveryCandidate(
   sandbox: registry.SandboxEntry,
   liveNames: Set<string>,
-  staleLiveNames: Set<string>,
+  staleNames: Set<string>,
+  observedStoppedNames: Set<string>,
   selectedGatewayName: string,
 ): boolean {
-  if (liveNames.has(sandbox.name) && !staleLiveNames.has(sandbox.name)) return false;
+  if (liveNames.has(sandbox.name) && !staleNames.has(sandbox.name)) return false;
+  if (
+    sandbox.stopped === true &&
+    observedStoppedNames.has(sandbox.name) &&
+    !staleNames.has(sandbox.name)
+  ) {
+    return false;
+  }
   try {
     return resolveSandboxGatewayName(sandbox) === selectedGatewayName;
   } catch {
@@ -330,6 +341,11 @@ export async function upgradeSandboxes(
       .filter((sandbox) => sandbox.phase !== null && sandbox.readiness !== "ready")
       .map((sandbox) => sandbox.name),
   );
+  const observedStoppedNames = new Set(
+    liveResult.sandboxes
+      .filter((sandbox) => sandbox.phase === "Stopped")
+      .map((sandbox) => sandbox.name),
+  );
 
   // Classify sandboxes as stale, unknown, or current. Pass the running NemoClaw
   // build so a NemoClaw image/build change is detected even when the agent
@@ -376,11 +392,18 @@ export async function upgradeSandboxes(
   // reconnected mid-run, so neither recovery candidates nor orphans.
   const becameReadyNames = new Set<string>();
   if (recoverPreparedBackups) {
+    const staleNames = new Set(stale.map((sandbox) => sandbox.name));
     const staleLiveNames = new Set(
       stale.filter((sandbox) => sandbox.running).map((sandbox) => sandbox.name),
     );
     const gatewayEligible = sandboxes.filter((sandbox) =>
-      isPreparedRecoveryCandidate(sandbox, liveNames, staleLiveNames, selectedGatewayName),
+      isPreparedRecoveryCandidate(
+        sandbox,
+        liveNames,
+        staleNames,
+        observedStoppedNames,
+        selectedGatewayName,
+      ),
     );
     const staleLiveCandidates = gatewayEligible.filter((sandbox) =>
       staleLiveNames.has(sandbox.name),

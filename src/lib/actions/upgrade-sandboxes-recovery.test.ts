@@ -247,6 +247,34 @@ describe("upgrade-sandboxes prepared backup recovery (#6114)", () => {
     expect(harness.stopSpy).toHaveBeenCalledWith("stopped-box");
   });
 
+  it("accepts a current intentionally stopped sandbox on the installer's verification pass", async () => {
+    const harness = createRecoveryHarness(["stopped-box"], {
+      liveOutput: "stopped-box Stopped",
+      registryOverrides: { "stopped-box": { stopped: true } },
+    });
+
+    await expect(harness.upgradeSandboxes({ auto: true })).resolves.toBeUndefined();
+
+    expect(harness.latestBackupSpy).not.toHaveBeenCalled();
+    expect(harness.rebuildSpy).not.toHaveBeenCalled();
+    expect(harness.stopSpy).not.toHaveBeenCalled();
+    expect(console.log).toHaveBeenCalledWith("  All sandboxes are up to date.");
+  });
+
+  it("still recovers an intentionally stopped sandbox when its managed image is stale", async () => {
+    const harness = createRecoveryHarness(["stopped-box"], {
+      liveOutput: "stopped-box Stopped",
+      registryOverrides: { "stopped-box": { stopped: true } },
+      staleNames: ["stopped-box"],
+    });
+
+    await expect(harness.upgradeSandboxes({ auto: true })).resolves.toBeUndefined();
+
+    expect(harness.latestBackupSpy).toHaveBeenCalledWith("stopped-box");
+    expect(harness.rebuildSpy).toHaveBeenCalledOnce();
+    expect(harness.stopSpy).toHaveBeenCalledWith("stopped-box");
+  });
+
   it("fails recovery when the rebuilt sandbox cannot regain its stopped state", async () => {
     const harness = createRecoveryHarness(["stopped-box"], {
       registryOverrides: { "stopped-box": { stopped: true } },
