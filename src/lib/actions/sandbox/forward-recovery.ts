@@ -7,8 +7,6 @@ import {
   type OpenShellForwardIdentity,
   type OpenShellForwardObservation,
 } from "../../adapters/openshell/forward";
-
-export { formatOpenShellForwardStartFailure };
 import {
   createOpenShellForwardAdapterForAuthority,
   openShellForwardIdentity,

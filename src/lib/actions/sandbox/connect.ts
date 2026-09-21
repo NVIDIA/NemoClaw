@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { isDeepStrictEqual } from "node:util";
+import { formatOpenShellForwardStartFailure } from "../../adapters/openshell/forward";
 import { createSynchronousCliOpenShellInferenceRouteObserver } from "../../adapters/openshell/inference-route-cli";
 import {
   createCliOpenShellSandboxCommandExecutor,
@@ -29,8 +30,6 @@ import * as agentRuntime from "../../agent/runtime";
 import { CLI_NAME } from "../../cli/branding";
 import { D, G, R, YW } from "../../cli/terminal-style";
 import { retryUntilAsync } from "../../core/retry";
-
-import { shellQuote } from "../../core/shell-quote";
 import { gatewayStartGuidance } from "../../gateway-start-guidance";
 import {
   formatInferenceRouteDriftForDisplay,
@@ -50,7 +49,7 @@ import {
   OpenShellGatewayEndpointOverrideError,
 } from "../../openshell-gateway-endpoint-guard";
 import { emitPortableOpenClawAlreadyRunningTiming } from "../../onboard/experimental/portable-demo-lifecycle-timing";
-import { ROOT } from "../../runner";
+import { ROOT, shellQuote } from "../../runner";
 import * as sandboxVersion from "../../sandbox/version";
 import { redact, redactFull } from "../../security/redact";
 import type { SandboxEntry } from "../../state/registry";
@@ -129,7 +128,6 @@ import {
   checkAndRecoverSandboxProcesses,
   createHermesPortableForwardRecoveryInput,
   executeSandboxExecCommand,
-  formatOpenShellForwardStartFailure,
   type GatewayRestartFailureLayer,
   HermesPortableForwardRecoveryError,
   type HermesPortableForwardRecoveryContext,
