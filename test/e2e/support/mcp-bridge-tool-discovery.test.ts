@@ -80,6 +80,12 @@ describe("MCP tool-call failure evidence", () => {
     const originalError = new Error("tool search returned no MCP target");
     const operation = vi.fn(async () => {
       requests.push(request("tools/list", { responseStatus: 401, auth: "Bearer stale-secret" }));
+      requests.push(
+        request("initialize", {
+          responseStatus: 401,
+          auth: "Bearer openshell:resolve:env:DISTINCT_MCP_SECRET",
+        }),
+      );
       throw originalError;
     });
     const artifacts = discoveryArtifacts();
@@ -101,6 +107,8 @@ describe("MCP tool-call failure evidence", () => {
           artifacts,
           artifactPrefix: "after-rebuild",
           sandboxName: "alpha",
+          serverName: "diagnostic-target",
+          credentialEnvName: "DISTINCT_MCP_SECRET",
           requests,
           expectedSecret: EXPECTED_SECRET,
           redactionValues: [EXPECTED_SECRET, "stale-secret"],
@@ -116,11 +124,17 @@ describe("MCP tool-call failure evidence", () => {
           responseStatus: 401,
           credentialKind: "other",
         },
+        {
+          httpMethod: "POST",
+          rpcMethod: "initialize",
+          responseStatus: 401,
+          credentialKind: "control",
+        },
       ],
     });
     expect(nemoclaw).toHaveBeenCalledTimes(1);
     expect(nemoclaw).toHaveBeenCalledWith(
-      ["alpha", "mcp", "status", "fake", "--tools", "--json"],
+      ["alpha", "mcp", "status", "diagnostic-target", "--tools", "--json"],
       expect.objectContaining({
         artifactName: "after-rebuild-failure-status-tools",
         redactionValues: [EXPECTED_SECRET, "stale-secret"],
@@ -142,6 +156,8 @@ describe("MCP tool-call failure evidence", () => {
         artifacts,
         artifactPrefix: "after-rebuild",
         sandboxName: "alpha",
+        serverName: "diagnostic-target",
+        credentialEnvName: "DISTINCT_MCP_SECRET",
         requests: [],
         expectedSecret: EXPECTED_SECRET,
         redactionValues: [EXPECTED_SECRET],
@@ -150,6 +166,42 @@ describe("MCP tool-call failure evidence", () => {
     expect(operation).toHaveBeenCalledTimes(1);
     expect(nemoclaw).not.toHaveBeenCalled();
     expect(artifacts.writeJson).not.toHaveBeenCalled();
+  });
+
+  it("preserves the failed call when an artifact write never settles", async () => {
+    vi.useFakeTimers();
+    try {
+      const originalError = new Error("tool search returned no MCP target");
+      const operation = vi.fn().mockRejectedValue(originalError);
+      const nemoclaw = vi.fn().mockResolvedValue({});
+      const artifacts = { writeJson: vi.fn(() => new Promise<string>(() => {})) };
+      const result = withMcpToolCallFailureEvidence(
+        operation,
+        { nemoclaw },
+        {
+          artifacts,
+          artifactPrefix: "after-rebuild",
+          sandboxName: "alpha",
+          serverName: "diagnostic-target",
+          credentialEnvName: "DISTINCT_MCP_SECRET",
+          requests: [],
+          expectedSecret: EXPECTED_SECRET,
+          redactionValues: [EXPECTED_SECRET],
+        },
+      );
+      const rejection = expect(result).rejects.toBe(originalError);
+      await vi.advanceTimersByTimeAsync(65_000);
+      await rejection;
+      expect(operation).toHaveBeenCalledTimes(1);
+      expect(artifacts.writeJson).toHaveBeenCalledTimes(1);
+      expect(nemoclaw).toHaveBeenCalledExactlyOnceWith(
+        ["alpha", "mcp", "status", "diagnostic-target", "--tools", "--json"],
+        expect.objectContaining({ timeoutMs: 60_000 }),
+      );
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 
