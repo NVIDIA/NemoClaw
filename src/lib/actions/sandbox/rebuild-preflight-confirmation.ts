@@ -164,7 +164,12 @@ export async function confirmDelegatedRebuildIntent(
   sandboxName: string,
   requestedDcodeAutoApprovalMode?: DcodeAutoApprovalMode,
 ): Promise<boolean> {
-  if (process.stdin?.isTTY !== true) {
+  if (
+    process.stdin?.isTTY !== true ||
+    process.env.CI === "true" ||
+    process.env.CI === "1" ||
+    process.env.GITHUB_ACTIONS === "true"
+  ) {
     console.error(
       "  Cannot confirm rebuild without an interactive terminal. Re-run with --yes or --force.",
     );
