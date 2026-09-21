@@ -12,7 +12,13 @@ import {
   HERMES_MANAGED_POLICY_SCHEMA_VERSION,
 } from "../../../agents/hermes/config/managed-policy.ts";
 
-const READER_PATH = path.join(import.meta.dirname, "../../..", "agents", "hermes", "managed_policy.py");
+const READER_PATH = path.join(
+  import.meta.dirname,
+  "../../..",
+  "agents",
+  "hermes",
+  "managed_policy.py",
+);
 const PROFILE_PATCHER_PATH = path.join(
   import.meta.dirname,
   "../../..",
@@ -78,6 +84,19 @@ function loadWithPython(document: unknown) {
 }
 
 describe("Hermes managed policy", () => {
+  it("accepts absent inference while retaining managed restrictions", () => {
+    const policy = buildHermesManagedPolicy({ ...SETTINGS, model: null }, {});
+    const result = loadWithPython(policy);
+    expect(result.status, result.stderr).toBe(0);
+    expect(policy.config.model).toBeUndefined();
+    expect(policy.config.approvals.mode).toBe("manual");
+  });
+  it("rejects partial routing in a providerless policy", () => {
+    const policy = buildHermesManagedPolicy({ ...SETTINGS, model: null }, {});
+    policy.config.providers = {};
+    const result = loadWithPython(policy);
+    expect(result.status).not.toBe(0);
+  });
   it("serializes one versioned policy with resolver-only credentials (#8008)", () => {
     const rawSecret = "raw-secret-must-not-appear";
     const policy = buildHermesManagedPolicy(SETTINGS, { DISCORD_BOT_TOKEN: rawSecret });

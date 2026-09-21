@@ -8,9 +8,9 @@ import path from "node:path";
 import { expect, vi } from "vitest";
 
 import { createCliOpenShellSandboxObserver } from "../../adapters/openshell/sandbox-observer-cli";
+import type { OpenShellSandboxBufferedCommandExecutor } from "../../adapters/openshell/sandbox-command";
 import type { CheckpointPortableRuntimeAuthority } from "../../state/onboard-checkpoint-types";
 import type { SandboxGpuProofResult } from "../../state/registry";
-import type { ManagedBootstrapRuntimeCreateLifecycleInput } from "../managed-bootstrap/runtime-create";
 import type {
   SandboxGpuCreateFlowDeps,
   SandboxGpuCreateFlowInput,
@@ -89,6 +89,13 @@ export function createGpuFlowDeps(
     return "";
   });
   return {
+    commandExecutor: {
+      runBuffered: vi.fn(async () => ({
+        outcome: { kind: "completed" as const, exitCode: 0, signal: null },
+        stdout: "",
+        stderr: "",
+      })),
+    } satisfies OpenShellSandboxBufferedCommandExecutor,
     runOpenshell: vi.fn((args: string[]) => {
       assertSandboxProbeTarget(args);
       return args[0] === "sandbox" && args[1] === "get"
@@ -113,13 +120,14 @@ export function createGpuFlowDeps(
     sleep: vi.fn(),
     openshellArgv: vi.fn((args: string[]) => ["openshell", ...args]),
     verifyDirectSandboxGpu: vi.fn(() => VERIFIED_GPU_PROOF),
+    verifyExactFinalHandoffRuntime: vi.fn(() => true),
   };
 }
 
 export function createGpuPatchFixture() {
   return {
     maybeApplyDuringCreate: vi.fn(),
-    replacementRuntimeId: vi.fn(() => null),
+    replacementRuntimeId: vi.fn<() => string | null>(() => null),
     createFailureMessage: vi.fn(() => null),
     exitOnPatchError: vi.fn(),
     rollbackManagedStartupAfterCreateFailure: vi.fn(),
@@ -318,47 +326,6 @@ export function createGpuFlowTestHarness(mocks: Record<string, ReturnType<typeof
     return dockerConfig;
   }
 
-  function attachManagedBootstrap(input: SandboxGpuCreateFlowInput): void {
-    input.sandboxGpuConfig = {
-      mode: "0",
-      hostGpuDetected: false,
-      hostGpuPlatform: null,
-      sandboxGpuEnabled: false,
-      sandboxGpuDevice: null,
-      errors: [],
-    };
-    input.gpuRoutePlan = "none";
-    input.initialGpuRoute = "none";
-    input.managedBootstrap = {
-      bootstrapIdentity: "e".repeat(64),
-      stateRoot: "/tmp/nemoclaw-managed-bootstrap",
-      runtimeProvider: {
-        identity: { id: "mxc" },
-        bootstrap: {
-          createOnboardRouting: () => ({ nativeFallbackHasCleanBaseline: false }),
-          createLifecycle: (options: ManagedBootstrapRuntimeCreateLifecycleInput) => ({
-            launchArgv: options.launchArgv,
-            patch: createGpuPatchFixture(),
-            recoverUnfinished: async () => null,
-            prepareNetwork: async () => undefined,
-            runCreate: async <T>(
-              start: (held: {
-                readonly heldWorkloadArgv: readonly string[];
-                readonly bootstrapIdentity: string;
-              }) => Promise<{ readonly value: T }>,
-            ): Promise<T> =>
-              (
-                await start({
-                  heldWorkloadArgv: options.heldWorkloadArgv,
-                  bootstrapIdentity: options.bootstrapIdentity,
-                })
-              ).value,
-          }),
-        },
-      },
-    } as unknown as NonNullable<SandboxGpuCreateFlowInput["managedBootstrap"]>;
-  }
-
   function captureCreateEnv(): {
     env: NodeJS.ProcessEnv;
     configExisted: boolean;
@@ -416,7 +383,6 @@ export function createGpuFlowTestHarness(mocks: Record<string, ReturnType<typeof
     errorOutput,
     createSourceInput,
     writeDesktopCredsStore,
-    attachManagedBootstrap,
     captureCreateEnv,
     setupHarness,
     resetHarness,

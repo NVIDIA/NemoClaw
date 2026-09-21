@@ -230,6 +230,18 @@ describe("E2E inference adapter", () => {
     });
   });
 
+  it("returns one unambiguous non-secret response marker from the complete mock request", async () => {
+    const adapter = await createAdapter({ env: {} });
+    expect(
+      await adapter.directChat("fixture NEMOCLAW_E2E_FAKE_RESPONSE=HERMES_NATIVE_SKILL_V2"),
+    ).toMatchObject({ choices: [{ message: { content: "HERMES_NATIVE_SKILL_V2" } }] });
+    expect(
+      await adapter.directChat(
+        "NEMOCLAW_E2E_FAKE_RESPONSE=HERMES_NATIVE_SKILL_V1 NEMOCLAW_E2E_FAKE_RESPONSE=HERMES_NATIVE_SKILL_V2",
+      ),
+    ).toMatchObject({ choices: [{ message: { content: "PONG" } }] });
+  });
+
   it("keeps unrelated ambient secrets out of adapter and fake-server child environments", async () => {
     const secretName = "UNRELATED_E2E_SENTINEL_SECRET";
     const secretValue = "sentinel-value-that-must-not-propagate";

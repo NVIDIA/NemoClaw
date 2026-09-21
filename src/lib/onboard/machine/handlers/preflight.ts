@@ -38,6 +38,7 @@ export interface PreflightStateOptions<
   gpuRequested: boolean;
   noGpu: boolean;
   allowDeferredN1xManagedVllm?: boolean;
+  allowLegacyDgxStationQualification?: boolean;
   env: NodeJS.ProcessEnv;
   deps: {
     getSandbox(name: string): SandboxEntry | null;
@@ -61,9 +62,11 @@ export interface PreflightStateOptions<
       options: {
         explicitlyOptedOutGpuPassthrough: boolean;
         observedAt?: string;
+        collectedAt?: string;
         now?: () => Date;
-        wslDockerDesktopGpuProofPassed?: boolean;
+        containerGpuProof?: Readonly<{ providerId: string; passed: boolean }>;
         allowDeferredN1xOnboarding?: boolean;
+        allowLegacyDgxStationQualification?: boolean;
         resuming: true;
         presentAdvisories?: boolean;
       },
@@ -115,12 +118,16 @@ function envHasSandboxGpuOverride(env: NodeJS.ProcessEnv): boolean {
   return env.NEMOCLAW_SANDBOX_GPU !== undefined || env.NEMOCLAW_SANDBOX_GPU_DEVICE !== undefined;
 }
 
-function resolvedWslDockerDesktopGpuProof(gpu: unknown): boolean | undefined {
-  if (gpu === null) return false;
+function resolvedContainerGpuProof(
+  gpu: unknown,
+): Readonly<{ providerId: string; passed: boolean }> | undefined {
   if (!gpu || typeof gpu !== "object") return undefined;
-  return (gpu as { wslDockerDesktopGpuProofPassed?: boolean }).wslDockerDesktopGpuProofPassed ===
-    true
-    ? true
+  const proof = (gpu as { containerGpuProof?: unknown }).containerGpuProof;
+  if (!proof || typeof proof !== "object") return undefined;
+  const providerId = (proof as { providerId?: unknown }).providerId;
+  const passed = (proof as { passed?: unknown }).passed;
+  return typeof providerId === "string" && typeof passed === "boolean"
+    ? { providerId, passed }
     : undefined;
 }
 
@@ -139,6 +146,7 @@ export async function handlePreflightState<
   gpuRequested,
   noGpu,
   allowDeferredN1xManagedVllm,
+  allowLegacyDgxStationQualification,
   env,
   deps,
 }: PreflightStateOptions<Gpu, SandboxEntry, Host, Config>): Promise<
@@ -184,12 +192,13 @@ export async function handlePreflightState<
     });
     const now = deps.now ?? (() => new Date());
     // Collect host facts, then require a live gateway result immediately
-    // before any runtime-backed probe. A successful gateway collection is
-    // younger than its reuse window, so the preceding host facts are current
-    // at the effect edge too.
+    // before any runtime-backed probe. `hostCollectedAt` closes the host
+    // collection before that gateway wait, so the wait is charged against the
+    // host reuse window while the host probes' own duration is not (#10670).
     let hostObservedAt = now().toISOString();
     let resumeHost = deps.assessHost();
     gpu = deps.detectGpuForReadiness();
+    let hostCollectedAt = now().toISOString();
     let resumeSandboxGpuConfig = deps.resolveSandboxGpuConfig(gpu, {
       flag: effectiveSandboxGpuFlag,
       device: effectiveSandboxGpuDevice,
@@ -199,8 +208,10 @@ export async function handlePreflightState<
     deps.assertOnboardHostReadiness(resumeHost, gpu, {
       explicitlyOptedOutGpuPassthrough: resumeSandboxGpuConfig.mode === "0",
       observedAt: hostObservedAt,
+      collectedAt: hostCollectedAt,
       now,
       allowDeferredN1xOnboarding,
+      allowLegacyDgxStationQualification,
       resuming: true,
     });
     // A full detector can run the bounded ARM64 WSL Docker GPU proof. Keep it
@@ -208,22 +219,25 @@ export async function handlePreflightState<
     // intent. Replace gateway and host facts after that effect before any
     // later runtime probe.
     if (resumeSandboxGpuConfig.mode !== "0") {
-      gpu = deps.detectGpu();
       hostObservedAt = now().toISOString();
+      gpu = deps.detectGpu();
       resumeHost = deps.assessHost();
+      hostCollectedAt = now().toISOString();
       resumeSandboxGpuConfig = deps.resolveSandboxGpuConfig(gpu, {
         flag: effectiveSandboxGpuFlag,
         device: effectiveSandboxGpuDevice,
         env,
       });
       await deps.assertGatewayReadiness();
-      const wslDockerDesktopGpuProofPassed = resolvedWslDockerDesktopGpuProof(gpu);
+      const containerGpuProof = resolvedContainerGpuProof(gpu);
       deps.assertOnboardHostReadiness(resumeHost, gpu, {
         explicitlyOptedOutGpuPassthrough: false,
         observedAt: hostObservedAt,
+        collectedAt: hostCollectedAt,
         now,
-        ...(wslDockerDesktopGpuProofPassed === undefined ? {} : { wslDockerDesktopGpuProofPassed }),
+        ...(containerGpuProof === undefined ? {} : { containerGpuProof }),
         allowDeferredN1xOnboarding,
+        allowLegacyDgxStationQualification,
         resuming: true,
         presentAdvisories: false,
       });

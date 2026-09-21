@@ -5,13 +5,12 @@ import {
   type ManagedWorkloadAuthority,
   readManagedWorkloadAuthority,
 } from "../../../src/lib/onboard/workload/authority.ts";
-import { managedImageRuntimeIdentity } from "../../../src/lib/onboard/managed-image/contract.ts";
-import { assertManagedBootstrapIdentity } from "../../../src/lib/onboard/managed-bootstrap/adapter.ts";
-import { MANAGED_BOOTSTRAP_TRAMPOLINE_EXECUTABLE } from "../../../src/lib/onboard/managed-bootstrap/docker.ts";
-import { MANAGED_BOOTSTRAP_REQUEST_FILE } from "../../../src/lib/onboard/managed-bootstrap/envelope.ts";
-import { fingerprintManagedStartupProfile } from "../../../src/lib/onboard/managed-startup/profile.ts";
-import { OPENSHELL_SANDBOX_SUPERVISOR_ARGV } from "../../../src/lib/onboard/sandbox-create-launch.ts";
+import {
+  OPENSHELL_MAIN_PROCESS_SPEC_ENV,
+  parseOpenShellMainProcessSpecEnvValue,
+} from "../../../src/lib/onboard/docker-startup-command-env.ts";
 import { load as loadSandboxRegistry } from "../../../src/lib/state/registry/persistence.ts";
+import { OPENSHELL_GATEWAY_START_LINE } from "../../helpers/openshell-gateway-start-output.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import {
   type HostCliClient,
@@ -54,13 +53,23 @@ export function normalizeImmutableImageContentId(value: unknown): unknown {
     : value;
 }
 
+export function hermesRuntimeIntendedCommand(
+  runtimeEnvironment: Readonly<Record<string, string>>,
+): readonly string[] {
+  const mainProcessSpec = runtimeEnvironment[OPENSHELL_MAIN_PROCESS_SPEC_ENV];
+  if (mainProcessSpec !== undefined) {
+    return parseOpenShellMainProcessSpecEnvValue(mainProcessSpec).command;
+  }
+  return (runtimeEnvironment.OPENSHELL_SANDBOX_COMMAND ?? "").trim().split(/\s+/u).filter(Boolean);
+}
+
 export function assertHermesGpuStartupOutputContract(
   gpuRoute: HermesGpuStartupProofOptions["gpuRoute"],
   runtimeProviderId: RuntimeProviderPrerequisite["id"],
   installText: string,
 ): void {
   expect(installText).toContain(`Container runtime: ${runtimeProviderId}`);
-  expect(installText).toMatch(/Starting OpenShell .*gateway/u);
+  expect(installText).toMatch(OPENSHELL_GATEWAY_START_LINE);
   expect(installText).toMatch(/gateway is healthy/u);
   expect(installText).not.toContain("Reusing healthy NemoClaw gateway.");
   expect(installText).not.toMatch(/Reusing existing .*gateway/u);
@@ -292,13 +301,12 @@ export async function assertHermesGpuStartupProof({
       .filter((entry) => entry.includes("="))
       .map((entry) => entry.split(/=(.*)/su).slice(0, 2) as [string, string]),
   );
-  const intendedCommand = runtimeEnvironment.OPENSHELL_SANDBOX_COMMAND ?? "";
-  const intendedTokens = intendedCommand.trim().split(/\s+/u).filter(Boolean);
+  const intendedTokens = hermesRuntimeIntendedCommand(runtimeEnvironment);
   const commandBoundary = {
     cmd: runtimeConfig.Cmd,
     entrypoint: runtimeConfig.Entrypoint,
     image: runtimeInspection?.Image ?? runtimeInspection?.ImageName ?? runtimeConfig.Image,
-    has_openshell_sandbox_command: Boolean(intendedCommand),
+    has_openshell_sandbox_command: intendedTokens.length > 0,
     command_is_sleep_infinity:
       intendedTokens.length === 2 &&
       intendedTokens[0] === "sleep" &&
@@ -307,40 +315,8 @@ export async function assertHermesGpuStartupProof({
       intendedTokens.length > 0 &&
       ["nemoclaw-start", "/usr/local/bin/nemoclaw-start"].includes(intendedTokens.at(-1) ?? ""),
   };
-  const verifiedManagedAuthority = managedAuthority!;
-  expect(verifiedManagedAuthority.agent).toBe("hermes");
-  const managedBootstrapCommand = commandBoundary.cmd;
-  expect(Array.isArray(managedBootstrapCommand)).toBe(true);
-  if (!Array.isArray(managedBootstrapCommand)) {
-    throw new TypeError("managed bootstrap command must be an argument array");
-  }
-  const bootstrapIdentity = managedBootstrapCommand[5];
-  expect(typeof bootstrapIdentity).toBe("string");
-  if (typeof bootstrapIdentity !== "string") {
-    throw new TypeError("managed bootstrap identity must be a string");
-  }
-  assertManagedBootstrapIdentity(bootstrapIdentity);
-  const agentIdentity = managedImageRuntimeIdentity(verifiedManagedAuthority.agent);
-  expect(commandBoundary.entrypoint).toEqual([MANAGED_BOOTSTRAP_TRAMPOLINE_EXECUTABLE]);
-  expect(managedBootstrapCommand).toEqual([
-    "--agent",
-    verifiedManagedAuthority.agent,
-    "--profile-fingerprint",
-    fingerprintManagedStartupProfile(verifiedManagedAuthority.profile),
-    "--bootstrap-identity",
-    bootstrapIdentity,
-    "--agent-uid",
-    String(agentIdentity.uid),
-    "--agent-gid",
-    String(agentIdentity.gid),
-    "--agent-workdir",
-    agentIdentity.workdir,
-    "--request-file",
-    MANAGED_BOOTSTRAP_REQUEST_FILE,
-    "--",
-    ...OPENSHELL_SANDBOX_SUPERVISOR_ARGV,
-  ]);
   expect(commandBoundary.has_openshell_sandbox_command).toBe(true);
+  expect(runtimeEnvironment.NEMOCLAW_MANAGED_BOOTSTRAP_IDENTITY).toBeUndefined();
   assertHermesContainerImageAuthority(
     commandBoundary.image,
     managedImageReference,

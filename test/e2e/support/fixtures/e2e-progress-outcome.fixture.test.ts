@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
 import { setTimeout as sleep } from "node:timers/promises";
 
 import { test } from "../../fixtures/e2e-test.ts";
@@ -45,6 +46,24 @@ test.runIf(outcome === "cleanup-failed")(
     cleanup.add("deterministic cleanup failure", async () => {
       await sleep(25);
       throw new Error("deterministic cleanup failure");
+    });
+  },
+);
+
+test.runIf(outcome === "cleanup-stalled")(
+  "stalls after cleanup starts",
+  {
+    meta: {
+      e2ePhases: ["enter stalled cleanup case", "run stalled E2E cleanup"],
+    },
+  },
+  ({ cleanup, expect, progress }) => {
+    const timeoutReady = process.env.NEMOCLAW_E2E_PROGRESS_TIMEOUT_READY;
+    expect(timeoutReady, "timeout-ready marker path is required").toBeTruthy();
+    progress.phase("run stalled E2E cleanup");
+    cleanup.add("deterministic stalled cleanup", async () => {
+      fs.writeFileSync(timeoutReady!, "ready");
+      await sleep(60_000);
     });
   },
 );

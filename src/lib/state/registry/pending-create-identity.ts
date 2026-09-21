@@ -9,6 +9,10 @@ const KEYS = new Set([
   "gatewayPort",
   "lifecycleGeneration",
   "createAttemptNonce",
+  "managedBootstrapIdentity",
+  "exactFinalHandoffCommitStarted",
+  "exactFinalHandoffRuntimeId",
+  "exactFinalHandoffAcknowledged",
   "route",
   "sandboxIdentityFingerprint",
   "sandboxName",
@@ -51,6 +55,23 @@ export function normalizePendingSandboxCreateIdentity(
     (value.createAttemptNonce !== undefined &&
       (typeof value.createAttemptNonce !== "string" ||
         !/^[0-9a-f]{62}$/u.test(value.createAttemptNonce))) ||
+    (value.managedBootstrapIdentity !== undefined &&
+      (typeof value.managedBootstrapIdentity !== "string" ||
+        !SHA256_DIGEST_PATTERN.test(value.managedBootstrapIdentity))) ||
+    (value.exactFinalHandoffAcknowledged !== undefined &&
+      value.exactFinalHandoffAcknowledged !== true) ||
+    (value.exactFinalHandoffCommitStarted !== undefined &&
+      value.exactFinalHandoffCommitStarted !== true) ||
+    (value.exactFinalHandoffRuntimeId !== undefined &&
+      (typeof value.exactFinalHandoffRuntimeId !== "string" ||
+        !SHA256_DIGEST_PATTERN.test(value.exactFinalHandoffRuntimeId))) ||
+    (value.exactFinalHandoffRuntimeId !== undefined &&
+      value.exactFinalHandoffCommitStarted !== true) ||
+    (value.route === "compatibility" &&
+      value.exactFinalHandoffCommitStarted === true &&
+      value.exactFinalHandoffRuntimeId === undefined) ||
+    (value.exactFinalHandoffAcknowledged === true &&
+      value.exactFinalHandoffCommitStarted !== true) ||
     (value.route !== "none" && value.route !== "native" && value.route !== "compatibility")
   ) {
     throw new Error(
@@ -66,6 +87,18 @@ export function normalizePendingSandboxCreateIdentity(
     lifecycleGeneration: value.lifecycleGeneration,
     sandboxIdentityFingerprint: value.sandboxIdentityFingerprint,
     ...(value.createAttemptNonce ? { createAttemptNonce: value.createAttemptNonce } : {}),
+    ...(typeof value.managedBootstrapIdentity === "string"
+      ? { managedBootstrapIdentity: value.managedBootstrapIdentity }
+      : {}),
     route: value.route,
+    ...(value.exactFinalHandoffCommitStarted === true
+      ? { exactFinalHandoffCommitStarted: true as const }
+      : {}),
+    ...(typeof value.exactFinalHandoffRuntimeId === "string"
+      ? { exactFinalHandoffRuntimeId: value.exactFinalHandoffRuntimeId }
+      : {}),
+    ...(value.exactFinalHandoffAcknowledged === true
+      ? { exactFinalHandoffAcknowledged: true as const }
+      : {}),
   };
 }

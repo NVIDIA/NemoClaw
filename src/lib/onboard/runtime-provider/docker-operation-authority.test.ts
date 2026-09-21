@@ -6,13 +6,17 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   createContextCapture as contextCapture,
   createDriftingContextCapture,
 } from "../../../../test/helpers/docker-operation-authority-test-helpers";
 import { prependInstalledUserLocalOpenshellPath } from "../openshell-pin";
-import { createDockerLlamaCppOperationAuthority } from "./docker-llama-cpp-operation";
+import { detectWslDockerDesktopStatus } from "../wsl-docker-desktop-gpu";
+import {
+  createDockerLlamaCppHostLocalOperation,
+  createDockerLlamaCppOperationAuthority,
+} from "./docker-llama-cpp-operation";
 import {
   createDockerOperationAuthority,
   dockerOperationBindingSha256,
@@ -40,6 +44,12 @@ function fakeDockerScript(script: string): string {
   writeFakeExecutable(root, "docker", script);
   return root;
 }
+
+beforeEach(() => {
+  const executableRoot = fakeDocker("qualified");
+  writeFakeExecutable(executableRoot, "ssh", "exit 0");
+  vi.stubEnv("PATH", executableRoot);
+});
 
 afterEach(() => {
   vi.unstubAllEnvs();
@@ -477,5 +487,57 @@ describe("Docker operation authority", () => {
         DOCKER_HOST: "tcp://spark.example.test:2375",
       }),
     ).toThrow(/^Managed llama\.cpp requires verified TLS for remote Docker TCP endpoints\.$/u);
+  });
+});
+
+vi.mock("../wsl-docker-desktop-gpu", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../wsl-docker-desktop-gpu")>()),
+  detectWslDockerDesktopStatus: vi.fn(() => "not-docker-desktop" as const),
+}));
+
+describe("managed llama.cpp operation probe strategy", () => {
+  const env = { HOME: "/tmp/nemoclaw-home", DOCKER_CONTEXT: "spark" };
+  const input = {} as Parameters<
+    ReturnType<typeof createDockerLlamaCppHostLocalOperation>["createLlamaCppLifecycle"]
+  >[0];
+
+  it.each([
+    { status: "docker-desktop" as const, loopbackProbe: "host-process" },
+    { status: "not-docker-desktop" as const, loopbackProbe: undefined },
+    { status: "unknown" as const, loopbackProbe: undefined },
+  ])(
+    "defaults loopbackProbe to $loopbackProbe when the WSL Docker Desktop status is $status",
+    ({ status, loopbackProbe }) => {
+      vi.mocked(detectWslDockerDesktopStatus).mockReturnValue(status);
+      const createLifecycle = vi.fn(() => ({}) as never);
+      const operation = createDockerLlamaCppHostLocalOperation(
+        env,
+        contextCapture("ssh://nvidia@spark.example.test"),
+        undefined,
+        createLifecycle,
+      );
+
+      operation.createLlamaCppLifecycle(input);
+
+      expect(createLifecycle).toHaveBeenCalledExactlyOnceWith({ ...input, loopbackProbe });
+    },
+  );
+
+  it("keeps a caller-selected host-process probe outside Docker Desktop WSL", () => {
+    vi.mocked(detectWslDockerDesktopStatus).mockReturnValue("not-docker-desktop");
+    const createLifecycle = vi.fn(() => ({}) as never);
+    const operation = createDockerLlamaCppHostLocalOperation(
+      env,
+      contextCapture("ssh://nvidia@spark.example.test"),
+      undefined,
+      createLifecycle,
+    );
+
+    operation.createLlamaCppLifecycle({ ...input, loopbackProbe: "host-process" });
+
+    expect(createLifecycle).toHaveBeenCalledExactlyOnceWith({
+      ...input,
+      loopbackProbe: "host-process",
+    });
   });
 });

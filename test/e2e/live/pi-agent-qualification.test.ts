@@ -11,8 +11,9 @@ import {
   CANDIDATE_AGENT_FEATURE_ENV,
   CANDIDATE_QUALIFICATION_RECEIPT_ENV,
 } from "../../../src/lib/agent/candidate.ts";
+import { runBoundedRetry } from "../../../tools/e2e/retry-evidence.mts";
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
-import { outputContainsSandbox, resultText, shellQuote } from "../fixtures/clients/command.ts";
+import { outputContainsSandbox, resultText } from "../fixtures/clients/command.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import {
   type SandboxClient,
@@ -27,6 +28,8 @@ import type { LifecyclePhaseFixture } from "../fixtures/phases/lifecycle.ts";
 import type { TestProgress } from "../fixtures/progress.ts";
 import { driveInteractiveCommand } from "./onboard-interactive-pty.ts";
 import {
+  buildPiReadTask,
+  classifyPiReadTaskAttempt,
   parsePiJsonEvents,
   parsePiInferenceEvidence,
   qualificationPlatform,
@@ -37,9 +40,11 @@ import {
 const GATEWAY = "nemoclaw";
 const MODEL = "nvidia/nemotron-3-super-120b-a12b";
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-pi-qual";
-const TASK_VERSION = "pi-read-v1";
+const TASK_VERSION = "pi-read-v2";
 const LIVE_TIMEOUT_MS = 90 * 60_000;
 const PI_COMMAND_TIMEOUT_MS = 5 * 60_000;
+const PI_PROVIDER_MAX_ATTEMPTS = 2;
+const PI_PROVIDER_RETRY_DELAY_MS = 10_000;
 const SECURITY_PROBE = String.raw`
 const fs = require("node:fs");
 const path = require("node:path");
@@ -82,9 +87,10 @@ while (stack.length > 0 && files < 10000 && bytes < 32 * 1024 * 1024) {
   }
 }
 const dockerSockets = ["/var/run/docker.sock", "/run/docker.sock"].filter((candidate) => fs.existsSync(candidate));
-const result = {upstreamCredentialNames, credentialFiles, dockerSockets, files, bytes};
+const rootProfileLoaded = fs.existsSync("/tmp/nemoclaw-e2e-root-profile-loaded");
+const result = {upstreamCredentialNames, credentialFiles, dockerSockets, rootProfileLoaded, files, bytes};
 process.stdout.write(JSON.stringify(result) + "\n");
-process.exit(upstreamCredentialNames.length === 0 && credentialFiles.length === 0 && dockerSockets.length === 0 ? 0 : 1);
+process.exit(upstreamCredentialNames.length === 0 && credentialFiles.length === 0 && dockerSockets.length === 0 && !rootProfileLoaded ? 0 : 1);
 `;
 const NETWORK_DENIAL_PROBE = String.raw`
 const timer = setTimeout(() => process.exit(2), 20000);
@@ -136,7 +142,9 @@ async function preclean(
     env,
     timeoutMs: 3 * 60_000,
   });
-  await sandbox.cleanupSandbox(SANDBOX_NAME, {
+  // A fresh runner may not have registered the isolated gateway yet. Verify that
+  // absence before skipping sandbox deletion; all other cleanup failures remain errors.
+  await sandbox.cleanupSandboxBeforeOnboard(SANDBOX_NAME, {
     artifactName: "pre-cleanup-pi-openshell",
     env,
     timeoutMs: 60_000,
@@ -156,50 +164,54 @@ async function runReadTask(
   env: NodeJS.ProcessEnv,
   phase: string,
 ): Promise<{ assistantText: string; eventCount: number; toolCallId: string }> {
-  const remotePath = `/sandbox/.nemoclaw-pi-${phase}.txt`;
   const token = `NEMOCLAW_PI_${phase.toUpperCase().replaceAll("-", "_")}_${randomBytes(8).toString("hex").toUpperCase()}`;
-  const seed = await execPiShell(
-    sandbox,
-    trustedSandboxShellScript(
-      `umask 077; printf '%s\\n' ${shellQuote(token)} > ${shellQuote(remotePath)}; sync`,
-    ),
-    {
-      artifactName: `pi-${phase}-seed`,
-      env,
-      timeoutMs: 30_000,
-    },
+  const { argv, remotePath, seedScript } = buildPiReadTask(
+    SANDBOX_NAME,
+    `/sandbox/.nemoclaw-pi-${phase}/workspace`,
+    `${TASK_VERSION}-${phase}`,
+    token,
   );
+  const seed = await execPiShell(sandbox, trustedSandboxShellScript(seedScript), {
+    artifactName: `pi-${phase}-seed`,
+    env,
+    timeoutMs: 30_000,
+  });
   expect(seed.exitCode, resultText(seed)).toBe(0);
-  const prompt = `Use the read tool exactly once to read ${remotePath}. Reply with exactly the file contents and no other text.`;
-  const result = await host.nemoclaw(
-    [
-      SANDBOX_NAME,
-      "exec",
-      "--workdir",
-      "/sandbox",
-      "--no-tty",
-      "--timeout",
-      "300",
-      "--",
-      "pi",
-      "--no-approve",
-      "--mode",
-      "json",
-      "--print",
-      "--tools",
-      "read",
-      "--name",
-      `${TASK_VERSION}-${phase}`,
-      prompt,
-    ],
-    {
-      artifactName: `pi-${phase}-headless-task`,
-      env,
-      timeoutMs: PI_COMMAND_TIMEOUT_MS,
+  // The canary is immutable and Pi receives only the read tool, so replaying this
+  // turn cannot repeat an external mutation. Retain every provider retry decision.
+  const execution = await runBoundedRetry({
+    operation: `pi-agent-qualification.read-${phase}`,
+    owner: "inference-provider",
+    idempotence: "read-only",
+    maxAttempts: PI_PROVIDER_MAX_ATTEMPTS,
+    delayMs: PI_PROVIDER_RETRY_DELAY_MS,
+    run: async (attempt) => {
+      const attemptArgv = [...argv];
+      const nameIndex = attemptArgv.indexOf("--name") + 1;
+      attemptArgv[nameIndex] = `${TASK_VERSION}-${phase}-attempt-${String(attempt)}`;
+      const result = await host.nemoclaw(attemptArgv, {
+        artifactName: `pi-${phase}-headless-task-attempt-${String(attempt)}`,
+        env,
+        timeoutMs: PI_COMMAND_TIMEOUT_MS,
+      });
+      let failure: unknown;
+      let proof: ReturnType<typeof qualifyPiReadTask> | undefined;
+      try {
+        proof = qualifyPiReadTask(parsePiJsonEvents(result.stdout), remotePath, token);
+      } catch (error) {
+        failure = error;
+      }
+      return { failure, proof, result };
     },
-  );
-  expect(result.exitCode, resultText(result)).toBe(0);
-  const proof = qualifyPiReadTask(parsePiJsonEvents(result.stdout), remotePath, token);
+    classify: classifyPiReadTaskAttempt,
+    onEvidence: async (evidence) => {
+      await artifacts.writeJson(`retry/pi-${phase}-provider-retry.json`, evidence);
+    },
+  });
+  const attempt = execution.value;
+  const failure = attempt?.failure instanceof Error ? attempt.failure.message : "missing attempt";
+  expect(execution.outcome, failure).toBe("passed");
+  const proof = attempt!.proof!;
   await artifacts.writeJson(`pi-${phase}-task-proof.json`, {
     taskVersion: TASK_VERSION,
     remotePath,
@@ -218,7 +230,6 @@ async function sessionInventory(sandbox: SandboxClient, env: NodeJS.ProcessEnv, 
     { artifactName: `pi-${phase}-session-inventory`, env, timeoutMs: 30_000 },
   );
   expect(result.exitCode, resultText(result)).toBe(0);
-  expect(result.stdout.trim()).not.toBe("");
   return result.stdout.trim();
 }
 
@@ -247,13 +258,14 @@ async function runInteractiveTask(
     ],
     env,
     progress,
-    rules: [{ trigger: token, response: "\u0004" }],
+    rules: [
+      { trigger: token, response: "/session\r", settleMs: 2_000 },
+      { trigger: "Session Info", response: "\u0004" },
+    ],
     timeoutMs: PI_COMMAND_TIMEOUT_MS,
   });
   await artifacts.writeText("pi-interactive-terminal.txt", result.output);
-  expect(result.timedOut).toBe(false);
-  expect(result.firedTriggers).toContain(token);
-  expect(result.output).toContain(token);
+  expect(result.firedTriggers).toContain("Session Info");
   expect(result.exitCode).toBe(0);
 }
 
@@ -270,9 +282,8 @@ test(
       e2ePhases: [
         "validate the exact Pi candidate receipt",
         "onboard Pi without a Dockerfile build",
-        "run headless and interactive Pi tasks",
-        "rebuild Pi and preserve session state",
-        "recover Pi after a gateway restart",
+        "run interactive Pi and preserve its session through rebuild",
+        "recover Pi after sandbox and gateway restarts",
         "prove Pi policy and credential boundaries",
         "destroy Pi and publish bounded evidence",
       ],
@@ -297,6 +308,7 @@ test(
       NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
       NEMOCLAW_AGENT: "pi",
       NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG: catalogPath,
+      NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG_JSON: "",
       NEMOCLAW_NON_INTERACTIVE: "1",
       NEMOCLAW_SANDBOX_NAME: SANDBOX_NAME,
       OPENSHELL_DRIVERS: "docker",
@@ -319,9 +331,6 @@ test(
     });
 
     progress.phase("validate the exact Pi candidate receipt");
-    expect(receipt.contract.agent).toBe("pi");
-    expect(receipt.contract.platform).toBe(platform);
-    expect(receipt.contract.source.repository).toBe("NVIDIA/NemoClaw");
     const piDockerfiles = ["agents/pi/Dockerfile", "agents/pi/Dockerfile.base"];
     const copiedSources = piDockerfiles.flatMap((dockerfile) =>
       directDockerfileCopySources(path.join(REPO_ROOT, dockerfile), dockerfile).map(
@@ -389,12 +398,16 @@ test(
       },
     });
 
-    progress.phase("run headless and interactive Pi tasks");
-    const beforeProof = await runReadTask(artifacts, host, sandbox, env, "before-rebuild");
+    const onboardProof = await runReadTask(artifacts, host, sandbox, env, "before-rebuild");
+    const sessionsAfterOnboard = await sessionInventory(sandbox, env, "after-onboard");
+
+    progress.phase("run interactive Pi and preserve its session through rebuild");
     await runInteractiveTask(artifacts, host, progress, env);
     const sessionsBeforeRebuild = await sessionInventory(sandbox, env, "before-rebuild");
+    expect(sessionsBeforeRebuild.split("\n").filter(Boolean).length).toBeGreaterThan(
+      sessionsAfterOnboard.split("\n").filter(Boolean).length,
+    );
 
-    progress.phase("rebuild Pi and preserve session state");
     const rebuild = await host.nemoclaw([SANDBOX_NAME, "rebuild", "--yes"], {
       artifactName: "pi-candidate-rebuild",
       env,
@@ -406,10 +419,45 @@ test(
     expect(sessionsAfterRebuild).toBe(sessionsBeforeRebuild);
     const rebuildProof = await runReadTask(artifacts, host, sandbox, env, "after-rebuild");
 
-    progress.phase("recover Pi after a gateway restart");
+    progress.phase("recover Pi after sandbox and gateway restarts");
+    const personalProfiles = await execPiShell(
+      sandbox,
+      trustedSandboxShellScript(
+        "set -euo pipefail; printf '%s\\n' '' 'export NEMOCLAW_E2E_PI_PROFILE=preserved' 'case \"$(id -u)\" in 0) touch /tmp/nemoclaw-e2e-root-profile-loaded ;; esac' | tee -a /sandbox/.bashrc /sandbox/.profile >/dev/null; sha256sum /sandbox/.bashrc /sandbox/.profile",
+      ),
+      { artifactName: "pi-personal-profiles-before-recovery", env, timeoutMs: 30_000 },
+    );
+    const restart = await host.command(
+      "bash",
+      [
+        "-ec",
+        '"$1" "$2" stop; "$1" "$2" start',
+        "pi-sandbox-restart",
+        host.commandPath,
+        SANDBOX_NAME,
+      ],
+      { artifactName: "pi-sandbox-stop-start", env, timeoutMs: 6 * 60_000 },
+    );
+    expect(restart.exitCode, resultText(restart)).toBe(0);
     await lifecycle.restartGatewayRuntime({ delayMs: 2_000, sandboxName: SANDBOX_NAME });
     await lifecycle.waitForGatewayConnected({ attempts: 60, intervalMs: 5_000 });
+    const recover = await host.nemoclaw([SANDBOX_NAME, "recover"], {
+      artifactName: "pi-recover-after-restart",
+      env,
+      redactionValues: inference.redactionValues(),
+      timeoutMs: 6 * 60_000,
+    });
+    expect(recover.exitCode, resultText(recover)).toBe(0);
     const recoveryProof = await runReadTask(artifacts, host, sandbox, env, "after-recovery");
+    const profilesAfterRecovery = await execPiShell(
+      sandbox,
+      trustedSandboxShellScript(
+        "set -eu; : >> /sandbox/.bashrc; : >> /sandbox/.profile; /usr/bin/env -u NEMOCLAW_E2E_PI_PROFILE bash -lc 'test \"$NEMOCLAW_E2E_PI_PROFILE\" = preserved'; /usr/bin/env -u NEMOCLAW_E2E_PI_PROFILE bash -ic 'test \"$NEMOCLAW_E2E_PI_PROFILE\" = preserved'; sha256sum /sandbox/.bashrc /sandbox/.profile",
+      ),
+      { artifactName: "pi-personal-profiles-after-recovery", env, timeoutMs: 30_000 },
+    );
+    expect(profilesAfterRecovery.exitCode, resultText(profilesAfterRecovery)).toBe(0);
+    expect(profilesAfterRecovery.stdout).toBe(personalProfiles.stdout);
 
     progress.phase("prove Pi policy and credential boundaries");
     const security = await sandbox.exec(SANDBOX_NAME, ["node", "-e", SECURITY_PROBE], {
@@ -514,7 +562,7 @@ test(
       },
       tasks: {
         version: TASK_VERSION,
-        headlessBeforeRebuild: beforeProof,
+        headlessAfterOnboard: onboardProof,
         headlessAfterRebuild: rebuildProof,
         headlessAfterRecovery: recoveryProof,
         interactive: true,

@@ -18,19 +18,15 @@ const E2E_WORKFLOW_CONTRACTS = [
   "test/e2e/support/hermes-workflow-boundary.test.ts",
   "test/automation/pull-requests/hosted-runner-recovery-workflow.test.ts",
   "test/e2e/support/inference-switch-workflow-boundary.test.ts",
-  "test/e2e/support/llama-cpp-dgx-spark-qualification-workflow.test.ts",
   "test/e2e/support/jetson-workflow-boundary.test.ts",
   "test/e2e/support/managed-image-protected-runtime-workflow.test.ts",
   "test/e2e/support/mcp-workflow-boundary.test.ts",
   "test/e2e/support/mcp-workflow-compatibility.test.ts",
   "test/e2e/support/native-runtime-qualification-producer-workflow.test.ts",
-  "test/e2e/support/openclaw-plugin-runtime-exdev-workflow-boundary.test.ts",
   "test/e2e/support/onboard-timeout-contract.test.ts",
   "test/e2e/support/openshell-gateway-auth-contract-workflow-boundary.test.ts",
   "test/e2e/support/openshell-gateway-upgrade-workflow-boundary.test.ts",
   "test/e2e/support/prepare-e2e-workflow-boundary.test.ts",
-  "test/e2e/support/runner-pressure-workflow-boundary.test.ts",
-  "test/e2e/support/sandbox-images-workflow-boundary.test.ts",
   "test/e2e/support/security-posture-workflow-boundary.test.ts",
   "test/e2e/support/shared-e2e-workflow-boundary.test.ts",
   "test/e2e/support/staging-brev-launchable-identity-workflow-boundary.test.ts",
@@ -46,6 +42,38 @@ function runTests(...tests: string[]): () => string[] {
 
 export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
   {
+    pattern:
+      /(?:^|\/)(?:scripts\/generate-openclaw-config\.mts|agents\/hermes\/(?:generate-config\.ts|config\/[^/]+\.ts|managed_policy\.py|seed-dashboard-config\.py))$/,
+    testsToRun: runTests("test/generation/providerless-agent-config.test.ts"),
+  },
+
+  {
+    pattern: /(?:^|\/)(?:scripts\/checks\/read-only-fixer\.py|\.pre-commit-config\.yaml)$/,
+    testsToRun: runTests(
+      "test/repository/publication-validation.test.ts",
+      "test/repository/checks-runner.test.ts",
+    ),
+  },
+  {
+    pattern:
+      /(?:^|\/)(?:oxlint\.config\.ts|oxc\.ignore-patterns\.ts|tsconfig(?:\.cli)?\.json|nemoclaw\/tsconfig(?:\.test)?\.json|\.pre-commit-config\.yaml)$/,
+    testsToRun: runTests(
+      "test/automation/lint/config-export-complexity.test.ts",
+      "test/automation/lint/adapters.test.ts",
+      "test/automation/lint/plugin.test.ts",
+      "test/automation/lint/correctness.test.ts",
+    ),
+  },
+  {
+    pattern:
+      /(?:^|\/)(?:oxfmt\.config\.ts|oxc\.ignore-patterns\.ts|package\.json|\.pre-commit-config\.yaml)$/,
+    testsToRun: runTests("test/automation/lint/source-formatting.test.ts"),
+  },
+  {
+    pattern: /(?:^|\/)scripts\/lib\/sandbox-init\.sh$/,
+    testsToRun: runTests("test/runtime/sandbox/sandbox-init.test.ts"),
+  },
+  {
     pattern: /(?:^|\/)\.github\/workflows\/[^/]+\.ya?ml$/,
     testsToRun: runTests("test/repository/github-actions-workflow-names.test.ts"),
   },
@@ -57,8 +85,6 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
       "test/onboarding/onboard-extra-provider-reconciliation.test.ts",
       "test/onboarding/onboard-fresh-create-identity.test.ts",
       "test/onboarding/onboard-installer-restore-intent.test.ts",
-      "test/onboarding/onboard-managed-image-buildless-e2e.test.ts",
-      "test/onboarding/onboard-mcp-observability-redirect.test.ts",
       "test/onboarding/onboard-messaging.test.ts",
       "test/onboarding/onboard-prepared-build-context.test.ts",
       "test/onboarding/onboard-reservation-recreate.test.ts",
@@ -129,6 +155,14 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
     testsToRun: runTests("test/agents/hermes/hermes-cron-restore-drain-patch.test.ts"),
   },
   {
+    pattern: /(?:^|\/)agents\/hermes\/patch-external-supervisor-recovery\.py$/,
+    testsToRun: runTests("test/agents/hermes/hermes-external-supervisor-recovery-patch.test.ts"),
+  },
+  {
+    pattern: /(?:^|\/)agents\/hermes\/patch-external-supervisor-restart\.py$/,
+    testsToRun: runTests("test/agents/hermes/hermes-external-supervisor-restart-patch.test.ts"),
+  },
+  {
     pattern: /(?:^|\/)agents\/hermes\/patch-session-list-preview\.py$/,
     testsToRun: runTests("test/agents/hermes/hermes-session-list-preview-patch.test.ts"),
   },
@@ -137,16 +171,23 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
     testsToRun: (_file, match) => {
       if (match[1] === "agents/hermes/") {
         return [
+          "test/generation/providerless-agent-config.test.ts",
           "src/lib/onboard/experimental/hermes-portable-build-context.test.ts",
           "src/lib/onboard/managed-startup-profile.test.ts",
           "test/agents/hermes/hermes-mcp-runtime-capability.test.ts",
+          "test/mcp/mcp-tool-discovery-image-contract.test.ts",
         ];
       }
       return match[1]
-        ? ["src/lib/onboard/managed-startup-profile.test.ts"]
+        ? [
+            "src/lib/onboard/managed-startup-profile.test.ts",
+            "test/mcp/mcp-tool-discovery-image-contract.test.ts",
+          ]
         : [
+            "test/generation/providerless-agent-config.test.ts",
             "src/lib/onboard/managed-startup-profile.test.ts",
             "src/lib/sandbox/optimized-build-context-copy-sources.test.ts",
+            "test/mcp/mcp-tool-discovery-image-contract.test.ts",
           ];
     },
   },
@@ -206,6 +247,10 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
   {
     pattern: /(?:^|\/)scripts\/setup-jetson\.sh$/,
     testsToRun: runTests("test/install/setup-jetson.test.ts"),
+  },
+  {
+    pattern: /(?:^|\/)scripts\/backup-workspace\.sh$/,
+    testsToRun: runTests("test/scripts/backup-workspace.test.ts"),
   },
   {
     pattern: /(?:^|\/)tools\/e2e\/contracts\/v1\/jetson-dispatch\.json$/,
@@ -294,11 +339,17 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
   },
   {
     pattern: /(?:^|\/)\.github\/workflows\/e2e\.yaml$/,
-    testsToRun: runTests(...E2E_WORKFLOW_CONTRACTS),
+    testsToRun: runTests(
+      ...E2E_WORKFLOW_CONTRACTS,
+      "test/e2e/support/openshell-sdk-install.test.ts",
+    ),
   },
   {
     pattern: /(?:^|\/)\.github\/workflows\/e2e-standard-profile\.yaml$/,
-    testsToRun: runTests("test/e2e/support/standard-profile-workflow-boundary.test.ts"),
+    testsToRun: runTests(
+      "test/e2e/support/standard-profile-workflow-boundary.test.ts",
+      "test/e2e/support/openshell-sdk-install.test.ts",
+    ),
   },
   {
     pattern: /(?:^|\/)\.github\/workflows\/portable-profile-e2e\.yaml$/,
@@ -321,10 +372,6 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
     testsToRun: runTests("test/e2e/support/dockerhub-auth-workflow-boundary.test.ts"),
   },
   {
-    pattern: /(?:^|\/)\.github\/workflows\/(?:pr-self-hosted|sandbox-images-and-e2e)\.yaml$/,
-    testsToRun: runTests("test/e2e/support/sandbox-images-workflow-boundary.test.ts"),
-  },
-  {
     pattern: /(?:^|\/)\.github\/workflows\/code-scanning\.yaml$/,
     testsToRun: runTests("test/repository/code-scanning-workflow.test.ts"),
   },
@@ -341,7 +388,7 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
   },
   {
     pattern: /(?:^|\/)\.github\/workflows\/pr-review-advisor\.yaml$/,
-    testsToRun: runTests("test/e2e/support/e2e-operations-workflow-boundary.test.ts"),
+    testsToRun: runTests("test/e2e/support/pr-review-advisor-workflow-boundary.test.ts"),
   },
   {
     pattern: /(?:^|\/)tools\/pr-review-advisor\/openshell-policy\.yaml$/,
@@ -368,8 +415,17 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
     testsToRun: runTests("test/automation/e2e/platform-vitest-main-workflow.test.ts"),
   },
   {
+    pattern: /(?:^|\/)tools\/e2e\/full-e2e-timeout-contract\.mts$/,
+    testsToRun: runTests(
+      "test/automation/e2e/e2e-recommendations.test.ts",
+      "test/automation/e2e/platform-vitest-main-workflow.test.ts",
+      "test/e2e/support/portable-profile-rootless-runtime-workflow.test.ts",
+      "test/e2e/support/security-posture-workflow-boundary.test.ts",
+    ),
+  },
+  {
     pattern:
-      /(?:^|\/)\.agents\/skills\/(?:nemoclaw-maintainer-cut-release-tag\/SKILL\.md|nemoclaw-maintainer-evening\/SKILL\.md|nemoclaw-maintainer-release-notes\/SKILL\.md|nemoclaw-maintainer-policies\/references\/release-train\.md)$/,
+      /(?:^|\/)\.agents\/skills\/(?:nemoclaw-maintainer-cut-release-tag\/(?:SKILL\.md|references\/cut-and-follow-through\.md)|nemoclaw-maintainer-evening\/SKILL\.md|nemoclaw-maintainer-release-notes\/SKILL\.md|nemoclaw-maintainer-policies\/references\/release-train\.md)$/,
     testsToRun: runTests("test/automation/releases/release-post-tag-follow-through.test.ts"),
   },
 ];

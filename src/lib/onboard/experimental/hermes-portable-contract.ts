@@ -45,6 +45,28 @@ const ALLOWED_ENV = new Set([
   "NEMOCLAW_SANDBOX_NAME",
   "NEMOCLAW_EXTRA_PLACEHOLDER_KEYS",
 ]);
+const REVIEWED_HERMES_MANIFEST_VERSIONS = new Set(["0.20.6", "0.21.3"]);
+// One-way compatibility bridges for the exact additive skills metadata change
+// in #11248 and native plugin/package restore ownership in #11766.
+// Support the prior 0.20.6 manifest and its two persisted metadata generations
+// through the current and next LKG upgrade window. Remove them under #11357
+// once release qualification no longer admits receipts created before #11766
+// and the historical rootless lifecycle fixture has advanced past all hashes.
+const REVIEWED_INSTALLED_STATE_IDENTITY =
+  "1cadfa0a741b4e66b5599a5edede99c2ef9cb00ef59c9814f164f95a89957140";
+const CURRENT_STATE_IDENTITY = "60ee30ca30cf989b0eb9ab67ed9633f470ad05b2c9c92f5e576d2ea8a6db3c64";
+const REVIEWED_INSTALLED_MANIFEST_STATE_IDENTITIES = new Map([
+  [
+    "c7bcd6e0616904ab66c1f2f39a670d920cfb1b7ef7c1edc496e20e554db6a6c2",
+    REVIEWED_INSTALLED_STATE_IDENTITY,
+  ],
+  [
+    "e78822837d5530f61a26ea1d554d7f9b21be13e3e223e294f0999187dc0fa71e",
+    REVIEWED_INSTALLED_STATE_IDENTITY,
+  ],
+  ["27453a10ca2e75f16ce5a1487192d11ac92b4d1752e8538131b5233c17a89d85", CURRENT_STATE_IDENTITY],
+]);
+const CURRENT_MANIFEST = "4600403d80c0ca038a89ac627f248a41148f1d97f649a49588a06b29427cee6c";
 
 export interface ResolveHermesPortableStartupContractInput {
   readonly agent: AgentDefinition;
@@ -309,6 +331,62 @@ function stateIdentity(projection: ReturnType<typeof manifestProjection>): strin
   );
 }
 
+function startupDescriptorSha256(argv: readonly string[], stateIdentitySha256: string): string {
+  return sha256(
+    JSON.stringify(
+      canonical({
+        argv,
+        configDir: "/sandbox/.hermes",
+        devicePairing: false,
+        gatewayCommand: "hermes gateway run",
+        health: {
+          url: "http://localhost:8642/health",
+          port: 8642,
+          timeout_seconds: 90,
+        },
+        interactiveCommand: "hermes",
+        stateIdentitySha256,
+        webAuth: { method: "bearer_token", env: "API_SERVER_KEY" },
+      }),
+    ),
+  );
+}
+
+function startupAuthorityMatches(
+  current: HermesPortableStartupContract,
+  installed: HermesPortableStartupContract,
+): boolean {
+  if (isDeepStrictEqual(current, installed)) return true;
+  const installedStateIdentity = REVIEWED_INSTALLED_MANIFEST_STATE_IDENTITIES.get(
+    installed.manifestSha256,
+  );
+  const reviewedTransition =
+    installedStateIdentity !== undefined &&
+    installed.startupDescriptorSha256 ===
+      startupDescriptorSha256(installed.argv, installedStateIdentity) &&
+    installed.stateIdentitySha256 === installedStateIdentity &&
+    current.manifestSha256 === CURRENT_MANIFEST &&
+    current.startupDescriptorSha256 ===
+      startupDescriptorSha256(current.argv, CURRENT_STATE_IDENTITY) &&
+    current.stateIdentitySha256 === CURRENT_STATE_IDENTITY;
+  if (!reviewedTransition) {
+    return false;
+  }
+  const {
+    manifestSha256: _currentManifest,
+    startupDescriptorSha256: _currentDescriptor,
+    stateIdentitySha256: _currentState,
+    ...currentAuthority
+  } = current;
+  const {
+    manifestSha256: _installedManifest,
+    startupDescriptorSha256: _installedDescriptor,
+    stateIdentitySha256: _installedState,
+    ...installedAuthority
+  } = installed;
+  return isDeepStrictEqual(currentAuthority, installedAuthority);
+}
+
 /** Derive the complete lifecycle descriptor from current manifest and launch inputs. */
 export function resolveHermesPortableStartupContract(
   input: ResolveHermesPortableStartupContractInput,
@@ -321,11 +399,12 @@ export function resolveHermesPortableStartupContract(
   }
   if (
     manifest.name !== "hermes" ||
-    manifest.expectedVersion !== "0.20.6" ||
+    !REVIEWED_HERMES_MANIFEST_VERSIONS.has(manifest.expectedVersion ?? "") ||
     manifest.gatewayCommand !== "hermes gateway run" ||
     manifest.runtime.interactive_command !== "hermes" ||
     manifest.healthProbe?.url !== "http://localhost:8642/health" ||
     manifest.healthProbe.port !== 8642 ||
+    manifest.healthProbe.timeout_seconds !== 90 ||
     manifest.devicePairing !== false ||
     manifest.webAuth.method !== "bearer_token" ||
     manifest.webAuth.env !== "API_SERVER_KEY" ||
@@ -337,20 +416,7 @@ export function resolveHermesPortableStartupContract(
   const stateIdentitySha256 = stateIdentity(manifest);
   return {
     manifestSha256: sha256(manifestBytes),
-    startupDescriptorSha256: sha256(
-      JSON.stringify(
-        canonical({
-          argv,
-          configDir: manifest.configPaths.dir,
-          devicePairing: manifest.devicePairing,
-          gatewayCommand: manifest.gatewayCommand,
-          health: manifest.healthProbe,
-          interactiveCommand: manifest.runtime.interactive_command,
-          stateIdentitySha256,
-          webAuth: manifest.webAuth,
-        }),
-      ),
-    ),
+    startupDescriptorSha256: startupDescriptorSha256(argv, stateIdentitySha256),
     argv,
     gatewayCommand: "hermes gateway run",
     interactiveCommand: "hermes",
@@ -379,7 +445,7 @@ export function assertCurrentHermesPortableStoredStartupContract(
     sandboxName,
     startupArgv: currentArgv,
   });
-  if (!isDeepStrictEqual(current, actual)) fail("current startup authority disagrees");
+  if (!startupAuthorityMatches(current, actual)) fail("current startup authority disagrees");
 }
 
 /** Re-render from current manifest, profile, and launch inputs before lifecycle mutation. */
@@ -388,6 +454,6 @@ export function assertCurrentHermesPortableStartupContract(
   input: ResolveHermesPortableStartupContractInput,
 ): HermesPortableStartupContract {
   const current = resolveHermesPortableStartupContract(input);
-  if (!isDeepStrictEqual(current, expected)) fail("current startup authority disagrees");
+  if (!startupAuthorityMatches(current, expected)) fail("current startup authority disagrees");
   return current;
 }

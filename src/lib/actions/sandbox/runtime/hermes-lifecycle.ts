@@ -1,10 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import * as agentRuntime from "../../../agent/runtime";
 import { MessagingSetupApplier } from "../../../messaging/applier/setup-applier";
 import type { MessagingOpenShellRunner } from "../../../messaging/applier/types";
 import type { SandboxMessagingPlan } from "../../../messaging/manifest";
-import * as gatewayRestart from "../gateway-restart";
+import { isExpectedHermesRestartRelayClosure } from "../gateway-restart";
 import * as processRecovery from "../process-recovery";
 
 export function createHermesCredentialEnvReconciliationRuntime(
@@ -21,19 +22,24 @@ export function createHermesCredentialEnvReconciliationRuntime(
           return result;
         },
       }),
-    restartGateway: (sandboxName: string, revalidate: (operation: string) => void) => {
+    restartGateway: async (sandboxName: string, revalidate: (operation: string) => void) => {
       revalidate(`restarting Hermes gateway for sandbox '${sandboxName}'`);
-      const result = processRecovery.executeGatewaySupervisorAction(sandboxName, "restart", 210000);
+      const result = await processRecovery.executeSandboxExecCommand(
+        sandboxName,
+        "hermes gateway restart",
+        210000,
+      );
       revalidate(`confirming Hermes gateway restart for sandbox '${sandboxName}'`);
-      return result;
+      return isExpectedHermesRestartRelayClosure(result) && result
+        ? { ...result, status: 0 }
+        : result;
     },
-    parseRestartCompletion: gatewayRestart.parseManagedGatewayControlCompletion,
-    waitForGateway: (sandboxName: string, revalidate: (operation: string) => void) => {
+    waitForGateway: async (sandboxName: string, revalidate: (operation: string) => void) => {
       revalidate(`checking Hermes gateway health for sandbox '${sandboxName}'`);
-      const healthy = processRecovery.waitForRecoveredSandboxGateway(sandboxName, {
+      const healthy = await processRecovery.waitForRecoveredSandboxGateway(sandboxName, {
         quiet: true,
-        initialManagedHealthPassed: true,
-        requireManagedProbe: true,
+        initialManagedHealthPassed: false,
+        managedProbeImpl: () => null,
       });
       revalidate(`confirming Hermes gateway health for sandbox '${sandboxName}'`);
       return healthy;
@@ -60,6 +66,26 @@ export function executePrivilegedSandboxCommand(
   ...args: Parameters<typeof processRecovery.executePrivilegedSandboxCommand>
 ) {
   return processRecovery.executePrivilegedSandboxCommand(...args);
+}
+
+export async function waitForGatedHermesGatewayRecovery(sandboxName: string): Promise<boolean> {
+  const agent = agentRuntime.getSessionAgent(sandboxName);
+  const timeoutSeconds = agent?.name === "hermes" ? agent.healthProbe?.timeout_seconds : undefined;
+  if (
+    typeof timeoutSeconds !== "number" ||
+    !Number.isFinite(timeoutSeconds) ||
+    timeoutSeconds < 0
+  ) {
+    return false;
+  }
+  return processRecovery.waitForRecoveredSandboxGateway(sandboxName, {
+    quiet: true,
+    timeoutSeconds,
+    // Hermes and OpenShell own the native gateway lifecycle. Observe the
+    // relaunched gateway through its sandbox health endpoint instead of the
+    // retired NemoClaw managed-gateway controller.
+    managedProbeImpl: () => null,
+  });
 }
 
 export type SandboxCommandResult = processRecovery.SandboxCommandResult;

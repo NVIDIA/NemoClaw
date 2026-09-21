@@ -34,9 +34,9 @@ describe("runWithDeferredSandboxLifecycleExit", () => {
       throw new Error("unexpected exit");
     });
 
-    await expect(
-      runWithDeferredSandboxLifecycleExit(async () => "complete", exit),
-    ).resolves.toBe("complete");
+    await expect(runWithDeferredSandboxLifecycleExit(async () => "complete", exit)).resolves.toBe(
+      "complete",
+    );
     expect(exit).not.toHaveBeenCalled();
   });
 

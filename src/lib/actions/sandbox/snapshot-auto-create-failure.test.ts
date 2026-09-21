@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   hostLocalInferenceReceipt,
   serializedLlamaCppHostLocalInferenceReceipt,
@@ -154,11 +154,20 @@ vi.mock("../../adapters/openshell/runtime", () => ({
   captureOpenshell: captureOpenshellMock,
   captureResolvedOpenshell: captureOpenshellMock,
   getOpenshellBinary: vi.fn(() => "openshell"),
-  runOpenshell: vi.fn(() => ({ status: 0, output: "" })),
+  runOpenshell: vi.fn((args: string[]) =>
+    args.join(" ") === "sandbox get -g nemoclaw beta"
+      ? {
+          status: 1,
+          stdout: "",
+          stderr:
+            "Error: code: 'Some requested entity was not found', message: \"sandbox not found\"",
+        }
+      : { status: 0, stdout: "", stderr: "" },
+  ),
 }));
 vi.mock("../../adapters/openshell/sandbox-policy-cli", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../adapters/openshell/sandbox-policy-cli")>()),
-  syncCliOpenShellSandboxPolicyReader: {
+  cliOpenShellSandboxPolicyReader: {
     inspectSandboxPolicy: vi.fn(),
     readSandboxPolicy: readSandboxPolicyMock,
     readSandboxPolicyRevision: vi.fn(),
@@ -169,9 +178,6 @@ vi.mock("../../credentials/store", () => ({
   getCredential: vi.fn(() => null),
   prompt: vi.fn(),
   saveCredential: vi.fn(),
-}));
-vi.mock("../../domain/sandbox/destroy", () => ({
-  getSandboxDeleteOutcome: vi.fn(() => ({ alreadyGone: false, gatewayUnreachable: false })),
 }));
 vi.mock("../../inference/gateway-route-compatibility", () => ({
   checkGatewayRouteCompatibility: vi.fn(() => ({ ok: true })),
@@ -186,6 +192,7 @@ vi.mock("../../inference/nim", () => ({
 }));
 vi.mock("../../messaging/channels", () => ({
   BUILT_IN_CHANNEL_MANIFESTS: [],
+  createBuiltInChannelManifestRegistry: vi.fn(() => ({ list: () => [] })),
   getMessagingConfigEnvAliases: vi.fn(() => ({})),
   getMessagingCredentialEnvKeysByChannel: vi.fn(() => ({})),
   getMessagingProviderSuffixesByChannel: vi.fn(() => ({})),
@@ -268,6 +275,11 @@ vi.mock("./snapshot/dependencies", async (importOriginal) => ({
 }));
 
 describe("snapshot restore auto-create failures", () => {
+  beforeAll(async () => {
+    // Load the mocked action graph before measuring the individual cleanup operations.
+    await import("./snapshot");
+  }, 30_000);
+
   beforeEach(() => {
     vi.clearAllMocks();
     harness.entries.clear();

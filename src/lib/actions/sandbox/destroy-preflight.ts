@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { createCliOpenShellGatewayLifecycleFromRunner } from "../../adapters/openshell/gateway-lifecycle-cli";
 import os from "node:os";
 
 import { buildSelectedOpenShellSubprocessEnv } from "../../adapters/openshell/command-argv";
@@ -24,7 +25,7 @@ import type {
 import type { SandboxEntry } from "../../state/registry";
 import * as registry from "../../state/registry";
 import { type DestroyRunOpenshell, selectGatewayForSandboxDestroy } from "./destroy-gateway";
-import { classifyDestroySandboxPresence } from "./destroy-presence";
+import { classifyDestroySandboxPresence, type DestroySandboxPresence } from "./destroy-presence";
 import {
   getPersistedSandboxTargetGatewayName,
   getSandboxTargetGatewayName,
@@ -40,20 +41,33 @@ export type SandboxDestroyPreflight = {
   selectedRunOpenshell: DestroyRunOpenshell;
   sandbox: SandboxEntry | null;
   sandboxConfirmedAbsent: boolean;
+  sandboxPresence?: DestroySandboxPresence;
 };
 
-export function resolveSandboxDestroyRuntimeSelection(
+export function resolveSandboxDestroyGatewayName(
+  sandboxName: string,
   sandbox: SandboxEntry | null,
-): OpenShellRuntimeSelection | undefined {
+  retainedRecoveryGatewayName?: string,
+): string {
+  const registeredGatewayName = sandbox ? getPersistedSandboxTargetGatewayName(sandbox) : null;
   if (
-    !sandbox ||
-    !Object.values(sandbox.mcp?.bridges ?? {}).some((entry) => entry.addState !== "prepared")
+    retainedRecoveryGatewayName &&
+    registeredGatewayName &&
+    retainedRecoveryGatewayName !== registeredGatewayName
   ) {
-    return undefined;
+    throw new Error(
+      `Refusing to destroy sandbox '${sandboxName}': retained recovery gateway '${retainedRecoveryGatewayName}' does not match registered gateway '${registeredGatewayName}'.`,
+    );
   }
-  return (
-    require("./mcp-bridge-provider") as typeof import("./mcp-bridge-provider")
-  ).getMcpProviderInspectionRuntimeSelection(sandbox);
+  return retainedRecoveryGatewayName ?? registeredGatewayName ?? getSandboxTargetGatewayName();
+}
+
+export function resolveSandboxDestroyRuntimeSelection(
+  _sandbox: SandboxEntry | null,
+): OpenShellRuntimeSelection | undefined {
+  // MCP source inspection freezes its gateway target during preparation. The
+  // non-MCP registry is only a routing hint and cannot assert MCP ownership.
+  return undefined;
 }
 
 export function stopSandboxInferenceResources(
@@ -283,7 +297,7 @@ export async function stopModelRouterForDestroyedSandbox(
   return true;
 }
 
-export function prepareSandboxDestroy(
+export async function prepareSandboxDestroy(
   sandboxName: string,
   {
     retainedRecoveryGatewayName,
@@ -292,7 +306,7 @@ export function prepareSandboxDestroy(
     retainedRecoveryGatewayName?: string;
     operationRuntimeSelection?: OpenShellRuntimeSelection;
   } = {},
-): SandboxDestroyPreflight {
+): Promise<SandboxDestroyPreflight> {
   const sandbox = registry.getSandbox(sandboxName);
   console.log(`  Deleting sandbox '${sandboxName}'...`);
   const { captureOpenshell, runOpenshell } = require("../../adapters/openshell/runtime") as Pick<
@@ -304,18 +318,11 @@ export function prepareSandboxDestroy(
   // following OpenShell subprocess against that same durable authority. A
   // retained recovery record remains authoritative after a partial destroy
   // has already retired the registry row.
-  const registeredGatewayName = sandbox ? getPersistedSandboxTargetGatewayName(sandbox) : null;
-  if (
-    retainedRecoveryGatewayName &&
-    registeredGatewayName &&
-    retainedRecoveryGatewayName !== registeredGatewayName
-  ) {
-    throw new Error(
-      `Refusing to destroy sandbox '${sandboxName}': retained recovery gateway '${retainedRecoveryGatewayName}' does not match registered gateway '${registeredGatewayName}'.`,
-    );
-  }
-  const cleanupGatewayName =
-    retainedRecoveryGatewayName ?? registeredGatewayName ?? getSandboxTargetGatewayName();
+  const cleanupGatewayName = resolveSandboxDestroyGatewayName(
+    sandboxName,
+    sandbox,
+    retainedRecoveryGatewayName,
+  );
   const runtimeSelection =
     operationRuntimeSelection ?? resolveSandboxDestroyRuntimeSelection(sandbox);
   if (runtimeSelection && runtimeSelection.gatewayName !== cleanupGatewayName) {
@@ -339,7 +346,12 @@ export function prepareSandboxDestroy(
           replaceEnv: true,
         })
     : undefined;
-  selectGatewayForSandboxDestroy(sandboxName, cleanupGatewayName, selectedRunOpenshell);
+  await selectGatewayForSandboxDestroy(
+    sandboxName,
+    cleanupGatewayName,
+    createCliOpenShellGatewayLifecycleFromRunner(selectedRunOpenshell),
+    runtimeSelection,
+  );
   process.env.OPENSHELL_GATEWAY = cleanupGatewayName;
 
   const sandboxPresence = classifyDestroySandboxPresence(
@@ -350,13 +362,14 @@ export function prepareSandboxDestroy(
       timeout: OPENSHELL_PROBE_TIMEOUT_MS,
     }),
   );
-  const sandboxConfirmedAbsent = sandboxPresence === "absent";
+
   return {
     cleanupGatewayName,
     runOpenshell,
     selectedRunOpenshell,
     sandbox,
-    sandboxConfirmedAbsent,
+    sandboxConfirmedAbsent: sandboxPresence === "absent",
+    sandboxPresence,
     ...(selectedCaptureOpenshell ? { selectedCaptureOpenshell } : {}),
     ...(runtimeSelection ? { runtimeSelection } : {}),
   };

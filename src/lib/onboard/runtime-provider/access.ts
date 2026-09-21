@@ -22,10 +22,17 @@ export type {
   RuntimeProviderChannelStopTransport,
   RuntimeProviderGatewayLauncher,
   RuntimeProviderManagedImageSupport,
+  RuntimeProviderWorkloadProfile,
   RuntimeProviderWorkloadCleanupPlan,
   RuntimeProviderWorkloadCleanupResult,
-  RuntimeProviderWorkloadProfile,
 } from "./contract";
+export type { PortableAgentRuntimeProviderSupport } from "../workload/portable-agent-runtime";
+export {
+  applyProviderManagedStartupRootRequest,
+  finalizeProviderManagedStartupSharedState,
+  releaseProviderManagedStartupHold,
+  type ProviderManagedStartupTransaction,
+} from "../managed-startup/provider-root-apply";
 export {
   CURRENT_RUNTIME_PROVIDER_BUNDLES,
   createCurrentRuntimeProviderBundles,

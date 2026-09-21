@@ -145,6 +145,12 @@ After a restore that includes Hermes state databases, the CLI prints a reminder 
 Run `$$nemoclaw <name> gateway restart` to make the gateway open the restored databases.
 </AgentOnly>
 
+<Note>
+`--to` is not available for a snapshot of a sandbox that uses a NemoClaw-managed image.
+NemoClaw reports that the restore is not available and stops before it creates, deletes, or changes the destination sandbox.
+Restore that snapshot into its source sandbox without `--to`.
+</Note>
+
 To clone a snapshot into a different sandbox name, pass `--to <name>`. If the destination sandbox already exists, NemoClaw refuses to overwrite it unless you pass `--force`:
 
 ```bash
@@ -220,17 +226,16 @@ After a rebuild restores `dashboard-home` or `profiles`, NemoClaw reruns the das
 
 Credential-bearing Deep Agents files such as `.deepagents/.env` and user-authored `.deepagents/.mcp.json` are intentionally excluded from snapshots. Deep Agents auth state files such as `.deepagents/.state/auth.json` and `.deepagents/.state/chatgpt-auth.json` are also excluded because the managed launcher refuses to start when upstream credential state is present.
 
-The managed v2 `.deepagents/.nemoclaw-mcp.json` projection and `hooks.json` are excluded because NemoClaw disables executable Deep Agents Code hooks in the managed harness.
-For a managed v2 runtime, NemoClaw reconstructs the managed MCP projection from host-side registry state.
+The agent-native `.deepagents/.mcp.json` is excluded from ordinary file copying because MCP is carried through the bounded source handoff.
+For a native-MCP runtime, NemoClaw carries managed entries from the agent source through the bounded rebuild or restore handoff.
+User-authored `hooks.json` is included and restored because managed interactive sessions support native Deep Agents Code hooks; review its executable commands before restoring a snapshot from another workspace.
 NemoClaw recreates the current inference route headers, `models` and `update` tables, and provider credentials from host-side onboarding and OpenShell provider state during rebuild.
 
 ### Restore Managed Deep Agents Configuration
 
-For a NemoClaw-managed Deep Agents image, NemoClaw restores only the allowlisted `ui.show_scrollbar`, `ui.show_url_open_toast`, `threads.relative_time`, and `threads.sort_order` preferences from the previous `config.toml` when their values pass validation. Unknown, runtime-controlled, executable, and security-sensitive backup keys are dropped instead of replacing freshly generated settings on that managed path.
+For a NemoClaw-managed Deep Agents image, NemoClaw restores the allowlisted UI and thread preferences, native interpreter settings, and native startup approval mode from the previous `config.toml` when their values pass validation. Unknown, runtime-controlled, privileged, and security-sensitive backup keys are dropped instead of replacing freshly generated settings on that managed path.
 
-Before it restores snapshot files for a managed v2 runtime, NemoClaw reconstructs the managed MCP projection from the host registry.
-For a legacy runtime, NemoClaw does not reconstruct the dedicated v2 projection.
-If the v2 projection path `/sandbox/.deepagents/.nemoclaw-mcp.json` is a directory, the restore leaves snapshot files unchanged and prints a recovery command.
+Before it restores snapshot files for a native-MCP runtime, NemoClaw verifies the current agent source and writes the native `.mcp.json` entry atomically. A legacy `.nemoclaw-mcp.json` source must be migrated first. If the native path `/sandbox/.deepagents/.mcp.json` is a directory, restore leaves snapshot files unchanged and prints a recovery command.
 Run that command to move the directory into a new recovery location.
 The command prints the selected location and does not replace an existing recovery file or directory.
 Then rerun the same snapshot restore command.
@@ -239,7 +244,8 @@ A Deep Agents target created from a custom Dockerfile restores `config.toml` as 
 
 ### Validate Before Replacement
 
-Before a Deep Agents rebuild changes the sandbox, NemoClaw verifies the recorded inference route, provider, model, reasoning settings, web search selection, base image, and policy inputs. If a late check fails, NemoClaw restores the previous MCP state and keeps the existing sandbox intact.
+Before a Deep Agents rebuild changes the sandbox, NemoClaw verifies the recorded inference route, provider, model, reasoning settings, web search selection, base image, and policy inputs.
+If a late check fails, NemoClaw does not delete the existing sandbox.
 
 </AgentOnly>
 
@@ -251,10 +257,10 @@ Run `$$nemoclaw backup-all` before broad maintenance such as `$$nemoclaw update`
 $$nemoclaw backup-all
 ```
 
-`backup-all` walks the sandboxes registered on the host, creates a snapshot for each eligible running or temporarily started sandbox, and stores the snapshot bundles under `~/.nemoclaw/rebuild-backups/<name>/`. If a registered docker-driver sandbox's container is stopped, `backup-all` starts the container for the duration of the backup and returns it to its stopped state afterward. If the container cannot be returned to the stopped state, the backup run fails and reports that the container was left running. If a sandbox is not running and its container cannot be started this way, start the sandbox or its container and rerun `$$nemoclaw backup-all`.
+`backup-all` walks the sandboxes registered on the host, creates a snapshot for each eligible running or temporarily started sandbox, and stores the snapshot bundles under `~/.nemoclaw/rebuild-backups/<name>/`. If a registered standard sandbox is stopped, `backup-all` asks OpenShell to start that exact sandbox for the duration of the backup and asks OpenShell to return it to `Stopped` afterward. If either lifecycle transition fails, the backup run fails with the affected sandbox named. Correct the reported OpenShell lifecycle problem, run `$$nemoclaw <name> start` when appropriate, and rerun `$$nemoclaw backup-all`; do not start or stop the provider container directly.
 
 For each eligible sandbox, `backup-all` holds one lifecycle transaction through the complete backup.
-Within that transaction, it starts a stopped container when required, copies sandbox state, and returns any container it started to the stopped state.
+Within that transaction, it asks OpenShell to start a stopped sandbox when required, copies sandbox state, and asks OpenShell to return that sandbox to `Stopped`.
 A backup failure marks that sandbox as failed, and `backup-all` continues with the next sandbox.
 
 When a backup fails, NemoClaw identifies the affected state item and reports `permission denied`, `tar read error`, or `absent after extraction` when available. Use `$$nemoclaw <name> snapshot list` and `$$nemoclaw <name> snapshot restore` to inspect or restore one sandbox's bundles later.

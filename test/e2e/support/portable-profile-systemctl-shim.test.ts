@@ -952,7 +952,7 @@ describe("portable profile systemctl fixture", () => {
     },
   );
 
-  it.each([
+  it.concurrent.each([
     { scenario: "activator PID" },
     { scenario: "service PID" },
     { scenario: "public socket" },
@@ -1048,7 +1048,7 @@ describe("portable profile systemctl fixture", () => {
     },
   );
 
-  it.each([
+  it.concurrent.each([
     { scenario: "activator PID" },
     { scenario: "service PID" },
     { scenario: "public socket" },

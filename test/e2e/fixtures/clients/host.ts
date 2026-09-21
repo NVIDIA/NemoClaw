@@ -24,12 +24,58 @@ export interface HostClientOptions {
   openshellPath?: string;
 }
 
+export interface ForwardCleanupOptions extends ShellProbeRunOptions {
+  gatewayName?: string;
+  sandboxName?: string;
+}
+
+export interface ForwardListenerEvidence {
+  valid: boolean;
+  pid?: number;
+  identity: string;
+  output: string;
+}
+
 const GATEWAY_ALREADY_ABSENT =
   /gateway[^\n]*(?:does not exist|not found)|No (?:active )?gateway|No gateway metadata found/i;
 const GATEWAY_REMOVE_UNSUPPORTED =
   /unrecognized subcommand ['"]remove['"]|unknown command ['"]remove['"]/i;
 const FORWARD_ALREADY_ABSENT =
   /no (?:active )?forward|forward[^\n]*(?:not found|not running)|forward stop[^\n]*not running/i;
+
+async function forwardListenerAuthority(env: NodeJS.ProcessEnv): Promise<{
+  gatewayEndpoint: string;
+  gatewayName: string;
+  workspace: string;
+}> {
+  const [ports, gatewayEnv, gatewayIdentity, gatewayManagement] = await Promise.all([
+    import("../../../../src/lib/core/ports.ts"),
+    import("../../../../src/lib/onboard/docker-driver-gateway-env.ts"),
+    import("../../../../src/lib/onboard/gateway-binding/identity.ts"),
+    import("../../../../src/lib/onboard/gateway-management.ts"),
+  ]);
+  const { DEFAULT_GATEWAY_PORT, parsePort } = ports;
+  const { getGatewayHttpsEndpoint } = gatewayEnv;
+  const { resolveGatewayName } = gatewayIdentity;
+  const { loadGatewayManagementDeclaration } = gatewayManagement;
+  const gatewayPort = parsePort("NEMOCLAW_GATEWAY_PORT", DEFAULT_GATEWAY_PORT, env);
+  const configuredDeclaration = env.NEMOCLAW_GATEWAY_MANAGEMENT?.trim();
+  const loaded = configuredDeclaration ? loadGatewayManagementDeclaration({ env }) : null;
+  if (loaded && !loaded.ok) {
+    throw new Error(`Forward listener gateway authority is invalid: ${loaded.reason}`);
+  }
+  const externalEndpoint =
+    loaded?.ok && loaded.declaration?.mode === "externally-supervised"
+      ? loaded.declaration.endpoint
+      : null;
+  return {
+    gatewayEndpoint: externalEndpoint
+      ? new URL(externalEndpoint).origin
+      : new URL(getGatewayHttpsEndpoint(gatewayPort)).origin,
+    gatewayName: env.OPENSHELL_GATEWAY?.trim() || resolveGatewayName(gatewayPort),
+    workspace: env.OPENSHELL_WORKSPACE?.trim() || "default",
+  };
+}
 
 export class HostCliClient {
   private readonly runner: CommandRunner;
@@ -70,10 +116,7 @@ export class HostCliClient {
       merged,
     );
     const environment = merged.env ?? {};
-    if (
-      result.exitCode === 0 &&
-      shouldAssertStockManagedImageReceipt(command, args, environment)
-    ) {
+    if (result.exitCode === 0 && shouldAssertStockManagedImageReceipt(command, args, environment)) {
       const sandboxName = environment.NEMOCLAW_SANDBOX_NAME?.trim();
       if (!sandboxName) {
         throw new Error("stock managed-image receipt assertion requires a sandbox name");
@@ -177,6 +220,96 @@ export class HostCliClient {
     return result;
   }
 
+  async inspectOpenShellForwardListener(
+    port: string,
+    sandboxName: string,
+    options: ShellProbeRunOptions = {},
+  ): Promise<ForwardListenerEvidence> {
+    const artifactName = options.artifactName ?? `forward-listener-${port}`;
+    const probeOptions = { ...options, timeoutMs: options.timeoutMs ?? 15_000 };
+    const [before, command] = await Promise.all([
+      this.command("lsof", ["-ti", `:${port}`, "-sTCP:LISTEN"], {
+        ...probeOptions,
+        artifactName: `${artifactName}-listener-before`,
+      }),
+      this.command("which", [this.openshellPath], {
+        ...probeOptions,
+        artifactName: `${artifactName}-command`,
+      }),
+    ]);
+    const pids = [
+      ...new Set(
+        before.stdout
+          .split(/\r?\n/u)
+          .map((line) => line.trim())
+          .filter(Boolean),
+      ),
+    ];
+    const pid = pids.length === 1 && /^[1-9]\d*$/u.test(pids[0]!) ? pids[0]! : "";
+    const commandPath = command.stdout.trim();
+    if (!pid || !commandPath) {
+      return {
+        valid: false,
+        identity: "",
+        output: `${resultText(before)}\n${resultText(command)}`,
+      };
+    }
+
+    const [actualExecutable, expectedExecutable, commandLine, after] = await Promise.all([
+      this.command("readlink", ["-f", `/proc/${pid}/exe`], {
+        ...probeOptions,
+        artifactName: `${artifactName}-actual-executable`,
+      }),
+      this.command("readlink", ["-f", commandPath], {
+        ...probeOptions,
+        artifactName: `${artifactName}-expected-executable`,
+      }),
+      this.command("ps", ["-ww", "-p", pid, "-o", "args="], {
+        ...probeOptions,
+        artifactName: `${artifactName}-command-line`,
+      }),
+      this.command("lsof", ["-ti", `:${port}`, "-sTCP:LISTEN"], {
+        ...probeOptions,
+        artifactName: `${artifactName}-listener-after`,
+      }),
+    ]);
+    const [{ buildCliOpenShellForwardServiceArgs }, authority] = await Promise.all([
+      import("../../../../src/lib/adapters/openshell/forward-cli-args.ts"),
+      forwardListenerAuthority(options.env ?? process.env),
+    ]);
+    const target = {
+      ...authority,
+      sandboxName,
+      localHost: "127.0.0.1" as const,
+      port: Number(port),
+    };
+    const expectedCommandLine = [commandPath, ...buildCliOpenShellForwardServiceArgs(target)].join(
+      " ",
+    );
+    const afterPids = [
+      ...new Set(
+        after.stdout
+          .split(/\r?\n/u)
+          .map((line) => line.trim())
+          .filter(Boolean),
+      ),
+    ];
+    const probes = [before, command, actualExecutable, expectedExecutable, commandLine, after];
+    const identity = `${pid}\t${actualExecutable.stdout.trim()}\t${commandLine.stdout.trim()}`;
+    const valid =
+      probes.every((probe) => probe.exitCode === 0 && !probe.timedOut) &&
+      actualExecutable.stdout.trim() === expectedExecutable.stdout.trim() &&
+      commandLine.stdout.trim() === expectedCommandLine &&
+      afterPids.length === 1 &&
+      afterPids[0] === pid;
+    return {
+      valid,
+      ...(valid ? { pid: Number(pid) } : {}),
+      identity,
+      output: probes.map(resultText).filter(Boolean).join("\n"),
+    };
+  }
+
   async destroySandbox(
     sandboxName: string,
     options: ShellProbeRunOptions = {},
@@ -231,10 +364,17 @@ export class HostCliClient {
     assertExitZero(destroy, `cleanup gateway registration ${gatewayName}`);
   }
 
-  async cleanupForward(port: number, options: ShellProbeRunOptions = {}): Promise<void> {
-    const result = await this.command(this.openshellPath, ["forward", "stop", String(port)], {
-      ...options,
-      artifactName: options.artifactName ?? `cleanup-forward-${port}`,
+  async cleanupForward(port: number, options: ForwardCleanupOptions = {}): Promise<void> {
+    const { gatewayName, sandboxName, ...probeOptions } = options;
+    const scoped = gatewayName !== undefined || sandboxName !== undefined;
+    if (scoped && (!gatewayName?.trim() || !sandboxName?.trim())) {
+      throw new Error("Scoped forward cleanup requires a gateway name and sandbox name.");
+    }
+    const args = ["forward", "stop", String(port)];
+    if (scoped) args.push(sandboxName!.trim(), "--gateway", gatewayName!.trim());
+    const result = await this.command(this.openshellPath, args, {
+      ...probeOptions,
+      artifactName: probeOptions.artifactName ?? `cleanup-forward-${port}`,
     });
     if (result.exitCode === 0 || FORWARD_ALREADY_ABSENT.test(resultText(result))) return;
     assertExitZero(result, `cleanup forward ${port}`);

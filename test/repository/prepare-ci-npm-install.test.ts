@@ -17,6 +17,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { parseSingleNpmPackResult } from "../helpers/npm-pack-result";
 
 import {
   prepareCiNpmInstallWithReviewedConfig,
@@ -34,6 +35,13 @@ const reviewed: ReviewedSourceRegistryPackage = {
   packageSpec: "@nvidia/openshell-sdk@0.0.106",
   tarballUrl: "https://npm.pkg.github.com/download/@nvidia/openshell-sdk/0.0.106/reviewed-fixture",
 };
+const replacement: ReviewedSourceRegistryPackage = {
+  ...reviewed,
+  artifactName: "nvidia-openshell-sdk-0.0.116.tgz",
+  label: "OpenShell TypeScript SDK 0.0.116",
+  packageSpec: "@nvidia/openshell-sdk@0.0.116",
+  tarballUrl: "https://npm.pkg.github.com/download/@nvidia/openshell-sdk/0.0.116/reviewed-fixture",
+};
 
 type CacheStageRequest = Readonly<{
   archive: Buffer;
@@ -46,15 +54,18 @@ function cacheStageMock() {
 }
 
 function reviewedLock(packageIdentity: ReviewedSourceRegistryPackage = reviewed) {
+  const version = packageIdentity.packageSpec.slice(
+    packageIdentity.packageSpec.lastIndexOf("@") + 1,
+  );
   return {
     lockfileVersion: 3,
     name: "reviewed-sdk-artifact-fixture",
     packages: {
-      "": { dependencies: { "@nvidia/openshell-sdk": "0.0.106" } },
+      "": { optionalDependencies: { "@nvidia/openshell-sdk": version } },
       "node_modules/@nvidia/openshell-sdk": {
         integrity: packageIdentity.integrity,
         resolved: packageIdentity.tarballUrl,
-        version: "0.0.106",
+        version,
       },
     },
     version: "1.0.0",
@@ -70,7 +81,10 @@ function publicLock() {
   };
 }
 
-function reviewedConfigSource(packageIdentity: ReviewedSourceRegistryPackage = reviewed) {
+function reviewedConfigSource(
+  packageIdentity: ReviewedSourceRegistryPackage = reviewed,
+  replacementIdentity?: ReviewedSourceRegistryPackage,
+) {
   return JSON.stringify({
     archiveGraphId: "reviewed-archive-graph",
     archivePackages: [],
@@ -78,20 +92,22 @@ function reviewedConfigSource(packageIdentity: ReviewedSourceRegistryPackage = r
     artifactDirectory: "artifacts/reviewed-npm-audit",
     exceptionFile: "ci/npm-audit-exceptions.json",
     lockedGraphs: [],
-    nodeVersion: "22.23.2",
+    nodeVersion: "24.18.1",
+    npmArchiveSha256: "5dbb86c71d07a1957f2e90734092dd6a58bdcd9ebc2d8d41ca1c6e6a21d364e1",
     npmIntegrity:
-      "sha512-OnUGvKW3lJs/ooPKDKUNfz1UmMfF48YWbjNA20QdiWrCVnZaAPppOfHPnfGiPb+1lKIsxjKXQ4UAfDI7PcvLPg==",
-    npmVersion: "10.9.4",
+      "sha512-uIXokLlBj6FpNUTQX1PmT5pz7BlIN9QlixX+zdaSNHsd0qUXsbDLr50xzY6Sw7cJVr0uzHKDOle0swmPW/p5Qw==",
+    npmVersion: "12.0.2",
     registryOrigin: "https://registry.npmjs.org/",
     schemaVersion: 2,
     severityThreshold: "high",
     sourceNestedShrinkwrapPackages: [],
     sourceRegistryPackage: packageIdentity,
+    ...(replacementIdentity ? { sourceRegistryPackageReplacement: replacementIdentity } : {}),
     sourceRegistryPackagesWithoutIntegrity: [],
   });
 }
 
-function fixture() {
+function fixture(packageIdentity: ReviewedSourceRegistryPackage = reviewed) {
   const root = mkdtempSync(join(tmpdir(), "nemoclaw-reviewed-sdk-artifact-"));
   temporaryRoots.push(root);
   const artifactDirectory = join(root, "artifact");
@@ -99,8 +115,8 @@ function fixture() {
   const lockfilePath = join(root, "package-lock.json");
   mkdirSync(artifactDirectory);
   mkdirSync(cacheDirectory);
-  writeFileSync(join(artifactDirectory, artifactName), archiveBytes);
-  writeFileSync(lockfilePath, JSON.stringify(reviewedLock()));
+  writeFileSync(join(artifactDirectory, packageIdentity.artifactName), archiveBytes);
+  writeFileSync(lockfilePath, JSON.stringify(reviewedLock(packageIdentity)));
   return { artifactDirectory, cacheDirectory, lockfilePath, root };
 }
 
@@ -108,7 +124,7 @@ function installFixture(
   reviewedLocation: "root" | "nemoclaw",
   packageIdentity: ReviewedSourceRegistryPackage = reviewed,
 ) {
-  const source = fixture();
+  const source = fixture(packageIdentity);
   const nestedRoot = join(source.root, "nemoclaw");
   mkdirSync(nestedRoot);
   writeFileSync(
@@ -132,15 +148,13 @@ function packedInstallFixture() {
   );
   writeFileSync(join(packageRoot, "index.js"), "export {};\n");
   rmSync(join(source.artifactDirectory, artifactName));
-  const packed = JSON.parse(
+  const entry = parseSingleNpmPackResult(
     execFileSync(
       "npm",
       ["pack", packageRoot, "--pack-destination", source.artifactDirectory, "--json"],
       { encoding: "utf8" },
     ),
-  ) as Array<{ filename?: string; integrity?: string }>;
-  expect(packed).toHaveLength(1);
-  const entry = packed[0]!;
+  );
   expect(entry.filename).toBe(artifactName);
   expect(entry.integrity).toMatch(/^sha512-/);
   const packageIdentity = { ...reviewed, integrity: entry.integrity! };
@@ -148,7 +162,7 @@ function packedInstallFixture() {
   writeFileSync(
     join(source.root, "package.json"),
     JSON.stringify({
-      dependencies: { "@nvidia/openshell-sdk": "0.0.106" },
+      optionalDependencies: { "@nvidia/openshell-sdk": "0.0.106" },
       name: "reviewed-sdk-install-fixture",
       private: true,
       version: "1.0.0",
@@ -272,6 +286,51 @@ describe("trusted OpenShell SDK archive preparation", () => {
     expect(stage).toHaveBeenCalledOnce();
   });
 
+  it("selects and stages one base-approved replacement SDK identity", async () => {
+    const source = installFixture("root", replacement);
+    const stage = cacheStageMock();
+
+    await prepareCiNpmInstallWithReviewedConfig(
+      installRequest(source, "artifact"),
+      reviewedConfigSource(reviewed, replacement),
+      stage,
+    );
+
+    expect(stage).toHaveBeenCalledOnce();
+    expect(stage.mock.calls[0]?.[0]).toMatchObject({ artifactName: replacement.artifactName });
+  });
+
+  it("rejects a candidate that mixes active and replacement SDK identities", async () => {
+    const source = installFixture("root", reviewed);
+    writeFileSync(
+      join(source.root, "nemoclaw", "package-lock.json"),
+      JSON.stringify(reviewedLock(replacement)),
+    );
+
+    await expect(
+      prepareCiNpmInstallWithReviewedConfig(
+        installRequest(source, "registry"),
+        reviewedConfigSource(reviewed, replacement),
+      ),
+    ).rejects.toThrow("reviewed npm locks use conflicting OpenShell SDK identities");
+  });
+
+  it.each([
+    ["a different package", { packageSpec: "@example/other-sdk@0.0.116" }],
+    ["the active package version", { packageSpec: reviewed.packageSpec }],
+    ["the active artifact name", { artifactName: reviewed.artifactName }],
+  ])("rejects replacement trust for %s", async (_case, replacementPatch) => {
+    const source = installFixture("root");
+    const invalidReplacement = { ...replacement, ...replacementPatch };
+
+    await expect(
+      prepareCiNpmInstallWithReviewedConfig(
+        installRequest(source, "registry"),
+        reviewedConfigSource(reviewed, invalidReplacement),
+      ),
+    ).rejects.toThrow("ci/reviewed-npm-audit.json is invalid");
+  });
+
   it("uses registry mode without requiring or caching an archive", async () => {
     const source = installFixture("root");
     const stage = cacheStageMock();
@@ -300,7 +359,7 @@ describe("trusted OpenShell SDK archive preparation", () => {
     expect(stage.mock.calls[0]?.[0].archive.equals(archiveBytes)).toBe(true);
   });
 
-  it("installs the reviewed archive offline after npm stages it", async () => {
+  it("installs the reviewed optional root archive without package credentials", async () => {
     const { packageIdentity, source } = packedInstallFixture();
 
     await prepareCiNpmInstallWithReviewedConfig(
@@ -311,14 +370,26 @@ describe("trusted OpenShell SDK archive preparation", () => {
       "npm",
       [
         "ci",
-        "--offline",
+        "--allow-remote=root",
+        "--prefer-offline",
         "--ignore-scripts",
         "--no-audit",
         "--no-fund",
         "--cache",
         source.cacheDirectory,
       ],
-      { cwd: source.root, encoding: "utf8" },
+      {
+        cwd: source.root,
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          GITHUB_TOKEN: undefined,
+          GH_TOKEN: undefined,
+          NODE_AUTH_TOKEN: undefined,
+          NPM_CONFIG__AUTH_TOKEN: undefined,
+          NPM_TOKEN: undefined,
+        },
+      },
     );
 
     const installed = JSON.parse(

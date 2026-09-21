@@ -5,6 +5,7 @@ import type {
   RuntimeProviderPrivilegedSandboxCommandResult,
   RuntimeProviderPrivilegedSandboxTarget,
 } from "../../../src/lib/onboard/runtime-provider/contract.ts";
+import { liveE2eManagedImageCatalog } from "../../../src/lib/onboard/workload/preparation.ts";
 import {
   executePrivilegedSandboxCommand,
   resolvePrivilegedSandboxTarget,
@@ -49,15 +50,35 @@ export interface SplitProcessSecurityReport {
 }
 
 export interface SecurityPostureSummary {
+  capabilitySurfaces: {
+    connect: CapabilitySurfaceReport;
+    entrypoint: CapabilitySurfaceReport;
+    exec: CapabilitySurfaceReport;
+  };
   configureGuard: true;
   hostNonRoot: true;
-  rcFilesLocked: true;
+  rcFilesMutable: true;
   runtimeProxyEnvLocked: true;
+  runtimeVersions: {
+    managedImageRevision: string;
+    openshell: string;
+  };
   splitProcess: {
     childSupervisor: ProcessSecurityIdentity;
     supervisor: ProcessSecurityIdentity;
   };
   startupLogClean: true;
+}
+
+export interface CapabilitySurfaceReport {
+  capAmb: string;
+  capBnd: string;
+  capEff: string;
+  capInh: string;
+  capPrm: string;
+  gid: number;
+  surface: "connect" | "entrypoint" | "exec";
+  uid: number;
 }
 
 export interface SecurityPostureExpectations {
@@ -66,6 +87,7 @@ export interface SecurityPostureExpectations {
 }
 
 export interface SecurityPostureDependencies {
+  environment?: NodeJS.ProcessEnv;
   executePrivilegedCommand?: typeof executePrivilegedSandboxCommand;
   resolvePrivilegedTarget?: typeof resolvePrivilegedSandboxTarget;
 }
@@ -86,6 +108,9 @@ const LIVE_PROCESS_STATES = ["D", "R", "S"] as const;
 const MAX_PROC_ENTRIES = 32_768;
 const MAX_CENSUS_STABILITY_ATTEMPTS = 4;
 const MAX_CENSUS_DIAGNOSTIC_IDENTITIES = 16;
+const CAPABILITY_SURFACE_MARKER = "NEMOCLAW_SECURITY_CAPABILITY_SURFACE";
+const EXPECTED_OPENSHELL_VERSION = "0.0.116";
+const REVISION_PATTERN = /^[0-9a-f]{40}$/u;
 // The pinned OpenShell supervisor has the Docker default capabilities plus
 // NET_ADMIN, SYS_ADMIN, SYS_PTRACE, and SYSLOG. Freeze the
 // resulting Linux capability mask so additions and removals both require an
@@ -99,9 +124,10 @@ const OPENSHELL_SUPERVISOR_CAPABILITY_MASKS = Object.freeze({
 });
 
 function supervisorCapabilityMask(providerId: string): string {
-  const mask = OPENSHELL_SUPERVISOR_CAPABILITY_MASKS[
-    providerId as keyof typeof OPENSHELL_SUPERVISOR_CAPABILITY_MASKS
-  ];
+  const mask =
+    OPENSHELL_SUPERVISOR_CAPABILITY_MASKS[
+      providerId as keyof typeof OPENSHELL_SUPERVISOR_CAPABILITY_MASKS
+    ];
   if (!mask) {
     throw new Error(`security-posture has no reviewed capability mask for '${providerId}'`);
   }
@@ -389,6 +415,32 @@ function probeEnv(): NodeJS.ProcessEnv {
   };
 }
 
+function selectedManagedImageRevision(environment: NodeJS.ProcessEnv): string {
+  const revision =
+    environment.E2E_MANAGED_IMAGE_REVISION?.trim() ||
+    environment.NEMOCLAW_E2E_MANAGED_IMAGE_REVISION?.trim() ||
+    liveE2eManagedImageCatalog(environment)?.revision ||
+    "";
+  if (!REVISION_PATTERN.test(revision)) {
+    throw new Error("security-posture requires one exact managed-image revision");
+  }
+  return revision;
+}
+
+/** Require the exact stable OpenShell version token from a successful probe. */
+export function parseExpectedOpenShellVersion(result: ShellProbeResult): string {
+  requireSuccess("OpenShell version", result);
+  const versions = [...resultText(result).matchAll(/(?:^|\s)(\d+\.\d+\.\d+)(?=\s|$)/gu)].map(
+    (match) => match[1]!,
+  );
+  if (versions.length !== 1 || versions[0] !== EXPECTED_OPENSHELL_VERSION) {
+    throw new Error(
+      `security-posture expected OpenShell ${EXPECTED_OPENSHELL_VERSION}, got ${versions.join(", ") || "unreported"}`,
+    );
+  }
+  return versions[0];
+}
+
 function resultText(result: Pick<ShellProbeResult, "stdout" | "stderr">): string {
   return [result.stdout, result.stderr].filter(Boolean).join("\n");
 }
@@ -479,6 +531,67 @@ function requireZeroCapabilities(status: ProcessSecurityStatus, label: string): 
   }
 }
 
+function capabilitySurfaceProbe(surface: CapabilitySurfaceReport["surface"]): string {
+  return String.raw`set -eu
+uid="$(id -u)"
+gid="$(id -g)"
+line='${CAPABILITY_SURFACE_MARKER} surface=${surface} uid='"$uid"' gid='"$gid"
+for field in CapInh CapPrm CapEff CapBnd CapAmb; do
+  value="$(awk -v name="$field:" '$1 == name { print $2; exit }' "/proc/$$/status")"
+  test -n "$value"
+  line="$line $field=$value"
+done
+printf '%s\n' "$line"
+exit 0`;
+}
+
+export function parseCapabilitySurfaceReport(
+  result: ShellProbeResult,
+  surface: CapabilitySurfaceReport["surface"],
+  sandboxUid: number,
+  sandboxGid: number,
+): CapabilitySurfaceReport {
+  requireSuccess(`${surface} child capability surface`, result);
+  const lines = resultText(result)
+    .replaceAll(/\u001b\[[0-9;?]*[ -/]*[@-~]/gu, "")
+    .split(/\r?\n/u)
+    .map((line) => line.trim())
+    .filter((line) => line.startsWith(`${CAPABILITY_SURFACE_MARKER} `));
+  if (lines.length !== 1) {
+    throw new Error(`${surface} child emitted ${lines.length} capability proof markers`);
+  }
+  const pattern = new RegExp(
+    `^${CAPABILITY_SURFACE_MARKER} surface=(connect|entrypoint|exec) uid=(\\d+) gid=(\\d+) CapInh=([0-9a-f]{16}) CapPrm=([0-9a-f]{16}) CapEff=([0-9a-f]{16}) CapBnd=([0-9a-f]{16}) CapAmb=([0-9a-f]{16})$`,
+    "u",
+  );
+  const match = pattern.exec(lines[0]!);
+  if (!match) throw new Error(`${surface} child emitted a malformed capability proof marker`);
+  const report: CapabilitySurfaceReport = {
+    surface: match[1] as CapabilitySurfaceReport["surface"],
+    uid: Number(match[2]),
+    gid: Number(match[3]),
+    capInh: match[4]!,
+    capPrm: match[5]!,
+    capEff: match[6]!,
+    capBnd: match[7]!,
+    capAmb: match[8]!,
+  };
+  if (report.surface !== surface) {
+    throw new Error(`${surface} child reported the ${report.surface} surface`);
+  }
+  if (report.uid !== sandboxUid || report.gid !== sandboxGid) {
+    throw new Error(
+      `${surface} child expected uid=${sandboxUid} gid=${sandboxGid}, got uid=${report.uid} gid=${report.gid}`,
+    );
+  }
+  for (const field of ["capInh", "capPrm", "capEff", "capBnd", "capAmb"] as const) {
+    if (!/^[0]+$/u.test(report[field])) {
+      throw new Error(`${surface} child ${field} expected 0, got ${report[field]}`);
+    }
+  }
+  return report;
+}
+
 function requireExactIds(values: string[], expected: number, label: string): void {
   const exact = String(expected);
   if (values.length !== 4 || values.some((value) => value !== exact)) {
@@ -542,12 +655,9 @@ function validateSupervisor(
   }
   requireExactIds(process.status.uid, 0, "OpenShell supervisor Uid");
   requireExactIds(process.status.gid, 0, "OpenShell supervisor Gid");
-  requireExactSupplementaryGroups(
-    process.status.groups,
-    [0],
-    "OpenShell supervisor Groups",
-    [[0, sandboxGid]],
-  );
+  requireExactSupplementaryGroups(process.status.groups, [0], "OpenShell supervisor Groups", [
+    [0, sandboxGid],
+  ]);
   for (const field of ["capInh", "capPrm", "capEff", "capBnd", "capAmb"] as const) {
     requireCapabilityHex(process.status[field], `OpenShell supervisor ${field}`);
   }
@@ -783,6 +893,16 @@ export async function assertSecurityPosture(
   );
   requireSuccess("non-root host user", hostUser);
 
+  const openshellVersionProbe = await host.command(host.openshellCommandPath, ["--version"], {
+    artifactName: "security-posture-openshell-version",
+    env: probeEnv(),
+    timeoutMs: 15_000,
+  });
+  const openshellVersion = parseExpectedOpenShellVersion(openshellVersionProbe);
+  const managedImageRevision = selectedManagedImageRevision(
+    dependencies.environment ?? process.env,
+  );
+
   const resolvePrivilegedTarget =
     dependencies.resolvePrivilegedTarget ?? resolvePrivilegedSandboxTarget;
   const executePrivilegedCommand =
@@ -823,6 +943,56 @@ export async function assertSecurityPosture(
     supervisorCapabilityMask(initialTarget.providerId),
   );
 
+  const execCapabilities = await sandbox.execShell(
+    sandboxName,
+    trustedSandboxShellScript(capabilitySurfaceProbe("exec")),
+    {
+      artifactName: "security-posture-exec-capabilities",
+      env: probeEnv(),
+      timeoutMs: 30_000,
+    },
+  );
+  const execCapabilitySurface = parseCapabilitySurfaceReport(
+    execCapabilities,
+    "exec",
+    splitProcess.sandboxUid,
+    splitProcess.sandboxGid,
+  );
+
+  const connectCapabilities = await host.command(
+    "bash",
+    [
+      "-lc",
+      'printf \'%s\\n\' "$1" | "$2" "$3" connect',
+      "security-posture-connect-capabilities",
+      capabilitySurfaceProbe("connect"),
+      host.commandPath,
+      sandboxName,
+    ],
+    {
+      artifactName: "security-posture-connect-capabilities",
+      env: probeEnv(),
+      timeoutMs: 90_000,
+    },
+  );
+  const connectCapabilitySurface = parseCapabilitySurfaceReport(
+    connectCapabilities,
+    "connect",
+    splitProcess.sandboxUid,
+    splitProcess.sandboxGid,
+  );
+  const childSupervisor = selectNemoclawStartSupervisor(splitProcess.childSupervisors);
+  const entrypointCapabilitySurface: CapabilitySurfaceReport = {
+    capAmb: childSupervisor.status.capAmb,
+    capBnd: childSupervisor.status.capBnd,
+    capEff: childSupervisor.status.capEff,
+    capInh: childSupervisor.status.capInh,
+    capPrm: childSupervisor.status.capPrm,
+    gid: splitProcess.sandboxGid,
+    surface: "entrypoint",
+    uid: splitProcess.sandboxUid,
+  };
+
   const rcFiles = await sandbox.execShell(
     sandboxName,
     trustedSandboxShellScript(String.raw`
@@ -832,12 +1002,15 @@ for f in /sandbox/.bashrc /sandbox/.profile; do
   test ! -L "$f" || { echo "SYMLINK $f"; bad=1; }
   set -- $(stat -c "%a %U:%G" "$f")
   echo "META $f $1 $2"
-  test "$1" = 444 || { echo "BAD_MODE $f $1"; bad=1; }
-  test "$2" = root:root || { echo "BAD_OWNER $f $2"; bad=1; }
+  test -w "$f" || { echo "NOT_WRITABLE $f"; bad=1; }
+  test "$2" = "$(id -un):$(id -gn)" || { echo "BAD_OWNER $f $2"; bad=1; }
   grep -Eq "nemoclaw-configure-guard|^(openclaw|hermes)\(\)" "$f" && {
     echo "INLINE_GUARD $f"
     bad=1
   }
+  printf '\n# nemoclaw-e2e-personal-profile\n' >> "$f" &&
+    cp "$f" "$f.nemoclaw-e2e" && mv "$f.nemoclaw-e2e" "$f" &&
+    grep -qx '# nemoclaw-e2e-personal-profile' "$f" || { echo "EDIT_FAILED $f"; bad=1; }
 done
 exit "$bad"
 `),
@@ -847,7 +1020,7 @@ exit "$bad"
       timeoutMs: 30_000,
     },
   );
-  requireSuccess("locked sandbox rc files", rcFiles);
+  requireSuccess("agent-owned editable sandbox rc files", rcFiles);
 
   const functionName = agent === "hermes" ? "hermes" : "openclaw";
   const guardArg = agent === "hermes" ? "setup" : "configure";
@@ -913,7 +1086,7 @@ log=/tmp/nemoclaw-start.log
 test -f "$log" || { echo MISSING_START_LOG; exit 1; }
 grep -qi '${launchPattern}' "$log" || { echo MISSING_GATEWAY_LAUNCH_MARKER; exit 1; }
 if grep -E 'mktemp:.*(/sandbox/\.\.(bashrc|profile)\.tmp|/sandbox/\.nemoclaw.*tmp)|Permission denied.*(/sandbox/\.bashrc|/sandbox/\.profile)' "$log"; then
-  echo START_LOG_HAS_RC_WRITE_FAILURE
+  echo START_LOG_HAS_SECURITY_FAILURE
   exit 1
 fi
 tail -n 20 "$log"
@@ -927,12 +1100,21 @@ tail -n 20 "$log"
   requireSuccess("sandbox startup log security posture", startLog);
 
   return {
+    capabilitySurfaces: {
+      connect: connectCapabilitySurface,
+      entrypoint: entrypointCapabilitySurface,
+      exec: execCapabilitySurface,
+    },
     configureGuard: true,
     hostNonRoot: true,
-    rcFilesLocked: true,
+    rcFilesMutable: true,
     runtimeProxyEnvLocked: true,
+    runtimeVersions: {
+      managedImageRevision,
+      openshell: openshellVersion,
+    },
     splitProcess: {
-      childSupervisor: selectNemoclawStartSupervisor(splitProcess.childSupervisors),
+      childSupervisor,
       supervisor: splitProcess.supervisor,
     },
     startupLogClean: true,

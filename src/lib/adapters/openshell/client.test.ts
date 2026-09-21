@@ -1,7 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { SpawnSyncReturns } from "node:child_process";
+import type { ChildProcess, SpawnSyncReturns } from "node:child_process";
+import { EventEmitter } from "node:events";
 import { chmodSync, existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -12,6 +13,7 @@ import { withStdoutRedirectedToStderr } from "../../cli/stdout-guard";
 import {
   captureOpenshellCommand,
   captureOpenshellCommandAsync,
+  captureOpenshellCommandAsyncResult,
   captureSandboxSshConfigCommand,
   getInstalledOpenshellVersion,
   type OpenshellSpawnSync,
@@ -448,6 +450,85 @@ describe("openshell helpers", () => {
     expect(result.signal).toBeTruthy();
   });
 
+  it("ignores empty async input so EPIPE cannot replace a successful close", async () => {
+    const child = new EventEmitter() as EventEmitter & ChildProcess;
+    const stdin = new EventEmitter() as EventEmitter & {
+      end: ReturnType<typeof vi.fn>;
+    };
+    const stdout = new EventEmitter();
+    const stderr = new EventEmitter();
+    const observedStdio: unknown[] = [];
+    stdin.on("error", () => {});
+    stdin.end = vi.fn();
+    Object.assign(child, {
+      exitCode: null,
+      signalCode: null,
+      stdin,
+      stdout,
+      stderr,
+      kill: vi.fn(() => true),
+    });
+
+    const resultPromise = captureOpenshellCommandAsyncResult("openshell", ["status"], {
+      input: "",
+      spawnImpl: ((_binary: string, _args: readonly string[], options: { stdio?: unknown }) => {
+        observedStdio.push(options.stdio);
+        queueMicrotask(() => {
+          stdout.emit("data", "READY");
+          stdin.emit("error", Object.assign(new Error("write EPIPE"), { code: "EPIPE" }));
+          child.emit("close", 0, null);
+        });
+        return child;
+      }) as never,
+    });
+
+    await expect(resultPromise).resolves.toEqual({
+      status: 0,
+      signal: null,
+      stdout: "READY",
+      stderr: "",
+    });
+    expect(observedStdio).toEqual([["ignore", "pipe", "pipe"]]);
+    expect(stdin.end).not.toHaveBeenCalled();
+  });
+
+  it("returns a structured failure when async process creation throws", async () => {
+    const error = Object.assign(new Error("spawn openshell EACCES"), { code: "EACCES" });
+
+    await expect(
+      captureOpenshellCommandAsyncResult("openshell", ["status"], {
+        spawnImpl: (() => {
+          throw error;
+        }) as never,
+      }),
+    ).resolves.toEqual({
+      status: null,
+      signal: null,
+      stdout: "",
+      stderr: "",
+      error,
+    });
+  });
+
+  it("preserves a concrete async close status after its deadline", async () => {
+    const result = await captureOpenshellCommandAsync(
+      process.execPath,
+      ["-e", "process.on('SIGTERM', () => process.exit(0)); setInterval(() => {}, 1000)"],
+      {
+        ignoreError: true,
+        timeout: 100,
+        killGraceMs: 10,
+      },
+    );
+
+    expect(result).toEqual({
+      status: 0,
+      output: "",
+      error: expect.objectContaining({ code: "ETIMEDOUT" }),
+      signal: null,
+    });
+  });
+
   it("includes stderr in async capture output when requested", async () => {
     const result = await captureOpenshellCommandAsync(
       process.execPath,
@@ -478,6 +559,22 @@ describe("openshell helpers", () => {
       stderr: "boom\n",
       signal: null,
     });
+  });
+
+  it("stops asynchronous capture after one MiB", async () => {
+    const result = await captureOpenshellCommandAsync(
+      process.execPath,
+      ["-e", "process.stdout.write('x'.repeat(1024 * 1024 + 1))"],
+      { ignoreError: true, includeStreams: true, outputLimitBytes: 1024 * 1024 },
+    );
+
+    expect(result.status).not.toBe(0);
+    expect(result.output).toHaveLength(1024 * 1024);
+    expect(result.stdout).toHaveLength(1024 * 1024);
+    expect(result.stderr).toBe("");
+    expect(result.error).toEqual(
+      expect.objectContaining({ code: "ERR_CHILD_PROCESS_STDIO_MAXBUFFER" }),
+    );
   });
 
   it("uses the injected exit handler on failure", () => {

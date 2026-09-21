@@ -205,7 +205,7 @@ export function ensureDockerDriverGatewayLocalTlsBundle({
         if (!provider.gateway.supported) {
           throw new Error("The selected runtime provider does not support a host-managed gateway.");
         }
-        return provider.gateway.prepareHostRuntime({
+        return provider.gateway.observeHostRuntime({
           environment: env,
           platform,
         }).requiredServerIpSans;

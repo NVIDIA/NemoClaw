@@ -24,13 +24,13 @@ type DcodeRebuildOrchestratorDeps = {
     sandboxName: string,
     bail: DcodeRebuildPreflightBail,
     runtimeSelection?: OpenShellRuntimeSelection,
-  ): boolean;
+  ): boolean | Promise<boolean>;
   preflightCredentials(
     sandboxName: string,
     entry: RebuildSandboxEntry,
     log: (message: string) => void,
     bail: DcodeRebuildPreflightBail,
-  ): boolean;
+  ): boolean | Promise<boolean>;
   ensureAgentBaseImage(
     agentName: string | null,
     bail: DcodeRebuildPreflightBail,
@@ -157,7 +157,9 @@ export function createDcodeRebuildOrchestrator(
           ) {
             return false;
           }
-          if (!deps.checkGatewaySchema(sandboxName, scope.bail, runtimeSelection)) return false;
+          if (!(await deps.checkGatewaySchema(sandboxName, scope.bail, runtimeSelection))) {
+            return false;
+          }
         }
         return deps.preflightCredentials(sandboxName, entry, log, scope.bail);
       }),

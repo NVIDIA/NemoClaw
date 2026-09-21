@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "revision": 1,
+  "identity": "exact-head",
+  "headSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "interest": "security-standard-work",
+  "status": "clear",
+  "findings": [],
+  "noFindingsReason": "No P0/P1 blocker remains in the reviewed area."
+}

@@ -1,0 +1,11 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+version = "1.0.0"
+
+[[pulse-trufflehog.files]]
+file = "/opt/hermes/website/docusaurus.config.ts"
+
+[[pulse-trufflehog.files.secrets]]
+type = "AlgoliaAdminKey"
+values = ["8fd*************************8a07"]

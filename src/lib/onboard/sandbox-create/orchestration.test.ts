@@ -7,6 +7,8 @@ import path from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
 
+import * as processRecovery from "../../actions/sandbox/process-recovery";
+import { createHermesCredentialEnvReconciliationRuntime } from "../../actions/sandbox/runtime/hermes-lifecycle";
 import type { SandboxEntry } from "../../state/registry";
 import { runSandboxProviderPreDeleteCleanup } from "../sandbox-provider-cleanup";
 import {
@@ -21,6 +23,7 @@ import {
   readManagedDcodeCreateSelectionDrift,
   readSandboxRecreateRegistryEntry,
   reconcileCreatedHermesCredentialEnvironment,
+  releaseManagedStartupHoldWithRetry,
   runAuthorityBoundProviderCleanup,
   runAsyncWithPostCreateRecovery,
   runSandboxCreateWithIdentityVerification,
@@ -34,8 +37,69 @@ const UNVERIFIED_RECOVERY_CONTEXT = {
   createAttemptNonce: "a".repeat(62),
 } as const;
 
+describe("managed startup hold release", () => {
+  it("retries a transient exact-container release failure before retained recovery", () => {
+    const release = vi
+      .fn()
+      .mockImplementationOnce(() => {
+        throw new Error("release unavailable");
+      })
+      .mockImplementationOnce(() => undefined);
+
+    expect(() => releaseManagedStartupHoldWithRetry(release)).not.toThrow();
+    expect(release).toHaveBeenCalledTimes(2);
+  });
+
+  it("bounds persistent release failures", () => {
+    const release = vi.fn(() => {
+      throw new Error("release unavailable");
+    });
+
+    expect(() => releaseManagedStartupHoldWithRetry(release)).toThrow("release unavailable");
+    expect(release).toHaveBeenCalledTimes(3);
+  });
+});
+
 describe("created Hermes credential environment reconciliation", () => {
   const plan = { agent: "hermes" } as never;
+
+  it("uses direct native health instead of the retired managed probe", async () => {
+    const wait = vi
+      .spyOn(processRecovery, "waitForRecoveredSandboxGateway")
+      .mockResolvedValueOnce(true);
+    const runtime = createHermesCredentialEnvReconciliationRuntime(vi.fn() as never, vi.fn());
+
+    await expect(runtime.waitForGateway("alpha", vi.fn())).resolves.toBe(true);
+
+    expect(wait).toHaveBeenCalledWith(
+      "alpha",
+      expect.objectContaining({ managedProbeImpl: expect.any(Function) }),
+    );
+    expect(wait.mock.calls[0]![1]!.managedProbeImpl!("alpha")).toBeNull();
+    wait.mockRestore();
+  });
+
+  it("revalidates identity after the secret boundary and before native restart", async () => {
+    const events: string[] = [];
+    const execute = vi
+      .spyOn(processRecovery, "executeSandboxExecCommand")
+      .mockImplementation(async (_sandboxName, command) => {
+        events.push(command === "hermes gateway restart" ? "restart" : "unexpected");
+        return { status: 0, stdout: "", stderr: "" };
+      });
+    const runtime = createHermesCredentialEnvReconciliationRuntime(vi.fn() as never, vi.fn());
+
+    await expect(
+      runtime.restartGateway("alpha", (operation) => events.push(`identity:${operation}`)),
+    ).resolves.toEqual({ status: 0, stdout: "", stderr: "" });
+
+    expect(events).toEqual([
+      "identity:restarting Hermes gateway for sandbox 'alpha'",
+      "restart",
+      "identity:confirming Hermes gateway restart for sandbox 'alpha'",
+    ]);
+    execute.mockRestore();
+  });
 
   it("finalizes sandbox registration before reconciling credentials (#9833)", async () => {
     const events: string[] = [];
@@ -47,7 +111,9 @@ describe("created Hermes credential environment reconciliation", () => {
         events.push("registration:complete");
         return { sandboxName: "alpha" };
       },
-      () => events.push("credentials:reconcile"),
+      async () => {
+        events.push("credentials:reconcile");
+      },
     );
 
     expect(events).toEqual([
@@ -57,11 +123,11 @@ describe("created Hermes credential environment reconciliation", () => {
     ]);
   });
 
-  it("restarts and rechecks the managed gateway after changing the env file", () => {
+  it("restarts and rechecks the native gateway after changing the env file", async () => {
     const events: string[] = [];
     const restart = { status: 0, stdout: "managed completion", stderr: "" };
 
-    reconcileCreatedHermesCredentialEnvironment(
+    await reconcileCreatedHermesCredentialEnvironment(
       { sandboxName: "alpha", plan },
       {
         revalidateSandboxIdentity: (operation) => events.push(`identity:${operation}`),
@@ -69,15 +135,11 @@ describe("created Hermes credential environment reconciliation", () => {
           events.push("reconcile");
           return { changed: true };
         },
-        restartGateway: () => {
+        restartGateway: async () => {
           events.push("restart");
           return restart;
         },
-        parseRestartCompletion: (result) => {
-          events.push("parse");
-          return result === restart ? {} : null;
-        },
-        waitForGateway: () => {
+        waitForGateway: async () => {
           events.push("wait");
           return true;
         },
@@ -90,23 +152,21 @@ describe("created Hermes credential environment reconciliation", () => {
       "reconcile",
       expect.stringMatching(/^identity:confirming/u),
       "restart",
-      "parse",
       "wait",
       expect.stringMatching(/^identity:completing/u),
     ]);
   });
 
-  it("does not restart when the env file was already reconciled", () => {
+  it("does not restart when the env file was already reconciled", async () => {
     const restartGateway = vi.fn();
     const waitForGateway = vi.fn();
 
-    reconcileCreatedHermesCredentialEnvironment(
+    await reconcileCreatedHermesCredentialEnvironment(
       { sandboxName: "alpha", plan },
       {
         revalidateSandboxIdentity: vi.fn(),
         reconcileCredentialEnv: () => ({ changed: false }),
         restartGateway,
-        parseRestartCompletion: vi.fn(),
         waitForGateway,
       },
       vi.fn(),
@@ -116,7 +176,7 @@ describe("created Hermes credential environment reconciliation", () => {
     expect(waitForGateway).not.toHaveBeenCalled();
   });
 
-  it("refuses a same-name replacement at the credential mutation edge (#9833)", () => {
+  it("refuses a same-name replacement at the credential mutation edge (#9833)", async () => {
     const expectedIdentity = "identity-a";
     let liveIdentity = expectedIdentity;
     const mutations: string[] = [];
@@ -128,7 +188,7 @@ describe("created Hermes credential environment reconciliation", () => {
       liveIdentity = "identity-b";
     });
 
-    expect(() =>
+    await expect(
       reconcileCreatedHermesCredentialEnvironment(
         { sandboxName: "alpha", plan },
         {
@@ -139,30 +199,32 @@ describe("created Hermes credential environment reconciliation", () => {
             return { changed: true };
           }) as never,
           restartGateway: vi.fn(),
-          parseRestartCompletion: vi.fn(),
           waitForGateway: vi.fn(),
         },
         vi.fn(),
       ),
-    ).toThrow(/sandbox identity changed/u);
+    ).rejects.toThrow(/sandbox identity changed/u);
     expect(mutations).toEqual([]);
   });
 
-  it("fails onboarding when the changed gateway cannot prove restart completion", () => {
+  it("fails onboarding when the native gateway restart fails", async () => {
     const recordRecovery = vi.fn();
-    expect(() =>
+    await expect(
       reconcileCreatedHermesCredentialEnvironment(
         { sandboxName: "alpha", plan },
         {
           revalidateSandboxIdentity: vi.fn(),
           reconcileCredentialEnv: () => ({ changed: true }),
-          restartGateway: () => ({ status: 1, stdout: "", stderr: "failed" }),
-          parseRestartCompletion: () => null,
+          restartGateway: async () => ({
+            status: 1,
+            stdout: "",
+            stderr: "failed",
+          }),
           waitForGateway: vi.fn(),
         },
         recordRecovery,
       ),
-    ).toThrow("managed gateway restart did not complete");
+    ).rejects.toThrow("native Hermes restart failed");
     expect(recordRecovery).toHaveBeenCalledOnce();
   });
 });
@@ -438,7 +500,7 @@ describe("APF create policy selection", () => {
 });
 
 describe("deferred provider effect authority", () => {
-  it("carries identity authority through every provider cleanup effect (#9833)", () => {
+  it("carries identity authority through every provider cleanup effect (#9833)", async () => {
     let liveIdentity = "identity-a";
     const operations: string[] = [];
     const revalidateSandboxIdentity = vi.fn((operation: string) => {
@@ -448,7 +510,7 @@ describe("deferred provider effect authority", () => {
           throw new Error("sandbox identity changed");
         })();
     });
-    const runProviderPreDeleteCleanup = vi.fn((_sandboxName, deps) => {
+    const runProviderPreDeleteCleanup = vi.fn(async (_sandboxName, deps) => {
       expect(deps.revalidateSandboxIdentity).toBe(revalidateSandboxIdentity);
       deps.revalidateSandboxIdentity?.("detaching provider");
       liveIdentity = "identity-b";
@@ -456,7 +518,7 @@ describe("deferred provider effect authority", () => {
       return { detached: [], failures: [] };
     });
 
-    expect(() =>
+    await expect(
       runAuthorityBoundProviderCleanup({
         sandboxName: "alpha",
         revalidateSandboxIdentity,
@@ -464,7 +526,7 @@ describe("deferred provider effect authority", () => {
         runOpenshell: vi.fn(),
         redact: (value) => value,
       }),
-    ).toThrow(/sandbox identity changed/u);
+    ).rejects.toThrow(/sandbox identity changed/u);
     expect(runProviderPreDeleteCleanup).toHaveBeenCalledOnce();
     expect(operations).toEqual([
       "cleaning up providers for sandbox 'alpha'",
@@ -473,7 +535,7 @@ describe("deferred provider effect authority", () => {
     ]);
   });
 
-  it("refuses provider cleanup when a sandbox appears after verified absence (#9833)", () => {
+  it("refuses provider cleanup when a sandbox appears after verified absence (#9833)", async () => {
     let observationCount = 0;
     const revalidateSandboxIdentity = vi.fn();
     const runOpenshell = vi.fn(() => ({
@@ -485,7 +547,7 @@ describe("deferred provider effect authority", () => {
       signal: null,
     }));
 
-    expect(() =>
+    await expect(
       runAuthorityBoundProviderCleanup({
         sandboxName: "alpha",
         observeSandbox: () =>
@@ -498,7 +560,7 @@ describe("deferred provider effect authority", () => {
         redact: (value) => value,
         tolerateMissingSandbox: true,
       }),
-    ).toThrow(/appeared after absence was verified/u);
+    ).rejects.toThrow(/appeared after absence was verified/u);
     expect(revalidateSandboxIdentity).toHaveBeenCalledOnce();
     expect(runOpenshell).not.toHaveBeenCalled();
   });
@@ -523,7 +585,7 @@ describe("deferred provider effect authority", () => {
         cleanupCreateSources: vi.fn(),
       },
       runVerifiedSandboxCreateEffects: null,
-      activateDeferredProviderEffects: (revalidate) => {
+      activateDeferredProviderEffects: async (revalidate) => {
         revalidate("cleaning up providers for sandbox 'alpha'");
         return ["first", "second"];
       },
@@ -544,11 +606,12 @@ describe("deferred provider effect authority", () => {
 
     expect(error).toBeInstanceOf(Error);
     expect((error as Error).message).toContain(
-      "Do not delete it by mutable sandbox name. Ask an OpenShell administrator to remove the retained sandbox through an identity-bound procedure.",
+      "Do not delete it by mutable sandbox name. Run 'nemoclaw alpha destroy'.",
     );
     expect((error as Error).message).toContain(
-      "After OpenShell confirms the retained sandbox is absent, run 'nemoclaw alpha destroy --yes' to reconcile its verified Docker containers and recovery record.",
+      "can reconcile verified residual resources and the recovery record only after OpenShell confirms absence",
     );
+    expect((error as Error).message).not.toContain("administrator");
 
     expect(runOpenshell).not.toHaveBeenCalledWith(
       expect.arrayContaining(["sandbox", "provider", "attach"]),
@@ -579,7 +642,7 @@ describe("deferred provider effect authority", () => {
         cleanupCreateSources: vi.fn(),
       },
       runVerifiedSandboxCreateEffects: null,
-      activateDeferredProviderEffects: () => [],
+      activateDeferredProviderEffects: async () => [],
       revalidateSandboxIdentityBeforeCreate: vi.fn(),
     });
     const runAfterVerifiedCreate = boundary.runAfterVerifiedCreate;
@@ -645,7 +708,10 @@ describe("managed MCP rebuild handoff", () => {
 
 describe("sandbox recreate registry authority", () => {
   it("re-reads the durable source row for Hermes portable recreation (#10056)", () => {
-    const durable = { name: "alpha", lifecycleGeneration: "source-generation" } as SandboxEntry;
+    const durable = {
+      name: "alpha",
+      lifecycleGeneration: "source-generation",
+    } as SandboxEntry;
     const readRegistry = vi.fn(() => durable);
 
     expect(
@@ -678,8 +744,8 @@ describe("sandbox recreate registry authority", () => {
 describe("managed DCode sandbox create selection", () => {
   it.each([null, "https://openrouter.ai/api/v1"])(
     "passes the selected endpoint to live drift validation: %s (#9555)",
-    (endpointUrl) => {
-      const readDcodeSelectionDrift = vi.fn(() => ({
+    async (endpointUrl) => {
+      const readDcodeSelectionDrift = vi.fn(async () => ({
         changed: false,
         providerChanged: false,
         modelChanged: false,
@@ -688,7 +754,7 @@ describe("managed DCode sandbox create selection", () => {
         unknown: false,
       }));
 
-      readManagedDcodeCreateSelectionDrift(
+      await readManagedDcodeCreateSelectionDrift(
         {
           sandboxName: "saved",
           provider: "compatible-endpoint",
@@ -851,7 +917,7 @@ describe("sandbox create identity checks", () => {
     expect(error).toBeInstanceOf(AggregateError);
     expect((error as AggregateError).message).toMatch(
       new RegExp(
-        `Create-attempt label: ai\\.nvidia\\.nemoclaw\\.create-attempt=${createAttemptNonce}.*left sandbox 'alpha' in place.*identity fingerprint: ${exactIdentity}.*did not run OpenShell's mutable-name deletion command.*Do not delete the sandbox by mutable sandbox name.*OpenShell administrator.*identity-bound recovery or removal procedure`,
+        `Create-attempt label: ai\\.nvidia\\.nemoclaw\\.create-attempt=${createAttemptNonce}.*left sandbox 'alpha' in place.*identity fingerprint: ${exactIdentity}.*did not run OpenShell's mutable-name deletion command.*Do not delete the sandbox by mutable sandbox name.*Inspection is diagnostic only and does not authorize deletion`,
         "u",
       ),
     );
@@ -860,7 +926,7 @@ describe("sandbox create identity checks", () => {
         expect.objectContaining({
           message: expect.stringMatching(
             new RegExp(
-              `Create-attempt label: ai\\.nvidia\\.nemoclaw\\.create-attempt=${createAttemptNonce}.*left sandbox 'alpha' in place.*identity fingerprint: ${exactIdentity}.*did not run OpenShell's mutable-name deletion command.*Do not delete the sandbox by mutable sandbox name.*OpenShell administrator.*identity-bound recovery or removal procedure`,
+              `Create-attempt label: ai\\.nvidia\\.nemoclaw\\.create-attempt=${createAttemptNonce}.*left sandbox 'alpha' in place.*identity fingerprint: ${exactIdentity}.*did not run OpenShell's mutable-name deletion command.*Do not delete the sandbox by mutable sandbox name.*Inspection is diagnostic only and does not authorize deletion`,
               "u",
             ),
           ),
@@ -1076,7 +1142,7 @@ describe("sandbox create identity checks", () => {
         cleanupCreateSources: vi.fn(),
       },
       runVerifiedSandboxCreateEffects: null,
-      activateDeferredProviderEffects: () => ["credential-provider"],
+      activateDeferredProviderEffects: async () => ["credential-provider"],
       revalidateSandboxIdentityBeforeCreate: vi.fn(),
     });
     const error = await runSandboxCreateWithIdentityVerification({
@@ -1132,7 +1198,9 @@ describe("sandbox create identity checks", () => {
     expect((error as AggregateError).errors).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ message: "temporary source cleanup failed" }),
-        expect.objectContaining({ message: expect.stringContaining("left sandbox 'alpha'") }),
+        expect.objectContaining({
+          message: expect.stringContaining("left sandbox 'alpha'"),
+        }),
       ]),
     );
   });
@@ -1145,7 +1213,9 @@ describe("sandbox create identity checks", () => {
       revalidate: (sandboxIsLive) => events.push(sandboxIsLive ? "identity" : "preflight"),
       create: async (verifyCreatedSandbox) => {
         events.push("create");
-        await verifyCreatedSandbox({ sandboxName: "alpha" });
+        await verifyCreatedSandbox({ sandboxName: "alpha" }, () => {
+          events.push("pre-effects-cutover");
+        });
         return "complete";
       },
       runVerifiedCreateEffects: async () => {
@@ -1177,6 +1247,7 @@ describe("sandbox create identity checks", () => {
       "identity",
       "checkpoint",
       "checkpoint-revalidate",
+      "pre-effects-cutover",
       "provider-effects",
       "identity",
       "identity",
@@ -1209,7 +1280,9 @@ describe("sandbox create identity checks", () => {
     expect(error).toBeInstanceOf(AggregateError);
     expect((error as AggregateError).errors).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ message: "identity boundary capture failed" }),
+        expect.objectContaining({
+          message: "identity boundary capture failed",
+        }),
       ]),
     );
     expect(persistCreateIdentity).not.toHaveBeenCalled();
@@ -1388,11 +1461,13 @@ describe("sandbox create identity checks", () => {
 
     expect(error).toBeInstanceOf(AggregateError);
     expect((error as AggregateError).message).toMatch(
-      /left sandbox 'alpha' in place.*did not return a durable sandbox identity fingerprint.*Do not delete the sandbox by mutable sandbox name.*identity-bound recovery or removal procedure/u,
+      /left sandbox 'alpha' in place.*did not return a durable sandbox identity fingerprint.*Do not delete the sandbox by mutable sandbox name.*Inspection is diagnostic only and does not authorize deletion/u,
     );
     expect((error as AggregateError).errors).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ message: expect.stringContaining("post-create verification") }),
+        expect.objectContaining({
+          message: expect.stringContaining("post-create verification"),
+        }),
       ]),
     );
     expect(cleanupTemporarySources).toHaveBeenCalledOnce();

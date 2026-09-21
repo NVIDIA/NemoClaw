@@ -159,9 +159,7 @@ function createHarness(initiallyRunning = false, registryInitiallyRunning = fals
   });
   const assertOperating = vi.fn(() => events.push("operating"));
   const assertRuntimeRetainedCurrent = vi.fn(() => events.push("runtime-retained-current"));
-  const assertRuntimeTransactionCurrent = vi.fn(() =>
-    events.push("runtime-transaction-current"),
-  );
+  const assertRuntimeTransactionCurrent = vi.fn(() => events.push("runtime-transaction-current"));
   const assertRuntimeCurrent = vi.fn(() => {
     events.push("runtime-current");
     expect(running).toBe(true);
@@ -268,7 +266,7 @@ function createHarness(initiallyRunning = false, registryInitiallyRunning = fals
     stateDir: "/state",
     runGatewayOpenshell: vi.fn(),
     readRegistry: vi.fn(() => entry),
-    verifyRoute: vi.fn(() => {
+    verifyRoute: vi.fn(async () => {
       events.push("route");
       return entry;
     }),
@@ -421,14 +419,14 @@ describe("Hermes Portable Ollama inference recovery", () => {
     ["malformed", "not-json\n", "serialized receipt is not valid JSON"],
   ] as const)(
     "rejects an ollama-local registry receipt that is %s before registry recovery",
-    (_label, serializedReceipt, expectedError) => {
+    async (_label, serializedReceipt, expectedError) => {
       const harness = createHarness();
       const entry = {
         ...harness.input.entry,
         hostLocalInferenceReceipt: serializedReceipt,
       } as SandboxEntry;
 
-      expect(() =>
+      await expect(
         recoverHermesPortableOllamaInference(
           {
             ...harness.input,
@@ -437,43 +435,51 @@ describe("Hermes Portable Ollama inference recovery", () => {
           },
           harness.overrides as never,
         ),
-      ).toThrow(expectedError);
+      ).rejects.toThrow(expectedError);
       expect(harness.overrides.prepareRegistryRecovery).not.toHaveBeenCalled();
     },
   );
 
-  it("resumes one stopped published runtime and commits only after final route proof", () => {
-    const harness = createHarness();
+  it.each(["connect-probe-only", "connect-interactive"] as const)(
+    "resumes one stopped published runtime and commits only after final route proof for %s (#11757)",
+    async (intent) => {
+      const harness = createHarness();
 
-    expect(recoverHermesPortableOllamaInference(harness.input, harness.overrides as never)).toBe(
-      "recovered",
-    );
+      expect(
+        await recoverHermesPortableOllamaInference(
+          { ...harness.input, intent },
+          harness.overrides as never,
+        ),
+      ).toBe("recovered");
 
-    expect(harness.prepareStartup).toHaveBeenCalledOnce();
-    expect(harness.running()).toBe(true);
-    expect(harness.registryRunning()).toBe(true);
-    expect(harness.events[0]).toBe("operating");
-    expect(harness.events.indexOf("registry-start")).toBeLessThan(harness.events.indexOf("resume"));
-    expect(harness.events.indexOf("route")).toBeGreaterThan(
-      harness.events.indexOf("prepared-validate"),
-    );
-    expect(harness.events.indexOf("route")).toBeLessThan(harness.events.indexOf("finalize"));
-    expect(harness.prepared.commit).not.toHaveBeenCalled();
-    expect(harness.prepared.rollback).not.toHaveBeenCalled();
-    expect(harness.writeExact).not.toHaveBeenCalled();
-    expect(harness.events.at(-1)).toBe("registry-release");
-  });
+      expect(harness.prepareStartup).toHaveBeenCalledOnce();
+      expect(harness.running()).toBe(true);
+      expect(harness.registryRunning()).toBe(true);
+      expect(harness.events[0]).toBe("operating");
+      expect(harness.events.indexOf("registry-start")).toBeLessThan(
+        harness.events.indexOf("resume"),
+      );
+      expect(harness.events.indexOf("route")).toBeGreaterThan(
+        harness.events.indexOf("prepared-validate"),
+      );
+      expect(harness.events.indexOf("route")).toBeLessThan(harness.events.indexOf("finalize"));
+      expect(harness.prepared.commit).not.toHaveBeenCalled();
+      expect(harness.prepared.rollback).not.toHaveBeenCalled();
+      expect(harness.writeExact).not.toHaveBeenCalled();
+      expect(harness.events.at(-1)).toBe("registry-release");
+    },
+  );
 
-  it("uses retained inference currentness until one final full qualification", () => {
+  it("uses retained inference currentness until one final full qualification", async () => {
     const harness = createHarness();
     const retained = vi.fn();
     const full = vi.fn(() => ({ running: true, receipt: harness.receipt }));
     harness.overrides.assertPreparedInferenceAuthorityTransactionCurrent = retained;
     harness.overrides.assertPreparedInferenceAuthorityCurrent = full;
 
-    expect(recoverHermesPortableOllamaInference(harness.input, harness.overrides as never)).toBe(
-      "recovered",
-    );
+    expect(
+      await recoverHermesPortableOllamaInference(harness.input, harness.overrides as never),
+    ).toBe("recovered");
 
     expect(retained).toHaveBeenCalledTimes(4);
     expect(full).toHaveBeenCalledOnce();
@@ -484,35 +490,43 @@ describe("Hermes Portable Ollama inference recovery", () => {
     expect(harness.writeExact).not.toHaveBeenCalled();
   });
 
-  it("rolls the exact stopped runtime back when retained inference authority drifts", () => {
-    const harness = createHarness();
-    const drift = new Error("retained inference authority changed");
-    harness.overrides.assertPreparedInferenceAuthorityTransactionCurrent = vi
-      .fn()
-      .mockImplementationOnce(() => undefined)
-      .mockImplementationOnce(() => {
-        throw drift;
-      });
+  it.each(["connect-probe-only", "connect-interactive"] as const)(
+    "rolls the exact stopped runtime back when retained inference authority drifts for %s (#11757)",
+    async (intent) => {
+      const harness = createHarness();
+      const drift = new Error("retained inference authority changed");
+      harness.overrides.assertPreparedInferenceAuthorityTransactionCurrent = vi
+        .fn()
+        .mockImplementationOnce(() => undefined)
+        .mockImplementationOnce(() => {
+          throw drift;
+        });
 
-    expect(() =>
-      recoverHermesPortableOllamaInference(harness.input, harness.overrides as never),
-    ).toThrow(drift);
+      await expect(
+        recoverHermesPortableOllamaInference(
+          { ...harness.input, intent },
+          harness.overrides as never,
+        ),
+      ).rejects.toThrow(drift);
 
-    expect(harness.prepared.rollback).toHaveBeenCalledOnce();
-    expect(harness.input.verifyRoute).not.toHaveBeenCalled();
-    expect(harness.writeExact).not.toHaveBeenCalled();
-    expect(harness.running()).toBe(false);
-  });
+      expect(harness.prepared.rollback).toHaveBeenCalledOnce();
+      expect(harness.input.verifyRoute).not.toHaveBeenCalled();
+      expect(harness.writeExact).not.toHaveBeenCalled();
+      expect(harness.running()).toBe(false);
+    },
+  );
 
-  it("releases a prepared probe dependency only after stopped-runtime finalization", () => {
+  it("releases a prepared probe dependency only after stopped-runtime finalization", async () => {
     const harness = createHarness();
     const dependency = {
       release: vi.fn(() => harness.events.push("dependency-release")),
-      rollback: vi.fn(() => harness.events.push("dependency-rollback")),
+      rollback: vi.fn(() => {
+        harness.events.push("dependency-rollback");
+      }),
     };
 
     expect(
-      recoverHermesPortableOllamaInference(
+      await recoverHermesPortableOllamaInference(
         {
           ...harness.input,
           prepareProbeDependency: vi.fn(() => {
@@ -539,48 +553,56 @@ describe("Hermes Portable Ollama inference recovery", () => {
     expect(dependency.rollback).not.toHaveBeenCalled();
   });
 
-  it("restores the stopped runtime when probe-dependency preparation fails", () => {
-    const harness = createHarness();
-    const canary = new Error("forward preparation failed");
+  it.each(["connect-probe-only", "connect-interactive"] as const)(
+    "restores the stopped runtime when probe-dependency preparation fails for %s (#11757)",
+    async (intent) => {
+      const harness = createHarness();
+      const canary = new Error("forward preparation failed");
 
-    expect(() =>
-      recoverHermesPortableOllamaInference(
-        {
-          ...harness.input,
-          prepareProbeDependency: vi.fn(() => {
-            throw canary;
-          }),
-        },
-        harness.overrides as never,
-      ),
-    ).toThrow(canary);
+      await expect(
+        recoverHermesPortableOllamaInference(
+          {
+            ...harness.input,
+            intent,
+            prepareProbeDependency: vi.fn(() => {
+              throw canary;
+            }),
+          },
+          harness.overrides as never,
+        ),
+      ).rejects.toThrow(canary);
 
-    expect(harness.prepared.rollback).toHaveBeenCalledOnce();
-    expect(harness.running()).toBe(false);
-    expect(harness.registryRunning()).toBe(false);
-    expect(harness.events.indexOf("rollback")).toBeLessThan(
-      harness.events.indexOf("registry-rollback"),
-    );
-  });
+      expect(harness.prepared.rollback).toHaveBeenCalledOnce();
+      expect(harness.running()).toBe(false);
+      expect(harness.registryRunning()).toBe(false);
+      expect(harness.events.indexOf("rollback")).toBeLessThan(
+        harness.events.indexOf("registry-rollback"),
+      );
+    },
+  );
 
-  it("rolls back a prepared probe dependency before the stopped runtime", () => {
+  it("awaits probe dependency rollback before restoring the stopped runtime", async () => {
     const harness = createHarness();
     const dependency = {
       release: vi.fn(() => harness.events.push("dependency-release")),
-      rollback: vi.fn(() => harness.events.push("dependency-rollback")),
+      rollback: vi.fn(async () => {
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        harness.events.push("dependency-rollback");
+      }),
     };
     vi.mocked(harness.prepared.finalizePublishedResume!).mockImplementation(() => {
       harness.events.push("finalize");
       throw new Error("finalization failed");
     });
 
-    expect(() =>
+    await expect(
       recoverHermesPortableOllamaInference(
         { ...harness.input, prepareProbeDependency: vi.fn(() => dependency) },
         harness.overrides as never,
       ),
-    ).toThrow("finalization failed");
+    ).rejects.toThrow("finalization failed");
 
+    expect(harness.events).toContain("dependency-rollback");
     expect(dependency.release).not.toHaveBeenCalled();
     expect(harness.events.indexOf("dependency-rollback")).toBeLessThan(
       harness.events.indexOf("rollback"),
@@ -592,7 +614,7 @@ describe("Hermes Portable Ollama inference recovery", () => {
     expect(harness.registryRunning()).toBe(false);
   });
 
-  it("restores forwards, the stopped runtime, and the registry after retained command drift", () => {
+  it("restores forwards, the stopped runtime, and the registry after retained command drift", async () => {
     const harness = createHarness();
     const commandDrift = new Error("retained command authority changed");
     const assertCallerCurrent = vi.fn(() => {
@@ -600,10 +622,12 @@ describe("Hermes Portable Ollama inference recovery", () => {
     });
     const dependency = {
       release: vi.fn(() => harness.events.push("dependency-release")),
-      rollback: vi.fn(() => harness.events.push("dependency-rollback")),
+      rollback: vi.fn(() => {
+        harness.events.push("dependency-rollback");
+      }),
     };
 
-    expect(() =>
+    await expect(
       recoverHermesPortableOllamaInference(
         {
           ...harness.input,
@@ -618,7 +642,7 @@ describe("Hermes Portable Ollama inference recovery", () => {
         },
         harness.overrides as never,
       ),
-    ).toThrow(commandDrift);
+    ).rejects.toThrow(commandDrift);
 
     expect(dependency.release).not.toHaveBeenCalled();
     expect(dependency.rollback).toHaveBeenCalledOnce();
@@ -633,7 +657,7 @@ describe("Hermes Portable Ollama inference recovery", () => {
     expect(harness.registryRunning()).toBe(false);
   });
 
-  it("keeps runtime restoration uncertainty dominant when command drift also breaks forward rollback", () => {
+  it("keeps runtime restoration uncertainty dominant when command drift also breaks forward rollback", async () => {
     const harness = createHarness();
     const commandDrift = new Error("retained command authority changed");
     const assertCallerCurrent = vi.fn();
@@ -655,7 +679,7 @@ describe("Hermes Portable Ollama inference recovery", () => {
 
     let caught: unknown;
     try {
-      recoverHermesPortableOllamaInference(
+      await recoverHermesPortableOllamaInference(
         {
           ...harness.input,
           assertCallerCurrent,
@@ -684,7 +708,7 @@ describe("Hermes Portable Ollama inference recovery", () => {
     expect(harness.registryRunning()).toBe(true);
   });
 
-  it("preserves probe-dependency restoration uncertainty after restoring Ollama", () => {
+  it("preserves probe-dependency restoration uncertainty after restoring Ollama", async () => {
     const harness = createHarness();
     const restorationError = new Error("forward restoration unproved");
     const dependency = {
@@ -699,12 +723,12 @@ describe("Hermes Portable Ollama inference recovery", () => {
       throw new Error("lower finalization canary");
     });
 
-    expect(() =>
+    await expect(
       recoverHermesPortableOllamaInference(
         { ...harness.input, prepareProbeDependency: vi.fn(() => dependency) },
         harness.overrides as never,
       ),
-    ).toThrow(restorationError);
+    ).rejects.toThrow(restorationError);
 
     expect(harness.prepared.rollback).toHaveBeenCalledOnce();
     expect(harness.running()).toBe(false);
@@ -714,12 +738,12 @@ describe("Hermes Portable Ollama inference recovery", () => {
     );
   });
 
-  it("validates an already running runtime without invoking resume", () => {
+  it("validates an already running runtime without invoking resume", async () => {
     const harness = createHarness(true, true);
 
-    expect(recoverHermesPortableOllamaInference(harness.input, harness.overrides as never)).toBe(
-      "reused",
-    );
+    expect(
+      await recoverHermesPortableOllamaInference(harness.input, harness.overrides as never),
+    ).toBe("reused");
 
     expect(harness.runtime.validatePublishedResume).toHaveBeenCalledOnce();
     expect(harness.runtime.preserveForRebuild).not.toHaveBeenCalled();
@@ -729,19 +753,19 @@ describe("Hermes Portable Ollama inference recovery", () => {
     expect(harness.events.at(-1)).toBe("registry-release");
   });
 
-  it("preserves an existing recovery failure classification", () => {
+  it("preserves an existing recovery failure classification", async () => {
     const harness = createHarness(true, true);
     const nested = new HermesPortableOllamaRecoveryError(
       "runtime-restoration-unproved",
       "nested recovery remained indeterminate",
     );
-    harness.input.verifyRoute.mockImplementation(() => {
+    harness.input.verifyRoute.mockImplementation(async () => {
       throw nested;
     });
 
     let caught: unknown;
     try {
-      recoverHermesPortableOllamaInference(harness.input, harness.overrides as never);
+      await recoverHermesPortableOllamaInference(harness.input, harness.overrides as never);
     } catch (error) {
       caught = error;
     }
@@ -752,26 +776,27 @@ describe("Hermes Portable Ollama inference recovery", () => {
     expect(harness.events).not.toContain("registry-release");
   });
 
-  it("rejects a running runtime when published resume validation is unavailable", () => {
+  it("rejects a running runtime when published resume validation is unavailable", async () => {
     const harness = createHarness(true, true);
     const { validatePublishedResume: _validatePublishedResume, ...runtimeWithoutValidator } =
       harness.runtime;
     harness.managedOperation.managedRuntime = runtimeWithoutValidator as never;
 
-    expect(() =>
+    await expect(
       recoverHermesPortableOllamaInference(harness.input, harness.overrides as never),
-    ).toThrow("runtime provider lacks published resume validation");
+    ).rejects.toThrow("runtime provider lacks published resume validation");
 
     expect(harness.input.verifyRoute).not.toHaveBeenCalled();
     expect(harness.prepareStartup).not.toHaveBeenCalled();
     expect(harness.events).not.toContain("registry-release");
   });
 
-  it("does not invent runtime rollback for an already-running Ollama dependency failure", () => {
+  it("does not invent runtime rollback for an already-running Ollama dependency failure", async () => {
     const harness = createHarness(true, true);
     const dependency = {
       release: vi.fn(),
-      rollback: vi.fn(() => {
+      rollback: vi.fn(async () => {
+        await new Promise<void>((resolve) => setImmediate(resolve));
         harness.events.push("dependency-rollback");
       }),
     };
@@ -788,24 +813,25 @@ describe("Hermes Portable Ollama inference recovery", () => {
       }),
     });
 
-    expect(() =>
+    await expect(
       recoverHermesPortableOllamaInference(
         { ...harness.input, prepareProbeDependency: vi.fn(() => dependency) },
         harness.overrides as never,
       ),
-    ).toThrow("registry finalization failed");
+    ).rejects.toThrow("registry finalization failed");
 
+    expect(harness.events).toContain("dependency-rollback");
     expect(dependency.rollback).toHaveBeenCalledOnce();
     expect(harness.prepared.rollback).not.toHaveBeenCalled();
     expect(harness.running()).toBe(true);
   });
 
-  it("reconciles a stopped registry before validating an already running runtime", () => {
+  it("reconciles a stopped registry before validating an already running runtime", async () => {
     const harness = createHarness(true);
 
-    expect(recoverHermesPortableOllamaInference(harness.input, harness.overrides as never)).toBe(
-      "reused",
-    );
+    expect(
+      await recoverHermesPortableOllamaInference(harness.input, harness.overrides as never),
+    ).toBe("reused");
 
     expect(harness.events).toContain("registry-start");
     expect(harness.runtime.validatePublishedResume).toHaveBeenCalledOnce();
@@ -815,7 +841,7 @@ describe("Hermes Portable Ollama inference recovery", () => {
     expect(harness.events.at(-1)).toBe("registry-release");
   });
 
-  it("emits failed timing after final route failure restores the exact stopped state", () => {
+  it("emits failed timing after final route failure restores the exact stopped state", async () => {
     const harness = createHarness();
     let now = 0;
     const routeError = new Error("route unavailable");
@@ -826,13 +852,13 @@ describe("Hermes Portable Ollama inference recovery", () => {
         onComplete,
       },
     });
-    harness.input.verifyRoute.mockImplementation(() => {
+    harness.input.verifyRoute.mockImplementation(async () => {
       throw routeError;
     });
 
     let caught: unknown;
     try {
-      recoverHermesPortableOllamaInference(harness.input, harness.overrides as never);
+      await recoverHermesPortableOllamaInference(harness.input, harness.overrides as never);
     } catch (error) {
       caught = error;
     }
@@ -860,15 +886,15 @@ describe("Hermes Portable Ollama inference recovery", () => {
     );
   });
 
-  it("restores the exact stopped state when provider revalidation fails", () => {
+  it("restores the exact stopped state when provider revalidation fails", async () => {
     const harness = createHarness();
     vi.mocked(harness.prepared.validateBeforeCommit).mockImplementation(() => {
       throw new Error("provider unavailable");
     });
 
-    expect(() =>
+    await expect(
       recoverHermesPortableOllamaInference(harness.input, harness.overrides as never),
-    ).toThrow("provider unavailable");
+    ).rejects.toThrow("provider unavailable");
 
     expect(harness.prepared.rollback).toHaveBeenCalledOnce();
     expect(harness.input.verifyRoute).not.toHaveBeenCalled();
@@ -879,7 +905,7 @@ describe("Hermes Portable Ollama inference recovery", () => {
     );
   });
 
-  it("restores the exact stopped state when final published authority changes", () => {
+  it("restores the exact stopped state when final published authority changes", async () => {
     const harness = createHarness();
     const assertCurrent = vi.fn(() => {
       throw new Error("published authority changed");
@@ -896,9 +922,9 @@ describe("Hermes Portable Ollama inference recovery", () => {
       assertCurrent,
     });
 
-    expect(() =>
+    await expect(
       recoverHermesPortableOllamaInference(harness.input, harness.overrides as never),
-    ).toThrow("published authority changed");
+    ).rejects.toThrow("published authority changed");
 
     expect(harness.input.verifyRoute).toHaveBeenCalledOnce();
     expect(harness.prepared.finalizePublishedResume).toHaveBeenCalledOnce();
@@ -908,7 +934,7 @@ describe("Hermes Portable Ollama inference recovery", () => {
     expect(harness.registryRunning()).toBe(false);
   });
 
-  it("rejects Ollama registry provenance before runtime mutation", () => {
+  it("rejects Ollama registry provenance before runtime mutation", async () => {
     const harness = createHarness();
     harness.input.entry = {
       ...harness.input.entry,
@@ -920,9 +946,9 @@ describe("Hermes Portable Ollama inference recovery", () => {
     } as never;
     harness.input.readRegistry.mockReturnValue(harness.input.entry);
 
-    expect(() =>
+    await expect(
       recoverHermesPortableOllamaInference(harness.input, harness.overrides as never),
-    ).toThrow("Ollama registry must not contain llama.cpp provenance");
+    ).rejects.toThrow("Ollama registry must not contain llama.cpp provenance");
 
     expect(harness.prepareStartup).not.toHaveBeenCalled();
     expect(harness.running()).toBe(false);
@@ -930,15 +956,15 @@ describe("Hermes Portable Ollama inference recovery", () => {
     expect(harness.events).not.toContain("registry-start");
   });
 
-  it("is idempotent across a recovered probe and a second probe", () => {
+  it("is idempotent across a recovered probe and a second probe", async () => {
     const harness = createHarness();
 
-    expect(recoverHermesPortableOllamaInference(harness.input, harness.overrides as never)).toBe(
-      "recovered",
-    );
-    expect(recoverHermesPortableOllamaInference(harness.input, harness.overrides as never)).toBe(
-      "reused",
-    );
+    expect(
+      await recoverHermesPortableOllamaInference(harness.input, harness.overrides as never),
+    ).toBe("recovered");
+    expect(
+      await recoverHermesPortableOllamaInference(harness.input, harness.overrides as never),
+    ).toBe("reused");
 
     expect(harness.prepareStartup).toHaveBeenCalledOnce();
     expect(harness.runtime.validatePublishedResume).toHaveBeenCalledOnce();
@@ -950,76 +976,79 @@ describe("Hermes Portable Ollama inference recovery", () => {
   it.each([
     ["recovered", false],
     ["reused", true],
-  ] as const)("emits fixed outer timing after a successful %s transaction", (action, running) => {
-    const harness = createHarness(running, running);
-    let now = 0;
-    const onComplete = vi.fn();
-    Object.assign(harness.overrides, {
-      recoveryTiming: {
-        now: () => ++now,
-        onComplete,
-      },
-    });
+  ] as const)(
+    "emits fixed outer timing after a successful %s transaction",
+    async (action, running) => {
+      const harness = createHarness(running, running);
+      let now = 0;
+      const onComplete = vi.fn();
+      Object.assign(harness.overrides, {
+        recoveryTiming: {
+          now: () => ++now,
+          onComplete,
+        },
+      });
 
-    expect(recoverHermesPortableOllamaInference(harness.input, harness.overrides as never)).toBe(
-      action,
-    );
+      expect(
+        await recoverHermesPortableOllamaInference(harness.input, harness.overrides as never),
+      ).toBe(action);
 
-    expect(onComplete).toHaveBeenCalledOnce();
-    const evidence = onComplete.mock.calls[0]?.[0];
-    expect(Object.keys(evidence).sort()).toEqual([
-      "dependencyMs",
-      "entryAuthorityMs",
-      "exactRuntimeInspectionMs",
-      "finalCurrentnessMs",
-      "fullCurrentnessCount",
-      "operatingAuthorityMs",
-      "preRouteCurrentnessMs",
-      "preparedAuthorityInspectionCount",
-      "preparedInferenceAuthorityMs",
-      "privatePublicationMs",
-      "registryPreparationMs",
-      "result",
-      "retainedCurrentnessCount",
-      "routeMs",
-      "runtimeAction",
-      "runtimeAuthorityMs",
-      "totalMs",
-    ]);
-    expect(evidence).toMatchObject({
-      exactRuntimeInspectionMs: 1,
-      operatingAuthorityMs: 1,
-      preparedInferenceAuthorityMs: 2,
-      privatePublicationMs: 1,
-      registryPreparationMs: 1,
-      retainedCurrentnessCount: action === "recovered" ? 4 : 3,
-      fullCurrentnessCount: 1,
-      preparedAuthorityInspectionCount: 2,
-      result: "proved",
-      runtimeAction: action,
-      runtimeAuthorityMs: 1,
-    });
-    expect(
-      Object.entries(evidence)
-        .filter(([key]) => key.endsWith("Ms"))
-        .every(([, value]) => typeof value === "number" && value >= 0),
-    ).toBe(true);
-    expect(JSON.stringify(evidence)).not.toContain("qwen3-vl");
-  });
+      expect(onComplete).toHaveBeenCalledOnce();
+      const evidence = onComplete.mock.calls[0]?.[0];
+      expect(Object.keys(evidence).sort()).toEqual([
+        "dependencyMs",
+        "entryAuthorityMs",
+        "exactRuntimeInspectionMs",
+        "finalCurrentnessMs",
+        "fullCurrentnessCount",
+        "operatingAuthorityMs",
+        "preRouteCurrentnessMs",
+        "preparedAuthorityInspectionCount",
+        "preparedInferenceAuthorityMs",
+        "privatePublicationMs",
+        "registryPreparationMs",
+        "result",
+        "retainedCurrentnessCount",
+        "routeMs",
+        "runtimeAction",
+        "runtimeAuthorityMs",
+        "totalMs",
+      ]);
+      expect(evidence).toMatchObject({
+        exactRuntimeInspectionMs: 1,
+        operatingAuthorityMs: 1,
+        preparedInferenceAuthorityMs: 2,
+        privatePublicationMs: 1,
+        registryPreparationMs: 1,
+        retainedCurrentnessCount: action === "recovered" ? 4 : 3,
+        fullCurrentnessCount: 1,
+        preparedAuthorityInspectionCount: 2,
+        result: "proved",
+        runtimeAction: action,
+        runtimeAuthorityMs: 1,
+      });
+      expect(
+        Object.entries(evidence)
+          .filter(([key]) => key.endsWith("Ms"))
+          .every(([, value]) => typeof value === "number" && value >= 0),
+      ).toBe(true);
+      expect(JSON.stringify(evidence)).not.toContain("qwen3-vl");
+    },
+  );
 
-  it("rejects registry drift before a runtime resume", () => {
+  it("rejects registry drift before a runtime resume", async () => {
     const harness = createHarness();
     harness.input.readRegistry.mockReturnValue({ ...harness.input.entry, model: "changed" });
 
-    expect(() =>
+    await expect(
       recoverHermesPortableOllamaInference(harness.input, harness.overrides as never),
-    ).toThrow("sandbox registry authority changed before recovery");
+    ).rejects.toThrow("sandbox registry authority changed before recovery");
 
     expect(harness.prepareStartup).not.toHaveBeenCalled();
     expect(harness.running()).toBe(false);
   });
 
-  it("restores a started registry when runtime reconstruction fails before Ollama mutation", () => {
+  it("restores a started registry when runtime reconstruction fails before Ollama mutation", async () => {
     const harness = createHarness();
     harness.overrides.createRuntimeAuthority.mockImplementation(() => {
       throw new Error("runtime authority unavailable");
@@ -1027,7 +1056,7 @@ describe("Hermes Portable Ollama inference recovery", () => {
 
     let caught: unknown;
     try {
-      recoverHermesPortableOllamaInference(harness.input, harness.overrides as never);
+      await recoverHermesPortableOllamaInference(harness.input, harness.overrides as never);
     } catch (error) {
       caught = error;
     }
@@ -1040,7 +1069,7 @@ describe("Hermes Portable Ollama inference recovery", () => {
     expect(harness.events).toContain("registry-rollback");
   });
 
-  it("keeps engine qualification distinct from registry recovery postconditions", () => {
+  it("keeps engine qualification distinct from registry recovery postconditions", async () => {
     const harness = createHarness();
     harness.overrides.prepareRecoveryEntry.mockImplementation(() => {
       throw new HermesPortableOllamaRecoveryPhaseError("REGISTRY_PREPARATION_AUTHORITY");
@@ -1048,7 +1077,7 @@ describe("Hermes Portable Ollama inference recovery", () => {
 
     let caught: unknown;
     try {
-      recoverHermesPortableOllamaInference(harness.input, harness.overrides as never);
+      await recoverHermesPortableOllamaInference(harness.input, harness.overrides as never);
     } catch (error) {
       caught = error;
     }
@@ -1066,7 +1095,7 @@ describe("Hermes Portable Ollama inference recovery", () => {
     ["runtime-inspection", "EXACT_RUNTIME_INSPECTION", 1],
   ] as const)(
     "classifies the fixed %s failure boundary after rollback",
-    (owner, phase, registryRollbackCount) => {
+    async (owner, phase, registryRollbackCount) => {
       const harness = createHarness();
       const canary = "nested recovery diagnostic canary";
       const onComplete = vi.fn();
@@ -1110,7 +1139,7 @@ describe("Hermes Portable Ollama inference recovery", () => {
 
       let caught: unknown;
       try {
-        recoverHermesPortableOllamaInference(harness.input, harness.overrides as never);
+        await recoverHermesPortableOllamaInference(harness.input, harness.overrides as never);
       } catch (error) {
         caught = error;
       }
@@ -1162,7 +1191,7 @@ describe("Hermes Portable Ollama inference recovery", () => {
     expect((caught as Error).message).not.toContain("registry restoration canary");
   });
 
-  it("reports registry restoration uncertainty instead of the nested phase", () => {
+  it("reports registry restoration uncertainty instead of the nested phase", async () => {
     const harness = createHarness();
     const canary = "nested recovery diagnostic canary";
     harness.overrides.prepareRegistryRecovery.mockReturnValue({
@@ -1181,7 +1210,7 @@ describe("Hermes Portable Ollama inference recovery", () => {
 
     let caught: unknown;
     try {
-      recoverHermesPortableOllamaInference(harness.input, harness.overrides as never);
+      await recoverHermesPortableOllamaInference(harness.input, harness.overrides as never);
     } catch (error) {
       caught = error;
     }
@@ -1191,15 +1220,15 @@ describe("Hermes Portable Ollama inference recovery", () => {
     expect(harness.prepareStartup).not.toHaveBeenCalled();
   });
 
-  it("rejects direct launch intent before registry or runtime mutation", () => {
+  it("rejects an unsupported launch intent before registry or runtime mutation (#11757)", async () => {
     const harness = createHarness();
 
-    expect(() =>
+    await expect(
       recoverHermesPortableOllamaInference(
         { ...harness.input, intent: "launch" } as never,
         harness.overrides as never,
       ),
-    ).toThrow("restricted to connect --probe-only");
+    ).rejects.toThrow("requires a supported connect intent");
 
     expect(harness.overrides.prepareRegistryRecovery).not.toHaveBeenCalled();
     expect(harness.prepareStartup).not.toHaveBeenCalled();

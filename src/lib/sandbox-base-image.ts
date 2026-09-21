@@ -49,8 +49,7 @@ export * from "./sandbox-base-image/types";
 
 const BUILD_FAILURE_DIAGNOSTIC_LIMIT = 8_000;
 const BUILD_FAILURE_TRUNCATED_PREFIX = "[diagnostic truncated]\n";
-const UNSAFE_BUILD_DIAGNOSTIC_CONTROLS =
-  /[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/gu;
+const UNSAFE_BUILD_DIAGNOSTIC_CONTROLS = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/gu;
 
 function stripBuildDiagnosticControls(value: string): string {
   return stripVTControlCharacters(value).replace(UNSAFE_BUILD_DIAGNOSTIC_CONTROLS, "");
@@ -67,9 +66,7 @@ function retainBuildDiagnosticTails(streams: readonly string[]): string {
     budgets[stream.index] = budget;
     remaining -= budget;
   });
-  return streams
-    .map((stream, index) => stream.slice(-budgets[index]!))
-    .join("\n");
+  return streams.map((stream, index) => stream.slice(-budgets[index]!)).join("\n");
 }
 
 /**
@@ -107,9 +104,10 @@ export function formatBuildFailureDiagnostics(buildResult: {
     return diagnostics;
   });
   const diagnostics = stripBuildDiagnosticControls(sanitizedStreams.join("\n"));
-  const retainedDiagnostics = diagnostics.length > BUILD_FAILURE_DIAGNOSTIC_LIMIT
-    ? `${BUILD_FAILURE_TRUNCATED_PREFIX}${retainBuildDiagnosticTails(sanitizedStreams)}`
-    : diagnostics;
+  const retainedDiagnostics =
+    diagnostics.length > BUILD_FAILURE_DIAGNOSTIC_LIMIT
+      ? `${BUILD_FAILURE_TRUNCATED_PREFIX}${retainBuildDiagnosticTails(sanitizedStreams)}`
+      : diagnostics;
   return stripBuildDiagnosticControls(retainedDiagnostics);
 }
 
@@ -282,7 +280,7 @@ function resolveContentAddressedLocalOverride(
       );
     }
   }
-  if (options.validateImage && !options.validateImage(imageRef)) {
+  if (options.validateImage && !options.validateImage(imageRef, { source: "local" })) {
     throw new SandboxBaseImageResolutionError(
       `${options.label || "Sandbox base image"} local override '${imageRef}' lacks ` +
         `${options.validationDescription || "a required runtime capability"}.`,
@@ -315,7 +313,15 @@ function validatePulledCandidate(
     }
   }
 
-  if (options.validateImage && !options.validateImage(imageRef)) {
+  if (
+    options.validateImage &&
+    !options.validateImage(imageRef, {
+      source,
+      ...(candidateOptions.pinnedRemoteRef
+        ? { pinnedRemoteRef: candidateOptions.pinnedRemoteRef }
+        : {}),
+    })
+  ) {
     if (warn) {
       console.warn("  Warning: sandbox base image lacks a required runtime capability.");
     }
@@ -409,7 +415,10 @@ function resolveLocalCandidate(
       const check = options.requireOpenshellSandboxAbi
         ? imageMeetsMinimumGlibc(imageRef, options.minGlibcVersion || OPENSHELL_SANDBOX_MIN_GLIBC)
         : { ok: true, version: null };
-      if (check.ok && (!options.validateImage || options.validateImage(imageRef))) {
+      if (
+        check.ok &&
+        (!options.validateImage || options.validateImage(imageRef, { source: "local" }))
+      ) {
         addTraceEvent("nemoclaw.sandbox_base_image.local_fallback_reuse");
         return { ref: imageRef, digest: null, source: "local", glibcVersion: check.version };
       }
@@ -458,7 +467,7 @@ function resolveLocalCandidate(
     return null;
   }
 
-  if (options.validateImage && !options.validateImage(imageRef)) {
+  if (options.validateImage && !options.validateImage(imageRef, { source: "local" })) {
     console.error("  Local sandbox base image lacks a required runtime capability.");
     return null;
   }
@@ -486,9 +495,7 @@ export function resolveSandboxBaseImage(
   }
   const resolutionKey = createSandboxBaseImageResolutionKey(options);
 
-  const canReuseResolutionHint =
-    allowLocalFallback || options.resolutionHint?.source !== "local";
-  if (!options.forceRefresh && canReuseResolutionHint) {
+  if (!options.forceRefresh) {
     const reused = reuseSandboxBaseImageResolutionHint(options, resolutionKey);
     if (reused) return reused;
   } else if (options.forceRefresh) {
@@ -591,10 +598,7 @@ export function resolveSandboxBaseImage(
       if (resolved) return finish(resolved);
     }
 
-    if (
-      allowLocalFallback &&
-      baseImageInputsChangedSinceMain(rootDir, env, inputPaths)
-    ) {
+    if (allowLocalFallback && baseImageInputsChangedSinceMain(rootDir, env, inputPaths)) {
       return resolveChangedInputs();
     }
 

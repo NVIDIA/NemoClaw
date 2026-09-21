@@ -32,11 +32,7 @@ import {
   type RuntimeProviderActivationRegistration,
   type RuntimeProviderActivationTransport,
 } from "./activation";
-import {
-  RUNTIME_PROVIDER_NATIVE_ARTIFACT_BOOTSTRAP_CONTRACT_VERSION,
-  RUNTIME_PROVIDER_SNAPSHOT_CONTRACT_VERSION,
-  type RuntimeProviderBundle,
-} from "./contract";
+import { RUNTIME_PROVIDER_SNAPSHOT_CONTRACT_VERSION, type RuntimeProviderBundle } from "./contract";
 import { CURRENT_RUNTIME_PROVIDER_BUNDLES, createCurrentRuntimeProviderBundles } from "./current";
 
 type CandidateTopology = {
@@ -110,11 +106,8 @@ function completeBundle(providerId: string): RuntimeProviderBundle {
     ...base,
     bootstrap: {
       providerId,
-      supported: true,
-      bootstrapKind: "managed-image",
-      createAuthorityStore: unreachable,
-      createLifecycle: unreachable,
-      createOnboardRouting: unreachable,
+      supported: false,
+      reason: "OpenShell owns managed-image sandbox creation.",
     },
     snapshot: {
       providerId,
@@ -140,6 +133,10 @@ function completeBundle(providerId: string): RuntimeProviderBundle {
         displayName: "Contract fixture",
       })),
       capture: () => ({ status: 0, stdout: "", stderr: "" }),
+      nvidiaContainer: {
+        capture: () => ({ status: 0, stdout: "", stderr: "" }),
+        cleanup: () => ({ status: "absent" }),
+      },
     },
   };
 }
@@ -179,17 +176,6 @@ function registration(
 }
 
 const INCOMPLETE_SURFACES = [
-  [
-    "bootstrap",
-    (bundle: RuntimeProviderBundle) => ({
-      ...bundle,
-      bootstrap: {
-        providerId: bundle.identity.id,
-        supported: false as const,
-        reason: "incomplete fixture",
-      },
-    }),
-  ],
   [
     "snapshot",
     (bundle: RuntimeProviderBundle) => ({
@@ -285,26 +271,6 @@ describe("runtime provider activation catalog", () => {
     expect(CURRENT_RUNTIME_PROVIDER_BUNDLES.podman).toBe(firstPodman);
   });
 
-  it("rejects native-artifact bootstrap from production activation (#8178)", () => {
-    const candidate = CANDIDATE_TOPOLOGIES[2];
-    const complete = completeBundle(candidate.providerId);
-    const inactive = {
-      ...complete,
-      bootstrap: {
-        providerId: candidate.providerId,
-        supported: true,
-        bootstrapKind: "native-artifact",
-        contractVersion: RUNTIME_PROVIDER_NATIVE_ARTIFACT_BOOTSTRAP_CONTRACT_VERSION,
-        run: unreachable,
-        recover: unreachable,
-      },
-    } as RuntimeProviderBundle;
-
-    expect(() =>
-      createRuntimeProviderActivationCatalog([registration(candidate, inactive)]),
-    ).toThrow("does not provide managed-image bootstrap authority");
-  });
-
   it.each(INCOMPLETE_SURFACES)(
     "rejects incomplete %s authority before composition",
     (surface, makeIncomplete) => {
@@ -338,9 +304,29 @@ describe("runtime provider activation catalog", () => {
 
       expect(() =>
         createRuntimeProviderActivationCatalog([registration(candidate, incomplete)]),
-      ).toThrow(`missing: ${operation}`);
+      ).toThrow(
+        operation === "host-local-inference"
+          ? "cannot expose NVIDIA container proof without host-local-inference authority"
+          : `missing: ${operation}`,
+      );
     },
   );
+
+  it("accepts a qualified provider without the optional NVIDIA container capability", () => {
+    const candidate = CANDIDATE_TOPOLOGIES[1];
+    const bundle = completeBundle(candidate.providerId);
+    const supported = bundle.containerEngine as Extract<
+      RuntimeProviderBundle["containerEngine"],
+      { readonly supported: true }
+    >;
+    const { nvidiaContainer: _capability, ...containerEngine } = supported;
+
+    expect(() =>
+      createRuntimeProviderActivationCatalog([
+        registration(candidate, { ...bundle, containerEngine }),
+      ]),
+    ).not.toThrow();
+  });
 
   it("rejects incomplete host-local inference authority", () => {
     const candidate = CANDIDATE_TOPOLOGIES[1];

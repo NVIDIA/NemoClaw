@@ -7,9 +7,10 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { shellQuote } from "../../src/lib/core/shell-quote";
+import { extractShellFunctionFromSource } from "./shell-function-extractor";
 
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+export function extractShellFunction(src: string, name: string): string {
+  return extractShellFunctionFromSource(src, name, "agents/hermes/start.sh");
 }
 
 export function bashPrintfQ(value: string): string {
@@ -22,10 +23,28 @@ export function bashPrintfQ(value: string): string {
   return result.stdout;
 }
 
-export function extractShellFunction(source: string, name: string): string {
-  const match = source.match(new RegExp(`${escapeRegExp(name)}\\(\\) \\{([\\s\\S]*?)^\\}`, "m"));
-  if (!match) throw new Error(`Expected shell function ${name}`);
-  return `${name}() {${match[1]}\n}`;
+export const LOCKED_HERMES_CONFIG_STAT_MOCK = [
+  "stat() {",
+  '  if [ "${1:-}" = "-c" ] && [ "${2:-}" = "%U:%G" ] && [ "${3:-}" = "$HERMES_DIR" ]; then printf "root:root\\n"; return 0; fi',
+  '  if [ "${1:-}" = "-c" ] && [ "${2:-}" = "%a" ] && [ "${3:-}" = "$HERMES_DIR" ]; then printf "755\\n"; return 0; fi',
+  '  if [ "${1:-}" = "-f" ] && [ "${2:-}" = "%Su:%Sg" ] && [ "${3:-}" = "$HERMES_DIR" ]; then printf "root:root\\n"; return 0; fi',
+  '  if [ "${1:-}" = "-f" ] && [ "${2:-}" = "%Lp" ] && [ "${3:-}" = "$HERMES_DIR" ]; then printf "755\\n"; return 0; fi',
+  '  case "${3:-}" in "$HERMES_DIR/config.yaml"|"$HERMES_DIR/.env")',
+  '    if [ "${1:-}" = "-c" ] && [ "${2:-}" = "%U:%G" ]; then printf "root:root\\n"; return 0; fi',
+  '    if [ "${1:-}" = "-c" ] && [ "${2:-}" = "%a" ]; then printf "444\\n"; return 0; fi',
+  '    if [ "${1:-}" = "-f" ] && [ "${2:-}" = "%Su:%Sg" ]; then printf "root:root\\n"; return 0; fi',
+  '    if [ "${1:-}" = "-f" ] && [ "${2:-}" = "%Lp" ]; then printf "444\\n"; return 0; fi',
+  "    ;;",
+  "  esac",
+  '  command stat "$@"',
+  "}",
+].join("\n");
+
+export function writeFakeProcCmdline(procRoot: string, pid: number, argv: string[]) {
+  const pidDir = path.join(procRoot, String(pid));
+  fs.mkdirSync(pidDir, { recursive: true });
+  fs.writeFileSync(path.join(pidDir, "cmdline"), Buffer.from(`${argv.join("\0")}\0`));
+  fs.writeFileSync(path.join(pidDir, "status"), "Name:\tfixture\nUid:\t1000\t1000\t1000\t1000\n");
 }
 
 export function runHermesBashHarness(
@@ -36,12 +55,9 @@ export function runHermesBashHarness(
   const script = path.join(tmpDir, "run.sh");
   fs.writeFileSync(
     script,
-    [
-      "#!/usr/bin/env bash",
-      "set -uo pipefail",
-      "HERMES_MCP_RECONCILE_PENDING=0",
-      ...lines,
-    ].join("\n"),
+    ["#!/usr/bin/env bash", "set -uo pipefail", "HERMES_MCP_RECONCILE_PENDING=0", ...lines].join(
+      "\n",
+    ),
     { mode: 0o700 },
   );
 

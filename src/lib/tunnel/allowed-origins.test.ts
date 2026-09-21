@@ -34,7 +34,7 @@ function makeDeps(config: ConfigObject, target: AgentConfigTarget = OPENCLAW_TAR
   const readConfig = vi.fn((_sb: string, _t: AgentConfigTarget): ConfigObject => config);
   const writeConfig = vi.fn((_sb: string, _t: AgentConfigTarget, _c: ConfigObject): void => {});
   const recomputeHash = vi.fn((_sb: string, _t: AgentConfigTarget): void => {});
-  const reloadGateway = vi.fn((_sb: string): void => {});
+  const reloadGateway = vi.fn(async (_sb: string): Promise<void> => {});
   const info = vi.fn((_msg: string): void => {});
   const warn = vi.fn((_msg: string): void => {});
   const deps: RegisterTunnelOriginDeps = {

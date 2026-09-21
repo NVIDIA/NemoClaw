@@ -45,28 +45,40 @@ const PODMAN_CONNECTION_SELECTORS = [
   "PODMAN_CONNECTIONS_CONF",
   "REGISTRY_AUTH_FILE",
 ] as const;
-const AUTHENTICATED_HEALTH_SCRIPT = String.raw`
-import pathlib, re, urllib.error, urllib.request
-text = pathlib.Path("/sandbox/.hermes/.env").read_text(encoding="utf-8")
-matches = re.findall(r"^(?:export\s+)?API_SERVER_KEY=([0-9a-f]{64})$", text, re.MULTILINE)
-if len(matches) != 1:
-    raise SystemExit(2)
-request = urllib.request.Request(
-    "http://127.0.0.1:8642/health",
-    headers={"Authorization": "Bearer " + matches[0]},
-    method="GET",
-)
-class NoRedirect(urllib.request.HTTPRedirectHandler):
-    def redirect_request(self, request, file_pointer, code, message, headers, new_url):
-        raise urllib.error.HTTPError(request.full_url, code, "redirect refused", headers, file_pointer)
+/** Keep credential parsing and loopback requests identical for waiting and final observation. */
+export const HERMES_AUTHENTICATED_HEALTH_PROGRAM = String.raw`
+import http.client, pathlib, re
 try:
-    response = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect).open(
-        request, timeout=5
-    )
-    print(response.status)
-except urllib.error.HTTPError as error:
-    print(error.code)
-except urllib.error.URLError:
+    text = pathlib.Path("/sandbox/.hermes/.env").read_text(encoding="utf-8")
+except (OSError, UnicodeError):
+    raise SystemExit(64)
+matches = re.findall(r"^(?:export[ \t]+)?API_SERVER_KEY=(.*)$", text, re.MULTILINE)
+if len(matches) != 1:
+    raise SystemExit(64)
+key = matches[0].strip()
+if len(key) >= 2 and key[0] == key[-1] and key[0] in ("'", '"'):
+    key = key[1:-1]
+if re.fullmatch(r"[0-9a-f]{64}", key) is None:
+    raise SystemExit(64)
+
+def authenticated_health_status(port, timeout):
+    connection = http.client.HTTPConnection("127.0.0.1", port, timeout=timeout)
+    try:
+        connection.request("GET", "/health", headers={"Authorization": "Bearer " + key})
+        response = connection.getresponse()
+        try:
+            return response.status
+        finally:
+            response.close()
+    finally:
+        connection.close()
+`;
+const AUTHENTICATED_HEALTH_SCRIPT =
+  HERMES_AUTHENTICATED_HEALTH_PROGRAM +
+  String.raw`
+try:
+    print(authenticated_health_status(8642, 5))
+except (OSError, http.client.HTTPException):
     print("unavailable")
 `;
 
@@ -469,12 +481,7 @@ function consumeCurrentObservation(
 }
 
 function isAuthenticatedHealthReady(observation: HermesPortableContainerInspection): boolean {
-  return (
-    observation.authority.running &&
-    !observation.paused &&
-    observation.authority.restartPolicy === "unless-stopped" &&
-    observation.status === "running"
-  );
+  return observation.authority.running && !observation.paused && observation.status === "running";
 }
 
 function captureAuthenticatedHealthWithPostInspection(
@@ -512,36 +519,6 @@ function captureAuthenticatedHealthWithPostInspection(
   return command.output;
 }
 
-/** Apply and verify the only enrollment-time Podman mutation by exact full ID. */
-export function configureHermesPortableRestartPolicy(
-  receipt: HermesPortableConfiguredReceipt,
-  deps: HermesPortableContainerDeps,
-): HermesPortableContainerInspection {
-  if (receipt.phase !== "configuring")
-    fail("restart-policy configuration requires configuring authority");
-  const before = assertCurrentHermesPortableContainer(receipt, deps);
-  if (before.authority.restartPolicy !== "unless-stopped") {
-    assertSocket(receipt, deps);
-    requireCommand(
-      deps.podman(
-        ["container", "update", "--restart=unless-stopped", receipt.container.containerId],
-        MUTATION_TIMEOUT_MS,
-      ),
-      "restart-policy update",
-    );
-    assertSocket(receipt, deps);
-  }
-  const after = assertCurrentHermesPortableContainer(receipt, deps);
-  if (
-    !after.authority.running ||
-    after.paused ||
-    after.authority.restartPolicy !== "unless-stopped"
-  ) {
-    fail("restart-policy configuration did not leave the exact container ready");
-  }
-  return after;
-}
-
 /** Read authenticated health without exposing the generated Bearer credential to the host. */
 export function observeHermesPortableAuthenticatedHealth(
   receipt: HermesPortableConfiguredReceipt,
@@ -553,9 +530,7 @@ export function observeHermesPortableAuthenticatedHealth(
     beforeObservation ?? assertCurrentHermesPortableContainer(receipt, deps),
   );
   if (!isAuthenticatedHealthReady(before)) {
-    fail(
-      "authenticated health requires the exact container to be running, unpaused, and restart-policy qualified",
-    );
+    fail("authenticated health requires the exact container to be running and unpaused");
   }
   assertSocket(receipt, deps);
   if (!deps.authenticatedHealth) {

@@ -342,11 +342,7 @@ function collectOpenshell(
   collect(collectDir, "openshell-logs", "openshell", ["logs", ...gatewayArgs, sandboxName]);
 
   if (!quick) {
-    collect(collectDir, "openshell-gateway-info", "openshell", [
-      "gateway",
-      "info",
-      ...gatewayArgs,
-    ]);
+    collect(collectDir, "openshell-gateway-info", "openshell", ["gateway", "info", ...gatewayArgs]);
   }
 }
 
@@ -369,8 +365,8 @@ function collectSandboxInternals(
       "openshell",
       ["sandbox", "ssh-config", ...gatewayArgs, sandboxName],
       {
-      timeout: TIMEOUT_MS,
-      stdio: ["ignore", "pipe", "ignore"],
+        timeout: TIMEOUT_MS,
+        stdio: ["ignore", "pipe", "ignore"],
         encoding: "utf-8",
       },
     );
@@ -381,9 +377,7 @@ function collectSandboxInternals(
     const sshConfig = sshResult.stdout ?? "";
     const sshHost = resolveOpenshellSandboxSshHost(sandboxName, sshConfig);
     if (!sshHost) {
-      warn(
-        `SSH config did not declare sandbox '${sandboxName}', skipping internals`,
-      );
+      warn(`SSH config did not declare sandbox '${sandboxName}', skipping internals`);
       return;
     }
     writeFileSync(sshConfigPath, sshConfig);

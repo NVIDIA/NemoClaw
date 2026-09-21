@@ -7,8 +7,58 @@ import {
   readSandboxConfig,
   resolveAgentConfig,
 } from "../sandbox/config";
+import type { OpenShellSandboxBufferedCommandExecutor } from "../adapters/openshell/sandbox-command";
 
 type WebSearchSelection = { fetchEnabled?: boolean } | null;
+const OPENCLAW_ALIVE_HTTP_CODES = new Set([200, 401]);
+
+export async function isOpenclawGatewayReady(
+  sandboxName: string,
+  port: number,
+  sandboxCommandExecutor: OpenShellSandboxBufferedCommandExecutor,
+  timeoutMs = 3_000,
+): Promise<boolean> {
+  const boundedTimeoutMs =
+    Number.isFinite(timeoutMs) && timeoutMs > 0 ? Math.min(3_000, Math.floor(timeoutMs)) : 3_000;
+  const curlTimeoutSeconds = String(Math.max(1, boundedTimeoutMs) / 1_000);
+  try {
+    const result = await sandboxCommandExecutor.runBuffered({
+      sandboxName,
+      target: { kind: "selected" },
+      command: [
+        "curl",
+        "-so",
+        "/dev/null",
+        "-w",
+        "%{http_code}",
+        "--max-time",
+        curlTimeoutSeconds,
+        `http://127.0.0.1:${String(port)}/health`,
+      ],
+      tty: false,
+    });
+    return (
+      result.outcome.kind === "completed" &&
+      OPENCLAW_ALIVE_HTTP_CODES.has(Number.parseInt(result.stdout.trim(), 10))
+    );
+  } catch {
+    return false;
+  }
+}
+
+export function createOpenclawGatewayReadinessProbe(
+  readSandbox: (sandboxName: string) => { dashboardPort?: number | null } | null,
+  defaultPort: number,
+  sandboxCommandExecutor: OpenShellSandboxBufferedCommandExecutor,
+): (sandboxName: string, timeoutMs?: number) => Promise<boolean> {
+  return (sandboxName, timeoutMs) =>
+    isOpenclawGatewayReady(
+      sandboxName,
+      readSandbox(sandboxName)?.dashboardPort ?? defaultPort,
+      sandboxCommandExecutor,
+      timeoutMs,
+    );
+}
 
 interface OpenClawWebSearchReuseDeps {
   readEnabled(sandboxName: string): unknown;
@@ -56,7 +106,8 @@ export interface ConfigureOpenclawSandboxDeps {
     provider: string,
     model: string,
     revalidateSandboxIdentity?: (operation: string) => void,
-  ): void;
+    managedProfileApplied?: boolean,
+  ): Promise<void>;
   reconcileWebSearch(
     sandboxName: string,
     webSearchConfig: WebSearchSelection,
@@ -71,8 +122,15 @@ export function createConfigureOpenclawSandbox(deps: ConfigureOpenclawSandboxDep
     provider: string,
     webSearchConfig: WebSearchSelection,
     revalidateSandboxIdentity?: (operation: string) => void,
+    managedProfileApplied = false,
   ): Promise<void> {
-    deps.syncNemoClawConfigInSandbox(sandboxName, provider, model, revalidateSandboxIdentity);
+    await deps.syncNemoClawConfigInSandbox(
+      sandboxName,
+      provider,
+      model,
+      revalidateSandboxIdentity,
+      managedProfileApplied,
+    );
     await deps.reconcileWebSearch(sandboxName, webSearchConfig, revalidateSandboxIdentity);
   };
 }
@@ -80,6 +138,15 @@ export function createConfigureOpenclawSandbox(deps: ConfigureOpenclawSandboxDep
 export interface OpenclawSetupDeps {
   step(n: number, total: number, msg: string): void;
   agentProductName(): string;
+  shouldRestartNativeGateway(provider: string): boolean;
+  restartNativeGateway(sandboxName: string): Promise<
+    | { ok: true }
+    | {
+        ok: false;
+        failureLayer: string;
+        detail: string;
+      }
+  >;
   configureOpenclawSandbox(
     sandboxName: string,
     model: string,
@@ -106,6 +173,15 @@ export function createOpenclawSetup(deps: OpenclawSetupDeps) {
       webSearchConfig,
       revalidateSandboxIdentity,
     );
+    if (deps.shouldRestartNativeGateway(provider)) {
+      revalidateSandboxIdentity?.(`restart native OpenClaw gateway in sandbox '${sandboxName}'`);
+      const restart = await deps.restartNativeGateway(sandboxName);
+      if (!restart.ok) {
+        throw new Error(
+          `OpenClaw native gateway restart failed during setup (${restart.failureLayer}): ${restart.detail}`,
+        );
+      }
+    }
     revalidateSandboxIdentity?.(`publish OpenClaw setup for sandbox '${sandboxName}'`);
     console.log(`  ✓ ${deps.agentProductName()} gateway launched inside sandbox`);
   };

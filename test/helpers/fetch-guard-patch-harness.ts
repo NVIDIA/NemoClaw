@@ -14,7 +14,7 @@ const OPENCLAW_VERSION_EXTRACTOR = path.join(
   "extract-semver.sh",
 );
 
-export const CURRENT_REVIEWED_OPENCLAW_PATCH_CLASSIFIER_VERSION = "2026.7.1";
+export const CURRENT_REVIEWED_OPENCLAW_PATCH_CLASSIFIER_VERSION = "2026.9.1";
 
 export function dockerRunCommandBetween(startMarker: string, endMarker: string): string {
   const dockerfile = fs.readFileSync(DOCKERFILE, "utf-8");

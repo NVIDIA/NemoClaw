@@ -140,14 +140,8 @@ function fakeGatewayRunOpenshell() {
   };
 
   const exactProfileExports = new Map([
-    [
-      "provider profile -g nemoclaw export brave --output json",
-      EXACT_BRAVE_PROFILE,
-    ],
-    [
-      "provider profile -g nemoclaw export nemoclaw-mcp-v1 --output json",
-      EXACT_MESSAGING_PROFILE,
-    ],
+    ["provider profile -g nemoclaw export brave --output json", EXACT_BRAVE_PROFILE],
+    ["provider profile -g nemoclaw export nemoclaw-mcp-v1 --output json", EXACT_MESSAGING_PROFILE],
   ]);
   const rejectUnexpectedProfileCommand = (args: string[]): never => {
     throw new Error(`Unexpected provider profile command: ${args.join(" ")}`);
@@ -175,7 +169,7 @@ function realStageSandboxCredentialProviders(
   const { runOpenshell } = fakeGatewayRunOpenshell();
   const registrationSession = { stagedCredentialProviders: [] as string[] } as Session;
   const registration = createCredentialProviderRegistration({
-    root: "/repo",
+    root: process.cwd(),
     runOpenshell: runOpenshell as unknown as CredentialProviderRegistrationDeps["runOpenshell"],
     getGatewayName: () => "nemoclaw",
     getCredential: () => null,
