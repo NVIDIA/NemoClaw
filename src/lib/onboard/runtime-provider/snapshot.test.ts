@@ -451,6 +451,10 @@ describe("OpenShell snapshot observation", () => {
         acceleration: liveAcceleration,
       },
     });
+    expect(capture).toHaveBeenCalledWith(
+      ["sandbox", "get", "-g", "nemoclaw-18080", "alpha"],
+      expect.anything(),
+    );
     expect(observeAcceleration).toHaveBeenCalledWith(
       expect.objectContaining({ name: "alpha" }),
       "openshell-alpha-id",
