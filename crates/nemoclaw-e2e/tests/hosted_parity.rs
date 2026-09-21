@@ -12,6 +12,8 @@ const CURRENT_OPENCLAW_EXPORT_SHA256: &str =
     "ec8f98186b2e18982bfce180627ecb79e35719b6a52088ad527282825f1705f4";
 const CURRENT_HERMES_EXPORT_SHA256: &str =
     "f178a06e9638ba2406850ad0abc1e2dd6eafe51823807f1348b071146f4dd151";
+const LIVE_NETWORK_POLICY_EXPORT_SHA256: &str =
+    "fba807339f35f49e71426a22935fcc1088d53451b38272e38891b1b1f1d70560";
 
 fn sha256(raw: &[u8]) -> String {
     Sha256::digest(raw)
@@ -104,6 +106,42 @@ fn current_single_agent_exports_parse_without_rewriting() {
             .unwrap()
             .env,
         "NOUS_API_KEY"
+    );
+
+    let live_raw = include_bytes!("../fixtures/current-config-exports/network-policy-live.yaml");
+    assert_eq!(sha256(live_raw), LIVE_NETWORK_POLICY_EXPORT_SHA256);
+    let live = Document::parse(live_raw.as_slice()).expect("live OpenClaw export must parse raw");
+    let live_sandbox = &live.spec.sandboxes[0];
+    assert_eq!(live_sandbox.name, "e2e-net-policy");
+    assert_eq!(live_sandbox.agent.name, "primary");
+    assert_eq!(live.sandbox_harness(live_sandbox).unwrap().kind, "openclaw");
+    assert_eq!(live_sandbox.runtime.provider, "docker");
+    assert!(
+        live_sandbox
+            .network
+            .policy
+            .as_ref()
+            .unwrap()
+            .explicit
+            .network_policies
+            .contains_key("nvidia")
+    );
+    let live_inference = live.sandbox_inference(live_sandbox).unwrap();
+    assert_eq!(
+        live_inference.routes[0].provider_ref.as_deref(),
+        Some("hosted-compatible-endpoint")
+    );
+    assert_eq!(
+        live_inference.routes[0].overrides.model,
+        "nvidia/nvidia/nemotron-3-ultra"
+    );
+    assert_eq!(
+        live.spec.inference_providers[0]
+            .credential
+            .as_ref()
+            .unwrap()
+            .env,
+        "COMPATIBLE_API_KEY"
     );
 }
 

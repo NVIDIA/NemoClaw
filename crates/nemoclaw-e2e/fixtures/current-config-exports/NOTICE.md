@@ -3,7 +3,10 @@
 
 # Current Config Export Fixture Provenance
 
-`openclaw.yaml` and `hermes.yaml` are raw outputs from the repaired v0 producer for #12131.
+`openclaw.yaml` and `hermes.yaml` are raw deterministic outputs from the repaired v0 producer for #12131.
+`network-policy-live.yaml` is the raw installed-CLI output retained by
+[E2E run 35589368543](https://github.com/NVIDIA/NemoClaw/actions/runs/35589368543) for the
+restricted OpenClaw `network-policy` target.
 The producer revision is `0a361a239c18dd4a56c34b4ca66dc32a3139bddd`.
 The target v1 parser revision is `9d446d51803ea6e3c6aaa286cee57c611173f214`.
 Both revisions are recorded by the parser test.
