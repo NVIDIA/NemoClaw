@@ -265,7 +265,7 @@ describe("cross-process onboard lock", () => {
         startedAt: ${JSON.stringify(holderStartedAt)},
         command: "separate nemoclaw onboard process",
       }));
-      process.stdout.write("locked\\\\n");
+      process.stdout.write("locked\\n");
       setInterval(() => {}, 1000);
     `;
     const child = spawn(process.execPath, ["-e", childScript, session.LOCK_FILE], {

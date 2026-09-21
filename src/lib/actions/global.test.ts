@@ -13,6 +13,11 @@ const mocks = vi.hoisted(() => ({
   help: vi.fn(),
   recoverNamedGatewayRuntime: vi.fn().mockResolvedValue({ recovered: true }),
   runOnboardAction: vi.fn().mockResolvedValue(undefined),
+  retireRegisteredLegacyDashboardForwards: vi.fn().mockResolvedValue({
+    retired: 1,
+    unchanged: 0,
+    skipped: 0,
+  }),
   version: vi.fn(),
 }));
 
@@ -25,6 +30,9 @@ vi.mock("./maintenance", () => ({
 }));
 vi.mock("./onboard", () => ({
   runOnboardAction: mocks.runOnboardAction,
+}));
+vi.mock("./sandbox/forward-recovery", () => ({
+  retireRegisteredLegacyDashboardForwards: mocks.retireRegisteredLegacyDashboardForwards,
 }));
 vi.mock("./root-help", () => ({ help: mocks.help, version: mocks.version }));
 
@@ -56,9 +64,35 @@ describe("global cli action facade", () => {
 
     expect(mocks.runOnboardAction).toHaveBeenCalledWith({ resume: true }, onboardRuntimeDeps);
     expect(mocks.backupAll).toHaveBeenCalledWith();
+    expect(mocks.retireRegisteredLegacyDashboardForwards).not.toHaveBeenCalled();
     expect(mocks.garbageCollectImages).toHaveBeenCalledWith({ dryRun: true });
     expect(mocks.help).toHaveBeenCalledWith();
     expect(mocks.version).toHaveBeenCalledWith();
+  });
+
+  it("retires legacy forwards only after a successful installer backup", async () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    await runBackupAllAction({ retireLegacyForwards: true });
+
+    expect(mocks.backupAll).toHaveBeenCalledOnce();
+    expect(mocks.retireRegisteredLegacyDashboardForwards).toHaveBeenCalledOnce();
+    expect(mocks.backupAll.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.retireRegisteredLegacyDashboardForwards.mock.invocationCallOrder[0]!,
+    );
+    expect(log).toHaveBeenCalledWith(
+      "Legacy dashboard forwards: 1 retired, 0 unchanged, 0 skipped.",
+    );
+  });
+
+  it("does not retire legacy forwards after a failed backup", async () => {
+    mocks.backupAll.mockRejectedValueOnce(new Error("backup failed"));
+
+    await expect(runBackupAllAction({ retireLegacyForwards: true })).rejects.toThrow(
+      "backup failed",
+    );
+
+    expect(mocks.retireRegisteredLegacyDashboardForwards).not.toHaveBeenCalled();
   });
 
   it("completes automatic port state at the shared onboard alias boundary (#10824)", async () => {
