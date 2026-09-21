@@ -114,21 +114,25 @@ export async function isRouterResponsive(
 ): Promise<boolean> {
   return new Promise<boolean>((resolve) => {
     let settled = false;
+    let deadline: ReturnType<typeof setTimeout> | undefined;
     const settle = (healthy: boolean) => {
       if (settled) return;
       settled = true;
+      if (deadline) clearTimeout(deadline);
       resolve(healthy);
     };
     const request = http
       .get(`http://127.0.0.1:${port}/health/liveliness`, (res: http.IncomingMessage) => {
         res.resume();
         settle((res.statusCode || 0) >= 200 && (res.statusCode || 0) < 300);
+        request.destroy();
       })
       .on("error", () => settle(false));
-    request.setTimeout(timeoutMs, () => {
+    deadline = setTimeout(() => {
       request.destroy();
       settle(false);
-    });
+    }, timeoutMs);
+    deadline.unref?.();
   });
 }
 

@@ -174,6 +174,18 @@ describe("getRouterHealthSnapshot (#8962)", () => {
       },
     );
   });
+
+  it("bounds liveness by wall-clock time while informational responses continue (#12089)", async () => {
+    await withHealthServer(
+      (_req, res) => {
+        const activity = setInterval(() => res.writeProcessing(), 20);
+        res.once("close", () => clearInterval(activity));
+      },
+      async (port) => {
+        await expect(isRouterResponsive(port, 100)).resolves.toBe(false);
+      },
+    );
+  });
 });
 
 const ROUTER_ARGS = ["/opt/model-router", "proxy", "--port", "4000"];
@@ -250,7 +262,7 @@ describe("inspectModelRouterProcessForPort", () => {
 });
 
 describe("stopModelRouterProcess", () => {
-  it("returns when the recorded PID does not report as running and the health endpoint is not healthy", async () => {
+  it("returns when the recorded PID does not report as running and the liveness endpoint is unresponsive", async () => {
     const isResponsive = vi.fn(async () => false);
     const kill = vi.fn();
 
@@ -280,7 +292,7 @@ describe("stopModelRouterProcess", () => {
     expect(kill).not.toHaveBeenCalled();
   });
 
-  it("returns only after the recorded PID does not report as running and the health endpoint is not healthy", async () => {
+  it("returns only after the recorded PID does not report as running and the liveness endpoint is unresponsive", async () => {
     let running = true;
     let healthy = true;
     const signals: NodeJS.Signals[] = [];
