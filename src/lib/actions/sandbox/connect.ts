@@ -128,6 +128,7 @@ import {
   checkAndRecoverSandboxProcesses,
   createHermesPortableForwardRecoveryInput,
   executeSandboxExecCommand,
+  formatOpenShellForwardStartFailure,
   type GatewayRestartFailureLayer,
   HermesPortableForwardRecoveryError,
   type HermesPortableForwardRecoveryContext,
@@ -600,7 +601,7 @@ function describeHermesPortableForwardRecoveryFailure(
     case "forward-settlement-timed-out":
       return "The required recorded host forwards did not become healthy before the recovery deadline. Inspect the recorded forward state before retrying.";
     case "forward-mutation-failed":
-      return `NemoClaw could not confirm that OpenShell forward ${context.operation} completed for recorded host port ${String(context.port)}.${context.startupFailure ? ` Startup failure: ${context.startupFailure}.` : ""} Inspect the recorded forward state before retrying.`;
+      return `NemoClaw could not confirm that OpenShell forward ${context.operation} completed for recorded host port ${String(context.port)}.${context.startupFailure ? ` Startup failure: ${formatOpenShellForwardStartFailure(context.startupFailure)}.` : ""} Inspect the recorded forward state before retrying.`;
   }
   switch (failure) {
     case "forward-occupied":

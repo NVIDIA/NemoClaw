@@ -1,12 +1,14 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import type {
-  OpenShellForwardAdapter,
-  OpenShellForwardIdentity,
-  OpenShellForwardObservation,
-  OpenShellForwardStartFailure,
+import {
+  formatOpenShellForwardStartFailure,
+  type OpenShellForwardAdapter,
+  type OpenShellForwardIdentity,
+  type OpenShellForwardObservation,
 } from "../../adapters/openshell/forward";
+
+export { formatOpenShellForwardStartFailure };
 import {
   createOpenShellForwardAdapterForAuthority,
   openShellForwardIdentity,
@@ -479,18 +481,6 @@ export function nonOwnedForwardListenerRefusal(sandboxName: string, port: number
   return `  Host port ${String(port)} for '${sandboxName}' is held by a listener that NemoClaw cannot attribute to this sandbox's OpenShell forward. NemoClaw cannot prove it started the listener, so it leaves the listener running and does not restore a forward onto it. Find the owner with \`ss -ltnp 'sport = :${String(port)}'\` or \`lsof -nP -iTCP:${String(port)} -sTCP:LISTEN\`, free the port, then run \`nemoclaw ${sandboxName} recover\` again.`;
 }
 
-function forwardStartFailureSuffix(failure?: OpenShellForwardStartFailure): string {
-  if (!failure) return "";
-  let failureValue = "";
-  if (failure.reason === "child_exited" && failure.exitStatus !== undefined) {
-    failureValue = ` status=${String(failure.exitStatus)}`;
-  }
-  if (failure.reason === "child_signaled" && failure.signal) {
-    failureValue = ` signal=${failure.signal}`;
-  }
-  return ` [forward-start ${failure.stage}/${failure.reason}${failureValue}]`;
-}
-
 function forwardOperationFailureMessage(
   result:
     | Awaited<ReturnType<OpenShellForwardAdapter["startForward"]>>
@@ -498,7 +488,8 @@ function forwardOperationFailureMessage(
 ): string {
   if ("error" in result) {
     const failure = "failure" in result ? result.failure : undefined;
-    return `${result.error.message}${forwardStartFailureSuffix(failure)}`;
+    const suffix = failure ? ` [${formatOpenShellForwardStartFailure(failure)}]` : "";
+    return `${result.error.message}${suffix}`;
   }
   if ("observation" in result && result.observation.state === "foreign") {
     return "The host port is owned by a foreign listener.";

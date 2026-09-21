@@ -5,7 +5,7 @@ import { EventEmitter } from "node:events";
 
 import { describe, expect, it, vi } from "vitest";
 
-import type { OpenShellForwardStartFailure } from "./forward";
+import { formatOpenShellForwardStartFailure, type OpenShellForwardStartFailure } from "./forward";
 import {
   createHarness,
   errors,
@@ -213,5 +213,30 @@ describe("CLI OpenShell direct forward startup failures", () => {
     });
     expect(JSON.stringify(result)).not.toContain("private");
     expect(terminate).toHaveBeenCalledTimes(testCase.terminationCount);
+  });
+
+  it.each([
+    {
+      failure: { stage: "startup", reason: "child_exited", exitStatus: 17 } as const,
+      formatted: "forward-start startup/child_exited status=17",
+      mode: "a child exits",
+    },
+    {
+      failure: { stage: "startup", reason: "child_signaled", signal: "SIGTERM" } as const,
+      formatted: "forward-start startup/child_signaled signal=SIGTERM",
+      mode: "a child receives a signal",
+    },
+    {
+      failure: { stage: "startup", reason: "child_exited" } as const,
+      formatted: "forward-start startup/child_exited",
+      mode: "an exit classification has no optional value",
+    },
+    {
+      failure: { stage: "startup", reason: "child_signaled" } as const,
+      formatted: "forward-start startup/child_signaled",
+      mode: "a signal classification has no optional value",
+    },
+  ])("formats the startup failure when $mode", ({ failure, formatted }) => {
+    expect(formatOpenShellForwardStartFailure(failure)).toBe(formatted);
   });
 });

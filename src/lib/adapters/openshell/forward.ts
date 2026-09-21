@@ -82,6 +82,18 @@ export type OpenShellForwardStartFailure =
       reason: "probe_failed";
     }>;
 
+/** Format a fixed, non-sensitive direct-forward startup classification. */
+export function formatOpenShellForwardStartFailure(failure: OpenShellForwardStartFailure): string {
+  let failureValue = "";
+  if (failure.reason === "child_exited" && failure.exitStatus !== undefined) {
+    failureValue = ` status=${String(failure.exitStatus)}`;
+  }
+  if (failure.reason === "child_signaled" && failure.signal) {
+    failureValue = ` signal=${failure.signal}`;
+  }
+  return `forward-start ${failure.stage}/${failure.reason}${failureValue}`;
+}
+
 type OpenShellOwnedForward = Readonly<{
   state: "owned";
   forward: OpenShellForwardIdentity;

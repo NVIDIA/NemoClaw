@@ -52,6 +52,7 @@ import {
   ensureSandboxPortForward,
   createHermesPortableForwardRecoveryInput,
   describeSandboxForwardListener,
+  formatOpenShellForwardStartFailure,
   HermesPortableForwardRecoveryError,
   prepareHermesPortableLaunchForwards,
   recoverDeclaredAgentForwardPorts,
@@ -96,6 +97,7 @@ export type { SandboxForwardHealth } from "./forward-recovery";
 export { resolveSandboxDashboardPort, resolveSandboxLaunchForwardPorts } from "./forward-recovery";
 export {
   createHermesPortableForwardRecoveryInput,
+  formatOpenShellForwardStartFailure,
   HermesPortableForwardRecoveryError,
   prepareHermesPortableLaunchForwards,
   recoverHermesPortableLaunchForwards,

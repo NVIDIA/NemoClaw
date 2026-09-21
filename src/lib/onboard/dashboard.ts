@@ -4,9 +4,10 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import type {
-  OpenShellForwardAdapter,
-  OpenShellForwardIdentity,
+import {
+  formatOpenShellForwardStartFailure,
+  type OpenShellForwardAdapter,
+  type OpenShellForwardIdentity,
 } from "../adapters/openshell/forward";
 import {
   createOpenShellForwardAdapterForAuthority,
@@ -395,16 +396,7 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
   ): string {
     if ("error" in result) {
       const failure = "failure" in result ? result.failure : undefined;
-      let failureValue = "";
-      if (failure?.reason === "child_exited" && failure.exitStatus !== undefined) {
-        failureValue = ` status=${String(failure.exitStatus)}`;
-      }
-      if (failure?.reason === "child_signaled" && failure.signal) {
-        failureValue = ` signal=${failure.signal}`;
-      }
-      const suffix = failure
-        ? ` [forward-start ${failure.stage}/${failure.reason}${failureValue}]`
-        : "";
+      const suffix = failure ? ` [${formatOpenShellForwardStartFailure(failure)}]` : "";
       return `${result.error.message}${suffix}`;
     }
     if ("observation" in result) {
