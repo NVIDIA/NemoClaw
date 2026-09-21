@@ -7,6 +7,7 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ArtifactSink } from "../fixtures/artifacts.ts";
+import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { shouldRetryMcpMutationAfterConcurrencyConflict } from "../live/mcp-bridge-cleanup.ts";
 import {
   type FakeMcpHttpsServer,
@@ -24,6 +25,7 @@ import {
   runHermesInitialMcpReadiness,
   shouldRetryMcpDiscoveryAfterRestart,
   shouldRetryMcpToolDiscoveryTransportFailure,
+  withMcpToolCallFailureEvidence,
 } from "../live/mcp-bridge-tool-discovery.ts";
 
 const EXPECTED_SECRET = "expected-secret";
@@ -68,6 +70,88 @@ function fakeDiscoveryServer(
 function discoveryArtifacts() {
   return { writeJson: vi.fn().mockResolvedValue("/tmp/discovery-evidence.json") };
 }
+
+describe("MCP tool-call failure evidence", () => {
+  it.each([
+    { name: "succeed", settle: () => Promise.resolve() },
+    { name: "fail", settle: () => Promise.reject(new Error("diagnostic unavailable")) },
+  ])("preserves the failed call when diagnostics $name", async ({ settle }) => {
+    const requests = [request("initialize")];
+    const originalError = new Error("tool search returned no MCP target");
+    const operation = vi.fn(async () => {
+      requests.push(request("tools/list", { responseStatus: 401, auth: "Bearer stale-secret" }));
+      throw originalError;
+    });
+    const artifacts = discoveryArtifacts();
+    artifacts.writeJson.mockImplementationOnce(async () => {
+      await settle();
+      return "/tmp/discovery-evidence.json";
+    });
+    const nemoclaw = vi.fn<HostCliClient["nemoclaw"]>(async () => {
+      requests.push(request("initialize"));
+      await settle();
+      return {} as Awaited<ReturnType<HostCliClient["nemoclaw"]>>;
+    });
+    vi.stubEnv("FAKE_MCP_SECRET", EXPECTED_SECRET);
+    await expect(
+      withMcpToolCallFailureEvidence(
+        operation,
+        { nemoclaw },
+        {
+          artifacts,
+          artifactPrefix: "after-rebuild",
+          sandboxName: "alpha",
+          requests,
+          expectedSecret: EXPECTED_SECRET,
+          redactionValues: [EXPECTED_SECRET, "stale-secret"],
+        },
+      ),
+    ).rejects.toBe(originalError);
+    expect(operation).toHaveBeenCalledTimes(1);
+    expect(artifacts.writeJson).toHaveBeenCalledWith("after-rebuild-failed-call-requests.json", {
+      requests: [
+        {
+          httpMethod: "POST",
+          rpcMethod: "tools/list",
+          responseStatus: 401,
+          credentialKind: "other",
+        },
+      ],
+    });
+    expect(nemoclaw).toHaveBeenCalledTimes(1);
+    expect(nemoclaw).toHaveBeenCalledWith(
+      ["alpha", "mcp", "status", "fake", "--tools", "--json"],
+      expect.objectContaining({
+        artifactName: "after-rebuild-failure-status-tools",
+        redactionValues: [EXPECTED_SECRET, "stale-secret"],
+        captureLimitBytes: 16 * 1024,
+        timeoutMs: 60_000,
+      }),
+    );
+    expect(nemoclaw.mock.calls[0]?.[1]?.env?.FAKE_MCP_SECRET).toBeUndefined();
+  });
+
+  it("does not probe or write evidence after a successful call", async () => {
+    const operation = vi.fn().mockResolvedValue(undefined);
+    const nemoclaw = vi.fn();
+    const artifacts = discoveryArtifacts();
+    await withMcpToolCallFailureEvidence(
+      operation,
+      { nemoclaw },
+      {
+        artifacts,
+        artifactPrefix: "after-rebuild",
+        sandboxName: "alpha",
+        requests: [],
+        expectedSecret: EXPECTED_SECRET,
+        redactionValues: [EXPECTED_SECRET],
+      },
+    );
+    expect(operation).toHaveBeenCalledTimes(1);
+    expect(nemoclaw).not.toHaveBeenCalled();
+    expect(artifacts.writeJson).not.toHaveBeenCalled();
+  });
+});
 
 function discoveryRestartOptions(
   restart: () => Promise<void>,

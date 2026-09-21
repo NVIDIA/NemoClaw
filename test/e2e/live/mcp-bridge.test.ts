@@ -90,6 +90,7 @@ import {
   assertAuthenticatedMcpRediscovery,
   assertAuthenticatedMcpToolDiscovery,
   runHermesInitialMcpReadiness,
+  withMcpToolCallFailureEvidence,
 } from "./mcp-bridge-tool-discovery.ts";
 import { assertTrustedPrivateMcpRebindingDenied } from "./mcp-bridge-trusted-private.ts";
 import {
@@ -1061,13 +1062,25 @@ test(
       [HOST_SECRET, ROTATED_HOST_SECRET],
       "openclaw-assert-secrets-absent-after-rebuild",
     );
-    await assertRealAdapterToolCall(host, sandbox, fakeMcp, {
-      ...bridge,
-      resultToken: MCP_RESULT,
-      artifactName: "openclaw-real-mcp-tool-call-after-rebuild",
-      expectedSecret: ROTATED_HOST_SECRET,
-      deniedTool: MCP_BRIDGE_DENIED_TOOL_NAME,
-    });
+    await withMcpToolCallFailureEvidence(
+      () =>
+        assertRealAdapterToolCall(host, sandbox, fakeMcp, {
+          ...bridge,
+          resultToken: MCP_RESULT,
+          artifactName: "openclaw-real-mcp-tool-call-after-rebuild",
+          expectedSecret: ROTATED_HOST_SECRET,
+          deniedTool: MCP_BRIDGE_DENIED_TOOL_NAME,
+        }),
+      host,
+      {
+        artifacts,
+        artifactPrefix: "openclaw-after-rebuild",
+        sandboxName: OPENCLAW_SANDBOX_NAME,
+        requests: fakeMcp.requests,
+        expectedSecret: ROTATED_HOST_SECRET,
+        redactionValues: [HOST_SECRET, ROTATED_HOST_SECRET, COMPATIBLE_KEY],
+      },
+    );
     await removeBridgeAndAssertEmpty(host, sandbox, {
       ...bridge,
       adapter: "openclaw-config",

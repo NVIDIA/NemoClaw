@@ -174,6 +174,10 @@ The managed-image scope does not claim trusted-private DNS-rebinding coverage: h
 `/etc/hosts` fixtures do not control the OpenShell supervisor's egress resolver. Full MCP bridge E2E
 coverage retains that assertion for environments with supervisor-authoritative DNS.
 
+If the OpenClaw tool call after rebuild fails, the test records its reduced MCP request evidence
+and one bounded `mcp status --tools --json` probe before cleanup. The probe receives no host MCP
+secret. Diagnostic failures do not replace the original failure, and the test does not retry the call.
+
 The same workflow publishes each Pi pull-request candidate by immutable digest after validating the
 local image, removes registry credentials, validates the anonymously pullable digest, and uploads a
 `managed-candidate-contract-*` artifact bound to the pull-request head. Pi remains outside the

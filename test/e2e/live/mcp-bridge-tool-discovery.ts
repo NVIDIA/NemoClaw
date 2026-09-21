@@ -223,6 +223,51 @@ export function buildMcpStatusRequestEvidence(
   };
 }
 
+export async function withMcpToolCallFailureEvidence(
+  operation: () => Promise<void>,
+  host: Pick<HostCliClient, "nemoclaw">,
+  options: {
+    artifacts: Pick<ArtifactSink, "writeJson">;
+    artifactPrefix: string;
+    sandboxName: string;
+    requests: readonly FakeMcpRequest[];
+    expectedSecret: string;
+    redactionValues: string[];
+  },
+): Promise<void> {
+  const requestOffset = options.requests.length;
+  const call = Promise.resolve().then(operation);
+  await call.catch(async () => {
+    // Snapshot before the diagnostic probe adds its own requests. Neither
+    // diagnostic failure nor a successful probe can replace the original failure.
+    const evidence = buildMcpStatusRequestEvidence(
+      options.requests.slice(requestOffset),
+      options.expectedSecret,
+      "openshell:resolve:env:FAKE_MCP_SECRET",
+    );
+    await Promise.allSettled([
+      Promise.resolve().then(() =>
+        options.artifacts.writeJson(
+          `${options.artifactPrefix}-failed-call-requests.json`,
+          evidence,
+        ),
+      ),
+      Promise.resolve().then(() =>
+        host.nemoclaw([options.sandboxName, "mcp", "status", "fake", "--tools", "--json"], {
+          artifactName: `${options.artifactPrefix}-failure-status-tools`,
+          // Inspect the restored binding without supplying a missing host secret.
+          env: buildAvailabilityProbeEnv(),
+          redactionValues: options.redactionValues,
+          captureLimitBytes: 16 * 1024,
+          timeoutMs: 60_000,
+        }),
+      ),
+    ]);
+  });
+  // Preserve the operation's original rejection after collecting diagnostics.
+  await call;
+}
+
 export async function assertAuthenticatedMcpRediscovery(
   target: AuthenticatedMcpDiscoveryTarget | undefined,
   requestOffset: number | undefined,
