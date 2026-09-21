@@ -33,6 +33,18 @@ fn only_object_not_found_establishes_absence() {
     }
     assert!(workspace_row(proto::GetWorkspaceResponse::default(), "workspace", false).is_err());
 }
+
+#[test]
+fn lazy_channel_connection_failures_are_retryable_transport_errors() {
+    assert_eq!(
+        remote_error(&tonic::Status::unknown("transport error")),
+        ObservationError::Transport
+    );
+    assert_eq!(
+        remote_error(&tonic::Status::unknown("server rejected query")),
+        ObservationError::Query
+    );
+}
 #[test]
 fn workspace_reader_requires_complete_matching_active_identity() {
     let response = proto::GetWorkspaceResponse {

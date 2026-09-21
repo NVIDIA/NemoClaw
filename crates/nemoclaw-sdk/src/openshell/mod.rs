@@ -36,6 +36,11 @@ fn remote_error(status: &tonic::Status) -> ObservationError {
         tonic::Code::Unavailable | tonic::Code::DeadlineExceeded | tonic::Code::Cancelled => {
             ObservationError::Transport
         }
+        // A lazy tonic Channel reports connector failures as Unknown with this
+        // fixed message before an RPC reaches the server.
+        tonic::Code::Unknown if status.message() == "transport error" => {
+            ObservationError::Transport
+        }
         _ => ObservationError::Query,
     }
 }
