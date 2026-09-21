@@ -49,25 +49,13 @@ write_dcode_resolution() {
   printf 'resolution_key=%s\n' "$key" >>"$GITHUB_OUTPUT"
   printf 'resolution_label=%s\n' "$(printf '%s' "$metadata" | base64 -w0 | tr '+/' '-_' | tr -d '=')" >>"$GITHUB_OUTPUT"
 }
-if [[ ! "$BASE_SHA" =~ ^[0-9a-f]{40}$ || ! "$CANDIDATE_SHA" =~ ^[0-9a-f]{40}$ ]]; then
-  echo "ERROR: PR base resolution requires exact base and candidate commit SHAs." >&2
-  exit 1
-fi
-if ! git cat-file -e "${BASE_SHA}^{commit}" 2>/dev/null; then
-  git fetch --no-tags --depth=1 origin "$BASE_SHA"
-fi
-diff_status=0
-git diff --quiet "$BASE_SHA" "$CANDIDATE_SHA" -- "$BASE_DOCKERFILE" || diff_status=$?
-if [ "$diff_status" -gt 1 ]; then
-  echo "ERROR: PR base Dockerfile comparison failed." >&2
-  exit "$diff_status"
-fi
-if [ "$diff_status" -eq 1 ]; then
-  echo "::notice::${DISPLAY_NAME} base Dockerfile changed; building the exact PR base locally"
-  local_base_archive="$RUNNER_TEMP/pr-base.docker.tar"
-  local_base_oci_archive="$RUNNER_TEMP/pr-base.oci.tar"
-  local_base_oci="$RUNNER_TEMP/pr-base.oci"
-  base_labels=()
+build_local_base() {
+  local reason="$1"
+  echo "::notice::${DISPLAY_NAME} ${reason}; building the exact PR base locally"
+  local local_base_archive="$RUNNER_TEMP/pr-base.docker.tar"
+  local local_base_oci_archive="$RUNNER_TEMP/pr-base.oci.tar"
+  local local_base_oci="$RUNNER_TEMP/pr-base.oci"
+  local base_labels=()
   if [ "$AGENT" = "langchain-deepagents-code" ]; then
     base_labels+=(--label "org.opencontainers.image.revision=${CANDIDATE_SHA}")
   fi
@@ -84,6 +72,7 @@ if [ "$diff_status" -eq 1 ]; then
   docker load --input "$local_base_archive"
   mkdir -p "$local_base_oci"
   tar -C "$local_base_oci" -xf "$local_base_oci_archive"
+  local local_base_oci_digest
   local_base_oci_digest="$(
     jq -er '
       .manifests
@@ -104,9 +93,31 @@ if [ "$diff_status" -eq 1 ]; then
     "$LOCAL_BASE_REFERENCE" \
     "$CANDIDATE_SHA"
   # shellcheck disable=SC2016 # backticks are literal Markdown delimiters.
-  printf '### %s PR base\n\nLocally built from `%s` at `%s`.\n' \
-    "$DISPLAY_NAME" "$BASE_DOCKERFILE" "$CANDIDATE_SHA" \
+  printf '### %s PR base\n\nLocally built from `%s` at `%s`.\nReason: %s.\n' \
+    "$DISPLAY_NAME" "$BASE_DOCKERFILE" "$CANDIDATE_SHA" "$reason" \
     >>"$GITHUB_STEP_SUMMARY"
+}
+current_dcode_runtime_compatible() {
+  [ "$AGENT" != "langchain-deepagents-code" ] || node --no-warnings \
+    scripts/checks/validate-dcode-runtime-contract.mts \
+    --reference "$1" \
+    --platform "$PLATFORM"
+}
+if [[ ! "$BASE_SHA" =~ ^[0-9a-f]{40}$ || ! "$CANDIDATE_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+  echo "ERROR: PR base resolution requires exact base and candidate commit SHAs." >&2
+  exit 1
+fi
+if ! git cat-file -e "${BASE_SHA}^{commit}" 2>/dev/null; then
+  git fetch --no-tags --depth=1 origin "$BASE_SHA"
+fi
+diff_status=0
+git diff --quiet "$BASE_SHA" "$CANDIDATE_SHA" -- "$BASE_DOCKERFILE" || diff_status=$?
+if [ "$diff_status" -gt 1 ]; then
+  echo "ERROR: PR base Dockerfile comparison failed." >&2
+  exit "$diff_status"
+fi
+if [ "$diff_status" -eq 1 ]; then
+  build_local_base "base Dockerfile changed"
   exit 0
 fi
 alias_raw="$RUNNER_TEMP/pr-base-alias.raw"
@@ -144,6 +155,10 @@ actual="sha256:$(sha256sum "$exact_raw" | awk '{print $1}')"
 if [ "$actual" != "$digest" ]; then
   echo "ERROR: exact PR base bytes do not match the selected descriptor digest." >&2
   exit 1
+fi
+if ! current_dcode_runtime_compatible "$reference"; then
+  build_local_base "published base does not satisfy the current runtime contract"
+  exit 0
 fi
 {
   printf 'ref=%s\n' "$reference"
