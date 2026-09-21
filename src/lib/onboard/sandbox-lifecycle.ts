@@ -4,7 +4,7 @@
 import * as onboardSession from "../state/onboard-session";
 import type { SandboxEntry } from "../state/registry";
 import * as registry from "../state/registry";
-import type { SelectionDrift } from "./selection-drift";
+import { normalizeSelectionComponent, type SelectionDrift } from "./selection-drift";
 
 export function removeSandboxUnlessSessionReservation(
   entry: SandboxEntry | null,
@@ -108,10 +108,10 @@ export function createSandboxLifecycleHelpers(deps: SandboxLifecycleDeps): Sandb
     requestedProvider: string | null,
     requestedModel: string | null,
   ): Promise<boolean> {
-    const currentProvider = drift.existingProvider || "unknown";
-    const currentModel = drift.existingModel || "unknown";
-    const nextProvider = requestedProvider || "unknown";
-    const nextModel = requestedModel || "unknown";
+    const currentProvider = normalizeSelectionComponent(drift.existingProvider) || "unknown";
+    const currentModel = normalizeSelectionComponent(drift.existingModel) || "unknown";
+    const nextProvider = normalizeSelectionComponent(requestedProvider) || "unknown";
+    const nextModel = normalizeSelectionComponent(requestedModel) || "unknown";
 
     console.log(`  Sandbox '${sandboxName}' exists but requested inference selection changed.`);
     console.log(`  Current:   provider=${currentProvider}  model=${currentModel}`);

@@ -2133,7 +2133,16 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
             },
             readDcodeSelectionDrift,
           )
-        : getSelectionDrift(sandboxName, provider, model, { runOpenshell });
+        : getSelectionDrift(
+            sandboxName,
+            provider,
+            model,
+            requestedAgentName,
+            requestedAgentName === "openclaw"
+              ? getSandboxInferenceConfig(model, provider, preferredInferenceApi)
+              : null,
+            { runOpenshell, runCaptureOpenshell },
+          );
       const actionableSelectionDrift = requiresSelectionRecreate(
         selectionDrift,
         isManagedDcodeAgent,
@@ -2238,8 +2247,8 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
             const confirmed = await confirmRecreateForSelectionDrift(
               sandboxName,
               selectionDrift,
-              provider,
-              model,
+              selectionDrift.requestedProvider ?? provider,
+              selectionDrift.requestedModel ?? model,
             );
             if (!confirmed) {
               console.error("  Aborted. Existing sandbox left unchanged.");

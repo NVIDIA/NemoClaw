@@ -155,7 +155,8 @@ export function sanitizeYamlConfigContent(rawConfig: string): string | null {
  *
  * The filename is used only to decide whether a non-JSON document is an
  * allowed YAML target. Returns null when the input cannot be sanitized.
- * Credential-free JSON is returned byte for byte.
+ * Credential-free JSON is returned byte for byte. Native OpenClaw JSON5 is
+ * always serialized as JSON so comments cannot cross the snapshot boundary.
  */
 export function sanitizeConfigFileContent(configName: string, rawConfig: string): string | null {
   const normalized = basename(configName).toLowerCase();
@@ -166,6 +167,9 @@ export function sanitizeConfigFileContent(configName: string, rawConfig: string)
         : (JSON.parse(rawConfig) as ConfigValue | object);
     if (!isConfigValue(parsed)) return null;
     const stripped = stripCredentials(parsed);
+    // Canonicalize native JSON5 so comments cannot carry unparsed credentials
+    // across the snapshot boundary.
+    if (normalized === "openclaw.json") return JSON.stringify(stripped, null, 2);
     if (JSON.stringify(stripped) === JSON.stringify(parsed)) return rawConfig;
     return JSON.stringify(stripped, null, 2);
   } catch {

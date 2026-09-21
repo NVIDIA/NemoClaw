@@ -10,6 +10,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   findSelectionConfigPath,
   getSelectionDrift,
+  readOpenClawSelectionConfig,
   readSandboxSelectionConfig,
 } from "./selection-drift";
 
@@ -82,17 +83,71 @@ describe("selection drift helpers", () => {
     expect(fs.existsSync(String(downloadedParent))).toBe(false);
   });
 
+  it("reads only the native OpenClaw model scalar without downloading its config", () => {
+    const root = tmpRoot();
+    const runOpenshell = vi.fn(() => ({ status: 1 }));
+    const runCaptureOpenshell = vi.fn(() => JSON.stringify("inference/model-a"));
+
+    expect(
+      readOpenClawSelectionConfig("alpha", {
+        runOpenshell,
+        runCaptureOpenshell,
+        tmpDir: root,
+      }),
+    ).toEqual({ provider: "inference", model: "model-a" });
+    expect(runCaptureOpenshell).toHaveBeenCalledExactlyOnceWith(
+      [
+        "sandbox",
+        "exec",
+        "--name",
+        "alpha",
+        "--",
+        "/usr/bin/env",
+        "HOME=/sandbox",
+        "/usr/local/bin/openclaw",
+        "config",
+        "get",
+        "agents.defaults.model.primary",
+        "--json",
+      ],
+      { ignoreError: true, timeout: 30_000 },
+    );
+    expect(runOpenshell).not.toHaveBeenCalled();
+    expect(fs.readdirSync(root)).toEqual([]);
+  });
+
+  it("rejects terminal controls from sandbox-owned selection state", () => {
+    const runOpenshell = vi.fn(() => ({ status: 1 }));
+
+    expect(
+      readOpenClawSelectionConfig("alpha", {
+        runOpenshell,
+        runCaptureOpenshell: () => JSON.stringify("inference/model-a\u001b]52;c;attack\u0007"),
+      }),
+    ).toBeNull();
+  });
+
   it("reports unknown drift when no readable selection config exists", () => {
     expect(
-      getSelectionDrift("alpha", "compatible-endpoint", "model-a", {
-        runOpenshell: () => ({ status: 1 }),
-      }),
+      getSelectionDrift(
+        "alpha",
+        "compatible-endpoint",
+        "model-a",
+        "openclaw",
+        { providerKey: "inference", primaryModelRef: "inference/model-a" },
+        {
+          runOpenshell: () => ({ status: 1 }),
+          runCaptureOpenshell: () => "",
+        },
+      ),
     ).toEqual({
       changed: true,
       providerChanged: false,
       modelChanged: false,
       existingProvider: null,
       existingModel: null,
+      requestedProvider: "inference",
+      requestedModel: "model-a",
       unknown: true,
     });
   });
@@ -109,12 +164,67 @@ describe("selection drift helpers", () => {
       return { status: 0 };
     });
 
-    expect(getSelectionDrift("alpha", "new-provider", "new-model", { runOpenshell })).toEqual({
+    expect(
+      getSelectionDrift("alpha", "new-provider", "new-model", "hermes", null, { runOpenshell }),
+    ).toEqual({
       changed: true,
       providerChanged: true,
       modelChanged: true,
       existingProvider: "old-provider",
       existingModel: "old-model",
+      requestedProvider: "new-provider",
+      requestedModel: "new-model",
+      unknown: false,
+    });
+  });
+
+  it("uses a matching native OpenClaw selection instead of stale NemoClaw state", () => {
+    const runOpenshell = vi.fn(() => ({ status: 1 }));
+    const runCaptureOpenshell = vi.fn(() => JSON.stringify("inference/model-a"));
+
+    expect(
+      getSelectionDrift(
+        "alpha",
+        "compatible-endpoint",
+        "model-a",
+        "openclaw",
+        { providerKey: "inference", primaryModelRef: "inference/model-a" },
+        { runOpenshell, runCaptureOpenshell },
+      ),
+    ).toEqual({
+      changed: false,
+      providerChanged: false,
+      modelChanged: false,
+      existingProvider: "inference",
+      existingModel: "model-a",
+      requestedProvider: "inference",
+      requestedModel: "model-a",
+      unknown: false,
+    });
+    expect(runOpenshell).not.toHaveBeenCalled();
+  });
+
+  it("reports drift when the native OpenClaw selection differs", () => {
+    const runOpenshell = vi.fn(() => ({ status: 1 }));
+    const runCaptureOpenshell = vi.fn(() => JSON.stringify("inference/model-b"));
+
+    expect(
+      getSelectionDrift(
+        "alpha",
+        "compatible-endpoint",
+        "model-a",
+        "openclaw",
+        { providerKey: "inference", primaryModelRef: "inference/model-a" },
+        { runOpenshell, runCaptureOpenshell },
+      ),
+    ).toEqual({
+      changed: true,
+      providerChanged: false,
+      modelChanged: true,
+      existingProvider: "inference",
+      existingModel: "model-b",
+      requestedProvider: "inference",
+      requestedModel: "model-a",
       unknown: false,
     });
   });

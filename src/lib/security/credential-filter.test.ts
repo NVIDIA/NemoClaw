@@ -406,6 +406,23 @@ describe("sanitizeConfigFile", () => {
     });
   });
 
+  it("removes JSON5 comments from sanitized OpenClaw snapshots (#11764)", () => {
+    const secret = "nvapi-comment-only-secret-abcdefghijklmnopqrstuvwxyz";
+    const sanitized = sanitizeConfigFileContent(
+      "openclaw.json",
+      [
+        `{`,
+        `  // API key retained by a native tool: ${secret}`,
+        `  model: 'inference/model-a',`,
+        `}`,
+      ].join("\n"),
+    );
+
+    expect(sanitized).not.toContain(secret);
+    expect(sanitized).not.toContain("native tool");
+    expect(JSON.parse(sanitized as string)).toEqual({ model: "inference/model-a" });
+  });
+
   it("does not follow config-file symlinks while sanitizing", () => {
     const targetPath = join(tmpDir, "target.json");
     const linkPath = join(tmpDir, "openclaw.json");
