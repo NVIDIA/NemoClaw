@@ -20,7 +20,8 @@ fn gateway_observations_are_read_only_in_plans_and_discardable_during_teardown()
                 &BTreeMap::new(),
                 &BTreeSet::new()
             )
-            .is_err()
+            .unwrap()
+            .is_empty()
         );
     }
     let plan: Plan = serde_json::from_value(json!({"resource_changes":[{"mode":"data", "address":address, "change":{"actions":["delete"]}}]})).unwrap();
@@ -38,6 +39,15 @@ fn gateway_observations_are_read_only_in_plans_and_discardable_during_teardown()
         let value = json!({"mode":mode, "address":address, "change":{"actions":[action]}});
         let plan: Plan = serde_json::from_value(json!({"resource_changes":[value]})).unwrap();
         assert!(check_plan(&plan, &BTreeMap::new(), &BTreeMap::new()).is_err());
+        assert!(
+            runtime::check_runtime_plan(
+                &plan,
+                &BTreeMap::new(),
+                &BTreeMap::new(),
+                &BTreeSet::new()
+            )
+            .is_err()
+        );
     }
     let change = json!({"mode":"data", "address":address, "change":{"actions":["read"]}});
     let duplicate: Plan =
@@ -189,6 +199,18 @@ async fn managed_gateway_plan_apply_noop_destroy_and_recovery_use_real_opentofu(
         .unwrap();
     let stage = Store::open(&store.directory.join("runtime")).unwrap();
     let first = stage.bindings().unwrap();
+    let state: Value =
+        serde_json::from_slice(&fs::read(stage.directory.join("terraform.tfstate")).unwrap())
+            .unwrap();
+    let readiness = state["resources"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|resource| {
+            resource["mode"] == "data" && resource["type"] == "nemoclaw_gateway_capabilities"
+        })
+        .expect("runtime apply must record provider-owned readiness");
+    assert_eq!(readiness["instances"][0]["attributes"]["compatible"], true);
     drop(stage);
     let docker = document.spec.sandboxes[0].runtime.provider == "docker";
     let compute = if docker {

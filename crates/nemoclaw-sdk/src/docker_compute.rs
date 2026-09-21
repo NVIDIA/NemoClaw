@@ -488,6 +488,10 @@ mod tests {
         let graph = crate::compile::compile_runtime(&document, &generations, "0.1.0").unwrap();
         assert!(graph["resource"]["docker_container"].is_null());
         assert_eq!(
+            graph["data"]["nemoclaw_gateway_capabilities"]["current"]["depends_on"],
+            json!(["nemoclaw_managed_gateway.runtime"])
+        );
+        assert_eq!(
             graph["resource"]["nemoclaw_managed_gateway"]["runtime"]["image_pull_policy"],
             "Always"
         );
