@@ -319,10 +319,6 @@ pub(super) fn constrain(root: &mut Value) {
         "serviceName",
         json!({"minLength":1,"maxLength":256,"pattern":"^[!-~](?:[ -~]*[!-~])?$(?![\\s\\S])"}),
     );
-    defs["AgentObservability"]["oneOf"] = json!([
-        {"required":["otlp"],"not":{"required":["relay"]}},
-        {"required":["relay"],"not":{"required":["otlp"]}}
-    ]);
     defs["Harness"]["allOf"].as_array_mut().unwrap().extend([
         json!({"if":{"required":["observability"],"properties":{"observability":{"required":["otlp"]}}},"then":{"properties":{"kind":{"const":"openclaw"}}}}),
         json!({"if":{"required":["observability"],"properties":{"observability":{"required":["relay"]}}},"then":{"properties":{"kind":{"const":"hermes"}}}})

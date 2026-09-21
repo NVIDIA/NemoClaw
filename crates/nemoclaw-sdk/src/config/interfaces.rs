@@ -60,25 +60,95 @@ pub struct HermesApi {
     /// Sandbox-local API port, from 8642 through 8652.
     pub port: u16,
 }
+/// Native Hermes dashboard, either disabled or enabled with service settings.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(try_from = "HermesDashboardInput", into = "HermesDashboardInput")]
+#[schemars(with = "HermesDashboardInput")]
+pub enum HermesDashboard {
+    /// Do not start the dashboard service.
+    Disabled,
+    /// Start the dashboard using the supplied overrides and native defaults.
+    Enabled(HermesDashboardSettings),
+}
+
+/// Settings that apply only to an enabled Hermes dashboard.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct HermesDashboardSettings {
+    /// Sandbox access port; defaults to 18789.
+    pub port: Option<u16>,
+    /// Native listener behind the forwarder; defaults to 19119.
+    pub internal_port: Option<u16>,
+    /// Browser chat availability; omission preserves the native enabled default.
+    pub tui: Option<HermesTui>,
+}
+
+// Preserve the authored enabled flag at the boundary, without allowing disabled
+// dashboards to carry settings in the SDK.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
+#[schemars(rename = "HermesDashboard")]
 /// Native Hermes dashboard with isolated configuration and active sessions.
-pub struct HermesDashboard {
+struct HermesDashboardInput {
     /// Start the dashboard. When false, all other dashboard fields must be omitted.
-    pub enabled: bool,
+    enabled: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(default, with = "u16", range(min = 1024))]
     /// Sandbox dashboard access port; defaults to 18789. Must differ from internalPort and reserved API ports.
-    pub port: Option<u16>,
+    port: Option<u16>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(default, with = "u16", range(min = 1024))]
     /// Native dashboard listener behind the local forwarder; defaults to 19119 and must differ from port.
-    pub internal_port: Option<u16>,
+    internal_port: Option<u16>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(default, with = "HermesTui")]
     /// Enable native browser chat/TUI; omitted settings preserve the pinned Hermes default of enabled.
-    pub tui: Option<HermesTui>,
+    tui: Option<HermesTui>,
 }
+impl TryFrom<HermesDashboardInput> for HermesDashboard {
+    type Error = ConfigError;
+
+    fn try_from(input: HermesDashboardInput) -> Result<Self, Self::Error> {
+        match input {
+            HermesDashboardInput {
+                enabled: true,
+                port,
+                internal_port,
+                tui,
+            } => Ok(Self::Enabled(HermesDashboardSettings {
+                port,
+                internal_port,
+                tui,
+            })),
+            HermesDashboardInput {
+                enabled: false,
+                port: None,
+                internal_port: None,
+                tui: None,
+            } => Ok(Self::Disabled),
+            _ => Err(ConfigError::new("disabled dashboard cannot have settings")),
+        }
+    }
+}
+
+impl From<HermesDashboard> for HermesDashboardInput {
+    fn from(dashboard: HermesDashboard) -> Self {
+        match dashboard {
+            HermesDashboard::Disabled => Self {
+                enabled: false,
+                port: None,
+                internal_port: None,
+                tui: None,
+            },
+            HermesDashboard::Enabled(settings) => Self {
+                enabled: true,
+                port: settings.port,
+                internal_port: settings.internal_port,
+                tui: settings.tui,
+            },
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 /// Browser chat/TUI availability; standalone terminal access remains native Hermes behavior.
@@ -103,11 +173,9 @@ impl AgentInterfaces {
                         .as_ref()
                         .is_none_or(|a| (8642..=8652).contains(&a.port))
                     && i.dashboard.as_ref().is_none_or(|d| {
-                        if !d.enabled {
-                            return d.port.is_none()
-                                && d.internal_port.is_none()
-                                && d.tui.is_none();
-                        }
+                        let HermesDashboard::Enabled(d) = d else {
+                            return true;
+                        };
                         let port = d.port.unwrap_or(18789);
                         let internal = d.internal_port.unwrap_or(19119);
                         port != internal
