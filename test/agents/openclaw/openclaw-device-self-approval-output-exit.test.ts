@@ -14,6 +14,7 @@ import {
 } from "../../helpers/openclaw-device-self-approval-patch-harness";
 
 const APPROVAL = {
+  status: "approved",
   requestId: "request-1",
   device: { deviceId: "device-1" },
 };
@@ -41,7 +42,13 @@ defaultRuntime.writeJson = (value) => {
 };
 defaultRuntime.exit = (code) => realExit(code);
 setInterval(() => {}, 1000);
-runDevicesApproveSuccess(${JSON.stringify(APPROVAL)}, { json: ${String(json)} });
+setApprovalFailures([new Error("scope-upgrade-pending")]);
+approvePairingWithFallback({ json: ${String(json)} }, "request-1")
+  .then((result) => runDevicesApproveSuccess(result, { json: ${String(json)} }))
+  .catch((error) => {
+    console.error(error);
+    realExit(1);
+  });
 `,
   );
   const result = spawnSync(process.execPath, [runner], {
