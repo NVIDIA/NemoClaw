@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import YAML from "yaml";
@@ -379,7 +379,7 @@ test(
     );
     expect(exported.exitCode, text(exported)).toBe(0);
     const raw = fs.readFileSync(outputPath, "utf8");
-    expect(raw.includes(apiKey), "Export must omit credential values").toBe(false);
+    expect(artifacts.redact(raw), "Export must omit credential values").toBe(raw);
     const document = asExportedConfig(YAML.parse(raw));
     const exportedSandbox = document.spec.sandboxes[0];
     const agents = exportedAgentList(exportedSandbox);
@@ -406,6 +406,8 @@ test(
         ? (YAML.parse(policy.value.document) as { network_policies?: unknown }).network_policies
         : undefined,
     );
+    const exportArtifact = "config-export-live.yaml";
+    await artifacts.writeText(exportArtifact, raw);
 
     const mismatchPath = path.join(exportDirectory, "must-not-exist.yaml");
     try {
@@ -437,6 +439,10 @@ test(
       endpoint: exportedEndpoint,
       effectivePolicyMatches: true,
       identityDriftPreventedPublication: true,
+      yaml: {
+        artifact: exportArtifact,
+        sha256: createHash("sha256").update(raw).digest("hex"),
+      },
     });
 
     progress.phase("deny default egress and hot-reload one host-gateway port");
