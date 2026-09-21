@@ -389,9 +389,10 @@ This preserves the locked dependency versions and avoids npm resolving a new pee
 Both jobs verify that the SDK connection API loads before running tests.
 This keeps the private optional dependency available for SDK-backed commands such as configuration export.
 
-The `network-policy` target also owns live configuration-export evidence for #10938, #11854, and PR #11065.
+The `network-policy` target also owns live configuration-export evidence for #10938, #11854, #12131, and PR #11065.
 After restricted single-agent OpenClaw onboarding, it invokes the candidate `config export` command through the real SDK connection.
-It compares the primary agent, sandbox name, immutable managed image, hosted endpoint, and explicit policy with the fixture's registered and effective state.
+It compares the OpenClaw harness, primary agent, sandbox name, hosted endpoint, and explicit policy with the fixture's registered and effective state.
+It also requires the temporary managed-image value to be `null`; the builder test owns the deterministic placeholder mapping.
 It then changes the fixture's recorded sandbox fingerprint and requires export to fail without creating a file.
 The fixture restores the registry in `finally` and removes private export files through its existing cleanup registry.
 The exported effective policy comes from the SDK configuration response and is compared with the
@@ -406,7 +407,7 @@ The assertion budget is unchanged. Nine export assertions replace nine redundant
 The `security-posture-hermes` target owns the corresponding live Hermes export evidence for #11286.
 After canonical hosted-inference onboarding, it invokes `config export` through both the `nemoclaw`
 and `nemohermes` launchers and requires the validated documents to have identical specs. It checks
-the Hermes agent type, immutable managed image, hosted route, effective policy, and omission of
+the Hermes agent type, null managed-image placeholder, hosted route, effective policy, and omission of
 credential values. It then changes the fixture's recorded sandbox fingerprint and requires both
 launchers to fail without publishing a file before restoring the registry. The assertion budget is
 unchanged because this contract replaces a redundant nonempty-log assertion in the same scenario.

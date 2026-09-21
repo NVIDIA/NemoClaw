@@ -11,6 +11,6 @@ export function asExportedConfig(value: unknown): V1Alpha1Export {
 export function exportedSingletonSandbox(
   sandbox: V1Alpha1ExportSandbox,
 ): Extract<V1Alpha1ExportSandbox, { readonly image: Readonly<{ ref: string }> }> {
-  if (!("image" in sandbox)) throw new Error("The export requires an explicit image");
+  if (sandbox.image === null) throw new Error("The export requires an explicit image");
   return sandbox;
 }

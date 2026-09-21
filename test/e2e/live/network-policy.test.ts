@@ -394,7 +394,8 @@ test(
     ).toBe(
       `sandbox=${SANDBOX_NAME}\nagent=primary\nroute=primary\nproviderRef=${exportedProvider.name}\nmodel=${entry.model}\napi=${entry.preferredInferenceApi}\nendpoint=${entry.endpointUrl}\ncredentialEnv=${entry.credentialEnv}\ntoolDisclosure=${entry.toolDisclosure ?? "progressive"}`,
     );
-    expect(exportedSandbox).not.toHaveProperty("image");
+    expect(exportedSandbox.harness.kind).toBe("openclaw");
+    expect(exportedSandbox.image).toBeNull();
     const exportedEndpoint = "endpoint" in exportedProvider ? exportedProvider.endpoint : undefined;
     expect(exportedEndpoint).toBe(requireHostedInferenceConfig(secrets).endpointUrl);
     expect(

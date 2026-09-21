@@ -74,6 +74,7 @@ describe("export config builder", () => {
         sandboxes: [
           {
             name: "alpha",
+            image: null,
             runtime: {
               provider: "docker",
             },
@@ -190,12 +191,25 @@ describe("export config builder", () => {
     );
 
     expect(result.spec.sandboxes[0]?.harness.kind).toBe("hermes");
+    expect(result.spec.sandboxes[0]?.image).toBeNull();
     expect(result.spec.sandboxes[0]?.harness).not.toHaveProperty("observability");
     expect(result.spec.sandboxes[0]?.network.policy.explicit).toMatchObject({
       process: { run_as_user: "1000", run_as_group: "1000" },
       filesystem_policy: {
         read_only: ["/usr", "/opt/fabric", "/opt/nemoclaw", "/opt/hermes"],
       },
+    });
+  });
+
+  it("uses a null managed image placeholder until v1 release (#12131)", () => {
+    const result = buildExportConfig(source, {
+      documentName: alphaDocumentName,
+      documentUid: firstUid,
+    });
+
+    expect(result.spec.sandboxes[0]).toMatchObject({
+      harness: { kind: "openclaw" },
+      image: null,
     });
   });
 

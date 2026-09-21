@@ -275,8 +275,9 @@ With `--json` and file output, the version 1 result includes `sourceSandbox`, `o
 Export validates retained corporate certificate authority (CA) state but omits the CA bundle and digest from YAML.
 Configure destination CA trust separately during onboarding; export does not change the source sandbox's trust.
 
-The v0 command projects verified source state into the v1alpha1 YAML shape.
-The v1 Rust parser remains authoritative for accepting that document; the v0 command does not carry a copy of the v1 schema or semantic validator.
+The v0 command projects verified source state into a pre-release v1alpha1 YAML shape.
+It does not validate the document with the unreleased v1 parser.
+For managed OpenClaw and Hermes sandboxes, `image: null` is a temporary placeholder until the v1 release defines the target image value.
 Each exported sandbox contains exactly one inline `harness` and one singular `agent` with one inline `inference` definition.
 
 A hosted single-agent export has this structure:
@@ -300,6 +301,7 @@ spec:
         env: OPENAI_API_KEY
   sandboxes:
     - name: my-assistant
+      image: null
       runtime:
         provider: docker
       network:

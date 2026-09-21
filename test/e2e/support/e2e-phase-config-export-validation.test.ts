@@ -147,6 +147,7 @@ function document(
       sandboxes: [
         {
           name: "sandbox",
+          image: null,
           runtime: { provider: "docker" },
           network: { policy: { explicit: POLICY } },
           harness: {
@@ -778,7 +779,7 @@ process.stdout.write("x".repeat(1024 * 1024 + 2048 - Buffer.byteLength(suffix, "
     );
   });
 
-  it("validates the current v1alpha1 Deep Agents document (#11860)", () => {
+  it("validates the staged v1alpha1 Deep Agents document (#11860)", () => {
     const candidate = structuredClone(document());
     const sandbox = candidate.spec.sandboxes[0]!;
     const image = { ref: IMAGE_REF };
@@ -791,12 +792,12 @@ process.stdout.write("x".repeat(1024 * 1024 + 2048 - Buffer.byteLength(suffix, "
     const missingImage = structuredClone(candidate);
     Reflect.deleteProperty(missingImage.spec.sandboxes[0]!, "image");
     expect(() => parseConfigExport(JSON.stringify(missingImage))).toThrow(
-      "complete v1alpha1 export contract",
+      "complete staged v1alpha1 shape",
     );
     const missingEndpoint = structuredClone(candidate);
     Reflect.deleteProperty(missingEndpoint.spec.gateway, "endpoint");
     expect(() => parseConfigExport(JSON.stringify(missingEndpoint))).toThrow(
-      "complete v1alpha1 export contract",
+      "complete staged v1alpha1 shape",
     );
   });
 

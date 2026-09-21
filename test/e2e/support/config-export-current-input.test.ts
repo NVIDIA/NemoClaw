@@ -27,6 +27,7 @@ function currentInput() {
       sandboxes: [
         {
           name: "assistant",
+          image: null,
           runtime: { provider: "docker" },
           network: { policy: { explicit: { version: 1 } } },
           harness: { kind: "openclaw" },
@@ -48,8 +49,8 @@ function currentInput() {
   };
 }
 
-describe("current config export input", () => {
-  it("accepts one singular agent (#12131)", () => {
+describe("staged config export input", () => {
+  it("accepts one singular agent with a null image placeholder (#12131)", () => {
     expect(parseConfigExport(JSON.stringify(currentInput())).spec.sandboxes[0]?.agent.name).toBe(
       "primary",
     );
@@ -63,7 +64,7 @@ describe("current config export input", () => {
     sandbox.agents = [agent];
 
     expect(() => parseConfigExport(JSON.stringify(candidate))).toThrow(
-      "complete v1alpha1 export contract",
+      "complete staged v1alpha1 shape",
     );
   });
 });

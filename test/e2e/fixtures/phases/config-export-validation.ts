@@ -164,6 +164,7 @@ const DeepAgentsExportSandboxSchema = Type.Object(
 const ManagedAgentExportSandboxSchema = Type.Object(
   {
     ...ExportSandboxFields,
+    image: Type.Null(),
     harness: Type.Object(
       {
         kind: Type.Union([Type.Literal("hermes"), Type.Literal("openclaw")]),
@@ -418,7 +419,7 @@ function requiredString(value: unknown, field: string): string {
 export function parseConfigExport(raw: string): ConfigExportDocument {
   const document: unknown = YAML.parse(raw);
   if (!Check(ConfigExportDocumentSchema, document)) {
-    throw new Error("exported configuration must match the complete v1alpha1 export contract");
+    throw new Error("exported configuration must match the complete staged v1alpha1 shape");
   }
   return document as ConfigExportDocument;
 }
@@ -584,7 +585,7 @@ function semanticsFromDocument(document: ConfigExportDocument): ConfigExportSema
     sandboxName: sandbox?.name ?? null,
     agent: sandbox?.harness.kind ?? null,
     runtimeProvider: sandbox?.runtime.provider ?? null,
-    imageRef: sandbox !== undefined && "image" in sandbox ? sandbox.image.ref : null,
+    imageRef: sandbox?.image?.ref ?? null,
     inferenceProviderName: provider?.name ?? null,
     inferenceProvider: provider?.provider ?? null,
     inferenceApi: provider?.api ?? null,
