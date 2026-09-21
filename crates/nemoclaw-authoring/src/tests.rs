@@ -69,7 +69,9 @@ fn fixed_hosted_openclaw_answers_project_to_parser_accepted_intent() {
         nemoclaw_sdk::config::ComputeDriver::Docker
     );
     assert!(first.yaml().contains("runtime:"));
-    let policy = &sandbox.network.policy.as_ref().unwrap().explicit;
+    let nemoclaw_sdk::config::NetworkPolicy::Explicit(policy) = &sandbox.network.policy else {
+        panic!("expected explicit policy");
+    };
     let process = policy.process.as_ref().unwrap();
     assert_eq!(process.run_as_user.as_deref(), Some("1000"));
     assert_eq!(process.run_as_group.as_deref(), Some("1000"));
@@ -305,7 +307,9 @@ fn representable_scenarios_share_one_parser_validated_table() {
         let route = &reparsed.sandbox_inference(sandbox).unwrap().routes[0];
         assert_eq!(route.provider_ref.as_deref(), Some(provider.name.as_str()));
         assert_eq!(route.overrides.model, direct_answers.model);
-        let policy = &sandbox.network.policy.as_ref().unwrap().explicit;
+        let nemoclaw_sdk::config::NetworkPolicy::Explicit(policy) = &sandbox.network.policy else {
+            panic!("expected explicit policy");
+        };
         let process = policy.process.as_ref().unwrap();
         assert_eq!(process.run_as_user.as_deref(), Some("1000"));
         assert_eq!(process.run_as_group.as_deref(), Some("1000"));

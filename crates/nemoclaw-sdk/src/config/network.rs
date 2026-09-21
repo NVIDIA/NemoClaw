@@ -7,17 +7,97 @@ use crate::config::HarnessKind;
 // preset selection, and delegated policy semantics to pinned openshell-policy.
 // 2026-09-19: removed the main-branch Landlock spelling translation and the
 // redundant external-proxy ownership annotation.
-use super::{ConfigError, Network};
+// 2026-09-21: made policy selection exclusive in Rust while preserving the input shape.
+use super::ConfigError;
 use openshell_core::proto;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
+/// Sandbox policy selection and optional agent HTTP proxy.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(try_from = "NetworkInput", into = "NetworkInput")]
+#[schemars(with = "NetworkInput")]
+pub struct Network {
+    /// Isolated preset or a complete authored policy; the two cannot coexist.
+    pub policy: NetworkPolicy,
+    /// Existing HTTP proxy used by the agent, independent of policy selection.
+    pub proxy: Option<Proxy>,
+}
+
+/// Sandbox policy source. Explicit policies replace the isolated preset completely.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub enum NetworkPolicy {
+    /// SDK-provided isolated policy.
+    #[default]
+    Isolated,
+    /// Complete authored OpenShell policy; no isolated defaults are merged.
+    Explicit(ExplicitPolicy),
+}
+
+// Keep the authored YAML shape at the serialization boundary. Runtime code
+// receives one policy choice, never independently mutable tier and policy fields.
+#[derive(Default, Serialize, Deserialize, schemars::JsonSchema)]
+#[schemars(!default, rename = "Network")]
+#[serde(default, deny_unknown_fields)]
+/// Sandbox policy selection and optional agent HTTP proxy.
+struct NetworkInput {
+    #[serde(rename = "tier")]
+    #[schemars(default)]
+    /// Isolated policy preset. Omit when declaring policy.explicit; omission without policy selects isolated.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    tier: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(default, with = "ExplicitPolicySelection")]
+    /// Complete authored OpenShell policy, replacing the isolated preset.
+    policy: Option<ExplicitPolicySelection>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(default, with = "Proxy")]
+    /// HTTP proxy address used by the agent process. Does not create a proxy or change gateway networking.
+    proxy: Option<Proxy>,
+}
+
+impl TryFrom<NetworkInput> for Network {
+    type Error = ConfigError;
+
+    fn try_from(input: NetworkInput) -> Result<Self, Self::Error> {
+        let policy = match (input.tier.as_str(), input.policy) {
+            ("", Some(policy)) => NetworkPolicy::Explicit(policy.explicit),
+            ("" | super::constraints::NETWORK_TIER, None) => NetworkPolicy::Isolated,
+            _ => {
+                return Err(ConfigError::new(
+                    "choose either isolated tier or an explicit policy",
+                ));
+            }
+        };
+        Ok(Self {
+            policy,
+            proxy: input.proxy,
+        })
+    }
+}
+
+impl From<Network> for NetworkInput {
+    fn from(network: Network) -> Self {
+        let (tier, policy) = match network.policy {
+            NetworkPolicy::Isolated => (super::constraints::NETWORK_TIER.into(), None),
+            NetworkPolicy::Explicit(explicit) => {
+                (String::new(), Some(ExplicitPolicySelection { explicit }))
+            }
+        };
+        Self {
+            tier,
+            policy,
+            proxy: network.proxy,
+        }
+    }
+}
+
 /// Select an explicit policy; no isolated defaults are merged into it.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
-pub struct ExplicitPolicySelection {
+struct ExplicitPolicySelection {
     /// Complete sandbox policy in OpenShell YAML field names.
-    pub explicit: ExplicitPolicy,
+    explicit: ExplicitPolicy,
 }
 
 /// Existing agent HTTP proxy, reachable from inside the sandbox. NemoClaw does not manage it. Credentials and URL syntax are excluded.
@@ -281,11 +361,10 @@ impl Proxy {
 }
 impl Network {
     pub(crate) fn validate_runtime_access(&self, harness: HarnessKind) -> Result<(), ConfigError> {
-        let Some(filesystem) = self
-            .policy
-            .as_ref()
-            .and_then(|p| p.explicit.filesystem_policy.as_ref())
-        else {
+        let NetworkPolicy::Explicit(policy) = &self.policy else {
+            return Ok(());
+        };
+        let Some(filesystem) = &policy.filesystem_policy else {
             return Ok(());
         };
         for (required, diagnostic) in crate::openshell::runtime_read_requirements(harness) {
@@ -314,16 +393,8 @@ impl Network {
     }
 
     pub fn validate(&self) -> Result<(), ConfigError> {
-        match &self.policy {
-            Some(policy) if self.tier.is_empty() => {
-                policy.explicit.to_proto()?;
-            }
-            None if self.tier == super::constraints::NETWORK_TIER => {}
-            _ => {
-                return Err(ConfigError::new(
-                    "choose either isolated tier or an explicit policy",
-                ));
-            }
+        if let NetworkPolicy::Explicit(policy) = &self.policy {
+            policy.to_proto()?;
         }
         if let Some(proxy) = &self.proxy {
             proxy.validate()?;
@@ -331,9 +402,10 @@ impl Network {
         Ok(())
     }
     pub fn policy_proto(&self) -> Result<proto::SandboxPolicy, ConfigError> {
-        self.policy
-            .as_ref()
-            .map_or_else(|| Ok(crate::openshell::policy()), |p| p.explicit.to_proto())
+        match &self.policy {
+            NetworkPolicy::Isolated => Ok(crate::openshell::policy()),
+            NetworkPolicy::Explicit(policy) => policy.to_proto(),
+        }
     }
 }
 pub(crate) const POLICY_PROTOCOLS: &[&str] = &["rest", "websocket", "json-rpc", "mcp"];

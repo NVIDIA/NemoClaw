@@ -339,9 +339,10 @@ async fn lifecycle_with_rejected_annotations(input: &str, reject_annotations: bo
     let directory = tempfile::tempdir().unwrap();
     let fixture = Fixture::start().await;
     let mut document = Document::parse(input.as_bytes()).unwrap();
-    if let Some(policy) = &mut document.spec.sandboxes[0].network.policy {
+    if let nemoclaw_sdk::config::NetworkPolicy::Explicit(policy) =
+        &mut document.spec.sandboxes[0].network.policy
+    {
         policy
-            .explicit
             .network_policies
             .get_mut("documentation")
             .unwrap()
@@ -644,7 +645,10 @@ async fn lifecycle_with_rejected_annotations(input: &str, reject_annotations: bo
             .environment
             .insert("NEMOCLAW_INFERENCE_CONFIG".into(), original);
     }
-    if document.spec.sandboxes[0].network.policy.is_some() {
+    if matches!(
+        document.spec.sandboxes[0].network.policy,
+        nemoclaw_sdk::config::NetworkPolicy::Explicit(_)
+    ) {
         let mut changed = document.clone();
         changed.spec.sandboxes[0]
             .network

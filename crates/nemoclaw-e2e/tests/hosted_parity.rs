@@ -87,24 +87,13 @@ fn hosted_openclaw_scenario_rejects_legacy_export_and_preserves_authored_intent(
         nemoclaw_sdk::config::DEFAULT_AGENT_IMAGE
     );
     assert_eq!(sandbox.runtime.provider, ComputeDriver::Docker);
-    assert!(sandbox.network.tier.is_empty());
-    let process = sandbox
-        .network
-        .policy
-        .as_ref()
-        .unwrap()
-        .explicit
-        .process
-        .as_ref()
-        .unwrap();
+    let nemoclaw_sdk::config::NetworkPolicy::Explicit(policy) = &sandbox.network.policy else {
+        panic!("expected explicit policy");
+    };
+    let process = policy.process.as_ref().unwrap();
     assert_eq!(process.run_as_user.as_deref(), Some("1000"));
     assert_eq!(process.run_as_group.as_deref(), Some("1000"));
-    let read_only = sandbox
-        .network
-        .policy
-        .as_ref()
-        .unwrap()
-        .explicit
+    let read_only = policy
         .filesystem_policy
         .as_ref()
         .unwrap()
