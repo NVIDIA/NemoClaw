@@ -47,7 +47,7 @@ describe("OpenShell gateway upgrade boundary", () => {
       ),
     ).toEqual([
       "openshell-gateway-upgrade-v0-0-89-x86-64",
-      "openshell-gateway-upgrade-v0-0-123-aarch64",
+      "openshell-gateway-upgrade-v0-0-123-x86-64",
     ]);
 
     const { environment, runner, shard } = catalogueTarget(
@@ -79,9 +79,9 @@ describe("OpenShell gateway upgrade boundary", () => {
     });
   });
 
-  it("pins the v0.0.123 gateway-registration regression target (#11898)", () => {
+  it("pins the v0.0.123 gateway-registration regression target to amd64 (#11898)", () => {
     const { environment, runner, shard } = catalogueTarget(
-      "openshell-gateway-upgrade-v0-0-123-aarch64",
+      "openshell-gateway-upgrade-v0-0-123-x86-64",
     );
 
     expect({
@@ -97,8 +97,8 @@ describe("OpenShell gateway upgrade boundary", () => {
       openShellVersion: environment.NEMOCLAW_OLD_OPENSHELL_VERSION,
       openClawVersion: environment.NEMOCLAW_OLD_OPENCLAW_VERSION,
     }).toEqual({
-      runner: "ubuntu-24.04-arm",
-      shard: "v0-0-123-aarch64",
+      runner: "ubuntu-latest",
+      shard: "v0-0-123-x86-64",
       nemoclawRef: REVIEWED_GATEWAY_REGISTRATION_UPGRADE_FIXTURE.nemoclawRef,
       commit: REVIEWED_GATEWAY_REGISTRATION_UPGRADE_FIXTURE.nemoclawCommit,
       installerSha256: REVIEWED_GATEWAY_REGISTRATION_UPGRADE_FIXTURE.installerSha256,

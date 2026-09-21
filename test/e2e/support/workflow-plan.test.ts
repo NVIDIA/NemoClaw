@@ -669,7 +669,7 @@ describe("E2E workflow plan", () => {
   ])("selects both gateway-upgrade fixtures when %s changes", (changedFile) => {
     expect(catalogueTargetsForChangedFiles([changedFile]).map((target) => target.id)).toEqual([
       "openshell-gateway-upgrade-v0-0-89-x86-64",
-      "openshell-gateway-upgrade-v0-0-123-aarch64",
+      "openshell-gateway-upgrade-v0-0-123-x86-64",
     ]);
   });
 

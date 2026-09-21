@@ -387,21 +387,21 @@ const GATEWAY_UPGRADE_TARGET = dockerOnlyTarget("openshell-gateway-upgrade-v0-0-
 });
 
 const GATEWAY_REGISTRATION_UPGRADE_TARGET = dockerOnlyTarget(
-  "openshell-gateway-upgrade-v0-0-123-aarch64",
+  "openshell-gateway-upgrade-v0-0-123-x86-64",
   {
     targetId: "openshell-gateway-upgrade",
-    displayName: `Upgrade: restores ${REVIEWED_GATEWAY_REGISTRATION_UPGRADE_FIXTURE.nemoclawRef} gateway registration and sandboxes on ARM64`,
+    displayName: `Upgrade: restores ${REVIEWED_GATEWAY_REGISTRATION_UPGRADE_FIXTURE.nemoclawRef} gateway registration and sandboxes on x86-64`,
     agentRuntime: "openclaw",
     environmentOrInferenceEndpoint:
-      "ARM64 Ubuntu; GitHub release artifacts; host-local compatible inference endpoint",
+      "x86-64 Ubuntu; GitHub release artifacts; host-local compatible inference endpoint",
     profile: "github-read",
-    runner: "ubuntu-24.04-arm",
+    runner: "ubuntu-latest",
     testFile: "test/e2e/live/openshell-gateway-upgrade.test.ts",
     timeoutMinutes: 120,
     installMode: "none",
     restoreCli: true,
     exposeCliBin: true,
-    shard: "v0-0-123-aarch64",
+    shard: "v0-0-123-x86-64",
     owningPaths: GATEWAY_UPGRADE_OWNING_PATHS,
     environment: {
       ...nonInteractive,
