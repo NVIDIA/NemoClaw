@@ -200,11 +200,7 @@ describe("OpenShell gateway upgrade boundary", () => {
     expect(currentNemoclawUpgradeRef({})).toBe("HEAD");
   });
 
-  it.each([
-    ["historical installer", ""],
-    ["legacy sandbox creation", ""],
-    ["current installer", "local-dockerfile"],
-  ] as const)("isolates the %s from managed-image qualification", (_phase, source) => {
+  it("isolates the historical installer from managed-image qualification", () => {
     const environment = isolateGatewayUpgradeFixtureEnv(
       {
         E2E_MANAGED_IMAGE_REVISION: "a".repeat(40),
@@ -215,11 +211,11 @@ describe("OpenShell gateway upgrade boundary", () => {
         NEMOCLAW_E2E_MANAGED_IMAGE_REVISION: "b".repeat(40),
         NEMOCLAW_INSTALL_REF: "candidate",
       },
-      source,
+      "",
     );
 
     expect(environment).toEqual({
-      E2E_WORKLOAD_SOURCE: source,
+      E2E_WORKLOAD_SOURCE: "",
       NEMOCLAW_INSTALL_REF: "candidate",
     });
   });

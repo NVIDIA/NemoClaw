@@ -429,24 +429,21 @@ async function installCurrentNemoclawUpgrade(
 ): Promise<void> {
   const currentRef = currentNemoclawUpgradeRef(process.env);
   const currentEnv = withoutEnvKeys(
-    isolateGatewayUpgradeFixtureEnv(
-      liveEnv({
-        GITHUB_TOKEN: process.env.GITHUB_TOKEN ?? "",
-        NEMOCLAW_ACCEPT_EXPERIMENTAL_OPENSHELL_UPGRADE: "1",
-        NEMOCLAW_BOOTSTRAP_PAYLOAD: "1",
-        NEMOCLAW_CONFIRM_LEGACY_MANAGED_RECREATE: JSON.stringify(LEGACY_SANDBOXES),
-        NEMOCLAW_INSTALL_REF: currentRef,
-        NEMOCLAW_INSTALL_TAG: currentRef,
-        NEMOCLAW_PROVIDER: "custom",
-        NEMOCLAW_ENDPOINT_URL: fakeBaseUrl,
-        NEMOCLAW_MODEL: "test-model",
-        NEMOCLAW_SANDBOX_NAME: SURVIVOR_SANDBOX,
-        NEMOCLAW_POLICY_MODE: "skip",
-        NEMOCLAW_DASHBOARD_PORT: "",
-        CHAT_UI_URL: "",
-      }),
-      "local-dockerfile",
-    ),
+    liveEnv({
+      GITHUB_TOKEN: process.env.GITHUB_TOKEN ?? "",
+      NEMOCLAW_ACCEPT_EXPERIMENTAL_OPENSHELL_UPGRADE: "1",
+      NEMOCLAW_BOOTSTRAP_PAYLOAD: "1",
+      NEMOCLAW_CONFIRM_LEGACY_MANAGED_RECREATE: JSON.stringify(LEGACY_SANDBOXES),
+      NEMOCLAW_INSTALL_REF: currentRef,
+      NEMOCLAW_INSTALL_TAG: currentRef,
+      NEMOCLAW_PROVIDER: "custom",
+      NEMOCLAW_ENDPOINT_URL: fakeBaseUrl,
+      NEMOCLAW_MODEL: "test-model",
+      NEMOCLAW_SANDBOX_NAME: SURVIVOR_SANDBOX,
+      NEMOCLAW_POLICY_MODE: "skip",
+      NEMOCLAW_DASHBOARD_PORT: "",
+      CHAT_UI_URL: "",
+    }),
     ["COMPATIBLE_API_KEY"],
   );
   const redactionValues = [GATEWAY_CREDENTIAL, process.env.GITHUB_TOKEN ?? ""].filter(Boolean);
