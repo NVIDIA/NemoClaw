@@ -98,9 +98,10 @@ build_local_base() {
     >>"$GITHUB_STEP_SUMMARY"
 }
 read_dcode_base_inputs() {
-  local dockerfile="$1" parser parsed_inputs source
+  local dockerfile="$1" parser parser_input parsed_inputs source
+  parser_input="scripts/lib/dockerfile-copy-sources.mts"
   parser="${BASH_SOURCE[0]%/*}/../lib/dockerfile-copy-sources.mts"
-  DCODE_BASE_INPUTS=("$dockerfile" .dockerignore)
+  DCODE_BASE_INPUTS=("$dockerfile" .dockerignore "$parser_input")
   parsed_inputs="$(
     node --experimental-strip-types --input-type=module -e '
       import { pathToFileURL } from "node:url";

@@ -138,6 +138,13 @@ it.each([
     title: "builds the DCode base locally when a copied security input changed",
   },
   {
+    candidateContents: "export const fixture = false;\n",
+    candidatePath: "scripts/lib/dockerfile-copy-sources.mts",
+    expectedLocal: true,
+    failPublishedPull: false,
+    title: "builds the DCode base locally when its COPY parser changed",
+  },
+  {
     candidateContents: "unrelated candidate change\n",
     candidatePath: "README.md",
     expectedLocal: true,
@@ -167,8 +174,10 @@ it.each([
   runGit("config", "user.name", "NemoClaw Test");
   runGit("config", "user.email", "nemoclaw-test@example.invalid");
   const agentRoot = path.join(temporaryRoot, "agents/langchain-deepagents-code");
+  const copyParser = "scripts/lib/dockerfile-copy-sources.mts";
   const securityPatch = "scripts/security/patches/libssh2-1.11.1-cve-2026.patch";
   fs.mkdirSync(agentRoot, { recursive: true });
+  fs.mkdirSync(path.join(temporaryRoot, path.dirname(copyParser)), { recursive: true });
   fs.mkdirSync(path.join(temporaryRoot, path.dirname(securityPatch)), { recursive: true });
   fs.writeFileSync(
     path.join(agentRoot, "Dockerfile.base"),
@@ -176,9 +185,10 @@ it.each([
   );
   fs.writeFileSync(path.join(agentRoot, "requirements.lock"), "deepagents==0.7.5\n");
   fs.writeFileSync(path.join(agentRoot, "validate-runtime-contract.py"), "print('ok')\n");
+  fs.writeFileSync(path.join(temporaryRoot, copyParser), "export const fixture = true;\n");
   fs.writeFileSync(path.join(temporaryRoot, securityPatch), "security patch v1\n");
   fs.writeFileSync(path.join(temporaryRoot, ".dockerignore"), ".git\n");
-  runGit("add", ".dockerignore", "agents/langchain-deepagents-code", securityPatch);
+  runGit("add", ".dockerignore", "agents/langchain-deepagents-code", copyParser, securityPatch);
   runGit("commit", "--quiet", "-m", "test: add base");
   const publishedSourceSha = runGit("rev-parse", "HEAD");
   fs.mkdirSync(path.dirname(path.join(temporaryRoot, candidatePath)), { recursive: true });
