@@ -92,7 +92,11 @@ fn private(ip: std::net::IpAddr) -> bool {
 impl Service {
     pub fn validate(&self) -> Result<(), ConfigError> {
         use crate::config::validation::require;
-        validate_image(&self.image)?;
+        validate_image(
+            &self.image,
+            self.image_pull_policy,
+            self.placement.is_none(),
+        )?;
         crate::config::ImagePullPolicy::validate_service(self.image_pull_policy)?;
         require(
             self.placement.is_some() == self.publication.is_some(),

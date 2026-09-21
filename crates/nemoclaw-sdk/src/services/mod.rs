@@ -17,7 +17,7 @@ mod runtime;
 mod validation;
 pub use validation::validate_resource_spec;
 
-pub(crate) use contract::InstallStage;
+pub(crate) use contract::{InstallStage, MANAGED_SERVICE_KIND};
 pub use installers::ollama::{
     ExternalOllama, ExternalOllamaModel, ManagedOllama, OllamaMemory, OllamaModel, OllamaProxy,
     OllamaServing,

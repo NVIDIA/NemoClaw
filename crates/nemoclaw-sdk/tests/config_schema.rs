@@ -93,6 +93,29 @@ fn image_pull_policy_accepts_only_supported_values_on_managed_containers() {
 }
 
 #[test]
+fn schema_and_parser_require_never_for_local_service_image_ids() {
+    let validator = jsonschema::validator_for(&input_schema()).unwrap();
+    let mut value = input("spark/spark-inline.yaml");
+    value["spec"]["services"]["qwen"]["image"] = json!(format!("sha256:{}", "a".repeat(64)));
+    value["spec"]["services"]["qwen"]["imagePullPolicy"] = json!("Never");
+    agrees(&validator, &value, true);
+
+    value["spec"]["services"]["qwen"]["imagePullPolicy"] = json!("IfNotPresent");
+    agrees(&validator, &value, false);
+
+    value["spec"]["services"]["qwen"]["imagePullPolicy"] = json!("Never");
+    value["spec"]["services"]["qwen"]["placement"] = json!({
+        "engine": "ssh://gpu-box",
+        "networkCidr": "172.21.0.0/24"
+    });
+    value["spec"]["services"]["qwen"]["publication"] = json!({
+        "endpoint": "http://10.0.0.2:18888/v1",
+        "bindAddress": "10.0.0.2"
+    });
+    agrees(&validator, &value, false);
+}
+
+#[test]
 fn input_schema_rejects_missing_required_fields_and_structural_nulls() {
     let validator = jsonschema::validator_for(&input_schema()).unwrap();
     let original = input("local.yaml");

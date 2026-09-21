@@ -7,8 +7,20 @@ use std::sync::LazyLock;
 
 static IMAGE: LazyLock<regex::Regex> =
     LazyLock::new(|| regex::Regex::new(crate::config::constraints::IMAGE).unwrap());
+static LOCAL_IMAGE_ID: LazyLock<regex::Regex> =
+    LazyLock::new(|| regex::Regex::new(crate::config::constraints::LOCAL_IMAGE_ID).unwrap());
 
-pub(super) fn validate_image(image: &str) -> Result<(), crate::config::ConfigError> {
+pub(super) fn validate_image(
+    image: &str,
+    policy: Option<crate::config::ImagePullPolicy>,
+    local_engine: bool,
+) -> Result<(), crate::config::ConfigError> {
+    if LOCAL_IMAGE_ID.is_match(image) {
+        return crate::config::validation::require(
+            policy == Some(crate::config::ImagePullPolicy::Never) && local_engine,
+            "local Docker image ID requires imagePullPolicy Never on a local engine",
+        );
+    }
     crate::config::validation::require(
         IMAGE.is_match(image),
         "service image must be pinned by a SHA-256 digest",
@@ -61,3 +73,6 @@ pub(crate) trait Installer {
         generations: &crate::compile::Generations,
     ) -> Result<RemovePlan, crate::Error>;
 }
+
+pub(crate) const MANAGED_SERVICE_KIND: &str = "managed_service";
+pub(crate) const MANAGED_SERVICE_STORAGE_KIND: &str = "managed_service_storage";

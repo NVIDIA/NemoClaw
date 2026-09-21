@@ -17,7 +17,7 @@ fn managed_ollama_service() -> Value {
 }
 
 #[test]
-fn declared_services_install_once_and_service_ref_selects_the_inference_connection() {
+fn only_referenced_services_install_and_service_ref_selects_the_inference_connection() {
     let value = managed_ollama_service();
     let document = Document::parse(value.to_string().as_bytes()).unwrap();
     let generations: Generations = [
@@ -35,11 +35,10 @@ fn declared_services_install_once_and_service_ref_selects_the_inference_connecti
             .iter()
             .any(|target| target.address == "docker_container.ollama_service_ollama-server")
     );
-    assert!(
-        runtime
-            .iter()
-            .any(|target| target.address == "docker_container.ollama_service_unused")
-    );
+    assert!(runtime.iter().all(|target| {
+        !target.address.contains("unused")
+            && !target.values.values().any(|value| value.contains("unused"))
+    }));
     let graph = compile(&document, &generations, "0.1.0").unwrap();
     assert_eq!(
         graph["resource"]["nemoclaw_provider_profile"]["inference_local"]["authenticated"],

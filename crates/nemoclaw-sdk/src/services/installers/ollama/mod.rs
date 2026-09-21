@@ -132,7 +132,11 @@ fn private(ip: IpAddr) -> bool {
 impl ManagedOllama {
     pub fn validate(&self) -> Result<(), crate::config::ConfigError> {
         use crate::config::validation::require;
-        validate_image(&self.image)?;
+        validate_image(
+            &self.image,
+            self.image_pull_policy,
+            self.placement.is_none(),
+        )?;
         crate::config::ImagePullPolicy::validate_service(self.image_pull_policy)?;
         require(
             self.placement.is_some() == self.publication.is_some(),
@@ -249,7 +253,7 @@ impl OllamaProxy {
 
     pub(crate) fn validate_definition(&self) -> Result<(), crate::config::ConfigError> {
         use crate::config::validation::require;
-        validate_image(&self.image)?;
+        validate_image(&self.image, self.image_pull_policy, true)?;
         crate::config::ImagePullPolicy::validate_service(self.image_pull_policy)?;
         require(
             self.engine.as_ref().is_none_or(|engine| {

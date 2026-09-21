@@ -2721,6 +2721,33 @@
                   }
                 ]
               }
+            },
+            {
+              "if": {
+                "properties": {
+                  "image": {
+                    "pattern": "^sha256:[a-f0-9]{64}$"
+                  }
+                },
+                "required": [
+                  "image"
+                ]
+              },
+              "then": {
+                "not": {
+                  "required": [
+                    "placement"
+                  ]
+                },
+                "properties": {
+                  "imagePullPolicy": {
+                    "const": "Never"
+                  }
+                },
+                "required": [
+                  "imagePullPolicy"
+                ]
+              }
             }
           ],
           "dependentRequired": {
@@ -2742,8 +2769,8 @@
               "description": "Explicit supported GPU or system profile."
             },
             "image": {
-              "description": "Immutable runtime image containing Ollama and the NemoClaw supervisor.",
-              "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:/-]*@sha256:[a-f0-9]{64}$",
+              "description": "Registry image pinned by digest, or a local Docker image ID with imagePullPolicy Never and no placement.",
+              "pattern": "^(?:[a-zA-Z0-9][a-zA-Z0-9._:/-]*@sha256:[a-f0-9]{64}|sha256:[a-f0-9]{64})$",
               "type": "string"
             },
             "imagePullPolicy": {
@@ -2790,6 +2817,35 @@
         },
         {
           "additionalProperties": false,
+          "allOf": [
+            {
+              "if": {
+                "properties": {
+                  "image": {
+                    "pattern": "^sha256:[a-f0-9]{64}$"
+                  }
+                },
+                "required": [
+                  "image"
+                ]
+              },
+              "then": {
+                "not": {
+                  "required": [
+                    "placement"
+                  ]
+                },
+                "properties": {
+                  "imagePullPolicy": {
+                    "const": "Never"
+                  }
+                },
+                "required": [
+                  "imagePullPolicy"
+                ]
+              }
+            }
+          ],
           "description": "Managed authentication proxy for an external Ollama daemon and model.",
           "properties": {
             "endpoint": {
@@ -2802,8 +2858,8 @@
               "type": "string"
             },
             "image": {
-              "description": "Immutable NemoClaw proxy image. The external daemon runs on the selected Docker host.",
-              "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:/-]*@sha256:[a-f0-9]{64}$",
+              "description": "Registry image pinned by digest, or a local Docker image ID with imagePullPolicy Never. The external daemon runs on the selected Docker host.",
+              "pattern": "^(?:[a-zA-Z0-9][a-zA-Z0-9._:/-]*@sha256:[a-f0-9]{64}|sha256:[a-f0-9]{64})$",
               "type": "string"
             },
             "imagePullPolicy": {
@@ -3001,6 +3057,33 @@
                   }
                 ]
               }
+            },
+            {
+              "if": {
+                "properties": {
+                  "image": {
+                    "pattern": "^sha256:[a-f0-9]{64}$"
+                  }
+                },
+                "required": [
+                  "image"
+                ]
+              },
+              "then": {
+                "not": {
+                  "required": [
+                    "placement"
+                  ]
+                },
+                "properties": {
+                  "imagePullPolicy": {
+                    "const": "Never"
+                  }
+                },
+                "required": [
+                  "imagePullPolicy"
+                ]
+              }
             }
           ],
           "dependentRequired": {
@@ -3043,8 +3126,8 @@
               "x-nemoclaw-required": "Without recipe"
             },
             "image": {
-              "description": "Immutable runtime image containing vLLM, the NemoClaw supervisor, and any declared recipe tools.",
-              "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:/-]*@sha256:[a-f0-9]{64}$",
+              "description": "Registry image pinned by digest, or a local Docker image ID with imagePullPolicy Never and no placement.",
+              "pattern": "^(?:[a-zA-Z0-9][a-zA-Z0-9._:/-]*@sha256:[a-f0-9]{64}|sha256:[a-f0-9]{64})$",
               "type": "string"
             },
             "imagePullPolicy": {

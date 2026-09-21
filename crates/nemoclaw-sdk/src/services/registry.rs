@@ -98,7 +98,9 @@ pub fn resource_behavior(kind: &str) -> ResourceBehavior {
         computed_digest: false,
         observed_running: matches!(
             kind,
-            installers::ollama::SERVICE_KIND | installers::vllm::SERVICE_KIND
+            installers::ollama::SERVICE_KIND
+                | installers::vllm::SERVICE_KIND
+                | super::contract::MANAGED_SERVICE_KIND
         ),
         retained_storage: matches!(
             kind,
@@ -106,7 +108,9 @@ pub fn resource_behavior(kind: &str) -> ResourceBehavior {
         ),
         runtime_process: matches!(
             kind,
-            installers::ollama::SERVICE_KIND | installers::vllm::SERVICE_KIND
+            installers::ollama::SERVICE_KIND
+                | installers::vllm::SERVICE_KIND
+                | super::contract::MANAGED_SERVICE_KIND
         ),
     }
 }
@@ -116,6 +120,7 @@ pub(crate) fn resource_label(kind: &str) -> Option<&'static str> {
         installers::vllm::SERVICE_KIND => Some("inference service"),
         installers::ollama::SERVICE_KIND => Some("Ollama service"),
         "ollama_proxy" => Some("Ollama proxy"),
+        super::contract::MANAGED_SERVICE_KIND => Some("managed service"),
         _ => None,
     }
 }
@@ -129,7 +134,41 @@ pub(crate) fn constrain_schema(defs: &mut serde_json::Map<String, serde_json::Va
             "imagePullPolicy",
             serde_json::json!({"enum":["IfNotPresent", "Never"]}),
         );
+        crate::config::schema::validation::property(
+            service,
+            "image",
+            serde_json::json!({"pattern":crate::config::constraints::SERVICE_IMAGE}),
+        );
+        let local_image = serde_json::json!({
+            "if": {
+                "properties": {
+                    "image": {"pattern": crate::config::constraints::LOCAL_IMAGE_ID}
+                },
+                "required": ["image"]
+            },
+            "then": {
+                "properties": {"imagePullPolicy": {"const": "Never"}},
+                "required": ["imagePullPolicy"],
+                "not": {"required": ["placement"]}
+            }
+        });
+        service
+            .as_object_mut()
+            .unwrap()
+            .entry("allOf")
+            .or_insert_with(|| serde_json::json!([]))
+            .as_array_mut()
+            .unwrap()
+            .push(local_image);
     }
+}
+
+fn active_service_names(document: &Document) -> Result<BTreeSet<String>, ConfigError> {
+    Ok(document
+        .selected_inference_providers()?
+        .into_iter()
+        .filter_map(|provider| provider.service_ref.clone())
+        .collect())
 }
 
 trait InferenceCapability {
@@ -455,22 +494,23 @@ pub(crate) fn install_plans(
     generations: &Generations,
     stage: InstallStage,
 ) -> Result<InstallPlans, crate::Error> {
+    let active = active_service_names(document)?;
     let plans = document
         .spec
         .services
         .iter()
-        .filter(|(_, definition)| definition.stage() == stage)
+        .filter(|(name, definition)| active.contains(name.as_str()) && definition.stage() == stage)
         .map(|(name, definition)| definition.install(document, name, generations))
         .collect::<Result<Vec<_>, _>>()?;
     Ok(InstallPlans { plans })
 }
 
 pub(crate) fn has_runtime(document: &Document) -> bool {
-    document
-        .spec
-        .services
-        .values()
-        .any(|definition| definition.stage() == InstallStage::Runtime)
+    let active = active_service_names(document)
+        .unwrap_or_else(|_| document.spec.services.keys().cloned().collect());
+    document.spec.services.iter().any(|(name, definition)| {
+        active.contains(name.as_str()) && definition.stage() == InstallStage::Runtime
+    })
 }
 
 pub(crate) fn validate(document: &Document) -> Result<(), ConfigError> {
@@ -569,7 +609,11 @@ pub(crate) fn credential_source_json(
 
 pub(crate) fn generation_kinds(document: &Document) -> Result<Vec<&'static str>, ConfigError> {
     let mut kinds = BTreeSet::new();
-    for definition in document.spec.services.values() {
+    let active = active_service_names(document)?;
+    for (name, definition) in &document.spec.services {
+        if !active.contains(name.as_str()) {
+            continue;
+        }
         match definition {
             ServiceDefinition::Ollama(_) => {
                 kinds.insert(installers::ollama::SERVICE_KIND);
@@ -589,10 +633,12 @@ pub(crate) fn remove_plans(
     document: &Document,
     generations: &Generations,
 ) -> Result<Vec<RemovePlan>, crate::Error> {
+    let active = active_service_names(document)?;
     document
         .spec
         .services
         .iter()
+        .filter(|(name, _)| active.contains(name.as_str()))
         .map(|(name, definition)| (name.as_str(), definition))
         .map(|(name, definition)| definition.remove(document, name, generations))
         .collect()
@@ -620,8 +666,9 @@ pub(crate) async fn check_running(
     bindings: &BTreeMap<String, StateBinding>,
     cancel: &crate::CancellationToken,
 ) -> Result<(), crate::Error> {
+    let active = active_service_names(document)?;
     for (name, definition) in &document.spec.services {
-        if definition.stage() == stage {
+        if active.contains(name.as_str()) && definition.stage() == stage {
             definition
                 .check_running(document, name, generations, connections, bindings, cancel)
                 .await?;
@@ -649,7 +696,9 @@ impl<'a> BackendRegistry<'a> {
             kind,
             installers::vllm::SERVICE_KIND
                 | installers::ollama::SERVICE_KIND
+                | super::contract::MANAGED_SERVICE_STORAGE_KIND
                 | installers::ollama::proxy::PROXY
+                | super::contract::MANAGED_SERVICE_KIND
         ) {
             return Err(ObservationError::Backend(
                 "service lifecycle belongs to the Docker provider",
@@ -659,10 +708,10 @@ impl<'a> BackendRegistry<'a> {
             kind,
             installers::vllm::STORAGE_KIND | installers::ollama::STORAGE_KIND
         ) {
-            let storage_kind = if kind == installers::vllm::STORAGE_KIND {
-                installers::vllm::STORAGE_KIND
-            } else {
-                installers::ollama::STORAGE_KIND
+            let storage_kind = match kind {
+                installers::vllm::STORAGE_KIND => installers::vllm::STORAGE_KIND,
+                installers::ollama::STORAGE_KIND => installers::ollama::STORAGE_KIND,
+                _ => unreachable!("storage kind was checked above"),
             };
             let engine = crate::managed::runtime_engine(self.connections, kind, row)
                 .map_err(|_| ObservationError::Backend("engine connection unavailable"))?;
@@ -739,7 +788,13 @@ mod lifecycle_tests {
         let schemas = resource_schemas();
         let connections = crate::docker::Connections::default();
         let registry = BackendRegistry::new(&connections);
-        for kind in ["inference_service", "ollama_service", "ollama_proxy"] {
+        for kind in [
+            "inference_service",
+            "ollama_service",
+            "ollama_proxy",
+            "managed_service",
+            "managed_service_storage",
+        ] {
             assert!(!schemas.iter().any(|schema| schema.kind == kind));
             assert!(matches!(
                 registry.resolve(kind, &Row::new()),
