@@ -32,6 +32,9 @@ it("keeps the detailed JSON envelope when paused Telegram skips its live probe (
     openshell,
     [
       "#!/usr/bin/env bash",
+      'case "$*" in',
+      "  *__NEMOCLAW_SANDBOX_EXEC_STARTED__*) echo '__NEMOCLAW_SANDBOX_EXEC_STARTED__' ;;",
+      "esac",
       `printf '%s\\n' "$*" >> ${JSON.stringify(calls)}`,
       'if [ "$1" = "sandbox" ] && [ "$2" = "exec" ]; then',
       `  printf '%s\\n' ${JSON.stringify(
