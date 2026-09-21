@@ -229,6 +229,7 @@ function validCreateRequest(request: CreateOpenShellSandboxRequest): boolean {
     request.gpu?.device,
     request.resources?.cpu,
     request.resources?.memory,
+    request.workingDirectory,
     ...Object.keys(request.labels ?? {}),
     ...Object.values(request.labels ?? {}),
     ...(request.providers ?? []),

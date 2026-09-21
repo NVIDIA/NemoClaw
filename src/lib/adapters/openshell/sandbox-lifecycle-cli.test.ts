@@ -93,6 +93,9 @@ describe("OpenShell sandbox lifecycle CLI", () => {
         environment: { ...createRequest.environment, OPENSHELL_GATEWAY_ENDPOINT: "https://drift" },
       }),
     ).resolves.toMatchObject({ status: 1, ambiguous: false });
+    await expect(
+      lifecycle.createSandbox({ ...createRequest, workingDirectory: "/tmp/bad\0directory" }),
+    ).resolves.toMatchObject({ status: 1, ambiguous: false });
     expect(streamCreate).not.toHaveBeenCalled();
   });
 
