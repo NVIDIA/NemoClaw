@@ -10,6 +10,7 @@ import { isDeepStrictEqual } from "node:util";
 import YAML from "yaml";
 
 import { HERMES_INTERFACE_DEFAULTS } from "../../../src/lib/config/model.ts";
+import { V1ALPHA1_RUNTIME_DEFAULTS } from "../../../src/lib/domain/config/v1alpha1-runtime-defaults.ts";
 import { fingerprintOpenShellSandboxId } from "../../../src/lib/adapters/openshell/sandbox-identity.ts";
 import {
   namedOpenShellGateway,
@@ -120,20 +121,29 @@ function hermesTuiEnabled(env: NodeJS.ProcessEnv): boolean {
 }
 
 function expectedHermesInterfaces(input: HermesConfigExportLiveInput) {
+  const targetDefaults = V1ALPHA1_RUNTIME_DEFAULTS.hermes.interfaces;
   const port = Number(input.env.NEMOCLAW_DASHBOARD_PORT ?? HERMES_INTERFACE_DEFAULTS.dashboardPort);
   const internalPort = Number(
     input.env.NEMOCLAW_HERMES_DASHBOARD_INTERNAL_PORT ??
       HERMES_INTERFACE_DEFAULTS.dashboardInternalPort,
   );
   const apiPort = Number(input.env.NEMOCLAW_HERMES_API_PORT ?? HERMES_INTERFACE_DEFAULTS.apiPort);
-  const api = apiPort === HERMES_INTERFACE_DEFAULTS.apiPort ? undefined : { port: apiPort };
-  if (!input.dashboardEnabled) return api ? { api } : undefined;
+  const api = apiPort === targetDefaults.api.port ? undefined : { port: apiPort };
+  if (!input.dashboardEnabled) {
+    return {
+      ...(targetDefaults.dashboard.enabled ? { dashboard: { enabled: false as const } } : {}),
+      ...(api ? { api } : {}),
+    };
+  }
+  const tuiEnabled = hermesTuiEnabled(input.env);
   return {
     dashboard: {
       enabled: true,
-      ...(port === HERMES_INTERFACE_DEFAULTS.dashboardPort ? {} : { port }),
-      ...(internalPort === HERMES_INTERFACE_DEFAULTS.dashboardInternalPort ? {} : { internalPort }),
-      ...(hermesTuiEnabled(input.env) ? { tui: { enabled: true } } : {}),
+      ...(port === targetDefaults.dashboard.port ? {} : { port }),
+      ...(internalPort === targetDefaults.dashboard.internalPort ? {} : { internalPort }),
+      ...(tuiEnabled === targetDefaults.dashboard.tuiEnabled
+        ? {}
+        : { tui: { enabled: tuiEnabled } }),
     },
     ...(api ? { api } : {}),
   };
@@ -369,6 +379,8 @@ export async function verifyHermesConfigExportLive(
       ),
     sandboxNameMatches: sandbox.name === input.sandboxName,
   };
+  const passed = passesHermesConfigExportLiveEvidence(evidence);
   await input.artifacts.writeJson("hermes-config-export-live-evidence.json", evidence);
-  return { checked: true, passed: passesHermesConfigExportLiveEvidence(evidence) };
+  if (passed) await input.artifacts.writeText("hermes-config-export.yaml", nemoclawRaw);
+  return { checked: true, passed };
 }

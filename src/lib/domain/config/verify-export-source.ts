@@ -37,6 +37,7 @@ import { fingerprintOpenShellSandboxId } from "../sandbox/openshell-identity";
 import { HERMES_PROVIDER_NAME } from "../../onboard/inference-providers/hermes-provider-identity";
 import { ExportSourceValuesSchema } from "./export-evidence";
 import { inspectAgentInterfaces } from "./verify-agent-interfaces";
+import { V1ALPHA1_RUNTIME_DEFAULTS } from "./v1alpha1-runtime-defaults";
 import type {
   CanonicalExportPolicy,
   ExportFinding,
@@ -580,23 +581,26 @@ function exportedObservability(
   return Check(NemoClawOpenClawObservabilitySchema, value) ? value : undefined;
 }
 
-function projectAgentSettings(profile: ManagedStartupProfile, defaults: ManagedStartupProfile) {
-  if (profile.agentConfig.agent !== "openclaw" || defaults.agentConfig.agent !== "openclaw") {
+function projectAgentSettings(profile: ManagedStartupProfile) {
+  if (profile.agentConfig.agent !== "openclaw") {
     return {};
   }
+  const defaults = V1ALPHA1_RUNTIME_DEFAULTS.openclaw;
   const overrides = Object.fromEntries(
     Object.entries(profile.tuning).filter(
       ([key, value]) => value !== defaults.tuning[key as keyof typeof defaults.tuning],
     ),
   );
-  const execution = {
-    ...(profile.agentConfig.agentTimeoutSeconds === defaults.agentConfig.agentTimeoutSeconds
-      ? {}
-      : { timeoutSeconds: profile.agentConfig.agentTimeoutSeconds }),
-    ...(profile.agentConfig.heartbeatEvery === defaults.agentConfig.heartbeatEvery
-      ? {}
-      : { heartbeatEvery: profile.agentConfig.heartbeatEvery }),
-  };
+  const execution: { timeoutSeconds?: number; heartbeatEvery?: string } = {};
+  if (profile.agentConfig.agentTimeoutSeconds !== defaults.execution.timeoutSeconds) {
+    execution.timeoutSeconds = profile.agentConfig.agentTimeoutSeconds;
+  }
+  if (
+    profile.agentConfig.heartbeatEvery !== defaults.execution.heartbeatEvery &&
+    profile.agentConfig.heartbeatEvery !== null
+  ) {
+    execution.heartbeatEvery = profile.agentConfig.heartbeatEvery;
+  }
   return {
     ...(Object.keys(overrides).length === 0 ? {} : { overrides }),
     ...(Object.keys(execution).length === 0 ? {} : { execution }),
@@ -658,7 +662,7 @@ function supportedAgentSettingsProfile(
   ) {
     return expected;
   }
-  const settings = projectAgentSettings(profile, expected);
+  const settings = projectAgentSettings(profile);
   if (
     !Check(NemoClawInferenceTuningSchema, profile.tuning) ||
     (settings.execution !== undefined &&
@@ -1419,7 +1423,12 @@ function projectVerifiedTools(
   entry: ObservedExportRegistry,
   authority: NonNullable<ReturnType<typeof readManagedWorkloadAuthority>> | null,
 ) {
-  if (entry.agent !== "openclaw" || authority?.profile.tools.disclosure !== "direct") return {};
+  if (
+    entry.agent !== "openclaw" ||
+    authority === null ||
+    authority.profile.tools.disclosure === V1ALPHA1_RUNTIME_DEFAULTS.openclaw.tools.disclosure
+  )
+    return {};
   return { tools: { disclosure: authority.profile.tools.disclosure } };
 }
 
@@ -1454,9 +1463,7 @@ function completeVerifiedSource(
   const entry = snapshot.registry;
   const observability = authority ? exportedObservability(authority.profile) : undefined;
   const selected = normalizeInferenceSelection(entry);
-  const settings = authority
-    ? projectAgentSettings(authority.profile, expectedManagedStartupProfile(entry))
-    : {};
+  const settings = authority ? projectAgentSettings(authority.profile) : {};
   const values = {
     ...(observability ? { observability } : {}),
     sandboxName: requestedSandboxName,

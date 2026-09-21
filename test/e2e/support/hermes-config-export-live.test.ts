@@ -14,6 +14,7 @@ const mocks = vi.hoisted(() => ({
   execShell: vi.fn(),
   asExportedConfig: vi.fn(),
   writeJson: vi.fn(),
+  writeText: vi.fn(),
 }));
 
 vi.mock("../../../src/lib/state/registry/persistence.ts", () => ({
@@ -100,7 +101,7 @@ async function runEnabledFixture(
   let dispose: (() => void) | undefined;
   try {
     return await verifyHermesConfigExportLive({
-      artifacts: { writeJson: mocks.writeJson },
+      artifacts: { writeJson: mocks.writeJson, writeText: mocks.writeText },
       cleanup: {
         trackDisposable: (_description: string, cleanup: () => void) => {
           dispose = cleanup;
@@ -225,6 +226,7 @@ describe("Hermes config export live evidence", () => {
       refusalCategory: "unsupported",
       refusalDiagnosticMatches: true,
     });
+    expect(mocks.writeText).not.toHaveBeenCalled();
     expect(mocks.save).not.toHaveBeenCalled();
     expect(mocks.asExportedConfig).not.toHaveBeenCalled();
   });
@@ -320,6 +322,7 @@ describe("Hermes config export live evidence", () => {
     );
     expect(mocks.save).not.toHaveBeenCalled();
     expect(mocks.asExportedConfig).not.toHaveBeenCalled();
+    expect(mocks.writeText).not.toHaveBeenCalled();
   });
 
   it("rejects drift evidence when only one launcher reports identity drift (#11286)", async () => {
@@ -349,8 +352,11 @@ describe("Hermes config export live evidence", () => {
 
 describe("Hermes interface runtime evidence", () => {
   it.each([
-    { apiPort: "8642", interfaces: undefined },
-    { apiPort: "8643", interfaces: { api: { port: 8643 } } },
+    { apiPort: "8642", interfaces: { dashboard: { enabled: false } } },
+    {
+      apiPort: "8643",
+      interfaces: { dashboard: { enabled: false }, api: { port: 8643 } },
+    },
   ])(
     "checks API allocation $apiPort with the dashboard disabled (#11433)",
     async ({ apiPort, interfaces }) => {
@@ -369,6 +375,7 @@ describe("Hermes interface runtime evidence", () => {
         checked: true,
         passed: true,
       });
+      expect(mocks.writeText).toHaveBeenCalledWith("hermes-config-export.yaml", "{}");
       expect(mocks.execShell).not.toHaveBeenCalled();
     },
   );
@@ -384,7 +391,7 @@ describe("Hermes interface runtime evidence", () => {
     async (processOutput, status, expected) => {
       const document = mocks.asExportedConfig.getMockImplementation()!();
       document.spec.sandboxes[0].harness.interfaces = {
-        dashboard: { enabled: true, port: 19000, internalPort: 19120, tui: { enabled: true } },
+        dashboard: { enabled: true, port: 19000, internalPort: 19120 },
         api: { port: 8643 },
       };
       mocks.asExportedConfig.mockReturnValue(document);

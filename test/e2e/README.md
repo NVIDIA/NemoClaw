@@ -533,7 +533,8 @@ Keep one only for a multi-job handoff, an unrepresented credential boundary, or 
 The `brave-search` target qualifies configuration export after normal Brave-enabled OpenClaw onboarding.
 It validates two exports through the public schema, compares their specs, and requires a `BRAVE_API_KEY` reference without credential values or internal transports.
 The target retains checks of the materialized OpenClaw search configuration, credential isolation, real agent search, direct Brave API results, and disabled-search reuse.
-Private YAML files are removed during cleanup; artifacts retain redacted command results and an allowlisted qualification summary.
+Temporary YAML files are removed during cleanup. After schema, credential, and transport checks pass,
+artifacts retain the first export as redacted YAML alongside the allowlisted qualification summary.
 The export assertions replace redundant checks within the same Brave lifecycle.
 Live policy qualification and a real Brave response cover the initial policy command and hostname substring.
 Successful agent execution and its answer cover the negative diagnostic-text check.

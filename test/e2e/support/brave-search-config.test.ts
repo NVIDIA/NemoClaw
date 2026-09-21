@@ -64,7 +64,9 @@ function exportedBraveConfig() {
         api: "openai-completions",
         endpoint: "https://integrate.api.nvidia.com/v1",
         credentialEnv: "NVIDIA_INFERENCE_API_KEY",
+        overrides: { contextWindow: 131072 },
       },
+      interfaces: { dashboard: { port: 18789 } },
       webSearch: {
         provider: "brave",
         agentRefs: ["primary"],
