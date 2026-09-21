@@ -8,6 +8,7 @@ use nemoclaw_sdk::{
 };
 use serde_json::{Value, json};
 use std::{
+    collections::BTreeSet,
     fs,
     path::{Path, PathBuf},
     process::Command,
@@ -20,14 +21,20 @@ fn explicit_path(name: &str) -> PathBuf {
     path
 }
 
-fn changes(resources: &[&str], action: &str) -> Vec<Change> {
-    resources
-        .iter()
-        .map(|resource| Change {
-            resource: (*resource).into(),
-            actions: vec![action.into()],
-        })
-        .collect()
+fn assert_changes(actual: &[Change], expected: &[&str], action: &str) {
+    assert!(
+        actual
+            .iter()
+            .all(|change| change.actions == [action.to_owned()]),
+        "unexpected change action: {actual:?}"
+    );
+    assert_eq!(
+        actual
+            .iter()
+            .map(|change| change.resource.as_str())
+            .collect::<BTreeSet<_>>(),
+        expected.iter().copied().collect::<BTreeSet<_>>()
+    );
 }
 
 fn docker_inventory() -> Value {
@@ -186,22 +193,29 @@ async fn bare_brev_hosted_openclaw_lifecycle() {
 
     let before_plan = docker_inventory();
     let plan = deployment.plan(&document, &cancel).await.unwrap();
-    assert_eq!(
-        plan,
-        OperationResult {
-            outcome: Outcome::Planned,
-            changes: changes(
-                &[
-                    "nemoclaw_gateway_storage.runtime",
-                    "nemoclaw_managed_gateway.runtime",
-                ],
-                "create"
-            ),
-            deferred: vec!["OpenShell registration and sandbox require the managed gateway".into()],
-            retained: vec![],
-            health: vec![],
-        }
+    assert_eq!(plan.outcome, Outcome::Planned);
+    let image_resource = plan
+        .changes
+        .iter()
+        .find(|change| change.resource.starts_with("docker_image.image_"))
+        .expect("plan must include the immutable managed gateway image")
+        .resource
+        .clone();
+    assert_changes(
+        &plan.changes,
+        &[
+            "docker_container.managed_gateway_runtime",
+            image_resource.as_str(),
+            "nemoclaw_gateway_storage.runtime",
+        ],
+        "create",
     );
+    assert_eq!(
+        plan.deferred,
+        ["OpenShell registration and sandbox require the managed gateway"]
+    );
+    assert!(plan.retained.is_empty());
+    assert!(plan.health.is_empty());
     assert_eq!(docker_inventory(), before_plan, "plan mutated Docker");
 
     let executable = bundle
@@ -223,19 +237,18 @@ async fn bare_brev_hosted_openclaw_lifecycle() {
     );
     let applied: OperationResult = serde_json::from_slice(&apply.stdout).unwrap();
     assert_eq!(applied.outcome, Outcome::Succeeded);
-    assert_eq!(
-        applied.changes,
-        changes(
-            &[
-                "nemoclaw_gateway_storage.runtime",
-                "nemoclaw_managed_gateway.runtime",
-                "nemoclaw_provider.inference_hosted-nvidia-prod",
-                "nemoclaw_provider_profile.inference_hosted-nvidia-prod",
-                "nemoclaw_sandbox.assistant",
-                "nemoclaw_workspace.deployment",
-            ],
-            "create"
-        )
+    assert_changes(
+        &applied.changes,
+        &[
+            "docker_container.managed_gateway_runtime",
+            image_resource.as_str(),
+            "nemoclaw_gateway_storage.runtime",
+            "nemoclaw_provider.inference_hosted-nvidia-prod",
+            "nemoclaw_provider_profile.inference_hosted-nvidia-prod",
+            "nemoclaw_sandbox.assistant",
+            "nemoclaw_workspace.deployment",
+        ],
+        "create",
     );
     assert!(applied.deferred.is_empty());
     assert!(applied.retained.is_empty());
@@ -310,39 +323,35 @@ async fn bare_brev_hosted_openclaw_lifecycle() {
     .await;
     assert_eq!(String::from_utf8(proof).unwrap(), "preserved");
 
-    let removed = changes(
-        &[
-            "nemoclaw_provider.inference_hosted-nvidia-prod",
-            "nemoclaw_provider_profile.inference_hosted-nvidia-prod",
-            "nemoclaw_sandbox.assistant",
-            "nemoclaw_managed_gateway.runtime",
-        ],
-        "delete",
-    );
+    let removed = [
+        "docker_container.managed_gateway_runtime",
+        image_resource.as_str(),
+        "nemoclaw_provider.inference_hosted-nvidia-prod",
+        "nemoclaw_provider_profile.inference_hosted-nvidia-prod",
+        "nemoclaw_sandbox.assistant",
+    ];
     let retained = vec![
         "nemoclaw_workspace.deployment".into(),
         "nemoclaw_gateway_storage.runtime".into(),
     ];
+    let destroy_plan = deployment.plan_destroy(&cancel).await.unwrap();
+    assert_eq!(destroy_plan.outcome, Outcome::Planned);
+    assert_changes(&destroy_plan.changes, &removed, "delete");
+    assert!(destroy_plan.deferred.is_empty());
+    assert_eq!(destroy_plan.retained, retained);
+    assert!(destroy_plan.health.is_empty());
+    let destroyed = deployment.destroy(&cancel).await.unwrap();
+    assert_eq!(destroyed.outcome, Outcome::Destroyed);
+    assert_changes(&destroyed.changes, &removed, "delete");
+    assert!(destroyed.deferred.is_empty());
     assert_eq!(
-        deployment.plan_destroy(&cancel).await.unwrap(),
-        OperationResult {
-            outcome: Outcome::Planned,
-            changes: removed.clone(),
-            deferred: vec![],
-            retained: retained.clone(),
-            health: vec![],
-        }
+        destroyed.retained,
+        vec![
+            "nemoclaw_workspace.deployment".into(),
+            "nemoclaw_gateway_storage.runtime".into(),
+        ]
     );
-    assert_eq!(
-        deployment.destroy(&cancel).await.unwrap(),
-        OperationResult {
-            outcome: Outcome::Destroyed,
-            changes: removed,
-            deferred: vec![],
-            retained,
-            health: vec![],
-        }
-    );
+    assert!(destroyed.health.is_empty());
     fs::write(
         directory.join("brev-proof.json"),
         serde_json::to_vec_pretty(&json!({
