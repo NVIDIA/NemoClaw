@@ -1011,8 +1011,8 @@ async fn apply_health_failure_retains_resources_and_unchanged_apply_checks_again
             .iter()
             .filter(|command| command.iter().any(|argument| argument == "check"))
             .count(),
-        configuration_checks + 2,
-        "unchanged apply must stop after preflight and provider refresh configuration checks"
+        configuration_checks + 1,
+        "unchanged apply must stop after the provider refresh configuration check"
     );
     assert_eq!(fixture.state.lock().unwrap().effects, effects);
     let record: serde_json::Value =
