@@ -106,6 +106,7 @@ internal static class NativeDownloadedModelSetup
         lifetime.CancelAfter(timeout);
         if (!process.Start()) throw new NativeModelSetupException("The model download helper could not start.");
         var completed = false;
+        string? helperFailure = null;
         var terminal = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         try
         {
@@ -119,7 +120,13 @@ internal static class NativeDownloadedModelSetup
                     int count;
                     while ((count = await reader.ReadAsync(buffer.AsMemory(), lifetime.Token)) != 0)
                     {
-                        if (!output) { errorBytes += count; if (errorBytes > 16384) throw new NativeModelSetupException("The model helper exceeded its diagnostic limit."); continue; }
+                        if (!output)
+                        {
+                            errorBytes += count;
+                            if (errorBytes > 16384) throw new NativeModelSetupException("The model helper exceeded its diagnostic limit.");
+                            line.Append(buffer, 0, count);
+                            continue;
+                        }
                         foreach (var character in buffer.AsSpan(0, count).ToArray())
                         {
                             if (character == '\r') continue;
@@ -146,6 +153,7 @@ internal static class NativeDownloadedModelSetup
                             else throw new NativeModelSetupException("The model helper returned an unexpected result.");
                         }
                     }
+                    if (!output) { helperFailure = ReadHelperFailure(line.ToString()); return; }
                     if (line.Length != 0) throw new NativeModelSetupException("The model helper returned incomplete progress.");
                 }
                 catch (ObjectDisposedException) when (completed && process.HasExited) { }
@@ -169,9 +177,9 @@ internal static class NativeDownloadedModelSetup
             else _ = readers.ContinueWith(static task => { _ = task.Exception; }, CancellationToken.None,
                 TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
             cancellation.ThrowIfCancellationRequested();
-            if (process.ExitCode != 0 || !completed) throw new NativeModelSetupException(action is "install" or "install-ready"
+            if (process.ExitCode != 0 || !completed) throw new NativeModelSetupException(helperFailure ?? (action is "install" or "install-ready"
                 ? "Local model setup did not finish. Check disk space, connectivity, the NVIDIA driver, and available memory, then retry."
-                : "The GPU readiness test did not finish. Check the NVIDIA driver and available memory, then retry.");
+                : "The GPU readiness test did not finish. Check the NVIDIA driver and available memory, then retry."));
         }
         catch (OperationCanceledException) when (!cancellation.IsCancellationRequested)
         {
@@ -190,5 +198,23 @@ internal static class NativeDownloadedModelSetup
                 catch (OperationCanceledException) { process.Kill(entireProcessTree: true); using var cleanup = new CancellationTokenSource(TimeSpan.FromSeconds(5)); await process.WaitForExitAsync(cleanup.Token); }
             }
         }
+    }
+
+    private static string? ReadHelperFailure(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value) || value.Length > 16384) return null;
+        try
+        {
+            using var document = JsonDocument.Parse(value);
+            var root = document.RootElement;
+            if (root.ValueKind != JsonValueKind.Object || root.EnumerateObject().Count() != 3 ||
+                !root.TryGetProperty("schemaVersion", out var schema) || schema.ValueKind != JsonValueKind.Number || schema.GetInt32() != 1 ||
+                !root.TryGetProperty("event", out var kind) || kind.ValueKind != JsonValueKind.String || kind.GetString() != "error" ||
+                !root.TryGetProperty("message", out var message) || message.ValueKind != JsonValueKind.String)
+                return null;
+            var detail = message.GetString();
+            return string.IsNullOrWhiteSpace(detail) || detail.Length > 1024 ? null : detail;
+        }
+        catch (JsonException) { return null; }
     }
 }

@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawn } from "node:child_process";
-import { createHmac, timingSafeEqual } from "node:crypto";
+import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -212,13 +212,43 @@ export function recordSignature(record: NativeOwnerRecord, credential: string): 
 
 export function writeOwnerRecord(record: NativeOwnerRecord, credential: string): void {
   const file = ownerRecordPath(true);
-  const temporary = `${file}.${record.instance}.tmp`;
-  fs.writeFileSync(
-    temporary,
-    JSON.stringify({ ...record, signature: recordSignature(record, credential) }) + "\n",
-    { flag: "wx", mode: 0o600 },
-  );
-  fs.renameSync(temporary, file);
+  const temporary = `${file}.${record.instance}.${randomBytes(8).toString("hex")}.tmp`;
+  try {
+    fs.writeFileSync(
+      temporary,
+      JSON.stringify({ ...record, signature: recordSignature(record, credential) }) + "\n",
+      { flag: "wx", mode: 0o600 },
+    );
+    for (let attempt = 0; ; attempt += 1) {
+      try {
+        fs.renameSync(temporary, file);
+        return;
+      } catch (error) {
+        const code = (error as NodeJS.ErrnoException).code;
+        if (
+          process.platform !== "win32" ||
+          !["EACCES", "EBUSY", "EPERM"].includes(code ?? "") ||
+          attempt >= 99
+        )
+          throw error;
+        // Windows cannot replace an opened destination whose reader omitted
+        // FILE_SHARE_DELETE. Security scanners and diagnostic readers can hold
+        // that handle briefly, so preserve the old authenticated record and
+        // retry the same-directory atomic replacement for at most one second.
+        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10);
+      }
+    }
+  } catch (error) {
+    try {
+      fs.rmSync(temporary, { force: true });
+    } catch (cleanup) {
+      throw new AggregateError(
+        [error, cleanup],
+        "The native inference owner record and its temporary file could not be updated.",
+      );
+    }
+    throw error;
+  }
 }
 
 export function readOwnerRecord(credential: string): NativeOwnerRecord | null {
