@@ -333,7 +333,7 @@ const childProcess = require("node:child_process");
 const { EventEmitter } = require("node:events");
 
 const events = [];
-processRecovery.beginUnregisteredOpenClawPostRestoreDoctor = async (sandboxName) => ({ ok: true, window: { sandboxName } });
+processRecovery.beginUnregisteredOpenClawBackupQuiesce = async (sandboxName) => ({ ok: true, window: { sandboxName, kind: "backup" } });
 processRecovery.finishUnregisteredOpenClawPostRestoreDoctor = async () => ({ ok: true });
 processRecovery.abortUnregisteredOpenClawPostRestoreDoctor = async () => ({ ok: true });
 const createdSandbox = fixtureMocks.createCreatedSandboxFixture({ lifecycleState: "created" });
@@ -675,7 +675,7 @@ const childProcess = require("node:child_process");
 const { EventEmitter } = require("node:events");
 
 const events = [];
-processRecovery.beginUnregisteredOpenClawPostRestoreDoctor = async (sandboxName) => ({ ok: true, window: { sandboxName } });
+processRecovery.beginUnregisteredOpenClawBackupQuiesce = async (sandboxName) => ({ ok: true, window: { sandboxName, kind: "backup" } });
 processRecovery.finishUnregisteredOpenClawPostRestoreDoctor = async () => ({ ok: true });
 processRecovery.abortUnregisteredOpenClawPostRestoreDoctor = async () => ({ ok: true });
 const createdSandbox = fixtureMocks.createCreatedSandboxFixture({

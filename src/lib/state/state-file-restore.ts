@@ -12,6 +12,7 @@ import { buildKeyAllowlistMergeRestoreCommand } from "./state-file-key-merge.js"
 export interface StateFileRestoreSpec {
   path: string;
   strategy: "copy" | "sqlite_backup";
+  missingTargetMode?: "runtime-parent";
 }
 
 const SQLITE_RESTORE_PY = [
@@ -82,6 +83,15 @@ export function buildStateFileRestoreCommand(dir: string, spec: StateFileRestore
     ].join(" && ");
   }
 
+  const modeSteps =
+    spec.missingTargetMode === "runtime-parent"
+      ? [
+          'if [ -f "$dst" ]; then target_permissions="$(LC_ALL=C ls -ld "$dst" 2>/dev/null | cut -c1-10)"; case "$target_permissions" in -rw-------) restore_mode=600 ;; -rw-rw----) restore_mode=660 ;; *) echo "refusing unsupported state target mode: $target_permissions" >&2; exit 12 ;; esac; else parent_permissions="$(LC_ALL=C ls -ld "$parent" 2>/dev/null | cut -c1-10)"; case "$parent_permissions" in drwx------) restore_mode=600 ;; drwxrws---|drwxrwx---) restore_mode=660 ;; *) echo "refusing unsupported state parent mode: $parent_permissions" >&2; exit 12 ;; esac; fi',
+        ]
+      : [
+          "restore_mode=640",
+          'if [ -f "$dst" ]; then target_permissions="$(LC_ALL=C ls -ld "$dst" 2>/dev/null | cut -c1-10)"; case "$target_permissions" in -rw-------) restore_mode=600 ;; -rw-rw----) restore_mode=660 ;; esac; fi',
+        ];
   const steps = [
     // Fail immediately so a partial state-file restore cannot report success.
     "set -e",
@@ -90,8 +100,7 @@ export function buildStateFileRestoreCommand(dir: string, spec: StateFileRestore
     '[ ! -L "$parent" ] || { echo "refusing symlinked state parent: $parent" >&2; exit 10; }',
     '[ ! -L "$dst" ] || { echo "refusing symlinked state target: $dst" >&2; exit 11; }',
     'mkdir -p "$parent"',
-    "restore_mode=640",
-    'if [ -f "$dst" ]; then target_permissions="$(LC_ALL=C ls -ld "$dst" 2>/dev/null | cut -c1-10)"; case "$target_permissions" in -rw-------) restore_mode=600 ;; -rw-rw----) restore_mode=660 ;; esac; fi',
+    ...modeSteps,
     'tmp="$(mktemp "${parent}/.nemoclaw-restore.XXXXXX")"',
     "trap 'rm -f \"$tmp\"' EXIT",
     'cat > "$tmp"',

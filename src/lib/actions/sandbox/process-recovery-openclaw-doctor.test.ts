@@ -12,13 +12,11 @@ import {
   abortOpenClawPostRestoreDoctor,
   beginOpenClawBackupQuiesce,
   beginOpenClawPostRestoreDoctor,
-  buildOpenClawBackupQuiesceDoctorPromotionCommand,
   buildOpenClawPostUpgradeDoctorAbortCommand,
   buildOpenClawPostUpgradeDoctorDeleteRetirementCommand,
   buildOpenClawPostUpgradeDoctorMarkerCommand,
   buildOpenClawPostUpgradeDoctorReleaseCommand,
   finishOpenClawPostRestoreDoctor,
-  promoteOpenClawBackupQuiesceToPostRestoreDoctor,
   releaseOpenClawPostRestoreDoctorForDelete,
   retireOpenClawPostRestoreDoctorForDelete,
 } from "./process-recovery";
@@ -98,36 +96,6 @@ describe("OpenClaw post-upgrade recovery doctor", () => {
         "nemoclaw-openclaw-post-upgrade-doctor-abort-v1\n",
       );
       expect(fs.statSync(marker).mode & 0o777).toBe(0o600);
-    } finally {
-      fs.rmSync(root, { recursive: true, force: true });
-    }
-  });
-
-  it("promotes only a verified backup quiesce receipt", () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-doctor-promote-"));
-    const ready = path.join(root, "doctor-ready");
-    try {
-      execFileSync("bash", [
-        "-c",
-        buildOpenClawPostUpgradeDoctorMarkerCommand(
-          "nemoclaw-openclaw-backup-quiesce-v1",
-        ).replaceAll("/sandbox/.openclaw", root),
-      ]);
-      fs.writeFileSync(ready, "nemoclaw-openclaw-post-upgrade-doctor-ready-v1\n", {
-        mode: 0o600,
-      });
-      const command = buildOpenClawBackupQuiesceDoctorPromotionCommand()
-        .replaceAll("/sandbox/.openclaw", root)
-        .replaceAll("/tmp/nemoclaw-post-upgrade-doctor-ready", ready);
-
-      execFileSync("bash", ["-c", command], { env: fakeGnuStatEnv(root) });
-
-      expect(fs.readFileSync(path.join(root, ".nemoclaw-post-upgrade-doctor"), "utf8")).toBe(
-        "nemoclaw-openclaw-backup-quiesce-promote-doctor-v1\n",
-      );
-      expect(fs.readFileSync(ready, "utf8")).toBe(
-        "nemoclaw-openclaw-post-upgrade-doctor-ready-v1\n",
-      );
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
@@ -358,32 +326,6 @@ describe("OpenClaw post-upgrade recovery doctor", () => {
       ["sandbox", "stop", "alpha"],
       ["sandbox", "start", "alpha"],
     ]);
-  });
-
-  it("waits for a fresh doctor receipt after promoting restored state", async () => {
-    const execute = vi
-      .fn()
-      .mockResolvedValueOnce({ status: 0, stdout: "", stderr: "" })
-      .mockResolvedValueOnce({ status: 23, stdout: "", stderr: "" })
-      .mockResolvedValueOnce({ status: 0, stdout: "", stderr: "" });
-    const deps = {
-      captureOpenshell: vi.fn() as never,
-      executeSandboxExecCommand: execute,
-      now: () => 0,
-      sleep: vi.fn(async () => undefined),
-    };
-
-    await expect(
-      promoteOpenClawBackupQuiesceToPostRestoreDoctor(
-        { sandboxName: "alpha", kind: "backup" },
-        deps,
-      ),
-    ).resolves.toEqual({ ok: true, window: { sandboxName: "alpha" } });
-
-    expect(execute.mock.calls[0]?.[1]).toBe(buildOpenClawBackupQuiesceDoctorPromotionCommand());
-    expect(execute.mock.calls[1]?.[1]).toContain("nemoclaw-openclaw-post-upgrade-doctor-v2");
-    expect(execute.mock.calls[1]?.[1]).toContain("nemoclaw-openclaw-post-upgrade-doctor-ready-v1");
-    expect(deps.sleep).toHaveBeenCalledOnce();
   });
 
   it("proves delete-edge release consumption without waiting for gateway health", async () => {
@@ -754,7 +696,7 @@ describe("OpenClaw post-upgrade recovery doctor", () => {
     ).resolves.toEqual({
       ok: false,
       stage: "release",
-      detail: "could not release the verified post-upgrade maintenance window",
+      detail: "could not release the verified maintenance window",
     });
     expect(execute).toHaveBeenCalledOnce();
   });

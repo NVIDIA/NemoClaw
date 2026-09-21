@@ -75,9 +75,9 @@ const { EventEmitter } = require("node:events");
 
 const PRE_UPGRADE_BACKUP = "/tmp/fake-pre-upgrade-backup";
 const events = [];
-processRecovery.beginUnregisteredOpenClawPostRestoreDoctor = async (sandboxName) => ({
+processRecovery.beginUnregisteredOpenClawBackupQuiesce = async (sandboxName) => ({
   ok: true,
-  window: { sandboxName },
+  window: { sandboxName, kind: "backup" },
 });
 processRecovery.finishUnregisteredOpenClawPostRestoreDoctor = async () => ({ ok: true });
 processRecovery.abortUnregisteredOpenClawPostRestoreDoctor = async () => ({ ok: true });

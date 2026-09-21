@@ -131,6 +131,15 @@ The state-file-presence check does not exclude an otherwise complete legacy snap
 
 ## Restore a Snapshot
 
+<AgentOnly variant="openclaw">
+An in-place OpenClaw restore stops the sandbox before it changes state and starts the sandbox after validation.
+This interrupts active agent work.
+If restore fails after maintenance begins, the CLI reports whether the sandbox is stopped or its running state could not be verified.
+For a verified stopped sandbox, run `$$nemoclaw my-assistant start`.
+For an unverified running state, run `$$nemoclaw my-assistant stop`, then `$$nemoclaw my-assistant start`.
+Verify that the sandbox is ready, then retry the same snapshot restore command.
+</AgentOnly>
+
 Restore the latest snapshot:
 
 ```bash
@@ -145,7 +154,8 @@ $$nemoclaw my-assistant snapshot restore before-upgrade
 $$nemoclaw my-assistant snapshot restore 2026-04-14T09-40-09-760Z
 ```
 
-In-place restore does not mutate the OpenShell policy. Cross-sandbox clone reads the source live policy and uses it only as the destination creation handoff.
+In-place restore does not mutate the OpenShell policy.
+Cross-sandbox clone reads the source live policy and uses it only as the destination creation handoff.
 
 <AgentOnly variant="hermes">
 A running Hermes gateway keeps serving its pre-restore state databases until it reopens them.

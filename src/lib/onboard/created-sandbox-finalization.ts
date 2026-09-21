@@ -7,7 +7,7 @@ import { isDeepStrictEqual } from "node:util";
 import { restoreRecreatedSandboxStateWithManagedAuthority } from "../actions/sandbox/snapshot/restore-authority";
 import {
   abortUnregisteredOpenClawPostRestoreDoctor,
-  beginUnregisteredOpenClawPostRestoreDoctor,
+  beginUnregisteredOpenClawBackupQuiesce,
   finishUnregisteredOpenClawPostRestoreDoctor,
   type OpenClawPostRestoreDoctorWindow,
 } from "../actions/sandbox/runtime/openclaw-lifecycle";
@@ -842,17 +842,17 @@ export async function finalizeCreatedSandbox(
       deps.revalidateSandboxIdentity?.(
         `entering offline state restore for sandbox '${options.sandboxName}'`,
       );
-      const doctorWindow = await beginUnregisteredOpenClawPostRestoreDoctor(options.sandboxName);
-      if (!doctorWindow.ok) {
+      const maintenanceWindow = await beginUnregisteredOpenClawBackupQuiesce(options.sandboxName);
+      if (!maintenanceWindow.ok) {
         deps.error(
-          `  OpenClaw state restore could not enter its gateway-down maintenance window (${doctorWindow.stage}: ${doctorWindow.detail}).`,
+          `  OpenClaw state restore could not enter its gateway-down maintenance window (${maintenanceWindow.stage}: ${maintenanceWindow.detail}).`,
         );
         deps.error("  State was not restored and registry metadata was not updated.");
         reportUnregisteredSandboxRecovery();
         deps.error(`  Manual recovery: ${options.restoreBackupPath}`);
         return deps.exitProcess(1);
       }
-      openClawRestoreWindow = doctorWindow.window;
+      openClawRestoreWindow = maintenanceWindow.window;
     }
     const restoreOptions = {
       targetAgentType: options.targetAgentType,

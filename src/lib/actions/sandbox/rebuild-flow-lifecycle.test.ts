@@ -367,7 +367,7 @@ describe("rebuildSandbox flow: lifecycle", () => {
     expect(harness.registryUpdateSpy).toHaveBeenCalledWith("alpha", {
       agentVersion: "0.2.0",
     });
-    expect(harness.runOpenClawPostRestoreDoctorSpy).toHaveBeenCalledWith({
+    expect(harness.finishOpenClawMaintenanceWindowSpy).toHaveBeenCalledWith({
       sandboxName: "alpha",
       kind: "backup",
       runtimeSelection: {

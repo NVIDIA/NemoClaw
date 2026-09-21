@@ -85,22 +85,89 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
       timestamp: "2026-06-15T00:00:00.000Z",
       backupPath: "/tmp/backup-alpha",
     });
-    f.restoreSandboxStateMock.mockReturnValue({
-      success: true,
-      restoredDirs: ["workspace"],
-      restoredFiles: ["user.md"],
-      failedDirs: [],
-      failedFiles: [],
+    f.getSandboxMock.mockReturnValue({ name: "alpha", agent: "openclaw" });
+    f.restoreSandboxStateMock.mockImplementation(() => {
+      f.lifecycleMock.events.push("restore-snapshot-state");
+      return {
+        success: true,
+        restoredDirs: ["workspace"],
+        restoredFiles: ["user.md"],
+        failedDirs: [],
+        failedFiles: [],
+      };
     });
     const { runSandboxSnapshot } = await import("./snapshot");
 
     await runSandboxSnapshot("alpha", { kind: "restore" });
 
     expect(f.restoreSandboxStateMock).toHaveBeenCalledWith("alpha", "/tmp/backup-alpha");
+    expect(f.lifecycleMock.events).toEqual([
+      "begin-openclaw-backup-quiesce",
+      "restore-snapshot-state",
+      "finish-openclaw-native-start",
+    ]);
+    expect(f.abortOpenClawPostRestoreDoctorMock).not.toHaveBeenCalled();
     const output = consoleLog.mock.calls.flat().join("\n");
     expect(output).toContain("Using latest snapshot v4 name=stable");
     expect(output).toContain("Restoring snapshot into 'alpha'");
     expect(output).toContain("Restored 1 directories, 1 files");
+  });
+
+  it("aborts the OpenClaw gateway-down window when in-place restore fails", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    f.getLatestBackupMock.mockReturnValue({ ...f.latestBackupFixture });
+    f.getSandboxMock.mockReturnValue({ name: "alpha", agent: "openclaw" });
+    f.restoreSandboxStateMock.mockImplementation(() => {
+      f.lifecycleMock.events.push("restore-snapshot-state");
+      return {
+        success: false,
+        restoredDirs: [],
+        restoredFiles: [],
+        failedDirs: ["workspace"],
+        failedFiles: [],
+      };
+    });
+    const { runSandboxSnapshot } = await import("./snapshot");
+
+    await expect(runSandboxSnapshot("alpha", { kind: "restore" })).rejects.toMatchObject({
+      exitCode: 1,
+    });
+
+    expect(f.lifecycleMock.events).toEqual([
+      "begin-openclaw-backup-quiesce",
+      "restore-snapshot-state",
+      "abort-openclaw-backup-quiesce",
+    ]);
+    expect(f.finishOpenClawPostRestoreDoctorMock).not.toHaveBeenCalled();
+    expect(consoleError.mock.calls.flat().join("\n")).toContain(
+      "OpenClaw sandbox 'alpha' remains stopped after restore failure",
+    );
+    expect(consoleError.mock.calls.flat().join("\n")).toContain(
+      "nemoclaw alpha start', verify that it is ready, then retry",
+    );
+  });
+
+  it("reports exact recovery when the OpenClaw gateway-down window cannot begin", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    f.getLatestBackupMock.mockReturnValue({ ...f.latestBackupFixture });
+    f.getSandboxMock.mockReturnValue({ name: "alpha", agent: "openclaw" });
+    f.beginOpenClawBackupQuiesceMock.mockResolvedValue({
+      ok: false,
+      stage: "restart",
+      detail: "sandbox did not enter maintenance",
+    });
+    const { runSandboxSnapshot } = await import("./snapshot");
+
+    await expect(runSandboxSnapshot("alpha", { kind: "restore" })).rejects.toMatchObject({
+      exitCode: 1,
+    });
+
+    expect(f.restoreSandboxStateMock).not.toHaveBeenCalled();
+    expect(f.abortOpenClawPostRestoreDoctorMock).not.toHaveBeenCalled();
+    const output = consoleError.mock.calls.flat().join("\n");
+    expect(output).toContain("Sandbox 'alpha' may remain stopped");
+    expect(output).toContain("nemoclaw alpha stop', then 'nemoclaw alpha start'");
+    expect(output).toContain("retry the same snapshot restore command");
   });
 
   it.each([
@@ -140,6 +207,7 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
       expect(f.restoreDeepAgentsNativeMcpConfigMock).not.toHaveBeenCalled();
       expect(f.getMcpProviderInspectionRuntimeSelectionMock).not.toHaveBeenCalled();
       expect(f.lifecycleMock.events).toEqual(["restore-snapshot-state"]);
+      expect(f.beginOpenClawBackupQuiesceMock).not.toHaveBeenCalled();
       expect(f.restoreSandboxStateMock).toHaveBeenCalledWith("alpha", "/tmp/backup-alpha");
     },
   );

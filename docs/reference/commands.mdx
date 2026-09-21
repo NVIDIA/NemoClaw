@@ -3069,7 +3069,9 @@ Refer to [Continue an Interrupted Replacement](../manage-sandboxes/operate-sandb
 
 <AgentOnly variant="openclaw">
 
-After restore, the command runs `openclaw doctor --fix` for cross-version structure repair.
+During restore, the command keeps the replacement OpenClaw gateway stopped while it restores state and writes host-managed messaging and MCP configuration.
+It then releases that maintenance window for one native OpenClaw start.
+It does not run `openclaw doctor --fix` on the restored configuration.
 
 </AgentOnly>
 <AgentOnly variant="hermes">
@@ -3185,7 +3187,24 @@ $$nemoclaw my-assistant snapshot list
 
 ### `$$nemoclaw <name> snapshot restore [selector] [--to <dst>] [--force] [--yes|-y]`
 
-Restore sandbox state from a snapshot. For an in-place restore, the sandbox must be running. If no selector is provided, the latest snapshot is used. Restore removes files added after the snapshot only from state directories selected for cleanup. It preserves directories that exist only in the target manifest or whose backup failed. State replacement runs under the per-sandbox mutation lock. For OpenClaw, restore installs the complete credential-sanitized native `openclaw.json` file without a selective merge or config hash. In-place restore does not change the OpenShell policy. A cross-sandbox clone reads the source live policy and hands that document to destination creation.
+Restore sandbox state from a snapshot.
+For an in-place restore, the sandbox must be running.
+If no selector is provided, the latest snapshot is used.
+Restore removes files added after the snapshot only from state directories selected for cleanup.
+It preserves directories that exist only in the target manifest or whose backup failed.
+State replacement runs under the per-sandbox mutation lock.
+
+<AgentOnly variant="openclaw">
+For OpenClaw, restore stops the sandbox, installs the complete credential-sanitized native `openclaw.json` file without a selective merge or config hash, validates the restored state, and starts the sandbox.
+This interrupts active agent work.
+If restore fails after maintenance begins, the CLI reports whether the sandbox is stopped or its running state could not be verified.
+For a verified stopped sandbox, run `$$nemoclaw <name> start`.
+For an unverified running state, run `$$nemoclaw <name> stop`, then `$$nemoclaw <name> start`.
+Verify that the sandbox is ready, then retry the same snapshot restore command.
+</AgentOnly>
+
+In-place restore does not change the OpenShell policy.
+A cross-sandbox clone reads the source live policy and hands that document to destination creation.
 
 The selector accepts any of:
 

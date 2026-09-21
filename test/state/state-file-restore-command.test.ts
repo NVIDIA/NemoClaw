@@ -27,6 +27,18 @@ describe("buildStateFileRestoreCommand (#5202)", () => {
     expect(cmd).toContain('chmod "$restore_mode" "$tmp"');
   });
 
+  it("derives a missing native OpenClaw config mode from its runtime parent (#11764)", () => {
+    const cmd = sandboxState.buildStateFileRestoreCommand("/sandbox/.openclaw", {
+      ...spec,
+      missingTargetMode: "runtime-parent",
+    });
+
+    expect(cmd).toContain("drwx------) restore_mode=600");
+    expect(cmd).toContain("drwxrws---|drwxrwx---) restore_mode=660");
+    expect(cmd).toContain("refusing unsupported state parent mode");
+    expect(cmd).not.toContain("restore_mode=640");
+  });
+
   it("isolates SQLite restore from an agent-managed Python environment (#7144)", () => {
     const cmd = sandboxState.buildStateFileRestoreCommand("/sandbox/.hermes", {
       path: "kanban.db",

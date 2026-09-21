@@ -89,7 +89,10 @@ import {
   createSnapshotCloneLifecycle,
   confirmSandboxRuntimeRestore,
   fingerprintSandboxLiveIdentity,
+  finishOpenClawPostRestoreDoctor,
+  getMcpProviderInspectionRuntimeSelection,
   isSandboxPolicyCredentialFree,
+  type OpenClawPostRestoreDoctorWindow,
   type PreparedHostLocalInferenceAuthority,
   type PreparedSandboxRuntimeRestore,
   prepareHostLocalInferenceAuthority,
@@ -100,6 +103,8 @@ import {
   rejectManagedSnapshotCloneUntilRebind,
   requireCurrentSnapshotRuntimeProvider,
   retirePreparedHostLocalInferenceAuthority,
+  abortOpenClawPostRestoreDoctor,
+  beginOpenClawBackupQuiesce,
   type RuntimeProviderBundle,
 } from "./snapshot/dependencies";
 import {
@@ -1398,121 +1403,177 @@ async function runSnapshotRestoreUnlocked(
     }
   }
   await withMcpLifecycleLock(targetSandbox, async () => {
-    const validateProviderRestoreBeforeMutation =
-      preparedRuntimeRestore || preparedHostLocalInferenceRestore
-        ? () => {
-            const currentTarget = registry.getSandbox(targetSandbox);
-            if (!currentTarget) {
-              throw new Error(`target '${targetSandbox}' is no longer registered`);
+    let openClawRestoreWindow: OpenClawPostRestoreDoctorWindow | null = null;
+    const abortOpenClawRestoreWindow = async (): Promise<void> => {
+      if (!openClawRestoreWindow) return;
+      const aborted = await abortOpenClawPostRestoreDoctor(openClawRestoreWindow);
+      openClawRestoreWindow = null;
+      if (!aborted.ok) {
+        console.error(
+          `  OpenClaw snapshot restore could not retire its gateway-down maintenance window: ${aborted.detail}`,
+        );
+        console.error(`  The running state of sandbox '${targetSandbox}' could not be verified.`);
+        console.error(
+          `  Run '${CLI_NAME} ${targetSandbox} stop', then '${CLI_NAME} ${targetSandbox} start' before inspecting the sandbox and retrying the restore.`,
+        );
+        return;
+      }
+      console.error(`  OpenClaw sandbox '${targetSandbox}' remains stopped after restore failure.`);
+      console.error(
+        `  Run '${CLI_NAME} ${targetSandbox} start', verify that it is ready, then retry the same snapshot restore command.`,
+      );
+    };
+    try {
+      const currentTarget = registry.getSandbox(targetSandbox);
+      if (!isCrossSandboxRestore && (currentTarget?.agent ?? "openclaw") === "openclaw") {
+        const runtimeSelection = currentTarget
+          ? getMcpProviderInspectionRuntimeSelection(currentTarget)
+          : undefined;
+        const begun = await beginOpenClawBackupQuiesce(targetSandbox, runtimeSelection);
+        if (!begun.ok) {
+          console.error(
+            `  OpenClaw snapshot restore could not enter its gateway-down maintenance window (${begun.stage}: ${begun.detail}).`,
+          );
+          console.error(
+            `  Sandbox '${targetSandbox}' may remain stopped after the failed maintenance transition.`,
+          );
+          console.error(
+            `  Run '${CLI_NAME} ${targetSandbox} stop', then '${CLI_NAME} ${targetSandbox} start', verify that it is ready, and retry the same snapshot restore command.`,
+          );
+          snapshotExit(1);
+        }
+        openClawRestoreWindow = begun.window;
+      }
+      const validateProviderRestoreBeforeMutation =
+        preparedRuntimeRestore || preparedHostLocalInferenceRestore
+          ? () => {
+              const currentTarget = registry.getSandbox(targetSandbox);
+              if (!currentTarget) {
+                throw new Error(`target '${targetSandbox}' is no longer registered`);
+              }
+              const provider = requireCurrentSnapshotRuntimeProvider(currentTarget);
+              if (preparedRuntimeRestore) {
+                const profileRestore = prepareManagedSnapshotProfileRestore(
+                  snapshotProfileSource,
+                  currentTarget,
+                  provider,
+                );
+                if (!profileRestore) {
+                  throw new Error("managed profile restore authority is missing");
+                }
+                const prepared = preparedRuntimeRestore;
+                if (!prepared) throw new Error("managed runtime restore authority is missing");
+                // The state layer invokes this after local tar staging and
+                // immediately before its first remote filesystem mutation.
+                preparedRuntimeRestore = prepareSandboxRuntimeRestore(
+                  provider,
+                  currentTarget,
+                  prepared.source,
+                  profileRestore.providerRestoreAuthority,
+                );
+              }
+              if (typeof hostLocalInferenceReceipt === "string") {
+                if (!preparedHostLocalInferenceRestore) {
+                  throw new Error("host-local inference restore authority is missing");
+                }
+                confirmHostLocalInferenceAuthority(
+                  provider,
+                  currentTarget,
+                  preparedHostLocalInferenceRestore,
+                );
+              }
             }
+          : null;
+      if (Boolean(snapshotRestoreAuthority) !== Boolean(validateProviderRestoreBeforeMutation)) {
+        console.error(
+          `  Cannot restore provider snapshot '${sandboxName}': content authority and the runtime mutation fence must both be present.`,
+        );
+        console.error(`  Snapshot files in destination '${targetSandbox}' were not changed.`);
+        snapshotExit(1);
+      }
+      if (targetSandbox !== sandboxName) {
+        console.log(`  Restoring snapshot from '${sandboxName}' into '${targetSandbox}'...`);
+      } else {
+        console.log(`  Restoring snapshot into '${sandboxName}'...`);
+      }
+      const result =
+        snapshotRestoreAuthority && validateProviderRestoreBeforeMutation
+          ? await sandboxState.restoreSandboxState(targetSandbox, backupPath, {
+              authority: snapshotRestoreAuthority,
+              validateBeforeMutation: validateProviderRestoreBeforeMutation,
+            })
+          : await sandboxState.restoreSandboxState(targetSandbox, backupPath);
+      if (result.success) {
+        if (preparedRuntimeRestore || preparedHostLocalInferenceRestore) {
+          const currentTarget = registry.getSandbox(targetSandbox);
+          if (!currentTarget) {
+            console.error(
+              `  Provider snapshot state was restored, but target '${targetSandbox}' is no longer registered.`,
+            );
+            snapshotExit(1);
+          }
+          try {
             const provider = requireCurrentSnapshotRuntimeProvider(currentTarget);
             if (preparedRuntimeRestore) {
-              const profileRestore = prepareManagedSnapshotProfileRestore(
-                snapshotProfileSource,
-                currentTarget,
-                provider,
-              );
-              if (!profileRestore) {
-                throw new Error("managed profile restore authority is missing");
-              }
-              const prepared = preparedRuntimeRestore;
-              if (!prepared) throw new Error("managed runtime restore authority is missing");
-              // The state layer invokes this after local tar staging and
-              // immediately before its first remote filesystem mutation.
-              preparedRuntimeRestore = prepareSandboxRuntimeRestore(
-                provider,
-                currentTarget,
-                prepared.source,
-                profileRestore.providerRestoreAuthority,
-              );
+              confirmSandboxRuntimeRestore(provider, currentTarget, preparedRuntimeRestore);
             }
-            if (typeof hostLocalInferenceReceipt === "string") {
-              if (!preparedHostLocalInferenceRestore) {
-                throw new Error("host-local inference restore authority is missing");
-              }
+            if (preparedHostLocalInferenceRestore) {
               confirmHostLocalInferenceAuthority(
                 provider,
                 currentTarget,
                 preparedHostLocalInferenceRestore,
               );
             }
-          }
-        : null;
-    if (Boolean(snapshotRestoreAuthority) !== Boolean(validateProviderRestoreBeforeMutation)) {
-      console.error(
-        `  Cannot restore provider snapshot '${sandboxName}': content authority and the runtime mutation fence must both be present.`,
-      );
-      console.error(`  Destination '${targetSandbox}' was not changed.`);
-      snapshotExit(1);
-    }
-    if (targetSandbox !== sandboxName) {
-      console.log(`  Restoring snapshot from '${sandboxName}' into '${targetSandbox}'...`);
-    } else {
-      console.log(`  Restoring snapshot into '${sandboxName}'...`);
-    }
-    const result =
-      snapshotRestoreAuthority && validateProviderRestoreBeforeMutation
-        ? await sandboxState.restoreSandboxState(targetSandbox, backupPath, {
-            authority: snapshotRestoreAuthority,
-            validateBeforeMutation: validateProviderRestoreBeforeMutation,
-          })
-        : await sandboxState.restoreSandboxState(targetSandbox, backupPath);
-    if (result.success) {
-      if (preparedRuntimeRestore || preparedHostLocalInferenceRestore) {
-        const currentTarget = registry.getSandbox(targetSandbox);
-        if (!currentTarget) {
-          console.error(
-            `  Provider snapshot state was restored, but target '${targetSandbox}' is no longer registered.`,
-          );
-          snapshotExit(1);
-        }
-        try {
-          const provider = requireCurrentSnapshotRuntimeProvider(currentTarget);
-          if (preparedRuntimeRestore) {
-            confirmSandboxRuntimeRestore(provider, currentTarget, preparedRuntimeRestore);
-          }
-          if (preparedHostLocalInferenceRestore) {
-            confirmHostLocalInferenceAuthority(
-              provider,
-              currentTarget,
-              preparedHostLocalInferenceRestore,
+          } catch (error) {
+            console.error(
+              `  Provider snapshot state was restored, but provider restore proof failed: ${
+                error instanceof Error ? error.message : String(error)
+              }.`,
             );
+            console.error("  Stabilize the runtime provider before retrying this exact snapshot.");
+            snapshotExit(1);
           }
-        } catch (error) {
+        }
+        console.log(
+          `  ${G}\u2713${R} Restored ${result.restoredDirs.length} directories, ${result.restoredFiles.length} files`,
+        );
+        printHermesGatewayRestoreHint(
+          targetSandbox,
+          registry.getSandbox(targetSandbox)?.agent,
+          result.restoredFiles,
+          resolvedSnapshot?.stateFiles ?? [],
+          CLI_NAME,
+        );
+      } else {
+        console.error(`  Restore failed.`);
+        if (result.restoredDirs.length > 0) {
+          console.error(`  Partial: ${result.restoredDirs.join(", ")}`);
+        }
+        if (result.failedDirs.length > 0) {
+          console.error(`  Failed: ${result.failedDirs.join(", ")}`);
+        }
+        if (result.failedFiles.length > 0) {
+          console.error(`  Failed files: ${result.failedFiles.join(", ")}`);
+        }
+        if (result.error) {
+          console.error(`  Reason: ${result.error}`);
+        }
+        snapshotExit(1);
+      }
+      if (openClawRestoreWindow) {
+        const finished = await finishOpenClawPostRestoreDoctor(openClawRestoreWindow);
+        if (!finished.ok) {
+          await abortOpenClawRestoreWindow();
           console.error(
-            `  Provider snapshot state was restored, but provider restore proof failed: ${
-              error instanceof Error ? error.message : String(error)
-            }.`,
+            `  Snapshot state was restored, but OpenClaw native startup failed (${finished.stage}: ${finished.detail}).`,
           );
-          console.error("  Retry this exact snapshot after the runtime provider stabilizes.");
           snapshotExit(1);
         }
+        openClawRestoreWindow = null;
       }
-      console.log(
-        `  ${G}\u2713${R} Restored ${result.restoredDirs.length} directories, ${result.restoredFiles.length} files`,
-      );
-      printHermesGatewayRestoreHint(
-        targetSandbox,
-        registry.getSandbox(targetSandbox)?.agent,
-        result.restoredFiles,
-        resolvedSnapshot?.stateFiles ?? [],
-        CLI_NAME,
-      );
-    } else {
-      console.error(`  Restore failed.`);
-      if (result.restoredDirs.length > 0) {
-        console.error(`  Partial: ${result.restoredDirs.join(", ")}`);
-      }
-      if (result.failedDirs.length > 0) {
-        console.error(`  Failed: ${result.failedDirs.join(", ")}`);
-      }
-      if (result.failedFiles.length > 0) {
-        console.error(`  Failed files: ${result.failedFiles.join(", ")}`);
-      }
-      if (result.error) {
-        console.error(`  Reason: ${result.error}`);
-      }
-      snapshotExit(1);
+    } catch (error) {
+      await abortOpenClawRestoreWindow();
+      throw error;
     }
   });
   if (isCrossSandboxRestore && crossSandboxRestoreAgent === "openclaw") {

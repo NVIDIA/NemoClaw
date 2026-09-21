@@ -50,6 +50,7 @@ Restart and reconnect preserve the current native configuration.
 Rebuild restores the credential-sanitized configuration captured immediately before rebuild.
 Snapshot restore reapplies only the credential-sanitized configuration present when that snapshot was created.
 These operations replace the complete native file instead of reconstructing selected keys.
+During rebuild, NemoClaw then reapplies the entries owned by the current host-side messaging plan, so restored native channel values do not replace that plan.
 Restore does not change OpenShell policy, credential bindings, or the host-side inference route.
 After restoring configuration that depends on different host resources, reconcile those resources with the matching NemoClaw commands and restart the gateway when OpenClaw requires it.
 The host command `$$nemoclaw <name> config set` is not available for OpenClaw.

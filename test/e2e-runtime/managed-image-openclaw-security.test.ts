@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { openclawProtectedImage } from "./managed-image-openclaw-security.ts";
+import { shellQuote } from "../../src/lib/core/shell-quote.ts";
+import { buildStateFileRestoreCommand } from "../../src/lib/state/state-file-restore.ts";
 import type { HostCliClient } from "../e2e/fixtures/clients/host.ts";
 import { expect, test } from "../e2e/fixtures/e2e-test.ts";
 
@@ -123,6 +125,22 @@ test.runIf(RUN_MANAGED_IMAGE_SECURITY)(
         "! /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- sh -c 'rm -f /tmp/nemoclaw-proxy-env.sh'",
       ].join("\n"),
       "managed-image-openclaw-native-config-isolation",
+    );
+    const restoreCommand = buildStateFileRestoreCommand("/sandbox/.openclaw", {
+      path: "openclaw.json",
+      strategy: "copy",
+      missingTargetMode: "runtime-parent",
+    });
+    await runContainer(
+      host,
+      image,
+      [
+        "rm -f /sandbox/.openclaw/openclaw.json",
+        `printf '%s\\n' '{"gateway":{"mode":"local"}}' | sh -c ${shellQuote(restoreCommand)}`,
+        'test "$(stat -c %a /sandbox/.openclaw/openclaw.json)" = 660',
+        "/usr/bin/setpriv --reuid=gateway --regid=gateway --init-groups -- sh -c 'printf \"\\n\" >>/sandbox/.openclaw/openclaw.json'",
+      ].join("\n"),
+      "managed-image-openclaw-missing-config-restore",
     );
 
     progress.phase("record managed-image security evidence");

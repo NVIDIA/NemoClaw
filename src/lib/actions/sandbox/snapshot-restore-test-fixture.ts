@@ -189,6 +189,9 @@ export const removeSandboxMock = vi.fn();
 export const updateSandboxMock = vi.fn();
 export const finalizePendingSandboxRegistrationMock = vi.fn();
 export const restoreSandboxStateMock = vi.fn();
+export const beginOpenClawBackupQuiesceMock = vi.fn();
+export const finishOpenClawPostRestoreDoctorMock = vi.fn();
+export const abortOpenClawPostRestoreDoctorMock = vi.fn();
 export const restoreDeepAgentsNativeMcpConfigMock = vi.fn();
 export const getMcpProviderInspectionRuntimeSelectionMock = vi.fn(() => ({
   gatewayName: "nemoclaw-8091",
@@ -386,6 +389,12 @@ vi.mock("./restore-gateway-pairing", () => ({
   waitForRestoredSandboxGatewaySupervisor: waitForRestoredSandboxGatewaySupervisorMock,
 }));
 
+vi.mock("./runtime/openclaw-lifecycle", () => ({
+  abortOpenClawPostRestoreDoctor: abortOpenClawPostRestoreDoctorMock,
+  beginOpenClawBackupQuiesce: beginOpenClawBackupQuiesceMock,
+  finishOpenClawPostRestoreDoctor: finishOpenClawPostRestoreDoctorMock,
+}));
+
 vi.mock("./snapshot/forward-port-allocation", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./snapshot/forward-port-allocation")>()),
   allocateSnapshotCloneForwardPorts: allocateSnapshotCloneForwardPortsMock,
@@ -461,6 +470,18 @@ export function resetSnapshotRestoreMocks(): void {
     restoredFiles: [],
     failedDirs: [],
     failedFiles: [],
+  });
+  beginOpenClawBackupQuiesceMock.mockImplementation(async () => {
+    lifecycleMock.events.push("begin-openclaw-backup-quiesce");
+    return { ok: true, window: { sandboxName: "alpha", kind: "backup" } };
+  });
+  finishOpenClawPostRestoreDoctorMock.mockImplementation(async () => {
+    lifecycleMock.events.push("finish-openclaw-native-start");
+    return { ok: true };
+  });
+  abortOpenClawPostRestoreDoctorMock.mockImplementation(async () => {
+    lifecycleMock.events.push("abort-openclaw-backup-quiesce");
+    return { ok: true };
   });
   restoreDeepAgentsNativeMcpConfigMock.mockReset();
   getMcpProviderInspectionRuntimeSelectionMock.mockClear();

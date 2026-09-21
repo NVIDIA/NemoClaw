@@ -35,7 +35,7 @@ import {
 } from "./rebuild-messaging-phase";
 import {
   abortUnregisteredOpenClawPostRestoreDoctor,
-  beginUnregisteredOpenClawPostRestoreDoctor,
+  beginUnregisteredOpenClawBackupQuiesce,
   finishUnregisteredOpenClawPostRestoreDoctor,
   type OpenClawPostRestoreDoctorWindow,
 } from "./runtime/openclaw-lifecycle";
@@ -184,37 +184,37 @@ async function resolveOpenClawPostRestoreWindow(
 ): Promise<OpenClawPostRestoreDoctorWindow | null> {
   if (preparedWindow) return preparedWindow;
   // Retained accepted-target recovery records from older NemoClaw builds do
-  // not carry the pre-restore window. Preserve their established recovery
-  // path while every current restore supplies the window before mutation.
-  log("Entering verified OpenClaw post-upgrade maintenance window");
-  const doctorWindow = await beginUnregisteredOpenClawPostRestoreDoctor(
+  // not carry the pre-restore window. Establish the same gateway-down window
+  // that current restores create, without requesting a configuration repair.
+  log("Entering verified OpenClaw gateway-down maintenance window");
+  const maintenanceWindow = await beginUnregisteredOpenClawBackupQuiesce(
     sandboxName,
     runtimeSelection,
   );
   log(
-    `Post-upgrade doctor maintenance window: ${doctorWindow.ok ? "verified" : doctorWindow.stage}`,
+    `OpenClaw gateway-down maintenance window: ${maintenanceWindow.ok ? "verified" : maintenanceWindow.stage}`,
   );
-  if (doctorWindow.ok) return doctorWindow.window;
-  console.log(`  ${D}Post-upgrade structure repair failed before offline restoration${R}`);
-  bail("OpenClaw post-upgrade structure repair failed during rebuild.");
+  if (maintenanceWindow.ok) return maintenanceWindow.window;
+  console.log(`  ${D}OpenClaw could not enter its gateway-down maintenance window${R}`);
+  bail("OpenClaw could not enter its gateway-down maintenance window during rebuild.");
   return null;
 }
 
 async function abortOpenClawPostRestoreWindowAfterFailure(
-  doctorWindow: OpenClawPostRestoreDoctorWindow,
+  maintenanceWindow: OpenClawPostRestoreDoctorWindow,
   log: RebuildLog,
 ): Promise<void> {
-  log("Aborting OpenClaw post-upgrade maintenance window after rebuild failure");
+  log("Aborting OpenClaw maintenance window after rebuild failure");
   try {
-    const abortResult = await abortUnregisteredOpenClawPostRestoreDoctor(doctorWindow);
-    log(`Post-upgrade doctor maintenance abort: ${abortResult.ok ? "verified" : "unverified"}`);
+    const abortResult = await abortUnregisteredOpenClawPostRestoreDoctor(maintenanceWindow);
+    log(`OpenClaw maintenance abort: ${abortResult.ok ? "verified" : "unverified"}`);
     if (!abortResult.ok) {
       console.error(
         `  ${YW}\u26a0${R} OpenClaw maintenance abort could not prove the sandbox stopped.`,
       );
     }
   } catch {
-    log("Post-upgrade doctor maintenance abort: unverified");
+    log("OpenClaw maintenance abort: unverified");
     console.error(
       `  ${YW}\u26a0${R} OpenClaw maintenance abort could not prove the sandbox stopped.`,
     );
@@ -373,20 +373,20 @@ export async function runRebuildPostRestorePhase(
     ));
     if (targetAgentName === "openclaw") {
       if (!openClawDoctorWindow) {
-        bail("OpenClaw post-upgrade maintenance authority was lost during rebuild.");
+        bail("OpenClaw gateway-down maintenance authority was lost during rebuild.");
         return;
       }
       log("Releasing OpenClaw for one final start after all offline post-restore writes");
-      const doctorResult = await finishUnregisteredOpenClawPostRestoreDoctor(openClawDoctorWindow);
-      log(`Post-upgrade doctor final start: ${doctorResult.ok ? "verified" : doctorResult.stage}`);
-      if (!doctorResult.ok) {
-        console.log(`  ${D}Post-upgrade structure repair failed during final sandbox start${R}`);
-        console.error(`  ${doctorResult.detail.replaceAll("\n", "\n  ")}`);
-        bail("OpenClaw post-upgrade structure repair failed during rebuild.");
+      const startResult = await finishUnregisteredOpenClawPostRestoreDoctor(openClawDoctorWindow);
+      log(`OpenClaw native final start: ${startResult.ok ? "verified" : startResult.stage}`);
+      if (!startResult.ok) {
+        console.log(`  ${D}OpenClaw native final start failed after offline restoration${R}`);
+        console.error(`  ${startResult.detail.replaceAll("\n", "\n  ")}`);
+        bail("OpenClaw native final start failed during rebuild.");
         return;
       }
       openClawDoctorWindow = null;
-      console.log(`  ${G}\u2713${R} Post-upgrade structure check passed`);
+      console.log(`  ${G}\u2713${R} OpenClaw native final start passed`);
     }
   } finally {
     if (openClawDoctorWindow) {

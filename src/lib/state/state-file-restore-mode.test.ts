@@ -10,24 +10,38 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { buildStateFileRestoreCommand } from "./state-file-restore";
 
-const STATE_FILE = { path: "openclaw.json", strategy: "copy" } as const;
+const STATE_FILE = {
+  path: "openclaw.json",
+  strategy: "copy",
+  missingTargetMode: "runtime-parent",
+} as const;
 const fixtures: string[] = [];
 
-function runRestore(occupy: (stateDir: string) => void = () => undefined): {
+function runRestore(
+  parentMode: number,
+  occupy: (stateDir: string) => void = () => undefined,
+): {
   configPath: string;
   stateDir: string;
+  stderr: string;
   status: number | null;
 } {
   const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-state-file-mode-"));
   fixtures.push(fixture);
   const stateDir = path.join(fixture, ".openclaw");
   fs.mkdirSync(stateDir);
+  fs.chmodSync(stateDir, parentMode);
   occupy(stateDir);
   const command = buildStateFileRestoreCommand(stateDir, STATE_FILE);
   const result = spawnSync("bash", ["-c", command], {
     input: Buffer.from('{"gateway":{"mode":"local"}}\n'),
   });
-  return { configPath: path.join(stateDir, STATE_FILE.path), stateDir, status: result.status };
+  return {
+    configPath: path.join(stateDir, STATE_FILE.path),
+    stateDir,
+    status: result.status,
+    stderr: result.stderr.toString("utf8"),
+  };
 }
 
 function mode(filePath: string): number {
@@ -41,17 +55,24 @@ afterEach(() => {
 });
 
 describe("state-file restore modes", () => {
-  it("restores OpenClaw config as an ordinary native state file (#11764)", () => {
-    const { configPath, stateDir, status } = runRestore();
+  it("restores a missing config with the sandbox-user runtime mode (#11764)", () => {
+    const { configPath, stateDir, status } = runRestore(0o700);
 
     expect(status).toBe(0);
-    expect(mode(configPath)).toBe(0o640);
+    expect(mode(configPath)).toBe(0o600);
     expect(fs.existsSync(`${configPath}.last-good`)).toBe(false);
     expect(fs.existsSync(path.join(stateDir, ".config-hash"))).toBe(false);
   });
 
+  it("restores a missing config with the separate gateway runtime mode (#11764)", () => {
+    const { configPath, status } = runRestore(0o2770);
+
+    expect(status).toBe(0);
+    expect(mode(configPath)).toBe(0o660);
+  });
+
   it("preserves private native mode for the sandbox-user runtime topology (#11764)", () => {
-    const { configPath, status } = runRestore((stateDir) => {
+    const { configPath, status } = runRestore(0o2770, (stateDir) => {
       const existingConfig = path.join(stateDir, STATE_FILE.path);
       fs.writeFileSync(existingConfig, "{}\n");
       fs.chmodSync(existingConfig, 0o600);
@@ -62,7 +83,7 @@ describe("state-file restore modes", () => {
   });
 
   it("preserves group-write mode for the separate gateway runtime topology (#11764)", () => {
-    const { configPath, status } = runRestore((stateDir) => {
+    const { configPath, status } = runRestore(0o700, (stateDir) => {
       const existingConfig = path.join(stateDir, STATE_FILE.path);
       fs.writeFileSync(existingConfig, "{}\n");
       fs.chmodSync(existingConfig, 0o660);
@@ -70,5 +91,13 @@ describe("state-file restore modes", () => {
 
     expect(status).toBe(0);
     expect(mode(configPath)).toBe(0o660);
+  });
+
+  it("refuses a missing config when the runtime parent mode is unsupported (#11764)", () => {
+    const { configPath, status, stderr } = runRestore(0o755);
+
+    expect(status).toBe(12);
+    expect(fs.existsSync(configPath)).toBe(false);
+    expect(stderr).toContain("refusing unsupported state parent mode: drwxr-xr-x");
   });
 });

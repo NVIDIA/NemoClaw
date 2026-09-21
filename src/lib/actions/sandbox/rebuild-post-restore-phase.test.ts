@@ -47,13 +47,14 @@ describe("rebuild post-restore phase", () => {
           runtime: { kind: runtimeKindByAgent[agentName] },
         }) as never,
     );
-    vi.spyOn(restoreWindow, "beginUnregisteredOpenClawPostRestoreDoctor").mockImplementation(
+    vi.spyOn(restoreWindow, "beginUnregisteredOpenClawBackupQuiesce").mockImplementation(
       async (sandboxName, runtimeSelection) => {
-        order.push("doctor-begin");
+        order.push("maintenance-begin");
         return {
           ok: true,
           window: {
             sandboxName,
+            kind: "backup",
             ...(runtimeSelection ? { runtimeSelection } : {}),
           },
         };
@@ -61,7 +62,7 @@ describe("rebuild post-restore phase", () => {
     );
     vi.spyOn(restoreWindow, "finishUnregisteredOpenClawPostRestoreDoctor").mockImplementation(
       async () => {
-        order.push("doctor-finish");
+        order.push("native-start");
         return { ok: true };
       },
     );
@@ -159,35 +160,36 @@ describe("rebuild post-restore phase", () => {
     };
   }
 
-  it("completes offline restoration before one doctor start and final sealing (#7102, #9946)", async () => {
+  it("completes offline restoration before one native final start (#7102, #9946, #11764)", async () => {
     await runRebuildPostRestorePhase(input());
 
     expect(order).toEqual([
-      "doctor-begin",
+      "maintenance-begin",
       "reconcile",
       "messaging",
       "mcp",
-      "doctor-finish",
+      "native-start",
       "host-forward",
     ]);
-    expect(
-      processRecovery.beginUnregisteredOpenClawPostRestoreDoctor,
-    ).toHaveBeenCalledExactlyOnceWith("alpha", undefined);
+    expect(processRecovery.beginUnregisteredOpenClawBackupQuiesce).toHaveBeenCalledExactlyOnceWith(
+      "alpha",
+      undefined,
+    );
     expect(processRecovery.finishUnregisteredOpenClawPostRestoreDoctor).toHaveBeenCalledOnce();
     expect(processRecovery.abortUnregisteredOpenClawPostRestoreDoctor).not.toHaveBeenCalled();
   });
 
   it("reuses the maintenance window established before filesystem restore", async () => {
-    const window = { sandboxName: "alpha" };
-    vi.mocked(processRecovery.beginUnregisteredOpenClawPostRestoreDoctor).mockClear();
+    const window = { sandboxName: "alpha", kind: "backup" } as const;
+    vi.mocked(processRecovery.beginUnregisteredOpenClawBackupQuiesce).mockClear();
 
     await runRebuildPostRestorePhase({ ...input(), openClawDoctorWindow: window });
 
-    expect(processRecovery.beginUnregisteredOpenClawPostRestoreDoctor).not.toHaveBeenCalled();
+    expect(processRecovery.beginUnregisteredOpenClawBackupQuiesce).not.toHaveBeenCalled();
     expect(processRecovery.finishUnregisteredOpenClawPostRestoreDoctor).toHaveBeenCalledWith(
       window,
     );
-    expect(order).toEqual(["reconcile", "messaging", "mcp", "doctor-finish", "host-forward"]);
+    expect(order).toEqual(["reconcile", "messaging", "mcp", "native-start", "host-forward"]);
   });
 
   it("reuses the MCP rebuild target for every post-restore sandbox command (#10514)", async () => {
@@ -204,7 +206,7 @@ describe("rebuild post-restore phase", () => {
 
     await runRebuildPostRestorePhase(args);
 
-    expect(processRecovery.beginUnregisteredOpenClawPostRestoreDoctor).toHaveBeenCalledWith(
+    expect(processRecovery.beginUnregisteredOpenClawBackupQuiesce).toHaveBeenCalledWith(
       "alpha",
       runtimeSelection,
     );
@@ -245,7 +247,7 @@ describe("rebuild post-restore phase", () => {
     expect(rebuildHermesPostRestore.restartHermesGatewayAfterStateRestore).not.toHaveBeenCalled();
   });
 
-  it("finishes offline writes but stops online finalization when doctor restart fails (#9946)", async () => {
+  it("finishes offline writes but stops online finalization when native start fails (#9946)", async () => {
     vi.mocked(processRecovery.finishUnregisteredOpenClawPostRestoreDoctor).mockResolvedValue({
       ok: false,
       stage: "restart",
@@ -261,16 +263,15 @@ describe("rebuild post-restore phase", () => {
     expect(rebuildHermesPostRestore.verifyHermesGatewayAfterStateRestore).not.toHaveBeenCalled();
     expect(rebuildMcp.restoreMcpAfterRebuild).toHaveBeenCalledOnce();
     expect(messagingHostForward.ensureMessagingHostForwardAfterRebuild).not.toHaveBeenCalled();
-    expect(args.bail).toHaveBeenCalledWith(
-      "OpenClaw post-upgrade structure repair failed during rebuild.",
-    );
+    expect(args.bail).toHaveBeenCalledWith("OpenClaw native final start failed during rebuild.");
     expect(
       processRecovery.abortUnregisteredOpenClawPostRestoreDoctor,
     ).toHaveBeenCalledExactlyOnceWith({
       sandboxName: "alpha",
+      kind: "backup",
     });
     const output = vi.mocked(console.log).mock.calls.flat().join("\n");
-    expect(output).toContain("Post-upgrade structure repair failed during final sandbox start");
+    expect(output).toContain("OpenClaw native final start failed after offline restoration");
     expect(output).not.toContain("sensitive doctor output");
     expect(output).not.toContain("rebuilt successfully");
   });
@@ -293,6 +294,7 @@ describe("rebuild post-restore phase", () => {
       processRecovery.abortUnregisteredOpenClawPostRestoreDoctor,
     ).toHaveBeenCalledExactlyOnceWith({
       sandboxName: "alpha",
+      kind: "backup",
     });
     const output = vi.mocked(console.error).mock.calls.flat().join("\n");
     expect(output).toContain("Messaging manifest config reapply failed before gateway start");
@@ -315,6 +317,7 @@ describe("rebuild post-restore phase", () => {
       processRecovery.abortUnregisteredOpenClawPostRestoreDoctor,
     ).toHaveBeenCalledExactlyOnceWith({
       sandboxName: "alpha",
+      kind: "backup",
     });
     expect(processRecovery.finishUnregisteredOpenClawPostRestoreDoctor).not.toHaveBeenCalled();
   });
@@ -345,6 +348,7 @@ describe("rebuild post-restore phase", () => {
         processRecovery.abortUnregisteredOpenClawPostRestoreDoctor,
       ).toHaveBeenCalledExactlyOnceWith({
         sandboxName: "alpha",
+        kind: "backup",
       });
       expect(processRecovery.finishUnregisteredOpenClawPostRestoreDoctor).not.toHaveBeenCalled();
     },
@@ -361,7 +365,7 @@ describe("rebuild post-restore phase", () => {
 
     await expect(runRebuildPostRestorePhase(args)).rejects.toThrow("original restoration failure");
 
-    expect(args.log).toHaveBeenCalledWith("Post-upgrade doctor maintenance abort: unverified");
+    expect(args.log).toHaveBeenCalledWith("OpenClaw maintenance abort: unverified");
     expect(vi.mocked(console.error).mock.calls.flat().join("\n")).not.toContain(
       "sensitive abort failure",
     );
@@ -375,7 +379,7 @@ describe("rebuild post-restore phase", () => {
 
     expect(args.bail).not.toHaveBeenCalled();
     expect(sessionModels.reconcileStalePinnedSessionModelsAfterRebuild).not.toHaveBeenCalled();
-    expect(processRecovery.beginUnregisteredOpenClawPostRestoreDoctor).not.toHaveBeenCalled();
+    expect(processRecovery.beginUnregisteredOpenClawBackupQuiesce).not.toHaveBeenCalled();
     expect(processRecovery.finishUnregisteredOpenClawPostRestoreDoctor).not.toHaveBeenCalled();
     expect(mutableConfigPerms.inspectMutableHermesConfigPerms).toHaveBeenCalledWith("alpha");
     expect(verification).toEqual({ mutableConfigPermissionsVerified: true });
