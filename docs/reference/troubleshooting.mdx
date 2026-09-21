@@ -2088,13 +2088,19 @@ $$nemoclaw <name> status
 
 Some OpenAI-compatible servers (such as SGLang) expose `/v1/responses` but their streaming mode is incomplete. OpenClaw requires granular streaming events like `response.output_text.delta` that these backends do not emit.
 
-For the compatible-endpoint provider, NemoClaw now defaults to `/v1/chat/completions` and skips the Responses API probe entirely unless you opt in. If you onboarded an older release that selected `/v1/responses`, re-run onboarding so the wizard rebuilds the image with chat completions:
+For the compatible-endpoint provider, NemoClaw now defaults to `/v1/chat/completions` and skips the Responses API probe entirely unless you opt in. If you onboarded an older release that selected `/v1/responses`, recreate the named sandbox so the wizard rebuilds the image with chat completions.
+
+Clear any previous Responses API preference before recreating the sandbox.
+
+<Warning>
+This command replaces the existing sandbox and interrupts active work.
+Finish active work before continuing.
+</Warning>
 
 ```bash
-$$nemoclaw onboard
+unset NEMOCLAW_PREFERRED_API
+$$nemoclaw onboard --fresh --name <sandbox-name> --recreate-sandbox
 ```
-
-If you previously set `NEMOCLAW_PREFERRED_API=openai-responses` to force the Responses API, unset it before re-running onboard.
 
 </AgentOnly>
 
@@ -2103,12 +2109,6 @@ If you previously set `NEMOCLAW_PREFERRED_API=openai-responses` to force the Res
 Every OpenClaw onboarding run with an OpenAI-compatible endpoint sends a validation request through `inference.local` from inside the sandbox, even when you select no messaging channel.
 If that sandbox validation request fails, fix the compatible-endpoint base URL, credentials, model, or network route before continuing onboarding.
 Messaging setup is not the root cause.
-
-</AgentOnly>
-
-<AgentOnly variant="openclaw,hermes">
-
-Do not rely on `NEMOCLAW_INFERENCE_API_OVERRIDE` alone. It patches the config at container startup but does not update the Dockerfile ARG baked into the image. A fresh `$$nemoclaw onboard` is the reliable fix.
 
 </AgentOnly>
 

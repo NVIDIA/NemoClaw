@@ -188,8 +188,6 @@ export async function registerTunnelOrigin(
     await resolved.reloadGateway(sandboxName);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    warn(
-      `Could not register tunnel origin (${message}); open the Web UI from the gateway host or set NEMOCLAW_CORS_ORIGIN.`,
-    );
+    warn(`Could not register tunnel origin (${message}); open the Web UI from the gateway host.`);
   }
 }

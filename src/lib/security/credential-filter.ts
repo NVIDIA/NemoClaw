@@ -15,6 +15,8 @@ import { basename, dirname, join } from "node:path";
 import JSON5 from "json5";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 
+import { assertSafeConfigStructure } from "./config-structure.js";
+
 import {
   isConfigObject,
   isConfigValue,
@@ -165,6 +167,7 @@ export function sanitizeConfigFileContent(configName: string, rawConfig: string)
       normalized === "openclaw.json"
         ? JSON5.parse<ConfigValue | object>(rawConfig)
         : (JSON.parse(rawConfig) as ConfigValue | object);
+    if (normalized === "openclaw.json") assertSafeConfigStructure(parsed);
     if (!isConfigValue(parsed)) return null;
     const stripped = stripCredentials(parsed);
     // Canonicalize native JSON5 so comments cannot carry unparsed credentials

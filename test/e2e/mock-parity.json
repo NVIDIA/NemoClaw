@@ -168,7 +168,6 @@
       "fast": [
         "src/lib/onboard/machine/finalization-deps.test.ts",
         "test/agents/openclaw/runtime/nemoclaw-start-preload-gateway.test.ts",
-        "test/agents/openclaw/runtime/nemoclaw-start-reasoning-effort.test.ts",
         "src/lib/state/native-agent-state-restore.test.ts",
         "test/runtime/sandbox/sandbox-provisioning.test.ts",
         "test/e2e/support/hosted-inference.test.ts",
@@ -969,17 +968,6 @@
         "test/e2e/support/onboard-timeout-contract.test.ts",
         "test/e2e/support/platform-parity-cloud-experimental.test.ts",
         "test/e2e/support/workflow-plan.test.ts",
-        "test/e2e/support/workflow-e2e-progress.test.ts"
-      ]
-    },
-    {
-      "live": "test/e2e/live/runtime-overrides.test.ts",
-      "fast": [
-        "test/agents/openclaw/runtime/nemoclaw-start-config-io.test.ts",
-        "test/generation/generate-openclaw-config.test.ts",
-        "test/e2e/support/e2e-progress-fixture.test.ts",
-        "test/e2e/support/e2e-progress-outcome.test.ts",
-        "test/e2e/support/e2e-semantic-phase-check.test.ts",
         "test/e2e/support/workflow-e2e-progress.test.ts"
       ]
     },

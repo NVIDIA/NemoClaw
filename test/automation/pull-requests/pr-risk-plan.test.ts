@@ -995,7 +995,6 @@ describe("deterministic PR risk plan", () => {
     "test/e2e/fixtures/runtime-input.txt",
     "test/e2e/e2e-cloud-experimental/full-e2e",
     "test/e2e/live/registry-targets.test.ts",
-    "test/e2e/live/runtime-overrides.test.ts",
     "test/e2e/live/dashboard-remote-bind.test.ts",
   ])("keeps the E2E control plane in a fail-closed runtime floor: %s", (file) => {
     const result = plan(file);

@@ -423,6 +423,13 @@ describe("sanitizeConfigFile", () => {
     expect(JSON.parse(sanitized as string)).toEqual({ model: "inference/model-a" });
   });
 
+  it("rejects deeply nested OpenClaw JSON5 before recursive credential filtering (#11764)", () => {
+    const nested = `${"{ nested: ".repeat(70)}'value'${" }".repeat(70)}`;
+
+    expect(() => sanitizeConfigFileContent("openclaw.json", nested)).not.toThrow();
+    expect(sanitizeConfigFileContent("openclaw.json", nested)).toBeNull();
+  });
+
   it("does not follow config-file symlinks while sanitizing", () => {
     const targetPath = join(tmpDir, "target.json");
     const linkPath = join(tmpDir, "openclaw.json");
