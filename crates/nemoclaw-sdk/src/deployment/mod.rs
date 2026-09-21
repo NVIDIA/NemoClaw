@@ -270,13 +270,7 @@ impl Deployment {
             &bundle,
             &store,
             &document,
-            &[
-                "apply",
-                "-input=false",
-                "-no-color",
-                "-parallelism=1",
-                "apply.plan",
-            ],
+            &["apply", "-input=false", "-no-color", "apply.plan"],
             cancel,
         )
         .await?;
@@ -465,13 +459,7 @@ impl Deployment {
             bundle,
             store,
             document,
-            &[
-                "plan",
-                "-input=false",
-                "-no-color",
-                "-parallelism=1",
-                &format!("-out={name}"),
-            ],
+            &["plan", "-input=false", "-no-color", &format!("-out={name}")],
             cancel,
         )
         .await?;

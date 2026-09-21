@@ -314,13 +314,7 @@ impl Deployment {
             bundle,
             &stage,
             document,
-            &[
-                "apply",
-                "-input=false",
-                "-no-color",
-                "-parallelism=1",
-                "apply.plan",
-            ],
+            &["apply", "-input=false", "-no-color", "apply.plan"],
             cancel,
         )
         .await?;

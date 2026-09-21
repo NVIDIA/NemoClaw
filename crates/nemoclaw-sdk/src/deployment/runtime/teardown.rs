@@ -100,13 +100,7 @@ impl Deployment {
                     &bundle,
                     stage,
                     &destroy_environment(&record.document),
-                    &[
-                        "apply",
-                        "-input=false",
-                        "-no-color",
-                        "-parallelism=1",
-                        "destroy.plan",
-                    ],
+                    &["apply", "-input=false", "-no-color", "destroy.plan"],
                     cancel,
                 )
                 .await?;
