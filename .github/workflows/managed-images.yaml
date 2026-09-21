@@ -210,6 +210,7 @@ jobs:
             install -m 0644 "$source_file" "$destination_file"
           done
           for support_relative in \
+            agents/langchain-deepagents-code/validate-runtime-contract.py \
             ci/reviewed-npm-audit.json \
             scripts/lib/bundled-npm-package.mts \
             scripts/lib/patch-bundled-npm-ip-address.mts \
@@ -2464,6 +2465,13 @@ jobs:
             *) echo "ERROR: unsupported managed agent $AGENT" >&2; exit 1 ;;
           esac
           VALIDATE_FILESYSTEM
+
+          if [ "$AGENT" = "langchain-deepagents-code" ]; then
+            DOCKER_CONFIG="$anonymous_config" \
+              node --no-warnings scripts/checks/validate-dcode-runtime-contract.mts \
+                --reference "$reference" \
+                --platform "$PLATFORM"
+          fi
 
           version_output="$(
             DOCKER_CONFIG="$anonymous_config" docker run --rm \
