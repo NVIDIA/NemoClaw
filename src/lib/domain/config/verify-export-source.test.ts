@@ -1265,7 +1265,7 @@ describe("dashboard settings export", () => {
           findings: expect.arrayContaining([
             expect.objectContaining({
               category: "unsupported",
-              field: "spec.sandboxes[].agent.dashboard",
+              field: "spec.sandboxes[].harness.interfaces.dashboard",
             }),
           ]),
         },
@@ -1382,7 +1382,12 @@ describe("dashboard settings export", () => {
     expect(outcome.outcome).toMatchObject({
       ok: false,
       failure: {
-        findings: expect.arrayContaining([expect.objectContaining({ category: "drifted" })]),
+        findings: expect.arrayContaining([
+          expect.objectContaining({
+            category: "drifted",
+            field: "spec.sandboxes[].harness.interfaces.dashboard.bind",
+          }),
+        ]),
       },
     });
     expect(outcome.writeStdout).not.toHaveBeenCalled();

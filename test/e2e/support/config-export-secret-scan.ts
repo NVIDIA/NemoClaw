@@ -21,17 +21,17 @@ export function encodedSensitiveValues(values: readonly string[]): string[] {
 
 function decodePercentEncodedText(raw: string): string {
   let decoded = raw;
-  for (let pass = 0; pass < 4; pass += 1) {
-    const next = decoded.replace(/(?:%[0-9a-f]{2})+/giu, (encoded) => {
+  let previous: string;
+  do {
+    previous = decoded;
+    decoded = decoded.replace(/(?:%[0-9a-f]{2})+/giu, (encoded) => {
       try {
         return decodeURIComponent(encoded);
       } catch {
         return encoded;
       }
     });
-    if (next === decoded) return decoded;
-    decoded = next;
-  }
+  } while (decoded !== previous);
   return decoded;
 }
 

@@ -1,10 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import type * as TypeBoxModule from "typebox" with { "resolution-mode": "import" };
 import type * as TypeBoxValueModule from "typebox/value" with { "resolution-mode": "import" };
 import { isDeepStrictEqual } from "node:util";
-import { validateExtraAgents, type NormalizedExtraAgent } from "../../extra-agents-validation";
 import { cloneAndDeepFreeze } from "../../core/immutable";
 import { resolveManagedStartupInferenceRoute } from "../../inference/gateway/route-contract";
 import { normalizeInferenceSelection } from "../../inference/selection";
@@ -29,7 +27,6 @@ import {
   isValidNemoClawSandboxName,
   isSupportedInferenceApi,
   NemoClawAgentToolsConfigSchema,
-  NemoClawAdditionalAgentSchema,
   NemoClawOpenClawObservabilitySchema,
   NemoClawInferenceTuningSchema,
   NemoClawAgentExecutionSchema,
@@ -55,9 +52,6 @@ const HERMES_API_KEY_ENDPOINT = "https://inference-api.nousresearch.com/v1";
 
 type SupportedExportAgent = "hermes" | "langchain-deepagents-code" | "openclaw";
 type ManagedStartupInferenceRoute = ReturnType<typeof resolveManagedStartupInferenceRoute>;
-type ProjectedAdditionalAgents = readonly TypeBoxModule.Type.Static<
-  typeof NemoClawAdditionalAgentSchema
->[];
 interface ExportAgentProfileProjection {
   readonly compatibility: Readonly<Record<string, unknown>> | null;
   readonly dashboard: ManagedStartupProfileBuilderInput["dashboard"];
@@ -166,7 +160,7 @@ function classifyHermesExcludedCapabilities(entry: ObservedExportRegistry): Expo
     ],
     ["spec.sandboxes[].agent.tools", entry.hermesToolGateways, "enabled Hermes tool gateways"],
     [
-      "spec.sandboxes[].agent.dashboard",
+      "spec.sandboxes[].harness.interfaces.dashboard",
       entry.agent !== "hermes" &&
         [
           entry.hermesApiPort,
@@ -357,7 +351,7 @@ function classifyExcludedCapabilities(entry: ObservedExportRegistry): ExportFind
     ],
     ["spec.sandboxes[].integrations.messaging", entry.messaging, "messaging"],
     [
-      "spec.sandboxes[].agent.dashboard",
+      "spec.sandboxes[].harness.interfaces.dashboard",
       entry.agent !== "openclaw" && entry.dashboardRemoteBindPrepared,
       "remote dashboard exposure",
     ],
@@ -652,7 +646,6 @@ function classifyToolDisclosureAgreement(
 function supportedAgentSettingsProfile(
   profile: ManagedStartupProfile,
   expected: ManagedStartupProfile,
-  additionalAgents?: ProjectedAdditionalAgents,
 ): ManagedStartupProfile | null {
   const agent = profile.agentConfig.agent;
   if (
@@ -682,22 +675,9 @@ function supportedAgentSettingsProfile(
       ...expected.agentConfig,
       agentTimeoutSeconds: profile.agentConfig.agentTimeoutSeconds,
       heartbeatEvery: profile.agentConfig.heartbeatEvery,
-      extraAgents: additionalAgents
-        ? profile.agentConfig.extraAgents
-        : expected.agentConfig.extraAgents,
+      extraAgents: expected.agentConfig.extraAgents,
     },
   };
-}
-
-function isSupportedAdditionalAgent(
-  agent: NormalizedExtraAgent,
-  primaryModelRef: string | null,
-): boolean {
-  return (
-    agent.subagents === undefined &&
-    agent.description === undefined &&
-    (agent.model === undefined || agent.model === primaryModelRef)
-  );
 }
 
 function supportedHostProfile(
@@ -712,51 +692,6 @@ function supportedHostProfile(
       managedPort: profile.proxy.managedPort,
     },
   };
-}
-
-function supportsAdditionalAgents(
-  entry: ObservedExportRegistry,
-  manifest: ReturnType<typeof validateExtraAgents>,
-): boolean {
-  return (
-    entry.openshellDriver === "docker" &&
-    (entry.servingProfileProvenance === undefined ||
-      (entry.provider === "vllm-local" &&
-        entry.servingProfileProvenance.preset.id === EXPORTED_VLLM_PROFILE_ID)) &&
-    manifest.agents.length > 0 &&
-    Object.keys(manifest.defaults.subagents).length === 0 &&
-    Object.keys(manifest.main).length === 0
-  );
-}
-
-function projectAdditionalAgents(
-  entry: ObservedExportRegistry,
-  profile: ManagedStartupProfile,
-): ProjectedAdditionalAgents | null | undefined {
-  if (profile.agentConfig.agent !== "openclaw") return undefined;
-  if (profile.inference === null) return null;
-  try {
-    const manifest = validateExtraAgents(
-      profile.agentConfig.extraAgents,
-      profile.inference.routeProvider,
-    );
-    if (manifest.agents.length === 0) return undefined;
-    if (!supportsAdditionalAgents(entry, manifest)) return null;
-    const exported: Array<ProjectedAdditionalAgents[number]> = [];
-    for (const agent of manifest.agents) {
-      const candidate = { name: agent.id, tools: agent.tools };
-      if (
-        !isSupportedAdditionalAgent(agent, profile.inference.primaryModelRef) ||
-        !Check(NemoClawAdditionalAgentSchema, candidate)
-      ) {
-        return null;
-      }
-      exported.push(candidate);
-    }
-    return exported;
-  } catch {
-    return null;
-  }
 }
 
 function classifyProfileEquality(
@@ -815,7 +750,6 @@ function expectedProfileWithObservedHostSettings(
 function classifyManagedStartupProfile(
   entry: ObservedExportRegistry,
   profile: ManagedStartupProfile,
-  additionalAgents?: ProjectedAdditionalAgents,
 ): ExportFinding[] {
   let expected = expectedProfileWithObservedHostSettings(entry, profile);
   if (!expected) {
@@ -835,7 +769,7 @@ function classifyManagedStartupProfile(
     ...classifyReasoningAgreement(entry, profile),
     ...classifyToolDisclosureAgreement(entry, profile, expected),
   ];
-  const supported = supportedAgentSettingsProfile(profile, expected, additionalAgents);
+  const supported = supportedAgentSettingsProfile(profile, expected);
   if (
     !supported ||
     (entry.servingProfileProvenance?.preset.id === EXPORTED_VLLM_PROFILE_ID &&
@@ -1345,39 +1279,24 @@ function validateAgreement(
   ];
 }
 
-function classifyAdditionalAgentProjection(
-  projected: ProjectedAdditionalAgents | null | undefined,
-): ExportFinding[] {
-  if (projected === null) {
-    return [
-      finding(
-        "spec.sandboxes[].agent",
-        "unsupported",
-        "The retained secondary-agent manifest cannot be represented by v1 export.",
-      ),
-    ];
-  }
-  if (projected === undefined) return [];
-  return [
-    finding(
-      "spec.sandboxes[].agent",
-      "unsupported",
-      "V1alpha1 export cannot represent a retained secondary-agent roster.",
-    ),
-  ];
-}
-
 function classifyManagedWorkload(
   entry: ObservedExportRegistry,
   authority: NonNullable<ReturnType<typeof readManagedWorkloadAuthority>>,
 ): ExportFinding[] {
-  const projected = projectAdditionalAgents(entry, authority.profile);
-  return [
-    ...classifyAdditionalAgentProjection(projected),
-    ...(projected === null
-      ? []
-      : classifyManagedStartupProfile(entry, authority.profile, projected)),
-  ];
+  const { profile } = authority;
+  if (
+    profile.agentConfig.agent === "openclaw" &&
+    profile.agentConfig.extraAgents.agents.length > 0
+  ) {
+    return [
+      finding(
+        "spec.sandboxes[].agent",
+        "unsupported",
+        "V1alpha1 export cannot represent a retained secondary-agent roster.",
+      ),
+    ];
+  }
+  return classifyManagedStartupProfile(entry, profile);
 }
 
 function inspectWorkload(entry: ObservedExportRegistry) {

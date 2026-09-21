@@ -70,11 +70,18 @@ describe("current config export input", () => {
 
 describe("config export artifact secret boundary", () => {
   const secret = "nvapi-review-secret-123456";
+  const percentEncodedSecret = [...Buffer.from(secret)]
+    .map((byte) => `%${byte.toString(16).padStart(2, "0")}`)
+    .join("");
   const encodedCases = [
     ["literal", secret],
+    ["percent encoded", percentEncodedSecret],
     [
-      "percent encoded",
-      [...Buffer.from(secret)].map((byte) => `%${byte.toString(16).padStart(2, "0")}`).join(""),
+      "deeply percent encoded",
+      Array.from({ length: 6 }).reduce<string>(
+        (value) => encodeURIComponent(value),
+        percentEncodedSecret,
+      ),
     ],
     [
       "YAML escaped",
