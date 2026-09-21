@@ -656,17 +656,24 @@ describe("maintainer merge-gate contributor compliance", () => {
 
 describe("maintainer PR comparator contributor compliance", () => {
   it("accepts a mergeable PR when GitHub reports a behind merge state", () => {
+    const currentBaseSha = "d".repeat(40);
     const fixture = {
       body: "Signed-off-by: Example User <user@example.com>",
       verified: true,
       mergeStateStatus: "BEHIND",
+      currentBaseSha,
     };
     const mergeGate = runGate(fixture);
     const comparator = runComparatorGate(fixture);
 
     const mergeGateOutput = JSON.parse(mergeGate.stdout);
     const comparatorOutput = JSON.parse(comparator.stdout);
-    expect(mergeGateOutput.gates.conflicts.pass).toBe(true);
+    expect(mergeGateOutput.gates.conflicts).toMatchObject({
+      pass: true,
+      details: "No merge conflicts; PR branch is behind its base branch",
+      baseSha: "b".repeat(40),
+      currentBaseSha,
+    });
     expect(comparatorOutput.gates.mergeable).toBe(true);
     expect(comparatorOutput.details).toMatchObject({
       mergeable: "MERGEABLE",
