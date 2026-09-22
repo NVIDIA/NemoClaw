@@ -622,6 +622,11 @@ export async function upgradeSandboxes(
           : {}),
       });
       if (manifest && sandbox.stopped === true) {
+        if (!registry.recordSandboxStopIntent(sandbox.name, true, registry.updateSandbox)) {
+          throw new Error(
+            `the rebuilt sandbox's pre-upgrade stopped-state intent could not be retained`,
+          );
+        }
         const stoppedResult = await upgradeSandboxesDependencies.stopSandbox(sandbox.name);
         if (stoppedResult.exitCode !== 0) {
           throw new Error(
