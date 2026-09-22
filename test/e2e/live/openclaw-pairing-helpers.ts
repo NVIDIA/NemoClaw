@@ -214,9 +214,9 @@ export async function assertOpenClawStateRoot(
 }
 
 // Source-of-truth boundary: the live pairing probe imports the conversation
-// runtime from the active `openclaw` binary installed in the sandbox. Connect
-// shells may shadow that binary with a shell function, so the locator asks bash
-// for `type -P openclaw` and intentionally ignores functions/aliases. The invalid
+// runtime from the active `openclaw` binary installed in the sandbox. The locator
+// scans executable PATH entries directly, so it does not depend on a nested shell
+// or observe connect-shell functions and aliases. The invalid
 // state is an active OpenClaw package without `dist/plugin-sdk/conversation-runtime.js`;
 // this pairing migration fails closed for that installer/package drift instead of
 // searching secondary global installs. OpenClaw 2026.9.1 moved challenge issuance
@@ -227,16 +227,23 @@ export async function assertOpenClawStateRoot(
 export const LOAD_CONVERSATION_RUNTIME_SOURCE = String.raw`
 import fs from "node:fs";
 import path from "node:path";
-import { execFileSync } from "node:child_process";
 import { pathToFileURL } from "node:url";
 
 function findOpenClawPackageRootFromBinary() {
-  let binary = "";
-  try { binary = execFileSync("bash", ["-c", "type -P openclaw || command -v openclaw"], { encoding: "utf8" }).trim(); } catch { return null; }
+  const binary = (process.env.PATH || "")
+    .split(path.delimiter)
+    .filter(Boolean)
+    .map((entry) => path.resolve(entry, "openclaw"))
+    .find((candidate) => {
+      try {
+        fs.accessSync(candidate, fs.constants.X_OK);
+        return fs.statSync(candidate).isFile();
+      } catch {
+        return false;
+      }
+    });
   if (!binary) return null;
-  let current = "";
-  try { current = fs.realpathSync(binary); } catch { return null; }
-  try { if (fs.statSync(current).isFile()) current = path.dirname(current); } catch { return null; }
+  let current = path.dirname(fs.realpathSync(binary));
   for (let depth = 0; depth < 8; depth += 1) {
     const manifest = path.join(current, "package.json");
     if (fs.existsSync(manifest)) {

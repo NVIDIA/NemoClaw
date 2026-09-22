@@ -197,17 +197,15 @@ describe("OpenClaw Discord pairing helper contracts", () => {
     expect(approveCommand).not.toContain('"abc$(touch /tmp/e2e-should-not-run)"');
   });
 
-  it("finds the active OpenClaw package when shell startup shadows openclaw with a function", () => {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-runtime-shadowed-"));
+  it("finds the active OpenClaw package from PATH without starting a child shell", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-runtime-path-"));
     try {
       const packageRoot = path.join(tmp, "openclaw-package");
       const packageBin = path.join(packageRoot, "bin");
       const pathBin = path.join(tmp, "path-bin");
-      const home = path.join(tmp, "home");
       const runtimeDir = path.join(packageRoot, "dist/plugin-sdk");
       fs.mkdirSync(packageBin, { recursive: true });
       fs.mkdirSync(pathBin, { recursive: true });
-      fs.mkdirSync(home, { recursive: true });
       fs.mkdirSync(runtimeDir, { recursive: true });
       fs.writeFileSync(
         path.join(packageRoot, "package.json"),
@@ -219,18 +217,13 @@ describe("OpenClaw Discord pairing helper contracts", () => {
       );
       fs.writeFileSync(path.join(packageBin, "openclaw"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
       fs.symlinkSync(path.join(packageBin, "openclaw"), path.join(pathBin, "openclaw"));
-      fs.writeFileSync(
-        path.join(home, ".bashrc"),
-        "openclaw() { echo shadowed-shell-function; }\nexport -f openclaw\n",
-      );
 
       const result = spawnSync(process.execPath, ["--input-type=module"], {
         input: `${LOAD_CONVERSATION_RUNTIME_SOURCE}\nconst runtime = await loadConversationRuntime();\nconsole.log(typeof runtime.issuePairingChallenge);\n`,
         encoding: "utf8",
         env: {
           ...process.env,
-          BASH_ENV: path.join(home, ".bashrc"),
-          PATH: `${pathBin}:${process.env.PATH ?? ""}`,
+          PATH: pathBin,
         },
       });
 
