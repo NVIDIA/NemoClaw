@@ -9,6 +9,9 @@ import { sandboxBaseImageHasSecurityInventory } from "../sandbox-base-image/secu
 import type { AgentDefinition } from "./defs";
 
 const DEEPAGENTS_CODE_DISTRIBUTION = "deepagents-code";
+const DEEPAGENTS_CODE_RUNTIME_CONTRACT_PATH =
+  "/usr/local/lib/nemoclaw/validate-dcode-runtime-contract.py";
+const DEEPAGENTS_CODE_RUNTIME_CONTRACT_OK = "nemoclaw-dcode-runtime-contract-ok";
 const DEEPAGENTS_CODE_DOS2UNIX_PROBE_OK = "nemoclaw-dcode-dos2unix-ok";
 const DEEPAGENTS_CODE_BASE_IMAGE_PROBE_GUARDS = [
   "--network",
@@ -26,10 +29,10 @@ type DeepAgentsCodeResolutionOptions = Pick<
 >;
 
 /**
- * Reject a published or cached Deep Agents Code base whose installed package
- * does not match the active manifest. The final image patchers intentionally
- * require this exact source pairing, so accepting a merely runnable older base
- * only defers the failure until the expensive final-image build (#6456).
+ * Reject a published or cached Deep Agents Code base whose installed runtime
+ * does not satisfy the active contract. The final image intentionally reruns
+ * this validator, so probing it here prevents a stale base from failing only
+ * after the expensive final-image build (#6456).
  */
 export function deepAgentsCodeBaseImageMatchesVersion(
   imageRef: string,
@@ -44,21 +47,20 @@ export function deepAgentsCodeBaseImageMatchesVersion(
       "/opt/venv/bin/python3",
       imageRef,
       "-I",
-      "-c",
-      `import importlib.metadata; print(importlib.metadata.version("${DEEPAGENTS_CODE_DISTRIBUTION}"))`,
+      DEEPAGENTS_CODE_RUNTIME_CONTRACT_PATH,
     ],
     { ignoreError: true, timeout: 20_000 },
   );
-  const installedVersion = output.trim();
-  if (!installedVersion) {
+  const contractOutput = output.trim();
+  if (!contractOutput) {
     console.warn(
-      `  Warning: ${imageRef} returned no Deep Agents Code version output; ` +
-        "the container or metadata probe may have failed. " +
+      `  Warning: ${imageRef} returned no Deep Agents Code runtime contract output; ` +
+        "the container or contract validator may have failed. " +
         `Rejecting the base image (expected ${DEEPAGENTS_CODE_DISTRIBUTION}==${expectedVersion}).`,
     );
     return false;
   }
-  return installedVersion === expectedVersion;
+  return contractOutput === DEEPAGENTS_CODE_RUNTIME_CONTRACT_OK;
 }
 
 /**
@@ -106,13 +108,17 @@ export function createDeepAgentsCodeBaseImageResolutionOptions(
   return {
     // Retain the resolver's pre-existing global inputs alongside these agent
     // inputs. Per-agent cache-policy isolation is a separate cross-agent change.
-    inputPaths: [path.join(agentRoot, "manifest.yaml"), path.join(agentRoot, "requirements.lock")],
+    inputPaths: [
+      path.join(agentRoot, "manifest.yaml"),
+      path.join(agentRoot, "requirements.lock"),
+      path.join(agentRoot, "validate-runtime-contract.py"),
+    ],
     validateImage: (imageRef) =>
       deepAgentsCodeBaseImageMatchesVersion(imageRef, expectedVersion) &&
       deepAgentsCodeBaseImageHasDos2Unix(imageRef) &&
       sandboxBaseImageHasSecurityInventory(imageRef),
     validationDescription:
-      `${DEEPAGENTS_CODE_DISTRIBUTION}==${expectedVersion}, dos2unix, and ` +
+      `${DEEPAGENTS_CODE_DISTRIBUTION}==${expectedVersion} runtime contract, dos2unix, and ` +
       "the immutable security package inventory",
   };
 }

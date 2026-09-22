@@ -2421,13 +2421,15 @@ write_auth_profile() {
     https://inference.local | https://inference.local/*)
       # Remove only the exact entries this function historically generated.
       # Preserve user-managed direct-provider profiles if they share the file.
-      python3 - <<'PYAUTH'
+      python3 - "$provider_key" <<'PYAUTH'
 import json
 import os
 import secrets
 import stat
 import sys
 
+provider_key = sys.argv[1]
+managed_profile_id = f'{provider_key}:manual'
 profile_name = 'auth-profiles.json'
 openclaw_path = os.path.expanduser('~/.openclaw')
 directory_flags = os.O_RDONLY | os.O_DIRECTORY | getattr(os, 'O_NOFOLLOW', 0)
@@ -2485,15 +2487,13 @@ try:
         raise SystemExit(0)
 
     def is_legacy_managed_profile(profile_id, profile):
-        if not isinstance(profile, dict):
+        if profile_id != managed_profile_id or not isinstance(profile, dict):
             return False
-        provider = profile.get('provider')
-        expected_id = f'{provider}:manual'
-        return profile_id == expected_id and profile == {
+        return profile == {
             'type': 'api_key',
-            'provider': provider,
+            'provider': provider_key,
             'keyRef': {'source': 'env', 'id': 'NVIDIA_INFERENCE_API_KEY'},
-            'profileId': expected_id,
+            'profileId': managed_profile_id,
         }
 
     retained = {
@@ -2580,6 +2580,17 @@ json.dump({
 }, open(path, 'w'))
 os.chmod(path, 0o600)
 PYAUTH
+}
+
+# Managed OpenShell routes authenticate at the host-owned proxy. Remove both
+# accepted input aliases from the parent entrypoint environment after profile
+# reconciliation succeeds, before any sandbox-user process can inherit them.
+clear_managed_inference_credentials() {
+  case "${NEMOCLAW_INFERENCE_BASE_URL:-}" in
+    https://inference.local | https://inference.local/*)
+      unset NVIDIA_INFERENCE_API_KEY NVIDIA_API_KEY
+      ;;
+  esac
 }
 
 harden_auth_profiles() {
@@ -5539,6 +5550,9 @@ if [ "$(id -u)" -ne 0 ]; then
   # Apply manifest-declared runtime env aliases before any child inherits the
   # env. This covers both one-shot commands and the gateway launch.
   apply_messaging_runtime_env_aliases
+  write_auth_profile
+  clear_managed_inference_credentials
+  harden_auth_profiles
 
   if [ ${#NEMOCLAW_CMD[@]} -gt 0 ]; then
     install_messaging_runtime_preloads
@@ -5577,8 +5591,6 @@ if [ "$(id -u)" -ne 0 ]; then
   fix_openclaw_ownership
   normalize_mutable_config_perms
   seed_default_workspace_templates /sandbox/.openclaw/workspace "" /sandbox/.openclaw/openclaw.json
-  write_auth_profile
-  harden_auth_profiles
 
   prepare_auto_pair_log
 
@@ -5655,6 +5667,7 @@ verify_messaging_runtime_secret_scans
 # auth-profiles.json files under ~/.openclaw. See
 # setup_auth_profile_as_sandbox for the HOME-handling rationale.
 setup_auth_profile_as_sandbox
+clear_managed_inference_credentials
 
 # If a command was passed (e.g., "openclaw agent ..."), run it as sandbox user
 if [ ${#NEMOCLAW_CMD[@]} -gt 0 ]; then
