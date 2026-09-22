@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-use nemoclaw_sdk::config::Document;
+use nemoclaw_sdk::config::{ComputeDriver, Document, Gateway, HarnessKind, InferenceProviderKind};
 use serde_json::json;
 use sha2::{Digest, Sha256};
 
@@ -72,15 +72,16 @@ fn live_inputs_preserve_raw_export_and_require_matching_authored_intent() {
     }
 }
 
-fn assert_hosted_document(document: &Document, harness: &str, runtime_root: &str) {
+fn assert_hosted_document(document: &Document, harness: HarnessKind, runtime_root: &str) {
     let gateway = &document.spec.gateway;
-    assert_eq!(gateway.management, "managed");
+    assert!(matches!(gateway, Gateway::Managed(_)));
+    let gateway = gateway.as_managed().unwrap();
     assert_eq!(gateway.engine, "unix:///var/run/docker.sock");
     assert_eq!(gateway.image, nemoclaw_sdk::config::DEFAULT_GATEWAY_IMAGE);
 
     let provider = &document.spec.inference_providers[0];
     assert_eq!(provider.name, "hosted-nvidia-prod");
-    assert_eq!(provider.provider, "openai");
+    assert_eq!(provider.provider, InferenceProviderKind::Openai);
     assert_eq!(provider.endpoint, "https://integrate.api.nvidia.com/v1");
     assert_eq!(
         provider.credential.as_ref().unwrap().env,
@@ -89,15 +90,16 @@ fn assert_hosted_document(document: &Document, harness: &str, runtime_root: &str
     assert!(provider.service_ref.is_none());
 
     let sandbox = &document.spec.sandboxes[0];
-    let expected_image = if harness == "hermes" {
+    let expected_image = if harness == HarnessKind::Hermes {
         nemoclaw_sdk::config::DEFAULT_HERMES_IMAGE
     } else {
         nemoclaw_sdk::config::DEFAULT_AGENT_IMAGE
     };
     assert_eq!(sandbox.image.ref_, expected_image);
-    assert_eq!(sandbox.runtime.provider, "docker");
-    assert!(sandbox.network.tier.is_empty());
-    let explicit = &sandbox.network.policy.as_ref().unwrap().explicit;
+    assert_eq!(sandbox.runtime.provider, ComputeDriver::Docker);
+    let nemoclaw_sdk::config::NetworkPolicy::Explicit(explicit) = &sandbox.network.policy else {
+        panic!("expected explicit policy");
+    };
     let process = explicit.process.as_ref().unwrap();
     assert_eq!(process.run_as_user.as_deref(), Some("1000"));
     assert_eq!(process.run_as_group.as_deref(), Some("1000"));
@@ -142,7 +144,7 @@ fn hosted_openclaw_scenario_rejects_legacy_export_and_preserves_authored_intent(
         raw,
         include_bytes!("../fixtures/openclaw-nvidia-hosted/v1.yaml"),
     );
-    assert_hosted_document(&v1, "openclaw", "/app");
+    assert_hosted_document(&v1, HarnessKind::OpenClaw, "/app");
 }
 
 #[test]
@@ -166,7 +168,7 @@ fn hosted_hermes_scenario_rejects_legacy_export_and_preserves_authored_intent() 
         export,
         include_bytes!("../fixtures/hermes-nvidia-hosted/v1.yaml"),
     );
-    assert_hosted_document(&v1, "hermes", "/opt/hermes");
+    assert_hosted_document(&v1, HarnessKind::Hermes, "/opt/hermes");
     let harness = v1.sandbox_harness(&v1.spec.sandboxes[0]).unwrap();
     assert_eq!(
         serde_json::to_value(harness.interfaces.as_ref().unwrap()).unwrap(),
@@ -398,7 +400,7 @@ mod live {
         let raw = fs::read(explicit_path("NEMOCLAW_LIVE_V0_EXPORT")).unwrap();
         let yaml = fs::read(explicit_path("NEMOCLAW_LIVE_V1_CONFIG")).unwrap();
         let document = super::authored_document(&raw, &yaml);
-        super::assert_hosted_document(&document, "hermes", "/opt/hermes");
+        super::assert_hosted_document(&document, super::HarnessKind::Hermes, "/opt/hermes");
         let directory = explicit_path("NEMOCLAW_LIVE_HOSTED_STATE");
         let bundle = explicit_path("NEMOCLAW_TEST_BUNDLE");
         fs::create_dir(&directory).expect("test requires a new state directory");

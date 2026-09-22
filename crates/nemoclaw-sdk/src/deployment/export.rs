@@ -1,49 +1,163 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-
 use super::*;
+
+pub(super) fn settled(bindings: &BTreeMap<String, StateBinding>) -> Result<(), Error> {
+    if bindings.values().any(|binding| !binding.deposed.is_empty()) {
+        return Err(Error::Conflict(
+            "replacement cleanup is unfinished; apply again before exporting",
+        ));
+    }
+    Ok(())
+}
 
 impl Deployment {
     pub async fn export(&self, cancel: &CancellationToken) -> Result<Document, Error> {
         Box::pin(self.export_inner(cancel)).await
     }
 
-    pub(super) async fn export_compute(
+    // Refresh an opaque state copy with provider configuration only. OpenTofu's
+    // refresh-only mode reads the existing resources without planning mutations;
+    // omitting data sources avoids running deployment readiness during export.
+    pub(super) async fn export_observations(
         &self,
-        target: &Target,
-        binding: &StateBinding,
-    ) -> Result<(), Error> {
-        if !target.address.starts_with("docker_container.") {
-            return Ok(());
-        }
-        let (endpoint, name) = if target.kind == "ollama_proxy" {
-            (
-                target.values["engine"].clone(),
-                target.values["name"].clone(),
-            )
+        bundle: &Bundle,
+        store: &Store,
+        record: &Record,
+        runtime: bool,
+        cancel: &CancellationToken,
+    ) -> Result<BTreeMap<String, Value>, Error> {
+        let graph = if runtime {
+            compile::compile_runtime(
+                &record.document,
+                &record.generations,
+                &bundle.manifest.version,
+            )?
         } else {
-            let spec: crate::managed::Spec = serde_json::from_str(&target.values["spec"])
-                .map_err(|_| Error::State("invalid runtime intent"))?;
-            (spec.engine().to_owned(), spec.name)
+            compile::compile(
+                &record.document,
+                &record.generations,
+                &bundle.manifest.version,
+            )?
         };
-        let engine = self.engines.resolve(&endpoint)?;
-        let observed = engine.container(&binding.id).await?.ok_or(Error::Conflict(
-            "managed container is absent; no YAML exported",
-        ))?;
-        if observed.id.as_deref() != Some(binding.id.as_str())
-            || observed
-                .name
-                .as_deref()
-                .map(|name| name.trim_start_matches('/'))
-                != Some(name.as_str())
-        {
-            return Err(crate::ObservationError::BindingMismatch.into());
+        let temporary = tempfile::Builder::new()
+            .prefix(".export-")
+            .tempdir_in(&store.directory)
+            .map_err(|_| Error::State("cannot create export observation directory"))?;
+        let stage = Store::open(temporary.path())?;
+        fs::copy(
+            store.directory.join("terraform.tfstate"),
+            stage.directory.join("terraform.tfstate"),
+        )
+        .map_err(|_| Error::State("export requires readable deployment state"))?;
+        self.prepare(
+            bundle,
+            &stage,
+            &json!({"terraform":graph["terraform"], "provider":graph["provider"]}),
+        )?;
+        let schema_environment = crate::state::schema_environment(&stage.directory);
+        crate::process::run(
+            &stage.directory,
+            &bundle.tofu(),
+            &["init", "-upgrade", "-input=false", "-no-color"],
+            &schema_environment,
+            cancel,
+        )
+        .await?;
+        let bindings = stage.bindings(&bundle.tofu(), cancel).await?;
+        settled(&bindings)?;
+        let targets = if runtime {
+            compile::runtime_targets(&record.document, &record.generations)?
+        } else {
+            compile::targets(&record.document, &record.generations)?
+        };
+        let targets: Vec<_> = targets
+            .iter()
+            .filter(|target| !target.address.starts_with("data."))
+            .collect();
+        if bindings.len() != targets.len() {
+            return Err(Error::Conflict(
+                "export requires all declared resource bindings",
+            ));
         }
-        Ok(())
+        for target in &targets {
+            let binding = bindings.get(&target.address).ok_or(Error::Conflict(
+                "export requires established resource identity",
+            ))?;
+            if !plan::disposable(&target.address)
+                && target
+                    .values
+                    .get("spec")
+                    .is_some_and(|spec| *spec != binding.spec)
+            {
+                return Err(Error::Conflict(
+                    "resource state differs from intent; no YAML exported",
+                ));
+            }
+        }
+        let environment =
+            gateway_environment(&record.document, self.secrets.as_ref(), &stage.directory)?;
+        crate::process::run(
+            &stage.directory,
+            &bundle.tofu(),
+            &[
+                "plan",
+                "-refresh-only",
+                "-input=false",
+                "-no-color",
+                "-out=export.plan",
+            ],
+            &environment,
+            cancel,
+        )
+        .await?;
+        let bytes = crate::process::run(
+            &stage.directory,
+            &bundle.tofu(),
+            &["show", "-json", "export.plan"],
+            &schema_environment,
+            cancel,
+        )
+        .await?;
+        let plan: Value = serde_json::from_slice(&bytes)
+            .map_err(|_| Error::State("invalid OpenTofu export observation"))?;
+        if plan["format_version"]
+            .as_str()
+            .and_then(|version| version.split('.').next())
+            != Some("1")
+        {
+            return Err(Error::State(
+                "unsupported OpenTofu export observation version",
+            ));
+        }
+        // The public plan's prior_state is the state after provider refresh,
+        // before configuration planning. With a provider-only configuration,
+        // planned_values excludes orphan resources even in refresh-only mode.
+        let mut observations = crate::state::parse_resources(&plan["prior_state"]["values"])?;
+        observations.retain(|address, _| !address.starts_with("data."));
+        if observations.len() != bindings.len() {
+            return Err(Error::Conflict(
+                "resource is confirmed absent; no configuration exported",
+            ));
+        }
+        for (address, binding) in bindings {
+            if observations
+                .get(&address)
+                .and_then(|row| row.get("id"))
+                .and_then(Value::as_str)
+                != Some(binding.id.as_str())
+            {
+                return Err(crate::ObservationError::BindingMismatch.into());
+            }
+        }
+        for target in targets {
+            validate_projection(target, &observations[&target.address])?;
+        }
+        Ok(observations)
     }
 
     async fn export_inner(&self, cancel: &CancellationToken) -> Result<Document, Error> {
-        let (_, store) = self.open()?;
+        let (bundle, store) = self.open()?;
         let record = store.load()?.ok_or(Error::Conflict(
             "no saved deployment configuration; apply a configuration before exporting",
         ))?;
@@ -63,46 +177,24 @@ impl Deployment {
             ));
         }
 
-        self.export_runtime(&store, &record, cancel).await?;
+        self.export_runtime(&bundle, &store, &record, cancel)
+            .await?;
         (self.progress)(Progress::Exporting);
-        let client = OpenShell::connect(&record.document.spec.gateway, self.secrets.clone())?;
-        let bindings = store.bindings()?;
+        let observations = self
+            .export_observations(&bundle, &store, &record, false, cancel)
+            .await?;
         let mut document = record.document;
         for target in compile::targets(&document, &record.generations)? {
             if cancel.is_cancelled() {
                 return Err(Error::Cancelled);
             }
-            if target.address.starts_with("data.") {
+            if target.address.starts_with("data.") || plan::disposable(&target.address) {
                 continue;
             }
-            if plan::disposable(&target.address) {
-                let binding = bindings
-                    .get(&target.address)
-                    .ok_or(Error::Conflict("resource has no saved ID"))?;
-                self.export_compute(&target, binding).await?;
-                continue;
-            }
+            let observed: Row = serde_json::from_value(observations[&target.address].clone())
+                .map_err(|_| Error::State("invalid provider export observation"))?;
             let mut expected = target.values;
-            expected.insert(
-                "id".into(),
-                bindings
-                    .get(&target.address)
-                    .ok_or(Error::Conflict("resource has no saved ID"))?
-                    .id
-                    .clone(),
-            );
-            let observed = if let Some(backend) =
-                crate::services::BackendRegistry::new(&self.engines)
-                    .resolve(&target.kind, &expected)?
-            {
-                backend.read(&target.kind, &expected, false).await?
-            } else {
-                client.read(&target.kind, &expected, false).await?
-            }
-            .ok_or(Error::Conflict(
-                "resource is confirmed absent; no configuration exported",
-            ))?;
-            verify_identity(&expected, &observed)?;
+            expected.insert("id".into(), observed["id"].clone());
             match target.kind.as_str() {
                 "provider"
                     if expected
@@ -119,13 +211,61 @@ impl Deployment {
                     }
                 }
                 "provider" => export_provider(&mut document, &expected, &observed)?,
-                "sandbox" => export_sandbox(&client, &document, &mut expected, &observed).await?,
+                "sandbox" => export_sandbox(&expected, &observed)?,
                 _ => {}
             }
         }
         document.validate()?;
         Ok(document)
     }
+}
+
+fn validate_projection(target: &Target, observed: &Value) -> Result<(), Error> {
+    if target.address.starts_with("docker_container.") {
+        let name = match target.values.get("name") {
+            Some(name) => name.clone(),
+            None => {
+                serde_json::from_str::<crate::managed::Spec>(&target.values["spec"])
+                    .map_err(|_| Error::State("invalid runtime intent"))?
+                    .name
+            }
+        };
+        if observed["name"]
+            .as_str()
+            .map(|name| name.trim_start_matches('/'))
+            != Some(name.as_str())
+        {
+            return Err(crate::ObservationError::BindingMismatch.into());
+        }
+    }
+    if plan::disposable(&target.address) {
+        return Ok(());
+    }
+    // Providers validate observations against their prior bindings. Export also
+    // requires that the observed identity still belongs to this document.
+    for field in ["name", "workspace", "owner", "generation"] {
+        if let Some(expected) = target.values.get(field)
+            && observed[field].as_str() != Some(expected)
+        {
+            return Err(crate::ObservationError::BindingMismatch.into());
+        }
+    }
+    // Authored configuration cannot be exported as unchanged intent when the
+    // provider reports drift. Compare JSON semantically, without harness dispatch.
+    for (field, expected) in &target.values {
+        if field.ends_with("_json") {
+            let expected: Value = serde_json::from_str(expected)
+                .map_err(|_| Error::State("invalid authored export configuration"))?;
+            let actual: Value = serde_json::from_str(observed[field].as_str().unwrap_or(""))
+                .map_err(|_| Error::State("invalid observed export configuration"))?;
+            if actual != expected {
+                return Err(Error::Conflict(
+                    "resource configuration drift requires inspection",
+                ));
+            }
+        }
+    }
+    Ok(())
 }
 
 fn export_provider(document: &mut Document, expected: &Row, observed: &Row) -> Result<(), Error> {
@@ -171,12 +311,7 @@ fn export_provider(document: &mut Document, expected: &Row, observed: &Row) -> R
     Ok(())
 }
 
-async fn export_sandbox(
-    client: &OpenShell,
-    document: &Document,
-    expected: &mut Row,
-    observed: &Row,
-) -> Result<(), Error> {
+fn export_sandbox(expected: &Row, observed: &Row) -> Result<(), Error> {
     if [
         "image",
         "agent_name",
@@ -195,20 +330,6 @@ async fn export_sandbox(
             "sandbox configuration drift requires inspection",
         ));
     }
-    let definition = document.sandbox(&expected["name"])?;
-    if document.sandbox_harness(definition)?.kind == "pi" {
-        expected.insert(
-            "pi_model_config".into(),
-            serde_json::to_string(
-                &document
-                    .sandbox_inference(definition)?
-                    .default_route()?
-                    .overrides,
-            )
-            .map_err(|_| Error::State("cannot encode Pi model configuration"))?,
-        );
-    }
-    client.configuration(expected).await?;
     Ok(())
 }
 
@@ -216,34 +337,43 @@ async fn export_sandbox(
 mod tests {
     use super::*;
 
-    #[tokio::test]
-    #[cfg(unix)]
-    async fn exporting_compute_observes_namespace_without_reading_credentials_or_readiness() {
-        let fixture = crate::docker::fixture::Fixture::start(|request| {
-            assert_eq!(request.method, "GET");
-            assert_eq!(request.path, "/containers/provider-id/json");
-            Some((
-                200,
-                serde_json::to_vec(&json!({"Id":"provider-id","Name":"/proxy"})).unwrap(),
-            ))
-        })
-        .await;
+    #[test]
+    fn export_rejects_configuration_and_intent_identity_drift_from_provider_observations() {
+        let target = Target {
+            address: "nemoclaw_pi_configuration.agent".into(),
+            kind: "pi_configuration".into(),
+            values: Row::from([
+                ("owner".into(), "deployment".into()),
+                ("generation".into(), "generation".into()),
+                ("name".into(), "agent".into()),
+                ("model_json".into(), r#"{"model":"wanted"}"#.into()),
+            ]),
+        };
+        let observed = serde_json::to_value(&target.values).unwrap();
+        validate_projection(&target, &observed).unwrap();
+        for (key, value) in [
+            ("owner", "foreign"),
+            ("generation", "foreign"),
+            ("model_json", r#"{"model":"changed"}"#),
+        ] {
+            let mut changed = observed.clone();
+            changed[key] = json!(value);
+            assert!(validate_projection(&target, &changed).is_err(), "{key}");
+        }
+        let mut reformatted = observed;
+        reformatted["model_json"] = json!(r#"{ "model": "wanted" }"#);
+        validate_projection(&target, &reformatted).unwrap();
+    }
+
+    #[test]
+    fn export_rejects_container_namespace_drift_from_provider_observations() {
         let target = Target {
             address: "docker_container.ollama_proxy_model".into(),
             kind: "ollama_proxy".into(),
-            values: Row::from([
-                ("engine".into(), fixture.endpoint.clone()),
-                ("name".into(), "proxy".into()),
-            ]),
+            values: Row::from([("name".into(), "expected-proxy".into())]),
         };
-        let binding = StateBinding {
-            id: "provider-id".into(),
-            spec: String::new(),
-        };
-        Deployment::new(Path::new("unused"), Path::new("unused"))
-            .export_compute(&target, &binding)
-            .await
-            .unwrap();
+        validate_projection(&target, &json!({"name":"expected-proxy"})).unwrap();
+        assert!(validate_projection(&target, &json!({"name":"renamed-proxy"})).is_err());
     }
 
     #[tokio::test]

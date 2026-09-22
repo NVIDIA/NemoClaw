@@ -1,5 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
+use nemoclaw_sdk::config::HarnessKind;
 use nemoclaw_sdk::{
     compile::{Generations, compile},
     config::Document,
@@ -183,7 +184,7 @@ fn five_agent_example_compiles_to_five_independent_sandboxes_sharing_inference()
             .unwrap();
         let settings: Value = serde_json::from_str(&row.values["inference_json"]).unwrap();
         let runtime_agents = settings["agents"].as_array();
-        if harness.kind == "openclaw" {
+        if harness.kind == HarnessKind::OpenClaw {
             assert_eq!(runtime_agents.unwrap().len(), 1);
         } else {
             assert_eq!(row.values["agent_name"], sandbox.agent.name);

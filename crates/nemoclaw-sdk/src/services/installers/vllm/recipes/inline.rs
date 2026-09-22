@@ -7,9 +7,7 @@ use crate::{config::ConfigError, snapshot::Manifest};
 use limits as l;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::{collections::BTreeMap, sync::LazyLock};
-static TOKEN: LazyLock<regex::Regex> = LazyLock::new(|| regex::Regex::new(l::TOKEN).unwrap());
-static SHA256: LazyLock<regex::Regex> = LazyLock::new(|| regex::Regex::new(l::SHA256).unwrap());
+use std::collections::BTreeMap;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -144,9 +142,6 @@ pub fn relative(path: &str) -> bool {
 fn absolute(path: &str) -> bool {
     path.strip_prefix('/').is_some_and(relative)
 }
-fn digest(value: &str) -> bool {
-    SHA256.is_match(value)
-}
 impl InlineRecipe {
     pub fn key(&self, service: &Service) -> String {
         let bytes = serde_json::to_vec(&(&service.model, self)).expect("recipe serialization");
@@ -157,46 +152,26 @@ impl InlineRecipe {
     }
     pub fn validate(&self, service: &Service) -> Result<(), ConfigError> {
         let bad = || ConfigError::new("invalid inline recipe contract or incompatible service");
-        if self.api_version != l::API_VERSION
-            || !l::ARCHITECTURES.contains(&self.compatibility.architecture.as_str())
-            || self.compatibility.gpu.is_empty()
-            || !(1..=l::DRIVER_MAX).contains(&self.compatibility.min_driver_major)
-            || !(1..=l::MEMORY_MAX).contains(&self.compatibility.min_host_memory_gi_b)
-            || self
-                .compatibility
-                .image_labels
-                .get(l::PROTOCOL_LABEL)
-                .map(String::as_str)
-                != Some("v1")
-            || self.compatibility.image_labels.iter().any(|(k, v)| {
-                !k.starts_with("org.nemoclaw.") || v.is_empty() || v.len() > l::TOKEN_MAX
-            })
-            || self.resources.prepared_bytes == 0
-            || self.resources.prepared_bytes > l::PREPARED_MAX
-            || self.resources.preparation_memory_gi_b == 0
-            || self.resources.preparation_memory_gi_b > l::MEMORY_MAX
-            || self.resources.startup_headroom_gi_b > l::MEMORY_MAX
-            || self.resources.gpu_memory_bytes < l::GPU_MIN
-            || self.resources.gpu_memory_bytes > l::GPU_MAX
+        crate::config::schema::validate_definition("InlineRecipe", self)?;
+        if self
+            .compatibility
+            .image_labels
+            .values()
+            .any(|value| value.len() > l::TOKEN_MAX)
             || service.memory.gpu_memory_gib != 0
         {
             return Err(bad());
         }
         for tool in [&self.preparation, &self.verification] {
-            if !absolute(&tool.executable)
-                || tool.executable.len() > l::PATH_MAX
-                || !digest(&tool.sha256)
-            {
+            if !absolute(&tool.executable) || tool.executable.len() > l::PATH_MAX {
                 return Err(bad());
             }
         }
-        if self.licenses.is_empty()
-            || self.source_notices.is_empty()
-            || self
-                .licenses
-                .iter()
-                .chain(&self.source_notices)
-                .any(|p| !absolute(p))
+        if self
+            .licenses
+            .iter()
+            .chain(&self.source_notices)
+            .any(|p| !absolute(p))
         {
             return Err(bad());
         }
@@ -209,58 +184,23 @@ impl InlineRecipe {
             }
         }
         if let Some(reuse) = &self.reuse
-            && (!relative(&reuse.snapshot_directory) || !digest(&reuse.preparation_key))
+            && !relative(&reuse.snapshot_directory)
         {
             return Err(bad());
         }
         let settings = &self.serving;
-        let token = |s: &str| s.len() <= l::TOKEN_MAX && TOKEN.is_match(s);
-        if !token(&settings.model_name)
-            || [
-                &settings.tool_parser,
-                &settings.reasoning_parser,
-                &settings.kv_cache_dtype,
-                &settings.mamba_cache_dtype,
-            ]
-            .iter()
-            .any(|v| !v.is_empty() && !token(v))
+        // Schema maxLength counts Unicode characters; this contract limits UTF-8 bytes.
+        if settings
+            .environment
+            .values()
+            .any(|value| value.len() > l::PATH_MAX)
         {
             return Err(bad());
-        }
-        for (key, value) in &settings.environment {
-            if key == "VLLM_API_KEY"
-                || !key.starts_with("VLLM_")
-                || !key
-                    .bytes()
-                    .all(|b| b.is_ascii_uppercase() || b.is_ascii_digit() || b == b'_')
-                || value.len() > l::PATH_MAX
-                || value.contains('\0')
-            {
-                return Err(bad());
-            }
         }
         for (key, value) in &settings.prepared_environment {
-            if key == "VLLM_API_KEY"
-                || !key.starts_with("VLLM_")
-                || !key
-                    .bytes()
-                    .all(|b| b.is_ascii_uppercase() || b.is_ascii_digit() || b == b'_')
-                || settings.environment.contains_key(key)
-                || (value != "." && !relative(value))
-            {
+            if settings.environment.contains_key(key) || (value != "." && !relative(value)) {
                 return Err(bad());
             }
-        }
-        if let Some(c) = &settings.compilation
-            && (c.mode > l::COMPILATION_MODE_MAX
-                || !l::CUDAGRAPH_MODES.contains(&c.cudagraph_mode.as_str())
-                || c.capture_sizes.is_empty()
-                || c.capture_sizes.len() > l::CAPTURE_COUNT_MAX
-                || c.capture_sizes
-                    .iter()
-                    .any(|n| *n == 0 || *n > l::CAPTURE_SIZE_MAX))
-        {
-            return Err(bad());
         }
         Ok(())
     }

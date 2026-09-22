@@ -226,7 +226,8 @@ If status is missing or the engine is unreachable, retain the original apply err
 | Operator stop or protection trip | Establish why the stop was requested before explicitly resuming inference |
 
 After correcting the conditions, follow [interrupted-operation recovery](usage.md#recover-an-interrupted-operation) from the client with the original YAML, bundle, and state directory.
-An unfinished apply must first reconcile that exact intent; do not change its timeout/model settings to bypass the guard.
+An unfinished OpenShell mutation must first reconcile that exact intent.
+A failed runtime apply can accept corrected model or serving settings subject to normal validation, replacement, and durable-storage checks.
 For a completed deployment, preview any proposed configuration change and follow the normal runtime replacement rules.
 Successful recovery must pass configuration and service readiness checks.
 Verify a native agent reply separately using [inference verification](inference.md#verify-the-result).

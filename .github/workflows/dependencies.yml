@@ -4,12 +4,6 @@ name: Rust dependency policy
 on:
   pull_request:
     branches: [v1]
-    paths:
-      - '**/Cargo.toml'
-      - '**/Cargo.lock'
-      - rust-toolchain.toml
-      - deny.toml
-      - .github/workflows/dependencies.yml
   push:
     branches: [v1]
     paths:

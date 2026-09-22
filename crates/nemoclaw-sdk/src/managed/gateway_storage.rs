@@ -1,5 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
+use crate::config::ComputeDriver;
 #[cfg(all(test, unix))]
 #[path = "gateway_storage_tests.rs"]
 mod tests;
@@ -103,7 +104,7 @@ impl Engine {
                 "invalid gateway storage specification or engine",
             ));
         }
-        if spec.compute_driver == "podman" {
+        if spec.compute_driver == ComputeDriver::Podman {
             #[cfg(unix)]
             {
                 let native = self.podman_json("info").await?;

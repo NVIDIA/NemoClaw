@@ -60,7 +60,7 @@ Resource events adapt OpenTofu's machine-readable UI into fixed resource-kind, a
 Resources of the same kind share a label.
 Waiting events report a fixed operation label when a timed step starts and every 10 seconds while it remains pending.
 Completed events contain a fixed `operation` label, an `elapsed` duration, and a `StepOutcome` of `Succeeded`, `Failed`, or `Cancelled`.
-They cover bundle verification, OpenTofu commands, sandbox/runtime readiness, and the `fabric.health` request, and contain no diagnostic payloads.
+They cover bundle verification and OpenTofu commands, including provider readiness checks within apply, and contain no diagnostic payloads.
 Download events contain the backend resource kind and name, requested image or model, optional layer ID, phase, and optional completed/total byte counts.
 Each event replaces the previous counts for that resource, artifact, and layer; counts are not increments.
 Provider downloads reach the callback through a local channel; updates can be dropped and never determine the operation result.
@@ -73,7 +73,7 @@ A timed step reports when it returns, including cooperative cancellation; droppi
 | Method | Input and result | Effect |
 |---|---|---|
 | `plan(&document, &cancel)` | `OperationResult` with changes and any deferred checks | Observes and previews the desired deployment |
-| `apply(&document, &cancel)` | `OperationResult` after checked planning and applicable readiness | Can create/change resources, download models, and check readiness without generation; a completely unchanged plan skips the post-apply sandbox readiness wait |
+| `apply(&document, &cancel)` | `OperationResult` after checked planning/readiness | Can create/change resources, download models, and check readiness without generation |
 | `export(&cancel)` | Observed `Document`; call `yaml()` to serialize it | Checks retained intent and observations; does not back up native data |
 | `plan_destroy(&cancel)` | `OperationResult` from retained state | Previews owned workload removal and retained resources |
 | `destroy(&cancel)` | `OperationResult` from retained state | Deletes sandbox files/history under the [retention rules](state.md) |
@@ -88,6 +88,7 @@ Apply computes its own checked plan; passing a previous preview is not part of t
 Each observation wraps `RuntimeHealth`: a `supported` flag, an optional Fabric `report`, and an optional bridge `reason_code`.
 The report uses Fabric's field names and retains check timestamps and dependency results.
 Other lifecycle operations leave this list empty.
+OpenTofu schedules the provider's sandbox completion observation; the SDK reads its recorded result without a second health request.
 
 `Error::Health { health }` retains the observation when supported health cannot establish readiness.
 Socket failures inside the host bridge also return `Error::Health`, with `health_transport_error` or `health_transport_timeout`.
@@ -100,6 +101,8 @@ The compatibility behavior for the current Fabric pin and required agent image i
 `with_secrets` supplies an application-owned `openshell::Secrets` implementation; the default resolves nonempty environment variables.
 The resolver receives reference names, including gateway TLS references whose values must be file paths.
 Resolved values are supplied to the SDK and, as required, its provider subprocess.
+OpenTofu initialization and JSON inspection do not resolve deployment credentials.
+Export resolves gateway authentication references for provider refresh, without requiring inference or search credentials.
 Keep them out of application logs and return typed authentication errors without attaching the secret.
 
 This resolver adapts values already loaded by the application:

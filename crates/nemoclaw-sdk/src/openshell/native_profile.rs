@@ -1,14 +1,14 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::ObservationError;
+use crate::{ObservationError, config::InferenceProviderKind};
 use openshell_core::proto;
 
 /// Build the endpoint and credential boundary for a native inference provider.
 pub fn definition(
     name: &str,
     endpoint: &str,
-    api: &str,
+    kind: InferenceProviderKind,
     authenticated: bool,
 ) -> Result<proto::ProviderProfile, ObservationError> {
     if name.is_empty()
@@ -17,7 +17,6 @@ pub fn definition(
         || !name
             .bytes()
             .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
-        || !matches!(api, "openai" | "anthropic")
     {
         return Err(ObservationError::Query);
     }
@@ -74,13 +73,13 @@ pub fn definition(
                 name: key.clone(),
                 env_vars: vec![key],
                 required: true,
-                auth_style: if api == "anthropic" {
+                auth_style: if kind == InferenceProviderKind::Anthropic {
                     "header"
                 } else {
                     "bearer"
                 }
                 .into(),
-                header_name: if api == "anthropic" {
+                header_name: if kind == InferenceProviderKind::Anthropic {
                     "x-api-key"
                 } else {
                     "Authorization"
@@ -103,7 +102,13 @@ mod tests {
 
     #[test]
     fn inference_credentials_and_policy_are_bound_to_the_selected_endpoint() {
-        let profile = definition("local", "http://172.20.0.1:11436/v1", "openai", true).unwrap();
+        let profile = definition(
+            "local",
+            "http://172.20.0.1:11436/v1",
+            InferenceProviderKind::Openai,
+            true,
+        )
+        .unwrap();
         assert_eq!(profile.id, "nemoclaw-inference-local");
         assert_eq!(
             profile.credentials[0].env_vars,
@@ -116,7 +121,13 @@ mod tests {
         assert_eq!(endpoint.path, "/v1/**");
         assert_eq!(endpoint.protocol, "rest");
         assert!(endpoint.allowed_ips.contains(&"172.20.0.1/32".to_string()));
-        let other = definition("hosted", "https://api.example.com/v1", "anthropic", true).unwrap();
+        let other = definition(
+            "hosted",
+            "https://api.example.com/v1",
+            InferenceProviderKind::Anthropic,
+            true,
+        )
+        .unwrap();
         assert_ne!(
             other.credentials[0].env_vars,
             profile.credentials[0].env_vars
@@ -126,7 +137,13 @@ mod tests {
 
     #[test]
     fn inference_grants_the_executables_observed_for_shipped_python_runtimes() {
-        let profile = definition("local", "http://172.20.0.1:11436/v1", "openai", false).unwrap();
+        let profile = definition(
+            "local",
+            "http://172.20.0.1:11436/v1",
+            InferenceProviderKind::Openai,
+            false,
+        )
+        .unwrap();
         // OpenShell observes /proc/<pid>/exe, not the virtualenv launch symlink.
         for executable in [
             "/usr/local/bin/python3.14",
@@ -154,10 +171,15 @@ mod tests {
     #[test]
     fn credentialless_models_need_no_placeholder_and_invalid_urls_fail_closed() {
         assert!(
-            definition("local", "http://172.20.0.1:11434/v1", "openai", false)
-                .unwrap()
-                .credentials
-                .is_empty()
+            definition(
+                "local",
+                "http://172.20.0.1:11434/v1",
+                InferenceProviderKind::Openai,
+                false
+            )
+            .unwrap()
+            .credentials
+            .is_empty()
         );
         for endpoint in [
             "https://user:secret@example.com/v1",
@@ -165,7 +187,7 @@ mod tests {
             "https://example.com/v1#fragment",
             "file:///tmp/model",
         ] {
-            assert!(definition("local", endpoint, "openai", true).is_err());
+            assert!(definition("local", endpoint, InferenceProviderKind::Openai, true).is_err());
         }
     }
 }

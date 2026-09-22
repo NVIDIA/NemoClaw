@@ -178,3 +178,16 @@ test(
     }
   },
 );
+
+test("Pi uses the native catalog endpoint for a named model without an override", async () => {
+  const loaded = await loadConfiguredModel(
+    { provider: "openai", model: "gpt-4o-mini" },
+    new InMemoryCredentialStore(),
+    { default: { provider: "openai", model: "gpt-4o-mini" } },
+  );
+  try {
+    assert.equal(loaded.model.baseUrl, "https://api.openai.com/v1");
+  } finally {
+    await loaded.cleanup();
+  }
+});

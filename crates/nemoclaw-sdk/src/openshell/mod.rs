@@ -5,6 +5,7 @@
 mod tests;
 
 mod agent;
+mod pi_configuration;
 pub(crate) use agent::runtime_read_requirements;
 mod native_profile;
 mod network;

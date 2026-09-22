@@ -323,7 +323,7 @@ async fn sdk_docker_proxy_lifecycle_preserves_readiness_and_storage_guards() {
     let stop_id = id.clone();
     let readiness_failure = Deployment::new(directory.path(), &bundle).with_progress(
         std::sync::Arc::new(move |event| {
-            if event == nemoclaw_sdk::Progress::Readiness
+            if event == nemoclaw_sdk::Progress::Applying
                 && !stopped.swap(true, std::sync::atomic::Ordering::SeqCst)
             {
                 docker(&["stop", "--time", "1", &stop_id]);

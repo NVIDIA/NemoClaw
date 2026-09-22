@@ -27,6 +27,9 @@ pub enum Error {
     Execution {
         operation: String,
         diagnostic: String,
+        /// Data-source postconditions were the only reported apply failures.
+        /// Absent for incomplete output or an ambiguous resource operation.
+        postcondition_failures: Option<Vec<String>>,
     },
     #[error("operation interrupted; retain state and reapply the same configuration")]
     Cancelled,

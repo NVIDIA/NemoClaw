@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+mod observations;
+
 use crate::{CancellationToken, Error};
 use process_wrap::tokio::{CommandWrap, KillOnDrop};
 use std::{collections::BTreeMap, path::Path, process::Stdio, time::Duration};
@@ -84,6 +86,7 @@ pub(crate) async fn run_with_progress(
     let mut child = command.spawn().map_err(|_| Error::Execution {
         operation: args.first().unwrap_or(&"command").to_string(),
         diagnostic: "cannot launch bundled executable".into(),
+        postcondition_failures: None,
     })?;
     let stdout = AbortOnDropHandle::new(tokio::spawn(capture(
         child.stdout().take().expect("piped stdout"),
@@ -128,12 +131,24 @@ pub(crate) async fn run_with_progress(
         ()=cancel.cancelled()=>return Err(Error::Cancelled),
         result=tokio::time::timeout(Duration::from_secs(5),capture)=>result.map_err(|_|Error::State("child exited but its output streams did not close; retain state for reconciliation"))??,
     };
-    if status.is_ok_and(|status| status.success()) && !overflow {
+    if status.as_ref().is_ok_and(|status| status.success()) && !overflow {
         if !valid_ui {
             return Err(Error::State("invalid or unsupported OpenTofu UI stream"));
         }
         return Ok(output);
     }
+    let postcondition_failures = if args.first() == Some(&"apply")
+        && args.contains(&"-json")
+        && status.as_ref().is_ok_and(|status| status.code() == Some(1))
+        && valid_ui
+        && diagnostic.is_empty()
+        && !overflow
+        && !diagnostic_overflow
+    {
+        observations::postcondition_failures(&output)
+    } else {
+        None
+    };
     let mut message = String::from_utf8_lossy(&diagnostic).into_owned();
     diagnostic.fill(0);
     if message.is_empty() {
@@ -178,7 +193,41 @@ pub(crate) async fn run_with_progress(
     Err(Error::Execution {
         operation: args.first().unwrap_or(&"command").to_string(),
         diagnostic: message.trim().into(),
+        postcondition_failures,
     })
+}
+
+#[cfg(test)]
+#[cfg(unix)]
+#[tokio::test]
+async fn only_normal_apply_failure_can_establish_postcondition_evidence() {
+    use std::os::unix::fs::PermissionsExt;
+    let directory = tempfile::tempdir().unwrap();
+    let binary = directory.path().join("tofu");
+    std::fs::write(
+        &binary,
+        r##"#!/bin/sh
+printf '%s\n' '{"type":"version","ui":"1.2"}' '{"type":"diagnostic","diagnostic":{"severity":"error","summary":"Resource postcondition failed","snippet":{"context":"data.example_readiness.main.lifecycle.postcondition[0]"}}}'
+exit "$3"
+"##,
+    )
+    .unwrap();
+    std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o700)).unwrap();
+    for (exit, expected) in [("1", true), ("2", false)] {
+        let error = run_with_progress(
+            directory.path(),
+            &binary,
+            &["apply", "-json", exit],
+            &BTreeMap::new(),
+            &CancellationToken::new(),
+            Some(std::sync::Arc::new(|_| {})),
+        )
+        .await
+        .unwrap_err();
+        assert!(
+            matches!(error, Error::Execution { postcondition_failures, .. } if postcondition_failures.is_some() == expected)
+        );
+    }
 }
 
 #[cfg(test)]

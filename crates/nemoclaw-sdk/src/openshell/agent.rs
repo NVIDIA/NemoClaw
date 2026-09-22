@@ -1,5 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
+use crate::config::HarnessKind;
 
 use crate::backend::Row;
 use openshell_core::proto;
@@ -7,15 +8,15 @@ use openshell_core::proto;
 /// Readable directories required by the packaged Fabric runtime and adapters.
 /// Keep these aligned with image/fabric/Dockerfile and the launch command below.
 pub(crate) fn runtime_read_requirements(
-    harness: &str,
+    harness: HarnessKind,
 ) -> impl Iterator<Item = (&'static str, &'static str)> {
     [
         ("/opt/fabric", "explicit filesystem policy must grant read access to /opt/fabric for the Fabric runtime"),
         ("/opt/nemoclaw", "explicit filesystem policy must grant read access to /opt/nemoclaw for the NemoClaw runtime bridge"),
     ].into_iter().chain(match harness {
-        "openclaw" => Some(("/app", "explicit filesystem policy must grant read access to /app for OpenClaw")),
-        "hermes" => Some(("/opt/hermes", "explicit filesystem policy must grant read access to /opt/hermes for Hermes")),
-        "pi" => Some(("/opt/fabric-source", "explicit filesystem policy must grant read access to /opt/fabric-source for Pi")),
+        HarnessKind::OpenClaw => Some(("/app", "explicit filesystem policy must grant read access to /app for OpenClaw")),
+        HarnessKind::Hermes => Some(("/opt/hermes", "explicit filesystem policy must grant read access to /opt/hermes for Hermes")),
+        HarnessKind::Pi => Some(("/opt/fabric-source", "explicit filesystem policy must grant read access to /opt/fabric-source for Pi")),
         _ => None,
     })
 }
@@ -33,7 +34,10 @@ pub fn command(runtime: &str) -> Vec<String> {
 }
 
 pub fn environment(name: &str, runtime: &str) -> Row {
-    if let Some(harness) = runtime.strip_prefix("fabric-") {
+    if let Some(harness) = runtime
+        .strip_prefix("fabric-")
+        .and_then(|value| value.parse::<HarnessKind>().ok())
+    {
         let mut env: Row = [
             ("ADAPTER_PYTHON", "/opt/fabric/bin/python"),
             ("HOME", "/sandbox"),
@@ -49,13 +53,13 @@ pub fn environment(name: &str, runtime: &str) -> Row {
         .into_iter()
         .map(|(k, v)| (k.into(), v.into()))
         .collect();
-        if harness != "deepagents" {
-            env.insert("NEMOCLAW_FABRIC_HARNESS".into(), harness.into());
+        if harness != HarnessKind::DeepAgents {
+            env.insert("NEMOCLAW_FABRIC_HARNESS".into(), harness.to_string());
         }
-        if harness == "openclaw" {
+        if harness == HarnessKind::OpenClaw {
             env.insert("PYTHONPATH".into(), "/opt/nemoclaw".into());
         }
-        if harness == "mini-swe-agent" {
+        if harness == HarnessKind::MiniSweAgent {
             env.insert("MSWEA_COST_TRACKING".into(), "ignore_errors".into());
         }
         return env;

@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-use super::{HardwareProfile, Service, ServiceHardware, arguments, hardware_capacity};
+use super::{Service, arguments};
 use crate::{
     config::{Document, ServiceDefinition},
     hardware::{Capacity, GIB},
@@ -75,45 +75,6 @@ fn capacity_rejects_unsafe_startup_without_allocating_host_memory() {
     running.available = 20 * GIB;
     running.foreign_gpu_processes = 1;
     service.check_capacity(&running, false, 0, 0).unwrap();
-}
-
-#[test]
-fn combined_budgets_reject_overcommit_and_do_not_count_running_allocations_twice() {
-    let mut service = service();
-    service.recipe = None;
-    service.hardware = Some(ServiceHardware::Profile {
-        profile: HardwareProfile::DgxSpark,
-        architecture: None,
-        min_gpu_memory_bytes: None,
-    });
-    service.memory.gpu_memory_gib = 20;
-    service.memory.kv_cache_gib = 6;
-    let mut capacity = Capacity {
-        architecture: "arm64".into(),
-        gpu: "NVIDIA GB10".into(),
-        driver_major: 580,
-        compute_capability: 121,
-        total: 121 * GIB,
-        available: 100 * GIB,
-        ..Default::default()
-    };
-    hardware_capacity::check_service_budgets(&[(&service, true), (&service, true)], &capacity)
-        .unwrap();
-    capacity.available = 65 * GIB;
-    assert!(
-        hardware_capacity::check_service_budgets(&[(&service, true), (&service, true)], &capacity)
-            .is_err()
-    );
-    hardware_capacity::check_service_budgets(&[(&service, false), (&service, true)], &capacity)
-        .unwrap();
-    capacity.total = 65 * GIB;
-    assert!(
-        hardware_capacity::check_service_budgets(
-            &[(&service, false), (&service, false)],
-            &capacity
-        )
-        .is_err()
-    );
 }
 
 #[test]

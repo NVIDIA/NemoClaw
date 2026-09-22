@@ -1,5 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
+use nemoclaw_sdk::config::ComputeDriver;
 use nemoclaw_sdk::config::{Credential, Document};
 
 #[test]
@@ -13,13 +14,14 @@ fn missing_inference_provider_does_not_panic() {
 
 #[test]
 fn bridge_resolution_rejects_malformed_networks_and_overflow() {
-    let mut document =
-        Document::parse(include_str!("fixtures/config/local.yaml").as_bytes()).unwrap();
-    document.spec.gateway.network_cidr = "10.0.0.0/24".into();
-    assert_eq!(document.spec.gateway.bridge().unwrap(), "10.0.0.1");
+    let mut gateway = nemoclaw_sdk::config::ManagedGateway {
+        network_cidr: "10.0.0.0/24".into(),
+        ..Default::default()
+    };
+    assert_eq!(gateway.bridge().unwrap(), "10.0.0.1");
     for network in ["invalid", "::/64", "255.255.255.255/32"] {
-        document.spec.gateway.network_cidr = network.into();
-        assert!(document.spec.gateway.bridge().is_err(), "{network}");
+        gateway.network_cidr = network.into();
+        assert!(gateway.bridge().is_err(), "{network}");
     }
 }
 
@@ -36,7 +38,7 @@ fn inference_connection_is_resolved_independently_of_the_sandbox_engine() {
         env: "MODEL_TOKEN".into(),
     });
     let first = remote.inference_connection().unwrap();
-    remote.spec.sandboxes[0].runtime.provider = "podman".into();
+    remote.spec.sandboxes[0].runtime.provider = ComputeDriver::Podman;
     remote.validate().unwrap();
     assert_eq!(remote.inference_connection().unwrap(), first);
     assert_eq!(first.endpoint, "https://inference.example.test:9443/v1");

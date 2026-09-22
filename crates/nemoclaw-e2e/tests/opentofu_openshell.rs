@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-use nemoclaw_e2e::openshell::Fixture;
+use nemoclaw_e2e::{assert_same_managed_resources, openshell::Fixture};
 use nemoclaw_sdk::{
     compile::{Generations, compile},
     config::Document,
@@ -38,7 +38,7 @@ async fn production_provider_applies_refreshes_and_destroys_the_reference_graph(
         include_str!("../../nemoclaw-sdk/tests/fixtures/config/local.yaml").as_bytes(),
     )
     .unwrap();
-    document.spec.gateway.endpoint = fixture.endpoint.clone();
+    *document.spec.gateway.endpoint_mut() = fixture.endpoint.clone();
     let generations: Generations = ["workspace", "provider", "sandbox"]
         .into_iter()
         .map(|k| (k.into(), format!("{k}-generation")))
@@ -65,7 +65,9 @@ async fn production_provider_applies_refreshes_and_destroys_the_reference_graph(
         );
         output
     };
-    for failure in ["version", "driver", "unavailable", "incomplete"] {
+    let versions: Value = serde_json::from_str(include_str!("../../../versions.json")).unwrap();
+    let version = versions["openshell"].as_str().unwrap();
+    for failure in ["version", "driver", "multiple", "unavailable", "incomplete"] {
         {
             let mut state = fixture.state.lock().unwrap();
             match failure {
@@ -80,6 +82,19 @@ async fn production_provider_applies_refreshes_and_destroys_the_reference_graph(
                     })
                 }
                 "driver" => state.driver = Some("podman".into()),
+                "multiple" => {
+                    state.gateway_info = Some(openshell_core::proto::GetGatewayInfoResponse {
+                        gateway_version: version.into(),
+                        compute_drivers: vec![
+                            openshell_core::proto::ComputeDriverInfo {
+                                name: "docker".into(),
+                                ..Default::default()
+                            };
+                            2
+                        ],
+                        ..Default::default()
+                    });
+                }
                 "unavailable" => state.fail_read = Some(("gateway", tonic::Code::Unavailable)),
                 _ => state.gateway_info = Some(Default::default()),
             }
@@ -88,13 +103,39 @@ async fn production_provider_applies_refreshes_and_destroys_the_reference_graph(
         assert!(!output.status.success(), "{failure} gateway was accepted");
         let diagnostic = String::from_utf8_lossy(&output.stderr);
         assert!(
-            diagnostic.contains(if matches!(failure, "version" | "driver") {
+            diagnostic.contains(if matches!(failure, "version" | "driver" | "multiple") {
                 "Resource precondition failed"
             } else {
                 "Gateway capability observation failed"
             }),
             "{diagnostic}"
         );
+        if matches!(failure, "version" | "driver" | "multiple") {
+            let normalized = diagnostic.split_whitespace().collect::<Vec<_>>().join(" ");
+            let observed = if failure == "version" {
+                "incompatible-version"
+            } else {
+                version
+            };
+            let driver = if failure == "driver" {
+                "podman"
+            } else {
+                "docker"
+            };
+            let count = if failure == "multiple" { 2 } else { 1 };
+            for expected in [
+                format!("Required version: {version}"),
+                format!("observed version: {observed}"),
+                "Required drivers: [\"docker\"]".into(),
+                format!("observed entries: {count}"),
+                format!("names: [\"{driver}\"]"),
+            ] {
+                assert!(
+                    normalized.contains(&expected),
+                    "missing {expected}: {diagnostic}"
+                );
+            }
+        }
         assert!(!diagnostic.contains("secret-sentinel"));
         let mut state = fixture.state.lock().unwrap();
         assert_eq!(
@@ -111,7 +152,9 @@ async fn production_provider_applies_refreshes_and_destroys_the_reference_graph(
     success(&["plan", "-input=false", "-out=plan", "-no-color"]);
     let plan: Value = serde_json::from_slice(&success(&["show", "-json", "plan"]).stdout).unwrap();
     for change in plan["resource_changes"].as_array().unwrap() {
-        assert_eq!(change["change"]["actions"], json!(["no-op"]));
+        if change["mode"] != "data" {
+            assert_eq!(change["change"]["actions"], json!(["no-op"]));
+        }
     }
     assert_eq!(fixture.state.lock().unwrap().effects, effects);
     fixture.state.lock().unwrap().driver = Some("podman".into());
@@ -129,8 +172,66 @@ async fn production_provider_applies_refreshes_and_destroys_the_reference_graph(
         before
     );
     fixture.state.lock().unwrap().fail_read = None;
+    // A saved plan must re-observe compatibility during apply, even when
+    // every managed resource is unchanged. No SDK coordinator runs here.
+    for create in [false, true] {
+        for failure in ["driver", "unavailable"] {
+            if create {
+                let mut sandbox = document.spec.sandboxes[0].clone();
+                sandbox.name = format!("extra-{failure}");
+                document.spec.sandboxes.push(sandbox);
+                graph = compile(&document, &generations, "0.1.0").unwrap();
+                fs::write(directory.path().join("main.tf.json"), graph.to_string()).unwrap();
+            }
+            success(&["plan", "-input=false", "-out=fresh.plan", "-no-color"]);
+            let before = fs::read(directory.path().join("terraform.tfstate")).unwrap();
+            let effects = fixture.state.lock().unwrap().effects;
+            {
+                let mut state = fixture.state.lock().unwrap();
+                if failure == "driver" {
+                    state.driver = Some("podman".into());
+                } else {
+                    state.fail_read = Some(("gateway", tonic::Code::Unavailable));
+                }
+            }
+            let output = run(&["apply", "-input=false", "-no-color", "fresh.plan"]);
+            assert!(
+                !output.status.success(),
+                "saved plan reused stale gateway metadata: create={create}, {failure}"
+            );
+            let diagnostic = String::from_utf8_lossy(&output.stderr);
+            assert!(
+                diagnostic.contains(if failure == "driver" {
+                    "Gateway version or compute driver"
+                } else {
+                    "Gateway capability observation failed"
+                }),
+                "{diagnostic}"
+            );
+            assert_eq!(fixture.state.lock().unwrap().effects, effects);
+            assert_same_managed_resources(
+                &fs::read(directory.path().join("terraform.tfstate")).unwrap(),
+                &before,
+            );
+            {
+                let mut state = fixture.state.lock().unwrap();
+                state.driver = None;
+                state.fail_read = None;
+            }
+            success(&["apply", "-auto-approve", "-input=false", "-no-color"]);
+            assert_eq!(
+                fixture.state.lock().unwrap().sandboxes.len(),
+                document.spec.sandboxes.len()
+            );
+        }
+    }
+
     graph["provider"]["nemoclaw"]["destroy"] = json!(true);
     graph.as_object_mut().unwrap().remove("data");
+    graph["resource"]["nemoclaw_workspace"]["deployment"]
+        .as_object_mut()
+        .unwrap()
+        .remove("depends_on");
     graph["resource"]["nemoclaw_workspace"]["deployment"]["lifecycle"] =
         json!({"prevent_destroy":true});
     for kind in [
@@ -156,10 +257,10 @@ async fn gateway_capability_observations_preserve_metadata_and_fail_closed_witho
     };
     let fixture = Fixture::start().await;
     let client = OpenShell::connect(
-        &Gateway {
+        &Gateway::External(nemoclaw_sdk::config::ExternalGateway {
             endpoint: fixture.endpoint.clone(),
             ..Default::default()
-        },
+        }),
         std::sync::Arc::new(EnvironmentSecrets),
     )
     .unwrap();

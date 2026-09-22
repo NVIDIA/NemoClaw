@@ -3,6 +3,7 @@
 
 use crate::{Backend, Definition, Mutation, Row, State, plan_update};
 use async_trait::async_trait;
+use nemoclaw_sdk::backend::{OpenShellLifecycle, openshell_lifecycle};
 use nemoclaw_sdk::{Binding, Bound, Observation, ObservationError, refresh};
 use std::sync::{
     Arc,
@@ -25,11 +26,12 @@ impl ResourceAdapter {
             destroying: Arc::new(AtomicBool::new(false)),
         }
     }
-    fn openshell(&self) -> bool {
-        matches!(
-            self.definition.kind,
-            "workspace" | "provider_profile" | "provider" | "sandbox"
-        )
+    fn protected_binding(&self) -> bool {
+        match openshell_lifecycle(self.definition.kind) {
+            Some(OpenShellLifecycle::Retained) => true,
+            Some(OpenShellLifecycle::Stateful) => !self.destroying.load(Ordering::Acquire),
+            _ => false,
+        }
     }
     fn optional(&self, field: &str) -> bool {
         (self.definition.kind == "provider_profile"
@@ -288,13 +290,7 @@ impl Resource for ResourceAdapter {
                 )
                 .await
             {
-                Ok(None)
-                    if self.openshell()
-                        && (self.definition.kind == "workspace"
-                            || !self.destroying.load(Ordering::Acquire)) =>
-                {
-                    Err(ObservationError::BindingMismatch)
-                }
+                Ok(None) if self.protected_binding() => Err(ObservationError::BindingMismatch),
                 Ok(Some(row)) => self.checked(&prior, row).map(Some),
                 other => other,
             },
@@ -354,16 +350,27 @@ impl Resource for ResourceAdapter {
     ) -> Option<(State, ValueEmpty, Vec<AttributePath>)> {
         // OptionalComputed normally carries the prior value forward. Omission
         // here means the runtime's default policy, not the previous selection.
-        if self.definition.fields.contains(&"image_pull_policy")
-            && matches!(config.get("image_pull_policy"), None | Some(Value::Null))
-        {
-            proposed.insert("image_pull_policy".into(), Value::Value(String::new()));
+        for field in [
+            "image_pull_policy",
+            "credential_env",
+            "credential_source",
+            "provider_type",
+        ] {
+            if self.definition.fields.contains(&field)
+                && matches!(config.get(field), None | Some(Value::Null))
+            {
+                proposed.insert(field.into(), Value::Value(String::new()));
+            }
         }
         self.check_plan(diags, &proposed, &config, Some(&prior))
             .await?;
         let (state, replacements) = plan_update(&self.definition, &prior, proposed);
-        if self.openshell() && !replacements.is_empty() {
-            diags.root_error_short("OpenShell resource replacement is forbidden; use explicit teardown and a new resource identity");
+        if matches!(
+            openshell_lifecycle(self.definition.kind),
+            Some(OpenShellLifecycle::Retained | OpenShellLifecycle::Stateful)
+        ) && !replacements.is_empty()
+        {
+            diags.root_error_short("Resource replacement would discard retained identity or sandbox files; use explicit teardown and a new resource identity");
             return None;
         }
         Some((
@@ -379,11 +386,9 @@ impl Resource for ResourceAdapter {
         private: ValueEmpty,
         _: ValueEmpty,
     ) -> Option<ValueEmpty> {
-        if self.openshell()
-            && (self.definition.kind == "workspace" || !self.destroying.load(Ordering::Acquire))
-        {
+        if self.protected_binding() {
             diags.root_error_short(
-                "OpenShell deletion requires destroy = true; workspaces must be retained",
+                "Sandbox deletion requires destroy = true because files and history are removed; workspaces must be retained",
             );
             return None;
         }

@@ -160,7 +160,8 @@ fn native_read_only_policies_reach_deep_agents_and_pi_without_disclosure_modes()
         for disclosure in ["direct", "progressive"] {
             value["spec"]["sandboxes"][0]["agent"]["tools"] = json!({"disclosure":disclosure});
             assert!(parse(&value).is_err());
-            assert!(!schema.is_valid(&value));
+            // Tool compatibility depends on the resolved harness, including harnessRef.
+            assert!(schema.is_valid(&value));
         }
     }
 }

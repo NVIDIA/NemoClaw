@@ -6,6 +6,10 @@ pub(crate) mod validation;
 pub const SCHEMA_PATH: &str = "schemas/nemoclaw-v1alpha1.schema.json";
 
 pub fn input_schema() -> serde_json::Value {
+    build_schema(false)
+}
+
+fn build_schema(normalized: bool) -> serde_json::Value {
     let settings = schemars::generate::SchemaSettings::draft2020_12();
     let mut schema = serde_json::to_value(
         settings
@@ -14,7 +18,7 @@ pub fn input_schema() -> serde_json::Value {
     )
     .unwrap();
     remove_serde_defaults(&mut schema);
-    validation::constrain(&mut schema);
+    validation::constrain(&mut schema, normalized);
     schema["$id"] = serde_json::json!("urn:nemoclaw:config:v1alpha1");
     schema["title"] = serde_json::json!("NemoClaw configuration (v1alpha1)");
     schema["$comment"] = serde_json::json!(
@@ -56,3 +60,9 @@ fn remove_serde_defaults(schema: &mut serde_json::Value) {
         }
     }
 }
+
+mod runtime;
+pub(crate) use runtime::{
+    validate_definition, validate_document, validate_harness_field, validate_input,
+    validate_property, validate_service, validate_tuning,
+};

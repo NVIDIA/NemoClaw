@@ -45,6 +45,14 @@ path = urllib.parse.unquote(url.path)
 if path.startswith("/v1."):
     path = "/" + path.split("/", 2)[2]
 query = urllib.parse.parse_qs(url.query)
+def container_slot(state):
+    name = path.split("/")[2] if path.startswith("/containers/") else ""
+    for slot in ("container", "deposed_container"):
+        item = state.get(slot)
+        if item and name in (item["Id"], item["Name"].lstrip("/")):
+            return slot
+    return None
+
 if method == "POST" and path.endswith("/wait"):
     # Docker wait completes after stop/removal. Do not hold the mutation lock
     # while another SSH connection performs that operation.
@@ -52,7 +60,8 @@ if method == "POST" and path.endswith("/wait"):
     while time.monotonic() < deadline:
         with (root / "lock").open("w") as lock:
             fcntl.flock(lock, fcntl.LOCK_EX)
-            waiting = json.loads((root / "engine.json").read_text()).get("container")
+            snapshot = json.loads((root / "engine.json").read_text())
+            waiting = snapshot.get(container_slot(snapshot))
         if not waiting or not waiting["State"]["Running"]:
             break
         time.sleep(0.01)
@@ -98,6 +107,9 @@ with (root / "lock").open("w") as lock:
             code = 404
         elif method == "HEAD":
             item = fixture["stats"].get(name)
+            if name == "/data/inference-key" and control.pop("defer_key_once", False):
+                (root / "control.json").write_text(json.dumps(control))
+                item = None
             if item is None:
                 code = 404
             else:
@@ -118,13 +130,13 @@ with (root / "lock").open("w") as lock:
                     archive.addfile(entry, io.BytesIO(data))
                 value = result.getvalue()[:((len(data) + 511) // 512 + 3) * 512]
     elif method == "GET" and path == "/containers/json":
-        container = state.get("container")
-        value = [] if not container else [{"Id":container["Id"], "Names":[container["Name"]],
+        containers = [state[slot] for slot in ("container", "deposed_container") if state.get(slot)]
+        value = [{"Id":container["Id"], "Names":[container["Name"]],
             "Image":container["Config"]["Image"], "ImageID":container["Image"],
             "Labels":container["Config"].get("Labels", {}), "State":"running" if container["State"]["Running"] else "exited",
-            "Status":"Up" if container["State"]["Running"] else "Exited", "Created":1}]
+            "Status":"Up" if container["State"]["Running"] else "Exited", "Created":1} for container in containers]
     elif method == "GET" and path.startswith("/containers/"):
-        value = state.get("container")
+        value = state.get(container_slot(state))
         if value:
             value = {**value, "State":{**value["State"],
                 "Status":"running" if value["State"]["Running"] else "exited"}}
@@ -168,17 +180,19 @@ with (root / "lock").open("w") as lock:
         state["creates"] += 1
         code = 201
     elif method == "POST" and path.endswith("/start"):
-        state["container"]["State"]["Running"] = True
-        state["container"]["State"]["Status"] = "running"
+        state[container_slot(state)]["State"]["Running"] = True
+        state[container_slot(state)]["State"]["Status"] = "running"
         state["effects"] += 1
         code, value = 204, b""
+    elif method == "POST" and path.endswith("/stop") and container_slot(state) == "deposed_container" and control.get("cleanup_failure"):
+        code, value = 500, {"message":"intentional replacement cleanup failure"}
     elif method == "POST" and path.endswith("/stop"):
-        state["container"]["State"]["Running"] = False
-        state["container"]["State"]["Status"] = "exited"
+        state[container_slot(state)]["State"]["Running"] = False
+        state[container_slot(state)]["State"]["Status"] = "exited"
         state["effects"] += 1
         code, value = 204, b""
     elif method == "POST" and path.endswith("/wait"):
-        container = state.get("container")
+        container = state.get(container_slot(state))
         if container and container["State"]["Running"]:
             code, value = 500, {"message":"fixture wait timed out before stop"}
         else:
@@ -188,9 +202,12 @@ with (root / "lock").open("w") as lock:
         state["effects"] += 1
         code, value = 204, b""
     elif method == "DELETE" and path.startswith("/containers/"):
-        state["container"] = None
-        state["effects"] += 1
-        code, value = 204, b""
+        slot = container_slot(state)
+        if slot:
+            state[slot] = None
+            state["effects"] += 1
+            code, value = 204, b""
+
     else:
         raise ValueError((method, path))
     if value is None:

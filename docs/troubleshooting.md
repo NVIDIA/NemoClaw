@@ -67,7 +67,7 @@ For an external Ollama digest mismatch, use [the proxy guide](inference.md#use-e
 | Observation | What it establishes | Next check |
 |---|---|---|
 | Model appears in the endpoint inventory | The service reports that model | Confirm API compatibility and an inference request |
-| Apply succeeds | Declared resources and agent configuration pass the checks applicable to that plan; a completely unchanged plan skips the post-apply sandbox readiness wait | Verify inference and a native agent turn through the intended interface |
+| Apply succeeds | Declared resources and agent configuration pass readiness checks | Verify inference and a native agent turn through the intended interface |
 | Agent configuration drift | Native settings differ from retained intent | Restore expected settings; checks do not overwrite them |
 | Dashboard cannot connect | Native service, forwarding, authentication, or browser pairing may be incomplete | Follow [interface diagnosis](interfaces.md#diagnose-failures); keep local forwarding ports consistent |
 | Managed runtime stopped after a protection trip | The independent supervisor stopped inference | Inspect [retained status and logs](models.md#diagnose-and-recover-a-stopped-runtime) and correct capacity/startup conditions before explicit recovery |

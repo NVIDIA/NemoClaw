@@ -27,14 +27,25 @@ fn managed_podman_selects_one_driver_and_mounts_the_declared_socket() {
         .find(|t| t.kind == "managed_gateway")
         .unwrap();
     let spec: Spec = serde_json::from_str(&target.values["spec"]).unwrap();
-    let config = spec.gateway_config("/owned");
-    assert!(config.contains("compute_driver = \"podman\""));
-    assert!(config.contains("[openshell.drivers.podman]"));
-    assert!(config.contains("socket_path = \"/var/run/docker.sock\""));
-    let launch = serde_json::to_value(spec.container("/owned").unwrap()).unwrap();
+    let config: toml::Value = toml::from_str(&spec.gateway_config("/owned")).unwrap();
+    let openshell = &config["openshell"];
     assert_eq!(
-        launch["HostConfig"]["Mounts"][1]["Source"],
-        "/run/user/1000/podman/podman.sock"
+        openshell["gateway"]["compute_driver"].as_str(),
+        Some("podman")
+    );
+    let socket = openshell["drivers"]["podman"]["socket_path"]
+        .as_str()
+        .unwrap();
+    let launch = spec.container("/owned").unwrap();
+    let host = launch.host_config.unwrap();
+    let mounts = host.mounts.unwrap();
+    let socket_mount = mounts
+        .iter()
+        .find(|mount| mount.target.as_deref() == Some(socket))
+        .expect("the configured Podman socket must be mounted into the gateway");
+    assert_eq!(
+        socket_mount.source.as_deref(),
+        Some("/run/user/1000/podman/podman.sock")
     );
     let mut other = value["spec"]["sandboxes"][0].clone();
     other["name"] = json!("other");
