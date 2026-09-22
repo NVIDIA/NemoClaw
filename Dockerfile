@@ -1488,8 +1488,8 @@ RUN node /usr/local/lib/nemoclaw/patch-openclaw-chat-send.mts \
 # operator.pairing; the canonical pairing function repeats identity, role, and
 # bounded-scope validation after acquiring its state lock.
 #
-# Removal criteria: drop when upstream OpenClaw can approve the same bounded
-# self-upgrade through the gateway using only operator.pairing.
+# Removal criteria: drop when upstream OpenClaw supports pairing-only
+# self-upgrade and `devices approve` exits after Approved.
 # hadolint ignore=DL3059
 RUN node /usr/local/lib/nemoclaw/patch-openclaw-device-self-approval.mts \
     /usr/local/lib/node_modules/openclaw/dist \
