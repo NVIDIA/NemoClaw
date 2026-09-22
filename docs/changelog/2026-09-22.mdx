@@ -23,6 +23,10 @@ It also updates the managed OpenClaw and Hermes runtimes and improves inference 
   OpenClaw device approval now exits after writing its local-fallback result instead of waiting on leftover gateway handles.
   Related changes: [PR #11105](https://github.com/NVIDIA/NemoClaw/pull/11105), [PR #11817](https://github.com/NVIDIA/NemoClaw/pull/11817), [PR #12102](https://github.com/NVIDIA/NemoClaw/pull/12102), [PR #12101](https://github.com/NVIDIA/NemoClaw/pull/12101), and [PR #12178](https://github.com/NVIDIA/NemoClaw/pull/12178).
   For more information, refer to the [OpenClaw Quickstart](/user-guide/openclaw/get-started/quickstart), [Quickstart with Hermes](/user-guide/hermes/get-started/quickstart), and [Troubleshooting for Hermes](/user-guide/hermes/reference/troubleshooting).
+- `nemoclaw status` now reports each sandbox's configured inference provider and model separately from the shared gateway's live route.
+  JSON output adds a redacted `configuredInference` object while preserving the existing schema-version-1 meaning of the row-level `provider` and `model` fields.
+  Related change: [PR #12233](https://github.com/NVIDIA/NemoClaw/pull/12233).
+  For more information, refer to the [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands).
 - NVIDIA Endpoints validation now uses the documented `reasoning_effort: "none"` control for Nemotron 3 Super.
   Managed llama.cpp honors its configured readiness budget, Model Router startup waits for each semantic health response within its existing startup budget, and qualifying Windows WSL N1x hosts can rank installed Ollama models when the chassis reports an OEM model string.
   Related changes: [PR #12007](https://github.com/NVIDIA/NemoClaw/pull/12007), [PR #11955](https://github.com/NVIDIA/NemoClaw/pull/11955), [PR #12096](https://github.com/NVIDIA/NemoClaw/pull/12096), and [PR #11617](https://github.com/NVIDIA/NemoClaw/pull/11617).
