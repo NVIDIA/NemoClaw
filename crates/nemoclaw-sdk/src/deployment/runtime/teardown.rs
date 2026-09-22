@@ -164,12 +164,11 @@ impl Deployment {
         }
         let expected = teardown_expected(record, &bindings, runtime)?;
         let retained = retained_addresses(record, &bindings, runtime)?;
-        let graph = teardown_graph(
-            record,
+        let graph = compile::compile_teardown(
+            &record.document,
+            &record.generations,
             &bundle.manifest.version,
-            &expected,
-            &bindings,
-            &retained,
+            &bindings.keys().cloned().collect(),
             runtime,
         )?;
         self.prepare(bundle, store, &graph)?;
@@ -291,43 +290,6 @@ fn bind_teardown_processes(
         );
     }
     Ok(())
-}
-
-fn teardown_graph(
-    record: &Record,
-    version: &str,
-    expected: &BTreeMap<String, Row>,
-    bindings: &BTreeMap<String, StateBinding>,
-    retained: &BTreeSet<String>,
-    runtime: bool,
-) -> Result<Value, Error> {
-    let mut graph = if runtime {
-        compile::compile_runtime(&record.document, &record.generations, version)?
-    } else {
-        compile::compile(&record.document, &record.generations, version)?
-    };
-    // Teardown must remain available when gateway capabilities or host capacity change.
-    graph.as_object_mut().unwrap().remove("data");
-    graph["provider"]["nemoclaw"]["destroy"] = json!(true);
-    let compiled_resources = graph["resource"].take();
-    graph["resource"] = json!({});
-    for address in retained {
-        if bindings.contains_key(address) {
-            let (kind, name) = address
-                .split_once('.')
-                .ok_or(Error::State("invalid resource address"))?;
-            let retained_values = if address.starts_with("docker_volume.") {
-                compiled_resources[kind][name].clone()
-            } else {
-                serde_json::to_value(&expected[address])
-                    .map_err(|_| Error::State("cannot encode retained resource"))?
-            };
-            let mut attrs = retained_values;
-            attrs["lifecycle"] = json!({"prevent_destroy":true});
-            graph["resource"][kind][name] = attrs;
-        }
-    }
-    Ok(graph)
 }
 
 fn validate_teardown_state(
@@ -586,7 +548,7 @@ mod tests {
                     )
                 })
                 .collect();
-        let expected = teardown_expected(&record, &bindings, true).unwrap();
+        teardown_expected(&record, &bindings, true).unwrap();
         let retained = retained_addresses(&record, &bindings, true).unwrap();
         assert_eq!(retained.len(), 5);
         let storage_kind = service_storage(&record)
@@ -599,8 +561,14 @@ mod tests {
             .unwrap()
             .0
             .to_owned();
-        let graph =
-            teardown_graph(&record, "0.1.0", &expected, &bindings, &retained, true).unwrap();
+        let graph = compile::compile_teardown(
+            &record.document,
+            &record.generations,
+            "0.1.0",
+            &bindings.keys().cloned().collect(),
+            true,
+        )
+        .unwrap();
         assert_eq!(
             graph["resource"][&storage_kind].as_object().unwrap().len(),
             2
@@ -647,9 +615,14 @@ mod tests {
         let retained_storage = service_storage(&record);
         assert!(bindings[&process].spec.is_empty());
         assert!(!expected[&process]["spec"].is_empty());
-        let retained = retained_addresses(&record, &bindings, true).unwrap();
-        let graph =
-            teardown_graph(&record, "0.1.0", &expected, &bindings, &retained, true).unwrap();
+        let graph = compile::compile_teardown(
+            &record.document,
+            &record.generations,
+            "0.1.0",
+            &bindings.keys().cloned().collect(),
+            true,
+        )
+        .unwrap();
         assert!(graph.get("data").is_none());
         assert_eq!(graph["provider"]["nemoclaw"]["destroy"], true);
         assert_eq!(graph["resource"].as_object().unwrap().len(), 3);

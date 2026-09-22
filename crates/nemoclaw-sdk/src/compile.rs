@@ -520,3 +520,7 @@ pub use runtime::{compile_runtime, runtime_targets};
 
 #[cfg(test)]
 pub(crate) use runtime::runtime_graph;
+
+#[path = "compile_teardown.rs"]
+mod teardown;
+pub use teardown::compile_teardown;
