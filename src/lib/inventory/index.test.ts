@@ -579,7 +579,7 @@ describe("inventory commands", () => {
     expect(getGatewayAuthority).not.toHaveBeenCalled();
   });
 
-  it("omits invalid configured inference fields from status text", async () => {
+  it("reports invalid configured inference fields as unknown", async () => {
     const lines: string[] = [];
     await showStatusCommand({
       listSandboxes: () => ({
@@ -592,7 +592,7 @@ describe("inventory commands", () => {
     });
 
     expect(lines).toContain("    alpha *");
-    expect(lines.some((line) => line.includes("Inference:"))).toBe(false);
+    expect(lines).toContain("      Inference (configured): unknown / unknown");
   });
 
   it("prints the empty-state onboarding hint when no sandboxes exist", async () => {

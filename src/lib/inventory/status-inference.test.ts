@@ -76,6 +76,7 @@ describe("global status inference", () => {
 
     expect(lines).toContain("    alpha * (provider/runtime-model)");
     expect(lines).toContain("      (onboarded: unknown)");
+    expect(lines).toContain("      Inference (configured): unknown / unknown");
   });
 
   it("prints the configured provider and model for every sandbox (#2604)", async () => {

@@ -742,10 +742,8 @@ export async function showStatusCommand(deps: ShowStatusCommandDeps): Promise<vo
       // shared live gateway route (that would silently show one sandbox's
       // "configured" line as another sandbox's route after a stop/start
       // realigns the one shared route).
-      if (storedProvider || storedModel) {
-        const parts = [storedProvider, storedModel].filter(Boolean).join(" / ");
-        log(`      Inference (configured): ${parts}`);
-      }
+      const configuredParts = [storedProvider ?? "unknown", storedModel ?? "unknown"];
+      log(`      Inference (configured): ${configuredParts.join(" / ")}`);
       if (liveRouteDrifted) {
         const parts = [liveProvider, liveModel].filter(Boolean).join(" / ");
         log(`      Inference (live): ${parts}`);
