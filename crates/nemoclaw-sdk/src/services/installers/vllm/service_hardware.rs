@@ -150,18 +150,27 @@ pub enum ServiceIpc {
 }
 
 impl Service {
-    pub(crate) fn memory_architecture(&self) -> Result<MemoryArchitecture, ConfigError> {
-        match (&self.hardware, &self.recipe) {
-            (Some(ServiceHardware::Dedicated(_)), None) => Ok(MemoryArchitecture::Dedicated),
-            (Some(ServiceHardware::Profile { profile, .. }), None) => {
-                Ok(profile.memory_architecture())
-            }
-            // The existing inline-recipe resource contract budgets host memory.
-            (None, Some(_)) => Ok(MemoryArchitecture::Unified),
+    /// Select the launch contract without changing its authored representation.
+    pub fn launch_mode(&self) -> Result<VllmLaunchMode<'_>, ConfigError> {
+        match (&self.hardware, self.recipe.as_deref()) {
+            (Some(hardware), None) => Ok(VllmLaunchMode::Native { hardware }),
+            (None, Some(recipe)) => Ok(VllmLaunchMode::Recipe { recipe }),
             _ => Err(ConfigError::new(
                 "declare exactly one of service.hardware or service.recipe",
             )),
         }
+    }
+    pub(crate) fn memory_architecture(&self) -> Result<MemoryArchitecture, ConfigError> {
+        Ok(match self.launch_mode()? {
+            VllmLaunchMode::Native {
+                hardware: ServiceHardware::Dedicated(_),
+            } => MemoryArchitecture::Dedicated,
+            VllmLaunchMode::Native {
+                hardware: ServiceHardware::Profile { profile, .. },
+            } => profile.memory_architecture(),
+            // The inline-recipe resource contract budgets host memory.
+            VllmLaunchMode::Recipe { .. } => MemoryArchitecture::Unified,
+        })
     }
 
     pub(crate) fn dedicated_hardware(&self) -> Option<DedicatedHardware> {
@@ -186,12 +195,20 @@ impl Service {
     }
 
     pub(crate) fn architecture(&self) -> Result<&str, ConfigError> {
-        match (&self.hardware, &self.recipe) {
-            (Some(hardware), None) => hardware.architecture(),
-            (None, Some(recipe)) => Ok(&recipe.compatibility.architecture),
-            _ => Err(ConfigError::new(
-                "declare exactly one of service.hardware or service.recipe",
-            )),
+        match self.launch_mode()? {
+            VllmLaunchMode::Native { hardware } => hardware.architecture(),
+            VllmLaunchMode::Recipe { recipe } => Ok(&recipe.compatibility.architecture),
         }
     }
+}
+
+/// Mutually exclusive contracts for native serving and recipe preparation/serving.
+#[derive(Clone, Copy, Debug)]
+pub enum VllmLaunchMode<'a> {
+    Native {
+        hardware: &'a ServiceHardware,
+    },
+    Recipe {
+        recipe: &'a super::recipes::inline::InlineRecipe,
+    },
 }

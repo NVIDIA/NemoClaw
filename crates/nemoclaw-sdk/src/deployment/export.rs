@@ -297,7 +297,10 @@ fn export_provider(document: &mut Document, expected: &Row, observed: &Row) -> R
         .find(|provider| provider.key == expected["name"])
         .ok_or(Error::Conflict("observed provider is not selected"))?;
     let provider = provider.definition;
-    let managed = provider.service_ref.is_some();
+    let managed = matches!(
+        provider.target()?,
+        crate::config::InferenceTarget::Service { .. }
+    );
     if managed
         && (observed["endpoint"] != document.provider_connection(provider)?.endpoint
             || !observed["credential_env"].is_empty())
