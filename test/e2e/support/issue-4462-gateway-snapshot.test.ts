@@ -146,6 +146,49 @@ describe("fresh-agent gateway snapshot artifacts", () => {
     }
   });
 
+  it.each(["pending", "paired"] as const)(
+    "rejects malformed canonical %s records instead of reporting settled state (#4462)",
+    (malformedMap) => {
+      const fixtureRoot = mkdtempSync(path.join(tmpdir(), "nemoclaw-issue-4462-malformed-"));
+      const stateRoot = path.join(fixtureRoot, "state-root");
+      const sqlitePath = path.join(stateRoot, "state", "openclaw.sqlite");
+      const helperPath = path.join(fixtureRoot, "openclaw_pairing_state.py");
+      const records = {
+        identity: {
+          deviceId: DEVICE_ID,
+          publicKey: PUBLIC_KEY,
+        },
+        pending: malformedMap === "pending" ? { malformed: TOKEN } : {},
+        paired: malformedMap === "paired" ? { malformed: TOKEN } : {},
+      };
+      mkdirSync(path.dirname(sqlitePath), { recursive: true });
+      writeFileSync(sqlitePath, "canonical-layout-sentinel", "utf8");
+      writeFileSync(
+        helperPath,
+        [
+          "import json",
+          `records = json.loads(${JSON.stringify(JSON.stringify(records))})`,
+          "def read_openclaw_pairing_state(state_dir, timeout=1):",
+          "    return records, {'stateDir': state_dir, 'timeout': timeout}",
+          "",
+        ].join("\n"),
+        "utf8",
+      );
+      try {
+        const result = spawnSync("python3", [SNAPSHOT_SCRIPT, "0.1", stateRoot, helperPath], {
+          encoding: "utf8",
+          timeout: 10_000,
+        });
+        expect(result.status).not.toBe(0);
+        expect(result.stdout).toBe("");
+        expect(result.stderr).toContain("canonical pairing state is unavailable");
+        expect(`${result.stdout}\n${result.stderr}`).not.toContain(TOKEN);
+      } finally {
+        rmSync(fixtureRoot, { force: true, recursive: true });
+      }
+    },
+  );
+
   it("rejects a local CLI identity whose device ID is not bound to its public key (#4462)", () => {
     const fixtureRoot = mkdtempSync(path.join(tmpdir(), "nemoclaw-issue-4462-binding-"));
     const stateRoot = path.join(fixtureRoot, "state");

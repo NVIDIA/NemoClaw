@@ -70,11 +70,11 @@ def load_pairing_records():
         raise RuntimeError("CLI identity must be an object")
     if not isinstance(pending, dict) or not isinstance(paired, dict):
         raise RuntimeError("pairing state must contain pending and paired maps")
-    return (
-        identity,
-        [value for value in pending.values() if isinstance(value, dict)],
-        [value for value in paired.values() if isinstance(value, dict)],
-    )
+    if any(not isinstance(value, dict) for value in pending.values()):
+        raise RuntimeError("pending pairing records must be objects")
+    if any(not isinstance(value, dict) for value in paired.values()):
+        raise RuntimeError("paired pairing records must be objects")
+    return identity, list(pending.values()), list(paired.values())
 
 
 def identity_public_key(value):
