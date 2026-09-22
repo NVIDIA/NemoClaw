@@ -68,6 +68,9 @@ export const DEFAULT_HERMES_PROVIDER_MODEL = HERMES_PROVIDER_MODEL_OPTIONS[0];
 export const CLOUD_MODEL_OPTIONS = [
   { id: "nvidia/nemotron-3-ultra-550b-a55b", label: "Nemotron 3 Ultra 550B" },
   { id: "nvidia/nemotron-3-super-120b-a12b", label: "Nemotron 3 Super 120B" },
+];
+export const OPENROUTER_CLOUD_MODEL_OPTIONS = [
+  ...CLOUD_MODEL_OPTIONS,
   { id: "minimaxai/minimax-m3", label: "Minimax M3" },
 ];
 export const DEFAULT_ROUTE_PROFILE = "inference-local";

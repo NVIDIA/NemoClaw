@@ -89,24 +89,48 @@ describe("standard OpenShell lifecycle failure guidance", () => {
     },
   );
 
-  it("does not attribute a Podman gateway failure to Docker", async () => {
-    const mutation = vi.fn(async () => ({
-      kind: "failed" as const,
-      error: {
-        kind: "transport" as const,
-        reason: "unreachable" as const,
-        message: "Gateway unreachable.",
-      },
-    }));
-    const result = await mutateStandardSandboxLifecycle("start", input("podman"), {
-      openShellLifecycle: { startSandbox: mutation, stopSandbox: mutation },
-    });
-    expect(result.exitCode).toBe(1);
-    expect(result.message).toContain("Gateway unreachable.");
-    expect(result.message).toContain("Preserve the sandbox");
-    expect(result.message).not.toContain("Docker");
-    expect(result.message).not.toContain("docker");
-  });
+  it.each(["podman", "vm", " VM "])(
+    "does not attribute a %s gateway failure to Docker",
+    async (driver) => {
+      const mutation = vi.fn(async () => ({
+        kind: "failed" as const,
+        error: {
+          kind: "transport" as const,
+          reason: "unreachable" as const,
+          message: "Gateway unreachable.",
+        },
+      }));
+      const result = await mutateStandardSandboxLifecycle("start", input(driver), {
+        openShellLifecycle: { startSandbox: mutation, stopSandbox: mutation },
+      });
+      expect(result.exitCode).toBe(1);
+      expect(result.message).toContain("Gateway unreachable.");
+      expect(result.message).toContain("Preserve the sandbox");
+      expect(result.message).not.toContain("Docker");
+      expect(result.message).not.toContain("docker");
+    },
+  );
+
+  it.each([undefined, "", " DOCKER "])(
+    "keeps Docker guidance for legacy or Docker driver %s",
+    async (driver) => {
+      const mutation = vi.fn(async () => ({
+        kind: "failed" as const,
+        error: { kind: "timeout" as const, message: "OpenShell timed out." },
+      }));
+      const request = input();
+      request.sandbox.openshellDriver = driver;
+
+      const result = await mutateStandardSandboxLifecycle("start", request, {
+        openShellLifecycle: { startSandbox: mutation, stopSandbox: mutation },
+      });
+
+      expect(result.exitCode).toBe(1);
+      expect(result.message).toContain("OpenShell timed out.");
+      expect(result.message).toContain("Run `docker info` on the owning gateway's host");
+      expect(mutation).toHaveBeenCalledOnce();
+    },
+  );
 
   it.each<OpenShellSandboxError>([
     { kind: "authentication", message: "OpenShell denied access." },

@@ -6,7 +6,6 @@ import {
   type OpenShellSandboxStateLifecycle,
 } from "../../../adapters/openshell/sandbox-lifecycle-sdk";
 import { cliName } from "../../../onboard/branding";
-import { normalizeRuntimeProviderIdentity } from "../../../onboard/runtime-provider/access";
 import type {
   RuntimeProviderLifecycleInput,
   RuntimeProviderLifecycleResult,
@@ -57,7 +56,9 @@ export async function mutateStandardSandboxLifecycle(
         "  Sandbox state is unverified; this failure does not prove the sandbox was removed.",
         "  Preserve the sandbox; do not rebuild, destroy, or re-onboard it to resolve a connection failure.",
       );
-      if (normalizeRuntimeProviderIdentity(input.sandbox.openshellDriver) === "docker") {
+      // Provider routing aliases VM to Docker; diagnostics must preserve the recorded driver.
+      const driver = input.sandbox.openshellDriver?.trim().toLowerCase();
+      if (!driver || driver === "docker") {
         messages.push(
           "  Run `docker info` on the owning gateway's host to inspect daemon, permission, context, or TLS errors.",
         );
