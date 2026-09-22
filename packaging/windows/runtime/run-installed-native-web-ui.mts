@@ -225,6 +225,7 @@ const launcher = required("NEMOCLAW_MXC_OPENCLAW_ENTRY");
 const home = required("NEMOCLAW_MXC_HOME");
 const sqliteRealpathPreload = nativeGuestAsset("openclaw-sqlite-realpath-preload.cjs");
 if (sqliteRealpathPreload.includes('"')) throw new Error("The SQLite realpath preload path is invalid.");
+const sqliteRealpathPreloadOption = sqliteRealpathPreload.replaceAll("\\", "/");
 const modelId = required("NEMOCLAW_MXC_MODEL_ID");
 const modelContext = Number(required("NEMOCLAW_MXC_MODEL_CONTEXT"));
 if (![65536, 131072].includes(modelContext)) throw new Error("The native model context is invalid.");
@@ -425,7 +426,7 @@ writeFileSync(join(configDirectory, "openclaw.json"), JSON.stringify({
 Object.assign(process.env, {
   HOME: home,
   NODE_DISABLE_COMPILE_CACHE: "1",
-  NODE_OPTIONS: '--require="' + sqliteRealpathPreload + '"',
+  NODE_OPTIONS: '--require="' + sqliteRealpathPreloadOption + '"',
   OPENCLAW_HOME: home,
   OPENCLAW_NO_RESPAWN: "1",
   OPENCLAW_NO_AUTO_UPDATE: "1",

@@ -79,7 +79,8 @@ test("native OpenClaw advertises the actual model context and opens a fresh chat
   const source = gatewaySource();
   assert(source.includes('required("NEMOCLAW_MXC_MODEL_CONTEXT")'));
   assert(source.includes('nativeGuestAsset("openclaw-sqlite-realpath-preload.cjs")'));
-  assert(source.includes("NODE_OPTIONS: '--require=\"' + sqliteRealpathPreload + '\"'"));
+  assert(source.includes('sqliteRealpathPreload.replaceAll("\\\\", "/")'));
+  assert(source.includes("NODE_OPTIONS: '--require=\"' + sqliteRealpathPreloadOption + '\"'"));
   assert(source.includes("contextWindow: modelContext"));
   assert(source.includes("skills: []"));
   assert(source.includes("reasoning: true"));

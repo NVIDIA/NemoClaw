@@ -248,6 +248,7 @@ def finished_application(
     required = {
         "native-runtime.cjs",
         "openclaw-invoke.cjs",
+        "openclaw-sqlite-realpath-preload.cjs",
         "native-inference-manifest.json",
     }
     if not required.issubset(files):
@@ -287,6 +288,10 @@ def finished_application(
         (executable, "app/NemoClaw.Runtime.exe"),
         (workers / "native-runtime.cjs", "workers/native-runtime.cjs"),
         (workers / "openclaw-invoke.cjs", "workers/openclaw-invoke.cjs"),
+        (
+            workers / "openclaw-sqlite-realpath-preload.cjs",
+            "workers/openclaw-sqlite-realpath-preload.cjs",
+        ),
         (
             workers / "native-inference-manifest.json",
             "app/native-inference-manifest.json",

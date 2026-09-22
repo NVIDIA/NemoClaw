@@ -68,6 +68,7 @@ class RuntimeAssembly(unittest.TestCase):
         for name in (
             "native-runtime.cjs",
             "openclaw-invoke.cjs",
+            "openclaw-sqlite-realpath-preload.cjs",
             "native-inference-manifest.json",
         ):
             (self.workers / name).write_text("fixture\n")

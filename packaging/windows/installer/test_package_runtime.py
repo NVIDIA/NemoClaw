@@ -112,6 +112,14 @@ class PackageComposition(unittest.TestCase):
                 / "workers/native-runtime.cjs"
             ).is_file()
         )
+        self.assertTrue(
+            (
+                self.output
+                / "runtimes"
+                / identity["runtimeId"]
+                / "workers/openclaw-sqlite-realpath-preload.cjs"
+            ).is_file()
+        )
         catalog = json.loads((self.output / "agent-support.json").read_text())
         self.assertEqual(
             [row["id"] for row in catalog["agents"] if row["selectable"]], ["openclaw"]
