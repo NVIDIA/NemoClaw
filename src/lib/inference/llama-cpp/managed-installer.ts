@@ -24,6 +24,7 @@ import { isLlamaCppServingRecipe } from "../serving/adapter-registry";
 import { loadManagedInferenceCatalog } from "../serving/catalog-loader";
 import type { ResolvedLlamaCppInferenceSelection } from "../serving/types";
 import { buildVllmDockerEnv } from "../vllm-docker-env";
+import { formatStorageBytes } from "../vllm-storage";
 import { LLAMA_CPP_CREDENTIAL_ENV } from "./contract";
 import { acquireVerifiedLlamaCppGguf, verifyLlamaCppGgufCacheEntry } from "./gguf-acquisition";
 import { compileLlamaCppGgufCachePlan } from "./gguf-cache-plan";
@@ -610,6 +611,43 @@ export function inspectManagedLlamaCppRuntimeExact(
   }).runtime.inspectManaged(options.receipt);
 }
 
+/** Total pinned size of the GGUF files this recipe downloads. */
+function llamaCppModelDownloadSizeBytes(selection: ResolvedLlamaCppInferenceSelection): number {
+  return selection.recipe.spec.model.files.reduce((total, file) => total + file.sizeBytes, 0);
+}
+
+/**
+ * Declare the selected profile and its pinned download sizes before the first
+ * acquisition effect.
+ *
+ * The onboarding review screen carries the same facts, but it prints after the
+ * provider step already downloaded the image and the model, so it cannot
+ * inform the operator's capacity and time decision (#12207).
+ */
+function printManagedLlamaCppInstallPlan(
+  selection: ResolvedLlamaCppInferenceSelection,
+  log: (message: string) => void,
+): void {
+  const { preset, recipe } = selection;
+  log("");
+  log("  Managed llama.cpp:");
+  log(`    Serving profile: ${preset.metadata.id}`);
+  log(`    Recipe: ${recipe.metadata.id}`);
+  log(`    Image: ${recipe.spec.runtime.image}`);
+  log(`    Model: ${recipe.spec.model.id}`);
+  log(
+    `    Image download on first run (${formatStorageBytes(
+      BigInt(recipe.spec.runtime.imageDownloadSizeBytes),
+    )}), cached after`,
+  );
+  log(
+    `    Model download on first run (${formatStorageBytes(
+      BigInt(llamaCppModelDownloadSizeBytes(selection)),
+    )}), cached after`,
+  );
+  log("");
+}
+
 /** Activate one catalog-selected managed llama.cpp runtime for a gateway owner. */
 export async function installManagedLlamaCpp(
   selection: ResolvedLlamaCppInferenceSelection,
@@ -681,6 +719,7 @@ export async function installManagedLlamaCpp(
       delete dockerEnv[name];
     }
     const cacheRoot = ensureSharedHuggingFaceCache(homeDir);
+    printManagedLlamaCppInstallPlan(selection, log);
     let artifact: VerifiedLocalModelArtifact | null = null;
     let acquireModel = false;
     try {
