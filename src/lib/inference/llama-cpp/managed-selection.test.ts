@@ -260,6 +260,20 @@ describe("managed llama.cpp selection", () => {
     expect(discovery.choices).toEqual([]);
   });
 
+  it("omits generic Linux managed llama.cpp below its GPU-memory floor", () => {
+    const { catalog, report } = fixture(GENERIC_PRESET_ID);
+    const belowMemoryFloor = {
+      ...report,
+      observations: report.observations.map((observation) =>
+        observation.id === "host.gpu.memory_per_device_bytes"
+          ? { ...observation, value: 50_331_647_999 }
+          : observation,
+      ),
+    };
+
+    expect(discoverManagedLlamaCppSelections({}, catalog, belowMemoryFloor).choices).toEqual([]);
+  });
+
   it.each([
     [
       "explicit selection with remote DOCKER_HOST",

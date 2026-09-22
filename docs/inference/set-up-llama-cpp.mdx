@@ -118,6 +118,7 @@ Before you start, confirm these prerequisites:
 - Use Docker's effective local `default` context. Export `DOCKER_CONTEXT=default`. If `DOCKER_CONTEXT` is unset, unset `DOCKER_HOST` and select the `default` context.
 - Confirm that the NVIDIA Container Toolkit is operational.
 - Confirm that NVIDIA Container Device Interface support is healthy.
+- On Linux x86_64, provide at least 48,000 MiB per NVIDIA GPU.
 - Stop any process that uses host port `8081`.
 - Allow capacity for the pinned images, the GGUF file, and same-filesystem download staging.
 - Export `HF_TOKEN` only when the YAML-declared Hugging Face source requires authentication.
