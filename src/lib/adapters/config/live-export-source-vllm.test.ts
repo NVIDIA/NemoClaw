@@ -440,6 +440,18 @@ describe("managed vLLM export pipeline", () => {
     expect(raw.getProviderProfile).not.toHaveBeenCalled();
   });
 
+  it("refuses endpoint drift from the verified managed runtime", async () => {
+    const { source, localProvider } = mockManagedVllmSource();
+    const endpointUrl = "http://host.openshell.internal:18001/v1";
+    vi.mocked(loadRegistry).mockReturnValue({
+      sandboxes: { alpha: { ...source, endpointUrl } },
+      defaultSandbox: null,
+    });
+    Object.assign(localProvider.config, { OPENAI_BASE_URL: endpointUrl });
+
+    expectExportRefusal(await exportLiveSource(), { category: "missing-provenance" });
+  });
+
   it("detects direct provider revision changes", async () => {
     const { localProvider } = mockManagedVllmSource();
     let revision = 8n;

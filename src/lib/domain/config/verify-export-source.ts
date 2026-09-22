@@ -1083,7 +1083,8 @@ function validateManagedVllmRepresentation(snapshot: QualifiedExportSnapshot): E
     inference.credentialEnv !== null ||
     !serving ||
     !Check(NemoClawManagedVllmServingSchema, serving) ||
-    inference.model !== serving.model.servedName
+    inference.model !== serving.model.servedName ||
+    inference.endpoint !== `http://host.openshell.internal:${String(serving.hostPort)}/v1`
   ) {
     return [
       finding(
