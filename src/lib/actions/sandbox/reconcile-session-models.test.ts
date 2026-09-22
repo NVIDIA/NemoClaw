@@ -21,6 +21,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { executeSandboxCommand } from "./process-recovery";
+import { SandboxCommandTransportError } from "../../adapters/sandbox/command-transport";
 import {
   buildSessionStoreReplaceCommand,
   reconcilePinnedSessionModels,
@@ -379,5 +380,46 @@ describe("reconcileStalePinnedSessionModelsAfterRebuild", () => {
       "Session model reconcile: failed to write /sandbox/.openclaw/agents/main/sessions/sessions.json (status=9)",
     );
     expect(log.mock.calls.flat()).not.toContainEqual(expect.stringContaining("cleared stale"));
+  });
+
+  describe.each([
+    "cancelled",
+    "timeout",
+    "capture",
+    "invocation",
+    "unavailable",
+    "malformed",
+  ] as const)("best-effort reconciliation after %s", (kind) => {
+    it.each([0, 1, 2])(
+      "stops after failed command %i without retrying or claiming success",
+      async (completedCommands) => {
+        const error = new SandboxCommandTransportError(kind);
+        const successes = [config, staleStore];
+        successes
+          .slice(0, completedCommands)
+          .forEach((stdout) =>
+            executeSandboxCommandMock.mockResolvedValueOnce({ status: 0, stdout, stderr: "" }),
+          );
+        executeSandboxCommandMock.mockRejectedValue(error);
+        const log = vi.fn();
+        await expect(
+          reconcileStalePinnedSessionModelsAfterRebuild("alpha", log),
+        ).resolves.toBeUndefined();
+        expect(executeSandboxCommandMock).toHaveBeenCalledTimes(completedCommands + 1);
+        expect(log).toHaveBeenLastCalledWith(
+          `Session model reconcile incomplete: ${error.message}`,
+        );
+        expect(log.mock.calls.flat()).not.toContainEqual(expect.stringContaining("cleared stale"));
+      },
+    );
+  });
+
+  it("propagates unexpected restoration authority errors", async () => {
+    const error = new Error("restoration authority refused");
+    executeSandboxCommandMock.mockRejectedValue(error);
+    await expect(reconcileStalePinnedSessionModelsAfterRebuild("alpha", vi.fn())).rejects.toBe(
+      error,
+    );
+    expect(executeSandboxCommandMock).toHaveBeenCalledOnce();
   });
 });

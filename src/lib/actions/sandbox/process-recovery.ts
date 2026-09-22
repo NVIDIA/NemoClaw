@@ -28,6 +28,7 @@ import {
   type CommandTransportDependencies,
   DEFAULT_SANDBOX_EXEC_TIMEOUT_MS,
   executeSandboxExecCommandTransport,
+  SandboxCommandTransportError,
   type SandboxCommandResult,
   type SandboxExecCommandOptions,
 } from "../../adapters/sandbox/command-transport";
@@ -343,9 +344,14 @@ async function executeOpenClawDoctorGateCommand(
   runtimeSelection?: OpenShellRuntimeSelection,
 ): Promise<SandboxCommandResult | null> {
   if (!deps.executePrivilegedSandboxCommand) {
-    return await deps.executeSandboxExecCommand(sandboxName, command, timeout, {
-      ...(runtimeSelection ? { runtimeSelection } : {}),
-    });
+    try {
+      return await deps.executeSandboxExecCommand(sandboxName, command, timeout, {
+        ...(runtimeSelection ? { runtimeSelection } : {}),
+      });
+    } catch (error) {
+      if (!(error instanceof SandboxCommandTransportError)) throw error;
+      return null;
+    }
   }
   const ownerCommand = [
     "set -e",
@@ -808,14 +814,18 @@ export async function beginOpenClawPostRestoreDoctor(
     maintenanceKind === "backup"
       ? OPENCLAW_BACKUP_QUIESCE_MARKER_CONTENT
       : OPENCLAW_POST_UPGRADE_DOCTOR_MARKER_CONTENT;
-  const markerResult = await deps.executeSandboxExecCommand(
-    sandboxName,
-    buildOpenClawPostUpgradeDoctorMarkerCommand(markerContent),
-    30_000,
-    {
-      ...(runtimeSelection ? { runtimeSelection } : {}),
-    },
-  );
+  let markerResult: SandboxCommandResult | null;
+  try {
+    markerResult = await deps.executeSandboxExecCommand(
+      sandboxName,
+      buildOpenClawPostUpgradeDoctorMarkerCommand(markerContent),
+      30_000,
+      { ...(runtimeSelection ? { runtimeSelection } : {}) },
+    );
+  } catch (error) {
+    if (!(error instanceof SandboxCommandTransportError)) throw error;
+    return { ok: false, stage: "mark", detail: error.message };
+  }
   if (!markerResult || markerResult.status !== 0) {
     return {
       ok: false,
@@ -1350,13 +1360,18 @@ async function isSandboxGatewayRunning(
   if (agent && !agentRuntime.hasGatewayRuntime(agent)) return null;
   const probeUrl = getSandboxHealthProbeUrl(sandboxName);
   const command = sandboxGatewayRecoveryProbeCommand(probeUrl);
-  return parseSandboxGatewayRecoveryProbe(
-    agent && agent.name !== "openclaw" && agent.name !== "hermes"
-      ? await executeCustomAgentRecoveryCommand(sandboxName, command, runtimeSelection)
-      : await executeSandboxExecCommand(sandboxName, command, DEFAULT_SANDBOX_EXEC_TIMEOUT_MS, {
-          runtimeSelection,
-        }),
-  );
+  try {
+    return parseSandboxGatewayRecoveryProbe(
+      agent && agent.name !== "openclaw" && agent.name !== "hermes"
+        ? await executeCustomAgentRecoveryCommand(sandboxName, command, runtimeSelection)
+        : await executeSandboxExecCommand(sandboxName, command, DEFAULT_SANDBOX_EXEC_TIMEOUT_MS, {
+            runtimeSelection,
+          }),
+    );
+  } catch (error) {
+    if (!(error instanceof SandboxCommandTransportError)) throw error;
+    return null;
+  }
 }
 
 function hasGatewayRecoveryMarker(result: SandboxCommandResult | null): boolean {

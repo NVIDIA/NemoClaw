@@ -7,6 +7,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
+import { SandboxCommandTransportError } from "../../adapters/sandbox/command-transport";
 
 import {
   abortOpenClawPostRestoreDoctor,
@@ -758,4 +759,66 @@ describe("OpenClaw post-upgrade recovery doctor", () => {
     });
     expect(execute).toHaveBeenCalledOnce();
   });
+});
+
+describe.each([
+  "cancelled",
+  "timeout",
+  "capture",
+  "invocation",
+  "unavailable",
+  "malformed",
+] as const)("doctor maintenance transport failure: %s", (kind) => {
+  it("reports an unverified marker without restarting or trying privilege", async () => {
+    const error = new SandboxCommandTransportError(kind);
+    const execute = vi.fn().mockRejectedValue(error);
+    const capture = vi.fn();
+    const privileged = vi.fn();
+    await expect(
+      beginOpenClawPostRestoreDoctor("alpha", undefined, {
+        captureOpenshell: capture as never,
+        executeSandboxExecCommand: execute,
+        executePrivilegedSandboxCommand: privileged,
+        now: () => 0,
+        sleep: vi.fn(),
+      }),
+    ).resolves.toEqual({ ok: false, stage: "mark", detail: error.message });
+    expect(execute).toHaveBeenCalledOnce();
+    expect(capture).not.toHaveBeenCalled();
+    expect(privileged).not.toHaveBeenCalled();
+  });
+
+  it("reports an unverified native release without polling or retrying", async () => {
+    const execute = vi.fn().mockRejectedValue(new SandboxCommandTransportError(kind));
+    const capture = vi.fn();
+    const sleep = vi.fn();
+    await expect(
+      releaseOpenClawPostRestoreDoctorForDelete(
+        { sandboxName: "alpha" },
+        {
+          captureOpenshell: capture as never,
+          executeSandboxExecCommand: execute,
+          now: () => 0,
+          sleep,
+        },
+      ),
+    ).resolves.toMatchObject({ ok: false, stage: "release" });
+    expect(execute).toHaveBeenCalledOnce();
+    expect(capture).not.toHaveBeenCalled();
+    expect(sleep).not.toHaveBeenCalled();
+  });
+});
+
+it("propagates unexpected maintenance authority errors", async () => {
+  const error = new Error("maintenance authority refused");
+  const deps = {
+    captureOpenshell: vi.fn() as never,
+    executeSandboxExecCommand: vi.fn().mockRejectedValue(error),
+    now: () => 0,
+    sleep: vi.fn(),
+  };
+  await expect(beginOpenClawPostRestoreDoctor("alpha", undefined, deps)).rejects.toBe(error);
+  await expect(
+    releaseOpenClawPostRestoreDoctorForDelete({ sandboxName: "alpha" }, deps),
+  ).rejects.toBe(error);
 });
