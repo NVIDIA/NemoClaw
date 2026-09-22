@@ -300,7 +300,7 @@ describe("managed llama.cpp profile onboarding", () => {
           detectedGpu,
           catalog,
           linuxCollectionOptions(),
-          selectionOptions,
+          { ...selectionOptions, dockerContextIsDefault: () => true },
         ),
     );
     const installManagedLlamaCpp = vi.fn<NonNullable<SetupNimFlowDeps["installManagedLlamaCpp"]>>(
@@ -404,7 +404,7 @@ describe("managed llama.cpp profile onboarding", () => {
           detectedGpu,
           catalog,
           sparkCollectionOptions(),
-          selectionOptions,
+          { ...selectionOptions, dockerContextIsDefault: () => true },
         ),
     );
     const installManagedLlamaCpp = vi.fn<NonNullable<SetupNimFlowDeps["installManagedLlamaCpp"]>>(
