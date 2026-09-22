@@ -23,10 +23,9 @@ describe("OpenClaw bounded current-layout scope upgrade patch", () => {
       const apply = runPatch(dist);
       expect(apply.status, `${apply.stdout}${apply.stderr}`).toBe(0);
       const source = fs.readFileSync(path.join(dist, "message-handler-fixture.js"), "utf8");
-      const shouldAttemptInlineApproval = runFixture<(input: Record<string, unknown>) => boolean>(
-        source,
-        "shouldAttemptInlineApproval",
-      );
+      const resolvePairingOutcome = runFixture<
+        (input: Record<string, unknown>) => "approved" | "pending"
+      >(source, "resolvePairingOutcome");
       const exact = {
         authMethod: "token",
         connectParams: { client: { id: "cli", mode: "cli" } },
@@ -43,42 +42,42 @@ describe("OpenClaw bounded current-layout scope upgrade patch", () => {
         trustedProxyApprovalScopes: null,
       };
 
-      expect(shouldAttemptInlineApproval(exact)).toBe(false);
-      expect(shouldAttemptInlineApproval({ ...exact, authMethod: "password" })).toBe(true);
-      expect(shouldAttemptInlineApproval({ ...exact, reason: "not-paired" })).toBe(true);
-      expect(shouldAttemptInlineApproval({ ...exact, role: "node" })).toBe(true);
+      expect(resolvePairingOutcome(exact)).toBe("pending");
+      expect(resolvePairingOutcome({ ...exact, authMethod: "password" })).toBe("approved");
+      expect(resolvePairingOutcome({ ...exact, reason: "not-paired" })).toBe("approved");
+      expect(resolvePairingOutcome({ ...exact, role: "node" })).toBe("approved");
       expect(
-        shouldAttemptInlineApproval({
+        resolvePairingOutcome({
           ...exact,
           pairing: { request: { isRepair: false, silent: true } },
         }),
-      ).toBe(true);
+      ).toBe("approved");
+      expect(resolvePairingOutcome({ ...exact, plan: { allowSilentLocalPairing: false } })).toBe(
+        "approved",
+      );
       expect(
-        shouldAttemptInlineApproval({ ...exact, plan: { allowSilentLocalPairing: false } }),
-      ).toBe(true);
-      expect(
-        shouldAttemptInlineApproval({
+        resolvePairingOutcome({
           ...exact,
           connectParams: { client: { id: "control-ui", mode: "ui" } },
         }),
-      ).toBe(true);
+      ).toBe("approved");
       expect(
-        shouldAttemptInlineApproval({
+        resolvePairingOutcome({
           ...exact,
           existingPairedDevice: { publicKey: "other-key", scopes: ["operator.pairing"] },
         }),
-      ).toBe(true);
+      ).toBe("approved");
       expect(
-        shouldAttemptInlineApproval({
+        resolvePairingOutcome({
           ...exact,
           existingPairedDevice: {
             publicKey: "public-key-1",
             scopes: ["operator.pairing", "operator.write"],
           },
         }),
-      ).toBe(true);
+      ).toBe("approved");
       expect(
-        shouldAttemptInlineApproval({
+        resolvePairingOutcome({
           ...exact,
           existingPairedDevice: {
             publicKey: "public-key-1",
@@ -86,9 +85,9 @@ describe("OpenClaw bounded current-layout scope upgrade patch", () => {
           },
           scopes: ["operator.admin"],
         }),
-      ).toBe(false);
+      ).toBe("pending");
       expect(
-        shouldAttemptInlineApproval({
+        resolvePairingOutcome({
           ...exact,
           existingPairedDevice: {
             publicKey: "public-key-1",
@@ -96,17 +95,17 @@ describe("OpenClaw bounded current-layout scope upgrade patch", () => {
           },
           scopes: ["operator.admin", "operator.unknown"],
         }),
-      ).toBe(true);
+      ).toBe("approved");
       expect(
-        shouldAttemptInlineApproval({ ...exact, scopes: ["operator.write", "operator.write"] }),
-      ).toBe(true);
+        resolvePairingOutcome({ ...exact, scopes: ["operator.write", "operator.write"] }),
+      ).toBe("approved");
       expect(
-        shouldAttemptInlineApproval({
+        resolvePairingOutcome({
           ...exact,
           trustedProxyApprovalScopes: ["operator.write"],
         }),
-      ).toBe(true);
-      expect(shouldAttemptInlineApproval({ ...exact, authMethod: "device-token" })).toBe(false);
+      ).toBe("approved");
+      expect(resolvePairingOutcome({ ...exact, authMethod: "device-token" })).toBe("pending");
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }

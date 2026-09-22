@@ -1,6 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { shellQuote } from "../../../src/lib/core/shell-quote.ts";
+export {
+  preApprovalAdminProbeEvidence,
+  type PreApprovalAdminProbeOutcome,
+} from "../fixtures/issue-4462-admin-approval-evidence.ts";
+
 export const ISSUE_4462_SCOPE_UPGRADE_PHASES = [
   "confirm configured runtime availability and clear the scope-upgrade sandbox",
   "install the OpenClaw sandbox",
@@ -9,45 +15,7 @@ export const ISSUE_4462_SCOPE_UPGRADE_PHASES = [
   "record the approval contract",
 ] as const;
 
-export type PreApprovalAdminProbeOutcome =
-  | "approval-required"
-  | "command-failed"
-  | "gateway-unavailable"
-  | "timeout"
-  | "unexpected-success";
-
-interface PreApprovalAdminProbeResult {
-  exitCode: number | null;
-  stderr: string;
-  stdout: string;
-  timedOut: boolean;
-}
-
-export function preApprovalAdminProbeEvidence(result: PreApprovalAdminProbeResult): {
-  outcome: PreApprovalAdminProbeOutcome;
-} {
-  if (result.timedOut) return { outcome: "timeout" };
-  if (result.exitCode === 0) return { outcome: "unexpected-success" };
-
-  const output = `${result.stdout}\n${result.stderr}`;
-  if (
-    /operator\.admin|scope upgrade pending approval|device pairing required|pairing required/i.test(
-      output,
-    )
-  ) {
-    return { outcome: "approval-required" };
-  }
-  if (
-    /gateway (?:connection )?(?:unavailable|unreachable)|econn(?:refused|reset)|connection refused|network unreachable|socket (?:closed|unavailable)/i.test(
-      output,
-    )
-  ) {
-    return { outcome: "gateway-unavailable" };
-  }
-  return { outcome: "command-failed" };
-}
-
-export const ADMIN_REQUEST_SELECTOR_PY = String.raw`import base64, hashlib, json, os, re, sys
+export const ADMIN_REQUEST_SELECTOR_PY = String.raw`import base64, hashlib, importlib.util, json, os, re, sys
 from pathlib import Path
 
 data=json.loads(Path(sys.argv[1]).read_text(encoding='utf-8'))
@@ -122,9 +90,13 @@ def identity_public_key(value):
     if len(der) != len(prefix) + 32 or not der.startswith(prefix): return ''
     return base64.urlsafe_b64encode(der[len(prefix):]).decode('ascii').rstrip('=')
 
-identity_path=Path(os.environ.get('OPENCLAW_STATE_DIR') or '/sandbox/.openclaw') / 'identity' / 'device.json'
-try: identity=json.loads(identity_path.read_text(encoding='utf-8'))
-except (FileNotFoundError, json.JSONDecodeError): raise SystemExit('local CLI identity is missing or invalid')
+state_root=Path(os.environ.get('OPENCLAW_STATE_DIR') or '/sandbox/.openclaw')
+helper_path=Path(os.environ.get('NEMOCLAW_OPENCLAW_PAIRING_STATE_HELPER') or '/usr/local/lib/nemoclaw/openclaw_pairing_state.py')
+spec=importlib.util.spec_from_file_location('nemoclaw_admin_pairing_state', helper_path)
+module=importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+records,_metadata=module.read_openclaw_pairing_state(str(state_root), timeout=1)
+identity=records.get('identity')
 if not isinstance(identity, dict): raise SystemExit('local CLI identity must be an object')
 identity_device_id=norm(identity.get('deviceId'))
 identity_key=identity_public_key(identity)
@@ -170,8 +142,8 @@ export function adminApprovalConnectScript(
   sandboxName: string,
   cronName: string,
 ): string {
-  const cli = JSON.stringify(cliPath);
-  const sandbox = JSON.stringify(sandboxName);
+  const cli = shellQuote(cliPath);
+  const sandbox = shellQuote(sandboxName);
   return [
     "set -euo pipefail",
     `cat <<'NEMOCLAW_ADMIN_APPROVAL' | ${cli} ${sandbox} connect`,

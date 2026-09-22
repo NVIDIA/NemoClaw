@@ -2193,10 +2193,26 @@ const BASE_FILE_SPECS: FileSpec[] = [
         if (result.error) return { source, status: "no-match", error: result.error };
         changed = true;
       }
+      const explicitAdminMarkerCount = countOccurrences(
+        result.source,
+        AUTH_REQUIRE_EXPLICIT_ADMIN_UPGRADE_MARKER,
+      );
+      if (
+        sqliteLayout &&
+        explicitAdminMarkerCount > 0 &&
+        (explicitAdminMarkerCount !== 1 ||
+          !result.source.includes(AUTH_INLINE_APPROVAL_REPLACEMENT))
+      ) {
+        return {
+          source,
+          status: "no-match",
+          error: `SQLite gateway explicit admin scope-upgrade patch in ${file}: duplicate or structurally changed patch`,
+        };
+      }
       if (
         sqliteLayout &&
         result.source.includes(AUTH_DEFER_SILENT_SCOPE_UPGRADE_MARKER) &&
-        !result.source.includes(AUTH_REQUIRE_EXPLICIT_ADMIN_UPGRADE_MARKER)
+        explicitAdminMarkerCount === 0
       ) {
         result = replaceExactlyOnce(
           result.source,

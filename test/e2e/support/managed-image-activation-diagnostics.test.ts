@@ -14,6 +14,7 @@ import {
   managedActivationPostRestartAgentTurnScript,
   managedActivationOpenClawPluginScript,
   managedHermesBoundaryPoisonCommand,
+  managedOpenClawAdminApprovalInput,
   managedOpenClawSubagentCommand,
   ONBOARD_FAILURE_LOG_ARTIFACT_OPTIONS,
   preclean,
@@ -21,6 +22,7 @@ import {
   waitForManagedActivationSandboxDeletion,
   waitForManagedActivationSandboxAbsence,
 } from "../live/managed-image-activation-e2e-helpers.ts";
+import { pendingAdminRequestId } from "../fixtures/issue-4462-admin-approval-evidence.ts";
 
 function runPostRestartAgentTurnFixture(statuses: string[], times: number[]) {
   const fixture = createHostProcessWorkspace("nemoclaw-openclaw-restart-ready-");
@@ -111,6 +113,37 @@ printf '%s\n' "$@" >"$MANAGED_ACTIVATION_FIXTURE/openclaw-args"
 }
 
 describe("managed image activation failure diagnostics", () => {
+  it("binds explicit admin approval to the exact request from the failed agent turn", () => {
+    const requestId = "4edc8df0-20d0-4308-b0e8-850843ae0cf4";
+    const result = {
+      exitCode: 1,
+      stderr: `scope upgrade pending approval (requestId: ${requestId})`,
+      stdout: "",
+      timedOut: false,
+    };
+
+    expect(pendingAdminRequestId(result)).toBe(requestId);
+    const input = managedOpenClawAdminApprovalInput(requestId);
+    expect(input).toContain(`openclaw devices approve '${requestId}'`);
+    expect(input).toContain("NEMOCLAW_MANAGED_ADMIN_APPROVAL_OK");
+    expect(input).not.toContain(result.stderr);
+  });
+
+  it("rejects ambiguous admin request IDs", () => {
+    const first = "4edc8df0-20d0-4308-b0e8-850843ae0cf4";
+    const second = "a96ada31-9cf9-4d99-97cc-978dcbb9fc39";
+    expect(
+      pendingAdminRequestId({
+        exitCode: 1,
+        stderr: [first, second]
+          .map((requestId) => `scope upgrade pending approval (requestId: ${requestId})`)
+          .join("\n"),
+        stdout: "",
+        timedOut: false,
+      }),
+    ).toBeNull();
+  });
+
   it("waits only for the exact OpenShell Deleting phase and records each observation", async () => {
     const list = vi
       .fn()

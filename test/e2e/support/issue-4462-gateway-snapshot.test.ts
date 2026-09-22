@@ -3,11 +3,12 @@
 
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
 import { describe, expect, it } from "vitest";
+import { ADMIN_REQUEST_SELECTOR_PY } from "../live/issue-4462-admin-approval-helper.ts";
 
 const SNAPSHOT_SCRIPT = path.join(
   import.meta.dirname,
@@ -141,6 +142,75 @@ describe("fresh-agent gateway snapshot artifacts", () => {
       expect(serialized).not.toContain(DEVICE_ID);
       expect(serialized).not.toContain(PUBLIC_KEY);
       expect(serialized).not.toContain(TOKEN);
+    } finally {
+      rmSync(fixtureRoot, { force: true, recursive: true });
+    }
+  });
+
+  it("selects the pending admin request with the canonical CLI identity (#12064)", () => {
+    const fixtureRoot = mkdtempSync(path.join(tmpdir(), "nemoclaw-issue-4462-selector-"));
+    const stateRoot = path.join(fixtureRoot, "state-root");
+    const sqlitePath = path.join(stateRoot, "state", "openclaw.sqlite");
+    const helperPath = path.join(fixtureRoot, "openclaw_pairing_state.py");
+    const devicesPath = path.join(fixtureRoot, "devices.json");
+    const requestIdPath = path.join(fixtureRoot, "request-id");
+    const requestId = "4edc8df0-20d0-4308-b0e8-850843ae0cf4";
+    const identity = { deviceId: DEVICE_ID, publicKey: PUBLIC_KEY };
+    const pending = {
+      requestId,
+      deviceId: DEVICE_ID,
+      publicKey: PUBLIC_KEY,
+      clientId: "cli",
+      clientMode: "cli",
+      role: "operator",
+      roles: ["operator"],
+      scopes: ["operator.admin", "operator.pairing", "operator.write"],
+    };
+    const paired = {
+      deviceId: DEVICE_ID,
+      publicKey: PUBLIC_KEY,
+      clientId: "cli",
+      clientMode: "cli",
+      role: "operator",
+      roles: ["operator"],
+      scopes: ["operator.pairing", "operator.write"],
+      approvedScopes: ["operator.pairing", "operator.write"],
+      tokens: {
+        operator: {
+          role: "operator",
+          scopes: ["operator.pairing", "operator.read", "operator.write"],
+          token: TOKEN,
+        },
+      },
+    };
+    mkdirSync(path.dirname(sqlitePath), { recursive: true });
+    writeFileSync(sqlitePath, "canonical-layout-sentinel", "utf8");
+    writeFileSync(
+      helperPath,
+      [
+        "import json",
+        `records = json.loads(${JSON.stringify(JSON.stringify({ identity }))})`,
+        "def read_openclaw_pairing_state(state_dir, timeout=1):",
+        "    return records, {'stateDir': state_dir, 'timeout': timeout}",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+    writeJson(devicesPath, { pending: [pending], paired: [paired] });
+    try {
+      const result = spawnSync("python3", ["-", devicesPath, requestIdPath], {
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          NEMOCLAW_OPENCLAW_PAIRING_STATE_HELPER: helperPath,
+          OPENCLAW_STATE_DIR: stateRoot,
+        },
+        input: ADMIN_REQUEST_SELECTOR_PY,
+        timeout: 10_000,
+      });
+      expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+      expect(readFileSync(requestIdPath, "utf8")).toBe(requestId);
+      expect(`${result.stdout}\n${result.stderr}`).not.toContain(TOKEN);
     } finally {
       rmSync(fixtureRoot, { force: true, recursive: true });
     }

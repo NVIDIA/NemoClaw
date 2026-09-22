@@ -33,6 +33,24 @@ function legacyTransactionJournal(
   };
 }
 
+function boundedScopeUpgrade(): Record<string, unknown> {
+  return {
+    authMethod: "device-token",
+    connectParams: { client: { id: "cli", mode: "cli" } },
+    devicePublicKey: "public-key-1",
+    existingPairedDevice: {
+      publicKey: "public-key-1",
+      scopes: ["operator.pairing"],
+    },
+    pairing: { request: { isRepair: true, silent: true } },
+    plan: { allowSilentLocalPairing: true },
+    reason: "scope-upgrade",
+    role: "operator",
+    scopes: ["operator.write"],
+    trustedProxyApprovalScopes: null,
+  };
+}
+
 describe("OpenClaw device self-approval patch upgrades (#4462)", () => {
   it("fails closed when the current gateway callsite cannot receive device-auth scope", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-device-callsite-drift-"));
@@ -303,33 +321,19 @@ describe("OpenClaw device self-approval patch upgrades (#4462)", () => {
       expect(upgraded).not.toContain(
         "const inlineApprovalAttempted = trustedProxyApprovalScopes !== null || pairing.request.silent === true;",
       );
-      const decideInlineApproval = vm.runInNewContext(
-        `${upgraded}\nshouldAttemptInlineApproval`,
-      ) as (input: Record<string, unknown>) => boolean;
-      const boundedUpgrade = {
-        authMethod: "device-token",
-        connectParams: { client: { id: "cli", mode: "cli" } },
-        devicePublicKey: "public-key-1",
-        existingPairedDevice: {
-          publicKey: "public-key-1",
-          scopes: ["operator.pairing"],
-        },
-        pairing: { request: { isRepair: true, silent: true } },
-        plan: { allowSilentLocalPairing: true },
-        reason: "scope-upgrade",
-        role: "operator",
-        scopes: ["operator.write"],
-        trustedProxyApprovalScopes: null,
-      };
-      expect(decideInlineApproval(boundedUpgrade)).toBe(false);
+      const resolvePairingOutcome = vm.runInNewContext(`${upgraded}\nresolvePairingOutcome`) as (
+        input: Record<string, unknown>,
+      ) => "approved" | "pending";
+      const boundedUpgrade = boundedScopeUpgrade();
+      expect(resolvePairingOutcome(boundedUpgrade)).toBe("pending");
       expect(
-        decideInlineApproval({
+        resolvePairingOutcome({
           ...boundedUpgrade,
           existingPairedDevice: { publicKey: "different", scopes: ["operator.pairing"] },
         }),
-      ).toBe(true);
+      ).toBe("approved");
       expect(
-        decideInlineApproval({
+        resolvePairingOutcome({
           ...boundedUpgrade,
           existingPairedDevice: {
             publicKey: "public-key-1",
@@ -337,7 +341,7 @@ describe("OpenClaw device self-approval patch upgrades (#4462)", () => {
           },
           scopes: ["operator.admin"],
         }),
-      ).toBe(false);
+      ).toBe("pending");
       expect(runPatch(dist).status).toBe(0);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
@@ -398,7 +402,51 @@ describe("OpenClaw device self-approval patch upgrades (#4462)", () => {
       expect(
         upgraded.match(/nemoclaw: require explicit approval for CLI operator.admin upgrade/gu),
       ).toHaveLength(1);
+      const resolvePairingOutcome = vm.runInNewContext(`${upgraded}\nresolvePairingOutcome`) as (
+        input: Record<string, unknown>,
+      ) => "approved" | "pending";
+      expect(
+        resolvePairingOutcome({
+          ...boundedScopeUpgrade(),
+          existingPairedDevice: {
+            publicKey: "public-key-1",
+            scopes: ["operator.pairing", "operator.write"],
+          },
+          scopes: ["operator.admin"],
+        }),
+      ).toBe("pending");
+      const beforeReapply = fs.readFileSync(file, "utf8");
       expect(runPatch(dist).status).toBe(0);
+      expect(fs.readFileSync(file, "utf8")).toBe(beforeReapply);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects a structurally changed explicit-admin approval patch (#12064)", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-device-admin-drift-"));
+    const dist = path.join(tmp, "dist");
+    fs.mkdirSync(dist);
+    writeCurrentGatewayCallFixtureDist(dist);
+    try {
+      expect(runPatch(dist).status).toBe(0);
+      const file = path.join(dist, "message-handler-fixture.js");
+      const source = fs.readFileSync(file, "utf8");
+      const damaged = source.replace(
+        '\t\t\tconst nemoclawAllowedAdminUpgradeScopes = new Set([...nemoclawAllowedUpgradeScopes, "operator.admin"]);\n',
+        "",
+      );
+      expect(damaged).not.toBe(source);
+      expect(damaged).toContain(
+        "nemoclaw: require explicit approval for CLI operator.admin upgrade",
+      );
+      fs.writeFileSync(file, damaged);
+
+      const reapply = runPatch(dist);
+      expect(reapply.status).not.toBe(0);
+      expect(`${reapply.stdout}${reapply.stderr}`).toContain(
+        "duplicate or structurally changed patch",
+      );
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
