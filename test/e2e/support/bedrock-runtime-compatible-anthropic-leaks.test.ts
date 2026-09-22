@@ -70,11 +70,22 @@ function runProbe(input: string | BedrockLeakProbeInput): {
   const result = spawnSync("python3", ["-I", "-c", BEDROCK_LEAK_PROBE_SOURCE], {
     encoding: "utf8",
     input: typeof input === "string" ? input : JSON.stringify(input),
+    killSignal: "SIGKILL",
     maxBuffer: 64 * 1024,
     timeout: 5_000,
   });
   expect(result.error).toBeUndefined();
   return { status: result.status, stdout: result.stdout, stderr: result.stderr };
+}
+
+function createFifo(file: string): void {
+  const result = spawnSync("mkfifo", [file], {
+    encoding: "utf8",
+    killSignal: "SIGKILL",
+    timeout: 5_000,
+  });
+  expect(result.error).toBeUndefined();
+  expect(result.status, result.stderr).toBe(0);
 }
 
 function progressProbe() {
@@ -223,8 +234,7 @@ describe("Bedrock Runtime bounded leak probe", () => {
   it("fails closed without blocking when a requested config is replaced by a FIFO (#12191)", () => {
     const fixture = createProbeFixture();
     fs.rmSync(fixture.configFile);
-    const created = spawnSync("mkfifo", [fixture.configFile], { encoding: "utf8" });
-    expect(created.status, created.stderr).toBe(0);
+    createFifo(fixture.configFile);
 
     const result = runProbe(fixture.input);
     const parsed = parseBedrockLeakProbeResult(result.stdout, PATTERNS);
