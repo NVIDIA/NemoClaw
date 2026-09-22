@@ -312,6 +312,30 @@ describe("managed vLLM export pipeline", () => {
     },
   );
 
+  it("reads the gateway-owned vLLM credential before runtime classification", async () => {
+    const fixture = mockManagedVllmSource();
+    const source: SandboxEntry = { ...fixture.source };
+    delete source.servingProfileProvenance;
+    vi.mocked(loadRegistry).mockReturnValue({
+      sandboxes: { alpha: source },
+      defaultSandbox: null,
+    });
+
+    await expect(createLiveExportSnapshotReader().read("alpha")).resolves.toMatchObject({
+      kind: "observed",
+      inference: {
+        provider: "vllm-local",
+        credentialEnv: null,
+        endpointEvidence: {
+          provider: { name: "vllm-local", workspace: "default" },
+          source: { kind: "provider-config", key: "OPENAI_BASE_URL" },
+        },
+      },
+    });
+    expect(observeManagedVllmForExport).not.toHaveBeenCalled();
+    expect(raw.getProviderProfile).not.toHaveBeenCalled();
+  });
+
   it.each([
     ["agentConfig", { agentTimeoutSeconds: 0 }],
     ["agentConfig", { agentTimeoutSeconds: 1.5 }],

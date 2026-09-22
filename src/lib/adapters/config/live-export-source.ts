@@ -145,12 +145,10 @@ function providerIdentity(provider: Provider, gatewayName: string, managed: bool
   };
 }
 
-function expectedCredentialKeys(
-  credentialEnv: string | null,
-  managed: boolean,
-  routeProvider: string,
-): string[] {
-  if (managed) return [VLLM_LOCAL_CREDENTIAL_ENV];
+function expectedCredentialKeys(credentialEnv: string | null, routeProvider: string): string[] {
+  // vLLM onboarding always registers this gateway-owned key, including for
+  // legacy host-local installs whose registry credential remains null.
+  if (routeProvider === "vllm-local") return [VLLM_LOCAL_CREDENTIAL_ENV];
   // Ollama onboarding has no user credential; its managed proxy still authenticates the route.
   if (routeProvider === "ollama-local" && credentialEnv === null)
     return [OLLAMA_LOCAL_CREDENTIAL_ENV];
@@ -193,7 +191,7 @@ function matchesProviderMetadata(
       [
         routeProvider,
         builtin ? "nvidia" : type,
-        expectedCredentialKeys(normalized.credentialEnv, managed, routeProvider),
+        expectedCredentialKeys(normalized.credentialEnv, routeProvider),
         builtin ? [] : [configKey],
       ],
     )
