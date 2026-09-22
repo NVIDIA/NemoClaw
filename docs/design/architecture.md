@@ -59,6 +59,7 @@ Apply obtains and checks new plans; a previous preview is not an approval artifa
 Destroy reverses the stage order so workloads are removed while their gateway is still available.
 The SDK checks both teardown plans before deleting anything and records completed stages so an interrupted destroy can resume.
 The compiler builds teardown configuration from retained intent and the established resource inventory, keeping storage and workspace declarations while removing workload and readiness declarations.
+It returns the retained addresses with that graph; plan validation and destroy reporting use the same result.
 Storage that was never established is omitted, so partial teardown does not finish creating it.
 For commands and deletion effects, see [deployment lifecycle](../usage.md).
 
