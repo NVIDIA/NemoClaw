@@ -464,7 +464,8 @@ describe("sandbox-create provider publication branches", () => {
       const uid = process.getuid?.() ?? 0;
       const authorityDirectoryChain = (target: string) => {
         const entries = [];
-        for (let directory = path.dirname(target); ; directory = path.dirname(directory)) {
+        let directory = path.dirname(target);
+        do {
           entries.push({
             device: "1",
             inode: String(entries.length + 10),
@@ -472,8 +473,9 @@ describe("sandbox-create provider publication branches", () => {
             ownerUid: String(uid),
             path: directory,
           });
-          if (directory === path.dirname(directory)) return entries;
-        }
+          directory = path.dirname(directory);
+        } while (directory !== entries.at(-1)?.path);
+        return entries;
       };
       const runtimeDir = path.join("/run/user", String(uid));
       const socketPath = path.join(runtimeDir, "podman", "podman.sock");
@@ -507,36 +509,48 @@ describe("sandbox-create provider publication branches", () => {
       };
       let restartPolicy = "no";
       const podman = (args: readonly string[]) => {
-        if (args[0] === "ps") return { status: 0, stdout: `${containerId}\n`, stderr: "" };
-        if (args[0] === "container" && args[1] === "inspect") {
-          return {
-            status: 0,
-            stdout: JSON.stringify([
-              {
-                Id: containerId,
-                Image: imageId,
-                Name: `openshell-default--${sandboxName}-${sandboxId}`,
-                Config: {
-                  Labels: {
-                    "openshell.managed": "true",
-                    "openshell.ai/sandbox-id": sandboxId,
-                    "openshell.ai/sandbox-name": sandboxName,
-                    "openshell.ai/sandbox-namespace": "",
-                    "openshell.ai/sandbox-workspace": "default",
+        const operation = args[0] === "ps" ? "ps" : args.slice(0, 2).join(" ");
+        const handlers = new Map([
+          ["ps", () => ({ status: 0, stdout: `${containerId}\n`, stderr: "" })],
+          [
+            "container inspect",
+            () => ({
+              status: 0,
+              stdout: JSON.stringify([
+                {
+                  Id: containerId,
+                  Image: imageId,
+                  Name: `openshell-default--${sandboxName}-${sandboxId}`,
+                  Config: {
+                    Labels: {
+                      "openshell.managed": "true",
+                      "openshell.ai/sandbox-id": sandboxId,
+                      "openshell.ai/sandbox-name": sandboxName,
+                      "openshell.ai/sandbox-namespace": "",
+                      "openshell.ai/sandbox-workspace": "default",
+                    },
                   },
+                  State: { Running: true, Paused: false, Status: "running" },
+                  HostConfig: { RestartPolicy: { Name: restartPolicy } },
                 },
-                State: { Running: true, Paused: false, Status: "running" },
-                HostConfig: { RestartPolicy: { Name: restartPolicy } },
-              },
-            ]),
-            stderr: "",
-          };
-        }
-        if (args[0] === "container" && args[1] === "update") {
-          restartPolicy = "unless-stopped";
-          return { status: 0, stdout: "", stderr: "" };
-        }
-        throw new Error(`unexpected podman invocation: ${args.join(" ")}`);
+              ]),
+              stderr: "",
+            }),
+          ],
+          [
+            "container update",
+            () => {
+              restartPolicy = "unless-stopped";
+              return { status: 0, stdout: "", stderr: "" };
+            },
+          ],
+        ]);
+        return (
+          handlers.get(operation)?.() ??
+          (() => {
+            throw new Error(`unexpected podman invocation: ${args.join(" ")}`);
+          })()
+        );
       };
 
       fs.chmodSync(tmpDir, 0o700);
@@ -685,7 +699,8 @@ describe("sandbox-create provider publication branches", () => {
           },
           readRegistry: () => registryEntry as never,
           compareAndSetRegistryGatewayPort: (name, expected, gatewayPort) => {
-            if (name !== sandboxName || registryEntry === null) return false;
+            assert.equal(name, sandboxName);
+            assert.ok(registryEntry);
             assert.deepEqual(registryEntry, expected);
             registryEntry = { ...registryEntry, gatewayPort };
             return true;
