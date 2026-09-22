@@ -46,15 +46,21 @@ jobs:
       - name: Test CI orchestration
         if: matrix.platform == 'linux_amd64'
         run: python3 -B -m unittest discover -s tools/ci -p 'test_*.py'
-      - name: Install test runner for Linux ARM64 pilot
-        if: matrix.platform == 'linux_arm64'
+      - name: Install pinned test runner
         run: |
           mkdir -p "$RUNNER_TEMP/nextest"
           cd "$RUNNER_TEMP/nextest"
-          archive=cargo-nextest-0.9.144-aarch64-unknown-linux-gnu.tar.gz
+          case "$TEST_PLATFORM" in
+            linux_arm64) target=aarch64-unknown-linux-gnu; checksum=7fecfd431b810c05c589d800524286b8f80ce2fe9fb1fef05caf16d095cea407 ;;
+            linux_amd64) target=x86_64-unknown-linux-gnu; checksum=8a4f726272b0a1c499bd87ca3978bfbb1a8c20bb08ccf075b9996e2081bd1e1e ;;
+            darwin_arm64) target=universal-apple-darwin; checksum=87472b2c3ee09154cadd34d168a5cdede478806810f095c3dc4dc499943da42e ;;
+            windows_amd64) target=x86_64-pc-windows-msvc; checksum=b0d6a6569d4ef63a095c5a574a6856c17fb755b51a02a17e4651e738e9192831 ;;
+            *) exit 1 ;;
+          esac
+          archive="cargo-nextest-0.9.144-$target.tar.gz"
           curl --fail --location --retry 3 "https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-0.9.144/$archive" -o "$archive"
-          echo "7fecfd431b810c05c589d800524286b8f80ce2fe9fb1fef05caf16d095cea407  $archive" | sha256sum --check
-          tar -xzf "$archive" cargo-nextest
+          python -c 'import hashlib, pathlib, sys; assert hashlib.sha256(pathlib.Path(sys.argv[1]).read_bytes()).hexdigest() == sys.argv[2], "nextest checksum mismatch"' "$archive" "$checksum"
+          tar -xzf "$archive"
           echo "$PWD" >> "$GITHUB_PATH"
           ./cargo-nextest nextest --version
       - name: Check formatting
@@ -65,12 +71,8 @@ jobs:
         run: cargo build --locked --workspace --all-targets
       - name: Run deterministic tests
         run: |
-          if [ "$TEST_PLATFORM" = linux_arm64 ]; then
-            cargo nextest run --locked --workspace --profile ci
-            cargo test --locked --workspace --doc
-          else
-            cargo test --locked --workspace
-          fi
+          cargo nextest run --locked --workspace --all-targets --profile ci
+          cargo test --locked --workspace --doc
       - name: Check recipe attribution and preparation adapters
         if: runner.os == 'Linux'
         run: python3 -B -m unittest discover -s runtimes/qwen38 -p 'test_*.py'
@@ -91,10 +93,14 @@ jobs:
           if [ "$TEST_PLATFORM" = windows_amd64 ]; then suffix=.exe; fi
           export NEMOCLAW_TEST_TOFU="$NEMOCLAW_TEST_BUNDLE/libexec/tofu$suffix"
           export NEMOCLAW_TEST_PROVIDER="$PWD/target/debug/terraform-provider-nemoclaw$suffix"
-          cargo test --locked -p nemoclaw-sdk native_state_json_preserves_module_and_instance_identity_without_refresh -- --ignored
-          tests=(--test provider_protocol --test service_capacity --test service_readiness --test sandbox_readiness --test opentofu_openshell --test deployment --test export_observations --test fabric_deployment --test multiple_providers --test remote_service)
-          if [ "$TEST_PLATFORM" = linux_arm64 ]; then
-            cargo nextest run --locked --workspace --profile lifecycle "${tests[@]}" --run-ignored only
-          else
-            cargo test --locked --workspace "${tests[@]}" -- --ignored --test-threads=2
-          fi
+          # Keep Cargo's target/feature selection identical to the first test build.
+          # Nextest filters execution without recompiling a different package graph.
+          cargo nextest run --locked --workspace --all-targets --profile lifecycle --run-ignored only
+      - name: Upload lifecycle timings
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: lifecycle-${{ matrix.platform }}-${{ github.run_attempt }}
+          path: target/nextest/lifecycle/lifecycle.xml
+          if-no-files-found: ignore
+          retention-days: 14
