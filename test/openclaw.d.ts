@@ -41,3 +41,11 @@ declare module "*/brave-web-search-provider-CY6mh6hm.js" {
     };
   };
 }
+
+declare module "*/tavily-search-provider-D3jRulyv.js" {
+  export function t(): {
+    createTool(options: { config: unknown; searchConfig: unknown }): {
+      execute(args: { query: string; count: number }): Promise<unknown>;
+    };
+  };
+}

@@ -9,16 +9,16 @@ use std::collections::{BTreeMap, BTreeSet};
 #[serde(tag = "kind", rename_all = "camelCase", deny_unknown_fields)]
 /// Integration configuration attached inline to an agent or selected through integrationRefs. Unsupported kinds are rejected.
 pub enum Integration {
-    /// Brave Search with gateway-held credentials and explicit agent grants.
+    /// Web search with gateway-held credentials and explicit agent grants.
     WebSearch(WebSearch),
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-/// Brave web search through OpenClaw or Deep Agents native tool configuration.
+/// Managed web search through a supported native agent integration.
 pub struct WebSearch {
     /// Supported search service.
     pub provider: SearchProvider,
-    /// Host environment reference. OpenShell supplies a BRAVE_API_KEY placeholder to the sandbox.
+    /// Host environment reference. OpenShell supplies the search provider's placeholder to the sandbox.
     pub credential: Credential,
 }
 
@@ -104,7 +104,7 @@ impl Sandbox {
                     if matches!(agent.tools, Some(AgentTools::ReadOnly { .. })) =>
                 {
                     return Err(ConfigError::new(
-                        "web search requires unrestricted OpenClaw agents",
+                        "web search requires an unrestricted agent",
                     ));
                 }
                 Integration::WebSearch(_) => {}
@@ -140,7 +140,7 @@ impl Document {
                         ));
                     }
                     selected = Some(RuntimeWebSearch {
-                        provider: search.provider.clone(),
+                        provider: search.provider,
                         credential: search.credential.clone(),
                         agent_refs: binding.agent_refs.into_iter().map(str::to_owned).collect(),
                     });
@@ -166,11 +166,54 @@ pub(crate) struct RuntimeWebSearch {
     pub agent_refs: Vec<String>,
     pub credential: Credential,
 }
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "lowercase")]
 /// Search provider supported by the managed profile.
 pub enum SearchProvider {
     Brave,
+    Tavily,
+}
+impl SearchProvider {
+    pub(crate) fn name(self) -> &'static str {
+        match self {
+            Self::Brave => "brave",
+            Self::Tavily => "tavily",
+        }
+    }
+    pub(crate) fn profile(self) -> &'static str {
+        match self {
+            Self::Brave => "nemoclaw-brave",
+            Self::Tavily => "nemoclaw-tavily",
+        }
+    }
+    pub(crate) fn profile_address(self) -> &'static str {
+        match self {
+            Self::Brave => "nemoclaw_provider_profile.web_search",
+            Self::Tavily => "nemoclaw_provider_profile.web_search_tavily",
+        }
+    }
+    pub(crate) fn credential_env(self) -> &'static str {
+        match self {
+            Self::Brave => "BRAVE_API_KEY",
+            Self::Tavily => "TAVILY_API_KEY",
+        }
+    }
+    pub(crate) fn endpoint(self) -> &'static str {
+        match self {
+            Self::Brave => "https://api.search.brave.com",
+            Self::Tavily => "https://api.tavily.com",
+        }
+    }
+    pub(crate) fn from_name(name: &str) -> Option<Self> {
+        match name {
+            "brave" => Some(Self::Brave),
+            "tavily" => Some(Self::Tavily),
+            _ => None,
+        }
+    }
+    pub(crate) fn from_profile(profile: &str) -> Option<Self> {
+        profile.strip_prefix("nemoclaw-").and_then(Self::from_name)
+    }
 }
 impl RuntimeWebSearch {
     pub(crate) fn validate<'a>(
@@ -180,7 +223,15 @@ impl RuntimeWebSearch {
     ) -> Result<(), ConfigError> {
         let agents: std::collections::BTreeMap<_, _> = agents.collect();
         let mut names = std::collections::BTreeSet::new();
-        if !matches!(harness, HarnessKind::OpenClaw | HarnessKind::DeepAgents)
+        let supported = match self.provider {
+            SearchProvider::Brave => {
+                matches!(harness, HarnessKind::OpenClaw | HarnessKind::DeepAgents)
+            }
+            SearchProvider::Tavily => {
+                matches!(harness, HarnessKind::OpenClaw | HarnessKind::Hermes)
+            }
+        };
+        if !supported
             || self.agent_refs.is_empty()
             || self.agent_refs.iter().any(|name| {
                 !names.insert(name)
@@ -189,7 +240,7 @@ impl RuntimeWebSearch {
             })
         {
             return Err(ConfigError::new(
-                "web search requires unique unrestricted OpenClaw or Deep Agents references",
+                "web search requires unique unrestricted references to a supported harness",
             ));
         }
         super::validation::credential(&Some(self.credential.clone()))
@@ -197,10 +248,11 @@ impl RuntimeWebSearch {
 }
 
 /// Stable registration identity for a search credential reference, never its value.
-pub(crate) fn search_provider_name(reference: &str) -> String {
+pub(crate) fn search_provider_name(provider: SearchProvider, reference: &str) -> String {
     use sha2::{Digest, Sha256};
     format!(
-        "brave-search-{}",
+        "{}-search-{}",
+        provider.name(),
         &super::hex(&Sha256::digest(reference))[..24]
     )
 }

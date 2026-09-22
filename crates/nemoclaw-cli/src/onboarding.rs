@@ -358,6 +358,8 @@ mod tests {
     use nemoclaw_sdk::CancellationToken;
     use std::{
         cell::RefCell,
+        fs,
+        path::Path,
         pin::Pin,
         rc::Rc,
         task::{Context, Poll},
@@ -431,5 +433,93 @@ mod tests {
 
         assert!(result.is_none());
         assert_eq!(*events.borrow(), ["plan"]);
+    }
+
+    fn generation_options(directory: &Path) -> Options {
+        Options {
+            state_dir: directory.join("state-must-not-exist"),
+            bundle_dir: Some(directory.join("bundle-must-not-exist")),
+            verbose: false,
+            generate_only: true,
+            output: directory.join("deployment.yaml"),
+            non_interactive: false,
+            edit: None,
+            name: None,
+            sandbox: None,
+            agent: None,
+            provider: None,
+            model: None,
+            credential_env: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn interactive_generation_accepts_reviewed_answers_without_lifecycle_setup() {
+        let directory = tempfile::tempdir().unwrap();
+        let options = generation_options(directory.path());
+        let output = options.output.clone();
+        let state = options.state_dir.clone();
+        let result = run(
+            options,
+            &b"interactive-deployment\n\n\n\n\n\ny\na\n"[..],
+            &CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+        assert!(result.is_none());
+        assert!(!state.exists());
+        let document = Document::parse(fs::read(output).unwrap().as_slice()).unwrap();
+        assert_eq!(document.metadata.name, "interactive-deployment");
+        assert_eq!(document.credential_names(), ["NVIDIA_INFERENCE_API_KEY"]);
+    }
+
+    #[tokio::test]
+    async fn interactive_edit_preserves_identity_and_exit_does_not_write() {
+        let directory = tempfile::tempdir().unwrap();
+        let initial = generation_options(directory.path());
+        let path = initial.output.clone();
+        run(
+            Options {
+                non_interactive: true,
+                ..initial
+            },
+            ForbiddenInput,
+            &CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+        let before = Document::parse(fs::read(&path).unwrap().as_slice()).unwrap();
+
+        run(
+            Options {
+                edit: Some(path.clone()),
+                ..generation_options(directory.path())
+            },
+            &b"i\nrejected-provider\nunsupported/model\nREJECTED_KEY\ni\nedited-provider\n\nEDITED_INFERENCE_KEY\na\n"[..],
+            &CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+        let after = Document::parse(fs::read(&path).unwrap().as_slice()).unwrap();
+        assert_eq!(after.metadata.uid, before.metadata.uid);
+        assert_eq!(after.metadata.name, before.metadata.name);
+        assert_eq!(after.spec.sandboxes[0].name, before.spec.sandboxes[0].name);
+        assert_eq!(after.inference_provider().unwrap().name, "edited-provider");
+        assert_eq!(after.credential_names(), ["EDITED_INFERENCE_KEY"]);
+
+        let exited = directory.path().join("exited.yaml");
+        let result = run(
+            Options {
+                output: exited.clone(),
+                edit: None,
+                ..generation_options(directory.path())
+            },
+            &b"\n\n\n\n\n\nx\n"[..],
+            &CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+        assert!(result.is_none());
+        assert!(!exited.exists());
     }
 }

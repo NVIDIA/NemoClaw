@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-use nemoclaw_sdk::config::Document;
+use nemoclaw_sdk::config::{DEFAULT_AGENT_IMAGE, DEFAULT_HERMES_IMAGE, Document};
 use serde_json::{Value, json};
 
 fn input(name: &str) -> Value {
@@ -31,6 +31,41 @@ fn maintained_examples_parse_without_connecting_to_services() {
         count += 1;
     }
     assert!(count > 0, "the maintained example corpus must not be empty");
+}
+
+#[test]
+fn omitted_image_uses_the_pin_for_the_selected_harness() {
+    let mut openclaw = input("fabric-openclaw.yaml");
+    openclaw["spec"]["sandboxes"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("image");
+    assert_eq!(
+        parse(&openclaw).unwrap().spec.sandboxes[0].image.ref_,
+        DEFAULT_AGENT_IMAGE
+    );
+
+    let mut hermes = input("managed-hermes.yaml");
+    hermes["spec"]["sandboxes"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("image");
+    assert_eq!(
+        parse(&hermes).unwrap().spec.sandboxes[0].image.ref_,
+        DEFAULT_HERMES_IMAGE
+    );
+
+    let harness = hermes["spec"]["sandboxes"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("harness")
+        .unwrap();
+    hermes["spec"]["harnesses"]["assistant"] = harness;
+    hermes["spec"]["sandboxes"][0]["harnessRef"] = json!("assistant");
+    assert_eq!(
+        parse(&hermes).unwrap().spec.sandboxes[0].image.ref_,
+        DEFAULT_HERMES_IMAGE
+    );
 }
 
 #[test]

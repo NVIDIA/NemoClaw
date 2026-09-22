@@ -439,14 +439,20 @@ fn trusted_private_hosts_are_not_supported_yet() {
 }
 
 #[test]
-fn tavily_search_is_not_supported_yet() {
+fn tavily_search_preserves_the_selected_provider_and_credential_reference() {
     let desired =
         DesiredState::from_yaml(include_bytes!("../../../examples/openclaw-web-search.yaml"))
             .search_provider("tavily", "TAVILY_API_KEY");
-    let result = Document::parse(desired.yaml().as_bytes());
-    assert!(
-        result.is_err(),
-        "onboarding should eventually support Tavily search"
+    let document = Document::parse(desired.yaml().as_bytes()).expect("Tavily intent must parse");
+    assert!(document.credential_names().contains(&"TAVILY_API_KEY"));
+    let normalized = serde_json::to_value(&document).unwrap();
+    assert_eq!(
+        normalized["spec"]["integrations"]["search"]["provider"],
+        "tavily"
+    );
+    assert_eq!(
+        Document::parse(document.yaml().unwrap().as_bytes()).unwrap(),
+        document
     );
 }
 

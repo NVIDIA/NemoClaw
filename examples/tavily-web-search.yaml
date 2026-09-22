@@ -1,0 +1,56 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# yaml-language-server: $schema=../schemas/nemoclaw-v1alpha1.schema.json
+
+# Set your own deployment UID, image digests, endpoints, and model before applying.
+# See docs/agents.md#tavily-web-search.
+apiVersion: nemoclaw.nvidia.com/v1alpha1
+kind: NemoClawConfig
+metadata:
+  name: tavily-web-search
+  uid: b126fc24-2c7e-4431-9726-29d2abc8597c
+spec:
+  gateway:
+    management: external
+    endpoint: http://127.0.0.1:17681
+  inferenceProviders:
+    - name: local
+      provider: openai
+      endpoint: http://172.20.0.1:11446/v1
+  integrations:
+    search:
+      kind: webSearch
+      provider: tavily
+      credential:
+        env: TAVILY_API_KEY
+  sandboxes:
+    - name: researcher
+      image:
+        # Use the digest from an OpenClaw image built from this revision.
+        ref: nc-fabric@sha256:0000000000000000000000000000000000000000000000000000000000000000
+      harness:
+        kind: openclaw
+      agent:
+        name: researcher
+        integrationRefs: [search]
+        inference:
+          routes:
+            - name: primary
+              providerRef: local
+              overrides:
+                model: qwen3:4b
+    - name: hermes
+      image:
+        # Use the digest from a Hermes image built from this revision.
+        ref: nc-fabric@sha256:0000000000000000000000000000000000000000000000000000000000000000
+      harness:
+        kind: hermes
+      agent:
+        name: hermes
+        integrationRefs: [search]
+        inference:
+          routes:
+            - name: primary
+              providerRef: local
+              overrides:
+                model: qwen3:4b
