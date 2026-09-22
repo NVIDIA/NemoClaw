@@ -246,6 +246,9 @@ export function filterMockParityRelevantChangedFiles(
 ): string[] {
   return files.filter((file) => {
     if (!LIVE_TEST.test(file) && !LIVE_HELPER.test(file) && !isFastPrTest(file)) return true;
+    // Python indentation is executable syntax, so the TypeScript token filter
+    // cannot safely classify any Python helper change as metadata-only.
+    if (LIVE_HELPER.test(file) && file.endsWith(".py")) return true;
     return isMockParityRelevantSourceChange(sourceAtBase(file), sourceAtHead(file));
   });
 }

@@ -187,6 +187,23 @@ describe("changed live E2E mock parity", () => {
     ).toEqual([]);
   });
 
+  it("retains indentation-only Python helper changes for mapped fast coverage", () => {
+    const relevantFiles = filterMockParityRelevantChangedFiles(
+      [pythonLiveHelper],
+      () => "if enabled:\n    inspect_boundary()\n",
+      () => "if enabled:\n        inspect_boundary()\n",
+    );
+
+    expect(relevantFiles).toEqual([pythonLiveHelper]);
+    expect(
+      validateMockParity({
+        manifest: manifest([{ live, liveSources: [pythonLiveHelper], fast: [fast] }]),
+        changedFiles: relevantFiles,
+        fileExists: exists,
+      }),
+    ).toEqual([`${pythonLiveHelper}: change at least one fast PR test mapped from ${live}`]);
+  });
+
   it("rejects a changed live E2E helper without an owning manifest entry", () => {
     expect(
       validateMockParity({

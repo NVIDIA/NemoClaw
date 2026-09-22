@@ -201,6 +201,24 @@ describe("Bedrock Runtime bounded leak probe", () => {
     });
   });
 
+  it("fails closed when a requested config is replaced by a symbolic link (#12191)", () => {
+    const fixture = createProbeFixture();
+    const replacement = path.join(fixture.root, "replacement.yaml");
+    fs.writeFileSync(replacement, "provider: replacement\n");
+    fs.rmSync(fixture.configFile);
+    fs.symlinkSync(replacement, fixture.configFile);
+
+    const result = runProbe(fixture.input);
+    const parsed = parseBedrockLeakProbeResult(result.stdout, PATTERNS);
+
+    expect(result.status).toBe(2);
+    expect(parsed.categories.configFiles).toMatchObject({
+      status: "error",
+      itemsScanned: 0,
+      errors: ["required-file-boundary-empty", "unsafe-file-boundary"],
+    });
+  });
+
   it("fails closed when no process member is readable (#12191)", () => {
     const fixture = createProbeFixture();
     fs.rmSync(fixture.environFile);

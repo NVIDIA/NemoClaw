@@ -1,10 +1,13 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+import errno
 import hashlib
 import json
+import os
 import pathlib
 import re
+import stat
 import sys
 
 VERSION = 1
@@ -157,22 +160,30 @@ def scan_files(paths, patterns, scan_budget):
     items = 0
     total_bytes = 0
     for raw_path in paths:
-        path = pathlib.Path(raw_path)
+        descriptor = None
         try:
-            if not path.exists():
-                errors.append("required-file-missing")
-                continue
-            if path.is_symlink() or not path.is_file():
+            descriptor = os.open(raw_path, os.O_RDONLY | os.O_NOFOLLOW)
+            opened = os.fstat(descriptor)
+            if not stat.S_ISREG(opened.st_mode):
                 errors.append("unsafe-file-boundary")
                 continue
-            with path.open("rb") as handle:
+            handle = os.fdopen(descriptor, "rb")
+            descriptor = None
+            with handle:
                 data = handle.read(MAX_FILE_BYTES + 1)
         except FileNotFoundError:
             errors.append("required-file-missing")
             continue
-        except Exception:
-            errors.append("file-read-failed")
+        except OSError as error:
+            errors.append(
+                "unsafe-file-boundary"
+                if error.errno == errno.ELOOP
+                else "file-read-failed"
+            )
             continue
+        finally:
+            if descriptor is not None:
+                os.close(descriptor)
         if len(data) > MAX_FILE_BYTES:
             errors.append("file-item-limit-exceeded")
             continue
