@@ -39,10 +39,12 @@ const LLAMA_LIVE_TEST_PATH = "test/e2e/live/llama-cpp-generic-gpu.test.ts";
 const CANDIDATE_SHA = "a".repeat(40);
 const BASE_SHA = "b".repeat(40);
 const REQUIRED_RUNTIME_AUTHORITY_PATHS = [
+  "src/lib/container-gpu-proof.ts",
   "src/lib/inference/nim.ts",
   "src/lib/onboard/provider-selection.ts",
   "src/lib/onboard/runtime-provider/configured-runtime.ts",
   "src/lib/onboard/runtime-provider/current.ts",
+  "src/lib/onboard/runtime-provider/nvidia-container-proof.ts",
   "src/lib/onboard/setup-nim-flow.ts",
 ] as const;
 
