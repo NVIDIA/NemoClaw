@@ -585,20 +585,16 @@ describe("reviewed npm image remediation contract", () => {
     expect(stages.map(({ file, name }) => `${file}:${name}`)).toEqual([
       "Dockerfile:npm12",
       "Dockerfile:builder",
-      "Dockerfile:managed-bootstrap-entrypoint-builder",
       "Dockerfile:codex-acp-runtime",
       "Dockerfile:wechat-npm-cache",
       "Dockerfile:openclaw-managed-messaging-npm-cache-0",
       "Dockerfile:openclaw-managed-messaging-npm-cache-1",
       "Dockerfile.base:native-security-builder",
       "Dockerfile.base:<final>",
-      "agents/hermes/Dockerfile:managed-bootstrap-entrypoint-builder",
       "agents/hermes/Dockerfile.base:native-security-builder",
       "agents/hermes/Dockerfile.base:<final>",
-      "agents/langchain-deepagents-code/Dockerfile:managed-bootstrap-entrypoint-builder",
       "agents/langchain-deepagents-code/Dockerfile.base:native-security-builder",
       "agents/langchain-deepagents-code/Dockerfile.base:<final>",
-      "agents/pi/Dockerfile:managed-bootstrap-entrypoint-builder",
       "agents/pi/Dockerfile.base:native-security-builder",
       "agents/pi/Dockerfile.base:<final>",
     ]);
@@ -609,7 +605,7 @@ describe("reviewed npm image remediation contract", () => {
     ).toHaveLength(2);
     expect(
       rootDockerfile.match(
-        /^COPY scripts\/checks\/materialize-locked-npm-cache-seed[.]mts \/scripts\/checks\/materialize-locked-npm-cache-seed[.]mts$/gmu,
+        /^COPY scripts\/checks\/materialize-locked-npm-cache-seed[.]mts(?: [^ \n]+)* \/scripts\/checks\/(?:materialize-locked-npm-cache-seed[.]mts)?$/gmu,
       ),
     ).toHaveLength(2);
     expect(

@@ -5,7 +5,14 @@ import { setTimeout as sleep } from "node:timers/promises";
 
 import type { OpenShellSandboxObserver } from "../../adapters/openshell/sandbox-observer";
 import { retryUntilAsync } from "../../core/retry";
+import { DEFAULT_SANDBOX_EXEC_TIMEOUT_MS } from "../../adapters/sandbox/command-transport";
 import { cliName } from "../../onboard/branding";
+import {
+  classifyRegisteredPortableAgentLifecycle,
+  qualifyLegacyHermesPortableLifecycleProfile,
+  recoverPortableAgentSandboxLifecycle,
+  requalifyPortableAgentSandboxAuthority,
+} from "../../onboard/experimental/portable-agent-lifecycle";
 import {
   CURRENT_RUNTIME_PROVIDER_BUNDLES,
   type RuntimeProviderBundleRegistry,
@@ -17,17 +24,30 @@ import {
   READINESS_INFERENCE_INVOCATION_TIMEOUT_MS,
   type SandboxInferenceInvocationResult,
 } from "./inference-invocation-probe";
+import { isTransientInferenceInvocationFailure } from "./inference-route-health";
 import { hermesPortableLifecycleLockOptions, withSandboxLifecycleLock } from "./gateway-state";
 import { getPersistedSandboxTargetGatewayName } from "./gateway-target";
-import { isSandboxGatewayRunningForStatus } from "./status/process-recovery";
+import {
+  isSandboxGatewayRunningForStatus,
+  resolveGatewayRecoveryWaitSeconds,
+  waitForStartedHermesGatewayProcess,
+} from "./status/process-recovery";
 import {
   resolveSandboxLifecycleProvider,
   type SandboxLifecycleResult,
 } from "./runtime/lifecycle-runtime";
+import {
+  mutateStandardSandboxLifecycle,
+  type StandardSandboxLifecycleDeps,
+} from "./runtime/standard-lifecycle";
 
-function verifyGateway(sandboxName: string): Promise<void> {
+function verifyGateway(
+  sandboxName: string,
+  options: { managedHermesGatewayProcessObserved?: true } = {},
+): Promise<void> {
   const { connectSandbox } = require("./connect") as typeof import("./connect");
   return connectSandbox(sandboxName, {
+    ...options,
     probeOnly: true,
     requireLaunchReadinessPublication: false,
   });
@@ -50,7 +70,7 @@ async function waitForSandboxReady(
   });
 }
 
-export interface SandboxStartDeps {
+export interface SandboxStartDeps extends StandardSandboxLifecycleDeps {
   allowDockerRuntimeInspection?: boolean;
   observer?: OpenShellSandboxObserver;
   environment?: NodeJS.ProcessEnv;
@@ -60,37 +80,58 @@ export interface SandboxStartDeps {
   verifyGateway?: (sandboxName: string) => Promise<void>;
   probeGatewayProcess?: typeof isSandboxGatewayRunningForStatus;
   delayGatewayProcessProbe?: (delayMs: number) => Promise<void>;
+  now?: () => number;
   probeInferenceInvocation?: typeof probeSandboxInferenceInvocation;
+  qualifyLegacyPortableProfile?: typeof qualifyLegacyHermesPortableLifecycleProfile;
+  recoverPortableSandbox?: typeof recoverPortableAgentSandboxLifecycle;
+  requalifyPortableSandbox?: typeof requalifyPortableAgentSandboxAuthority;
+  delayInferenceInvocationProbe?: (delayMs: number) => Promise<void>;
   withLifecycleLock?: typeof withSandboxLifecycleLock;
   log?: (message: string) => void;
 }
 
-const HERMES_GATEWAY_PROCESS_SETTLEMENT_ATTEMPTS = 3;
-const HERMES_GATEWAY_PROCESS_SETTLEMENT_DELAY_MS = 2_000;
+const GATEWAY_PROCESS_SETTLEMENT_DELAY_MS = 2_000;
+const START_INFERENCE_SETTLEMENT_DELAYS_MS = [2_000, 2_000] as const;
 
-/** Wait only for a definitively stopped Hermes gateway after this command started its sandbox. */
-async function waitForStartedHermesGatewayProcess(
+/** Observe native startup only after an intentional stop; never relaunch the agent here. */
+async function waitForStartedNativeGatewayProcess(
   sandboxName: string,
   sandbox: SandboxEntry,
   deps: SandboxStartDeps,
   log: (message: string) => void,
 ): Promise<boolean | null | undefined> {
-  if (sandbox.agent !== "hermes" || sandbox.stopped !== true) return undefined;
+  const nativeAgent = sandbox.agent ?? "openclaw";
+  if ((nativeAgent !== "hermes" && nativeAgent !== "openclaw") || sandbox.stopped !== true) {
+    return undefined;
+  }
   const gatewayName = getPersistedSandboxTargetGatewayName(sandbox);
-  return await retryUntilAsync(
-    () => (deps.probeGatewayProcess ?? isSandboxGatewayRunningForStatus)(sandboxName, gatewayName),
-    {
-      accept: (running) => running !== false,
-      retryDelaysMs: Array.from(
-        { length: HERMES_GATEWAY_PROCESS_SETTLEMENT_ATTEMPTS - 1 },
-        () => HERMES_GATEWAY_PROCESS_SETTLEMENT_DELAY_MS,
-      ),
-      onRetry: (_running, delayMs) => {
-        log(`  Hermes gateway is still starting; checking again in ${delayMs / 1_000} seconds…`);
-      },
-      sleep: deps.delayGatewayProcessProbe ?? sleep,
-    },
-  );
+  const probe = deps.probeGatewayProcess ?? isSandboxGatewayRunningForStatus;
+  const delay = async (delayMs: number) => {
+    log(`  Native agent gateway is still starting; checking again in ${delayMs / 1_000} seconds…`);
+    await (deps.delayGatewayProcessProbe ?? sleep)(delayMs);
+  };
+  if (nativeAgent === "hermes") {
+    return await waitForStartedHermesGatewayProcess(sandboxName, gatewayName, {
+      probe,
+      ...(deps.delayGatewayProcessProbe ? { sleep: deps.delayGatewayProcessProbe } : {}),
+      log,
+    });
+  }
+
+  const now = deps.now ?? (() => performance.now());
+  const deadline =
+    now() + resolveGatewayRecoveryWaitSeconds(undefined, deps.environment ?? process.env) * 1_000;
+  while (now() < deadline) {
+    const remaining = Math.floor(deadline - now());
+    if (remaining < 1) break;
+    const running = await probe(sandboxName, gatewayName, {
+      startup: { timeoutMs: Math.min(DEFAULT_SANDBOX_EXEC_TIMEOUT_MS, remaining) },
+    });
+    if (now() >= deadline) break;
+    if (running !== false) return running;
+    await delay(Math.min(GATEWAY_PROCESS_SETTLEMENT_DELAY_MS, deadline - now()));
+  }
+  return false;
 }
 
 /**
@@ -111,18 +152,35 @@ async function checkStartedSandboxInference(
   if (!model || !provider) return null;
   const gatewayName = getPersistedSandboxTargetGatewayName(sandbox);
   log("  Checking that the sandbox serves an agent request…");
-  return await (deps.probeInferenceInvocation ?? probeSandboxInferenceInvocation)(
-    {
-      sandboxName,
-      gatewayName,
-      ...(sandbox.agent === "langchain-deepagents-code" ? { agentName: sandbox.agent } : {}),
-      provider,
-      model,
-      preferredInferenceApi: sandbox.preferredInferenceApi ?? null,
-    },
-    {},
-    READINESS_INFERENCE_INVOCATION_TIMEOUT_MS,
-  );
+  const input = {
+    sandboxName,
+    gatewayName,
+    ...(sandbox.agent === "langchain-deepagents-code" ? { agentName: sandbox.agent } : {}),
+    provider,
+    model,
+    preferredInferenceApi: sandbox.preferredInferenceApi ?? null,
+  };
+  const probe = () =>
+    (deps.probeInferenceInvocation ?? probeSandboxInferenceInvocation)(
+      input,
+      {},
+      READINESS_INFERENCE_INVOCATION_TIMEOUT_MS,
+    );
+  if (sandbox.agent !== "hermes" && sandbox.agent !== "pi") return await probe();
+  return await retryUntilAsync(probe, {
+    accept: (result) =>
+      sandbox.agent === "pi"
+        ? result.ok || result.httpStatus !== 503
+        : !isTransientInferenceInvocationFailure(result),
+    retryDelaysMs: START_INFERENCE_SETTLEMENT_DELAYS_MS,
+    onRetry: (result, delayMs, attempt) =>
+      log(
+        `  Inference request returned HTTP ${result.ok ? "unknown" : result.httpStatus}; ` +
+          `checking again in ${delayMs / 1_000} seconds ` +
+          `(attempt ${attempt + 1}/${START_INFERENCE_SETTLEMENT_DELAYS_MS.length + 1})…`,
+      ),
+    sleep: deps.delayInferenceInvocationProbe ?? sleep,
+  });
 }
 
 /**
@@ -159,29 +217,79 @@ async function startSandboxWithinLifecycleFence(
   const input = {
     readRegistry: deps.getSandbox ?? registry.getSandbox,
     environment: deps.environment ?? process.env,
+    gatewayName: getPersistedSandboxTargetGatewayName(resolved.sandbox),
     log,
     sandbox: resolved.sandbox,
     sandboxName,
   };
   const preflight = resolved.bundle.preflightDoctor.preflightLifecycle("start", input);
   if (preflight) return preflight;
-  const result = await resolved.lifecycle.start(input);
-  if (result.exitCode !== 0) return result;
-  if (
-    resolved.sandbox.stopped === true &&
-    !registry.recordSandboxStopIntent(
+  let result: SandboxLifecycleResult & { readonly hermesPortableVerified?: true };
+  try {
+    const portableAuthority = classifyRegisteredPortableAgentLifecycle(
       sandboxName,
-      false,
-      deps.updateSandbox ?? registry.updateSandbox,
-    )
-  ) {
-    throw new Error(
-      `Sandbox '${sandboxName}' started, but NemoClaw could not clear its intentional-stop record. Run '${cliName()} ${sandboxName} status' before another lifecycle command.`,
+      resolved.bundle.identity.id,
+      resolved.sandbox,
+      {
+        env: input.environment,
+        readRegistry: (name) => input.readRegistry?.(name) ?? null,
+        ...(deps.qualifyLegacyPortableProfile
+          ? { qualifyLegacyHermes: deps.qualifyLegacyPortableProfile }
+          : {}),
+      },
     );
+    const portableAuthorityRecorded = portableAuthority.kind === "portable";
+    if (portableAuthorityRecorded && resolved.sandbox.agent === "hermes") {
+      await (deps.requalifyPortableSandbox ?? requalifyPortableAgentSandboxAuthority)(sandboxName, {
+        env: input.environment,
+        readRegistry: (name) => input.readRegistry?.(name) ?? null,
+      });
+    }
+    const portable = portableAuthorityRecorded
+      ? await (deps.recoverPortableSandbox ?? recoverPortableAgentSandboxLifecycle)(
+          sandboxName,
+          {
+            agent: resolved.sandbox.agent,
+            gatewayName: resolved.sandbox.gatewayName ?? "nemoclaw",
+            lifecycleGeneration: resolved.sandbox.lifecycleGeneration,
+            openshellDriver: resolved.sandbox.openshellDriver,
+            provider: resolved.sandbox.provider,
+          },
+          {
+            env: input.environment,
+            log,
+            readRegistry: (name) => input.readRegistry?.(name) ?? null,
+          },
+        )
+      : ({ kind: "not-installed" } as const);
+    result =
+      portable.kind !== "not-installed"
+        ? resolved.sandbox.agent === "hermes"
+          ? { exitCode: 0, hermesPortableVerified: true }
+          : { exitCode: 0 }
+        : await mutateStandardSandboxLifecycle("start", input, deps);
+  } catch (error) {
+    return { exitCode: 1, message: error instanceof Error ? error.message : String(error) };
   }
+  if (result.exitCode !== 0) return result;
+  const clearIntentionalStop = () => {
+    if (
+      resolved.sandbox.stopped === true &&
+      !registry.recordSandboxStopIntent(
+        sandboxName,
+        false,
+        deps.updateSandbox ?? registry.updateSandbox,
+      )
+    ) {
+      throw new Error(
+        `Sandbox '${sandboxName}' started, but NemoClaw could not clear its intentional-stop record. Run '${cliName()} ${sandboxName} status' before another lifecycle command.`,
+      );
+    }
+  };
   if ("hermesPortableVerified" in result && result.hermesPortableVerified === true) {
     log("  Checking gateway health and host forwards…");
     await (deps.verifyGateway ?? verifyGateway)(sandboxName);
+    clearIntentionalStop();
     return { exitCode: 0 };
   }
 
@@ -192,25 +300,33 @@ async function startSandboxWithinLifecycleFence(
     gatewayProcess: undefined,
     inference: null,
   };
-  const settleHermesGatewayProcess =
-    resolved.sandbox.agent === "hermes" && resolved.sandbox.stopped === true;
-  await resolved.lifecycle.verifyStarted(input, async (name) => {
-    log("  Waiting for OpenShell sandbox readiness…");
-    await waitForSandboxReady(name, deps.observer, deps.allowDockerRuntimeInspection);
-    readiness.gatewayProcess = await waitForStartedHermesGatewayProcess(
-      name,
+  log("  Waiting for OpenShell sandbox readiness…");
+  await waitForSandboxReady(sandboxName, deps.observer, deps.allowDockerRuntimeInspection);
+  readiness.gatewayProcess = await waitForStartedNativeGatewayProcess(
+    sandboxName,
+    resolved.sandbox,
+    deps,
+    log,
+  );
+  if (readiness.gatewayProcess !== false) {
+    log("  Checking gateway health and host forwards…");
+    if (deps.verifyGateway) {
+      await deps.verifyGateway(sandboxName);
+    } else if (resolved.sandbox.agent === "hermes" && readiness.gatewayProcess === true) {
+      await verifyGateway(sandboxName, { managedHermesGatewayProcessObserved: true });
+    } else {
+      await verifyGateway(sandboxName);
+    }
+    readiness.inference = await checkStartedSandboxInference(
+      sandboxName,
       resolved.sandbox,
       deps,
       log,
     );
-    if (settleHermesGatewayProcess && readiness.gatewayProcess === false) return;
-    log("  Checking gateway health and host forwards…");
-    await (deps.verifyGateway ?? verifyGateway)(name);
-    readiness.inference = await checkStartedSandboxInference(name, resolved.sandbox, deps, log);
-  });
-  if (settleHermesGatewayProcess && readiness.gatewayProcess === false) {
+  }
+  if (readiness.gatewayProcess === false) {
     log(
-      "  The sandbox started but its Hermes gateway did not become responsive before the startup settlement window expired.",
+      "  The sandbox started but its native agent gateway did not become responsive before the startup settlement window expired.",
     );
     return { exitCode: 1 };
   }
@@ -219,5 +335,6 @@ async function startSandboxWithinLifecycleFence(
     log(`  Run the sandbox doctor command for '${sandboxName}' to identify the failing hop.`);
     return { exitCode: 1 };
   }
+  clearIntentionalStop();
   return { exitCode: 0 };
 }

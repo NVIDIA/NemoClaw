@@ -21,6 +21,7 @@ export function createOpenShellForwardAdapterForAuthority(
   options: Readonly<{
     environment?: NodeJS.ProcessEnv;
     executable?: string;
+    legacyForwardWorkspaceSelection?: "explicit" | "implicit-default";
   }> = {},
 ): OpenShellForwardAdapter {
   const environment = options.environment ?? process.env;
@@ -30,6 +31,9 @@ export function createOpenShellForwardAdapterForAuthority(
     executable,
     environment,
     gatewayEndpoint: authority.gatewayEndpoint,
+    ...(options.legacyForwardWorkspaceSelection
+      ? { legacyForwardWorkspaceSelection: options.legacyForwardWorkspaceSelection }
+      : {}),
     runtimeSelection: {
       gatewayName: authority.gatewayName,
       workspace: authority.workspace,

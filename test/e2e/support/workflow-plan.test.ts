@@ -87,9 +87,9 @@ describe("E2E workflow plan", () => {
       }, {}),
     ).toEqual({
       catalogue: E2E_TARGET_CATALOGUE.length,
-      "typed-registry": 4,
-      "shared-e2e": 2,
-      "retained-workflow": 15,
+      "typed-registry": 3,
+      "shared-e2e": 1,
+      "retained-workflow": 14,
       staging: 1,
     });
     expect(plan.coverageMatrix.filter((row) => row.unresolvedReason !== "")).toEqual([
@@ -99,7 +99,7 @@ describe("E2E workflow plan", () => {
       }),
     ]);
     expect(plan.hermesSelected).toBe(true);
-    expect(plan.coverageMatrix).toHaveLength(82);
+    expect(plan.coverageMatrix).toHaveLength(76);
     expect(selectedWorkflowJobs(plan)).toEqual([
       "catalogue-brave-nvidia-inference",
       "catalogue-github-read",
@@ -114,7 +114,6 @@ describe("E2E workflow plan", () => {
       "managed-image-protected-runtime",
       "mcp-bridge",
       "messaging-providers",
-      "openclaw-plugin-runtime-exdev",
       "openshell-credential-generation-window",
       "openshell-gateway-auth-contract",
       "shared-e2e",
@@ -142,7 +141,7 @@ describe("E2E workflow plan", () => {
       "ubuntu-repo-cloud-openclaw",
     ]);
     expect(plan.testMatrix).toEqual([]);
-    expect(catalogueIds).toHaveLength(49);
+    expect(catalogueIds).toHaveLength(46);
     expect(catalogueIds).not.toEqual(
       expect.arrayContaining(["bootstrap-install-smoke", "rebuild-hermes", "rebuild-openclaw"]),
     );
@@ -236,11 +235,9 @@ describe("E2E workflow plan", () => {
   });
 
   it("routes a catalogue target through its credential profile", () => {
-    const plan = buildE2eWorkflowPlan({ jobs: "cloud-inference" });
+    const plan = buildE2eWorkflowPlan({ jobs: "full-e2e" });
 
-    expect(plan.catalogueMatrices["nvidia-inference"].map((row) => row.id)).toEqual([
-      "cloud-inference",
-    ]);
+    expect(plan.catalogueMatrices["nvidia-inference"].map((row) => row.id)).toEqual(["full-e2e"]);
     expect(plan.catalogueMatrices.standard).toEqual([]);
     expect(selectedWorkflowJobs(plan)).toEqual(["catalogue-nvidia-inference"]);
   });
@@ -263,6 +260,18 @@ describe("E2E workflow plan", () => {
   ])("selects live config export coverage when %s changes", (changedFile) => {
     expect(catalogueTargetsForChangedFiles([changedFile]).map((target) => target.id)).toContain(
       "network-policy",
+    );
+  });
+
+  it.each([
+    "src/lib/onboard/runtime-provider/contract.ts",
+    "src/lib/onboard/runtime-provider/docker.ts",
+    "src/lib/onboard/runtime-provider/mxc.ts",
+    "src/lib/onboard/runtime-provider/podman.ts",
+    "src/lib/onboard/runtime-provider/registry.ts",
+  ])("selects final gateway cleanup evidence when %s changes", (changedFile) => {
+    expect(catalogueTargetsForChangedFiles([changedFile]).map((target) => target.id)).toContain(
+      "sandbox-operations",
     );
   });
 
@@ -421,7 +430,7 @@ describe("E2E workflow plan", () => {
   it("requires explicit execution coverage for every catalogue target (#9167)", () => {
     expectExplicitCatalogueCoverage();
 
-    const target = catalogueTarget("cloud-inference");
+    const target = catalogueTarget("full-e2e");
     expect(() =>
       validateE2eTargetCatalogue([{ ...target, agentRuntime: "unresolved", unresolvedReason: "" }]),
     ).toThrow("must declare an unresolved reason");
@@ -466,7 +475,7 @@ describe("E2E workflow plan", () => {
     "rejects malformed, implementation-derived, and duplicate display names [%s]",
     (displayName) => {
       const networkPolicy = catalogueTarget("network-policy");
-      const cloudInference = catalogueTarget("cloud-inference");
+      const fullE2e = catalogueTarget("full-e2e");
 
       expect(() =>
         validateE2eTargetCatalogue([{ ...networkPolicy, displayName: "network-policy" }]),
@@ -493,7 +502,7 @@ describe("E2E workflow plan", () => {
       expect(() =>
         validateE2eTargetCatalogue([
           networkPolicy,
-          { ...cloudInference, displayName: networkPolicy.displayName },
+          { ...fullE2e, displayName: networkPolicy.displayName },
         ]),
       ).toThrow("invalid or duplicate display name");
     },
@@ -651,6 +660,29 @@ describe("E2E workflow plan", () => {
     ]);
     expect(plan.catalogueMatrices.standard.map((row) => row.id)).toEqual(["snapshot-commands"]);
     expect(selectedWorkflowJobs(plan)).toEqual(["catalogue-standard", "jetson-nvmap-gpu"]);
+  });
+
+  it.each([
+    "scripts/install.sh",
+    "src/lib/actions/global.ts",
+    "src/lib/actions/sandbox/forward-recovery.ts",
+  ])("selects both gateway-upgrade fixtures when %s changes", (changedFile) => {
+    expect(catalogueTargetsForChangedFiles([changedFile]).map((target) => target.id)).toEqual([
+      "openshell-gateway-upgrade-v0-0-89-x86-64",
+      "openshell-gateway-upgrade-v0-0-123-x86-64",
+    ]);
+  });
+
+  it("selects sandbox operations when its gateway client changes", () => {
+    const changedFile = "test/e2e/fixtures/clients/gateway.ts";
+    const plan = buildE2eWorkflowPlan({}, { changedFiles: [changedFile] });
+
+    expect(catalogueTargetsForChangedFiles([changedFile]).map((target) => target.id)).toEqual([
+      "sandbox-operations",
+    ]);
+    expect(plan.catalogueMatrices["nvidia-inference"].map((row) => row.id)).toContain(
+      "sandbox-operations",
+    );
   });
 
   it.each([
@@ -1053,9 +1085,9 @@ describe("E2E workflow plan", () => {
   });
 
   it("rejects execution coverage that differs from its execution owner (#9167)", () => {
-    const plan = buildE2eWorkflowPlan({ jobs: "cloud-inference" });
+    const plan = buildE2eWorkflowPlan({ jobs: "full-e2e" });
     const coverageMatrix = plan.coverageMatrix.map((row) =>
-      row.id === "cloud-inference" ? { ...row, observableOutcome: "Different valid outcome" } : row,
+      row.id === "full-e2e" ? { ...row, observableOutcome: "Different valid outcome" } : row,
     );
 
     expect(() => validateE2eWorkflowPlan({ ...plan, coverageMatrix })).toThrow(

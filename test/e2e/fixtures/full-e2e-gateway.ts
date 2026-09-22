@@ -17,7 +17,13 @@ export async function withOwnedFullE2eGateway(
 export function fullE2eGateway(preinstalled: boolean, env: NodeJS.ProcessEnv = process.env) {
   if (!preinstalled) {
     const port = parsePort("NEMOCLAW_GATEWAY_PORT", DEFAULT_GATEWAY_PORT, env);
-    return { owned: true, env: { OPENSHELL_GATEWAY: resolveGatewayName(port) } };
+    return {
+      owned: true,
+      env: {
+        NEMOCLAW_GATEWAY_PORT: String(port),
+        OPENSHELL_GATEWAY: resolveGatewayName(port),
+      },
+    };
   }
   const declarationPath =
     env.NEMOCLAW_GATEWAY_MANAGEMENT?.trim() || "/etc/nemoclaw/gateway-management.json";

@@ -7,6 +7,7 @@ import { renderHermesPortableDockerfileBuildSettings } from "./dockerfile-patch"
 
 const DOCKERFILE = [
   "ARG TARGETARCH",
+  "ARG BASE_IMAGE=ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@sha256:" + "a".repeat(64),
   "FROM scratch",
   "ARG NEMOCLAW_MODEL=old",
   "ARG NEMOCLAW_INFERENCE_PROVIDER_ID=old",
@@ -36,7 +37,7 @@ describe("Hermes portable Dockerfile settings", () => {
     expect(rendered).toContain("ARG NEMOCLAW_INFERENCE_API=openai-completions");
     expect(rendered).toContain("ARG NEMOCLAW_TOOL_DISCLOSURE=direct");
     expect(rendered).toContain("ARG CHAT_UI_URL=\n");
-    expect(rendered).toContain("ARG TARGETARCH=amd64\nFROM scratch");
+    expect(rendered).toContain("ARG TARGETARCH=amd64\nARG BASE_IMAGE=");
   });
 
   it("rejects injected or incomplete schema-5 settings (#9203)", () => {
@@ -73,5 +74,20 @@ describe("Hermes portable Dockerfile settings", () => {
         SETTINGS,
       ),
     ).toThrow("must declare at least one build stage");
+  });
+
+  it("binds a validated base image into the portable context (#9203)", () => {
+    const rendered = renderHermesPortableDockerfileBuildSettings(DOCKERFILE, {
+      ...SETTINGS,
+      baseImageRef: "localhost/nemoclaw-hermes-base:portable-e2e",
+    });
+
+    expect(rendered).toContain("ARG BASE_IMAGE=localhost/nemoclaw-hermes-base:portable-e2e");
+    expect(() =>
+      renderHermesPortableDockerfileBuildSettings(DOCKERFILE, {
+        ...SETTINGS,
+        baseImageRef: "unsafe\nFROM scratch",
+      }),
+    ).toThrow("base image reference is invalid");
   });
 });

@@ -37,6 +37,7 @@
     },
     {
       "live": "test/e2e/live/managed-image-multiarch-startup.test.ts",
+      "liveSources": ["test/e2e/live/managed-image-multiarch-startup-helpers.ts"],
       "fast": [
         "test/e2e/support/base-image-publication.test.ts",
         "test/e2e/support/managed-image-multiarch-startup-helpers.test.ts",
@@ -62,8 +63,7 @@
         "src/lib/onboard/command.test.ts",
         "src/lib/onboard/sandbox-workload-preparation.test.ts",
         "test/e2e/support/managed-image-activation-diagnostics.test.ts",
-        "test/inference/managed/managed-image-publication-workflow.test.ts",
-        "test/onboarding/onboard-managed-image-buildless-e2e.test.ts"
+        "test/inference/managed/managed-image-publication-workflow.test.ts"
       ]
     },
     {
@@ -76,6 +76,7 @@
         "src/lib/agent/candidate.test.ts",
         "src/lib/agent/pi-lifecycle.test.ts",
         "src/lib/onboard/pi-candidate-rebuild.test.ts",
+        "test/e2e/support/e2e-clients.test.ts",
         "test/e2e/support/onboard-interactive-pty.test.ts",
         "test/e2e/support/pi-agent-qualification-events.test.ts",
         "test/agents/openclaw/runtime/pi-candidate-runtime-artifacts.test.ts"
@@ -89,7 +90,8 @@
         "src/lib/adapters/podman/index.test.ts",
         "src/lib/adapters/podman/socket-authority.test.ts",
         "src/lib/onboard/docker-driver-gateway-runtime.test.ts",
-        "src/lib/onboard/runtime-provider/podman-lifecycle.test.ts",
+        "src/lib/adapters/openshell/sandbox-lifecycle-sdk.test.ts",
+        "src/lib/onboard/runtime-provider/podman.test.ts",
         "src/lib/onboard/runtime-provider/podman-preflight.test.ts",
         "src/lib/onboard/runtime-provider/podman.test.ts",
         "test/e2e/support/podman-cpu-proof-workflow.test.ts"
@@ -160,10 +162,13 @@
         "test/e2e/live/full-e2e-inference-probe.ts",
         "test/e2e/live/full-e2e-workload-evidence.ts",
         "test/e2e/live/launch-agent-turn.ts",
-        "test/e2e/live/pr-base-comparison.ts"
+        "test/e2e/live/pr-base-comparison.ts",
+        "test/e2e/live/sandbox-credential-boundary.ts"
       ],
       "fast": [
+        "src/lib/onboard/machine/finalization-deps.test.ts",
         "test/agents/openclaw/runtime/nemoclaw-start-preload-gateway.test.ts",
+        "src/lib/state/native-agent-state-restore.test.ts",
         "test/runtime/sandbox/sandbox-provisioning.test.ts",
         "test/e2e/support/hosted-inference.test.ts",
         "test/e2e/support/full-e2e-inference-probe.test.ts",
@@ -172,6 +177,7 @@
         "test/e2e/support/launch-agent-turn.test.ts",
         "test/e2e/support/openclaw-agent-output.test.ts",
         "test/e2e/support/pr-base-comparison.test.ts",
+        "test/e2e/support/sandbox-credential-boundary.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts",
         "test/e2e/support/managed-image-receipt.test.ts",
@@ -282,6 +288,7 @@
     },
     {
       "live": "test/e2e/live/openclaw-tui-chat-correlation.test.ts",
+      "liveSources": ["test/e2e/live/openclaw-tui-ref-fidelity.ts"],
       "fast": [
         "test/e2e/support/openclaw-tui-ref-fidelity.test.ts",
         "test/e2e/support/openclaw-tui-run-classification.test.ts",
@@ -295,6 +302,10 @@
         "test/e2e/live/json-envelope.ts"
       ],
       "fast": [
+        "src/lib/actions/sandbox/forward-recovery-declared-ports.test.ts",
+        "src/lib/actions/sandbox/start.test.ts",
+        "src/lib/actions/sandbox/process-recovery.test.ts",
+        "src/lib/actions/sandbox/launch-readiness-gateway-health.test.ts",
         "test/e2e/support/json-envelope.test.ts",
         "test/e2e/support/dashboard-connect-handoff.test.ts",
         "test/e2e/support/runtime-provider-fixture.test.ts"
@@ -418,15 +429,6 @@
       ]
     },
     {
-      "live": "test/e2e/live/cloud-inference.test.ts",
-      "liveSources": ["test/e2e/live/cloud-inference-provider-skip.ts"],
-      "fast": [
-        "test/e2e/support/e2e-cleanup-resources.test.ts",
-        "test/e2e/support/retry-policy.test.ts",
-        "test/e2e/support/e2e-clients.test.ts"
-      ]
-    },
-    {
       "live": "test/e2e/live/cloud-onboard.test.ts",
       "fast": [
         "src/lib/onboard/initial-policy-real-policy.test.ts",
@@ -471,14 +473,6 @@
       ]
     },
     {
-      "live": "test/e2e/live/device-auth-health.test.ts",
-      "liveSources": ["test/e2e/live/device-auth-health-helpers.ts"],
-      "fast": [
-        "test/e2e/support/e2e-cleanup-resources.test.ts",
-        "test/e2e/support/e2e-clients.test.ts"
-      ]
-    },
-    {
       "live": "test/e2e/live/double-onboard.test.ts",
       "fast": [
         "test/cli/sandbox-status-text.test.ts",
@@ -508,6 +502,8 @@
         "test/e2e/live/hermes-cli-adapter-live.ts"
       ],
       "fast": [
+        "src/lib/adapters/config/live-export-source-ollama.test.ts",
+        "src/lib/domain/config/export-document.test.ts",
         "test/e2e/support/gpu-e2e-helpers.test.ts",
         "test/e2e/support/hermes-cli-adapter-live.test.ts",
         "test/e2e/support/runtime-provider-fixture.test.ts",
@@ -574,13 +570,6 @@
       ]
     },
     {
-      "live": "test/e2e/live/issue-2478-crash-loop-recovery.test.ts",
-      "fast": [
-        "test/e2e/support/e2e-cleanup-resources.test.ts",
-        "test/e2e/support/e2e-clients.test.ts"
-      ]
-    },
-    {
       "live": "test/e2e/live/issue-4462-scope-upgrade-approval.test.ts",
       "liveSources": ["test/e2e/live/issue-4462-admin-approval-helper.ts"],
       "fast": [
@@ -622,6 +611,7 @@
         "test/e2e/live/openshell-exact-main-runtime-contracts.ts"
       ],
       "fast": [
+        "src/lib/actions/sandbox/mcp-bridge-state.test.ts",
         "src/lib/actions/sandbox/mcp-bridge-policy.test.ts",
         "src/lib/actions/sandbox/mcp-bridge-adapter-registration.test.ts",
         "src/lib/actions/sandbox/mcp-bridge-adapter-teardown.test.ts",
@@ -671,6 +661,7 @@
         "src/lib/onboard/messaging-policy-presets.test.ts",
         "src/lib/onboard/providers.test.ts",
         "test/channels/channels-add-bridge-lifecycle.test.ts",
+        "test/e2e/support/messaging-providers-installed-runtime-paths.test.ts",
         "test/e2e/support/messaging-providers-runtime-proofs.test.ts",
         "test/onboarding/onboard-messaging.test.ts",
         "test/runtime/messaging/messaging-build-applier.test.ts",
@@ -721,22 +712,7 @@
         "test/e2e/support/compatible-anthropic-switch.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts",
-        "test/e2e/support/openclaw-agent-output.test.ts"
-      ]
-    },
-    {
-      "live": "test/e2e/live/openclaw-plugin-runtime-exdev.test.ts",
-      "liveSources": [
-        "test/e2e/live/json-envelope.ts",
-        "test/e2e/live/openclaw-plugin-runtime-exdev-trusted-prebuild.ts"
-      ],
-      "fast": [
-        "test/e2e/support/json-envelope.test.ts",
-        "test/e2e/support/openclaw-plugin-runtime-exdev-trusted-prebuild.test.ts",
-        "test/e2e/support/openclaw-plugin-runtime-exdev-workflow-boundary.test.ts",
-        "test/automation/pull-requests/pr-risk-plan.test.ts",
-        "test/e2e/support/e2e-cleanup-resources.test.ts",
-        "test/e2e/support/e2e-clients.test.ts"
+        "test/e2e/support/openclaw-inference-switch-helpers.test.ts"
       ]
     },
     {
@@ -774,8 +750,7 @@
         "src/lib/actions/sandbox/rebuild-flow-target-image.test.ts",
         "src/lib/actions/upgrade-sandboxes-recovery.test.ts",
         "src/lib/onboard/dockerfile-patch.test.ts",
-        "src/lib/state/openclaw-plugin-restore.test.ts",
-        "test/agents/openclaw/openclaw-2026-7-startup-compat.test.ts",
+        "src/lib/state/native-agent-state-restore.test.ts",
         "test/agents/openclaw/openclaw-shared-state-permissions-patch.test.ts",
         "test/install/install-preexisting-sandbox-recovery.test.ts",
         "test/e2e/support/e2e-live-target-gating.test.ts",
@@ -791,20 +766,6 @@
       ]
     },
     {
-      "live": "test/e2e/live/shields-retirement-upgrade.test.ts",
-      "liveSources": [
-        "test/e2e/live/openshell-gateway-upgrade-helpers.ts",
-        "test/e2e/live/openshell-gateway-upgrade-old-installer.ts"
-      ],
-      "fast": [
-        "src/lib/actions/sandbox/rebuild-flow-lifecycle.test.ts",
-        "src/lib/state/migrations/removed-immutability.test.ts",
-        "test/e2e/support/openshell-gateway-upgrade-old-installer.test.ts",
-        "test/e2e/support/openshell-gateway-upgrade-workflow-boundary.test.ts",
-        "test/e2e/support/shields-retirement-workflow-plan.test.ts"
-      ]
-    },
-    {
       "live": "test/e2e/live/overlayfs-autofix.test.ts",
       "fast": [
         "test/e2e/support/e2e-cleanup-resources.test.ts",
@@ -817,6 +778,7 @@
       "fast": [
         "src/lib/actions/sandbox/gateway-restart.test.ts",
         "src/lib/actions/sandbox/rebuild-flow-lifecycle.test.ts",
+        "src/lib/state/native-agent-state-restore.test.ts",
         "test/agents/hermes/hermes-gateway-wrapper.test.ts",
         "test/agents/hermes/hermes-image-build-probes.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
@@ -829,6 +791,7 @@
       "fast": [
         "src/lib/actions/sandbox/rebuild-flow-lifecycle.test.ts",
         "src/lib/onboard/machine/handlers/finalization.test.ts",
+        "src/lib/state/native-agent-state-restore.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts",
         "test/e2e/support/native-lifecycle-migration-contract.test.ts"
@@ -837,10 +800,12 @@
     {
       "live": "test/e2e/live/sandbox-survival.test.ts",
       "fast": [
+        "src/lib/onboard/machine/finalization-deps.test.ts",
         "test/agents/native-gateway-lifecycle.test.ts",
         "src/lib/actions/sandbox/gateway-state-probe-recovery-start.test.ts",
         "src/lib/onboard/runtime-provider/docker.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
+        "test/e2e/support/e2e-phase-lifecycle.test.ts",
         "test/e2e/support/e2e-clients.test.ts"
       ]
     },
@@ -982,13 +947,17 @@
     {
       "live": "test/e2e/live/registry-targets.test.ts",
       "liveSources": [
+        "test/e2e/live/cloud-experimental-check-list.ts",
         "test/e2e/live/cloud-experimental-checks.ts",
         "test/e2e/live/deepagents-observability-contract.ts",
         "test/e2e/live/deepagents-otlp-capture-server.ts",
-        "test/e2e/live/dcode-base-image-runtime-evidence.ts"
+        "test/e2e/live/dcode-base-image-runtime-evidence.ts",
+        "test/e2e/live/run-plan.ts"
       ],
       "fast": [
+        "test/e2e/support/e2e-live-registry-discovery.test.ts",
         "test/e2e/support/e2e-matrix.test.ts",
+        "test/e2e/support/e2e-phase-config-export-validation.test.ts",
         "test/e2e/support/e2e-phase-onboarding.test.ts",
         "test/e2e/support/e2e-progress-fixture.test.ts",
         "test/e2e/support/e2e-progress-outcome.test.ts",
@@ -1003,6 +972,7 @@
     {
       "live": "test/e2e/live/runtime-overrides.test.ts",
       "fast": [
+        "test/generation/generate-openclaw-config.test.ts",
         "test/e2e/support/e2e-progress-fixture.test.ts",
         "test/e2e/support/e2e-progress-outcome.test.ts",
         "test/e2e/support/e2e-semantic-phase-check.test.ts",

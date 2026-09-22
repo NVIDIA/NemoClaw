@@ -57,20 +57,20 @@ async function nemoclaw(
   });
 }
 
-async function cleanup(host: HostCliClient, sandbox: SandboxClient): Promise<void> {
-  await nemoclaw(host, [SANDBOX_NAME, "destroy", "--yes"], "cleanup-nemoclaw-destroy").catch(
+async function preCleanup(host: HostCliClient, sandbox: SandboxClient): Promise<void> {
+  await nemoclaw(host, [SANDBOX_NAME, "destroy", "--yes"], "pre-cleanup-nemoclaw-destroy").catch(
     () => undefined,
   );
   await sandbox
     .openshell(["sandbox", "delete", SANDBOX_NAME], {
-      artifactName: "cleanup-openshell-sandbox-delete",
+      artifactName: "pre-cleanup-openshell-sandbox-delete",
       env: env(),
       timeoutMs: 60_000,
     })
     .catch(() => undefined);
   await sandbox
     .openshell(["gateway", "destroy", "-g", "nemoclaw"], {
-      artifactName: "cleanup-openshell-gateway-destroy",
+      artifactName: "pre-cleanup-openshell-gateway-destroy",
       env: env(),
       timeoutMs: 60_000,
     })
@@ -93,7 +93,7 @@ done
 exit "$status"`,
       ],
       {
-        artifactName: "cleanup-ollama-processes",
+        artifactName: "pre-cleanup-ollama-processes",
         env: env(),
         timeoutMs: 30_000,
       },
@@ -294,7 +294,7 @@ exit "$status"`,
       SANDBOX_NAME,
       nemoclawSandboxCleanupOptions,
     );
-    await cleanup(host, sandbox);
+    await preCleanup(host, sandbox);
 
     progress.phase("install Ollama runtime");
     const installOllama = await host.command(
@@ -398,7 +398,11 @@ exit "$status"`,
     await expectSandboxInference42(sandbox, model, "phase-6-sandbox-inference-after-reonboard");
 
     progress.phase("remove GPU double-onboard sandbox");
-    await cleanup(host, sandbox);
+    await host.cleanupSandbox(SANDBOX_NAME, {
+      artifactName: "verify-cleanup-nemoclaw-destroy",
+      env: env(),
+      timeoutMs: 20 * 60_000,
+    });
     const registryFile = path.join(os.homedir(), ".nemoclaw", "sandboxes.json");
     const registryText = fs.existsSync(registryFile) ? fs.readFileSync(registryFile, "utf8") : "";
     expect(registryText).not.toContain(SANDBOX_NAME);

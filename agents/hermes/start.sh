@@ -223,7 +223,7 @@ else
   _dashboard_port="$(printf '%s' "$_dashboard_port_raw" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
   _dashboard_port_valid=1
   case "$_dashboard_port" in
-    *[!0-9]* | '') _dashboard_port_valid=0 ;;
+    0* | *[!0-9]* | '') _dashboard_port_valid=0 ;;
   esac
   if [ "$_dashboard_port_valid" -eq 1 ] && { [ "$_dashboard_port" -lt 1024 ] || [ "$_dashboard_port" -gt 65535 ]; }; then
     _dashboard_port_valid=0
@@ -248,7 +248,7 @@ else
   PUBLIC_PORT="$(printf '%s' "$_api_port_raw" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
   _api_port_valid=1
   case "$PUBLIC_PORT" in
-    *[!0-9]* | '') _api_port_valid=0 ;;
+    0* | *[!0-9]* | '') _api_port_valid=0 ;;
   esac
   if [ "$_api_port_valid" -eq 1 ] && { [ "$PUBLIC_PORT" -lt "$HERMES_DEFAULT_API_PORT" ] || [ "$PUBLIC_PORT" -gt "$HERMES_API_PORT_RANGE_END" ]; }; then
     _api_port_valid=0
@@ -288,10 +288,7 @@ HERMES="$(command -v hermes)" # Resolve once, use absolute path everywhere
 # create new top-level state while the gateway user cannot remove config files.
 HERMES_DIR="/sandbox/.hermes"
 readonly HERMES_SANDBOX_LAZY_INSTALL_TARGET="/sandbox/.hermes/lazy-packages"
-readonly HERMES_GATEWAY_LAZY_INSTALL_TARGET="/run/nemoclaw/hermes-gateway-lazy-packages"
-readonly HERMES_MANAGED_BUNDLED_PLUGINS="/opt/hermes/plugins"
 export HERMES_LAZY_INSTALL_TARGET="$HERMES_SANDBOX_LAZY_INSTALL_TARGET"
-export HERMES_BUNDLED_PLUGINS="$HERMES_MANAGED_BUNDLED_PLUGINS"
 HERMES_HASH_FILE="/etc/nemoclaw/hermes.config-hash"
 
 # Resolve the standalone secret-boundary validator. The container ships it at
@@ -329,6 +326,8 @@ fi
 _HERMES_GUARD_TIMEOUT=(timeout --signal=TERM --kill-after=5s 12m)
 _HERMES_BOUNDARY_TIMEOUT=(timeout --signal=TERM --kill-after=2s 15s)
 HERMES_STARTUP_READY_FILE="/run/nemoclaw/hermes-startup-ready"
+HERMES_GATEWAY_RECOVERY_REQUEST_FILE="/tmp/nemoclaw-hermes-gateway-recovery/request"
+HERMES_GATEWAY_RECOVERY_WAITING_FILE="/tmp/nemoclaw-hermes-gateway-recovery-waiting"
 HERMES_RESTART_SEALED=0
 
 # A same-container PID 1 restart can retain /run. Revoke the prior readiness
@@ -378,7 +377,7 @@ validate_tcp_port() {
   local name="$1"
   local value="$2"
   case "$value" in
-    '' | *[!0-9]*)
+    '' | 0* | *[!0-9]*)
       echo "[gateway] ERROR: ${name} must be an integer TCP port, got '${value}'" >&2
       exit 1
       ;;
@@ -435,55 +434,19 @@ verify_hermes_config_integrity() {
 }
 
 prepare_hermes_lazy_dependencies() {
-  local lazy_target="$HERMES_SANDBOX_LAZY_INSTALL_TARGET"
-  local uv_cache_target="/sandbox/.hermes/cache/uv"
-  local root_separated=0
-  local env_name
-  local -a installer=(/usr/bin/env)
+  local -a installer=()
 
   if [ "$(id -u)" -eq 0 ]; then
-    prepare_hermes_gateway_lazy_install_target || return 1
-    lazy_target="$HERMES_GATEWAY_LAZY_INSTALL_TARGET"
-    uv_cache_target="${HERMES_GATEWAY_LAZY_INSTALL_TARGET}/.uv-cache"
-    root_separated=1
-
-    # The gateway installer must not consume package-manager configuration or
-    # Python startup paths from the sandbox environment. In particular, uv
-    # discovers uv.toml from the current workspace and pip's fallback Python
-    # process imports from its current directory unless safe-path mode is
-    # inherited. Remove the complete input families before adding back only
-    # the fixed gateway values below.
-    while IFS= read -r env_name; do
-      case "$env_name" in
-        UV_* | PIP_* | PYTHON* | LD_* | DYLD_* | BASH_ENV | ENV | VIRTUAL_ENV) installer+=(-u "$env_name") ;;
-      esac
-    done < <(compgen -e)
+    prepare_hermes_native_lazy_install_target || return 1
+    installer+=("${STEP_DOWN_PREFIX_GATEWAY[@]}")
   fi
 
   installer+=(
+    /usr/bin/env
     HOME=/sandbox
-    UV_CACHE_DIR="$uv_cache_target"
-    UV_NO_CACHE=1
     HERMES_HOME="$HERMES_DIR"
-    HERMES_LAZY_INSTALL_TARGET="$lazy_target"
+    HERMES_LAZY_INSTALL_TARGET="$HERMES_SANDBOX_LAZY_INSTALL_TARGET"
   )
-  if [ "$root_separated" -eq 1 ]; then
-    installer+=(
-      UV_NO_CONFIG=1
-      PIP_CONFIG_FILE=/dev/null
-      PIP_DISABLE_PIP_VERSION_CHECK=1
-      PYTHONSAFEPATH=1
-      PYTHONNOUSERSITE=1
-      PYTHONUTF8=1
-      PATH=/usr/local/bin:/opt/hermes/.venv/bin:/usr/sbin:/usr/bin:/sbin:/bin
-    )
-  fi
-
-  # A root-separated gateway installs and consumes dependencies only through
-  # its private /run target. Same-UID startup keeps the sandbox-owned target.
-  if [ "$root_separated" -eq 1 ]; then
-    installer+=("${STEP_DOWN_PREFIX_GATEWAY[@]}")
-  fi
   installer+=("$_HERMES_PYTHON" -I -c)
 
   "${installer[@]}" '
@@ -1958,6 +1921,31 @@ hermes_tracked_service_owns_listener() {
   esac
 }
 
+hermes_find_reparented_role_listener_pid() {
+  local role="$1"
+  local service_user="$2"
+  local port="$3"
+  local previous_pid="${4:-}"
+  local proc_dir pid
+  local matched_pid=""
+
+  for proc_dir in "${_HERMES_PROC_ROOT}"/[0-9]*; do
+    [ -d "$proc_dir" ] || continue
+    pid="${proc_dir##*/}"
+    [ "$pid" != "$previous_pid" ] || continue
+    hermes_process_role_identity "$role" "$pid" "$service_user" "$port" >/dev/null 2>&1 \
+      || continue
+    hermes_tracked_service_owns_listener "$pid" "$port" "$service_user" || continue
+    # A unique role-and-listener match is the only safe launcher handoff. An
+    # ambiguous match stays fail-closed so a sibling process is never adopted.
+    [ -z "$matched_pid" ] || return 1
+    matched_pid="$pid"
+  done
+
+  [ -n "$matched_pid" ] || return 1
+  printf '%s' "$matched_pid"
+}
+
 start_socat_forwarder() {
   local public_port="$1"
   local internal_port="$2"
@@ -1968,6 +1956,8 @@ start_socat_forwarder() {
   local _socat_pid
   local _socat_role=""
   local owner_role=""
+  local adopted_owner_pid=""
+  local adopted_owner_identity=""
 
   case "$owner_user" in
     gateway) owner_role=gateway ;;
@@ -1992,8 +1982,20 @@ start_socat_forwarder() {
       if [ -z "$owner_role" ] \
         || ! hermes_tracked_role_is_current \
           "$owner_role" "$owner_pid" "$owner_user" "$internal_port"; then
-        echo "[gateway] ${label} service owner pid ${owner_pid} exited before binding 127.0.0.1:${internal_port}" >&2
-        return 1
+        if [ "$owner_role" = dashboard ]; then
+          if adopted_owner_pid="$(hermes_find_reparented_role_listener_pid \
+            "$owner_role" "$owner_user" "$internal_port" "$owner_pid")" \
+            && adopted_owner_identity="$(hermes_process_role_identity \
+              "$owner_role" "$adopted_owner_pid" "$owner_user" "$internal_port")"; then
+            owner_pid="$adopted_owner_pid"
+            hermes_set_role_identity "$owner_role" "$adopted_owner_identity"
+            DASHBOARD_PID="$owner_pid"
+            echo "[gateway] ${label} service handed off to verified listener owner pid ${owner_pid}" >&2
+          fi
+        else
+          echo "[gateway] ${label} service owner pid ${owner_pid} exited before binding 127.0.0.1:${internal_port}" >&2
+          return 1
+        fi
       fi
       if hermes_tracked_service_owns_listener "$owner_pid" "$internal_port" "$owner_user"; then
         internal_ready=1
@@ -2189,10 +2191,10 @@ start_hermes_dashboard_current_user() {
   prepare_restricted_log /tmp/dashboard.log "" 600 || return 1
   launch_hermes_dashboard_process current || return 1
   echo "[gateway] hermes dashboard launched (pid $DASHBOARD_PID)" >&2
+  ensure_dashboard_log_stream || return 1
   if ! hermes_capture_tracked_role dashboard "$DASHBOARD_PID" current "$DASHBOARD_INTERNAL_PORT"; then
     hermes_fatal_unproven_child dashboard "$DASHBOARD_PID"
   fi
-  ensure_dashboard_log_stream || return 1
   start_socat_forwarder \
     "$DASHBOARD_PUBLIC_PORT" "$DASHBOARD_INTERNAL_PORT" "dashboard" DASHBOARD_SOCAT_PID \
     "$DASHBOARD_PID" current
@@ -2204,10 +2206,10 @@ start_hermes_dashboard_sandbox_user() {
   prepare_restricted_log /tmp/dashboard.log sandbox:sandbox 600 || return 1
   launch_hermes_dashboard_process sandbox || return 1
   echo "[gateway] hermes dashboard launched as 'sandbox' user (pid $DASHBOARD_PID)" >&2
+  ensure_dashboard_log_stream || return 1
   if ! hermes_capture_tracked_role dashboard "$DASHBOARD_PID" sandbox "$DASHBOARD_INTERNAL_PORT"; then
     hermes_fatal_unproven_child dashboard "$DASHBOARD_PID"
   fi
-  ensure_dashboard_log_stream || return 1
   start_socat_forwarder \
     "$DASHBOARD_PUBLIC_PORT" "$DASHBOARD_INTERNAL_PORT" "dashboard" DASHBOARD_SOCAT_PID \
     "$DASHBOARD_PID" sandbox
@@ -2217,6 +2219,7 @@ wait_for_hermes_gateway_internal() {
   local gateway_pid="$1"
   local deadline=$((SECONDS + 90))
   local code
+  local gateway_status
   local service_user=current
   [ "$(id -u)" -eq 0 ] && service_user=gateway
   while [ "$SECONDS" -lt "$deadline" ]; do
@@ -2233,8 +2236,14 @@ wait_for_hermes_gateway_internal() {
       esac
     fi
     if ! hermes_tracked_role_is_current gateway "$gateway_pid" "$service_user" "$INTERNAL_PORT"; then
-      wait "$gateway_pid"
-      return $?
+      gateway_status=0
+      wait "$gateway_pid" || gateway_status=$?
+      echo "[gateway] Hermes gateway exited before readiness (status ${gateway_status})" >&2
+      if [ -s /tmp/gateway.log ]; then
+        sed 's/^/[gateway-log:] /' /tmp/gateway.log >&2
+      fi
+      [ "$gateway_status" -ne 0 ] || return 1
+      return "$gateway_status"
     fi
     sleep 1
   done
@@ -2345,7 +2354,6 @@ export https_proxy="$_PROXY_URL"
 export no_proxy="$_NO_PROXY_VAL"
 export HERMES_HOME="${HERMES_DIR}"
 export HERMES_LAZY_INSTALL_TARGET="${HERMES_SANDBOX_LAZY_INSTALL_TARGET}"
-export HERMES_BUNDLED_PLUGINS="${HERMES_MANAGED_BUNDLED_PLUGINS}"
 PROXYEOF
     cat <<'TUIENVEOF'
 if [ -f /opt/hermes/ui-tui/dist/entry.js ]; then
@@ -2637,11 +2645,7 @@ validate_hermes_env_secret_boundary() {
 }
 
 validate_hermes_runtime_env_secret_boundary() {
-  local lazy_target="$HERMES_SANDBOX_LAZY_INSTALL_TARGET"
-  if [ "$(id -u)" -eq 0 ]; then
-    lazy_target="$HERMES_GATEWAY_LAZY_INSTALL_TARGET"
-  fi
-  HERMES_LAZY_INSTALL_TARGET="$lazy_target" "${_HERMES_BOUNDARY_TIMEOUT[@]}" \
+  HERMES_LAZY_INSTALL_TARGET="$HERMES_SANDBOX_LAZY_INSTALL_TARGET" "${_HERMES_BOUNDARY_TIMEOUT[@]}" \
     "$_HERMES_PYTHON" -I "$_HERMES_BOUNDARY_VALIDATOR" runtime-env
 }
 
@@ -2715,8 +2719,7 @@ launch_hermes_gateway() {
   fi
   HERMES_HOME="${HERMES_DIR}" \
     HOME=/sandbox \
-    HERMES_LAZY_INSTALL_TARGET="${HERMES_GATEWAY_LAZY_INSTALL_TARGET}" \
-    HERMES_BUNDLED_PLUGINS="${HERMES_MANAGED_BUNDLED_PLUGINS}" \
+    HERMES_LAZY_INSTALL_TARGET="${HERMES_SANDBOX_LAZY_INSTALL_TARGET}" \
     nohup "${STEP_DOWN_PREFIX_GATEWAY[@]}" sh -c \
     'umask 0007; exec "$@" >>/tmp/gateway.log 2>&1' sh "$HERMES" gateway run &
   GATEWAY_PID=$!
@@ -2870,34 +2873,48 @@ prepare_hermes_root_runtime_dir() {
   return 0
 }
 
-prepare_hermes_gateway_lazy_install_target() {
-  local target_metadata runtime_device target_device
-  prepare_hermes_root_runtime_dir || return 1
-  if [ -L "$HERMES_GATEWAY_LAZY_INSTALL_TARGET" ]; then
-    echo "[SECURITY] Refusing Hermes startup because the gateway lazy-install target is a symbolic link" >&2
+prepare_hermes_native_lazy_install_target() {
+  if [ -L "$HERMES_SANDBOX_LAZY_INSTALL_TARGET" ]; then
+    echo "[SECURITY] Refusing Hermes startup because the native lazy-install target is a symbolic link" >&2
     return 1
   fi
-  if [ ! -e "$HERMES_GATEWAY_LAZY_INSTALL_TARGET" ]; then
-    install -d -o gateway -g gateway -m 0700 -- "$HERMES_GATEWAY_LAZY_INSTALL_TARGET" || {
-      echo "[SECURITY] Refusing Hermes startup because the gateway lazy-install target could not be created safely" >&2
+  if [ ! -e "$HERMES_SANDBOX_LAZY_INSTALL_TARGET" ]; then
+    install -d -o sandbox -g sandbox -m 2770 -- "$HERMES_SANDBOX_LAZY_INSTALL_TARGET" || {
+      echo "[SECURITY] Refusing Hermes startup because the native lazy-install target could not be created safely" >&2
       return 1
     }
   fi
-  if [ ! -d "$HERMES_GATEWAY_LAZY_INSTALL_TARGET" ] || [ -L "$HERMES_GATEWAY_LAZY_INSTALL_TARGET" ]; then
-    echo "[SECURITY] Refusing Hermes startup because the gateway lazy-install target is not a real directory" >&2
+  if [ ! -d "$HERMES_SANDBOX_LAZY_INSTALL_TARGET" ] || [ -L "$HERMES_SANDBOX_LAZY_INSTALL_TARGET" ]; then
+    echo "[SECURITY] Refusing Hermes startup because the native lazy-install target is not a real directory" >&2
     return 1
   fi
-  runtime_device="$(stat -c '%d' -- "$HERMES_RUNTIME_DIR" 2>/dev/null)" || runtime_device=""
-  target_device="$(stat -c '%d' -- "$HERMES_GATEWAY_LAZY_INSTALL_TARGET" 2>/dev/null)" || target_device=""
-  if [ -z "$runtime_device" ] || [ "$target_device" != "$runtime_device" ]; then
-    echo "[SECURITY] Refusing Hermes startup because the gateway lazy-install target is outside the managed runtime filesystem" >&2
-    return 1
-  fi
-  chown gateway:gateway -- "$HERMES_GATEWAY_LAZY_INSTALL_TARGET" 2>/dev/null || true
-  chmod 0700 -- "$HERMES_GATEWAY_LAZY_INSTALL_TARGET" 2>/dev/null || true
-  target_metadata="$(stat -c '%U:%G:%a' -- "$HERMES_GATEWAY_LAZY_INSTALL_TARGET" 2>/dev/null)" || target_metadata=""
-  if [ "$target_metadata" != "gateway:gateway:700" ]; then
-    echo "[SECURITY] Refusing Hermes startup because the gateway lazy-install target must be gateway-owned with mode 0700" >&2
+  if ! "$_HERMES_PYTHON" -I - "$HERMES_SANDBOX_LAZY_INSTALL_TARGET" <<'PY'; then
+import os
+import pwd
+import stat
+import sys
+
+target = sys.argv[1]
+flags = os.O_RDONLY | os.O_CLOEXEC | os.O_DIRECTORY | os.O_NOFOLLOW
+fd = os.open(target, flags)
+try:
+    before = os.fstat(fd)
+    if not stat.S_ISDIR(before.st_mode):
+        raise RuntimeError("native lazy-install target is not a directory")
+    sandbox = pwd.getpwnam("sandbox")
+    os.fchown(fd, sandbox.pw_uid, sandbox.pw_gid)
+    os.fchmod(fd, 0o2770)
+    after = os.fstat(fd)
+    if (after.st_uid, after.st_gid, stat.S_IMODE(after.st_mode)) != (
+        sandbox.pw_uid,
+        sandbox.pw_gid,
+        0o2770,
+    ):
+        raise RuntimeError("native lazy-install target metadata was not applied")
+finally:
+    os.close(fd)
+PY
+    echo "[SECURITY] Refusing Hermes startup because the native lazy-install target must be sandbox:sandbox with mode 2770" >&2
     return 1
   fi
   return 0
@@ -2944,12 +2961,18 @@ prepare_hermes_root_runtime() {
 }
 
 launch_hermes_gateway_current_user() {
+  if [ -e "$HERMES_GATEWAY_RECOVERY_WAITING_FILE" ] \
+    || [ -L "$HERMES_GATEWAY_RECOVERY_WAITING_FILE" ]; then
+    rm -f -- "$HERMES_GATEWAY_RECOVERY_WAITING_FILE" || {
+      echo "[SECURITY] Refusing Hermes startup because the stale gateway recovery generation could not be removed" >&2
+      return 1
+    }
+  fi
   cleanup_stale_hermes_gateway_runtime || return $?
   HERMES_HOME="${HERMES_DIR}" \
     HOME=/sandbox \
     HERMES_LAZY_INSTALL_TARGET="${HERMES_SANDBOX_LAZY_INSTALL_TARGET}" \
-    HERMES_BUNDLED_PLUGINS="${HERMES_MANAGED_BUNDLED_PLUGINS}" \
-    nohup "$HERMES" gateway run >>/tmp/gateway.log 2>&1 &
+    nohup "$HERMES" gateway run --external-supervisor >>/tmp/gateway.log 2>&1 &
   GATEWAY_PID=$!
   if ! hermes_capture_tracked_role gateway "$GATEWAY_PID" current "$INTERNAL_PORT"; then
     hermes_fatal_unproven_child gateway "$GATEWAY_PID"
@@ -2957,6 +2980,213 @@ launch_hermes_gateway_current_user() {
   # shellcheck disable=SC2034  # read by cleanup_on_signal from sandbox-init.sh
   SANDBOX_WAIT_PID="$GATEWAY_PID"
   echo "[gateway] hermes gateway launched (pid $GATEWAY_PID)" >&2
+}
+
+# With --external-supervisor, Hermes 0.21.3 handles SIGUSR1 by exiting with
+# EX_TEMPFAIL (75). In the non-root OpenShell topology, this entrypoint remains
+# alive and relaunches the gateway immediately for that status. The image patch
+# maps an unplanned SIGTERM under this external supervisor to private status 79.
+# A clean stop or that exact status is held until the privileged recovery
+# transaction restores its cron gate. Other failures propagate to OpenShell.
+readonly HERMES_SERVICE_RESTART_STATUS=75
+readonly HERMES_GATEWAY_RECOVERY_STATUS=79
+readonly HERMES_SERVICE_RESTART_MAX=5
+readonly HERMES_SERVICE_RESTART_WINDOW_SECONDS=60
+readonly HERMES_GATEWAY_RECOVERY_REQUESTER_EXIT_ATTEMPTS=30
+readonly HERMES_GATEWAY_RECOVERY_REQUEST_WAIT_SECONDS=120
+readonly HERMES_GATEWAY_RECOVERY_TRANSPORT_SETTLE_SECONDS=1
+
+hermes_gateway_recovery_request_value() {
+  local extra generation metadata request requester_pid requester_start version
+  if [ ! -e "$HERMES_GATEWAY_RECOVERY_REQUEST_FILE" ] \
+    && [ ! -L "$HERMES_GATEWAY_RECOVERY_REQUEST_FILE" ]; then
+    printf '%s\n' absent
+    return 0
+  fi
+  if [ ! -f "$HERMES_GATEWAY_RECOVERY_REQUEST_FILE" ] \
+    || [ -L "$HERMES_GATEWAY_RECOVERY_REQUEST_FILE" ]; then
+    echo "[SECURITY] Hermes gateway recovery request is not a regular file" >&2
+    return 1
+  fi
+  metadata="$(stat -c '%u:%g:%a:%h:%d:%i' -- "$HERMES_GATEWAY_RECOVERY_REQUEST_FILE" 2>/dev/null)" || {
+    echo "[SECURITY] Hermes gateway recovery request metadata is unavailable" >&2
+    return 1
+  }
+  case "$metadata" in
+    0:0:444:1:*) ;;
+    *)
+      echo "[SECURITY] Hermes gateway recovery request metadata is unsafe" >&2
+      return 1
+      ;;
+  esac
+  request="$(cat -- "$HERMES_GATEWAY_RECOVERY_REQUEST_FILE")" || {
+    echo "[SECURITY] Hermes gateway recovery request is unreadable" >&2
+    return 1
+  }
+  read -r version generation requester_pid requester_start extra <<<"$request"
+  [ "$version" = v2 ] || generation=
+  if [ "${#generation}" -ne 64 ]; then
+    echo "[SECURITY] Hermes gateway recovery request is invalid" >&2
+    return 1
+  fi
+  case "$generation" in
+    *[!0-9a-f]*)
+      echo "[SECURITY] Hermes gateway recovery request is invalid" >&2
+      return 1
+      ;;
+  esac
+  case "$requester_pid" in
+    '' | 0 | 1 | *[!0-9]*)
+      echo "[SECURITY] Hermes gateway recovery requester identity is invalid" >&2
+      return 1
+      ;;
+  esac
+  case "$requester_start" in
+    '' | *[!0-9]*)
+      echo "[SECURITY] Hermes gateway recovery requester identity is invalid" >&2
+      return 1
+      ;;
+  esac
+  if [ -n "$extra" ]; then
+    echo "[SECURITY] Hermes gateway recovery request is invalid" >&2
+    return 1
+  fi
+  printf '%s\n' "$request"
+}
+
+hermes_recovery_requester_start_time() {
+  local pid="$1"
+  local proc_stat stat_path stat_suffix start_time
+
+  case "$pid" in
+    '' | 0 | 1 | *[!0-9]*) return 2 ;;
+  esac
+  stat_path="/proc/${pid}/stat"
+  [ -e "$stat_path" ] || return 1
+  [ -r "$stat_path" ] || return 2
+  if ! IFS= read -r proc_stat <"$stat_path"; then
+    [ -e "$stat_path" ] || return 1
+    return 2
+  fi
+  stat_suffix="${proc_stat##*) }"
+  start_time="$(awk '{print $20}' <<<"$stat_suffix")"
+  case "$start_time" in
+    '' | *[!0-9]*) return 2 ;;
+  esac
+  printf '%s' "$start_time"
+}
+
+wait_for_hermes_recovery_requester_exit() {
+  local requester_pid="$1"
+  local requester_start="$2"
+  local attempt observation_status observed_start
+
+  attempt=0
+  while [ "$attempt" -lt "$HERMES_GATEWAY_RECOVERY_REQUESTER_EXIT_ATTEMPTS" ]; do
+    observation_status=0
+    observed_start="$(hermes_recovery_requester_start_time "$requester_pid" 2>/dev/null)" \
+      || observation_status=$?
+    if [ "$observation_status" -eq 1 ]; then
+      return 0
+    fi
+    if [ "$observation_status" -eq 0 ] \
+      && [ "$observed_start" != "$requester_start" ]; then
+      return 0
+    fi
+    attempt=$((attempt + 1))
+    sleep 1
+  done
+  echo "[SECURITY] Hermes gateway recovery controller did not exit after publishing its request" >&2
+  return 1
+}
+
+publish_hermes_gateway_recovery_generation() {
+  local generation temporary_marker
+  generation="$(od -An -N32 -tx1 /dev/urandom | tr -d ' \n')" || return 1
+  if [ "${#generation}" -ne 64 ]; then
+    echo "[SECURITY] Hermes gateway recovery generation is unavailable" >&2
+    return 1
+  fi
+  temporary_marker="$(mktemp "${HERMES_GATEWAY_RECOVERY_WAITING_FILE}.XXXXXX")" || {
+    echo "[SECURITY] Hermes gateway recovery generation could not be prepared" >&2
+    return 1
+  }
+  if ! printf 'v1 %s\n' "$generation" >"$temporary_marker" \
+    || ! chmod 0600 "$temporary_marker" \
+    || ! mv -f -- "$temporary_marker" "$HERMES_GATEWAY_RECOVERY_WAITING_FILE"; then
+    rm -f -- "$temporary_marker"
+    echo "[SECURITY] Hermes gateway recovery generation could not be published atomically" >&2
+    return 1
+  fi
+  HERMES_GATEWAY_RECOVERY_GENERATION="$generation"
+}
+
+wait_for_hermes_gateway_recovery_request() {
+  local attempt current request_generation requester_pid requester_start version
+  publish_hermes_gateway_recovery_generation || return 1
+  echo "[gateway] Hermes gateway stopped cleanly; awaiting gated host recovery" >&2
+  attempt=0
+  while [ "$attempt" -lt "$HERMES_GATEWAY_RECOVERY_REQUEST_WAIT_SECONDS" ]; do
+    current="$(hermes_gateway_recovery_request_value)" || return 1
+    read -r version request_generation requester_pid requester_start <<<"$current"
+    if [ "$version" = v2 ] \
+      && [ "$request_generation" = "$HERMES_GATEWAY_RECOVERY_GENERATION" ]; then
+      wait_for_hermes_recovery_requester_exit "$requester_pid" "$requester_start" || return $?
+      # The controller request becomes visible before Docker necessarily delivers
+      # its exit status and buffered receipt to the host-side exec client. Settle
+      # that transport only after the exact requester process has exited so the
+      # gateway cannot replace the controller while it is still running.
+      sleep "$HERMES_GATEWAY_RECOVERY_TRANSPORT_SETTLE_SECONDS" || {
+        echo "[SECURITY] Hermes gateway recovery controller transport did not settle" >&2
+        return 1
+      }
+      echo "[gateway] Gated host recovery requested; relaunching under the existing OpenShell entrypoint" >&2
+      return 0
+    fi
+    sleep 1
+    attempt=$((attempt + 1))
+  done
+  echo "[CRITICAL] Hermes gateway recovery request timed out after ${HERMES_GATEWAY_RECOVERY_REQUEST_WAIT_SECONDS} seconds; the gateway remains stopped; run 'nemoclaw <name> stop' followed by 'nemoclaw <name> start' to restart the sandbox" >&2
+  return 1
+}
+
+relaunch_hermes_gateway_current_user() {
+  mark_hermes_gateway_stopped
+  launch_hermes_gateway_current_user || return $?
+  wait_for_hermes_gateway_internal "$GATEWAY_PID" || return $?
+  ensure_hermes_supervised_auxiliaries || return $?
+  finalize_tirith_marker_retry
+  refresh_hermes_supervised_child_pids
+}
+
+supervise_hermes_service_restarts_current_user() {
+  local gateway_status=0 restart_time
+  local -a service_restart_times=()
+
+  while :; do
+    gateway_status=0
+    wait "$GATEWAY_PID" || gateway_status=$?
+    if [ "$gateway_status" -eq 0 ] \
+      || [ "$gateway_status" -eq "$HERMES_GATEWAY_RECOVERY_STATUS" ]; then
+      wait_for_hermes_gateway_recovery_request || return $?
+    elif [ "$gateway_status" -eq "$HERMES_SERVICE_RESTART_STATUS" ]; then
+      restart_time="$SECONDS"
+      while [ "${#service_restart_times[@]}" -gt 0 ] \
+        && [ "$((restart_time - service_restart_times[0]))" -gt "$HERMES_SERVICE_RESTART_WINDOW_SECONDS" ]; do
+        service_restart_times=("${service_restart_times[@]:1}")
+      done
+      service_restart_times+=("$restart_time")
+      if [ "${#service_restart_times[@]}" -ge "$HERMES_SERVICE_RESTART_MAX" ]; then
+        echo "[CRITICAL] Hermes gateway pid ${GATEWAY_PID} start identity ${GATEWAY_PID_START_IDENTITY:-unknown} requested ${HERMES_SERVICE_RESTART_MAX} service-managed restarts within ${HERMES_SERVICE_RESTART_WINDOW_SECONDS} seconds; relaunch is stopped for this supervisor instance; run 'nemoclaw <name> stop' followed by 'nemoclaw <name> start' to reset the supervisor, then inspect gateway logs if restart requests recur" >&2
+        return 1
+      fi
+      echo "[gateway] Hermes requested a service-managed restart; relaunching under the existing OpenShell entrypoint" >&2
+    else
+      return "$gateway_status"
+    fi
+
+    relaunch_hermes_gateway_current_user || return $?
+  done
 }
 
 start_hermes_root_gateway() {
@@ -3023,17 +3253,13 @@ if [ "$(id -u)" -ne 0 ]; then
   ensure_hermes_supervised_auxiliaries || exit 1
   finalize_tirith_marker_retry
   print_dashboard_urls
-  wait "$GATEWAY_PID"
+  supervise_hermes_service_restarts_current_user
   exit $?
 fi
 
 # ── Root path (full privilege separation via setpriv) ──────────
 
 export HERMES_HOME="${HERMES_DIR}"
-publish_hermes_root_runtime_marker hermes-bundled-plugins-only 1 || exit 1
-if [ -n "$(find -P "$HERMES_DIR/plugins" -mindepth 1 -type d -print -quit 2>/dev/null)" ]; then
-  echo "[gateway] WARNING: root-separated Hermes ignores sandbox-owned user plugins; rebuild required plugins into /opt/hermes/plugins" >&2
-fi
 prepare_hermes_root_runtime
 
 if [ ${#NEMOCLAW_CMD[@]} -gt 0 ]; then
