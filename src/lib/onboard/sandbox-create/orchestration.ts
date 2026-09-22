@@ -1046,6 +1046,18 @@ export async function activateManagedStartupCorporateCaTrustBeforeIdentityRevali
   );
 }
 
+export async function activateManagedStartupCorporateCaTrustAfterSandboxCreate<T>(input: {
+  readonly create: Promise<T>;
+  readonly activate: () => Promise<void>;
+}): Promise<T> {
+  // OpenShell treats a lifecycle stop during its create-readiness transaction
+  // as cancellation and removes the pending sandbox. Do not mutate lifecycle
+  // state until the create RPC has returned and the sandbox is durable.
+  const created = await input.create;
+  await input.activate();
+  return created;
+}
+
 /**
  * Keep every effect after an unverified create behind one exact-identity gate.
  *
@@ -3137,17 +3149,9 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
                     console.log("  ✓ Released the managed startup hold");
                   }
                   managedBootstrapCreateFinished = true;
-                  if (managedStartupRootApplyRequest.corporateCaB64 !== null) {
-                    console.log("  Activating corporate CA trust in the OpenShell supervisor...");
-                  }
-                  await activateManagedStartupCorporateCaTrustBeforeIdentityRevalidation({
-                    corporateCaB64: managedStartupRootApplyRequest.corporateCaB64,
-                    sandboxName,
-                    boundary,
-                    refreshCorporateCaTrust: (request) =>
-                      managedWorkloadOnboard.refreshManagedStartupCorporateCaTrust(request),
-                    revalidateSandboxIdentity: context.revalidateSandboxIdentity,
-                  });
+                  context.revalidateSandboxIdentity(
+                    `confirming managed startup profile for sandbox '${sandboxName}'`,
+                  );
                   console.log("  ✓ Revalidated the managed startup sandbox identity");
                 }
                 if (runDeferredProviderEffects) await runDeferredProviderEffects(context);
@@ -3488,18 +3492,34 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       });
       cleanupBuildContext();
     } else {
-      const created = await runSandboxCreateWithProviderEffects({
-        resumingVerifiedCreate: Boolean(resumeVerifiedCreateInput),
-        providerEffectBoundary,
-        create: (runAfterVerifiedCreate) =>
-          runCreateFlow(
-            createArgv,
-            undefined,
-            undefined,
-            undefined,
-            undefined,
-            runAfterVerifiedCreate,
-          ),
+      const created = await activateManagedStartupCorporateCaTrustAfterSandboxCreate({
+        create: runSandboxCreateWithProviderEffects({
+          resumingVerifiedCreate: Boolean(resumeVerifiedCreateInput),
+          providerEffectBoundary,
+          create: (runAfterVerifiedCreate) =>
+            runCreateFlow(
+              createArgv,
+              undefined,
+              undefined,
+              undefined,
+              undefined,
+              runAfterVerifiedCreate,
+            ),
+        }),
+        activate: async () => {
+          if (!managedStartupRootApplyRequest?.corporateCaB64) return;
+          console.log("  Activating corporate CA trust in the OpenShell supervisor...");
+          const boundary = requireVerifiedCreateBoundary();
+          await activateManagedStartupCorporateCaTrustBeforeIdentityRevalidation({
+            corporateCaB64: managedStartupRootApplyRequest.corporateCaB64,
+            sandboxName,
+            boundary,
+            refreshCorporateCaTrust: (request) =>
+              managedWorkloadOnboard.refreshManagedStartupCorporateCaTrust(request),
+            revalidateSandboxIdentity: (operation) =>
+              revalidateVerifiedCreateIdentity(boundary, operation),
+          });
+        },
       });
       try {
         await finalizeCreatedSandboxBeforeHermesCredentialReconciliation(
