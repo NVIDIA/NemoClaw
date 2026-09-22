@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawn, spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -56,6 +57,11 @@ describe("runtime model override (#759)", () => {
     fs.chmodSync(openclawDir, 0o2770);
     fs.chmodSync(configPath, 0o660);
     fs.chmodSync(hashPath, 0o660);
+    const initialModes = {
+      dir: fs.statSync(openclawDir).mode & 0o7777,
+      config: fs.statSync(configPath).mode & 0o777,
+      hash: fs.statSync(hashPath).mode & 0o777,
+    };
 
     const helperFns = [extractShellFunction("openclaw_config_dir_owner")]
       .join("\n")
@@ -79,7 +85,9 @@ describe("runtime model override (#759)", () => {
       encoding: "utf-8",
       env: { ...process.env, ...env },
     });
-    const config = JSON.parse(fs.readFileSync(configPath, "utf-8"));
+    const configBytes = fs.readFileSync(configPath);
+    const config = JSON.parse(configBytes.toString("utf-8"));
+    const configDigest = createHash("sha256").update(configBytes).digest("hex");
     const hash = fs.readFileSync(hashPath, "utf-8");
     const modes = {
       dir: fs.statSync(openclawDir).mode & 0o7777,
@@ -87,11 +95,11 @@ describe("runtime model override (#759)", () => {
       hash: fs.statSync(hashPath).mode & 0o777,
     };
     fs.rmSync(root, { recursive: true, force: true });
-    return { result, config, hash, modes };
+    return { result, config, configDigest, hash, initialModes, modes };
   }
 
   it("applies model, API, context, max-token, and reasoning overrides and recomputes the hash", () => {
-    const { result, config, hash } = runApplyModelOverride({
+    const { result, config, configDigest, hash } = runApplyModelOverride({
       NEMOCLAW_MODEL_OVERRIDE: "new-model",
       NEMOCLAW_INFERENCE_API_OVERRIDE: "anthropic-messages",
       NEMOCLAW_CONTEXT_WINDOW: "4096",
@@ -110,22 +118,20 @@ describe("runtime model override (#759)", () => {
       maxTokens: 512,
       reasoning: true,
     });
-    expect(hash).toContain("openclaw.json");
+    expect(hash.trim().split(/\s+/)).toEqual([configDigest, "openclaw.json"]);
   });
 
   it("restores mutable config permissions after successful overrides", () => {
-    const { result, modes } = runApplyModelOverride({
+    const { result, initialModes, modes } = runApplyModelOverride({
       NEMOCLAW_MODEL_OVERRIDE: "new-model",
     });
 
     expect(result.status).toBe(0);
-    expect(modes.dir).toBe(0o2770);
-    expect(modes.config).toBe(0o660);
-    expect(modes.hash).toBe(0o660);
+    expect(modes).toEqual(initialModes);
   });
 
   it("applies an explicit model override as a non-root custom image user (#12033)", () => {
-    const { result, config, hash, modes } = runApplyModelOverride(
+    const { result, config, configDigest, hash, initialModes, modes } = runApplyModelOverride(
       { NEMOCLAW_MODEL_OVERRIDE: "new-model" },
       1000,
     );
@@ -136,12 +142,8 @@ describe("runtime model override (#759)", () => {
       id: "new-model",
       name: "new-model",
     });
-    expect(hash).toContain("openclaw.json");
-    expect(modes).toEqual({
-      dir: 0o2770,
-      config: 0o660,
-      hash: 0o660,
-    });
+    expect(hash.trim().split(/\s+/)).toEqual([configDigest, "openclaw.json"]);
+    expect(modes).toEqual(initialModes);
   });
 
   it.each([

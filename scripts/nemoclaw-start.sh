@@ -1305,10 +1305,15 @@ if os.environ.get("RECONCILE_SOURCE") == "gateway":
     if not isinstance(first, dict):
         first = {}
         models_list[0] = first
+    provider_model_unchanged = (
+        first.get("name") == provider_model
+        and first.get("id") in (bare, provider_model)
+    )
     first["id"] = bare
     first["name"] = provider_model
-    first.pop("contextWindow", None)
-    first.pop("maxTokens", None)
+    if not provider_model_unchanged:
+        first.pop("contextWindow", None)
+        first.pop("maxTokens", None)
 with open(config_file, "w") as f:
     json.dump(cfg, f, indent=2)
 PYRECONCILE_WRITE

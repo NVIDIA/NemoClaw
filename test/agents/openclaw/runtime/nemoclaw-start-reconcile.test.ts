@@ -410,6 +410,38 @@ describe("agent identity reconciliation with provider (#3175)", () => {
     expect(hash).toBe("oldhash\n");
   });
 
+  it("preserves explicit limits when only the primary model reference is stale", () => {
+    const { result, config, hash } = runReconcile(
+      {
+        agents: { defaults: { model: { primary: "inference/stale-primary" } } },
+        models: {
+          providers: {
+            inference: {
+              api: "openai-completions",
+              models: [
+                {
+                  id: "nvidia/synced",
+                  name: "inference/nvidia/synced",
+                  contextWindow: 131072,
+                  maxTokens: 4096,
+                },
+              ],
+            },
+          },
+        },
+      },
+      { gatewayModel: "nvidia/synced" },
+    );
+
+    expect(result.status).toBe(0);
+    expect(config.agents.defaults.model.primary).toBe("inference/nvidia/synced");
+    expect(config.models.providers.inference.models[0]).toMatchObject({
+      contextWindow: 131072,
+      maxTokens: 4096,
+    });
+    expect(hash).not.toBe("oldhash\n");
+  });
+
   it("falls back to the in-file reconcile when the gateway probe returns no model", () => {
     const { result, config } = runReconcile(
       {
