@@ -1,8 +1,8 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 # yaml-language-server: $schema=../../schemas/nemoclaw-v1alpha1.schema.json
-# Supply a unique deployment UID, an accessible digest-selected agent image,
-# and an inference endpoint reachable from inside the Kubernetes sandbox.
+# Supply a unique deployment UID, an accessible digest-selected image for every agent,
+# and an inference endpoint reachable from inside each Kubernetes sandbox.
 apiVersion: nemoclaw.nvidia.com/v1alpha1
 kind: NemoClawConfig
 metadata:
@@ -22,6 +22,7 @@ spec:
       provider: openai
       endpoint: https://inference.example.com/v1
       credential: {env: INFERENCE_API_KEY}
+  # Each sandbox runs one independent agent using the shared inference profile.
   sandboxes:
     - name: assistant
       # Replace this example digest with an image adapted for the gateway's UID/GID 10001.
@@ -36,9 +37,35 @@ spec:
         kind: openclaw
       agent:
         name: main
-        inference:
-          routes:
-            - name: primary
-              providerRef: inference
-              overrides:
-                model: example-model
+        inferenceRef: chat
+    - name: researcher
+      image:
+        ref: registry.example.com/nemoclaw/openclaw-kubernetes@sha256:0000000000000000000000000000000000000000000000000000000000000000
+      runtime:
+        provider: kubernetes
+      network:
+        tier: isolated
+      harness:
+        kind: openclaw
+      agent:
+        name: researcher
+        inferenceRef: chat
+    - name: reviewer
+      image:
+        ref: registry.example.com/nemoclaw/openclaw-kubernetes@sha256:0000000000000000000000000000000000000000000000000000000000000000
+      runtime:
+        provider: kubernetes
+      network:
+        tier: isolated
+      harness:
+        kind: openclaw
+      agent:
+        name: reviewer
+        inferenceRef: chat
+  inferences:
+    chat:
+      routes:
+        - name: primary
+          providerRef: inference
+          overrides:
+            model: example-model

@@ -24,7 +24,7 @@ It does not add a Kubernetes operator or change the behavior of Docker and Podma
 | NemoClaw SDK and OpenTofu | OpenShell workspace, provider definitions, sandbox bindings, runtime configuration, and readiness observations |
 | Optional CPU model fixture | Ollama workload, Service, model PVC, and network policy in the dedicated cluster |
 
-Ordinary apply still refuses sandbox replacement and does not adopt missing or substituted bindings.
+Ordinary apply still refuses sandbox removal or replacement and does not adopt missing or substituted bindings.
 Destroy removes the agent deployment's workloads and retains the OpenShell workspace; it does not uninstall the gateway or destroy the cluster.
 Deleting the kind cluster also deletes its local persistent volumes and every sandbox in it.
 This development profile establishes no production, high-availability, GPU-service, or broad Kubernetes compatibility claim.
@@ -43,9 +43,22 @@ Run the usual [plan and apply commands](usage.md) with a separate state director
 No-op apply still checks runtime health.
 An application-health result does not establish a successful model response.
 
+### Deploy Multiple Agents
+
+Both Kubernetes examples define three OpenClaw sandboxes: `assistant`, `researcher`, and `reviewer`.
+Each sandbox has one `agent`, its own runtime and workspace files, and `runtime.provider: kubernetes`.
+All three agents select `inferenceRef: chat`, which resolves to the shared `spec.inferences.chat` routes and one deployment-level inference provider.
+The names identify independent agents; they do not configure specialized roles or automatic collaboration.
+See [agent configuration](agents.md) for harness and inference settings.
+
+Before applying, replace the image placeholder in every sandbox and supply one fresh deployment UID for the entire configuration.
+Use one SDK state directory for all three sandboxes in that deployment.
+Before the first apply, choose the agent count by adding or removing complete `spec.sandboxes` entries; keep sandbox names unique and retain the selected network policy on each entry.
+The examples are checked by the schema and parser; the [recorded live validation](validation/kubernetes-kind-linux-amd64.md) covers a single OpenClaw sandbox.
+
 ### Reuse the Docker Hosted NVIDIA Profile
 
-The [Kubernetes hosted NVIDIA example](../examples/kubernetes/hosted-nvidia.yaml) preserves the inference provider, API, model, credential reference, and native agent settings from the [Docker hosted fixture](../crates/nemoclaw-e2e/fixtures/openclaw-nvidia-hosted/v1.yaml).
+The [Kubernetes hosted NVIDIA example](../examples/kubernetes/hosted-nvidia.yaml) preserves the inference provider, API, model, and credential reference from the [Docker hosted fixture](../crates/nemoclaw-e2e/fixtures/openclaw-nvidia-hosted/v1.yaml) and shares that profile across three agents.
 It uses `https://integrate.api.nvidia.com/v1`, model `nvidia/nemotron-3-super-120b-a12b`, API `openai-completions`, and credential environment variable `NVIDIA_INFERENCE_API_KEY`.
 The Docker Brev workflow supplies that variable from its repository secret named `NVIDIA_API_KEY`; the secret's value is not present in the fixture.
 For Kubernetes, supply a fresh deployment UID, the external gateway connection, and the Kubernetes agent image, and keep the process UID and GID at `10001`.
