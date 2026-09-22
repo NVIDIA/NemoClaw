@@ -28,8 +28,10 @@ pub(crate) struct Record {
     pending_creations: Option<BTreeMap<String, crate::backend::Row>>,
     succeeded: bool,
     pub digest: String,
-    #[serde(skip_serializing_if = "String::is_empty")]
-    plan_digest: String,
+    // Accept older version-7 records, but saved plan artifacts no longer
+    // authorize recovery. Current bindings and fresh plans determine it.
+    #[serde(rename = "planDigest", skip_serializing)]
+    pub _legacy_plan_digest: String,
     #[serde(skip_serializing_if = "is_false")]
     destroying: bool,
     #[serde(skip_serializing_if = "is_false")]
@@ -91,14 +93,15 @@ impl Record {
     pub fn begin_apply(
         &mut self,
         document: &Document,
-        plan_digest: String,
         creations: BTreeMap<String, crate::backend::Row>,
     ) {
+        self.prepare_apply(document);
         if creations.is_empty() {
-            self.begin_runtime_apply(document, plan_digest);
+            // OpenTofu owns recovery for established bindings. Preserve any
+            // earlier ambiguous creation, but do not invent one for updates,
+            // deletions, or apply-time observations.
             return;
         }
-        self.prepare_apply(document, plan_digest);
         // Never narrow an older full-intent guard or forget an earlier lost reply.
         if !self.pending || self.runtime_pending {
             self.pending_creations = Some(creations);
@@ -115,8 +118,8 @@ impl Record {
         self.runtime_pending = false;
         self.pending_creations = None;
     }
-    pub fn begin_runtime_apply(&mut self, document: &Document, plan_digest: String) {
-        self.prepare_apply(document, plan_digest);
+    pub fn begin_runtime_apply(&mut self, document: &Document) {
+        self.prepare_apply(document);
         // Runtime recovery must not clear an earlier ambiguous OpenShell mutation.
         if !self.pending {
             self.pending = true;
@@ -129,11 +132,10 @@ impl Record {
             self.runtime_pending = false;
         }
     }
-    // Keep the authored intent and saved-plan identity at the same checkpoint.
-    fn prepare_apply(&mut self, document: &Document, plan_digest: String) {
+    // Keep the authored intent and recovery flags at the same checkpoint.
+    fn prepare_apply(&mut self, document: &Document) {
         self.document = document.clone();
         self.digest = document.digest();
-        self.plan_digest = plan_digest;
         self.succeeded = false;
         self.destroyed = false;
         self.destroy_runtime = false;
@@ -159,7 +161,6 @@ impl Record {
         self.finish_apply();
         self.destroying = false;
         self.destroyed = true;
-        self.plan_digest.clear();
     }
 
     pub fn pending(&self) -> bool {
@@ -179,9 +180,6 @@ impl Record {
     }
     pub fn root_destroyed(&self) -> bool {
         self.destroy_runtime
-    }
-    pub fn plan_digest(&self) -> &str {
-        &self.plan_digest
     }
     fn validate(&self) -> Result<(), Error> {
         if self.version != 7 {

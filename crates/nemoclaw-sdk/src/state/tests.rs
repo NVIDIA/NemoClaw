@@ -219,12 +219,12 @@ fn runtime_reconciliation_does_not_clear_unfinished_openshell_recovery() {
     )
     .unwrap();
     let mut record = Record::new(document).unwrap();
-    record.begin_runtime_apply(&record.document.clone(), "runtime-plan".into());
+    record.begin_runtime_apply(&record.document.clone());
     assert!(record.pending && record.runtime_pending);
     record.finish_runtime_apply();
     assert!(!record.pending && !record.runtime_pending);
     record.pending = true;
-    record.begin_runtime_apply(&record.document.clone(), "runtime-plan".into());
+    record.begin_runtime_apply(&record.document.clone());
     assert!(!record.runtime_pending);
     record.finish_runtime_apply();
     assert!(record.pending && !record.runtime_pending);
@@ -261,7 +261,7 @@ fn pending_creation_guards_only_unresolved_targets_and_survives_runtime_recovery
         record.validate_pending_intent(&revised),
         Err(Error::Conflict(_))
     ));
-    record.begin_runtime_apply(&record.document.clone(), "runtime-plan".into());
+    record.begin_runtime_apply(&record.document.clone());
     record.finish_runtime_apply();
     assert!(record.pending && !record.runtime_pending);
     assert_eq!(
@@ -285,23 +285,40 @@ fn subsequent_apply_preserves_all_unresolved_creations_until_success() {
     let second = &targets[1];
     record.begin_apply(
         &document,
-        "plan".into(),
         [(first.address.clone(), first.values.clone())].into(),
     );
     record.begin_apply(
         &document,
-        "plan".into(),
         [(second.address.clone(), second.values.clone())].into(),
     );
     assert_eq!(record.pending_creations.as_ref().unwrap().len(), 2);
-    record.begin_apply(&document, "plan".into(), BTreeMap::new());
+    record.begin_apply(&document, BTreeMap::new());
     assert!(record.pending && !record.runtime_pending);
     assert_eq!(record.pending_creations.as_ref().unwrap().len(), 2);
     record.finish_apply();
     assert!(!record.pending && record.pending_creations.is_none());
-    record.begin_apply(&document, "plan".into(), BTreeMap::new());
-    assert!(record.pending && record.runtime_pending);
+    record.begin_apply(&document, BTreeMap::new());
+    assert!(!record.pending && !record.runtime_pending);
     assert!(record.validate_pending_intent(&document).is_ok());
+}
+
+#[test]
+fn applying_only_bound_resources_does_not_require_creation_recovery() {
+    let document =
+        Document::parse(include_bytes!("../../tests/fixtures/config/local.yaml").as_slice())
+            .unwrap();
+    let mut record = Record::new(document.clone()).unwrap();
+    record.begin_apply(&document, BTreeMap::new());
+    let directory = tempfile::tempdir().unwrap();
+    let store = Store::open(directory.path()).unwrap();
+    store.save(&record).unwrap();
+    let recovered = store.load().unwrap().unwrap();
+    assert!(
+        !recovered.pending,
+        "OpenTofu already owns every planned resource binding"
+    );
+    assert!(!recovered.runtime_pending);
+    assert!(recovered.pending_creations.is_none());
 }
 
 #[test]
@@ -319,15 +336,29 @@ fn legacy_pending_operations_keep_the_full_intent_guard_until_success() {
     let target = crate::compile::targets(&document, &record.generations)
         .unwrap()
         .remove(0);
-    record.begin_apply(
-        &document,
-        "plan".into(),
-        [(target.address, target.values)].into(),
-    );
+    record.begin_apply(&document, [(target.address, target.values)].into());
     assert!(record.pending_creations.is_none());
     assert!(record.validate_pending_intent(&revised).is_err());
     record.finish_apply();
     assert!(record.validate_pending_intent(&revised).is_ok());
+}
+
+#[test]
+fn obsolete_plan_hash_is_read_but_not_retained_as_recovery_authority() {
+    let document =
+        Document::parse(include_bytes!("../../tests/fixtures/config/local.yaml").as_slice())
+            .unwrap();
+    let mut value = serde_json::to_value(Record::new(document).unwrap()).unwrap();
+    value["planDigest"] = serde_json::json!("old-failed-apply-plan");
+    let record: Record = serde_json::from_value(value).unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let store = Store::open(directory.path()).unwrap();
+    store.save(&record).unwrap();
+    let saved: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(directory.path().join("intent.json")).unwrap())
+            .unwrap();
+    assert!(saved.get("planDigest").is_none());
+    assert!(store.load().unwrap().is_some());
 }
 
 #[test]
@@ -339,13 +370,13 @@ fn recovery_checkpoints_survive_reload_and_reapply() {
     let generations = record.generations.clone();
     let directory = tempfile::tempdir().unwrap();
     let store = Store::open(directory.path()).unwrap();
-    record.begin_runtime_apply(&document, "runtime-plan".into());
+    record.begin_runtime_apply(&document);
     store.save(&record).unwrap();
     record = store.load().unwrap().unwrap();
     assert!(record.pending && record.runtime_pending);
     assert!(!record.succeeded);
     record.finish_runtime_apply();
-    record.begin_apply(&document, "root-plan".into(), BTreeMap::new());
+    record.begin_apply(&document, BTreeMap::new());
     record.finish_apply();
     assert!(!record.pending && !record.succeeded);
     store.save(&record).unwrap();
@@ -374,10 +405,8 @@ fn recovery_checkpoints_survive_reload_and_reapply() {
     store.save(&record).unwrap();
     record = store.load().unwrap().unwrap();
     assert!(record.destroyed && !record.destroying && !record.pending && !record.runtime_pending);
-    assert!(record.plan_digest.is_empty());
-    record.begin_apply(&document, "reapply-plan".into(), BTreeMap::new());
+    record.begin_apply(&document, BTreeMap::new());
     assert!(!record.destroyed && !record.destroy_runtime && !record.succeeded);
-    assert_eq!(record.plan_digest, "reapply-plan");
     assert_eq!(record.generations, generations);
     assert_eq!(record.document, document);
     assert_eq!(record.digest, document.digest());
@@ -391,14 +420,13 @@ fn teardown_takes_over_interrupted_runtime_recovery_without_losing_its_checkpoin
         Document::parse(include_bytes!("../../tests/fixtures/config/local.yaml").as_slice())
             .unwrap();
     let mut record = Record::new(document.clone()).unwrap();
-    record.begin_runtime_apply(&document, "runtime-plan".into());
+    record.begin_runtime_apply(&document);
     record.begin_destroy();
     let directory = tempfile::tempdir().unwrap();
     let store = Store::open(directory.path()).unwrap();
     store.save(&record).unwrap();
     record = store.load().unwrap().unwrap();
     assert!(record.destroying && !record.pending && !record.succeeded);
-    assert_eq!(record.plan_digest, "runtime-plan");
     record.finish_root_destroy();
     store.save(&record).unwrap();
     record = store.load().unwrap().unwrap();

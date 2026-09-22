@@ -233,8 +233,7 @@ impl Deployment {
             }
             return Ok(result);
         }
-        let plan_digest = crate::bundle::hash_file(&store.directory.join("apply.plan"))?;
-        record.begin_apply(&document, plan_digest, creations);
+        record.begin_apply(&document, creations);
         store.save(&record)?;
         (self.progress)(Progress::Applying);
         let applied = self

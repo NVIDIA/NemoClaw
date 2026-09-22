@@ -412,7 +412,7 @@ mod tests {
             if let Some((pending, destroying, destroyed)) = flags {
                 let mut record = Record::new(document.clone()).unwrap();
                 if pending {
-                    record.begin_runtime_apply(&document, "plan".into());
+                    record.begin_runtime_apply(&document);
                 }
                 if destroying {
                     record.begin_destroy();

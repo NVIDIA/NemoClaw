@@ -1729,16 +1729,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "743fb55ba31b18fb1ecef6bdc9aa2743314978ac084044301a7eee33fb99a20d"
 
 [[package]]
-name = "nemoclaw-authoring"
-version = "0.1.0"
-dependencies = [
- "getrandom 0.4.3",
- "nemoclaw-sdk",
- "serde-saphyr",
- "serde_json",
-]
-
-[[package]]
 name = "nemoclaw-build"
 version = "0.1.0"
 dependencies = [
