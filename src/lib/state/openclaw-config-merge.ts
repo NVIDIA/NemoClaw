@@ -42,6 +42,8 @@ export const OPENCLAW_CONFIG_RESTORE_OWNERSHIP = {
   backupDurableSections: ["mcp", "mcpServers", "customAgents", "agents"],
   /** Fresh rebuild owns the agent's primary model routing within `agents`. */
   agentPrimaryModelPath: ["agents", "defaults", "model", "primary"],
+  /** Fresh rebuild owns the generated compaction policy for the selected route. */
+  agentCompactionPath: ["agents", "defaults", "compaction"],
   /** NemoClaw's cross-agent disclosure selection owns this generated key. */
   currentGeneratedToolFields: ["toolSearch"],
 } as const;
@@ -318,6 +320,21 @@ function readAgentPrimaryModelRef(config: Record<string, unknown>): string | und
  * its `model` is a string routing reference.
  */
 function updateMainAgentListModel(agents: Record<string, unknown>, primaryModelRef: string): void {
+  const entries = agents.entries;
+  if (isPlainObject(entries)) {
+    const main = entries.main;
+    if (isPlainObject(main) && typeof main.model === "string") {
+      main.model = primaryModelRef;
+      return;
+    }
+    for (const entry of Object.values(entries)) {
+      if (isPlainObject(entry) && entry.default === true && typeof entry.model === "string") {
+        entry.model = primaryModelRef;
+        return;
+      }
+    }
+    return;
+  }
   const list = agents.list;
   if (!Array.isArray(list)) return;
   let defaultAgent: Record<string, unknown> | undefined;
@@ -341,7 +358,7 @@ function updateMainAgentListModel(agents: Record<string, unknown>, primaryModelR
  * from the snapshot — including a stale `model.primary` captured before a
  * managed-model switch. `models.providers` routing is already refreshed, but
  * the agent routes on `agents.defaults.model.primary` (and the matching
- * main/default `agents.list[].model`), so without this the rebuilt sandbox
+ * main/default `agents.entries.*.model`), so without this the rebuilt sandbox
  * keeps labelling/routing the previous model. This is issue #7210 (the
  * `rebuild --tool-disclosure progressive` config-binding variant, where an
  * MCP-present sandbox is switched via rebuild instead of a full recreate);
@@ -359,6 +376,24 @@ function reconcileAgentPrimaryModel(
   const model = ensureMergedObject(defaults, "model");
   model.primary = freshPrimary;
   updateMainAgentListModel(agents, freshPrimary);
+}
+
+/** Keep the freshly generated route policy instead of restoring stale build-time defaults. */
+function reconcileAgentCompaction(
+  merged: Record<string, unknown>,
+  currentConfig: Record<string, unknown>,
+): void {
+  const currentAgents = currentConfig.agents;
+  if (!isPlainObject(currentAgents)) return;
+  const currentDefaults = currentAgents.defaults;
+  if (!isPlainObject(currentDefaults)) return;
+  const agents = ensureMergedObject(merged, "agents");
+  const defaults = ensureMergedObject(agents, "defaults");
+  if ("compaction" in currentDefaults) {
+    defaults.compaction = cloneJson(currentDefaults.compaction);
+  } else {
+    delete defaults.compaction;
+  }
 }
 
 export function mergeOpenClawRestoredConfig(
@@ -381,6 +416,7 @@ export function mergeOpenClawRestoredConfig(
   merged.plugins = mergeOpenClawPlugins(backedUpConfig.plugins, currentConfig.plugins);
   merged.tools = mergeOpenClawTools(backedUpConfig.tools, currentConfig.tools);
   reconcileAgentPrimaryModel(merged, currentConfig);
+  reconcileAgentCompaction(merged, currentConfig);
 
   return merged;
 }

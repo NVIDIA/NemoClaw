@@ -50,7 +50,7 @@ describe("Google Chat template resolver", () => {
     ).toBe("000000000000000000000");
   });
 
-  it("normalizes the DM allowlist into nested dm.policy / dm.allowFrom", () => {
+  it("normalizes the DM allowlist for top-level dmPolicy / allowFrom", () => {
     const withIds: SandboxMessagingInputReference[] = [
       configInput("allowFrom", "allowedIds.googlechat", "users/111, user@example.com"),
     ];
@@ -63,7 +63,7 @@ describe("Google Chat template resolver", () => {
         ?.value,
     ).toEqual(["users/111", "user@example.com"]);
 
-    // No allowlist → both undefined so the whole `dm` object drops out.
+    // No allowlist → both top-level policy fields drop out.
     const noIds: SandboxMessagingInputReference[] = [];
     expect(
       resolveGooglechatTemplateReference("allowedIds.googlechat.dmPolicy", { inputs: noIds })

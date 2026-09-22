@@ -338,12 +338,51 @@ describe("pull request and main workflow contracts", () => {
     expect(JSON.stringify(job)).not.toMatch(/HF_TOKEN|HUGGING_FACE_HUB_TOKEN|secrets\./u);
   });
 
+  // source-shape-contract: security -- Required pre-merge execution and credential-free inputs keep the real OpenClaw install proof on the reviewed PR boundary
+  it("requires the real patched OpenClaw distribution proof before merge", () => {
+    const job = prWorkflow.jobs["real-openclaw-dist-harness"];
+
+    expect(job.needs).toBe("changes");
+    expect(job.if).toBe("needs.changes.outputs.code == 'true'");
+    expect(job["timeout-minutes"]).toBe(20);
+    expect(stepUses(job)).toEqual([
+      trustedCheckoutAction,
+      trustedSetupNodeAction,
+      reviewedNpmAction,
+    ]);
+    expect(requiredWorkflowStep(job, "Checkout").with?.["persist-credentials"]).toBe(false);
+    expect(requiredWorkflowStep(job, "Install test dependencies").run).toBe(
+      "npm ci --ignore-scripts --no-audit --no-fund",
+    );
+    expect(requiredWorkflowStep(job, "Build generated harness inputs").run).toBe(
+      "npm run build:policy-boundary && npm run catalog:compile",
+    );
+    const proof = requiredWorkflowStep(job, "Audit the real patched OpenClaw distribution");
+    expect(proof.env).toEqual({ NEMOCLAW_REAL_OPENCLAW_DIST_HARNESS: "1" });
+    expect(proof.run).toContain("openclaw-real-patched-dist-harness.test.ts");
+    expect(JSON.stringify(job)).not.toMatch(/secrets\./u);
+  });
+
   // source-shape-contract: security -- Pull request jobs must never receive the GitHub Packages credential
   it("does not grant package access to pull request jobs", () => {
     expect(prWorkflow.permissions).toEqual({ contents: "read" });
     expect(
       Object.entries(prWorkflow.jobs).filter(([, job]) => job.permissions?.packages !== undefined),
     ).toEqual([]);
+    expect(requiredWorkflowStep(prWorkflow.jobs["static-checks"], "Run static checks").env).toEqual(
+      {
+        PR_NUMBER: "${{ github.event.pull_request.number }}",
+        BASE_SHA: "${{ github.event.pull_request.base.sha }}",
+        HEAD_SHA: "${{ github.event.pull_request.head.sha }}",
+      },
+    );
+    expect(
+      requiredWorkflowStep(prWorkflow.jobs["cli-test-shards"], "Run CLI coverage shard").env,
+    ).toEqual({
+      PR_NUMBER: "${{ github.event.pull_request.number }}",
+      BASE_SHA: "${{ github.event.pull_request.base.sha }}",
+      HEAD_SHA: "${{ github.event.pull_request.head.sha }}",
+    });
   });
 
   // source-shape-contract: security -- Trusted main jobs may read packages only where the reviewed installer consumes the token
@@ -1023,6 +1062,7 @@ printf '%s  %s\\n' '6bf226944684f56c84dd014e8b979d27425c0148f61b3bd99bcc6f39e9dc
       INSTALLER_INTEGRATION_RESULT: "success",
       OPEN_SHELL_SDK_PACKAGE_RESULT: "success",
       PLUGIN_TESTS_RESULT: "success",
+      REAL_OPENCLAW_DIST_HARNESS_RESULT: "success",
       REVIEWED_NPM_AUDIT_RESULT: "success",
       STATIC_RESULT: "success",
       WECHAT_RUNTIME_AUDIT_RESULT: "success",
@@ -1047,12 +1087,14 @@ printf '%s  %s\\n' '6bf226944684f56c84dd014e8b979d27425c0148f61b3bd99bcc6f39e9dc
         ...successfulCode,
         HF_MODELS_RESULT: "failure",
         PLUGIN_TESTS_RESULT: "cancelled",
+        REAL_OPENCLAW_DIST_HARNESS_RESULT: "failure",
         STATIC_RESULT: "failure",
       },
       workflowJobListing([
         workflowJob(201, "static-checks", "failure"),
         workflowJob(202, "plugin-tests", "cancelled"),
         workflowJob(203, "hugging-face-models", "failure"),
+        workflowJob(204, "real-openclaw-dist-harness", "failure"),
       ]),
     );
     const docsOnlySuccess = runWorkflowShellStep(prGate, {
@@ -1066,6 +1108,7 @@ printf '%s  %s\\n' '6bf226944684f56c84dd014e8b979d27425c0148f61b3bd99bcc6f39e9dc
       INSTALLER_INTEGRATION_RESULT: "skipped",
       OPEN_SHELL_SDK_PACKAGE_RESULT: "skipped",
       PLUGIN_TESTS_RESULT: "skipped",
+      REAL_OPENCLAW_DIST_HARNESS_RESULT: "skipped",
       REVIEWED_NPM_AUDIT_RESULT: "skipped",
       STATIC_RESULT: "skipped",
       WECHAT_RUNTIME_AUDIT_RESULT: "skipped",
@@ -1108,6 +1151,10 @@ printf '%s  %s\\n' '6bf226944684f56c84dd014e8b979d27425c0148f61b3bd99bcc6f39e9dc
     expect(codeFailure.stdout).toContain("hugging-face-models failed");
     expect(codeFailure.stdout).toContain(
       "https://github.com/NVIDIA/NemoClaw/actions/runs/123/job/203",
+    );
+    expect(codeFailure.stdout).toContain("real-openclaw-dist-harness failed");
+    expect(codeFailure.stdout).toContain(
+      "https://github.com/NVIDIA/NemoClaw/actions/runs/123/job/204",
     );
     expect(docsOnlySuccess.status).toBe(0);
     expect(mainSuccess.status).toBe(0);

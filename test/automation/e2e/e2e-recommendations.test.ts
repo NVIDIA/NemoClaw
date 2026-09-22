@@ -48,7 +48,7 @@ const ADVERSARIAL_E2E_TEXT = [
   "nice gh secret list",
   "command aws secretsmanager get-secret-value --secret-id prod",
 ];
-const E2E_CONTROL_PLANE_JOB_IDS = new Set(["cloud-onboard", "cloud-inference", "security-posture"]);
+const E2E_CONTROL_PLANE_JOB_IDS = new Set(["cloud-onboard", "full-e2e", "security-posture"]);
 
 function withoutControlPlaneRecommendations<T extends { id: string }>(
   recommendations: readonly T[],
@@ -68,6 +68,13 @@ function metadata(
 }
 
 describe("E2E recommendation normalizer", () => {
+  it("allows the opted-in credentialed Model Router target", () => {
+    const inventory = trustedE2eRecommendationInventory();
+
+    expect(inventory.allowedJobIds).toContain("model-router-provider-routed-inference");
+    expect(inventory.manualOnlyJobIds).not.toContain("model-router-provider-routed-inference");
+  });
+
   it("maps changed catalogue tests to their logical advisor selectors", () => {
     const inventory = trustedE2eRecommendationInventory();
     const trustedJobIds = new Set([...inventory.allowedJobIds, ...inventory.manualOnlyJobIds]);
@@ -140,6 +147,7 @@ describe("E2E recommendation normalizer", () => {
         "tools/e2e/module-tags.mts",
         ".github/workflows/e2e.yaml",
         "test/platform/images/vllm-docker-storage.test.ts",
+        "test/helpers/timeouts.ts",
       ]) {
         const destination = path.join(tmp, file);
         fs.mkdirSync(path.dirname(destination), { recursive: true });
@@ -296,7 +304,7 @@ describe("E2E recommendation normalizer", () => {
           { domain: "runtime", reason: command, confidence: "high", matchedFiles: [] },
         ],
         requiredTests: [{ id: "security-posture", reason: command }],
-        optionalTests: [{ id: "cloud-inference", reason: command }],
+        optionalTests: [{ id: "full-e2e", reason: command }],
         newE2eRecommendations: [
           { domain: "runtime", reason: "Add coverage.", suggestedTest: command, priority: "high" },
         ],
@@ -514,7 +522,7 @@ describe("E2E recommendation normalizer", () => {
         ],
         optional: [
           {
-            id: "ubuntu-repo-docker-post-reboot-recovery",
+            id: "ubuntu-policy-custom-missing-presets-negative",
             workflow: E2E_WORKFLOW,
             selectorType: "target",
             // Model claims this optional item is actually required.
@@ -1049,7 +1057,7 @@ jobs:
           reason: "duplicate fallback",
         },
         {
-          id: "ubuntu-repo-docker-post-reboot-recovery",
+          id: "ubuntu-policy-custom-missing-presets-negative",
           workflow: E2E_WORKFLOW,
           selectorType: "target",
           required: false,
@@ -1061,7 +1069,7 @@ jobs:
     };
     const normalized = normalizeE2eTargetAdvisorResult(raw, metadata());
     expect(normalized.optional.map((item) => item.id)).toEqual([
-      "ubuntu-repo-docker-post-reboot-recovery",
+      "ubuntu-policy-custom-missing-presets-negative",
     ]);
   });
 

@@ -49,23 +49,37 @@ const source = {
 } as unknown as VerifiedExportSource;
 
 describe("export config builder", () => {
+  it.each(["openclaw", "hermes"] as const)(
+    "emits one singular %s agent for the v1alpha1 consumer (#12131)",
+    (agent) => {
+      const result = buildExportConfig(
+        { ...source, agent, interfaces: undefined },
+        { documentName: alphaDocumentName, documentUid: firstUid },
+      );
+      const sandbox = result.spec.sandboxes[0]!;
+
+      expect(sandbox).toHaveProperty("agent");
+      expect(sandbox).not.toHaveProperty("agents");
+    },
+  );
+
   it("maps a verified source into one aggregate (#10938)", () => {
     const result = buildExportConfig(source, {
       documentName: workAgentsDocumentName,
       documentUid: firstUid,
     });
 
-    expect(result.spec.sandboxes[0]?.agents[0]).not.toHaveProperty("observability");
+    expect(result.spec.sandboxes[0]?.harness).not.toHaveProperty("observability");
     expect(result).toMatchObject({
-      apiVersion: "nemoclaw.nvidia.com/v1",
+      apiVersion: "nemoclaw.nvidia.com/v1alpha1",
       kind: "NemoClawConfig",
       metadata: { name: "work-agents", uid: firstUid },
       spec: {
-        gateway: { management: "nemoclaw", name: "nemoclaw", port: 8080 },
+        gateway: { management: "managed", endpoint: "http://127.0.0.1:8080" },
         inferenceProviders: [
           {
             name: "hosted-openai-api",
-            provider: "openai-api",
+            provider: "openai",
             api: "openai-responses",
             endpoint: "https://api.openai.com/v1",
             credential: { env: "OPENAI_API_KEY" },
@@ -74,26 +88,35 @@ describe("export config builder", () => {
         sandboxes: [
           {
             name: "alpha",
+            image: null,
             runtime: {
               provider: "docker",
-              image: { ref: `nvcr.io/nvidia/nemoclaw@${digest}` },
             },
-            network: { policy: { explicit: policy } },
-            agents: [
-              {
-                name: "primary",
-                type: "openclaw",
-                inference: {
-                  routes: [
-                    {
-                      name: "primary",
-                      providerRef: "hosted-openai-api",
-                      overrides: { model: "gpt-5" },
-                    },
-                  ],
+            network: {
+              policy: {
+                explicit: {
+                  ...policy,
+                  process: { run_as_user: "1000", run_as_group: "1000" },
+                  filesystem_policy: {
+                    ...policy.filesystem_policy,
+                    read_only: ["/usr", "/opt/fabric", "/opt/nemoclaw", "/app"],
+                  },
                 },
               },
-            ],
+            },
+            harness: { kind: "openclaw" },
+            agent: {
+              name: "primary",
+              inference: {
+                routes: [
+                  {
+                    name: "primary",
+                    providerRef: "hosted-openai-api",
+                    overrides: { model: "gpt-5" },
+                  },
+                ],
+              },
+            },
           },
         ],
       },
@@ -113,7 +136,16 @@ describe("export config builder", () => {
         documentUid: firstUid,
       },
     );
-    expect(document.spec.sandboxes[0]!.integrations).toEqual({ webSearch });
+    expect(document.spec.sandboxes[0]!.integrations).toEqual({
+      "brave-search": {
+        kind: "webSearch",
+        provider: "brave",
+        credential: { env: "BRAVE_API_KEY" },
+      },
+    });
+    const sandbox = document.spec.sandboxes[0]!;
+    expect("agent" in sandbox).toBe(true);
+    expect(sandbox.agent.integrationRefs).toEqual(["brave-search"]);
     expect(document.spec.inferenceProviders).toHaveLength(1);
     expect(
       buildExportConfig(source, { documentName: alphaDocumentName, documentUid: firstUid }).spec
@@ -135,9 +167,9 @@ describe("export config builder", () => {
     expect(second.metadata.uid).not.toBe(first.metadata.uid);
     expect(second.spec).toEqual(first.spec);
     expect(second.spec.inferenceProviders[0]?.name).toBe("hosted-openai-api");
-    expect(second.spec.sandboxes[0]?.agents[0]?.inference.routes[0]?.providerRef).toBe(
-      "hosted-openai-api",
-    );
+    const sandbox = second.spec.sandboxes[0]!;
+    expect("agent" in sandbox).toBe(true);
+    expect(sandbox.agent.inference.routes[0]?.providerRef).toBe("hosted-openai-api");
   });
 
   it("preserves the verified Hermes agent type (#11286)", () => {
@@ -149,8 +181,15 @@ describe("export config builder", () => {
       },
     );
 
-    expect(result.spec.sandboxes[0]?.agents[0]?.type).toBe("hermes");
-    expect(result.spec.sandboxes[0]?.agents[0]).not.toHaveProperty("observability");
+    expect(result.spec.sandboxes[0]?.harness.kind).toBe("hermes");
+    expect(result.spec.sandboxes[0]?.image).toBeNull();
+    expect(result.spec.sandboxes[0]?.harness).not.toHaveProperty("observability");
+    expect(result.spec.sandboxes[0]?.network.policy.explicit).toMatchObject({
+      process: { run_as_user: "1000", run_as_group: "1000" },
+      filesystem_policy: {
+        read_only: ["/usr", "/opt/fabric", "/opt/nemoclaw", "/opt/hermes"],
+      },
+    });
   });
 
   it("binds verified Hermes API-key authentication to its inference provider (#11432)", () => {
@@ -174,9 +213,10 @@ describe("export config builder", () => {
       },
     );
 
-    expect(result.spec.sandboxes[0]?.agents[0]?.auth).toEqual({
+    const sandbox = result.spec.sandboxes[0]!;
+    expect("agent" in sandbox).toBe(true);
+    expect(sandbox.agent.auth).toEqual({
       method: "api-key",
-      providerRef: "hosted-hermes-provider",
     });
   });
 
@@ -193,7 +233,7 @@ describe("export config builder", () => {
       }).spec.inferenceProviders[0],
     ).toEqual({
       name: "hosted-openai-api",
-      provider: "openai-api",
+      provider: "openai",
       api: "openai-responses",
       endpoint: "https://api.openai.com/v1",
     });

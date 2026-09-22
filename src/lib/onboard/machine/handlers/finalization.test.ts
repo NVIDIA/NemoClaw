@@ -152,6 +152,39 @@ async function runFinalizationHandlers(
 }
 
 describe("finalization handlers", () => {
+  it("defers registry-bound runtime verification to the outer rebuild transaction", async () => {
+    const { deps, calls } = createDeps();
+
+    const result = await handleFinalizationPhase({
+      ...baseOptions(deps),
+      deferRuntimeVerification: true,
+    });
+
+    expect(result.stateResult).toEqual({
+      type: "transition",
+      next: "post_verify",
+      transitionKind: "advance",
+      updates: undefined,
+      metadata: { state: "finalizing" },
+    });
+    expect(calls.setDefaultSandbox).toHaveBeenCalledExactlyOnceWith("my-assistant");
+    expect(calls.cleanupHost).toHaveBeenCalledOnce();
+    expect(calls.recoverProcesses).not.toHaveBeenCalled();
+    expect(calls.verify).not.toHaveBeenCalled();
+
+    const postVerify = await handlePostVerifyState({
+      ...baseOptions(deps),
+      deferRuntimeVerification: true,
+    });
+    expect(postVerify).toEqual({
+      stateResult: { type: "complete", updates: {}, metadata: { state: "post_verify" } },
+      verificationDiagnostics: [],
+      deploymentHealthy: true,
+    });
+    expect(calls.recoverProcesses).not.toHaveBeenCalled();
+    expect(calls.verify).not.toHaveBeenCalled();
+  });
+
   it("completes providerless component activation without ordinary setup (#11486)", async () => {
     const { deps, calls } = createDeps();
     const result = await handleFinalizationPhase({
@@ -761,6 +794,9 @@ describe("secret-boundary refusal during finalization", () => {
   ])(
     "pauses $phase before successful handoff on a recovery refusal (#11758)",
     async ({ phase, run }) => {
+      vi.spyOn(finalizationHandlerRuntime, "loadLaunchReadiness").mockReturnValue({
+        resolveOrdinaryOpenClawPairingTarget: () => null,
+      } as never);
       vi.spyOn(finalizationHandlerRuntime, "loadProcessRecovery").mockReturnValue({
         checkAndRecoverSandboxProcesses: vi.fn(async () => ({
           checked: true,
@@ -771,6 +807,7 @@ describe("secret-boundary refusal during finalization", () => {
           secretBoundaryReason: "unexpected-marker" as const,
         })),
         waitForRecreatedSandboxOpenShellReady: vi.fn(async () => true),
+        waitForStartedNativeGatewayProcess: vi.fn(async () => true),
       });
       const { deps, calls } = createDeps({
         checkAndRecoverSandboxProcesses: finalizationHandlerDeps.checkAndRecoverSandboxProcesses,

@@ -7,18 +7,26 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import {
+  REVIEWED_GATEWAY_REGISTRATION_UPGRADE_FIXTURE,
+  REVIEWED_GATEWAY_UPGRADE_FIXTURE,
+  REVIEWED_GATEWAY_UPGRADE_FIXTURES,
+} from "../../../tools/e2e/openshell-gateway-upgrade-fixture.mts";
+import {
   catalogueTarget,
   E2E_TARGET_CATALOGUE,
   validateE2eTargetCatalogue,
 } from "../../../tools/e2e/target-catalogue.mts";
-import { REVIEWED_GATEWAY_UPGRADE_FIXTURE } from "../../../tools/e2e/openshell-gateway-upgrade-fixture.mts";
 import { validateE2eWorkflow } from "../../../tools/e2e/workflow-boundary.mts";
 import { readWorkflow } from "../../helpers/e2e-workflow-contract";
 import {
   captureGatewayUpgradeProbeEvidence,
   currentGatewayUpgradeInstallerArgs,
   currentNemoclawUpgradeRef,
+  gatewayCredentialNonExposureScript,
+  gatewayUpgradeRecoverySucceeded,
   GATEWAY_UPGRADE_INSTALL_TIMEOUT_MS,
+  isolateGatewayUpgradeFixtureEnv,
+  legacyGatewayUpgradeBaseImageOverrideEnabled,
   legacyGatewayUpgradeHostFirewallOptions,
   oldGatewayUpgradeInstallerArgs,
   throwGatewayUpgradeSetupFailures,
@@ -30,11 +38,19 @@ describe("OpenShell gateway upgrade boundary", () => {
   it("pins the retained gateway-upgrade fixture in the catalogue (#10517)", () => {
     expect(Object.isFrozen(REVIEWED_GATEWAY_UPGRADE_FIXTURE)).toBe(true);
     expect(Object.isFrozen(REVIEWED_GATEWAY_UPGRADE_FIXTURE.openClawArchive)).toBe(true);
+    expect(Object.isFrozen(REVIEWED_GATEWAY_UPGRADE_FIXTURES)).toBe(true);
+    expect(Object.isFrozen(REVIEWED_GATEWAY_REGISTRATION_UPGRADE_FIXTURE)).toBe(true);
+    expect(Object.isFrozen(REVIEWED_GATEWAY_REGISTRATION_UPGRADE_FIXTURE.openClawArchive)).toBe(
+      true,
+    );
     expect(
       E2E_TARGET_CATALOGUE.filter((entry) => entry.targetId === "openshell-gateway-upgrade").map(
         (entry) => entry.id,
       ),
-    ).toEqual(["openshell-gateway-upgrade-v0-0-89-x86-64"]);
+    ).toEqual([
+      "openshell-gateway-upgrade-v0-0-89-x86-64",
+      "openshell-gateway-upgrade-v0-0-123-x86-64",
+    ]);
 
     const { environment, runner, shard } = catalogueTarget(
       "openshell-gateway-upgrade-v0-0-89-x86-64",
@@ -46,6 +62,9 @@ describe("OpenShell gateway upgrade boundary", () => {
       nemoclawRef: environment.NEMOCLAW_OLD_NEMOCLAW_REF,
       commit: environment.NEMOCLAW_OLD_NEMOCLAW_COMMIT,
       installerSha256: environment.NEMOCLAW_OLD_INSTALLER_SHA256,
+      overridesBaseImage: legacyGatewayUpgradeBaseImageOverrideEnabled(
+        environment.NEMOCLAW_OLD_SANDBOX_BASE_IMAGE_REF,
+      ),
       sandboxBaseImageRef: environment.NEMOCLAW_OLD_SANDBOX_BASE_IMAGE_REF,
       openShellVersion: environment.NEMOCLAW_OLD_OPENSHELL_VERSION,
       openClawVersion: environment.NEMOCLAW_OLD_OPENCLAW_VERSION,
@@ -55,9 +74,48 @@ describe("OpenShell gateway upgrade boundary", () => {
       nemoclawRef: REVIEWED_GATEWAY_UPGRADE_FIXTURE.nemoclawRef,
       commit: REVIEWED_GATEWAY_UPGRADE_FIXTURE.nemoclawCommit,
       installerSha256: REVIEWED_GATEWAY_UPGRADE_FIXTURE.installerSha256,
+      overridesBaseImage: true,
       sandboxBaseImageRef: REVIEWED_GATEWAY_UPGRADE_FIXTURE.sandboxBaseImageRef,
       openShellVersion: REVIEWED_GATEWAY_UPGRADE_FIXTURE.openShellVersion,
       openClawVersion: REVIEWED_GATEWAY_UPGRADE_FIXTURE.openclawVersion,
+    });
+  });
+
+  it("pins the v0.0.123 gateway-registration regression target to amd64 (#11898)", () => {
+    const { environment, runner, shard } = catalogueTarget(
+      "openshell-gateway-upgrade-v0-0-123-x86-64",
+    );
+
+    expect({
+      runner,
+      shard,
+      nemoclawRef: environment.NEMOCLAW_OLD_NEMOCLAW_REF,
+      commit: environment.NEMOCLAW_OLD_NEMOCLAW_COMMIT,
+      installerSha256: environment.NEMOCLAW_OLD_INSTALLER_SHA256,
+      overridesBaseImage: legacyGatewayUpgradeBaseImageOverrideEnabled(
+        environment.NEMOCLAW_OLD_SANDBOX_BASE_IMAGE_REF,
+      ),
+      sandboxBaseImageRef: environment.NEMOCLAW_OLD_SANDBOX_BASE_IMAGE_REF,
+      openShellVersion: environment.NEMOCLAW_OLD_OPENSHELL_VERSION,
+      openClawVersion: environment.NEMOCLAW_OLD_OPENCLAW_VERSION,
+    }).toEqual({
+      runner: "ubuntu-latest",
+      shard: "v0-0-123-x86-64",
+      nemoclawRef: REVIEWED_GATEWAY_REGISTRATION_UPGRADE_FIXTURE.nemoclawRef,
+      commit: REVIEWED_GATEWAY_REGISTRATION_UPGRADE_FIXTURE.nemoclawCommit,
+      installerSha256: REVIEWED_GATEWAY_REGISTRATION_UPGRADE_FIXTURE.installerSha256,
+      overridesBaseImage: false,
+      sandboxBaseImageRef: REVIEWED_GATEWAY_REGISTRATION_UPGRADE_FIXTURE.sandboxBaseImageRef,
+      openShellVersion: REVIEWED_GATEWAY_REGISTRATION_UPGRADE_FIXTURE.openShellVersion,
+      openClawVersion: REVIEWED_GATEWAY_REGISTRATION_UPGRADE_FIXTURE.openclawVersion,
+    });
+    validateLegacyGatewayUpgradeFixture({
+      nemoclawRef: environment.NEMOCLAW_OLD_NEMOCLAW_REF,
+      nemoclawCommit: environment.NEMOCLAW_OLD_NEMOCLAW_COMMIT,
+      installerSha256: environment.NEMOCLAW_OLD_INSTALLER_SHA256,
+      sandboxBaseImageRef: environment.NEMOCLAW_OLD_SANDBOX_BASE_IMAGE_REF,
+      openShellVersion: environment.NEMOCLAW_OLD_OPENSHELL_VERSION,
+      openclawVersion: environment.NEMOCLAW_OLD_OPENCLAW_VERSION,
     });
   });
 
@@ -109,6 +167,49 @@ describe("OpenShell gateway upgrade boundary", () => {
     ]);
   });
 
+  it.each([
+    { expected: true, forwardValid: true, recoveryExitCode: 0, stateExitCodes: [0, 0] },
+    { expected: false, forwardValid: true, recoveryExitCode: 1, stateExitCodes: [0, 0] },
+    { expected: false, forwardValid: false, recoveryExitCode: 0, stateExitCodes: [0, 0] },
+    { expected: false, forwardValid: true, recoveryExitCode: 0, stateExitCodes: [0, 1] },
+  ])(
+    "reports recovery success as $expected for command $recoveryExitCode, listener $forwardValid, and sandbox states $stateExitCodes",
+    ({ expected, forwardValid, recoveryExitCode, stateExitCodes }) => {
+      expect(
+        gatewayUpgradeRecoverySucceeded(
+          { exitCode: recoveryExitCode },
+          { valid: forwardValid },
+          stateExitCodes.map((exitCode) => ({ exitCode })),
+        ),
+      ).toBe(expected);
+    },
+  );
+
+  it("fails credential custody when managed-file inspection errors", () => {
+    const temporaryDirectory = fs.mkdtempSync(
+      path.join(os.tmpdir(), "nemoclaw-gateway-credential-inspection-"),
+    );
+    const missingPath = path.join(temporaryDirectory, "missing-openclaw.json");
+    try {
+      const result = spawnSync(
+        "bash",
+        ["-c", gatewayCredentialNonExposureScript("credential-not-in-environment", [missingPath])],
+        {
+          encoding: "utf8",
+          env: { PATH: process.env.PATH },
+        },
+      );
+
+      expect({ status: result.status, stderr: result.stderr }).toEqual({
+        status: 2,
+        stderr: expect.stringContaining("managed OpenClaw credential inspection failed"),
+      });
+      expect(result.stderr).toContain(missingPath);
+    } finally {
+      fs.rmSync(temporaryDirectory, { force: true, recursive: true });
+    }
+  });
+
   it("freshens only the retryable old fixture install", () => {
     expect(oldGatewayUpgradeInstallerArgs("old-install.sh")).toEqual([
       "old-install.sh",
@@ -142,6 +243,30 @@ describe("OpenShell gateway upgrade boundary", () => {
       currentNemoclawUpgradeRef({ NEMOCLAW_E2E_EXPECTED_SHA: "", GITHUB_SHA: "workflow-sha" }),
     ).toBe("workflow-sha");
     expect(currentNemoclawUpgradeRef({})).toBe("HEAD");
+  });
+
+  it.each([
+    ["historical installer", ""],
+    ["legacy sandbox creation", ""],
+    ["current installer", "local-dockerfile"],
+  ] as const)("isolates the %s from managed-image qualification", (_phase, source) => {
+    const environment = isolateGatewayUpgradeFixtureEnv(
+      {
+        E2E_MANAGED_IMAGE_REVISION: "a".repeat(40),
+        E2E_MANAGED_IMAGE_COHORT_RECEIPT: "receipt",
+        E2E_WORKLOAD_SOURCE: "managed-image",
+        NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG: "/tmp/catalog.json",
+        NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG_JSON: '{"openclaw":{}}',
+        NEMOCLAW_E2E_MANAGED_IMAGE_REVISION: "b".repeat(40),
+        NEMOCLAW_INSTALL_REF: "candidate",
+      },
+      source,
+    );
+
+    expect(environment).toEqual({
+      E2E_WORKLOAD_SOURCE: source,
+      NEMOCLAW_INSTALL_REF: "candidate",
+    });
   });
 
   it("waits through the historical install for the Docker gateway network", () => {

@@ -57,13 +57,11 @@ describe("generate-openclaw-config.mts: extra-agents path defaulting", () => {
         { id: "beta", workspace: "/sandbox/.openclaw/workspace-beta", tools: TOOLS_OK },
       ]),
     });
-    expect(config.agents.list[1]).toMatchObject({
-      id: "alpha",
+    expect(config.agents.entries.alpha).toMatchObject({
       workspace: "/sandbox/.openclaw/workspace-alpha",
       agentDir: "/sandbox/.openclaw/agents/alpha",
     });
-    expect(config.agents.list[2]).toMatchObject({
-      id: "beta",
+    expect(config.agents.entries.beta).toMatchObject({
       workspace: "/sandbox/.openclaw/workspace-beta",
       agentDir: "/sandbox/.openclaw/agents/beta",
     });
@@ -75,9 +73,8 @@ describe("generate-openclaw-config.mts: extra-agents path defaulting", () => {
         { id: "legacy-worker", tools: { allow: ["read"] } },
       ]),
     });
-    expect(config.agents.list).toHaveLength(2);
-    expect(config.agents.list[1]).toMatchObject({
-      id: "legacy-worker",
+    expect(Object.keys(config.agents.entries)).toHaveLength(2);
+    expect(config.agents.entries["legacy-worker"]).toMatchObject({
       workspace: "/sandbox/.openclaw/workspace-legacy-worker",
       agentDir: "/sandbox/.openclaw/agents/legacy-worker",
       tools: { allow: ["read"] },
@@ -90,9 +87,8 @@ describe("generate-openclaw-config.mts: extra-agents path defaulting", () => {
         agents: [{ id: "legacy-worker", tools: { allow: ["read"] } }],
       }),
     });
-    expect(config.agents.list).toHaveLength(2);
-    expect(config.agents.list[1]).toMatchObject({
-      id: "legacy-worker",
+    expect(Object.keys(config.agents.entries)).toHaveLength(2);
+    expect(config.agents.entries["legacy-worker"]).toMatchObject({
       workspace: "/sandbox/.openclaw/workspace-legacy-worker",
       agentDir: "/sandbox/.openclaw/agents/legacy-worker",
       tools: { allow: ["read"] },

@@ -63,6 +63,8 @@ The boundary validator derives artifact consumers from jobs that use the pinned 
 It excludes `generate-matrix` and the no-build and trusted-build jobs in `E2E_JOB_POLICY`.
 Each selected consumer restores the artifact instead of running `npm run build:cli`.
 Each consumer runs the pinned preparation action with `build-cli: "false"` to install Node.js and project dependencies.
+The `managed-image-multiarch-startup` no-build job keeps that setting and builds only the candidate shared policy boundary.
+It rejects preexisting output, verifies the required shared modules, and then starts the direct managed-image contracts.
 The shared compiler uses native GitHub caching of `dist/` and `nemoclaw/dist/`
 for main CI, PR CI, and E2E candidate preparation. Its key includes the checkout
 SHA, trusted recipe revision, action content, Node version, and runner platform.
@@ -161,9 +163,10 @@ and sandbox, records the authenticated discovery diagnostics, scans the evidence
 credentials, and must pass.
 These are two required acceptance executions, not retries; either failure remains a failed check.
 The concurrent-add probe retries only the rejected command after status proves that the other
-command committed one coherent bridge. The rejected command must report either the exact portable
-host-lock timeout or the reviewed Hermes restart transport failure. The retry runs once, has its own
-command artifact, and must succeed idempotently from the verified committed source.
+command committed one coherent bridge. The rejected command must report the exact portable
+host-lock timeout. The retry runs once, has its own command artifact, and must succeed idempotently
+from the verified committed source. Production Hermes add owns reload-transport reconciliation, so
+the E2E boundary does not retry a Hermes mutation after transport loss.
 The workflow records one publication cohort before its PR producer matrix runs. Failed-job reruns
 reuse that cohort and replace only the stable run-scoped artifact owned by each retried agent.
 Consumers accept one complete cohort from the same run at the current or an earlier attempt. They
@@ -221,7 +224,7 @@ The historical fixtures retain these version boundaries:
 
 | Fixture | Required boundary |
 | --- | --- |
-| `openshell-gateway-upgrade` | Retain one v0.0.89 fixture with a pinned installer commit and digest, sandbox image digest, and reviewed OpenClaw archive. Prove that the current gateway upgrade leaves its sandbox Ready, preserves a workspace marker, keeps the raw gateway credential out of the sandbox environment, `/sandbox/.openclaw/openclaw.json`, and recursive `auth-profiles.json` files below `/sandbox/.openclaw/agents`, and supports authenticated agent turns before and after the upgrade. |
+| `openshell-gateway-upgrade` | Retain the reviewed v0.0.89 and v0.0.123 x86-64 fixtures with pinned installer commits, digests, and OpenClaw archives. Prove credential custody and authenticated agent turns before and after upgrade. Require the survivor to preserve workspace state. Create each fixture-declared stopped sandbox, preserve its workspace state, and restore its stopped phase after a lifecycle check. |
 | `rebuild-openclaw` | Retain the reviewed old-base build in the target. Build and create the old sandbox before testing the candidate rebuild path. |
 
 These targets may restore the shared artifact for the candidate CLI.
@@ -389,25 +392,38 @@ This keeps the private optional dependency available for SDK-backed commands suc
 
 The `network-policy` target also owns live configuration-export evidence for #10938, #11854, and PR #11065.
 After restricted OpenClaw onboarding with two read-only agents, it invokes the candidate `config export` command through the real SDK connection.
-It compares the ordered agent roster, sandbox name, immutable managed image, hosted endpoint, and explicit policy with the fixture's registered and effective state.
-It then changes the fixture's recorded sandbox fingerprint and requires export to fail without creating a file.
+It requires the command to reject the secondary-agent roster without producing a document.
+It then changes the fixture's recorded sandbox fingerprint and again requires export to fail without creating a file.
 The fixture restores the registry in `finally` and removes private export files through its existing cleanup registry.
-The exported effective policy comes from the SDK configuration response and is compared with the
-independent CLI policy observation. This covers the SDK connection and complete export observation boundary; the deterministic adapter tests remain the owners of individual wire shapes and malformed responses.
-The assertion budget is unchanged. Nine export assertions replace nine redundant checks in the same target:
-
-- Two CLI-file and two OpenShell-version checks are covered by the retained successful onboarding checks.
-- Two intermediate process-start comparisons are covered by the retained comparison after all policy and traffic probes.
-- The approved HTTP status check is redundant with the marker server response, which always returns that marker with status 200.
-- Two web-fetch success-marker checks duplicate the retained probe exit-status check; the probe rejects missing approved content and unexpected denied-port access.
+This proves that the real SDK connection reaches the fail-closed secondary-agent and identity-drift
+boundaries. It does not qualify successful export or effective-policy preservation. Deterministic
+adapter tests own individual wire shapes and malformed responses, while successful single-agent
+export evidence remains with its owning scenarios. The assertion budget is lowered with the removed
+successful-export checks.
 
 The `security-posture-hermes` target owns the corresponding live Hermes export evidence for #11286.
 After canonical hosted-inference onboarding, it invokes `config export` through both the `nemoclaw`
 and `nemohermes` launchers and requires the validated documents to have identical specs. It checks
-the Hermes agent type, immutable managed image, hosted route, effective policy, and omission of
-credential values. It then changes the fixture's recorded sandbox fingerprint and requires both
+the Hermes agent type, null managed-image placeholder, hosted route, effective policy, and omission
+of credential values. It then changes the fixture's recorded sandbox fingerprint and requires both
 launchers to fail without publishing a file before restoring the registry. The assertion budget is
 unchanged because this contract replaces a redundant nonempty-log assertion in the same scenario.
+
+The `ubuntu-repo-cloud-langchain-deepagents-code` target owns live Deep Agents export evidence for
+Issue #11860. Its ordered checks first exercise opt-in observability and thread approval, then restore
+the disabled baseline. The TUI check then runs without changing that registry baseline. The installed
+CLI must emit a v1alpha1 document with the `deepagents` harness, hosted OpenAI-compatible route,
+credential reference, and independently observed effective policy.
+The fixture compares the registry before and after export, and state validation confirms that the
+sandbox remains ready after the read-only command.
+
+The `sandbox-operations` target owns live final-gateway cleanup on the Docker-backed OpenShell
+boundary. It leaves one sandbox live after removing only its local registry entry, then requires a
+`destroy --cleanup-gateway` of the registered sandbox to preserve the gateway, report the live
+sandbox and recovery commands, and exit nonzero. After cleanup, it onboards and destroys one final
+sandbox,
+requires the bounded command to finish, and proves both the sandbox and gateway runtime are absent.
+Deterministic destroy tests own the exact 30-second retry schedule and delayed-list sequence.
 
 `tools/e2e/target-catalogue.mts` declares live E2E targets that share one execution shape.
 Each entry owns these target properties:
@@ -495,22 +511,20 @@ inference through the managed route and backend, replacing two duplicate raw cha
 The GPU memory-offload assertion also rejects a missing matching process because its memory value
 is then `NaN`; a separate process-existence assertion is unnecessary. Authentication denial,
 runtime ownership, Ready state, and cleanup assertions remain unchanged.
-The `gpu-e2e` target also qualifies configuration export for an attached native Linux Ollama daemon.
+The `gpu-e2e` target also verifies that attached-Ollama export remains refused while v1alpha1 compatibility is deferred.
 A separate OpenClaw scenario disables direct sandbox GPU and uses normal onboarding to create the
 managed proxy on the target's shared port. It stops the installer service before starting a fixture-owned
-daemon on port 11439 and preparing the selected `qwen2.5:0.5b` model. It exports twice through
-the candidate CLI and real SDK, validates both documents, compares their specs, selected model name and digest,
-checks credential omission, and requires a stopped daemon to prevent publication. Inference-provider
-definitions omit internal endpoints; the sandbox's explicit network policy is preserved. Private YAML is
-removed through the cleanup registry; retained evidence contains only the selected model, ports,
-managed image, and result booleans. The existing CUDA, authentication, and inference lifecycle
-scenarios remain separate. The export fixture requires service shutdown and model preparation to succeed
-before export. Onboarding and model preparation each have a 20-minute limit within the 75-minute
-scenario. It retries read-only daemon readiness checks on connection refusal or curl
+daemon on port 11439 and preparing the selected `qwen2.5:0.5b` model.
+It invokes the candidate CLI and real SDK once, requires an unsupported-compatibility failure, and verifies that no YAML file is published.
+The export evidence JSON records only the sandbox name, deferred compatibility, and prevented publication.
+The scenario does not qualify successful export, a secondary-agent roster, repeated-document equality, or stopped-daemon refusal.
+Those outcomes remain required for #11858 after #11928 and #12012 provide the target contract and exporter mapping.
+The existing CUDA, authentication, and inference lifecycle scenarios remain separate.
+Onboarding and model preparation each have a 20-minute limit within the 75-minute test timeout; the catalogue allows 90 minutes for the target.
+The fixture retries read-only daemon readiness checks on connection refusal or curl
 timeout, for at most 20 reads. It records each attempt and stops on any other failure; model
 preparation, onboarding, and export mutations are not retried.
-After stopped-daemon refusal, cleanup restores the fixture daemon so sandbox destruction can unload
-models through the saved endpoint. It destroys the sandbox before stopping that daemon.
+Cleanup destroys the sandbox before stopping the fixture daemon and removes the private output directory.
 Retained workflow jobs are exceptions to the catalogue shape.
 Keep one only for a multi-job handoff, an unrepresented credential boundary, or an execution contract the reusable profile cannot represent.
 
@@ -814,6 +828,38 @@ lazy-package state survive rebuild. Managed-image activation exercises native
 OpenClaw and Hermes discovery before and after gateway restart. Deterministic
 state-restore tests prove complete native directories are archived without
 image-plugin exclusions.
+
+## Device-auth health classification
+
+Issue #11946 retired the standalone `device-auth-health` target. The target
+repeated these retained contracts:
+
+| Removed assertion | Retained owner |
+|---|---|
+| Install, onboard, list, status, and sandbox inference succeed. | `full-e2e` |
+| An authenticated compatible endpoint receives the sandbox request. | `openclaw-inference-switch` |
+| Gateway, dashboard, and inference HTTP 401 responses remain reachable. | `src/lib/verify-deployment.test.ts` and `src/lib/verify-deployment-agent.test.ts` |
+| Status keeps a reachable authenticated route online. | `test/cli/sandbox-status-json.test.ts` |
+| A real dashboard remains exposed through its supported host forward. | `dashboard-remote-bind` |
+
+The deleted helper tests covered only the retired target's command environment,
+retry loop, and cleanup calls. They did not own a product behavior.
+
+## Cloud inference consolidation
+
+Issue #11946 also retired the standalone `cloud-inference` target. The target's
+supported outcomes now have these owners:
+
+| Removed assertion | Retained owner |
+|---|---|
+| Install, PATH setup, list, status, hosted inference, and sandbox inference succeed. | `full-e2e` |
+| Sandbox state contains no `auth-profiles.json` or secret-shaped credential values. | `full-e2e` and `test/e2e/support/sandbox-credential-boundary.test.ts` |
+| Repository skills contain valid frontmatter and content. | `test/repository/repo-skills-validation.test.ts` |
+| `/sandbox/.openclaw` and `openclaw.json` have the required image layout. | `test/e2e-runtime/managed-image-openclaw-security.test.ts` |
+
+The optional `/sandbox/.openclaw/skills` directory had no pass or fail state.
+The deleted provider retry classifier and sandbox-layout wrapper served only the
+retired target.
 
 ## OpenShell development artifact retention
 

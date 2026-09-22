@@ -24,7 +24,10 @@ import {
   ONBOARD_SINGLE_FINAL_HANDOFF_TARGET_TIMEOUT_MINUTES,
 } from "./onboard-timeout-contract.mts";
 import { HERMES_ACP_E2E_OWNING_PATHS } from "./hermes-acp-owning-paths.mts";
-import { REVIEWED_GATEWAY_UPGRADE_FIXTURE } from "./openshell-gateway-upgrade-fixture.mts";
+import {
+  REVIEWED_GATEWAY_REGISTRATION_UPGRADE_FIXTURE,
+  REVIEWED_GATEWAY_UPGRADE_FIXTURE,
+} from "./openshell-gateway-upgrade-fixture.mts";
 import { normalizeE2eSelectorId } from "./selector-aliases.mts";
 
 export const E2E_EXECUTION_PROFILES = [
@@ -296,7 +299,7 @@ const PI_IMAGE_SOURCE_OWNING_PATHS = [
   "scripts/security/patches/perl-5.44.0-net-ping-capability-tests.patch",
   "scripts/security/patches/python3.13-htmlparser-cve-2026-15308.patch",
   "scripts/upgrade-bundled-npm.mts",
-  "tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/managed-startup-image-runtime.bundle",
+  "tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/managed-startup-direct-image-runtime.bundle",
 ] as const;
 
 function commonEgressTarget(options: {
@@ -344,6 +347,17 @@ function commonEgressTarget(options: {
   });
 }
 
+const GATEWAY_UPGRADE_OWNING_PATHS = Object.freeze([
+  "scripts/install.sh",
+  "src/lib/actions/global.ts",
+  "src/lib/actions/maintenance.ts",
+  "src/lib/actions/sandbox/forward-recovery.ts",
+  "src/lib/actions/upgrade-sandboxes.ts",
+  "tools/e2e/openshell-gateway-upgrade-fixture.mts",
+  "test/e2e/live/openshell-gateway-upgrade-helpers.ts",
+  "test/e2e/live/openshell-gateway-upgrade-old-installer.ts",
+]);
+
 const GATEWAY_UPGRADE_TARGET = dockerOnlyTarget("openshell-gateway-upgrade-v0-0-89-x86-64", {
   targetId: "openshell-gateway-upgrade",
   displayName: `Upgrade: preserves a ${REVIEWED_GATEWAY_UPGRADE_FIXTURE.nemoclawRef} sandbox on x86-64`,
@@ -358,11 +372,7 @@ const GATEWAY_UPGRADE_TARGET = dockerOnlyTarget("openshell-gateway-upgrade-v0-0-
   restoreCli: true,
   exposeCliBin: true,
   shard: "v0-0-89-x86-64",
-  owningPaths: [
-    "tools/e2e/openshell-gateway-upgrade-fixture.mts",
-    "test/e2e/live/openshell-gateway-upgrade-helpers.ts",
-    "test/e2e/live/openshell-gateway-upgrade-old-installer.ts",
-  ],
+  owningPaths: GATEWAY_UPGRADE_OWNING_PATHS,
   environment: {
     ...nonInteractive,
     NEMOCLAW_GATEWAY_UPGRADE_SURVIVOR_NAME: "e2e-gw-survivor",
@@ -372,9 +382,49 @@ const GATEWAY_UPGRADE_TARGET = dockerOnlyTarget("openshell-gateway-upgrade-v0-0-
     NEMOCLAW_OLD_SANDBOX_BASE_IMAGE_REF: REVIEWED_GATEWAY_UPGRADE_FIXTURE.sandboxBaseImageRef,
     NEMOCLAW_OLD_OPENSHELL_VERSION: REVIEWED_GATEWAY_UPGRADE_FIXTURE.openShellVersion,
     NEMOCLAW_OLD_OPENCLAW_VERSION: REVIEWED_GATEWAY_UPGRADE_FIXTURE.openclawVersion,
+    // This target upgrades only the host gateway. Its survivor intentionally
+    // keeps the reviewed historical OpenClaw image and state format.
     OPENSHELL_GATEWAY: "nemoclaw",
   },
 });
+
+const GATEWAY_REGISTRATION_UPGRADE_TARGET = dockerOnlyTarget(
+  "openshell-gateway-upgrade-v0-0-123-x86-64",
+  {
+    targetId: "openshell-gateway-upgrade",
+    displayName: `Upgrade: restores ${REVIEWED_GATEWAY_REGISTRATION_UPGRADE_FIXTURE.nemoclawRef} gateway registration and sandboxes on x86-64`,
+    agentRuntime: "openclaw",
+    environmentOrInferenceEndpoint:
+      "x86-64 Ubuntu; GitHub release artifacts; host-local compatible inference endpoint",
+    profile: "github-read",
+    runner: "ubuntu-latest",
+    testFile: "test/e2e/live/openshell-gateway-upgrade.test.ts",
+    timeoutMinutes: 120,
+    installMode: "none",
+    restoreCli: true,
+    exposeCliBin: true,
+    shard: "v0-0-123-x86-64",
+    owningPaths: GATEWAY_UPGRADE_OWNING_PATHS,
+    environment: {
+      ...nonInteractive,
+      NEMOCLAW_GATEWAY_UPGRADE_SURVIVOR_NAME: "e2e-gw-survivor",
+      NEMOCLAW_OLD_NEMOCLAW_REF: REVIEWED_GATEWAY_REGISTRATION_UPGRADE_FIXTURE.nemoclawRef,
+      NEMOCLAW_OLD_NEMOCLAW_COMMIT: REVIEWED_GATEWAY_REGISTRATION_UPGRADE_FIXTURE.nemoclawCommit,
+      NEMOCLAW_OLD_INSTALLER_SHA256: REVIEWED_GATEWAY_REGISTRATION_UPGRADE_FIXTURE.installerSha256,
+      NEMOCLAW_OLD_SANDBOX_BASE_IMAGE_REF:
+        REVIEWED_GATEWAY_REGISTRATION_UPGRADE_FIXTURE.sandboxBaseImageRef,
+      NEMOCLAW_OLD_OPENSHELL_VERSION:
+        REVIEWED_GATEWAY_REGISTRATION_UPGRADE_FIXTURE.openShellVersion,
+      NEMOCLAW_OLD_OPENCLAW_VERSION: REVIEWED_GATEWAY_REGISTRATION_UPGRADE_FIXTURE.openclawVersion,
+      OPENSHELL_GATEWAY: "nemoclaw",
+    },
+  },
+);
+
+const GATEWAY_UPGRADE_TARGETS = Object.freeze([
+  GATEWAY_UPGRADE_TARGET,
+  GATEWAY_REGISTRATION_UPGRADE_TARGET,
+]);
 
 export const E2E_CATALOGUE_EXCLUSION_REASONS = {
   "issue-4434-tui-unreachable-inference":
@@ -576,21 +626,6 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
       WECHAT_BOT_TOKEN: "test-fake-wechat-token-stop-start-hermes",
     },
   }),
-  managedRuntimeTarget("cloud-inference", {
-    displayName: "Inference: OpenClaw uses hosted inference",
-    agentRuntime: "openclaw",
-    environmentOrInferenceEndpoint: "Ubuntu; NVIDIA hosted inference",
-    profile: "nvidia-inference",
-    timeoutMinutes: 50,
-    installMode: "none",
-    restoreCli: true,
-    exposeCliBin: true,
-    environment: {
-      ...hostedInference,
-      NEMOCLAW_SANDBOX_NAME: "e2e-cloud-inference",
-      OPENSHELL_GATEWAY: "nemoclaw",
-    },
-  }),
   commonEgressTarget({
     displayName: "Networking: OpenClaw answers through balanced egress",
     environmentOrInferenceEndpoint: "Ubuntu; NVIDIA hosted inference and public weather endpoint",
@@ -677,22 +712,6 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
       OPENSHELL_GATEWAY: "nemoclaw",
     },
   }),
-  managedRuntimeTarget("device-auth-health", {
-    displayName: "Health: treats a 401 authentication response as reachable",
-    agentRuntime: "openclaw",
-    environmentOrInferenceEndpoint: "Ubuntu; local authentication fixture; no inference endpoint",
-    profile: "standard",
-    timeoutMinutes: 40,
-    installMode: "authenticated",
-    restoreCli: true,
-    exposeCliBin: true,
-    environment: {
-      ...nonInteractive,
-      NEMOCLAW_SANDBOX_NAME: "e2e-health-auth",
-      NEMOCLAW_DASHBOARD_PORT: "18789",
-      OPENSHELL_GATEWAY: "nemoclaw",
-    },
-  }),
   managedRuntimeTarget("double-onboard", {
     displayName: "Onboarding: reuses the gateway and preserves sibling sandboxes",
     agentRuntime: "openclaw",
@@ -769,7 +788,6 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
       "src/lib/inference/ollama/proxy-observation.ts",
       "scripts/ollama-auth-proxy.mts",
       "src/lib/adapters/config/live-export-source.ts",
-      "src/lib/domain/config/verify-ollama-serving.ts",
       "src/lib/config/model.ts",
       "src/lib/config/schema.ts",
     ],
@@ -878,21 +896,6 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
       SLACK_BOT_TOKEN: "xoxb-test-hermes-slack-token",
     },
   }),
-  managedRuntimeTarget("issue-2478-crash-loop-recovery", {
-    displayName: "Gateway: recovers after process termination and remains stable",
-    agentRuntime: "openclaw",
-    environmentOrInferenceEndpoint: "Ubuntu Docker host; local gateway; no inference endpoint",
-    profile: "standard",
-    timeoutMinutes: 30,
-    installMode: "authenticated",
-    restoreCli: true,
-    exposeCliBin: true,
-    environment: {
-      ...nonInteractive,
-      NEMOCLAW_SANDBOX_NAME: "e2e-2478",
-      OPENSHELL_GATEWAY: "nemoclaw",
-    },
-  }),
   managedRuntimeTarget("issue-4462-scope-upgrade-approval", {
     displayName: "Authorization: approves a write-scope upgrade without operator.admin",
     agentRuntime: "openclaw",
@@ -960,6 +963,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     agentRuntime: "openclaw",
     environmentOrInferenceEndpoint: "Ubuntu; NVIDIA API and Model Router",
     profile: "nvidia-api",
+    prAdvisorSelectable: true,
     timeoutMinutes: 45,
     installMode: "none",
     restoreCli: true,
@@ -1189,7 +1193,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
       OPENSHELL_GATEWAY: "nemoclaw",
     },
   }),
-  GATEWAY_UPGRADE_TARGET,
+  ...GATEWAY_UPGRADE_TARGETS,
   dockerOnlyTarget("rebuild-openclaw", {
     displayName: "Rebuild: restores OpenClaw state and native readiness",
     agentRuntime: "openclaw",
@@ -1248,10 +1252,21 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     },
   }),
   managedRuntimeTarget("sandbox-operations", {
-    displayName: "Sandbox: preserves lifecycle and multi-sandbox operations",
+    displayName: "Sandbox: preserves lifecycle and final gateway cleanup",
     agentRuntime: "openclaw",
     environmentOrInferenceEndpoint: "Ubuntu; NVIDIA hosted inference",
     profile: "nvidia-inference",
+    owningPaths: [
+      "src/lib/actions/sandbox/destroy-gateway-cleanup.ts",
+      "src/lib/actions/sandbox/destroy.ts",
+      "src/lib/domain/sandbox/destroy.ts",
+      "src/lib/onboard/runtime-provider/contract.ts",
+      "src/lib/onboard/runtime-provider/docker.ts",
+      "src/lib/onboard/runtime-provider/mxc.ts",
+      "src/lib/onboard/runtime-provider/podman.ts",
+      "src/lib/onboard/runtime-provider/registry.ts",
+      "test/e2e/fixtures/clients/gateway.ts",
+    ],
     timeoutMinutes: 120,
     installMode: "credential-free",
     installNonInteractive: true,
@@ -1634,10 +1649,8 @@ export function validateE2eTargetCatalogue(
       entry.targetId === "openshell-gateway-upgrade" ||
       entry.id.startsWith("openshell-gateway-upgrade-")
     ) {
-      if (
-        entry.id !== GATEWAY_UPGRADE_TARGET.id ||
-        !isDeepStrictEqual(entry, GATEWAY_UPGRADE_TARGET)
-      ) {
+      const reviewedTarget = GATEWAY_UPGRADE_TARGETS.find((candidate) => candidate.id === entry.id);
+      if (!reviewedTarget || !isDeepStrictEqual(entry, reviewedTarget)) {
         throw new Error(
           `E2E target ${entry.id} must match the exact reviewed gateway-upgrade fixture`,
         );

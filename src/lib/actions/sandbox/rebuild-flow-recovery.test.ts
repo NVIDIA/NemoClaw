@@ -468,7 +468,7 @@ describe("rebuildSandbox flow: recovery", () => {
     );
   });
 
-  it("rejects prepared recovery without an MCP observation before deletion", async () => {
+  it("records an empty observation for a live prepared recovery before deletion", async () => {
     const recoveryManifest = makePreparedRecoveryManifest();
     delete (recoveryManifest as Partial<typeof recoveryManifest>).rebuildMcpHandoff;
     const harness = createRebuildFlowHarness({
@@ -480,9 +480,34 @@ describe("rebuildSandbox flow: recovery", () => {
         throwOnError: true,
         recoveryManifest,
       }),
-    ).rejects.toThrow("MCP recovery observation is unavailable");
+    ).resolves.toBeUndefined();
 
     expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
+    expect(harness.prepareMcpBridgesForRebuildSpy).toHaveBeenCalledWith("alpha", undefined, []);
+    expect(harness.runOpenshellSpy).toHaveBeenCalledWith(
+      ["sandbox", "delete", "-g", "nemoclaw", "alpha"],
+      expect.objectContaining({ ignoreError: true }),
+    );
+    expect(harness.onboardSpy).toHaveBeenCalledOnce();
+  });
+
+  it("keeps live prepared recovery fail-closed when source observation is unavailable", async () => {
+    const recoveryManifest = makePreparedRecoveryManifest();
+    delete (recoveryManifest as Partial<typeof recoveryManifest>).rebuildMcpHandoff;
+    const harness = createRebuildFlowHarness({
+      preDeleteLatestManifest: recoveryManifest,
+    });
+    vi.mocked(mcpBridgeSource.inspectAgentMcpSources).mockRejectedValueOnce(
+      new Error("source observation unavailable"),
+    );
+
+    await expect(
+      harness.rebuildSandbox("alpha", ["--yes"], {
+        throwOnError: true,
+        recoveryManifest,
+      }),
+    ).rejects.toThrow("source observation unavailable");
+
     expectNoSandboxDelete(harness.runOpenshellSpy);
     expect(harness.onboardSpy).not.toHaveBeenCalled();
   });
@@ -688,6 +713,7 @@ describe("rebuildSandbox flow: recovery", () => {
   });
 
   it("reattaches exactly the MCP providers detached when sandbox deletion fails", async () => {
+    vi.useFakeTimers();
     const attached = {
       server: "attached",
       providerName: "nemoclaw-mcp-alpha-attached",
@@ -703,23 +729,23 @@ describe("rebuildSandbox flow: recovery", () => {
       },
       runOpenshell: (args) => {
         const deleteFailure = { status: 7, output: "delete failed", stderr: "delete failed" };
-        const readySource = {
-          status: 0,
-          output: "Phase: Ready",
-          stdout: "Phase: Ready",
-          stderr: "",
-        };
-        const responses: Record<string, typeof deleteFailure | typeof readySource> = {
-          "sandbox delete -g nemoclaw alpha": deleteFailure,
-          "sandbox get -g nemoclaw alpha": readySource,
-        };
-        return responses[args.join(" ")];
+        return args.join(" ") === "sandbox delete -g nemoclaw alpha" ? deleteFailure : undefined;
+      },
+      captureOpenshell: (args) => {
+        vi.setSystemTime(Date.now() + 20_000);
+        return args[0] === "sandbox" && args[1] === "get"
+          ? { status: 0, output: SOURCE_PROBE, stdout: SOURCE_PROBE, stderr: "" }
+          : MISSING_SOURCE;
       },
     });
 
-    await expect(
-      harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
-    ).rejects.toThrow("Failed to delete sandbox");
+    try {
+      await expect(
+        harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+      ).rejects.toThrow("Failed to delete sandbox");
+    } finally {
+      vi.useRealTimers();
+    }
 
     expect(harness.reattachMcpProvidersAfterRebuildAbortSpy).toHaveBeenCalledWith(
       "alpha",

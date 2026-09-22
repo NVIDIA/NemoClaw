@@ -114,6 +114,7 @@ export interface PodmanHostLocalInferenceHarness {
     probeFailureText: string;
     ollamaPullFailure: string | null;
     ollamaPsModels: unknown[];
+    runFailsWithoutContainer: boolean;
     runLostAcknowledgement: boolean;
     runAcknowledgementText: string | null;
     startLostAcknowledgement: boolean;
@@ -451,6 +452,7 @@ export function createPodmanHostLocalInferenceTestHarness(
     ] as unknown[],
     driftAfterReady: false,
     driftAfterInference: false,
+    runFailsWithoutContainer: false,
     runLostAcknowledgement: false,
     runAcknowledgementText: null as string | null,
     startLostAcknowledgement: false,
@@ -835,6 +837,13 @@ export function createPodmanHostLocalInferenceTestHarness(
           return state.probeRunLostAcknowledgement
             ? result(125, "", "transport closed after probe create")
             : result(0, state.probeRunAcknowledgementText ?? `${PROBE_CONTAINER_ID}\n`);
+        }
+        if (state.runFailsWithoutContainer) {
+          return result(
+            125,
+            "",
+            "rootlessport listen tcp 127.0.0.1:11434: bind: address already in use",
+          );
         }
         // Locate the immutable workload reference independent of optional flags.
         const immutableImage = immutableManagedImage(args, probeImageRef);

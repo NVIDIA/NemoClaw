@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { randomBytes } from "node:crypto";
+
 import type { AgentDefinition } from "../agent/definition-types";
 import { buildSubprocessEnv } from "../subprocess-env";
 import {
@@ -9,11 +11,9 @@ import {
 } from "./docker-startup-command-env";
 import type { HermesDashboardOnboardState } from "./hermes-dashboard";
 import {
-  createManagedBootstrapIdentity,
-  MANAGED_BOOTSTRAP_IDENTITY_ENV,
-  renderManagedBootstrapHeldCommand,
-} from "./managed-bootstrap/adapter";
-import { MANAGED_STARTUP_EXECUTABLE } from "./managed-startup/hold";
+  MANAGED_STARTUP_EXECUTABLE,
+  MANAGED_STARTUP_HOLD_EXECUTABLE,
+} from "./managed-startup/hold";
 import type { ManagedStartupRootApplyRequest } from "./managed-startup/root-apply";
 import {
   prebuildSandboxImageIfEligible,
@@ -46,14 +46,9 @@ export interface SandboxCreateLaunchInput {
   openshellShellCommand: OpenshellShellCommand;
   openshellArgv?: OpenshellArgv;
   buildEnv?(): Record<string, string>;
-  /**
-   * Intentional partial migration: remains unset until production selects a
-   * complete runtime bundle with supported bootstrap after epic #7744's durable
-   * lifecycle, recovery, and rollback gates plus exact-head/base protected
-   * all-agent amd64/arm64, GPU/local-inference, and regression matrix pass.
-   * https://github.com/NVIDIA/NemoClaw/issues/7744
-   */
   managedStartupRootApplyRequest?: ManagedStartupRootApplyRequest | null;
+  /** Reuse the durable hold identity when resuming one verified incomplete create. */
+  managedBootstrapIdentity?: string | null;
 }
 
 export interface SandboxCreateLaunch {
@@ -91,29 +86,6 @@ export function renderSandboxCreateCommand(
   ])} 2>&1`;
 }
 
-export function managedBootstrapCreateArgs(
-  createArgs: readonly string[],
-  bootstrapIdentity: string | null,
-): string[] {
-  if (!bootstrapIdentity) return [...createArgs];
-  // OpenShell runs the command after `--` as an exec session while its OCI
-  // supervisor retains `sleep infinity`. Persist the transaction identity on
-  // the sandbox spec so each runtime provider can bind the idle workload to
-  // the exact authorized bootstrap without depending on driver internals.
-  const assignmentPrefix = `${MANAGED_BOOTSTRAP_IDENTITY_ENV}=`;
-  if (
-    createArgs.some(
-      (argument) =>
-        argument.startsWith(assignmentPrefix) || argument.startsWith(`--env=${assignmentPrefix}`),
-    )
-  ) {
-    throw new Error(
-      `OpenShell create arguments must not override reserved ${MANAGED_BOOTSTRAP_IDENTITY_ENV}.`,
-    );
-  }
-  return [...createArgs, "--env", `${assignmentPrefix}${bootstrapIdentity}`];
-}
-
 export { buildSandboxRuntimeEnvArgs, type SandboxRuntimeEnvArgsInput };
 
 export function prepareSandboxCreateLaunch(input: SandboxCreateLaunchInput): SandboxCreateLaunch {
@@ -132,7 +104,6 @@ export function prepareSandboxCreateLaunch(input: SandboxCreateLaunchInput): San
     allowHermesApiPortOverride: true,
     env,
   });
-
   const sandboxEnv = (input.buildEnv ?? buildSubprocessEnv)();
   // Remove host-infrastructure credentials that the generic allowlist
   // permits for host-side processes but that must not enter the sandbox.
@@ -148,20 +119,35 @@ export function prepareSandboxCreateLaunch(input: SandboxCreateLaunchInput): San
   // lets the real exit code flow through to run().
   const intendedSandboxStartupCommand = ["env", ...envArgs, MANAGED_STARTUP_EXECUTABLE];
   const managedStartupRootApplyRequest = input.managedStartupRootApplyRequest ?? null;
+  if (
+    input.managedBootstrapIdentity !== undefined &&
+    input.managedBootstrapIdentity !== null &&
+    !/^[a-f0-9]{64}$/u.test(input.managedBootstrapIdentity)
+  ) {
+    throw new Error("Managed startup resume requires one exact bootstrap identity.");
+  }
   const managedBootstrapIdentity = managedStartupRootApplyRequest
-    ? createManagedBootstrapIdentity()
+    ? (input.managedBootstrapIdentity ?? randomBytes(32).toString("hex"))
     : null;
+  // Keep the raw profile and CA payload out of OpenShell's create argv and
+  // sandbox environment; the verified host apply and release handshake owns them.
   const sandboxStartupCommand =
     managedStartupRootApplyRequest && managedBootstrapIdentity
       ? [
-          ...renderManagedBootstrapHeldCommand(
-            managedStartupRootApplyRequest,
-            managedBootstrapIdentity,
-            intendedSandboxStartupCommand,
-          ),
+          "env",
+          ...envArgs,
+          MANAGED_STARTUP_HOLD_EXECUTABLE,
+          "--agent",
+          managedStartupRootApplyRequest.agent,
+          "--profile-fingerprint",
+          managedStartupRootApplyRequest.profileFingerprint,
+          "--bootstrap-identity",
+          managedBootstrapIdentity,
+          "--",
+          MANAGED_STARTUP_EXECUTABLE,
         ]
       : intendedSandboxStartupCommand;
-  const createArgs = managedBootstrapCreateArgs(input.createArgs, managedBootstrapIdentity);
+  const createArgs = [...input.createArgs];
   const openshellArgs = ["sandbox", "create", ...createArgs, "--", ...sandboxStartupCommand];
   const createCommand = renderSandboxCreateCommand(
     createArgs,

@@ -5,7 +5,7 @@ import { isCandidateAgent, readCandidateQualificationReceipt } from "../../agent
 import type { AgentDefinition } from "../../agent/defs";
 import { getVersion } from "../../core/version";
 import type { SandboxMessagingPlan } from "../../messaging/manifest";
-import type { SandboxWorkloadReceipt } from "../../state/registry/types";
+import type { SandboxEntry, SandboxWorkloadReceipt } from "../../state/registry/types";
 import type {
   CreateSandboxBuildContextResult,
   PreparedSandboxBuildContext,
@@ -23,12 +23,18 @@ import {
   type SelectedDockerGpuRoute,
 } from "../docker-gpu-route";
 import type { InitialSandboxPolicy } from "../initial-policy";
-import { isShippedManagedImageAgent, managedImageRuntimeIdentity } from "../managed-image/contract";
+import { isShippedManagedImageAgent } from "../managed-image/contract";
 import {
   type BuiltManagedStartupOnboardProfile,
   buildManagedStartupOnboardProfile,
   type ManagedStartupOnboardProfileInput,
 } from "../managed-startup/onboard-profile";
+export {
+  applyProviderManagedStartupRootRequest,
+  finalizeProviderManagedStartupSharedState,
+  releaseProviderManagedStartupHold,
+  type ProviderManagedStartupTransaction,
+} from "../runtime-provider/access";
 import { createManagedStartupRootApplyRequest } from "../managed-startup/root-apply";
 import {
   managedStartupStateRoots,
@@ -43,7 +49,6 @@ import {
   type RuntimeProviderBundle,
   resolveRuntimeProviderBundle,
 } from "../runtime-provider/access";
-import type { RuntimeProviderManagedImageBootstrapSurface } from "../runtime-provider/contract";
 import type {
   MaterializeSandboxCreatePlanInput,
   SandboxCreateIntent,
@@ -53,7 +58,6 @@ import {
   type SandboxCreatePlan,
 } from "../sandbox-create-plan-materialization";
 import {
-  OPENSHELL_SANDBOX_SUPERVISOR_ARGV,
   prepareSandboxCreateLaunch,
   prepareSandboxCreateLaunchWithPrebuild,
   type SandboxCreateLaunchInput,
@@ -92,10 +96,6 @@ type ManagedProfileInput = Omit<
 >;
 type ResolveBuildPatchInput = Parameters<typeof resolveSandboxBuildPatch>[0];
 type SandboxInferenceConfig = import("../../inference/config").SandboxInferenceConfig;
-type BootstrapProvider = RuntimeProviderBundle & {
-  readonly bootstrap: RuntimeProviderManagedImageBootstrapSurface;
-};
-
 export { normalizeRuntimeProviderIdentity };
 
 export type ManagedStateVolumeOnboardLifecycle = {
@@ -186,6 +186,18 @@ export function shouldActivateStockManagedRuntime(input: {
   );
 }
 
+/** Keep published base images on their legacy OpenClaw finalization contract. */
+export function shouldUseManagedOpenclawStartup(
+  defaultOpenclawSelected: boolean,
+  sandbox: Pick<SandboxEntry, "managedStartupProtocol" | "workload"> | null,
+): boolean {
+  return (
+    defaultOpenclawSelected &&
+    sandbox?.workload?.kind === "managed-image" &&
+    sandbox.managedStartupProtocol !== "legacy-unbound"
+  );
+}
+
 export function assertPortableManagedBootstrapNotSelected(
   portableLifecycle: boolean,
   managedBootstrapSelected: boolean,
@@ -238,15 +250,11 @@ export async function prepareHermesPortableSandboxWorkloadForLifecycle(
   return workload;
 }
 
-function requireBootstrapProvider(provider: RuntimeProviderBundle | null): BootstrapProvider {
-  if (
-    !provider ||
-    !provider.bootstrap.supported ||
-    provider.bootstrap.bootstrapKind !== "managed-image"
-  ) {
-    throw new Error("Selected runtime provider does not support managed bootstrap onboarding.");
-  }
-  return provider as BootstrapProvider;
+function requireManagedRuntimeProvider(
+  provider: RuntimeProviderBundle | null,
+): RuntimeProviderBundle {
+  if (!provider) throw new Error("Managed-image onboarding requires a runtime provider.");
+  return provider;
 }
 
 /** Memoize the exact workload and profile used before deletion, launch, and registration. */
@@ -296,7 +304,7 @@ export function createManagedWorkloadOnboardRuntime(
           prepareSandboxWorkloadSourceFromRebuildHandoff(
             input.managedWorkloadRebuild,
             runtimeCapabilities,
-            requireBootstrapProvider(runtimeProvider),
+            requireManagedRuntimeProvider(runtimeProvider),
           ),
         )
       : prepareSandboxWorkloadSource({
@@ -333,7 +341,7 @@ export function createManagedWorkloadOnboardRuntime(
     workload: PreparedSandboxWorkloadSource,
   ): BuiltManagedStartupOnboardProfile | null => {
     if (workload.source.kind !== "managed-image") return null;
-    requireBootstrapProvider(runtimeProvider);
+    requireManagedRuntimeProvider(runtimeProvider);
     if (input.managedWorkloadRebuild) {
       if (workload.source.reference !== input.managedWorkloadRebuild.replacement.source.reference) {
         throw new Error("Managed rebuild workload changed before startup profile preparation.");
@@ -518,7 +526,7 @@ export async function prepareOnboardSandboxWorkloadLaunch(
   let dashboardRemoteBindPrepared = false;
   let launch: SandboxCreateLaunchWithPrebuild;
   if (input.workload.source.kind === "managed-image") {
-    const runtimeProvider = requireBootstrapProvider(input.runtime.runtimeProvider);
+    const runtimeProvider = requireManagedRuntimeProvider(input.runtime.runtimeProvider);
     const gatewayRuntime = runtimeProvider.gateway.prepareHostRuntime({
       environment: process.env,
       platform: process.platform,
@@ -634,48 +642,6 @@ export async function prepareSelectedOnboardSandboxWorkloadLaunch(
   prepareOrdinary: () => Promise<PreparedOnboardSandboxWorkloadLaunch>,
 ): Promise<PreparedOnboardSandboxWorkloadLaunch> {
   return hermesPortable ? prepareHermes() : await prepareOrdinary();
-}
-
-export function resolveOnboardManagedBootstrapLaunch(input: {
-  readonly runtime: ManagedWorkloadOnboardRuntime;
-  readonly workload: PreparedSandboxWorkloadSource;
-  readonly sandboxName: string;
-  readonly stateRoot: string;
-  readonly bootstrapIdentity: string | null;
-  readonly request: import("../managed-startup/root-apply").ManagedStartupRootApplyRequest | null;
-  readonly intendedWorkloadArgv: readonly string[] | null | undefined;
-}) {
-  if (input.workload.source.kind !== "managed-image") return null;
-  const runtimeProvider = requireBootstrapProvider(input.runtime.runtimeProvider);
-  if (!input.bootstrapIdentity || !input.request || !input.intendedWorkloadArgv) {
-    throw new Error(
-      "Managed image onboarding is missing its identity-bound bootstrap launch contract.",
-    );
-  }
-  const agentIdentity = managedImageRuntimeIdentity(input.workload.source.contract.agent);
-  return {
-    bootstrapIdentity: input.bootstrapIdentity,
-    stateRoot: input.stateRoot,
-    runtimeProvider,
-    authorityStore: runtimeProvider.bootstrap.createAuthorityStore({ stateRoot: input.stateRoot }),
-    request: input.request,
-    image: {
-      repository: input.workload.source.contract.image,
-      manifestDigest: input.workload.source.contract.digest,
-    },
-    agentIdentity,
-    workspaceRoot: managedStartupWorkspaceRoot({
-      agent: input.workload.source.contract.agent,
-      agentIdentity,
-    }),
-    managedStateRoots: managedStartupStateRoots({
-      agent: input.workload.source.contract.agent,
-      sandboxName: input.sandboxName,
-      agentIdentity,
-    }),
-    intendedWorkloadArgv: input.intendedWorkloadArgv,
-    expectedSupervisorArgv: OPENSHELL_SANDBOX_SUPERVISOR_ARGV,
-  } as const;
 }
 
 export function resolveOnboardSandboxWorkloadReceipt(input: {
