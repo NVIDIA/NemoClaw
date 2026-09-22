@@ -24,6 +24,7 @@ import { trustedSandboxShellScript, type SandboxClient } from "./clients/sandbox
 import type { CleanupRegistry } from "./cleanup.ts";
 import { CLI_ENTRYPOINT, REPO_ROOT } from "./paths.ts";
 import { inspectConfigExportArtifactSafety } from "./phases/config-export-validation.ts";
+import { validateLiveExportWithRevisionMatchedV1Consumer } from "./revision-matched-v1-consumer.ts";
 
 interface HermesConfigExportLiveInput {
   readonly artifacts: ArtifactSink;
@@ -57,6 +58,7 @@ interface HermesConfigExportPublishedEvidence {
   readonly inferenceEndpointMatches: boolean;
   readonly launchersSucceeded: boolean;
   readonly policyMatches: boolean;
+  readonly revisionMatchedV1ConsumerAccepted: boolean;
   readonly sandboxNameMatches: boolean;
 }
 
@@ -111,6 +113,7 @@ export function passesHermesConfigExportLiveEvidence(
     evidence.inferenceEndpointMatches &&
     evidence.launchersSucceeded &&
     evidence.policyMatches &&
+    evidence.revisionMatchedV1ConsumerAccepted &&
     evidence.sandboxNameMatches
   );
 }
@@ -296,6 +299,7 @@ export async function verifyHermesConfigExportLive(
       inferenceEndpointMatches: false,
       launchersSucceeded,
       policyMatches: false,
+      revisionMatchedV1ConsumerAccepted: false,
       sandboxNameMatches: false,
     };
     await input.artifacts.writeJson("hermes-config-export-live-evidence.json", evidence);
@@ -358,6 +362,12 @@ export async function verifyHermesConfigExportLive(
     save(registry);
   }
 
+  let revisionMatchedV1ConsumerAccepted = false;
+  try {
+    validateLiveExportWithRevisionMatchedV1Consumer(nemoclawRaw, entry);
+    revisionMatchedV1ConsumerAccepted = true;
+  } catch {}
+
   const evidence: HermesConfigExportLiveEvidence = {
     outcome: "published",
     aliasesEquivalent: isDeepStrictEqual(nemohermesDocument.spec, nemoclawDocument.spec),
@@ -386,6 +396,7 @@ export async function verifyHermesConfigExportLive(
         (sandbox.network.policy.explicit as { network_policies?: unknown }).network_policies,
         (expectedPolicy as { network_policies?: unknown }).network_policies,
       ),
+    revisionMatchedV1ConsumerAccepted,
     sandboxNameMatches: sandbox.name === input.sandboxName,
   };
   const passed = passesHermesConfigExportLiveEvidence(evidence);

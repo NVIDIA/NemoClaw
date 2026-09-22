@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
   exec: vi.fn(),
   execShell: vi.fn(),
   asExportedConfig: vi.fn(),
+  validateV1Consumer: vi.fn(),
   writeJson: vi.fn(),
   writeText: vi.fn(),
 }));
@@ -29,6 +30,10 @@ vi.mock("../../../src/lib/adapters/openshell/sandbox-policy-cli.ts", () => ({
 
 vi.mock("../../support/config-export-document.ts", () => ({
   asExportedConfig: mocks.asExportedConfig,
+}));
+
+vi.mock("../fixtures/revision-matched-v1-consumer.ts", () => ({
+  validateLiveExportWithRevisionMatchedV1Consumer: mocks.validateV1Consumer,
 }));
 
 import {
@@ -89,6 +94,7 @@ function passingEvidence(): Extract<HermesConfigExportLiveEvidence, { outcome: "
     inferenceEndpointMatches: true,
     launchersSucceeded: true,
     policyMatches: true,
+    revisionMatchedV1ConsumerAccepted: true,
     sandboxNameMatches: true,
   };
 }
@@ -350,6 +356,31 @@ describe("Hermes config export live evidence", () => {
         identityDriftReported: false,
       }),
     );
+  });
+
+  it("withholds retained YAML when the revision-matched v1 consumer rejects it", async () => {
+    const document = mocks.asExportedConfig.getMockImplementation()!();
+    document.spec.sandboxes[0].harness.interfaces = { dashboard: { enabled: false } };
+    mocks.asExportedConfig.mockReturnValue(document);
+    const writeExport = async (_command: string, args: string[]) => {
+      fs.writeFileSync(args.at(args.indexOf("--output") + 1)!, "{}");
+      return { exitCode: 0, stderr: "", stdout: "" };
+    };
+    mocks.command
+      .mockImplementationOnce(writeExport)
+      .mockImplementationOnce(writeExport)
+      .mockResolvedValue({ exitCode: 1, stderr: "sandbox identity drifted", stdout: "" });
+    mocks.validateV1Consumer.mockImplementationOnce(() => {
+      throw new Error("pinned consumer rejected the export");
+    });
+
+    await expect(runEnabledFixture()).resolves.toEqual({ checked: true, passed: false });
+    expect(mocks.validateV1Consumer).toHaveBeenCalledWith("{}", expect.any(Object));
+    expect(mocks.writeJson).toHaveBeenCalledWith(
+      "hermes-config-export-live-evidence.json",
+      expect.objectContaining({ revisionMatchedV1ConsumerAccepted: false }),
+    );
+    expect(mocks.writeText).not.toHaveBeenCalled();
   });
 });
 
