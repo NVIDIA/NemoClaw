@@ -34,12 +34,11 @@
  * pre-convergence transition separately from a cold clone, which has no paired
  * record and must not select stored device authentication.
  *
- * On the local-fallback approve path, a failed gateway connect can leave
- * handles open. OpenClaw then prints Approved and returns without exiting, so
- * `openclaw devices approve` hangs and `nemoclaw connect` waits with it
- * (#12064). Drain stdout and stderr, then force `defaultRuntime.exit(0)` after
- * a successful local fallback approve until upstream closes those handles or
- * exits after Approved.
+ * Both gateway and local-fallback approvals can leave handles open after the
+ * command prints Approved. Drain stdout and stderr, then defer
+ * `defaultRuntime.exit(0)` until the command action has settled. This keeps
+ * OpenClaw's approval cleanup in control before the one-shot CLI exits
+ * (#12064).
  *
  * Remove this patch when upstream OpenClaw supports same-device, operator-only
  * scope approval through the gateway using the already-approved pairing scope
@@ -65,6 +64,8 @@ const CLI_BOOTSTRAP_AUTH_STORE_MARKER = "nemoclaw: persist canonical CLI bootstr
 const CLI_PAIRED_TOKEN_MARKER = "nemoclaw: preflight bounded paired token before live pairing list";
 const CLI_APPROVE_EXIT_MARKER =
   "nemoclaw: exit after devices approve so leftover gateway handles cannot hang";
+const CLI_APPROVE_SETTLED_EXIT_MARKER =
+  "nemoclaw: defer devices approve exit until the command action settles";
 const CLI_APPROVE_LOCAL_FALLBACK_MARKER =
   "nemoclaw: mark local fallback approval for bounded process exit";
 const CLI_APPROVE_LOCAL_FALLBACK_RESET_MARKER =
@@ -425,7 +426,7 @@ const CLI_APPROVE_EXIT_REPLACEMENT_PREVIOUS = [
   "\texitAfterDevicesApproveOutput();",
   "}",
 ].join("\n");
-const CLI_APPROVE_EXIT_REPLACEMENT = CLI_APPROVE_EXIT_REPLACEMENT_PREVIOUS.replace(
+const CLI_APPROVE_EXIT_REPLACEMENT_SCOPED = CLI_APPROVE_EXIT_REPLACEMENT_PREVIOUS.replace(
   "\tconst exitAfterDevicesApproveOutput = () => {",
   [
     "\tconst nemoclawExitAfterDevicesApprove =",
@@ -433,6 +434,10 @@ const CLI_APPROVE_EXIT_REPLACEMENT = CLI_APPROVE_EXIT_REPLACEMENT_PREVIOUS.repla
     "\tconst exitAfterDevicesApproveOutput = () => {",
     "\t\tif (!nemoclawExitAfterDevicesApprove) return;",
   ].join("\n"),
+);
+const CLI_APPROVE_EXIT_REPLACEMENT = CLI_APPROVE_EXIT_REPLACEMENT_PREVIOUS.replace(
+  "\t\t\tif (remaining === 0) defaultRuntime.exit(0);",
+  `\t\t\tif (remaining === 0) setImmediate(() => defaultRuntime.exit(0)); // ${CLI_APPROVE_SETTLED_EXIT_MARKER} (#12064)`,
 );
 
 const CLI_APPROVE_LOCAL_FALLBACK_RESET_TARGET =
@@ -453,47 +458,73 @@ const CLI_APPROVE_LOCAL_FALLBACK_REPLACEMENT = [
 
 function applyDevicesApproveExitPatch(source: string, file: string): ReplacementResult {
   const exitMarkerCount = countOccurrences(source, CLI_APPROVE_EXIT_MARKER);
+  const settledExitMarkerCount = countOccurrences(source, CLI_APPROVE_SETTLED_EXIT_MARKER);
   const fallbackMarkerCount = countOccurrences(source, CLI_APPROVE_LOCAL_FALLBACK_MARKER);
   const fallbackResetMarkerCount = countOccurrences(
     source,
     CLI_APPROVE_LOCAL_FALLBACK_RESET_MARKER,
   );
-  if (exitMarkerCount === 1 && fallbackMarkerCount === 1 && fallbackResetMarkerCount === 1) {
+  if (
+    exitMarkerCount === 1 &&
+    settledExitMarkerCount === 1 &&
+    fallbackMarkerCount === 0 &&
+    fallbackResetMarkerCount === 0
+  ) {
     return { source };
   }
   const isFresh =
-    exitMarkerCount === 0 && fallbackMarkerCount === 0 && fallbackResetMarkerCount === 0;
+    exitMarkerCount === 0 &&
+    settledExitMarkerCount === 0 &&
+    fallbackMarkerCount === 0 &&
+    fallbackResetMarkerCount === 0 &&
+    source.includes(CLI_APPROVE_EXIT_TARGET);
   const isPrevious =
-    exitMarkerCount === 1 && fallbackMarkerCount === 0 && fallbackResetMarkerCount === 0;
-  if (!isFresh && !isPrevious) {
+    exitMarkerCount === 1 &&
+    settledExitMarkerCount === 0 &&
+    fallbackMarkerCount === 0 &&
+    fallbackResetMarkerCount === 0 &&
+    source.includes(CLI_APPROVE_EXIT_REPLACEMENT_PREVIOUS);
+  const isScoped =
+    exitMarkerCount === 1 &&
+    settledExitMarkerCount === 0 &&
+    fallbackMarkerCount === 1 &&
+    fallbackResetMarkerCount === 1 &&
+    source.includes(CLI_APPROVE_EXIT_REPLACEMENT_SCOPED);
+  if (!isFresh && !isPrevious && !isScoped) {
     return {
       source,
-      error: `devices CLI approve exit patch in ${file}: partial or duplicate patch markers (${exitMarkerCount}, ${fallbackMarkerCount}, ${fallbackResetMarkerCount})`,
+      error: `devices CLI approve exit patch in ${file}: partial or duplicate patch markers (${exitMarkerCount}, ${settledExitMarkerCount}, ${fallbackMarkerCount}, ${fallbackResetMarkerCount})`,
     };
   }
   let result = replaceExactlyOnce(
     source,
-    exitMarkerCount === 1 ? CLI_APPROVE_EXIT_REPLACEMENT_PREVIOUS : CLI_APPROVE_EXIT_TARGET,
+    isScoped
+      ? CLI_APPROVE_EXIT_REPLACEMENT_SCOPED
+      : exitMarkerCount === 1
+        ? CLI_APPROVE_EXIT_REPLACEMENT_PREVIOUS
+        : CLI_APPROVE_EXIT_TARGET,
     CLI_APPROVE_EXIT_REPLACEMENT,
     "devices CLI approve success exit target",
     file,
   );
   if (result.error) return result;
-  result = replaceExactlyOnce(
-    result.source,
-    CLI_APPROVE_LOCAL_FALLBACK_RESET_TARGET,
-    CLI_APPROVE_LOCAL_FALLBACK_RESET_REPLACEMENT,
-    "devices CLI local fallback exit reset target",
-    file,
-  );
-  if (result.error) return result;
-  result = replaceExactlyOnce(
-    result.source,
-    CLI_APPROVE_LOCAL_FALLBACK_TARGET,
-    CLI_APPROVE_LOCAL_FALLBACK_REPLACEMENT,
-    "devices CLI local fallback exit target",
-    file,
-  );
+  if (isScoped) {
+    result = replaceExactlyOnce(
+      result.source,
+      CLI_APPROVE_LOCAL_FALLBACK_RESET_REPLACEMENT,
+      CLI_APPROVE_LOCAL_FALLBACK_RESET_TARGET,
+      "devices CLI local fallback exit reset target",
+      file,
+    );
+    if (result.error) return result;
+    result = replaceExactlyOnce(
+      result.source,
+      CLI_APPROVE_LOCAL_FALLBACK_REPLACEMENT,
+      CLI_APPROVE_LOCAL_FALLBACK_TARGET,
+      "devices CLI local fallback exit target",
+      file,
+    );
+  }
   return result;
 }
 

@@ -94,7 +94,7 @@ describe("OpenClaw device self-approval patch upgrades (#4462)", () => {
     }
   });
 
-  it("limits an earlier devices approve exit patch to the local fallback (#12064)", () => {
+  it("moves a scoped approval exit after the command action settles (#12064)", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-device-approve-exit-upgrade-"));
     const dist = path.join(tmp, "dist");
     fs.mkdirSync(dist);
@@ -129,7 +129,7 @@ describe("OpenClaw device self-approval patch upgrades (#4462)", () => {
         "\texitAfterDevicesApproveOutput();",
         "}",
       ].join("\n");
-      const currentHandler = [
+      const scopedHandler = [
         "\tconst nemoclawExitAfterDevicesApprove =",
         '\t\topts[Symbol.for("nemoclaw.devices-approve.local-fallback")] === true;',
         ...previousHandler
@@ -156,22 +156,31 @@ describe("OpenClaw device self-approval patch upgrades (#4462)", () => {
         "\t\tif (!fallback) {",
       ].join("\n");
       const source = fs.readFileSync(file, "utf8");
-      expect(source).toContain(currentHandler);
-      expect(source).toContain(currentReset);
-      expect(source).toContain(currentFallback);
+      expect(source).toContain(
+        "nemoclaw: defer devices approve exit until the command action settles",
+      );
+      expect(source).not.toContain(currentReset);
+      expect(source).not.toContain(currentFallback);
       fs.writeFileSync(
         file,
         source
-          .replace(currentHandler, previousHandler)
-          .replace(currentReset, resetTarget)
-          .replace(currentFallback, fallbackTarget),
+          .replace(
+            "\t\t\tif (remaining === 0) setImmediate(() => defaultRuntime.exit(0)); // nemoclaw: defer devices approve exit until the command action settles (#12064)",
+            "\t\t\tif (remaining === 0) defaultRuntime.exit(0);",
+          )
+          .replace(previousHandler, scopedHandler)
+          .replace(resetTarget, currentReset)
+          .replace(fallbackTarget, currentFallback),
       );
 
       expect(runPatch(dist).status).toBe(0);
       const upgraded = fs.readFileSync(file, "utf8");
-      expect(upgraded).toContain(currentHandler);
-      expect(upgraded).toContain(currentReset);
-      expect(upgraded).toContain(currentFallback);
+      expect(upgraded).toContain(
+        "nemoclaw: defer devices approve exit until the command action settles",
+      );
+      expect(upgraded).not.toContain(scopedHandler);
+      expect(upgraded).not.toContain(currentReset);
+      expect(upgraded).not.toContain(currentFallback);
       expect(upgraded).not.toContain(previousHandler);
       expect(runPatch(dist).status).toBe(0);
     } finally {
@@ -182,10 +191,8 @@ describe("OpenClaw device self-approval patch upgrades (#4462)", () => {
   it.each([
     ["missing", "nemoclaw: exit after devices approve so leftover gateway handles cannot hang"],
     ["duplicate", "nemoclaw: exit after devices approve so leftover gateway handles cannot hang"],
-    ["missing", "nemoclaw: mark local fallback approval for bounded process exit"],
-    ["duplicate", "nemoclaw: mark local fallback approval for bounded process exit"],
-    ["missing", "nemoclaw: reset local fallback approval exit state"],
-    ["duplicate", "nemoclaw: reset local fallback approval exit state"],
+    ["missing", "nemoclaw: defer devices approve exit until the command action settles"],
+    ["duplicate", "nemoclaw: defer devices approve exit until the command action settles"],
   ] as const)("rejects a %s devices approve exit marker: %s (#12064)", (state, marker) => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-device-approve-marker-"));
     const dist = path.join(tmp, "dist");
