@@ -672,7 +672,7 @@ describe("managed llama.cpp selection", () => {
           nvidiaPlatform: "linux",
           productName: "NVIDIA RTX PRO 6000 Blackwell Server Edition",
         }),
-        detectGpu: () => ({ count: 1 }),
+        detectGpu: () => ({ count: 1, totalMemoryMB: 48_000, perGpuMB: 48_000 }),
         detectHostGpuPlatform: () => "linux",
         detectNvidiaDriverVersion: () => "595.84",
       },
