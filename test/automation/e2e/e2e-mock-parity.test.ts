@@ -177,6 +177,16 @@ describe("changed live E2E mock parity", () => {
     ).toEqual([`${pythonLiveHelper}: change at least one fast PR test mapped from ${live}`]);
   });
 
+  it("accepts a changed Python live helper with a changed mapped fast test", () => {
+    expect(
+      validateMockParity({
+        manifest: manifest([{ live, liveSources: [pythonLiveHelper], fast: [fast] }]),
+        changedFiles: [pythonLiveHelper, fast],
+        fileExists: exists,
+      }),
+    ).toEqual([]);
+  });
+
   it("rejects a changed live E2E helper without an owning manifest entry", () => {
     expect(
       validateMockParity({
