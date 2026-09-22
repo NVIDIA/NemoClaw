@@ -176,12 +176,14 @@ function matchesProviderMetadata(
 ): boolean {
   const { type, configKey } = providerContract(normalized.preferredInferenceApi);
   const builtin = provider.builtinInferenceEndpoint !== undefined;
-  // The protobuf SDK materializes an unset profile_workspace scalar as "".
-  // A named workspace still represents a profile binding that the direct
-  // managed-vLLM export contract does not qualify.
+  // OpenShell's CLI writes the selected workspace for a newly created
+  // provider, while legacy records and protobuf defaults can leave the field
+  // empty. A different workspace is outside this direct provider contract.
   const managedBindingMatches =
     !managed ||
-    ((provider.profileWorkspace === undefined || provider.profileWorkspace === "") &&
+    ((provider.profileWorkspace === undefined ||
+      provider.profileWorkspace === "" ||
+      provider.profileWorkspace === provider.workspace) &&
       provider.managedProfile === undefined);
   return (
     type !== null &&

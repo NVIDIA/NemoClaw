@@ -137,8 +137,8 @@ function mockManagedVllmSource(
     type: "openai",
     credentials,
     config: { OPENAI_BASE_URL: source.endpointUrl },
-    // Protobuf string scalars use the empty string when profile_workspace is unset.
-    profileWorkspace: "",
+    // `openshell provider create` binds the selected workspace explicitly.
+    profileWorkspace: "default",
   };
   raw.getProvider.mockResolvedValue({
     provider: localProvider,
@@ -395,9 +395,9 @@ describe("managed vLLM export pipeline", () => {
     expectExportRefusal(await exportLiveSource(), { category: "unstable-source" });
   });
 
-  it("rejects an unexpected OpenAI profile binding without reading the profile", async () => {
+  it("rejects a cross-workspace OpenAI profile binding without reading the profile", async () => {
     const { localProvider } = mockManagedVllmSource();
-    Object.assign(localProvider, { profileWorkspace: "default" });
+    Object.assign(localProvider, { profileWorkspace: "other-workspace" });
     raw.getProviderProfile.mockResolvedValue({
       profile: {
         id: "openai",
