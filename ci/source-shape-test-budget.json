@@ -152,11 +152,6 @@
       "category": "compatibility"
     },
     {
-      "file": "test/platform/images/node-tar-dockerfile-contract.test.ts",
-      "test": "uses the documented Debian CDN fallback for the root npm build stage",
-      "category": "security"
-    },
-    {
       "file": "test/repository/code-scanning-workflow.test.ts",
       "test": "installs npm from the immutable reviewed action bootstrap",
       "category": "security"
