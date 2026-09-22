@@ -5,6 +5,9 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import YAML from "yaml";
+import { createProviders } from "../../../src/lib/adapters/openshell/providers.ts";
+import { OpenShellReadError } from "../../../src/lib/adapters/openshell/sdk-read.ts";
+import { namedOpenShellGateway } from "../../../src/lib/adapters/openshell/sandbox-observer.ts";
 import { EXPORTED_VLLM_PROFILE_ID } from "../../../src/lib/config/model.ts";
 import type {
   V1Alpha1Export,
@@ -663,6 +666,40 @@ test(
     expect(onboard.exitCode, resultText(onboard)).toBe(0);
     const apiKey = loadManagedVllmApiKey();
     artifacts.addRedactionValues([apiKey ?? ""]);
+
+    const providerEvidence = await (async () => {
+      try {
+        const provider = await createProviders().get({
+          target: namedOpenShellGateway("nemoclaw"),
+          workspace: "default",
+          name: "vllm-local",
+          configKeys: ["OPENAI_BASE_URL"],
+          signal: AbortSignal.timeout(30_000),
+        });
+        return provider
+          ? {
+              status: "observed",
+              workspace: provider.workspace,
+              name: provider.name,
+              type: provider.type,
+              credentialKeys: provider.credentialKeys,
+              configKeys: provider.configKeys,
+              profileWorkspace: provider.profileWorkspace ?? null,
+              managedProfile: provider.managedProfile ?? null,
+              hasOpenAiBaseUrl: Object.hasOwn(provider.config, "OPENAI_BASE_URL"),
+            }
+          : { status: "missing" };
+      } catch (error) {
+        return {
+          status: "error",
+          kind: error instanceof OpenShellReadError ? error.kind : "unknown",
+        };
+      }
+    })();
+    await artifacts.writeText(
+      "vllm-export-provider-evidence.json",
+      `${JSON.stringify(providerEvidence, null, 2)}\n`,
+    );
 
     progress.phase("export the managed vLLM configuration");
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-vllm-export-"));
