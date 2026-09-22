@@ -114,4 +114,32 @@ describe("managed inference auth-profile boundary", () => {
       fs.rmSync(fixture.home, { recursive: true, force: true });
     }
   });
+
+  it("rejects a symlinked auth-profile parent without changing its target", () => {
+    const externalContents = JSON.stringify({ "inference:manual": legacyManagedProfile });
+    let externalProfile = "";
+    const fixture = runWriteAuthProfile(
+      { NEMOCLAW_INFERENCE_BASE_URL: "https://inference.local/v1" },
+      (authPath) => {
+        const openclawDir = path.resolve(authPath, "../../../../");
+        const externalAgents = path.join(fixtureRoot(authPath), "external-agents");
+        externalProfile = path.join(externalAgents, "main", "agent", "auth-profiles.json");
+        fs.mkdirSync(path.dirname(externalProfile), { recursive: true });
+        fs.writeFileSync(externalProfile, externalContents);
+        fs.mkdirSync(openclawDir, { recursive: true });
+        fs.symlinkSync(externalAgents, path.join(openclawDir, "agents"));
+      },
+    );
+    try {
+      expect(fixture.status).not.toBe(0);
+      expect(fixture.stderr).toContain("[SECURITY] Refusing auth-profile cleanup");
+      expect(fs.readFileSync(externalProfile, "utf-8")).toBe(externalContents);
+    } finally {
+      fs.rmSync(fixture.home, { recursive: true, force: true });
+    }
+  });
 });
+
+function fixtureRoot(authPath: string): string {
+  return path.resolve(authPath, "../../../../../");
+}

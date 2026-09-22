@@ -2424,72 +2424,123 @@ write_auth_profile() {
       python3 - <<'PYAUTH'
 import json
 import os
+import secrets
 import stat
-import tempfile
+import sys
 
-path = os.path.expanduser('~/.openclaw/agents/main/agent/auth-profiles.json')
-try:
-    path_stat = os.lstat(path)
-except FileNotFoundError:
-    raise SystemExit(0)
+profile_name = 'auth-profiles.json'
+openclaw_path = os.path.expanduser('~/.openclaw')
+directory_flags = os.O_RDONLY | os.O_DIRECTORY | getattr(os, 'O_NOFOLLOW', 0)
 
-if stat.S_ISLNK(path_stat.st_mode):
-    raise SystemExit('[SECURITY] Refusing auth-profile cleanup through a symlink')
+def security_failure(detail):
+    print(f'[SECURITY] Refusing auth-profile cleanup: {detail}', file=sys.stderr)
+    raise SystemExit(1)
 
-try:
-    flags = os.O_RDONLY | getattr(os, 'O_NOFOLLOW', 0)
-    descriptor = os.open(path, flags)
-    with os.fdopen(descriptor, encoding='utf-8') as profile_file:
-        profiles = json.load(profile_file)
-except (OSError, UnicodeError, json.JSONDecodeError):
-    # Unknown or user-managed state is not ours to replace or delete.
-    raise SystemExit(0)
-
-if not isinstance(profiles, dict):
-    raise SystemExit(0)
-
-def is_legacy_managed_profile(profile_id, profile):
-    if not isinstance(profile, dict):
-        return False
-    provider = profile.get('provider')
-    expected_id = f'{provider}:manual'
-    return profile_id == expected_id and profile == {
-        'type': 'api_key',
-        'provider': provider,
-        'keyRef': {'source': 'env', 'id': 'NVIDIA_INFERENCE_API_KEY'},
-        'profileId': expected_id,
-    }
-
-retained = {
-    profile_id: profile
-    for profile_id, profile in profiles.items()
-    if not is_legacy_managed_profile(profile_id, profile)
-    }
-if retained == profiles:
-    raise SystemExit(0)
-if not retained:
-    os.unlink(path)
-    raise SystemExit(0)
-
-directory = os.path.dirname(path)
-descriptor, temporary_path = tempfile.mkstemp(prefix='.auth-profiles.', dir=directory)
-try:
-    os.fchmod(descriptor, 0o600)
-    with os.fdopen(descriptor, 'w', encoding='utf-8') as profile_file:
-        json.dump(retained, profile_file)
-        profile_file.flush()
-        os.fsync(profile_file.fileno())
-    os.replace(temporary_path, path)
-except BaseException:
+def open_profile_directory():
     try:
-        os.close(descriptor)
-    except OSError:
-        pass
-    try:
-        os.unlink(temporary_path)
+        directory_fd = os.open(openclaw_path, directory_flags)
     except FileNotFoundError:
-        pass
-    raise
+        raise SystemExit(0)
+    except OSError:
+        security_failure('the .openclaw root is not a trusted directory')
+
+    for component in ('agents', 'main', 'agent'):
+        try:
+            child_fd = os.open(component, directory_flags, dir_fd=directory_fd)
+        except FileNotFoundError:
+            os.close(directory_fd)
+            raise SystemExit(0)
+        except OSError:
+            os.close(directory_fd)
+            security_failure(f'{component} is not a trusted directory')
+        os.close(directory_fd)
+        directory_fd = child_fd
+    return directory_fd
+
+directory_fd = open_profile_directory()
+try:
+    try:
+        profile_fd = os.open(
+            profile_name,
+            os.O_RDONLY | getattr(os, 'O_NOFOLLOW', 0),
+            dir_fd=directory_fd,
+        )
+    except FileNotFoundError:
+        raise SystemExit(0)
+    except OSError:
+        security_failure('auth-profiles.json is not a trusted regular file')
+
+    if not stat.S_ISREG(os.fstat(profile_fd).st_mode):
+        os.close(profile_fd)
+        security_failure('auth-profiles.json is not a regular file')
+
+    try:
+        with os.fdopen(profile_fd, encoding='utf-8') as profile_file:
+            profiles = json.load(profile_file)
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        # Unknown or user-managed state is not ours to replace or delete.
+        raise SystemExit(0)
+
+    if not isinstance(profiles, dict):
+        raise SystemExit(0)
+
+    def is_legacy_managed_profile(profile_id, profile):
+        if not isinstance(profile, dict):
+            return False
+        provider = profile.get('provider')
+        expected_id = f'{provider}:manual'
+        return profile_id == expected_id and profile == {
+            'type': 'api_key',
+            'provider': provider,
+            'keyRef': {'source': 'env', 'id': 'NVIDIA_INFERENCE_API_KEY'},
+            'profileId': expected_id,
+        }
+
+    retained = {
+        profile_id: profile
+        for profile_id, profile in profiles.items()
+        if not is_legacy_managed_profile(profile_id, profile)
+    }
+    if retained == profiles:
+        raise SystemExit(0)
+    if not retained:
+        os.unlink(profile_name, dir_fd=directory_fd)
+        raise SystemExit(0)
+
+    temporary_name = f'.auth-profiles.{secrets.token_hex(16)}'
+    try:
+        temporary_fd = os.open(
+            temporary_name,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, 'O_NOFOLLOW', 0),
+            mode=0o600,
+            dir_fd=directory_fd,
+        )
+    except OSError:
+        security_failure('could not create a private replacement file')
+
+    try:
+        with os.fdopen(temporary_fd, 'w', encoding='utf-8') as profile_file:
+            json.dump(retained, profile_file)
+            profile_file.flush()
+            os.fsync(profile_file.fileno())
+        os.replace(
+            temporary_name,
+            profile_name,
+            src_dir_fd=directory_fd,
+            dst_dir_fd=directory_fd,
+        )
+    except BaseException:
+        try:
+            os.close(temporary_fd)
+        except OSError:
+            pass
+        try:
+            os.unlink(temporary_name, dir_fd=directory_fd)
+        except FileNotFoundError:
+            pass
+        raise
+finally:
+    os.close(directory_fd)
 PYAUTH
       return
       ;;
