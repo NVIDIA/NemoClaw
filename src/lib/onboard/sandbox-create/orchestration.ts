@@ -3555,17 +3555,15 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       });
       cleanupBuildContext();
     } else {
-      const routedOrdinaryCreateRequest = agentCreateInput.portableLifecycle
-        ? null
-        : finalizeOrdinaryCreateRequest({
-            plan: createRequestPlan,
-            gatewayName: GATEWAY_NAME,
-            startupCommand: sandboxStartupCommand,
-            environment: createFlowEnvironment,
-            compatibilityPolicyPath,
-            compatibility: initialGpuRoute === "compatibility",
-            rebuildPolicySourcePath: createIntent?.rebuildPolicySourcePath,
-          });
+      const routedCreateRequest = finalizeOrdinaryCreateRequest({
+        plan: createRequestPlan,
+        gatewayName: GATEWAY_NAME,
+        startupCommand: sandboxStartupCommand,
+        environment: createFlowEnvironment,
+        compatibilityPolicyPath,
+        compatibility: initialGpuRoute === "compatibility",
+        rebuildPolicySourcePath: createIntent?.rebuildPolicySourcePath,
+      });
       try {
         const created = await activateManagedStartupCorporateCaTrustAfterSandboxCreate({
           create: runSandboxCreateWithProviderEffects({
@@ -3573,9 +3571,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
             providerEffectBoundary,
             create: (runAfterVerifiedCreate) =>
               runCreateFlow(
-                agentCreateInput.portableLifecycle
-                  ? { kind: "portable", argv: requirePortableCreateArgv() }
-                  : { kind: "ordinary", request: routedOrdinaryCreateRequest! },
+                routedCreateRequest,
                 undefined,
                 undefined,
                 undefined,
