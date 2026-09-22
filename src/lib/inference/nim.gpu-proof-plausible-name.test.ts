@@ -138,7 +138,7 @@ describe("detectGpu CUDA proof for a plausible, non-placeholder NVIDIA GPU name 
     "selects the largest installed Ollama model on a %s-proven WSL RTX Spark N1X (#10954)",
     (providerId) => {
       onWsl2Arm64WithoutKernelInterface(() => {
-        const runCaptureImpl = makeRunCapture(`${PLAUSIBLE_NAME}, 999999, 999999\n`);
+        const runCaptureImpl = makeRunCapture(`${PLAUSIBLE_NAME}, 63936, 999999\n`);
         const gpu = detectGpu({
           proveArm64ContainerGpu: passingProver(
             {
@@ -197,10 +197,17 @@ describe("detectGpu CUDA proof for a plausible, non-placeholder NVIDIA GPU name 
   it("selects the largest installed Ollama model when only the Windows chassis model identifies RTX Spark N1X", () => {
     onWsl2Arm64WithoutKernelInterface(() => {
       const gpu = detectGpu({
-        proveArm64ContainerGpu: passingProver({
-          totalMemoryMB: 63_936,
-          availableMemoryMB: 60_000,
-        }),
+        proveArm64ContainerGpu: passingProver(
+          { totalMemoryMB: 63_936, availableMemoryMB: 60_000 },
+          "docker",
+          [
+            {
+              name: "NVIDIA RTX Spark N1X Laptop GPU",
+              totalMemoryMB: 63_936,
+              availableMemoryMB: 60_000,
+            },
+          ],
+        ),
         runCaptureImpl: makeRunCapture("NVIDIA RTX Spark N1X Laptop GPU, 63936, 60000\n"),
         isWsl: true,
         n1xWslProduct: true,
@@ -214,10 +221,17 @@ describe("detectGpu CUDA proof for a plausible, non-placeholder NVIDIA GPU name 
   it("keeps a placeholder GPU name compute-constrained when the chassis model does not qualify", () => {
     onWsl2Arm64WithoutKernelInterface(() => {
       const gpu = detectGpu({
-        proveArm64ContainerGpu: passingProver({
-          totalMemoryMB: 63_936,
-          availableMemoryMB: 60_000,
-        }),
+        proveArm64ContainerGpu: passingProver(
+          { totalMemoryMB: 63_936, availableMemoryMB: 60_000 },
+          "docker",
+          [
+            {
+              name: "NVIDIA JMJWOA-Generic-GPU",
+              totalMemoryMB: 63_936,
+              availableMemoryMB: 60_000,
+            },
+          ],
+        ),
         runCaptureImpl: makeRunCapture("NVIDIA JMJWOA-Generic-GPU, 63936, 60000\n"),
         isWsl: true,
         n1xWslProduct: false,
@@ -250,7 +264,7 @@ describe("detectGpu CUDA proof for a plausible, non-placeholder NVIDIA GPU name 
           totalMemoryMB: 63_936,
           availableMemoryMB: 30_000,
         }),
-        runCaptureImpl: makeRunCapture(`${PLAUSIBLE_NAME}, 8128, 7000\n`),
+        runCaptureImpl: makeRunCapture(`${PLAUSIBLE_NAME}, 63936, 7000\n`),
         isWsl: true,
         n1xWslProduct: true,
       });
@@ -260,7 +274,7 @@ describe("detectGpu CUDA proof for a plausible, non-placeholder NVIDIA GPU name 
     });
   });
 
-  it("ignores a forged high-memory row when proved device capacity is unavailable (#10954)", () => {
+  it("rejects a forged single-row capacity that does not match provider evidence (#10954)", () => {
     onWsl2Arm64WithoutKernelInterface(() => {
       const gpu = detectGpu({
         proveArm64ContainerGpu: passingProver({
@@ -271,8 +285,7 @@ describe("detectGpu CUDA proof for a plausible, non-placeholder NVIDIA GPU name 
         isWsl: true,
         n1xWslProduct: true,
       });
-      expect(gpu).toMatchObject({ computeConstrained: true });
-      expect(selectDefaultOllamaModel(["qwen3.5:9b", "qwen3.6:35b"], gpu)).toBe("qwen3.5:9b");
+      expect(gpu).toBeNull();
     });
   });
 

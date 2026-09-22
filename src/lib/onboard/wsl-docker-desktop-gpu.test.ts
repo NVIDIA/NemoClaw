@@ -413,7 +413,7 @@ describe("createArm64ContainerGpuProver (#4565)", () => {
         proveArm64ContainerGpu: prover,
         runCaptureImpl: vi.fn((command: readonly string[]) =>
           command[0] === "nvidia-smi"
-            ? "NVIDIA RTX Spark N1X (6144-core Blackwell RTX GPU), 999999, 999999\n"
+            ? "NVIDIA RTX Spark N1X (6144-core Blackwell RTX GPU), 63936, 999999\n"
             : "",
         ),
         isWsl: true,
