@@ -37,6 +37,10 @@ import {
   passesHermesConfigExportLiveEvidence,
   verifyHermesConfigExportLive,
 } from "../fixtures/hermes-config-export-live.ts";
+import {
+  RevisionMatchedConsumerError,
+  type RevisionMatchedConsumerFailureStage,
+} from "../fixtures/revision-matched-v1-consumer.ts";
 
 const IMAGE_REF = "nvcr.io/nvidia/nemoclaw@sha256:" + "a".repeat(64);
 
@@ -92,6 +96,7 @@ function passingEvidence(): Extract<HermesConfigExportLiveEvidence, { outcome: "
     launchersSucceeded: true,
     policyMatches: true,
     revisionMatchedConsumer: true,
+    revisionMatchedConsumerDiagnostic: null,
     sandboxNameMatches: true,
   };
 }
@@ -395,7 +400,38 @@ describe("Hermes config export live evidence", () => {
     );
   });
 
-  it("withholds live YAML when the revision-matched consumer rejects it (#12132)", async () => {
+  it.each([
+    "git-archive",
+    "cargo-test",
+    "python-validation",
+  ] satisfies RevisionMatchedConsumerFailureStage[])(
+    "withholds live YAML and records the bounded %s consumer stage (#12132)",
+    async (stage) => {
+      const writeExport = async (_command: string, args: string[]) => {
+        fs.writeFileSync(args.at(args.indexOf("--output") + 1)!, "{}");
+        return { exitCode: 0, stderr: "", stdout: "" };
+      };
+      mocks.command
+        .mockImplementationOnce(writeExport)
+        .mockImplementationOnce(writeExport)
+        .mockResolvedValue({ exitCode: 1, stderr: "sandbox identity drifted", stdout: "" });
+      mocks.validateV1Consumer.mockImplementationOnce(() => {
+        throw new RevisionMatchedConsumerError(stage);
+      });
+
+      await expect(runEnabledFixture()).resolves.toEqual({ checked: true, passed: false });
+      expect(mocks.writeJson).toHaveBeenCalledWith(
+        "hermes-config-export-live-evidence.json",
+        expect.objectContaining({
+          revisionMatchedConsumer: false,
+          revisionMatchedConsumerDiagnostic: `revision-matched-v1-consumer:${stage}`,
+        }),
+      );
+      expect(mocks.writeText).not.toHaveBeenCalled();
+    },
+  );
+
+  it("does not publish an unknown revision-matched consumer error (#12132)", async () => {
     const writeExport = async (_command: string, args: string[]) => {
       fs.writeFileSync(args.at(args.indexOf("--output") + 1)!, "{}");
       return { exitCode: 0, stderr: "", stdout: "" };
@@ -404,15 +440,20 @@ describe("Hermes config export live evidence", () => {
       .mockImplementationOnce(writeExport)
       .mockImplementationOnce(writeExport)
       .mockResolvedValue({ exitCode: 1, stderr: "sandbox identity drifted", stdout: "" });
+    const secret = "revision-matched-secret";
     mocks.validateV1Consumer.mockImplementationOnce(() => {
-      throw new Error("revision-matched v1 consumer rejected the live export");
+      throw new Error(`revision-matched v1 consumer rejected the live export: ${secret}`);
     });
 
     await expect(runEnabledFixture()).resolves.toEqual({ checked: true, passed: false });
     expect(mocks.writeJson).toHaveBeenCalledWith(
       "hermes-config-export-live-evidence.json",
-      expect.objectContaining({ revisionMatchedConsumer: false }),
+      expect.objectContaining({
+        revisionMatchedConsumer: false,
+        revisionMatchedConsumerDiagnostic: "revision-matched-v1-consumer:unknown",
+      }),
     );
+    expect(JSON.stringify(mocks.writeJson.mock.calls)).not.toContain(secret);
     expect(mocks.writeText).not.toHaveBeenCalled();
   });
 });

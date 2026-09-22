@@ -27,7 +27,11 @@ import {
   publishValidatedConfigExportYaml,
   readConfigExportFileSafely,
 } from "./phases/config-export-validation.ts";
-import { validateLiveExportWithRevisionMatchedV1Consumer } from "./revision-matched-v1-consumer.ts";
+import { redactString } from "./redaction.ts";
+import {
+  RevisionMatchedConsumerError,
+  validateLiveExportWithRevisionMatchedV1Consumer,
+} from "./revision-matched-v1-consumer.ts";
 
 interface HermesConfigExportLiveInput {
   readonly artifacts: ArtifactSink;
@@ -63,6 +67,7 @@ interface HermesConfigExportPublishedEvidence {
   readonly launchersSucceeded: boolean;
   readonly policyMatches: boolean;
   readonly revisionMatchedConsumer: boolean;
+  readonly revisionMatchedConsumerDiagnostic: string | null;
   readonly sandboxNameMatches: boolean;
 }
 
@@ -118,6 +123,7 @@ export function passesHermesConfigExportLiveEvidence(
     evidence.launchersSucceeded &&
     evidence.policyMatches &&
     evidence.revisionMatchedConsumer &&
+    evidence.revisionMatchedConsumerDiagnostic === null &&
     evidence.sandboxNameMatches
   );
 }
@@ -304,6 +310,7 @@ export async function verifyHermesConfigExportLive(
       launchersSucceeded,
       policyMatches: false,
       revisionMatchedConsumer: false,
+      revisionMatchedConsumerDiagnostic: null,
       sandboxNameMatches: false,
     };
     await input.artifacts.writeJson("hermes-config-export-live-evidence.json", evidence);
@@ -316,14 +323,20 @@ export async function verifyHermesConfigExportLive(
   const hostedProvider = nemoclawDocument.spec.inferenceProviders[0];
   const expectedPolicy = policy.ok ? YAML.parse(policy.value.document) : null;
   let revisionMatchedConsumer = false;
+  let revisionMatchedConsumerDiagnostic: string | null = null;
   try {
     (input.validateV1Consumer ?? validateLiveExportWithRevisionMatchedV1Consumer)(
       nemoclawRaw,
       entry,
     );
     revisionMatchedConsumer = true;
-  } catch {
+  } catch (error) {
     revisionMatchedConsumer = false;
+    const stage = error instanceof RevisionMatchedConsumerError ? error.stage : "unknown";
+    revisionMatchedConsumerDiagnostic = redactString(
+      `revision-matched-v1-consumer:${stage}`,
+      input.redactionValues,
+    ).slice(0, 128);
   }
 
   const nemoclawMismatchPath = path.join(exportDirectory, "nemoclaw-mismatch.yaml");
@@ -397,6 +410,7 @@ export async function verifyHermesConfigExportLive(
         (expectedPolicy as { network_policies?: unknown }).network_policies,
       ),
     revisionMatchedConsumer,
+    revisionMatchedConsumerDiagnostic,
     sandboxNameMatches: sandbox.name === input.sandboxName,
   };
   const passed = passesHermesConfigExportLiveEvidence(evidence);

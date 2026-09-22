@@ -41,6 +41,29 @@ export interface RevisionMatchedConsumerEvidence {
   }[];
 }
 
+export type RevisionMatchedConsumerFailureStage =
+  | "git-archive"
+  | "cargo-test"
+  | "python-validation";
+
+export class RevisionMatchedConsumerError extends Error {
+  readonly stage: RevisionMatchedConsumerFailureStage;
+
+  constructor(stage: RevisionMatchedConsumerFailureStage) {
+    super(`revision-matched v1 consumer failed during ${stage}`);
+    this.name = "RevisionMatchedConsumerError";
+    this.stage = stage;
+  }
+}
+
+function runConsumerStage<T>(stage: RevisionMatchedConsumerFailureStage, operation: () => T): T {
+  try {
+    return operation();
+  } catch {
+    throw new RevisionMatchedConsumerError(stage);
+  }
+}
+
 function sha256(value: string): string {
   return createHash("sha256").update(value).digest("hex");
 }
@@ -167,22 +190,24 @@ export function validateWithRevisionMatchedV1Consumer(
       };
     });
     fs.writeFileSync(manifestPath, `${JSON.stringify({ documents }, null, 2)}\n`, { mode: 0o600 });
-    execFileSync(
-      "git",
-      [
-        "-C",
-        REPO_ROOT,
-        "archive",
-        "--format=tar",
-        `--output=${consumerArchive}`,
-        V1ALPHA1_RUNTIME_DEFAULTS_REVISION,
-      ],
-      {
-        encoding: "utf8",
-        killSignal: "SIGKILL",
-        stdio: "pipe",
-        timeout: CONSUMER_COMMAND_TIMEOUT_MS,
-      },
+    runConsumerStage("git-archive", () =>
+      execFileSync(
+        "git",
+        [
+          "-C",
+          REPO_ROOT,
+          "archive",
+          "--format=tar",
+          `--output=${consumerArchive}`,
+          V1ALPHA1_RUNTIME_DEFAULTS_REVISION,
+        ],
+        {
+          encoding: "utf8",
+          killSignal: "SIGKILL",
+          stdio: "pipe",
+          timeout: CONSUMER_COMMAND_TIMEOUT_MS,
+        },
+      ),
     );
     fs.mkdirSync(consumer);
     execFileSync("tar", ["-xf", consumerArchive, "-C", consumer], {
@@ -195,47 +220,51 @@ export function validateWithRevisionMatchedV1Consumer(
       path.join(FIXTURE_ROOT, "config-export-compatibility.rs"),
       path.join(consumer, "crates/nemoclaw-sdk/tests/config_export_compatibility.rs"),
     );
-    execFileSync(
-      "cargo",
-      ["test", "--locked", "-p", "nemoclaw-sdk", "--test", "config_export_compatibility"],
-      {
-        cwd: consumer,
-        encoding: "utf8",
-        env: {
-          ...process.env,
-          CARGO_TARGET_DIR: path.join(
-            os.tmpdir(),
-            `nemoclaw-v1-target-${V1ALPHA1_RUNTIME_DEFAULTS_REVISION}`,
-          ),
-          NEMOCLAW_V1_CONFIG_INPUTS: inputDirectory,
-          NEMOCLAW_V1_SETTINGS_OUTPUT: settingsDirectory,
+    runConsumerStage("cargo-test", () =>
+      execFileSync(
+        "cargo",
+        ["test", "--locked", "-p", "nemoclaw-sdk", "--test", "config_export_compatibility"],
+        {
+          cwd: consumer,
+          encoding: "utf8",
+          env: {
+            ...process.env,
+            CARGO_TARGET_DIR: path.join(
+              os.tmpdir(),
+              `nemoclaw-v1-target-${V1ALPHA1_RUNTIME_DEFAULTS_REVISION}`,
+            ),
+            NEMOCLAW_V1_CONFIG_INPUTS: inputDirectory,
+            NEMOCLAW_V1_SETTINGS_OUTPUT: settingsDirectory,
+          },
+          maxBuffer: 10 * 1024 * 1024,
+          killSignal: "SIGKILL",
+          stdio: "pipe",
+          timeout: CONSUMER_BUILD_TIMEOUT_MS,
         },
-        maxBuffer: 10 * 1024 * 1024,
-        killSignal: "SIGKILL",
-        stdio: "pipe",
-        timeout: CONSUMER_BUILD_TIMEOUT_MS,
-      },
+      ),
     );
-    execFileSync(
-      "python3",
-      [
-        path.join(FIXTURE_ROOT, "validate-native-settings.py"),
-        "--consumer",
-        consumer,
-        "--settings",
-        settingsDirectory,
-        "--manifest",
-        manifestPath,
-        "--output",
-        evidencePath,
-      ],
-      {
-        encoding: "utf8",
-        killSignal: "SIGKILL",
-        maxBuffer: 10 * 1024 * 1024,
-        stdio: "pipe",
-        timeout: CONSUMER_COMMAND_TIMEOUT_MS,
-      },
+    runConsumerStage("python-validation", () =>
+      execFileSync(
+        "python3",
+        [
+          path.join(FIXTURE_ROOT, "validate-native-settings.py"),
+          "--consumer",
+          consumer,
+          "--settings",
+          settingsDirectory,
+          "--manifest",
+          manifestPath,
+          "--output",
+          evidencePath,
+        ],
+        {
+          encoding: "utf8",
+          killSignal: "SIGKILL",
+          maxBuffer: 10 * 1024 * 1024,
+          stdio: "pipe",
+          timeout: CONSUMER_COMMAND_TIMEOUT_MS,
+        },
+      ),
     );
     const evidence = JSON.parse(fs.readFileSync(evidencePath, "utf8")) as Omit<
       RevisionMatchedConsumerEvidence,

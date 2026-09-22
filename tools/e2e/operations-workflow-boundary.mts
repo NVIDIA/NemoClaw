@@ -45,6 +45,7 @@ const CONFIG_EXPORT_ARTIFACT_REQUIREMENT_SCRIPT =
     "set -euo pipefail",
     `evidence_path="${CONFIG_EXPORT_EVIDENCE_PATH}"`,
     `yaml_path="${CONFIG_EXPORT_YAML_PATH}"`,
+    `trap 'status=$?; if (( status != 0 )); then rm -f -- "$yaml_path"; fi; exit "$status"' EXIT`,
     '[[ -f "$evidence_path" && ! -L "$evidence_path" ]] || {',
     '  echo "::error::automatic config export evidence is missing or invalid" >&2',
     "  exit 1",
@@ -1067,7 +1068,7 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
     errors.push("live E2E must upload the validated config export YAML");
   }
   if (
-    requireConfigExportEvidence.if !== "${{ success() }}" ||
+    requireConfigExportEvidence.if !== "${{ always() }}" ||
     requireConfigExportEvidence.shell !== "bash" ||
     String(requireConfigExportEvidence.run ?? "") !== CONFIG_EXPORT_ARTIFACT_REQUIREMENT_SCRIPT ||
     (requireConfigExportEvidence["continue-on-error"] !== undefined &&

@@ -3,7 +3,7 @@
 
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -128,17 +128,24 @@ describe("E2E operations workflow", testTimeoutOptions(15_000), () => {
     },
   );
   it.each([
-    ["success with matching YAML", "success", ["config-export.yaml"], CONFIG_EXPORT_YAML_SHA256, 0],
-    ["success without YAML", "success", [], CONFIG_EXPORT_YAML_SHA256, 1],
-    ["success without a YAML digest", "success", ["config-export.yaml"], undefined, 1],
-    ["success with replaced YAML", "success", ["config-export.yaml"], "0".repeat(64), 1],
-    ["expected refusal without YAML", "expected-refusal", [], undefined, 0],
-    ["no usable sandbox without YAML", "no-usable-sandbox", [], undefined, 0],
-    ["expected refusal with YAML", "expected-refusal", ["config-export.yaml"], undefined, 1],
-    ["failed evidence without YAML", "failure", [], undefined, 1],
+    [
+      "success with matching YAML",
+      "success",
+      ["config-export.yaml"],
+      CONFIG_EXPORT_YAML_SHA256,
+      0,
+      true,
+    ],
+    ["success without YAML", "success", [], CONFIG_EXPORT_YAML_SHA256, 1, false],
+    ["success without a YAML digest", "success", ["config-export.yaml"], undefined, 1, false],
+    ["success with replaced YAML", "success", ["config-export.yaml"], "0".repeat(64), 1, false],
+    ["expected refusal without YAML", "expected-refusal", [], undefined, 0, false],
+    ["no usable sandbox without YAML", "no-usable-sandbox", [], undefined, 0, false],
+    ["expected refusal with YAML", "expected-refusal", ["config-export.yaml"], undefined, 1, false],
+    ["failed evidence without YAML", "failure", [], undefined, 1, false],
   ] as const)(
     "checks classification-aware config export artifacts for %s (#12132)",
-    (_caseName, classification, yamlFileNames, sha256, expectedStatus) => {
+    (_caseName, classification, yamlFileNames, sha256, expectedStatus, yamlRetained) => {
       const workflow = readE2eOperationsWorkflow();
       const requirement = workflow.jobs.live.steps!.find(
         (step) => step.name === "Require automatic config export evidence",
@@ -171,6 +178,7 @@ describe("E2E operations workflow", testTimeoutOptions(15_000), () => {
 
       try {
         expect(result.status, result.stderr).toBe(expectedStatus);
+        expect(existsSync(join(artifactDirectory, "config-export.yaml"))).toBe(yamlRetained);
       } finally {
         rmSync(directory, { force: true, recursive: true });
       }
