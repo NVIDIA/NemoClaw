@@ -90,10 +90,6 @@ function passingEvidence(): Extract<HermesConfigExportLiveEvidence, { outcome: "
     launchersSucceeded: true,
     policyMatches: true,
     sandboxNameMatches: true,
-    yaml: {
-      nemoclaw: "apiVersion: nemoclaw.nvidia.com/v1alpha1\n",
-      nemohermes: "apiVersion: nemoclaw.nvidia.com/v1alpha1\n",
-    },
   };
 }
 

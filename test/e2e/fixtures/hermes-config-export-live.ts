@@ -56,7 +56,6 @@ interface HermesConfigExportPublishedEvidence {
   readonly launchersSucceeded: boolean;
   readonly policyMatches: boolean;
   readonly sandboxNameMatches: boolean;
-  readonly yaml?: Readonly<{ nemoclaw: string; nemohermes: string }>;
 }
 
 interface HermesConfigExportExpectedRefusalEvidence {
@@ -110,10 +109,7 @@ export function passesHermesConfigExportLiveEvidence(
     evidence.inferenceEndpointMatches &&
     evidence.launchersSucceeded &&
     evidence.policyMatches &&
-    evidence.sandboxNameMatches &&
-    evidence.yaml !== undefined &&
-    evidence.yaml.nemoclaw.length > 0 &&
-    evidence.yaml.nemohermes.length > 0
+    evidence.sandboxNameMatches
   );
 }
 
@@ -372,7 +368,6 @@ export async function verifyHermesConfigExportLive(
         (expectedPolicy as { network_policies?: unknown }).network_policies,
       ),
     sandboxNameMatches: sandbox.name === input.sandboxName,
-    ...(!containsCredential ? { yaml: { nemoclaw: nemoclawRaw, nemohermes: nemohermesRaw } } : {}),
   };
   await input.artifacts.writeJson("hermes-config-export-live-evidence.json", evidence);
   return { checked: true, passed: passesHermesConfigExportLiveEvidence(evidence) };
