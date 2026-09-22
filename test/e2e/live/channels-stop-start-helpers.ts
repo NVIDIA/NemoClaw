@@ -14,6 +14,7 @@ import {
 import type { CleanupRegistry } from "../fixtures/cleanup.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { expect } from "../fixtures/e2e-test.ts";
+import { captureOpenClawOnboardFailure } from "../fixtures/openclaw-onboard-diagnostics.ts";
 import { hermesRevisionScopedCredentialLinePattern } from "../fixtures/hermes-channel-credential-state.ts";
 import {
   type OpenClawChannelConfigState,
@@ -1031,6 +1032,12 @@ export async function runChannelsStopStartTarget({
     skip,
     "NVIDIA endpoint validation was rate-limited before channel lifecycle assertions ran",
   );
+  await captureOpenClawOnboardFailure(install, sandbox, {
+    sandboxName: SANDBOX_NAME,
+    artifactPrefix: "channels-onboard",
+    env: onboardingEnv,
+    redactionValues: redactions,
+  });
   expectExitZero(install, `${AGENT} install.sh`);
   await expectSandboxReady(
     host,

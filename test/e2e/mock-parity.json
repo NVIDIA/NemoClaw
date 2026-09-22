@@ -661,6 +661,7 @@
         "test/e2e/live/messaging-providers-wechat-runtime-proof.ts"
       ],
       "fast": [
+        "test/e2e/support/openclaw-onboard-diagnostics.test.ts",
         "src/lib/messaging/channels/discord/credential-injection.test.ts",
         "src/lib/onboard/credential-provider-registration.test.ts",
         "src/lib/onboard/messaging-policy-presets.test.ts",
@@ -891,6 +892,7 @@
       "fast": [
         "test/channels/channels-add-bridge-lifecycle.test.ts",
         "test/e2e/support/channels-stop-start-cleanup.test.ts",
+        "test/e2e/support/openclaw-onboard-diagnostics.test.ts",
         "test/e2e/support/channels-stop-start-config-state.test.ts",
         "test/e2e/support/channels-stop-start-googlechat.test.ts",
         "test/e2e/support/channels-stop-start-googlechat-proof.test.ts",
