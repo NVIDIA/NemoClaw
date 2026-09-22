@@ -27,14 +27,14 @@ impl Deployment {
         runtime: bool,
         cancel: &CancellationToken,
     ) -> Result<BTreeMap<String, Value>, Error> {
-        let graph = if runtime {
-            compile::compile_runtime(
+        let (graph, targets) = if runtime {
+            compile::compiled_runtime(
                 &record.document,
                 &record.generations,
                 &bundle.manifest.version,
             )?
         } else {
-            compile::compile(
+            compile::deployment_graph(
                 &record.document,
                 &record.generations,
                 &bundle.manifest.version,
@@ -50,27 +50,16 @@ impl Deployment {
             stage.directory.join("terraform.tfstate"),
         )
         .map_err(|_| Error::State("export requires readable deployment state"))?;
-        self.prepare(
+        self.initialize(
             bundle,
             &stage,
             &json!({"terraform":graph["terraform"], "provider":graph["provider"]}),
-        )?;
-        let schema_environment = crate::state::schema_environment(&stage.directory);
-        crate::process::run(
-            &stage.directory,
-            &bundle.tofu(),
-            &["init", "-upgrade", "-input=false", "-no-color"],
-            &schema_environment,
             cancel,
         )
         .await?;
+        let schema_environment = crate::state::schema_environment(&stage.directory);
         let bindings = stage.bindings(&bundle.tofu(), cancel).await?;
         settled(&bindings)?;
-        let targets = if runtime {
-            compile::runtime_targets(&record.document, &record.generations)?
-        } else {
-            compile::targets(&record.document, &record.generations)?
-        };
         let targets: Vec<_> = targets
             .iter()
             .filter(|target| !target.address.starts_with("data."))

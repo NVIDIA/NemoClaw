@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/nemoclaw-sdk", "crates/nemoclaw-authoring", "crates/nemoclaw-provider", "crates/nemoclaw-e2e", "crates/nemoclaw-cli", "crates/nemoclaw-runtime", "crates/nemoclaw-build"]
+members = ["crates/nemoclaw-sdk", "crates/nemoclaw-provider", "crates/nemoclaw-e2e", "crates/nemoclaw-cli", "crates/nemoclaw-runtime", "crates/nemoclaw-build"]
 resolver = "3"
 
 [workspace.package]

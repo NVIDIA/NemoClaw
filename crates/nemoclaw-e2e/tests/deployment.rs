@@ -160,6 +160,13 @@ async fn gateway_change_between_plan_and_apply_preserves_resources_and_allows_te
     // This apply planned no managed-resource mutations, so a failed read
     // must not impose the original-intent guard for ambiguous OpenShell writes.
     fixture.state.lock().unwrap().driver = None;
+    let failed_state = fs::read(directory.path().join("terraform.tfstate")).unwrap();
+    assert_eq!(deployment.export(&cancel).await.unwrap(), document);
+    assert_eq!(
+        fs::read(directory.path().join("terraform.tfstate")).unwrap(),
+        failed_state,
+        "export verifies established bindings without completing another apply"
+    );
     document.metadata.name = "corrected-observation-intent".into();
     assert!(
         deployment

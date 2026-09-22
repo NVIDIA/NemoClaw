@@ -47,6 +47,8 @@ NEMOCLAW_TEST_PROVIDER=/absolute/path/to/terraform-provider-nemoclaw \
 
 These tests also check gateway version and driver preconditions, failed observations without resource changes, and data-source reads deferred until bootstrap inputs become known.
 Standalone HCL cases exercise provider/profile replacement and removal without sandbox teardown mode, recreation after confirmed absence, credential-reference updates, and recovery after a lost creation response.
+They also commit absence with refresh-only before a later creation plan, and verify that substituted creation readback preserves the original binding with an error.
+A lost creation response followed by removing its declaration demonstrates why pending creation intent must be retained: OpenTofu cannot remove an object whose binding it never received.
 The fixture enforces the pinned API's refusal to delete a referenced profile or an attached provider; sandbox and workspace protection remain covered separately.
 
 The SDK/CLI lifecycle tests require a verified native bundle (manifest plus CLI, OpenTofu, and both production providers).

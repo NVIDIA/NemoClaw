@@ -28,8 +28,10 @@ pub(crate) struct Record {
     pub pending_creations: Option<BTreeMap<String, crate::backend::Row>>,
     pub succeeded: bool,
     pub digest: String,
-    #[serde(skip_serializing_if = "String::is_empty")]
-    pub plan_digest: String,
+    // Accept older version-7 records, but saved plan artifacts no longer
+    // authorize recovery. Current bindings and fresh plans determine it.
+    #[serde(rename = "planDigest", skip_serializing)]
+    pub _legacy_plan_digest: String,
     #[serde(skip_serializing_if = "is_false")]
     pub destroying: bool,
     #[serde(skip_serializing_if = "is_false")]
@@ -90,7 +92,9 @@ impl Record {
     }
     pub fn begin_apply(&mut self, creations: BTreeMap<String, crate::backend::Row>) {
         if creations.is_empty() {
-            self.begin_runtime_apply();
+            // OpenTofu owns recovery for established bindings. Preserve any
+            // earlier ambiguous creation, but do not invent one for updates,
+            // deletions, or apply-time observations.
             return;
         }
         // Never narrow an older full-intent guard or forget an earlier lost reply.

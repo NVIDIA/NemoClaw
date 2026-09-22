@@ -6,7 +6,6 @@
 Create one OpenClaw sandbox using an existing OpenShell gateway and inference endpoint, then access its native dashboard.
 This development procedure uses a source-built bundle and agent image.
 Published installer/release downloads and an end-to-end rehearsal of this procedure on the current revision: **TBD**.
-For a managed Docker gateway with hosted NVIDIA inference, use [interactive onboarding](reference/cli.md#commands) instead.
 
 ## 1. Prepare the Hosts and Bundle
 
