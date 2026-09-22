@@ -58,6 +58,7 @@ function createProbeFixture(): ProbeFixture {
       credentialFiles: [credentialFile],
       configFiles: [configFile],
       procRoot,
+      processCommandMarkers: ["python3", "worker.py"],
     }),
   };
 }
@@ -217,6 +218,44 @@ describe("Bedrock Runtime bounded leak probe", () => {
     });
   });
 
+  it("ignores unreadable unrelated processes after selecting the required process (#12191)", () => {
+    const fixture = createProbeFixture();
+    const unrelatedRoot = path.join(fixture.input.procRoot, "202");
+    fs.mkdirSync(path.join(unrelatedRoot, "environ"), { recursive: true });
+    fs.writeFileSync(path.join(unrelatedRoot, "cmdline"), "unrelated\0daemon\0");
+
+    const result = runProbe(fixture.input);
+    const parsed = parseBedrockLeakProbeResult(result.stdout, PATTERNS);
+
+    expect(result.status).toBe(0);
+    expect(parsed.status).toBe("clean");
+    expect(parsed.categories.processEnvironment.itemsScanned).toBe(1);
+    expect(parsed.categories.processArguments.itemsScanned).toBe(1);
+  });
+
+  it("fails closed when the required process cannot be selected (#12191)", () => {
+    const fixture = createProbeFixture();
+    const input = {
+      ...fixture.input,
+      processCommandMarkers: ["missing", "gateway"],
+    };
+
+    const result = runProbe(input);
+    const parsed = parseBedrockLeakProbeResult(result.stdout, PATTERNS);
+
+    expect(result.status).toBe(2);
+    expect(parsed.categories.processEnvironment).toMatchObject({
+      status: "error",
+      itemsScanned: 0,
+      errors: ["required-process-boundary-empty", "required-process-selection-empty"],
+    });
+    expect(parsed.categories.processArguments).toMatchObject({
+      status: "error",
+      itemsScanned: 0,
+      errors: ["required-process-boundary-empty", "required-process-selection-empty"],
+    });
+  });
+
   it("fails closed at the per-file byte limit without publishing file content (#12191)", () => {
     const fixture = createProbeFixture();
     fs.writeFileSync(fixture.configFile, Buffer.alloc(1024 * 1024 + 1, 65));
@@ -244,6 +283,7 @@ describe("Bedrock Runtime bounded leak probe", () => {
         credentialFiles: [fixture.credentialFile],
         configFiles: [fixture.configFile],
         procRoot: fixture.input.procRoot,
+        processCommandMarkers: fixture.input.processCommandMarkers,
       }),
     ).toThrow("between 1 and 16");
 
@@ -253,6 +293,7 @@ describe("Bedrock Runtime bounded leak probe", () => {
         credentialFiles: [fixture.credentialFile],
         configFiles: [fixture.configFile],
         procRoot: fixture.input.procRoot,
+        processCommandMarkers: fixture.input.processCommandMarkers,
       }),
     ).toThrow("8 to 4096");
     expect(() =>
@@ -260,8 +301,17 @@ describe("Bedrock Runtime bounded leak probe", () => {
         credentialFiles: [`/${"x".repeat(32_768)}`],
         configFiles: [fixture.configFile],
         procRoot: fixture.input.procRoot,
+        processCommandMarkers: fixture.input.processCommandMarkers,
       }),
     ).toThrow("input exceeded its byte limit");
+    expect(() =>
+      createBedrockLeakProbeInput(PATTERNS, {
+        credentialFiles: [fixture.credentialFile],
+        configFiles: [fixture.configFile],
+        procRoot: fixture.input.procRoot,
+        processCommandMarkers: ["x"],
+      }),
+    ).toThrow("bounded single-line text");
 
     const clean = runProbe(fixture.input);
     const forged = JSON.parse(clean.stdout) as {
@@ -293,6 +343,7 @@ describe("Bedrock Runtime bounded leak probe", () => {
       credentialFiles: [fixture.credentialFile],
       configFiles: [fixture.configFile],
       procRoot: fixture.input.procRoot,
+      processCommandMarkers: fixture.input.processCommandMarkers,
     });
     const bounded = runProbe(boundedInput);
     const parsed = parseBedrockLeakProbeResult(bounded.stdout, scanPatterns);
@@ -314,6 +365,7 @@ describe("Bedrock Runtime bounded leak probe", () => {
         credentialFiles: [fixture.credentialFile],
         configFiles: [fixture.configFile],
         procRoot: fixture.input.procRoot,
+        processCommandMarkers: fixture.input.processCommandMarkers,
       }),
     ).not.toThrow();
     expect(patterns.map(({ name }) => name)).toEqual([

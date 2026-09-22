@@ -36,6 +36,7 @@ export interface BedrockLeakProbeInput {
   readonly credentialFiles: readonly string[];
   readonly configFiles: readonly string[];
   readonly procRoot: string;
+  readonly processCommandMarkers: readonly string[];
 }
 
 type ProbeCategoryName = (typeof PROBE_CATEGORIES)[number];
@@ -64,6 +65,7 @@ interface BedrockLeakProbeInputOptions {
   readonly credentialFiles: readonly string[];
   readonly configFiles: readonly string[];
   readonly procRoot?: string;
+  readonly processCommandMarkers: readonly string[];
 }
 
 export function createBedrockForbiddenLeakPatterns(
@@ -96,11 +98,31 @@ function validatePatterns(patterns: readonly ForbiddenLeakPattern[]): void {
 }
 
 function validatePaths(label: string, paths: readonly string[]): void {
-  if (paths.length === 0 || paths.length > 16) {
-    throw new Error(`Bedrock leak probe ${label} must contain between 1 and 16 paths`);
+  const countInvalid = paths.length === 0 || paths.length > 16;
+  const pathInvalid = paths.some(
+    (filePath) => !filePath.startsWith("/") || /[\r\n]/u.test(filePath),
+  );
+  if (countInvalid || pathInvalid) {
+    throw new Error(
+      countInvalid
+        ? `Bedrock leak probe ${label} must contain between 1 and 16 paths`
+        : `Bedrock leak probe ${label} must contain absolute single-line paths`,
+    );
   }
-  if (paths.some((filePath) => !filePath.startsWith("/") || /[\r\n]/u.test(filePath))) {
-    throw new Error(`Bedrock leak probe ${label} must contain absolute single-line paths`);
+}
+
+function validateProcessCommandMarkers(markers: readonly string[]): void {
+  const countInvalid = markers.length === 0 || markers.length > 8;
+  const markerInvalid = markers.some((marker) => {
+    const bytes = Buffer.byteLength(marker, "utf8");
+    return bytes < 2 || bytes > 128 || /[\0\r\n]/u.test(marker);
+  });
+  if (countInvalid || markerInvalid) {
+    throw new Error(
+      countInvalid
+        ? "Bedrock leak probe requires between 1 and 8 process command markers"
+        : "Bedrock leak probe process command markers must be bounded single-line text",
+    );
   }
 }
 
@@ -111,6 +133,7 @@ export function createBedrockLeakProbeInput(
   validatePatterns(patterns);
   validatePaths("credential files", options.credentialFiles);
   validatePaths("config files", options.configFiles);
+  validateProcessCommandMarkers(options.processCommandMarkers);
   const procRoot = options.procRoot ?? "/proc";
   validatePaths("process root", [procRoot]);
   const input: BedrockLeakProbeInput = {
@@ -127,6 +150,7 @@ export function createBedrockLeakProbeInput(
     credentialFiles: [...options.credentialFiles],
     configFiles: [...options.configFiles],
     procRoot,
+    processCommandMarkers: [...options.processCommandMarkers],
   };
   if (Buffer.byteLength(JSON.stringify(input), "utf8") > 32_768) {
     throw new Error("Bedrock leak probe input exceeded its byte limit");
