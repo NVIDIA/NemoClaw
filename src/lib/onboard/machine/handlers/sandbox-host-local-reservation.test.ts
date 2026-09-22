@@ -129,16 +129,26 @@ it("does not take over a pending reservation owned by another session", async ()
   expect(test.registry.getSandbox("saved")).toEqual(before);
 });
 
-it("rejects host-local authority without a recorded gateway port", async () => {
-  const test = await resumedHostLocalSandbox();
-  test.registry.restoreSandboxEntry({ name: "saved", ...test.route, gatewayPort: null });
-  const before = test.registry.getSandbox("saved");
-  await expect(test.run()).rejects.toThrow(
-    "Cannot reserve host-local inference provenance without exact runtime and gateway authority",
-  );
-  expect(test.createSandbox).not.toHaveBeenCalled();
-  expect(test.registry.getSandbox("saved")).toEqual(before);
-});
+it.each(["gatewayPort", "openshellDriver"] as const)(
+  "reports recovery guidance for a published host-local row missing %s",
+  async (field) => {
+    const test = await resumedHostLocalSandbox();
+    test.registry.restoreSandboxEntry({ name: "saved", ...test.route, [field]: null });
+    const before = test.registry.getSandbox("saved");
+    const failure = test.run();
+    await expect(failure).rejects.toThrow(
+      "Cannot reserve host-local inference provenance without exact runtime and gateway authority",
+    );
+    await expect(failure).rejects.toThrow("sandbox 'saved'");
+    await expect(failure).rejects.toThrow("nemoclaw saved doctor");
+    await expect(failure).rejects.toHaveProperty(
+      "cause.message",
+      "Cannot reserve host-local inference provenance without exact runtime and gateway authority",
+    );
+    expect(test.createSandbox).not.toHaveBeenCalled();
+    expect(test.registry.getSandbox("saved")).toEqual(before);
+  },
+);
 
 it("reuses the same session's pending host-local authority without changing the row", async () => {
   const test = await resumedHostLocalSandbox();
@@ -164,7 +174,14 @@ it.each(["gatewayPort", "openshellDriver"] as const)(
       reservationSessionId: test.session.sessionId,
     });
     const before = test.registry.getSandbox("saved");
-    await expect(test.run()).rejects.toThrow(
+    const failure = test.run();
+    await expect(failure).rejects.toThrow(
+      "Cannot reserve host-local inference provenance without exact runtime and gateway authority",
+    );
+    await expect(failure).rejects.toThrow("sandbox 'saved'");
+    await expect(failure).rejects.toThrow("nemoclaw saved doctor");
+    await expect(failure).rejects.toHaveProperty(
+      "cause.message",
       "Cannot reserve host-local inference provenance without exact runtime and gateway authority",
     );
     expect(test.createSandbox).not.toHaveBeenCalled();
