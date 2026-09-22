@@ -18,14 +18,9 @@ fn gateway_observations_are_read_only_in_plans_and_discardable_during_teardown()
                     .is_empty()
             );
             assert!(
-                runtime::check_runtime_plan(
-                    &plan,
-                    &BTreeMap::new(),
-                    &BTreeMap::new(),
-                    &BTreeSet::new()
-                )
-                .unwrap()
-                .is_empty()
+                runtime::check_runtime_plan(&plan, &BTreeMap::new(), &BTreeMap::new())
+                    .unwrap()
+                    .is_empty()
             );
         }
         let plan: Plan = serde_json::from_value(json!({"resource_changes":[{"mode":"data", "address":address, "change":{"actions":["delete"]}}]})).unwrap();
@@ -44,13 +39,7 @@ fn gateway_observations_are_read_only_in_plans_and_discardable_during_teardown()
             let plan: Plan = serde_json::from_value(json!({"resource_changes":[value]})).unwrap();
             assert!(check_plan(&plan, &BTreeMap::new(), &BTreeMap::new()).is_err());
             assert!(
-                runtime::check_runtime_plan(
-                    &plan,
-                    &BTreeMap::new(),
-                    &BTreeMap::new(),
-                    &BTreeSet::new()
-                )
-                .is_err()
+                runtime::check_runtime_plan(&plan, &BTreeMap::new(), &BTreeMap::new()).is_err()
             );
         }
         let change = json!({"mode":"data", "address":address, "change":{"actions":["read"]}});
@@ -173,6 +162,78 @@ fn reconstructible_resource_plans_keep_scope_without_rechecking_provider_identit
             .is_empty()
     );
     assert!(check_plan(&omitted, &expected, &bindings).is_err());
+}
+
+#[test]
+fn teardown_delegates_reconstructible_and_disposable_recovery_to_opentofu() {
+    for address in [
+        "nemoclaw_provider.example",
+        "nemoclaw_provider_profile.example",
+        "nemoclaw_pi_configuration.example",
+        "docker_container.runtime",
+    ] {
+        let allowed = BTreeMap::from([(address.into(), Row::new())]);
+        let bindings = BTreeMap::from([(
+            address.into(),
+            StateBinding {
+                id: "previous".into(),
+                ..Default::default()
+            },
+        )]);
+        let empty: Plan = serde_json::from_value(json!({})).unwrap();
+        // A committed refresh need not repeat absence in subsequent plans.
+        assert!(
+            check_destroy_plan(&empty, &allowed, &bindings, &BTreeSet::new())
+                .unwrap()
+                .is_empty()
+        );
+        let absent: Plan = serde_json::from_value(json!({
+            "resource_drift": [{"address":address, "change":{"actions":["delete"], "before":{"id":"refreshed-object"}}}],
+            "resource_changes": [{"address":address, "change":{"actions":["no-op"], "before":null, "after":null}}]
+        })).unwrap();
+        assert!(
+            check_destroy_plan(&absent, &allowed, &bindings, &BTreeSet::new())
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            check_destroy_plan(&absent, &BTreeMap::new(), &bindings, &BTreeSet::new()).is_err()
+        );
+        for deposed in [None, Some("refreshed-key")] {
+            let change = json!({"address":address, "deposed":deposed, "change":{"actions":["delete"], "before":{"id":"refreshed-object"}}});
+            let plan: Plan = serde_json::from_value(json!({"resource_changes":[change]})).unwrap();
+            assert_eq!(
+                check_destroy_plan(&plan, &allowed, &bindings, &BTreeSet::new())
+                    .unwrap()
+                    .len(),
+                1
+            );
+            assert!(
+                check_destroy_plan(&plan, &BTreeMap::new(), &bindings, &BTreeSet::new()).is_err()
+            );
+            assert!(
+                check_destroy_plan(
+                    &plan,
+                    &allowed,
+                    &bindings,
+                    &BTreeSet::from([address.into()])
+                )
+                .is_err()
+            );
+        }
+        for actions in [
+            json!(["create"]),
+            json!(["update"]),
+            json!(["delete", "create"]),
+            json!(["forget"]),
+        ] {
+            let plan: Plan = serde_json::from_value(
+                json!({"resource_changes":[{"address":address, "change":{"actions":actions}}]}),
+            )
+            .unwrap();
+            assert!(check_destroy_plan(&plan, &allowed, &bindings, &BTreeSet::new()).is_err());
+        }
+    }
 }
 
 #[test]
@@ -332,8 +393,8 @@ fn gateway_observation_resolves_only_gateway_credentials() {
 }
 
 #[test]
-fn runtime_replacement_requires_retained_storage_and_preserves_the_old_binding() {
-    let address = "nemoclaw_inference_service.runtime";
+fn gateway_replacement_preserves_the_old_binding_and_rejects_other_actions() {
+    let address = "nemoclaw_managed_gateway.runtime";
     let expected = [(address.into(), Row::from([("spec".into(), "old".into())]))].into();
     let bindings = [(
         address.into(),
@@ -344,19 +405,17 @@ fn runtime_replacement_requires_retained_storage_and_preserves_the_old_binding()
         },
     )]
     .into();
-    let replacement = [address.into()].into();
     let plan:Plan = serde_json::from_value(json!({"resource_changes":[{"address":address,"change":{"actions":["delete","create"],"before":{"id":"physical","spec":"old"}}}]})).unwrap();
-    assert!(runtime::check_runtime_plan(&plan, &expected, &bindings, &BTreeSet::new()).is_err());
     assert_eq!(
-        runtime::check_runtime_plan(&plan, &expected, &bindings, &replacement)
+        runtime::check_runtime_plan(&plan, &expected, &bindings)
             .unwrap()
             .len(),
         1
     );
     let mut wrong:Plan = serde_json::from_value(json!({"resource_changes":[{"address":address,"change":{"actions":["delete","create"],"before":{"id":"other","spec":"old"}}}]})).unwrap();
-    assert!(runtime::check_runtime_plan(&wrong, &expected, &bindings, &replacement).is_err());
+    assert!(runtime::check_runtime_plan(&wrong, &expected, &bindings).is_err());
     wrong.resource_changes.clear();
-    assert!(runtime::check_runtime_plan(&wrong, &expected, &bindings, &replacement).is_err());
+    assert!(runtime::check_runtime_plan(&wrong, &expected, &bindings).is_err());
     for action in [
         vec!["create"],
         vec!["delete"],
@@ -364,7 +423,7 @@ fn runtime_replacement_requires_retained_storage_and_preserves_the_old_binding()
         vec!["create", "delete"],
     ] {
         let plan:Plan=serde_json::from_value(json!({"resource_changes":[{"address":address,"change":{"actions":action,"before":{"id":"physical","spec":"old"}}}]})).unwrap();
-        assert!(runtime::check_runtime_plan(&plan, &expected, &bindings, &replacement).is_err());
+        assert!(runtime::check_runtime_plan(&plan, &expected, &bindings).is_err());
     }
 }
 
@@ -701,8 +760,7 @@ fn runtime_plans_accept_only_declared_local_image_observations_and_teardown_dele
         }
         let plan: Plan = serde_json::from_value(json!({"resource_changes":changes})).unwrap();
         assert_eq!(
-            runtime::check_runtime_plan(&plan, &allowed, &BTreeMap::new(), &BTreeSet::new())
-                .is_ok(),
+            runtime::check_runtime_plan(&plan, &allowed, &BTreeMap::new()).is_ok(),
             valid
         );
     }
@@ -775,7 +833,7 @@ fn removed_disposable_compute_accepts_confirmed_absence() {
             .is_empty()
     );
     assert!(
-        runtime::check_runtime_plan(&plan, &BTreeMap::new(), &bindings, &BTreeSet::new())
+        runtime::check_runtime_plan(&plan, &BTreeMap::new(), &bindings)
             .unwrap()
             .is_empty()
     );
@@ -856,7 +914,7 @@ fn replacement_cleanup_reports_opentofu_objects_within_deployment_scope() {
     let apply = plan(json!([current, old]));
     assert_eq!(check_plan(&apply, &allowed, &bindings).unwrap().len(), 1);
     assert_eq!(
-        runtime::check_runtime_plan(&apply, &allowed, &bindings, &BTreeSet::new())
+        runtime::check_runtime_plan(&apply, &allowed, &bindings)
             .unwrap()
             .len(),
         1

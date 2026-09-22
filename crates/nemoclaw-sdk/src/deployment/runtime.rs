@@ -4,9 +4,9 @@ mod teardown;
 #[cfg(all(test, unix))]
 mod tests;
 
-pub(super) use super::plan::check_plan_with_replacements as check_runtime_plan;
+pub(super) use super::plan::check_plan as check_runtime_plan;
 use super::*;
-use crate::managed::{GATEWAY_KIND, GATEWAY_STORAGE_KIND, Spec};
+use crate::managed::{GATEWAY_KIND, Spec};
 const GATEWAY_STORAGE: &str = "nemoclaw_gateway_storage.runtime";
 fn bound_spec(want: &Spec, binding: Option<&StateBinding>) -> Result<Spec, Error> {
     let Some(binding) = binding else {
@@ -29,7 +29,6 @@ fn bound_spec(want: &Spec, binding: Option<&StateBinding>) -> Result<Spec, Error
 }
 struct RuntimeValidation {
     expected: BTreeMap<String, Row>,
-    replacements: BTreeSet<String>,
     gateway_running: bool,
 }
 // Binding validation is local. Live identity and running state come from the
@@ -48,7 +47,6 @@ fn runtime_bindings(
     }
     for target in targets {
         if target.kind == GATEWAY_KIND
-            && plan::disposable(&target.address)
             && bindings.contains_key(&target.address)
             && !bindings.contains_key(GATEWAY_STORAGE)
         {
@@ -82,35 +80,14 @@ fn runtime_bindings(
 }
 fn runtime_observations(
     document: &Document,
-    generations: &crate::compile::Generations,
     targets: &[Target],
     bindings: &BTreeMap<String, StateBinding>,
     plan: &Plan,
 ) -> Result<RuntimeValidation, Error> {
     let mut result = RuntimeValidation {
         expected: runtime_bindings(targets, bindings)?,
-        replacements: BTreeSet::new(),
         gateway_running: document.spec.gateway.as_managed().is_none(),
     };
-    let retained: BTreeSet<_> = targets
-        .iter()
-        .filter(|target| {
-            target.kind == GATEWAY_STORAGE_KIND
-                || crate::services::resource_behavior(&target.kind).retained_storage
-        })
-        .filter(|target| {
-            bindings.get(&target.address).is_some_and(|binding| {
-                plan.resource_changes.iter().any(|change| {
-                    change.address == target.address
-                        && change.mode.as_deref() != Some("data")
-                        && change.change.actions == ["no-op"]
-                        && change.change.before["id"] == binding.id
-                        && change.change.before["spec"] == binding.spec
-                })
-            })
-        })
-        .map(|target| target.address.clone())
-        .collect();
     if let Some(gateway) = targets
         .iter()
         .find(|target| target.kind == GATEWAY_KIND && plan::disposable(&target.address))
@@ -123,26 +100,13 @@ fn runtime_observations(
                     .is_some_and(|id| !id.is_empty())
         });
     }
-    for target in targets.iter().filter(|target| {
-        !plan::disposable(&target.address)
-            && (target.kind == GATEWAY_KIND
-                || crate::services::resource_behavior(&target.kind).runtime_process)
-    }) {
-        if target.kind == GATEWAY_KIND {
-            result.gateway_running = plan.resource_changes.iter().any(|change| {
-                change.address == target.address && change.change.before["running"] == "true"
-            });
-        }
-        let storage = if target.kind == GATEWAY_KIND {
-            Some(GATEWAY_STORAGE.to_owned())
-        } else {
-            crate::services::required_storage_address(document, generations, &target.address)?
-        };
-        if result.expected[&target.address]["spec"] != target.values["spec"]
-            && storage.is_some_and(|address| retained.contains(&address))
-        {
-            result.replacements.insert(target.address.clone());
-        }
+    if let Some(gateway) = targets
+        .iter()
+        .find(|target| target.kind == GATEWAY_KIND && !plan::disposable(&target.address))
+    {
+        result.gateway_running = plan.resource_changes.iter().any(|change| {
+            change.address == gateway.address && change.change.before["running"] == "true"
+        });
     }
     Ok(result)
 }
@@ -193,10 +157,8 @@ impl Deployment {
         let plan = self
             .saved_plan(bundle, &stage, document, "apply.plan", cancel)
             .await?;
-        let checked =
-            runtime_observations(document, &record.generations, &targets, &bindings, &plan)?;
-        let changes =
-            check_runtime_plan(&plan, &checked.expected, &bindings, &checked.replacements)?;
+        let checked = runtime_observations(document, &targets, &bindings, &plan)?;
+        let changes = check_runtime_plan(&plan, &checked.expected, &bindings)?;
         if !apply {
             if !checked.gateway_running
                 && !self
