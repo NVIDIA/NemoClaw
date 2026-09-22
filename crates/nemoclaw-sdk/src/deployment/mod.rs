@@ -35,6 +35,9 @@ pub enum Progress {
     /// A resource operation observed in OpenTofu's machine-readable UI.
     Resource {
         resource: &'static str,
+        /// Native graph identity when it is a bounded, safe resource address.
+        /// Unlike the kind label, this distinguishes concurrent resources.
+        address: Option<String>,
         action: &'static str,
         status: &'static str,
         elapsed: std::time::Duration,

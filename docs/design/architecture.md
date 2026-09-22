@@ -27,6 +27,16 @@ The SDK and NemoClaw provider share backend library code.
 The [provider reference](../provider.md) owns resource-specific contracts and protocol details.
 Implementation starts at [Deployment](../../crates/nemoclaw-sdk/src/deployment/mod.rs), [graph compilation](../../crates/nemoclaw-sdk/src/compile.rs), and [backend contracts](../../crates/nemoclaw-sdk/src/backend.rs).
 
+## Terminal Presentation
+
+The CLI renders SDK progress through an inline Ratatui display or plain lines for redirected output.
+Both consume the same typed observations; neither queries resources or interprets runtime logs.
+OpenTofu supplies resource operations and identities, while readiness and health remain with their existing owners.
+The renderer tracks active work and elapsed time without treating animation as evidence of progress.
+It finishes before the CLI writes the final text or JSON result.
+Unsupported health, incomplete plans, and unconfirmed state after failure remain explicit in both formats.
+See [CLI output](../reference/cli.md#output-and-failure) for the user contract.
+
 ## Configuration
 
 Desired-state YAML passes through the SDK's [configuration validation](../configuration-schema.md).

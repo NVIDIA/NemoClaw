@@ -9,6 +9,8 @@ publish = false
 [dependencies]
 nemoclaw-sdk = { path = "../nemoclaw-sdk" }
 clap.workspace = true
+ratatui.workspace = true
+terminal_size.workspace = true
 serde_json.workspace = true
 serde-saphyr.workspace = true
 tokio = { workspace = true, features = ["signal", "io-std", "io-util", "net"] }

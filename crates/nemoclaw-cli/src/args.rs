@@ -10,6 +10,14 @@ pub(crate) enum OutputFormat {
     Json,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, ValueEnum)]
+pub(crate) enum ProgressMode {
+    #[default]
+    Auto,
+    Plain,
+    Off,
+}
+
 #[derive(Parser)]
 #[command(
     name = "nemoclaw",
@@ -26,6 +34,9 @@ pub(crate) struct Cli {
     /// Report operation timings on standard error.
     #[arg(long, short, global = true)]
     pub(crate) verbose: bool,
+    /// Progress on stderr: automatic inline display, plain lines, or off.
+    #[arg(long, global = true, value_enum, default_value = "auto")]
+    pub(crate) progress: ProgressMode,
     #[command(subcommand)]
     pub(crate) command: Command,
 }
@@ -52,6 +63,9 @@ pub(crate) enum Command {
         after_help = "Examples:\n  nemoclaw apply spark.yaml\n  cat spark.yaml | nemoclaw apply -"
     )]
     Apply {
+        /// Output format (use json for scripts).
+        #[arg(short, long, value_enum, default_value = "text", value_name = "FORMAT")]
+        output: OutputFormat,
         /// Desired-state YAML path, or - to read standard input.
         #[arg(value_name = "FILE")]
         file: PathBuf,
@@ -67,14 +81,20 @@ pub(crate) enum Command {
         output: Option<PathBuf>,
     },
     /// Remove owned workloads while retaining persistent data.
-    Destroy,
+    Destroy {
+        /// Output format (use json for scripts).
+        #[arg(short, long, value_enum, default_value = "text", value_name = "FORMAT")]
+        output: OutputFormat,
+    },
 }
 
 impl Command {
     pub(crate) fn output_format(&self) -> OutputFormat {
         match self {
-            Self::Plan { output, .. } => *output,
-            _ => OutputFormat::Json,
+            Self::Plan { output, .. } | Self::Apply { output, .. } | Self::Destroy { output } => {
+                *output
+            }
+            Self::Export { .. } => OutputFormat::Text,
         }
     }
 }
@@ -82,6 +102,49 @@ impl Command {
 mod tests {
     use super::*;
     use clap::{CommandFactory, error::ErrorKind};
+
+    #[test]
+    fn lifecycle_commands_default_to_text_and_accept_json() {
+        for args in [
+            vec!["nemoclaw", "apply", "spark.yaml"],
+            vec!["nemoclaw", "destroy"],
+        ] {
+            assert_eq!(
+                Cli::try_parse_from(args.clone())
+                    .unwrap()
+                    .command
+                    .output_format(),
+                OutputFormat::Text
+            );
+            let mut json = args;
+            json.extend(["-o", "json"]);
+            assert_eq!(
+                Cli::try_parse_from(json).unwrap().command.output_format(),
+                OutputFormat::Json
+            );
+        }
+    }
+
+    #[test]
+    fn progress_modes_are_global_and_output_does_not_change_export_yaml() {
+        for (mode, expected) in [
+            ("auto", ProgressMode::Auto),
+            ("plain", ProgressMode::Plain),
+            ("off", ProgressMode::Off),
+        ] {
+            for args in [
+                vec!["nemoclaw", "--progress", mode, "destroy"],
+                vec!["nemoclaw", "destroy", "--progress", mode],
+            ] {
+                assert_eq!(Cli::try_parse_from(args).unwrap().progress, expected);
+            }
+        }
+        let cli = Cli::try_parse_from(["nemoclaw", "export", "-o", "deployment.yaml"]).unwrap();
+        assert_eq!(cli.command.output_format(), OutputFormat::Text);
+        assert!(
+            matches!(cli.command, Command::Export { output: Some(path) } if path.as_path() == std::path::Path::new("deployment.yaml"))
+        );
+    }
 
     #[test]
     fn command_definitions_are_consistent() {

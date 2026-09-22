@@ -11,7 +11,7 @@ mod progress;
 use args::Cli;
 use clap::Parser;
 use nemoclaw_sdk::CancellationToken;
-use std::process::ExitCode;
+use std::{io::Write, process::ExitCode};
 
 fn interrupt() -> std::io::Result<impl std::future::Future<Output = ()>> {
     #[cfg(unix)]
@@ -32,17 +32,31 @@ fn interrupt() -> std::io::Result<impl std::future::Future<Output = ()>> {
         })
     }
 }
-#[tokio::main]
-async fn main() -> ExitCode {
+fn main() -> ExitCode {
+    let runtime = match tokio::runtime::Runtime::new() {
+        Ok(runtime) => runtime,
+        Err(error) => {
+            eprintln!("Cannot start command: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let outcome = runtime.block_on(run());
+    // Tokio stdin uses an uncancellable blocking read. All operation/state cleanup
+    // and terminal restoration have finished; do not wait for more input to exit.
+    runtime.shutdown_background();
+    outcome
+}
+
+async fn run() -> ExitCode {
     let cli = Cli::parse();
     let output_format = cli.command.output_format();
+    let context = formatting::RenderContext::new(&cli);
     let cancel = CancellationToken::new();
     let signal = cancel.clone();
     let interruption = match interrupt() {
         Ok(interruption) => interruption,
         Err(error) => {
-            eprintln!("cannot listen for interruption: {error}");
-            return ExitCode::FAILURE;
+            return report_error(&error, output_format, &context);
         }
     };
     let signals = tokio::spawn(async move {
@@ -53,11 +67,13 @@ async fn main() -> ExitCode {
         args::Command::Export { output } => output.clone(),
         _ => None,
     };
-    let result = dispatch::run(cli, tokio::io::stdin(), &cancel).await;
+    let mut reporter = progress::Reporter::new(cli.progress, cli.verbose, context.header());
+    let result = dispatch::run(cli, tokio::io::stdin(), &cancel, reporter.callback()).await;
+    reporter.finish();
     signals.abort();
     match result {
         Ok(result) => {
-            match formatting::render(result, output_format).and_then(|output| {
+            match formatting::render(result, output_format, &context).and_then(|output| {
                 io::write_output(
                     output_path.as_deref(),
                     output.as_bytes(),
@@ -67,14 +83,32 @@ async fn main() -> ExitCode {
             }) {
                 Ok(()) => ExitCode::SUCCESS,
                 Err(error) => {
-                    eprintln!("{error}");
+                    // Output may already contain a partial result. Do not append another JSON value.
+                    let _ = writeln!(
+                        std::io::stderr().lock(),
+                        "{}",
+                        formatting::render_output_error(error.as_ref(), &context).trim_end()
+                    );
                     ExitCode::FAILURE
                 }
             }
         }
-        Err(error) => {
-            eprintln!("{}", formatting::render_error(error.as_ref()));
-            ExitCode::FAILURE
-        }
+        Err(error) => report_error(error.as_ref(), output_format, &context),
     }
+}
+
+fn report_error(
+    error: &(dyn std::error::Error + 'static),
+    format: args::OutputFormat,
+    context: &formatting::RenderContext,
+) -> ExitCode {
+    let rendered = formatting::render_error(error, format, context);
+    let written = match format {
+        args::OutputFormat::Json => writeln!(std::io::stdout().lock(), "{}", rendered.trim_end()),
+        args::OutputFormat::Text => writeln!(std::io::stderr().lock(), "{}", rendered.trim_end()),
+    };
+    if written.is_err() {
+        return ExitCode::FAILURE;
+    }
+    ExitCode::from(formatting::error_exit_code(error))
 }

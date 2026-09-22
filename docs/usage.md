@@ -38,7 +38,7 @@ Export is not a backup of agent files or conversations.
 
 Without `--state-dir`, state defaults to `.nemoclaw` in the working directory.
 Plan and apply require a YAML path or explicit `-` for stdin; export and destroy accept no YAML.
-Plan prints text by default; scripts should select `-o json`.
+Plan, apply, and destroy print text by default; scripts should select `-o json`.
 See [CLI options and output](reference/cli.md) for bundle selection, formats, and exit codes.
 
 ## Configure Sandboxes and Inference
@@ -95,7 +95,7 @@ Use an [agent image built from this revision](build.md#build-agent-images); an o
 Image changes require the [separate-deployment path](#choose-the-change-path); keep existing deployments' original bundles and state.
 
 Not-ready or unknown supported health, transport failures, and malformed reports fail apply and retain resources.
-For a supported health failure, the CLI writes structured JSON to stderr and exits with status 1.
+For a supported health failure, the CLI exits with status 1 and reports the observation in the selected [output format](reference/cli.md#output-and-failure).
 Keep state, diagnose the failure, and explicitly reapply after recovery.
 Health is an observation at its recorded time, not a guarantee of future availability.
 

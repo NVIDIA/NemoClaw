@@ -64,6 +64,7 @@ Each Fabric harness is an independent ignored test with its own temporary state 
 To test one harness, append its test name, for example `-- --ignored harness_codex`; to run all harnesses with the same concurrency bound under Cargo, use `-- --ignored --test-threads=4`.
 
 These tests cover shared SDK/CLI state, interrupted creation, unchanged apply, readiness failure without replacement, failed observation without state loss, export/reapply, interrupted destroy, and retained workspace recovery.
+The `cli_terminal_outputs_preserve_lifecycle_and_json_contract` case checks text plans, JSON apply, unchanged text apply, JSON plan completeness, text destroy, and repeated JSON destroy against the same fixture state.
 The registration lifecycle case recreates a missing selected registration while preserving its sandbox and profile, and the interrupted-create case permits unrelated intent edits while retaining pending resource configuration.
 The `independent_sandboxes_reconcile_concurrently_and_retain_shared_dependencies` fixture checks overlapping sandbox creates, unchanged reapply, and teardown with a retained shared workspace.
 The `gateway_change_between_plan_and_apply_preserves_resources_and_allows_teardown` fixture changes the gateway driver after planning to verify OpenTofu's fresh apply-time check, recovery, and teardown after capability drift.

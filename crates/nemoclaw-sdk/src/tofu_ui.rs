@@ -59,8 +59,8 @@ impl Ui {
             Some("apply_errored") => "failed",
             _ => return,
         };
-        // Only fixed labels cross the progress boundary. IDs, provider messages,
-        // outputs, and arbitrary configuration values can contain credentials.
+        // Forward fixed kind labels and bounded graph identities, never provider
+        // messages, physical IDs, outputs, or arbitrary configuration values.
         let kind = value["hook"]["resource"]["resource_type"].as_str();
         let resource = match kind {
             Some("nemoclaw_workspace") => "workspace",
@@ -69,12 +69,14 @@ impl Ui {
             Some("nemoclaw_provider") => "provider",
             Some("nemoclaw_provider_profile") => "provider profile",
             Some("nemoclaw_managed_gateway") => "gateway",
+            Some("nemoclaw_gateway_storage") => "gateway storage",
+            Some("docker_container") => "container",
+            Some("docker_image") => "image",
+            Some("docker_volume") => "volume",
+            Some("docker_network") => "network",
             Some(kind) => {
                 let kind = kind.strip_prefix("nemoclaw_").unwrap_or(kind);
-                let Some(label) = crate::services::resource_label(kind) else {
-                    return;
-                };
-                label
+                crate::services::resource_label(kind).unwrap_or("resource")
             }
             None => return,
         };
@@ -96,7 +98,10 @@ impl Ui {
         };
         let mut elapsed =
             Duration::from_secs(value["hook"]["elapsed_seconds"].as_u64().unwrap_or(0));
-        if let Some(address) = value["hook"]["resource"]["addr"].as_str() {
+        let address = value["hook"]["resource"]["addr"]
+            .as_str()
+            .filter(|address| safe_address(address, kind.unwrap_or_default()));
+        if let Some(address) = address {
             let key = (address.to_owned(), action == "refresh");
             let timestamp = value["@timestamp"]
                 .as_str()
@@ -121,6 +126,7 @@ impl Ui {
         }
         (self.progress)(Progress::Resource {
             resource,
+            address: address.map(str::to_owned),
             action,
             status,
             elapsed,
@@ -137,6 +143,28 @@ impl Ui {
         }
         Ok(())
     }
+}
+
+/// Generated graphs use named resources, without user-controlled instance keys.
+/// Reject keys, terminal controls, malformed addresses, and oversized identities.
+fn safe_address(address: &str, kind: &str) -> bool {
+    let address = address.strip_prefix("data.").unwrap_or(address);
+    let Some(name) = address
+        .strip_prefix(kind)
+        .and_then(|rest| rest.strip_prefix('.'))
+    else {
+        return false;
+    };
+    fn identifier(value: &str) -> bool {
+        value
+            .as_bytes()
+            .first()
+            .is_some_and(|byte| byte.is_ascii_alphabetic() || *byte == b'_')
+            && value
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+    }
+    address.len() <= 1024 && identifier(kind) && identifier(name)
 }
 
 #[cfg(test)]
@@ -161,6 +189,7 @@ mod tests {
             *received.lock().unwrap(),
             [Progress::Resource {
                 resource: "sandbox readiness",
+                address: Some("data.nemoclaw_sandbox_readiness.private-name".into()),
                 action: "read",
                 status: "waiting",
                 elapsed: Duration::from_secs(30)
@@ -202,12 +231,35 @@ mod tests {
         }
         ui.finish().unwrap();
         let events = received.lock().unwrap();
+        assert!(format!("{:?}", events[0]).contains("nemoclaw_provider.fast"));
+        assert!(format!("{:?}", events[1]).contains("nemoclaw_provider.smart"));
         assert!(
             matches!(events[2], Progress::Resource { elapsed, .. } if elapsed == std::time::Duration::from_millis(125))
         );
         assert!(
             matches!(events[3], Progress::Resource { elapsed, .. } if elapsed == std::time::Duration::from_millis(250))
         );
+    }
+
+    #[test]
+    fn native_container_progress_is_visible_without_forwarding_provider_messages() {
+        let received = Arc::new(Mutex::new(Vec::new()));
+        let events = received.clone();
+        let mut ui = Ui::new(Arc::new(move |event| events.lock().unwrap().push(event)));
+        ui.feed(b"{\"type\":\"version\",\"ui\":\"1.0\"}\n");
+        ui.feed(
+            concat!(
+                "{\"type\":\"apply_start\",\"@message\":\"secret-sentinel\",",
+                "\"hook\":{\"resource\":{\"resource_type\":\"docker_container\",",
+                "\"addr\":\"docker_container.inference_qwen\"},\"action\":\"create\"}}\n"
+            )
+            .as_bytes(),
+        );
+        ui.finish().unwrap();
+        let events = received.lock().unwrap();
+        assert_eq!(events.len(), 1);
+        assert!(format!("{:?}", events[0]).contains("docker_container.inference_qwen"));
+        assert!(!format!("{:?}", events[0]).contains("secret-sentinel"));
     }
 
     #[test]
@@ -229,11 +281,48 @@ mod tests {
             *received.lock().unwrap(),
             [Progress::Resource {
                 resource: "sandbox",
+                address: None,
                 action: "create",
                 status: "waiting",
                 elapsed: std::time::Duration::from_secs(30)
             }]
         );
+    }
+
+    #[test]
+    fn unsafe_addresses_keep_operation_visible_without_exposing_values() {
+        for address in [
+            "nemoclaw_sandbox.\u{1b}[31msecret-sentinel",
+            "nemoclaw_sandbox.assistant[\"secret-sentinel\"]",
+            "secret-sentinel",
+            "different_kind.secret-sentinel",
+            &format!("nemoclaw_sandbox.{}", "s".repeat(1024)),
+        ] {
+            let received = Arc::new(Mutex::new(Vec::new()));
+            let events = received.clone();
+            let mut ui = Ui::new(Arc::new(move |event| events.lock().unwrap().push(event)));
+            ui.feed(b"{\"type\":\"version\",\"ui\":\"1.0\"}\n");
+            ui.feed(
+                serde_json::json!({
+                    "type":"apply_errored", "hook": {
+                        "resource":{"resource_type":"nemoclaw_sandbox", "addr":address},
+                        "action":"create"
+                    }
+                })
+                .to_string()
+                .as_bytes(),
+            );
+            ui.finish().unwrap();
+            assert!(matches!(
+                received.lock().unwrap().as_slice(),
+                [Progress::Resource {
+                    address: None,
+                    status: "failed",
+                    ..
+                }]
+            ));
+            assert!(!format!("{:?}", received.lock().unwrap()).contains("secret-sentinel"));
+        }
     }
     #[test]
     fn rejects_unsupported_missing_malformed_and_oversized_streams() {

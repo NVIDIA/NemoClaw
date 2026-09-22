@@ -10,6 +10,86 @@ use std::{fs, path::PathBuf, process::Command};
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires explicit verified NEMOCLAW_TEST_BUNDLE; isolated gateway fixture"]
+async fn cli_terminal_outputs_preserve_lifecycle_and_json_contract() {
+    let bundle = PathBuf::from(std::env::var_os("NEMOCLAW_TEST_BUNDLE").unwrap());
+    let directory = tempfile::tempdir().unwrap();
+    let fixture = Fixture::start().await;
+    let mut document = Document::parse(
+        include_str!("../../nemoclaw-sdk/tests/fixtures/config/local.yaml").as_bytes(),
+    )
+    .unwrap();
+    *document.spec.gateway.endpoint_mut() = fixture.endpoint.clone();
+    let input = directory.path().join("deployment.yaml");
+    let state = directory.path().join("state");
+    fs::write(&input, document.yaml().unwrap()).unwrap();
+    let invoke = |operation: &str, format: &str| {
+        let mut command = Command::new(
+            bundle
+                .join("bin")
+                .join(nemoclaw_sdk::bundle::executable("nemoclaw")),
+        );
+        command
+            .args([
+                operation,
+                "-o",
+                format,
+                "--progress",
+                "plain",
+                "--state-dir",
+            ])
+            .arg(&state);
+        if operation != "destroy" {
+            command.arg(&input).arg("--non-interactive");
+        }
+        let output = command.output().unwrap();
+        assert!(
+            output.status.success(),
+            "{operation}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(!output.stdout.contains(&0x1b));
+        assert!(!output.stderr.contains(&0x1b));
+        output
+    };
+    let planned = invoke("plan", "text");
+    let preview = String::from_utf8(planned.stdout).unwrap();
+    assert!(preview.contains("sandbox/assistant"), "{preview}");
+    assert!(preview.contains("No runtime resources changed"));
+    assert_eq!(fixture.state.lock().unwrap().effects, 0);
+
+    let applied = invoke("apply", "json");
+    let result: serde_json::Value = serde_json::from_slice(&applied.stdout).unwrap();
+    assert_eq!(result["outcome"], "succeeded");
+    assert!(!result["changes"].as_array().unwrap().is_empty());
+    let effects = fixture.state.lock().unwrap().effects;
+    let planned = invoke("plan", "json");
+    let result: serde_json::Value = serde_json::from_slice(&planned.stdout).unwrap();
+    assert_eq!(result["complete"], true);
+    assert_eq!(result["changes"], serde_json::json!([]));
+    let applied = invoke("apply", "text");
+    let summary = String::from_utf8(applied.stdout).unwrap();
+    assert!(summary.contains("Apply complete"), "{summary}");
+    assert!(summary.contains("No resource changes"));
+    assert!(summary.contains("Model and agent responses were not tested"));
+    assert_eq!(fixture.state.lock().unwrap().effects, effects);
+
+    let destroyed = invoke("destroy", "text");
+    let summary = String::from_utf8(destroyed.stdout).unwrap();
+    assert!(summary.contains("Destroy complete"), "{summary}");
+    assert!(summary.contains("Sandbox files and conversation history deleted"));
+    assert!(summary.contains("OpenShell workspace (does not preserve sandbox files)"));
+    let repeated = invoke("destroy", "json");
+    let result: serde_json::Value = serde_json::from_slice(&repeated.stdout).unwrap();
+    assert_eq!(result["outcome"], "destroyed");
+    assert_eq!(result["changes"], serde_json::json!([]));
+    let observed = fixture.state.lock().unwrap();
+    assert!(observed.sandboxes.is_empty());
+    assert!(observed.providers.is_empty());
+    assert_eq!(observed.workspaces.len(), 1);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires explicit verified NEMOCLAW_TEST_BUNDLE; isolated gateway fixture"]
 async fn missing_selected_provider_reconciles_without_sandbox_changes() {
     let bundle = PathBuf::from(std::env::var_os("NEMOCLAW_TEST_BUNDLE").unwrap());
     let directory = tempfile::tempdir().unwrap();
@@ -1119,17 +1199,26 @@ async fn apply_health_failure_retains_resources_and_unchanged_apply_checks_again
             .join("bin")
             .join(nemoclaw_sdk::bundle::executable("nemoclaw")),
     )
-    .arg("apply")
+    .args(["apply", "-o", "json", "--progress", "off"])
     .arg(&input)
     .arg("--state-dir")
     .arg(directory.path())
     .output()
     .unwrap();
     assert_eq!(failed.status.code(), Some(1));
-    assert!(failed.stdout.is_empty());
-    let diagnostic: serde_json::Value = serde_json::from_slice(&failed.stderr).unwrap();
-    assert_eq!(diagnostic["health"]["reason_code"], "fabric_health_timeout");
-    assert_eq!(diagnostic["resourcesRetained"], true);
+    assert!(failed.stderr.is_empty());
+    let diagnostic: serde_json::Value = serde_json::from_slice(&failed.stdout).unwrap();
+    assert_eq!(diagnostic["outcome"], "failed");
+    assert_eq!(
+        diagnostic["error"]["health"]["reason_code"],
+        "fabric_health_timeout"
+    );
+    assert!(
+        diagnostic["remainingState"]
+            .as_str()
+            .unwrap()
+            .contains("Resources retained")
+    );
     fixture.state.lock().unwrap().health_report = None;
     let result = deployment.apply(&document, &cancel).await.unwrap();
     assert!(result.changes.is_empty());
