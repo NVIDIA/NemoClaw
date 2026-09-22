@@ -93,7 +93,7 @@ function nativeNvidiaFixture() {
 
 describe("OpenShell provider evidence", () => {
   it.each(["openclaw", "hermes"] as const)(
-    "qualifies the %s Tavily profile at its binding without reading credentials (#12138)",
+    "qualifies the %s Tavily rules without an access preset or credential reads (#12138)",
     async (agent) => {
       const { raw, connect } = fixture();
       const profile = managedTavilyProfile(agent);
@@ -164,6 +164,7 @@ describe("OpenShell provider evidence", () => {
       ],
       ["credential refresh", { credentials: [{ ...credential, refresh: {} }] }],
       ["a foreign endpoint", { endpoints: [{ ...endpoint, host: "foreign.example" }] }],
+      ["a read-write access preset", { endpoints: [{ ...endpoint, access: "read-write" }] }],
       [
         "disabled body rewriting",
         { endpoints: [{ ...endpoint, requestBodyCredentialRewrite: false }] },
@@ -320,6 +321,10 @@ describe("OpenShell provider evidence", () => {
     { label: "missing credentials", change: { credentials: [] } },
     { label: "missing binaries", change: { binaries: [] } },
     { label: "discovery override", change: { discovery: {} } },
+    {
+      label: "an empty access preset",
+      change: { endpoints: [{ ...managedBraveProfile().endpoints[0], access: "" }] },
+    },
   ])("rejects managed Brave profiles with $label (#10904)", async ({ change }) => {
     const { connect, raw } = fixture();
     raw.getProvider.mockResolvedValue({

@@ -69,6 +69,7 @@ export function managedTavilyProfile(agent: "openclaw" | "hermes" = "openclaw") 
       {
         ...base.endpoints[0],
         host: "api.tavily.com",
+        access: "",
         requestBodyCredentialRewrite: true,
         rules: ["/search", "/extract"].map((path) => ({
           allow: {

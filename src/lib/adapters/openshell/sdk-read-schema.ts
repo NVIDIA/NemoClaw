@@ -70,7 +70,6 @@ const ManagedRestEndpointFields = {
   protocol: Type.Literal("rest"),
   tls: Type.Literal(""),
   enforcement: Type.Literal("enforce"),
-  access: Type.Literal("read-write"),
   allowedIps: Type.Tuple([]),
   denyRules: Type.Tuple([]),
   allowEncodedSlash: Type.Literal(false),
@@ -118,6 +117,7 @@ export const ManagedBraveProfileResponseSchema = Type.Object({
       Type.Object({
         ...ManagedRestEndpointFields,
         host: Type.Literal("api.search.brave.com"),
+        access: Type.Literal("read-write"),
         rules: Type.Tuple([]),
         requestBodyCredentialRewrite: Type.Literal(false),
       }),
@@ -160,6 +160,7 @@ function tavilyProfile(id: "tavily" | "tavily-hermes-v1", binaries: readonly str
         Type.Object({
           ...ManagedRestEndpointFields,
           host: Type.Literal("api.tavily.com"),
+          access: Type.Literal(""),
           rules: Type.Tuple([tavilyRule("/search"), tavilyRule("/extract")]),
           requestBodyCredentialRewrite: Type.Literal(true),
         }),

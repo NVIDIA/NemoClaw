@@ -66,6 +66,16 @@ describe("automatic config export validation phase", () => {
 
   it.each([
     {
+      label: "a managed search export without its staged image placeholder",
+      change: { image: undefined },
+      message: "complete v1alpha1 export contract",
+    },
+    {
+      label: "a managed search export with a Deep Agents image reference",
+      change: { image: { ref: IMAGE_REF } },
+      message: "complete v1alpha1 export contract",
+    },
+    {
       label: "a missing search definition",
       change: { integrations: undefined },
       message: "agent grants",

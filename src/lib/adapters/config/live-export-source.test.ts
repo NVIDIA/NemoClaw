@@ -210,6 +210,18 @@ describe("live export snapshot reader", () => {
           }),
       ],
       [
+        "the profile adds a read-write access preset",
+        () => {
+          const profile = managedTavilyProfile(agent);
+          raw.getProviderProfile.mockResolvedValue({
+            profile: {
+              ...profile,
+              endpoints: [{ ...profile.endpoints[0], access: "read-write" }],
+            },
+          });
+        },
+      ],
+      [
         "the profile never stabilizes",
         () => {
           let version = 4n;

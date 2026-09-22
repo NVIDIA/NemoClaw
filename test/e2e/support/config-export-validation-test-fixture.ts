@@ -218,6 +218,7 @@ export function searchDocument(
       sandboxes: [
         {
           ...sandbox,
+          image: null,
           harness: { kind: agent },
           integrations: {
             [name]: {
