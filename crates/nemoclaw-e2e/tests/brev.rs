@@ -282,6 +282,55 @@ fn confirmed_openclaw_reply(response: &[u8]) -> bool {
         })
 }
 
+fn openclaw_reply_diagnostics(response: &[u8]) -> Value {
+    let Ok(value) = serde_json::from_slice::<Value>(response) else {
+        return json!({"valid_json": false});
+    };
+    let payloads = value["result"]["payloads"].as_array();
+    json!({
+        "valid_json": true,
+        "status_ok": value["status"] == "ok",
+        "has_error": !value["error"].is_null(),
+        "error_http_status": value["error"]["status"].as_u64().filter(|status| (100..=599).contains(status)),
+        "payload_count": payloads.map(Vec::len),
+        "error_payload_count": payloads.map(|payloads| payloads.iter().filter(|payload| payload["isError"] == true).count()),
+        "has_first_text": value["result"]["payloads"][0]["text"].is_string(),
+        "confirmed_reply": confirmed_openclaw_reply(response)
+    })
+}
+
+#[test]
+fn reply_diagnostics_report_shape_without_model_text_or_credentials() {
+    let response = json!({
+        "status": "secret-status",
+        "error": {"message": "secret-credential", "status": 429},
+        "result": {"payloads": [{"text": "private-model-text", "isError": true}]}
+    });
+    assert_eq!(
+        openclaw_reply_diagnostics(&serde_json::to_vec(&response).unwrap()),
+        json!({
+            "valid_json": true,
+            "status_ok": false,
+            "has_error": true,
+            "error_http_status": 429,
+            "payload_count": 1,
+            "error_payload_count": 1,
+            "has_first_text": true,
+            "confirmed_reply": false
+        })
+    );
+    assert_eq!(
+        openclaw_reply_diagnostics(b"secret non-JSON response"),
+        json!({"valid_json": false})
+    );
+    for status in [json!("secret-status"), json!(99), json!(600), json!(-1)] {
+        let diagnostic = openclaw_reply_diagnostics(
+            &serde_json::to_vec(&json!({"error": {"status": status}})).unwrap(),
+        );
+        assert!(diagnostic["error_http_status"].is_null());
+    }
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires a fresh owned bare Brev AMD64 VM, hosted inference credential, explicit config, unused state path, and verified bundle; destroys workloads and retains deployment storage"]
 async fn bare_brev_hosted_openclaw_lifecycle() {
@@ -389,7 +438,8 @@ async fn bare_brev_hosted_openclaw_lifecycle() {
     .await;
     assert!(
         confirmed_openclaw_reply(&response),
-        "no confirmed hosted agent reply"
+        "no confirmed hosted agent reply: {}",
+        openclaw_reply_diagnostics(&response)
     );
 
     let proof_path = "/sandbox/workspace/brev-reconciliation-proof";
