@@ -8,6 +8,7 @@ mod export;
 mod plan;
 mod runtime;
 mod timing;
+mod voice;
 use crate::{
     CancellationToken, Error,
     backend::Row,
@@ -26,6 +27,7 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
+pub use voice::IntegrationResult;
 
 pub use timing::StepOutcome;
 
@@ -80,6 +82,8 @@ pub struct OperationResult {
     pub retained: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub health: Vec<crate::SandboxHealth>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub integrations: Vec<IntegrationResult>,
 }
 impl OperationResult {
     fn planned(changes: Vec<Change>) -> Self {
@@ -89,6 +93,7 @@ impl OperationResult {
             deferred: Vec::new(),
             retained: Vec::new(),
             health: Vec::new(),
+            integrations: Vec::new(),
         }
     }
 }
@@ -96,6 +101,7 @@ impl OperationResult {
 /// The same desired-state operations used by the CLI. The selected state
 /// directory is locked for each operation; callers retain it across failures.
 pub struct Deployment {
+    voiceclaw: Option<crate::voice::Bootstrap>,
     state_directory: PathBuf,
     bundle_directory: PathBuf,
     secrets: Arc<dyn Secrets>,
@@ -104,6 +110,7 @@ pub struct Deployment {
 impl Deployment {
     pub fn new(state_directory: &Path, bundle_directory: &Path) -> Self {
         Self {
+            voiceclaw: None,
             state_directory: state_directory.into(),
             bundle_directory: bundle_directory.into(),
             secrets: Arc::new(EnvironmentSecrets),
@@ -331,6 +338,8 @@ impl Deployment {
             .collect::<Result<_, Error>>()?;
         record.succeeded = true;
         store.save(&record)?;
+        self.connect_voiceclaw(&bundle, &store, &record, &mut result, cancel)
+            .await?;
         result.outcome = Outcome::Succeeded;
         Ok(result)
     }

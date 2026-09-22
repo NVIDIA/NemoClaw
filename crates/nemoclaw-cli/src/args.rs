@@ -95,6 +95,9 @@ pub(crate) enum Command {
         /// Desired-state YAML path, or - to read standard input.
         #[arg(value_name = "FILE")]
         file: PathBuf,
+        /// Operator-approved VoiceClaw installation root for an explicit R0 connection.
+        #[arg(long, value_name = "DIR")]
+        voiceclaw: Option<PathBuf>,
         /// Fail instead of prompting for missing credential values.
         #[arg(long)]
         non_interactive: bool,

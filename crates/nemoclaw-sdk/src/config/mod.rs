@@ -169,6 +169,7 @@ impl Document {
             {
                 match binding.definition {
                     Integration::WebSearch(search) => names.push(&search.credential.env),
+                    Integration::VoiceclawR0 { .. } => {}
                 }
             }
         }

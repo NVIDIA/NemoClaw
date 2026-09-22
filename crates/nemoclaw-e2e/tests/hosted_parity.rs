@@ -267,6 +267,7 @@ mod live {
             deferred: vec!["OpenShell registration and sandbox require the managed gateway".into()],
             retained: vec![],
             health: vec![],
+            integrations: vec![],
         }
     }
 
@@ -347,6 +348,7 @@ mod live {
                 deferred: vec![],
                 retained: retained.clone(),
                 health: vec![],
+                integrations: vec![],
             }
         );
         assert_eq!(
@@ -357,6 +359,7 @@ mod live {
                 deferred: vec![],
                 retained: retained.clone(),
                 health: vec![],
+                integrations: vec![],
             }
         );
         retained
@@ -383,6 +386,7 @@ mod live {
                 deferred: vec![],
                 retained: vec![],
                 health: vec![],
+                integrations: vec![],
             }
         );
         let exported = deployment.export(&cancel).await.unwrap();
@@ -437,6 +441,7 @@ mod live {
                 deferred: vec![],
                 retained: vec![],
                 health: vec![],
+                integrations: vec![],
             }
         );
         let unchanged = deployment.apply(&document, &cancel).await.unwrap();

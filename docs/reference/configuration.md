@@ -632,6 +632,16 @@ Web search with gateway-held credentials and explicit agent grants.
 | `kind` | string | Yes | — | Integration implementation selected by this definition. Constraints: `"webSearch"`. |
 | `provider` | [SearchProvider](#searchprovider) | Yes | — | Supported search service. |
 
+### Alternative 2
+
+Explicit VoiceClaw R0 connection to the selected OpenClaw agent.
+
+
+| Field | Input type | Required | Default | Description and constraints |
+|---|---|---|---|---|
+| `agentRef` | string | Yes | — | Name of the attached OpenClaw agent. Constraints: pattern `^[a-z][a-z0-9-]{0,39}$`. |
+| `kind` | string | Yes | — | Integration implementation selected by this definition. Constraints: `"voiceclawR0"`. |
+
 ## Manifest
 
 Pinned model snapshot inventory. The parser rejects duplicate files and file/directory conflicts.

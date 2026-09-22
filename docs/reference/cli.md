@@ -19,7 +19,8 @@ The [CLI parser](../../crates/nemoclaw-cli/src/args.rs) defines the commands and
 | `nemoclaw export` | Retained state; no YAML | Observed YAML after configuration and ownership checks |
 | `nemoclaw destroy` | Retained state; no YAML | JSON result; removes owned workloads under the retention rules |
 
-Apply can download models and check readiness; it does not request model or agent responses.
+Ordinary apply can download models and check readiness; it does not request model or agent responses.
+The experimental [VoiceClaw R0 handoff](#experimental-voiceclaw-r0-handoff) can dispatch one fixed agent probe.
 Destroy does not prompt for confirmation and deletes sandbox files and conversation history.
 Read [deployment lifecycle](../usage.md) and preview deletion before destroying a deployment.
 
@@ -66,6 +67,7 @@ Credential values are not written to desired state, output, diagnostics, or depl
 | `--name`, `--sandbox`, `--agent` | `onboard` | Set the generated deployment, sandbox, and agent names |
 | `--provider`, `--model` | `onboard` | Set the hosted NVIDIA provider and model names; unsupported model choices fail instead of being approximated |
 | `--credential-env` | `onboard` | Name the environment variable reference; does not read its value |
+| `--voiceclaw DIR` | `apply` | Select an operator-approved Unix bootstrap for the experimental VoiceClaw R0 handoff |
 | `--destroy` | `plan` | Preview destroy; cannot be combined with a YAML input |
 | `--help`, `-h` | CLI and subcommands | Display help |
 | `--version`, `-V` | CLI | Display the CLI version |
@@ -127,3 +129,24 @@ See [recovery](../usage.md#updates-and-recovery) for interrupted operations and 
 
 The current CLI does not expose `launch`, `status`, `doctor`, `backup-all`, `rebuild`, or `config export`.
 Use [migration](../migration.md) to find current task owners and **TBD** workflows.
+
+## Experimental VoiceClaw R0 Handoff
+
+**TBD:** native VoiceClaw qualification and a supported bootstrap distribution.
+The [example](../../examples/voiceclaw-r0.yaml) and [R0/2 fixtures](../../crates/nemoclaw-sdk/tests/fixtures/voiceclaw-r0-v2/README.md) describe an experimental operator-managed connection.
+It is separate from managed VoiceClaw service installation.
+
+On Unix, attach one `voiceclawR0` integration to an OpenClaw agent through `integrationRefs`, then pass `--voiceclaw /absolute/bootstrap/root` to `apply` from your deployment directory.
+The operator-approved root must contain the executable `bin/voiceclaw-nemoclaw-r0` implementing the fixture bootstrap protocol.
+The SDK equivalent is `Deployment::with_voiceclaw(Bootstrap::new(root)?)`.
+
+Apply saves the deployed agent before invoking bootstrap preparation and connection.
+The bootstrap receives a short-lived credential through descriptor 3, backed by a private temporary file that is unlinked after launch; it is absent from YAML, argv, and retained deployment state.
+The semantic server listens on loopback, binds the credential to the selected native agent identity, and permits one fixed response probe.
+The bootstrap inherits the terminal streams and is responsible for displaying client instructions; its output may precede the CLI's final JSON.
+Apply stays attached until the connection closes or the operator cancels; it does not manage the external VoiceClaw process lifetime.
+The final result includes the connection's close reason in `integrations`.
+
+A failed or cancelled handoff retains the deployed agent and its state.
+Keep that state directory to retry apply or use ordinary plan/destroy recovery.
+Windows rejects the bootstrap before launch because the credential descriptor protocol requires Unix.

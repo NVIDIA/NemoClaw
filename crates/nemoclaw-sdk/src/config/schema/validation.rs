@@ -97,6 +97,14 @@ pub(super) fn constrain(root: &mut Value, normalized: bool) {
             json!({"description": "Supported installer selected by this service definition."}),
         );
     }
+    for variant in defs["Integration"]["oneOf"]
+        .as_array_mut()
+        .expect("integration variants")
+    {
+        if variant["properties"]["kind"]["const"] == "voiceclawR0" {
+            property(variant, "agentRef", json!({"pattern": c::SLUG}));
+        }
+    }
     for name in ["Spec", "Sandbox", "Agent"] {
         property(
             &mut defs[name],

@@ -1249,6 +1249,27 @@
             "credential"
           ],
           "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Explicit VoiceClaw R0 connection to the selected OpenClaw agent.",
+          "properties": {
+            "agentRef": {
+              "description": "Name of the attached OpenClaw agent.",
+              "pattern": "^[a-z][a-z0-9-]{0,39}$",
+              "type": "string"
+            },
+            "kind": {
+              "const": "voiceclawR0",
+              "description": "Integration implementation selected by this definition.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "agentRef"
+          ],
+          "type": "object"
         }
       ]
     },

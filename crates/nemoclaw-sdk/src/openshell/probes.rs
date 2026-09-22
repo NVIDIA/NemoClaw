@@ -94,7 +94,106 @@ fn response_text(bytes: &[u8]) -> Result<String, Error> {
     }
     Ok(text.into())
 }
+fn voice_command(
+    binding: &Row,
+    session: &str,
+    message: &str,
+    command_timeout: &str,
+) -> Result<Vec<String>, OpenClawResponseError> {
+    if value(binding, "agent_runtime") != "fabric-openclaw" {
+        return Err(OpenClawResponseError::Unavailable);
+    }
+    let settings = inference_settings(value(binding, "inference_json"), "fabric-openclaw")
+        .map_err(|_| OpenClawResponseError::Unavailable)?
+        .ok_or(OpenClawResponseError::Unavailable)?;
+    let [agent] = settings.agents.as_slice() else {
+        return Err(OpenClawResponseError::Unavailable);
+    };
+    // The binding names the Fabric sandbox runtime; OpenClaw has a separate
+    // native agent identity carried by its validated runtime configuration.
+    Ok([
+        "openclaw",
+        "agent",
+        "--agent",
+        &agent.name,
+        "--session-id",
+        session,
+        "--message",
+        message,
+        "--thinking",
+        "off",
+        "--json",
+        "--timeout",
+        command_timeout,
+    ]
+    .map(String::from)
+    .to_vec())
+}
+
 impl OpenShell {
+    pub(crate) async fn voice_ready(&self, binding: &Row) -> crate::voice::ProbeResult {
+        match self.agent_configuration(binding).await {
+            Ok(()) => crate::voice::ProbeResult::Ready,
+            Err(Error::Observation(ObservationError::BindingMismatch)) => {
+                crate::voice::ProbeResult::Replaced
+            }
+            Err(_) => crate::voice::ProbeResult::Unavailable,
+        }
+    }
+
+    async fn openclaw_response(
+        &self,
+        binding: &Row,
+        message: &'static str,
+        command_timeout: &'static str,
+        execution_timeout: u32,
+    ) -> Result<String, OpenClawResponseError> {
+        let mut random = [0_u8; 16];
+        getrandom::fill(&mut random).map_err(|_| OpenClawResponseError::Unavailable)?;
+        random[6] = (random[6] & 15) | 64;
+        random[8] = (random[8] & 63) | 128;
+        let hex: String = random.iter().map(|b| format!("{b:02x}")).collect();
+        let session = format!(
+            "{}-{}-{}-{}-{}",
+            &hex[..8],
+            &hex[8..12],
+            &hex[12..16],
+            &hex[16..20],
+            &hex[20..]
+        );
+        let command = voice_command(binding, &session, message, command_timeout)?;
+        let (exit, output) = match self
+            .exec_bound(binding, command, Row::new(), execution_timeout)
+            .await
+        {
+            Ok(result) => result,
+            Err(Error::Observation(ObservationError::BindingMismatch)) => {
+                return Err(OpenClawResponseError::Replaced);
+            }
+            Err(_) => return Err(OpenClawResponseError::Unavailable),
+        };
+        if exit != 0 {
+            return Err(OpenClawResponseError::Unavailable);
+        }
+        response_text(&output).map_err(|_| OpenClawResponseError::InvalidResponse)
+    }
+
+    pub(crate) async fn voice_response(&self, binding: &Row) -> crate::voice::DispatchResult {
+        match self
+            .openclaw_response(binding, crate::voice::QUESTION, "60", 60)
+            .await
+        {
+            Ok(answer) => crate::voice::DispatchResult::Answer(answer),
+            Err(OpenClawResponseError::Replaced) => crate::voice::DispatchResult::TargetReplaced,
+            Err(OpenClawResponseError::Unavailable) => {
+                crate::voice::DispatchResult::AgentUnavailable
+            }
+            Err(OpenClawResponseError::InvalidResponse) => {
+                crate::voice::DispatchResult::InvalidResponse
+            }
+        }
+    }
+
     async fn bound_sandbox(&self, binding: &Row) -> Result<proto::Sandbox, Error> {
         let sandbox = self
             .grpc()
@@ -442,6 +541,28 @@ impl OpenShell {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn voice_dispatch_selects_the_native_agent_not_the_sandbox_runtime() {
+        let document = crate::config::Document::parse(
+            include_bytes!("../../../../examples/fabric-openclaw.yaml").as_slice(),
+        )
+        .unwrap();
+        let generations = ["workspace", "provider", "sandbox"]
+            .map(|kind| (kind.into(), "a".repeat(32)))
+            .into();
+        let targets = crate::compile::targets(&document, &generations).unwrap();
+        let binding = &targets
+            .iter()
+            .find(|target| target.kind == "sandbox")
+            .unwrap()
+            .values;
+        assert_eq!(binding["agent_name"], "assistant");
+        let command = voice_command(binding, "session", crate::voice::QUESTION, "60").unwrap();
+        assert_eq!(command[3], "main");
+        assert_eq!(command[7], crate::voice::QUESTION);
+    }
+
     #[tokio::test]
     async fn observed_pi_catalog_supplies_its_declared_default_without_private_model_state() {
         let mut value: serde_json::Value =
@@ -578,4 +699,11 @@ mod tests {
             assert!(response_text(bytes).is_err());
         }
     }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum OpenClawResponseError {
+    Replaced,
+    Unavailable,
+    InvalidResponse,
 }

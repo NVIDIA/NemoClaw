@@ -103,6 +103,7 @@ impl Document {
         }
         validate_endpoint(gateway.endpoint(), true)?;
         self.validate_harness_references()?;
+        self.voiceclaw_r0_binding()?;
         let selected_providers = self.selected_inference_providers()?;
         crate::services::validate(self)?;
         self.validate_inference_references()?;

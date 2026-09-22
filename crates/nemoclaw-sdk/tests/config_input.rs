@@ -191,3 +191,54 @@ fn service_image_error_identifies_the_required_digest_pin() {
     }
     parse(&original).unwrap();
 }
+
+#[test]
+fn voiceclaw_intent_selects_one_openclaw_agent_without_internal_settings() {
+    let value = input("voiceclaw-r0.yaml");
+    let document = parse(&value).unwrap();
+    assert!(
+        matches!(&document.spec.integrations["voice"], nemoclaw_sdk::config::Integration::VoiceclawR0 { agent_ref } if agent_ref == "assistant")
+    );
+
+    for (path, replacement) in [
+        ("/spec/integrations/voice/kind", json!("unknown")),
+        ("/spec/integrations/voice/agentRef", json!("missing")),
+        ("/spec/sandboxes/0/harness/kind", json!("hermes")),
+    ] {
+        let mut invalid = value.clone();
+        *invalid.pointer_mut(path).unwrap() = replacement;
+        assert!(parse(&invalid).is_err(), "{path}");
+    }
+
+    let mut internal = value;
+    internal["spec"]["integrations"]["voice"]["credential"] = json!("secret");
+    assert!(parse(&internal).is_err());
+}
+
+#[test]
+fn voiceclaw_r0_requires_explicit_selection_and_only_one_attached_agent() {
+    let mut value = input("voiceclaw-r0.yaml");
+    value["spec"]["sandboxes"][0]["agent"]["integrationRefs"] = json!([]);
+    value["spec"]["sandboxes"][0]["harness"]["kind"] = json!("hermes");
+    let document = parse(&value).unwrap();
+    assert!(
+        document.spec.sandboxes[0]
+            .integration_bindings(&document.spec.integrations)
+            .unwrap()
+            .is_empty()
+    );
+
+    let mut value = input("voiceclaw-r0.yaml");
+    let mut second = value["spec"]["sandboxes"][0].clone();
+    second["name"] = json!("second");
+    value["spec"]["sandboxes"]
+        .as_array_mut()
+        .unwrap()
+        .push(second);
+    assert!(
+        parse(&value)
+            .unwrap_err()
+            .to_string()
+            .contains("one attached OpenClaw agent")
+    );
+}

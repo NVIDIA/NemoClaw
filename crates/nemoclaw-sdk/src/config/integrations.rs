@@ -11,6 +11,13 @@ use std::collections::{BTreeMap, BTreeSet};
 pub enum Integration {
     /// Web search with gateway-held credentials and explicit agent grants.
     WebSearch(WebSearch),
+    /// Explicit VoiceClaw R0 connection to the selected OpenClaw agent.
+    #[serde(rename = "voiceclawR0")]
+    VoiceclawR0 {
+        #[serde(rename = "agentRef")]
+        /// Name of the attached OpenClaw agent.
+        agent_ref: String,
+    },
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -108,6 +115,12 @@ impl Sandbox {
                     ));
                 }
                 Integration::WebSearch(_) => {}
+                Integration::VoiceclawR0 { agent_ref } if agent_ref == &agent.name => {}
+                Integration::VoiceclawR0 { .. } => {
+                    return Err(ConfigError::new(
+                        "VoiceClaw agentRef must match its attached agent",
+                    ));
+                }
             }
             bindings
                 .entry((owner, name))
@@ -133,6 +146,7 @@ impl Document {
         let mut selected = None;
         for binding in sandbox.integration_bindings(&self.spec.integrations)? {
             match binding.definition {
+                Integration::VoiceclawR0 { .. } => {}
                 Integration::WebSearch(search) => {
                     if selected.is_some() {
                         return Err(ConfigError::new(
@@ -255,4 +269,25 @@ pub(crate) fn search_provider_name(provider: SearchProvider, reference: &str) ->
         provider.name(),
         &super::hex(&Sha256::digest(reference))[..24]
     )
+}
+
+impl Document {
+    pub(crate) fn voiceclaw_r0_binding(&self) -> Result<Option<(&str, &Sandbox)>, ConfigError> {
+        let mut selected = None;
+        for sandbox in &self.spec.sandboxes {
+            for binding in sandbox.integration_bindings(&self.spec.integrations)? {
+                if matches!(binding.definition, Integration::VoiceclawR0 { .. }) {
+                    if selected.is_some()
+                        || self.sandbox_harness(sandbox)?.kind != HarnessKind::OpenClaw
+                    {
+                        return Err(ConfigError::new(
+                            "VoiceClaw R0 requires one attached OpenClaw agent",
+                        ));
+                    }
+                    selected = Some((binding.name, sandbox));
+                }
+            }
+        }
+        Ok(selected)
+    }
 }

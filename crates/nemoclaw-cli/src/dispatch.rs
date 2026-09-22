@@ -90,6 +90,7 @@ pub(crate) async fn run<R: AsyncRead + Unpin>(
         Command::Apply {
             file,
             non_interactive,
+            voiceclaw,
         } => {
             let document = document(&file, &mut stdin, cancel).await?;
             let mut lines = tokio::io::BufReader::new(stdin).lines();
@@ -102,6 +103,9 @@ pub(crate) async fn run<R: AsyncRead + Unpin>(
                 cancel,
             )
             .await?;
+            if let Some(root) = voiceclaw {
+                deployment = deployment.with_voiceclaw(nemoclaw_sdk::voice::Bootstrap::new(&root)?);
+            }
             deployment.apply(&document, cancel).await?
         }
         Command::Plan {

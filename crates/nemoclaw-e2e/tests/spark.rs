@@ -98,6 +98,7 @@ async fn spark_yaml_plans_and_applies_expected_resources() {
             deferred: vec!["OpenShell registration and sandbox require the managed gateway".into(),],
             retained: vec![],
             health: vec![],
+            integrations: vec![],
         }
     );
 
@@ -120,6 +121,7 @@ async fn spark_yaml_plans_and_applies_expected_resources() {
             deferred: vec![],
             retained: vec![],
             health: vec![],
+            integrations: vec![],
         }
     );
     let reapplied = deployment.apply(&document, &cancel).await.unwrap();
@@ -183,6 +185,7 @@ async fn spark_image_change_plans_and_applies_replacement() {
             deferred: vec![],
             retained: vec![],
             health: vec![],
+            integrations: vec![],
         }
     );
     let applied = deployment.apply(&document, &cancel).await.unwrap();
