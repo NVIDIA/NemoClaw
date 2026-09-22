@@ -55,13 +55,10 @@ import {
   type SandboxCreatePlan,
 } from "../sandbox-create-plan-materialization";
 import {
-  prepareSandboxCreateLaunch,
-  prepareSandboxCreateLaunchWithPrebuild,
   prepareSandboxRuntimeLaunch,
   prebuildSandboxImageIfEligible,
   requiresLocalSandboxBuildKit,
   type SandboxCreateLaunchInput,
-  type SandboxCreateLaunchWithPrebuild,
   type SandboxRuntimeLaunchWithPrebuild,
 } from "../sandbox-create-launch";
 import { getSandboxReadyTimeoutSecs } from "../sandbox-gpu-create";
@@ -457,17 +454,10 @@ interface PreparedOnboardSandboxWorkloadLaunchBase {
   readonly legacyBuildContext: CreateSandboxBuildContextResult | null;
 }
 
-export type PreparedOnboardSandboxWorkloadLaunch = PreparedOnboardSandboxWorkloadLaunchBase &
-  (
-    | {
-        readonly createRequestPlan: PlannedOpenShellSandboxCreateRequest;
-        readonly launch: SandboxRuntimeLaunchWithPrebuild;
-      }
-    | {
-        readonly createRequestPlan: null;
-        readonly launch: SandboxCreateLaunchWithPrebuild;
-      }
-  );
+export type PreparedOnboardSandboxWorkloadLaunch = PreparedOnboardSandboxWorkloadLaunchBase & {
+  readonly createRequestPlan: PlannedOpenShellSandboxCreateRequest;
+  readonly launch: SandboxRuntimeLaunchWithPrebuild;
+};
 
 function requireLegacyBuildContext(
   buildContext: CreateSandboxBuildContextResult | null,
@@ -531,28 +521,15 @@ export async function prepareOnboardSandboxWorkloadLaunch(
     getChannelsFromPlan(input.plannedMessagingPlan) ?? createPlan.activeMessagingChannels;
   const initialGpuRoute = initialDockerGpuRoute(createPlan.gpuRoutePlan);
   const sandboxReadyTimeoutSecs = getSandboxReadyTimeoutSecs(input.gpu.config);
-  const portableCreateArgs = createPlan.createArgs ? [...createPlan.createArgs] : null;
-  if (!createPlan.createRequest && !portableCreateArgs) {
-    throw new Error("Sandbox workload is missing its create plan.");
-  }
   const launchInput = input.launchInput;
 
   let buildId = String(Date.now());
   let dashboardRemoteBindPrepared = false;
-  let prepared:
-    | {
-        readonly kind: "runtime";
-        readonly createRequest: PlannedOpenShellSandboxCreateRequest;
-        readonly launch: SandboxRuntimeLaunchWithPrebuild;
-      }
-    | {
-        readonly kind: "portable";
-        readonly launch: SandboxCreateLaunchWithPrebuild;
-      };
+  let prepared: {
+    readonly createRequest: PlannedOpenShellSandboxCreateRequest;
+    readonly launch: SandboxRuntimeLaunchWithPrebuild;
+  };
   if (input.workload.source.kind === "managed-image") {
-    if (!createPlan.createRequest) {
-      throw new Error("Portable sandbox creation cannot use a managed-image workload.");
-    }
     const runtimeProvider = requireManagedRuntimeProvider(input.runtime.runtimeProvider);
     const gatewayRuntime = runtimeProvider.gateway.prepareHostRuntime({
       environment: process.env,
@@ -586,7 +563,6 @@ export async function prepareOnboardSandboxWorkloadLaunch(
       managedStartupRootApplyRequest: rootApplyRequest,
     });
     prepared = {
-      kind: "runtime",
       createRequest: createPlan.createRequest,
       launch: {
         ...managedLaunch,
@@ -613,43 +589,23 @@ export async function prepareOnboardSandboxWorkloadLaunch(
     });
     buildId = patch.buildId;
     dashboardRemoteBindPrepared = patch.dashboardRemoteBindPrepared;
-    if (createPlan.createRequest) {
-      const runtimeLaunch = prepareSandboxRuntimeLaunch({
-        ...launchInput,
-        policyAttached: Boolean(createPlan.createRequest.policyPath),
-      });
-      const { createArgs: _portableArgs, ...prebuild } = await prebuildSandboxImageIfEligible({
-        buildCtx: buildContext.buildCtx,
-        buildId,
-        dockerDriverGateway: input.gpu.dockerDriverGateway,
-        origin: buildContext.origin,
-        sourceReference: createPlan.createRequest.source.reference,
-        sandboxName: input.launchInput.sandboxName,
-        requiresLocalBuildKit: requiresLocalSandboxBuildKit(
-          buildContext.origin,
-          input.legacy.agent,
-        ),
-      });
-      prepared = {
-        kind: "runtime",
-        createRequest: createPlan.createRequest,
-        launch: { ...runtimeLaunch, prebuild },
-      };
-    } else {
-      prepared = {
-        kind: "portable",
-        launch: await prepareSandboxCreateLaunchWithPrebuild({
-          ...launchInput,
-          createArgs: portableCreateArgs!,
-          prebuild: {
-            buildCtx: buildContext.buildCtx,
-            buildId,
-            dockerDriverGateway: input.gpu.dockerDriverGateway,
-            origin: buildContext.origin,
-          },
-        }),
-      };
-    }
+    const runtimeLaunch = prepareSandboxRuntimeLaunch({
+      ...launchInput,
+      policyAttached: Boolean(createPlan.createRequest.policyPath),
+    });
+    const { createArgs: _portableArgs, ...prebuild } = await prebuildSandboxImageIfEligible({
+      buildCtx: buildContext.buildCtx,
+      buildId,
+      dockerDriverGateway: input.gpu.dockerDriverGateway,
+      origin: buildContext.origin,
+      sourceReference: createPlan.createRequest.source.reference,
+      sandboxName: input.launchInput.sandboxName,
+      requiresLocalBuildKit: requiresLocalSandboxBuildKit(buildContext.origin, input.legacy.agent),
+    });
+    prepared = {
+      createRequest: createPlan.createRequest,
+      launch: { ...runtimeLaunch, prebuild },
+    };
   }
 
   const sharedLaunch = {
@@ -664,13 +620,6 @@ export async function prepareOnboardSandboxWorkloadLaunch(
     dashboardRemoteBindPrepared,
     legacyBuildContext,
   };
-  if (prepared.kind === "portable") {
-    return {
-      ...sharedLaunch,
-      createRequestPlan: null,
-      launch: prepared.launch,
-    };
-  }
   return {
     ...sharedLaunch,
     createRequestPlan: Object.freeze({
@@ -695,12 +644,9 @@ export function prepareHermesPortableOnboardSandboxLaunch(input: {
     intent: input.intent,
     fromRef: input.fromRef,
   });
-  if (!createPlan.createArgs) {
-    throw new Error("Hermes portable workload is missing its create arguments.");
-  }
-  const launch = prepareSandboxCreateLaunch({
+  const launch = prepareSandboxRuntimeLaunch({
     ...input.launchInput,
-    createArgs: createPlan.createArgs,
+    policyAttached: Boolean(createPlan.createRequest.policyPath),
   });
   return {
     ...createPlan,
@@ -709,10 +655,14 @@ export function prepareHermesPortableOnboardSandboxLaunch(input: {
     buildId: "hermes-portable",
     dashboardRemoteBindPrepared: false,
     legacyBuildContext: null,
-    createRequestPlan: null,
+    createRequestPlan: createPlan.createRequest,
     launch: {
       ...launch,
-      prebuild: { createArgs: [...createPlan.createArgs], imageRef: null, imageId: null },
+      prebuild: {
+        sourceReference: createPlan.createRequest.source.reference,
+        imageRef: null,
+        imageId: null,
+      },
     },
   };
 }

@@ -3397,6 +3397,8 @@ For gateway-based messaging agents, it also reports messaging overlap warnings w
 </AgentOnly>
 Use `$$nemoclaw <name> status` when you need one sandbox's live health and recovery guidance.
 Pass `--json` for machine-readable output with registered sandboxes, service state, inference routes, and health details.
+Each sandbox row's `configuredInference` object contains that sandbox's recorded `provider` and `model`.
+For schema-version-1 compatibility, the row-level `provider` and `model` fields keep their existing effective-route behavior; use `configuredInference` when you need the recorded route.
 When the latest resumable onboarding session owns the matching inference-route reservation, it appears under `Incomplete onboarding` in text and as `incompleteOnboarding` in JSON.
 When present, `incompleteOnboarding` contains `name`, `status` (`failed` or `in_progress`), `step` (a string or `null`), `interrupted` (a boolean), and `resumable: true`; otherwise it is `null`.
 It is not counted as a registered sandbox and does not trigger sandbox or gateway health probes.
@@ -3404,7 +3406,10 @@ Each JSON sandbox row reports `agent` as a string, never `null`.
 The row reports `openclaw` when the registry records no agent for the sandbox.
 This command reads the registry without gateway recovery, so it never reports `unknown`.
 For each listed sandbox, the text output includes the configured inference provider and model plus the number of active SSH sessions when the session probe is available.
-That route line is labeled `Inference (configured):` to distinguish it from the live inference result from `$$nemoclaw <name> status`.
+That route line is labeled `Inference (configured):`.
+An unavailable recorded provider or model appears as `unknown`.
+For the default sandbox, an `Inference (live):` line also appears when the shared gateway route differs from the recorded route.
+Use `$$nemoclaw <name> status` for the sandbox's full live health and recovery details.
 Host-service PID lookup honors `NEMOCLAW_SANDBOX_NAME`, then `NEMOCLAW_SANDBOX`, then `SANDBOX_NAME`, then the registry default.
 
 ```bash
