@@ -541,6 +541,11 @@ Complete JSON parsing and expected configuration fields cover config-read exit c
 The retained nonzero HTTP response covers the extra egress command exit check.
 The lower direct assertion count is recorded in the census; transitive coverage remains unchanged.
 
+The separate `config-export-v1-consumer` e2e-support contract owns revision-matched parsing and
+native-settings generation for effective export defaults. It exercises raw deterministic OpenClaw
+and Hermes exports against the recorded v1 revision. Live scenarios retain responsibility for the
+installed CLI, source deployment, and artifact boundary instead of recompiling the target consumer.
+
 For manual PR qualification, select `jobs=brave-search` with Docker and leave `targets` empty.
 Confirm that the target executes: an unavailable optional Brave credential can remove it from the plan.
 Trusted `main` controls the 45-minute job limit.

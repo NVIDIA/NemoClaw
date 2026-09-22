@@ -102,7 +102,14 @@ it invokes the CLI, and removes the directory before it writes retained evidence
 
 For `required` coverage, the fixture checks the producer-owned v1alpha1 envelope
 and all fields used in its semantic comparison. Cross-branch import
-compatibility remains a separate contract. Semantic expectations remain
+compatibility remains a separate contract. The `config-export-v1-consumer`
+e2e-support test archives the revision recorded by the target-default map, passes
+raw deterministic exports through that revision's Rust `Document::parse` and
+`compile::targets`, and evaluates the compiled settings with its OpenClaw and
+Hermes native adapter functions. It compares both preserved source behavior and
+target omission defaults, so a target-default change fails at the consumer
+boundary. This deterministic test uses no live credential or deployment state.
+Semantic expectations remain
 independent of the exporter. The fixture reads the target manifest and host
 registry directly, then queries the effective policy through the OpenShell CLI.
 It captures these expectations before it invokes config export, so exporter-side
