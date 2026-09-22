@@ -23,6 +23,7 @@ import type { HostCliClient } from "./clients/host.ts";
 import { trustedSandboxShellScript, type SandboxClient } from "./clients/sandbox.ts";
 import type { CleanupRegistry } from "./cleanup.ts";
 import { CLI_ENTRYPOINT, REPO_ROOT } from "./paths.ts";
+import { inspectConfigExportArtifactSafety } from "./phases/config-export-validation.ts";
 
 interface HermesConfigExportLiveInput {
   readonly artifacts: ArtifactSink;
@@ -301,8 +302,16 @@ export async function verifyHermesConfigExportLive(
     return { checked: true, passed: false };
   }
 
-  const nemoclawDocument = asExportedConfig(YAML.parse(nemoclawRaw));
-  const nemohermesDocument = asExportedConfig(YAML.parse(nemohermesRaw));
+  const nemoclawDecoded = YAML.parse(nemoclawRaw);
+  const nemohermesDecoded = YAML.parse(nemohermesRaw);
+  const nemoclawDocument = asExportedConfig(nemoclawDecoded);
+  const nemohermesDocument = asExportedConfig(nemohermesDecoded);
+  const exportsSafe = [
+    inspectConfigExportArtifactSafety(nemoclawRaw, input.redactionValues, nemoclawDecoded),
+    inspectConfigExportArtifactSafety(nemohermesRaw, input.redactionValues, nemohermesDecoded),
+  ].every(({ internalTransportsAbsent, knownSecretsAbsent }) => {
+    return internalTransportsAbsent && knownSecretsAbsent;
+  });
   const sandbox = nemoclawDocument.spec.sandboxes[0]!;
   const hostedProvider = nemoclawDocument.spec.inferenceProviders[0];
   const expectedPolicy = policy.ok ? YAML.parse(policy.value.document) : null;
@@ -354,7 +363,7 @@ export async function verifyHermesConfigExportLive(
     aliasesEquivalent: isDeepStrictEqual(nemohermesDocument.spec, nemoclawDocument.spec),
     agent: sandbox.harness.kind,
     checked: true,
-    credentialValuesOmitted: !containsCredential,
+    credentialValuesOmitted: !containsCredential && exportsSafe,
     credentialReferenceMatches: hostedProvider?.credential?.env === entry.credentialEnv,
     identityDriftPreventedPublication:
       typeof nemoclawDriftExitCode === "number" &&

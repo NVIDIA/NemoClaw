@@ -301,14 +301,19 @@ describe("Hermes config export live evidence", () => {
     });
   });
 
-  it("records failed evidence before parsing when a launcher fails", async () => {
+  it("withholds encoded credential material from retained YAML", async () => {
+    const document = mocks.asExportedConfig.getMockImplementation()!();
+    document.spec.sandboxes[0].harness.interfaces = { dashboard: { enabled: false } };
+    mocks.asExportedConfig.mockReturnValue(document);
+    const encoded = Buffer.from("secret-value", "utf8").toString("base64");
+    const writeExport = async (_command: string, args: string[]) => {
+      fs.writeFileSync(args.at(args.indexOf("--output") + 1)!, `{}\n# ${encoded}\n`);
+      return { exitCode: 0, stderr: "", stdout: "" };
+    };
     mocks.command
-      .mockImplementationOnce(async (_command: string, args: string[]) => {
-        const outputPath = args.at(args.indexOf("--output") + 1)!;
-        fs.writeFileSync(outputPath, "secret-value");
-        return { exitCode: 0, stderr: "", stdout: "" };
-      })
-      .mockResolvedValueOnce({ exitCode: 1, stderr: "failed", stdout: "" });
+      .mockImplementationOnce(writeExport)
+      .mockImplementationOnce(writeExport)
+      .mockResolvedValue({ exitCode: 1, stderr: "sandbox identity drifted", stdout: "" });
     const result = await runEnabledFixture(["secret-value"]);
 
     expect(result).toEqual({ checked: true, passed: false });
@@ -317,11 +322,9 @@ describe("Hermes config export live evidence", () => {
       expect.objectContaining({
         checked: true,
         credentialValuesOmitted: false,
-        launchersSucceeded: false,
+        launchersSucceeded: true,
       }),
     );
-    expect(mocks.save).not.toHaveBeenCalled();
-    expect(mocks.asExportedConfig).not.toHaveBeenCalled();
     expect(mocks.writeText).not.toHaveBeenCalled();
   });
 

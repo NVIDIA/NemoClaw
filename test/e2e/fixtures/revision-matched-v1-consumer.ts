@@ -52,12 +52,12 @@ function openClawTargetDefaults(): Record<string, unknown> {
     maxTokens: defaults.tuning.maxTokens,
     reasoning: defaults.tuning.reasoning,
     timeoutSeconds: defaults.execution.timeoutSeconds,
-    heartbeatPresent: defaults.execution.heartbeatEvery !== null,
+    heartbeatEvery: defaults.execution.heartbeatEvery,
     dashboardEnabled: defaults.interfaces.dashboard.enabled,
     dashboardPort: defaults.interfaces.dashboard.port,
     dashboardBind: defaults.interfaces.dashboard.bind === "127.0.0.1" ? "loopback" : "lan",
     toolDisclosure: defaults.tools.disclosure,
-    thinkingDefaultPresent: defaults.tuning.reasoningEffort !== "default",
+    reasoningEffort: defaults.tuning.reasoningEffort,
   };
 }
 
@@ -96,13 +96,13 @@ function openClawSource(entry: RevisionMatchedLiveEntry): Record<string, unknown
     maxTokens: requiredNumber(profile.tuning.maxTokens, "OpenClaw maximum tokens"),
     reasoning: profile.tuning.reasoning,
     timeoutSeconds: profile.agentConfig.agentTimeoutSeconds,
-    heartbeatPresent: profile.agentConfig.heartbeatEvery !== null,
+    heartbeatEvery: profile.agentConfig.heartbeatEvery,
     dashboardEnabled: true,
     dashboardPort: profile.dashboard.port,
     dashboardBind: profile.dashboard.bindAddress === "127.0.0.1" ? "loopback" : "lan",
     toolDisclosure: profile.tools.disclosure,
     explicitAgentOwnership: true,
-    thinkingDefaultPresent: profile.tuning.reasoningEffort !== "default",
+    reasoningEffort: profile.tuning.reasoningEffort,
   };
 }
 

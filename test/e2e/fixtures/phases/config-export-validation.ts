@@ -808,6 +808,32 @@ function containsInternalTransportText(raw: string): boolean {
   return containsSensitiveText(raw, INTERNAL_TRANSPORT_MARKERS);
 }
 
+export interface ConfigExportArtifactSafety {
+  readonly internalTransportsAbsent: boolean;
+  readonly knownSecretsAbsent: boolean;
+}
+
+/** Inspect raw and decoded YAML before it crosses the retained-artifact boundary. */
+export function inspectConfigExportArtifactSafety(
+  raw: string,
+  secretValues: readonly string[],
+  decoded: unknown = YAML.parse(raw),
+): ConfigExportArtifactSafety {
+  const encodedSecrets = encodedSensitiveValues(secretValues);
+  return {
+    knownSecretsAbsent:
+      !containsKnownSecretText(raw, secretValues) &&
+      !decodedScalarsMatch(decoded, (value) =>
+        [...secretValues, ...encodedSecrets].some(
+          (secret) => secret.length > 0 && value.includes(secret),
+        ),
+      ),
+    internalTransportsAbsent:
+      !containsInternalTransportText(raw) &&
+      !decodedScalarsMatch(decoded, (value) => INTERNAL_TRANSPORT_PATTERN.test(value)),
+  };
+}
+
 export class ConfigExportValidationPhaseFixture {
   constructor(
     private readonly host: HostCliClient,
@@ -969,21 +995,14 @@ export class ConfigExportValidationPhaseFixture {
         }
         failureStage = "security";
         const secretValues = this.secrets.redactionValues();
-        const encodedSecrets = encodedSensitiveValues(secretValues);
-        const rawSecretsAbsent = !containsKnownSecretText(raw, secretValues);
         failureStage = "verification";
         const decoded = YAML.parse(raw) as unknown;
         failureStage = "security";
-        knownSecretsAbsent =
-          rawSecretsAbsent &&
-          !decodedScalarsMatch(decoded, (value) =>
-            [...secretValues, ...encodedSecrets].some(
-              (secret) => secret.length > 0 && value.includes(secret),
-            ),
-          );
-        internalTransportsAbsent =
-          !containsInternalTransportText(raw) &&
-          !decodedScalarsMatch(decoded, (value) => INTERNAL_TRANSPORT_PATTERN.test(value));
+        ({ knownSecretsAbsent, internalTransportsAbsent } = inspectConfigExportArtifactSafety(
+          raw,
+          secretValues,
+          decoded,
+        ));
         if (!knownSecretsAbsent) throw new Error("config export exposed a known fixture secret");
         if (!internalTransportsAbsent) {
           throw new Error("config export exposed an internal credential transport");

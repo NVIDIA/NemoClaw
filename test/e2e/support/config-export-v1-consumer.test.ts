@@ -9,6 +9,7 @@ import { exportSnapshots } from "../../../src/lib/actions/config/export-test-fix
 import {
   hermesSnapshot,
   snapshot,
+  tunedSnapshot,
 } from "../../../src/lib/domain/config/export-source-test-fixture.ts";
 import { testTimeoutOptions } from "../../helpers/timeouts.ts";
 import { validateWithRevisionMatchedV1Consumer } from "../fixtures/revision-matched-v1-consumer.ts";
@@ -25,19 +26,20 @@ describe("revision-matched v1 config consumer", () => {
     testTimeoutOptions(12 * 60 * 1_000),
     async () => {
       const openclaw = await rawExport(snapshot());
+      const openclawTuned = await rawExport(tunedSnapshot());
       const hermesDisabled = await rawExport(hermesSnapshot());
       const openClawSource = {
         contextWindow: 131_072,
         maxTokens: 4096,
         reasoning: false,
         timeoutSeconds: 600,
-        heartbeatPresent: false,
+        heartbeatEvery: null,
         dashboardEnabled: true,
         dashboardPort: 18_789,
         dashboardBind: "loopback",
         toolDisclosure: "progressive",
         explicitAgentOwnership: true,
-        thinkingDefaultPresent: false,
+        reasoningEffort: "default",
       };
       const evidence = validateWithRevisionMatchedV1Consumer([
         {
@@ -46,6 +48,21 @@ describe("revision-matched v1 config consumer", () => {
           raw: openclaw,
           agentName: "primary",
           source: openClawSource,
+        },
+        {
+          name: "openclaw-tuned",
+          harness: "openclaw",
+          raw: openclawTuned,
+          agentName: "primary",
+          source: {
+            ...openClawSource,
+            contextWindow: 65_536,
+            maxTokens: 8192,
+            reasoning: true,
+            timeoutSeconds: 900,
+            heartbeatEvery: "30m",
+            reasoningEffort: "high",
+          },
         },
         {
           name: "hermes-disabled",
@@ -64,10 +81,11 @@ describe("revision-matched v1 config consumer", () => {
       ]);
 
       expect(evidence.revision).toBe("88c6600c06b0937907290362eef86912052c4ad0");
-      expect(evidence.documents).toHaveLength(2);
+      expect(evidence.documents).toHaveLength(3);
       expect(evidence.documents.map(({ harness, sha256 }) => ({ harness, sha256 }))).toEqual(
         [
           ["openclaw", openclaw],
+          ["openclaw", openclawTuned],
           ["hermes", hermesDisabled],
         ].map(([harness, raw]) => ({
           harness,

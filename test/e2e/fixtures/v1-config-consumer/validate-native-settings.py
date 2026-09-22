@@ -35,18 +35,21 @@ def openclaw_evidence(adapter, settings, expected):
     native = adapter.native_configuration(expected["agentName"], settings)
     provider = next(iter(native["models"]["providers"].values()))
     model = provider["models"][0]
+    defaults = native["agents"]["defaults"]
+    entry = native["agents"]["entries"][expected["agentName"]]
+    heartbeat = defaults.get("heartbeat")
     source = {
         "contextWindow": model["contextWindow"],
         "maxTokens": model["maxTokens"],
         "reasoning": model["reasoning"],
-        "timeoutSeconds": native["agents"]["defaults"]["timeoutSeconds"],
-        "heartbeatPresent": "heartbeat" in native["agents"]["defaults"],
+        "timeoutSeconds": defaults["timeoutSeconds"],
+        "heartbeatEvery": heartbeat.get("every") if isinstance(heartbeat, dict) else None,
         "dashboardEnabled": native["gateway"]["controlUi"]["enabled"],
         "dashboardPort": native["gateway"]["port"],
         "dashboardBind": native["gateway"]["bind"],
         "toolDisclosure": "progressive" if isinstance(native["tools"]["toolSearch"], dict) else "direct",
         "explicitAgentOwnership": native["agents"].get("ownership") == "explicit",
-        "thinkingDefaultPresent": "thinkingDefault" in native["agents"]["defaults"],
+        "reasoningEffort": entry.get("thinkingDefault", defaults.get("thinkingDefault", "default")),
     }
     if source != expected["source"]:
         raise AssertionError(f"OpenClaw native source behavior changed: {source!r}")
@@ -63,19 +66,27 @@ def openclaw_evidence(adapter, settings, expected):
     native_defaults = adapter.native_configuration(expected["agentName"], omitted)
     default_provider = next(iter(native_defaults["models"]["providers"].values()))
     default_model = default_provider["models"][0]
+    default_agents = native_defaults["agents"]
+    default_values = default_agents["defaults"]
+    default_entry = default_agents["entries"][expected["agentName"]]
+    default_heartbeat = default_values.get("heartbeat")
     target_defaults = {
         "contextWindow": default_model["contextWindow"],
         "maxTokens": default_model["maxTokens"],
         "reasoning": default_model["reasoning"],
-        "timeoutSeconds": native_defaults["agents"]["defaults"]["timeoutSeconds"],
-        "heartbeatPresent": "heartbeat" in native_defaults["agents"]["defaults"],
+        "timeoutSeconds": default_values["timeoutSeconds"],
+        "heartbeatEvery": (
+            default_heartbeat.get("every") if isinstance(default_heartbeat, dict) else None
+        ),
         "dashboardEnabled": native_defaults["gateway"]["controlUi"]["enabled"],
         "dashboardPort": native_defaults["gateway"]["port"],
         "dashboardBind": native_defaults["gateway"]["bind"],
         "toolDisclosure": (
             "progressive" if isinstance(native_defaults["tools"]["toolSearch"], dict) else "direct"
         ),
-        "thinkingDefaultPresent": "thinkingDefault" in native_defaults["agents"]["defaults"],
+        "reasoningEffort": default_entry.get(
+            "thinkingDefault", default_values.get("thinkingDefault", "default")
+        ),
     }
     if target_defaults != expected["targetDefaults"]:
         raise AssertionError(f"OpenClaw target omission defaults changed: {target_defaults!r}")
