@@ -34,18 +34,20 @@ sys.stdout.write(text)'
   done < <(docker ps --all --format '{{.Names}}')
   gateway_container="$(docker ps --filter 'name=-gateway$' --format '{{.Names}}' | head -1)"
   if test -n "${gateway_container}"; then
-    gateway_network="$(docker inspect --format '{{.HostConfig.NetworkMode}}' "${gateway_container}")"
+    gateway_network="$(docker inspect "${gateway_container}" \
+      | jq -r '.[0].NetworkSettings.Networks | keys[] | select(. != "bridge" and . != "none")' \
+      | head -1)"
     gateway_port="$(docker inspect --format '{{range $port, $bindings := .HostConfig.PortBindings}}{{println $port}}{{end}}' "${gateway_container}" | sed -n 's#/tcp$##p' | head -1)"
-    bridge_address="$(docker network inspect --format '{{(index .IPAM.Config 0).Gateway}}' "${gateway_network}")"
-    echo "gateway_probe network=${gateway_network} bridge=${bridge_address} port=${gateway_port}"
+    gateway_address="$(docker inspect "${gateway_container}" \
+      | jq -r --arg network "${gateway_network}" '.[0].NetworkSettings.Networks[$network].IPAddress')"
+    echo "gateway_probe network=${gateway_network} address=${gateway_address} port=${gateway_port}"
     curl --silent --show-error --max-time 3 "http://127.0.0.1:${gateway_port}" >/dev/null \
       && echo "gateway_loopback_probe=ok" || echo "gateway_loopback_probe=failed"
-    curl --silent --show-error --max-time 3 "http://${bridge_address}:${gateway_port}" >/dev/null \
-      && echo "gateway_bridge_probe=ok" || echo "gateway_bridge_probe=failed"
+    curl --silent --show-error --max-time 3 "http://${gateway_address}:${gateway_port}" >/dev/null \
+      && echo "gateway_managed_probe=ok" || echo "gateway_managed_probe=failed"
     docker run --rm --network "${gateway_network}" \
-      --add-host "host.openshell.internal:${bridge_address}" \
       --entrypoint node nc-fabric:openclaw \
-      -e "fetch('http://host.openshell.internal:${gateway_port}').then(() => console.log('gateway_container_probe=ok')).catch(error => { console.error('gateway_container_probe=failed', error.cause?.code || error.message); process.exit(1) })" \
+      -e "fetch('http://${gateway_address}:${gateway_port}').then(() => console.log('gateway_container_probe=ok')).catch(error => { console.error('gateway_container_probe=failed', error.cause?.code || error.message); process.exit(1) })" \
       || true
   fi
   echo "::endgroup::"
