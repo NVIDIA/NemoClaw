@@ -682,6 +682,22 @@ describe("maintainer PR comparator contributor compliance", () => {
     expect(comparatorOutput.failures).not.toContain("substantive:mergeable=MERGEABLE,state=BEHIND");
   });
 
+  it("accepts a mergeable PR when GitHub reports required hooks", () => {
+    const result = runComparatorGate({
+      body: "Signed-off-by: Example User <user@example.com>",
+      verified: true,
+      mergeStateStatus: "HAS_HOOKS",
+    });
+
+    const output = JSON.parse(result.stdout);
+    expect(output.gates.mergeable).toBe(true);
+    expect(output.details).toMatchObject({
+      mergeable: "MERGEABLE",
+      merge_state_status: "HAS_HOOKS",
+    });
+    expect(output.failures).not.toContain("substantive:mergeable=MERGEABLE,state=HAS_HOOKS");
+  });
+
   it("keeps blocked PRs eligible for approval but rejects them as merge candidates", () => {
     const fixture = {
       body: "Signed-off-by: Example User <user@example.com>",
