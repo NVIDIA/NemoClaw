@@ -164,12 +164,12 @@ For a new destination, NemoClaw waits for the owning gateway to report the sandb
 
 If NemoClaw cannot securely remove the temporary clone policy after destination creation, it leaves the destination as a pending clone and does not restore snapshot state. Inspect and remove the task-owned file identified by the error, then rerun the same restore without `--force` so NemoClaw can reconcile the destination without deleting or recreating it.
 
-If OpenShell does not confirm whether it created the destination, NemoClaw prints a create-attempt label.
-For a clone restore that uses host-local inference, NemoClaw also keeps the route reservation.
+If NemoClaw cannot confirm the same valid destination identity after a clone create attempt, it prints a create-attempt label.
+NemoClaw also keeps the clone's exact route and create-attempt record.
 Run the printed selector command.
 Do not retry the restore while the selector reports a sandbox or OpenShell cannot confirm the result.
 If the selector and destination name are both absent, rerun the original restore command.
-For a host-local inference clone, NemoClaw removes only the matching retained route reservation before it starts a new create attempt.
+NemoClaw removes only the matching retained route reservation before it starts a new create attempt.
 If the selector identifies a sandbox, resolve that retained sandbox through its owning gateway before you retry.
 
 If the destination is not Ready with the same valid identity, the restore exits nonzero before registration or state restore. The OpenShell sandbox remains created but unregistered, so `--force` cannot select it for deletion. Run the exact owner-scoped deletion command printed by the failure:

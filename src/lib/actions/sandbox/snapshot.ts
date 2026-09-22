@@ -25,6 +25,7 @@ import {
   NEMOCLAW_CREATE_ATTEMPT_LABEL,
   NEMOCLAW_CREATE_ATTEMPT_NONCE_HEX_LENGTH,
   observeCreatedOpenShellSandboxId,
+  settleCreatedOpenShellSandboxId,
 } from "../../adapters/openshell/sandbox-identity";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "../../adapters/openshell/timeouts";
 import { CLI_NAME } from "../../cli/branding";
@@ -122,6 +123,17 @@ const G = useColor ? (trueColor ? "\x1b[38;2;118;185;0m" : "\x1b[38;5;148m") : "
 const B = useColor ? "\x1b[1m" : "";
 const D = useColor ? "\x1b[2m" : "";
 const R = useColor ? "\x1b[0m" : "";
+const CREATED_IDENTITY_SETTLEMENT_SLEEP = new Int32Array(new SharedArrayBuffer(4));
+
+function sleepForCreatedIdentitySettlement(milliseconds: number): void {
+  if (!Number.isFinite(milliseconds) || milliseconds <= 0) return;
+  Atomics.wait(
+    CREATED_IDENTITY_SETTLEMENT_SLEEP,
+    0,
+    0,
+    Math.min(milliseconds, OPENSHELL_PROBE_TIMEOUT_MS),
+  );
+}
 
 export type SnapshotRequest =
   | { kind: "help" }
@@ -165,7 +177,7 @@ function failUnregisteredSnapshotClone(
     throw new SnapshotCommandError([
       `  OpenShell did not confirm whether sandbox '${sandboxName}' was created, and NemoClaw could not reconcile one exact Ready identity.`,
       `  Create-attempt label: ${NEMOCLAW_CREATE_ATTEMPT_LABEL}=${ambiguousCreateAttemptNonce}`,
-      "  Snapshot state was not restored. Any exact host-local inference route reservation remains protected.",
+      "  Snapshot state was not restored. The exact route and create-attempt record remain protected.",
       "  Do not submit another create attempt until OpenShell confirms this labelled sandbox is absent or identifies the retained sandbox for cleanup.",
       `  Inspect: openshell sandbox list -g ${shellQuote(gatewayName)} --selector ${shellQuote(`${NEMOCLAW_CREATE_ATTEMPT_LABEL}=${ambiguousCreateAttemptNonce}`)} --output json`,
     ]);
@@ -413,21 +425,17 @@ async function autoCreateSandboxFromSource(
     createdSandboxId = sandboxId;
     return sandboxId;
   };
-  const requireCreatedSandboxId = (): string => {
-    const observation = observeCreatedOpenShellSandboxId(
-      {
+  const settleCreatedSandboxId = (): string =>
+    bindCreatedSandboxId(
+      settleCreatedOpenShellSandboxId({
         sandboxName: dstName,
         gatewayName: sourceGatewayName,
         createAttemptNonce,
         runCaptureOpenshell: captureCreatedIdentity,
-      },
-      OPENSHELL_PROBE_TIMEOUT_MS,
+        priorSandboxId: createdSandboxId,
+        sleep: sleepForCreatedIdentitySettlement,
+      }),
     );
-    if (observation.state !== "matched") {
-      throw new Error("OpenShell did not return one exact created sandbox identity.");
-    }
-    return bindCreatedSandboxId(observation.sandboxId);
-  };
   const observeCreatedClone = () => {
     const list = captureOpenshell(["sandbox", "list", "-g", sourceGatewayName], {
       ignoreError: true,
@@ -473,64 +481,72 @@ async function autoCreateSandboxFromSource(
   ];
   const createEnv = { ...process.env };
   delete createEnv.NEMOCLAW_OBSERVABILITY;
-  let cloneHostLocalReservation: Pick<
-    SandboxEntry,
-    "hostLocalInferenceReceipt" | "hostLocalInferenceProvenance" | "reservationSessionId"
-  > | null = null;
-  const releaseCloneHostLocalReservation = (): void => {
-    if (!cloneHostLocalReservation) return;
-    const current = registry.getSandbox(dstName);
-    if (
-      current?.pendingRouteReservation === true &&
-      current.reservationSessionId === cloneHostLocalReservation.reservationSessionId &&
-      current.hostLocalInferenceReceipt === cloneHostLocalReservation.hostLocalInferenceReceipt &&
-      isDeepStrictEqual(
-        current.hostLocalInferenceProvenance,
-        cloneHostLocalReservation.hostLocalInferenceProvenance,
-      )
-    ) {
-      registry.removeSandboxRouteReservationIfCurrent(current);
-    }
-    cloneHostLocalReservation = null;
-  };
-
   const sourceAuthority = srcEntry as SandboxEntry;
-  if (sourceAuthority.hostLocalInferenceProvenance) {
-    if (
-      typeof sourceAuthority.hostLocalInferenceReceipt !== "string" ||
+  if (
+    sourceAuthority.hostLocalInferenceProvenance &&
+    (typeof sourceAuthority.hostLocalInferenceReceipt !== "string" ||
       typeof sourceAuthority.provider !== "string" ||
       typeof sourceAuthority.model !== "string" ||
       !isValidForwardPort(sourceAuthority.gatewayPort) ||
-      typeof sourceAuthority.openshellDriver !== "string"
-    ) {
+      typeof sourceAuthority.openshellDriver !== "string")
+  ) {
+    throw new SnapshotCommandError(
+      "Source host-local inference lifecycle authority is incomplete.",
+    );
+  }
+  const cloneRouteReservation = {
+    provider: sourceAuthority.provider ?? null,
+    model: sourceAuthority.model ?? null,
+    endpointUrl: sourceAuthority.endpointUrl ?? null,
+    endpointSource: sourceAuthority.endpointSource ?? null,
+    credentialEnv: sourceAuthority.credentialEnv ?? null,
+    preferredInferenceApi: sourceAuthority.preferredInferenceApi ?? null,
+    gatewayName: sourceGatewayName,
+    gatewayPort: sourceAuthority.gatewayPort ?? undefined,
+    openshellDriver: sourceAuthority.openshellDriver ?? undefined,
+    reservationSessionId: createAttemptNonce,
+    ...(sourceAuthority.hostLocalInferenceProvenance
+      ? {
+          hostLocalInferenceReceipt: sourceAuthority.hostLocalInferenceReceipt,
+          hostLocalInferenceProvenance: sourceAuthority.hostLocalInferenceProvenance,
+        }
+      : {}),
+  };
+  let cloneRouteReservationSessionId: string | null = null;
+  const reserveCloneRoute = (requireAbsent: boolean): void => {
+    if (cloneRouteReservationSessionId) return;
+    const reserved = requireAbsent
+      ? registry.reserveSandboxInferenceRoute(dstName, cloneRouteReservation, {
+          requireAbsent: true,
+        })
+      : registry.reserveSandboxInferenceRoute(dstName, cloneRouteReservation);
+    if (!reserved) {
       throw new SnapshotCommandError(
-        "Source host-local inference lifecycle authority is incomplete.",
+        `Could not retain clone route authority for '${dstName}' because its registry row changed.`,
       );
     }
-    const reserved = registry.reserveSandboxInferenceRoute(dstName, {
-      provider: sourceAuthority.provider,
-      model: sourceAuthority.model,
-      endpointUrl: sourceAuthority.endpointUrl ?? null,
-      endpointSource: sourceAuthority.endpointSource ?? null,
-      credentialEnv: sourceAuthority.credentialEnv ?? null,
-      preferredInferenceApi: sourceAuthority.preferredInferenceApi ?? null,
-      gatewayName: sourceGatewayName,
-      gatewayPort: sourceAuthority.gatewayPort,
-      openshellDriver: sourceAuthority.openshellDriver,
-      reservationSessionId: createAttemptNonce,
-      hostLocalInferenceReceipt: sourceAuthority.hostLocalInferenceReceipt,
-      hostLocalInferenceProvenance: sourceAuthority.hostLocalInferenceProvenance,
-    });
-    if (!reserved) {
+    cloneRouteReservationSessionId = createAttemptNonce;
+  };
+  const releaseCloneRouteReservation = (): void => {
+    if (!cloneRouteReservationSessionId) return;
+    const current = registry.getSandbox(dstName);
+    if (
+      current?.pendingRouteReservation === true &&
+      current.reservationSessionId === cloneRouteReservationSessionId
+    ) {
+      registry.removeSandboxRouteReservationIfCurrent(current);
+    }
+    cloneRouteReservationSessionId = null;
+  };
+
+  if (sourceAuthority.hostLocalInferenceProvenance) {
+    try {
+      reserveCloneRoute(false);
+    } catch {
       throw new SnapshotCommandError(
         "Could not reserve the clone's exact host-local inference authority.",
       );
     }
-    cloneHostLocalReservation = {
-      reservationSessionId: createAttemptNonce,
-      hostLocalInferenceReceipt: sourceAuthority.hostLocalInferenceReceipt,
-      hostLocalInferenceProvenance: sourceAuthority.hostLocalInferenceProvenance,
-    };
   }
 
   console.log(`  '${dstName}' does not exist. Creating from '${srcName}' image (${fromImage})...`);
@@ -591,12 +607,12 @@ async function autoCreateSandboxFromSource(
       },
     });
   } catch (error) {
-    releaseCloneHostLocalReservation();
+    releaseCloneRouteReservation();
     throw error;
   }
 
   if (createResult.status !== 0 && !createResult.forcedReady && !createResult.ambiguous) {
-    releaseCloneHostLocalReservation();
+    releaseCloneRouteReservation();
     console.error(`  Failed to create sandbox '${dstName}' (exit ${createResult.status}).`);
     const tail = (createResult.output || "").slice(-600);
     if (tail) console.error(tail);
@@ -605,14 +621,16 @@ async function autoCreateSandboxFromSource(
 
   try {
     if (readyCheckIdentityError) throw readyCheckIdentityError;
-    requireCreatedSandboxId();
+    settleCreatedSandboxId();
   } catch {
+    reserveCloneRoute(true);
     failUnregisteredSnapshotClone(dstName, sourceGatewayName, createAttemptNonce);
   }
   let lifecycleRegistration: ReturnType<typeof cloneLifecycle.capture>;
   try {
     lifecycleRegistration = cloneLifecycle.capture();
   } catch {
+    reserveCloneRoute(true);
     failUnregisteredSnapshotClone(dstName, sourceGatewayName, createAttemptNonce);
   }
 
@@ -633,6 +651,7 @@ async function autoCreateSandboxFromSource(
   try {
     finalLifecycleRegistration = cloneLifecycle.revalidate(lifecycleRegistration);
   } catch {
+    reserveCloneRoute(true);
     failUnregisteredSnapshotClone(dstName, sourceGatewayName, createAttemptNonce);
   }
   const cloneSourceEntry = srcEntry as SandboxEntry;
@@ -670,18 +689,18 @@ async function autoCreateSandboxFromSource(
       undefined,
       {
         pending: true,
-        ...(cloneHostLocalReservation ? { reservationSessionId: createAttemptNonce } : {}),
+        ...(cloneRouteReservationSessionId ? { reservationSessionId: createAttemptNonce } : {}),
       },
     );
   } catch {
-    releaseCloneHostLocalReservation();
+    releaseCloneRouteReservation();
     failUnregisteredSnapshotClone(dstName, sourceGatewayName);
   }
 
-  // The pending registry row now owns any host-local inference reservation.
+  // The pending registry row now owns any retained route reservation.
   // Keep it unpublished until the caller completes sensitive-file cleanup.
-  const reservationSessionId = cloneHostLocalReservation?.reservationSessionId ?? null;
-  cloneHostLocalReservation = null;
+  const reservationSessionId = cloneRouteReservationSessionId;
+  cloneRouteReservationSessionId = null;
   return reservationSessionId;
 }
 
@@ -861,8 +880,8 @@ function pendingSnapshotCloneRouteMatchesSource(
 ): boolean {
   return (
     pending.gatewayName === sourceGatewayName &&
-    pending.gatewayPort === sourceEntry.gatewayPort &&
-    pending.openshellDriver === sourceEntry.openshellDriver &&
+    (pending.gatewayPort ?? null) === (sourceEntry.gatewayPort ?? null) &&
+    (pending.openshellDriver ?? null) === (sourceEntry.openshellDriver ?? null) &&
     pending.hostLocalInferenceReceipt === sourceEntry.hostLocalInferenceReceipt &&
     isDeepStrictEqual(
       pending.hostLocalInferenceProvenance,
