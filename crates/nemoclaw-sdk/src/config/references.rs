@@ -1,5 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
+use super::source::DefinitionSource;
 use super::{ConfigError, Document, Harness, Inference, Route, Sandbox};
 
 // Borrow authored inference together with its declaration scope and diagnostic path.
@@ -53,9 +54,15 @@ impl Document {
         sandbox: &'a Sandbox,
     ) -> Result<ScopedInference<'a>, ConfigError> {
         let agent = &sandbox.agent;
-        match (&agent.inference, &agent.inference_ref) {
-            (Some(inference), None) => Ok(ScopedInference::new(inference, Some(sandbox), None)),
-            (None, Some(name)) => {
+        match DefinitionSource::from_parts(
+            agent.inference.as_ref(),
+            agent.inference_ref.as_deref(),
+            "agent requires exactly one of inference or inferenceRef",
+        )? {
+            DefinitionSource::Inline(inference) => {
+                Ok(ScopedInference::new(inference, Some(sandbox), None))
+            }
+            DefinitionSource::Reference(name) => {
                 if let Some(inference) = self.spec.inferences.get(name) {
                     return Ok(ScopedInference::new(inference, None, Some(name)));
                 }
@@ -79,9 +86,6 @@ impl Document {
                         )
                     })
             }
-            _ => Err(ConfigError::new(
-                "agent requires exactly one of inference or inferenceRef",
-            )),
         }
     }
 
@@ -131,32 +135,7 @@ impl Document {
 impl Document {
     /// Resolve the sandbox's harness without replacing its authored selection.
     pub fn sandbox_harness<'a>(&'a self, sandbox: &'a Sandbox) -> Result<&'a Harness, ConfigError> {
-        match (&sandbox.harness, &sandbox.harness_ref) {
-            (Some(harness), None) => Ok(harness),
-            (None, Some(name)) => self
-                .spec
-                .harnesses
-                .get(name)
-                .or_else(|| sandbox.harnesses.get(name))
-                .ok_or_else(|| {
-                    missing_reference(
-                        &format!(
-                            "spec.sandboxes[{}].harnessRef",
-                            diagnostic_name(&sandbox.name)
-                        ),
-                        "harness",
-                        name,
-                        self.spec
-                            .harnesses
-                            .keys()
-                            .chain(sandbox.harnesses.keys())
-                            .map(String::as_str),
-                    )
-                }),
-            _ => Err(ConfigError::new(
-                "sandbox requires exactly one of harness or harnessRef",
-            )),
-        }
+        sandbox.resolve_harness(&self.spec.harnesses)
     }
 
     pub(super) fn validate_harness_references(&self) -> Result<(), ConfigError> {
@@ -268,4 +247,33 @@ pub(crate) fn missing_reference<'a>(
         "{path}: unknown {kind} {name:?}; visible definitions: {choices}",
         name = diagnostic_name(name)
     ))
+}
+
+impl Sandbox {
+    pub(super) fn resolve_harness<'a>(
+        &'a self,
+        harnesses: &'a std::collections::BTreeMap<String, Harness>,
+    ) -> Result<&'a Harness, ConfigError> {
+        match DefinitionSource::from_parts(
+            self.harness.as_ref(),
+            self.harness_ref.as_deref(),
+            "sandbox requires exactly one of harness or harnessRef",
+        )? {
+            DefinitionSource::Inline(harness) => Ok(harness),
+            DefinitionSource::Reference(name) => harnesses
+                .get(name)
+                .or_else(|| self.harnesses.get(name))
+                .ok_or_else(|| {
+                    missing_reference(
+                        &format!("spec.sandboxes[{}].harnessRef", diagnostic_name(&self.name)),
+                        "harness",
+                        name,
+                        harnesses
+                            .keys()
+                            .chain(self.harnesses.keys())
+                            .map(String::as_str),
+                    )
+                }),
+        }
+    }
 }

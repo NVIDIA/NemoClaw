@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 use super::references::{ScopedInference, diagnostic_name, missing_reference};
+use super::source::DefinitionSource;
 use super::{ConfigError, Document, Inference, InferenceProvider, Route, Sandbox};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -50,8 +51,12 @@ impl Document {
                     .flat_map(|s| &s.inference_providers),
             )
         };
-        match (&route.provider, &route.provider_ref) {
-            (Some(provider), None) => {
+        match DefinitionSource::from_parts(
+            route.provider.as_ref(),
+            route.provider_ref.as_deref(),
+            "route requires exactly one of provider or providerRef",
+        )? {
+            DefinitionSource::Inline(provider) => {
                 if enclosing().any(|definition| definition.name == provider.name) {
                     return Err(ConfigError::new(
                         "inline provider names must not shadow enclosing definitions",
@@ -63,12 +68,12 @@ impl Document {
                     format!("{}.provider", inference.route_path(route)),
                 ))
             }
-            (None, Some(name)) => {
+            DefinitionSource::Reference(name) => {
                 if let Some(provider) = self
                     .spec
                     .inference_providers
                     .iter()
-                    .find(|p| &p.name == name)
+                    .find(|p| p.name == name)
                 {
                     return Ok(SelectedProvider::new(
                         provider,
@@ -78,7 +83,7 @@ impl Document {
                 }
                 if let Some(sandbox) = inference.sandbox
                     && let Some(provider) =
-                        sandbox.inference_providers.iter().find(|p| &p.name == name)
+                        sandbox.inference_providers.iter().find(|p| p.name == name)
                 {
                     return Ok(SelectedProvider::new(
                         provider,
@@ -93,9 +98,6 @@ impl Document {
                     enclosing().map(|p| p.name.as_str()),
                 ))
             }
-            _ => Err(ConfigError::new(
-                "route requires exactly one of provider or providerRef",
-            )),
         }
     }
 

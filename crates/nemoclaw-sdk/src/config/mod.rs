@@ -13,6 +13,7 @@ mod inference;
 mod interfaces;
 mod providers;
 pub(crate) mod references;
+mod source;
 pub use crate::services::ServiceDefinition;
 pub use agent_inference::*;
 pub use execution::*;
@@ -195,11 +196,7 @@ impl Document {
         }
         let harnesses = &self.spec.harnesses;
         for sandbox in &mut self.spec.sandboxes {
-            let harness = match (&sandbox.harness, &sandbox.harness_ref) {
-                (Some(harness), None) => Some(harness),
-                (None, Some(name)) => harnesses.get(name).or_else(|| sandbox.harnesses.get(name)),
-                _ => None,
-            };
+            let harness = sandbox.resolve_harness(harnesses).ok();
             let default_image =
                 if harness.is_some_and(|harness| harness.kind == HarnessKind::Hermes) {
                     DEFAULT_HERMES_IMAGE
