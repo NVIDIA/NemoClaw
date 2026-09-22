@@ -11,11 +11,11 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import readline from "node:readline";
 
 import { isErrnoException } from "../core/errno";
 import { GATEWAY_PORT } from "../core/ports";
 import { createPromptActivityCleanup } from "../core/prompt-activity";
+import { createStdinPromptInterface, raisePromptInterrupt } from "../core/prompt-terminal";
 import { listMessagingCredentialMetadata } from "../messaging/channels";
 import { rejectSymlinksOnPath } from "../state/config-io";
 import { nemoclawStateRoot } from "../state/state-root";
@@ -719,14 +719,14 @@ export function prompt(
         .catch((error: NodeJS.ErrnoException) => {
           if (error && error.code === "SIGINT") {
             reject(error);
-            process.kill(process.pid, "SIGINT");
+            raisePromptInterrupt();
             return;
           }
           reject(error);
         });
       return;
     }
-    const rl = readline.createInterface({ input: process.stdin, output: process.stderr });
+    const rl = createStdinPromptInterface();
     let finished = false;
 
     const cleanup = createPromptActivityCleanup(() => {
@@ -761,7 +761,7 @@ export function prompt(
       rl.on("SIGINT", () => {
         const error = Object.assign(new Error("Prompt interrupted"), { code: "SIGINT" });
         rejectPrompt(error);
-        process.kill(process.pid, "SIGINT");
+        raisePromptInterrupt();
       });
       // Treat readline closing before the question is answered as cancellation.
       // When stdin reaches EOF (e.g. `nemoclaw onboard ... < /dev/null`), the
