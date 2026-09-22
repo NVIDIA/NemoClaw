@@ -1,10 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import type {
-  OpenShellForwardAdapter,
-  OpenShellForwardIdentity,
-  OpenShellForwardObservation,
+import {
+  formatOpenShellForwardStartFailure,
+  type OpenShellForwardAdapter,
+  type OpenShellForwardIdentity,
+  type OpenShellForwardObservation,
 } from "../../adapters/openshell/forward";
 import {
   createOpenShellForwardAdapterForAuthority,
@@ -169,6 +170,31 @@ export type InstallerLegacyForwardRetirementSummary = Readonly<{
   skipped: number;
 }>;
 
+function resolveSandboxForwardPortsFromAuthority(
+  sandboxName: string,
+  sandbox: NonNullable<ReturnType<typeof registry.getSandbox>>,
+  agent: SandboxPortAgent,
+  primaryPort: number,
+  hermesDashboardPort: number | null,
+): number[] {
+  const ports = new Set<number>([primaryPort]);
+  if (isValidPort(hermesDashboardPort)) ports.add(hermesDashboardPort);
+  const messagingForward = getSandboxMessagingHostForward(sandboxName, sandbox);
+  if (messagingForward) ports.add(messagingForward.port);
+  for (const port of resolveDeclaredAgentForwardPorts(
+    sandbox,
+    primaryPort,
+    agent,
+    hermesDashboardPort,
+  )) {
+    ports.add(port);
+  }
+  return [
+    primaryPort,
+    ...[...ports].filter((port) => port !== primaryPort).sort((first, second) => first - second),
+  ];
+}
+
 function registeredLegacyForwardIdentities(
   sandboxName: string,
   sandbox: NonNullable<ReturnType<typeof registry.getSandbox>>,
@@ -181,26 +207,18 @@ function registeredLegacyForwardIdentities(
     sandbox.hermesDashboardEnabled === true && isValidPort(sandbox.hermesDashboardPort)
       ? sandbox.hermesDashboardPort
       : null;
-  const ports = new Set<number>([primaryPort]);
-  if (hermesDashboardPort !== null) ports.add(hermesDashboardPort);
-  const messagingForward = getSandboxMessagingHostForward(sandboxName, sandbox);
-  if (messagingForward) ports.add(messagingForward.port);
-  for (const port of resolveDeclaredAgentForwardPorts(
+  const ports = resolveSandboxForwardPortsFromAuthority(
+    sandboxName,
     sandbox,
-    primaryPort,
     registeredAgent,
+    primaryPort,
     hermesDashboardPort,
-  )) {
-    ports.add(port);
-  }
+  );
   const primaryBind = resolveDashboardForwardBind(sandbox, {
     requestedBind: process.env.NEMOCLAW_DASHBOARD_BIND,
     wsl: isWsl(),
   });
-  return [
-    primaryPort,
-    ...[...ports].filter((port) => port !== primaryPort).sort((first, second) => first - second),
-  ].map((port) =>
+  return ports.map((port) =>
     sandboxForwardIdentity(
       runtime,
       sandboxName,
@@ -633,7 +651,11 @@ function forwardOperationFailureMessage(
     | Awaited<ReturnType<OpenShellForwardAdapter["startForward"]>>
     | Awaited<ReturnType<OpenShellForwardAdapter["retireLegacyForward"]>>,
 ): string {
-  if ("error" in result) return result.error.message;
+  if ("error" in result) {
+    const failure = "failure" in result ? result.failure : undefined;
+    const suffix = failure ? ` [${formatOpenShellForwardStartFailure(failure)}]` : "";
+    return `${result.error.message}${suffix}`;
+  }
   if ("observation" in result && result.observation.state === "foreign") {
     return "The host port is owned by a foreign listener.";
   }
@@ -1014,20 +1036,14 @@ function resolveSandboxLaunchForwardPortsFromAuthority(
 ): number[] {
   if (agent && !agentRuntime.hasGatewayRuntime(agent)) return [];
 
-  const requiredPorts = new Set<number>([primaryPort]);
   const hermesDashboard = getHermesDashboardRecoveryConfig(sandboxName, () => sandbox);
-  if (hermesDashboard) requiredPorts.add(hermesDashboard.publicPort);
-  const messagingForward = getSandboxMessagingHostForward(sandboxName, sandbox);
-  if (messagingForward) requiredPorts.add(messagingForward.port);
-  for (const port of resolveDeclaredAgentForwardPorts(
+  return resolveSandboxForwardPortsFromAuthority(
+    sandboxName,
     sandbox,
-    primaryPort,
     agent,
+    primaryPort,
     hermesDashboard?.publicPort ?? null,
-  )) {
-    requiredPorts.add(port);
-  }
-  return [...requiredPorts];
+  );
 }
 
 /** Resolve the complete forward set used by launch-readiness health. */

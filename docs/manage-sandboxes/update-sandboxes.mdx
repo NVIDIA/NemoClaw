@@ -103,7 +103,17 @@ If the forced installation fails, the installer does not stage a gateway service
 
 ## Resume a Manually Prepared Upgrade
 
-Use this path only after strict backup succeeds, every applicable registered legacy forward is retired, and the gateway is retired.
+Use this path only with the current release CLI.
+If the installer has not already reported that it prepared the current CLI, start the supported automatic flow first:
+
+```bash
+curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_ACCEPT_EXPERIMENTAL_OPENSHELL_UPGRADE=1 bash
+```
+
+That flow prepares the current CLI before it replaces OpenShell.
+If it completes, do not run the manual steps below.
+Continue manually only when the automatic flow stops after preparing the CLI or a support workflow directs you to this recovery path.
+Set the prepared-upgrade state only after strict backup succeeds, every applicable registered legacy forward is retired, and the gateway is retired.
 Strict backup can report a confirmed stranded registry sandbox without creating a backup for it because both the selected gateway and the container provider prove that no sandbox runtime remains.
 That record requires the cleanup or recreation action printed by `$$nemoclaw backup-all`, but it does not block a prepared upgrade after the strict command succeeds.
 Run the backup and forward-retirement step with the current prepared NemoClaw CLI before you retire the gateway:
@@ -118,7 +128,8 @@ NEMOCLAW_GATEWAY_PORT="$selected_port" NEMOCLAW_REQUIRE_ALL_SANDBOX_BACKUPS=1 $$
 For a non-default gateway, replace `8080` with its port and set `gateway_name` to `nemoclaw-<selected-port>`.
 If an older OpenShell release rejects the named destroy command for the default `nemoclaw` gateway, run `openshell gateway destroy` instead.
 Do not substitute `openshell gateway remove`: removal can unregister a gateway without stopping its process.
-Do not set `NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1` unless both commands succeed and the backup command reports that strict backup and exact legacy-forward retirement completed.
+Set `NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1` only after the command pipeline exits successfully.
+Confirm that the strict backup summary reports `0 failed, 0 skipped` and that the `Legacy dashboard forwards:` summary appears before gateway destruction.
 A confirmed stranded record has no backup to reuse; complete the reported cleanup or recreation action during recovery.
 If either command fails or cannot prove a retirement, resolve that failure while the completed backups remain intact.
 Set `NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1` on the `bash` side of the install pipeline when you rerun the installer.
@@ -162,6 +173,9 @@ OpenClaw's native plugin and package state is restored with the rest of its decl
 
 The installer attempts every eligible recovery and exits with a nonzero status if any recovery fails.
 Recovery preserves each sandbox's recorded GPU selection and runs before generic host admission.
+When recovery rebuilds an intentionally stopped sandbox, NemoClaw returns the replacement to `Stopped`.
+Recovery fails if OpenShell cannot confirm that phase or a required post-stop reconciliation fails.
+Rerun the installer to reconcile the stopped state without rebuilding a current replacement again.
 Fresh onboarding and required DGX Station reconciliation still require host admission.
 
 ### Interpret Automatic Recovery Results

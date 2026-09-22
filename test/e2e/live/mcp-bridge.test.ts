@@ -98,6 +98,7 @@ import {
 } from "./mcp-provider-rewrite-probe.ts";
 import { assertRawOpenShellAllowedIpsRebindingDenied } from "./openshell-allowed-ips-rebinding.ts";
 import { prepareExactMainMcpProof } from "./openshell-exact-main-mcp-proof.ts";
+import { pausePortableHostLockOwner } from "../support/mcp-bridge-portable-lock-barrier.ts";
 const OPENCLAW_SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-mcp-bridge";
 const HERMES_SANDBOX_NAME = process.env.NEMOCLAW_MCP_HERMES_SANDBOX_NAME ?? "e2e-mcp-hermes";
 const DEEPAGENTS_SANDBOX_NAME = process.env.NEMOCLAW_MCP_DEEPAGENTS_SANDBOX_NAME ?? "e2e-mcp-dcode";
@@ -229,16 +230,38 @@ async function assertConcurrentAddSerialized(
       artifactName,
       env,
       redactionValues: [HOST_SECRET],
-      // Keep callers alive through the existing bounded restart and reload.
       timeoutMs: MCP_MUTATION_TIMEOUT_MS[options.expectedAdapter],
     });
-  const attempts = await Promise.all(
-    ["first", "second"].map((attempt) =>
-      add(`${options.artifactPrefix}-mcp-concurrent-add-${attempt}`),
-    ),
-  );
+  const attempts =
+    options.expectedAdapter === "hermes-config"
+      ? await (async () => {
+          const firstAttempt = add(`${options.artifactPrefix}-mcp-concurrent-add-first`);
+          const secondAttempt = (async () => {
+            const barrier = await pausePortableHostLockOwner({
+              commandArgs: args,
+              commandPath: host.commandPath,
+              homeDir: process.env.HOME ?? os.homedir(),
+            });
+            try {
+              cleanup.add(`resume ${options.artifactPrefix} concurrent MCP add lock owner`, () =>
+                barrier.resume(),
+              );
+              return await add(`${options.artifactPrefix}-mcp-concurrent-add-second`);
+            } finally {
+              await barrier.resume();
+            }
+          })();
+          const [first, second] = await Promise.all([firstAttempt, secondAttempt]);
+          return [first, second];
+        })()
+      : await Promise.all(
+          ["first", "second"].map((attempt) =>
+            add(`${options.artifactPrefix}-mcp-concurrent-add-${attempt}`),
+          ),
+        );
   const successful = attempts.filter((result) => result.exitCode === 0);
   expect(successful.length).toBeGreaterThan(0);
+  const rejected = attempts.filter((result) => result.exitCode !== 0);
   const statusObservation = await readConcurrentMcpStatusAndConfirmHermesRegistration({
     clients: { artifacts, host, sandbox },
     committedAddResult: successful[0]!,
@@ -265,18 +288,15 @@ async function assertConcurrentAddSerialized(
   });
   expect(statusObservation.registered).toBe(true);
   const resumed = await Promise.all(
-    attempts
-      .filter((result) => result.exitCode !== 0)
-      .map((originalResult) =>
-        retryAfterConcurrentAddTransientFailure({
-          adapter: options.expectedAdapter,
-          committedBridgeVerified: true,
-          diagnostic: resultText(originalResult),
-          originalResult,
-          retry: () =>
-            add(`${options.artifactPrefix}-mcp-concurrent-add-after-restart-transport-failure`),
-        }),
-      ),
+    rejected.map((originalResult) =>
+      retryAfterConcurrentAddTransientFailure({
+        committedBridgeVerified: true,
+        diagnostic: resultText(originalResult),
+        originalResult,
+        retry: () =>
+          add(`${options.artifactPrefix}-mcp-concurrent-add-after-portable-lock-contention`),
+      }),
+    ),
   );
   expect([...successful, ...resumed].filter((result) => result.exitCode === 0)).toHaveLength(2);
   const exactRetry = await add(`${options.artifactPrefix}-mcp-concurrent-add-exact-retry`);
@@ -1135,6 +1155,21 @@ mcpBridgeShardTest("hermes")(
     cleanup.add("remove Hermes MCP bridge", () =>
       cleanupMcpBridge(host, HERMES_SANDBOX_NAME, SERVER_NAME, "hermes-config"),
     );
+    // Cleanup is LIFO. Register evidence after bridge removal so failure state
+    // is captured before cleanup mutates the config and restarts the gateway.
+    cleanup.add("capture Hermes MCP runtime evidence", async () => {
+      await sandbox.execShell(
+        HERMES_SANDBOX_NAME,
+        trustedSandboxShellScript(buildHermesMcpRuntimeDiagnosticsScript()),
+        {
+          artifactName: "hermes-mcp-runtime-diagnostics",
+          captureLimitBytes: 32_768,
+          env: buildAvailabilityProbeEnv(),
+          redactionValues: [HOST_SECRET, ROTATED_HOST_SECRET, COMPATIBLE_KEY, TOOL_CHALLENGE],
+          timeoutMs: 60_000,
+        },
+      );
+    });
     progress.phase("configure and inspect the Hermes MCP bridge");
     await assertConcurrentAddSerialized(host, cleanup, artifacts, sandbox, {
       ...bridge,
@@ -1214,19 +1249,6 @@ mcpBridgeShardTest("hermes")(
     await restartBridgeWithoutHostSecret(host, HERMES_SANDBOX_NAME, "hermes");
     await assertHermesToolCall("hermes-real-mcp-tool-call-after-rediscovery-restart");
     await assertAuthenticatedMcpRediscovery(survivingMcp, survivingDiscoveryOffset);
-    cleanup.add("capture Hermes MCP runtime evidence", async () => {
-      await sandbox.execShell(
-        HERMES_SANDBOX_NAME,
-        trustedSandboxShellScript(buildHermesMcpRuntimeDiagnosticsScript()),
-        {
-          artifactName: "hermes-mcp-runtime-diagnostics",
-          captureLimitBytes: 32_768,
-          env: buildAvailabilityProbeEnv(),
-          redactionValues: [HOST_SECRET, ROTATED_HOST_SECRET, COMPATIBLE_KEY, TOOL_CHALLENGE],
-          timeoutMs: 60_000,
-        },
-      );
-    });
     await replaceBridgeCredentialConservatively(
       host,
       sandbox,
