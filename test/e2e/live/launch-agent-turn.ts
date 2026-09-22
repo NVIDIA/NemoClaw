@@ -730,6 +730,13 @@ function sqliteSessionStoreStats(missingReason) {
       (stats.mode & 0o777n) === 0o600n &&
       stats.nlink === 1n,
     "sqlite_session_store_invalid",
+    {
+      check: "metadata",
+      regularFile: stats.isFile() && !stats.isSymbolicLink(),
+      ownerMatches: stats.uid === BigInt(process.getuid()),
+      privateMode: (stats.mode & 0o777n) === 0o600n,
+      singleLink: stats.nlink === 1n,
+    },
   );
   return stats;
 }
@@ -756,7 +763,7 @@ function readExistingSqliteTranscriptSnapshot(before) {
         "SELECT name FROM sqlite_schema WHERE type = 'table' AND name = 'transcript_events'",
       )
       .get();
-    requireEvidence(table?.name === "transcript_events", "sqlite_session_store_invalid");
+    requireEvidence(table?.name === "transcript_events", "sqlite_session_store_invalid", { check: "transcript_table" });
     rows = database
       .prepare(
         "SELECT session_id AS sessionId, seq, event_json AS eventJson " +

@@ -8,10 +8,15 @@ import { type SandboxClient, trustedSandboxShellScript } from "../fixtures/clien
 import { redactString } from "../fixtures/redaction.ts";
 
 /** Capture supervisor evidence even when sandbox exec is unavailable; never replace the failure. */
-export async function captureHermesMcpRestartFailure(
+export async function captureHermesMcpLifecycleFailure(
   host: Pick<HostCliClient, "command" | "openshellCommandPath">,
   result: { exitCode: number | null; timedOut: boolean },
-  options: { agent: string; sandboxName: string; redactionValues: string[] },
+  options: {
+    agent: string;
+    sandboxName: string;
+    redactionValues: string[];
+    operation: "restart" | "remove";
+  },
 ): Promise<void> {
   if (options.agent !== "hermes" || (result.exitCode === 0 && !result.timedOut)) return;
   await host
@@ -19,7 +24,7 @@ export async function captureHermesMcpRestartFailure(
       host.openshellCommandPath,
       ["logs", options.sandboxName, "-n", "200", "--source", "all", "--since", "2m"],
       {
-        artifactName: "hermes-mcp-restart-failure-supervisor-logs",
+        artifactName: `hermes-mcp-${options.operation}-failure-supervisor-logs`,
         env: buildAvailabilityProbeEnv(),
         redactionValues: options.redactionValues,
         captureLimitBytes: 32_768,

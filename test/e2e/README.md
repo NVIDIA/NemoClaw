@@ -180,11 +180,13 @@ signed by that CA through supervisor egress. Cloud onboarding separately verifie
 installed bundle contents and permissions; file presence alone is not TLS-consumer
 evidence. The managed-startup unit tests own activation ordering and identity checks.
 
-If the Hermes replacement-credential restart fails, MCP E2E captures host-side
+If the Hermes replacement-credential restart or subsequent bridge removal fails, MCP E2E captures host-side
 OpenShell supervisor logs before asserting the original failure. This remains
 available when sandbox exec is rejected in `Error` state. Capture is limited to
 200 lines from the last two minutes, 32 KiB, and 30 seconds, with fixture credentials
 redacted. Diagnostic acquisition does not retry the mutation or replace its result.
+OpenClaw launch evidence reports whether a SQLite rejection concerns file metadata or the transcript table, without exposing paths, identities, or session contents. The existing evidence checks remain required.
+A failed native weather-plugin invocation also records unauthenticated liveness and readiness HTTP status codes, bounded to two three-second probes. It does not repeat the tool invocation or replace its failure.
 
 The same workflow publishes each Pi pull-request candidate by immutable digest after validating the
 local image, removes registry credentials, validates the anonymously pullable digest, and uploads a

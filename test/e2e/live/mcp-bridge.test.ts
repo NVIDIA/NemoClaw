@@ -38,7 +38,7 @@ import {
   assertHermesMcpHttpResponse,
   buildHermesMcpChatProbeScript,
   buildHermesMcpRuntimeDiagnosticsScript,
-  captureHermesMcpRestartFailure,
+  captureHermesMcpLifecycleFailure,
   readHermesGatewayIdentity,
   HERMES_MCP_FAILURE_CAPTURE_BYTES,
 } from "./mcp-bridge-hermes-http.ts";
@@ -399,6 +399,12 @@ async function removeBridgeAndAssertEmpty(
     options.adapter,
     options.artifactPrefix,
   );
+  await captureHermesMcpLifecycleFailure(host, remove, {
+    agent: options.agent,
+    sandboxName: options.sandboxName,
+    operation: "remove",
+    redactionValues: [...Object.values(MCP_BRIDGE_TEST_CREDENTIALS), TOOL_CHALLENGE],
+  });
   expectExitZero(remove, `${options.artifactPrefix} mcp remove fake server`);
   const list = await host.nemoclaw([options.sandboxName, "mcp", "list", "--json"], {
     artifactName: `${options.artifactPrefix}-mcp-list-after-remove`,
@@ -661,7 +667,8 @@ async function replaceBridgeCredentialConservatively(
     redactionValues: [HOST_SECRET, ROTATED_HOST_SECRET],
     timeoutMs: 12 * 60_000,
   });
-  await captureHermesMcpRestartFailure(host, restart, {
+  await captureHermesMcpLifecycleFailure(host, restart, {
+    operation: "restart",
     agent,
     sandboxName,
     redactionValues: [...Object.values(MCP_BRIDGE_TEST_CREDENTIALS), TOOL_CHALLENGE],

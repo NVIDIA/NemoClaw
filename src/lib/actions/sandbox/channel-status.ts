@@ -11,6 +11,7 @@
  * registry list. The diagnostic below has to fail loud for paired-but-idle.
  */
 
+import { SandboxCommandTransportError } from "../../adapters/sandbox/command-transport";
 import { type AgentDefinition, loadAgent } from "../../agent/defs";
 import { CLI_DISPLAY_NAME, CLI_NAME } from "../../cli/branding";
 import { B, D, G, R, RD, YW } from "../../cli/terminal-style";
@@ -156,7 +157,17 @@ async function defaultExec(
   command: string,
   timeoutMs?: number,
 ): Promise<{ status: number; stdout: string; stderr: string } | null> {
-  return loadProcessRecovery().executeSandboxExecCommand(sandboxName, command, timeoutMs, {});
+  try {
+    return await loadProcessRecovery().executeSandboxExecCommand(
+      sandboxName,
+      command,
+      timeoutMs,
+      {},
+    );
+  } catch (error) {
+    if (!(error instanceof SandboxCommandTransportError)) throw error;
+    return null;
+  }
 }
 
 function defaultDeps(deps: StatusDeps | undefined): Required<StatusDeps> {

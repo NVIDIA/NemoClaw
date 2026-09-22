@@ -98,3 +98,53 @@ it("keeps the detailed JSON envelope when paused Telegram skips its live probe (
   const invoked = fs.existsSync(calls) ? fs.readFileSync(calls, "utf8") : "";
   expect(invoked).not.toMatch(/gateway\.log|pgrep/);
 });
+
+it("reports an unreadable channel configuration when native execution loses its response", ({
+  testHome,
+}) => {
+  const { home, bin } = testHome;
+  const sandboxName = "transport-failure";
+  const openshell = path.join(bin, "openshell");
+  const calls = path.join(home, "exec-calls");
+  writeSandboxRegistry(home, sandboxName, {
+    agent: "openclaw",
+    messaging: {
+      schemaVersion: 1,
+      plan: makeMessagingPlan({
+        sandboxName,
+        channels: ["telegram"],
+        disabledChannels: ["telegram"],
+      }),
+    },
+  });
+  fs.mkdirSync(bin, { recursive: true });
+  fs.writeFileSync(
+    openshell,
+    [
+      "#!/usr/bin/env bash",
+      'if [ "$1" = "sandbox" ] && [ "$2" = "exec" ]; then',
+      `  printf 'exec\\n' >> ${JSON.stringify(calls)}`,
+      "  printf 'relay closed before command output\\n' >&2",
+      "fi",
+      "exit 1",
+    ].join("\n"),
+    { mode: 0o755 },
+  );
+
+  const result = runWithEnv(
+    `${sandboxName} channels status --channel telegram --json`,
+    testHome.environment({ NEMOCLAW_OPENSHELL_BIN: openshell }),
+  );
+
+  expect(result.code, result.out).toBe(0);
+  const status = JSON.parse(result.out);
+  expect(status.report.signals).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        severity: "warn",
+        detail: expect.stringContaining("could not read"),
+      }),
+    ]),
+  );
+  expect(fs.readFileSync(calls, "utf8").trim().split("\n")).toEqual(["exec"]);
+});

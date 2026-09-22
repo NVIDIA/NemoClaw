@@ -5,7 +5,10 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { fullE2eGateway } from "../fixtures/full-e2e-gateway.ts";
+import {
+  captureNativePluginFailureReadiness,
+  fullE2eGateway,
+} from "../fixtures/full-e2e-gateway.ts";
 
 const directories: string[] = [];
 const disposables: (() => Promise<void>)[] = [];
@@ -208,4 +211,34 @@ describe("full E2E gateway ownership", () => {
       fullE2eGateway(true, declaration({ version: 1, mode: "nemoclaw-managed" })),
     ).toThrow("externally supervised gateway");
   });
+});
+
+it("captures bounded readiness status after a failed plugin invocation without retrying it", async () => {
+  const execShell = vi.fn().mockResolvedValue({ exitCode: 0 });
+  await captureNativePluginFailureReadiness(
+    { execShell },
+    { exitCode: 22 },
+    {
+      sandboxName: "owned-sandbox",
+      artifactName: "plugin",
+      env: {},
+    },
+  );
+  expect(execShell).toHaveBeenCalledExactlyOnceWith("owned-sandbox", expect.anything(), {
+    artifactName: "plugin-readiness-after-failure",
+    env: {},
+    captureLimitBytes: 1024,
+    timeoutMs: 10_000,
+  });
+});
+
+it("skips successful plugin calls and preserves a failed result when diagnostics are unavailable", async () => {
+  const execShell = vi.fn().mockRejectedValue(new Error("sandbox unavailable"));
+  const options = { sandboxName: "owned-sandbox", artifactName: "plugin", env: {} };
+  await captureNativePluginFailureReadiness({ execShell }, { exitCode: 0 }, options);
+  expect(execShell).not.toHaveBeenCalled();
+  await expect(
+    captureNativePluginFailureReadiness({ execShell }, { exitCode: 22 }, options),
+  ).resolves.toBeUndefined();
+  expect(execShell).toHaveBeenCalledTimes(1);
 });

@@ -56,7 +56,11 @@ import { bindApprovedPrBaseForBaseImageComparison } from "./pr-base-comparison.t
 import { buildSandboxCredentialScanCommand } from "./sandbox-credential-boundary.ts";
 import { FULL_E2E_TEST_TIMEOUT_MS } from "../../../tools/e2e/full-e2e-timeout-contract.mts";
 import { parseOpenClawJsonDocuments } from "../../../src/lib/openclaw/agent-json-provenance.ts";
-import { fullE2eGateway, withOwnedFullE2eGateway } from "../fixtures/full-e2e-gateway.ts";
+import {
+  captureNativePluginFailureReadiness,
+  fullE2eGateway,
+  withOwnedFullE2eGateway,
+} from "../fixtures/full-e2e-gateway.ts";
 
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-full";
 const FULL_E2E_TARGET_ID = process.env.E2E_TARGET_ID ?? "full-e2e";
@@ -229,6 +233,11 @@ async function invokeNativeWeatherPlugin(
     ),
     { artifactName, env: env(), timeoutMs: 60_000 },
   );
+  await captureNativePluginFailureReadiness(sandbox, result, {
+    sandboxName: SANDBOX_NAME,
+    artifactName,
+    env: env(),
+  });
   const document = parseOpenClawJsonDocuments(result.stdout)[0] as
     | {
         ok?: boolean;
