@@ -217,8 +217,13 @@ fn container(target: &Target) -> Result<Value, Error> {
     let spec = spec(target)?;
     if target.kind == crate::managed::GATEWAY_KIND {
         let launch = spec.container("/NEMOCLAW_GATEWAY_DATA")?;
+        let endpoint = url::Url::parse(&spec.gateway.endpoint)
+            .map_err(|_| Error::State("invalid gateway endpoint"))?;
+        let port = endpoint
+            .port()
+            .ok_or(Error::State("missing gateway port"))?;
         return Ok(
-            json!({"name":spec.name,"user":"0:0","labels":[{"label":crate::managed::OWNER_LABEL,"value":spec.owner}],"entrypoint":launch.entrypoint,"command":launch.cmd,"env":launch.env,"network_mode":"host","mounts":[{"type":"volume","source":spec.volume(),"target":"/NEMOCLAW_GATEWAY_DATA"},{"type":"bind","source":spec.gateway.engine.strip_prefix("unix://").ok_or(Error::State("gateway requires Unix engine"))?,"target":"/var/run/docker.sock"}],"capabilities":[{"drop":["ALL"]}],"security_opts":["no-new-privileges"],"restart":"no","log_driver":"json-file","log_opts":{"max-size":"32m","max-file":"3"},"must_run":true,"wait":false,"remove_volumes":false,"destroy_grace_seconds":60}),
+            json!({"name":spec.name,"user":"0:0","labels":[{"label":crate::managed::OWNER_LABEL,"value":spec.owner}],"entrypoint":launch.entrypoint,"command":launch.cmd,"env":launch.env,"networks_advanced":[{"name":spec.network(),"ipv4_address":spec.gateway_address()?}],"ports":[{"internal":port,"external":port,"ip":endpoint.host_str().ok_or(Error::State("missing gateway host"))?,"protocol":"tcp"}],"mounts":[{"type":"volume","source":spec.volume(),"target":"/NEMOCLAW_GATEWAY_DATA"},{"type":"bind","source":spec.gateway.engine.strip_prefix("unix://").ok_or(Error::State("gateway requires Unix engine"))?,"target":"/var/run/docker.sock"}],"capabilities":[{"drop":["ALL"]}],"security_opts":["no-new-privileges"],"restart":"no","log_driver":"json-file","log_opts":{"max-size":"32m","max-file":"3"},"must_run":true,"wait":false,"remove_volumes":false,"destroy_grace_seconds":60}),
         );
     }
     let process = spec
@@ -459,7 +464,27 @@ mod tests {
             .generations;
         let graph = crate::compile::compile_runtime(&document, &generations, "0.1.0").unwrap();
         let gateway = &graph["resource"]["docker_container"]["managed_gateway_runtime"];
-        assert_eq!(gateway["network_mode"], "host");
+        let storage: Spec = serde_json::from_str(
+            graph["resource"]["nemoclaw_gateway_storage"]["runtime"]["spec"]
+                .as_str()
+                .unwrap(),
+        )
+        .unwrap();
+        let command = gateway["command"].as_array().unwrap();
+        let gateway_port = command.windows(2).find(|pair| pair[0] == "--port").unwrap()[1]
+            .as_str()
+            .unwrap()
+            .parse::<u16>()
+            .unwrap();
+        assert!(gateway.get("network_mode").is_none());
+        assert_eq!(
+            gateway["networks_advanced"],
+            json!([{"name":storage.network(),"ipv4_address":storage.gateway_address().unwrap()}])
+        );
+        assert_eq!(
+            gateway["ports"],
+            json!([{"internal":gateway_port,"external":gateway_port,"ip":"127.0.0.1","protocol":"tcp"}])
+        );
         assert_eq!(gateway["user"], "0:0");
         assert_eq!(
             gateway["mounts"][0]["target"],
@@ -473,12 +498,6 @@ mod tests {
             json!(["nemoclaw_gateway_storage.runtime"])
         );
         assert!(graph["resource"]["nemoclaw_managed_gateway"].is_null());
-        let storage: Spec = serde_json::from_str(
-            graph["resource"]["nemoclaw_gateway_storage"]["runtime"]["spec"]
-                .as_str()
-                .unwrap(),
-        )
-        .unwrap();
         assert_eq!(storage.layout, 1);
         assert!(
             graph["resource"]["docker_network"].is_null(),

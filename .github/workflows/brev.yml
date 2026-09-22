@@ -1,0 +1,141 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+name: Live / Brev
+
+on:
+  workflow_dispatch:
+  # Dispatch requires this file on the default branch; branch pushes remain opt-in.
+  push:
+    branches: [run-brev-v1-e2e/**]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: live-brev-${{ github.run_id }}-${{ github.run_attempt }}
+  cancel-in-progress: false
+
+env:
+  CARGO_INCREMENTAL: "0"
+
+jobs:
+  build:
+    name: Brev / Build
+    if: >-
+      github.repository == 'NVIDIA/NemoClaw' &&
+      ((github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/v1') ||
+       (github.event_name == 'push' && startsWith(github.ref, 'refs/heads/run-brev-v1-e2e/')))
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    outputs:
+      artifact: ${{ steps.identity.outputs.artifact }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - id: identity
+        name: Identify candidate artifact
+        run: echo "artifact=brev-candidate-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_OUTPUT"
+      - uses: ./.github/actions/setup-rust
+        with:
+          platform: linux_amd64
+          cache-prefix: brev-deps-v1
+      - name: Build native bundle
+        run: cargo run --locked -p nemoclaw-build -- bundle --platform linux_amd64
+      - name: Build live test executable
+        run: |
+          set -euo pipefail
+          cargo test --locked -p nemoclaw-e2e --test brev --no-run --message-format=json \
+            | tee "${RUNNER_TEMP}/brev-build.json" >/dev/null
+          binary="$(jq -r 'select(.reason == "compiler-artifact" and .target.name == "brev" and .profile.test == true) | .executable' "${RUNNER_TEMP}/brev-build.json" | tail -1)"
+          test -x "${binary}"
+          mkdir candidate
+          cp "${binary}" candidate/brev-test
+          cp -a dist/linux_amd64 candidate/bundle
+          # Tar retains executable bits; no credential is present in this job.
+          tar -cf "${RUNNER_TEMP}/brev-candidate.tar" candidate
+      - name: Upload candidate
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ${{ steps.identity.outputs.artifact }}
+          path: ${{ runner.temp }}/brev-candidate.tar
+          compression-level: 0
+          retention-days: 1
+          if-no-files-found: error
+
+  prepare:
+    name: Brev / Prepare VM and image
+    if: >-
+      github.repository == 'NVIDIA/NemoClaw' &&
+      ((github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/v1') ||
+       (github.event_name == 'push' && startsWith(github.ref, 'refs/heads/run-brev-v1-e2e/')))
+    runs-on: ubuntu-22.04
+    timeout-minutes: 40
+    outputs:
+      instance: ${{ steps.identity.outputs.instance }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-brev
+        with:
+          api-key: ${{ secrets.BREV_API_KEY }}
+      # Publish ownership before create, including when create partially fails.
+      - id: identity
+        name: Identify owned VM
+        run: echo "instance=nclaw-v1-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_OUTPUT"
+      - name: Provision VM and build candidate image
+        env:
+          INSTANCE_NAME: ${{ steps.identity.outputs.instance }}
+        run: bash tools/e2e/brev-v1-host.sh prepare
+
+  qualify:
+    name: Brev / Lifecycle
+    needs: [build, prepare]
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-brev
+        with:
+          api-key: ${{ secrets.BREV_API_KEY }}
+      - name: Download candidate
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: ${{ needs.build.outputs.artifact }}
+          path: ${{ runner.temp }}/brev-candidate
+      - name: Extract candidate
+        run: tar -xf "${RUNNER_TEMP}/brev-candidate/brev-candidate.tar"
+      - name: Transfer bundle and run lifecycle
+        env:
+          INSTANCE_NAME: ${{ needs.prepare.outputs.instance }}
+          NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+        run: bash tools/e2e/brev-v1-host.sh qualify
+      - name: Upload sanitized evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: brev-proof-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/brev-evidence/brev-proof.json
+          if-no-files-found: warn
+          retention-days: 14
+
+  cleanup:
+    name: Brev / Delete VM
+    needs: [build, prepare, qualify]
+    if: always() && needs.prepare.outputs.instance != ''
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-brev
+        with:
+          api-key: ${{ secrets.BREV_API_KEY }}
+      - name: Delete owned VM and verify absence
+        env:
+          INSTANCE_NAME: ${{ needs.prepare.outputs.instance }}
+        run: bash tools/e2e/brev-v1-host.sh cleanup

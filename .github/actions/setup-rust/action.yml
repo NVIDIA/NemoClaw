@@ -1,0 +1,38 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+name: Set up Rust
+description: Install pinned protoc and restore third-party Rust artifacts.
+inputs:
+  platform:
+    description: Native bundle platform.
+    required: true
+  cache-prefix:
+    description: Separate dependency caches for distinct build jobs.
+    default: native-deps-v2
+runs:
+  using: composite
+  steps:
+    - name: Restore verified downloads
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: .build/downloads
+        key: native-downloads-v1-${{ inputs.platform }}-${{ hashFiles('versions.json') }}
+    - name: Install pinned build tools
+      shell: bash
+      env:
+        TEST_PLATFORM: ${{ inputs.platform }}
+      run: |
+        rustup show
+        python tools/ci/setup-protoc.py
+    - name: Restore Rust dependencies
+      uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      with:
+        prefix-key: ${{ inputs.cache-prefix }}
+        key: ${{ inputs.platform }}-${{ hashFiles('Cargo.toml') }}
+        add-rust-environment-hash-key: "true"
+        workspaces: . -> target
+        cache-targets: "true"
+        cache-all-crates: "false"
+        cache-workspace-crates: "false"
+        cache-bin: "false"
+        save-if: ${{ github.ref == 'refs/heads/v1' }}

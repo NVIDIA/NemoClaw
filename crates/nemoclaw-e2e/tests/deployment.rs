@@ -692,13 +692,14 @@ async fn lifecycle_with_rejected_annotations(input: &str, reject_annotations: bo
             .execution
         {
             execution.timeout_seconds = Some(1200);
-        } else if let Some(observability) = &mut changed.spec.sandboxes[0]
-            .harness
-            .as_mut()
-            .unwrap()
-            .observability
+        } else if let Some(nemoclaw_sdk::config::AgentObservability::Otlp(otlp)) =
+            &mut changed.spec.sandboxes[0]
+                .harness
+                .as_mut()
+                .unwrap()
+                .observability
         {
-            observability.otlp.as_mut().unwrap().sample_rate = 1.into();
+            otlp.sample_rate = 1.into();
         } else {
             changed.inference_provider_mut().unwrap().api = Some(
                 if document.inference_provider().unwrap().api

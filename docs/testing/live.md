@@ -93,6 +93,47 @@ The hosted Fabric runtime must keep its identity throughout native access and re
 This test makes a real model request and reports assertion failures through the test runner.
 The workspace remains after destroy.
 
+## Bare Brev
+
+The `Live / Brev` workflow provisions an ordinary Brev CPU VM rather than a NemoClaw Launchable.
+The build job creates the candidate Linux AMD64 bundle and test binary while an independent preparation job provisions the VM and builds the matching OpenClaw image there.
+The lifecycle job waits for both, transfers the candidate, and runs the real inference and deployment checks.
+A separate cleanup job runs after success, failure, or cancellation and requires two confirmed observations that its owned VM is absent.
+The check list shows build, preparation, lifecycle, and deletion times separately; VM deletion remains part of successful qualification.
+The workflow requires repository secrets named `BREV_API_KEY` and `NVIDIA_API_KEY`.
+While `v1` is not the repository's default branch, run it by pushing the candidate to an intentionally named `run-brev-v1-e2e/*` branch in `NVIDIA/NemoClaw`.
+After the workflow file reaches the default branch, select `v1` with `workflow_dispatch` instead.
+
+The reviewed Brev startup script installs the required host packages, enables Docker, and waits on a readiness sentinel before candidate transfer.
+The VM must be AMD64, expose a working Docker daemon with Buildx and a Landlock kernel ABI, and have at least 80 GiB free after candidate artifacts arrive.
+The test refuses a host with a detected NemoClaw or OpenShell deployment.
+It uses the hosted NVIDIA OpenClaw fixture as the initial v1 configuration, replacing only its deployment UID and agent-image digest for the owned run.
+
+The test proves that plan leaves the Docker inventory unchanged, waits for the real apply CLI process to exit, and then requires an exact agent reply through the hosted runtime.
+It checks unchanged apply, export/reapply, stable resource and Fabric runtime identities, denied undeclared egress, and preservation of an owned workspace file.
+Destroy must remove the provider, profile, sandbox, and managed gateway while retaining the documented workspace and gateway storage.
+The workflow uploads a sanitized Boolean proof and verifies that the Brev VM is absent before completing.
+Failures still request VM deletion; no keep-alive option is provided.
+If cleanup fails, rerun the original `Brev / Delete VM` job until deletion is verified.
+After successful cleanup, rerun all jobs for fresh qualification; rerunning only lifecycle qualification cannot reuse the deleted VM.
+Artifact and VM identities come from their producing jobs, including the original attempt when dependent jobs are retried.
+The intermediate artifact contains only the candidate bundle and test executable.
+Qualification transfers the inference credential through a private temporary file; the runner copy is removed after transfer, and the VM copy disappears with verified VM deletion.
+
+Run the Rust test directly only on a fresh owned Linux AMD64 host with the same prerequisites:
+
+```sh
+NEMOCLAW_LIVE_BREV_CONFIG=/absolute/path/to/owned-config.yaml \
+NEMOCLAW_LIVE_BREV_STATE=/absolute/path/to/new-state \
+NEMOCLAW_TEST_BUNDLE=/absolute/path/to/immutable/linux-amd64-bundle \
+NVIDIA_INFERENCE_API_KEY=... \
+  cargo test -p nemoclaw-e2e --test brev \
+    bare_brev_hosted_openclaw_lifecycle -- --ignored --exact --nocapture
+```
+
+The direct command destroys NemoClaw workloads but leaves retained deployment storage and does not dispose of its host.
+The workflow owns and disposes of the Brev VM around that test.
+
 ## Generic Models
 
 The generic model lifecycle has a separate opt-in live test.

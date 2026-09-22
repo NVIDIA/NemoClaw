@@ -121,41 +121,37 @@
       "description": "Harness-specific native interfaces; OpenClaw uses gateway settings, Hermes uses separate services."
     },
     "AgentObservability": {
-      "additionalProperties": false,
       "description": "Harness-native telemetry shared by the sandbox.",
       "oneOf": [
         {
-          "not": {
-            "required": [
-              "relay"
-            ]
+          "additionalProperties": false,
+          "description": "Export OpenClaw traces to an externally operated local OTLP/HTTP collector.",
+          "properties": {
+            "otlp": {
+              "$ref": "#/$defs/OtlpTracing",
+              "description": "Collector and sampling settings."
+            }
           },
           "required": [
             "otlp"
-          ]
+          ],
+          "type": "object"
         },
         {
-          "not": {
-            "required": [
-              "otlp"
-            ]
+          "additionalProperties": false,
+          "description": "Emit Hermes ATOF and ATIF traces through its in-process NeMo Relay integration.",
+          "properties": {
+            "relay": {
+              "$ref": "#/$defs/RelayTracing",
+              "description": "In-process Relay tracing settings."
+            }
           },
           "required": [
             "relay"
-          ]
+          ],
+          "type": "object"
         }
-      ],
-      "properties": {
-        "otlp": {
-          "$ref": "#/$defs/OtlpTracing",
-          "description": "Export OpenClaw traces to an externally operated local OTLP/HTTP collector."
-        },
-        "relay": {
-          "$ref": "#/$defs/RelayTracing",
-          "description": "Emit Hermes ATOF and ATIF traces through its in-process NeMo Relay integration."
-        }
-      },
-      "type": "object"
+      ]
     },
     "AgentTools": {
       "anyOf": [
@@ -846,7 +842,7 @@
           }
         }
       ],
-      "description": "Native Hermes dashboard with isolated configuration and active sessions.",
+      "description": "Native Hermes dashboard, either disabled or enabled with service settings.",
       "properties": {
         "enabled": {
           "description": "Start the dashboard. When false, all other dashboard fields must be omitted.",

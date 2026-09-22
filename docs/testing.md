@@ -13,6 +13,23 @@ cargo fmt --check
 cargo clippy --workspace --all-targets -- -D warnings
 ```
 
+## CI Workflows
+
+| Workflow | Checks |
+|---|---|
+| CI / Native | `Native / linux_arm64`, `Native / linux_amd64`, `Native / darwin_arm64`, `Native / windows_amd64` |
+| CI / Images | `Images / linux_arm64`, `Images / linux_amd64` |
+| CI / Dependencies | `Dependencies / Policy` |
+| CD / Documentation | `Documentation / Validate`, then PR preview, staging, or release publication |
+| Live / Brev | Build and VM/image preparation in parallel, then lifecycle qualification and verified VM deletion |
+
+The first eight checks are required by the `v1` ruleset, including documentation validation.
+Keep the ruleset's check names aligned when renaming jobs; workflow display names do not identify required checks.
+Superseded PR runs are cancelled.
+Running branch pushes finish; newer pushes replace older pending runs.
+Live runs use separate concurrency groups.
+The Brev workflow remains opt-in; see [live prerequisites and cleanup](testing/live.md#bare-brev).
+
 ## Test Runner Pilot
 
 The Linux ARM64 native CI job uses cargo-nextest 0.9.144 for ordinary tests and the explicitly configured bundle fixtures.
@@ -111,6 +128,8 @@ Development and test builds use `debug = 1`, retaining line-number backtraces wi
 Changing this profile requires a one-time dependency rebuild before measuring warm-cache CI duration.
 The dependency cache keeps third-party build artifacts for both debug and target-specific release profiles.
 Workspace libraries, test executables, workspace binaries, and installed Cargo binaries are excluded.
+Only `v1` writes Rust dependency caches; PRs restore the base branch cache and skip uploads.
+This avoids spending PR time saving caches scoped to individual pull requests.
 
 Dependency caches are keyed by platform and the Rust toolchain, manifests, lockfile, and build environment, rather than each source commit.
 
@@ -118,7 +137,9 @@ The checksum-addressed OpenTofu archives in `.build/downloads` use a separate ca
 Source-only changes reuse that archive cache without uploading it again.
 Bundle assembly still verifies every archive checksum and builds a fresh bundle; `dist` is not cached.
 
-Protobuf's compiler is still downloaded and checksum-verified during tool setup.
+The [shared Rust setup](../.github/actions/setup-rust/action.yml) downloads and checksum-verifies Protobuf's compiler for native, documentation, and Brev builds.
+GitHub restricts cache access by branch: temporary Brev branches may start cold because `v1` is not the default branch.
+Parallel VM preparation reduces the build's contribution to elapsed time even on a cold run.
 
 ## Local Coverage
 
