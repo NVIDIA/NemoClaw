@@ -458,10 +458,28 @@ pub(super) fn compile_with_plans(
             "error_message":gateway_error_message("self")
         }]}
     });
+    let sandbox_readiness: BTreeMap<_, _> = document.spec.sandboxes.iter().map(|sandbox| {
+        let reference = format!("nemoclaw_sandbox.{}", sandbox.name);
+        let binding = if document.sandbox_harness(sandbox)?.kind == HarnessKind::Pi {
+            format!("${{merge({reference}, {{pi_model_config = nemoclaw_pi_configuration.{}.model_json}})}}", sandbox.name)
+        } else {
+            format!("${{{reference}}}")
+        };
+        Ok((sandbox.name.clone(), json!({
+            "sandbox":binding,
+            // uuid() is unknown in a saved plan and records a unique observation
+            // token, so failed applies cannot report stale health as a new result.
+            "read_trigger":"${uuid()}",
+            "lifecycle":{"postcondition":[{
+                "condition":"${self.ready}",
+                "error_message":"${self.error_message != null ? self.error_message : \"Fabric readiness could not be established; resources retained\"}"
+            }]}
+        })))
+    }).collect::<Result<_, ConfigError>>()?;
     Ok(json!({
         "terraform":{"required_version":format!("= {OPENTOFU_VERSION}"),"required_providers":{"nemoclaw":{"source":PROVIDER_ADDRESS,"version":format!("= {version}")}}},
         "provider":{"nemoclaw":provider}, "resource":resources,
-        "data":{"nemoclaw_gateway_capabilities":{
+        "data":{"nemoclaw_sandbox_readiness":sandbox_readiness, "nemoclaw_gateway_capabilities":{
             "current":{"required_compute_drivers":drivers},
             "apply":apply_readiness
         }}

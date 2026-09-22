@@ -52,7 +52,7 @@ They use only the local gRPC fixture:
 
 ```sh
 NEMOCLAW_TEST_BUNDLE=/absolute/path/to/bundle \
-  cargo test -p nemoclaw-e2e --test deployment --test fabric_deployment --test multiple_providers -- --ignored
+  cargo test -p nemoclaw-e2e --test deployment --test export_observations --test fabric_deployment --test multiple_providers -- --ignored
 ```
 
 CI runs the fixture lifecycle tests with `--test-threads=2`.
@@ -66,6 +66,23 @@ The direct provider fixture checks saved plans with both unchanged and newly cre
 The Pi lifecycle fixture verifies that this gate also blocks model configuration writes, and that unchanged apply performs no configuration writes.
 The multiple-provider fixture also verifies two independent deployments, each sandbox’s selected provider attachments, export/reapply, and drift in one deployment without changes to the other.
 The fixture returns protocol responses; it does not establish live agent inference.
+The export fixture checks provider refresh failures through OpenTofu, unchanged deployment state and configuration, and export without inference credentials or Fabric health requests.
+
+## Standalone Sandbox Completion
+
+On Unix, build the production provider and supply the explicit OpenTofu and provider paths as above.
+Run from the repository root:
+
+```sh
+NEMOCLAW_TEST_TOFU=/absolute/path/to/tofu \
+NEMOCLAW_TEST_PROVIDER=/absolute/path/to/terraform-provider-nemoclaw \
+  cargo test -p nemoclaw-e2e --test sandbox_readiness -- --ignored
+```
+
+The fixture runs the sandbox completion data source through OpenTofu against a local gRPC server, without SDK deployment orchestration.
+It checks deferred health reads, failed postconditions with retained observations and bindings, unchanged-apply rechecks, and teardown without readiness.
+It creates temporary state and simulated OpenShell resources; it does not start containers or invoke a model.
+On failure, inspect the OpenTofu diagnostic and verify that the selected provider matches the checkout before rerunning.
 
 ## Standalone Service Readiness
 

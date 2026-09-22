@@ -46,7 +46,7 @@ flowchart TD
     Tofu -->|compute lifecycle| DockerProvider[Docker provider]
     DockerProvider --> Docker[Docker API]
     Provider --> Backend[Shared SDK backend operations]
-    SDK -->|validation, export, and active probes| Backend
+    SDK -->|explicit active probes| Backend
     Backend --> OpenShell[OpenShell API]
     Backend --> Docker[Docker API]
     Backend --> Ollama[Ollama API]
@@ -77,7 +77,7 @@ The local state directory retains these records:
 | Deployment UID and generation tokens | Deployment ownership and creation identity | Matching a resource name alone cannot authorize adoption. |
 | Intent document and digest | Configuration selected for an operation | An unfinished OpenShell mutation requires its original intent; runtime recovery can use revised intent subject to binding checks. |
 | OpenTofu state and saved resource specifications | Established physical IDs and configurations | A failed readiness check retains state; explicit recovery may replace disposable compute. |
-| Operation flags and saved-plan digest | Apply or destroy progress | Recovery can verify intent and resume the remaining resource operations. |
+| Operation flags | Apply or destroy progress | Recovery can verify intent and resume the remaining resource operations. |
 
 An observation has three outcomes, with different consequences:
 
@@ -107,7 +107,7 @@ flowchart TD
     SaveRuntime --> Wait[Provider readiness gates inside OpenTofu]
     Wait --> Shell[Plan and check OpenShell graph]
     Shell --> SaveShell[Save intent and apply OpenShell graph]
-    SaveShell --> Probe[Check agent configuration and readiness]
+    SaveShell --> Probe[Provider sandbox completion checks inside OpenTofu]
     Probe --> Done[Record successful deployment]
     SaveRuntime -. failure .-> Keep[Retain established bindings for explicit recovery]
     Wait -. failure .-> Keep
@@ -137,7 +137,12 @@ The [managed orchestration commit](https://github.com/NVIDIA/NemoClaw/commit/b18
 The installer contract declares install and removal plans.
 Managed vLLM/Ollama and proxy readiness use an independent provider data source ordered after the container and deferred until every apply.
 Proxy consumers depend on this observation; unrelated provider registrations remain independent.
-The SDK still checks sandbox configuration and readiness separately, pending the [Fabric management contract](fabric-management.md#result-and-adoption-gates).
+Sandbox configuration, startup readiness, and Fabric health run in a separate provider data source after sandbox creation and any model configuration.
+Its postcondition rejects incomplete readiness; OpenTofu retains the observation and resource bindings.
+An apply-only read token ensures unchanged applies check again and lets the SDK reject stale health results when reporting a failure.
+The SDK reads these results through public OpenTofu JSON rather than contacting the sandbox again.
+Only exclusively observed completion failures can clear the unfinished-mutation guard; partial mutations remain guarded.
+This moves observation scheduling into the graph; the broader [Fabric management contract](fabric-management.md#result-and-adoption-gates) remains separate work.
 A stopped service remains bound, and an explicit apply can reconcile it without a package-specific recovery operation or an automatic restart loop.
 
 ## Why Storage Has Its Own Binding
@@ -171,14 +176,18 @@ Source-derived provider versions prevent stale installations from being reused a
 
 The public SDK does not embed OpenTofu or expose its raw graph as a user configuration mechanism.
 
-Refresh and export share typed readers.
+Refresh and export use the owning providers' readers.
+Export runs an OpenTofu refresh-only plan against a temporary copy of state with provider configuration and no resource or data-source declarations.
+It does not apply that plan or change the deployment's state and graph.
+The SDK projects refreshed values from the plan's public JSON into YAML and checks their identity and configuration against retained intent.
+Apply-only readiness data sources do not run during export.
 Observations use the owning OpenShell, Docker, and model APIs.
 The relevant orchestration observations are provider resource identities, configuration, policy, and application status.
 Model inventories and preparation verification belong to the hosted runtime.
 
 A host inventory collector would not replace the owning APIs for these checks.
 Capacity uses observations from the selected execution host; credential references, intent, and OpenTofu state remain client-side.
-Mutations and active readiness or inference probes remain direct.
+Explicit inference probes remain direct SDK operations.
 
 Export writes YAML only after all required observations succeed.
 

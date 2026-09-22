@@ -32,6 +32,10 @@ fn multiple_services_share_image_acquisition_without_custom_capacity_gates() {
     .into();
     let graph = compile_runtime(&document, &generations, "0.1.0").unwrap();
     assert!(graph["data"].get("nemoclaw_service_capacity").is_none());
+    assert!(
+        graph["data"].get("nemoclaw_sandbox_readiness").is_none(),
+        "the runtime graph cannot observe sandboxes owned by the deployment graph"
+    );
     let readiness = &graph["data"]["nemoclaw_gateway_capabilities"]["current"];
     assert_eq!(readiness["wait_timeout_seconds"], 90);
     assert_eq!(readiness["required_compute_drivers"], json!(["docker"]));

@@ -1,6 +1,5 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-use crate::config::HarnessKind;
 
 #[cfg(test)]
 mod tests;
@@ -11,11 +10,11 @@ mod runtime;
 mod timing;
 use crate::{
     CancellationToken, Error,
-    backend::{Backend, Row},
+    backend::Row,
     bundle::Bundle,
     compile::{self, Target},
     config::{Credential, Document},
-    openshell::{EnvironmentSecrets, OpenShell, Secrets, verify_identity},
+    openshell::{EnvironmentSecrets, Secrets},
     state::{Record, StateBinding, Store, atomic_write, save_json},
 };
 use plan::{Plan, check_destroy_plan, check_plan};
@@ -101,7 +100,6 @@ pub struct Deployment {
     bundle_directory: PathBuf,
     secrets: Arc<dyn Secrets>,
     progress: Arc<dyn Fn(Progress) + Send + Sync>,
-    engines: crate::docker::Connections,
 }
 impl Deployment {
     pub fn new(state_directory: &Path, bundle_directory: &Path) -> Self {
@@ -110,14 +108,7 @@ impl Deployment {
             bundle_directory: bundle_directory.into(),
             secrets: Arc::new(EnvironmentSecrets),
             progress: Arc::new(|_| {}),
-            engines: crate::docker::Connections::default(),
         }
-    }
-    /// Supply in-process engine connections. Provider subprocesses independently
-    /// connect to the same explicit endpoints carried by compiled resource specs.
-    pub fn with_engines(mut self, engines: crate::docker::Connections) -> Self {
-        self.engines = engines;
-        self
     }
     pub fn with_secrets(mut self, secrets: Arc<dyn Secrets>) -> Self {
         self.secrets = secrets;
@@ -208,7 +199,6 @@ impl Deployment {
                 .push("OpenShell registration and sandbox require the managed gateway".into());
             return Ok(result);
         }
-        let client = OpenShell::connect(&document.spec.gateway, self.secrets.clone())?;
         let bindings = self
             .state_bindings(
                 &bundle,
@@ -274,79 +264,128 @@ impl Deployment {
         record.plan_digest = crate::bundle::hash_file(&store.directory.join("apply.plan"))?;
         store.save(&record)?;
         (self.progress)(Progress::Applying);
-        self.tofu(
-            &bundle,
-            &store,
-            &document,
-            &["apply", "-input=false", "-no-color", "apply.plan"],
-            cancel,
-        )
-        .await?;
-        record.pending = false;
-        record.runtime_pending = false;
-        store.save(&record)?;
-        let bindings = self
-            .state_bindings(
+        let applied = self
+            .tofu(
                 &bundle,
                 &store,
                 &document,
-                &record.generations,
-                false,
+                &["apply", "-input=false", "-no-color", "apply.plan"],
                 cancel,
             )
-            .await?;
-        (self.progress)(Progress::Readiness);
-        for target in targets.iter().filter(|target| target.kind == "sandbox") {
-            let definition = document.sandbox(&target.values["name"])?;
-            let mut sandbox = target.values.clone();
-            sandbox.insert(
-                "id".into(),
-                bindings
-                    .get(&target.address)
-                    .ok_or(Error::State("sandbox has no established identity"))?
-                    .id
-                    .clone(),
-            );
-            (self.progress)(Progress::Readiness);
-            self.timed("sandbox.ready", async {
-                if document.sandbox_harness(definition)?.kind == HarnessKind::Pi {
-                    sandbox.insert(
-                        "pi_model_config".into(),
-                        serde_json::to_string(
-                            &document
-                                .sandbox_inference(definition)?
-                                .default_route()?
-                                .overrides,
-                        )
-                        .map_err(|_| Error::State("cannot encode Pi model configuration"))?,
-                    );
-                }
-                client.ready(&sandbox, cancel).await?;
-                Ok(())
-            })
-            .await?;
+            .await;
+        if let Err(error) = applied {
+            // Only a complete UI stream proving exclusively data postcondition
+            // failures can settle durable mutations. Never replace an unrelated
+            // apply error with a health report retained from an earlier apply.
+            if let Error::Execution {
+                postcondition_failures: Some(addresses),
+                ..
+            } = &error
+                && let Ok(observations) = self
+                    .sandbox_observations(&bundle, &store, &document, &plan, cancel)
+                    .await
+                && !addresses.is_empty()
+                && addresses.iter().all(|address| {
+                    observations.iter().any(|(sandbox, observed)| {
+                        *address == format!("data.nemoclaw_sandbox_readiness.{sandbox}")
+                            && observed["ready"] == false
+                    })
+                })
             {
-                let agents = vec![definition.agent.name.clone()];
-                let health = self.timed("fabric.health", async {
-                    tokio::select! { () = cancel.cancelled() => Err(Error::Cancelled), result = client.health_for(&sandbox, None) => result }
-                }).await?;
-                let health = crate::SandboxHealth {
-                    sandbox: definition.name.clone(),
-                    agents,
-                    health,
-                };
-                if !health.health.allows_apply_completion() {
+                record.pending = false;
+                record.runtime_pending = false;
+                store.save(&record)?;
+                if let Some(health) = observations.iter().find_map(|(name, observed)| {
+                    let health =
+                        crate::RuntimeHealth::decode(observed["health_json"].as_str()?.as_bytes())
+                            .ok()?;
+                    let agent = document.sandbox(name).ok()?.agent.name.clone();
+                    (!health.allows_apply_completion()).then(|| crate::SandboxHealth {
+                        sandbox: name.clone(),
+                        agents: vec![agent],
+                        health,
+                    })
+                }) {
                     return Err(Error::Health {
                         health: Box::new(health),
                     });
                 }
-                result.health.push(health);
             }
+            return Err(error);
         }
+        record.pending = false;
+        record.runtime_pending = false;
+        store.save(&record)?;
+        result.health = self
+            .sandbox_observations(&bundle, &store, &document, &plan, cancel)
+            .await?
+            .into_iter()
+            .map(|(name, observed)| {
+                Ok(crate::SandboxHealth {
+                    agents: vec![document.sandbox(&name)?.agent.name.clone()],
+                    sandbox: name,
+                    health: crate::RuntimeHealth::decode(
+                        observed["health_json"]
+                            .as_str()
+                            .ok_or(Error::State("sandbox health observation is absent"))?
+                            .as_bytes(),
+                    )?,
+                })
+            })
+            .collect::<Result<_, Error>>()?;
         record.succeeded = true;
         store.save(&record)?;
         result.outcome = Outcome::Succeeded;
         Ok(result)
+    }
+    async fn sandbox_observations(
+        &self,
+        bundle: &Bundle,
+        store: &Store,
+        document: &Document,
+        plan: &Plan,
+        cancel: &CancellationToken,
+    ) -> Result<Vec<(String, Value)>, Error> {
+        let bytes = self
+            .tofu(bundle, store, document, &["show", "-json"], cancel)
+            .await?;
+        let state: Value = serde_json::from_slice(&bytes)
+            .map_err(|_| Error::State("invalid OpenTofu health observations"))?;
+        if state["format_version"]
+            .as_str()
+            .is_none_or(|version| version.split('.').next() != Some("1"))
+        {
+            return Err(Error::State("unsupported OpenTofu state JSON version"));
+        }
+        let observations = crate::state::parse_resources(&state["values"])?;
+        document
+            .spec
+            .sandboxes
+            .iter()
+            .map(|sandbox| {
+                let address = format!("data.nemoclaw_sandbox_readiness.{}", sandbox.name);
+                let observed = observations
+                    .get(&address)
+                    .ok_or(Error::State("sandbox readiness observation is absent"))?;
+                let previous = plan
+                    .resource_changes
+                    .iter()
+                    .find(|change| change.address == address)
+                    .ok_or(Error::State("sandbox readiness was not scheduled"))?;
+                let token = observed["read_trigger"]
+                    .as_str()
+                    .filter(|value| !value.is_empty())
+                    .ok_or(Error::State(
+                        "sandbox readiness observation has no operation identity",
+                    ))?;
+                if previous.change.before["read_trigger"].as_str() == Some(token) {
+                    return Err(Error::State(
+                        "sandbox readiness observation predates this apply",
+                    ));
+                }
+                Ok((sandbox.name.clone(), observed.clone()))
+            })
+            .collect()
     }
     async fn state_bindings(
         &self,
@@ -429,7 +468,11 @@ impl Deployment {
             _ => "tofu.command",
         };
         self.timed(operation, async {
-            let env = command_environment(document, self.secrets.as_ref(), &store.directory)?;
+            let env = if matches!(args.first(), Some(&"init" | &"show")) {
+                crate::state::schema_environment(&store.directory)
+            } else {
+                command_environment(document, self.secrets.as_ref(), &store.directory)?
+            };
             if matches!(args.first(), Some(&"plan" | &"apply")) {
                 let mut args = args.to_vec();
                 args.insert(1, "-json");
@@ -495,22 +538,36 @@ fn command_environment(
     secrets: &dyn Secrets,
     directory: &Path,
 ) -> Result<BTreeMap<String, String>, Error> {
-    let mut env: BTreeMap<String, String> = [
-        ("TF_IN_AUTOMATION", "1"),
-        ("TF_INPUT", "0"),
-        ("CHECKPOINT_DISABLE", "1"),
-    ]
-    .into_iter()
-    .map(|(k, v)| (k.into(), v.into()))
-    .collect();
-    env.insert(
-        "TF_CLI_CONFIG_FILE".into(),
-        directory
-            .join("providers.tfrc")
-            .to_string_lossy()
-            .into_owned(),
-    );
-    for name in document.credential_names() {
+    credential_environment(document.credential_names(), secrets, directory)
+}
+
+fn gateway_environment(
+    document: &Document,
+    secrets: &dyn Secrets,
+    directory: &Path,
+) -> Result<BTreeMap<String, String>, Error> {
+    let gateway = &document.spec.gateway;
+    let mut names = BTreeSet::new();
+    if let Some(credential) = gateway.credential() {
+        names.insert(credential.env.as_str());
+    }
+    if let Some(tls) = gateway.tls() {
+        names.extend([
+            tls.ca.env.as_str(),
+            tls.certificate.env.as_str(),
+            tls.key.env.as_str(),
+        ]);
+    }
+    credential_environment(names, secrets, directory)
+}
+
+fn credential_environment<'a>(
+    names: impl IntoIterator<Item = &'a str>,
+    secrets: &dyn Secrets,
+    directory: &Path,
+) -> Result<BTreeMap<String, String>, Error> {
+    let mut env = crate::state::schema_environment(directory);
+    for name in names {
         if ["TF_", "TOFU_", "PLUGIN_", "NEMOCLAW_INTERNAL_"]
             .iter()
             .any(|prefix| name.starts_with(prefix))

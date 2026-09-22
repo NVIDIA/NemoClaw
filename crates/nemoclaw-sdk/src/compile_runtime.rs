@@ -86,6 +86,11 @@ pub(crate) fn runtime_graph(
         crate::services::InstallStage::Runtime,
     )?;
     let mut graph = compile_with_plans(document, generations, version, &service_plans)?;
+    // Sandbox observations belong to the graph owning their resource bindings.
+    graph["data"]
+        .as_object_mut()
+        .unwrap()
+        .remove("nemoclaw_sandbox_readiness");
     // This graph already waits on gateway reconciliation. The separate
     // OpenShell graph owns the fresh check before its dependent mutations.
     graph["data"]["nemoclaw_gateway_capabilities"]

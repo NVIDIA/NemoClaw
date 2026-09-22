@@ -40,8 +40,9 @@ pub async fn verify_agent(
 }
 
 /// OpenTofu may reorder cached precondition results and advance the serial on
-/// otherwise unchanged apply. Every other field, including bindings and check
-/// outcomes, must remain identical. Failed-observation tests still compare bytes.
+/// otherwise unchanged apply. Sandbox observations also carry a fresh operation
+/// token. Every other field, including health, bindings and check outcomes, must
+/// remain identical. Failed-observation tests still compare bytes.
 pub fn assert_same_deployment_state(actual: &[u8], expected: &[u8]) {
     fn normalize(bytes: &[u8]) -> serde_json::Value {
         let mut state: serde_json::Value = serde_json::from_slice(bytes).unwrap();
@@ -53,6 +54,21 @@ pub fn assert_same_deployment_state(actual: &[u8], expected: &[u8]) {
                 .unwrap()
                 .is_u64()
         );
+        if let Some(resources) = state["resources"].as_array_mut() {
+            for resource in resources {
+                if resource["mode"] == "data"
+                    && resource["type"] == "nemoclaw_sandbox_readiness"
+                    && let Some(instances) = resource["instances"].as_array_mut()
+                {
+                    for instance in instances {
+                        instance["attributes"]
+                            .as_object_mut()
+                            .unwrap()
+                            .remove("read_trigger");
+                    }
+                }
+            }
+        }
         if let Some(checks) = state
             .get_mut("check_results")
             .and_then(serde_json::Value::as_array_mut)
@@ -144,4 +160,24 @@ fn failed_apply_preserves_managed_resources_but_may_record_failed_observations()
             "{path}"
         );
     }
+}
+
+#[test]
+fn sandbox_completion_state_comparison_ignores_only_the_operation_token() {
+    let before = serde_json::json!({"serial":1,"resources":[{
+        "mode":"data","type":"nemoclaw_sandbox_readiness",
+        "instances":[{"attributes":{"read_trigger":"old", "ready":true, "health_json":"unsupported"}}]
+    }]});
+    let mut after = before.clone();
+    after["resources"][0]["instances"][0]["attributes"]["read_trigger"] =
+        serde_json::json!("fresh");
+    assert_same_deployment_state(after.to_string().as_bytes(), before.to_string().as_bytes());
+    after["resources"][0]["instances"][0]["attributes"]["ready"] = serde_json::json!(false);
+    assert!(
+        std::panic::catch_unwind(|| assert_same_deployment_state(
+            after.to_string().as_bytes(),
+            before.to_string().as_bytes()
+        ))
+        .is_err()
+    );
 }
