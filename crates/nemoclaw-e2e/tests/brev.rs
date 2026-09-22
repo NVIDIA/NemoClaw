@@ -297,13 +297,16 @@ async fn bare_brev_hosted_openclaw_lifecycle() {
         [
             "/opt/fabric/bin/python",
             "-c",
-            "import urllib.error,urllib.request\ntry: urllib.request.urlopen('https://example.com',timeout=15)\nexcept urllib.error.URLError:\n print('policy-denied')\nelse: raise AssertionError('undeclared egress was allowed')",
+            "import urllib.error,urllib.request\ntry: urllib.request.urlopen('https://example.com',timeout=15)\nexcept urllib.error.URLError as error:\n assert '403' in str(error), str(error)\n print('policy-denied-403')\nelse: raise AssertionError('undeclared egress was allowed')",
         ]
         .map(String::from)
         .to_vec(),
     )
     .await;
-    assert_eq!(String::from_utf8(denial).unwrap().trim(), "policy-denied");
+    assert_eq!(
+        String::from_utf8(denial).unwrap().trim(),
+        "policy-denied-403"
+    );
 
     let unchanged = deployment.apply(&document, &cancel).await.unwrap();
     assert_eq!(unchanged.outcome, Outcome::Succeeded);
