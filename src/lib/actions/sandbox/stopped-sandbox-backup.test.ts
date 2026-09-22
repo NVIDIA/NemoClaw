@@ -459,6 +459,20 @@ describe("backupStartedSandboxState", () => {
     vi.useRealTimers();
   });
 
+  it("waits beyond the former ninety-second SSH readiness boundary (#11936)", async () => {
+    vi.useFakeTimers();
+    adapterMocks.backupWithAuthority.mockImplementation(() =>
+      adapterMocks.backupWithAuthority.mock.calls.length <= 46 ? unreachable : ok,
+    );
+
+    const pending = backupStartedSandboxState("my-sb");
+    await vi.runAllTimersAsync();
+
+    await expect(pending).resolves.toEqual(ok);
+    expect(adapterMocks.backupWithAuthority).toHaveBeenCalledTimes(47);
+    vi.useRealTimers();
+  });
+
   it("returns a non-transport failure without retrying", async () => {
     const backup = vi.fn().mockReturnValue(denied);
     const sleep = vi.fn().mockResolvedValue(undefined);

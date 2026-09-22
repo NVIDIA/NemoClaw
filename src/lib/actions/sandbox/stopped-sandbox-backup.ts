@@ -263,7 +263,7 @@ interface BackupRetryDeps {
   delayMs: number;
 }
 
-const STARTED_BACKUP_READY_TIMEOUT_MS = 90_000;
+const STARTED_BACKUP_READY_TIMEOUT_MS = 180_000;
 const STARTED_BACKUP_RETRY_DELAY_MS = 2_000;
 
 const defaultBackupRetryDeps: BackupRetryDeps = {
