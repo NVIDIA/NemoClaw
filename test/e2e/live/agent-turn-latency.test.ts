@@ -157,10 +157,8 @@ runAgentTurnLatencyTest(
       stdin: "open-pipe",
     });
     expect(firstTurn.result.exitCode, resultText(firstTurn.result)).toBe(0);
-    expect(
-      containsAnswer(parseOpenClawAgentText(firstTurn.result.stdout), "42"),
-      resultText(firstTurn.result),
-    ).toBe(true);
+    const openclawAnswer = parseOpenClawAgentText(firstTurn.result.stdout);
+    expect(containsAnswer(openclawAnswer, "42"), resultText(firstTurn.result)).toBe(true);
     expect(firstTurn.elapsedMs).toBeLessThanOrEqual(MAX_TURN_SECONDS * 1000);
     const firstTurnTiming = buildOpenClawFirstTurnLatencyEvidence(
       firstTurn.result.stdout,
@@ -174,7 +172,7 @@ runAgentTurnLatencyTest(
     ).toBeLessThanOrEqual(MAX_HOST_DISPATCH_OVERHEAD_MS);
     results.openclaw = {
       ...firstTurnTiming,
-      answer: "42",
+      answer: openclawAnswer,
       elapsedMs: firstTurn.elapsedMs,
       model: inference.model,
       provider: inference.expectedRouteProvider,
@@ -242,13 +240,12 @@ runAgentTurnLatencyTest(
     const hermesMs = Number((process.hrtime.bigint() - hermesStarted) / 1_000_000n);
     expect(hermesTurn.exitCode, resultText(hermesTurn)).toBe(0);
     const hermesResponse = responseBodyAndStatus(hermesTurn.stdout);
+    const hermesAnswer = chatContent(hermesResponse.body);
     expect(hermesResponse.status, resultText(hermesTurn)).toBe("200");
-    expect(containsAnswer(chatContent(hermesResponse.body), "42"), resultText(hermesTurn)).toBe(
-      true,
-    );
+    expect(containsAnswer(hermesAnswer, "42"), resultText(hermesTurn)).toBe(true);
     expect(hermesMs).toBeLessThanOrEqual(MAX_TURN_SECONDS * 1000);
     results.hermes = {
-      answer: "42",
+      answer: hermesAnswer,
       elapsedMs: hermesMs,
       httpStatus: hermesResponse.status,
       model: inference.model,
