@@ -5,7 +5,7 @@ mod create;
 mod update;
 
 use super::*;
-use crate::backend::{Backend, Mutation};
+use crate::backend::{Backend, Mutation, OpenShellLifecycle, openshell_lifecycle};
 use async_trait::async_trait;
 use std::{collections::HashMap, time::Duration};
 
@@ -47,7 +47,7 @@ impl OpenShell {
             Some(inference_profile(
                 value(want, "name"),
                 value(want, "endpoint"),
-                kind,
+                kind.parse().map_err(|_| ObservationError::Query)?,
                 !source.is_empty() || !value(want, "credential_env").is_empty(),
             )?)
         } else {
@@ -353,7 +353,11 @@ impl Backend for OpenShell {
         if kind == "pi_configuration" {
             return self.remove_pi(prior, destroying).await;
         }
-        if !destroying || !matches!(kind, "sandbox" | "provider" | "provider_profile") {
+        if !matches!(
+            openshell_lifecycle(kind),
+            Some(OpenShellLifecycle::Reconstructible)
+        ) && !(destroying && openshell_lifecycle(kind) == Some(OpenShellLifecycle::Stateful))
+        {
             return Err(ObservationError::Query);
         }
         tokio::time::timeout(Duration::from_secs(300), self.delete_bound(kind, prior))
@@ -381,14 +385,9 @@ mod search_tests {
 
     #[tokio::test]
     async fn search_creation_resolves_only_the_reference_and_observation_drops_the_value() {
-        let client = OpenShell::connect(
-            &Gateway {
-                endpoint: "http://127.0.0.1:1".into(),
-                ..Default::default()
-            },
-            Arc::new(SearchSecrets),
-        )
-        .unwrap();
+        let mut gateway = Gateway::default();
+        *gateway.endpoint_mut() = "http://127.0.0.1:1".into();
+        let client = OpenShell::connect(&gateway, Arc::new(SearchSecrets)).unwrap();
         for provider in [SearchProvider::Brave, SearchProvider::Tavily] {
             let name = crate::config::search_provider_name(provider, "SEARCH_KEY");
             let want: Row = [

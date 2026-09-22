@@ -493,38 +493,11 @@
       "type": "object"
     },
     "Gateway": {
-      "additionalProperties": false,
-      "description": "Managed Podman targets local rootless Linux; rootful, remote, and other platforms are unqualified.\nChoose a managed local Docker or Podman gateway or connect to an external gateway. Credentials and TLS require HTTPS.",
-      "if": {
-        "properties": {
-          "endpoint": {
-            "pattern": "^http:"
-          }
-        },
-        "required": [
-          "endpoint"
-        ]
-      },
+      "description": "Install a local gateway or connect to an existing gateway.",
       "oneOf": [
         {
-          "allOf": [
-            {
-              "not": {
-                "anyOf": [
-                  {
-                    "required": [
-                      "credential"
-                    ]
-                  },
-                  {
-                    "required": [
-                      "tls"
-                    ]
-                  }
-                ]
-              }
-            }
-          ],
+          "additionalProperties": false,
+          "description": "A gateway installed and managed by this deployment.\nManaged Podman targets local rootless Linux; rootful, remote, and other platforms are unqualified.",
           "properties": {
             "endpoint": {
               "anyOf": [
@@ -535,7 +508,10 @@
                   "pattern": "^http://127\\.0\\.0\\.1:[0-9]+/?$"
                 }
               ],
-              "default": "http://127.0.0.1:17681"
+              "default": "http://127.0.0.1:17681",
+              "description": "Local gateway HTTP origin with an unprivileged loopback port.",
+              "type": "string",
+              "x-nemoclaw-default-rule": "Omitted or empty selects the default."
             },
             "engine": {
               "anyOf": [
@@ -546,17 +522,29 @@
                   "pattern": "^unix:///"
                 }
               ],
-              "default": "unix:///var/run/docker.sock"
+              "default": "unix:///var/run/docker.sock",
+              "description": "Managed gateway Unix engine socket; Podman requires its API service socket.",
+              "type": "string",
+              "x-nemoclaw-default-rule": "Omitted or empty selects the default."
             },
             "image": {
               "default": "ghcr.io/nvidia/openshell/gateway@sha256:ec2b0efea84fff198e888e97c85befb9c908acde92e8256f9b527877ed182d66",
+              "description": "Managed gateway image pinned by the SDK.",
               "enum": [
                 "",
                 "ghcr.io/nvidia/openshell/gateway@sha256:ec2b0efea84fff198e888e97c85befb9c908acde92e8256f9b527877ed182d66"
-              ]
+              ],
+              "type": "string",
+              "x-nemoclaw-default-rule": "Omitted or empty selects the default."
+            },
+            "imagePullPolicy": {
+              "$ref": "#/$defs/ImagePullPolicy",
+              "description": "Image acquisition before container creation. Docker accepts IfNotPresent (the default) or Never; Podman also accepts Always before creation or restart."
             },
             "management": {
-              "const": "managed"
+              "const": "managed",
+              "description": "Whether this deployment manages the gateway.",
+              "type": "string"
             },
             "networkCIDR": {
               "anyOf": [
@@ -566,111 +554,75 @@
                 {
                   "pattern": "/24$"
                 }
-              ]
-            }
-          },
-          "title": "Managed gateway"
-        },
-        {
-          "allOf": [
-            {
-              "not": {
-                "anyOf": [
-                  {
-                    "required": [
-                      "imagePullPolicy"
-                    ]
-                  }
-                ]
-              }
-            }
-          ],
-          "properties": {
-            "endpoint": {
-              "pattern": "^https?://"
-            },
-            "engine": {
-              "const": ""
-            },
-            "image": {
-              "const": ""
-            },
-            "management": {
-              "const": "external"
-            },
-            "networkCIDR": {
-              "const": ""
+              ],
+              "description": "Canonical private IPv4 /24 for a managed gateway.",
+              "type": "string",
+              "x-nemoclaw-default-rule": "Omitted or empty selects 172.30.N.0/24, where N is the first byte of SHA-256(metadata.uid)."
             }
           },
           "required": [
+            "management"
+          ],
+          "title": "Managed gateway",
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "An existing gateway managed outside this deployment.",
+          "if": {
+            "properties": {
+              "endpoint": {
+                "pattern": "^http:"
+              }
+            },
+            "required": [
+              "endpoint"
+            ]
+          },
+          "properties": {
+            "credential": {
+              "$ref": "#/$defs/Credential",
+              "description": "Optional bearer credential reference for an external HTTPS gateway."
+            },
+            "endpoint": {
+              "description": "Gateway HTTP(S) origin, without a path.",
+              "pattern": "^https?://",
+              "type": "string"
+            },
+            "management": {
+              "const": "external",
+              "description": "Whether this deployment manages the gateway.",
+              "type": "string"
+            },
+            "tls": {
+              "$ref": "#/$defs/TLS",
+              "description": "Optional mutual TLS references for an external HTTPS gateway."
+            }
+          },
+          "required": [
+            "management",
             "endpoint"
           ],
-          "title": "External gateway"
-        }
-      ],
-      "properties": {
-        "credential": {
-          "$ref": "#/$defs/Credential",
-          "description": "Optional bearer credential reference for an external HTTPS gateway."
-        },
-        "endpoint": {
-          "description": "Gateway HTTP(S) origin, without a path. Required for an external gateway; managed gateways use unprivileged loopback HTTP ports.",
-          "type": "string",
-          "x-nemoclaw-default-rule": "Managed only: omitted or empty selects http://127.0.0.1:17681.",
-          "x-nemoclaw-required": "When external"
-        },
-        "engine": {
-          "description": "Managed gateway Unix engine socket; Podman requires its API service socket. Omit or leave empty for an external gateway.",
-          "type": "string",
-          "x-nemoclaw-default-rule": "Managed only: omitted or empty selects unix:///var/run/docker.sock."
-        },
-        "image": {
-          "description": "Managed gateway image pinned by the SDK. Omit or leave empty for an external gateway.",
-          "type": "string",
-          "x-nemoclaw-default-rule": "Managed only: omitted or empty selects ghcr.io/nvidia/openshell/gateway@sha256:ec2b0efea84fff198e888e97c85befb9c908acde92e8256f9b527877ed182d66."
-        },
-        "imagePullPolicy": {
-          "$ref": "#/$defs/ImagePullPolicy",
-          "description": "Image acquisition before container creation. Docker accepts IfNotPresent (the default) or Never; Podman also accepts Always before creation or restart."
-        },
-        "management": {
-          "description": "Whether the SDK manages the gateway or connects to an existing one.",
-          "enum": [
-            "managed",
-            "external"
-          ],
-          "type": "string"
-        },
-        "networkCIDR": {
-          "description": "Canonical private IPv4 /24 for a managed gateway. Omit or leave empty for an external gateway.",
-          "type": "string",
-          "x-nemoclaw-default-rule": "Managed only: omitted or empty selects 172.30.N.0/24, where N is the first byte of SHA-256(metadata.uid)."
-        },
-        "tls": {
-          "$ref": "#/$defs/TLS",
-          "description": "Optional mutual TLS references for an external HTTPS gateway."
-        }
-      },
-      "required": [
-        "management"
-      ],
-      "then": {
-        "not": {
-          "anyOf": [
-            {
-              "required": [
-                "credential"
-              ]
-            },
-            {
-              "required": [
-                "tls"
+          "then": {
+            "not": {
+              "anyOf": [
+                {
+                  "required": [
+                    "credential"
+                  ]
+                },
+                {
+                  "required": [
+                    "tls"
+                  ]
+                }
               ]
             }
-          ]
+          },
+          "title": "External gateway",
+          "type": "object"
         }
-      },
-      "type": "object"
+      ]
     },
     "HardwareProfile": {
       "description": "GPU-family contracts, not model or whole-system qualifications. System profiles fix ARM64; GPU profiles require architecture. Each currently requires one visible GPU.",
@@ -1088,6 +1040,39 @@
                   ]
                 }
               ]
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "api"
+            ]
+          },
+          "then": {
+            "else": {
+              "properties": {
+                "provider": {
+                  "const": "openai"
+                }
+              }
+            },
+            "if": {
+              "properties": {
+                "api": {
+                  "const": "anthropic-messages"
+                }
+              },
+              "required": [
+                "api"
+              ]
+            },
+            "then": {
+              "properties": {
+                "provider": {
+                  "const": "anthropic"
+                }
+              }
             }
           }
         }
@@ -1920,11 +1905,21 @@
         {
           "anyOf": [
             {
+              "properties": {
+                "host": {
+                  "minLength": 1
+                }
+              },
               "required": [
                 "host"
               ]
             },
             {
+              "properties": {
+                "allowed_ips": {
+                  "minItems": 1
+                }
+              },
               "required": [
                 "allowed_ips"
               ]
@@ -1966,6 +1961,7 @@
           "items": {
             "$ref": "#/$defs/PolicyMatcher"
           },
+          "minItems": 1,
           "type": "array"
         },
         "enforcement": {
@@ -2029,6 +2025,7 @@
           "items": {
             "$ref": "#/$defs/PolicyAllowRule"
           },
+          "minItems": 1,
           "type": "array"
         },
         "tls": {
@@ -2408,120 +2405,6 @@
       "additionalProperties": false,
       "allOf": [
         {
-          "if": {
-            "properties": {
-              "agent": {
-                "properties": {
-                  "tools": {
-                    "properties": {
-                      "allow": {}
-                    },
-                    "required": [
-                      "allow"
-                    ]
-                  }
-                },
-                "required": [
-                  "tools"
-                ]
-              }
-            },
-            "required": [
-              "agent"
-            ]
-          },
-          "then": {
-            "properties": {
-              "harness": {
-                "properties": {
-                  "kind": {
-                    "enum": [
-                      "openclaw",
-                      "deepagents",
-                      "pi"
-                    ]
-                  }
-                }
-              }
-            }
-          }
-        },
-        {
-          "if": {
-            "properties": {
-              "agent": {
-                "properties": {
-                  "tools": {
-                    "properties": {
-                      "disclosure": {}
-                    },
-                    "required": [
-                      "disclosure"
-                    ]
-                  }
-                },
-                "required": [
-                  "tools"
-                ]
-              }
-            },
-            "required": [
-              "agent"
-            ]
-          },
-          "then": {
-            "properties": {
-              "harness": {
-                "properties": {
-                  "kind": {
-                    "const": "openclaw"
-                  }
-                }
-              }
-            }
-          }
-        },
-        {
-          "if": {
-            "properties": {
-              "agent": {
-                "properties": {
-                  "inference": {
-                    "properties": {
-                      "routes": {
-                        "minItems": 2
-                      }
-                    },
-                    "required": [
-                      "routes"
-                    ]
-                  }
-                },
-                "required": [
-                  "inference"
-                ]
-              }
-            },
-            "required": [
-              "agent"
-            ]
-          },
-          "then": {
-            "properties": {
-              "harness": {
-                "properties": {
-                  "kind": {
-                    "enum": [
-                      "openclaw",
-                      "pi"
-                    ]
-                  }
-                }
-              }
-            }
-          }
-        },
-        {
           "oneOf": [
             {
               "not": {
@@ -2745,7 +2628,8 @@
             "image": {
               "description": "Immutable runtime image containing Ollama and the NemoClaw supervisor.",
               "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:/-]*@sha256:[a-f0-9]{64}$",
-              "type": "string"
+              "type": "string",
+              "x-nemoclaw-error": "service image must be pinned by a SHA-256 digest"
             },
             "imagePullPolicy": {
               "$ref": "#/$defs/ImagePullPolicy",
@@ -2800,12 +2684,14 @@
             "engine": {
               "description": "Local Docker Unix socket. Omission uses the managed gateway engine.",
               "pattern": "^unix:///[^?#\\x00]*$",
-              "type": "string"
+              "type": "string",
+              "x-nemoclaw-error": "proxy engine must be a local Unix socket"
             },
             "image": {
               "description": "Immutable NemoClaw proxy image. The external daemon runs on the selected Docker host.",
               "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:/-]*@sha256:[a-f0-9]{64}$",
-              "type": "string"
+              "type": "string",
+              "x-nemoclaw-error": "service image must be pinned by a SHA-256 digest"
             },
             "imagePullPolicy": {
               "$ref": "#/$defs/ImagePullPolicy",
@@ -3046,7 +2932,8 @@
             "image": {
               "description": "Immutable runtime image containing vLLM, the NemoClaw supervisor, and any declared recipe tools.",
               "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:/-]*@sha256:[a-f0-9]{64}$",
-              "type": "string"
+              "type": "string",
+              "x-nemoclaw-error": "service image must be pinned by a SHA-256 digest"
             },
             "imagePullPolicy": {
               "$ref": "#/$defs/ImagePullPolicy",
@@ -3711,39 +3598,19 @@
         "properties": {
           "spec": {
             "properties": {
-              "sandboxes": {
-                "items": {
-                  "properties": {
-                    "agent": {
-                      "properties": {
-                        "inference": {
-                          "properties": {
-                            "routes": {
-                              "items": {
-                                "required": [
-                                  "providerRef"
-                                ]
-                              }
-                            }
-                          },
-                          "required": [
-                            "routes"
-                          ]
-                        }
-                      },
-                      "required": [
-                        "inference"
-                      ]
-                    }
-                  },
-                  "required": [
-                    "agent"
-                  ]
-                }
+              "gateway": {
+                "properties": {
+                  "management": {
+                    "const": "managed"
+                  }
+                },
+                "required": [
+                  "management"
+                ]
               }
             },
             "required": [
-              "sandboxes"
+              "gateway"
             ]
           }
         },
@@ -3757,133 +3624,25 @@
             "properties": {
               "spec": {
                 "properties": {
-                  "inferenceProviders": {
-                    "minItems": 1
-                  }
-                },
-                "required": [
-                  "inferenceProviders"
-                ]
-              }
-            },
-            "required": [
-              "spec"
-            ]
-          },
-          {
-            "properties": {
-              "spec": {
-                "properties": {
                   "sandboxes": {
                     "items": {
                       "properties": {
-                        "inferenceProviders": {
-                          "minItems": 1
-                        }
-                      },
-                      "required": [
-                        "inferenceProviders"
-                      ]
-                    }
-                  }
-                },
-                "required": [
-                  "sandboxes"
-                ]
-              }
-            },
-            "required": [
-              "spec"
-            ]
-          }
-        ]
-      }
-    },
-    {
-      "if": {
-        "allOf": [
-          {
-            "allOf": [
-              {
-                "properties": {
-                  "spec": {
-                    "properties": {
-                      "inferenceProviders": {
-                        "maxItems": 1,
-                        "minItems": 1
-                      }
-                    },
-                    "required": [
-                      "inferenceProviders"
-                    ]
-                  }
-                },
-                "required": [
-                  "spec"
-                ]
-              },
-              {
-                "properties": {
-                  "spec": {
-                    "properties": {
-                      "sandboxes": {
-                        "items": {
+                        "runtime": {
                           "properties": {
-                            "inferenceProviders": {
-                              "maxItems": 0
-                            }
-                          }
-                        }
-                      }
-                    }
-                  }
-                }
-              },
-              {
-                "properties": {
-                  "spec": {
-                    "properties": {
-                      "sandboxes": {
-                        "items": {
-                          "properties": {
-                            "agent": {
-                              "properties": {
-                                "inference": {
-                                  "properties": {
-                                    "routes": {
-                                      "items": {
-                                        "required": [
-                                          "providerRef"
-                                        ]
-                                      }
-                                    }
-                                  },
-                                  "required": [
-                                    "routes"
-                                  ]
-                                }
-                              },
-                              "required": [
-                                "inference"
+                            "provider": {
+                              "enum": [
+                                "",
+                                "docker"
                               ]
                             }
-                          },
-                          "required": [
-                            "agent"
-                          ]
+                          }
                         }
                       }
-                    },
-                    "required": [
-                      "sandboxes"
-                    ]
+                    }
                   }
-                },
-                "required": [
-                  "spec"
-                ]
+                }
               }
-            ]
+            }
           },
           {
             "properties": {
@@ -3892,17 +3651,19 @@
                   "sandboxes": {
                     "items": {
                       "properties": {
-                        "harness": {
+                        "runtime": {
                           "properties": {
-                            "kind": {}
+                            "provider": {
+                              "const": "podman"
+                            }
                           },
                           "required": [
-                            "kind"
+                            "provider"
                           ]
                         }
                       },
                       "required": [
-                        "harness"
+                        "runtime"
                       ]
                     }
                   }
@@ -3915,2523 +3676,6 @@
             "required": [
               "spec"
             ]
-          }
-        ]
-      },
-      "then": {
-        "allOf": [
-          {
-            "if": {
-              "properties": {
-                "spec": {
-                  "properties": {
-                    "sandboxes": {
-                      "items": {
-                        "properties": {
-                          "harness": {
-                            "properties": {
-                              "kind": {
-                                "const": "pi"
-                              }
-                            },
-                            "required": [
-                              "kind"
-                            ]
-                          }
-                        },
-                        "required": [
-                          "harness"
-                        ]
-                      }
-                    }
-                  },
-                  "required": [
-                    "sandboxes"
-                  ]
-                }
-              },
-              "required": [
-                "spec"
-              ]
-            },
-            "then": {
-              "properties": {
-                "spec": {
-                  "properties": {
-                    "inferenceProviders": {
-                      "items": {
-                        "not": {
-                          "anyOf": [
-                            {
-                              "required": [
-                                "api"
-                              ]
-                            }
-                          ]
-                        }
-                      }
-                    }
-                  }
-                }
-              }
-            }
-          },
-          {
-            "else": {
-              "properties": {
-                "spec": {
-                  "properties": {
-                    "inferenceProviders": {
-                      "items": {
-                        "properties": {
-                          "provider": {
-                            "const": "openai"
-                          }
-                        }
-                      }
-                    }
-                  }
-                }
-              }
-            },
-            "if": {
-              "anyOf": [
-                {
-                  "properties": {
-                    "spec": {
-                      "properties": {
-                        "inferenceProviders": {
-                          "items": {
-                            "properties": {
-                              "api": {
-                                "const": "anthropic-messages"
-                              }
-                            },
-                            "required": [
-                              "api"
-                            ]
-                          }
-                        }
-                      },
-                      "required": [
-                        "inferenceProviders"
-                      ]
-                    }
-                  },
-                  "required": [
-                    "spec"
-                  ]
-                },
-                {
-                  "allOf": [
-                    {
-                      "properties": {
-                        "spec": {
-                          "properties": {
-                            "sandboxes": {
-                              "items": {
-                                "properties": {
-                                  "harness": {
-                                    "properties": {
-                                      "kind": {
-                                        "const": "claude"
-                                      }
-                                    },
-                                    "required": [
-                                      "kind"
-                                    ]
-                                  }
-                                },
-                                "required": [
-                                  "harness"
-                                ]
-                              }
-                            }
-                          },
-                          "required": [
-                            "sandboxes"
-                          ]
-                        }
-                      },
-                      "required": [
-                        "spec"
-                      ]
-                    },
-                    {
-                      "properties": {
-                        "spec": {
-                          "properties": {
-                            "inferenceProviders": {
-                              "items": {
-                                "not": {
-                                  "anyOf": [
-                                    {
-                                      "required": [
-                                        "api"
-                                      ]
-                                    }
-                                  ]
-                                }
-                              }
-                            }
-                          },
-                          "required": [
-                            "inferenceProviders"
-                          ]
-                        }
-                      },
-                      "required": [
-                        "spec"
-                      ]
-                    }
-                  ]
-                }
-              ]
-            },
-            "then": {
-              "properties": {
-                "spec": {
-                  "properties": {
-                    "inferenceProviders": {
-                      "items": {
-                        "properties": {
-                          "provider": {
-                            "const": "anthropic"
-                          }
-                        }
-                      }
-                    }
-                  }
-                }
-              }
-            }
-          },
-          {
-            "if": {
-              "properties": {
-                "spec": {
-                  "properties": {
-                    "sandboxes": {
-                      "items": {
-                        "properties": {
-                          "harness": {
-                            "properties": {
-                              "kind": {
-                                "const": "claude"
-                              }
-                            },
-                            "required": [
-                              "kind"
-                            ]
-                          }
-                        },
-                        "required": [
-                          "harness"
-                        ]
-                      }
-                    }
-                  },
-                  "required": [
-                    "sandboxes"
-                  ]
-                }
-              },
-              "required": [
-                "spec"
-              ]
-            },
-            "then": {
-              "properties": {
-                "spec": {
-                  "properties": {
-                    "inferenceProviders": {
-                      "items": {
-                        "properties": {
-                          "api": {
-                            "const": "anthropic-messages"
-                          }
-                        }
-                      }
-                    }
-                  }
-                }
-              }
-            }
-          },
-          {
-            "if": {
-              "properties": {
-                "spec": {
-                  "properties": {
-                    "sandboxes": {
-                      "items": {
-                        "properties": {
-                          "harness": {
-                            "properties": {
-                              "kind": {
-                                "const": "codex"
-                              }
-                            },
-                            "required": [
-                              "kind"
-                            ]
-                          }
-                        },
-                        "required": [
-                          "harness"
-                        ]
-                      }
-                    }
-                  },
-                  "required": [
-                    "sandboxes"
-                  ]
-                }
-              },
-              "required": [
-                "spec"
-              ]
-            },
-            "then": {
-              "properties": {
-                "spec": {
-                  "properties": {
-                    "inferenceProviders": {
-                      "items": {
-                        "properties": {
-                          "api": {
-                            "const": "openai-responses"
-                          }
-                        }
-                      }
-                    }
-                  }
-                }
-              }
-            }
-          },
-          {
-            "if": {
-              "properties": {
-                "spec": {
-                  "properties": {
-                    "sandboxes": {
-                      "items": {
-                        "properties": {
-                          "harness": {
-                            "properties": {
-                              "kind": {
-                                "not": {
-                                  "enum": [
-                                    "openclaw",
-                                    "hermes",
-                                    "claude",
-                                    "codex"
-                                  ]
-                                }
-                              }
-                            },
-                            "required": [
-                              "kind"
-                            ]
-                          }
-                        },
-                        "required": [
-                          "harness"
-                        ]
-                      }
-                    }
-                  },
-                  "required": [
-                    "sandboxes"
-                  ]
-                }
-              },
-              "required": [
-                "spec"
-              ]
-            },
-            "then": {
-              "properties": {
-                "spec": {
-                  "properties": {
-                    "inferenceProviders": {
-                      "items": {
-                        "properties": {
-                          "api": {
-                            "const": "openai-completions"
-                          }
-                        }
-                      }
-                    }
-                  }
-                }
-              }
-            }
-          },
-          {
-            "if": {
-              "properties": {
-                "spec": {
-                  "properties": {
-                    "sandboxes": {
-                      "items": {
-                        "properties": {
-                          "harness": {
-                            "properties": {
-                              "kind": {
-                                "not": {
-                                  "const": "openclaw"
-                                }
-                              }
-                            },
-                            "required": [
-                              "kind"
-                            ]
-                          }
-                        },
-                        "required": [
-                          "harness"
-                        ]
-                      }
-                    }
-                  },
-                  "required": [
-                    "sandboxes"
-                  ]
-                }
-              },
-              "required": [
-                "spec"
-              ]
-            },
-            "then": {
-              "properties": {
-                "spec": {
-                  "properties": {
-                    "sandboxes": {
-                      "items": {
-                        "properties": {
-                          "agent": {
-                            "properties": {
-                              "inference": {
-                                "properties": {
-                                  "routes": {
-                                    "items": {
-                                      "properties": {
-                                        "overrides": {
-                                          "not": {
-                                            "anyOf": [
-                                              {
-                                                "required": [
-                                                  "contextWindow"
-                                                ]
-                                              },
-                                              {
-                                                "required": [
-                                                  "reasoning"
-                                                ]
-                                              },
-                                              {
-                                                "required": [
-                                                  "reasoningEffort"
-                                                ]
-                                              }
-                                            ]
-                                          }
-                                        }
-                                      }
-                                    }
-                                  }
-                                }
-                              }
-                            }
-                          }
-                        }
-                      }
-                    }
-                  }
-                }
-              }
-            }
-          },
-          {
-            "if": {
-              "properties": {
-                "spec": {
-                  "properties": {
-                    "sandboxes": {
-                      "items": {
-                        "properties": {
-                          "harness": {
-                            "properties": {
-                              "kind": {
-                                "not": {
-                                  "enum": [
-                                    "openclaw",
-                                    "deepagents",
-                                    "mini-swe-agent",
-                                    "remote-agent"
-                                  ]
-                                }
-                              }
-                            },
-                            "required": [
-                              "kind"
-                            ]
-                          }
-                        },
-                        "required": [
-                          "harness"
-                        ]
-                      }
-                    }
-                  },
-                  "required": [
-                    "sandboxes"
-                  ]
-                }
-              },
-              "required": [
-                "spec"
-              ]
-            },
-            "then": {
-              "properties": {
-                "spec": {
-                  "properties": {
-                    "sandboxes": {
-                      "items": {
-                        "properties": {
-                          "agent": {
-                            "properties": {
-                              "inference": {
-                                "properties": {
-                                  "routes": {
-                                    "items": {
-                                      "properties": {
-                                        "overrides": {
-                                          "not": {
-                                            "anyOf": [
-                                              {
-                                                "required": [
-                                                  "maxTokens"
-                                                ]
-                                              }
-                                            ]
-                                          }
-                                        }
-                                      }
-                                    }
-                                  }
-                                }
-                              }
-                            }
-                          }
-                        }
-                      }
-                    }
-                  }
-                }
-              }
-            }
-          },
-          {
-            "if": {
-              "properties": {
-                "spec": {
-                  "properties": {
-                    "sandboxes": {
-                      "items": {
-                        "properties": {
-                          "agent": {
-                            "properties": {
-                              "auth": {}
-                            },
-                            "required": [
-                              "auth"
-                            ]
-                          }
-                        },
-                        "required": [
-                          "agent"
-                        ]
-                      }
-                    }
-                  },
-                  "required": [
-                    "sandboxes"
-                  ]
-                }
-              },
-              "required": [
-                "spec"
-              ]
-            },
-            "then": {
-              "allOf": [
-                {
-                  "properties": {
-                    "spec": {
-                      "properties": {
-                        "sandboxes": {
-                          "items": {
-                            "properties": {
-                              "harness": {
-                                "properties": {
-                                  "kind": {
-                                    "const": "hermes"
-                                  }
-                                }
-                              }
-                            }
-                          }
-                        }
-                      }
-                    }
-                  }
-                },
-                {
-                  "properties": {
-                    "spec": {
-                      "properties": {
-                        "inferenceProviders": {
-                          "items": {
-                            "anyOf": [
-                              {
-                                "required": [
-                                  "credential"
-                                ]
-                              },
-                              {
-                                "required": [
-                                  "serviceRef"
-                                ]
-                              }
-                            ]
-                          }
-                        }
-                      },
-                      "required": [
-                        "inferenceProviders"
-                      ]
-                    }
-                  },
-                  "required": [
-                    "spec"
-                  ]
-                }
-              ]
-            }
-          },
-          {
-            "if": {
-              "properties": {
-                "spec": {
-                  "properties": {
-                    "sandboxes": {
-                      "items": {
-                        "properties": {
-                          "harness": {
-                            "properties": {
-                              "kind": {
-                                "not": {
-                                  "const": "pi"
-                                }
-                              }
-                            },
-                            "required": [
-                              "kind"
-                            ]
-                          }
-                        },
-                        "required": [
-                          "harness"
-                        ]
-                      }
-                    }
-                  },
-                  "required": [
-                    "sandboxes"
-                  ]
-                }
-              },
-              "required": [
-                "spec"
-              ]
-            },
-            "then": {
-              "properties": {
-                "spec": {
-                  "properties": {
-                    "sandboxes": {
-                      "items": {
-                        "properties": {
-                          "agent": {
-                            "properties": {
-                              "inference": {
-                                "properties": {
-                                  "routes": {
-                                    "items": {
-                                      "properties": {
-                                        "overrides": {
-                                          "not": {
-                                            "anyOf": [
-                                              {
-                                                "required": [
-                                                  "piModel"
-                                                ]
-                                              }
-                                            ]
-                                          }
-                                        }
-                                      }
-                                    }
-                                  }
-                                }
-                              }
-                            }
-                          }
-                        }
-                      }
-                    }
-                  }
-                }
-              }
-            }
-          }
-        ]
-      }
-    },
-    {
-      "if": {
-        "allOf": [
-          {
-            "allOf": [
-              {
-                "properties": {
-                  "spec": {
-                    "properties": {
-                      "inferenceProviders": {
-                        "maxItems": 0
-                      }
-                    }
-                  }
-                }
-              },
-              {
-                "properties": {
-                  "spec": {
-                    "properties": {
-                      "sandboxes": {
-                        "items": {
-                          "properties": {
-                            "inferenceProviders": {
-                              "maxItems": 1,
-                              "minItems": 1
-                            }
-                          },
-                          "required": [
-                            "inferenceProviders"
-                          ]
-                        }
-                      }
-                    },
-                    "required": [
-                      "sandboxes"
-                    ]
-                  }
-                },
-                "required": [
-                  "spec"
-                ]
-              },
-              {
-                "properties": {
-                  "spec": {
-                    "properties": {
-                      "sandboxes": {
-                        "items": {
-                          "properties": {
-                            "agent": {
-                              "properties": {
-                                "inference": {
-                                  "properties": {
-                                    "routes": {
-                                      "items": {
-                                        "required": [
-                                          "providerRef"
-                                        ]
-                                      }
-                                    }
-                                  },
-                                  "required": [
-                                    "routes"
-                                  ]
-                                }
-                              },
-                              "required": [
-                                "inference"
-                              ]
-                            }
-                          },
-                          "required": [
-                            "agent"
-                          ]
-                        }
-                      }
-                    },
-                    "required": [
-                      "sandboxes"
-                    ]
-                  }
-                },
-                "required": [
-                  "spec"
-                ]
-              }
-            ]
-          },
-          {
-            "properties": {
-              "spec": {
-                "properties": {
-                  "sandboxes": {
-                    "items": {
-                      "properties": {
-                        "harness": {
-                          "properties": {
-                            "kind": {}
-                          },
-                          "required": [
-                            "kind"
-                          ]
-                        }
-                      },
-                      "required": [
-                        "harness"
-                      ]
-                    }
-                  }
-                },
-                "required": [
-                  "sandboxes"
-                ]
-              }
-            },
-            "required": [
-              "spec"
-            ]
-          }
-        ]
-      },
-      "then": {
-        "allOf": [
-          {
-            "if": {
-              "properties": {
-                "spec": {
-                  "properties": {
-                    "sandboxes": {
-                      "items": {
-                        "properties": {
-                          "harness": {
-                            "properties": {
-                              "kind": {
-                                "const": "pi"
-                              }
-                            },
-                            "required": [
-                              "kind"
-                            ]
-                          }
-                        },
-                        "required": [
-                          "harness"
-                        ]
-                      }
-                    }
-                  },
-                  "required": [
-                    "sandboxes"
-                  ]
-                }
-              },
-              "required": [
-                "spec"
-              ]
-            },
-            "then": {
-              "properties": {
-                "spec": {
-                  "properties": {
-                    "sandboxes": {
-                      "items": {
-                        "properties": {
-                          "inferenceProviders": {
-                            "items": {
-                              "not": {
-                                "anyOf": [
-                                  {
-                                    "required": [
-                                      "api"
-                                    ]
-                                  }
-                                ]
-                              }
-                            }
-                          }
-                        }
-                      }
-                    }
-                  }
-                }
-              }
-            }
-          },
-          {
-            "else": {
-              "properties": {
-                "spec": {
-                  "properties": {
-                    "sandboxes": {
-                      "items": {
-                        "properties": {
-                          "inferenceProviders": {
-                            "items": {
-                              "properties": {
-                                "provider": {
-                                  "const": "openai"
-                                }
-                              }
-                            }
-                          }
-                        }
-                      }
-                    }
-                  }
-                }
-              }
-            },
-            "if": {
-              "anyOf": [
-                {
-                  "properties": {
-                    "spec": {
-                      "properties": {
-                        "sandboxes": {
-                          "items": {
-                            "properties": {
-                              "inferenceProviders": {
-                                "items": {
-                                  "properties": {
-                                    "api": {
-                                      "const": "anthropic-messages"
-                                    }
-                                  },
-                                  "required": [
-                                    "api"
-                                  ]
-                                }
-                              }
-                            },
-                            "required": [
-                              "inferenceProviders"
-                            ]
-                          }
-                        }
-                      },
-                      "required": [
-                        "sandboxes"
-                      ]
-                    }
-                  },
-                  "required": [
-                    "spec"
-                  ]
-                },
-                {
-                  "allOf": [
-                    {
-                      "properties": {
-                        "spec": {
-                          "properties": {
-                            "sandboxes": {
-                              "items": {
-                                "properties": {
-                                  "harness": {
-                                    "properties": {
-                                      "kind": {
-                                        "const": "claude"
-                                      }
-                                    },
-                                    "required": [
-                                      "kind"
-                                    ]
-                                  }
-                                },
-                                "required": [
-                                  "harness"
-                                ]
-                              }
-                            }
-                          },
-                          "required": [
-                            "sandboxes"
-                          ]
-                        }
-                      },
-                      "required": [
-                        "spec"
-                      ]
-                    },
-                    {
-                      "properties": {
-                        "spec": {
-                          "properties": {
-                            "sandboxes": {
-                              "items": {
-                                "properties": {
-                                  "inferenceProviders": {
-                                    "items": {
-                                      "not": {
-                                        "anyOf": [
-                                          {
-                                            "required": [
-                                              "api"
-                                            ]
-                                          }
-                                        ]
-                                      }
-                                    }
-                                  }
-                                },
-                                "required": [
-                                  "inferenceProviders"
-                                ]
-                              }
-                            }
-                          },
-                          "required": [
-                            "sandboxes"
-                          ]
-                        }
-                      },
-                      "required": [
-                        "spec"
-                      ]
-                    }
-                  ]
-                }
-              ]
-            },
-            "then": {
-              "properties": {
-                "spec": {
-                  "properties": {
-                    "sandboxes": {
-                      "items": {
-                        "properties": {
-                          "inferenceProviders": {
-                            "items": {
-                              "properties": {
-                                "provider": {
-                                  "const": "anthropic"
-                                }
-                              }
-                            }
-                          }
-                        }
-                      }
-                    }
-                  }
-                }
-              }
-            }
-          },
-          {
-            "if": {
-              "properties": {
-                "spec": {
-                  "properties": {
-                    "sandboxes": {
-                      "items": {
-                        "properties": {
-                          "harness": {
-                            "properties": {
-                              "kind": {
-                                "const": "claude"
-                              }
-                            },
-                            "required": [
-                              "kind"
-                            ]
-                          }
-                        },
-                        "required": [
-                          "harness"
-                        ]
-                      }
-                    }
-                  },
-                  "required": [
-                    "sandboxes"
-                  ]
-                }
-              },
-              "required": [
-                "spec"
-              ]
-            },
-            "then": {
-              "properties": {
-                "spec": {
-                  "properties": {
-                    "sandboxes": {
-                      "items": {
-                        "properties": {
-                          "inferenceProviders": {
-                            "items": {
-                              "properties": {
-                                "api": {
-                                  "const": "anthropic-messages"
-                                }
-                              }
-                            }
-                          }
-                        }
-                      }
-                    }
-                  }
-                }
-              }
-            }
-          },
-          {
-            "if": {
-              "properties": {
-                "spec": {
-                  "properties": {
-                    "sandboxes": {
-                      "items": {
-                        "properties": {
-                          "harness": {
-                            "properties": {
-                              "kind": {
-                                "const": "codex"
-                              }
-                            },
-                            "required": [
-                              "kind"
-                            ]
-                          }
-                        },
-                        "required": [
-                          "harness"
-                        ]
-                      }
-                    }
-                  },
-                  "required": [
-                    "sandboxes"
-                  ]
-                }
-              },
-              "required": [
-                "spec"
-              ]
-            },
-            "then": {
-              "properties": {
-                "spec": {
-                  "properties": {
-                    "sandboxes": {
-                      "items": {
-                        "properties": {
-                          "inferenceProviders": {
-                            "items": {
-                              "properties": {
-                                "api": {
-                                  "const": "openai-responses"
-                                }
-                              }
-                            }
-                          }
-                        }
-                      }
-                    }
-                  }
-                }
-              }
-            }
-          },
-          {
-            "if": {
-              "properties": {
-                "spec": {
-                  "properties": {
-                    "sandboxes": {
-                      "items": {
-                        "properties": {
-                          "harness": {
-                            "properties": {
-                              "kind": {
-                                "not": {
-                                  "enum": [
-                                    "openclaw",
-                                    "hermes",
-                                    "claude",
-                                    "codex"
-                                  ]
-                                }
-                              }
-                            },
-                            "required": [
-                              "kind"
-                            ]
-                          }
-                        },
-                        "required": [
-                          "harness"
-                        ]
-                      }
-                    }
-                  },
-                  "required": [
-                    "sandboxes"
-                  ]
-                }
-              },
-              "required": [
-                "spec"
-              ]
-            },
-            "then": {
-              "properties": {
-                "spec": {
-                  "properties": {
-                    "sandboxes": {
-                      "items": {
-                        "properties": {
-                          "inferenceProviders": {
-                            "items": {
-                              "properties": {
-                                "api": {
-                                  "const": "openai-completions"
-                                }
-                              }
-                            }
-                          }
-                        }
-                      }
-                    }
-                  }
-                }
-              }
-            }
-          },
-          {
-            "if": {
-              "properties": {
-                "spec": {
-                  "properties": {
-                    "sandboxes": {
-                      "items": {
-                        "properties": {
-                          "harness": {
-                            "properties": {
-                              "kind": {
-                                "not": {
-                                  "const": "openclaw"
-                                }
-                              }
-                            },
-                            "required": [
-                              "kind"
-                            ]
-                          }
-                        },
-                        "required": [
-                          "harness"
-                        ]
-                      }
-                    }
-                  },
-                  "required": [
-                    "sandboxes"
-                  ]
-                }
-              },
-              "required": [
-                "spec"
-              ]
-            },
-            "then": {
-              "properties": {
-                "spec": {
-                  "properties": {
-                    "sandboxes": {
-                      "items": {
-                        "properties": {
-                          "agent": {
-                            "properties": {
-                              "inference": {
-                                "properties": {
-                                  "routes": {
-                                    "items": {
-                                      "properties": {
-                                        "overrides": {
-                                          "not": {
-                                            "anyOf": [
-                                              {
-                                                "required": [
-                                                  "contextWindow"
-                                                ]
-                                              },
-                                              {
-                                                "required": [
-                                                  "reasoning"
-                                                ]
-                                              },
-                                              {
-                                                "required": [
-                                                  "reasoningEffort"
-                                                ]
-                                              }
-                                            ]
-                                          }
-                                        }
-                                      }
-                                    }
-                                  }
-                                }
-                              }
-                            }
-                          }
-                        }
-                      }
-                    }
-                  }
-                }
-              }
-            }
-          },
-          {
-            "if": {
-              "properties": {
-                "spec": {
-                  "properties": {
-                    "sandboxes": {
-                      "items": {
-                        "properties": {
-                          "harness": {
-                            "properties": {
-                              "kind": {
-                                "not": {
-                                  "enum": [
-                                    "openclaw",
-                                    "deepagents",
-                                    "mini-swe-agent",
-                                    "remote-agent"
-                                  ]
-                                }
-                              }
-                            },
-                            "required": [
-                              "kind"
-                            ]
-                          }
-                        },
-                        "required": [
-                          "harness"
-                        ]
-                      }
-                    }
-                  },
-                  "required": [
-                    "sandboxes"
-                  ]
-                }
-              },
-              "required": [
-                "spec"
-              ]
-            },
-            "then": {
-              "properties": {
-                "spec": {
-                  "properties": {
-                    "sandboxes": {
-                      "items": {
-                        "properties": {
-                          "agent": {
-                            "properties": {
-                              "inference": {
-                                "properties": {
-                                  "routes": {
-                                    "items": {
-                                      "properties": {
-                                        "overrides": {
-                                          "not": {
-                                            "anyOf": [
-                                              {
-                                                "required": [
-                                                  "maxTokens"
-                                                ]
-                                              }
-                                            ]
-                                          }
-                                        }
-                                      }
-                                    }
-                                  }
-                                }
-                              }
-                            }
-                          }
-                        }
-                      }
-                    }
-                  }
-                }
-              }
-            }
-          },
-          {
-            "if": {
-              "properties": {
-                "spec": {
-                  "properties": {
-                    "sandboxes": {
-                      "items": {
-                        "properties": {
-                          "agent": {
-                            "properties": {
-                              "auth": {}
-                            },
-                            "required": [
-                              "auth"
-                            ]
-                          }
-                        },
-                        "required": [
-                          "agent"
-                        ]
-                      }
-                    }
-                  },
-                  "required": [
-                    "sandboxes"
-                  ]
-                }
-              },
-              "required": [
-                "spec"
-              ]
-            },
-            "then": {
-              "allOf": [
-                {
-                  "properties": {
-                    "spec": {
-                      "properties": {
-                        "sandboxes": {
-                          "items": {
-                            "properties": {
-                              "harness": {
-                                "properties": {
-                                  "kind": {
-                                    "const": "hermes"
-                                  }
-                                }
-                              }
-                            }
-                          }
-                        }
-                      }
-                    }
-                  }
-                },
-                {
-                  "properties": {
-                    "spec": {
-                      "properties": {
-                        "sandboxes": {
-                          "items": {
-                            "properties": {
-                              "inferenceProviders": {
-                                "items": {
-                                  "anyOf": [
-                                    {
-                                      "required": [
-                                        "credential"
-                                      ]
-                                    },
-                                    {
-                                      "required": [
-                                        "serviceRef"
-                                      ]
-                                    }
-                                  ]
-                                }
-                              }
-                            },
-                            "required": [
-                              "inferenceProviders"
-                            ]
-                          }
-                        }
-                      },
-                      "required": [
-                        "sandboxes"
-                      ]
-                    }
-                  },
-                  "required": [
-                    "spec"
-                  ]
-                }
-              ]
-            }
-          },
-          {
-            "if": {
-              "properties": {
-                "spec": {
-                  "properties": {
-                    "sandboxes": {
-                      "items": {
-                        "properties": {
-                          "harness": {
-                            "properties": {
-                              "kind": {
-                                "not": {
-                                  "const": "pi"
-                                }
-                              }
-                            },
-                            "required": [
-                              "kind"
-                            ]
-                          }
-                        },
-                        "required": [
-                          "harness"
-                        ]
-                      }
-                    }
-                  },
-                  "required": [
-                    "sandboxes"
-                  ]
-                }
-              },
-              "required": [
-                "spec"
-              ]
-            },
-            "then": {
-              "properties": {
-                "spec": {
-                  "properties": {
-                    "sandboxes": {
-                      "items": {
-                        "properties": {
-                          "agent": {
-                            "properties": {
-                              "inference": {
-                                "properties": {
-                                  "routes": {
-                                    "items": {
-                                      "properties": {
-                                        "overrides": {
-                                          "not": {
-                                            "anyOf": [
-                                              {
-                                                "required": [
-                                                  "piModel"
-                                                ]
-                                              }
-                                            ]
-                                          }
-                                        }
-                                      }
-                                    }
-                                  }
-                                }
-                              }
-                            }
-                          }
-                        }
-                      }
-                    }
-                  }
-                }
-              }
-            }
-          }
-        ]
-      }
-    },
-    {
-      "if": {
-        "allOf": [
-          {
-            "properties": {
-              "spec": {
-                "properties": {
-                  "sandboxes": {
-                    "items": {
-                      "properties": {
-                        "agent": {
-                          "properties": {
-                            "inference": {
-                              "properties": {
-                                "routes": {
-                                  "items": {
-                                    "required": [
-                                      "provider"
-                                    ]
-                                  }
-                                }
-                              },
-                              "required": [
-                                "routes"
-                              ]
-                            }
-                          },
-                          "required": [
-                            "inference"
-                          ]
-                        }
-                      },
-                      "required": [
-                        "agent"
-                      ]
-                    }
-                  }
-                },
-                "required": [
-                  "sandboxes"
-                ]
-              }
-            },
-            "required": [
-              "spec"
-            ]
-          },
-          {
-            "properties": {
-              "spec": {
-                "properties": {
-                  "sandboxes": {
-                    "items": {
-                      "properties": {
-                        "harness": {
-                          "properties": {
-                            "kind": {}
-                          },
-                          "required": [
-                            "kind"
-                          ]
-                        }
-                      },
-                      "required": [
-                        "harness"
-                      ]
-                    }
-                  }
-                },
-                "required": [
-                  "sandboxes"
-                ]
-              }
-            },
-            "required": [
-              "spec"
-            ]
-          }
-        ]
-      },
-      "then": {
-        "allOf": [
-          {
-            "if": {
-              "properties": {
-                "spec": {
-                  "properties": {
-                    "sandboxes": {
-                      "items": {
-                        "properties": {
-                          "harness": {
-                            "properties": {
-                              "kind": {
-                                "const": "pi"
-                              }
-                            },
-                            "required": [
-                              "kind"
-                            ]
-                          }
-                        },
-                        "required": [
-                          "harness"
-                        ]
-                      }
-                    }
-                  },
-                  "required": [
-                    "sandboxes"
-                  ]
-                }
-              },
-              "required": [
-                "spec"
-              ]
-            },
-            "then": {
-              "properties": {
-                "spec": {
-                  "properties": {
-                    "sandboxes": {
-                      "items": {
-                        "properties": {
-                          "agent": {
-                            "properties": {
-                              "inference": {
-                                "properties": {
-                                  "routes": {
-                                    "items": {
-                                      "properties": {
-                                        "provider": {
-                                          "not": {
-                                            "anyOf": [
-                                              {
-                                                "required": [
-                                                  "api"
-                                                ]
-                                              }
-                                            ]
-                                          }
-                                        }
-                                      }
-                                    }
-                                  }
-                                }
-                              }
-                            }
-                          }
-                        }
-                      }
-                    }
-                  }
-                }
-              }
-            }
-          },
-          {
-            "else": {
-              "properties": {
-                "spec": {
-                  "properties": {
-                    "sandboxes": {
-                      "items": {
-                        "properties": {
-                          "agent": {
-                            "properties": {
-                              "inference": {
-                                "properties": {
-                                  "routes": {
-                                    "items": {
-                                      "properties": {
-                                        "provider": {
-                                          "properties": {
-                                            "provider": {
-                                              "const": "openai"
-                                            }
-                                          }
-                                        }
-                                      }
-                                    }
-                                  }
-                                }
-                              }
-                            }
-                          }
-                        }
-                      }
-                    }
-                  }
-                }
-              }
-            },
-            "if": {
-              "anyOf": [
-                {
-                  "properties": {
-                    "spec": {
-                      "properties": {
-                        "sandboxes": {
-                          "items": {
-                            "properties": {
-                              "agent": {
-                                "properties": {
-                                  "inference": {
-                                    "properties": {
-                                      "routes": {
-                                        "items": {
-                                          "properties": {
-                                            "provider": {
-                                              "properties": {
-                                                "api": {
-                                                  "const": "anthropic-messages"
-                                                }
-                                              },
-                                              "required": [
-                                                "api"
-                                              ]
-                                            }
-                                          },
-                                          "required": [
-                                            "provider"
-                                          ]
-                                        }
-                                      }
-                                    },
-                                    "required": [
-                                      "routes"
-                                    ]
-                                  }
-                                },
-                                "required": [
-                                  "inference"
-                                ]
-                              }
-                            },
-                            "required": [
-                              "agent"
-                            ]
-                          }
-                        }
-                      },
-                      "required": [
-                        "sandboxes"
-                      ]
-                    }
-                  },
-                  "required": [
-                    "spec"
-                  ]
-                },
-                {
-                  "allOf": [
-                    {
-                      "properties": {
-                        "spec": {
-                          "properties": {
-                            "sandboxes": {
-                              "items": {
-                                "properties": {
-                                  "harness": {
-                                    "properties": {
-                                      "kind": {
-                                        "const": "claude"
-                                      }
-                                    },
-                                    "required": [
-                                      "kind"
-                                    ]
-                                  }
-                                },
-                                "required": [
-                                  "harness"
-                                ]
-                              }
-                            }
-                          },
-                          "required": [
-                            "sandboxes"
-                          ]
-                        }
-                      },
-                      "required": [
-                        "spec"
-                      ]
-                    },
-                    {
-                      "properties": {
-                        "spec": {
-                          "properties": {
-                            "sandboxes": {
-                              "items": {
-                                "properties": {
-                                  "agent": {
-                                    "properties": {
-                                      "inference": {
-                                        "properties": {
-                                          "routes": {
-                                            "items": {
-                                              "properties": {
-                                                "provider": {
-                                                  "not": {
-                                                    "anyOf": [
-                                                      {
-                                                        "required": [
-                                                          "api"
-                                                        ]
-                                                      }
-                                                    ]
-                                                  }
-                                                }
-                                              },
-                                              "required": [
-                                                "provider"
-                                              ]
-                                            }
-                                          }
-                                        },
-                                        "required": [
-                                          "routes"
-                                        ]
-                                      }
-                                    },
-                                    "required": [
-                                      "inference"
-                                    ]
-                                  }
-                                },
-                                "required": [
-                                  "agent"
-                                ]
-                              }
-                            }
-                          },
-                          "required": [
-                            "sandboxes"
-                          ]
-                        }
-                      },
-                      "required": [
-                        "spec"
-                      ]
-                    }
-                  ]
-                }
-              ]
-            },
-            "then": {
-              "properties": {
-                "spec": {
-                  "properties": {
-                    "sandboxes": {
-                      "items": {
-                        "properties": {
-                          "agent": {
-                            "properties": {
-                              "inference": {
-                                "properties": {
-                                  "routes": {
-                                    "items": {
-                                      "properties": {
-                                        "provider": {
-                                          "properties": {
-                                            "provider": {
-                                              "const": "anthropic"
-                                            }
-                                          }
-                                        }
-                                      }
-                                    }
-                                  }
-                                }
-                              }
-                            }
-                          }
-                        }
-                      }
-                    }
-                  }
-                }
-              }
-            }
-          },
-          {
-            "if": {
-              "properties": {
-                "spec": {
-                  "properties": {
-                    "sandboxes": {
-                      "items": {
-                        "properties": {
-                          "harness": {
-                            "properties": {
-                              "kind": {
-                                "const": "claude"
-                              }
-                            },
-                            "required": [
-                              "kind"
-                            ]
-                          }
-                        },
-                        "required": [
-                          "harness"
-                        ]
-                      }
-                    }
-                  },
-                  "required": [
-                    "sandboxes"
-                  ]
-                }
-              },
-              "required": [
-                "spec"
-              ]
-            },
-            "then": {
-              "properties": {
-                "spec": {
-                  "properties": {
-                    "sandboxes": {
-                      "items": {
-                        "properties": {
-                          "agent": {
-                            "properties": {
-                              "inference": {
-                                "properties": {
-                                  "routes": {
-                                    "items": {
-                                      "properties": {
-                                        "provider": {
-                                          "properties": {
-                                            "api": {
-                                              "const": "anthropic-messages"
-                                            }
-                                          }
-                                        }
-                                      }
-                                    }
-                                  }
-                                }
-                              }
-                            }
-                          }
-                        }
-                      }
-                    }
-                  }
-                }
-              }
-            }
-          },
-          {
-            "if": {
-              "properties": {
-                "spec": {
-                  "properties": {
-                    "sandboxes": {
-                      "items": {
-                        "properties": {
-                          "harness": {
-                            "properties": {
-                              "kind": {
-                                "const": "codex"
-                              }
-                            },
-                            "required": [
-                              "kind"
-                            ]
-                          }
-                        },
-                        "required": [
-                          "harness"
-                        ]
-                      }
-                    }
-                  },
-                  "required": [
-                    "sandboxes"
-                  ]
-                }
-              },
-              "required": [
-                "spec"
-              ]
-            },
-            "then": {
-              "properties": {
-                "spec": {
-                  "properties": {
-                    "sandboxes": {
-                      "items": {
-                        "properties": {
-                          "agent": {
-                            "properties": {
-                              "inference": {
-                                "properties": {
-                                  "routes": {
-                                    "items": {
-                                      "properties": {
-                                        "provider": {
-                                          "properties": {
-                                            "api": {
-                                              "const": "openai-responses"
-                                            }
-                                          }
-                                        }
-                                      }
-                                    }
-                                  }
-                                }
-                              }
-                            }
-                          }
-                        }
-                      }
-                    }
-                  }
-                }
-              }
-            }
-          },
-          {
-            "if": {
-              "properties": {
-                "spec": {
-                  "properties": {
-                    "sandboxes": {
-                      "items": {
-                        "properties": {
-                          "harness": {
-                            "properties": {
-                              "kind": {
-                                "not": {
-                                  "enum": [
-                                    "openclaw",
-                                    "hermes",
-                                    "claude",
-                                    "codex"
-                                  ]
-                                }
-                              }
-                            },
-                            "required": [
-                              "kind"
-                            ]
-                          }
-                        },
-                        "required": [
-                          "harness"
-                        ]
-                      }
-                    }
-                  },
-                  "required": [
-                    "sandboxes"
-                  ]
-                }
-              },
-              "required": [
-                "spec"
-              ]
-            },
-            "then": {
-              "properties": {
-                "spec": {
-                  "properties": {
-                    "sandboxes": {
-                      "items": {
-                        "properties": {
-                          "agent": {
-                            "properties": {
-                              "inference": {
-                                "properties": {
-                                  "routes": {
-                                    "items": {
-                                      "properties": {
-                                        "provider": {
-                                          "properties": {
-                                            "api": {
-                                              "const": "openai-completions"
-                                            }
-                                          }
-                                        }
-                                      }
-                                    }
-                                  }
-                                }
-                              }
-                            }
-                          }
-                        }
-                      }
-                    }
-                  }
-                }
-              }
-            }
-          },
-          {
-            "if": {
-              "properties": {
-                "spec": {
-                  "properties": {
-                    "sandboxes": {
-                      "items": {
-                        "properties": {
-                          "harness": {
-                            "properties": {
-                              "kind": {
-                                "not": {
-                                  "const": "openclaw"
-                                }
-                              }
-                            },
-                            "required": [
-                              "kind"
-                            ]
-                          }
-                        },
-                        "required": [
-                          "harness"
-                        ]
-                      }
-                    }
-                  },
-                  "required": [
-                    "sandboxes"
-                  ]
-                }
-              },
-              "required": [
-                "spec"
-              ]
-            },
-            "then": {
-              "properties": {
-                "spec": {
-                  "properties": {
-                    "sandboxes": {
-                      "items": {
-                        "properties": {
-                          "agent": {
-                            "properties": {
-                              "inference": {
-                                "properties": {
-                                  "routes": {
-                                    "items": {
-                                      "properties": {
-                                        "overrides": {
-                                          "not": {
-                                            "anyOf": [
-                                              {
-                                                "required": [
-                                                  "contextWindow"
-                                                ]
-                                              },
-                                              {
-                                                "required": [
-                                                  "reasoning"
-                                                ]
-                                              },
-                                              {
-                                                "required": [
-                                                  "reasoningEffort"
-                                                ]
-                                              }
-                                            ]
-                                          }
-                                        }
-                                      }
-                                    }
-                                  }
-                                }
-                              }
-                            }
-                          }
-                        }
-                      }
-                    }
-                  }
-                }
-              }
-            }
-          },
-          {
-            "if": {
-              "properties": {
-                "spec": {
-                  "properties": {
-                    "sandboxes": {
-                      "items": {
-                        "properties": {
-                          "harness": {
-                            "properties": {
-                              "kind": {
-                                "not": {
-                                  "enum": [
-                                    "openclaw",
-                                    "deepagents",
-                                    "mini-swe-agent",
-                                    "remote-agent"
-                                  ]
-                                }
-                              }
-                            },
-                            "required": [
-                              "kind"
-                            ]
-                          }
-                        },
-                        "required": [
-                          "harness"
-                        ]
-                      }
-                    }
-                  },
-                  "required": [
-                    "sandboxes"
-                  ]
-                }
-              },
-              "required": [
-                "spec"
-              ]
-            },
-            "then": {
-              "properties": {
-                "spec": {
-                  "properties": {
-                    "sandboxes": {
-                      "items": {
-                        "properties": {
-                          "agent": {
-                            "properties": {
-                              "inference": {
-                                "properties": {
-                                  "routes": {
-                                    "items": {
-                                      "properties": {
-                                        "overrides": {
-                                          "not": {
-                                            "anyOf": [
-                                              {
-                                                "required": [
-                                                  "maxTokens"
-                                                ]
-                                              }
-                                            ]
-                                          }
-                                        }
-                                      }
-                                    }
-                                  }
-                                }
-                              }
-                            }
-                          }
-                        }
-                      }
-                    }
-                  }
-                }
-              }
-            }
-          },
-          {
-            "if": {
-              "properties": {
-                "spec": {
-                  "properties": {
-                    "sandboxes": {
-                      "items": {
-                        "properties": {
-                          "agent": {
-                            "properties": {
-                              "auth": {}
-                            },
-                            "required": [
-                              "auth"
-                            ]
-                          }
-                        },
-                        "required": [
-                          "agent"
-                        ]
-                      }
-                    }
-                  },
-                  "required": [
-                    "sandboxes"
-                  ]
-                }
-              },
-              "required": [
-                "spec"
-              ]
-            },
-            "then": {
-              "allOf": [
-                {
-                  "properties": {
-                    "spec": {
-                      "properties": {
-                        "sandboxes": {
-                          "items": {
-                            "properties": {
-                              "harness": {
-                                "properties": {
-                                  "kind": {
-                                    "const": "hermes"
-                                  }
-                                }
-                              }
-                            }
-                          }
-                        }
-                      }
-                    }
-                  }
-                },
-                {
-                  "properties": {
-                    "spec": {
-                      "properties": {
-                        "sandboxes": {
-                          "items": {
-                            "properties": {
-                              "agent": {
-                                "properties": {
-                                  "inference": {
-                                    "properties": {
-                                      "routes": {
-                                        "items": {
-                                          "properties": {
-                                            "provider": {
-                                              "anyOf": [
-                                                {
-                                                  "required": [
-                                                    "credential"
-                                                  ]
-                                                },
-                                                {
-                                                  "required": [
-                                                    "serviceRef"
-                                                  ]
-                                                }
-                                              ]
-                                            }
-                                          },
-                                          "required": [
-                                            "provider"
-                                          ]
-                                        }
-                                      }
-                                    },
-                                    "required": [
-                                      "routes"
-                                    ]
-                                  }
-                                },
-                                "required": [
-                                  "inference"
-                                ]
-                              }
-                            },
-                            "required": [
-                              "agent"
-                            ]
-                          }
-                        }
-                      },
-                      "required": [
-                        "sandboxes"
-                      ]
-                    }
-                  },
-                  "required": [
-                    "spec"
-                  ]
-                }
-              ]
-            }
-          },
-          {
-            "if": {
-              "properties": {
-                "spec": {
-                  "properties": {
-                    "sandboxes": {
-                      "items": {
-                        "properties": {
-                          "harness": {
-                            "properties": {
-                              "kind": {
-                                "not": {
-                                  "const": "pi"
-                                }
-                              }
-                            },
-                            "required": [
-                              "kind"
-                            ]
-                          }
-                        },
-                        "required": [
-                          "harness"
-                        ]
-                      }
-                    }
-                  },
-                  "required": [
-                    "sandboxes"
-                  ]
-                }
-              },
-              "required": [
-                "spec"
-              ]
-            },
-            "then": {
-              "properties": {
-                "spec": {
-                  "properties": {
-                    "sandboxes": {
-                      "items": {
-                        "properties": {
-                          "agent": {
-                            "properties": {
-                              "inference": {
-                                "properties": {
-                                  "routes": {
-                                    "items": {
-                                      "properties": {
-                                        "overrides": {
-                                          "not": {
-                                            "anyOf": [
-                                              {
-                                                "required": [
-                                                  "piModel"
-                                                ]
-                                              }
-                                            ]
-                                          }
-                                        }
-                                      }
-                                    }
-                                  }
-                                }
-                              }
-                            }
-                          }
-                        }
-                      }
-                    }
-                  }
-                }
-              }
-            }
           }
         ]
       }
@@ -6467,16 +3711,16 @@
   "title": "NemoClaw configuration (v1alpha1)",
   "type": "object",
   "x-nemoclaw-parser-checks": [
-    "Document::parse remains authoritative. It rejects YAML aliases, anchors, merge keys, unsupported tags, duplicate keys, multiple documents, and input larger than 1 MiB.",
-    "The parser checks endpoint transport and address policy, managed gateway port bounds, canonical private IPv4 /24 networks, local engine socket syntax, one compute driver per managed gateway, and publication address/port/network agreement.",
+    "Document::parse rejects YAML aliases, anchors, merge keys, unsupported tags, duplicate keys, multiple documents, and input larger than 1 MiB. It applies the compiled input schema before defaulting; Document::validate applies the normalized schema and semantic checks, including for directly constructed Rust values.",
+    "The parser checks endpoint transport and address policy, managed gateway port bounds, canonical private IPv4 /24 networks, local engine socket syntax, and publication address/port/network agreement.",
     "Explicit sandbox policies are also checked by the pinned OpenShell policy parser and validator, including protocol-specific rule semantics, process identities, filesystem paths, and destination address restrictions.",
     "Explicit filesystem grants must permit reads of the selected harness runtime directories; parent and read-write grants count. This parser check does not inspect images, resolve symlinks, or establish runtime permissions.",
-    "The parser checks uniquely named model choices with an explicit default for multiple choices, multiple choices for OpenClaw and Pi, and the OpenClaw disclosure mode; omitted disclosure means progressive.",
+    "The schema requires an explicit default for multiple model choices. Rust checks unique route names, that the default names a route, and that the resolved harness supports the selected model count, tuning, and tools; omitted disclosure means progressive.",
     "The parser resolves integrationRefs only from enclosing deployment or sandbox definitions, rejects name shadowing and incompatible agent grants, and permits at most one attached web search definition per sandbox. Brave supports OpenClaw and Deep Agents; Tavily supports OpenClaw and Hermes. Agent-inline definitions attach directly; unused enclosing definitions grant no access.",
-    "The parser requires exactly one sandbox harness or harnessRef, resolves visible harnesses without shadowing, and rejects agent-level harness selection. Each sandbox requires one agent and hosts one Fabric runtime using the sandbox-selected implementation. Shared definitions reuse configuration across sandboxes.",
+    "The schema requires exactly one sandbox harness or harnessRef and rejects agent-level harness selection. Rust resolves visible harnesses without shadowing. Each sandbox requires one agent and hosts one Fabric runtime using the sandbox-selected implementation. Shared definitions reuse configuration across sandboxes.",
     "The parser permits non-default reasoningEffort values only on the initial default choice. Managed inference services may constrain routes to their declared served model.",
-    "The parser resolves inferenceRef from enclosing inferences, preserves declaration scope for nested provider references, and rejects missing names, shadowing, and inline/reference ambiguity.",
-    "The parser resolves providerRef from enclosing inferenceProviders, rejects shadowing, conflicting selected names, more than 32 selected providers, incompatible managed-service combinations, and compares route models and authentication with the selected provider. With multiple named definitions, provider/agent compatibility is a parser check. Unselected definitions create no resources. Snapshot identity must match the service model.",
+    "Rust resolves inferenceRef from enclosing inferences, preserves declaration scope for nested provider references, and rejects missing names and shadowing. The schema rejects inline/reference ambiguity.",
+    "The parser resolves providerRef from enclosing inferenceProviders, rejects shadowing, conflicting selected names, more than 32 selected providers, incompatible managed-service combinations, and compares route models and authentication with the selected provider. Provider/agent compatibility is checked after reference resolution for both inline and shared definitions. Unselected definitions create no resources. Snapshot identity must match the service model.",
     "The parser checks memory threshold ordering and GPU/KV budget relationships; recipe path safety, byte-length limits, environment-map conflicts, snapshot file uniqueness, directory conflicts, and total-size overflow.",
     "Schema validation does not observe hardware, image labels, model weights, credentials, ownership, connectivity, or inference readiness. Those checks run during the relevant SDK operation."
   ]

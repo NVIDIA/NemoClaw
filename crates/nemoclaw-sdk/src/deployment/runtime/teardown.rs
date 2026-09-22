@@ -29,7 +29,16 @@ impl Deployment {
         let mut record = store.load()?.ok_or(Error::Conflict(
             "destroy requires existing deployment state",
         ))?;
-        let bindings = store.bindings()?;
+        let bindings = self
+            .state_bindings(
+                &bundle,
+                &store,
+                &record.document,
+                &record.generations,
+                false,
+                cancel,
+            )
+            .await?;
         validate_teardown_state(&record, &bindings)?;
         let runtime = if record.document.has_runtime() {
             Some(Store::open(&store.directory.join("runtime"))?)
@@ -41,9 +50,20 @@ impl Deployment {
             .retained
             .extend(retained_bindings(&record, &bindings, false)?);
         if let Some(stage) = &runtime {
-            result
-                .retained
-                .extend(retained_bindings(&record, &stage.bindings()?, true)?);
+            result.retained.extend(retained_bindings(
+                &record,
+                &self
+                    .state_bindings(
+                        &bundle,
+                        stage,
+                        &record.document,
+                        &record.generations,
+                        true,
+                        cancel,
+                    )
+                    .await?,
+                true,
+            )?);
         }
         if record.destroyed {
             if !preview {
@@ -80,13 +100,7 @@ impl Deployment {
                     &bundle,
                     stage,
                     &destroy_environment(&record.document),
-                    &[
-                        "apply",
-                        "-input=false",
-                        "-no-color",
-                        "-parallelism=1",
-                        "destroy.plan",
-                    ],
+                    &["apply", "-input=false", "-no-color", "destroy.plan"],
                     cancel,
                 )
                 .await?;
@@ -96,6 +110,7 @@ impl Deployment {
                 store.save(&record)?;
             }
         }
+        record.finish_apply();
         record.destroying = false;
         record.destroyed = true;
         record.plan_digest.clear();
@@ -111,7 +126,16 @@ impl Deployment {
         runtime: bool,
         cancel: &CancellationToken,
     ) -> Result<(Vec<Change>, bool), Error> {
-        let bindings = store.bindings()?;
+        let bindings = self
+            .state_bindings(
+                bundle,
+                store,
+                &record.document,
+                &record.generations,
+                runtime,
+                cancel,
+            )
+            .await?;
         if bindings.is_empty() {
             if record.succeeded || record.destroying {
                 return Err(Error::Conflict(
@@ -194,7 +218,7 @@ fn teardown_expected(
     }
     let mut expected = allowed(&targets);
     for (address, binding) in bindings {
-        if plan::disposable(address) {
+        if plan::disposable(address) || plan::reconstructible(address) {
             expected.entry(address.clone()).or_default();
             continue;
         }
@@ -292,7 +316,7 @@ fn validate_teardown_state(
     record: &Record,
     bindings: &BTreeMap<String, StateBinding>,
 ) -> Result<(), Error> {
-    if record.pending {
+    if record.pending && !record.runtime_pending {
         return Err(Error::Conflict(
             "unfinished apply may have created resources whose IDs were not saved; apply the original configuration again before destroy",
         ));
@@ -345,6 +369,39 @@ mod tests {
         );
     }
 
+    #[test]
+    fn teardown_can_finish_a_failed_removal_of_a_reconstructible_resource() {
+        let document = Document::parse(
+            include_bytes!("../../../../../examples/fabric-openclaw.yaml").as_slice(),
+        )
+        .unwrap();
+        let mut record = Record::new(document).unwrap();
+        record.begin_runtime_apply();
+        let bindings = [
+            (
+                "nemoclaw_workspace.deployment".into(),
+                StateBinding {
+                    id: "workspace".into(),
+                    ..Default::default()
+                },
+            ),
+            (
+                "nemoclaw_provider.removed".into(),
+                StateBinding {
+                    id: "provider".into(),
+                    ..Default::default()
+                },
+            ),
+        ]
+        .into();
+        validate_teardown_state(&record, &bindings).unwrap();
+        assert!(
+            teardown_expected(&record, &bindings, false)
+                .unwrap()
+                .contains_key("nemoclaw_provider.removed")
+        );
+    }
+
     fn runtime_state() -> (Record, BTreeMap<String, StateBinding>) {
         let document =
             Document::parse(include_str!("../../../tests/fixtures/config/spark.yaml").as_bytes())
@@ -367,6 +424,7 @@ mod tests {
                         } else {
                             target.values.get("spec").cloned().unwrap_or_default()
                         },
+                        ..Default::default()
                     },
                 )
             })
@@ -440,6 +498,7 @@ mod tests {
                             } else {
                                 target.values.get("spec").cloned().unwrap_or_default()
                             },
+                            ..Default::default()
                         },
                     )
                 })

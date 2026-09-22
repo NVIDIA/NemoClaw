@@ -252,7 +252,7 @@ mod credential_boundary_tests {
     }
 }
 
-async fn read_proxy_key(engine: &Engine, id: &str) -> Result<String, Error> {
+pub(super) async fn read_proxy_key(engine: &Engine, id: &str) -> Result<String, Error> {
     let work = async {
         loop {
             match read_key(engine, id).await {

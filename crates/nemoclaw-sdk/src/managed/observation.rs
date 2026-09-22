@@ -1,5 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
+use crate::config::ComputeDriver;
 #[cfg(all(test, unix))]
 #[path = "observation_tests.rs"]
 mod tests;
@@ -467,7 +468,7 @@ impl Engine {
             ));
         }
         let info = self.info().await?;
-        let network = if spec.compute_driver == "podman" {
+        let network = if spec.compute_driver == ComputeDriver::Podman {
             let network = self
                 .network(&spec.network())
                 .await?

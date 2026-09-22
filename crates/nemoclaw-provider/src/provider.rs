@@ -133,6 +133,17 @@ impl Provider for NemoClawProvider {
     ) -> Option<HashMap<String, Box<dyn DynamicDataSource>>> {
         Some(HashMap::from([
             (
+                "sandbox_readiness".into(),
+                Box::new(crate::sandbox_readiness::SandboxReadinessDataSource(
+                    self.backend.clone(),
+                )) as Box<dyn DynamicDataSource>,
+            ),
+            (
+                "service_readiness".into(),
+                Box::new(crate::readiness::ReadinessDataSource(self.backend.clone()))
+                    as Box<dyn DynamicDataSource>,
+            ),
+            (
                 "service_capacity".into(),
                 Box::new(crate::capacity::CapacityDataSource(self.backend.clone()))
                     as Box<dyn DynamicDataSource>,
@@ -214,8 +225,7 @@ impl Provider for NemoClawProvider {
         if deferred {
             return Some(());
         }
-        let mut gateway = Gateway {
-            management: "external".into(),
+        let mut gateway = nemoclaw_sdk::config::ExternalGateway {
             endpoint: text(config.endpoint),
             ..Default::default()
         };
@@ -237,7 +247,7 @@ impl Provider for NemoClawProvider {
                 key: Credential { env: key },
             });
         }
-        match OpenShell::connect(&gateway, Arc::new(EnvironmentSecrets)) {
+        match OpenShell::connect(&Gateway::External(gateway), Arc::new(EnvironmentSecrets)) {
             Ok(client) => {
                 match self.backend.0.write() {
                     Ok(mut slot) => *slot = Connection::Ready(client),
@@ -316,7 +326,10 @@ impl Provider for NemoClawProvider {
                     "provider_type",
                     "credential_source",
                 ],
-                &["endpoint", "credential_env"],
+                // Endpoint and authentication-mode changes also replace the
+                // imported profile. Delete the registration first so the API
+                // permits profile deletion; ordinary key rotation stays mutable.
+                &["credential_env"],
             ),
             Definition::new(
                 "sandbox",

@@ -111,9 +111,13 @@ fn deletion_timestamp_presence_blocks_observation_but_allows_cleanup() {
 #[test]
 fn loaded_policy_accepts_only_the_runtime_log_directory_enrichment() {
     let mut declared = policy();
-    let profile =
-        native_profile::definition("local", "http://172.30.122.1:18899/v1", "openai", false)
-            .unwrap();
+    let profile = native_profile::definition(
+        "local",
+        "http://172.30.122.1:18899/v1",
+        crate::config::InferenceProviderKind::Openai,
+        false,
+    )
+    .unwrap();
     declared.network_policies.insert(
         profile.id.clone(),
         proto::NetworkPolicyRule {
@@ -179,8 +183,13 @@ fn sparse_filesystem_policy_accepts_proxy_baseline_but_rejects_other_drift() {
         ],
         read_write: vec!["/sandbox".into()],
     });
-    let profile =
-        native_profile::definition("inference", "https://example.com/v1", "openai", false).unwrap();
+    let profile = native_profile::definition(
+        "inference",
+        "https://example.com/v1",
+        crate::config::InferenceProviderKind::Openai,
+        false,
+    )
+    .unwrap();
     declared.network_policies.insert(
         "inference".into(),
         proto::NetworkPolicyRule {

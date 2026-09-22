@@ -6,7 +6,7 @@ use crate::{
     Answers, ApiChoice, Capabilities, Diagnostics, HarnessChoice, InferenceChoice, RuntimeChoice,
     Session,
 };
-use nemoclaw_sdk::config::{Document, InferenceApi};
+use nemoclaw_sdk::config::{ComputeDriver, Document, HarnessKind, InferenceApi};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CompletionBoundary {
@@ -75,12 +75,9 @@ impl Draft {
             ));
         };
         let agent = &sandbox.agent;
-        let harness = match document
-            .sandbox_harness(sandbox)
-            .map(|value| value.kind.as_str())
-        {
-            Ok("openclaw") => HarnessChoice::OpenClaw,
-            Ok("hermes") => HarnessChoice::Hermes,
+        let harness = match document.sandbox_harness(sandbox).map(|value| value.kind) {
+            Ok(HarnessKind::OpenClaw) => HarnessChoice::OpenClaw,
+            Ok(HarnessKind::Hermes) => HarnessChoice::Hermes,
             _ => {
                 return Err(diagnostic(
                     "document",
@@ -88,7 +85,7 @@ impl Draft {
                 ));
             }
         };
-        if sandbox.runtime.provider != "docker" {
+        if sandbox.runtime.provider != ComputeDriver::Docker {
             return Err(diagnostic(
                 "document",
                 "editing requires the Docker runtime",
@@ -114,8 +111,8 @@ impl Draft {
             .clone();
         let api = match provider.api.unwrap_or_else(|| {
             InferenceApi::for_harness(match harness {
-                HarnessChoice::OpenClaw => "openclaw",
-                HarnessChoice::Hermes => "hermes",
+                HarnessChoice::OpenClaw => HarnessKind::OpenClaw,
+                HarnessChoice::Hermes => HarnessKind::Hermes,
             })
         }) {
             InferenceApi::OpenaiCompletions => ApiChoice::OpenAiCompletions,
@@ -257,10 +254,9 @@ impl Review {
         self.authored.document()
     }
 
-    pub fn harness_kind(&self) -> &str {
+    pub fn harness_kind(&self) -> HarnessKind {
         let sandbox = &self.authored.document.spec.sandboxes[0];
-        &self
-            .authored
+        self.authored
             .document
             .sandbox_harness(sandbox)
             .expect("generated review has a harness")

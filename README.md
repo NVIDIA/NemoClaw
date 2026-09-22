@@ -3,12 +3,11 @@
 
 # NemoClaw
 
-NemoClaw’s SDK manages agent deployments from desired-state YAML.
-The CLI delegates `plan`, `apply`, `export`, and `destroy` to the SDK.
-OpenTofu owns graph execution and resource state.
+NemoClaw deploys agents in OpenShell sandboxes from desired-state YAML.
+Use the CLI or Rust SDK to plan, apply, export, and destroy deployments.
 
-The [design decision](docs/design/scope.md) defines implementation boundaries and invariants.
-[Recorded test results and limits](docs/validation/README.md) identify tested configurations.
+This branch documents v1 development using source-built bundles.
+See [tested configurations and limits](docs/validation/README.md) before choosing a deployment.
 
 ## Start Here
 
@@ -22,7 +21,7 @@ The [design decision](docs/design/scope.md) defines implementation boundaries an
 
 ## Contribute
 
-Follow [AGENTS.md](AGENTS.md) for repository workflow and required checks.
+Read the [accepted scope](docs/design/scope.md) and follow [AGENTS.md](AGENTS.md) for repository workflow and required checks.
 Follow [WRITING.md](WRITING.md) for explanatory text and the [documentation contributor guide](docs/CONTRIBUTING.md) for documentation changes.
 Report potential vulnerabilities through the private channels in [SECURITY.md](SECURITY.md).
 

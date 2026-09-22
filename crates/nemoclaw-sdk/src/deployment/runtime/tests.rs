@@ -45,6 +45,7 @@ fn replacement_and_gateway_deferral_use_refreshed_plan_observations() {
                 StateBinding {
                     id: format!("physical-{}", target.kind),
                     spec: target.values["spec"].clone(),
+                    ..Default::default()
                 },
             )
         })
@@ -122,6 +123,7 @@ fn unbound_gateway_is_deferred_and_retained_intent_is_checked_locally() {
         StateBinding {
             id: "storage".into(),
             spec: "changed".into(),
+            ..Default::default()
         },
     )]);
     assert!(runtime_bindings(&targets, &bindings).is_err());
@@ -142,6 +144,7 @@ fn native_compute_binding_does_not_require_a_nemoclaw_spec_or_replacement_author
         StateBinding {
             id: "prior-container".into(),
             spec: String::new(),
+            ..Default::default()
         },
     )]);
     let expected = runtime_bindings(std::slice::from_ref(&target), &bindings).unwrap();
@@ -220,6 +223,7 @@ fn docker_gateway_plan_uses_provider_reconciliation_but_requires_durable_identit
         StateBinding {
             id: "container".into(),
             spec: String::new(),
+            ..Default::default()
         },
     )]);
     assert!(runtime_bindings(&targets, &bindings).is_err());
@@ -228,6 +232,7 @@ fn docker_gateway_plan_uses_provider_reconciliation_but_requires_durable_identit
         StateBinding {
             id: "durable".into(),
             spec: storage.values["spec"].clone(),
+            ..Default::default()
         },
     );
     for (actions, running) in [

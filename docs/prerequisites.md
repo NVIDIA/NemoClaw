@@ -11,7 +11,7 @@ They can have different requirements; a working client binary does not qualify t
 | Role | Must be available there |
 |---|---|
 | Client running NemoClaw | Matching native bundle, writable deployment state directory, referenced credentials/TLS files, and access to the gateway and selected engine |
-| Image build host | The image recipe's toolchain and architecture; Fabric supports Deep Agents and OpenClaw builds on Linux ARM64 or AMD64, while other agent targets use ARM64 |
+| Image build host | The selected image recipe's toolchain and architecture; see [runtime requirements](#runtime-and-inference-requirements) |
 | Sandbox engine host | OpenShell's configured compute daemon and the selected immutable agent image |
 | Inference host | A reachable compatible endpoint, or the tools, image, model storage, and capacity required by the selected managed service |
 
@@ -24,33 +24,31 @@ For remote model placement, use the [SSH service guide](remote-service.md); SSH 
 The [first-deployment guide](get-started.md) uses OpenClaw with an existing OpenShell gateway and external inference endpoint.
 Prepare these inputs before running apply:
 
-- An OpenShell **0.0.117-dev.186+g1fe79f539** gateway with the selected Docker or Podman compute driver and permission to create a deployment workspace and sandbox.
+- An OpenShell gateway with the selected Docker or Podman compute driver and permission to create a deployment workspace and sandbox.
 - Its client-reachable endpoint and any bearer credential or mTLS files required by the gateway operator.
 - An inference endpoint reachable from OpenShell, its request API, an exact model ID, and any provider credential.
 - An OpenClaw image built from this checkout and available by immutable digest on the sandbox compute daemon.
-- An authenticated OpenShell **0.0.117-dev.186+g1fe79f539** CLI for native access, configured for the same gateway and the deployment's workspace.
+- An authenticated OpenShell CLI for native access, configured for the same gateway and the deployment's workspace.
 - A fresh deployment UUID, a separate state directory, and resources you control.
 
-The client, gateway, and supervisor are pinned to OpenShell commit `1fe79f53991debf32776853a60f0cbd4e127dcfb`; this is a development build, not a stable release.
-The [gateway check](../crates/nemoclaw-sdk/src/openshell/probes.rs) verifies the version and compute driver.
-Use [inference API selection](inference.md) to match the endpoint to the agent.
-A successful connection or listed model does not establish that the model can complete an agent turn.
+Use OpenShell **0.0.117-dev.186+g1fe79f539** for the gateway and native CLI.
+The client, gateway, and supervisor are pinned to commit `1fe79f53991debf32776853a60f0cbd4e127dcfb`, a development build.
+The gateway check verifies version and compute driver.
+Select a compatible [inference API](inference.md) and verify an actual agent reply; endpoint reachability alone is insufficient.
 
 Provisioning an external gateway and authenticated OpenShell CLI credentials from a clean host: **TBD** — the current guide requires operator-provided services and access.
 For an existing profile or plaintext loopback gateway, use [gateway/workspace selection](interfaces.md#select-the-gateway-and-workspace).
-End-to-end rehearsal of this first-deployment procedure on the current revision: **TBD**.
+See the [first-deployment guide](get-started.md) for its rehearsal status.
 
 ## Client and Build Tools
 
-Use the versions in [the build guide](build.md) and [versions.json](../versions.json).
-Build a verified bundle containing the CLI, OpenTofu, provider, and matching configuration schema.
-Keep that bundle unchanged while an operation uses it.
+Follow the [source-build guide](build.md) for tool versions and a verified CLI/OpenTofu/provider/schema bundle.
+Keep the bundle unchanged while an operation uses it.
 
 The builder accepts `linux_arm64`, `linux_amd64`, `darwin_arm64`, `darwin_amd64`, and `windows_amd64` targets.
 [Native platform test results](validation/rust-native-platforms.json) identify the tested revisions; they do not qualify GPU deployment on all five platforms.
 
 Prebuilt release downloads and a supported installation/upgrade channel: **TBD**.
-Use the existing [source-build procedure](build.md) for the documented development workflow.
 
 ## Runtime and Inference Requirements
 
@@ -65,7 +63,6 @@ Use the existing [source-build procedure](build.md) for the documented developme
 | SSH-managed model service | Trusted noninteractive SSH access and the documented model-host tools; see [remote service](remote-service.md) |
 
 Build images from a revision that implements the selected configuration features.
-An image available on the build daemon is not automatically available to the sandbox or model-service daemon.
 The example deployment UUIDs, endpoints, and local image digests must be replaced with values for your resources.
 
 ## Platform Qualification Still Needed

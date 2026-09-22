@@ -40,8 +40,9 @@ pub async fn verify_agent(
 }
 
 /// OpenTofu may reorder cached precondition results and advance the serial on
-/// otherwise unchanged apply. Every other field, including bindings and check
-/// outcomes, must remain identical. Failed-observation tests still compare bytes.
+/// otherwise unchanged apply. Sandbox observations also carry a fresh operation
+/// token. Every other field, including health, bindings and check outcomes, must
+/// remain identical. Failed-observation tests still compare bytes.
 pub fn assert_same_deployment_state(actual: &[u8], expected: &[u8]) {
     fn normalize(bytes: &[u8]) -> serde_json::Value {
         let mut state: serde_json::Value = serde_json::from_slice(bytes).unwrap();
@@ -53,6 +54,21 @@ pub fn assert_same_deployment_state(actual: &[u8], expected: &[u8]) {
                 .unwrap()
                 .is_u64()
         );
+        if let Some(resources) = state["resources"].as_array_mut() {
+            for resource in resources {
+                if resource["mode"] == "data"
+                    && resource["type"] == "nemoclaw_sandbox_readiness"
+                    && let Some(instances) = resource["instances"].as_array_mut()
+                {
+                    for instance in instances {
+                        instance["attributes"]
+                            .as_object_mut()
+                            .unwrap()
+                            .remove("read_trigger");
+                    }
+                }
+            }
+        }
         if let Some(checks) = state
             .get_mut("check_results")
             .and_then(serde_json::Value::as_array_mut)
@@ -94,4 +110,74 @@ fn unchanged_state_comparison_preserves_bindings_and_check_outcomes() {
             "{path} must not be normalized away"
         );
     }
+}
+
+/// Failed apply may record new data-source observations and condition results.
+/// Its managed resources and deployment lineage must still be preserved.
+pub fn assert_same_managed_resources(actual: &[u8], expected: &[u8]) {
+    fn managed(bytes: &[u8]) -> (String, Vec<serde_json::Value>) {
+        let state: serde_json::Value = serde_json::from_slice(bytes).unwrap();
+        let resources = state["resources"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|resource| match resource["mode"].as_str() {
+                Some("managed") => true,
+                Some("data") => false,
+                _ => panic!("unexpected resource mode"),
+            })
+            .cloned()
+            .collect();
+        (state["lineage"].as_str().unwrap().into(), resources)
+    }
+    assert_eq!(managed(actual), managed(expected));
+}
+
+#[test]
+fn failed_apply_preserves_managed_resources_but_may_record_failed_observations() {
+    let before = serde_json::json!({
+        "lineage":"owned",
+        "resources":[
+            {"mode":"managed","instances":[{"attributes":{"id":"owned"}}]},
+            {"mode":"data","instances":[{"attributes":{"compatible":true}}]}
+        ]
+    });
+    let mut observed = before.clone();
+    observed["resources"][1]["instances"][0]["attributes"]["compatible"] = serde_json::json!(false);
+    assert_same_managed_resources(
+        observed.to_string().as_bytes(),
+        before.to_string().as_bytes(),
+    );
+    for path in ["/lineage", "/resources/0/instances/0/attributes/id"] {
+        let mut changed = observed.clone();
+        *changed.pointer_mut(path).unwrap() = serde_json::json!("foreign");
+        assert!(
+            std::panic::catch_unwind(|| assert_same_managed_resources(
+                changed.to_string().as_bytes(),
+                before.to_string().as_bytes()
+            ))
+            .is_err(),
+            "{path}"
+        );
+    }
+}
+
+#[test]
+fn sandbox_completion_state_comparison_ignores_only_the_operation_token() {
+    let before = serde_json::json!({"serial":1,"resources":[{
+        "mode":"data","type":"nemoclaw_sandbox_readiness",
+        "instances":[{"attributes":{"read_trigger":"old", "ready":true, "health_json":"unsupported"}}]
+    }]});
+    let mut after = before.clone();
+    after["resources"][0]["instances"][0]["attributes"]["read_trigger"] =
+        serde_json::json!("fresh");
+    assert_same_deployment_state(after.to_string().as_bytes(), before.to_string().as_bytes());
+    after["resources"][0]["instances"][0]["attributes"]["ready"] = serde_json::json!(false);
+    assert!(
+        std::panic::catch_unwind(|| assert_same_deployment_state(
+            after.to_string().as_bytes(),
+            before.to_string().as_bytes()
+        ))
+        .is_err()
+    );
 }

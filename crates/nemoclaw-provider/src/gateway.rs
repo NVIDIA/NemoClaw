@@ -19,8 +19,11 @@ pub(crate) struct GatewayDataSource(pub Arc<ConfiguredBackend>);
 pub(crate) struct GatewayState {
     required_compute_drivers: Value<Vec<Value<String>>>,
     wait_timeout_seconds: Value<u64>,
+    // An unknown scheduling input makes OpenTofu defer this read until apply.
+    read_trigger: Value<bool>,
     gateway_version: Value<String>,
     compute_drivers: Value<BTreeSet<String>>,
+    compute_driver_count: Value<u64>,
     compatible: Value<bool>,
 }
 
@@ -31,7 +34,9 @@ fn requirements(diags: &mut Diagnostics, config: &GatewayState) -> Option<()> {
             !drivers.is_empty()
                 && drivers.iter().all(|driver| match driver {
                     Value::Unknown => true,
-                    Value::Value(driver) => matches!(driver.as_str(), "docker" | "podman"),
+                    Value::Value(driver) => driver
+                        .parse::<nemoclaw_sdk::config::ComputeDriver>()
+                        .is_ok(),
                     Value::Null => false,
                 })
         }
@@ -93,6 +98,11 @@ impl DataSource for GatewayDataSource {
                         AttributeConstraint::Optional,
                     ),
                     (
+                        "read_trigger",
+                        AttributeType::Bool,
+                        AttributeConstraint::Optional,
+                    ),
+                    (
                         "required_compute_drivers",
                         AttributeType::Set(Box::new(AttributeType::String)),
                         AttributeConstraint::Required,
@@ -105,6 +115,11 @@ impl DataSource for GatewayDataSource {
                     (
                         "compute_drivers",
                         AttributeType::Set(Box::new(AttributeType::String)),
+                        AttributeConstraint::Computed,
+                    ),
+                    (
+                        "compute_driver_count",
+                        AttributeType::Number,
                         AttributeConstraint::Computed,
                     ),
                     (
@@ -141,6 +156,10 @@ impl DataSource for GatewayDataSource {
         _: ValueEmpty,
     ) -> Option<GatewayState> {
         requirements(diags, &config)?;
+        if matches!(config.read_trigger, Value::Unknown) {
+            diags.root_error_short("Gateway read trigger is not yet known");
+            return None;
+        }
         let drivers = match &config.required_compute_drivers {
             Value::Value(drivers) => drivers
                 .iter()
@@ -176,6 +195,7 @@ impl DataSource for GatewayDataSource {
             Ok(observed) => {
                 config.compatible =
                     Value::Value(drivers.iter().all(|driver| observed.supports(driver)));
+                config.compute_driver_count = Value::Value(observed.compute_drivers.len() as u64);
                 config.gateway_version = Value::Value(observed.gateway_version);
                 config.compute_drivers =
                     Value::Value(observed.compute_drivers.into_iter().flatten().collect());
@@ -211,8 +231,10 @@ mod tests {
             let config = GatewayState {
                 required_compute_drivers: drivers,
                 wait_timeout_seconds: Value::Null,
+                read_trigger: Value::Null,
                 gateway_version: Value::Null,
                 compute_drivers: Value::Null,
+                compute_driver_count: Value::Null,
                 compatible: Value::Null,
             };
             let mut diagnostics = Diagnostics::default();
@@ -242,8 +264,10 @@ mod wait_tests {
             let config = GatewayState {
                 required_compute_drivers: Value::Value(vec![Value::Value("docker".into())]),
                 wait_timeout_seconds: timeout,
+                read_trigger: Value::Null,
                 gateway_version: Value::Null,
                 compute_drivers: Value::Null,
+                compute_driver_count: Value::Null,
                 compatible: Value::Null,
             };
             let mut diagnostics = Diagnostics::default();

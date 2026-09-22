@@ -17,7 +17,9 @@ pub(super) fn inference_settings(
         .validate(
             runtime
                 .strip_prefix("fabric-")
-                .ok_or(ObservationError::Query)?,
+                .ok_or(ObservationError::Query)?
+                .parse()
+                .map_err(|_| ObservationError::Query)?,
         )
         .map_err(|_| ObservationError::Query)?;
     Ok(Some(settings))

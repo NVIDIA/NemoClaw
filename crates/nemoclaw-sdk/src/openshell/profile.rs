@@ -55,9 +55,9 @@ fn native_definition(want: &Row) -> Result<proto::ProviderProfile, ObservationEr
         name,
         &want["endpoint"],
         if want.get("provider_type").is_some_and(|s| s == "anthropic") {
-            "anthropic"
+            crate::config::InferenceProviderKind::Anthropic
         } else {
-            "openai"
+            crate::config::InferenceProviderKind::Openai
         },
         authenticated,
     )?;
