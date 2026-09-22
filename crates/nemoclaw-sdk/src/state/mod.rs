@@ -90,7 +90,9 @@ impl Record {
     }
     pub fn begin_apply(&mut self, creations: BTreeMap<String, crate::backend::Row>) {
         if creations.is_empty() {
-            self.begin_runtime_apply();
+            // OpenTofu owns recovery for established bindings. Preserve any
+            // earlier ambiguous creation, but do not invent one for updates,
+            // deletions, or apply-time observations.
             return;
         }
         // Never narrow an older full-intent guard or forget an earlier lost reply.

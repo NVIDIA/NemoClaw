@@ -292,8 +292,27 @@ fn subsequent_apply_preserves_all_unresolved_creations_until_success() {
     record.finish_apply();
     assert!(!record.pending && record.pending_creations.is_none());
     record.begin_apply(BTreeMap::new());
-    assert!(record.pending && record.runtime_pending);
+    assert!(!record.pending && !record.runtime_pending);
     assert!(record.validate_pending_intent(&document).is_ok());
+}
+
+#[test]
+fn applying_only_bound_resources_does_not_require_creation_recovery() {
+    let document =
+        Document::parse(include_bytes!("../../tests/fixtures/config/local.yaml").as_slice())
+            .unwrap();
+    let mut record = Record::new(document).unwrap();
+    record.begin_apply(BTreeMap::new());
+    let directory = tempfile::tempdir().unwrap();
+    let store = Store::open(directory.path()).unwrap();
+    store.save(&record).unwrap();
+    let recovered = store.load().unwrap().unwrap();
+    assert!(
+        !recovered.pending,
+        "OpenTofu already owns every planned resource binding"
+    );
+    assert!(!recovered.runtime_pending);
+    assert!(recovered.pending_creations.is_none());
 }
 
 #[test]
