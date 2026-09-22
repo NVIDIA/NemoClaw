@@ -98,10 +98,19 @@ gate_ci_green=$(
   [ "$ci_failure_count" = "0" ] && [ "$ci_pending_count" = "0" ] && [ "$missing_check_count" = "0" ] && echo true || echo false
 )
 
-# Gate 3: mergeable
+# Gate 3: mergeable without conflicts, transient merge-state evidence, or an
+# unidentified protection blocker. BEHIND alone does not make the candidate
+# ineligible, but UNSTABLE and BLOCKED fail closed because this collector cannot
+# prove a stable merge result or every GitHub branch-protection condition.
 mergeable=$(printf '%s' "$raw" | jq -r .mergeable)
 merge_state=$(printf '%s' "$raw" | jq -r .mergeStateStatus)
-gate_mergeable=$([ "$mergeable" = "MERGEABLE" ] && [ "$merge_state" = "CLEAN" ] && echo true || echo false)
+case "$merge_state" in
+  BEHIND | CLEAN | HAS_HOOKS) merge_state_permitted=true ;;
+  *) merge_state_permitted=false ;;
+esac
+gate_mergeable=$(
+  [ "$mergeable" = "MERGEABLE" ] && [ "$merge_state_permitted" = "true" ] && echo true || echo false
+)
 
 # Gate 4: contributor compliance (PR-body DCO + every commit GitHub Verified)
 if printf '%s' "$raw" | jq -r '.body // ""' | grep -Eq '^Signed-off-by:[[:space:]]+.+[[:space:]]+<[^<>[:space:]]+@[^<>[:space:]]+>[[:space:]]*$'; then
@@ -147,9 +156,8 @@ gate_branch_protection=$([ "$review_decision" = "APPROVED" ] && echo true || ech
 
 head_sha=$(printf '%s' "$raw" | jq -r .headRefOid)
 
-# Classify failures as trivial vs substantive (used by degraded mode).
-# Substantive: CI red/cancelled, merge conflict, missing approvals.
-# Trivial: stale base only (everything else here is substantive).
+# Classify failures for degraded mode. A behind branch is not itself a failure;
+# CI failures, merge conflicts, and missing approvals are substantive.
 classify_failures=()
 [ "$gate_state_open" = "false" ] && classify_failures+=("substantive:not_open")
 [ "$gate_ci_green" = "false" ] && classify_failures+=("substantive:ci_failures=$ci_failure_count,pending=$ci_pending_count,missing=$(printf '%s' "$missing_checks" | jq -r 'join(",")')")

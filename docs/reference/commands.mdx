@@ -275,8 +275,9 @@ With `--json` and file output, the version 1 result includes `sourceSandbox`, `o
 Export validates retained corporate certificate authority (CA) state but omits the CA bundle and digest from YAML.
 Configure destination CA trust separately during onboarding; export does not change the source sandbox's trust.
 
-The v0 command projects verified source state into the v1alpha1 YAML shape.
-The v1 Rust parser remains authoritative for accepting that document; the v0 command does not carry a copy of the v1 schema or semantic validator.
+The v0 command projects verified source state into the pre-release v1alpha1 YAML shape.
+Managed OpenClaw and Hermes exports use `image: null` until v1 supplies the value.
+The unreleased v1 parser is not an acceptance gate for this staged output.
 
 If staging cleanup fails, the diagnostic identifies the temporary file and its original directory by device and inode when that evidence is available.
 The directory can have moved from the requested output location.
