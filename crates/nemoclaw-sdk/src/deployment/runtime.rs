@@ -4,88 +4,10 @@ mod teardown;
 #[cfg(all(test, unix))]
 mod tests;
 
+pub(super) use super::plan::check_plan_with_replacements as check_runtime_plan;
 use super::*;
 use crate::managed::{GATEWAY_KIND, GATEWAY_STORAGE_KIND, Spec};
 const GATEWAY_STORAGE: &str = "nemoclaw_gateway_storage.runtime";
-pub(super) fn check_runtime_plan(
-    plan: &Plan,
-    allowed: &BTreeMap<String, Row>,
-    bindings: &BTreeMap<String, StateBinding>,
-    replacements: &BTreeSet<String>,
-) -> Result<Vec<Change>, Error> {
-    let mut ordinary = Plan::default();
-    let mut changes = Vec::new();
-    let mut seen = BTreeSet::new();
-    let mut observations = BTreeSet::new();
-    for change in &plan.resource_changes {
-        if plan::observation(change, &mut observations, allowed, true, false)? {
-            continue;
-        }
-        if plan::disposable(&change.address) || change.deposed.is_some() {
-            ordinary.resource_changes.push(plan::ResourceChange {
-                mode: change.mode.clone(),
-                address: change.address.clone(),
-                deposed: change.deposed.clone(),
-                change: plan::PlannedChange {
-                    actions: change.change.actions.clone(),
-                    before: change.change.before.clone(),
-                    after: change.change.after.clone(),
-                },
-            });
-            continue;
-        }
-        if !seen.insert(&change.address) {
-            return Err(Error::Conflict("runtime plan duplicated a resource"));
-        }
-        let expected = allowed.get(&change.address).ok_or(Error::Conflict(
-            "runtime plan contains an undeclared resource",
-        ))?;
-        if change.change.actions == ["delete", "create"] {
-            if !replacements.contains(&change.address) {
-                return Err(Error::Conflict(
-                    "runtime replacement requires verified retained storage",
-                ));
-            }
-            let binding = bindings
-                .get(&change.address)
-                .ok_or(Error::Conflict("runtime replacement is unbound"))?;
-            if change.change.before["id"] != binding.id
-                || change.change.before["spec"] != expected["spec"]
-            {
-                return Err(Error::Conflict(
-                    "runtime replacement changed the established identity or specification",
-                ));
-            }
-            changes.push(Change {
-                resource: change.address.clone(),
-                actions: change.change.actions.clone(),
-            });
-            ordinary.resource_changes.push(plan::ResourceChange {
-                mode: change.mode.clone(),
-                address: change.address.clone(),
-                deposed: change.deposed.clone(),
-                change: plan::PlannedChange {
-                    actions: vec!["no-op".into()],
-                    before: change.change.before.clone(),
-                    after: change.change.after.clone(),
-                },
-            });
-        } else {
-            ordinary.resource_changes.push(plan::ResourceChange {
-                mode: change.mode.clone(),
-                address: change.address.clone(),
-                deposed: change.deposed.clone(),
-                change: plan::PlannedChange {
-                    actions: change.change.actions.clone(),
-                    before: change.change.before.clone(),
-                    after: change.change.after.clone(),
-                },
-            });
-        }
-    }
-    changes.extend(check_plan(&ordinary, allowed, bindings)?);
-    Ok(changes)
-}
 fn bound_spec(want: &Spec, binding: Option<&StateBinding>) -> Result<Spec, Error> {
     let Some(binding) = binding else {
         return Ok(want.clone());
@@ -263,24 +185,11 @@ impl Deployment {
             }
         }
         let stage = Store::open(&store.directory.join("runtime"))?;
-        let bindings = self
-            .state_bindings(bundle, &stage, document, &record.generations, true, cancel)
-            .await?;
-        let targets = compile::runtime_targets(document, &record.generations)?;
+        let (graph, targets) =
+            compile::compiled_runtime(document, &record.generations, &bundle.manifest.version)?;
+        self.initialize(bundle, &stage, &graph, cancel).await?;
+        let bindings = stage.bindings(&bundle.tofu(), cancel).await?;
         runtime_bindings(&targets, &bindings)?;
-        self.prepare(
-            bundle,
-            &stage,
-            &compile::compile_runtime(document, &record.generations, &bundle.manifest.version)?,
-        )?;
-        self.tofu(
-            bundle,
-            &stage,
-            document,
-            &["init", "-upgrade", "-input=false", "-no-color"],
-            cancel,
-        )
-        .await?;
         let plan = self
             .saved_plan(bundle, &stage, document, "apply.plan", cancel)
             .await?;

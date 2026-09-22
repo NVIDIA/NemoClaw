@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::*;
-#[derive(Deserialize, Default)]
+#[derive(Deserialize)]
 pub(super) struct Plan {
     #[serde(default)]
     pub resource_changes: Vec<ResourceChange>,
@@ -18,11 +18,10 @@ pub(super) struct ResourceChange {
     pub deposed: Option<String>,
     pub change: PlannedChange,
 }
-pub(super) fn observation(
+fn observation(
     change: &ResourceChange,
     seen: &mut BTreeSet<String>,
     allowed: &BTreeMap<String, Row>,
-    gateway: bool,
     destroying: bool,
 ) -> Result<bool, Error> {
     if change.mode.as_deref() != Some("data") {
@@ -35,7 +34,7 @@ pub(super) fn observation(
     }
     let expected = (change.address.starts_with("data.docker_image.")
         && allowed.contains_key(&change.address))
-        || (gateway && crate::compile::is_gateway_observation(&change.address))
+        || crate::compile::is_gateway_observation(&change.address)
         || allowed.keys().any(|address| {
             address
                 .strip_prefix("nemoclaw_sandbox.")
@@ -92,9 +91,7 @@ fn identity(change: &ResourceChange, expected: &Row, binding: &StateBinding) -> 
     }
     Ok(())
 }
-pub(super) fn disposable(address: &str) -> bool {
-    crate::docker_compute::is_disposable(address)
-}
+pub(super) use crate::docker_compute::is_disposable as disposable;
 
 pub(super) fn reconstructible(address: &str) -> bool {
     address.split_once('.').is_some_and(|(kind, _)| {
@@ -156,19 +153,31 @@ pub(super) fn check_plan(
     allowed: &BTreeMap<String, Row>,
     bindings: &BTreeMap<String, StateBinding>,
 ) -> Result<Vec<Change>, Error> {
+    check_plan_with_replacements(plan, allowed, bindings, &BTreeSet::new())
+}
+
+pub(super) fn check_plan_with_replacements(
+    plan: &Plan,
+    allowed: &BTreeMap<String, Row>,
+    bindings: &BTreeMap<String, StateBinding>,
+    replacements: &BTreeSet<String>,
+) -> Result<Vec<Change>, Error> {
     let mut seen = BTreeSet::new();
     let mut changes = Vec::new();
     let mut observations = BTreeSet::new();
     let mut cleanup_seen = BTreeSet::new();
     let mut absent = BTreeSet::new();
     for drift in &plan.resource_drift {
-        if reconstructible(&drift.address) && drift.change.actions == ["delete"] {
+        if (reconstructible(&drift.address)
+            || (disposable(&drift.address) && drift.deposed.is_none()))
+            && drift.change.actions == ["delete"]
+        {
             let binding = bindings.get(&drift.address).ok_or(Error::Conflict(
                 "plan reports absence without a saved resource identity",
             ))?;
             if drift.deposed.is_some()
                 || !drift.change.after.is_null()
-                || drift.change.before["id"] != binding.id
+                || (reconstructible(&drift.address) && drift.change.before["id"] != binding.id)
                 || !absent.insert(drift.address.clone())
             {
                 return Err(Error::Conflict("plan changed a recorded resource identity"));
@@ -176,7 +185,7 @@ pub(super) fn check_plan(
         }
     }
     for change in &plan.resource_changes {
-        if observation(change, &mut observations, allowed, true, false)? {
+        if observation(change, &mut observations, allowed, false)? {
             continue;
         }
         if let Some(cleanup) = cleanup(change, bindings, &mut cleanup_seen)? {
@@ -185,7 +194,7 @@ pub(super) fn check_plan(
             }
             continue;
         }
-        if reconstructible(&change.address) {
+        if reconstructible(&change.address) || disposable(&change.address) {
             let declared = allowed.contains_key(&change.address);
             let binding = bindings.get(&change.address);
             let removed_and_absent = !declared
@@ -205,34 +214,19 @@ pub(super) fn check_plan(
             if removed_and_absent {
                 continue;
             }
-            if change.change.actions == ["create"] {
-                if !change.change.before.is_null()
-                    || (binding.is_some() && !absent.contains(&change.address))
-                {
-                    return Err(Error::Conflict(
-                        "resource recreation lacks confirmed absence",
-                    ));
+            // OpenShell identities survive refresh; disposable Docker identities need not.
+            if reconstructible(&change.address) {
+                if change.change.actions == ["create"] {
+                    if !change.change.before.is_null()
+                        || (binding.is_some() && !absent.contains(&change.address))
+                    {
+                        return Err(Error::Conflict(
+                            "resource recreation lacks confirmed absence",
+                        ));
+                    }
+                } else if binding.is_none_or(|binding| change.change.before["id"] != binding.id) {
+                    return Err(Error::Conflict("plan changed a recorded resource identity"));
                 }
-            } else if binding.is_none_or(|binding| change.change.before["id"] != binding.id) {
-                return Err(Error::Conflict("plan changed a recorded resource identity"));
-            }
-            if change.change.actions != ["no-op"] {
-                changes.push(Change {
-                    resource: change.address.clone(),
-                    actions: change.change.actions.clone(),
-                });
-            }
-            continue;
-        }
-        if disposable(&change.address) {
-            if (!allowed.contains_key(&change.address) && !bindings.contains_key(&change.address))
-                || !seen.insert(&change.address)
-                || !standard_actions(&change.change.actions)
-                || (!allowed.contains_key(&change.address) && change.change.actions != ["delete"])
-            {
-                return Err(Error::Conflict(
-                    "plan contains invalid or undeclared disposable compute",
-                ));
             }
             if change.change.actions != ["no-op"] {
                 changes.push(Change {
@@ -245,9 +239,13 @@ pub(super) fn check_plan(
         let expected = allowed
             .get(&change.address)
             .ok_or(Error::Conflict("plan contains an undeclared resource"))?;
+        let replacement = change.change.actions == ["delete", "create"]
+            && replacements.contains(&change.address)
+            && bindings.contains_key(&change.address);
         if !seen.insert(&change.address)
-            || change.change.actions.len() != 1
-            || !["no-op", "create", "update"].contains(&change.change.actions[0].as_str())
+            || (!replacement
+                && (change.change.actions.len() != 1
+                    || !["no-op", "create", "update"].contains(&change.change.actions[0].as_str())))
         {
             return Err(Error::Conflict(
                 "plan would remove, replace, or duplicate a resource",
@@ -296,7 +294,7 @@ pub(super) fn check_destroy_plan(
     let mut observations = BTreeSet::new();
     let mut cleanup_absent = BTreeSet::new();
     for drift in &plan.resource_drift {
-        if observation(drift, &mut observations, allowed, true, true)? {
+        if observation(drift, &mut observations, allowed, true)? {
             continue;
         }
         if cleanup(drift, bindings, &mut cleanup_absent)?.is_some() {
@@ -325,7 +323,7 @@ pub(super) fn check_destroy_plan(
     let mut observations = BTreeSet::new();
     let mut cleanup_seen = BTreeSet::new();
     for change in &plan.resource_changes {
-        if observation(change, &mut observations, allowed, true, true)? {
+        if observation(change, &mut observations, allowed, true)? {
             continue;
         }
         if let Some(cleanup) = cleanup(change, bindings, &mut cleanup_seen)? {

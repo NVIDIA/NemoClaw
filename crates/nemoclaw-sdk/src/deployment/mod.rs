@@ -195,17 +195,11 @@ impl Deployment {
                 .push("OpenShell registration and sandbox require the managed gateway".into());
             return Ok(result);
         }
-        let bindings = self
-            .state_bindings(
-                &bundle,
-                &store,
-                &document,
-                &record.generations,
-                false,
-                cancel,
-            )
-            .await?;
-        let targets = compile::targets(&document, &record.generations)?;
+        let (graph, targets) =
+            compile::deployment_graph(&document, &record.generations, &bundle.manifest.version)?;
+        (self.progress)(Progress::Validating);
+        self.initialize(&bundle, &store, &graph, cancel).await?;
+        let bindings = store.bindings(&bundle.tofu(), cancel).await?;
         let allowed = allowed(&targets);
         if bindings.iter().any(|(address, binding)| {
             (!allowed.contains_key(address)
@@ -217,20 +211,6 @@ impl Deployment {
                 "undeclared resource binding in deployment state",
             ));
         }
-        (self.progress)(Progress::Validating);
-        self.prepare(
-            &bundle,
-            &store,
-            &compile::compile(&document, &record.generations, &bundle.manifest.version)?,
-        )?;
-        self.tofu(
-            &bundle,
-            &store,
-            &document,
-            &["init", "-upgrade", "-input=false", "-no-color"],
-            cancel,
-        )
-        .await?;
         (self.progress)(Progress::Planning);
         let plan = self
             .saved_plan(&bundle, &store, &document, "apply.plan", cancel)
@@ -407,16 +387,29 @@ impl Deployment {
         } else {
             compile::compile(document, generations, &bundle.manifest.version)?
         };
-        self.prepare(bundle, store, &graph)?;
-        crate::process::run(
-            &store.directory,
-            &bundle.tofu(),
-            &["init", "-upgrade", "-input=false", "-no-color"],
-            &crate::state::schema_environment(&store.directory),
-            cancel,
+        self.initialize(bundle, store, &graph, cancel).await?;
+        store.bindings(&bundle.tofu(), cancel).await
+    }
+    async fn initialize(
+        &self,
+        bundle: &Bundle,
+        store: &Store,
+        graph: &Value,
+        cancel: &CancellationToken,
+    ) -> Result<(), Error> {
+        self.prepare(bundle, store, graph)?;
+        self.timed(
+            "tofu.init",
+            crate::process::run(
+                &store.directory,
+                &bundle.tofu(),
+                &["init", "-upgrade", "-input=false", "-no-color"],
+                &crate::state::schema_environment(&store.directory),
+                cancel,
+            ),
         )
         .await?;
-        store.bindings(&bundle.tofu(), cancel).await
+        Ok(())
     }
     fn prepare(&self, bundle: &Bundle, store: &Store, graph: &Value) -> Result<(), Error> {
         for entry in fs::read_dir(&store.directory)

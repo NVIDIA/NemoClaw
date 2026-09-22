@@ -305,19 +305,29 @@ pub fn compile(
     generations: &Generations,
     version: &str,
 ) -> Result<Value, ConfigError> {
+    deployment_graph(document, generations, version).map(|(graph, _)| graph)
+}
+
+pub(crate) fn deployment_graph(
+    document: &Document,
+    generations: &Generations,
+    version: &str,
+) -> Result<(Value, Vec<Target>), ConfigError> {
     document.validate()?;
     let service_plans = service_plans(
         document,
         generations,
         crate::services::InstallStage::Deployment,
     )?;
-    let mut graph = compile_with_plans(document, generations, version, &service_plans)?;
     let raw = targets_with_plans(document, generations, &service_plans)?;
+    let mut graph = compile_with_plans(document, version, &service_plans, &raw)?;
     crate::docker_compute::configure(&mut graph, &raw)
         .map_err(|_| ConfigError::new("invalid Docker compute graph"))?;
     crate::services::configure_proxy_readiness(&mut graph, &raw)
         .map_err(|_| ConfigError::new("invalid proxy readiness graph"))?;
-    Ok(graph)
+    let targets = crate::docker_compute::targets(&raw)
+        .map_err(|_| ConfigError::new("invalid Docker compute plan"))?;
+    Ok((graph, targets))
 }
 
 pub(crate) const GATEWAY_CAPABILITIES_ADDRESS: &str = "data.nemoclaw_gateway_capabilities.current";
@@ -342,14 +352,7 @@ pub(super) fn gateway_error_message(reference: &str) -> String {
     )
 }
 
-pub(super) fn compile_with_plans(
-    document: &Document,
-    generations: &Generations,
-    version: &str,
-    service_plans: &crate::services::InstallPlans,
-) -> Result<Value, ConfigError> {
-    let targets = targets_with_plans(document, generations, service_plans)?;
-    let providers = document.selected_providers()?;
+fn graph_base(document: &Document, version: &str) -> Value {
     let gateway = &document.spec.gateway;
     let mut provider = json!({"endpoint":gateway.endpoint()});
     if let Some(c) = gateway.credential() {
@@ -360,6 +363,27 @@ pub(super) fn compile_with_plans(
         provider["tls_certificate_env"] = json!(tls.certificate.env);
         provider["tls_key_env"] = json!(tls.key.env);
     }
+    let drivers: std::collections::BTreeSet<_> = document
+        .spec
+        .sandboxes
+        .iter()
+        .map(|sandbox| &sandbox.runtime.provider)
+        .collect();
+    json!({
+        "terraform":{"required_version":format!("= {OPENTOFU_VERSION}"),"required_providers":{"nemoclaw":{"source":PROVIDER_ADDRESS,"version":format!("= {version}")}}},
+        "provider":{"nemoclaw":provider}, "resource":{},
+        "data":{"nemoclaw_gateway_capabilities":{"current":{"required_compute_drivers":drivers}}}
+    })
+}
+
+fn compile_with_plans(
+    document: &Document,
+    version: &str,
+    service_plans: &crate::services::InstallPlans,
+    targets: &[Target],
+) -> Result<Value, ConfigError> {
+    let providers = document.selected_providers()?;
+    let mut graph = graph_base(document, version);
     let mut resources = json!({});
     let provider_dependencies: BTreeMap<_, _> = targets
         .iter()
@@ -455,16 +479,10 @@ pub(super) fn compile_with_plans(
             .entry(kind)
             .or_insert_with(|| json!({}))[name] = attributes;
     }
-    let drivers: std::collections::BTreeSet<_> = document
-        .spec
-        .sandboxes
-        .iter()
-        .map(|sandbox| &sandbox.runtime.provider)
-        .collect();
     // timestamp() is unknown while planning. Its nonempty test becomes a
     // stable true at apply, forcing a fresh read without perpetual state drift.
     let apply_readiness = json!({
-        "required_compute_drivers":drivers,
+        "required_compute_drivers":graph["data"]["nemoclaw_gateway_capabilities"]["current"]["required_compute_drivers"],
         "read_trigger":"${timestamp() != \"\"}",
         "lifecycle":{"postcondition":[{
             "condition":"${self.compatible}",
@@ -489,18 +507,15 @@ pub(super) fn compile_with_plans(
             }]}
         })))
     }).collect::<Result<_, ConfigError>>()?;
-    Ok(json!({
-        "terraform":{"required_version":format!("= {OPENTOFU_VERSION}"),"required_providers":{"nemoclaw":{"source":PROVIDER_ADDRESS,"version":format!("= {version}")}}},
-        "provider":{"nemoclaw":provider}, "resource":resources,
-        "data":{"nemoclaw_sandbox_readiness":sandbox_readiness, "nemoclaw_gateway_capabilities":{
-            "current":{"required_compute_drivers":drivers},
-            "apply":apply_readiness
-        }}
-    }))
+    graph["resource"] = resources;
+    graph["data"]["nemoclaw_sandbox_readiness"] = json!(sandbox_readiness);
+    graph["data"]["nemoclaw_gateway_capabilities"]["apply"] = apply_readiness;
+    Ok(graph)
 }
 
 #[path = "compile_runtime.rs"]
 mod runtime;
+pub(crate) use runtime::compiled_runtime;
 pub use runtime::{compile_runtime, runtime_targets};
 
 #[cfg(test)]

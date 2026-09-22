@@ -738,6 +738,37 @@ fn disposable_docker_compute_reconciles_while_durable_storage_does_not_recreate(
     assert!(check_plan(&plan, &allowed, &bound).is_err());
 }
 
+#[test]
+fn removed_disposable_compute_accepts_confirmed_absence() {
+    let address = "docker_container.inference_service_model";
+    let bindings = BTreeMap::from([(
+        address.into(),
+        StateBinding {
+            id: "old-container".into(),
+            ..Default::default()
+        },
+    )]);
+    let plan: Plan = serde_json::from_value(json!({
+        "resource_changes": [{"address": address, "change": {"actions": ["no-op"], "before": null, "after": null}}],
+        "resource_drift": [{"address": address, "change": {"actions": ["delete"], "before": {"id": "old-container"}, "after": null}}]
+    })).unwrap();
+    assert!(
+        check_plan(&plan, &BTreeMap::new(), &bindings)
+            .unwrap()
+            .is_empty()
+    );
+    assert!(
+        runtime::check_runtime_plan(&plan, &BTreeMap::new(), &bindings, &BTreeSet::new())
+            .unwrap()
+            .is_empty()
+    );
+    let mut unexplained = plan;
+    unexplained.resource_drift[0].change.after = json!({"id": "still-present"});
+    assert!(check_plan(&unexplained, &BTreeMap::new(), &bindings).is_err());
+    unexplained.resource_drift.clear();
+    assert!(check_plan(&unexplained, &BTreeMap::new(), &bindings).is_err());
+}
+
 #[tokio::test]
 async fn changing_gateway_management_at_the_same_endpoint_preserves_saved_state() {
     let bundle_directory = tempfile::tempdir().unwrap();
