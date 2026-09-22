@@ -95,8 +95,11 @@ The workspace remains after destroy.
 
 ## Bare Brev
 
-The `Bare Brev desired-state E2E` workflow provisions an ordinary Brev CPU VM rather than a NemoClaw Launchable.
-It builds the candidate Linux AMD64 bundle and test binary from the selected revision, then builds the matching OpenClaw image on the VM.
+The `Live / Brev` workflow provisions an ordinary Brev CPU VM rather than a NemoClaw Launchable.
+The build job creates the candidate Linux AMD64 bundle and test binary while an independent preparation job provisions the VM and builds the matching OpenClaw image there.
+The lifecycle job waits for both, transfers the candidate, and runs the real inference and deployment checks.
+A separate cleanup job runs after success, failure, or cancellation and requires two confirmed observations that its owned VM is absent.
+The check list shows build, preparation, lifecycle, and deletion times separately; VM deletion remains part of successful qualification.
 The workflow requires repository secrets named `BREV_API_KEY` and `NVIDIA_API_KEY`.
 While `v1` is not the repository's default branch, run it by pushing the candidate to an intentionally named `run-brev-v1-e2e/*` branch in `NVIDIA/NemoClaw`.
 After the workflow file reaches the default branch, select `v1` with `workflow_dispatch` instead.
@@ -111,6 +114,11 @@ It checks unchanged apply, export/reapply, stable resource and Fabric runtime id
 Destroy must remove the provider, profile, sandbox, and managed gateway while retaining the documented workspace and gateway storage.
 The workflow uploads a sanitized Boolean proof and verifies that the Brev VM is absent before completing.
 Failures still request VM deletion; no keep-alive option is provided.
+If cleanup fails, rerun the original `Brev / Delete VM` job until deletion is verified.
+After successful cleanup, rerun all jobs for fresh qualification; rerunning only lifecycle qualification cannot reuse the deleted VM.
+Artifact and VM identities come from their producing jobs, including the original attempt when dependent jobs are retried.
+The intermediate artifact contains only the candidate bundle and test executable.
+Qualification transfers the inference credential through a private temporary file; the runner copy is removed after transfer, and the VM copy disappears with verified VM deletion.
 
 Run the Rust test directly only on a fresh owned Linux AMD64 host with the same prerequisites:
 
