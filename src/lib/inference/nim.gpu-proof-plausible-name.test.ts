@@ -113,7 +113,7 @@ function onWsl2Arm64WithoutKernelInterface(fn: () => void): void {
 
 describe("detectGpu CUDA proof for a plausible, non-placeholder NVIDIA GPU name (#9000)", () => {
   it("trusts one plausible, non-placeholder NVIDIA GPU name when the bounded CUDA proof passes (#9000)", () => {
-    const prover = passingProver();
+    const prover = passingProver({ totalMemoryMB: 49088, availableMemoryMB: 0 });
     onWsl2Arm64WithoutKernelInterface(() => {
       const result = detectGpu({
         proveArm64ContainerGpu: prover,
@@ -260,10 +260,13 @@ describe("detectGpu CUDA proof for a plausible, non-placeholder NVIDIA GPU name 
     });
   });
 
-  it("ignores a forged high-memory row when the CUDA proof has no capacity (#10954)", () => {
+  it("ignores a forged high-memory row when proved device capacity is unavailable (#10954)", () => {
     onWsl2Arm64WithoutKernelInterface(() => {
       const gpu = detectGpu({
-        proveArm64ContainerGpu: passingProver(),
+        proveArm64ContainerGpu: passingProver({
+          totalMemoryMB: 63936,
+          availableMemoryMB: 0,
+        }),
         runCaptureImpl: makeRunCapture(`${PLAUSIBLE_NAME}, 999999, 999999\n`),
         isWsl: true,
         n1xWslProduct: true,
@@ -629,7 +632,7 @@ describe("detectGpu trust-gate rejection reasons (#9000)", () => {
     onWsl2Arm64WithoutKernelInterface(() => {
       expect(
         detectGpu({
-          proveArm64ContainerGpu: passingProver(),
+          proveArm64ContainerGpu: passingProver({ totalMemoryMB: 8128, availableMemoryMB: 7000 }),
           runCaptureImpl: makeRunCapture(`${PLAUSIBLE_NAME}, 8128, 7000\n`),
           isWsl: true,
           onTrustGateRejection,

@@ -171,7 +171,7 @@ function runRuntimeProviderGpuProof(
       resource,
       timedOut || result.error !== undefined ? "until-deadline" : "immediate",
     );
-    const passed = workloadPassed && cleanup.status !== "failed";
+    const passed = workloadPassed && verifiedDevices !== null && cleanup.status !== "failed";
     return {
       providerId: provider.identity.id,
       passed,

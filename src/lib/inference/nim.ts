@@ -603,14 +603,16 @@ export function detectGpu(deps: DetectGpuDeps = {}): GpuDetection | null {
           }
           deps.onContainerGpuProof?.({ providerId: proof.providerId, passed: proof.passed });
           if (!proof.passed) return { proof: null, rejection: "the bounded CUDA proof failed" };
-          if (parsed.length > 1) {
-            const verified = proof.verifiedDevices;
-            if (!verified || !gpuRowsMatch(parsed, verified)) {
-              return {
-                proof: null,
-                rejection: "the bounded CUDA proof did not verify every reported GPU row",
-              };
-            }
+          const verified = proof.verifiedDevices;
+          if (
+            !verified ||
+            verified.length !== parsed.length ||
+            (parsed.length > 1 && !gpuRowsMatch(parsed, verified))
+          ) {
+            return {
+              proof: null,
+              rejection: "the bounded CUDA proof did not verify every reported GPU row",
+            };
           }
           return { proof, rejection: null };
         };

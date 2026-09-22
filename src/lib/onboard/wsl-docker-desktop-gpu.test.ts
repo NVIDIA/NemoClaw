@@ -316,6 +316,29 @@ describe("createArm64ContainerGpuProver (#4565)", () => {
     );
   });
 
+  it("rejects CUDA success without valid provider-visible device rows", () => {
+    const base = proofProvider("docker");
+    const provider = {
+      ...base,
+      containerEngine: {
+        ...base.containerEngine,
+        nvidiaContainer: {
+          ...base.containerEngine.nvidiaContainer!,
+          capture: () => ({ status: 0, stdout: "Test PASSED\n", stderr: "" }),
+          cleanup: () => ({ status: "absent" as const }),
+        },
+      },
+    };
+    const result = createArm64ContainerGpuProver({
+      platform: "linux",
+      arch: "arm64",
+      resolveRuntimeProvider: () => provider,
+      log: () => undefined,
+    })(["NVIDIA RTX Spark N1X"]);
+    expect(result).toMatchObject({ passed: false });
+    expect(result).not.toHaveProperty("verifiedDevices");
+  });
+
   it("aggregates multiple device rows from the provider-owned capture", () => {
     const base = proofProvider("docker");
     const capture = vi.fn(() => ({
