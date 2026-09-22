@@ -150,17 +150,17 @@ impl Deployment {
         let record = store.load()?.ok_or(Error::Conflict(
             "no saved deployment configuration; apply a configuration before exporting",
         ))?;
-        if record.pending {
+        if record.pending() {
             return Err(Error::Conflict(
                 "cannot export while apply is unfinished; run apply again with the same configuration and state directory",
             ));
         }
-        if record.destroying {
+        if record.destroying() {
             return Err(Error::Conflict(
                 "cannot export while destroy is unfinished; run destroy again with the same state directory",
             ));
         }
-        if record.destroyed {
+        if record.destroyed() {
             return Err(Error::Conflict(
                 "cannot export a destroyed deployment; apply its configuration again using the same state directory before exporting",
             ));
@@ -411,9 +411,15 @@ mod tests {
             let intent = state.path().join("intent.json");
             if let Some((pending, destroying, destroyed)) = flags {
                 let mut record = Record::new(document.clone()).unwrap();
-                record.pending = pending;
-                record.destroying = destroying;
-                record.destroyed = destroyed;
+                if pending {
+                    record.begin_runtime_apply(&document);
+                }
+                if destroying {
+                    record.begin_destroy();
+                }
+                if destroyed {
+                    record.finish_destroy();
+                }
                 Store::open(state.path()).unwrap().save(&record).unwrap();
             }
             let before = fs::read(&intent).ok();

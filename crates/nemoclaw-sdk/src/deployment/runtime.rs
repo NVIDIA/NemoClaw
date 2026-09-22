@@ -173,12 +173,7 @@ impl Deployment {
             store.save(record)?;
             return Ok((changes, !checked.gateway_running));
         }
-        record.document = document.clone();
-        record.digest = document.digest();
-        record.begin_runtime_apply();
-        record.succeeded = false;
-        record.destroyed = false;
-        record.destroy_runtime = false;
+        record.begin_runtime_apply(document);
         store.save(record)?;
         self.tofu(
             bundle,

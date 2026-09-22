@@ -67,7 +67,7 @@ impl Deployment {
                 .retained
                 .extend(retained_bindings(&record, &runtime_bindings, true)?);
         }
-        if record.destroyed {
+        if record.destroyed() {
             if !preview {
                 result.outcome = Outcome::Destroyed;
             }
@@ -75,7 +75,7 @@ impl Deployment {
         }
         // Observe and validate both complete saved plans before the first delete.
         let mut stages = Vec::new();
-        if !record.destroy_runtime {
+        if !record.root_destroyed() {
             let (changes, planned) = self
                 .plan_teardown_stage(&bundle, &store, &record, false, cancel)
                 .await?;
@@ -94,9 +94,7 @@ impl Deployment {
         }
         // Both teardown graphs now account for every saved identity, so destroy
         // owns recovery from this point and can resume at its recorded boundary.
-        record.destroying = true;
-        record.pending = false;
-        record.succeeded = false;
+        record.begin_destroy();
         store.save(&record)?;
         (self.progress)(Progress::Destroying);
         for (stage, is_runtime, planned) in stages {
@@ -111,13 +109,11 @@ impl Deployment {
                 .await?;
             }
             if !is_runtime {
-                record.destroy_runtime = true;
+                record.finish_root_destroy();
                 store.save(&record)?;
             }
         }
-        record.finish_apply();
-        record.destroying = false;
-        record.destroyed = true;
+        record.finish_destroy();
         store.save(&record)?;
         result.outcome = Outcome::Destroyed;
         Ok(result)
@@ -141,7 +137,7 @@ impl Deployment {
             )
             .await?;
         if bindings.is_empty() {
-            if record.succeeded || record.destroying {
+            if record.succeeded() || record.destroying() {
                 return Err(Error::Conflict(
                     "established state is missing; destroy cannot infer unbound resources",
                 ));
@@ -283,8 +279,8 @@ fn validate_teardown_state(
     bindings: &BTreeMap<String, StateBinding>,
     runtime_bindings: &BTreeMap<String, StateBinding>,
 ) -> Result<(), Error> {
-    if record.pending {
-        let applicable_state_is_safe = if !record.runtime_pending {
+    if record.pending() {
+        let applicable_state_is_safe = if !record.runtime_pending() {
             false
         } else if record.document.has_runtime() {
             runtime_bindings_safe(record, runtime_bindings)?
@@ -351,7 +347,9 @@ mod tests {
         let mut record = Record::new(document).unwrap();
         let bindings = BTreeMap::new();
         validate_teardown_state(&record, &bindings, &bindings).unwrap();
-        record.pending = true;
+        let mut saved = serde_json::to_value(&record).unwrap();
+        saved["pending"] = serde_json::json!(true);
+        record = serde_json::from_value(saved).unwrap();
         assert_eq!(
             validate_teardown_state(&record, &bindings, &bindings)
                 .unwrap_err()
@@ -367,7 +365,7 @@ mod tests {
         )
         .unwrap();
         let mut record = Record::new(document).unwrap();
-        record.begin_runtime_apply();
+        record.begin_runtime_apply(&record.document.clone());
         let bindings = [
             (
                 "nemoclaw_workspace.deployment".into(),
@@ -447,7 +445,7 @@ mod tests {
     #[test]
     fn runtime_recovery_uses_current_bindings_without_the_failed_apply_plan() {
         let (mut record, runtime_bindings) = runtime_state();
-        record.begin_runtime_apply();
+        record.begin_runtime_apply(&record.document.clone());
         // A preview can replace apply.plan after a failed apply. Current resource
         // bindings and a fresh teardown plan must determine the next operation.
         validate_teardown_state(&record, &BTreeMap::new(), &runtime_bindings)
@@ -457,8 +455,7 @@ mod tests {
     #[test]
     fn unfinished_runtime_apply_can_destroy_only_its_safe_saved_bindings() {
         let (mut record, runtime_bindings) = runtime_state();
-        record.pending = true;
-        record.runtime_pending = true;
+        record.begin_runtime_apply(&record.document.clone());
         let bindings = BTreeMap::new();
         validate_teardown_state(&record, &bindings, &runtime_bindings).unwrap();
 
