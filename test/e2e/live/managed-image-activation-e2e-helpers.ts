@@ -52,6 +52,7 @@ const ONBOARD_TIMEOUT_MS = 20 * 60_000;
 const OPENCLAW_POST_RESTART_READY_TIMEOUT_SECONDS = 60;
 const OPENCLAW_POST_RESTART_READY_TIMEOUT_MS =
   (OPENCLAW_POST_RESTART_READY_TIMEOUT_SECONDS + 10) * 1_000;
+const OPENCLAW_ADMIN_APPROVAL_CAPTURE_LIMIT_BYTES = 64 * 1024;
 const OPENCLAW_ADMIN_APPROVAL_MARKER = "NEMOCLAW_MANAGED_ADMIN_APPROVAL_OK";
 const HERMES_BOUNDARY_SENTINEL = "SENTINEL_MANAGED_RESTART_RAW_SECRET";
 const HERMES_BOUNDARY_BACKUP = "/tmp/nemoclaw-hermes-env-before-restart-refusal";
@@ -233,6 +234,7 @@ async function approveOpenClawAdminScope(
   const approval = requestId
     ? await host.command(host.commandPath, [sandboxName, "connect"], {
         artifactName: "openclaw-explicit-admin-approval",
+        captureLimitBytes: OPENCLAW_ADMIN_APPROVAL_CAPTURE_LIMIT_BYTES,
         env,
         redactionValues: [API_KEY],
         stdin: { text: managedOpenClawAdminApprovalInput(requestId) },
@@ -254,7 +256,26 @@ export function managedOpenClawAdminApprovalInput(requestId: string): string {
     "set -euo pipefail",
     'approval_output="$(mktemp)"',
     "trap 'rm -f -- \"$approval_output\"' EXIT",
-    `openclaw devices approve ${shellQuote(requestId)} >"$approval_output" 2>&1`,
+    "approval_status=0",
+    `openclaw devices approve ${shellQuote(requestId)} >"$approval_output" 2>&1 || approval_status=$?`,
+    'python3 - "$approval_output" "$approval_status" <<\'PY_ADMIN_APPROVAL_DIAGNOSTIC\'',
+    "import re, sys",
+    "from pathlib import Path",
+    "status=int(sys.argv[2])",
+    "try: raw=Path(sys.argv[1]).read_text(encoding='utf-8', errors='replace')[:65536]",
+    "except OSError: raw=''",
+    "checks=(",
+    "    ('timeout', r'timed?\\s*out|timeout'),",
+    "    ('authorization-rejected', r'denied|forbidden|unauthorized|approval.*(?:failed|rejected)'),",
+    "    ('gateway-unavailable', r'gateway|connection|econn|socket|network'),",
+    "    ('uncertain-output-delivery', r'\\bapproved\\b|approval.*(?:complete|succeeded)'),",
+    "    ('invalid-response', r'invalid|parse|json'),",
+    ")",
+    "label=next((name for name, pattern in checks if re.search(pattern, raw, re.IGNORECASE)), 'command-failed' if raw.strip() else 'no-output')",
+    "status == 0 or print('NEMOCLAW_MANAGED_ADMIN_APPROVAL_FAILED', file=sys.stderr)",
+    "status == 0 or print(f'NEMOCLAW_MANAGED_ADMIN_APPROVAL_DIAGNOSTIC={label}', file=sys.stderr)",
+    "raise SystemExit(0 if status == 0 else 31)",
+    "PY_ADMIN_APPROVAL_DIAGNOSTIC",
     `echo ${shellQuote(OPENCLAW_ADMIN_APPROVAL_MARKER)}`,
     "exit",
     "",

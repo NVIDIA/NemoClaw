@@ -129,6 +129,46 @@ describe("managed image activation failure diagnostics", () => {
     expect(input).not.toContain(result.stderr);
   });
 
+  it("retains a fixed diagnostic without approval output secrets when approval fails", () => {
+    const fixture = createHostProcessWorkspace("nemoclaw-managed-admin-approval-");
+    const requestId = "4edc8df0-20d0-4308-b0e8-850843ae0cf4";
+    const secret = "approval-diagnostic-secret-value";
+    fixture.writeExecutable(
+      "openclaw",
+      `#!/bin/sh
+printf 'approval denied by policy token=%s\n' "$APPROVAL_DIAGNOSTIC_SECRET" >&2
+exit 91
+`,
+    );
+
+    try {
+      const result = fixture.run(
+        "/bin/sh",
+        [
+          "-lc",
+          `PATH=${JSON.stringify(fixture.binDir)}:$PATH
+export PATH
+${managedOpenClawAdminApprovalInput(requestId)}`,
+        ],
+        {
+          env: { APPROVAL_DIAGNOSTIC_SECRET: secret },
+          killSignal: "SIGKILL",
+          timeout: 10_000,
+        },
+      );
+
+      expect(result.status).toBe(31);
+      expect(result.stderr).toContain("NEMOCLAW_MANAGED_ADMIN_APPROVAL_FAILED");
+      expect(result.stderr).toContain(
+        "NEMOCLAW_MANAGED_ADMIN_APPROVAL_DIAGNOSTIC=authorization-rejected",
+      );
+      expect(result.stderr).not.toContain(secret);
+      expect(result.stderr).not.toContain(requestId);
+    } finally {
+      fixture.remove();
+    }
+  });
+
   it("rejects ambiguous admin request IDs", () => {
     const first = "4edc8df0-20d0-4308-b0e8-850843ae0cf4";
     const second = "a96ada31-9cf9-4d99-97cc-978dcbb9fc39";
