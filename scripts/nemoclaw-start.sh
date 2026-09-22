@@ -954,12 +954,6 @@ apply_model_override() {
     || [ -n "${NEMOCLAW_INFERENCE_API_OVERRIDE:-}" ] \
     || return 0
 
-  # Host overrides require root startup authority.
-  if [ "$(id -u)" -ne 0 ]; then
-    printf '[SECURITY] Model/inference overrides ignored — requires root (non-root mode cannot write to config)\n' >&2
-    return 0
-  fi
-
   local config_file="/sandbox/.openclaw/openclaw.json"
   local hash_file="/sandbox/.openclaw/.config-hash"
 
@@ -968,6 +962,11 @@ apply_model_override() {
   if [ -L "$config_file" ] || [ -L "$hash_file" ]; then
     printf '[SECURITY] Refusing model override — config or hash path is a symlink\n' >&2
     return 1
+  fi
+
+  if [ "$(id -u)" -ne 0 ] && [ ! -w "$config_file" ]; then
+    printf '[SECURITY] Model/inference overrides ignored: OpenClaw config is not writable by the sandbox user\n' >&2
+    return 0
   fi
 
   local model_override="${NEMOCLAW_MODEL_OVERRIDE:-}"
@@ -1107,8 +1106,8 @@ PYOVERRIDE
 # reconciliation the file's stale entry can be pushed back, reverting
 # the route.
 #
-# Probe the live gateway via `openshell inference get --json` and
-# treat it as the source of truth: when the gateway model differs
+# Probe the live gateway via `openshell inference get` and treat its
+# inference section as the source of truth: when the gateway model differs
 # from the file, align both primary and the inference provider's
 # first model entry so the agent identity and the gateway route stay
 # consistent across the next reconcile cycle.
@@ -1126,44 +1125,91 @@ reconcile_agent_model_with_provider() {
   # overwrite the user's explicit choice with an inference/-prefixed variant.
   [ -z "${NEMOCLAW_MODEL_OVERRIDE:-}" ] || return 0
 
-  if [ "$(id -u)" -ne 0 ]; then
-    return 0
-  fi
-
   local config_file="/sandbox/.openclaw/openclaw.json"
   local hash_file="/sandbox/.openclaw/.config-hash"
 
   [ -f "$config_file" ] || return 0
 
   if [ -L "$config_file" ] || [ -L "$hash_file" ]; then
+    printf '[SECURITY] Refusing agent model reconciliation: config or hash path is a symlink\n' >&2
+    return 1
+  fi
+
+  if [ "$(id -u)" -ne 0 ] && [ ! -w "$config_file" ]; then
+    printf '[config] Agent model reconciliation skipped: OpenClaw config is not writable by the sandbox user\n' >&2
     return 0
   fi
 
   local gateway_model=""
   if command -v openshell >/dev/null 2>&1; then
     gateway_model="$(
-      python3 - <<'PYPROBE'
-import json, subprocess
+      /usr/bin/python3 -I - <<'PYPROBE'
+import re
+import subprocess
+import sys
+
+ansi_escape = re.compile(r"\x1b(?:\[[0-?]*[ -/]*[@-~]|[@-_])")
+
 try:
     result = subprocess.run(
-        ["openshell", "inference", "get", "--json"],
+        ["openshell", "inference", "get"],
         capture_output=True,
+        encoding="utf-8",
+        errors="replace",
+        text=True,
         timeout=3,
         check=False,
     )
-except Exception:
+except subprocess.TimeoutExpired:
+    print("[config] Gateway model probe unavailable: openshell inference get timed out", file=sys.stderr)
+    raise SystemExit(0)
+except OSError:
+    print("[config] Gateway model probe unavailable: openshell inference get could not start", file=sys.stderr)
     raise SystemExit(0)
 if result.returncode != 0:
+    print(
+        f"[config] Gateway model probe unavailable: openshell inference get exited with status {result.returncode}",
+        file=sys.stderr,
+    )
     raise SystemExit(0)
-try:
-    data = json.loads(result.stdout)
-except Exception:
+
+lines = ansi_escape.sub("", result.stdout).splitlines()
+section_count = 0
+in_inference_section = False
+models = []
+unconfigured = False
+for line in lines:
+    if re.fullmatch(r"(?:Gateway )?Inference:\s*", line, re.IGNORECASE):
+        section_count += 1
+        in_inference_section = True
+        continue
+    if in_inference_section and re.fullmatch(r"\S.*:\s*", line):
+        in_inference_section = False
+        continue
+    if not in_inference_section:
+        continue
+    if re.fullmatch(r"\s*Not configured\s*", line, re.IGNORECASE):
+        unconfigured = True
+        continue
+    match = re.fullmatch(r"\s*Model:\s*(.+?)\s*", line)
+    if match:
+        models.append(match.group(1))
+
+if section_count == 1 and unconfigured and not models:
+    print("[config] Gateway model probe unavailable: openshell reported no configured inference route", file=sys.stderr)
     raise SystemExit(0)
-model = data.get("model") if isinstance(data, dict) else None
-if isinstance(model, str) and model:
-    print(model)
+if section_count != 1 or len(models) != 1:
+    print("[config] Gateway model probe unavailable: openshell returned malformed inference output", file=sys.stderr)
+    raise SystemExit(0)
+model = models[0]
+if len(model) > 512 or re.fullmatch(r"[A-Za-z0-9._:/-]+", model) is None:
+    print("[SECURITY] Gateway model probe rejected an unsafe model identifier", file=sys.stderr)
+    raise SystemExit(0)
+print(model)
 PYPROBE
     )"
+  else
+    printf '[config] Gateway model probe unavailable: openshell is not installed\n' >&2
   fi
 
   local provider_model_ref
@@ -1261,6 +1307,8 @@ if os.environ.get("RECONCILE_SOURCE") == "gateway":
         models_list[0] = first
     first["id"] = bare
     first["name"] = provider_model
+    first.pop("contextWindow", None)
+    first.pop("maxTokens", None)
 with open(config_file, "w") as f:
     json.dump(cfg, f, indent=2)
 PYRECONCILE_WRITE
