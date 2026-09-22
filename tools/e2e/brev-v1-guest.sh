@@ -56,8 +56,8 @@ sys.stdout.write(text)'
 }
 trap diagnose_failure ERR
 
-phase="${1:-all}"
-case "${phase}" in prepare|qualify|all) ;; *) exit 2 ;; esac
+phase="${1:?set prepare or qualify}"
+case "${phase}" in prepare|qualify) ;; *) exit 2 ;; esac
 if test "${phase}" != qualify; then
   test "$(uname -m)" = x86_64
   command -v docker >/dev/null
@@ -89,21 +89,11 @@ PY
   test ! -e "${HOME}/.nemoclaw"
   test ! -e "${HOME}/.config/openshell"
 
-  cd "${repo}"
-  mkdir -p .build
-  AGENT_PLATFORM=linux/amd64 docker buildx bake openclaw --load \
-    --metadata-file .build/brev-agent-image.json
-  image_ref="$(docker image inspect nc-fabric:openclaw --format '{{index .RepoDigests 0}}')"
-  case "${image_ref}" in
-    nc-fabric@sha256:*) ;;
-    *) echo "local image store did not retain an immutable repository digest" >&2; exit 1 ;;
-  esac
-
-  printf '%s\n' "${image_ref}" > "${root}/image-ref"
   printf '%s\n' "${available_kib}" > "${root}/available-kib"
 fi
 if test "${phase}" = prepare; then exit 0; fi
-image_ref="$(cat "${root}/image-ref")"
+python3 "${repo}/tools/ci/brev_image.py" load "${root}/image-candidate" "$(cat "${root}/source-revision")"
+image_ref="$(cat "${root}/image-candidate/image-ref")"
 available_kib="$(cat "${root}/available-kib")"
 
 config="${root}/brev.yaml"

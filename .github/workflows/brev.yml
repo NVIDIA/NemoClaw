@@ -63,8 +63,47 @@ jobs:
           retention-days: 1
           if-no-files-found: error
 
+  image:
+    name: Brev / Build image
+    if: >-
+      github.repository == 'NVIDIA/NemoClaw' &&
+      ((github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/v1') ||
+       (github.event_name == 'push' && startsWith(github.ref, 'refs/heads/run-brev-v1-e2e/')))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    outputs:
+      artifact: ${{ steps.identity.outputs.artifact }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - id: identity
+        name: Identify candidate image
+        run: echo "artifact=brev-image-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_OUTPUT"
+      - name: Build candidate OCI archive
+        env:
+          AGENT_PLATFORM: linux/amd64
+        run: |
+          mkdir candidate-image
+          docker buildx create --name brev --driver docker-container \
+            --driver-opt image=moby/buildkit@sha256:28a898719c18a33f4e8000685287fa36fd0dd9560c6440227d3a732d79bb41d8
+          docker buildx bake --builder brev openclaw \
+            --set 'openclaw.output=type=oci,dest=candidate-image/image.tar' \
+            --metadata-file candidate-image/metadata.json
+          python3 tools/ci/brev_image.py record candidate-image "$GITHUB_SHA"
+      - name: Upload candidate image
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ steps.identity.outputs.artifact }}
+          path: |
+            candidate-image/image.tar
+            candidate-image/candidate.json
+          compression-level: 0
+          retention-days: 1
+          if-no-files-found: error
+
   prepare:
-    name: Brev / Prepare VM and image
+    name: Brev / Prepare VM
     if: >-
       github.repository == 'NVIDIA/NemoClaw' &&
       ((github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/v1') ||
@@ -84,14 +123,14 @@ jobs:
       - id: identity
         name: Identify owned VM
         run: echo "instance=nclaw-v1-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_OUTPUT"
-      - name: Provision VM and build candidate image
+      - name: Provision VM and check fresh host
         env:
           INSTANCE_NAME: ${{ steps.identity.outputs.instance }}
         run: bash tools/e2e/brev-v1-host.sh prepare
 
   qualify:
     name: Brev / Lifecycle
-    needs: [build, prepare]
+    needs: [build, image, prepare]
     runs-on: ubuntu-22.04
     timeout-minutes: 30
     steps:
@@ -106,6 +145,11 @@ jobs:
         with:
           name: ${{ needs.build.outputs.artifact }}
           path: ${{ runner.temp }}/brev-candidate
+      - name: Download candidate image
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ${{ needs.image.outputs.artifact }}
+          path: candidate-image
       - name: Extract candidate
         run: tar -xf "${RUNNER_TEMP}/brev-candidate/brev-candidate.tar"
       - name: Transfer bundle and run lifecycle
@@ -124,7 +168,7 @@ jobs:
 
   cleanup:
     name: Brev / Delete VM
-    needs: [build, prepare, qualify]
+    needs: [build, image, prepare, qualify]
     if: always() && needs.prepare.outputs.instance != ''
     runs-on: ubuntu-22.04
     timeout-minutes: 20
