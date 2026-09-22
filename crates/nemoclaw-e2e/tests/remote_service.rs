@@ -23,7 +23,7 @@ async fn run(root: &Path, bundle: &Path, command: &str, file: &str, success: boo
         .arg("--state-dir")
         .arg(root.join("deployment"))
         .arg(command);
-    if command == "plan" {
+    if matches!(command, "plan" | "apply" | "destroy") {
         process.args(["-o", "json"]);
     }
     if !file.is_empty() {
