@@ -98,7 +98,6 @@ export function managedStartupE2eProfile(
           agentTimeoutSeconds: 600,
           heartbeatEvery: MANAGED_STARTUP_E2E_OPENCLAW_HEARTBEAT_EVERY,
           extraAgents: { agents: [], defaults: {}, main: {} },
-          deviceAuth: { disabled: true, optOutSource: "managed-onboard" },
           minimalBootstrap: true,
         },
         inference: {

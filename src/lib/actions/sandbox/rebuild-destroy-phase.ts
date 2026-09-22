@@ -41,6 +41,10 @@ export interface RebuildDestroyPhaseInput {
   staleRecovery: boolean;
   recreateJournal: RebuildRecreateJournal;
   backupManifest: RebuildBackupManifest;
+  recheckMessagingConflicts?: (
+    runtimeSelection: OpenShellRuntimeSelection | undefined,
+    onConflict: RebuildBail,
+  ) => Promise<void>;
   mcpEntries?: readonly McpRebuildPreparation["entries"][number][];
   log: RebuildLog;
   bail: RebuildBail;
@@ -52,6 +56,7 @@ export interface RebuildDestroyPhaseInput {
   validateAtDeleteEdge?: (
     runtimeSelection?: OpenShellRuntimeSelection,
   ) => RebuildDeleteValidationResult | Promise<RebuildDeleteValidationResult>;
+  prepareSourceForDelete?: () => Promise<RebuildDeleteValidationResult>;
   cleanupDockerOrphanAfterDelete?: () => void;
   onDeleted: () => void;
   onDeleteStateAmbiguous?: () => void;
@@ -188,6 +193,7 @@ export async function runRebuildDestroyPhase(
     bail,
     validateAfterMcpPreparation,
     validateAtDeleteEdge,
+    prepareSourceForDelete,
     cleanupDockerOrphanAfterDelete,
     onDeleted,
   } = input;
@@ -301,8 +307,15 @@ export async function runRebuildDestroyPhase(
   // final synchronous check covers registry state only and minimizes that
   // window. Durable MCP intent remains preserved, and restoration rechecks the
   // external state and fails closed if later control-plane drift is observed.
-  if (mcpPreparation.revalidateBeforeDelete || mcpPreparation.assertDeleteEdgeUnchanged) {
+  if (
+    input.recheckMessagingConflicts ||
+    mcpPreparation.revalidateBeforeDelete ||
+    mcpPreparation.assertDeleteEdgeUnchanged
+  ) {
     try {
+      await input.recheckMessagingConflicts?.(rebuildMcpRuntimeSelection, (message) => {
+        throw new Error(message);
+      });
       await mcpPreparation.revalidateBeforeDelete?.();
       mcpPreparation.assertDeleteEdgeUnchanged?.();
     } catch (error) {
@@ -315,8 +328,8 @@ export async function runRebuildDestroyPhase(
       const detail = error instanceof Error ? error.message : String(error);
       bail(
         mcpRecoveryFailure
-          ? `Failed to revalidate MCP recovery before sandbox deletion: ${redactFull(detail)} MCP provider recovery also failed: ${mcpRecoveryFailure}`
-          : `Failed to revalidate MCP recovery before sandbox deletion: ${redactFull(detail)}`,
+          ? `Failed to revalidate rebuild before sandbox deletion: ${redactFull(detail)} MCP provider recovery also failed: ${mcpRecoveryFailure}`
+          : `Failed to revalidate rebuild before sandbox deletion: ${redactFull(detail)}`,
       );
       return null;
     }
@@ -394,6 +407,30 @@ export async function runRebuildDestroyPhase(
         : `Sandbox deletion could not be journaled: ${redactFull(detail)}`,
     );
     return null;
+  }
+  if (sourcePresence !== "missing" && prepareSourceForDelete) {
+    let preparation: RebuildDeleteValidationResult;
+    try {
+      preparation = await prepareSourceForDelete();
+    } catch (error) {
+      log(`Unexpected source delete preparation failure: ${redactFull(String(error))}`);
+      preparation = { ok: false, message: "Source sandbox could not be prepared for deletion." };
+    }
+    if (!preparation.ok) {
+      const mcpRecoveryFailure = await reattachMcpAfterDeleteFailure(
+        sandboxName,
+        rebuildDetachedMcpProviderEntries,
+        rebuildScrubbedMcpAdapterEntries,
+        rebuildMcpRuntimeSelection,
+      );
+      bail(
+        mcpRecoveryFailure
+          ? `${preparation.message} MCP provider recovery also failed: ${mcpRecoveryFailure}`
+          : preparation.message,
+        preparation.code,
+      );
+      return null;
+    }
   }
   if (sourcePresence === "missing") {
     log(`Skipping delete: gateway ${gatewayName} reports '${sandboxName}' already absent`);

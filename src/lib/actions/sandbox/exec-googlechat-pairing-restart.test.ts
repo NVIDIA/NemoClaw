@@ -11,6 +11,7 @@ import { createCliOpenShellSandboxCommandExecutor } from "../../adapters/openshe
 import {
   execSandbox,
   isGoogleChatPairingApproval,
+  isOpenClawAgentRosterMutation,
   type ExecSandboxDeps,
   type SandboxExecCleanupDeps,
 } from "./exec";
@@ -238,6 +239,7 @@ describe("Google Chat pairing approval gateway activation (#8553)", () => {
                     stderr: result.stderr,
                   };
                 },
+                waitForSandboxControlPlaneReady: async () => true,
                 waitForRecoveredSandboxGateway: async () => true,
                 ensureSandboxPortForward: () => true,
                 ensureHermesDashboardPortForwardIfEnabled: () => null,
@@ -269,7 +271,9 @@ describe("Google Chat pairing approval gateway activation (#8553)", () => {
       );
 
       expect(exitCode).toBe(0);
-      expect(fs.readFileSync(restartLog, "utf8")).toBe("openclaw gateway restart\n");
+      expect(fs.readFileSync(restartLog, "utf8")).toBe(
+        "env -u OPENCLAW_HOME -u OPENCLAW_STATE_DIR -u OPENCLAW_CONFIG_PATH openclaw gateway restart --safe --skip-deferral --json\n",
+      );
       expect(nextDm.status, nextDm.stderr).toBe(0);
     } finally {
       fs.rmSync(fixtureRoot, { recursive: true, force: true });
@@ -439,6 +443,56 @@ describe("Google Chat pairing approval gateway activation (#8553)", () => {
     expect(exitCode).toBe(1);
     expect(errorSpy).toHaveBeenCalledWith(
       expect.stringContaining("pairing approval committed for 'alpha'"),
+    );
+  });
+});
+
+describe("OpenClaw agent roster gateway activation", () => {
+  it("recognizes only native agent roster mutations", () => {
+    expect(isOpenClawAgentRosterMutation(["openclaw", "agents", "add", "work"])).toBe(true);
+    expect(isOpenClawAgentRosterMutation(["openclaw", "agents", "delete", "work"])).toBe(true);
+    expect(isOpenClawAgentRosterMutation(["openclaw", "agents", "list", "--json"])).toBe(false);
+    expect(isOpenClawAgentRosterMutation(["openclaw", "agent", "--agent", "work"])).toBe(false);
+    expect(isOpenClawAgentRosterMutation(["sh", "-lc", "openclaw agents add work"])).toBe(false);
+  });
+
+  it.each(["add", "delete"])(
+    "restarts the managed gateway after agents %s succeeds",
+    async (verb) => {
+      const restartGateway = vi.fn(async () => ({ ok: true }));
+      const exitCode = await runAndCaptureExit(
+        ["openclaw", "agents", verb, "work"],
+        depsFor(0, restartGateway),
+      );
+
+      expect(restartGateway).toHaveBeenCalledExactlyOnceWith("alpha");
+      expect(exitCode).toBe(0);
+    },
+  );
+
+  it("does not restart after a failed roster mutation", async () => {
+    const restartGateway = vi.fn(async () => ({ ok: true }));
+    const exitCode = await runAndCaptureExit(
+      ["openclaw", "agents", "add", "work"],
+      depsFor(2, restartGateway),
+    );
+
+    expect(restartGateway).not.toHaveBeenCalled();
+    expect(exitCode).toBe(2);
+  });
+
+  it("fails with explicit recovery after a committed roster update cannot activate", async () => {
+    const restartGateway = vi.fn(async () => ({ ok: false }));
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const exitCode = await runAndCaptureExit(
+      ["openclaw", "agents", "add", "work"],
+      depsFor(0, restartGateway),
+    );
+
+    expect(exitCode).toBe(1);
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("roster update committed"));
+    expect(errorSpy).toHaveBeenCalledWith(
+      expect.stringContaining("nemoclaw alpha gateway restart"),
     );
   });
 });

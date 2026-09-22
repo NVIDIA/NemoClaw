@@ -405,6 +405,7 @@ describeConcurrentProbeSuite("MCP status wire-level credential-resolution probe"
   writeHarnessResult(JSON.stringify({
     attachmentInspections: providerAttachmentInspectionCount,
     attached: statuses.map((status) => status.provider.attached),
+    supported: statuses.map((status) => status.support.supported),
   }));
 `,
     );
@@ -412,6 +413,7 @@ describeConcurrentProbeSuite("MCP status wire-level credential-resolution probe"
     expect(JSON.parse(stdout)).toEqual({
       attachmentInspections: 1,
       attached: [true, true],
+      supported: [true, true],
     });
   });
 
@@ -530,12 +532,8 @@ describeConcurrentProbeSuite("MCP status wire-level credential-resolution probe"
       credentialObservationCount: number;
     }>;
 
-    expect(outcomes[0]?.probeCommand).toContain(
-      "authorization: Bearer openshell:resolve:env:v19_GITHUB_TOKEN",
-    );
-    expect(outcomes[0]?.probeCommand).not.toContain(
-      "authorization: Bearer openshell:resolve:env:GITHUB_TOKEN",
-    );
+    expect(outcomes[0]?.probeCommand).toContain("openshell:resolve:env:v19_GITHUB_TOKEN");
+    expect(outcomes[0]?.probeCommand).not.toContain("openshell:resolve:env:GITHUB_TOKEN");
     expect(outcomes[1]?.probeCommand).toBeNull();
     expect(outcomes[1]?.resolution.detail).toContain("identityless credential placeholder");
     expect(outcomes.map((outcome) => outcome.credentialObservationCount)).toEqual([1, 1]);
@@ -1386,12 +1384,8 @@ describeConcurrentProbeSuite("MCP add post-add credential-resolution probe", () 
       exitCode: number;
     };
     expect(payload.probed).toBe(true);
-    expect(payload.probeCommand).toContain(
-      "authorization: Bearer openshell:resolve:env:v11_GITHUB_TOKEN",
-    );
-    expect(payload.probeCommand).not.toContain(
-      "authorization: Bearer openshell:resolve:env:GITHUB_TOKEN",
-    );
+    expect(payload.probeCommand).toContain("openshell:resolve:env:v11_GITHUB_TOKEN");
+    expect(payload.probeCommand).not.toContain("openshell:resolve:env:GITHUB_TOKEN");
     expect(payload.logLines.some((line) => line.includes("MCP server 'github' added"))).toBe(true);
     expect(
       payload.errorLines.some(

@@ -120,21 +120,25 @@ function manifest(
 }
 
 function document(
-  overrides: { model?: string; observability?: boolean; credentialReference?: string } = {},
+  overrides: {
+    model?: string;
+    observability?: boolean;
+    credentialReference?: string;
+  } = {},
 ): ConfigExportDocument {
   return {
-    apiVersion: "nemoclaw.nvidia.com/v1",
+    apiVersion: "nemoclaw.nvidia.com/v1alpha1",
     kind: "NemoClawConfig",
     metadata: {
       name: "export",
       uid: "123e4567-e89b-42d3-a456-426614174000",
     },
     spec: {
-      gateway: { management: "nemoclaw", name: "nemoclaw", port: 8080 },
+      gateway: { management: "managed", endpoint: "http://127.0.0.1:8080" },
       inferenceProviders: [
         {
           name: "hosted-compatible-endpoint",
-          provider: "compatible-endpoint",
+          provider: "openai",
           api: "openai-completions",
           endpoint: "https://inference.example/v1",
           credential: { env: overrides.credentialReference ?? "NVIDIA_INFERENCE_API_KEY" },
@@ -143,35 +147,36 @@ function document(
       sandboxes: [
         {
           name: "sandbox",
-          runtime: { provider: "docker", image: { ref: IMAGE_REF } },
+          image: null,
+          runtime: { provider: "docker" },
           network: { policy: { explicit: POLICY } },
-          agents: [
-            {
-              name: "primary",
-              type: "openclaw",
-              inference: {
-                routes: [
-                  {
-                    name: "primary",
-                    providerRef: "hosted-compatible-endpoint",
-                    overrides: { model: overrides.model ?? "nvidia/model" },
-                  },
-                ],
-              },
-              ...(overrides.observability
-                ? {
-                    observability: {
-                      otlp: {
-                        enabled: true,
-                        endpoint: "http://host.openshell.internal:4318",
-                        serviceName: "openclaw",
-                        sampleRate: 1,
-                      },
+          harness: {
+            kind: "openclaw",
+            ...(overrides.observability
+              ? {
+                  observability: {
+                    otlp: {
+                      enabled: true,
+                      endpoint: "http://host.openshell.internal:4318",
+                      serviceName: "openclaw",
+                      sampleRate: 1,
                     },
-                  }
-                : {}),
+                  },
+                }
+              : {}),
+          },
+          agent: {
+            name: "primary",
+            inference: {
+              routes: [
+                {
+                  name: "primary",
+                  providerRef: "hosted-compatible-endpoint",
+                  overrides: { model: overrides.model ?? "nvidia/model" },
+                },
+              ],
             },
-          ],
+          },
         },
       ],
     },
@@ -311,7 +316,7 @@ function successfulHost(raw: string) {
 }
 
 function refusalHost(
-  message = "Config export failed (unsupported).\nV1 export requires OpenClaw or Hermes.",
+  message = "Config export failed (unsupported).\nThe source cannot be exported.",
 ) {
   return {
     command: vi.fn(async () => ({
@@ -515,7 +520,6 @@ if (process.argv.includes("--output")) {
       dependencies: independentDependencies,
       host: successfulHost(raw),
     });
-
     const evidence = await test.phase.from(target("required"), instance());
     const persistedEvidence = JSON.parse(
       fs.readFileSync(path.join(artifactRoot, "config-export-evidence.v1.json"), "utf8"),
@@ -551,6 +555,7 @@ if (process.argv.includes("--output")) {
         "policySha256",
         "enabledFeatures",
         "routeProviderReference",
+        "sourceRegistryUnchanged",
       ]),
     );
     expect(persistedEvidence.verifications.filter((entry) => !entry.passed)).toEqual([]);
@@ -740,7 +745,7 @@ process.stdout.write("x".repeat(1024 * 1024 + 2048 - Buffer.byteLength(suffix, "
         ...registry,
         sandboxes: {
           ...registry.sandboxes,
-          sandbox: { ...registry.sandboxes.sandbox!, model: registryModel },
+          other: { ...registry.sandboxes.sandbox!, name: "other", model: registryModel },
         },
       };
     };
@@ -767,6 +772,35 @@ process.stdout.write("x".repeat(1024 * 1024 + 2048 - Buffer.byteLength(suffix, "
     });
     expect(test.writes.at(-1)?.verifications).toContainEqual(
       expect.objectContaining({ id: "model", passed: false }),
+    );
+    expect(test.writes.at(-1)?.verifications).toContainEqual(
+      expect.objectContaining({ id: "sourceRegistryUnchanged", passed: false }),
+    );
+  });
+
+  it("validates the current v1alpha1 Deep Agents document (#11860)", () => {
+    const candidate = structuredClone(document());
+    const sandbox = candidate.spec.sandboxes[0]!;
+    const image = { ref: IMAGE_REF };
+    Object.assign(sandbox, { harness: { kind: "deepagents" }, image });
+    expect(parseConfigExport(JSON.stringify(candidate)).spec.sandboxes[0]).toMatchObject({
+      image: { ref: IMAGE_REF },
+      harness: { kind: "deepagents" },
+      agent: { name: "primary" },
+    });
+    const missingImage = structuredClone(candidate);
+    Reflect.deleteProperty(missingImage.spec.sandboxes[0]!, "image");
+    expect(() => parseConfigExport(JSON.stringify(missingImage))).toThrow(
+      "complete v1alpha1 export contract",
+    );
+    const missingEndpoint = structuredClone(candidate);
+    Reflect.deleteProperty(missingEndpoint.spec.gateway, "endpoint");
+    expect(() => parseConfigExport(JSON.stringify(missingEndpoint))).toThrow(
+      "complete v1alpha1 export contract",
+    );
+    Object.assign(sandbox, { agents: [sandbox.agent], agent: undefined });
+    expect(() => parseConfigExport(JSON.stringify(candidate))).toThrow(
+      "complete v1alpha1 export contract",
     );
   });
 

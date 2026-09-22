@@ -423,6 +423,29 @@ describe("sandbox BuildKit prebuild", () => {
     });
   });
 
+  it("rebinds the typed ordinary source without constructing create arguments", async () => {
+    const { buildCtx, dockerfile } = createBuildContext();
+    const result = await prebuildSandboxImageIfEligible({
+      buildCtx,
+      buildId: BUILD_ID,
+      origin: "generated",
+      sourceReference: dockerfile,
+      sandboxName: "alpha",
+      dockerDriverGateway: true,
+      env: {},
+      buildImage: vi.fn(async () => 0),
+      inspectImageId: () => IMAGE_ID,
+      log: () => {},
+    });
+
+    expect(result).toEqual({
+      createArgs: [],
+      sourceReference: "nemoclaw-sandbox-local:alpha-1234567890",
+      imageRef: "nemoclaw-sandbox-local:alpha-1234567890",
+      imageId: IMAGE_ID,
+    });
+  });
+
   it("isolates a generated BuildKit build from an unavailable WSL Docker Desktop helper (#9748)", async () => {
     const { buildCtx, createArgs } = createBuildContext();
     const dockerConfig = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-wsl-docker-config-"));

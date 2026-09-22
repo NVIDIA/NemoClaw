@@ -98,7 +98,8 @@ if [[ "$1" == run ]]; then
     probe="\${@: -1}"
     [[ "$probe" == *'import mcp'* ]]
     [[ "$probe" == *'import acp'* ]]
-    [[ "$probe" == *'metadata.version("agent-client-protocol") == "0.9.0"'* ]]
+    [[ "$probe" == *"metadata.version('hermes-agent') == '0.21.3'"* ]]
+    [[ "$probe" == *"metadata.version('agent-client-protocol') == '0.9.0'"* ]]
     [[ "$probe" == *'from acp_adapter.server import HermesACPAgent'* ]]
     exit
   fi
@@ -158,6 +159,8 @@ exit 2`);
     const initializer = "mcp_tool._ensure_mcp_sdk() or sys.exit(1)";
     expect(probe).toContain("or sys.exit(1)");
     expect(probe).not.toContain("assert ");
+    expect(probe).toContain("metadata.version('hermes-agent') == '0.21.3'");
+    expect(probe).toContain("metadata.version('agent-client-protocol') == '0.9.0'");
     expect(probe).toContain(initializer);
     expect(probe.indexOf(initializer)).toBeLessThan(probe.indexOf("_MCP_AVAILABLE"));
     expect(probe.indexOf(initializer)).toBeLessThan(probe.indexOf("_MCP_HTTP_AVAILABLE"));
@@ -184,7 +187,8 @@ if [[ "$1" == run ]]; then
     [[ "$probe" == *'import mcp'* ]]
     if [[ "$image" == "$MCP_ONLY_DIGEST" ]]; then exit 1; fi
     [[ "$probe" == *'import acp'* ]]
-    [[ "$probe" == *'metadata.version("agent-client-protocol") == "0.9.0"'* ]]
+    [[ "$probe" == *"metadata.version('hermes-agent') == '0.21.3'"* ]]
+    [[ "$probe" == *"metadata.version('agent-client-protocol') == '0.9.0'"* ]]
     [[ "$probe" == *'from acp_adapter.server import HermesACPAgent'* ]]
     exit
   fi
@@ -215,7 +219,7 @@ exit 2`);
 
     expect(result.status, result.stderr).toBe(0);
     expect(result.stdout).toContain(
-      "lacks the required MCP Streamable HTTP or ACP 0.9.0 adapter imports",
+      "does not match Hermes 0.21.3 with the required MCP Streamable HTTP and ACP 0.9.0 runtimes",
     );
     expect(result.stdout).toContain("building locally");
     expect(readFileSync(githubEnv, "utf8").trim()).toBe(

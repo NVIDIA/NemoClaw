@@ -22,7 +22,6 @@ import {
   LLAMA_CPP_LOCAL_CREDENTIAL_ENV,
   MANAGED_PROVIDER_ID,
   OLLAMA_LOCAL_CREDENTIAL_ENV,
-  parseGatewayInference,
   planInferenceRouteReconcile,
   resolveAgentDefaultCloudModel,
   resolveAgentInferenceApi,
@@ -556,65 +555,6 @@ describe("coerceAgentInferenceApi", () => {
     expect(coerceAgentInferenceApi({ inference: {} }, "anthropic-messages")).toBe(
       "anthropic-messages",
     );
-  });
-});
-
-describe("parseGatewayInference", () => {
-  it("parses provider and model from openshell inference get output", () => {
-    const output = [
-      "Gateway inference:",
-      "",
-      "  Provider: nvidia-nim",
-      "  Model: nvidia/nemotron-3-super-120b-a12b",
-      "  Version: 2",
-    ].join("\n");
-    expect(parseGatewayInference(output)).toEqual({
-      provider: "nvidia-nim",
-      model: "nvidia/nemotron-3-super-120b-a12b",
-    });
-  });
-
-  it("parses the OpenShell v0.0.99 inference heading", () => {
-    const output = [
-      "Inference:",
-      "",
-      "  Workspace: default",
-      "  Provider: compatible-endpoint",
-      "  Model: custom-model",
-      "  Version: 1",
-      "",
-      "System inference:",
-      "",
-      "  Not configured",
-    ].join("\n");
-    expect(parseGatewayInference(output)).toEqual({
-      provider: "compatible-endpoint",
-      model: "custom-model",
-    });
-  });
-
-  it("returns null for empty output", () => {
-    expect(parseGatewayInference("")).toBeNull();
-    expect(parseGatewayInference(null)).toBeNull();
-    expect(parseGatewayInference(undefined)).toBeNull();
-  });
-
-  it("returns null when inference is not configured", () => {
-    expect(parseGatewayInference("Gateway inference:\n\n  Not configured")).toBeNull();
-  });
-
-  it("handles output with only provider (no model line)", () => {
-    expect(parseGatewayInference("Gateway inference:\n\n  Provider: nvidia-nim")).toEqual({
-      provider: "nvidia-nim",
-      model: null,
-    });
-  });
-
-  it("handles output with only model (no provider line)", () => {
-    expect(parseGatewayInference("Gateway inference:\n\n  Model: some/model")).toEqual({
-      provider: null,
-      model: "some/model",
-    });
   });
 });
 

@@ -2,7 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { NemoClawConfigDocumentName, NemoClawConfigDocumentUid } from "../../config/model";
-import type { V1Alpha1Export } from "../../config/v1alpha1-export";
+import type {
+  V1Alpha1Export,
+  V1Alpha1ExportAgent,
+  V1Alpha1ExportSandbox,
+} from "../../config/v1alpha1-export";
 import type { VerifiedExportSource } from "./export-evidence";
 
 function providerLocalName(provider: string): string {
@@ -60,7 +64,7 @@ function exportAgent(
     primary: boolean;
     tools?: Readonly<{ allow: readonly "read"[] }>;
   }>,
-): V1Alpha1Export["spec"]["sandboxes"][number]["agents"][number] {
+): V1Alpha1ExportAgent {
   const tools = agent.primary ? source.tools : agent.tools;
   return {
     name: agent.name,
@@ -84,27 +88,16 @@ function exportAgent(
   };
 }
 
-function exportAgents(
-  source: VerifiedExportSource,
-  providerName: string,
-): V1Alpha1Export["spec"]["sandboxes"][number]["agents"] {
-  const primary = exportAgent(source, providerName, { name: "primary", primary: true });
-  return [
-    primary,
-    ...(source.additionalAgents ?? []).map((agent) =>
-      exportAgent(source, providerName, {
-        name: agent.name,
-        primary: false,
-        tools: agent.tools,
-      }),
-    ),
-  ];
-}
-
 function targetProcess(policy: Record<string, unknown>): void {
   const process = policy.process as Record<string, unknown> | undefined;
   if (process?.run_as_user === "sandbox") process.run_as_user = "1000";
   if (process?.run_as_group === "sandbox") process.run_as_group = "1000";
+}
+
+function agentFilesystemRoots(agent: VerifiedExportSource["agent"]): string[] {
+  if (agent === "openclaw") return ["/app"];
+  if (agent === "hermes") return ["/opt/hermes"];
+  return [];
 }
 
 function targetFilesystem(
@@ -115,7 +108,7 @@ function targetFilesystem(
   if (!filesystem) return;
   const readOnly = Array.isArray(filesystem.read_only) ? [...filesystem.read_only] : [];
   const readWrite = Array.isArray(filesystem.read_write) ? filesystem.read_write : [];
-  const roots = ["/opt/fabric", "/opt/nemoclaw", agent === "openclaw" ? "/app" : "/opt/hermes"];
+  const roots = ["/opt/fabric", "/opt/nemoclaw", ...agentFilesystemRoots(agent)];
   for (const root of roots) {
     if (!readOnly.includes(root) && !readWrite.includes(root)) readOnly.push(root);
   }
@@ -140,6 +133,41 @@ export function buildExportConfig(
   identity: ExportConfigBuildIdentity,
 ): V1Alpha1Export {
   const providerName = exportedProviderName(source.inference);
+  const sandboxBase = {
+    name: source.sandboxName,
+    runtime: {
+      provider: "docker" as const,
+    },
+    network: {
+      policy: { explicit: targetPolicy(source) },
+      ...(source.proxy === undefined ? {} : { proxy: source.proxy }),
+    },
+    ...(source.webSearch === undefined
+      ? {}
+      : {
+          integrations: {
+            "brave-search": {
+              kind: "webSearch" as const,
+              provider: source.webSearch.provider,
+              credential: source.webSearch.credential,
+            },
+          },
+        }),
+  };
+  const sandbox: V1Alpha1ExportSandbox =
+    source.agent === "langchain-deepagents-code"
+      ? {
+          ...sandboxBase,
+          image: { ref: source.runtime.imageRef },
+          harness: { kind: "deepagents", ...agentSettings(source) },
+          agent: exportAgent(source, providerName, { name: "primary", primary: true }),
+        }
+      : {
+          ...sandboxBase,
+          image: null,
+          harness: { kind: source.agent, ...agentSettings(source) },
+          agent: exportAgent(source, providerName, { name: "primary", primary: true }),
+        };
   const candidate = {
     apiVersion: "nemoclaw.nvidia.com/v1alpha1",
     kind: "NemoClawConfig",
@@ -150,31 +178,7 @@ export function buildExportConfig(
         endpoint: `http://127.0.0.1:${source.gateway.port}`,
       },
       inferenceProviders: [inferenceProvider(source, providerName)],
-      sandboxes: [
-        {
-          name: source.sandboxName,
-          runtime: {
-            provider: "docker" as const,
-          },
-          network: {
-            policy: { explicit: targetPolicy(source) },
-            ...(source.proxy === undefined ? {} : { proxy: source.proxy }),
-          },
-          ...(source.webSearch === undefined
-            ? {}
-            : {
-                integrations: {
-                  "brave-search": {
-                    kind: "webSearch",
-                    provider: source.webSearch.provider,
-                    credential: source.webSearch.credential,
-                  },
-                },
-              }),
-          harness: { kind: source.agent, ...agentSettings(source) },
-          agents: exportAgents(source, providerName),
-        },
-      ],
+      sandboxes: [sandbox],
     },
   } satisfies V1Alpha1Export;
   return candidate;

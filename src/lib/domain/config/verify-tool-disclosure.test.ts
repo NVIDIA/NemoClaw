@@ -63,7 +63,7 @@ describe("managed tool-disclosure export", () => {
     expect(result.publish).not.toHaveBeenCalled();
     const [yaml] = result.writeStdout.mock.calls[0]!;
     const document = asExportedConfig(YAML.parse(yaml));
-    expect(document.spec.sandboxes[0]!.agents[0]!).toHaveProperty("tools", {
+    expect(document.spec.sandboxes[0]!.agent).toHaveProperty("tools", {
       disclosure: "direct",
     });
     expect(document.spec.sandboxes[0]!.network.policy.explicit).toMatchObject({
@@ -89,7 +89,8 @@ describe("managed tool-disclosure export", () => {
     expect(result.outcome).toEqual({ ok: true, completion: { kind: "stdout" } });
     const [yaml] = result.writeStdout.mock.calls[0]!;
     const sandbox = asExportedConfig(YAML.parse(yaml)).spec.sandboxes[0]!;
-    expect(sandbox.agents[0]!).toHaveProperty("tools", { disclosure: "direct" });
+    expect("agent" in sandbox).toBe(true);
+    expect(sandbox.agent).toHaveProperty("tools", { disclosure: "direct" });
     expect(sandbox.network.proxy).toEqual({ host: "proxy.internal", port: 3129 });
   });
 
@@ -99,7 +100,7 @@ describe("managed tool-disclosure export", () => {
       const result = await exportSnapshots([snapshot({ registry: entry({ toolDisclosure }) })]);
       expect(result.outcome.ok).toBe(true);
       const [yaml] = result.writeStdout.mock.calls[0]!;
-      expect(asExportedConfig(YAML.parse(yaml)).spec.sandboxes[0]!.agents[0]).not.toHaveProperty(
+      expect(asExportedConfig(YAML.parse(yaml)).spec.sandboxes[0]!.agent).not.toHaveProperty(
         "tools",
       );
     },
@@ -197,12 +198,9 @@ describe("managed tool-disclosure export", () => {
     expect(result.outcome.ok).toBe(true);
     expect(result.read).toHaveBeenCalledTimes(4);
     const [yaml] = result.writeStdout.mock.calls[0]!;
-    expect(asExportedConfig(YAML.parse(yaml)).spec.sandboxes[0]!.agents[0]!).toHaveProperty(
-      "tools",
-      {
-        disclosure: "direct",
-      },
-    );
+    expect(asExportedConfig(YAML.parse(yaml)).spec.sandboxes[0]!.agent).toHaveProperty("tools", {
+      disclosure: "direct",
+    });
   });
 
   it("does not publish when tool selection changes during both observations", async () => {

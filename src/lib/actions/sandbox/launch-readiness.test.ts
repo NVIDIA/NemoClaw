@@ -342,6 +342,73 @@ describe("launch readiness validation", () => {
     });
   });
 
+  it("binds a custom OpenClaw image to its observed live version without stamping it managed", async () => {
+    sandbox = {
+      ...sandbox,
+      agent: null,
+      agentVersion: null,
+      nemoclawVersion: null,
+      fromDockerfile: "/tmp/custom-openclaw/Dockerfile",
+    };
+    const currentDeps = deps();
+    const commandExecutor = currentDeps.commandExecutor!;
+    vi.mocked(commandExecutor.runBuffered).mockResolvedValue({
+      outcome: { kind: "completed", exitCode: 0 },
+      stdout: "openclaw 2026.9.1\n",
+      stderr: "",
+    });
+    const qualify = vi.fn(
+      (
+        _sandboxName: string,
+        _gatewayName: string,
+        openclawVersion: string,
+        _stateDirectory: string,
+      ): LaunchReadinessOpenClawSessionQualification => ({
+        schemaVersion: 1,
+        kind: "openclaw-pairing",
+        openclawVersion,
+        deviceIdentitySha256: DIGEST,
+        pairingStateSha256,
+        requiredRoles: ["operator"],
+        requiredScopes: ["operator.pairing", "operator.read", "operator.write"],
+      }),
+    );
+    currentDeps.observeOpenClawPairingQualification = qualify;
+
+    const first = await inspectLaunchReadiness(SANDBOX, currentDeps);
+    expect(first).toMatchObject({ kind: "fallback", category: "missing" });
+    await expect(
+      publishLaunchReadiness(publicationFromDecision(SANDBOX, first), currentDeps),
+    ).resolves.toEqual({ kind: "published" });
+
+    expect(commandExecutor.runBuffered).toHaveBeenCalledWith({
+      sandboxName: SANDBOX,
+      target: { kind: "named", gatewayName: GATEWAY_NAME },
+      command: ["sh", "-lc", "openclaw --version"],
+      timeoutMilliseconds: 10_000,
+      outputLimitBytes: 4_096,
+    });
+    expect(qualify).toHaveBeenCalledWith(SANDBOX, GATEWAY_NAME, "2026.9.1", "/sandbox/.openclaw");
+    expect(publishedIdentity?.session).toMatchObject({
+      kind: "openclaw-pairing",
+      openclawVersion: "2026.9.1",
+    });
+    expect(sandbox).toMatchObject({ agentVersion: null, nemoclawVersion: null });
+  });
+
+  it("does not invent or probe a version for a managed OpenClaw image with missing metadata", async () => {
+    sandbox = { ...sandbox, agentVersion: null };
+    const currentDeps = deps();
+    const first = await inspectLaunchReadiness(SANDBOX, currentDeps);
+    expect(first).toMatchObject({ kind: "fallback", category: "missing" });
+
+    await expect(
+      publishLaunchReadiness(publicationFromDecision(SANDBOX, first), currentDeps),
+    ).resolves.toEqual({ kind: "evidence-failed" });
+    expect(currentDeps.commandExecutor!.runBuffered).not.toHaveBeenCalled();
+    expect(publishedIdentity).toBeNull();
+  });
+
   it("fences a concurrent OpenClaw pairing change before launch acceptance (#9023)", async () => {
     const currentDeps = await createAcceptedLease();
     pairingStateSha256 = "e".repeat(64);
