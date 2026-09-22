@@ -134,22 +134,24 @@ describe("revision-matched v1 config consumer", () => {
     const source = snapshot();
     const raw = await rawExport(source);
     let cargoTargetDirectory: string | undefined;
-    vi.mocked(execFileSync)
-      .mockImplementationOnce(childProcess.actualExecFileSync!)
-      .mockImplementationOnce(childProcess.actualExecFileSync!)
-      .mockImplementationOnce(
-        (
-          _file: string,
-          _args: readonly string[] | undefined,
-          options: ExecFileSyncOptions | undefined,
-        ) => {
-          cargoTargetDirectory = options?.env?.CARGO_TARGET_DIR;
-          expect(cargoTargetDirectory).toEqual(expect.any(String));
-          fs.mkdirSync(cargoTargetDirectory!, { recursive: true });
-          fs.writeFileSync(path.join(cargoTargetDirectory!, "partial-build"), "incomplete");
-          throw new Error("native validation failed");
-        },
-      );
+    type CommandRunner = (
+      file: string,
+      args: readonly string[] | undefined,
+      options: ExecFileSyncOptions | undefined,
+    ) => ReturnType<typeof execFileSync>;
+    const passthrough: CommandRunner = (file, args, options) =>
+      childProcess.actualExecFileSync!(file, args, options);
+    const failCargo: CommandRunner = (_file, _args, options) => {
+      cargoTargetDirectory = options?.env?.CARGO_TARGET_DIR;
+      expect(cargoTargetDirectory).toEqual(expect.any(String));
+      fs.mkdirSync(cargoTargetDirectory!, { recursive: true });
+      fs.writeFileSync(path.join(cargoTargetDirectory!, "partial-build"), "incomplete");
+      throw new Error("native validation failed");
+    };
+    const commandRunners = new Map<string, CommandRunner>([["cargo", failCargo]]);
+    vi.mocked(execFileSync).mockImplementation((file, args, options) =>
+      (commandRunners.get(file) ?? passthrough)(file, args, options),
+    );
 
     expect(() =>
       validateWithRevisionMatchedV1Consumer([
