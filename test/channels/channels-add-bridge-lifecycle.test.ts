@@ -156,7 +156,7 @@ function printedText(): string {
 }
 
 function withoutGateway(args: readonly string[]): string[] {
-  const index = args[2] === "-g" ? 2 : args[3] === "-g" ? 3 : -1;
+  const index = [0, 2, 3].find((position) => args[position] === "-g") ?? -1;
   return index < 0 ? [...args] : [...args.slice(0, index), ...args.slice(index + 2)];
 }
 
@@ -233,6 +233,11 @@ beforeEach(() => {
   // crosses the direct channel action, generic provider upsert, and OpenShell
   // refresh boundary. Individual failure tests override the spy below.
   providerSpy = vi.spyOn(policyChannelDependencies, "upsertMessagingProviders");
+  vi.spyOn(policyChannelDependencies, "resolveConfigRuntimeSelection").mockReturnValue({
+    gatewayName: "nemoclaw",
+    workspace: "default",
+    localTlsDir: "/recorded/tls",
+  });
   vi.spyOn(policyChannelDependencies, "revalidateChannelProviderPolicy").mockImplementation(
     async () => undefined,
   );
@@ -496,6 +501,18 @@ describe("channels add owns the bridge-provider lifecycle (#6120)", () => {
     resetGatewayObservations();
     await removeSandboxChannel("test-sb", { channel: "googlechat" });
 
+    expect(policyChannelDependencies.resolveConfigRuntimeSelection).toHaveBeenCalledWith("test-sb");
+    expect(runOpenshellSpy).toHaveBeenCalledWith(
+      expect.arrayContaining(["-g", "nemoclaw", "sandbox", "exec", "test-sb"]),
+      expect.objectContaining({
+        replaceEnv: true,
+        env: expect.objectContaining({
+          OPENSHELL_GATEWAY: "nemoclaw",
+          OPENSHELL_WORKSPACE: "default",
+          OPENSHELL_LOCAL_TLS_DIR: "/recorded/tls",
+        }),
+      }),
+    );
     expect(detachedProviders.has("test-sb-googlechat-bridge")).toBe(true);
     expect(deletedProviders.has("test-sb-googlechat-bridge")).toBe(true);
     expect(registry.getConfiguredMessagingChannelsFromEntry(registryEntry)).not.toContain(
