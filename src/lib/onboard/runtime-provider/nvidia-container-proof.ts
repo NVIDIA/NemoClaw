@@ -16,6 +16,7 @@ import type { RuntimeProviderBundle, RuntimeProviderOwnedContainerResource } fro
 // aarch64 CUDA binary. A real kernel execution is the device-usability proof;
 // the same container then reports capacity for the device namespace it proved.
 const NVIDIA_CONTAINER_GPU_CAPACITY_MARKER = "NEMOCLAW_GPU_MEMORY_MIB=";
+const NVIDIA_CONTAINER_GPU_DEVICE_MARKER = "NEMOCLAW_GPU_DEVICE=";
 
 // The proof may pull the image on first use. Keep the historical environment
 // variable as a compatibility surface while the execution owner is provider-neutral.
@@ -70,6 +71,54 @@ export function parseContainerGpuProofCapacity(
     return null;
   }
   return { totalMemoryMB, availableMemoryMB };
+}
+
+export function parseContainerGpuProofDevices(
+  output: string,
+): ContainerGpuProofResult["verifiedDevices"] | null {
+  const rows = output
+    .split("\n")
+    .filter((line) => line.startsWith(NVIDIA_CONTAINER_GPU_DEVICE_MARKER))
+    .map((line) => line.slice(NVIDIA_CONTAINER_GPU_DEVICE_MARKER.length));
+  if (rows.length === 0) return null;
+  if (rows.length > 16) return null;
+  const indices = new Set<number>();
+  const devices = rows.map((row) => {
+    const indexSeparator = row.indexOf(",");
+    const indexRaw = row.slice(0, indexSeparator).trim();
+    const deviceRow = row.slice(indexSeparator + 1);
+    const freeSeparator = deviceRow.lastIndexOf(",");
+    const beforeFree = deviceRow.slice(0, freeSeparator);
+    const totalSeparator = beforeFree.lastIndexOf(",");
+    const name = beforeFree.slice(0, totalSeparator).trim();
+    const totalMemoryMB = Number(beforeFree.slice(totalSeparator + 1).trim());
+    const availableMemoryMB = Number(deviceRow.slice(freeSeparator + 1).trim());
+    const index = /^\d+$/u.test(indexRaw) ? Number(indexRaw) : -1;
+    const duplicateIndex = indices.has(index);
+    indices.add(index);
+    return { name, totalMemoryMB, availableMemoryMB, index, duplicateIndex };
+  });
+  if (
+    devices.some(
+      ({ name, totalMemoryMB, availableMemoryMB, index, duplicateIndex }) =>
+        !name ||
+        !Number.isSafeInteger(index) ||
+        index < 0 ||
+        duplicateIndex ||
+        !Number.isSafeInteger(totalMemoryMB) ||
+        totalMemoryMB <= 0 ||
+        !Number.isSafeInteger(availableMemoryMB) ||
+        availableMemoryMB < 0 ||
+        availableMemoryMB > totalMemoryMB,
+    )
+  ) {
+    return null;
+  }
+  return devices.map(({ name, totalMemoryMB, availableMemoryMB }) => ({
+    name,
+    totalMemoryMB,
+    availableMemoryMB,
+  }));
 }
 
 // An exec-format error on this ARM64-only path is a proof-image defect, not a
@@ -131,7 +180,18 @@ function runRuntimeProviderGpuProof(
     const timedOut = (result.error as NodeJS.ErrnoException | undefined)?.code === "ETIMEDOUT";
     const diagnosticSource = result.stderr || result.stdout;
     const workloadPassed = result.status === 0 && !timedOut && result.error === undefined;
-    const verifiedCapacity = workloadPassed ? parseContainerGpuProofCapacity(result.stdout) : null;
+    const verifiedDevices = workloadPassed ? parseContainerGpuProofDevices(result.stdout) : null;
+    const verifiedCapacity = workloadPassed
+      ? verifiedDevices
+        ? {
+            totalMemoryMB: verifiedDevices.reduce((sum, device) => sum + device.totalMemoryMB, 0),
+            availableMemoryMB: verifiedDevices.reduce(
+              (sum, device) => sum + device.availableMemoryMB,
+              0,
+            ),
+          }
+        : parseContainerGpuProofCapacity(result.stdout)
+      : null;
     const cleanup = cleanupContainer(
       resource,
       timedOut || result.error !== undefined ? "until-deadline" : "immediate",
@@ -144,6 +204,7 @@ function runRuntimeProviderGpuProof(
       exitCode: result.status,
       diagnostic: diagnosticSource.slice(0, 300),
       ...(passed && verifiedCapacity ? { verifiedCapacity } : {}),
+      ...(passed && verifiedDevices ? { verifiedDevices } : {}),
       ...(cleanup ? { cleanup } : {}),
     };
   } catch (error) {

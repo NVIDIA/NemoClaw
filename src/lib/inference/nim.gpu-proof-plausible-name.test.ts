@@ -22,6 +22,11 @@ const makeRunCapture = (smiOutput: string) =>
 const passingProver = (
   verifiedCapacity?: { totalMemoryMB: number; availableMemoryMB: number },
   providerId = "docker",
+  verifiedDevices?: readonly {
+    name: string;
+    totalMemoryMB: number;
+    availableMemoryMB: number;
+  }[],
 ) =>
   vi.fn(() => ({
     providerId,
@@ -30,6 +35,7 @@ const passingProver = (
     exitCode: 0,
     diagnostic: "",
     ...(verifiedCapacity ? { verifiedCapacity } : {}),
+    ...(verifiedDevices ? { verifiedDevices } : {}),
   }));
 
 const failingProver = () =>
@@ -295,7 +301,7 @@ describe("detectGpu CUDA proof for a plausible, non-placeholder NVIDIA GPU name 
     });
   });
 
-  it("rejects multiple plausible, non-placeholder NVIDIA GPU rows without attempting the proof (#9000)", () => {
+  it("rejects multiple rows when a passing proof lacks per-device evidence (#12073)", () => {
     const prover = passingProver();
     onWsl2Arm64WithoutKernelInterface(() => {
       expect(
@@ -307,7 +313,7 @@ describe("detectGpu CUDA proof for a plausible, non-placeholder NVIDIA GPU name 
           isWsl: true,
         }),
       ).toBeNull();
-      expect(prover).not.toHaveBeenCalled();
+      expect(prover).toHaveBeenCalledOnce();
     });
   });
 
@@ -404,9 +410,83 @@ describe("detectGpu trust-gate rejection reasons (#9000)", () => {
     ]);
   });
 
-  it("reports multiple GPU rows without attempting the proof (#9000)", () => {
+  it("accepts multiple matching GPU rows after proving every device (#12073)", () => {
     const { reasons, onTrustGateRejection } = collectReasons();
-    const prover = passingProver();
+    const secondName = "NVIDIA GeForce RTX 4090 Laptop GPU";
+    const verifiedDevices = [
+      { name: PLAUSIBLE_NAME, totalMemoryMB: 8128, availableMemoryMB: 7000 },
+      { name: secondName, totalMemoryMB: 16376, availableMemoryMB: 15000 },
+    ] as const;
+    const prover = passingProver(
+      { totalMemoryMB: 24504, availableMemoryMB: 22000 },
+      "docker",
+      verifiedDevices,
+    );
+    onWsl2Arm64WithoutKernelInterface(() => {
+      expect(
+        detectGpu({
+          proveArm64ContainerGpu: prover,
+          runCaptureImpl: makeRunCapture(
+            `${PLAUSIBLE_NAME}, 8128, 7000\n${secondName}, 16376, 15000\n`,
+          ),
+          isWsl: true,
+          onTrustGateRejection,
+        }),
+      ).toMatchObject({
+        count: 2,
+        totalMemoryMB: 24504,
+        containerGpuProof: { providerId: "docker", passed: true },
+      });
+    });
+    expect(prover).toHaveBeenCalledWith([PLAUSIBLE_NAME, secondName]);
+    expect(reasons).toEqual([]);
+  });
+
+  it("uses aggregate proved capacity and accepts reversed device order (#12073)", () => {
+    const secondName = "NVIDIA GB300";
+    const prover = passingProver({ totalMemoryMB: 281170, availableMemoryMB: 250000 }, "docker", [
+      { name: secondName, totalMemoryMB: 256703, availableMemoryMB: 240000 },
+      { name: PLAUSIBLE_NAME, totalMemoryMB: 24467, availableMemoryMB: 10000 },
+    ]);
+    onWsl2Arm64WithoutKernelInterface(() => {
+      const gpu = detectGpu({
+        proveArm64ContainerGpu: prover,
+        runCaptureImpl: makeRunCapture(`${PLAUSIBLE_NAME}, 24467, 1\n${secondName}, 256703, 2\n`),
+        isWsl: true,
+      });
+      expect(gpu).toMatchObject({
+        count: 2,
+        totalMemoryMB: 281170,
+        availableMemoryMB: 250000,
+      });
+      expect(gpu).not.toHaveProperty("computeConstrained");
+      expect(selectDefaultOllamaModel(["qwen3.5:9b", "qwen3.6:35b"], gpu)).toBe("qwen3.6:35b");
+    });
+  });
+
+  it("preserves duplicate device counts and verified zero free memory (#12073)", () => {
+    const prover = passingProver({ totalMemoryMB: 16384, availableMemoryMB: 0 }, "docker", [
+      { name: PLAUSIBLE_NAME, totalMemoryMB: 8192, availableMemoryMB: 0 },
+      { name: PLAUSIBLE_NAME, totalMemoryMB: 8192, availableMemoryMB: 0 },
+    ]);
+    onWsl2Arm64WithoutKernelInterface(() => {
+      expect(
+        detectGpu({
+          proveArm64ContainerGpu: prover,
+          runCaptureImpl: makeRunCapture(
+            `${PLAUSIBLE_NAME}, 8192, 7000\n${PLAUSIBLE_NAME}, 8192, 7000\n`,
+          ),
+          isWsl: true,
+        }),
+      ).toMatchObject({ count: 2, totalMemoryMB: 16384, availableMemoryMB: 0 });
+    });
+  });
+
+  it("rejects multiple GPU rows when container evidence does not match (#12073)", () => {
+    const { reasons, onTrustGateRejection } = collectReasons();
+    const prover = passingProver(undefined, "docker", [
+      { name: PLAUSIBLE_NAME, totalMemoryMB: 8128, availableMemoryMB: 7000 },
+    ]);
     onWsl2Arm64WithoutKernelInterface(() => {
       expect(
         detectGpu({
@@ -419,10 +499,28 @@ describe("detectGpu trust-gate rejection reasons (#9000)", () => {
         }),
       ).toBeNull();
     });
-    expect(prover).not.toHaveBeenCalled();
     expect(reasons).toEqual([
-      "/proc/driver/nvidia is absent and the bounded CUDA proof was not attempted for multiple GPU rows",
+      "/proc/driver/nvidia is absent and the bounded CUDA proof did not verify every reported GPU row",
     ]);
+  });
+
+  it("rejects matching multi-device evidence without an aggregate capacity snapshot (#12073)", () => {
+    const secondName = "NVIDIA GB300";
+    const prover = passingProver(undefined, "docker", [
+      { name: PLAUSIBLE_NAME, totalMemoryMB: 8192, availableMemoryMB: 8000 },
+      { name: secondName, totalMemoryMB: 16384, availableMemoryMB: 16000 },
+    ]);
+    onWsl2Arm64WithoutKernelInterface(() => {
+      expect(
+        detectGpu({
+          proveArm64ContainerGpu: prover,
+          runCaptureImpl: makeRunCapture(
+            `${PLAUSIBLE_NAME}, 8192, 7000\n${secondName}, 16384, 15000\n`,
+          ),
+          isWsl: true,
+        }),
+      ).toBeNull();
+    });
   });
 
   it("reports when the product-name filter rejects every GPU row (#9000)", () => {
