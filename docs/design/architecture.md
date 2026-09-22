@@ -55,8 +55,15 @@ flowchart TD
 The shared backend code is compiled into its callers; it is not another server.
 The provider translates the OpenTofu protocol into those operations.
 The SDK also checks proposed changes against its deployment contract before asking OpenTofu to execute a saved plan.
-For example, an undeclared resource or changed durable storage binding stops apply even if OpenTofu can express that change.
+For example, an unbound undeclared resource or changed durable storage binding stops apply even if OpenTofu can express that change.
+The SDK accepts provider-planned deletion of reconstructible bindings subject to the graph's protected-resource constraints.
 The Docker provider may recreate Docker gateway, inference, and proxy containers and service-owned networks; their physical identities are not recovery invariants.
+
+The shared [OpenShell lifecycle contract](../../crates/nemoclaw-sdk/src/backend.rs) classifies retained workspace identity, stateful sandboxes, and reconstructible registrations and configuration.
+The provider declares field mutability, reports confirmed absence, and verifies ownership through the shared backend before mutation.
+OpenTofu orders those actions and records their results; the SDK checks deployment scope and unresolved-operation constraints.
+Repeated ownership checks at observation and mutation protect different moments in time and remain necessary.
+The [provider reference](../provider.md#openshell-resource-lifecycles) describes the resource-specific behavior and upstream deletion constraints.
 
 The [public SDK lifecycle commit](https://github.com/NVIDIA/NemoClaw/commit/bd45fa3297) tested SDK apply followed by CLI export and destroy.
 That mixed-client test established that recovery belongs below the CLI boundary.
@@ -75,7 +82,7 @@ The local state directory retains these records:
 | Record | Meaning | Why recovery needs it |
 |---|---|---|
 | Deployment UID and generation tokens | Deployment ownership and creation identity | Matching a resource name alone cannot authorize adoption. |
-| Intent document and digest | Configuration selected for an operation | An unfinished OpenShell mutation requires its original intent; runtime recovery can use revised intent subject to binding checks. |
+| Intent document, digest, and pending creation targets | Configuration selected for an operation | A possibly completed creation retains its original resource configuration; unrelated intent can change without losing recovery evidence. |
 | OpenTofu state and saved resource specifications | Established physical IDs and configurations | A failed readiness check retains state; explicit recovery may replace disposable compute. |
 | Operation flags | Apply or destroy progress | Recovery can verify intent and resume the remaining resource operations. |
 
@@ -123,10 +130,14 @@ Suppose gateway creation succeeds but inference startup fails.
 The gateway and model-storage bindings remain recorded, and a later explicit apply can reconcile them.
 Automatic rollback could delete useful data or repeat an operation whose response was lost.
 
-An unfinished OpenShell mutation still requires its original intent before another change or destroy.
+Before an OpenShell apply, the SDK records the compiled targets for planned creations and replacements.
+A lost creation response can leave an object outside OpenTofu state, so revised intent must preserve those pending targets until reconciliation succeeds.
+Unrelated target configuration can change; later failures merge new pending targets without discarding earlier evidence.
+Older unfinished records without target-level evidence retain their full original-intent guard.
 Runtime failures retain an unfinished-operation marker for export, but allow revised intent or teardown using OpenTofu's recorded bindings and the existing durable-storage checks.
-An OpenShell-graph apply that only observes resources or changes disposable compute uses the same recovery rule.
-An apply that may mutate other resource bindings remains guarded; reconciliation cannot clear an earlier unfinished OpenShell operation.
+An OpenShell-graph apply that only observes resources, updates or deletes established bindings, or changes disposable compute uses the same recovery rule.
+Those operations do not create an untracked identity; provider refresh and mutation checks verify the existing bindings on retry.
+Runtime reconciliation cannot clear earlier pending OpenShell creations, and teardown requires resolving those creations first.
 Gateway and managed vLLM/Ollama readiness run inside the runtime graph; a failed read retains compute and storage state without rolling them back.
 
 Destroy reverses the dependency direction: remove OpenShell workloads before stopping the gateway that owns them.

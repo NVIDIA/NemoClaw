@@ -46,6 +46,8 @@ NEMOCLAW_TEST_PROVIDER=/absolute/path/to/terraform-provider-nemoclaw \
 ```
 
 These tests also check gateway version and driver preconditions, failed observations without resource changes, and data-source reads deferred until bootstrap inputs become known.
+Standalone HCL cases exercise provider/profile replacement and removal without sandbox teardown mode, recreation after confirmed absence, credential-reference updates, and recovery after a lost creation response.
+The fixture enforces the pinned API's refusal to delete a referenced profile or an attached provider; sandbox and workspace protection remain covered separately.
 
 The SDK/CLI lifecycle tests require a verified native bundle (manifest plus CLI, OpenTofu, and both production providers).
 They use only the local gRPC fixture:
@@ -60,6 +62,7 @@ Each Fabric harness is an independent ignored test with its own temporary state 
 To test one harness, append its test name, for example `-- --ignored harness_codex`; to run all harnesses with CI's concurrency bound, use `-- --ignored --test-threads=2`.
 
 These tests cover shared SDK/CLI state, interrupted creation, unchanged apply, readiness failure without replacement, failed observation without state loss, export/reapply, interrupted destroy, and retained workspace recovery.
+The registration lifecycle case recreates a missing selected registration while preserving its sandbox and profile, and the interrupted-create case permits unrelated intent edits while retaining pending resource configuration.
 The `independent_sandboxes_reconcile_concurrently_and_retain_shared_dependencies` fixture checks overlapping sandbox creates, unchanged reapply, and teardown with a retained shared workspace.
 The `gateway_change_between_plan_and_apply_preserves_resources_and_allows_teardown` fixture changes the gateway driver after planning to verify OpenTofu's fresh apply-time check, recovery, and teardown after capability drift.
 The direct provider fixture checks saved plans with both unchanged and newly created resources; incompatible or unavailable gateways stop dependent mutations without losing managed-resource bindings.

@@ -24,6 +24,8 @@ Reject unsupported state without silently adopting, replacing, or deleting its r
 - Lock deployment state while coordinating an operation and retain provider state and operation progress to recover from partial creation or deletion.
 - Treat Docker gateway, inference, and proxy containers and service-owned networks as disposable compute; the Docker provider may recreate or replace them during explicit apply.
 - Verify ownership, generation, and durable identity for gateway storage, credentials, Podman gateway processes, and OpenShell resources before modification.
+- Let OpenTofu reconcile reconstructible OpenShell provider profiles, registrations, and Pi configuration through the provider's resource lifecycle contract.
+- Protect sandbox replacement and missing bindings because sandbox files and conversation history are not separately retained; ordinary apply must not silently discard them.
 - Use provider resource identities and reconciliation for disposable compute and reproducible model caches instead of requiring stable physical IDs across recovery.
 - Only confirmed absence may remove a resource from state.
 - Authentication, transport, extension, query, and incomplete-observation failures must stop planning and preserve prior bindings.
