@@ -20,12 +20,12 @@
   },
   {
     "id": "positive-maintainer-same-repository-publication",
-    "question": "I am a NemoClaw maintainer. The recorded implementation handoff requires the `managed-image-startup` manual PR E2E selector. Publish this validated code change as a full-E2E draft PR; the canonical CI and manual PR E2E contracts allow required artifacts only for same-repository pull requests.",
+    "question": "I am a NemoClaw maintainer. The explicit authorized task requires the `managed-image-multiarch-startup` manual PR E2E selector. Publish this validated code change as a full-E2E draft PR; the canonical CI and manual PR E2E contracts allow required artifacts only for same-repository pull requests.",
     "expected_skill": "nemoclaw-contributor-create-pr",
     "ground_truth": "A candidate that requires same-repository-only CI or E2E must be published from an authorized NVIDIA/NemoClaw branch, not from the maintainer's fork.",
     "expected_behavior": [
       "Uses `nemoclaw-contributor-create-pr`.",
-      "Uses the recorded implementation handoff as the authority for manual PR E2E applicability and selector choice.",
+      "Uses the explicit authorized task as the authority for manual PR E2E applicability and selector choice.",
       "Reads the source-repository restrictions from the canonical base before declaring publication inputs or writing a branch.",
       "Confirms `WRITE`, `MAINTAIN`, or `ADMIN` permission for `NVIDIA/NemoClaw` and confirms that the requested task authorizes the repository branch write.",
       "Declares an `NVIDIA/NemoClaw` source branch and binds the guarded branch write and PR creation to that repository.",
@@ -34,12 +34,12 @@
   },
   {
     "id": "positive-authorized-fork-publication",
-    "question": "Publish this validated NemoClaw change from my authorized fork. The recorded implementation handoff does not require manual PR E2E, and the canonical required CI paths permit fork heads.",
+    "question": "Publish this validated NemoClaw change from my authorized fork. The explicit authorized task does not require manual PR E2E, and the canonical required CI paths permit fork heads.",
     "expected_skill": "nemoclaw-contributor-create-pr",
     "ground_truth": "When every required path permits fork heads, publication uses the declared authorized fork and binds its guarded branch write and PR creation to that verified repository identity.",
     "expected_behavior": [
       "Uses `nemoclaw-contributor-create-pr`.",
-      "Records from the implementation handoff that manual PR E2E is not required and does not invent an E2E requirement from advisory output.",
+      "Records from the explicit authorized task that manual PR E2E is not required and does not invent an E2E requirement from advisory output or an implementation handoff.",
       "Reads the source-repository restrictions from the canonical base and confirms that every required CI path permits fork heads.",
       "Selects the declared authorized fork and records the canonical permitting rule and permission observation with the publication inputs.",
       "Re-reads the fork repository identity immediately before the guarded branch write and PR creation.",
