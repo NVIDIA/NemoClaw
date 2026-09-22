@@ -150,9 +150,7 @@ function buildSandboxDriverConfig(
 export type SandboxCreatePlan = {
   activeMessagingChannels: string[];
   initialSandboxPolicy: InitialSandboxPolicy;
-  /** Ordinary lifecycle input. Portable retains raw create arguments until #12119. */
-  createRequest: PlannedOpenShellSandboxCreateRequest | null;
-  createArgs: string[] | null;
+  createRequest: PlannedOpenShellSandboxCreateRequest;
   messagingProviders: string[];
   gpuRoutePlan: SandboxCreateIntent["gpuRoutePlan"];
   compatibilityPolicyPath: string | null;
@@ -358,24 +356,9 @@ function assertDeferredProviderPlanSupported(
 }
 
 /** Materialize policy, route metadata, resources, and providers from a secretless intent. */
-export function materializeSandboxCreatePlan(
-  input: MaterializeSandboxCreatePlanInput & { readonly portableLifecycle: true },
-): Promise<SandboxCreatePlan & { readonly createRequest: null; readonly createArgs: string[] }>;
-export function materializeSandboxCreatePlan(
-  input: MaterializeSandboxCreatePlanInput & { readonly portableLifecycle?: false },
-): Promise<
-  SandboxCreatePlan & {
-    readonly createRequest: PlannedOpenShellSandboxCreateRequest;
-    readonly createArgs: null;
-  }
->;
-export function materializeSandboxCreatePlan(
-  input: MaterializeSandboxCreatePlanInput,
-): Promise<SandboxCreatePlan>;
 export async function materializeSandboxCreatePlan({
   intent,
   fromRef,
-  portableLifecycle = false,
   managedStateMounts,
   managedStateMountDriverId,
   policylessCreate = false,
@@ -487,23 +470,6 @@ export async function materializeSandboxCreatePlan({
       ? activateProviderEffects
       : null,
   };
-  if (portableLifecycle) {
-    return {
-      ...sharedPlan,
-      createRequest: null,
-      createArgs: [
-        "--from",
-        fromRef,
-        "--name",
-        intent.sandboxName,
-        ...(!policylessCreate ? ["--policy", initialSandboxPolicy.policyPath] : []),
-        ...(driverConfig ? ["--driver-config-json", driverConfig] : []),
-        ...intent.gpuCreateArgs,
-        ...intent.resourceCreateArgs,
-        ...createProviders.flatMap((provider) => ["--provider", provider]),
-      ],
-    };
-  }
   const resources = materializeCreateResources(intent.resourceCreateArgs);
   const gpu = materializeCreateGpu(intent.gpuCreateArgs);
   return {
@@ -517,7 +483,6 @@ export async function materializeSandboxCreatePlan({
       ...(resources ? { resources } : {}),
       ...(createProviders.length > 0 ? { providers: Object.freeze(createProviders) } : {}),
     }),
-    createArgs: null,
   };
 }
 
@@ -525,7 +490,7 @@ export async function materializeSandboxCreatePlan({
 export function materializeHermesPortableCreatePlan(input: {
   readonly intent: SandboxCreateIntent;
   readonly fromRef: string;
-}): SandboxCreatePlan & { readonly createRequest: null; readonly createArgs: string[] } {
+}): SandboxCreatePlan {
   const { intent, fromRef } = input;
   if (
     intent.policy.options.agentName !== "hermes" ||
@@ -556,23 +521,20 @@ export function materializeHermesPortableCreatePlan(input: {
     },
   );
   const driverConfig = buildSandboxDriverConfig(intent, undefined, null);
-  const createArgs = [
-    "--from",
-    fromRef,
-    "--name",
-    intent.sandboxName,
-    "--policy",
-    initialSandboxPolicy.policyPath,
-    ...(driverConfig ? ["--driver-config-json", driverConfig] : []),
-    ...intent.gpuCreateArgs,
-    ...intent.resourceCreateArgs,
-  ];
-  if (intent.inferenceProvider) createArgs.push("--provider", intent.inferenceProvider);
+  const resources = materializeCreateResources(intent.resourceCreateArgs);
+  const gpu = materializeCreateGpu(intent.gpuCreateArgs);
   return {
     activeMessagingChannels: [],
     initialSandboxPolicy,
-    createRequest: null,
-    createArgs,
+    createRequest: Object.freeze({
+      sandboxName: intent.sandboxName,
+      source: Object.freeze({ reference: fromRef }),
+      policyPath: initialSandboxPolicy.policyPath,
+      ...(driverConfig ? { driverConfigJson: driverConfig } : {}),
+      ...(gpu ? { gpu } : {}),
+      ...(resources ? { resources } : {}),
+      ...(intent.inferenceProvider ? { providers: Object.freeze([intent.inferenceProvider]) } : {}),
+    }),
     messagingProviders: [],
     gpuRoutePlan: intent.gpuRoutePlan,
     compatibilityPolicyPath: null,

@@ -400,7 +400,6 @@ describe("runSandboxGpuCreateFlow native failure and readiness", () => {
     };
     input.gpuRoutePlan = "none";
     input.initialGpuRoute = "none";
-    input.createArgv = ["openshell", "sandbox", "create"];
     input.createRequest = { ...input.createRequest!, gpu: undefined };
     input.persistStartupCommand = true;
     input.requiredUlimits = [
@@ -449,7 +448,6 @@ describe("runSandboxGpuCreateFlow native failure and readiness", () => {
     };
     input.gpuRoutePlan = "none";
     input.initialGpuRoute = "none";
-    input.createArgv = ["openshell", "sandbox", "create"];
     input.createRequest = { ...input.createRequest!, gpu: undefined };
     input.persistStartupCommand = true;
     input.managedImage = true;
@@ -490,7 +488,6 @@ describe("runSandboxGpuCreateFlow native failure and readiness", () => {
     };
     input.gpuRoutePlan = "none";
     input.initialGpuRoute = "none";
-    input.createArgv = ["openshell", "sandbox", "create"];
     input.persistStartupCommand = true;
     input.requiredUlimits = [
       { name: "nproc", soft: 512, hard: 512 },
@@ -543,7 +540,6 @@ describe("runSandboxGpuCreateFlow native failure and readiness", () => {
     };
     input.gpuRoutePlan = "none";
     input.initialGpuRoute = "none";
-    input.createArgv = ["openshell", "sandbox", "create"];
     input.persistStartupCommand = true;
     input.requiredUlimits = [
       { name: "nproc", soft: 512, hard: 512 },
@@ -867,7 +863,7 @@ describe("runSandboxGpuCreateFlow native failure and readiness", () => {
     expect(mocks.queryOpenShellDockerSandboxRuntimeSnapshot).not.toHaveBeenCalled();
     expect(mocks.streamSandboxCreate).toHaveBeenCalledWith(
       expect.stringMatching(/openshell$/u),
-      input.createArgv!.slice(1),
+      expect.arrayContaining(["sandbox", "create", "--name", input.sandboxName]),
       input.sandboxEnv,
       expect.objectContaining({ waitForReadyTermination: false }),
     );

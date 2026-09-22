@@ -209,19 +209,18 @@ require.cache[sandboxGpuCreateFlowId].exports = {
       assert.equal(lifecycleLock.isMcpLifecycleLockHeld(sandboxName, portableStateDir), true);
     });
     if (${JSON.stringify(mode)} === "superseded") return { created: false };
-    const attemptArgv = [...input.createArgv];
-    const separator = attemptArgv.indexOf("--");
-    attemptArgv.splice(
-      separator < 0 ? attemptArgv.length : separator,
-      0,
-      "--label",
-      "ai.nvidia.nemoclaw.create-attempt=" + "a".repeat(62),
-    );
+    const attemptRequest = {
+      ...input.createRequest,
+      labels: {
+        ...input.createRequest.labels,
+        "ai.nvidia.nemoclaw.create-attempt": "a".repeat(62),
+      },
+    };
     const created = await input.createSandbox(
-      attemptArgv,
+      attemptRequest,
       undefined,
       undefined,
-      process.cwd(),
+      async () => ({ status: 0, output: "created", sawProgress: true }),
       input.createPolicyPath,
     );
     return { created: true, value: created };
@@ -230,9 +229,7 @@ require.cache[sandboxGpuCreateFlowId].exports = {
     gpuCreateCalls += 1;
     events.push(input.resumeVerifiedCreate ? "sandbox:resume" : "sandbox:create");
     if (!input.resumeVerifiedCreate) {
-      const observedCreateArgv = input.createArgv
-        ? [...input.createArgv]
-        : [
+      const observedCreateArgv = [
             "openshell",
             "sandbox",
             "create",

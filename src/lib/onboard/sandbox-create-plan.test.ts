@@ -497,12 +497,12 @@ describe("resolveSandboxCreateIntent", () => {
     plan.initialSandboxPolicy.cleanup?.();
   });
 
-  it("keeps Portable OpenClaw on its raw create plan", async () => {
+  it("materializes Portable OpenClaw as a typed create plan", async () => {
     const { intent, messagingTokenDefs } = resolveDiscordCreateIntent({ selected: true });
     const portableIntent = {
       ...intent,
-      gpuCreateArgs: ["--gpus", "all"],
-      resourceCreateArgs: ["--cpus", "4"],
+      gpuCreateArgs: ["--gpu"],
+      resourceCreateArgs: ["--cpu", "4"],
     };
 
     const plan = await materializeSandboxCreatePlan({
@@ -515,21 +515,13 @@ describe("resolveSandboxCreateIntent", () => {
       getHermesToolGatewayProviderName: vi.fn(),
     });
 
-    expect(plan.createRequest).toBeNull();
-    expect(plan.createArgs).toEqual(
-      expect.arrayContaining([
-        "--from",
-        "/tmp/Dockerfile",
-        "--name",
-        "sandbox",
-        "--provider",
-        discordProviderName,
-        "--gpus",
-        "all",
-        "--cpus",
-        "4",
-      ]),
-    );
+    expect(plan.createRequest).toMatchObject({
+      sandboxName: "sandbox",
+      source: { reference: "/tmp/Dockerfile" },
+      gpu: {},
+      resources: { cpu: "4" },
+      providers: expect.arrayContaining([discordProviderName]),
+    });
     plan.initialSandboxPolicy.cleanup?.();
   });
 
@@ -905,9 +897,7 @@ describe("resolveSandboxCreateIntent", () => {
       intent,
       fromRef: "ghcr.io/nvidia/nemoclaw/hermes:test",
     });
-    const configIndex = plan.createArgs.indexOf("--driver-config-json");
-
-    expect(JSON.parse(plan.createArgs[configIndex + 1]!)).toEqual({
+    expect(JSON.parse(plan.createRequest.driverConfigJson!)).toEqual({
       docker: {
         cdi_devices: ["nvidia.com/gpu=GPU-69adb14e-820e-bfb4-0993-171e73f68504"],
       },
@@ -915,8 +905,7 @@ describe("resolveSandboxCreateIntent", () => {
         cdi_devices: ["nvidia.com/gpu=GPU-69adb14e-820e-bfb4-0993-171e73f68504"],
       },
     });
-    expect(plan.createArgs).toContain("--gpu");
-    expect(plan.createArgs).not.toContain("--gpu-device");
+    expect(plan.createRequest.gpu).toEqual({});
   });
 
   it("rejects GPU device driver config without the typed GPU request", async () => {

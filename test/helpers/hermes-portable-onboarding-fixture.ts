@@ -223,21 +223,14 @@ export function createHermesPortableTestInput(stateDir: string, policyPath: stri
     lifecycleGeneration: "generation-1",
     stateDir,
     createPolicyPath: policyPath,
-    createArgv: [
-      "/usr/bin/openshell",
-      "sandbox",
-      "create",
-      "-g",
-      "nemoclaw",
-      "--from",
-      sourceDockerfilePath,
-      "--name",
-      "alpha",
-      "--policy",
+    createRequest: {
+      sandboxName: "alpha",
+      target: { kind: "named", gatewayName: "nemoclaw" },
+      source: { reference: sourceDockerfilePath },
       policyPath,
-      "--",
-      ...startupArgv(),
-    ],
+      startupCommand: startupArgv(),
+      environment: {},
+    },
     runtimeAuthority: {
       schemaVersion: 1,
       kind: "podman",
@@ -435,24 +428,21 @@ export function createHermesPortableTransactionFixture(
     ...(options.readSandboxReadyPublicationClockMs
       ? { readSandboxReadyPublicationClockMs: options.readSandboxReadyPublicationClockMs }
       : {}),
-    createSandbox: async (argv, buildContextPath, effectivePolicySourcePath) => {
+    createSandbox: async (request, effectivePolicySourcePath) => {
       events.push("create");
       if (options.createSandbox) {
-        const created = await options.createSandbox(
-          argv,
-          buildContextPath,
-          effectivePolicySourcePath,
-        );
+        const created = await options.createSandbox(request, effectivePolicySourcePath);
         present = true;
         return created;
       }
-      const policyIndex = argv.indexOf("--policy");
-      expect(argv[policyIndex + 1]).toContain("policy.");
-      expect(argv[policyIndex + 1]).toBe(effectivePolicySourcePath);
-      expect(argv[argv.indexOf("--from") + 1]).toBe(
+      expect(request.policyPath).toContain("policy.");
+      expect(request.policyPath).toBe(effectivePolicySourcePath);
+      expect(request.source.reference).toBe(
         options.expectedDockerfilePath ?? "/private/staged-hermes/Dockerfile",
       );
-      expect(buildContextPath).toBe(options.expectedBuildContextPath ?? "/private/staged-hermes");
+      expect(request.workingDirectory).toBe(
+        options.expectedBuildContextPath ?? "/private/staged-hermes",
+      );
       present = true;
       return { ready: true };
     },
