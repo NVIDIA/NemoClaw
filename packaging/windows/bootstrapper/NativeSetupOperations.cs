@@ -182,7 +182,7 @@ internal static class NativeSetupOperations
             var installRoot = Directory.GetParent(uiRoot)?.FullName ?? throw new InvalidOperationException("The native installation directory is unavailable.");
             return Path.Combine(installRoot, "bin", "NemoClaw.exe");
         }
-        return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "NVIDIA", "NemoClaw RTX Spark Preview", "bin", "NemoClaw.exe");
+        return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "NVIDIA", "NemoClaw RTX Spark", "bin", "NemoClaw.exe");
     }
 
 }

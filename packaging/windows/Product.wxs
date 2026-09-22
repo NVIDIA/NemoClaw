@@ -42,7 +42,7 @@
 
     <StandardDirectory Id="ProgramFiles6432Folder">
       <Directory Id="NvidiaFolder" Name="NVIDIA">
-        <Directory Id="INSTALLFOLDER" Name="NemoClaw RTX Spark Preview">
+        <Directory Id="INSTALLFOLDER" Name="NemoClaw RTX Spark">
           <Directory Id="BinFolder" Name="bin">
             <Component Id="MachinePathComponent" Guid="412C4444-FD09-4864-A232-AED38B2ED231" Bitness="always64">
               <RegistryValue

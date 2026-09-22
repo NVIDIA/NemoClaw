@@ -1384,7 +1384,7 @@ def assemble(
             or not re.fullmatch(
                 r"[A-Za-z]:\\[^<>:\"|?*\x00-\x1f]+", target_install_root
             )
-            or PureWindowsPath(target_install_root).parts[-2:] != ("NVIDIA", "NemoClaw")
+            or PureWindowsPath(target_install_root).parts[-2:] != ("NVIDIA", "NemoClaw RTX Spark")
             or any(
                 part in {".", ".."} or part.endswith((" ", "."))
                 for part in PureWindowsPath(target_install_root).parts[1:]
@@ -1489,7 +1489,7 @@ def assemble(
                     destination, output.with_name(output.name + "-hermes-bytecode.json")
                 )
             installed_agent_root = (
-                PureWindowsPath(target_install_root or r"C:\Program Files\NVIDIA\NemoClaw")
+                PureWindowsPath(target_install_root or r"C:\Program Files\NVIDIA\NemoClaw RTX Spark")
                 / "runtimes"
                 / runtime_id
                 / LAYOUT[agent][0]

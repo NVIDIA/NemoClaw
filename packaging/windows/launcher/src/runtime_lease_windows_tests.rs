@@ -128,7 +128,7 @@ impl Fixture {
     fn new(writable: bool) -> Self {
         let installed = installed_path().unwrap();
         let program_files = installed
-            .strip_suffix("\\NVIDIA\\NemoClaw RTX Spark Preview")
+            .strip_suffix("\\NVIDIA\\NemoClaw RTX Spark")
             .unwrap();
         let nonce = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -449,7 +449,7 @@ fn installer_created_directory_blocks_creator_owner_materialization() {
 
     let installed = installed_path().unwrap();
     let program_files = installed
-        .strip_suffix("\\NVIDIA\\NemoClaw RTX Spark Preview")
+        .strip_suffix("\\NVIDIA\\NemoClaw RTX Spark")
         .unwrap();
     let nonce = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)

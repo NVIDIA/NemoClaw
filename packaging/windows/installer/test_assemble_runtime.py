@@ -204,6 +204,11 @@ class RuntimeAssembly(unittest.TestCase):
         audit = json.loads((content / "openclaw/nemoclaw-runtime-audit.json").read_text())
         self.assertEqual(audit["agent"], "openclaw")
         self.assertEqual(audit["runtimeBytesCopiedPerLaunch"], 0)
+        self.assertTrue(
+            audit["maximumFinalInstalledPath"]["path"].startswith(
+                r"C:\Program Files\NVIDIA\NemoClaw RTX Spark\runtimes"
+            )
+        )
         self.assertLess(audit["maximumFinalInstalledPath"]["characters"], 260)
         self.assertEqual(assembler.inventory(self.source), before)
         self.assertFalse((self.output / "bin").exists())
@@ -1094,7 +1099,7 @@ class RuntimeAssembly(unittest.TestCase):
                 hermes_compatibility=args[4],
                 hermes_compatibility_proof=args[5],
                 hermes_executor=args[6],
-                target_install_root=r"C:\Program Files\NVIDIA\NemoClaw",
+                target_install_root=r"C:\Program Files\NVIDIA\NemoClaw RTX Spark",
             )
         self.assertEqual(stages, ["partition", "bytecode"])
         root = self.output / receipt["runtimeInstalledPath"]
