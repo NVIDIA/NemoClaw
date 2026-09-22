@@ -196,13 +196,6 @@ function nativeWeatherPluginWriteScript(version: NativePluginVersion): string {
 };
 export default plugin;
 `;
-  const updateVerification =
-    version === "v2"
-      ? [
-          "HOME=/sandbox openclaw plugins inspect weather --runtime --json > /tmp/e2e-native-weather-v2.json",
-          `grep -Eq '"version"[[:space:]]*:[[:space:]]*"2\\.0\\.0"' /tmp/e2e-native-weather-v2.json`,
-        ]
-      : [];
   return [
     "set -eu",
     "source_dir=/sandbox/e2e-native-weather",
@@ -212,7 +205,6 @@ export default plugin;
     `printf '%s' ${shellQuote(manifest)} > "$source_dir/openclaw.plugin.json"`,
     `printf '%s' ${shellQuote(entrypoint)} > "$source_dir/index.js"`,
     'HOME=/sandbox openclaw plugins install --force --accept-capabilities "$source_dir"',
-    ...updateVerification,
   ].join("\n");
 }
 
@@ -244,25 +236,34 @@ async function invokeNativeWeatherPlugin(
   ).toBe(true);
 }
 
-async function exerciseNativeOpenClawPluginLifecycle(
+async function exerciseNativeOpenClawPluginVersion(
   host: HostCliClient,
   sandbox: SandboxClient,
+  version: NativePluginVersion,
 ): Promise<void> {
-  const installV1 = await sandbox.execShell(
+  const install = await sandbox.execShell(
     SANDBOX_NAME,
-    trustedSandboxShellScript(nativeWeatherPluginWriteScript("v1")),
-    { artifactName: "phase-4-native-plugin-install-v1", env: env(), timeoutMs: 120_000 },
+    trustedSandboxShellScript(nativeWeatherPluginWriteScript(version)),
+    { artifactName: `phase-4-native-plugin-install-${version}`, env: env(), timeoutMs: 120_000 },
   );
-  expect(installV1.exitCode, resultText(installV1)).toBe(0);
+  expect(install.exitCode, resultText(install)).toBe(0);
   const restart = await repoNemoclaw(
     host,
     [SANDBOX_NAME, "gateway", "restart"],
-    "phase-4-native-plugin-gateway-restart",
+    `phase-4-native-plugin-gateway-restart-${version}`,
     {},
     180_000,
   );
   expect(restart.exitCode, resultText(restart)).toBe(0);
-  await invokeNativeWeatherPlugin(sandbox, "v1", "phase-4-native-plugin-invoke-v1");
+  await invokeNativeWeatherPlugin(sandbox, version, `phase-4-native-plugin-invoke-${version}`);
+}
+
+async function exerciseNativeOpenClawPluginLifecycle(
+  host: HostCliClient,
+  sandbox: SandboxClient,
+): Promise<void> {
+  await exerciseNativeOpenClawPluginVersion(host, sandbox, "v1");
+  await exerciseNativeOpenClawPluginVersion(host, sandbox, "v2");
 
   const updateDryRun = await sandbox.exec(
     SANDBOX_NAME,
@@ -270,13 +271,6 @@ async function exerciseNativeOpenClawPluginLifecycle(
     { artifactName: "phase-4-native-plugin-update-dry-run", env: env(), timeoutMs: 120_000 },
   );
   expect(updateDryRun.exitCode, resultText(updateDryRun)).toBe(0);
-
-  const installV2 = await sandbox.execShell(
-    SANDBOX_NAME,
-    trustedSandboxShellScript(nativeWeatherPluginWriteScript("v2")),
-    { artifactName: "phase-4-native-plugin-install-v2", env: env(), timeoutMs: 120_000 },
-  );
-  expect(installV2.exitCode, resultText(installV2)).toBe(0);
 
   const selfUpdateDryRun = await sandbox.exec(
     SANDBOX_NAME,
