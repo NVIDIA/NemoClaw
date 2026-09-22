@@ -326,7 +326,10 @@ impl Provider for NemoClawProvider {
                     "provider_type",
                     "credential_source",
                 ],
-                &["endpoint", "credential_env"],
+                // Endpoint and authentication-mode changes also replace the
+                // imported profile. Delete the registration first so the API
+                // permits profile deletion; ordinary key rotation stays mutable.
+                &["credential_env"],
             ),
             Definition::new(
                 "sandbox",

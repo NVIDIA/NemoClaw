@@ -42,6 +42,8 @@ impl Standalone {
             .env("TF_CLI_CONFIG_FILE", self.root.path().join("tofu.rc"))
             .env("CHECKPOINT_DISABLE", "1")
             .env("TF_IN_AUTOMATION", "1")
+            .env("NEMOCLAW_TEST_REGISTRATION_KEY", "fixture-secret")
+            .env("NEMOCLAW_TEST_ROTATED_KEY", "rotated-fixture-secret")
             .output()
             .unwrap();
         assert_eq!(
@@ -70,6 +72,19 @@ impl Standalone {
     fn apply(&self) {
         self.run(&["apply", "-auto-approve", "-input=false"], true);
     }
+    fn registrations_only(&self) {
+        let path = self.root.path().join("main.tf");
+        let source = fs::read_to_string(&path).unwrap();
+        let (registrations, _) = source
+            .split_once("resource \"nemoclaw_sandbox\" \"agent\"")
+            .unwrap();
+        fs::write(
+            path,
+            registrations.replace("\"http://127.0.0.1:11434/v1\"", "var.inference_endpoint")
+                + "\nvariable \"inference_endpoint\" { default = \"http://127.0.0.1:11434/v1\" }\n",
+        )
+        .unwrap();
+    }
     fn noop(&self) {
         self.run(&["plan", "-input=false", "-out=noop.plan"], true);
         let output = self.run(&["show", "-json", "noop.plan"], true);
@@ -78,6 +93,239 @@ impl Standalone {
             assert_eq!(change["change"]["actions"], json!(["no-op"]));
         }
     }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires explicit NEMOCLAW_TEST_TOFU and NEMOCLAW_TEST_PROVIDER; isolated OpenShell fixture"]
+async fn standalone_registrations_recreate_confirmed_absence_without_replacing_sandboxes() {
+    let fixture = Fixture::start().await;
+    let tofu = Standalone::new(&fixture.endpoint);
+    tofu.apply();
+    let sandbox = fixture.state.lock().unwrap().sandboxes.clone();
+    for kind in ["provider", "provider_profile"] {
+        {
+            let mut state = fixture.state.lock().unwrap();
+            if kind == "provider" {
+                state.providers.clear();
+            } else {
+                state.profiles.clear();
+            }
+        }
+        let effects = fixture.state.lock().unwrap().effects;
+        tofu.run(&["plan", "-input=false", "-out=recover.plan"], true);
+        assert_eq!(fixture.state.lock().unwrap().effects, effects);
+        let plan: Value =
+            serde_json::from_slice(&tofu.run(&["show", "-json", "recover.plan"], true).stdout)
+                .unwrap();
+        for change in plan["resource_changes"].as_array().unwrap() {
+            assert_eq!(
+                change["change"]["actions"],
+                if change["type"] == format!("nemoclaw_{kind}") {
+                    json!(["create"])
+                } else {
+                    json!(["no-op"])
+                },
+                "{change}"
+            );
+        }
+        tofu.run(&["apply", "-input=false", "recover.plan"], true);
+        tofu.noop();
+        let state = fixture.state.lock().unwrap();
+        assert_eq!(state.sandboxes, sandbox);
+        assert_eq!(state.providers.len(), 1);
+        assert_eq!(state.profiles.len(), 1);
+        assert_eq!(state.effects, effects + 1);
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires explicit NEMOCLAW_TEST_TOFU and NEMOCLAW_TEST_PROVIDER; isolated OpenShell fixture"]
+async fn standalone_registrations_replace_and_remove_without_destroy_mode() {
+    let fixture = Fixture::start().await;
+    let tofu = Standalone::new(&fixture.endpoint);
+    tofu.registrations_only();
+    tofu.apply();
+    let before = fixture.state.lock().unwrap().providers.clone();
+    let effects = fixture.state.lock().unwrap().effects;
+    tofu.run(
+        &[
+            "plan",
+            "-input=false",
+            "-var=inference_endpoint=http://127.0.0.1:11435/v1",
+            "-out=change.plan",
+        ],
+        true,
+    );
+    assert_eq!(fixture.state.lock().unwrap().effects, effects);
+    let plan: Value =
+        serde_json::from_slice(&tofu.run(&["show", "-json", "change.plan"], true).stdout).unwrap();
+    for change in plan["resource_changes"].as_array().unwrap() {
+        assert_eq!(
+            change["change"]["actions"],
+            match change["type"].as_str().unwrap() {
+                "nemoclaw_provider_profile" => json!(["delete", "create"]),
+                "nemoclaw_provider" => json!(["delete", "create"]),
+                "nemoclaw_workspace" => json!(["no-op"]),
+                other => panic!("unexpected resource {other}"),
+            }
+        );
+    }
+    tofu.run(&["apply", "-input=false", "change.plan"], true);
+    {
+        let state = fixture.state.lock().unwrap();
+        let provider = state.providers.values().next().unwrap();
+        assert_ne!(
+            provider.metadata.as_ref().unwrap().id,
+            before
+                .values()
+                .next()
+                .unwrap()
+                .metadata
+                .as_ref()
+                .unwrap()
+                .id
+        );
+        assert_eq!(
+            provider.config["OPENAI_BASE_URL"],
+            "http://127.0.0.1:11435/v1"
+        );
+        assert_eq!(state.profiles.len(), 1);
+    }
+    tofu.run(
+        &[
+            "apply",
+            "-auto-approve",
+            "-input=false",
+            "-var=enabled=false",
+        ],
+        true,
+    );
+    let state = fixture.state.lock().unwrap();
+    assert_eq!(state.workspaces.len(), 1);
+    assert!(state.providers.is_empty() && state.profiles.is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires explicit NEMOCLAW_TEST_TOFU and NEMOCLAW_TEST_PROVIDER; isolated OpenShell fixture"]
+async fn standalone_registrations_preserve_bindings_on_failed_or_foreign_observations() {
+    let fixture = Fixture::start().await;
+    let tofu = Standalone::new(&fixture.endpoint);
+    tofu.registrations_only();
+    tofu.apply();
+    let prior = tofu.state();
+    let effects = fixture.state.lock().unwrap().effects;
+    for kind in ["provider", "provider_profile"] {
+        for code in [tonic::Code::Unavailable, tonic::Code::Unauthenticated] {
+            fixture.state.lock().unwrap().fail_read = Some((kind, code));
+            tofu.run(&["plan", "-input=false"], false);
+            assert_eq!(tofu.state(), prior);
+        }
+    }
+    {
+        let mut state = fixture.state.lock().unwrap();
+        state.fail_read = None;
+        state
+            .providers
+            .values_mut()
+            .next()
+            .unwrap()
+            .metadata
+            .as_mut()
+            .unwrap()
+            .labels
+            .insert("nemoclaw.nvidia.com/uid".into(), "foreign".into());
+    }
+    tofu.run(&["plan", "-input=false", "-var=enabled=false"], false);
+    assert_eq!(tofu.state(), prior);
+    assert_eq!(fixture.state.lock().unwrap().effects, effects);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires explicit NEMOCLAW_TEST_TOFU and NEMOCLAW_TEST_PROVIDER; isolated OpenShell fixture"]
+async fn standalone_registrations_recover_lost_create_response_without_duplicate_creation() {
+    let fixture = Fixture::start().await;
+    let tofu = Standalone::new(&fixture.endpoint);
+    tofu.registrations_only();
+    fixture.state.lock().unwrap().lose_create = true;
+    tofu.run(&["apply", "-auto-approve", "-input=false"], false);
+    let profiles = fixture.state.lock().unwrap().profiles.clone();
+    assert_eq!(profiles.len(), 1);
+    assert!(fixture.state.lock().unwrap().providers.is_empty());
+    let effects = fixture.state.lock().unwrap().effects;
+    tofu.apply();
+    tofu.noop();
+    let state = fixture.state.lock().unwrap();
+    assert_eq!(state.profiles, profiles);
+    assert_eq!(state.providers.len(), 1);
+    assert_eq!(state.effects, effects + 1);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires explicit NEMOCLAW_TEST_TOFU and NEMOCLAW_TEST_PROVIDER; isolated OpenShell fixture"]
+async fn standalone_registration_authentication_mode_replaces_but_secret_reference_rotation_updates()
+ {
+    let fixture = Fixture::start().await;
+    let tofu = Standalone::new(&fixture.endpoint);
+    tofu.registrations_only();
+    let path = tofu.root.path().join("main.tf");
+    fs::write(
+        &path,
+        fs::read_to_string(&path)
+            .unwrap()
+            .replace(
+                "authenticated = \"false\"",
+                "authenticated = tostring(var.credential_env != \"\")",
+            )
+            .replace(
+                "endpoint   = nemoclaw_provider_profile.inference[0].endpoint",
+                "endpoint   = nemoclaw_provider_profile.inference[0].endpoint\n  credential_env = var.credential_env",
+            )
+            + "\nvariable \"credential_env\" { default = \"\" }\n",
+    )
+    .unwrap();
+    tofu.apply();
+    let id = || {
+        fixture
+            .state
+            .lock()
+            .unwrap()
+            .providers
+            .values()
+            .next()
+            .unwrap()
+            .metadata
+            .as_ref()
+            .unwrap()
+            .id
+            .clone()
+    };
+    let anonymous_id = id();
+    tofu.run(
+        &[
+            "apply",
+            "-auto-approve",
+            "-input=false",
+            "-var=credential_env=NEMOCLAW_TEST_REGISTRATION_KEY",
+        ],
+        true,
+    );
+    let authenticated_id = id();
+    assert_ne!(anonymous_id, authenticated_id);
+    let profiles = fixture.state.lock().unwrap().profiles.clone();
+    tofu.run(
+        &[
+            "apply",
+            "-auto-approve",
+            "-input=false",
+            "-var=credential_env=NEMOCLAW_TEST_ROTATED_KEY",
+        ],
+        true,
+    );
+    assert_eq!(id(), authenticated_id);
+    assert_eq!(fixture.state.lock().unwrap().profiles, profiles);
+    tofu.apply();
+    assert_ne!(id(), authenticated_id);
+    tofu.noop();
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

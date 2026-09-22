@@ -187,7 +187,11 @@ fn compiled_resources_preserve_ownership_connections_and_dependency_order() {
     ] {
         assert_eq!(resource["owner"], document.metadata.uid);
         assert_eq!(resource["generation"], generations[generation]);
-        assert_eq!(resource["lifecycle"]["prevent_destroy"], true);
+        if generation == "provider" {
+            assert!(resource["lifecycle"].get("prevent_destroy").is_none());
+        } else {
+            assert_eq!(resource["lifecycle"]["prevent_destroy"], true);
+        }
     }
     assert_eq!(provider["credential_env"], "MODEL_TOKEN");
     assert_eq!(provider["endpoint"], "https://models.example.test/v1");

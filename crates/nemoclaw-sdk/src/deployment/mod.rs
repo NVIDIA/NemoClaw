@@ -176,11 +176,6 @@ impl Deployment {
                 "state is bound to a different deployment UID or gateway",
             ));
         }
-        if record.pending && !record.runtime_pending && record.digest != document.digest() {
-            return Err(Error::Conflict(
-                "unfinished apply has different intent; reapply its original configuration",
-            ));
-        }
         for kind in crate::services::generation_kinds(&document)? {
             if record.generations.get(kind).is_none_or(String::is_empty) {
                 record.generations.insert(
@@ -189,6 +184,7 @@ impl Deployment {
                 );
             }
         }
+        record.validate_pending_intent(&document)?;
         let (runtime_changes, deferred) = self
             .runtime_stage(&bundle, &store, &document, &mut record, apply, cancel)
             .await?;
@@ -212,7 +208,9 @@ impl Deployment {
         let targets = compile::targets(&document, &record.generations)?;
         let allowed = allowed(&targets);
         if bindings.iter().any(|(address, binding)| {
-            (!allowed.contains_key(address) && !plan::disposable(address))
+            (!allowed.contains_key(address)
+                && !plan::disposable(address)
+                && !plan::reconstructible(address))
                 || !binding.spec.is_empty()
         }) {
             return Err(Error::Conflict(
@@ -238,9 +236,14 @@ impl Deployment {
             .saved_plan(&bundle, &store, &document, "apply.plan", cancel)
             .await?;
         let root_changes = check_plan(&plan, &allowed, &bindings)?;
-        let durable_mutations = root_changes
+        let creations = root_changes
             .iter()
-            .any(|change| !plan::disposable(&change.resource));
+            .filter(|change| {
+                !plan::disposable(&change.resource)
+                    && change.actions.iter().any(|action| action == "create")
+            })
+            .map(|change| (change.resource.clone(), allowed[&change.resource].clone()))
+            .collect();
         let mut changes = runtime_changes;
         changes.extend(root_changes);
         let mut result = OperationResult::planned(changes);
@@ -252,12 +255,7 @@ impl Deployment {
         }
         record.document = document.clone();
         record.digest = document.digest();
-        if durable_mutations {
-            record.pending = true;
-            record.runtime_pending = false;
-        } else {
-            record.begin_runtime_apply();
-        }
+        record.begin_apply(creations);
         record.succeeded = false;
         record.destroyed = false;
         record.destroy_runtime = false;
@@ -292,8 +290,7 @@ impl Deployment {
                     })
                 })
             {
-                record.pending = false;
-                record.runtime_pending = false;
+                record.finish_apply();
                 store.save(&record)?;
                 if let Some(health) = observations.iter().find_map(|(name, observed)| {
                     let health =
@@ -313,8 +310,7 @@ impl Deployment {
             }
             return Err(error);
         }
-        record.pending = false;
-        record.runtime_pending = false;
+        record.finish_apply();
         store.save(&record)?;
         result.health = self
             .sandbox_observations(&bundle, &store, &document, &plan, cancel)

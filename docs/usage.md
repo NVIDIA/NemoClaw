@@ -235,7 +235,7 @@ Reordering declarations is not an update.
 Each sandbox receives only its selected inference provider policies, while shared definitions reuse one provider registration.
 Sandbox-local definitions are visible only to their enclosing sandbox.
 Sandboxes can select distinct Brave credential references; shared references reuse one registration.
-Ordinary apply still refuses removal or replacement; destroy operates on the whole deployment.
+Ordinary apply still refuses sandbox removal or replacement because its files and history are not separately retained; destroy operates on the whole deployment.
 Use separate deployments when you need independent teardown.
 Existing state needs the [named-resource transition](state.md#named-sandbox-resources).
 
@@ -245,15 +245,18 @@ Existing state needs the [named-resource transition](state.md#named-sandbox-reso
 |---|---|
 | OpenClaw model choices or a Pi catalog with multiple choices or a tool policy | Change the sandbox launch specification; use a separate deployment and verify the selected models through the native agent |
 | Pi model or native model metadata with one declared choice and no tool policy | Restarts the Pi runtime inside the existing sandbox; its in-memory conversation is lost; see [Pi model selection](agents.md#pi-model-selection) |
-| External inference endpoint, provider implementation, or authenticated/anonymous mode | Changes the immutable native provider profile binding; use a separate deployment |
+| External inference endpoint, provider implementation, or authenticated/anonymous mode | Changes a selected provider's profile and registration; changes to an existing sandbox's launch specification still require a separate deployment |
 | Sandbox image, harness, API, OpenClaw tuning, agent/tools, execution settings, interfaces, or attached integration settings | Changes the sandbox launch specification; ordinary apply refuses replacement; use a separate deployment with a fresh UID and state |
 | Sandbox network policy or proxy | Changes the sandbox specification; follow [policy change constraints](sandbox-network.md) and use a separate deployment when replacement is required |
 | Managed inference or proxy image or serving specification | Docker-provider reconciliation may replace the container while retaining its independently bound storage; review the plan and [model constraints](models.md) |
 | Deployment UID, established gateway endpoint, or bound credential/gateway engine | Cannot retarget the existing state; create a separate deployment |
-| Remove a resource or change management mode so its binding disappears | Ordinary apply refuses removal; assess a separate deployment and explicit retirement of the original |
+| Remove an unused inference provider definition | Changes the desired document only; the SDK creates registrations for selected definitions, so unused definitions have no resources to delete |
+| Remove a sandbox, retained storage, or a protected gateway binding | Ordinary apply refuses removal; assess a separate deployment and explicit retirement of the original |
 | Change a credential value behind the same environment reference | Unchanged apply does not detect rotation; see [credential lifecycle](security.md#credentials-and-authentication) |
 
-The [plan checks](../crates/nemoclaw-sdk/src/deployment/plan.rs) retain removal/replacement restrictions for durable and OpenShell resources.
+The [provider lifecycle contract](provider.md#openshell-resource-lifecycles) distinguishes reconstructible registrations and configuration from protected sandbox data and durable identity.
+OpenShell refuses deletion of a registration still attached to a sandbox or a profile still referenced by a registration.
+Ordinary apply can recreate a missing registration after confirmed absence, while preserving the sandbox's identity and files.
 Disposable Docker compute uses ordinary provider reconciliation within the declared deployment graph.
 A model change does not migrate conversations or guarantee that the new model supports the old model's tools, context, or reasoning settings.
 
@@ -285,10 +288,12 @@ Changing an established gateway endpoint is rejected.
 There is no lost-state adoption, migration, pruning, or purge command.
 
 After an interrupted apply, keep the original YAML and entire state directory, including `runtime/`, and explicitly reapply.
-If the error says an unfinished apply has different intent, use the exact configuration from that unfinished operation before attempting a new change.
+If the error reports an unfinished creation, preserve that resource's original configuration while correcting unrelated settings.
+Reapply successfully before removing or changing that pending resource or requesting teardown; the server may have created it without returning its identity.
+Older unfinished records without per-resource recovery evidence still require the exact configuration from the unfinished operation.
 If managed gateway or inference runtime apply fails, revised intent or teardown can proceed using recorded bindings and the existing ownership checks.
-The same applies when an OpenShell-graph apply only observes resources or changes disposable compute; other resource mutations retain the original-intent guard.
-An unfinished OpenShell mutation still requires its original intent; runtime recovery does not clear that guard.
+The same applies when an OpenShell-graph apply only observes resources, updates or deletes established bindings, or changes disposable compute.
+Runtime recovery does not clear pending OpenShell creations.
 Export remains unavailable while either operation is unfinished.
 If readiness fails after resource creation, provider state and persistent data remain recorded.
 A later explicit apply may replace or recreate disposable service compute.

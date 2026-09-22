@@ -120,8 +120,7 @@ impl Deployment {
                 store.save(&record)?;
             }
         }
-        record.pending = false;
-        record.runtime_pending = false;
+        record.finish_apply();
         record.destroying = false;
         record.destroyed = true;
         record.plan_digest.clear();
@@ -229,7 +228,7 @@ fn teardown_expected(
     }
     let mut expected = allowed(&targets);
     for (address, binding) in bindings {
-        if plan::disposable(address) {
+        if plan::disposable(address) || plan::reconstructible(address) {
             expected.entry(address.clone()).or_default();
             continue;
         }
@@ -395,6 +394,39 @@ mod tests {
                 .unwrap_err()
                 .to_string(),
             "unfinished apply may have created resources whose IDs were not saved; apply the original configuration again before destroy"
+        );
+    }
+
+    #[test]
+    fn teardown_can_finish_a_failed_removal_of_a_reconstructible_resource() {
+        let document = Document::parse(
+            include_bytes!("../../../../../examples/fabric-openclaw.yaml").as_slice(),
+        )
+        .unwrap();
+        let mut record = Record::new(document).unwrap();
+        record.begin_runtime_apply();
+        let bindings = [
+            (
+                "nemoclaw_workspace.deployment".into(),
+                StateBinding {
+                    id: "workspace".into(),
+                    ..Default::default()
+                },
+            ),
+            (
+                "nemoclaw_provider.removed".into(),
+                StateBinding {
+                    id: "provider".into(),
+                    ..Default::default()
+                },
+            ),
+        ]
+        .into();
+        validate_teardown_state(&record, &bindings).unwrap();
+        assert!(
+            teardown_expected(&record, &bindings, false)
+                .unwrap()
+                .contains_key("nemoclaw_provider.removed")
         );
     }
 
