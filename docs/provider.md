@@ -42,6 +42,7 @@ Do not edit SDK-generated graphs or share a deployment state directory between i
 The shared [resource lifecycle contract](../crates/nemoclaw-sdk/src/backend.rs) distinguishes reconstructible configuration from protected identity and sandbox data.
 The provider owns observation and update/replacement behavior; OpenTofu owns action ordering and resource state.
 The SDK checks deployment scope and recovery constraints without imposing a second blanket ban on OpenShell changes.
+For reconstructible resources, OpenTofu and the provider own confirmed absence, physical identity, and replacement cleanup; the SDK does not require a second drift history to report those actions.
 
 | Resource | Ordinary reconciliation | Protection |
 |---|---|---|
@@ -69,6 +70,9 @@ See [deletion and retention](state.md#deletion-and-retention) before removing wo
 An observation error is not absence.
 Authentication, transport, and incomplete observations preserve prior state and stop planning.
 The backend verifies ownership again immediately before mutation because objects can change after planning.
+Creation readback must match the physical ID, owner, and generation established by the creation response.
+If readback fails or identifies a substituted object, the provider returns the original established binding together with the error.
+OpenTofu retains that failed creation as tainted state; automatic untainting is not a recovery guarantee.
 OpenShell deletion is name-addressed without a conditional ID/version check; an immediate identity check does not make the API operation atomic.
 
 ## Gateway Capabilities

@@ -279,16 +279,18 @@ Older unfinished records without per-resource recovery evidence still require th
 If managed gateway or inference runtime apply fails, revised intent or teardown can proceed using recorded bindings and the existing ownership checks.
 The same applies when an OpenShell-graph apply only observes resources, updates or deletes established bindings, or changes disposable compute.
 Runtime recovery does not clear pending OpenShell creations.
-Export remains unavailable while either operation is unfinished.
+Export remains unavailable during pending creation recovery, unfinished managed-runtime apply, or unfinished teardown.
+If an OpenShell-stage apply planned no non-disposable resource creations, a later export can verify its established bindings without another successful apply; incomplete or inconsistent observations still fail export.
 If readiness fails after resource creation, provider state and persistent data remain recorded.
 A later explicit apply may replace or recreate disposable service compute.
 Authentication, transport, and incomplete observations remain failures; missing or changed bound credentials and gateway storage never authorize their automatic recreation.
 A missing model-cache volume may be recreated during apply, followed by model download and preparation; its separate credential volume must still match.
 
 To retire instead of recover after an interrupted apply, first run `nemoclaw plan --destroy` with the same state directory.
-The SDK permits this path when its recovery evidence identifies either a matching runtime-stage plan with at least one validated runtime binding, or a matching OpenShell-stage plan with established bindings and no potentially unrecorded durable creation.
+After unfinished managed-runtime apply, this path requires a matching saved plan and validated bindings.
+An OpenShell-stage apply that planned no non-disposable resource creations leaves reconciliation of its established bindings to OpenTofu; it does not add a pending-creation guard.
 OpenShell bindings established before a failed runtime stage may remain; every recorded binding must belong to the current intent, each saved storage specification must match, and a recorded managed process also requires its independent storage binding.
-Empty applicable state, a plan mismatch, undeclared or drifted bindings, a process without its storage binding, and ambiguous unfinished creations still require reapplying the exact original YAML before destroy.
+Empty applicable state or a plan mismatch during managed-runtime recovery, undeclared or drifted bindings, a process without its storage binding, and ambiguous unfinished creations still require recovery before destroy.
 Destroy changes the operation to resumable teardown only after both resource graphs are planned, so a planning failure leaves the unfinished-apply recovery state in place.
 
 Export requires complete observations and agent configuration checks, but does not invoke inference.

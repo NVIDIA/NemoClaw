@@ -20,6 +20,8 @@ The [accepted scope](scope.md) defines the invariants; this page explains the re
 
 Operation coordination belongs in the SDK so applications and the CLI share the same recovery behavior.
 The SDK checks deployment scope and recovery constraints; providers decide resource transitions and verify remote identity before mutation.
+For reconstructible OpenShell resources and disposable Docker resources, the SDK reports OpenTofu's actions without reconstructing absence or replacement cleanup from plan history.
+Durable identity, retained storage, and undeclared-resource checks remain deployment constraints.
 OpenTofu executes the graph with its default parallelism.
 The SDK and NemoClaw provider share backend library code.
 
@@ -37,6 +39,8 @@ The native [bundle](../build.md#build-a-native-bundle) ships the matching CLI, s
 
 OpenShell needs a reachable gateway to refresh resources and plan changes.
 A managed deployment therefore establishes its runtime infrastructure before planning OpenShell resources.
+Deferred provider configuration supports fresh bootstrap, but an unavailable gateway still blocks refresh of existing OpenShell bindings before a combined graph can restore it.
+The runtime stage preserves that recovery path.
 The SDK coordinates two graphs:
 
 ```mermaid
@@ -56,6 +60,8 @@ Apply obtains and checks new plans; a previous preview is not an approval artifa
 
 Destroy reverses the stage order so workloads are removed while their gateway is still available.
 The SDK checks both teardown plans before deleting anything and records completed stages so an interrupted destroy can resume.
+The compiler builds teardown configuration from retained intent and the established resource inventory, keeping storage and workspace declarations while removing workload and readiness declarations.
+Storage that was never established is omitted, so partial teardown does not finish creating it.
 For commands and deletion effects, see [deployment lifecycle](../usage.md).
 
 ## State and Recovery
@@ -84,6 +90,8 @@ Older pending records without per-target evidence require the entire original co
 
 Failures involving only observations, established updates or deletions, or disposable compute permit revised intent or teardown using recorded bindings.
 They cannot clear earlier unresolved OpenShell creations; those must be reconciled before teardown.
+An OpenShell-stage apply without non-disposable resource creations does not start a pending-creation guard; export can verify its established bindings through OpenTofu even after that apply fails.
+Managed-runtime failures retain their separate stage recovery evidence.
 The [recovery guide](../usage.md#recover-an-interrupted-operation) describes the caller's next steps.
 
 ## Storage and Resource Lifetimes
