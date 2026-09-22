@@ -2410,8 +2410,91 @@ prepare_gateway_token_for_current_command() {
   fi
 }
 
-# Write an auth profile JSON for the NVIDIA API key so the gateway can authenticate.
+# Reconcile the legacy OpenClaw auth profile used by direct inference routes.
+# Managed OpenShell routes authenticate at the inference.local proxy, so the
+# sandbox must not retain even an environment-variable reference to the host
+# credential. Direct custom-image routes still need the profile for OpenClaw.
 write_auth_profile() {
+  local provider_key="${NEMOCLAW_INFERENCE_PROVIDER_ID:-${NEMOCLAW_PROVIDER_KEY:-inference}}"
+
+  case "${NEMOCLAW_INFERENCE_BASE_URL:-}" in
+    https://inference.local | https://inference.local/*)
+      # Remove only the exact entries this function historically generated.
+      # Preserve user-managed direct-provider profiles if they share the file.
+      python3 - <<'PYAUTH'
+import json
+import os
+import stat
+import tempfile
+
+path = os.path.expanduser('~/.openclaw/agents/main/agent/auth-profiles.json')
+try:
+    path_stat = os.lstat(path)
+except FileNotFoundError:
+    raise SystemExit(0)
+
+if stat.S_ISLNK(path_stat.st_mode):
+    raise SystemExit('[SECURITY] Refusing auth-profile cleanup through a symlink')
+
+try:
+    flags = os.O_RDONLY | getattr(os, 'O_NOFOLLOW', 0)
+    descriptor = os.open(path, flags)
+    with os.fdopen(descriptor, encoding='utf-8') as profile_file:
+        profiles = json.load(profile_file)
+except (OSError, UnicodeError, json.JSONDecodeError):
+    # Unknown or user-managed state is not ours to replace or delete.
+    raise SystemExit(0)
+
+if not isinstance(profiles, dict):
+    raise SystemExit(0)
+
+def is_legacy_managed_profile(profile_id, profile):
+    if not isinstance(profile, dict):
+        return False
+    provider = profile.get('provider')
+    expected_id = f'{provider}:manual'
+    return profile_id == expected_id and profile == {
+        'type': 'api_key',
+        'provider': provider,
+        'keyRef': {'source': 'env', 'id': 'NVIDIA_INFERENCE_API_KEY'},
+        'profileId': expected_id,
+    }
+
+retained = {
+    profile_id: profile
+    for profile_id, profile in profiles.items()
+    if not is_legacy_managed_profile(profile_id, profile)
+    }
+if retained == profiles:
+    raise SystemExit(0)
+if not retained:
+    os.unlink(path)
+    raise SystemExit(0)
+
+directory = os.path.dirname(path)
+descriptor, temporary_path = tempfile.mkstemp(prefix='.auth-profiles.', dir=directory)
+try:
+    os.fchmod(descriptor, 0o600)
+    with os.fdopen(descriptor, 'w', encoding='utf-8') as profile_file:
+        json.dump(retained, profile_file)
+        profile_file.flush()
+        os.fsync(profile_file.fileno())
+    os.replace(temporary_path, path)
+except BaseException:
+    try:
+        os.close(descriptor)
+    except OSError:
+        pass
+    try:
+        os.unlink(temporary_path)
+    except FileNotFoundError:
+        pass
+    raise
+PYAUTH
+      return
+      ;;
+  esac
+
   if [ -z "${NVIDIA_INFERENCE_API_KEY:-}" ] && [ -n "${NVIDIA_API_KEY:-}" ]; then
     export NVIDIA_INFERENCE_API_KEY="$NVIDIA_API_KEY"
   fi
@@ -2427,7 +2510,6 @@ write_auth_profile() {
   # through v0.0.89 so pre-existing custom images keep routing. Remove this
   # fallback in v0.0.90.
   # See: https://github.com/NVIDIA/NemoClaw/issues/1332
-  local provider_key="${NEMOCLAW_INFERENCE_PROVIDER_ID:-${NEMOCLAW_PROVIDER_KEY:-inference}}"
   python3 - "$provider_key" <<'PYAUTH'
 import json
 import os
