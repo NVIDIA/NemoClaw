@@ -1048,13 +1048,38 @@ export async function activateManagedStartupCorporateCaTrustBeforeIdentityRevali
 
 export async function activateManagedStartupCorporateCaTrustAfterSandboxCreate<T>(input: {
   readonly create: Promise<T>;
-  readonly activate: () => Promise<void>;
+  readonly corporateCaB64: string | null;
+  readonly sandboxName: string;
+  readonly requireVerifiedCreateBoundary: () => VerifiedSandboxCreateBoundary;
+  readonly refreshCorporateCaTrust: (request: {
+    readonly sandboxName: string;
+    readonly sandboxIdentityFingerprint: string;
+    readonly target: { readonly kind: "named"; readonly gatewayName: string };
+  }) => Promise<void>;
+  readonly revalidateSandboxIdentity: (
+    boundary: VerifiedSandboxCreateBoundary,
+    operation: string,
+  ) => void;
+  readonly recordRecovery: () => void;
+  readonly noteActivation?: () => void;
 }): Promise<T> {
   // OpenShell treats a lifecycle stop during its create-readiness transaction
   // as cancellation and removes the pending sandbox. Do not mutate lifecycle
   // state until the create RPC has returned and the sandbox is durable.
   const created = await input.create;
-  await input.activate();
+  if (!input.corporateCaB64) return created;
+  await runAsyncWithPostCreateRecovery(async () => {
+    input.noteActivation?.();
+    const boundary = input.requireVerifiedCreateBoundary();
+    await activateManagedStartupCorporateCaTrustBeforeIdentityRevalidation({
+      corporateCaB64: input.corporateCaB64,
+      sandboxName: input.sandboxName,
+      boundary,
+      refreshCorporateCaTrust: input.refreshCorporateCaTrust,
+      revalidateSandboxIdentity: (operation) =>
+        input.revalidateSandboxIdentity(boundary, operation),
+    });
+  }, input.recordRecovery);
   return created;
 }
 
@@ -3507,25 +3532,17 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
                 runAfterVerifiedCreate,
               ),
           }),
-          activate: async () => {
-            if (!managedStartupRootApplyRequest?.corporateCaB64) return;
-            await runAsyncWithPostCreateRecovery(
-              async () => {
-                console.log("  Activating corporate CA trust in the OpenShell supervisor...");
-                const boundary = requireVerifiedCreateBoundary();
-                await activateManagedStartupCorporateCaTrustBeforeIdentityRevalidation({
-                  corporateCaB64: managedStartupRootApplyRequest.corporateCaB64,
-                  sandboxName,
-                  boundary,
-                  refreshCorporateCaTrust: (request) =>
-                    managedWorkloadOnboard.refreshManagedStartupCorporateCaTrust(request),
-                  revalidateSandboxIdentity: (operation) =>
-                    revalidateVerifiedCreateIdentity(boundary, operation),
-                });
-              },
-              () => recordPostCreateRecovery("onboarding finalization"),
-            );
+          corporateCaB64: managedStartupRootApplyRequest?.corporateCaB64 ?? null,
+          sandboxName,
+          requireVerifiedCreateBoundary,
+          refreshCorporateCaTrust: (request) =>
+            managedWorkloadOnboard.refreshManagedStartupCorporateCaTrust(request),
+          revalidateSandboxIdentity: (boundary, operation) => {
+            revalidateVerifiedCreateIdentity(boundary, operation);
           },
+          recordRecovery: () => recordPostCreateRecovery("onboarding finalization"),
+          noteActivation: () =>
+            console.log("  Activating corporate CA trust in the OpenShell supervisor..."),
         });
         await finalizeCreatedSandboxBeforeHermesCredentialReconciliation(
           async () => {

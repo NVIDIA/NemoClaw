@@ -13,6 +13,7 @@ import type { SandboxEntry } from "../../state/registry";
 import { runSandboxProviderPreDeleteCleanup } from "../sandbox-provider-cleanup";
 import {
   assertApfCreateIntent,
+  activateManagedStartupCorporateCaTrustAfterSandboxCreate,
   completeHermesPortableSandboxRegistration,
   createProviderEffectBoundary,
   finalizeCreatedSandboxBeforeHermesCredentialReconciliation,
@@ -35,6 +36,37 @@ const UNVERIFIED_RECOVERY_CONTEXT = {
   lifecycleGeneration: "generation-1",
   createAttemptNonce: "a".repeat(62),
 } as const;
+describe("managed startup corporate CA onboarding orchestration", () => {
+  it("wires the verified create boundary into the corporate CA refresh", async () => {
+    const events: string[] = [];
+    const boundary = {
+      sandboxName: "alpha",
+      gatewayName: "owned-gateway",
+      gatewayPort: 8080,
+      lifecycleGeneration: "generation-1",
+      lifecycleLiveIdentityFingerprint: "a".repeat(64),
+      route: "none" as const,
+    };
+    const refreshCorporateCaTrust = vi.fn(async () => {
+      events.push("refresh");
+    });
+    await activateManagedStartupCorporateCaTrustAfterSandboxCreate({
+      create: Promise.resolve().then(() => events.push("create")),
+      corporateCaB64: "Y2EtYnVuZGxl",
+      sandboxName: "alpha",
+      requireVerifiedCreateBoundary: () => boundary,
+      refreshCorporateCaTrust,
+      revalidateSandboxIdentity: (verified) => expect(verified).toBe(boundary),
+      recordRecovery: vi.fn(),
+    });
+    expect(refreshCorporateCaTrust).toHaveBeenCalledExactlyOnceWith({
+      sandboxName: "alpha",
+      sandboxIdentityFingerprint: "a".repeat(64),
+      target: { kind: "named", gatewayName: "owned-gateway" },
+    });
+    expect(events).toEqual(["create", "refresh"]);
+  });
+});
 describe("managed startup hold release", () => {
   it("retries a transient exact-container release failure before retained recovery", () => {
     const release = vi
