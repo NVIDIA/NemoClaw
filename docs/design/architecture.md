@@ -11,7 +11,6 @@ The [accepted scope](scope.md) defines the invariants; this page explains the re
 | Component | Responsibility |
 |---|---|
 | CLI | Arguments, prompts, credential acquisition, and output |
-| Authoring library | Presets, draft edits, and review data |
 | SDK | Configuration validation, graph compilation, deployment locking, plan policy, and recovery across stages |
 | OpenTofu | Dependency ordering, concurrent resource reconciliation, and resource state |
 | Docker provider | Docker containers, images, model-cache volumes, and service networks |
@@ -30,9 +29,8 @@ Implementation starts at [Deployment](../../crates/nemoclaw-sdk/src/deployment/m
 
 ## Configuration
 
-The [authoring library](../../crates/nemoclaw-authoring/src/lib.rs) turns onboarding answers and draft edits into YAML without terminal dependencies or deployment operations.
-It retains credential references, not values, and supports a subset of SDK configuration.
-Both authored and directly supplied YAML pass through the SDK's [configuration validation](../configuration-schema.md).
+Desired-state YAML passes through the SDK's [configuration validation](../configuration-schema.md).
+Configuration retains credential references, not values.
 The native [bundle](../build.md#build-a-native-bundle) ships the matching CLI, schema, OpenTofu, and providers; source-derived provider versions prevent stale installations from being reused.
 
 ## Why Managed Apply Has Two Stages

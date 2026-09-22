@@ -1,82 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-use nemoclaw_authoring::{
-    AnswerOverrides, Answers, ApiChoice, AuthoredDocument, Capabilities, HarnessChoice, Session,
-};
-use nemoclaw_sdk::config::{Document, MAX_DOCUMENT_BYTES};
+use nemoclaw_sdk::config::Document;
 use serde_json::{Value, json};
-
-#[test]
-fn default_onboarding_authors_openclaw_with_hosted_nvidia() {
-    let authored = author_onboarding(AnswerOverrides::default());
-    let reparsed = Document::parse(authored.yaml().as_bytes()).unwrap();
-    let desired = normalized(&reparsed);
-    assert!(authored.yaml().len() as u64 <= MAX_DOCUMENT_BYTES);
-    assert_eq!(&reparsed, authored.document());
-    assert_eq!(reparsed.metadata.name, "openclaw-nvidia-hosted");
-    assert_eq!(
-        desired["spec"]["sandboxes"][0]["harness"]["kind"],
-        "openclaw"
-    );
-    assert_eq!(
-        desired["spec"]["sandboxes"][0]["runtime"]["provider"],
-        "docker"
-    );
-    assert_eq!(
-        desired["spec"]["inferenceProviders"][0]["provider"],
-        "openai"
-    );
-    assert_eq!(
-        desired["spec"]["inferenceProviders"][0]["api"],
-        "openai-completions"
-    );
-    assert_eq!(
-        desired["spec"]["inferenceProviders"][0]["endpoint"],
-        "https://integrate.api.nvidia.com/v1"
-    );
-    assert_eq!(reparsed.credential_names(), ["NVIDIA_INFERENCE_API_KEY"]);
-}
-
-#[test]
-fn onboarding_authors_openclaw_with_the_responses_api() {
-    let authored = author_onboarding(AnswerOverrides {
-        deployment_name: Some("openclaw-responses".into()),
-        api: Some(ApiChoice::OpenAiResponses),
-        credential_env: Some("NVIDIA_RESPONSES_API_KEY".into()),
-        ..AnswerOverrides::default()
-    });
-    let document = Document::parse(authored.yaml().as_bytes()).unwrap();
-    let desired = normalized(&document);
-    assert_eq!(document.metadata.name, "openclaw-responses");
-    assert_eq!(
-        desired["spec"]["sandboxes"][0]["harness"]["kind"],
-        "openclaw"
-    );
-    assert_eq!(
-        desired["spec"]["inferenceProviders"][0]["api"],
-        "openai-responses"
-    );
-    assert_eq!(document.credential_names(), ["NVIDIA_RESPONSES_API_KEY"]);
-}
-
-#[test]
-fn onboarding_authors_hermes_with_hosted_nvidia() {
-    let authored = author_onboarding(AnswerOverrides {
-        deployment_name: Some("hermes-nvidia-hosted".into()),
-        harness: Some(HarnessChoice::Hermes),
-        ..AnswerOverrides::default()
-    });
-    let document = Document::parse(authored.yaml().as_bytes()).unwrap();
-    let desired = normalized(&document);
-    assert_eq!(document.metadata.name, "hermes-nvidia-hosted");
-    assert_eq!(desired["spec"]["sandboxes"][0]["harness"]["kind"], "hermes");
-    assert_eq!(
-        desired["spec"]["inferenceProviders"][0]["api"],
-        "openai-completions"
-    );
-    assert_eq!(document.credential_names(), ["NVIDIA_INFERENCE_API_KEY"]);
-}
 
 #[test]
 fn anthropic_with_claude_should_work() {
@@ -329,7 +255,7 @@ fn brave_web_search_should_work() {
 
 #[test]
 fn invalid_sandbox_names_are_rejected() {
-    let desired = DesiredState::from_onboarding().sandbox_name("Not A DNS Label");
+    let desired = DesiredState::openclaw().sandbox_name("Not A DNS Label");
     let result = Document::parse(desired.yaml().as_bytes());
     assert!(
         result.is_err(),
@@ -339,21 +265,21 @@ fn invalid_sandbox_names_are_rejected() {
 
 #[test]
 fn image_input_modalities_are_not_supported_yet() {
-    let desired = DesiredState::from_onboarding().inference_inputs(&["text", "image"]);
+    let desired = DesiredState::openclaw().inference_inputs(&["text", "image"]);
     let result = Document::parse(desired.yaml().as_bytes());
     assert!(
         result.is_err(),
-        "onboarding should eventually preserve model input modalities"
+        "configuration must reject unsupported model input modalities"
     );
 }
 
 #[test]
 fn gemini_is_not_supported_yet() {
-    let desired = DesiredState::from_onboarding().provider_kind("google", "gemini-generate");
+    let desired = DesiredState::openclaw().provider_kind("google", "gemini-generate");
     let result = Document::parse(desired.yaml().as_bytes());
     assert!(
         result.is_err(),
-        "onboarding should eventually support Gemini providers"
+        "configuration must reject unsupported Gemini providers"
     );
 }
 
@@ -364,77 +290,77 @@ fn llama_cpp_is_not_supported_yet() {
     let result = Document::parse(desired.yaml().as_bytes());
     assert!(
         result.is_err(),
-        "onboarding should eventually support llama.cpp services"
+        "configuration must reject unsupported llama.cpp services"
     );
 }
 
 #[test]
 fn model_routing_is_not_supported_yet() {
-    let desired = DesiredState::from_onboarding().model_router();
+    let desired = DesiredState::openclaw().model_router();
     let result = Document::parse(desired.yaml().as_bytes());
     assert!(
         result.is_err(),
-        "onboarding should eventually preserve model-routing intent"
+        "configuration must reject unsupported model-routing intent"
     );
 }
 
 #[test]
 fn sandbox_resource_sizing_is_not_supported_yet() {
-    let desired = DesiredState::from_onboarding().sandbox_resources();
+    let desired = DesiredState::openclaw().sandbox_resources();
     let result = Document::parse(desired.yaml().as_bytes());
     assert!(
         result.is_err(),
-        "onboarding should eventually preserve sandbox resource sizing"
+        "configuration must reject unsupported sandbox resource sizing"
     );
 }
 
 #[test]
 fn serving_profile_provenance_is_not_supported_yet() {
-    let desired = DesiredState::from_onboarding().serving_profile();
+    let desired = DesiredState::openclaw().serving_profile();
     let result = Document::parse(desired.yaml().as_bytes());
     assert!(
         result.is_err(),
-        "onboarding should eventually preserve serving-profile provenance"
+        "configuration must reject unsupported serving-profile provenance"
     );
 }
 
 #[test]
 fn sandbox_gpu_selection_is_not_supported_yet() {
-    let desired = DesiredState::from_onboarding().sandbox_gpu();
+    let desired = DesiredState::openclaw().sandbox_gpu();
     let result = Document::parse(desired.yaml().as_bytes());
     assert!(
         result.is_err(),
-        "onboarding should eventually preserve sandbox GPU selection"
+        "configuration must reject unsupported sandbox GPU selection"
     );
 }
 
 #[test]
 fn host_mounts_are_not_supported_yet() {
-    let desired = DesiredState::from_onboarding().host_mount();
+    let desired = DesiredState::openclaw().host_mount();
     let result = Document::parse(desired.yaml().as_bytes());
     assert!(
         result.is_err(),
-        "onboarding should eventually preserve read-only host mounts"
+        "configuration must reject unsupported read-only host mounts"
     );
 }
 
 #[test]
 fn hermes_provider_tools_are_not_supported_yet() {
-    let desired = DesiredState::from_onboarding().hermes_provider_tools();
+    let desired = DesiredState::openclaw().hermes_provider_tools();
     let result = Document::parse(desired.yaml().as_bytes());
     assert!(
         result.is_err(),
-        "onboarding should eventually preserve Hermes provider tools"
+        "configuration must reject unsupported Hermes provider tools"
     );
 }
 
 #[test]
 fn trusted_private_hosts_are_not_supported_yet() {
-    let desired = DesiredState::from_onboarding().trusted_private_hosts();
+    let desired = DesiredState::openclaw().trusted_private_hosts();
     let result = Document::parse(desired.yaml().as_bytes());
     assert!(
         result.is_err(),
-        "onboarding should eventually preserve trusted private hosts"
+        "configuration must reject unsupported trusted private hosts"
     );
 }
 
@@ -458,24 +384,12 @@ fn tavily_search_preserves_the_selected_provider_and_credential_reference() {
 
 #[test]
 fn messaging_channels_are_not_supported_yet() {
-    let desired = DesiredState::from_onboarding().messaging_channel();
+    let desired = DesiredState::openclaw().messaging_channel();
     let result = Document::parse(desired.yaml().as_bytes());
     assert!(
         result.is_err(),
-        "onboarding should eventually preserve messaging channels"
+        "configuration must reject unsupported messaging channels"
     );
-}
-
-const UID: &str = "12345678-1234-4234-9234-123456789abc";
-
-fn author_onboarding(inputs: AnswerOverrides) -> AuthoredDocument {
-    Session::with_uid(UID)
-        .unwrap()
-        .project(
-            &Capabilities::available(),
-            &Answers::onboarding_defaults().with_overrides(inputs),
-        )
-        .unwrap()
 }
 
 fn normalized(document: &Document) -> Value {
@@ -487,12 +401,8 @@ struct DesiredState {
 }
 
 impl DesiredState {
-    fn from_onboarding() -> Self {
-        Self::from_yaml(
-            author_onboarding(AnswerOverrides::default())
-                .yaml()
-                .as_bytes(),
-        )
+    fn openclaw() -> Self {
+        Self::from_yaml(include_bytes!("../../../examples/fabric-openclaw.yaml"))
     }
 
     fn from_yaml(yaml: &[u8]) -> Self {
