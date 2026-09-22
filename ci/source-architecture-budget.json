@@ -56,7 +56,7 @@
       "src/lib/onboard.ts": 192,
       "src/lib/onboard/sandbox-gpu-create-run-attempt.ts": 20,
       "src/lib/onboard/machine/handlers/sandbox.ts": 21,
-      "src/lib/policy/index.ts": 22,
+      "src/lib/policy/index.ts": 23,
       "src/lib/sandbox/config.ts": 19,
       "src/lib/state/sandbox.ts": 21,
       "scripts/checks/run-managed-image-openshell-e2e.ts": 18

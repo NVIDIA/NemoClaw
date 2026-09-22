@@ -768,6 +768,10 @@ const { isAnyPromptActive } = require(${JSON.stringify(path.join(import.meta.dir
 process.stdin.isTTY = true;
 process.stderr.isTTY = true;
 process.stdin.ref = () => process.stdin;
+// The fake TTY flag above would otherwise make the pending-input window
+// (#12169) read this process's real, already-closed stdin and report
+// cancellation before the raw-mode failure under test can happen.
+process.stdin.resume = () => process.stdin;
 process.stdin.pause = () => process.stdin;
 process.stdin.unref = () => process.stdin;
 process.stdin.setRawMode = () => { throw new Error('raw mode unavailable'); };
@@ -1074,12 +1078,15 @@ process.stdin.unref = () => { counts.unref += 1; return process.stdin; };
 process.stdin.setRawMode = (value) => { counts.raw.push(value); return process.stdin; };
 process.stdin.isTTY = true;
 process.stderr.isTTY = true;
+// The fake TTY flag makes each prompt open its pending-input window
+// (#12169) first, so answer once the window has handed stdin to the reader.
+const answerAfterPendingWindow = (text) => setTimeout(() => process.stdin.emit('data', text), 40);
 (async () => {
   const normalPrompt = prompt('normal: ');
-  setImmediate(() => process.stdin.emit('data', 'alpha\\n'));
+  answerAfterPendingWindow('alpha\\n');
   const normal = await normalPrompt;
   const secretPrompt = prompt('secret: ', { secret: true });
-  setImmediate(() => process.stdin.emit('data', 'bravo\\n'));
+  answerAfterPendingWindow('bravo\\n');
   const secret = await secretPrompt;
   console.log(JSON.stringify({ normal, secret, counts }));
 })().catch((err) => { console.error(err && err.stack ? err.stack : String(err)); process.exit(1); });

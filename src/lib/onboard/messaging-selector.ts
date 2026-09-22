@@ -3,6 +3,7 @@
 
 import readline from "node:readline";
 
+import { pendingStdinEofError, takePendingStdinEof } from "../core/pending-stdin-eof";
 import { markPromptActive } from "../core/prompt-activity";
 
 export interface MessagingChannelSelectorEntry {
@@ -152,6 +153,21 @@ export function readMessagingChannelSelection<T extends MessagingChannelSelector
   enabled: Set<string>,
   showList: () => void,
 ): Promise<void> {
+  // This menu switches the TTY to raw mode too, so a Ctrl-D typed before it
+  // opened would be dropped and the menu would never settle (#12169).
+  const pending = takePendingStdinEof();
+  if (pending === false) return readChannelKeys(availableChannels, enabled, showList);
+  return pending.then((ended) => {
+    if (ended) throw pendingStdinEofError();
+    return readChannelKeys(availableChannels, enabled, showList);
+  });
+}
+
+function readChannelKeys<T extends MessagingChannelSelectorEntry>(
+  availableChannels: readonly T[],
+  enabled: Set<string>,
+  showList: () => void,
+): Promise<void> {
   return new Promise<void>((resolve, reject) => {
     const input = process.stdin as MessagingSelectorInput;
     const output = process.stderr;
@@ -212,7 +228,7 @@ export function readMessagingChannelSelection<T extends MessagingChannelSelector
     }
 
     function inputClosedHandler(): void {
-      fail(Object.assign(new Error("Prompt closed before input"), { code: "EOF" }));
+      fail(pendingStdinEofError());
     }
 
     function onData(chunk: Buffer | string): void {
@@ -274,11 +290,21 @@ function splitIncompleteMessagingSelectorInput(text: string): {
 }
 
 function promptMessagingSelectorLine(question: string): Promise<string> {
-  return new Promise((resolve, reject) => {
-    if (typeof process.stdin.ref === "function") {
-      process.stdin.ref();
-    }
+  if (typeof process.stdin.ref === "function") {
+    process.stdin.ref();
+  }
+  // Cancellation typed between questions would be lost to readline's
+  // raw-mode switch and the prompt would never settle (#12169).
+  const pending = takePendingStdinEof();
+  if (pending === false) return readMessagingSelectorLine(question);
+  return pending.then((ended) => {
+    if (ended) throw pendingStdinEofError();
+    return readMessagingSelectorLine(question);
+  });
+}
 
+function readMessagingSelectorLine(question: string): Promise<string> {
+  return new Promise((resolve, reject) => {
     // Hold background heartbeat output while this prompt owns the terminal;
     // released in cleanup() on every settle path. (#6651)
     const rl = readline.createInterface({ input: process.stdin, output: process.stderr });
@@ -317,7 +343,7 @@ function promptMessagingSelectorLine(question: string): Promise<string> {
       });
       rl.on("close", () => {
         if (finished) return;
-        rejectPrompt(Object.assign(new Error("Prompt closed before input"), { code: "EOF" }));
+        rejectPrompt(pendingStdinEofError());
       });
       rl.question(question, resolvePrompt);
     } catch (error) {
