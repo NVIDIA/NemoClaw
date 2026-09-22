@@ -22,6 +22,8 @@ A legacy image stops with migration guidance before it changes a live provider, 
 </AgentOnly>
 <AgentOnly variant="hermes">
 Hermes stores MCP servers in its native `config.yaml`. Registration and inspection preserve the stable credential handle from the readiness check in the OpenShell resolver placeholder without comparing it with host-side desired state.
+Before an MCP add or restart mutation, NemoClaw requires the Hermes helper to report reconcile-finality capability version 1.
+An add or restart with an older helper stops with rebuild guidance and leaves the provider, policy, attachment, and native configuration unchanged.
 </AgentOnly>
 <AgentOnly variant="openclaw">
 OpenClaw stores MCP servers in `openclaw.json` under `mcp.servers`.
@@ -30,7 +32,17 @@ To remove an entry instead, `$$nemoclaw my-sandbox mcp remove <server>` supports
 Refer to [Remove a Server](manage-mcp-servers#remove-a-server).
 </AgentOnly>
 
-An interrupted add is retried from the current agent and OpenShell sources. A deterministic provider name lets the retry recognize a partially created provider without a host-side transaction marker. The retry resumes only when the native entry, generated policy, provider identity and credential key, and sandbox attachment form an exact prefix of the requested add; conflicting or ambiguous resources remain unchanged and stop the command.
+An interrupted add that does not report an unknown outcome is retried from the current agent and OpenShell sources.
+A deterministic provider name lets the retry recognize a partially created provider without a host-side transaction marker.
+The retry resumes only when the native entry, generated policy, provider identity and credential key, and sandbox attachment form an exact prefix of the requested add; conflicting or ambiguous resources remain unchanged and stop the command.
+
+<AgentOnly variant="hermes">
+If Hermes loses its OpenShell exec relay during the managed reload, NemoClaw first proves whether the transaction committed.
+It returns success for proven committed state and follows normal rollback for proven absence.
+If neither state can be proven, NemoClaw reports an unknown outcome without rollback or another mutation.
+Do not retry, force-remove, or remove and re-add the server while the outcome is unknown.
+Follow [Hermes Add Outcome Is Unknown](../../reference/troubleshoot-mcp-servers#hermes-add-outcome-is-unknown).
+</AgentOnly>
 
 ## Add the Server
 

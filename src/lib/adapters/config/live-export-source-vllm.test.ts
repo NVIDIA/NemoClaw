@@ -185,6 +185,12 @@ describe("managed vLLM export pipeline", () => {
               diagnostic:
                 "V1alpha1 export currently supports hosted inference; managed vLLM and Ollama compatibility are deferred.",
             },
+            {
+              field: "spec.sandboxes[].agent",
+              category: "unsupported",
+              diagnostic:
+                "V1alpha1 export does not support an OpenClaw sandbox with secondary agents.",
+            },
           ],
         },
       });
