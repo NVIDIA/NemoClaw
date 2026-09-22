@@ -162,6 +162,7 @@ export function finalizeOrdinaryCreateRequest(input: {
   readonly workingDirectory?: string;
   readonly compatibilityPolicyPath: string | null;
   readonly compatibility: boolean;
+  readonly rebuildPolicySourcePath: string | null | undefined;
 }) {
   if (!input.plan) {
     throw new Error("Ordinary sandbox creation is missing its typed create request.");
@@ -172,7 +173,13 @@ export function finalizeOrdinaryCreateRequest(input: {
     startupCommand: input.startupCommand,
     environment: input.environment,
     ...(input.workingDirectory ? { workingDirectory: input.workingDirectory } : {}),
-    ...(input.compatibility ? { compatibilityPolicyPath: input.compatibilityPolicyPath } : {}),
+    ...(input.compatibility
+      ? {
+          compatibilityPolicyPath: input.rebuildPolicySourcePath
+            ? (input.plan.policyPath ?? null)
+            : input.compatibilityPolicyPath,
+        }
+      : {}),
   });
 }
 
@@ -3555,6 +3562,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
             environment: createFlowEnvironment,
             compatibilityPolicyPath,
             compatibility: initialGpuRoute === "compatibility",
+            rebuildPolicySourcePath: createIntent?.rebuildPolicySourcePath,
           });
       const created = await runSandboxCreateWithProviderEffects({
         resumingVerifiedCreate: Boolean(resumeVerifiedCreateInput),

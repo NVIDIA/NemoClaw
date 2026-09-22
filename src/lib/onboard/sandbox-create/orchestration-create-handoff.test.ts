@@ -25,6 +25,7 @@ describe("ordinary sandbox create orchestration handoff", () => {
       workingDirectory: "/tmp/context",
       compatibilityPolicyPath: null,
       compatibility: false,
+      rebuildPolicySourcePath: null,
     });
     await lifecycle.createSandbox(request, { initialPhase: "create" });
 
@@ -45,5 +46,27 @@ describe("ordinary sandbox create orchestration handoff", () => {
       cwd: "/tmp/context",
       initialPhase: "create",
     });
+  });
+
+  it("preserves the selected rebuild policy when compatibility routing removes GPU options", () => {
+    const request = finalizeOrdinaryCreateRequest({
+      plan: {
+        sandboxName: "alpha",
+        source: { reference: "/tmp/context/Dockerfile" },
+        policyPath: "/tmp/live-policy.yaml",
+        driverConfigJson: JSON.stringify({ docker: { cdi_devices: ["nvidia.com/gpu=all"] } }),
+        gpu: {},
+      },
+      gatewayName: "nemoclaw-8091",
+      startupCommand: ["nemoclaw-start"],
+      environment: { PATH: "/usr/bin" },
+      compatibilityPolicyPath: "/tmp/generated-compatibility-policy.yaml",
+      compatibility: true,
+      rebuildPolicySourcePath: "/tmp/captured-live-policy.yaml",
+    });
+
+    expect(request.policyPath).toBe("/tmp/live-policy.yaml");
+    expect(request.gpu).toBeUndefined();
+    expect(request.driverConfigJson).toBeUndefined();
   });
 });
