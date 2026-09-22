@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -13,7 +14,9 @@ const mocks = vi.hoisted(() => ({
   exec: vi.fn(),
   execShell: vi.fn(),
   asExportedConfig: vi.fn(),
+  getBuildIdentity: vi.fn(),
   writeJson: vi.fn(),
+  writeText: vi.fn(),
 }));
 
 vi.mock("../../../src/lib/state/registry/persistence.ts", () => ({
@@ -30,6 +33,10 @@ vi.mock("../../support/config-export-document.ts", () => ({
   asExportedConfig: mocks.asExportedConfig,
 }));
 
+vi.mock("../../../src/lib/core/version.ts", () => ({
+  getBuildIdentity: mocks.getBuildIdentity,
+}));
+
 import {
   type HermesConfigExportLiveEvidence,
   passesHermesConfigExportLiveEvidence,
@@ -37,6 +44,7 @@ import {
 } from "../fixtures/hermes-config-export-live.ts";
 
 const IMAGE_REF = "nvcr.io/nvidia/nemoclaw@sha256:" + "a".repeat(64);
+const PRODUCER_REVISION = "b".repeat(40);
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -53,6 +61,10 @@ beforeEach(() => {
   mocks.readSandboxPolicy.mockReturnValue({
     ok: true,
     value: { appliedRevision: 1, document: "version: 1" },
+  });
+  mocks.getBuildIdentity.mockReturnValue({
+    nemoclawVersion: "0.1.0",
+    sourceRevision: PRODUCER_REVISION,
   });
   mocks.asExportedConfig.mockReturnValue({
     spec: {
@@ -92,7 +104,18 @@ function passingEvidence(): Extract<HermesConfigExportLiveEvidence, { outcome: "
     inferenceEndpointMatches: true,
     launchersSucceeded: true,
     policyMatches: true,
+    producer: { sourceRevision: PRODUCER_REVISION },
     sandboxNameMatches: true,
+    yaml: {
+      nemoclaw: {
+        artifact: "hermes-config-export-nemoclaw.yaml",
+        sha256: "c".repeat(64),
+      },
+      nemohermes: {
+        artifact: "hermes-config-export-nemohermes.yaml",
+        sha256: "d".repeat(64),
+      },
+    },
   };
 }
 
@@ -104,7 +127,7 @@ async function runEnabledFixture(
   let dispose: (() => void) | undefined;
   try {
     return await verifyHermesConfigExportLive({
-      artifacts: { writeJson: mocks.writeJson },
+      artifacts: { writeJson: mocks.writeJson, writeText: mocks.writeText },
       cleanup: {
         trackDisposable: (_description: string, cleanup: () => void) => {
           dispose = cleanup;
@@ -163,6 +186,28 @@ describe("Hermes config export live evidence", () => {
     );
   });
 
+  it("rejects evidence without an exact producer revision", () => {
+    expect(
+      passesHermesConfigExportLiveEvidence({
+        ...passingEvidence(),
+        producer: { sourceRevision: "main" },
+      }),
+    ).toBe(false);
+  });
+
+  it("rejects evidence without both YAML digests", () => {
+    const evidence = passingEvidence();
+    expect(
+      passesHermesConfigExportLiveEvidence({
+        ...evidence,
+        yaml: {
+          ...evidence.yaml,
+          nemohermes: { ...evidence.yaml.nemohermes, sha256: "" },
+        },
+      }),
+    ).toBe(false);
+  });
+
   it("accepts the exact credential-bearing HTTP refusal from both aliases", () => {
     expect(
       passesHermesConfigExportLiveEvidence({
@@ -188,6 +233,48 @@ describe("Hermes config export live evidence", () => {
     );
     expect(mocks.command).not.toHaveBeenCalled();
     expect(mocks.writeJson).not.toHaveBeenCalled();
+    expect(mocks.writeText).not.toHaveBeenCalled();
+  });
+
+  it("retains both secret-free YAML exports with digests and producer revision", async () => {
+    const nemoclawRaw = "apiVersion: nemoclaw.nvidia.com/v1alpha1\nkind: NemoClawConfig\n";
+    const nemohermesRaw = `${nemoclawRaw}metadata:\n  name: hermes\n`;
+    const writeExport = (raw: string) => async (_command: string, args: string[]) => {
+      fs.writeFileSync(args.at(args.indexOf("--output") + 1)!, raw);
+      return { exitCode: 0, stderr: "", stdout: "" };
+    };
+    mocks.command
+      .mockImplementationOnce(writeExport(nemoclawRaw))
+      .mockImplementationOnce(writeExport(nemohermesRaw))
+      .mockResolvedValue({ exitCode: 1, stderr: "sandbox identity drifted", stdout: "" });
+
+    await expect(runEnabledFixture()).resolves.toEqual({ checked: true, passed: true });
+    expect(mocks.writeText).toHaveBeenNthCalledWith(
+      1,
+      "hermes-config-export-nemoclaw.yaml",
+      nemoclawRaw,
+    );
+    expect(mocks.writeText).toHaveBeenNthCalledWith(
+      2,
+      "hermes-config-export-nemohermes.yaml",
+      nemohermesRaw,
+    );
+    expect(mocks.writeJson).toHaveBeenCalledWith(
+      "hermes-config-export-live-evidence.json",
+      expect.objectContaining({
+        producer: { sourceRevision: PRODUCER_REVISION },
+        yaml: {
+          nemoclaw: {
+            artifact: "hermes-config-export-nemoclaw.yaml",
+            sha256: createHash("sha256").update(nemoclawRaw).digest("hex"),
+          },
+          nemohermes: {
+            artifact: "hermes-config-export-nemohermes.yaml",
+            sha256: createHash("sha256").update(nemohermesRaw).digest("hex"),
+          },
+        },
+      }),
+    );
   });
 
   it.each([

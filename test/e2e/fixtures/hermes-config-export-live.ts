@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -10,6 +10,7 @@ import { isDeepStrictEqual } from "node:util";
 import YAML from "yaml";
 
 import { HERMES_INTERFACE_DEFAULTS } from "../../../src/lib/config/model.ts";
+import { getBuildIdentity } from "../../../src/lib/core/version.ts";
 import { fingerprintOpenShellSandboxId } from "../../../src/lib/adapters/openshell/sandbox-identity.ts";
 import {
   namedOpenShellGateway,
@@ -23,6 +24,7 @@ import { trustedSandboxShellScript, type SandboxClient } from "./clients/sandbox
 import type { CleanupRegistry } from "./cleanup.ts";
 import { CLI_ENTRYPOINT, REPO_ROOT } from "./paths.ts";
 import { requireEffectivePolicyDocument } from "../support/config-export-policy-evidence.ts";
+import { writeSecretFreeConfigExportArtifact } from "../support/config-export-secret-scan.ts";
 
 interface HermesConfigExportLiveInput {
   readonly artifacts: ArtifactSink;
@@ -56,7 +58,20 @@ interface HermesConfigExportPublishedEvidence {
   readonly inferenceEndpointMatches: boolean;
   readonly launchersSucceeded: boolean;
   readonly policyMatches: boolean;
+  readonly producer: {
+    readonly sourceRevision: string;
+  };
   readonly sandboxNameMatches: boolean;
+  readonly yaml: {
+    readonly nemoclaw: {
+      readonly artifact: string;
+      readonly sha256: string;
+    };
+    readonly nemohermes: {
+      readonly artifact: string;
+      readonly sha256: string;
+    };
+  };
 }
 
 interface HermesConfigExportExpectedRefusalEvidence {
@@ -76,6 +91,10 @@ export type HermesConfigExportLiveEvidence =
 const CREDENTIAL_HTTP_REFUSAL =
   "V1alpha1 requires HTTPS when an inference provider declares a credential.";
 const CREDENTIAL_HTTP_REFUSAL_DIAGNOSTIC = `Config export failed (unsupported).\n${CREDENTIAL_HTTP_REFUSAL}`;
+const NEMOCLAW_EXPORT_ARTIFACT = "hermes-config-export-nemoclaw.yaml";
+const NEMOHERMES_EXPORT_ARTIFACT = "hermes-config-export-nemohermes.yaml";
+const REVISION_PATTERN = /^[0-9a-f]{40,64}$/u;
+const SHA256_PATTERN = /^[0-9a-f]{64}$/u;
 
 function normalizeCommandDiagnostics(stdout: string, stderr: string): string {
   return [stdout, stderr]
@@ -110,7 +129,12 @@ export function passesHermesConfigExportLiveEvidence(
     evidence.inferenceEndpointMatches &&
     evidence.launchersSucceeded &&
     evidence.policyMatches &&
-    evidence.sandboxNameMatches
+    REVISION_PATTERN.test(evidence.producer.sourceRevision) &&
+    evidence.sandboxNameMatches &&
+    evidence.yaml.nemoclaw.artifact === NEMOCLAW_EXPORT_ARTIFACT &&
+    SHA256_PATTERN.test(evidence.yaml.nemoclaw.sha256) &&
+    evidence.yaml.nemohermes.artifact === NEMOHERMES_EXPORT_ARTIFACT &&
+    SHA256_PATTERN.test(evidence.yaml.nemohermes.sha256)
   );
 }
 
@@ -212,6 +236,7 @@ export async function verifyHermesConfigExportLive(
   const expectedPolicy = YAML.parse(requireEffectivePolicyDocument(policy)) as {
     network_policies?: unknown;
   } | null;
+  const producerRevision = getBuildIdentity({ rootDir: REPO_ROOT }).sourceRevision;
   const nemoclawPath = path.join(exportDirectory, "nemoclaw.yaml");
   const nemohermesPath = path.join(exportDirectory, "nemohermes.yaml");
   const commonOptions = {
@@ -289,7 +314,12 @@ export async function verifyHermesConfigExportLive(
       inferenceEndpointMatches: false,
       launchersSucceeded,
       policyMatches: false,
+      producer: { sourceRevision: producerRevision },
       sandboxNameMatches: false,
+      yaml: {
+        nemoclaw: { artifact: NEMOCLAW_EXPORT_ARTIFACT, sha256: "" },
+        nemohermes: { artifact: NEMOHERMES_EXPORT_ARTIFACT, sha256: "" },
+      },
     };
     await input.artifacts.writeJson("hermes-config-export-live-evidence.json", evidence);
     return { checked: true, passed: false };
@@ -297,6 +327,18 @@ export async function verifyHermesConfigExportLive(
 
   const nemoclawDocument = asExportedConfig(YAML.parse(nemoclawRaw));
   const nemohermesDocument = asExportedConfig(YAML.parse(nemohermesRaw));
+  await writeSecretFreeConfigExportArtifact(
+    input.artifacts,
+    NEMOCLAW_EXPORT_ARTIFACT,
+    nemoclawRaw,
+    input.redactionValues,
+  );
+  await writeSecretFreeConfigExportArtifact(
+    input.artifacts,
+    NEMOHERMES_EXPORT_ARTIFACT,
+    nemohermesRaw,
+    input.redactionValues,
+  );
   const sandbox = nemoclawDocument.spec.sandboxes[0]!;
   const hostedProvider = nemoclawDocument.spec.inferenceProviders[0];
 
@@ -368,7 +410,18 @@ export async function verifyHermesConfigExportLive(
       (sandbox.network.policy.explicit as { network_policies?: unknown } | null)?.network_policies,
       expectedPolicy?.network_policies,
     ),
+    producer: { sourceRevision: producerRevision },
     sandboxNameMatches: sandbox.name === input.sandboxName,
+    yaml: {
+      nemoclaw: {
+        artifact: NEMOCLAW_EXPORT_ARTIFACT,
+        sha256: createHash("sha256").update(nemoclawRaw).digest("hex"),
+      },
+      nemohermes: {
+        artifact: NEMOHERMES_EXPORT_ARTIFACT,
+        sha256: createHash("sha256").update(nemohermesRaw).digest("hex"),
+      },
+    },
   };
   await input.artifacts.writeJson("hermes-config-export-live-evidence.json", evidence);
   return { checked: true, passed: passesHermesConfigExportLiveEvidence(evidence) };
