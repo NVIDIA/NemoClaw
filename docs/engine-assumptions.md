@@ -4,7 +4,7 @@
 # Execution-Engine Assumptions
 
 This reference describes the checked-in engine boundaries.
-The [execution-target findings](design/execution-targets.md) retain the validation results that established them.
+The [execution-target design](design/execution-targets.md) explains their rationale and links to validation records.
 Use [the SSH service guide](remote-service.md) for deployment instructions.
 
 “Client host” means the host running the SDK, CLI, provider, or collector.

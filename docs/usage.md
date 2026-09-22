@@ -3,51 +3,53 @@
 
 # Use Desired State
 
-Build a [verified native bundle](build.md) and put its `bin` directory on `PATH`.
-Choose a checked-in [example](../examples/), set a fresh deployment UUID and available endpoints, and retain the same state directory for every operation.
-Each document contains one to 32 named sandboxes, each with exactly one harness configuration.
-Use the [multiple-sandbox example](../examples/multiple-sandboxes.yaml) to share inference across different harnesses in one state directory.
-[OpenClaw and Pi agents](agents.md) can select multiple model choices.
-Each sandbox declares one `agent` and hosts one Fabric runtime; each Deep Agents instance selects one model.
-Use separate sandboxes for additional agents, with shared inference definitions when they use the same providers.
-Declare managed packages under `spec.services`, then select their connections with `inferenceProviders[].serviceRef`.
-Every declared service is installed and checked during apply, even without an inference consumer.
-Multiple Ollama and vLLM services can run independently.
-See [managed inference dependencies](inference.md#combine-local-and-hosted-providers) for placement and capacity constraints.
+Use a [verified native bundle](build.md) with its `bin` directory on `PATH`.
+For a first deployment, follow [get started](get-started.md) or [interactive onboarding](reference/cli.md#commands).
+When copying an [example](../examples/), assign a fresh UUID and replace endpoints and image pins with values for your resources.
+Keep the matching bundle and the same state directory throughout the deployment.
 
-Examples contain deployment identities and local image pins; replace them before provisioning your own deployment.
-Apply creates or changes runtime resources and can download container images and model data.
-It checks configuration and readiness without sending generation requests.
-If you omit `--state-dir`, the CLI uses `.nemoclaw` in the working directory.
+From the directory containing your YAML, preview the changes.
+Plan observes resources without creating containers, pulling images, downloading models, preparing data, or invoking inference.
+A fresh managed gateway defers the OpenShell graph until apply makes it reachable.
 
 ```sh
 nemoclaw plan --state-dir .local/deployment deployment.yaml
-nemoclaw apply --state-dir .local/deployment deployment.yaml
-nemoclaw export --state-dir .local/deployment --output exported-new.yaml
-nemoclaw apply --state-dir .local/deployment exported-new.yaml
 ```
 
-Plan and apply require a YAML path.
-Pass `-` explicitly to read standard input, for example `cat deployment.yaml | nemoclaw apply -`.
-Export writes YAML to standard output, or to a file with `--output exported.yaml`.
-`--bundle DIR` selects an explicit private bundle; otherwise the CLI uses the parent of its executable's `bin` directory.
+Review the preview before apply.
+Apply computes its own checked plan and can create or change resources and download images or models.
+It checks configuration and readiness without invoking inference.
 
-Keep the selected bundle unchanged while an operation runs.
-Export and destroy accept no YAML.
-Errors go to stderr with a nonzero exit code.
+```sh
+nemoclaw apply --state-dir .local/deployment deployment.yaml
+```
 
-Plan prints a text preview; use `nemoclaw plan -o json deployment.yaml` for scripts.
-Apply and destroy emit JSON; export emits YAML.
-See [CLI output](reference/cli.md#output-and-failure) for formats and exit codes.
+Verify model and agent responses separately using [inference verification](inference.md#verify-the-result).
+On failure, retain YAML and state and use [recovery](#recover-an-interrupted-operation).
 
-Plan observes resources without creating containers, pulling images, downloading models, preparing data, or invoking inference.
-A fresh managed gateway defers the OpenShell graph until apply makes it reachable.
-Apply always creates its own checked plan; a previous public plan is not an approval artifact.
+After apply succeeds, export the observed configuration:
 
-Verify inference and a native agent reply separately; see [verification levels](inference.md#verify-the-result).
+```sh
+nemoclaw export --state-dir .local/deployment --output exported-new.yaml
+```
 
-For model-specific preparation supplied by a pinned image, see [inline recipes](recipes.md).
-Ordinary vLLM models select `spec.services.<name>.hardware` instead of a recipe.
+Check the exit status before using the export, then follow [unchanged reapply](#verify-an-unchanged-reapply).
+Export is not a backup of agent files or conversations.
+
+Without `--state-dir`, state defaults to `.nemoclaw` in the working directory.
+Plan and apply require a YAML path or explicit `-` for stdin; export and destroy accept no YAML.
+Plan prints text by default; scripts should select `-o json`.
+See [CLI options and output](reference/cli.md) for bundle selection, formats, and exit codes.
+
+## Configure Sandboxes and Inference
+
+A document contains one to 32 named sandboxes, each with one harness and one agent.
+Use the [multiple-sandbox example](../examples/multiple-sandboxes.yaml) to share inference across different harnesses.
+[OpenClaw and Pi](agents.md) can select multiple models; each Deep Agents instance selects one.
+
+Declare managed services under `spec.services` and select their connections with `inferenceProviders[].serviceRef`.
+Every declared service is installed and checked, even without an inference consumer.
+See [service constraints](inference.md#combine-local-and-hosted-providers) for multiple Ollama/vLLM services and [models](models.md) for hardware contracts and optional [recipes](recipes.md).
 
 ## Use a Managed Podman Gateway
 
@@ -74,46 +76,37 @@ Destroy retains that network and gateway storage.
 
 ## Fabric Health During Apply
 
-Apply requests health from the existing hosted Fabric runtime after configuration and infrastructure readiness checks, including on unchanged applies.
-It does not start a second runtime, invoke the agent, send generation requests, repair health failures, or replay work.
+Apply requests health from each existing Fabric runtime after configuration and infrastructure readiness checks, including on unchanged applies.
+It does not invoke agents, send generation requests, repair failures, or replay work.
 Plan, export, and destroy do not request Fabric health.
 
-The JSON result includes one `health` entry per sandbox, identifying its sole agent and hosted Fabric runtime.
-These observations do not separately test every inference route or integration.
-When available, `report` retains Fabric's liveness, activity, readiness, reason codes, timestamps, and dependency observations.
-A busy runtime can complete apply if Fabric reports it responsive and ready to accept work.
-A dependency marked unsupported is not a successful check; Fabric owns its effect on overall readiness.
+Each sandbox's `health` entry identifies its agent and runtime.
+When supported, `report` contains Fabric's liveness, activity, readiness, reasons, timestamps, and dependency observations.
+Fabric decides overall readiness; a busy runtime can pass if responsive and ready to accept work.
+An unsupported dependency is not a successful check.
+These observations do not test every inference route or integration.
 
-The pinned Fabric does not yet provide `runtime.check_health()`.
-New agent images include the bridge but report `supported: false`, `report: null`, and `reason_code: fabric_health_unsupported`.
-Apply retains its existing configuration and readiness checks in this case; success does not establish fresh Fabric health or working inference.
-The proposed upstream contract is [Fabric #305](https://github.com/NVIDIA/NeMo-Fabric/pull/305); real adapter health qualification remains **TBD** until an accepted implementation is pinned and tested.
+**Current limit:** the pinned Fabric lacks `runtime.check_health()`.
+New images report `supported: false`, `report: null`, and `reason_code: fabric_health_unsupported` while apply retains its other configuration and readiness checks.
+Success therefore does not establish fresh Fabric health or working inference.
+Real adapter health qualification remains **TBD** until an accepted implementation is pinned and tested.
 
-Use an [agent image built from this revision](build.md#build-agent-images).
-An older image without the health bridge fails apply with an image-rebuild diagnostic; a missing bridge is not treated as unsupported Fabric.
-Sandbox image changes require the [separate-deployment path](#choose-the-change-path).
-Keep the original bundle and state for existing deployments.
+Use an [agent image built from this revision](build.md#build-agent-images); an older image missing the bridge fails with a rebuild diagnostic.
+Image changes require the [separate-deployment path](#choose-the-change-path); keep existing deployments' original bundles and state.
 
-Supported health with not-ready or unknown readiness fails apply and retains resources.
-The SDK returns structured health observations; the CLI writes them as JSON to stderr with exit status 1.
-Transport failures and malformed reports also fail rather than becoming healthy or unsupported.
-Keep the state directory, inspect the failure, and explicitly reapply the same configuration after recovery.
-The report is an observation at its recorded time, not a promise of future availability or successful tasks.
+Not-ready or unknown supported health, transport failures, and malformed reports fail apply and retain resources.
+For a supported health failure, the CLI writes structured JSON to stderr and exits with status 1.
+Keep state, diagnose the failure, and explicitly reapply after recovery.
+Health is an observation at its recorded time, not a guarantee of future availability.
 
 ## Configuration and Credentials
 
 Use [definitions and references](configuration-references.md) to choose shared or inline configuration.
-Use the [YAML field reference](reference/configuration.md) to check field names, defaults, conditional requirements, and validation limits.
+Use the [field reference](reference/configuration.md) for names, defaults, and validation rules.
 
-Unknown fields, duplicate keys, inline secrets, and unsupported combinations are rejected.
-Images must use immutable SHA-256 references.
-Managed DGX Spark declares a named service with `kind: vllm`, an explicit hardware profile or recipe, a pinned model, serving settings, and memory policy.
-Its inference provider uses `serviceRef` instead of `endpoint`.
-
-The checked-in [DGX Spark example](../examples/spark/spark-inline.yaml) declares preparation tools in an inline recipe and uses the resident memory supervisor.
-Follow [managed Ollama](inference.md#run-managed-ollama) for its runtime image, engine, model digest, capacity, and removal behavior.
-Use a service with [`kind: ollamaProxy`](inference.md#use-external-ollama-through-a-managed-proxy) to keep the daemon and installed model external while managing an authenticated proxy.
-Gateway and inference ownership are independent of the harness; the selected service must still support its request API.
+Unknown fields, duplicate keys, inline secrets, and unsupported combinations are rejected; images require immutable SHA-256 references.
+Gateway and inference ownership are independent of the harness, but inference must support the harness's request API.
+See [managed models](models.md), [Ollama](inference.md#run-managed-ollama), or [external Ollama with a managed proxy](inference.md#use-external-ollama-through-a-managed-proxy) for service configuration.
 
 Use `credential: {env: INFERENCE_API_KEY}` for an inference provider or gateway.
 The caller supplies the referenced environment value.
@@ -130,13 +123,8 @@ Destroy removes the owned provider registration, but retained gateway storage re
 Caller-supplied inference credentials require HTTPS.
 The managed Ollama proxy uses its private HTTP endpoint and a deployment-generated bearer key.
 Uncredentialed inference HTTP endpoints must be literal private or loopback addresses; plaintext gateway addresses must be loopback.
-The isolated policy permits inference routing without general network egress.
-
-The isolated preset uses OpenShell's `best_effort` Landlock mode and depends on the host kernel.
-Unavailable Landlock restrictions are not enforced.
-The [recorded test results](validation/README.md) cover policy tests, not a security qualification.
-
-Use [sandbox policy and proxy configuration](sandbox-network.md) to replace the isolated preset or select an agent HTTP proxy.
+The isolated policy permits inference routing without general egress and uses `best_effort` Landlock; unavailable kernel restrictions are not enforced.
+See [policy and proxy configuration](sandbox-network.md) for changes and [security](security.md) for qualification limits.
 
 ## Control Container Image Downloads
 
@@ -162,7 +150,7 @@ imagePullPolicy: Never
 
 Docker-managed gateways use the same `IfNotPresent` and `Never` modes as services; `Always` is rejected.
 Podman gateways retain their existing image policy: omission means `IfNotPresent`, and `Always` contacts the registry before creation or restart, including its credential initializer.
-Service acquisition does not promise a registry request on every restart or layer-by-layer progress.
+Service acquisition does not promise a registry request on every restart or complete layer progress.
 Export preserves the declared setting.
 Downloaded service images remain on the selected engine after destroy, although their disposable provider resource bindings are removed.
 
@@ -202,17 +190,14 @@ Do not edit or delete its state to bypass this rejection.
 
 ## Editor Schema Assistance
 
-The maintained examples select their schema with a comment:
+Add a schema comment for editor completion, descriptions, and diagnostics:
 
 ```yaml
 # yaml-language-server: $schema=../schemas/nemoclaw-v1alpha1.schema.json
 ```
 
-An editor using [YAML Language Server](https://github.com/redhat-developer/yaml-language-server) can provide field completion, hover descriptions, and schema diagnostics.
-The path is relative to the YAML file.
-When copying an example elsewhere, update the path to the matching schema file.
-Use the schema from the same source revision as your CLI; the API version alone does not identify that revision.
-For an installed bundle, select its `schemas/nemoclaw-v1alpha1.schema.json` file.
+Editors using [YAML Language Server](https://github.com/redhat-developer/yaml-language-server) resolve the path relative to the YAML file; update it when copying examples.
+Select `schemas/nemoclaw-v1alpha1.schema.json` from the matching bundle or CLI source revision; the API version alone is insufficient.
 
 Keep `$schema` in the comment; a YAML field named `$schema` is an unknown configuration field and is rejected.
 Exported YAML omits comments, so add the association again if you want editor assistance for an export.
@@ -333,8 +318,7 @@ Repeating completed destroy has no changes.
 An interrupted destroy resumes from its recorded graph boundary; other operations refuse unfinished teardown.
 
 Reapply the original configuration to recreate workloads using retained storage.
-Managed Ollama retains its native Docker cache-volume binding while deleting its container.
-Model files are not deleted.
+See [retention details](state.md#deletion-and-retention) for surviving resources and files.
 
 The local lock excludes other NemoClaw operations on the same state directory, not other gateway clients.
 OpenShell deletes by name without an ID/version condition, so a concurrent replacement between the final identity check and delete cannot be eliminated by this client.

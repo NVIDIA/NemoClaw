@@ -6,6 +6,7 @@
 Create one OpenClaw sandbox using an existing OpenShell gateway and inference endpoint, then access its native dashboard.
 This development procedure uses a source-built bundle and agent image.
 Published installer/release downloads and an end-to-end rehearsal of this procedure on the current revision: **TBD**.
+For a managed Docker gateway with hosted NVIDIA inference, use [interactive onboarding](reference/cli.md#commands) instead.
 
 ## 1. Prepare the Hosts and Bundle
 
@@ -40,31 +41,6 @@ An example's old digest or zero-digest placeholder is not a downloadable release
 
 ## 3. Prepare Desired-State YAML
 
-For a managed OpenShell gateway, Docker, OpenClaw, and hosted NVIDIA inference, the CLI can generate configuration, plan, and apply:
-
-```sh
-mkdir -p .local/first-deployment
-nemoclaw onboard --output .local/first-deployment/deployment.yaml \
-  --state-dir .local/first-deployment/state
-```
-
-Review and accept the generated configuration first.
-The CLI saves the YAML file, resolves its named credential references, prints a plan preview, and then asks separately before applying it.
-Declining apply or encountering a later failure leaves the YAML at the selected path.
-Use `--generate-only` to stop after saving the file; this mode needs no credential value or working runtime bundle, and the file can later be used with standalone `plan` and `apply`.
-Use `--non-interactive` only for explicit automation: direct flags and defaults replace authoring prompts.
-When onboarding continues through plan and apply, all credentials must be available from the environment and a successful plan proceeds to apply without another prompt.
-Scripted generation therefore uses both flags:
-
-```sh
-nemoclaw onboard --generate-only --non-interactive \
-  --output .local/first-deployment/deployment.yaml
-```
-
-Without `--non-interactive`, onboarding requires a terminal on stdin and fails immediately when input is piped or redirected.
-
-The external-gateway configuration used by the rest of this guide is outside that fixed authoring scenario, so prepare it by hand as follows.
-
 Use a working directory that does not already contain another deployment.
 Copy the maintained [dashboard example](../examples/openclaw-dashboard.yaml) into it:
 
@@ -86,13 +62,13 @@ Edit the copied YAML before executing it:
 | `spec.inferenceProviders[0].provider` and `.api` | The [matching protocol and API](inference.md); the example selects OpenAI Responses |
 | `spec.inferenceProviders[0].credential` | An environment reference when the endpoint needs a key |
 | `spec.sandboxes[0].image.ref` | The immutable reference from your image build |
+| `spec.sandboxes[0].runtime.provider` | `docker` or `podman`, matching the gateway's compute driver |
 | The primary route's `overrides.model` | The exact model ID served by your endpoint |
 | Other route `overrides` | Limits and reasoning settings supported by that model; remove optional tuning you have not verified |
 
-Keep `gateway.management: external`, the `assistant` sandbox name, and the loopback dashboard on port `18800` for this procedure.
-If you change the sandbox name or port, use the new values in the access commands too.
+Keep `gateway.management: external`, sandbox name `assistant`, and loopback dashboard port `18800` to match the access commands.
 Update the copied schema comment to `../../schemas/nemoclaw-v1alpha1.schema.json` so editor diagnostics use this checkout's schema.
-Use the [field reference](reference/configuration.md) for accepted fields; do not add earlier-version onboarding settings.
+Use the [field reference](reference/configuration.md) for accepted fields.
 
 For an authenticated inference endpoint, add this under its provider:
 
@@ -145,8 +121,8 @@ Follow [Connect through OpenShell](interfaces.md#connect-through-openshell) to f
 Keep the forward bound to loopback.
 
 In the native dashboard, send a short prompt such as `Reply with a short greeting.`
-Verify that the UI displays an agent reply; an open dashboard, a ready sandbox, or a successful API probe alone does not establish this result.
-A reply establishes only this endpoint/model/harness interaction, not general model quality or tool reliability.
+Verify an agent reply, which tests this endpoint/model/harness interaction beyond dashboard access or readiness.
+It does not establish general model quality or tool reliability.
 Browser and first-message rehearsal of this exact procedure: **TBD** — the existing interface fixtures verify native protocol behavior.
 
 Stop forwarding with Ctrl-C when finished.
