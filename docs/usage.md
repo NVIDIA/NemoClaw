@@ -296,8 +296,9 @@ Authentication, transport, and incomplete observations remain failures; missing 
 A missing model-cache volume may be recreated during apply, followed by model download and preparation; its separate credential volume must still match.
 
 To retire instead of recover an apply that stopped during the managed-runtime stage, first run `nemoclaw plan --destroy` with the same state directory.
-This path is available only when the saved plan digest matches the runtime-stage plan, validated bindings account for every declared runtime resource, and no OpenShell resource is bound.
-Incomplete or mismatched bindings and unfinished OpenShell-stage applies still require reapplying the exact original YAML before destroy.
+This path is available only when the saved plan digest matches the runtime-stage plan, no OpenShell resource is bound, and at least one recorded runtime binding is safe to remove or retain.
+Every recorded binding must belong to the current intent, each saved storage specification must match, and a recorded managed process also requires its independent storage binding.
+Empty runtime state, a plan mismatch, undeclared or drifted bindings, a process without its storage binding, and unfinished OpenShell-stage applies still require reapplying the exact original YAML before destroy.
 Destroy changes the operation to resumable teardown only after both resource graphs are planned, so a planning failure leaves the unfinished-apply recovery state in place.
 
 Export requires complete observations and agent configuration checks, but does not invoke inference.

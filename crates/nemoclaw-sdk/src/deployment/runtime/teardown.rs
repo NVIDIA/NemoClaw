@@ -333,7 +333,7 @@ fn validate_teardown_state(
         && (!record.runtime_pending
             || !pending_runtime_plan
             || !bindings.is_empty()
-            || !runtime_bindings_complete(record, runtime_bindings)?)
+            || !runtime_bindings_safe(record, runtime_bindings)?)
     {
         return Err(Error::Conflict(
             "unfinished apply may have created resources whose IDs were not saved; apply the original configuration again before destroy",
@@ -354,21 +354,11 @@ fn validate_teardown_state(
     Ok(())
 }
 
-fn runtime_bindings_complete(
+fn runtime_bindings_safe(
     record: &Record,
     bindings: &BTreeMap<String, StateBinding>,
 ) -> Result<bool, Error> {
-    let targets = compile::runtime_targets(&record.document, &record.generations)?;
-    let expected: BTreeSet<_> = targets
-        .iter()
-        .filter(|target| !target.address.starts_with("data."))
-        .map(|target| target.address.as_str())
-        .collect();
-    if expected.len() != bindings.len()
-        || expected
-            .iter()
-            .any(|address| !bindings.contains_key(*address))
-    {
+    if bindings.is_empty() {
         return Ok(false);
     }
     teardown_expected(record, bindings, true)?;
@@ -460,7 +450,7 @@ mod tests {
     }
 
     #[test]
-    fn unfinished_runtime_apply_can_destroy_only_with_its_complete_saved_bindings() {
+    fn unfinished_runtime_apply_can_destroy_only_its_safe_saved_bindings() {
         let (mut record, runtime_bindings) = runtime_state();
         record.pending = true;
         record.runtime_pending = true;
@@ -471,14 +461,28 @@ mod tests {
             validate_teardown_state(&record, &bindings, &runtime_bindings, false).is_err(),
             "a pending root-stage plan must not be mistaken for runtime recovery"
         );
-        for address in runtime_bindings.keys() {
-            let mut incomplete = runtime_bindings.clone();
-            incomplete.remove(address);
-            assert!(
-                validate_teardown_state(&record, &bindings, &incomplete, true).is_err(),
-                "{address}"
-            );
-        }
+        assert!(
+            validate_teardown_state(&record, &bindings, &BTreeMap::new(), true).is_err(),
+            "an empty state cannot prove that a successful mutation was recorded"
+        );
+
+        let storage = service_storage(&record);
+        let partial = BTreeMap::from([(
+            storage.clone(),
+            runtime_bindings.get(&storage).unwrap().clone(),
+        )]);
+        validate_teardown_state(&record, &bindings, &partial, true)
+            .expect("a recorded retained volume is a safe partial runtime state");
+
+        let process = service_process(&record);
+        let missing_storage = BTreeMap::from([(
+            process.clone(),
+            runtime_bindings.get(&process).unwrap().clone(),
+        )]);
+        assert!(
+            validate_teardown_state(&record, &bindings, &missing_storage, true).is_err(),
+            "a process cannot be removed without its independent storage binding"
+        );
 
         let mut root_bindings = bindings;
         root_bindings.insert(
