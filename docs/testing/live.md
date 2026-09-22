@@ -97,10 +97,12 @@ The workspace remains after destroy.
 
 The `Live / Brev` workflow provisions an ordinary Brev CPU VM rather than a NemoClaw Launchable.
 Three jobs build the Linux AMD64 bundle and test binary, build the matching OpenClaw image, and provision the VM in parallel.
-The lifecycle job waits for all three, transfers the candidates, verifies the image archive checksum and source revision, and requires Docker to retain the built image digest after loading.
-It then runs the real inference and deployment checks on the fresh VM; image compilation happens on the CI runner.
+Image transfer starts as soon as the image and VM are ready, overlapping any remaining bundle build.
+The image-loading job verifies the archive checksum and source revision, and requires Docker to retain the built image digest after loading.
+The lifecycle job waits for the bundle and loaded image, then transfers the bundle and runs the real inference and deployment checks on the fresh VM.
+Image compilation happens on the CI runner.
 A separate cleanup job runs after success, failure, or cancellation and requires two confirmed observations that its owned VM is absent.
-The check list shows bundle build, image build, preparation, lifecycle, and deletion times separately; VM deletion remains part of successful qualification.
+The check list shows bundle build, image build, preparation, image loading, lifecycle, and deletion times separately; VM deletion remains part of successful qualification.
 The workflow requires repository secrets named `BREV_API_KEY` and `NVIDIA_API_KEY`.
 While `v1` is not the repository's default branch, run it by pushing the candidate to an intentionally named `run-brev-v1-e2e/*` branch in `NVIDIA/NemoClaw`.
 After the workflow file reaches the default branch, select `v1` with `workflow_dispatch` instead.
