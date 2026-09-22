@@ -420,9 +420,30 @@ fn delete_provider(
     state: &mut State,
     q: &p::DeleteProviderRequest,
 ) -> Result<p::DeleteProviderResponse, Status> {
+    let workspace = workspace(&q.workspace_scope)?;
+    if !state
+        .providers
+        .contains_key(&format!("{workspace}/{}", q.name))
+    {
+        return Err(Status::not_found("absent"));
+    }
+    if state.sandboxes.values().any(|sandbox| {
+        sandbox
+            .metadata
+            .as_ref()
+            .is_some_and(|m| m.workspace == workspace)
+            && sandbox
+                .spec
+                .as_ref()
+                .is_some_and(|spec| spec.providers.contains(&q.name))
+    }) {
+        return Err(Status::failed_precondition(
+            "provider is attached to a sandbox",
+        ));
+    }
     let deleted = state
         .providers
-        .remove(&format!("{}/{}", workspace(&q.workspace_scope)?, q.name))
+        .remove(&format!("{workspace}/{}", q.name))
         .is_some();
     if !deleted {
         return Err(Status::not_found("absent"));
@@ -724,6 +745,20 @@ fn delete_profile(
     state: &mut State,
     q: p::DeleteProviderProfileRequest,
 ) -> Result<p::DeleteProviderProfileResponse, Status> {
+    if !state
+        .profiles
+        .contains_key(&format!("{}/{}", q.workspace, q.id))
+    {
+        return Err(Status::not_found("absent"));
+    }
+    // The pinned gateway refuses deletion while a registration uses the profile.
+    if state
+        .providers
+        .values()
+        .any(|provider| provider.profile_workspace == q.workspace && provider.r#type == q.id)
+    {
+        return Err(Status::failed_precondition("profile is in use"));
+    }
     let deleted = state
         .profiles
         .remove(&format!("{}/{}", q.workspace, q.id))

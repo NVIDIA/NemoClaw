@@ -175,11 +175,8 @@ impl OpenShell {
     pub(super) async fn remove_pi(
         &self,
         prior: &Row,
-        destroying: bool,
+        _destroying: bool,
     ) -> Result<(), ObservationError> {
-        if !destroying {
-            return Err(ObservationError::Query);
-        }
         self.read_pi(prior, true).await?;
         // The sandbox owns this runtime. Forgetting its configuration binding
         // must not mutate or delete a runtime independently of that sandbox.

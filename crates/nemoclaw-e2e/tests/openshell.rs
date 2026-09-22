@@ -72,10 +72,27 @@ async fn owning_api_reconciles_lost_create_reply_and_checks_conditional_updates(
     let error = client.read("provider", &provider, false).await.unwrap_err();
     assert!(!error.to_string().contains("secret"));
     fixture.state.lock().unwrap().fail_read = None;
-    fixture.state.lock().unwrap().lose_delete = true;
-    assert!(client.remove("provider", &provider, true).await.is_err());
+    for key in ["id", "owner", "generation"] {
+        let mut substituted = provider.clone();
+        substituted.insert(key.into(), "foreign".into());
+        let effects = fixture.state.lock().unwrap().effects;
+        assert!(
+            client
+                .remove("provider", &substituted, false)
+                .await
+                .is_err()
+        );
+        assert_eq!(fixture.state.lock().unwrap().effects, effects);
+    }
+    fixture.state.lock().unwrap().fail_read = Some(("provider", tonic::Code::Unavailable));
     let effects = fixture.state.lock().unwrap().effects;
-    assert!(client.remove("provider", &provider, true).await.is_ok());
+    assert!(client.remove("provider", &provider, false).await.is_err());
+    assert_eq!(fixture.state.lock().unwrap().effects, effects);
+    fixture.state.lock().unwrap().fail_read = None;
+    fixture.state.lock().unwrap().lose_delete = true;
+    assert!(client.remove("provider", &provider, false).await.is_err());
+    let effects = fixture.state.lock().unwrap().effects;
+    assert!(client.remove("provider", &provider, false).await.is_ok());
     assert_eq!(fixture.state.lock().unwrap().effects, effects);
     assert!(
         client
@@ -400,6 +417,8 @@ async fn explicit_policy_and_proxy_reach_the_gateway_and_detect_drift() {
         .get_mut(&key)
         .unwrap()
         .spec = Some(spec);
+    assert!(client.remove("sandbox", sandbox, false).await.is_err());
+    assert!(fixture.state.lock().unwrap().sandboxes.contains_key(&key));
     assert!(client.remove("sandbox", sandbox, true).await.is_ok());
 }
 
