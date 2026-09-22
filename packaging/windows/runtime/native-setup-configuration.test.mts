@@ -47,6 +47,19 @@ test("prebuilt OpenClaw factories materialize the exported workers as valid Java
     });
     assert.equal(parsed.status, 0, parsed.stderr);
   }
+  const assets = new Map<string, string>();
+  const worker = staticWorkerSource("openclaw-web", gatewaySource(), assets);
+  assert(worker.includes('nativeGuestAsset("openclaw-sqlite-realpath-preload.cjs")'));
+  const preload = assets.get("openclaw-sqlite-realpath-preload.cjs");
+  assert(preload);
+  assert(preload.includes('error?.code !== "EPERM"'));
+  assert(preload.includes("entry.isSymbolicLink()"));
+  const parsedPreload = spawnSync(process.execPath, ["--check", "-"], {
+    input: preload,
+    encoding: "utf8",
+    timeout: 10_000,
+  });
+  assert.equal(parsedPreload.status, 0, parsedPreload.stderr);
 });
 
 test("native OpenClaw uses a bounded tool surface and adds only selected capabilities", () => {
@@ -65,6 +78,8 @@ test("native OpenClaw uses a bounded tool surface and adds only selected capabil
 test("native OpenClaw advertises the actual model context and opens a fresh chat", () => {
   const source = gatewaySource();
   assert(source.includes('required("NEMOCLAW_MXC_MODEL_CONTEXT")'));
+  assert(source.includes('nativeGuestAsset("openclaw-sqlite-realpath-preload.cjs")'));
+  assert(source.includes("NODE_OPTIONS: '--require=\"' + sqliteRealpathPreload + '\"'"));
   assert(source.includes("contextWindow: modelContext"));
   assert(source.includes("skills: []"));
   assert(source.includes("reasoning: true"));

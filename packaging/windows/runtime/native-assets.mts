@@ -36,7 +36,7 @@ export function nativeWorkerAssets(runtimeRoot: string, mode: NativeWorkerMode) 
 
 export function nativeGuestAsset(name: string) {
   if (
-    !/^(?:openclaw-invoke\.cjs|(?:hermes|deepagents)-(?:turn|console|console-probe|dashboard|dashboard-probe)\.pyc)$/u.test(
+    !/^(?:openclaw-(?:invoke|sqlite-realpath-preload)\.cjs|(?:hermes|deepagents)-(?:turn|console|console-probe|dashboard|dashboard-probe)\.pyc)$/u.test(
       name,
     )
   )

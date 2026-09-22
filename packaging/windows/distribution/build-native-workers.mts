@@ -179,6 +179,46 @@ export function staticWorkerSource(mode: string, input: string, assets: Map<stri
       text: "false",
     });
   }
+  if (mode === "openclaw-web") {
+    assets.set(
+      "openclaw-sqlite-realpath-preload.cjs",
+      [
+        'const fs = require("node:fs");',
+        'const path = require("node:path");',
+        'const { syncBuiltinESMExports } = require("node:module");',
+        "const configuredRoot = process.env.OPENCLAW_HOME || process.env.NEMOCLAW_MXC_HOME;",
+        'const root = configuredRoot ? path.resolve(configuredRoot) : "";',
+        "const fallback = (target, error) => {",
+        '  if (error?.code !== "EPERM" || typeof target !== "string" || !path.isAbsolute(root)) return null;',
+        "  const resolved = path.resolve(target);",
+        "  const relative = path.relative(root, resolved);",
+        '  if (relative.startsWith("..") || path.isAbsolute(relative)) return null;',
+        "  let cursor = root;",
+        "  if (fs.lstatSync(cursor).isSymbolicLink()) return null;",
+        "  for (const part of relative.split(path.sep).filter(Boolean)) {",
+        "    cursor = path.join(cursor, part);",
+        "    const entry = fs.lstatSync(cursor);",
+        "    if (entry.isSymbolicLink()) return null;",
+        "  }",
+        "  return resolved;",
+        "};",
+        'const encoded = (value, options) => options === "buffer" || options?.encoding === "buffer" ? Buffer.from(value) : value;',
+        "const promiseRealpath = fs.promises.realpath.bind(fs.promises);",
+        "fs.promises.realpath = async (target, options) => { try { return await promiseRealpath(target, options); } catch (error) { const value = fallback(target, error); if (value === null) throw error; return encoded(value, options); } };",
+        "const realpath = fs.realpath.bind(fs);",
+        'const patchedRealpath = (target, options, callback) => { const done = typeof options === "function" ? options : callback; const encoding = typeof options === "function" ? undefined : options; return realpath(target, encoding, (error, value) => { if (error) { const replacement = fallback(target, error); if (replacement !== null) { done(null, encoded(replacement, encoding)); return; } } done(error, value); }); };',
+        "const realpathSync = fs.realpathSync.bind(fs);",
+        "const nativeRealpathSync = fs.realpathSync.native.bind(fs.realpathSync);",
+        "const patchedRealpathSync = (target, options) => { try { return realpathSync(target, options); } catch (error) { const value = fallback(target, error); if (value === null) throw error; return encoded(value, options); } };",
+        "patchedRealpathSync.native = (target, options) => { try { return nativeRealpathSync(target, options); } catch (error) { const value = fallback(target, error); if (value === null) throw error; return encoded(value, options); } };",
+        "patchedRealpath.native = patchedRealpath;",
+        "fs.realpath = patchedRealpath;",
+        "fs.realpathSync = patchedRealpathSync;",
+        "syncBuiltinESMExports();",
+        "",
+      ].join("\n"),
+    );
+  }
   let rewritten = input;
   for (const edit of edits.sort((a, b) => b.start - a.start))
     rewritten = rewritten.slice(0, edit.start) + edit.text + rewritten.slice(edit.end);
