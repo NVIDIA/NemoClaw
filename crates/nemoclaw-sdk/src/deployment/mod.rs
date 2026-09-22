@@ -4,6 +4,7 @@
 #[cfg(test)]
 mod tests;
 
+mod apply;
 mod export;
 mod plan;
 mod runtime;
@@ -248,64 +249,28 @@ impl Deployment {
                 cancel,
             )
             .await;
-        if let Err(error) = applied {
-            // Only a complete UI stream proving exclusively data postcondition
-            // failures can settle durable mutations. Never replace an unrelated
-            // apply error with a health report retained from an earlier apply.
-            if let Error::Execution {
-                postcondition_failures: Some(addresses),
-                ..
-            } = &error
-                && let Ok(observations) = self
-                    .sandbox_observations(&bundle, &store, &document, &plan, cancel)
-                    .await
-                && !addresses.is_empty()
-                && addresses.iter().all(|address| {
-                    observations.iter().any(|(sandbox, observed)| {
-                        *address == format!("data.nemoclaw_sandbox_readiness.{sandbox}")
-                            && observed["ready"] == false
-                    })
-                })
-            {
-                record.finish_apply();
-                store.save(&record)?;
-                if let Some(health) = observations.iter().find_map(|(name, observed)| {
-                    let health =
-                        crate::RuntimeHealth::decode(observed["health_json"].as_str()?.as_bytes())
-                            .ok()?;
-                    let agent = document.sandbox(name).ok()?.agent.name.clone();
-                    (!health.allows_apply_completion()).then(|| crate::SandboxHealth {
-                        sandbox: name.clone(),
-                        agents: vec![agent],
-                        health,
-                    })
-                }) {
-                    return Err(Error::Health {
-                        health: Box::new(health),
-                    });
-                }
-            }
-            return Err(error);
+        let mutations_settled = applied.is_ok();
+        if mutations_settled {
+            // Persist known mutation completion before an interruptible health read.
+            record.finish_apply();
+            store.save(&record)?;
         }
-        record.finish_apply();
-        store.save(&record)?;
-        result.health = self
+        let applied = match applied {
+            Err(error) if apply::readiness_failures(&error).is_none() => return Err(error),
+            applied => applied,
+        };
+        let observations = self
             .sandbox_observations(&bundle, &store, &document, &plan, cancel)
-            .await?
-            .into_iter()
-            .map(|(name, observed)| {
-                Ok(crate::SandboxHealth {
-                    agents: vec![document.sandbox(&name)?.agent.name.clone()],
-                    sandbox: name,
-                    health: crate::RuntimeHealth::decode(
-                        observed["health_json"]
-                            .as_str()
-                            .ok_or(Error::State("sandbox health observation is absent"))?
-                            .as_bytes(),
-                    )?,
-                })
-            })
-            .collect::<Result<_, Error>>()?;
+            .await;
+        let health = match apply::ApplyOutcome::classify(applied, observations) {
+            apply::ApplyOutcome::Unsettled(error) => return Err(error),
+            apply::ApplyOutcome::Settled(health) => health,
+        };
+        if !mutations_settled {
+            record.finish_apply();
+            store.save(&record)?;
+        }
+        result.health = health?;
         record.mark_succeeded();
         store.save(&record)?;
         result.outcome = Outcome::Succeeded;
@@ -318,47 +283,11 @@ impl Deployment {
         document: &Document,
         plan: &Plan,
         cancel: &CancellationToken,
-    ) -> Result<Vec<(String, Value)>, Error> {
+    ) -> Result<apply::Readiness, Error> {
         let bytes = self
             .tofu(bundle, store, document, &["show", "-json"], cancel)
             .await?;
-        let state: Value = serde_json::from_slice(&bytes)
-            .map_err(|_| Error::State("invalid OpenTofu health observations"))?;
-        if state["format_version"]
-            .as_str()
-            .is_none_or(|version| version.split('.').next() != Some("1"))
-        {
-            return Err(Error::State("unsupported OpenTofu state JSON version"));
-        }
-        let observations = crate::state::parse_resources(&state["values"])?;
-        document
-            .spec
-            .sandboxes
-            .iter()
-            .map(|sandbox| {
-                let address = format!("data.nemoclaw_sandbox_readiness.{}", sandbox.name);
-                let observed = observations
-                    .get(&address)
-                    .ok_or(Error::State("sandbox readiness observation is absent"))?;
-                let previous = plan
-                    .resource_changes
-                    .iter()
-                    .find(|change| change.address == address)
-                    .ok_or(Error::State("sandbox readiness was not scheduled"))?;
-                let token = observed["read_trigger"]
-                    .as_str()
-                    .filter(|value| !value.is_empty())
-                    .ok_or(Error::State(
-                        "sandbox readiness observation has no operation identity",
-                    ))?;
-                if previous.change.before["read_trigger"].as_str() == Some(token) {
-                    return Err(Error::State(
-                        "sandbox readiness observation predates this apply",
-                    ));
-                }
-                Ok((sandbox.name.clone(), observed.clone()))
-            })
-            .collect()
+        apply::Readiness::decode(document, plan, &bytes)
     }
     async fn state_bindings(
         &self,

@@ -1344,3 +1344,70 @@ async fn mixed_sandboxes_reorder_add_recover_export_and_destroy_independently() 
     deployment.destroy(&cancel).await.unwrap();
     assert!(fixture.state.lock().unwrap().sandboxes.is_empty());
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires explicit verified NEMOCLAW_TEST_BUNDLE; isolated gateway fixture"]
+async fn successful_apply_checkpoints_mutations_before_reading_health() {
+    use nemoclaw_sdk::{Progress, StepOutcome};
+    use std::sync::{Arc, Mutex};
+    let bundle = PathBuf::from(std::env::var_os("NEMOCLAW_TEST_BUNDLE").unwrap());
+    let directory = tempfile::tempdir().unwrap();
+    let fixture = Fixture::start().await;
+    let mut document = Document::parse(
+        include_str!("../../nemoclaw-sdk/tests/fixtures/config/local.yaml").as_bytes(),
+    )
+    .unwrap();
+    *document.spec.gateway.endpoint_mut() = fixture.endpoint.clone();
+    let cancel = CancellationToken::new();
+    let interrupt = cancel.clone();
+    let observed = Arc::new(Mutex::new((false, None)));
+    let captured = observed.clone();
+    let intent = directory.path().join("intent.json");
+    let deployment =
+        Deployment::new(directory.path(), &bundle).with_progress(Arc::new(move |event| {
+            let mut observed = captured.lock().unwrap();
+            match event {
+                Progress::Completed {
+                    operation: "tofu.apply",
+                    outcome: StepOutcome::Succeeded,
+                    ..
+                } => observed.0 = true,
+                Progress::Waiting {
+                    operation: "tofu.show",
+                    ..
+                } if observed.0 => {
+                    observed.1 = Some(
+                        serde_json::from_slice::<serde_json::Value>(&fs::read(&intent).unwrap())
+                            .unwrap(),
+                    );
+                    interrupt.cancel();
+                }
+                _ => {}
+            }
+        }));
+    assert!(matches!(
+        deployment.apply(&document, &cancel).await,
+        Err(nemoclaw_sdk::Error::Cancelled)
+    ));
+    let record = observed
+        .lock()
+        .unwrap()
+        .1
+        .clone()
+        .expect("post-apply health observation");
+    assert_eq!(
+        record["pending"], false,
+        "mutation checkpoint must precede the health read"
+    );
+    assert_eq!(
+        record["succeeded"], false,
+        "health has not established success"
+    );
+    let effects = fixture.state.lock().unwrap().effects;
+    let result = Deployment::new(directory.path(), &bundle)
+        .apply(&document, &CancellationToken::new())
+        .await
+        .unwrap();
+    assert!(result.changes.is_empty());
+    assert_eq!(fixture.state.lock().unwrap().effects, effects);
+}
