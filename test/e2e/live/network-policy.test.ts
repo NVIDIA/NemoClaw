@@ -11,6 +11,7 @@ import {
   namedOpenShellGateway,
   cliOpenShellSandboxPolicyReader,
 } from "../../../src/lib/adapters/openshell/sandbox-policy-cli.ts";
+import { getBuildIdentity } from "../../../src/lib/core/version.ts";
 import { load, save } from "../../../src/lib/state/registry/persistence.ts";
 import { createServer, type Server } from "node:http";
 import path from "node:path";
@@ -25,7 +26,7 @@ import {
   validateSandboxName,
 } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
-import { CLI_ENTRYPOINT } from "../fixtures/paths.ts";
+import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
 import { parseConfigExport } from "../fixtures/phases/config-export-validation.ts";
 import { ensureConfiguredRuntimeProviderAvailable } from "../fixtures/runtime-provider.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
@@ -33,7 +34,10 @@ import {
   buildNetworkPolicyCurlProbe,
   parseNetworkPolicyCurlOutput,
 } from "../support/network-policy-probe.ts";
-import { requireEffectivePolicyDocument } from "../support/config-export-policy-evidence.ts";
+import {
+  type NetworkPolicyConfigExportLiveEvidence,
+  requireEffectivePolicyDocument,
+} from "../support/config-export-policy-evidence.ts";
 import { writeSecretFreeConfigExportArtifact } from "../support/config-export-secret-scan.ts";
 import { runRestrictedOnboardWithRetry } from "./restricted-onboard-helpers.ts";
 
@@ -421,16 +425,18 @@ test(
     } finally {
       save(registry);
     }
-    await artifacts.writeJson("config-export-live-evidence.json", {
+    const exportEvidence: NetworkPolicyConfigExportLiveEvidence = {
       sandboxName: SANDBOX_NAME,
       managedImagePlaceholderIsNull: exportedSandbox.image === null,
       effectivePolicyMatches,
       identityDriftPreventedPublication: true,
+      producer: { sourceRevision: getBuildIdentity({ rootDir: REPO_ROOT }).sourceRevision },
       yaml: {
         artifact: exportArtifact,
         sha256: createHash("sha256").update(raw).digest("hex"),
       },
-    });
+    };
+    await artifacts.writeJson("config-export-live-evidence.json", exportEvidence);
 
     progress.phase("deny default egress and hot-reload one host-gateway port");
     const defaultDenied = await probeUrl(

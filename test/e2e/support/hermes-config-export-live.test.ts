@@ -403,6 +403,46 @@ describe("Hermes config export live evidence", () => {
     });
   });
 
+  it("rejects an encoded credential in an expected-refusal diagnostic", async () => {
+    const secret = "secret-value";
+    mocks.load.mockReturnValue({
+      sandboxes: {
+        hermes: {
+          credentialEnv: "NVIDIA_API_KEY",
+          endpointUrl: "http://host.openshell.internal:35271/v1",
+          gatewayName: "nemoclaw",
+          workload: { kind: "managed-image", reference: IMAGE_REF },
+        },
+      },
+    });
+    const encodedSecret = [...Buffer.from(secret)]
+      .map((byte) => `%${byte.toString(16).padStart(2, "0")}`)
+      .join("");
+    const refusal =
+      "Config export failed (unsupported).\nV1alpha1 requires HTTPS when an inference provider declares a credential.";
+    mocks.command
+      .mockResolvedValueOnce({ exitCode: 2, stdout: "", stderr: `${refusal}\n` })
+      .mockResolvedValueOnce({
+        exitCode: 2,
+        stdout: "",
+        stderr: `${refusal}\nunexpected diagnostic: ${encodedSecret}\n`,
+      });
+
+    await expect(runEnabledFixture([secret])).resolves.toEqual({
+      checked: true,
+      passed: false,
+    });
+    expect(mocks.writeJson).toHaveBeenCalledWith("hermes-config-export-live-evidence.json", {
+      outcome: "expected-refusal",
+      aliasesEquivalent: false,
+      checked: true,
+      credentialValuesOmitted: false,
+      outputFilesAbsent: true,
+      refusalCategory: null,
+      refusalDiagnosticMatches: false,
+    });
+  });
+
   it("records failed evidence before parsing when a launcher fails", async () => {
     mocks.command
       .mockImplementationOnce(async (_command: string, args: string[]) => {

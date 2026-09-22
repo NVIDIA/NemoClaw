@@ -395,7 +395,7 @@ After restricted single-agent OpenClaw onboarding, it invokes the candidate `con
 It validates the staged document, requires `image: null`, and compares the exported `network_policies` value with the effective sandbox policy's `network_policies` value.
 It then changes the fixture's recorded sandbox fingerprint and requires export to fail without creating a file.
 The fixture restores the registry in `finally` and removes private export files through its existing cleanup registry.
-The fixture stores the secret-free YAML and its SHA-256 digest as review evidence.
+The fixture stores the secret-free YAML, its SHA-256 digest, and the installed CLI source revision as review evidence.
 The exported `network_policies` value must match the independent CLI policy observation.
 Deterministic adapter tests own individual wire shapes and malformed responses.
 

@@ -24,7 +24,10 @@ import { trustedSandboxShellScript, type SandboxClient } from "./clients/sandbox
 import type { CleanupRegistry } from "./cleanup.ts";
 import { CLI_ENTRYPOINT, REPO_ROOT } from "./paths.ts";
 import { requireEffectivePolicyDocument } from "../support/config-export-policy-evidence.ts";
-import { writeSecretFreeConfigExportArtifact } from "../support/config-export-secret-scan.ts";
+import {
+  containsSensitiveText,
+  writeSecretFreeConfigExportArtifact,
+} from "../support/config-export-secret-scan.ts";
 
 interface HermesConfigExportLiveInput {
   readonly artifacts: ArtifactSink;
@@ -267,13 +270,12 @@ export async function verifyHermesConfigExportLive(
   const nemohermesRaw = nemohermes.exitCode === 0 ? fs.readFileSync(nemohermesPath, "utf8") : "";
   const nemoclawDiagnostics = normalizeCommandDiagnostics(nemoclaw.stdout, nemoclaw.stderr);
   const nemohermesDiagnostics = normalizeCommandDiagnostics(nemohermes.stdout, nemohermes.stderr);
-  const containsCredential = input.redactionValues.some(
-    (value) =>
-      value.length > 0 &&
-      [nemoclawRaw, nemohermesRaw, nemoclawDiagnostics, nemohermesDiagnostics].some((output) =>
-        output.includes(value),
-      ),
-  );
+  const containsCredential = [
+    nemoclawRaw,
+    nemohermesRaw,
+    nemoclawDiagnostics,
+    nemohermesDiagnostics,
+  ].some((output) => containsSensitiveText(output, input.redactionValues));
   if (!launchersSucceeded) {
     const expectsCredentialHttpRefusal =
       typeof entry.credentialEnv === "string" &&
