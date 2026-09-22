@@ -94,7 +94,7 @@ describe.skipIf(!dockerClientAvailable)("managed vLLM Docker format boundary", (
   it("keeps quoted image defaults literal and private authentication out of observations", () => {
     const literal = 'LITERAL={{printf "unsafe"}}';
     fixture.objects.image.Config.Env.push(literal);
-    fixture.objects.container.Config.Env.push(literal);
+    fixture.objects.container.Config.Env.push(literal, literal);
     const observation = JSON.stringify(fixture.run());
     expect(observation).not.toContain(fixture.key);
     expect(observation).not.toContain(fixture.fingerprint);
