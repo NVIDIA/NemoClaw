@@ -222,6 +222,8 @@ if ! published_dcode_base_matches_candidate_contract "$reference"; then
   reason="published base ${reference} could not be proven compatible with candidate ${CANDIDATE_SHA}"
   if [ -n "$PUBLISHED_DCODE_SOURCE_REVISION" ] && [ -n "$PUBLISHED_DCODE_CHANGED_INPUTS" ]; then
     reason="published base ${reference} from ${PUBLISHED_DCODE_SOURCE_REVISION} differs from candidate ${CANDIDATE_SHA} at ${PUBLISHED_DCODE_CHANGED_INPUTS}"
+  elif [ -n "$PUBLISHED_DCODE_SOURCE_REVISION" ]; then
+    reason="published base ${reference} from ${PUBLISHED_DCODE_SOURCE_REVISION} could not be proven compatible with candidate ${CANDIDATE_SHA}"
   fi
   build_local_base "$reason"
   exit 0

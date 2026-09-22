@@ -333,9 +333,10 @@ exit 90
     expect(summaryContents.includes(`Reason: published base ${baseRepository}@${digest}`)).toBe(
       expectedLocal,
     );
-    const expectedDetailedReason = expectedLocal && !failPublishedPull && !rejectCopyParsing;
-    expect(summaryContents.includes(publishedSourceSha)).toBe(expectedDetailedReason);
-    expect(summaryContents.includes(candidatePath)).toBe(expectedDetailedReason);
+    const expectedSourceRevision = expectedLocal && !failPublishedPull;
+    expect(summaryContents.includes(publishedSourceSha)).toBe(expectedSourceRevision);
+    const expectedChangedInput = expectedSourceRevision && !rejectCopyParsing;
+    expect(summaryContents.includes(candidatePath)).toBe(expectedChangedInput);
   } finally {
     fs.rmSync(temporaryRoot, { recursive: true, force: true });
   }
