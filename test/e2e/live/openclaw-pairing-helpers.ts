@@ -214,56 +214,35 @@ export async function assertOpenClawStateRoot(
 }
 
 // Source-of-truth boundary: the live pairing probe imports the conversation
-// runtime from the active `openclaw` binary installed in the sandbox. The locator
-// scans executable PATH entries directly, so it does not depend on a nested shell
-// or observe connect-shell functions and aliases. The invalid
-// state is an active OpenClaw package without `dist/plugin-sdk/conversation-runtime.js`;
+// runtime from the canonical OpenClaw package installed in the managed image.
+// OpenShell command execution does not guarantee that non-login Node probes can
+// discover the CLI through PATH, while the image contract always exposes the
+// active package at `/usr/local/lib/node_modules/openclaw`. The invalid state is
+// that managed package missing or lacking `dist/plugin-sdk/conversation-runtime.js`;
 // this pairing migration fails closed for that installer/package drift instead of
 // searching secondary global installs. OpenClaw 2026.9.1 moved challenge issuance
 // to `dist/plugin-sdk/channel-pairing.js`, so the loader adapts that public split
 // export to the legacy helper shape used by these probes. Support tests cover both
-// layouts, shell-function shadows, and the no-runtime path. Remove this locator once
+// layouts, managed-root validation, and the no-runtime path. Remove this locator once
 // OpenClaw exposes a stable CLI for issuing pairing challenges from E2E probes.
 export const LOAD_CONVERSATION_RUNTIME_SOURCE = String.raw`
 import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
-function findOpenClawPackageRootFromBinary() {
-  const binary = (process.env.PATH || "")
-    .split(path.delimiter)
-    .filter(Boolean)
-    .map((entry) => path.resolve(entry, "openclaw"))
-    .find((candidate) => {
-      try {
-        fs.accessSync(candidate, fs.constants.X_OK);
-        return fs.statSync(candidate).isFile();
-      } catch {
-        return false;
-      }
-    });
-  if (!binary) return null;
-  let current = path.dirname(fs.realpathSync(binary));
-  for (let depth = 0; depth < 8; depth += 1) {
-    const manifest = path.join(current, "package.json");
-    if (fs.existsSync(manifest)) {
-      try {
-        const pkg = JSON.parse(fs.readFileSync(manifest, "utf8"));
-        if (pkg?.name === "openclaw") return current;
-      } catch {}
-    }
-    const parent = path.dirname(current);
-    if (parent === current) break;
-    current = parent;
-  }
-  return null;
+function managedOpenClawPackageRoot() {
+  return process.env.NEMOCLAW_E2E_OPENCLAW_PACKAGE_ROOT || "/usr/local/lib/node_modules/openclaw";
 }
 
 async function loadConversationRuntime() {
-  const candidates = [];
-  const binaryRoot = findOpenClawPackageRootFromBinary();
-  if (binaryRoot) candidates.push(binaryRoot);
+  const candidates = [managedOpenClawPackageRoot()];
   for (const root of [...new Set(candidates)]) {
+    try {
+      const pkg = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"));
+      if (pkg?.name !== "openclaw") continue;
+    } catch {
+      continue;
+    }
     const runtime = path.join(root, "dist/plugin-sdk/conversation-runtime.js");
     if (!fs.existsSync(runtime)) continue;
     const conversation = await import(pathToFileURL(runtime).href);
