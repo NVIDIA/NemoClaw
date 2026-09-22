@@ -70,8 +70,7 @@ const ContainerSchema = Type.Object(
     Name: Type.Literal("/nemoclaw-vllm"),
     Image: ImageId,
     StartedAt: Type.String({ minLength: 1, maxLength: 64 }),
-    Matches: Type.Boolean(),
-    Diagnostic: Type.Optional(Type.String({ pattern: "^(?:[0-9]+,)*$" })),
+    Matches: Type.Literal(true),
     State: Type.Object({ Running: Type.Literal(true) }),
     Config: Type.Object({
       Env: Type.Array(Type.String({ pattern: "^VLLM_API_KEY=[a-f0-9]{64}$" }), {
@@ -225,10 +224,7 @@ function containerFormat(
     `(or (and (eq (index .Mounts 0).Source ${JSON.stringify(cacheRoot)}) (eq (index .Mounts 0).Destination ${JSON.stringify(cacheTarget)}) (index .Mounts 0).RW) (and (eq (index .Mounts 0).Source ${JSON.stringify(`${cacheRoot}/hub`)}) (eq (index .Mounts 0).Destination ${JSON.stringify(`${cacheTarget}/hub`)}) (not (index .Mounts 0).RW)))`,
     "$environment",
   ];
-  const diagnostic = conditions
-    .map((condition, index) => `{{if not ${condition}}}${String(index)},{{end}}`)
-    .join("");
-  return `{{$environment := true}}{{$ulimits := true}}${environmentCheck}${allowedEnvironmentCheck}${ulimitCheck}{"Id":{{json .Id}},"Name":{{json .Name}},"Image":{{json .Image}},"StartedAt":{{json .State.StartedAt}},"Matches":{{and ${conditions.join(" ")}}},"Diagnostic":"${diagnostic}","State":{"Running":{{json .State.Running}}},"Config":{"Labels":{${labels}},"Env":[{{range .Config.Env}}{{if eq (index (split . "=") 0) "VLLM_API_KEY"}}{{json .}}{{end}}{{end}}]},"NetworkSettings":{"Ports":{{json .NetworkSettings.Ports}}}}`;
+  return `{{$environment := true}}{{$ulimits := true}}${environmentCheck}${allowedEnvironmentCheck}${ulimitCheck}{"Id":{{json .Id}},"Name":{{json .Name}},"Image":{{json .Image}},"StartedAt":{{json .State.StartedAt}},"Matches":{{and ${conditions.join(" ")}}},"State":{"Running":{{json .State.Running}}},"Config":{"Labels":{${labels}},"Env":[{{range .Config.Env}}{{if eq (index (split . "=") 0) "VLLM_API_KEY"}}{{json .}}{{end}}{{end}}]},"NetworkSettings":{"Ports":{{json .NetworkSettings.Ports}}}}`;
 }
 
 /** Read the fixed runtime; authentication stays inside existing private lifecycle verification. */
@@ -236,14 +232,12 @@ export function observeManagedVllmForExport(
   recorded: ServingProfileProvenance | undefined,
   options: VllmExportRuntimeOptions = {},
 ): ObservedManagedVllmRuntime {
-  let diagnostic = "platform";
   try {
     if (
       (options.platform ?? process.platform) !== "linux" ||
       (options.architecture ?? process.arch) !== "x64"
     )
       fail();
-    diagnostic = "catalog";
     const expected = expectedRuntime(
       recorded ?? servingProfileProvenance(loadServingCatalog(), EXPORTED_VLLM_PROFILE_ID),
     );
@@ -255,7 +249,6 @@ export function observeManagedVllmForExport(
         timeout: INSPECTION_TIMEOUT_MS,
         maxBuffer: MAX_INSPECTION_BYTES,
       });
-    diagnostic = "image";
     const image = parse(
       inspect(
         "image",
@@ -269,7 +262,6 @@ export function observeManagedVllmForExport(
       image.Environment.some((value) => value.startsWith("VLLM_API_KEY="))
     )
       fail();
-    diagnostic = "network";
     const network = parse(
       inspect(
         "network",
@@ -279,28 +271,14 @@ export function observeManagedVllmForExport(
       NetworkSchema,
     );
     const bridge = validateManagedVllmBridgeHost(network.Config[0]!.Gateway);
-    diagnostic = "container-inspect";
-    const source = inspect(
-      "container",
-      HOST_LOCAL_VLLM_CONTAINER_NAME,
-      containerFormat(expected, image, options.homeDirectory ?? os.homedir()),
+    const row = parse(
+      inspect(
+        "container",
+        HOST_LOCAL_VLLM_CONTAINER_NAME,
+        containerFormat(expected, image, options.homeDirectory ?? os.homedir()),
+      ),
+      ContainerSchema,
     );
-    diagnostic = "container-parse";
-    const row = parse(source, ContainerSchema);
-    if (!row.Matches) {
-      diagnostic = `container-policy:${row.Diagnostic ?? ""}`;
-      fail();
-    }
-    diagnostic = "labels";
-    const identity = {
-      [HOST_LOCAL_VLLM_CATALOG_LABEL]: expected.current.catalogDigest,
-      [HOST_LOCAL_VLLM_PRESET_LABEL]: expected.current.preset.id,
-      [HOST_LOCAL_VLLM_PRESET_DIGEST_LABEL]: expected.current.preset.digest,
-      [HOST_LOCAL_VLLM_RECIPE_LABEL]: expected.current.recipe.id,
-      [HOST_LOCAL_VLLM_RECIPE_DIGEST_LABEL]: expected.current.recipe.digest,
-    };
-    if (Object.entries(identity).some(([key, value]) => row.Config.Labels[key] !== value)) fail();
-    diagnostic = "authentication";
     const recovered = recoverHostLocalManagedVllmEndpoint({
       ...options.authentication,
       dockerInspect: () => JSON.stringify([row]),
@@ -332,8 +310,6 @@ export function observeManagedVllmForExport(
       startedAt: row.StartedAt,
     };
   } catch {
-    throw new Error(
-      `The fixed managed vLLM runtime could not be verified for export. [${diagnostic}]`,
-    );
+    fail();
   }
 }
