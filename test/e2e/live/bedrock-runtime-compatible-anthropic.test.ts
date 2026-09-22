@@ -29,8 +29,8 @@ import { CLI_DIST_ENTRYPOINT, CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/path
 import { parseOpenClawAgentText } from "../fixtures/openclaw-agent-output.ts";
 import type { TestProgress, TestProgressCapability } from "../fixtures/progress.ts";
 import {
-  BEDROCK_LEAK_PROBE_SOURCE,
   createBedrockForbiddenLeakPatterns,
+  createBedrockLeakProbeExecArgs,
   createBedrockLeakProbeInput,
   parseBedrockLeakProbeResult,
 } from "./bedrock-runtime-compatible-anthropic-leaks.ts";
@@ -800,19 +800,15 @@ async function assertNoBedrockLeaks(options: {
     configFiles:
       options.agent === "hermes" ? [configFile, "/etc/nemoclaw/hermes.config-hash"] : [configFile],
   });
-  const probe = await runRawCommand(
-    "openshell",
-    ["sandbox", "exec", "-n", SANDBOX_NAME, "--", "python3", "-I", "-c", BEDROCK_LEAK_PROBE_SOURCE],
-    {
-      artifactName: "sandbox-secret-isolation-bedrock-runtime",
-      artifacts: options.artifacts,
-      env: testEnv(options.home),
-      progress: options.progress,
-      redactionValues: [COMPATIBLE_KEY, adapterToken],
-      stdin: JSON.stringify(input),
-      timeoutMs: 180_000,
-    },
-  );
+  const probe = await runRawCommand("openshell", createBedrockLeakProbeExecArgs(SANDBOX_NAME), {
+    artifactName: "sandbox-secret-isolation-bedrock-runtime",
+    artifacts: options.artifacts,
+    env: testEnv(options.home),
+    progress: options.progress,
+    redactionValues: [COMPATIBLE_KEY, adapterToken],
+    stdin: JSON.stringify(input),
+    timeoutMs: 180_000,
+  });
   const summary = parseBedrockLeakProbeResult(probe.stdout, patterns);
   await options.artifacts.writeJson(
     "sandbox-secret-isolation-bedrock-runtime-summary.json",

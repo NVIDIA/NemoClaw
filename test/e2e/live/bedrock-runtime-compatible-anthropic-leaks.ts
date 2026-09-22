@@ -60,6 +60,21 @@ export const BEDROCK_LEAK_PROBE_SOURCE = fs.readFileSync(
   "utf8",
 );
 
+export function createBedrockLeakProbeExecArgs(sandboxName: string): readonly string[] {
+  return [
+    "sandbox",
+    "exec",
+    "-n",
+    sandboxName,
+    "--stdin",
+    "--",
+    "python3",
+    "-I",
+    "-c",
+    BEDROCK_LEAK_PROBE_SOURCE,
+  ];
+}
+
 interface BedrockLeakProbeInputOptions {
   readonly credentialFiles: readonly string[];
   readonly configFiles: readonly string[];

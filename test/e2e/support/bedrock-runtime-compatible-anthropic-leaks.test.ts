@@ -16,6 +16,7 @@ import {
   type BedrockLeakProbeInput,
   type ForbiddenLeakPattern,
   createBedrockForbiddenLeakPatterns,
+  createBedrockLeakProbeExecArgs,
   createBedrockLeakProbeInput,
   parseBedrockLeakProbeResult,
 } from "../live/bedrock-runtime-compatible-anthropic-leaks.ts";
@@ -110,6 +111,23 @@ afterEach(async () => {
 });
 
 describe("Bedrock Runtime bounded leak probe", () => {
+  it("forwards probe input through the explicit OpenShell stdin boundary (#12191)", () => {
+    const args = createBedrockLeakProbeExecArgs("e2e-bedrock");
+
+    expect(args.slice(0, -1)).toEqual([
+      "sandbox",
+      "exec",
+      "-n",
+      "e2e-bedrock",
+      "--stdin",
+      "--",
+      "python3",
+      "-I",
+      "-c",
+    ]);
+    expect(args.at(-1)).toBe(BEDROCK_LEAK_PROBE_SOURCE);
+  });
+
   it("reports bounded clean metadata for every required sandbox boundary (#12191)", () => {
     const fixture = createProbeFixture();
     const result = runProbe(fixture.input);
