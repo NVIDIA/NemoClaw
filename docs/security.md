@@ -45,7 +45,7 @@ Use the owning guide for the selected credential type:
 | External inference key, including Hermes provider authentication | Caller resolves the reference; OpenShell retains the installed value for routing; destroy removes the provider registration, not the upstream account/key | [Inference authentication](inference.md#authenticate-hermes-through-the-provider) |
 | Generated managed vLLM key | Private file in a separate retained credential volume, available to runtime root and engine administrators; recreation reuses it; retiring the container does not erase the key | [Managed service authentication](inference.md#authenticate-a-managed-vllm-service) |
 | Generated external-Ollama proxy key | Private credential volume, available to proxy root and engine administrators; retained across destroy/recreation and never forwarded to Ollama | [Ollama proxy](inference.md#use-external-ollama-through-a-managed-proxy) |
-| Brave search key | Caller supplies the value; OpenShell holds it and replaces the agent's placeholder; destroy removes managed registrations but does not revoke the Brave key | [Brave web search](agents.md#brave-web-search) |
+| Brave or Tavily search key | Caller supplies the value; OpenShell holds it and replaces the agent's placeholder; destroy removes managed registrations but does not revoke the upstream key | [Brave web search](agents.md#brave-web-search), [Tavily web search](agents.md#tavily-web-search) |
 | Native OpenClaw/local Hermes interface tokens | Sandbox-user-readable native files; retained across process restarts, deleted with sandbox data; replace compromised credentials through a fresh deployment | [Agent interfaces](interfaces.md) |
 
 Removing a caller's environment variable does not revoke an upstream key or erase a credential retained by a gateway.
@@ -85,7 +85,7 @@ Before enabling export, identify who can read the collector's stored data and ho
 The current integration selects an existing collector; it does not provision or manage that retention policy.
 Experimental [Hermes Relay tracing](agents.md#hermes-relay-tracing) instead writes local sandbox artifacts without adding a collector or egress rule.
 Its full-payload setting is disabled, but trace contents still need privacy review before sharing; deleting the sandbox deletes those files.
-Relay without explicit `interfaces` selects the upstream adapter, which defaults to `HERMES_YOLO_MODE=1` and accepted hooks when unset; the local Hermes adapter's manual-approval configuration does not apply.
+Relay with both explicit `interfaces` and Tavily search omitted selects the upstream adapter, which defaults to `HERMES_YOLO_MODE=1` and accepted hooks when unset; the local Hermes adapter's manual-approval configuration does not apply.
 Review this change in native control behavior before enabling the experimental mode.
 
 Production tracing privacy review and retention guidance: **TBD**.

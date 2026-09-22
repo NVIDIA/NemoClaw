@@ -88,6 +88,12 @@ RUN mkdir -p /opt/nemoclaw/plugins/brave/node_modules \
     && ln -s /app /opt/nemoclaw/plugins/brave/node_modules/openclaw && rm /tmp/brave.tgz
 COPY image/fabric/BRAVE-LICENSE /opt/nemoclaw/plugins/brave/LICENSE
 COPY image/fabric/BRAVE-NOTICE.md /opt/nemoclaw/plugins/brave/NOTICE.md
+ADD --checksum=sha256:9b250b5ed8660247947701c4df3fb8b1c6b32fd7e30b7a186c7ae763e30c29e8 https://registry.npmjs.org/@openclaw/tavily-plugin/-/tavily-plugin-2026.9.4.tgz /tmp/tavily.tgz
+RUN mkdir -p /opt/nemoclaw/plugins/tavily/node_modules \
+    && tar -xzf /tmp/tavily.tgz -C /opt/nemoclaw/plugins/tavily --strip-components=1 \
+    && ln -s /app /opt/nemoclaw/plugins/tavily/node_modules/openclaw && rm /tmp/tavily.tgz
+COPY image/fabric/TAVILY-LICENSE /opt/nemoclaw/plugins/tavily/LICENSE
+COPY image/fabric/TAVILY-NOTICE.md /opt/nemoclaw/plugins/tavily/NOTICE.md
 COPY image/fabric/openclaw_adapter.py image/fabric/openclaw_features.py image/fabric/openclaw.fabric-adapter.json /opt/nemoclaw/
 ENV HOME=/sandbox OPENCLAW_HOME=/sandbox OPENCLAW_STATE_DIR=/sandbox/.openclaw OPENCLAW_CONFIG_PATH=/sandbox/.openclaw/openclaw.json
 USER node
@@ -107,8 +113,12 @@ COPY --from=hermes-assets /opt/hermes /opt/hermes
 COPY --from=hermes-assets --chmod=0644 /sources/hermes.tar.gz /opt/nemoclaw/source/
 # Hermes resolves bundled assets relative to its source checkout.
 RUN /opt/fabric/bin/pip install --no-index --no-deps --no-build-isolation -e /opt/hermes --config-settings editable_mode=compat
-COPY image/fabric/hermes_adapter.py image/fabric/hermes.fabric-adapter.json /opt/nemoclaw/
+COPY image/fabric/hermes_adapter.py image/fabric/openclaw_features.py image/fabric/hermes.fabric-adapter.json /opt/nemoclaw/
+COPY image/fabric/hermes_tavily.py /opt/hermes/plugins/web/tavily/__init__.py
+COPY image/fabric/hermes-tavily.plugin.yaml /opt/hermes/plugins/web/tavily/plugin.yaml
 ENV HERMES_DISABLE_LAZY_INSTALLS=1
+RUN --network=none --mount=type=bind,source=image/fabric/test_hermes_tavily.py,target=/tmp/test_hermes_tavily.py \
+    NEMOCLAW_TEST_NATIVE_TAVILY=1 /opt/fabric/bin/python -B /tmp/test_hermes_tavily.py
 USER node
 
 FROM base AS node-check-tools

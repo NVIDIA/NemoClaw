@@ -55,7 +55,10 @@ pub(super) fn provider_names(text: &str, runtime: &str) -> Result<Vec<String>, O
     let mut providers = vec![settings.provider];
     providers.extend(selected);
     if let Some(search) = &settings.web_search {
-        providers.push(crate::config::search_provider_name(&search.credential.env));
+        providers.push(crate::config::search_provider_name(
+            search.provider,
+            &search.credential.env,
+        ));
     }
     Ok(providers)
 }
@@ -63,6 +66,35 @@ pub(super) fn provider_names(text: &str, runtime: &str) -> Result<Vec<String>, O
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn tavily_is_attached_only_when_selected_by_the_sandbox_agent() {
+        let mut settings = serde_json::json!({
+            "provider": "local",
+            "connection": {"provider":"openai", "model":"fixture-model",
+                "base_url":"http://127.0.0.1:11434/v1", "api_key_env":"NEMOCLAW_ANONYMOUS_API_KEY"},
+            "api":"openai-completions", "tuning":{}, "agents":[{"name":"main"}]
+        });
+        assert_eq!(
+            provider_names(&settings.to_string(), "fabric-hermes").unwrap(),
+            ["local"]
+        );
+        settings["webSearch"] = serde_json::json!({
+            "provider":"tavily", "agentRefs":["main"], "credential":{"env":"SEARCH_KEY"}
+        });
+        for harness in ["fabric-openclaw", "fabric-hermes"] {
+            assert_eq!(
+                provider_names(&settings.to_string(), harness).unwrap(),
+                [
+                    "local".to_owned(),
+                    crate::config::search_provider_name(
+                        crate::config::SearchProvider::Tavily,
+                        "SEARCH_KEY"
+                    )
+                ]
+            );
+        }
+    }
+
     #[test]
     fn inference_json_accepts_hcl_encoding_and_rejects_invalid_settings() {
         let valid = serde_json::json!({
