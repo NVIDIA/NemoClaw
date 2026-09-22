@@ -106,6 +106,116 @@ async fn exec(client: &OpenShell, binding: &Row, command: Vec<String>) -> Vec<u8
     output
 }
 
+fn policy_dns_denied(logs: &str, hostname: &str) -> bool {
+    let denial = format!(" DENIED {hostname}:53 [reason:policy_dns_ineligible]");
+    logs.lines()
+        .any(|line| line.contains("OCSF NET:REFUSE ") && line.contains(&denial))
+}
+
+async fn assert_undeclared_egress_denied(client: &OpenShell, binding: &Row) {
+    let selected = Command::new("docker")
+        .args([
+            "ps",
+            "--quiet",
+            "--no-trunc",
+            "--filter",
+            "label=openshell.ai/managed-by=openshell",
+            "--filter",
+            "label=openshell.ai/isolation-role=supervisor",
+            "--filter",
+        ])
+        .arg(format!("label=openshell.ai/sandbox-id={}", binding["id"]))
+        .output()
+        .unwrap();
+    assert!(selected.status.success(), "supervisor lookup failed");
+    let selected = String::from_utf8(selected.stdout).unwrap();
+    let ids: Vec<_> = selected.lines().collect();
+    assert_eq!(ids.len(), 1, "expected one owned running supervisor");
+    let supervisor = ids[0];
+    let inspected = Command::new("docker")
+        .args(["inspect", supervisor])
+        .output()
+        .unwrap();
+    assert!(inspected.status.success(), "supervisor inspection failed");
+    let inspected: Value = serde_json::from_slice(&inspected.stdout).unwrap();
+    assert_eq!(inspected[0]["Id"], supervisor);
+    assert_eq!(inspected[0]["State"]["Running"], true);
+    let labels = &inspected[0]["Config"]["Labels"];
+    assert_eq!(labels["openshell.ai/sandbox-id"], binding["id"]);
+    assert_eq!(labels["openshell.ai/managed-by"], "openshell");
+    assert_eq!(labels["openshell.ai/isolation-role"], "supervisor");
+
+    let started = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap();
+    let hostname = format!("denied-{}.example.com", started.as_nanos());
+    let script = format!(
+        "import urllib.error,urllib.request\ntry: urllib.request.urlopen('https://{hostname}',timeout=15)\nexcept urllib.error.URLError: print('request-blocked')\nelse: raise AssertionError('undeclared egress was allowed')"
+    );
+    let blocked = exec(
+        client,
+        binding,
+        vec!["/opt/fabric/bin/python".into(), "-c".into(), script],
+    )
+    .await;
+    assert_eq!(
+        String::from_utf8(blocked).unwrap().trim(),
+        "request-blocked"
+    );
+
+    // Pinned OpenShell denies undeclared DNS names before attempting resolution.
+    // A failed request alone cannot distinguish that policy from a network fault.
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
+    loop {
+        let logs = Command::new("docker")
+            .args([
+                "logs",
+                "--since",
+                &started.as_secs().to_string(),
+                "--tail",
+                "2000",
+                supervisor,
+            ])
+            .output()
+            .unwrap();
+        assert!(
+            logs.status.success(),
+            "owned supervisor log observation failed"
+        );
+        if policy_dns_denied(&String::from_utf8_lossy(&logs.stdout), &hostname)
+            || policy_dns_denied(&String::from_utf8_lossy(&logs.stderr), &hostname)
+        {
+            break;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "request failed without fresh matching OpenShell policy-denial evidence"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+}
+
+#[test]
+fn egress_proof_requires_policy_denial_for_the_exact_probe_hostname() {
+    let hostname = "denied-fixture.example.com";
+    let denied = format!(
+        "2026-09-22T03:50:36.523Z OCSF NET:REFUSE [MED] DENIED {hostname}:53 [reason:policy_dns_ineligible]"
+    );
+    assert!(policy_dns_denied(&denied, hostname));
+    for logs in [
+        String::new(),
+        "DNS timed out".into(),
+        "Name or service not known".into(),
+        "Tunnel connection failed: 403 Forbidden".into(),
+        denied.replace(hostname, "other.example.com"),
+        denied.replace(hostname, "denied-fixture.example.com.attacker.test"),
+        denied.replace("policy_dns_ineligible", "policy_dns_upstream_error"),
+        denied.replace("NET:REFUSE", "NET:ALLOW"),
+    ] {
+        assert!(!policy_dns_denied(&logs, hostname), "{logs}");
+    }
+}
+
 async fn runtime_id(client: &OpenShell, binding: &Row) -> String {
     let output = exec(
         client,
@@ -170,26 +280,6 @@ fn confirmed_openclaw_reply(response: &[u8]) -> bool {
                 .trim_end_matches(['.', '!'])
                 .eq_ignore_ascii_case("FOUR")
         })
-}
-
-fn confirmed_policy_denial(response: &[u8]) -> bool {
-    let Ok(response) = std::str::from_utf8(response) else {
-        return false;
-    };
-    response
-        .lines()
-        .any(|line| line == "policy-denied-403" || line.starts_with("policy-denied-dns:"))
-}
-
-#[test]
-fn policy_denial_requires_a_dns_block_or_proxy_rejection() {
-    assert!(confirmed_policy_denial(b"policy-denied-403\n"));
-    assert!(confirmed_policy_denial(
-        b"policy-denied-dns:[Errno -3] Temporary failure in name resolution\n"
-    ));
-    assert!(!confirmed_policy_denial(b"timed out\n"));
-    assert!(!confirmed_policy_denial(b"connection refused\n"));
-    assert!(!confirmed_policy_denial(b""));
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -311,23 +401,7 @@ async fn bare_brev_hosted_openclaw_lifecycle() {
     )
     .await;
     assert!(output.is_empty());
-    let denial = exec(
-        &client,
-        &binding,
-        [
-            "/opt/fabric/bin/python",
-            "-c",
-            "import socket,urllib.error,urllib.request\ntry: socket.getaddrinfo('example.com',443,type=socket.SOCK_STREAM)\nexcept socket.gaierror as error:\n print(f'policy-denied-dns:{error}')\nelse:\n try: urllib.request.urlopen('https://example.com',timeout=15)\n except urllib.error.URLError as error:\n  if '403' not in str(error):\n   print(f'unexpected-url-error:{error}')\n   raise\n  print('policy-denied-403')\n else: raise AssertionError('undeclared egress was allowed')",
-        ]
-        .map(String::from)
-        .to_vec(),
-    )
-    .await;
-    assert!(
-        confirmed_policy_denial(&denial),
-        "undeclared egress did not produce a policy denial: {}",
-        String::from_utf8_lossy(&denial)
-    );
+    assert_undeclared_egress_denied(&client, &binding).await;
 
     let unchanged = deployment.apply(&document, &cancel).await.unwrap();
     assert_eq!(unchanged.outcome, Outcome::Succeeded);
