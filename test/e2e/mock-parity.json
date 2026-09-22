@@ -578,8 +578,8 @@
       "live": "test/e2e/live/issue-4462-scope-upgrade-approval.test.ts",
       "liveSources": ["test/e2e/live/issue-4462-admin-approval-helper.ts"],
       "fast": [
+        "test/security/admin-approval-helper.test.ts",
         "test/e2e/support/issue-4462-fixture-boundary.test.ts",
-        "test/e2e/support/issue-4462-gateway-snapshot.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts"
       ]
