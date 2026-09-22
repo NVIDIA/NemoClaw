@@ -10,10 +10,7 @@ import type {
   V1Alpha1VllmService,
 } from "../../../src/lib/config/v1alpha1-export.ts";
 import { cleanupLocalModelRuntimes } from "../../../src/lib/inference/local-model-profile/cleanup.ts";
-import { loadServingCatalog } from "../../../src/lib/inference/serving/catalog-loader.ts";
-import { servingProfileProvenance } from "../../../src/lib/inference/serving/profile-provenance.ts";
 import { HOST_LOCAL_VLLM_CONTAINER_NAME } from "../../../src/lib/inference/serving/vllm-host-local-lifecycle.ts";
-import { observeManagedVllmForExport } from "../../../src/lib/inference/serving/vllm-export-runtime.ts";
 import { loadManagedVllmApiKey } from "../../../src/lib/inference/vllm-api-key.ts";
 import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
@@ -664,41 +661,6 @@ test(
     expect(onboard.exitCode, resultText(onboard)).toBe(0);
     const apiKey = loadManagedVllmApiKey();
     artifacts.addRedactionValues([apiKey ?? ""]);
-    await host.command(
-      "docker",
-      [
-        "container",
-        "inspect",
-        "--format",
-        '{"shmSize":{{json .HostConfig.ShmSize}},"mounts":{{json .Mounts}},"environment":{{json .Config.Env}}}',
-        HOST_LOCAL_VLLM_CONTAINER_NAME,
-      ],
-      {
-        artifactName: "vllm-export-container-policy",
-        env: exportEnv,
-        timeoutMs: 30_000,
-      },
-    );
-    const runtimeImage = servingProfileProvenance(
-      loadServingCatalog(),
-      EXPORTED_VLLM_PROFILE_ID,
-    ).runtimeImage!;
-    await host.command(
-      "docker",
-      ["image", "inspect", "--format", '{"environment":{{json .Config.Env}}}', runtimeImage],
-      {
-        artifactName: "vllm-export-image-policy",
-        env: exportEnv,
-        timeoutMs: 30_000,
-      },
-    );
-    let verifierDiagnostic = "verified";
-    try {
-      observeManagedVllmForExport(undefined);
-    } catch (error) {
-      verifierDiagnostic = error instanceof Error ? error.message : "unknown verifier failure";
-    }
-    await artifacts.writeText("vllm-export-verifier-diagnostic.txt", verifierDiagnostic);
 
     progress.phase("export the managed vLLM configuration");
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-vllm-export-"));

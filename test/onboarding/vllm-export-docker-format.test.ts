@@ -31,9 +31,16 @@ describe.skipIf(!dockerClientAvailable)("managed vLLM Docker format boundary", (
       CapAdd: null,
       SecurityOpt: ["label=disable"],
       Ulimits: null,
+      ShmSize: 64 * 1024 * 1024,
     });
     Reflect.deleteProperty(fixture.objects.container.HostConfig, "Tmpfs");
     Object.assign(fixture.objects.container.HostConfig.DeviceRequests[0]!, { DeviceIDs: null });
+    fixture.objects.container.Config.Env.unshift("HF_HOME=/root/.cache/huggingface");
+    Object.assign(fixture.objects.container.Mounts[0]!, {
+      Source: "/home/fixture/.cache/huggingface",
+      Destination: "/root/.cache/huggingface",
+      RW: true,
+    });
     expect(fixture.run().serving.hostPort).toBe(18000);
   });
 
