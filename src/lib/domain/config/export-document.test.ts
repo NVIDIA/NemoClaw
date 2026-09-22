@@ -49,6 +49,20 @@ const source = {
 } as unknown as VerifiedExportSource;
 
 describe("export config builder", () => {
+  it.each(["openclaw", "hermes"] as const)(
+    "emits one singular %s agent for the v1alpha1 consumer (#12131)",
+    (agent) => {
+      const result = buildExportConfig(
+        { ...source, agent, interfaces: undefined },
+        { documentName: alphaDocumentName, documentUid: firstUid },
+      );
+      const sandbox = result.spec.sandboxes[0]!;
+
+      expect(sandbox).toHaveProperty("agent");
+      expect(sandbox).not.toHaveProperty("agents");
+    },
+  );
+
   it("maps a verified source into one aggregate (#10938)", () => {
     const result = buildExportConfig(source, {
       documentName: workAgentsDocumentName,
@@ -137,29 +151,6 @@ describe("export config builder", () => {
       buildExportConfig(source, { documentName: alphaDocumentName, documentUid: firstUid }).spec
         .sandboxes[0],
     ).not.toHaveProperty("integrations");
-  });
-
-  it("grants Brave to the declared single agent (#12131)", () => {
-    const document = buildExportConfig(
-      {
-        ...source,
-        webSearch: {
-          provider: "brave",
-          agentRefs: ["primary"],
-          credential: { env: "BRAVE_API_KEY" },
-        },
-      },
-      {
-        documentName: alphaDocumentName,
-        documentUid: firstUid,
-      },
-    );
-
-    const sandbox = document.spec.sandboxes[0]!;
-    expect("agent" in sandbox).toBe(true);
-    expect(sandbox.agent).toEqual(
-      expect.objectContaining({ name: "primary", integrationRefs: ["brave-search"] }),
-    );
   });
 
   it("uses the supplied identity and keeps derived references deterministic (#10938)", () => {

@@ -8,9 +8,11 @@ export function asExportedConfig(value: unknown): V1Alpha1Export {
   return value as V1Alpha1Export;
 }
 
-export function exportedSingletonSandbox(
+export function exportedDeepAgentsSandbox(
   sandbox: V1Alpha1ExportSandbox,
 ): Extract<V1Alpha1ExportSandbox, { readonly image: Readonly<{ ref: string }> }> {
-  if (sandbox.image === null) throw new Error("The export requires an explicit image");
+  if (sandbox.image === null || sandbox.harness.kind !== "deepagents") {
+    throw new Error("The export requires a Deep Agents sandbox");
+  }
   return sandbox;
 }

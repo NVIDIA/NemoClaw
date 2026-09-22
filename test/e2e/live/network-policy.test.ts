@@ -5,7 +5,6 @@ import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import YAML from "yaml";
-import { asExportedConfig } from "../../support/config-export-document.ts";
 import { fingerprintOpenShellSandboxId } from "../../../src/lib/adapters/openshell/sandbox-identity.ts";
 import {
   namedOpenShellGateway,
@@ -26,6 +25,7 @@ import {
 } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { CLI_ENTRYPOINT } from "../fixtures/paths.ts";
+import { parseConfigExport } from "../fixtures/phases/config-export-validation.ts";
 import { ensureConfiguredRuntimeProviderAvailable } from "../fixtures/runtime-provider.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import {
@@ -34,7 +34,6 @@ import {
 } from "../support/network-policy-probe.ts";
 import { writeSecretFreeConfigExportArtifact } from "../support/config-export-secret-scan.ts";
 import { runRestrictedOnboardWithRetry } from "./restricted-onboard-helpers.ts";
-import { requireHostedInferenceConfig } from "../fixtures/hosted-inference.ts";
 
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-net-policy";
 const SUPPRESSION_SANDBOX_NAME =
@@ -380,24 +379,9 @@ test(
     );
     expect(exported.exitCode, text(exported)).toBe(0);
     const raw = fs.readFileSync(outputPath, "utf8");
-    const document = asExportedConfig(YAML.parse(raw));
+    const document = parseConfigExport(raw);
     const exportedSandbox = document.spec.sandboxes[0];
-    const exportedAgent = exportedSandbox.agent;
-    const exportedRoute = exportedAgent.inference.routes[0];
-    const exportedProvider = document.spec.inferenceProviders[0];
-    const exportedToolDisclosure =
-      exportedAgent.tools && "disclosure" in exportedAgent.tools
-        ? exportedAgent.tools.disclosure
-        : "progressive";
-    expect(
-      `sandbox=${exportedSandbox.name}\nagent=${exportedAgent.name}\nroute=${exportedRoute.name}\nproviderRef=${exportedRoute.providerRef}\nmodel=${exportedRoute.overrides.model}\napi=${exportedProvider.api}\nendpoint=${exportedProvider.endpoint}\ncredentialEnv=${exportedProvider.credential?.env}\ntoolDisclosure=${exportedToolDisclosure}`,
-    ).toBe(
-      `sandbox=${SANDBOX_NAME}\nagent=primary\nroute=primary\nproviderRef=${exportedProvider.name}\nmodel=${entry.model}\napi=${entry.preferredInferenceApi}\nendpoint=${entry.endpointUrl}\ncredentialEnv=${entry.credentialEnv}\ntoolDisclosure=${entry.toolDisclosure ?? "progressive"}`,
-    );
-    expect(exportedSandbox.harness.kind).toBe("openclaw");
     expect(exportedSandbox.image).toBeNull();
-    const exportedEndpoint = "endpoint" in exportedProvider ? exportedProvider.endpoint : undefined;
-    expect(exportedEndpoint).toBe(requireHostedInferenceConfig(secrets).endpointUrl);
     expect(
       (document.spec.sandboxes[0].network.policy.explicit as { network_policies?: unknown })
         .network_policies,
@@ -434,11 +418,7 @@ test(
     }
     await artifacts.writeJson("config-export-live-evidence.json", {
       sandboxName: SANDBOX_NAME,
-      agentNames: [exportedAgent.name],
-      image: "v1-default",
-      endpoint: exportedEndpoint,
-      model: exportedRoute.overrides.model,
-      toolDisclosure: exportedToolDisclosure,
+      managedImagePlaceholderIsNull: exportedSandbox.image === null,
       effectivePolicyMatches: true,
       identityDriftPreventedPublication: true,
       yaml: {

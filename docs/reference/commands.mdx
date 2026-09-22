@@ -356,8 +356,9 @@ When a managed OpenClaw sandbox uses Brave Search, the export includes its `webS
 When retained managed proxy settings differ from the default, the export includes the validated host and port under `network.proxy`.
 For hosted OpenClaw inference, the export preserves nondefault managed context-window, maximum-token, reasoning, and reasoning-effort settings as route overrides.
 It preserves nondefault agent timeout and heartbeat settings under `execution`.
-The exporter emits one primary agent for a single-agent OpenClaw sandbox.
-It rejects an OpenClaw sandbox that has retained secondary agents because the current v1 contract requires one agent per sandbox.
+The exporter emits one primary agent for a single-agent OpenClaw sandbox and uses `image: null` as the managed-image placeholder until v1 release.
+The command rejects a managed OpenClaw sandbox with secondary agents and produces no document.
+Secondary-agent export remains deferred until the v1 schema defines that representation.
 For OpenClaw, it preserves a nondefault managed dashboard port or bind address under `interfaces.dashboard`.
 When managed OpenClaw uses direct tool disclosure, the export includes `tools.disclosure: direct`.
 It omits the default progressive disclosure setting.

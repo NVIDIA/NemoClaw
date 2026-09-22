@@ -799,8 +799,11 @@ process.stdout.write("x".repeat(1024 * 1024 + 2048 - Buffer.byteLength(suffix, "
     expect(() => parseConfigExport(JSON.stringify(missingEndpoint))).toThrow(
       "complete staged v1alpha1 shape",
     );
+    Object.assign(sandbox, { agents: [sandbox.agent], agent: undefined });
+    expect(() => parseConfigExport(JSON.stringify(candidate))).toThrow(
+      "complete staged v1alpha1 shape",
+    );
   });
-
   it("rejects an export that violates the canonical config schema (#11485)", async () => {
     const valid = document();
     const raw = JSON.stringify({

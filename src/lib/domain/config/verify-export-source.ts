@@ -675,7 +675,6 @@ function supportedAgentSettingsProfile(
       ...expected.agentConfig,
       agentTimeoutSeconds: profile.agentConfig.agentTimeoutSeconds,
       heartbeatEvery: profile.agentConfig.heartbeatEvery,
-      extraAgents: expected.agentConfig.extraAgents,
     },
   };
 }
@@ -1279,33 +1278,28 @@ function validateAgreement(
   ];
 }
 
-function classifyManagedWorkload(
-  entry: ObservedExportRegistry,
-  authority: NonNullable<ReturnType<typeof readManagedWorkloadAuthority>>,
-): ExportFinding[] {
-  const { profile } = authority;
-  if (
-    profile.agentConfig.agent === "openclaw" &&
-    profile.agentConfig.extraAgents.agents.length > 0
-  ) {
-    return [
-      finding(
-        "spec.sandboxes[].agent",
-        "unsupported",
-        "V1alpha1 export cannot represent a retained secondary-agent roster.",
-      ),
-    ];
-  }
-  return classifyManagedStartupProfile(entry, profile);
-}
-
 function inspectWorkload(entry: ObservedExportRegistry) {
   let authority: NonNullable<ReturnType<typeof readManagedWorkloadAuthority>> | null = null;
   const findings: ExportFinding[] = [];
   if (entry.workload?.kind === "managed-image") {
     try {
       authority = readManagedWorkloadAuthority(entry);
-      if (authority) findings.push(...classifyManagedWorkload(entry, authority));
+      if (authority) {
+        if (
+          authority.profile.agentConfig.agent === "openclaw" &&
+          authority.profile.agentConfig.extraAgents.agents.length > 0
+        ) {
+          findings.push(
+            finding(
+              "spec.sandboxes[].agent",
+              "unsupported",
+              "V1alpha1 export does not support an OpenClaw sandbox with secondary agents.",
+            ),
+          );
+        } else {
+          findings.push(...classifyManagedStartupProfile(entry, authority.profile));
+        }
+      }
     } catch {
       findings.push(
         finding(

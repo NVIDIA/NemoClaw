@@ -163,9 +163,10 @@ and sandbox, records the authenticated discovery diagnostics, scans the evidence
 credentials, and must pass.
 These are two required acceptance executions, not retries; either failure remains a failed check.
 The concurrent-add probe retries only the rejected command after status proves that the other
-command committed one coherent bridge. The rejected command must report either the exact portable
-host-lock timeout or the reviewed Hermes restart transport failure. The retry runs once, has its own
-command artifact, and must succeed idempotently from the verified committed source.
+command committed one coherent bridge. The rejected command must report the exact portable
+host-lock timeout. The retry runs once, has its own command artifact, and must succeed idempotently
+from the verified committed source. Production Hermes add owns reload-transport reconciliation, so
+the E2E boundary does not retry a Hermes mutation after transport loss.
 The workflow records one publication cohort before its PR producer matrix runs. Failed-job reruns
 reuse that cohort and replace only the stable run-scoped artifact owned by each retried agent.
 Consumers accept one complete cohort from the same run at the current or an earlier attempt. They
@@ -391,18 +392,12 @@ This keeps the private optional dependency available for SDK-backed commands suc
 
 The `network-policy` target also owns live configuration-export evidence for #10938, #11854, #12131, and PR #11065.
 After restricted single-agent OpenClaw onboarding, it invokes the candidate `config export` command through the real SDK connection.
-It compares the OpenClaw harness, primary agent, sandbox name, hosted endpoint, and explicit policy with the fixture's registered and effective state.
-It also requires the temporary managed-image value to be `null`; the builder test owns the deterministic placeholder mapping.
+It validates the staged document, requires `image: null`, and compares the explicit policy with the effective sandbox policy.
 It then changes the fixture's recorded sandbox fingerprint and requires export to fail without creating a file.
 The fixture restores the registry in `finally` and removes private export files through its existing cleanup registry.
-The exported effective policy comes from the SDK configuration response and is compared with the
-independent CLI policy observation. This covers the SDK connection and complete export observation boundary; the deterministic adapter tests remain the owners of individual wire shapes and malformed responses.
-The assertion budget is unchanged. Nine export assertions replace nine redundant checks in the same target:
-
-- Two CLI-file and two OpenShell-version checks are covered by the retained successful onboarding checks.
-- Two intermediate process-start comparisons are covered by the retained comparison after all policy and traffic probes.
-- The approved HTTP status check is redundant with the marker server response, which always returns that marker with status 200.
-- Two web-fetch success-marker checks duplicate the retained probe exit-status check; the probe rejects missing approved content and unexpected denied-port access.
+The fixture stores the secret-free YAML and its SHA-256 digest as review evidence.
+The exported effective policy comes from the SDK response and must match the independent CLI policy observation.
+Deterministic adapter tests own individual wire shapes and malformed responses.
 
 The `security-posture-hermes` target owns the corresponding live Hermes export evidence for #11286.
 After canonical hosted-inference onboarding, it invokes `config export` through both the `nemoclaw`

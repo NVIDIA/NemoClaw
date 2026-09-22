@@ -751,7 +751,7 @@ describe("live export snapshot reader", () => {
     expect(JSON.stringify(result)).not.toContain(readFailureCanary);
   });
 
-  it("refuses an observed secondary-agent roster without publishing YAML (#12131)", async () => {
+  it("refuses an observed agent roster before publishing singular v1alpha1 output (#12131)", async () => {
     const built = buildManagedStartupProfile({
       ...startupInput,
       environment: {
@@ -773,11 +773,9 @@ describe("live export snapshot reader", () => {
     expect(result).toMatchObject({
       ok: false,
       failure: {
+        kind: "observation",
         findings: expect.arrayContaining([
-          expect.objectContaining({
-            field: "spec.sandboxes[].agent",
-            category: "unsupported",
-          }),
+          expect.objectContaining({ field: "spec.sandboxes[].agent", category: "unsupported" }),
         ]),
       },
     });

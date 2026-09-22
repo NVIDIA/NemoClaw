@@ -150,7 +150,7 @@ describe("managed vLLM export pipeline", () => {
     { count: 2, names: ["researcher", "reviewer"] },
     { count: 128, names: Array.from({ length: 128 }, (_, index) => `reader-${index}`) },
   ])(
-    "rejects all $count fixed-profile secondaries before the deferred target mapping (#12131)",
+    "admits all $count fixed-profile secondaries before the deferred target mapping (#11859)",
     async ({ names }) => {
       mockManagedVllmSource({
         NEMOCLAW_EXTRA_AGENTS_JSON: JSON.stringify(
@@ -188,7 +188,8 @@ describe("managed vLLM export pipeline", () => {
             {
               field: "spec.sandboxes[].agent",
               category: "unsupported",
-              diagnostic: "V1alpha1 export cannot represent a retained secondary-agent roster.",
+              diagnostic:
+                "V1alpha1 export does not support an OpenClaw sandbox with secondary agents.",
             },
           ],
         },
