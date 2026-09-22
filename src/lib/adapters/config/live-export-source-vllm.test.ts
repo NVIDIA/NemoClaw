@@ -137,6 +137,8 @@ function mockManagedVllmSource(
     type: "openai",
     credentials,
     config: { OPENAI_BASE_URL: source.endpointUrl },
+    // Protobuf string scalars use the empty string when profile_workspace is unset.
+    profileWorkspace: "",
   };
   raw.getProvider.mockResolvedValue({
     provider: localProvider,
