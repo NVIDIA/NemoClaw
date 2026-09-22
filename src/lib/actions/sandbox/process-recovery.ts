@@ -204,12 +204,27 @@ export async function executeSandboxCommand(
   });
 }
 
+class CustomAgentRecoveryTransportError extends Error {
+  constructor(
+    sandboxName: string,
+    readonly operation: "inspection" | "recovery",
+    reason: string,
+  ) {
+    super(
+      `Custom-agent ${operation} for sandbox "${sandboxName}" failed: SSH ${reason}. ` +
+        "Check sandbox connectivity and gateway state before trying recovery again.",
+    );
+    this.name = "CustomAgentRecoveryTransportError";
+  }
+}
+
 /** Custom manifests require the login user until they declare a native recovery contract. */
 async function executeCustomAgentRecoveryCommand(
   sandboxName: string,
   command: string,
+  operation: "inspection" | "recovery",
   runtimeSelection?: OpenShellRuntimeSelection,
-): Promise<SandboxCommandResult | null> {
+): Promise<SandboxCommandResult> {
   const result = await createCliOpenShellSandboxSshExecutor().run({
     sandboxName,
     command,
@@ -221,9 +236,10 @@ async function executeCustomAgentRecoveryCommand(
       : buildSubprocessEnv(),
     timeoutMilliseconds: DEFAULT_SANDBOX_EXEC_TIMEOUT_MS,
   });
-  return result.kind === "completed"
-    ? { status: result.exitCode, stdout: result.stdout.trim(), stderr: result.stderr.trim() }
-    : null;
+  if (result.kind === "failed") {
+    throw new CustomAgentRecoveryTransportError(sandboxName, operation, result.reason);
+  }
+  return { status: result.exitCode, stdout: result.stdout.trim(), stderr: result.stderr.trim() };
 }
 
 /** Run one root controller argv against the registry-pinned direct container. */
@@ -1363,7 +1379,12 @@ async function isSandboxGatewayRunning(
   try {
     return parseSandboxGatewayRecoveryProbe(
       agent && agent.name !== "openclaw" && agent.name !== "hermes"
-        ? await executeCustomAgentRecoveryCommand(sandboxName, command, runtimeSelection)
+        ? await executeCustomAgentRecoveryCommand(
+            sandboxName,
+            command,
+            "inspection",
+            runtimeSelection,
+          )
         : await executeSandboxExecCommand(sandboxName, command, DEFAULT_SANDBOX_EXEC_TIMEOUT_MS, {
             runtimeSelection,
           }),
@@ -1838,7 +1859,12 @@ async function recoverSandboxProcesses(
     // runtime user. Recover them over SSH so the launch inherits the sandbox
     // login user instead of creating root-owned agent state under /sandbox.
     return recoveredCustomAgent(
-      await executeCustomAgentRecoveryCommand(sandboxName, agentScript, runtimeSelection),
+      await executeCustomAgentRecoveryCommand(
+        sandboxName,
+        agentScript,
+        "recovery",
+        runtimeSelection,
+      ),
     );
   }
 
@@ -2855,7 +2881,20 @@ export async function checkAndRecoverSandboxProcesses(
   } = {},
 ) {
   const { withLifecycleLock = withSandboxLifecycleLock, ...recoveryOptions } = options;
-  return withLifecycleLock(sandboxName, () =>
-    checkAndRecoverSandboxProcessesWithoutHostLock(sandboxName, recoveryOptions),
-  );
+  return withLifecycleLock(sandboxName, async () => {
+    try {
+      return await checkAndRecoverSandboxProcessesWithoutHostLock(sandboxName, recoveryOptions);
+    } catch (error) {
+      if (!(error instanceof CustomAgentRecoveryTransportError)) throw error;
+      recoveryOptions.onRecoveryFailureLayer?.(null, error.message);
+      if (!recoveryOptions.quiet) console.error(`  ${error.message}`);
+      return {
+        checked: error.operation === "recovery",
+        wasRunning: error.operation === "recovery" ? false : null,
+        recovered: false,
+        forwardRecovered: false,
+        recoveryFailureDetail: error.message,
+      };
+    }
+  });
 }

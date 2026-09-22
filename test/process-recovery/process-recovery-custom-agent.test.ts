@@ -113,6 +113,63 @@ async function withFakeOpenshellBinary<T>(fn: () => Promise<T>): Promise<T> {
 }
 
 describe("checkAndRecoverSandboxProcesses custom agent recovery", () => {
+  (["inspection", "recovery"] as const).forEach((operation) => {
+    it.each(["configuration", "unavailable", "timeout", "cancelled", "transport", "capture"])(
+      `reports SSH %s during custom-agent ${operation} without retry or fallback`,
+      async (reason) => {
+        const agentRuntime = requireSource("../../src/lib/agent/runtime.ts");
+        const registry = requireSource("../../src/lib/state/registry.ts");
+        const ssh = requireSource("../../src/lib/adapters/openshell/sandbox-ssh-cli.ts");
+        const native = requireSource("../../src/lib/adapters/openshell/sandbox-command-cli.ts");
+        const privileged = requireSource("../../src/lib/sandbox/privileged-exec.ts");
+        const run = vi.fn(async () => ({ kind: "failed", reason }));
+        vi.spyOn(ssh, "createCliOpenShellSandboxSshExecutor").mockReturnValue({ run });
+        const nativeExecutor = vi.spyOn(native, "createCliOpenShellSandboxCommandExecutor");
+        const privilegedExecutor = vi.spyOn(privileged, "executePrivilegedSandboxCommand");
+        vi.spyOn(agentRuntime, "getSessionAgent").mockReturnValue({
+          name: "custom-agent",
+          displayName: "Custom Agent",
+          binary_path: "/usr/local/bin/custom-agent",
+          gateway_command: "custom-agent gateway run",
+          forwardPort: 19000,
+          healthProbe: { url: "http://127.0.0.1:19000/health", port: 19000 },
+        });
+        vi.spyOn(registry, "getSandbox").mockReturnValue({
+          name: "custom-box",
+          agent: "custom-agent",
+          dashboardPort: 19000,
+          gatewayName: "nemoclaw-19080",
+          gatewayPort: 19080,
+        });
+        const forwardAdapterForAuthority = mockForwardOwned();
+        const onRecoveryFailureLayer = vi.fn();
+        const result = await checkAndRecoverSandboxProcesses("custom-box", {
+          quiet: true,
+          forwardAdapterForAuthority,
+          onRecoveryFailureLayer,
+          isSandboxGatewayRunningImpl: operation === "recovery" ? async () => false : undefined,
+        });
+        expect(result).toEqual({
+          checked: operation === "recovery",
+          wasRunning: operation === "recovery" ? false : null,
+          recovered: false,
+          forwardRecovered: false,
+          recoveryFailureDetail: expect.stringContaining(`SSH ${reason}`),
+        });
+        expect(result.recoveryFailureDetail).toContain(`Custom-agent ${operation}`);
+        expect(result.recoveryFailureDetail).toContain('sandbox "custom-box"');
+        expect(result.recoveryFailureDetail).toContain(
+          "Check sandbox connectivity and gateway state",
+        );
+        expect(onRecoveryFailureLayer).toHaveBeenCalledWith(null, result.recoveryFailureDetail);
+        expect(run).toHaveBeenCalledOnce();
+        expect(nativeExecutor).not.toHaveBeenCalled();
+        expect(privilegedExecutor).not.toHaveBeenCalled();
+        expect(forwardAdapterForAuthority).not.toHaveBeenCalled();
+      },
+    );
+  });
+
   it("retains SSH health-probe compatibility for an explicitly loaded custom gateway agent", async () => {
     const openshellRuntime = requireSource("../../src/lib/adapters/openshell/runtime.ts");
     const agentRuntime = requireSource("../../src/lib/agent/runtime.ts");
