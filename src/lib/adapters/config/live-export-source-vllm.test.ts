@@ -312,7 +312,7 @@ describe("managed vLLM export pipeline", () => {
     },
   );
 
-  it("reads the gateway-owned vLLM credential before runtime classification", async () => {
+  it("qualifies the fixed vLLM runtime when the registry omits profile provenance", async () => {
     const fixture = mockManagedVllmSource();
     const source: SandboxEntry = { ...fixture.source };
     delete source.servingProfileProvenance;
@@ -332,7 +332,7 @@ describe("managed vLLM export pipeline", () => {
         },
       },
     });
-    expect(observeManagedVllmForExport).not.toHaveBeenCalled();
+    expect(observeManagedVllmForExport).toHaveBeenCalledWith(undefined);
     expect(raw.getProviderProfile).not.toHaveBeenCalled();
   });
 
@@ -386,7 +386,6 @@ describe("managed vLLM export pipeline", () => {
 
   it.each([
     { workload: undefined },
-    { servingProfileProvenance: undefined },
     { lifecycleLiveIdentityFingerprint: "f".repeat(64) },
     { compatibleEndpointReasoning: "false" },
     { model: "another-model" },

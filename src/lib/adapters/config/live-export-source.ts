@@ -345,7 +345,7 @@ async function readSnapshot(sandboxName: string): Promise<RawExportSnapshot> {
     const sandbox = sandboxIdentity(row);
     stage = "managed-serving";
     const managedServing =
-      entry.provider === "vllm-local" && entry.servingProfileProvenance
+      entry.provider === "vllm-local"
         ? observeManagedVllmForExport(entry.servingProfileProvenance)
         : undefined;
     stage = "inference-route";

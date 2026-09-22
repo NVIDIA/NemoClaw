@@ -704,22 +704,11 @@ function classifyProfileEquality(
 ): ExportFinding[] {
   const findings: ExportFinding[] = [];
   if (!hasEqualJsonStructure(profile.inference, expected.inference)) {
-    const actual = profile.inference ?? {};
-    const wanted = expected.inference ?? {};
-    const differingFields = Object.keys({ ...actual, ...wanted })
-      .filter(
-        (field) =>
-          !hasEqualJsonStructure(
-            actual[field as keyof typeof actual],
-            wanted[field as keyof typeof wanted],
-          ),
-      )
-      .sort();
     findings.push(
       finding(
         "spec.inferenceProviders",
         "drifted",
-        `The managed startup profile and the registered inference selection differ (${differingFields.join(", ") || "inference"}; servingPreset=${JSON.stringify(profile.inference?.servingPreset)}; expectedServingPreset=${JSON.stringify(expected.inference?.servingPreset)}).`,
+        "The managed startup profile and the registered inference selection differ.",
       ),
     );
   }
@@ -756,7 +745,6 @@ function expectedProfileWithObservedHostSettings(
     let expected = supportedHostProfile(profile, expectedManagedStartupProfile(entry));
     const servingPreset = profile.inference?.servingPreset;
     if (
-      entry.servingProfileProvenance?.preset.id === EXPORTED_VLLM_PROFILE_ID &&
       expected.inference &&
       (servingPreset === undefined ||
         servingPreset === null ||
@@ -797,7 +785,8 @@ function classifyManagedStartupProfile(
   const supported = supportedAgentSettingsProfile(profile, expected);
   if (
     !supported ||
-    (entry.servingProfileProvenance?.preset.id === EXPORTED_VLLM_PROFILE_ID &&
+    ((entry.servingProfileProvenance?.preset.id === EXPORTED_VLLM_PROFILE_ID ||
+      profile.inference?.servingPreset === EXPORTED_VLLM_PROFILE_ID) &&
       profile.tuning.contextWindow !== EXPORTED_VLLM_CONTEXT_WINDOW)
   ) {
     return [

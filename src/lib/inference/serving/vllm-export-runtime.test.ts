@@ -102,9 +102,9 @@ function fixture() {
 }
 
 describe("fixed managed vLLM export observation", () => {
-  it("binds one running runtime to the current catalog and nondefault listener", () => {
+  it("binds one running runtime without retained provenance to the current catalog", () => {
     const f = fixture();
-    const result = observeManagedVllmForExport(f.provenance, f.options);
+    const result = observeManagedVllmForExport(undefined, f.options);
     expect(result).toMatchObject({
       containerId,
       imageId,

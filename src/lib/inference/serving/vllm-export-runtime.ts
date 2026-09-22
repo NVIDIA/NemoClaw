@@ -20,7 +20,10 @@ import { buildLocalManagedVllmDockerEnv } from "../vllm-docker-env";
 import { isHostLocalInferenceServingRecipe } from "./adapter-registry";
 import { loadManagedInferenceCatalog, loadServingCatalog } from "./catalog-loader";
 import { materializeHostLocalVllmModel } from "./host-local-vllm-selection";
-import { assertServingProfileProvenanceCurrent } from "./profile-provenance";
+import {
+  assertServingProfileProvenanceCurrent,
+  servingProfileProvenance,
+} from "./profile-provenance";
 import type { ServingProfileProvenance } from "./types";
 import {
   HOST_LOCAL_VLLM_AUTH_LABEL,
@@ -223,7 +226,7 @@ function containerFormat(
 
 /** Read the fixed runtime; authentication stays inside existing private lifecycle verification. */
 export function observeManagedVllmForExport(
-  recorded: ServingProfileProvenance,
+  recorded: ServingProfileProvenance | undefined,
   options: VllmExportRuntimeOptions = {},
 ): ObservedManagedVllmRuntime {
   try {
@@ -232,7 +235,9 @@ export function observeManagedVllmForExport(
       (options.architecture ?? process.arch) !== "x64"
     )
       fail();
-    const expected = expectedRuntime(recorded);
+    const expected = expectedRuntime(
+      recorded ?? servingProfileProvenance(loadServingCatalog(), EXPORTED_VLLM_PROFILE_ID),
+    );
     const capture = options.capture ?? dockerCapture;
     const env = buildLocalManagedVllmDockerEnv();
     const inspect = (kind: string, name: string, format: string) =>
