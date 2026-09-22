@@ -504,14 +504,6 @@ function gpuRowsMatch(
   return host.size === proved.size && [...host].every(([key, count]) => proved.get(key) === count);
 }
 
-function isMultiGpuOllamaEligible(proof: ContainerGpuProofResult | null): boolean {
-  return (
-    (proof?.verifiedDevices?.length ?? 0) > 1 &&
-    proof?.verifiedCapacity !== undefined &&
-    proof.verifiedCapacity.availableMemoryMB >= 30_000
-  );
-}
-
 function isN1xWslOllamaEligible(
   proofPassed: boolean,
   capacity: ContainerGpuProofResult["verifiedCapacity"],
@@ -705,7 +697,6 @@ export function detectGpu(deps: DetectGpuDeps = {}): GpuDetection | null {
           platform,
           deps.n1xWslProduct,
         );
-        const multiGpuOllamaEligible = isMultiGpuOllamaEligible(boundedCudaProof);
         const proofCapacitySelected =
           verifiedCapacity !== undefined &&
           (n1xWslOllamaEligible || (boundedCudaProof?.verifiedDevices?.length ?? 0) > 1);
@@ -713,7 +704,6 @@ export function detectGpu(deps: DetectGpuDeps = {}): GpuDetection | null {
         // identity-qualified WSL RTX Spark N1X path (#10954).
         const computeConstrained =
           !n1xWslOllamaEligible &&
-          !multiGpuOllamaEligible &&
           (platform === "jetson" || platform === "n1x" || containerGpuProofPassed);
         const selectedTotalMemoryMB =
           proofCapacitySelected && verifiedCapacity

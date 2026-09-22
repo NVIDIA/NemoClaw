@@ -442,7 +442,7 @@ describe("detectGpu trust-gate rejection reasons (#9000)", () => {
     expect(reasons).toEqual([]);
   });
 
-  it("uses aggregate proved capacity and accepts reversed device order (#12073)", () => {
+  it("uses aggregate proved capacity in reversed device order without widening model policy (#12073)", () => {
     const secondName = "NVIDIA GB300";
     const prover = passingProver({ totalMemoryMB: 281170, availableMemoryMB: 250000 }, "docker", [
       { name: secondName, totalMemoryMB: 256703, availableMemoryMB: 240000 },
@@ -459,8 +459,8 @@ describe("detectGpu trust-gate rejection reasons (#9000)", () => {
         totalMemoryMB: 281170,
         availableMemoryMB: 250000,
       });
-      expect(gpu).not.toHaveProperty("computeConstrained");
-      expect(selectDefaultOllamaModel(["qwen3.5:9b", "qwen3.6:35b"], gpu)).toBe("qwen3.6:35b");
+      expect(gpu).toMatchObject({ computeConstrained: true });
+      expect(selectDefaultOllamaModel(["qwen3.5:9b", "qwen3.6:35b"], gpu)).toBe("qwen3.5:9b");
     });
   });
 
