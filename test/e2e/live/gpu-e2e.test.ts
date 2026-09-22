@@ -11,6 +11,7 @@ import type {
 } from "../../../src/lib/config/v1alpha1-export.ts";
 import { cleanupLocalModelRuntimes } from "../../../src/lib/inference/local-model-profile/cleanup.ts";
 import { HOST_LOCAL_VLLM_CONTAINER_NAME } from "../../../src/lib/inference/serving/vllm-host-local-lifecycle.ts";
+import { observeManagedVllmForExport } from "../../../src/lib/inference/serving/vllm-export-runtime.ts";
 import { loadManagedVllmApiKey } from "../../../src/lib/inference/vllm-api-key.ts";
 import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
@@ -661,6 +662,13 @@ test(
     expect(onboard.exitCode, resultText(onboard)).toBe(0);
     const apiKey = loadManagedVllmApiKey();
     artifacts.addRedactionValues([apiKey ?? ""]);
+    let verifierDiagnostic = "verified";
+    try {
+      observeManagedVllmForExport(undefined);
+    } catch (error) {
+      verifierDiagnostic = error instanceof Error ? error.message : "unknown verifier failure";
+    }
+    await artifacts.writeText("vllm-export-verifier-diagnostic.txt", verifierDiagnostic);
 
     progress.phase("export the managed vLLM configuration");
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-vllm-export-"));
