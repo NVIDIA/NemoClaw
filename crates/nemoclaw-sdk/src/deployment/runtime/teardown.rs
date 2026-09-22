@@ -57,12 +57,20 @@ impl Deployment {
         } else {
             BTreeMap::new()
         };
-        let pending_runtime_plan = runtime.as_ref().is_some_and(|stage| {
+        let matches_pending_plan = |stage: &Store| {
             !record.plan_digest.is_empty()
                 && crate::bundle::hash_file(&stage.directory.join("apply.plan"))
                     .is_ok_and(|digest| digest == record.plan_digest)
-        });
-        validate_teardown_state(&record, &bindings, &runtime_bindings, pending_runtime_plan)?;
+        };
+        let pending_root_plan = matches_pending_plan(&store);
+        let pending_runtime_plan = runtime.as_ref().is_some_and(matches_pending_plan);
+        validate_teardown_state(
+            &record,
+            &bindings,
+            &runtime_bindings,
+            pending_root_plan,
+            pending_runtime_plan,
+        )?;
         let mut result = OperationResult::planned(Vec::new());
         result
             .retained
@@ -326,17 +334,17 @@ fn validate_teardown_state(
     record: &Record,
     bindings: &BTreeMap<String, StateBinding>,
     runtime_bindings: &BTreeMap<String, StateBinding>,
+    pending_root_plan: bool,
     pending_runtime_plan: bool,
 ) -> Result<(), Error> {
-    if record.pending
-        && (!record.runtime_pending
-            || !pending_runtime_plan
-            || !bindings.is_empty()
-            || !runtime_bindings_safe(record, runtime_bindings)?)
-    {
-        return Err(Error::Conflict(
-            "unfinished apply may have created resources whose IDs were not saved; apply the original configuration again before destroy",
-        ));
+    if record.pending {
+        let saved_plan_has_state = (pending_root_plan && !bindings.is_empty())
+            || (pending_runtime_plan && runtime_bindings_safe(record, runtime_bindings)?);
+        if !record.runtime_pending || !saved_plan_has_state {
+            return Err(Error::Conflict(
+                "unfinished apply may have created resources whose IDs were not saved; apply the original configuration again before destroy",
+            ));
+        }
     }
     for (service, storage) in crate::services::remove_plans(&record.document, &record.generations)?
         .into_iter()
@@ -387,10 +395,10 @@ mod tests {
         .unwrap();
         let mut record = Record::new(document).unwrap();
         let bindings = BTreeMap::new();
-        validate_teardown_state(&record, &bindings, &bindings, false).unwrap();
+        validate_teardown_state(&record, &bindings, &bindings, false, false).unwrap();
         record.pending = true;
         assert_eq!(
-            validate_teardown_state(&record, &bindings, &bindings, false)
+            validate_teardown_state(&record, &bindings, &bindings, false, false)
                 .unwrap_err()
                 .to_string(),
             "unfinished apply may have created resources whose IDs were not saved; apply the original configuration again before destroy"
@@ -422,7 +430,7 @@ mod tests {
             ),
         ]
         .into();
-        validate_teardown_state(&record, &bindings).unwrap();
+        validate_teardown_state(&record, &bindings, &BTreeMap::new(), true, false).unwrap();
         assert!(
             teardown_expected(&record, &bindings, false)
                 .unwrap()
@@ -487,14 +495,14 @@ mod tests {
         record.pending = true;
         record.runtime_pending = true;
         let bindings = BTreeMap::new();
-        validate_teardown_state(&record, &bindings, &runtime_bindings, true).unwrap();
+        validate_teardown_state(&record, &bindings, &runtime_bindings, false, true).unwrap();
 
         assert!(
-            validate_teardown_state(&record, &bindings, &runtime_bindings, false).is_err(),
-            "a pending root-stage plan must not be mistaken for runtime recovery"
+            validate_teardown_state(&record, &bindings, &runtime_bindings, false, false).is_err(),
+            "a saved plan mismatch must remain fail-closed"
         );
         assert!(
-            validate_teardown_state(&record, &bindings, &BTreeMap::new(), true).is_err(),
+            validate_teardown_state(&record, &bindings, &BTreeMap::new(), false, true).is_err(),
             "an empty state cannot prove that a successful mutation was recorded"
         );
 
@@ -503,7 +511,7 @@ mod tests {
             storage.clone(),
             runtime_bindings.get(&storage).unwrap().clone(),
         )]);
-        validate_teardown_state(&record, &bindings, &partial, true)
+        validate_teardown_state(&record, &bindings, &partial, false, true)
             .expect("a recorded retained volume is a safe partial runtime state");
 
         let process = service_process(&record);
@@ -512,7 +520,7 @@ mod tests {
             runtime_bindings.get(&process).unwrap().clone(),
         )]);
         assert!(
-            validate_teardown_state(&record, &bindings, &missing_storage, true).is_err(),
+            validate_teardown_state(&record, &bindings, &missing_storage, false, true).is_err(),
             "a process cannot be removed without its independent storage binding"
         );
 
@@ -524,10 +532,8 @@ mod tests {
                 ..Default::default()
             },
         );
-        assert!(
-            validate_teardown_state(&record, &root_bindings, &runtime_bindings, true).is_err(),
-            "pending root resources must remain fail-closed"
-        );
+        validate_teardown_state(&record, &root_bindings, &runtime_bindings, false, true)
+            .expect("root bindings predate a pending runtime-stage apply");
     }
 
     fn update_service(
