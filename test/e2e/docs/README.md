@@ -109,6 +109,10 @@ raw deterministic exports through that revision's Rust `Document::parse` and
 Hermes native adapter functions. It compares both preserved source behavior and
 target omission defaults, so a target-default change fails at the consumer
 boundary. This deterministic test uses no live credential or deployment state.
+Before a live OpenClaw or Hermes scenario publishes YAML, it sends the real CLI
+output through that same revision-matched consumer and compares the generated
+native settings with the retained registry and managed-startup source state. A
+consumer rejection records failed evidence and withholds the YAML artifact.
 Semantic expectations remain
 independent of the exporter. The fixture reads the target manifest and host
 registry directly, then queries the effective policy through the OpenShell CLI.

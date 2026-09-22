@@ -19,7 +19,10 @@ import {
   tunedSnapshot,
 } from "../../../src/lib/domain/config/export-source-test-fixture.ts";
 import { testTimeoutOptions } from "../../helpers/timeouts.ts";
-import { validateWithRevisionMatchedV1Consumer } from "./v1-config-consumer.ts";
+import {
+  revisionMatchedConsumerInputFromLiveSource,
+  validateWithRevisionMatchedV1Consumer,
+} from "../fixtures/revision-matched-v1-consumer.ts";
 
 async function rawExport(source: ReturnType<typeof snapshot>): Promise<string> {
   const exported = await exportSnapshots([source]);
@@ -66,74 +69,31 @@ describe("revision-matched v1 config consumer", () => {
     "preserves exported defaults through parsing and native generation (#12132)",
     testTimeoutOptions(12 * 60 * 1_000),
     async () => {
-      const openclaw = await rawExport(snapshot());
-      const openclawExplicit = await rawExport(
-        tunedSnapshot({
-          NEMOCLAW_CONTEXT_WINDOW: "131072",
-          NEMOCLAW_MAX_TOKENS: "4096",
-          NEMOCLAW_REASONING: "false",
-          NEMOCLAW_REASONING_EFFORT: "default",
-          NEMOCLAW_AGENT_TIMEOUT: "600",
-        }),
-      );
-      const hermesDisabled = await rawExport(hermesSnapshot());
-      const hermesTuiDisabled = await rawExport(hermesTuiDisabledSnapshot());
-      const openClawSource = {
-        contextWindow: 131_072,
-        maxTokens: 4096,
-        reasoning: false,
-        timeoutSeconds: 600,
-        heartbeatPresent: false,
-        dashboardEnabled: true,
-        dashboardPort: 18_789,
-        dashboardBind: "loopback",
-        toolDisclosure: "progressive",
-        explicitAgentOwnership: true,
-        thinkingDefaultPresent: false,
-      };
+      const openclawSource = snapshot();
+      const openclaw = await rawExport(openclawSource);
+      const openclawExplicitSource = tunedSnapshot({
+        NEMOCLAW_CONTEXT_WINDOW: "131072",
+        NEMOCLAW_MAX_TOKENS: "4096",
+        NEMOCLAW_REASONING: "false",
+        NEMOCLAW_REASONING_EFFORT: "default",
+        NEMOCLAW_AGENT_TIMEOUT: "600",
+      });
+      const openclawExplicit = await rawExport(openclawExplicitSource);
+      const hermesDisabledSource = hermesSnapshot();
+      const hermesDisabled = await rawExport(hermesDisabledSource);
+      const hermesTuiDisabledSource = hermesTuiDisabledSnapshot();
+      const hermesTuiDisabled = await rawExport(hermesTuiDisabledSource);
       const evidence = validateWithRevisionMatchedV1Consumer([
-        {
-          name: "openclaw",
-          harness: "openclaw",
-          raw: openclaw,
-          agentName: "primary",
-          source: openClawSource,
-        },
-        {
-          name: "openclaw-explicit-source",
-          harness: "openclaw",
-          raw: openclawExplicit,
-          agentName: "primary",
-          source: openClawSource,
-        },
-        {
-          name: "hermes-disabled",
-          harness: "hermes",
-          raw: hermesDisabled,
-          source: {
-            apiPort: 8642,
-            dashboard: {
-              enabled: false,
-              port: 18_789,
-              internalPort: 19_119,
-              tui: { enabled: true },
-            },
-          },
-        },
-        {
-          name: "hermes-tui-disabled",
-          harness: "hermes",
-          raw: hermesTuiDisabled,
-          source: {
-            apiPort: 8642,
-            dashboard: {
-              enabled: true,
-              port: 18_789,
-              internalPort: 19_119,
-              tui: { enabled: false },
-            },
-          },
-        },
+        revisionMatchedConsumerInputFromLiveSource(openclaw, openclawSource.registry),
+        revisionMatchedConsumerInputFromLiveSource(
+          openclawExplicit,
+          openclawExplicitSource.registry,
+        ),
+        revisionMatchedConsumerInputFromLiveSource(hermesDisabled, hermesDisabledSource.registry),
+        revisionMatchedConsumerInputFromLiveSource(
+          hermesTuiDisabled,
+          hermesTuiDisabledSource.registry,
+        ),
       ]);
 
       expect(evidence.revision).toBe("88c6600c06b0937907290362eef86912052c4ad0");

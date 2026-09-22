@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
   exec: vi.fn(),
   execShell: vi.fn(),
   asExportedConfig: vi.fn(),
+  validateV1Consumer: vi.fn(),
   writeJson: vi.fn(),
   writeText: vi.fn(),
 }));
@@ -52,6 +53,7 @@ beforeEach(() => {
     },
   });
   mocks.readSandboxPolicy.mockReturnValue({ ok: false });
+  mocks.validateV1Consumer.mockReturnValue(undefined);
   mocks.asExportedConfig.mockReturnValue({
     spec: {
       inferenceProviders: [
@@ -89,6 +91,7 @@ function passingEvidence(): Extract<HermesConfigExportLiveEvidence, { outcome: "
     inferenceEndpointMatches: true,
     launchersSucceeded: true,
     policyMatches: true,
+    revisionMatchedConsumer: true,
     sandboxNameMatches: true,
   };
 }
@@ -124,6 +127,7 @@ async function runEnabledFixture(
       host: { command: mocks.command },
       redactionValues,
       sandboxName: "hermes",
+      validateV1Consumer: mocks.validateV1Consumer,
     } as unknown as Parameters<typeof verifyHermesConfigExportLive>[0]);
   } finally {
     dispose?.();
@@ -147,6 +151,7 @@ describe("Hermes config export live evidence", () => {
     "inferenceEndpointMatches",
     "launchersSucceeded",
     "policyMatches",
+    "revisionMatchedConsumer",
     "sandboxNameMatches",
   ] as const)("rejects evidence when %s is false", (field) => {
     expect(passesHermesConfigExportLiveEvidence({ ...passingEvidence(), [field]: false })).toBe(
@@ -388,6 +393,27 @@ describe("Hermes config export live evidence", () => {
         identityDriftReported: false,
       }),
     );
+  });
+
+  it("withholds live YAML when the revision-matched consumer rejects it (#12132)", async () => {
+    const writeExport = async (_command: string, args: string[]) => {
+      fs.writeFileSync(args.at(args.indexOf("--output") + 1)!, "{}");
+      return { exitCode: 0, stderr: "", stdout: "" };
+    };
+    mocks.command
+      .mockImplementationOnce(writeExport)
+      .mockImplementationOnce(writeExport)
+      .mockResolvedValue({ exitCode: 1, stderr: "sandbox identity drifted", stdout: "" });
+    mocks.validateV1Consumer.mockImplementationOnce(() => {
+      throw new Error("revision-matched v1 consumer rejected the live export");
+    });
+
+    await expect(runEnabledFixture()).resolves.toEqual({ checked: true, passed: false });
+    expect(mocks.writeJson).toHaveBeenCalledWith(
+      "hermes-config-export-live-evidence.json",
+      expect.objectContaining({ revisionMatchedConsumer: false }),
+    );
+    expect(mocks.writeText).not.toHaveBeenCalled();
   });
 });
 

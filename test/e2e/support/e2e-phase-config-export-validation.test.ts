@@ -289,6 +289,7 @@ function dependencies(
     removeDirectory:
       options.removeDirectory ??
       ((directory) => fs.rmSync(directory, { force: true, recursive: true })),
+    validateV1Consumer: () => undefined,
   };
 }
 
@@ -363,6 +364,7 @@ function fixture(
     },
   );
   return {
+    artifacts,
     cleanup,
     host,
     phase: new ConfigExportValidationPhaseFixture(
@@ -374,6 +376,18 @@ function fixture(
     ),
     writes,
   };
+}
+
+function expectLatestEvidence(test: ReturnType<typeof fixture>, expected: object): void {
+  expect(test.writes.at(-1)).toMatchObject(expected);
+}
+
+function expectFailureAt(
+  test: ReturnType<typeof fixture>,
+  failureStage: string,
+  details = {},
+): void {
+  expectLatestEvidence(test, { classification: "failure", failureStage, ...details });
 }
 
 async function captureFailure(operation: Promise<unknown>): Promise<Error> {
@@ -431,7 +445,7 @@ describe("automatic config export validation phase", () => {
       vi.stubEnv("NEMOCLAW_E2E_USE_HOSTED_INFERENCE", hosted);
       try {
         await test.phase.from(target("required"), instance()).catch(() => undefined);
-        expect(test.writes.at(-1)).toMatchObject({
+        expectLatestEvidence(test, {
           passed,
           ...(passed
             ? { classification: "success" }
@@ -602,11 +616,7 @@ if (process.argv.includes("--output")) {
 
     await captureFailure(test.phase.from(target("required"), instance()));
 
-    expect(test.writes.at(-1)).toMatchObject({
-      classification: "failure",
-      failureStage: "observation",
-      passed: false,
-    });
+    expectFailureAt(test, "observation", { passed: false });
     expect(test.writes.at(-1)).not.toHaveProperty("export");
     expect(host.nemoclaw).not.toHaveBeenCalled();
   });
@@ -627,12 +637,7 @@ if (process.argv.includes("--output")) {
 
     await captureFailure(test.phase.from(target("required"), instance()));
 
-    expect(test.writes.at(-1)).toMatchObject({
-      classification: "failure",
-      failureStage: "observation",
-      passed: false,
-      cleanup: { succeeded: true },
-    });
+    expectFailureAt(test, "observation", { passed: false, cleanup: { succeeded: true } });
     expect(test.writes.at(-1)).not.toHaveProperty("export");
     expect(host.nemoclaw).not.toHaveBeenCalled();
   });
@@ -680,12 +685,7 @@ process.stdout.write("x".repeat(1024 * 1024 + 2048 - Buffer.byteLength(suffix, "
 
       await captureFailure(test.phase.from(target("required"), instance()));
 
-      expect(test.writes.at(-1)).toMatchObject({
-        classification: "failure",
-        failureStage: "observation",
-        passed: false,
-        cleanup: { succeeded: true },
-      });
+      expectFailureAt(test, "observation", { passed: false, cleanup: { succeeded: true } });
       expect(test.writes.at(-1)).not.toHaveProperty("export");
       expect(host.nemoclaw).not.toHaveBeenCalled();
     } finally {
@@ -714,9 +714,7 @@ process.stdout.write("x".repeat(1024 * 1024 + 2048 - Buffer.byteLength(suffix, "
 
     await captureFailure(test.phase.from(target("required"), instance()));
 
-    expect(test.writes.at(-1)).toMatchObject({
-      classification: "failure",
-      failureStage: "observation",
+    expectFailureAt(test, "observation", {
       diagnostic: "the live inference endpoint is unsafe",
     });
     expect(JSON.stringify(test.writes.at(-1))).not.toContain(credentialCanary);
@@ -764,7 +762,7 @@ process.stdout.write("x".repeat(1024 * 1024 + 2048 - Buffer.byteLength(suffix, "
 
     await captureFailure(test.phase.from(target("required"), instance()));
 
-    expect(test.writes.at(-1)).toMatchObject({
+    expectLatestEvidence(test, {
       classification: "failure",
       failureStage: "verification",
       expected: { model: "nvidia/model" },
@@ -819,10 +817,7 @@ process.stdout.write("x".repeat(1024 * 1024 + 2048 - Buffer.byteLength(suffix, "
 
     await captureFailure(test.phase.from(target("required"), instance()));
 
-    expect(test.writes.at(-1)).toMatchObject({
-      classification: "failure",
-      failureStage: "verification",
-    });
+    expectFailureAt(test, "verification");
     expect(test.writes.at(-1)).not.toHaveProperty("export");
   });
 
@@ -830,10 +825,7 @@ process.stdout.write("x".repeat(1024 * 1024 + 2048 - Buffer.byteLength(suffix, "
     const test = fixture({ dependencies: dependencies({ credentialRefs: [] }) });
 
     await captureFailure(test.phase.from(target("required"), instance()));
-    expect(test.writes.at(-1)).toMatchObject({
-      classification: "failure",
-      failureStage: "observation",
-    });
+    expectFailureAt(test, "observation");
     expect(test.writes.at(-1)).not.toHaveProperty("export");
   });
 
@@ -844,7 +836,7 @@ process.stdout.write("x".repeat(1024 * 1024 + 2048 - Buffer.byteLength(suffix, "
     });
 
     await captureFailure(test.phase.from(target("required"), instance()));
-    expect(test.writes.at(-1)).toMatchObject({
+    expectLatestEvidence(test, {
       classification: "failure",
       security: { knownSecretsAbsent: false },
     });
@@ -862,11 +854,7 @@ process.stdout.write("x".repeat(1024 * 1024 + 2048 - Buffer.byteLength(suffix, "
 
     await captureFailure(test.phase.from(target("required"), instance()));
 
-    expect(test.writes.at(-1)).toMatchObject({
-      classification: "failure",
-      failureStage: "security",
-      security: { knownSecretsAbsent: false },
-    });
+    expectFailureAt(test, "security", { security: { knownSecretsAbsent: false } });
     expect(test.writes.at(-1)).not.toHaveProperty("export");
     expect(JSON.stringify(test.writes.at(-1))).not.toContain(SECRET);
   });
@@ -879,11 +867,7 @@ process.stdout.write("x".repeat(1024 * 1024 + 2048 - Buffer.byteLength(suffix, "
 
     await captureFailure(test.phase.from(target("required"), instance()));
 
-    expect(test.writes.at(-1)).toMatchObject({
-      classification: "failure",
-      failureStage: "security",
-      security: { knownSecretsAbsent: false },
-    });
+    expectFailureAt(test, "security", { security: { knownSecretsAbsent: false } });
     expect(test.writes.at(-1)).not.toHaveProperty("export");
     expect(JSON.stringify(test.writes.at(-1))).not.toContain(SECRET);
     expect(JSON.stringify(test.writes.at(-1))).not.toContain(encodedSecret);
@@ -899,11 +883,7 @@ process.stdout.write("x".repeat(1024 * 1024 + 2048 - Buffer.byteLength(suffix, "
 
     await captureFailure(test.phase.from(target("required"), instance()));
 
-    expect(test.writes.at(-1)).toMatchObject({
-      classification: "failure",
-      failureStage: "security",
-      security: { knownSecretsAbsent: false },
-    });
+    expectFailureAt(test, "security", { security: { knownSecretsAbsent: false } });
     expect(test.writes.at(-1)).not.toHaveProperty("export");
     expect(JSON.stringify(test.writes.at(-1))).not.toContain(SECRET);
     expect(JSON.stringify(test.writes.at(-1))).not.toContain(encodedSecret);
@@ -921,11 +901,7 @@ process.stdout.write("x".repeat(1024 * 1024 + 2048 - Buffer.byteLength(suffix, "
 
     await captureFailure(test.phase.from(target("required"), instance()));
 
-    expect(test.writes.at(-1)).toMatchObject({
-      classification: "failure",
-      failureStage: "security",
-      security: { knownSecretsAbsent: false },
-    });
+    expectFailureAt(test, "security", { security: { knownSecretsAbsent: false } });
     expect(test.writes.at(-1)).not.toHaveProperty("export");
     const serializedEvidence = JSON.stringify(test.writes.at(-1));
     expect(serializedEvidence).not.toContain(SECRET);
@@ -948,11 +924,7 @@ process.stdout.write("x".repeat(1024 * 1024 + 2048 - Buffer.byteLength(suffix, "
 
       await captureFailure(test.phase.from(target("required"), instance()));
 
-      expect(test.writes.at(-1)).toMatchObject({
-        classification: "failure",
-        failureStage: "security",
-        security: { knownSecretsAbsent: false },
-      });
+      expectFailureAt(test, "security", { security: { knownSecretsAbsent: false } });
       expect(test.writes.at(-1)).not.toHaveProperty("export");
       expect(JSON.stringify(test.writes.at(-1))).not.toContain(SECRET);
     },
@@ -964,11 +936,7 @@ process.stdout.write("x".repeat(1024 * 1024 + 2048 - Buffer.byteLength(suffix, "
     });
 
     await captureFailure(test.phase.from(target("required"), instance()));
-    expect(test.writes.at(-1)).toMatchObject({
-      classification: "failure",
-      failureStage: "security",
-      security: { internalTransportsAbsent: false },
-    });
+    expectFailureAt(test, "security", { security: { internalTransportsAbsent: false } });
     expect(test.writes.at(-1)).not.toHaveProperty("export");
   });
 
@@ -982,11 +950,7 @@ process.stdout.write("x".repeat(1024 * 1024 + 2048 - Buffer.byteLength(suffix, "
 
     await captureFailure(test.phase.from(target("required"), instance()));
 
-    expect(test.writes.at(-1)).toMatchObject({
-      classification: "failure",
-      failureStage: "security",
-      security: { internalTransportsAbsent: false },
-    });
+    expectFailureAt(test, "security", { security: { internalTransportsAbsent: false } });
     expect(test.writes.at(-1)).not.toHaveProperty("export");
   });
 
@@ -999,11 +963,7 @@ process.stdout.write("x".repeat(1024 * 1024 + 2048 - Buffer.byteLength(suffix, "
 
       await captureFailure(test.phase.from(target("required"), instance()));
 
-      expect(test.writes.at(-1)).toMatchObject({
-        classification: "failure",
-        failureStage: "security",
-        security: { internalTransportsAbsent: false },
-      });
+      expectFailureAt(test, "security", { security: { internalTransportsAbsent: false } });
       expect(test.writes.at(-1)).not.toHaveProperty("export");
     },
   );
@@ -1017,12 +977,31 @@ process.stdout.write("x".repeat(1024 * 1024 + 2048 - Buffer.byteLength(suffix, "
 
     await captureFailure(test.phase.from(target("required"), instance()));
 
-    expect(test.writes.at(-1)).toMatchObject({
+    expectLatestEvidence(test, {
       classification: "failure",
       failureStage: "verification",
       command: { exitCode: 0, timedOut: false, outputPublished: true },
     });
     expect(test.writes.at(-1)).not.toHaveProperty("export");
+  });
+
+  it("withholds live YAML when the revision-matched consumer rejects it (#12132)", async () => {
+    const invalid = dependencies();
+    invalid.validateV1Consumer = () => {
+      throw new Error("revision-matched v1 consumer rejected the live export");
+    };
+    const test = fixture({ dependencies: invalid });
+
+    await captureFailure(test.phase.from(target("required"), instance()));
+
+    expectLatestEvidence(test, {
+      classification: "failure",
+      failureStage: "verification",
+      diagnostic: "revision-matched v1 consumer rejected the live export",
+      passed: false,
+    });
+    expect(test.writes.at(-1)).not.toHaveProperty("export");
+    expect(test.artifacts.writeText).not.toHaveBeenCalled();
   });
 
   it("classifies a command launch failure after observation as transport failure (#11485)", async () => {
@@ -1034,7 +1013,7 @@ process.stdout.write("x".repeat(1024 * 1024 + 2048 - Buffer.byteLength(suffix, "
 
     await captureFailure(test.phase.from(target("required"), instance()));
 
-    expect(test.writes.at(-1)).toMatchObject({
+    expectLatestEvidence(test, {
       classification: "failure",
       failureStage: "transport",
       expected: { model: "nvidia/model" },
@@ -1056,7 +1035,7 @@ process.stdout.write("x".repeat(1024 * 1024 + 2048 - Buffer.byteLength(suffix, "
 
     await captureFailure(test.phase.from(target("expected-refusal"), instance()));
 
-    expect(test.writes.at(-1)).toMatchObject({
+    expectLatestEvidence(test, {
       classification: "failure",
       failureStage: "transport",
       command: {
@@ -1115,7 +1094,7 @@ process.stdout.write("x".repeat(1024 * 1024 + 2048 - Buffer.byteLength(suffix, "
     const test = fixture({ host });
 
     await captureFailure(test.phase.from(target("expected-refusal"), instance()));
-    expect(test.writes.at(-1)).toMatchObject({
+    expectLatestEvidence(test, {
       classification: "failure",
       failureStage: "export",
       passed: false,
@@ -1129,7 +1108,7 @@ process.stdout.write("x".repeat(1024 * 1024 + 2048 - Buffer.byteLength(suffix, "
     const test = fixture({ host: host as ReturnType<typeof successfulHost> });
 
     await captureFailure(test.phase.from(target("expected-refusal"), instance()));
-    expect(test.writes.at(-1)).toMatchObject({
+    expectLatestEvidence(test, {
       classification: "failure",
       failureStage: "export",
       expectedRefusalCategory: "unsupported",
@@ -1230,7 +1209,7 @@ process.exitCode = 1;
 
     await captureFailure(test.phase.from(target("required"), instance()));
 
-    expect(test.writes.at(-1)).toMatchObject({
+    expectLatestEvidence(test, {
       classification: "failure",
       passed: false,
       failureStage: "export",
@@ -1272,7 +1251,7 @@ process.exitCode = 1;
 
     await captureFailure(test.phase.from(target("required"), instance()));
 
-    expect(test.writes.at(-1)).toMatchObject({
+    expectLatestEvidence(test, {
       classification: "failure",
       passed: false,
       failureStage: "export",
@@ -1311,7 +1290,7 @@ process.exitCode = 1;
 
     await captureFailure(test.phase.from(target("required"), instance()));
 
-    expect(test.writes.at(-1)).toMatchObject({
+    expectLatestEvidence(test, {
       classification: "failure",
       passed: false,
       failureStage: "export",
@@ -1352,7 +1331,7 @@ process.exitCode = 1;
 
     await captureFailure(test.phase.from(target("required"), instance()));
 
-    expect(test.writes.at(-1)).toMatchObject({
+    expectLatestEvidence(test, {
       classification: "failure",
       passed: false,
       failureStage: "export",
@@ -1384,7 +1363,7 @@ process.exitCode = 1;
     });
 
     await captureFailure(test.phase.from(target("required"), instance()));
-    expect(test.writes.at(-1)).toMatchObject({
+    expectLatestEvidence(test, {
       classification: "failure",
       passed: false,
       failureStage: "cleanup",
@@ -1406,7 +1385,7 @@ process.exitCode = 1;
 
     await captureFailure(test.phase.from(target("required"), instance()));
 
-    expect(test.writes.at(-1)).toMatchObject({
+    expectLatestEvidence(test, {
       classification: "failure",
       failureStage: "verification",
       diagnostic: "invalid exported configuration",
@@ -1452,7 +1431,7 @@ process.exitCode = 1;
       expect.any(Array),
       expect.objectContaining({ persistArtifacts: false }),
     );
-    expect(test.writes.at(-1)).toMatchObject({
+    expectLatestEvidence(test, {
       classification: "failure",
       failureStage: "export",
       diagnostic: "[REDACTED]",
@@ -1490,7 +1469,7 @@ process.exitCode = 1;
 
     await captureFailure(test.phase.from(target("required"), instance()));
 
-    expect(test.writes.at(-1)).toMatchObject({
+    expectLatestEvidence(test, {
       classification: "failure",
       failureStage: "export",
       diagnostic: "[REDACTED]",
