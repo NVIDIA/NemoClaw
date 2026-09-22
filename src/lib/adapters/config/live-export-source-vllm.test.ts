@@ -64,7 +64,6 @@ function mockManagedVllmSource(
     env: environment,
     logger: { log: vi.fn(), warn: vi.fn() },
   });
-  environment.NEMOCLAW_SERVING_PRESET = EXPORTED_VLLM_PROFILE_ID;
   Object.assign(environment, environmentOverrides);
   const built = buildManagedStartupProfile({
     ...startupInput,

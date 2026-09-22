@@ -566,7 +566,6 @@ function expectedManagedStartupProfile(entry: ObservedExportRegistry): ManagedSt
       entry.servingProfileProvenance?.preset.id === EXPORTED_VLLM_PROFILE_ID
         ? {
             NEMOCLAW_CONTEXT_WINDOW: String(EXPORTED_VLLM_CONTEXT_WINDOW),
-            NEMOCLAW_SERVING_PRESET: EXPORTED_VLLM_PROFILE_ID,
           }
         : {},
     corporateCa: null,
@@ -705,22 +704,11 @@ function classifyProfileEquality(
 ): ExportFinding[] {
   const findings: ExportFinding[] = [];
   if (!hasEqualJsonStructure(profile.inference, expected.inference)) {
-    const actual = profile.inference ?? {};
-    const wanted = expected.inference ?? {};
-    const differingFields = Object.keys({ ...actual, ...wanted })
-      .filter(
-        (field) =>
-          !hasEqualJsonStructure(
-            actual[field as keyof typeof actual],
-            wanted[field as keyof typeof wanted],
-          ),
-      )
-      .sort();
     findings.push(
       finding(
         "spec.inferenceProviders",
         "drifted",
-        `The managed startup profile and the registered inference selection differ (${differingFields.join(", ") || "inference"}).`,
+        "The managed startup profile and the registered inference selection differ.",
       ),
     );
   }
