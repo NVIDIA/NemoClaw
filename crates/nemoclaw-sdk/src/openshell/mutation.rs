@@ -5,7 +5,7 @@ mod create;
 mod update;
 
 use super::*;
-use crate::backend::{Backend, Mutation};
+use crate::backend::{Backend, Mutation, OpenShellLifecycle, openshell_lifecycle};
 use async_trait::async_trait;
 use std::{collections::HashMap, time::Duration};
 
@@ -346,7 +346,11 @@ impl Backend for OpenShell {
         if kind == "pi_configuration" {
             return self.remove_pi(prior, destroying).await;
         }
-        if !destroying || !matches!(kind, "sandbox" | "provider" | "provider_profile") {
+        if !matches!(
+            openshell_lifecycle(kind),
+            Some(OpenShellLifecycle::Reconstructible)
+        ) && !(destroying && openshell_lifecycle(kind) == Some(OpenShellLifecycle::Stateful))
+        {
             return Err(ObservationError::Query);
         }
         tokio::time::timeout(Duration::from_secs(300), self.delete_bound(kind, prior))

@@ -428,10 +428,15 @@ pub(super) fn compile_with_plans(
             .as_array_mut()
             .expect("resource dependencies")
             .push(json!(GATEWAY_APPLY_CAPABILITIES_ADDRESS));
-        attributes["lifecycle"] = json!({"prevent_destroy":true, "precondition":[{
+        attributes["lifecycle"] = json!({"precondition":[{
             "condition":format!("${{{GATEWAY_CAPABILITIES_ADDRESS}.compatible}}"),
             "error_message":gateway_error_message(GATEWAY_CAPABILITIES_ADDRESS)
         }]});
+        if crate::backend::openshell_lifecycle(&target.kind)
+            != Some(crate::backend::OpenShellLifecycle::Reconstructible)
+        {
+            attributes["lifecycle"]["prevent_destroy"] = json!(true);
+        }
         let (kind, name) = target
             .address
             .split_once('.')

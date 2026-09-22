@@ -81,6 +81,84 @@ fn ordinary_plan_cannot_delete_replace_or_recreate_a_bound_resource() {
     }
 }
 #[test]
+fn reconstructible_resources_support_removal_replacement_and_confirmed_absence() {
+    for kind in ["provider", "provider_profile", "pi_configuration"] {
+        let address = format!("nemoclaw_{kind}.example");
+        let expected = [(address.clone(), Row::new())].into();
+        let bindings = [(
+            address.clone(),
+            StateBinding {
+                id: "physical".into(),
+                ..Default::default()
+            },
+        )]
+        .into();
+        for actions in [
+            json!(["update"]),
+            json!(["delete", "create"]),
+            json!(["create", "delete"]),
+        ] {
+            let plan: Plan = serde_json::from_value(json!({"resource_changes":[{
+                "address":address,"change":{"actions":actions,"before":{"id":"physical"}}
+            }]}))
+            .unwrap();
+            assert!(
+                check_plan(&plan, &expected, &bindings).is_ok(),
+                "{kind}: {actions}"
+            );
+        }
+        let removal: Plan = serde_json::from_value(json!({"resource_changes":[{
+            "address":address,"change":{"actions":["delete"],"before":{"id":"physical"}}
+        }]}))
+        .unwrap();
+        assert!(check_plan(&removal, &BTreeMap::new(), &bindings).is_ok());
+        let mut recreation: Plan = serde_json::from_value(json!({
+            "resource_changes":[{"address":address,"change":{"actions":["create"],"after":{"name":"desired"}}}],
+            "resource_drift":[{"address":address,"change":{"actions":["delete"],"before":{"id":"physical"}}}]
+        })).unwrap();
+        assert!(check_plan(&recreation, &expected, &bindings).is_ok());
+        let removed_and_absent: Plan = serde_json::from_value(json!({
+            "resource_changes":[{"address":address,"change":{"actions":["no-op"],"before":null,"after":null}}],
+            "resource_drift":[{"address":address,"change":{"actions":["delete"],"before":{"id":"physical"}}}]
+        })).unwrap();
+        assert!(check_plan(&removed_and_absent, &BTreeMap::new(), &bindings).is_ok());
+        recreation.resource_drift[0].change.after = json!({"id":"physical"});
+        assert!(check_plan(&recreation, &expected, &bindings).is_err());
+        recreation.resource_drift[0].change.after = Value::Null;
+        recreation.resource_drift[0].change.before["id"] = json!("foreign");
+        assert!(check_plan(&recreation, &expected, &bindings).is_err());
+        recreation.resource_drift.clear();
+        assert!(check_plan(&recreation, &expected, &bindings).is_err());
+    }
+}
+
+#[test]
+fn reconstructible_resource_plans_cannot_forget_or_change_recorded_identity() {
+    let address = "nemoclaw_provider.example";
+    let expected = [(address.into(), Row::new())].into();
+    let bindings = [(
+        address.into(),
+        StateBinding {
+            id: "physical".into(),
+            ..Default::default()
+        },
+    )]
+    .into();
+    for (actions, id) in [
+        (json!(["delete"]), "foreign"),
+        (json!(["forget"]), "physical"),
+    ] {
+        let plan: Plan = serde_json::from_value(json!({"resource_changes":[{
+            "address":address,"change":{"actions":actions,"before":{"id":id}}
+        }]}))
+        .unwrap();
+        assert!(check_plan(&plan, &expected, &bindings).is_err());
+    }
+    let omitted: Plan = serde_json::from_value(json!({"resource_changes":[]})).unwrap();
+    assert!(check_plan(&omitted, &BTreeMap::new(), &bindings).is_err());
+}
+
+#[test]
 fn teardown_must_account_for_every_binding_and_retain_the_workspace() {
     let allowed = [("nemoclaw_workspace.deployment".into(), Row::new())].into();
     let bound = [(

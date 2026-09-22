@@ -24,6 +24,8 @@ pub(crate) struct Record {
     pub pending: bool,
     #[serde(skip_serializing_if = "is_false")]
     pub runtime_pending: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pending_creations: Option<BTreeMap<String, crate::backend::Row>>,
     pub succeeded: bool,
     pub digest: String,
     #[serde(skip_serializing_if = "String::is_empty")]
@@ -63,6 +65,50 @@ impl Record {
             ..Default::default()
         })
     }
+    pub fn validate_pending_intent(&self, document: &Document) -> Result<(), Error> {
+        if !self.pending || self.runtime_pending {
+            return Ok(());
+        }
+        if let Some(pending) = &self.pending_creations {
+            let targets = crate::compile::targets(document, &self.generations)?;
+            if pending.iter().any(|(address, desired)| {
+                !targets
+                    .iter()
+                    .any(|target| &target.address == address && &target.values == desired)
+            }) {
+                return Err(Error::Conflict(
+                    "unfinished creation requires its original resource configuration; retain the pending resource while revising unrelated intent",
+                ));
+            }
+        } else if self.digest != document.digest() {
+            // Records written before scoped recovery lack per-resource evidence.
+            return Err(Error::Conflict(
+                "unfinished apply has different intent; reapply its original configuration",
+            ));
+        }
+        Ok(())
+    }
+    pub fn begin_apply(&mut self, creations: BTreeMap<String, crate::backend::Row>) {
+        if creations.is_empty() {
+            self.begin_runtime_apply();
+            return;
+        }
+        // Never narrow an older full-intent guard or forget an earlier lost reply.
+        if !self.pending || self.runtime_pending {
+            self.pending_creations = Some(creations);
+        } else if let Some(pending) = &mut self.pending_creations {
+            for (address, desired) in creations {
+                pending.entry(address).or_insert(desired);
+            }
+        }
+        self.pending = true;
+        self.runtime_pending = false;
+    }
+    pub fn finish_apply(&mut self) {
+        self.pending = false;
+        self.runtime_pending = false;
+        self.pending_creations = None;
+    }
     pub fn begin_runtime_apply(&mut self) {
         // Runtime recovery must not clear an earlier ambiguous OpenShell mutation.
         if !self.pending {
@@ -90,6 +136,14 @@ impl Record {
                         .is_some_and(|value| !value.is_empty())
                 })
             });
+        if self.pending_creations.as_ref().is_some_and(|pending| {
+            pending.is_empty()
+                || !self.pending
+                || self.runtime_pending
+                || self.validate_pending_intent(&self.document).is_err()
+        }) {
+            return Err(Error::State("pending resource recovery intent is invalid"));
+        }
         if self.document.validate().is_err()
             || self.digest != self.document.digest()
             || ["workspace", "provider", "sandbox"]

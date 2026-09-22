@@ -10,6 +10,45 @@ use std::{fs, path::PathBuf, process::Command};
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires explicit verified NEMOCLAW_TEST_BUNDLE; isolated gateway fixture"]
+async fn missing_selected_provider_reconciles_without_sandbox_changes() {
+    let bundle = PathBuf::from(std::env::var_os("NEMOCLAW_TEST_BUNDLE").unwrap());
+    let directory = tempfile::tempdir().unwrap();
+    let fixture = Fixture::start().await;
+    let mut document = Document::parse(
+        include_str!("../../nemoclaw-sdk/tests/fixtures/config/local.yaml").as_bytes(),
+    )
+    .unwrap();
+    *document.spec.gateway.endpoint_mut() = fixture.endpoint.clone();
+    let deployment = Deployment::new(directory.path(), &bundle);
+    let cancel = CancellationToken::new();
+    deployment.apply(&document, &cancel).await.unwrap();
+    let sandbox = fixture.state.lock().unwrap().sandboxes.clone();
+    let profile = fixture.state.lock().unwrap().profiles.clone();
+    fixture.state.lock().unwrap().providers.clear();
+    let recreated = deployment.apply(&document, &cancel).await.unwrap();
+    assert_eq!(recreated.changes.len(), 1);
+    assert_eq!(
+        recreated.changes[0].resource,
+        "nemoclaw_provider.inference_local"
+    );
+    assert_eq!(recreated.changes[0].actions, ["create"]);
+    assert_eq!(fixture.state.lock().unwrap().sandboxes, sandbox);
+    assert_eq!(fixture.state.lock().unwrap().profiles, profile);
+    assert_eq!(fixture.state.lock().unwrap().providers.len(), 1);
+    assert!(
+        deployment
+            .apply(&document, &cancel)
+            .await
+            .unwrap()
+            .changes
+            .is_empty()
+    );
+    assert_eq!(deployment.export(&cancel).await.unwrap(), document);
+    deployment.destroy(&cancel).await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires explicit verified NEMOCLAW_TEST_BUNDLE; isolated gateway fixture"]
 async fn independent_sandboxes_reconcile_concurrently_and_retain_shared_dependencies() {
     let bundle = PathBuf::from(std::env::var_os("NEMOCLAW_TEST_BUNDLE").unwrap());
     let directory = tempfile::tempdir().unwrap();
@@ -138,7 +177,7 @@ async fn gateway_change_between_plan_and_apply_preserves_resources_and_allows_te
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires explicit verified NEMOCLAW_TEST_BUNDLE"]
-async fn interrupted_create_requires_original_intent_and_destroy_allows_recreation() {
+async fn interrupted_create_preserves_pending_targets_allows_unrelated_intent_and_recovers() {
     let bundle = PathBuf::from(std::env::var_os("NEMOCLAW_TEST_BUNDLE").unwrap());
     let directory = tempfile::tempdir().unwrap();
     let fixture = Fixture::start().await;
@@ -167,9 +206,10 @@ async fn interrupted_create_requires_original_intent_and_destroy_allows_recreati
     assert!(
         error
             .to_string()
-            .contains("unfinished apply has different intent"),
+            .contains("unfinished creation requires its original resource configuration"),
         "{error}"
     );
+    document.metadata.name = "revised-unrelated-description".into();
     deployment.apply(&document, &cancel).await.unwrap();
     let effects = fixture.state.lock().unwrap().effects;
     assert_eq!(effects, 4);

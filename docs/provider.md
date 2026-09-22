@@ -16,7 +16,7 @@ The NemoClaw provider verifies durable data and credential identity; the Docker 
 
 Before planning, the SDK checks configuration, locks state, and validates retained intent and local bindings.
 OpenTofu refresh and provider planning perform environmental checks; the SDK does not run a separate environmental preflight.
-The SDK then checks the saved plan against its ownership and recovery rules before authorizing changes.
+The SDK then checks the saved plan against its deployment scope, retained bindings, and recovery rules before authorizing changes.
 Docker gateway, inference, and proxy containers may be recreated or replaced while their independent storage bindings remain unchanged.
 Podman gateways retain their stronger process identity checks.
 Docker gateway storage independently binds signing and encryption keys; its verified mountpoint supplies the process mount through OpenTofu.
@@ -36,6 +36,40 @@ The generated graphs manage these objects and observations:
 The [standalone HCL fixture](testing/fixtures.md#standalone-cache-and-credential-resources) verifies cache and credential resource composition without SDK orchestration.
 It does not qualify a complete standalone OpenShell deployment workflow.
 Do not edit SDK-generated graphs or share a deployment state directory between independently managed workflows.
+
+## OpenShell Resource Lifecycles
+
+The shared [resource lifecycle contract](../crates/nemoclaw-sdk/src/backend.rs) distinguishes reconstructible configuration from protected identity and sandbox data.
+The provider owns observation and update/replacement behavior; OpenTofu owns action ordering and resource state.
+The SDK checks deployment scope and recovery constraints without imposing a second blanket ban on OpenShell changes.
+
+| Resource | Ordinary reconciliation | Protection |
+|---|---|---|
+| Provider profile and registration | Update supported fields, replace immutable configuration, remove unused declarations, and recreate after confirmed absence | Verify ownership and established identity before mutation; preserve bindings on failed observation |
+| Pi runtime configuration | Update model configuration and reconcile its resource lifecycle | Verify the parent sandbox identity; a model change can restart Pi and lose its in-memory conversation |
+| Sandbox | Create and observe the declared sandbox | Refuse ordinary deletion, replacement, or recreation of a missing binding because deletion loses native files and history |
+| Workspace | Create, observe, and retain | Refuse replacement, deletion, or automatic recreation of a missing binding |
+
+OpenShell refuses deletion of profiles referenced by registrations and registrations attached to sandboxes.
+The registration's endpoint, provider type, and authentication mode require replacement, matching its profile's configuration contract.
+The graph orders registration deletion before profile deletion when both change.
+Standalone HCL must declare the matching configuration and dependency on its profile.
+Recreating an absent profile with unchanged configuration does not itself replace its registration.
+The SDK creates registrations only for definitions selected by sandboxes; unused YAML definitions have no resource lifecycle.
+The standalone provider supports ordinary registration removal and replacement, while removing a last selection in SDK YAML also changes the protected sandbox specification.
+Replacing a registration still attached to a protected sandbox is not a supported shortcut around sandbox lifecycle rules.
+Endpoint and policy changes that also change a sandbox's launch specification remain protected; see [change paths](usage.md#choose-the-change-path).
+
+The provider's `destroy` setting authorizes explicit sandbox teardown; reconstructible registrations and configuration do not require it.
+It never authorizes deleting the workspace or bypassing identity checks.
+Removing Pi configuration releases its resource binding without deleting or stopping the sandbox-owned runtime.
+The SDK's destroy operation still retains durable storage and the workspace.
+See [deletion and retention](state.md#deletion-and-retention) before removing workloads.
+
+An observation error is not absence.
+Authentication, transport, and incomplete observations preserve prior state and stop planning.
+The backend verifies ownership again immediately before mutation because objects can change after planning.
+OpenShell deletion is name-addressed without a conditional ID/version check; an immediate identity check does not make the API operation atomic.
 
 ## Gateway Capabilities
 
