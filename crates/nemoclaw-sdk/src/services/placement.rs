@@ -48,43 +48,57 @@ impl<'a> PublishedPlacement<'a> {
         }
     }
     pub(crate) fn validate(self, port: i64) -> Result<(), ConfigError> {
-        let Self {
-            placement,
-            publication,
-        } = self;
+        let network = self.placement.validate()?;
+        self.publication.validate(&network, port)
+    }
+}
+
+impl ServicePlacement {
+    /// Validate the execution host and return its Docker network for publication checks.
+    fn validate(&self) -> Result<ipnet::Ipv4Net, ConfigError> {
         require(
-            placement.engine.starts_with("ssh://"),
+            self.engine.starts_with("ssh://"),
             "explicit service placement requires SSH Docker",
         )?;
         require(
-            crate::docker::Engine::validate_endpoint(&placement.engine).is_ok(),
+            crate::docker::Engine::validate_endpoint(&self.engine).is_ok(),
             "invalid service engine",
         )?;
-        let network: ipnet::Ipv4Net = placement
+
+        let network: ipnet::Ipv4Net = self
             .network_cidr
             .parse()
             .map_err(|_| ConfigError::new("invalid service network"))?;
+        let is_private_subnet = network.addr().is_private() && network.prefix_len() == 24;
+        let is_network_address = network.addr() == network.network();
         require(
-            network.prefix_len() == 24
-                && network.addr() == network.network()
-                && network.addr().is_private(),
+            is_private_subnet && is_network_address,
             "service network requires a private IPv4 /24",
         )?;
-        crate::config::validate_endpoint(&publication.endpoint, false)?;
-        let endpoint = url::Url::parse(&publication.endpoint)
+        Ok(network)
+    }
+}
+
+impl ServicePublication {
+    fn validate(&self, network: &ipnet::Ipv4Net, port: i64) -> Result<(), ConfigError> {
+        crate::config::validate_endpoint(&self.endpoint, false)?;
+        let endpoint = url::Url::parse(&self.endpoint)
             .map_err(|_| ConfigError::new("invalid service publication"))?;
-        let address: std::net::Ipv4Addr = publication
+        let bind_address: std::net::Ipv4Addr = self
             .bind_address
             .parse()
             .map_err(|_| ConfigError::new("invalid service bind address"))?;
+
+        // Publish on the private execution host, outside the container subnet.
+        let binds_private_host = bind_address.is_private()
+            && !bind_address.is_loopback()
+            && !network.contains(&bind_address);
+        let matches_service_endpoint = endpoint.scheme() == "http"
+            && endpoint.host_str() == Some(self.bind_address.as_str())
+            && endpoint.port().map(i64::from) == Some(port)
+            && endpoint.path() == "/v1";
         require(
-            address.is_private()
-                && !address.is_loopback()
-                && !network.contains(&address)
-                && endpoint.scheme() == "http"
-                && endpoint.host_str() == Some(publication.bind_address.as_str())
-                && endpoint.port().map(i64::from) == Some(port)
-                && endpoint.path() == "/v1",
+            binds_private_host && matches_service_endpoint,
             "service publication must match its private bind address, serving port and /v1 path",
         )
     }
