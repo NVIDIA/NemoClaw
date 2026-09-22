@@ -112,10 +112,10 @@ The Muse Glimmer profile remains Experimental after bounded physical DGX Spark q
 
 Before you start, confirm these prerequisites:
 
-- Use a qualified DGX Spark Arm64 host, a Linux x86_64 host with one NVIDIA GPU, or a qualifying Windows WSL N1x host.
+- Use a qualified DGX Spark Arm64 host, a Linux x86_64 host with at least one NVIDIA GPU, or a qualifying Windows WSL N1x host.
 - Use NVIDIA driver version `580.65.06` or later on each managed host profile.
 - Confirm that Docker is operational on the host.
-- Unset `DOCKER_HOST` and select Docker's local `default` context.
+- Use Docker's effective local `default` context. Set `DOCKER_CONTEXT=default`. If `DOCKER_CONTEXT` is unset, unset `DOCKER_HOST` and select the `default` context.
 - Confirm that the NVIDIA Container Toolkit is operational.
 - Confirm that NVIDIA Container Device Interface support is healthy.
 - Stop any process that uses host port `8081`.
