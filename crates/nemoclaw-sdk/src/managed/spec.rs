@@ -186,6 +186,13 @@ impl Spec {
     pub fn bridge(&self) -> Result<String, Error> {
         crate::config::bridge_address(self.network_cidr()).map_err(Into::into)
     }
+    /// Resolve the gateway container address on the managed network.
+    ///
+    /// # Errors
+    /// Returns a configuration error for malformed IPv4 CIDRs or address overflow.
+    pub fn gateway_address(&self) -> Result<String, Error> {
+        crate::config::gateway_address(self.network_cidr()).map_err(Into::into)
+    }
     /// Validate and extract the service configuration used inside the runtime.
     ///
     /// # Errors
@@ -290,13 +297,12 @@ impl Spec {
                     {
                         "HostIp":url.host_str().ok_or(Error::Conflict("missing gateway host"))?,
                         "HostPort":port.to_string()
-                    },
-                    {
-                        "HostIp":self.bridge()?,
-                        "HostPort":port.to_string()
                     }
                 ]});
                 config["ExposedPorts"] = json!({format!("{port}/tcp"): {}});
+                config["NetworkingConfig"] = json!({"EndpointsConfig":{
+                    self.network():{"IPAMConfig":{"IPv4Address":self.gateway_address()?}}
+                }});
             }
             host["Mounts"] = json!([{"Type":"volume","Source":self.volume(),"Target":data_path},{"Type":"bind","Source":self.gateway.engine.strip_prefix("unix://").ok_or(Error::Conflict("managed gateway requires a Unix socket"))?,"Target":"/var/run/docker.sock"}]);
         } else {
@@ -334,8 +340,17 @@ impl Spec {
         } else {
             format!("grpc_endpoint = {:?}\n", self.gateway.endpoint)
         };
+        let host_gateway_ip = if self.compute_driver == "docker" {
+            format!(
+                "host_gateway_ip = {:?}\n",
+                self.gateway_address()
+                    .expect("validated managed gateway network")
+            )
+        } else {
+            String::new()
+        };
         format!(
-            "[openshell]\nversion = 2\n\n[openshell.gateway]\ncompute_driver = {:?}\ndisable_tls = true\n\n[openshell.drivers.{}]{}\nnetwork_name = {:?}\nsandbox_runtime_image = {:?}\nsupervisor_image = {:?}\n{}\n[openshell.gateway.gateway_jwt]\nsigning_key_path = {:?}\npublic_key_path = {:?}\nkid_path = {:?}\ngateway_id = {:?}\n\n[openshell.gateway.auth]\nallow_unauthenticated_users = true\n",
+            "[openshell]\nversion = 2\n\n[openshell.gateway]\ncompute_driver = {:?}\ndisable_tls = true\n\n[openshell.drivers.{}]{}\nnetwork_name = {:?}\n{}sandbox_runtime_image = {:?}\nsupervisor_image = {:?}\n{}\n[openshell.gateway.gateway_jwt]\nsigning_key_path = {:?}\npublic_key_path = {:?}\nkid_path = {:?}\ngateway_id = {:?}\n\n[openshell.gateway.auth]\nallow_unauthenticated_users = true\n",
             self.compute_driver,
             self.compute_driver,
             if self.compute_driver == "podman" {
@@ -344,6 +359,7 @@ impl Spec {
                 ""
             },
             self.network(),
+            host_gateway_ip,
             SANDBOX_RUNTIME_IMAGE,
             SUPERVISOR_IMAGE,
             grpc_endpoint,

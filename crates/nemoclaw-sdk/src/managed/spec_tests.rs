@@ -229,6 +229,20 @@ fn runtime_launch_preserves_declared_bindings_limits_and_isolation() {
                 binding.host_ip.as_deref() == Some("127.0.0.1")
                     && binding.host_port.as_deref() == Some(port.to_string().as_str())
             }));
+            assert_eq!(bindings.len(), 1);
+            let endpoint = launch
+                .networking_config
+                .as_ref()
+                .and_then(|networking| networking.endpoints_config.as_ref())
+                .and_then(|endpoints| endpoints.get(&spec.network()))
+                .expect("gateway must have a managed-network endpoint");
+            assert_eq!(
+                endpoint
+                    .ipam_config
+                    .as_ref()
+                    .and_then(|ipam| ipam.ipv4_address.as_deref()),
+                Some(spec.gateway_address().unwrap().as_str())
+            );
             assert!(mounts.iter().any(|mount| mount.source.as_deref()
                 == spec.gateway.engine.strip_prefix("unix://")
                 && mount.target.as_deref() == Some("/var/run/docker.sock")));
@@ -255,6 +269,10 @@ fn managed_gateway_uses_driver_derived_docker_supervisor_callback() {
                 !configuration.contains("grpc_endpoint ="),
                 "Docker must derive the supervisor callback from its managed bridge"
             );
+            assert!(configuration.contains(&format!(
+                "host_gateway_ip = {:?}",
+                spec.gateway_address().unwrap()
+            )));
         } else {
             assert!(
                 configuration.contains(&format!("grpc_endpoint = {:?}", spec.gateway.endpoint))

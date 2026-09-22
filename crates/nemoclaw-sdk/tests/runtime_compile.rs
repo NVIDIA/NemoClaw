@@ -93,23 +93,22 @@ fn managed_graph_separates_retained_storage_from_replaceable_processes() {
         .unwrap()
         .parse::<u16>()
         .unwrap();
-    assert_eq!(gateway["network_mode"], gateway_spec.network());
+    assert!(gateway.get("network_mode").is_none());
+    assert_eq!(
+        gateway["networks_advanced"],
+        json!([{
+            "name": gateway_spec.network(),
+            "ipv4_address": gateway_spec.gateway_address().unwrap()
+        }])
+    );
     assert_eq!(
         gateway["ports"],
-        json!([
-            {
-                "internal": gateway_port,
-                "external": gateway_port,
-                "ip": "127.0.0.1",
-                "protocol": "tcp"
-            },
-            {
-                "internal": gateway_port,
-                "external": gateway_port,
-                "ip": gateway_spec.bridge().unwrap(),
-                "protocol": "tcp"
-            }
-        ])
+        json!([{
+            "internal": gateway_port,
+            "external": gateway_port,
+            "ip": "127.0.0.1",
+            "protocol": "tcp"
+        }])
     );
     assert_eq!(
         graph["resource"]["docker_container"]["inference_service_inference_qwen"]["depends_on"],
