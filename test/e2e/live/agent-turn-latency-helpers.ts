@@ -9,12 +9,7 @@ import { execTimeout } from "../../helpers/timeouts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText, shellQuote } from "../fixtures/clients/command.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
-import {
-  type SandboxClient,
-  trustedSandboxShellScript,
-  validateSandboxName,
-} from "../fixtures/clients/sandbox.ts";
-import { expect } from "../fixtures/e2e-test.ts";
+import { type SandboxClient, validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import type { E2EInferenceAdapter } from "../fixtures/inference-adapter.ts";
 import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
 import type { TestProgress } from "../fixtures/progress.ts";
@@ -145,18 +140,19 @@ function startProgressActivity(progress: AgentTurnProgress | undefined, label: s
   };
 }
 
-async function runCleanupStep(
+async function runCleanupStep<T>(
   label: string,
-  run: () => Promise<unknown>,
+  run: () => Promise<T>,
   progress?: AgentTurnProgress,
   acceptNonzero?: (value: unknown) => boolean,
-): Promise<void> {
+): Promise<T> {
   emitProgressEvent(progress, `${label} started`);
   const finishActivity = startProgressActivity(progress, `cleanup: ${label}`);
   try {
     const result = await run();
     requireCleanupSuccess(label, result, acceptNonzero);
     emitProgressEvent(progress, `${label} passed`);
+    return result;
   } catch (error) {
     emitProgressEvent(progress, `${label} failed`);
     if (error instanceof Error && error.message.startsWith("cleanup failed (")) throw error;
@@ -244,44 +240,6 @@ export function msSince(start: bigint): number {
   return Number((process.hrtime.bigint() - start) / 1_000_000n);
 }
 
-export function assertOpenClawConfig(raw: string, model: string): void {
-  const cfg = JSON.parse(raw) as {
-    agents?: { defaults?: { model?: { primary?: unknown } } };
-    models?: {
-      providers?: {
-        inference?: { baseUrl?: unknown; models?: Array<{ id?: unknown; name?: unknown }> };
-      };
-    };
-  };
-  const provider = cfg.models?.providers?.inference;
-  expect(cfg.agents?.defaults?.model?.primary).toBe(`inference/${model}`);
-  expect(provider?.baseUrl).toBe("https://inference.local/v1");
-  expect(provider?.models?.[0]?.id).toBe(model);
-  expect(provider?.models?.[0]?.name).toBe(`inference/${model}`);
-}
-
-export function assertHermesConfig(raw: string, model: string): void {
-  const values = parseHermesModelBlock(raw);
-  expect(values.default).toBe(model);
-  expect(values.base_url).toBe("https://inference.local/v1");
-  expect(values.provider).toBe("custom");
-  expect(raw).not.toMatch(/^models:\s*\n(?:[ \t].*\n)*?[ \t]+providers:/mu);
-}
-
-function parseHermesModelBlock(raw: string): Record<string, string> {
-  const values: Record<string, string> = {};
-  let inModel = false;
-  for (const line of raw.split(/\r?\n/u)) {
-    const entersModel = /^model:\s*$/u.test(line);
-    entersModel && (inModel = true);
-    if (entersModel) continue;
-    if (inModel && /^[A-Za-z0-9_-]+:/u.test(line)) break;
-    const match = inModel ? line.match(/^\s+([A-Za-z0-9_-]+):\s*(.*?)\s*$/u) : null;
-    match && (values[match[1]] = match[2].replace(/^['"]|['"]$/gu, ""));
-  }
-  return values;
-}
-
 export async function installSandbox(
   host: HostCliClient,
   sandboxName: string,
@@ -365,6 +323,17 @@ export async function cleanupTurnSandboxes(
   inference: AgentTurnInference,
   progress?: AgentTurnProgress,
 ): Promise<void> {
+  const cleanupEnv = env(OPENCLAW_SANDBOX, "openclaw", inference);
+  const gatewayName = cleanupEnv.OPENSHELL_GATEWAY ?? "nemoclaw";
+  const gatewayPresent = await runCleanupStep(
+    "inspect OpenShell gateway",
+    () =>
+      sandbox.hasGatewayForInitialCleanup(gatewayName, {
+        env: cleanupEnv,
+        timeoutMs: 60_000,
+      }),
+    progress,
+  );
   for (const [name, agent] of [
     [OPENCLAW_SANDBOX, "openclaw"],
     [HERMES_SANDBOX, "hermes"],
@@ -374,18 +343,20 @@ export async function cleanupTurnSandboxes(
       () => cleanupTurnSandbox(host, name, agent, inference, progress),
       progress,
     );
-    await runCleanupStep(
-      `delete ${agent} sandbox`,
-      () =>
-        sandbox.openshell(["sandbox", "delete", name], {
-          artifactName: `cleanup-${agent}-delete`,
-          env: env(name, agent, inference),
-          onOutput: progress?.onOutput,
-          timeoutMs: 60_000,
-        }),
-      progress,
-      isMissingSandboxResult,
-    );
+    if (gatewayPresent) {
+      await runCleanupStep(
+        `delete ${agent} sandbox`,
+        () =>
+          sandbox.openshell(["sandbox", "delete", name], {
+            artifactName: `cleanup-${agent}-delete`,
+            env: env(name, agent, inference),
+            onOutput: progress?.onOutput,
+            timeoutMs: 60_000,
+          }),
+        progress,
+        isMissingSandboxResult,
+      );
+    }
   }
   await runCleanupStep(
     "stop Hermes API forward",
@@ -401,7 +372,7 @@ export async function cleanupTurnSandboxes(
   await runCleanupStep(
     "remove OpenShell gateway",
     () =>
-      host.cleanupGatewayRegistration("nemoclaw", {
+      host.cleanupGatewayRegistration(gatewayName, {
         artifactName: "cleanup-gateway-destroy-turn-latency",
         env: buildAvailabilityProbeEnv(),
         onOutput: progress?.onOutput,
@@ -484,49 +455,6 @@ export async function openclawTurn(
     },
   );
   return { result, elapsedMs: msSince(started) };
-}
-
-export async function waitHermesHealth(
-  sandbox: SandboxClient,
-  inference: AgentTurnInference,
-  progress?: Pick<TestProgress, "onOutput">,
-): Promise<ShellProbeResult> {
-  return await sandbox.execShell(
-    HERMES_SANDBOX,
-    trustedSandboxShellScript(
-      "for attempt in $(seq 1 10); do body=$(curl -sf --max-time 10 http://localhost:8642/health 2>/dev/null || true); printf '%s' \"$body\" | grep -qi '\"ok\"' && { printf '%s' \"$body\"; exit 0; }; sleep 5; done; printf '%s' \"$body\"; exit 1",
-    ),
-    {
-      artifactName: "hermes-health",
-      env: env(HERMES_SANDBOX, "hermes", inference),
-      onOutput: progress?.onOutput,
-      timeoutMs: 90_000,
-    },
-  );
-}
-
-export function openclawConfigCommand(): string {
-  const script =
-    "const fs=require('node:fs');" +
-    "function redact(value){" +
-    "if(Array.isArray(value))return value.map(redact);" +
-    "if(value&&typeof value==='object'){" +
-    "const out={};" +
-    "for(const [key,entry] of Object.entries(value)){" +
-    "out[key]=/api[_-]?key|token|secret|credential/i.test(key)?'[REDACTED]':redact(entry);" +
-    "}" +
-    "return out;" +
-    "}" +
-    "return value;" +
-    "}" +
-    "console.log(JSON.stringify(redact(JSON.parse(fs.readFileSync('/sandbox/.openclaw/openclaw.json','utf8'))),null,2));";
-  return `node -e ${JSON.stringify(script)}`;
-}
-
-export function assertNoOpenClawTransportErrors(output: string): void {
-  expect(output).not.toMatch(
-    /SsrFBlockedError|transport error|ECONNREFUSED|EAI_AGAIN|gateway unavailable|network connection error/i,
-  );
 }
 
 export function hermesTurnCommand(payload: string): string {

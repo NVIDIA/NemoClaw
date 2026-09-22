@@ -105,6 +105,7 @@ const REGISTRY_OWNING_PATHS = [
   "test/e2e/fixtures/",
   "test/e2e/live/registry-targets.test.ts",
   "test/e2e/registry/",
+  "tools/e2e/onboard-timeout-contract.mts",
 ] as const;
 const DCODE_SKILL_OWNING_PATHS = [
   "agents/langchain-deepagents-code/manifest.yaml",
@@ -332,9 +333,7 @@ function isCatalogueMatrixRow(value: unknown): value is E2eCatalogueMatrixRow {
     typeof value.shard === "string" &&
     /^[a-z0-9]+(?:-[a-z0-9]+)*$/u.test(value.shard) &&
     (value.artifact_layout === "target-shard" || value.artifact_layout === "flat-shard") &&
-    (value.host_preparation === "none" ||
-      value.host_preparation === "hermes-swap" ||
-      value.host_preparation === "rebuild-swap") &&
+    (value.host_preparation === "none" || value.host_preparation === "hermes-swap") &&
     (value.install_mode === "none" ||
       value.install_mode === "authenticated" ||
       value.install_mode === "credential-free") &&

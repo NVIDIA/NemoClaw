@@ -55,6 +55,23 @@ export function isDisplayedHermesSessionTitleForContinuation(
   );
 }
 
+export function isHermesFailedUsageEvidence(rawJson: string, expectedFailure: string): boolean {
+  try {
+    const value: unknown = JSON.parse(rawJson);
+    if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
+    const evidence = value as Record<string, unknown>;
+    return (
+      evidence.failed === true &&
+      evidence.failure === expectedFailure &&
+      evidence.estimated_cost_usd === null &&
+      evidence.input_tokens === null &&
+      evidence.output_tokens === null
+    );
+  } catch {
+    return false;
+  }
+}
+
 export function onlyNewHermesSessionId(before: Set<string>, after: Set<string>): string {
   const created = [...after].filter((id) => !before.has(id));
   expect(created).toHaveLength(1);
@@ -220,23 +237,33 @@ export async function assertHermesCliAdapterLiveContract({
       timeoutMs: 60_000,
     },
   );
-  expect(guardedUsage.exitCode, resultText(guardedUsage)).toBe(2);
-  expect(resultText(guardedUsage)).toContain(
-    "[COMPATIBILITY] Refusing resumed one-shot with --usage-file",
-  );
+  expect(guardedUsage.exitCode, resultText(guardedUsage)).toBe(1);
+  expect(resultText(guardedUsage)).toContain(`session not found: ${seedSessionId}`);
   expect(
     [...(await listDefaultSessions("phase-4-cli-adapter-sessions-after-guarded-usage"))].sort(),
   ).toEqual([...sessionsBeforeGuardedUsage].sort());
   const guardedUsageFile = await sandbox.execShell(
     sandboxName,
-    trustedSandboxShellScript(`test ! -e ${shellQuote(usageFilePath)}`),
+    trustedSandboxShellScript(
+      [
+        "set -eu",
+        `usage_file=${shellQuote(usageFilePath)}`,
+        'test -f "$usage_file"',
+        'cat -- "$usage_file"',
+        'rm -f -- "$usage_file"',
+      ].join("; "),
+    ),
     {
-      artifactName: "phase-4-cli-adapter-guarded-usage-file-absence",
+      artifactName: "phase-4-cli-adapter-guarded-usage-file-failure-report",
       env,
       timeoutMs: 30_000,
     },
   );
-  expect(guardedUsageFile.exitCode, resultText(guardedUsageFile)).toBe(0);
+  expect(
+    guardedUsageFile.exitCode === 0 &&
+      isHermesFailedUsageEvidence(guardedUsageFile.stdout, `session not found: ${seedSessionId}`),
+    resultText(guardedUsageFile),
+  ).toBe(true);
 
   const profileName = "nemoclaw-cli-adapter-e2e";
   await runHermesCli(

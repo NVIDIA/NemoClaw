@@ -4,6 +4,7 @@
 import { spawn, spawnSync } from "node:child_process";
 import path from "node:path";
 import { createOpenShellOperationDeadline } from "../../adapters/openshell/operation-deadline";
+import { createCliOpenShellSandboxLifecycle } from "../../adapters/openshell/sandbox-lifecycle-cli";
 import { TextDecoder } from "node:util";
 import { redactOnboardCommandDiagnosticText } from "../diagnostics/redaction";
 
@@ -1076,8 +1077,8 @@ async function qualify(
   const container = currentnessTiming.measure("containerInspect", () =>
     assertCurrentHermesPortableContainer(receipt, containerDeps),
   );
-  if (container.paused || container.authority.restartPolicy !== "unless-stopped") {
-    fail("container state or restart policy disagrees with active authority");
+  if (container.paused) {
+    fail("exact container is paused");
   }
   if (hasTransactionAuthority) operatingAuthority.assertTransactionCurrent();
   else operatingAuthority.assertCurrent();
@@ -1359,7 +1360,6 @@ function assertLifecycleTransactionCurrent(
   if (
     current.authority.running !== expectedRunning ||
     current.paused ||
-    current.authority.restartPolicy !== "unless-stopped" ||
     (expectedRunning ? current.status !== "running" : current.status !== "exited")
   ) {
     fail("container state changed during retained lifecycle authority");
@@ -2276,7 +2276,12 @@ export async function prepareHermesPortableSandboxRemoval(
       "Error",
     ]);
     operatingAuthority.assertCurrent();
-    return { present: true, qualified, capture, containerDeps: qualified.containerDeps };
+    return {
+      present: true,
+      qualified,
+      capture,
+      containerDeps: qualified.containerDeps,
+    };
   };
 
   const initial = await inspect();
@@ -2291,13 +2296,27 @@ export async function prepareHermesPortableSandboxRemoval(
     async removeAndVerify() {
       const current = await inspect();
       if (!current.present) return;
-      const removed = current.capture(
-        ["sandbox", "delete", "-g", receipt.gatewayName, receipt.sandboxName],
-        40_000,
-      );
+      const removed = await createCliOpenShellSandboxLifecycle({
+        environment: commandEnv,
+        capture: (args, options) => {
+          const captured = current.capture(args, options.timeout);
+          const stdout = String(captured.stdout ?? "");
+          const stderr = String(captured.stderr ?? "");
+          return {
+            ...captured,
+            stdout,
+            stderr,
+            output: `${stdout}\n${stderr}`.trim(),
+          };
+        },
+      }).deleteSandbox({
+        sandboxName: receipt.sandboxName,
+        target: { kind: "named", gatewayName: receipt.gatewayName },
+        timeoutMs: 40_000,
+      });
       const after = await inspect(true);
       if (after.present) {
-        if (removed.status !== 0 || removed.error) fail("exact sandbox deletion failed");
+        if (removed.kind === "failed") fail("exact sandbox deletion failed");
         fail("exact sandbox remained after deletion");
       }
     },

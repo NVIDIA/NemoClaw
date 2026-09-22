@@ -2,15 +2,14 @@
 # SPDX-License-Identifier: Apache-2.0
 #
 # Pins the remaining NemoClaw source compatibility differences in the checksum-
-# pinned Hermes v2026.8.27 source. Hermes 0.20.6 already carries the reviewed
-# Python security floors and routes memory-provider installation through its
-# managed lazy target. Keep the Hindsight bridge and upstream agent-browser
-# fallback exact so runtime resolution cannot drift beyond the separately
-# verified build-time probes. Scope one-shot completion waits to the exact turn
-# so unrelated managed-runtime processes cannot hold a completed query open.
-# Keep the cron tick lock in writable runtime state while Shields keeps cron
-# definitions sealed read-only.
+# pinned Hermes v2026.9.14 source. Keep the upstream agent-browser fallback
+# exact so runtime resolution cannot drift beyond the separately verified
+# build-time probe, and keep the Hindsight lazy-install dependency exact. Scope
+# one-shot completion waits to the exact turn so unrelated managed-runtime
+# processes cannot hold a completed query open. Keep the cron tick lock in
+# writable runtime state while job definitions remain sealed read-only.
 diff --git a/plugins/memory/hindsight/plugin.yaml b/plugins/memory/hindsight/plugin.yaml
+index 4a364fc60a..110ee31a3b 100644
 --- a/plugins/memory/hindsight/plugin.yaml
 +++ b/plugins/memory/hindsight/plugin.yaml
 @@ -2,7 +2,7 @@ name: hindsight
@@ -22,54 +21,103 @@ diff --git a/plugins/memory/hindsight/plugin.yaml b/plugins/memory/hindsight/plu
  requires_env: []
  hooks:
    - on_session_end
-diff --git a/tools/browser_tool.py b/tools/browser_tool.py
---- a/tools/browser_tool.py
-+++ b/tools/browser_tool.py
-@@ -957,8 +957,7 @@ NPX_AGENT_BROWSER_SENTINEL = "npx agent-browser"
--# Pinned to match scripts/install.sh / scripts/install.ps1's
--# "agent-browser@^0.26.0" managed install so a git-clone install resolving
--# agent-browser via bare npx gets the same version as a managed install,
--# instead of floating latest with no integrity check. Update both together.
--AGENT_BROWSER_NPX_SPEC = "agent-browser@^0.26.0"
--
--
-+# NemoClaw pins the npx fallback to the reviewed 0.26.0 release so managed
-+# image execution cannot float to a later registry version. Update the image
-+# warm-cache and offline probes with this source authority.
-+AGENT_BROWSER_NPX_SPEC = "agent-browser@0.26.0"
-+
-+
- def _is_npx_agent_browser_sentinel(browser_cmd: str) -> bool:
-diff --git a/hermes_cli/oneshot.py b/hermes_cli/oneshot.py
---- a/hermes_cli/oneshot.py
-+++ b/hermes_cli/oneshot.py
-@@ -23,6 +23,7 @@ from __future__ import annotations
- import logging
- import os
- import sys
-+import uuid
- from contextlib import redirect_stderr, redirect_stdout
- from pathlib import Path
- from typing import Optional
-@@ -510,4 +511,5 @@ def _run_agent(
--        result = agent.run_conversation(prompt)
-+        oneshot_task_id = str(uuid.uuid4())
-+        result = agent.run_conversation(prompt, task_id=oneshot_task_id)
-         return (result.get("final_response") or "", result)
-     finally:
-         # Ordering deliberately mirrors gateway/run.py:_cleanup_agent_resources,
-@@ -526,4 +528,4 @@ def _run_agent(
--                process_registry.wait_for_pending_completions(None)
-+                process_registry.wait_for_pending_completions(oneshot_task_id)
-             except Exception:
-                 logging.debug("oneshot background completion wait failed", exc_info=True)
-             try:
 diff --git a/cron/scheduler.py b/cron/scheduler.py
+index 3d745e1360..651770198a 100644
 --- a/cron/scheduler.py
 +++ b/cron/scheduler.py
-@@ -1569,4 +1569,4 @@ def _get_lock_paths() -> tuple[Path, Path]:
+@@ -1045,7 +1045,7 @@ def _get_hermes_home() -> Path:
+ def _get_lock_paths() -> tuple[Path, Path]:
      """Resolve cron lock paths at call time so profile/env changes are honored."""
      hermes_home = _get_hermes_home()
 -    lock_dir = hermes_home / "cron"
 +    lock_dir = hermes_home / "runtime"
      return lock_dir, lock_dir / ".tick.lock"
+
+
+diff --git a/hermes_cli/oneshot.py b/hermes_cli/oneshot.py
+index 5c3603f2c4..bd61c11b63 100644
+--- a/hermes_cli/oneshot.py
++++ b/hermes_cli/oneshot.py
+@@ -12,6 +12,7 @@ import json
+ import logging
+ import os
+ import sys
++import uuid
+ from contextlib import redirect_stderr, redirect_stdout
+ from dataclasses import dataclass
+ from pathlib import Path
+@@ -473,6 +474,7 @@ def _run_agent(
+     # The try spans agent construction (not just ``chat``) so the store is always closed, even when
+     # ``AIAgent(...)`` raises — the one-shot exit path hard-exits via os._exit and skips finalizers.
+     agent = None
++    oneshot_task_id = str(uuid.uuid4())
+     try:
+         agent = AIAgent(
+             api_key=runtime.get("api_key"),
+@@ -500,10 +502,14 @@ def _run_agent(
+         agent.stream_delta_callback = None
+         agent.tool_gen_callback = None
+
+-        result = agent.run_conversation(prompt, conversation_history=conversation_history or None)
++        result = agent.run_conversation(
++            prompt,
++            conversation_history=conversation_history or None,
++            task_id=oneshot_task_id,
++        )
+         return (result.get("final_response") or "", result)
+     finally:
+-        _close_agent(agent, session_db)
++        _close_agent(agent, session_db, oneshot_task_id)
+
+
+ def _quietly(what: str, fn) -> None:
+@@ -514,24 +520,27 @@ def _quietly(what: str, fn) -> None:
+         logging.debug("oneshot %s failed", what, exc_info=True)
+
+
+-def _linger_for_background_completions() -> None:
++def _linger_for_background_completions(oneshot_task_id: str) -> None:
+     # Linger (bounded) for background processes this turn spawned with notify_on_complete=true BEFORE
+     # agent.close(): close() calls process_registry.kill_all(task_id) and the dying parent owns the
+     # children's stdout pipes, so exiting now destroys in-flight deliveries — including Bot Mode handoff
+     # replies dispatched from a short-lived recipient (#90879).
+     from tools.process_registry import process_registry
+
+-    process_registry.wait_for_pending_completions(None)
++    process_registry.wait_for_pending_completions(oneshot_task_id)
+
+
+-def _close_agent(agent, session_db) -> None:
++def _close_agent(agent, session_db, oneshot_task_id: str) -> None:
+     """Teardown mirroring gateway/run.py:_cleanup_agent_resources (NOT cli.py:_run_cleanup):
+     oneshot has no _active_agent_ref and the hard-exit path skips finalizers."""
+     if agent is not None:
+         # Linger (bounded) for notify_on_complete background processes BEFORE agent.close():
+         # close() kill_all()s the task and the dying parent owns the children's stdout pipes, so
+         # exiting now destroys in-flight deliveries (e.g. Bot Mode handoff replies).
+-        _quietly("background completion wait", _linger_for_background_completions)
++        _quietly(
++            "background completion wait",
++            lambda: _linger_for_background_completions(oneshot_task_id),
++        )
+         session_messages = getattr(agent, "_session_messages", None)
+         memory_args = (session_messages,) if isinstance(session_messages, list) else ()
+         _quietly("memory/context cleanup", lambda: agent.shutdown_memory_provider(*memory_args))
+diff --git a/tools/browser_tool.py b/tools/browser_tool.py
+index 104bc7694d..e1b011de05 100644
+--- a/tools/browser_tool.py
++++ b/tools/browser_tool.py
+@@ -119,9 +119,10 @@ _EMPTY_OK_COMMANDS: frozenset = frozenset({"close", "record"})  # legitimately e
+ # Sentinel _find_agent_browser returns/caches to mean "resolve via npx" rather
+ # than a concrete path (also compared in hermes_cli/tools_config.py and doctor.py).
+ NPX_AGENT_BROWSER_SENTINEL = "npx agent-browser"
+-# Pinned to match scripts/install.sh / install.ps1's managed install so a bare-npx
+-# resolution gets the same version instead of floating latest. Update together.
+-AGENT_BROWSER_NPX_SPEC = "agent-browser@^0.26.0"
++# NemoClaw pins the npx fallback to the reviewed 0.26.0 release so managed
++# image execution cannot float to a later registry version. Update the image
++# warm-cache and offline probes with this source authority.
++AGENT_BROWSER_NPX_SPEC = "agent-browser@0.26.0"
+
+ # Process caches (``_cached_X`` + ``_X_resolved`` pairs) for config-derived lookups;
+ # reset by ``cleanup_all_browsers``. Written/read by the sibling modules via ``browser_tool_origin``.

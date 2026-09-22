@@ -78,7 +78,7 @@ export interface IncompleteOnboarding {
 
 export interface ListSandboxesCommandDeps {
   recoverRegistryEntries: () => Promise<RecoveryResult>;
-  getLiveInference: () => GatewayInference | null;
+  getLiveInference: () => GatewayInference | null | Promise<GatewayInference | null>;
   /**
    * Returns the last onboard session's sandbox name and step state. The
    * step state is needed to filter out phantom names from interrupted
@@ -144,7 +144,7 @@ export interface GatewayHealth {
 
 export interface ShowStatusCommandDeps {
   listSandboxes: () => { sandboxes: SandboxEntry[]; defaultSandbox?: string | null };
-  getLiveInference: () => GatewayInference | null;
+  getLiveInference: () => GatewayInference | null | Promise<GatewayInference | null>;
   showServiceStatus: (options: { sandboxName?: string }) => void;
   getServiceStatuses?: (options: { sandboxName?: string }) => StatusServiceRow[];
   /**
@@ -506,7 +506,7 @@ export async function listSandboxesCommand(deps: ListSandboxesCommandDeps): Prom
   const log = deps.log ?? console.log;
   const recovery = await deps.recoverRegistryEntries();
   const inventory = await buildSandboxInventory(deps, recovery);
-  const liveInference = inventory.sandboxes.length > 0 ? deps.getLiveInference() : null;
+  const liveInference = inventory.sandboxes.length > 0 ? await deps.getLiveInference() : null;
   const resolvedDefault = resolveDefaultSandboxName(() => ({
     defaultSandbox: recovery.defaultSandbox ?? null,
   }));
@@ -618,7 +618,8 @@ export async function getStatusReport(deps: ShowStatusCommandDeps): Promise<Stat
     sandboxList.sandboxes,
     deps.loadLastSession?.(),
   );
-  const liveInference = sandboxes.length > 0 && !hasHermesPortable ? deps.getLiveInference() : null;
+  const liveInference =
+    sandboxes.length > 0 && !hasHermesPortable ? await deps.getLiveInference() : null;
   const gatewayHealth =
     deps.getGatewayHealth && sandboxes.length > 0 && !hasHermesPortable
       ? await deps.getGatewayHealth()
@@ -693,7 +694,7 @@ export async function showStatusCommand(deps: ShowStatusCommandDeps): Promise<vo
   log("");
   log("  Global status (registered sandboxes and host services):");
   if (sandboxes.length > 0) {
-    const live = hasHermesPortable ? null : deps.getLiveInference();
+    const live = hasHermesPortable ? null : await deps.getLiveInference();
     log("  Sandboxes:");
     for (const sb of sandboxes) {
       const isDefault = sb.name === resolvedDefault;
