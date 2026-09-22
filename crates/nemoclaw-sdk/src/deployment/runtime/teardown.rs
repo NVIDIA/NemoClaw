@@ -39,31 +39,46 @@ impl Deployment {
                 cancel,
             )
             .await?;
-        validate_teardown_state(&record, &bindings)?;
         let runtime = if record.document.has_runtime() {
             Some(Store::open(&store.directory.join("runtime"))?)
         } else {
             None
         };
+        let runtime_bindings = if let Some(stage) = &runtime {
+            self.state_bindings(
+                &bundle,
+                stage,
+                &record.document,
+                &record.generations,
+                true,
+                cancel,
+            )
+            .await?
+        } else {
+            BTreeMap::new()
+        };
+        let matches_pending_plan = |stage: &Store| {
+            !record.plan_digest.is_empty()
+                && crate::bundle::hash_file(&stage.directory.join("apply.plan"))
+                    .is_ok_and(|digest| digest == record.plan_digest)
+        };
+        let pending_root_plan = matches_pending_plan(&store);
+        let pending_runtime_plan = runtime.as_ref().is_some_and(matches_pending_plan);
+        validate_teardown_state(
+            &record,
+            &bindings,
+            &runtime_bindings,
+            pending_root_plan,
+            pending_runtime_plan,
+        )?;
         let mut result = OperationResult::planned(Vec::new());
         result
             .retained
             .extend(retained_bindings(&record, &bindings, false)?);
-        if let Some(stage) = &runtime {
-            result.retained.extend(retained_bindings(
-                &record,
-                &self
-                    .state_bindings(
-                        &bundle,
-                        stage,
-                        &record.document,
-                        &record.generations,
-                        true,
-                        cancel,
-                    )
-                    .await?,
-                true,
-            )?);
+        if runtime.is_some() {
+            result
+                .retained
+                .extend(retained_bindings(&record, &runtime_bindings, true)?);
         }
         if record.destroyed {
             if !preview {
@@ -90,7 +105,10 @@ impl Deployment {
         if preview {
             return Ok(result);
         }
+        // Both teardown graphs now account for every saved identity, so destroy
+        // owns recovery from this point and can resume at its recorded boundary.
         record.destroying = true;
+        record.pending = false;
         record.succeeded = false;
         store.save(&record)?;
         (self.progress)(Progress::Destroying);
@@ -315,11 +333,18 @@ fn teardown_graph(
 fn validate_teardown_state(
     record: &Record,
     bindings: &BTreeMap<String, StateBinding>,
+    runtime_bindings: &BTreeMap<String, StateBinding>,
+    pending_root_plan: bool,
+    pending_runtime_plan: bool,
 ) -> Result<(), Error> {
-    if record.pending && !record.runtime_pending {
-        return Err(Error::Conflict(
-            "unfinished apply may have created resources whose IDs were not saved; apply the original configuration again before destroy",
-        ));
+    if record.pending {
+        let saved_plan_has_state = (pending_root_plan && !bindings.is_empty())
+            || (pending_runtime_plan && runtime_bindings_safe(record, runtime_bindings)?);
+        if !record.runtime_pending || !saved_plan_has_state {
+            return Err(Error::Conflict(
+                "unfinished apply may have created resources whose IDs were not saved; apply the original configuration again before destroy",
+            ));
+        }
     }
     for (service, storage) in crate::services::remove_plans(&record.document, &record.generations)?
         .into_iter()
@@ -334,6 +359,17 @@ fn validate_teardown_state(
         }
     }
     Ok(())
+}
+
+fn runtime_bindings_safe(
+    record: &Record,
+    bindings: &BTreeMap<String, StateBinding>,
+) -> Result<bool, Error> {
+    if bindings.is_empty() {
+        return Ok(false);
+    }
+    teardown_expected(record, bindings, true)?;
+    Ok(true)
 }
 
 fn retained_bindings(
@@ -352,17 +388,17 @@ mod tests {
     use super::*;
 
     #[test]
-    fn unfinished_apply_explains_how_to_recover_before_destroy() {
+    fn unfinished_apply_without_complete_runtime_state_explains_how_to_recover() {
         let document = Document::parse(
             include_bytes!("../../../../../examples/fabric-openclaw.yaml").as_slice(),
         )
         .unwrap();
         let mut record = Record::new(document).unwrap();
         let bindings = BTreeMap::new();
-        validate_teardown_state(&record, &bindings).unwrap();
+        validate_teardown_state(&record, &bindings, &bindings, false, false).unwrap();
         record.pending = true;
         assert_eq!(
-            validate_teardown_state(&record, &bindings)
+            validate_teardown_state(&record, &bindings, &bindings, false, false)
                 .unwrap_err()
                 .to_string(),
             "unfinished apply may have created resources whose IDs were not saved; apply the original configuration again before destroy"
@@ -394,7 +430,7 @@ mod tests {
             ),
         ]
         .into();
-        validate_teardown_state(&record, &bindings).unwrap();
+        validate_teardown_state(&record, &bindings, &BTreeMap::new(), true, false).unwrap();
         assert!(
             teardown_expected(&record, &bindings, false)
                 .unwrap()
@@ -451,6 +487,53 @@ mod tests {
         service_resource(record, |kind| {
             crate::services::resource_behavior(kind).retained_storage
         })
+    }
+
+    #[test]
+    fn unfinished_runtime_apply_can_destroy_only_its_safe_saved_bindings() {
+        let (mut record, runtime_bindings) = runtime_state();
+        record.pending = true;
+        record.runtime_pending = true;
+        let bindings = BTreeMap::new();
+        validate_teardown_state(&record, &bindings, &runtime_bindings, false, true).unwrap();
+
+        assert!(
+            validate_teardown_state(&record, &bindings, &runtime_bindings, false, false).is_err(),
+            "a saved plan mismatch must remain fail-closed"
+        );
+        assert!(
+            validate_teardown_state(&record, &bindings, &BTreeMap::new(), false, true).is_err(),
+            "an empty state cannot prove that a successful mutation was recorded"
+        );
+
+        let storage = service_storage(&record);
+        let partial = BTreeMap::from([(
+            storage.clone(),
+            runtime_bindings.get(&storage).unwrap().clone(),
+        )]);
+        validate_teardown_state(&record, &bindings, &partial, false, true)
+            .expect("a recorded retained volume is a safe partial runtime state");
+
+        let process = service_process(&record);
+        let missing_storage = BTreeMap::from([(
+            process.clone(),
+            runtime_bindings.get(&process).unwrap().clone(),
+        )]);
+        assert!(
+            validate_teardown_state(&record, &bindings, &missing_storage, false, true).is_err(),
+            "a process cannot be removed without its independent storage binding"
+        );
+
+        let mut root_bindings = bindings;
+        root_bindings.insert(
+            "nemoclaw_workspace.deployment".into(),
+            StateBinding {
+                id: "possibly-partial-root-resource".into(),
+                ..Default::default()
+            },
+        );
+        validate_teardown_state(&record, &root_bindings, &runtime_bindings, false, true)
+            .expect("root bindings predate a pending runtime-stage apply");
     }
 
     fn update_service(
