@@ -3,6 +3,38 @@
 
 # Publish the Branch and PR
 
+## Select the source repository
+
+Choose the source repository before declaring the immutable publication inputs or writing a branch.
+Do not default to a fork merely because it is the usual contributor location.
+
+Read the canonical base copies of the pull-request workflows and any applicable manual-E2E contract.
+Use the trusted diff and those canonical rules to determine whether every required CI and E2E path
+supports a fork head. In particular:
+
+- a candidate whose required reviewed OpenShell SDK package job rejects a non-canonical head must use
+  a branch in `NVIDIA/NemoClaw`;
+- a PR that requires the manual PR E2E workflow must use a branch in `NVIDIA/NemoClaw` unless the
+  canonical contract explicitly supports another source repository.
+
+Treat this as a pre-publication hard stop. If any required path is same-repository-only:
+
+1. Read `viewerPermission` for `NVIDIA/NemoClaw`. Use a same-repository source branch only when the
+   authenticated actor has `WRITE`, `MAINTAIN`, or `ADMIN` and the requested task authorizes the
+   repository branch write.
+2. Otherwise stop before pushing or creating a PR. Name the exact required path and the repository
+   maintainer who must adopt or publish the branch. Do not create a fork PR that cannot complete its
+   required gates and do not describe its known failure as pending evidence.
+
+When all required paths support fork heads, use the declared authorized fork. Record the selected
+source repository, the canonical rule that permits it, and the permission observation with the other
+publication inputs. Re-read the relevant source-repository identity immediately before the branch
+write and PR creation.
+
+An existing PR cannot change its head repository. If this gate discovers that an open fork PR must be
+same-repository, do not rerun the impossible check or silently create a duplicate. Report the invalid
+source choice and obtain explicit authorization before closing and replacing the PR.
+
 ## Guarded publication
 
 Use a configured GitHub method allowed by the access hard stop. This skill owns the publication
