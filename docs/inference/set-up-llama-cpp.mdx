@@ -115,6 +115,7 @@ Before you start, confirm these prerequisites:
 - Use a qualified DGX Spark Arm64 host, a Linux x86_64 host with one NVIDIA GPU, or a qualifying Windows WSL N1x host.
 - Use NVIDIA driver version `580.65.06` or later on each managed host profile.
 - Confirm that Docker is operational on the host.
+- Unset `DOCKER_HOST` and select Docker's local `default` context.
 - Confirm that the NVIDIA Container Toolkit is operational.
 - Confirm that NVIDIA Container Device Interface support is healthy.
 - Stop any process that uses host port `8081`.
@@ -125,7 +126,6 @@ For Windows WSL N1x, also confirm these requirements:
 
 - Use Arm64 WSL with one GPU whose normalized identity is either `NVIDIA RTX Spark N1X` or `NVIDIA RTX Spark N1X (6144-core Blackwell RTX GPU)`.
 - Use the default local Docker Desktop context with at least 48,000 MiB of Docker memory.
-- Unset `DOCKER_HOST` and select Docker's `default` context before you select the managed recipe.
 - Provide at least 48,000 MiB of GPU memory.
 - Pass Docker storage, runtime, NVIDIA GPU integration, and Docker Desktop GPU passthrough readiness.
 
