@@ -221,6 +221,7 @@ function validCreateRequest(request: CreateOpenShellSandboxRequest): boolean {
     !validCreateText(request.source.reference) ||
     request.startupCommand.length === 0 ||
     request.startupCommand.some((value) => !validCreateText(value)) ||
+    (request.autoProviders === true && (request.providers?.length ?? 0) > 0) ||
     (request.runtimeSelection &&
       request.runtimeSelection.gatewayName !== request.target.gatewayName)
   ) {
@@ -274,6 +275,7 @@ export function renderCreateOpenShellSandboxArgs(request: CreateOpenShellSandbox
       `${name}=${value}`,
     ]),
     ...(request.providers ?? []).flatMap((provider) => ["--provider", provider]),
+    ...(request.autoProviders === true ? ["--auto-providers"] : []),
     "--",
     ...request.startupCommand,
   ];

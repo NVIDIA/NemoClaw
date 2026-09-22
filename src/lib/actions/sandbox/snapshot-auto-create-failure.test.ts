@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   hostLocalInferenceReceipt,
   serializedLlamaCppHostLocalInferenceReceipt,
@@ -13,7 +13,7 @@ import {
   type HostLocalInferenceOperation,
   type HostLocalInferenceRuntime,
 } from "../../onboard/runtime-provider/host-local-inference";
-import type { SnapshotStreamSandboxCreateMock } from "./snapshot-create-stream-test-types";
+import type { StreamSandboxCreateCommand } from "../../adapters/openshell/sandbox-lifecycle-cli";
 import { createSandboxHostLocalInferenceProvenance } from "../../state/registry/host-local-inference";
 
 const harness = vi.hoisted(() => ({
@@ -22,13 +22,34 @@ const harness = vi.hoisted(() => ({
   prepareDestroy: vi.fn((value: unknown) => value),
   destroy: vi.fn((value: unknown) => ({ status: "removed", receipt: value })),
 }));
-const captureOpenshellMock = vi.fn((args: string[]) => ({
-  status: 0,
-  output:
-    args[0] === "policy"
-      ? "version: 1\nnetwork_policies: {}\n"
-      : "alpha Ready\nbeta Ready\nId: beta-runtime-id\n",
-}));
+function defaultCaptureOpenshell(args: string[]) {
+  const selectorIndex = args.indexOf("--selector");
+  const selector = args[selectorIndex + 1] ?? "";
+  const separatorIndex = selector.indexOf("=");
+  return selectorIndex >= 0
+    ? {
+        status: 0,
+        output: JSON.stringify([
+          {
+            id: "beta-runtime-id",
+            name: "beta",
+            labels: { [selector.slice(0, separatorIndex)]: selector.slice(separatorIndex + 1) },
+            resource_version: 1,
+            created_at: "2026-09-22T00:00:00.000Z",
+            phase: "Ready",
+            current_policy_version: 1,
+          },
+        ]),
+      }
+    : {
+        status: 0,
+        output:
+          args[0] === "policy"
+            ? "version: 1\nnetwork_policies: {}\n"
+            : "alpha Ready\nbeta Ready\nId: beta-runtime-id\n",
+      };
+}
+const captureOpenshellMock = vi.fn(defaultCaptureOpenshell);
 const readSandboxPolicyMock = vi.fn(() => ({
   ok: true as const,
   value: {
@@ -67,9 +88,9 @@ const reserveSandboxInferenceRouteMock = vi.fn((name: string, route: Record<stri
 });
 const restoreSandboxStateMock = vi.fn();
 const captureSnapshotRestoreAuthorityMock = vi.fn();
-const streamSandboxCreateMock = vi.fn<SnapshotStreamSandboxCreateMock>(async () => ({
+const streamSandboxCreateMock = vi.fn<StreamSandboxCreateCommand>(async () => ({
   status: 7,
-  output: "create failed before registry write",
+  output: "spawn failed: injected create failure (ENOENT)",
   sawProgress: false,
   forcedReady: false,
 }));
@@ -273,6 +294,13 @@ vi.mock("./snapshot/dependencies", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./snapshot/dependencies")>()),
   requireCurrentSnapshotRuntimeProvider: vi.fn(() => runtimeProvider),
 }));
+vi.mock("./snapshot/forward-port-allocation", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./snapshot/forward-port-allocation")>()),
+  allocateSnapshotCloneForwardPorts: vi.fn(async () => ({
+    dashboardPort: null,
+    hermesApiPort: null,
+  })),
+}));
 
 describe("snapshot restore auto-create failures", () => {
   beforeAll(async () => {
@@ -282,15 +310,17 @@ describe("snapshot restore auto-create failures", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    captureOpenshellMock.mockImplementation(defaultCaptureOpenshell);
     harness.entries.clear();
     harness.entries.set("alpha", sourceEntry());
     streamSandboxCreateMock.mockResolvedValue({
       status: 7,
-      output: "create failed before registry write",
+      output: "spawn failed: injected create failure (ENOENT)",
       sawProgress: false,
       forcedReady: false,
     });
   });
+  afterEach(() => vi.unstubAllEnvs());
 
   it("does not register a ghost sandbox when auto-create fails", async () => {
     vi.spyOn(console, "error").mockImplementation(() => {});
@@ -309,6 +339,101 @@ describe("snapshot restore auto-create failures", () => {
       expect.any(Object),
       expect.objectContaining({ initialPhase: "create" }),
     );
+    expect(registerSandboxMock).not.toHaveBeenCalled();
+    expect(restoreSandboxStateMock).not.toHaveBeenCalled();
+  });
+
+  it("reconciles one ambiguous create by exact create-attempt identity without retrying", async () => {
+    vi.stubEnv("NVIDIA_API_KEY", "must-not-cross-clone-boundary");
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    streamSandboxCreateMock.mockResolvedValue({
+      status: 1,
+      output: "connection lost after submission NVIDIA_API_KEY=must-not-cross-clone-boundary",
+      sawProgress: true,
+      forcedReady: false,
+    });
+    restoreSandboxStateMock.mockReturnValue({
+      success: true,
+      restoredDirs: [],
+      restoredFiles: [],
+      failedDirs: [],
+      failedFiles: [],
+    });
+    const { runSandboxSnapshot } = await import("./snapshot");
+
+    await expect(
+      runSandboxSnapshot("alpha", { kind: "restore", to: "beta" }),
+    ).resolves.toBeUndefined();
+
+    expect(streamSandboxCreateMock).toHaveBeenCalledOnce();
+    const createArgs = streamSandboxCreateMock.mock.calls[0]?.[1] ?? [];
+    const createEnvironment = streamSandboxCreateMock.mock.calls[0]?.[2] ?? {};
+    expect(createArgs).toContain("--auto-providers");
+    expect(createArgs).toEqual(
+      expect.arrayContaining([
+        "--label",
+        expect.stringMatching(/^ai\.nvidia\.nemoclaw\.create-attempt=[0-9a-f]{62}$/u),
+      ]),
+    );
+    expect(JSON.stringify({ createArgs, createEnvironment })).not.toContain(
+      "must-not-cross-clone-boundary",
+    );
+    expect(registerSandboxMock).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "beta" }),
+      undefined,
+      { pending: true },
+    );
+    expect(restoreSandboxStateMock).toHaveBeenCalledOnce();
+  });
+
+  it("blocks registration when the nonce-owned clone identity changes", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    let selectorReads = 0;
+    captureOpenshellMock.mockImplementation((args: string[]) => {
+      const selectorIndex = args.indexOf("--selector");
+      const selector = args[selectorIndex + 1] ?? "";
+      const separatorIndex = selector.indexOf("=");
+      selectorReads += selectorIndex >= 0 ? 1 : 0;
+      return selectorIndex >= 0
+        ? {
+            status: 0,
+            output: JSON.stringify([
+              {
+                id: selectorReads === 1 ? "beta-runtime-id" : "beta-replacement-id",
+                name: "beta",
+                labels: {
+                  [selector.slice(0, separatorIndex)]: selector.slice(separatorIndex + 1),
+                },
+                resource_version: selectorReads,
+                created_at: "2026-09-22T00:00:00.000Z",
+                phase: "Ready",
+                current_policy_version: 1,
+              },
+            ]),
+          }
+        : {
+            status: 0,
+            output:
+              args[0] === "policy"
+                ? "version: 1\nnetwork_policies: {}\n"
+                : "alpha Ready\nbeta Ready\nId: beta-runtime-id\n",
+          };
+    });
+    streamSandboxCreateMock.mockResolvedValue({
+      status: 0,
+      output: "created",
+      sawProgress: true,
+      forcedReady: false,
+    });
+    const { runSandboxSnapshot } = await import("./snapshot");
+
+    await expect(
+      runSandboxSnapshot("alpha", { kind: "restore", to: "beta" }),
+    ).rejects.toMatchObject({ exitCode: 1 });
+
+    expect(streamSandboxCreateMock).toHaveBeenCalledOnce();
     expect(registerSandboxMock).not.toHaveBeenCalled();
     expect(restoreSandboxStateMock).not.toHaveBeenCalled();
   });
@@ -349,6 +474,58 @@ describe("snapshot restore auto-create failures", () => {
     expect(registerSandboxMock).not.toHaveBeenCalled();
   });
 
+  it("retains exact route authority when an ambiguous create cannot be reconciled", async () => {
+    const receipt = serializedLlamaCppHostLocalInferenceReceipt();
+    harness.entries.set("alpha", {
+      ...sourceEntry(),
+      openshellDriver: "docker",
+      provider: "llama-cpp-local",
+      model: "llama-cpp-model",
+      endpointUrl: "https://inference.local/v1",
+      endpointSource: "inference-set",
+      credentialEnv: "NEMOCLAW_LLAMACPP_LOCAL_TOKEN",
+      preferredInferenceApi: "openai-completions",
+      gatewayPort: 8080,
+      hostLocalInferenceReceipt: receipt,
+      hostLocalInferenceProvenance: createSandboxHostLocalInferenceProvenance("alpha", receipt),
+    });
+    captureOpenshellMock.mockImplementation((args: string[]) => ({
+      status: 0,
+      output:
+        args[0] === "policy"
+          ? "version: 1\nnetwork_policies: {}\n"
+          : args.includes("--selector")
+            ? "malformed selector output"
+            : "alpha Ready\nbeta Ready\nId: beta-runtime-id\n",
+    }));
+    streamSandboxCreateMock.mockResolvedValue({
+      status: 1,
+      output: "connection lost after submission",
+      sawProgress: true,
+      forcedReady: false,
+    });
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    const { runSandboxSnapshot } = await import("./snapshot");
+
+    await expect(
+      runSandboxSnapshot("alpha", { kind: "restore", to: "beta" }),
+    ).rejects.toMatchObject({
+      exitCode: 1,
+      lines: expect.arrayContaining([
+        expect.stringMatching(/^  Create-attempt label: ai\.nvidia\.nemoclaw\.create-attempt=/u),
+      ]),
+    });
+
+    expect(streamSandboxCreateMock).toHaveBeenCalledOnce();
+    expect(getSandboxMock("beta")).toMatchObject({
+      pendingRouteReservation: true,
+      hostLocalInferenceReceipt: receipt,
+    });
+    expect(registerSandboxMock).not.toHaveBeenCalled();
+    expect(restoreSandboxStateMock).not.toHaveBeenCalled();
+  });
+
   it("releases an exact host-local clone reservation when auto-create rejects", async () => {
     const receipt = serializedLlamaCppHostLocalInferenceReceipt();
     harness.entries.set("alpha", {
@@ -364,14 +541,18 @@ describe("snapshot restore auto-create failures", () => {
       hostLocalInferenceReceipt: receipt,
       hostLocalInferenceProvenance: createSandboxHostLocalInferenceProvenance("alpha", receipt),
     });
-    streamSandboxCreateMock.mockRejectedValue(new Error("injected create rejection"));
+    streamSandboxCreateMock.mockRejectedValue(
+      Object.assign(new Error("injected create rejection"), { code: "ENOENT" }),
+    );
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
     vi.spyOn(console, "log").mockImplementation(() => {});
     const { runSandboxSnapshot } = await import("./snapshot");
 
-    await expect(runSandboxSnapshot("alpha", { kind: "restore", to: "beta" })).rejects.toThrow(
-      "injected create rejection",
-    );
+    await expect(
+      runSandboxSnapshot("alpha", { kind: "restore", to: "beta" }),
+    ).rejects.toMatchObject({ exitCode: 1 });
 
+    expect(consoleError.mock.calls.flat().join("\n")).toContain("injected create rejection");
     expect(reserveSandboxInferenceRouteMock).toHaveBeenCalledWith(
       "beta",
       expect.objectContaining({
