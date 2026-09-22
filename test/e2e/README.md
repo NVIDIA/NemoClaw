@@ -1386,6 +1386,11 @@ rolling history or write to the GitHub Actions step summary. Both output files
 are private regular files on the runner (`0600`) with strict per-line and total
 size limits.
 
+Cloud onboarding creates its disposable installer workspace and isolated `HOME`
+under the runner account's home directory. Native SDK lifecycle operations require
+trusted gateway-state ancestors, so this workspace must not live beneath the
+world-writable system temporary directory. The test cleanup removes the workspace.
+
 Raw cloud-onboard traces stay under the runner temporary directory. Before
 artifact upload, `scripts/e2e/sanitize-trace-timing.py` reduces them to the
 allowlisted `cloud-onboard-trace-timing-summary.json` timing schema and deletes

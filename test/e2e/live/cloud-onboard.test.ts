@@ -138,7 +138,11 @@ test(
     const installUrl =
       process.env.NEMOCLAW_INSTALL_SCRIPT_URL ??
       `https://raw.githubusercontent.com/NVIDIA/NemoClaw/${ref}/install.sh`;
-    const installCwd = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-public-install-"));
+    // Native SDK lifecycle operations require trusted ancestors for gateway state.
+    // Keep the disposable HOME outside the world-writable system temporary root.
+    const installCwd = fs.mkdtempSync(
+      path.join(os.userInfo().homedir, ".nemoclaw-public-install-"),
+    );
     const testHome = path.join(installCwd, "home");
     const legacyDir = path.join(testHome, ".nemoclaw");
     const legacyFile = path.join(legacyDir, "credentials.json");
