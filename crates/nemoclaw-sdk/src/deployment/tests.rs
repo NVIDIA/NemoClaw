@@ -524,22 +524,20 @@ async fn managed_gateway_plan_apply_noop_destroy_and_recovery_use_real_opentofu(
     }
     // Reproduce a failed runtime apply after OpenTofu saved every declared
     // identity. Preview must remain read-only; destroy owns the recovery.
-    record.pending = true;
-    record.runtime_pending = true;
-    record.succeeded = false;
+    record.begin_runtime_apply(&document, record.plan_digest().into());
     store.save(&record).unwrap();
     drop(store);
     let plan = deployment.plan_destroy(&cancel).await.unwrap();
     assert_eq!(plan.changes.len(), if docker { 2 } else { 1 });
     assert_eq!(plan.retained, vec!["nemoclaw_gateway_storage.runtime"]);
     let (_, store) = deployment.open().unwrap();
-    assert!(store.load().unwrap().unwrap().pending);
+    assert!(store.load().unwrap().unwrap().pending());
     drop(store);
     deployment.destroy(&cancel).await.unwrap();
     assert!(engine.container(&name).await.unwrap().is_none());
     let (bundle, store) = deployment.open().unwrap();
     let mut record = store.load().unwrap().unwrap();
-    assert!(!record.pending);
+    assert!(!record.pending());
     deployment
         .runtime_stage(&bundle, &store, &document, &mut record, true, &cancel)
         .await

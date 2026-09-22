@@ -21,21 +21,21 @@ pub(crate) struct Record {
     pub version: u32,
     pub document: Document,
     pub generations: Generations,
-    pub pending: bool,
+    pending: bool,
     #[serde(skip_serializing_if = "is_false")]
-    pub runtime_pending: bool,
+    runtime_pending: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub pending_creations: Option<BTreeMap<String, crate::backend::Row>>,
-    pub succeeded: bool,
+    pending_creations: Option<BTreeMap<String, crate::backend::Row>>,
+    succeeded: bool,
     pub digest: String,
     #[serde(skip_serializing_if = "String::is_empty")]
-    pub plan_digest: String,
+    plan_digest: String,
     #[serde(skip_serializing_if = "is_false")]
-    pub destroying: bool,
+    destroying: bool,
     #[serde(skip_serializing_if = "is_false")]
-    pub destroyed: bool,
+    destroyed: bool,
     #[serde(skip_serializing_if = "is_false")]
-    pub destroy_runtime: bool,
+    destroy_runtime: bool,
 }
 fn is_false(value: &bool) -> bool {
     !*value
@@ -88,11 +88,17 @@ impl Record {
         }
         Ok(())
     }
-    pub fn begin_apply(&mut self, creations: BTreeMap<String, crate::backend::Row>) {
+    pub fn begin_apply(
+        &mut self,
+        document: &Document,
+        plan_digest: String,
+        creations: BTreeMap<String, crate::backend::Row>,
+    ) {
         if creations.is_empty() {
-            self.begin_runtime_apply();
+            self.begin_runtime_apply(document, plan_digest);
             return;
         }
+        self.prepare_apply(document, plan_digest);
         // Never narrow an older full-intent guard or forget an earlier lost reply.
         if !self.pending || self.runtime_pending {
             self.pending_creations = Some(creations);
@@ -109,7 +115,8 @@ impl Record {
         self.runtime_pending = false;
         self.pending_creations = None;
     }
-    pub fn begin_runtime_apply(&mut self) {
+    pub fn begin_runtime_apply(&mut self, document: &Document, plan_digest: String) {
+        self.prepare_apply(document, plan_digest);
         // Runtime recovery must not clear an earlier ambiguous OpenShell mutation.
         if !self.pending {
             self.pending = true;
@@ -121,6 +128,60 @@ impl Record {
             self.pending = false;
             self.runtime_pending = false;
         }
+    }
+    // Keep the authored intent and saved-plan identity at the same checkpoint.
+    fn prepare_apply(&mut self, document: &Document, plan_digest: String) {
+        self.document = document.clone();
+        self.digest = document.digest();
+        self.plan_digest = plan_digest;
+        self.succeeded = false;
+        self.destroyed = false;
+        self.destroy_runtime = false;
+    }
+
+    // Durable mutations settle before health observations establish success.
+    pub fn mark_succeeded(&mut self) {
+        self.succeeded = true;
+    }
+
+    // Call only after both teardown plans account for the saved identities.
+    pub fn begin_destroy(&mut self) {
+        self.destroying = true;
+        self.pending = false;
+        self.succeeded = false;
+    }
+
+    pub fn finish_root_destroy(&mut self) {
+        self.destroy_runtime = true;
+    }
+
+    pub fn finish_destroy(&mut self) {
+        self.finish_apply();
+        self.destroying = false;
+        self.destroyed = true;
+        self.plan_digest.clear();
+    }
+
+    pub fn pending(&self) -> bool {
+        self.pending
+    }
+    pub fn runtime_pending(&self) -> bool {
+        self.runtime_pending
+    }
+    pub fn succeeded(&self) -> bool {
+        self.succeeded
+    }
+    pub fn destroying(&self) -> bool {
+        self.destroying
+    }
+    pub fn destroyed(&self) -> bool {
+        self.destroyed
+    }
+    pub fn root_destroyed(&self) -> bool {
+        self.destroy_runtime
+    }
+    pub fn plan_digest(&self) -> &str {
+        &self.plan_digest
     }
     fn validate(&self) -> Result<(), Error> {
         if self.version != 7 {

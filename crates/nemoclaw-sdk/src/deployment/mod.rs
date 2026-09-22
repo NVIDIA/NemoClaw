@@ -162,7 +162,7 @@ impl Deployment {
             Some(record) => record,
             None => Record::new(document.clone())?,
         };
-        if record.destroying {
+        if record.destroying() {
             return Err(Error::Conflict(
                 "unfinished destroy; rerun destroy before another operation",
             ));
@@ -233,13 +233,8 @@ impl Deployment {
             }
             return Ok(result);
         }
-        record.document = document.clone();
-        record.digest = document.digest();
-        record.begin_apply(creations);
-        record.succeeded = false;
-        record.destroyed = false;
-        record.destroy_runtime = false;
-        record.plan_digest = crate::bundle::hash_file(&store.directory.join("apply.plan"))?;
+        let plan_digest = crate::bundle::hash_file(&store.directory.join("apply.plan"))?;
+        record.begin_apply(&document, plan_digest, creations);
         store.save(&record)?;
         (self.progress)(Progress::Applying);
         let applied = self
@@ -309,7 +304,7 @@ impl Deployment {
                 })
             })
             .collect::<Result<_, Error>>()?;
-        record.succeeded = true;
+        record.mark_succeeded();
         store.save(&record)?;
         result.outcome = Outcome::Succeeded;
         Ok(result)

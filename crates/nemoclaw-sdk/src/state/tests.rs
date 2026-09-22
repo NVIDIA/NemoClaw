@@ -219,12 +219,12 @@ fn runtime_reconciliation_does_not_clear_unfinished_openshell_recovery() {
     )
     .unwrap();
     let mut record = Record::new(document).unwrap();
-    record.begin_runtime_apply();
+    record.begin_runtime_apply(&record.document.clone(), "runtime-plan".into());
     assert!(record.pending && record.runtime_pending);
     record.finish_runtime_apply();
     assert!(!record.pending && !record.runtime_pending);
     record.pending = true;
-    record.begin_runtime_apply();
+    record.begin_runtime_apply(&record.document.clone(), "runtime-plan".into());
     assert!(!record.runtime_pending);
     record.finish_runtime_apply();
     assert!(record.pending && !record.runtime_pending);
@@ -261,7 +261,7 @@ fn pending_creation_guards_only_unresolved_targets_and_survives_runtime_recovery
         record.validate_pending_intent(&revised),
         Err(Error::Conflict(_))
     ));
-    record.begin_runtime_apply();
+    record.begin_runtime_apply(&record.document.clone(), "runtime-plan".into());
     record.finish_runtime_apply();
     assert!(record.pending && !record.runtime_pending);
     assert_eq!(
@@ -283,15 +283,23 @@ fn subsequent_apply_preserves_all_unresolved_creations_until_success() {
     let targets = crate::compile::targets(&document, &record.generations).unwrap();
     let first = &targets[0];
     let second = &targets[1];
-    record.begin_apply([(first.address.clone(), first.values.clone())].into());
-    record.begin_apply([(second.address.clone(), second.values.clone())].into());
+    record.begin_apply(
+        &document,
+        "plan".into(),
+        [(first.address.clone(), first.values.clone())].into(),
+    );
+    record.begin_apply(
+        &document,
+        "plan".into(),
+        [(second.address.clone(), second.values.clone())].into(),
+    );
     assert_eq!(record.pending_creations.as_ref().unwrap().len(), 2);
-    record.begin_apply(BTreeMap::new());
+    record.begin_apply(&document, "plan".into(), BTreeMap::new());
     assert!(record.pending && !record.runtime_pending);
     assert_eq!(record.pending_creations.as_ref().unwrap().len(), 2);
     record.finish_apply();
     assert!(!record.pending && record.pending_creations.is_none());
-    record.begin_apply(BTreeMap::new());
+    record.begin_apply(&document, "plan".into(), BTreeMap::new());
     assert!(record.pending && record.runtime_pending);
     assert!(record.validate_pending_intent(&document).is_ok());
 }
@@ -311,9 +319,92 @@ fn legacy_pending_operations_keep_the_full_intent_guard_until_success() {
     let target = crate::compile::targets(&document, &record.generations)
         .unwrap()
         .remove(0);
-    record.begin_apply([(target.address, target.values)].into());
+    record.begin_apply(
+        &document,
+        "plan".into(),
+        [(target.address, target.values)].into(),
+    );
     assert!(record.pending_creations.is_none());
     assert!(record.validate_pending_intent(&revised).is_err());
     record.finish_apply();
     assert!(record.validate_pending_intent(&revised).is_ok());
+}
+
+#[test]
+fn recovery_checkpoints_survive_reload_and_reapply() {
+    let document =
+        Document::parse(include_bytes!("../../tests/fixtures/config/local.yaml").as_slice())
+            .unwrap();
+    let mut record = Record::new(document.clone()).unwrap();
+    let generations = record.generations.clone();
+    let directory = tempfile::tempdir().unwrap();
+    let store = Store::open(directory.path()).unwrap();
+    record.begin_runtime_apply(&document, "runtime-plan".into());
+    store.save(&record).unwrap();
+    record = store.load().unwrap().unwrap();
+    assert!(record.pending && record.runtime_pending);
+    assert!(!record.succeeded);
+    record.finish_runtime_apply();
+    record.begin_apply(&document, "root-plan".into(), BTreeMap::new());
+    record.finish_apply();
+    assert!(!record.pending && !record.succeeded);
+    store.save(&record).unwrap();
+    record = store.load().unwrap().unwrap();
+    assert!(
+        !record.pending && !record.succeeded,
+        "settled mutations do not imply healthy completion"
+    );
+    record.mark_succeeded();
+    store.save(&record).unwrap();
+    record = store.load().unwrap().unwrap();
+    assert!(record.succeeded);
+    record.begin_destroy();
+    store.save(&record).unwrap();
+    record = store.load().unwrap().unwrap();
+    assert!(record.destroying && !record.succeeded && !record.destroy_runtime);
+    record.finish_root_destroy();
+    store.save(&record).unwrap();
+    record = store.load().unwrap().unwrap();
+    record.begin_destroy();
+    assert!(
+        record.destroy_runtime,
+        "retry must retain the completed root stage"
+    );
+    record.finish_destroy();
+    store.save(&record).unwrap();
+    record = store.load().unwrap().unwrap();
+    assert!(record.destroyed && !record.destroying && !record.pending && !record.runtime_pending);
+    assert!(record.plan_digest.is_empty());
+    record.begin_apply(&document, "reapply-plan".into(), BTreeMap::new());
+    assert!(!record.destroyed && !record.destroy_runtime && !record.succeeded);
+    assert_eq!(record.plan_digest, "reapply-plan");
+    assert_eq!(record.generations, generations);
+    assert_eq!(record.document, document);
+    assert_eq!(record.digest, document.digest());
+    store.save(&record).unwrap();
+    assert_eq!(store.load().unwrap().unwrap(), record);
+}
+
+#[test]
+fn teardown_takes_over_interrupted_runtime_recovery_without_losing_its_checkpoint() {
+    let document =
+        Document::parse(include_bytes!("../../tests/fixtures/config/local.yaml").as_slice())
+            .unwrap();
+    let mut record = Record::new(document.clone()).unwrap();
+    record.begin_runtime_apply(&document, "runtime-plan".into());
+    record.begin_destroy();
+    let directory = tempfile::tempdir().unwrap();
+    let store = Store::open(directory.path()).unwrap();
+    store.save(&record).unwrap();
+    record = store.load().unwrap().unwrap();
+    assert!(record.destroying && !record.pending && !record.succeeded);
+    assert_eq!(record.plan_digest, "runtime-plan");
+    record.finish_root_destroy();
+    store.save(&record).unwrap();
+    record = store.load().unwrap().unwrap();
+    assert!(record.root_destroyed());
+    record.finish_destroy();
+    assert!(!record.runtime_pending && record.pending_creations.is_none());
+    store.save(&record).unwrap();
+    assert_eq!(store.load().unwrap().unwrap(), record);
 }

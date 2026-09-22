@@ -211,13 +211,8 @@ impl Deployment {
             store.save(record)?;
             return Ok((changes, !checked.gateway_running));
         }
-        record.document = document.clone();
-        record.digest = document.digest();
-        record.begin_runtime_apply();
-        record.succeeded = false;
-        record.destroyed = false;
-        record.destroy_runtime = false;
-        record.plan_digest = crate::bundle::hash_file(&stage.directory.join("apply.plan"))?;
+        let plan_digest = crate::bundle::hash_file(&stage.directory.join("apply.plan"))?;
+        record.begin_runtime_apply(document, plan_digest);
         store.save(record)?;
         self.tofu(
             bundle,
