@@ -1208,7 +1208,8 @@ network_policies:
   it("rejects a missing typed policy before durable policy or create effects (#9203)", async () => {
     const fixture = deps();
     const invalid = input();
-    invalid.createRequest = { ...invalid.createRequest, policyPath: undefined };
+    const { policyPath: _policyPath, ...requestWithoutPolicy } = invalid.createRequest;
+    invalid.createRequest = requestWithoutPolicy;
 
     await expect(runHermesPortableOnboardingTransaction(invalid, fixture.value)).rejects.toThrow(
       "does not name the captured source",

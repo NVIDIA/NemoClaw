@@ -46,6 +46,14 @@ import { registryEntryGatewayPort } from "../../src/lib/state/gateway-registry";
 
 export const HERMES_PORTABLE_TEST_POLICY = "version: 1\nnetwork_policies: {}\n";
 
+type Mutable<Value> = { -readonly [Key in keyof Value]: Value[Key] };
+
+type MutableHermesPortableOnboardingInput = Mutable<
+  Omit<HermesPortableOnboardingInput, "buildContext">
+> & {
+  buildContext: Mutable<HermesPortableOnboardingInput["buildContext"]>;
+};
+
 const CONTAINER_ID = "a".repeat(64);
 const IMAGE_ID = "b".repeat(64);
 export const HERMES_PORTABLE_TEST_SANDBOX_ID = "sandbox-id-1";
@@ -214,7 +222,10 @@ function matchingRegistryEntry(
   };
 }
 
-export function createHermesPortableTestInput(stateDir: string, policyPath: string) {
+export function createHermesPortableTestInput(
+  stateDir: string,
+  policyPath: string,
+): MutableHermesPortableOnboardingInput {
   const uid = process.getuid!();
   const sourceDockerfilePath = `ghcr.io/nvidia/nemoclaw/hermes@sha256:${"a".repeat(64)}`;
   return {

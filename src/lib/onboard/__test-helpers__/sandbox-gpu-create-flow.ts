@@ -315,7 +315,7 @@ export function createGpuFlowTestHarness(mocks: Record<string, ReturnType<typeof
   function createSourceInput(): SandboxGpuCreateFlowInput {
     const input = createGpuFlowInput();
     input.prebuild = {
-      createArgs: ["--from", "/tmp/build/Dockerfile", "--name", "alpha", "--gpu"],
+      sourceReference: "/tmp/build/Dockerfile",
       imageRef: null,
       imageId: null,
     };
