@@ -5,7 +5,6 @@ import * as agentRuntime from "../../../agent/runtime";
 import { MessagingSetupApplier } from "../../../messaging/applier/setup-applier";
 import type { MessagingOpenShellRunner } from "../../../messaging/applier/types";
 import type { SandboxMessagingPlan } from "../../../messaging/manifest";
-import { isExpectedHermesRestartRelayClosure } from "../gateway-restart";
 import * as processRecovery from "../process-recovery";
 
 export function createHermesCredentialEnvReconciliationRuntime(
@@ -24,25 +23,15 @@ export function createHermesCredentialEnvReconciliationRuntime(
       }),
     restartGateway: async (sandboxName: string, revalidate: (operation: string) => void) => {
       revalidate(`restarting Hermes gateway for sandbox '${sandboxName}'`);
-      const result = await processRecovery.executeSandboxExecCommand(
-        sandboxName,
-        "hermes gateway restart",
-        210000,
-      );
+      const result = await processRecovery.restartSandboxGateway(sandboxName, { quiet: true });
       revalidate(`confirming Hermes gateway restart for sandbox '${sandboxName}'`);
-      return isExpectedHermesRestartRelayClosure(result) && result
-        ? { ...result, status: 0 }
-        : result;
-    },
-    waitForGateway: async (sandboxName: string, revalidate: (operation: string) => void) => {
-      revalidate(`checking Hermes gateway health for sandbox '${sandboxName}'`);
-      const healthy = await processRecovery.waitForRecoveredSandboxGateway(sandboxName, {
-        quiet: true,
-        initialManagedHealthPassed: false,
-        managedProbeImpl: () => null,
-      });
-      revalidate(`confirming Hermes gateway health for sandbox '${sandboxName}'`);
-      return healthy;
+      return result.ok
+        ? { status: 0, stdout: "Hermes gateway restarted and forwards recovered.", stderr: "" }
+        : {
+            status: 1,
+            stdout: "",
+            stderr: `${result.failureLayer}: ${result.detail}`,
+          };
     },
     revalidateSandboxIdentity,
   };

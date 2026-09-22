@@ -157,7 +157,7 @@ const DeepAgentsExportSandboxSchema = Type.Object(
   },
   { additionalProperties: false },
 );
-const LegacyExportSandboxSchema = Type.Object(
+const AgentExportSandboxSchema = Type.Object(
   {
     ...ExportSandboxFields,
     harness: Type.Object(
@@ -167,7 +167,7 @@ const LegacyExportSandboxSchema = Type.Object(
       },
       { additionalProperties: false },
     ),
-    agents: Type.Array(ExportAgentSchema, { minItems: 1 }),
+    agent: ExportAgentSchema,
   },
   { additionalProperties: false },
 );
@@ -209,7 +209,7 @@ const ConfigExportDocumentSchema = Type.Object(
           { minItems: 1 },
         ),
         sandboxes: Type.Array(
-          Type.Union([DeepAgentsExportSandboxSchema, LegacyExportSandboxSchema]),
+          Type.Union([DeepAgentsExportSandboxSchema, AgentExportSandboxSchema]),
           { minItems: 1, maxItems: 1 },
         ),
       },
@@ -571,8 +571,7 @@ async function readEffectivePolicyDocument(
 
 function semanticsFromDocument(document: ConfigExportDocument): ConfigExportSemantics {
   const sandbox = document.spec.sandboxes[0];
-  const agent =
-    sandbox === undefined ? undefined : "agent" in sandbox ? sandbox.agent : sandbox.agents[0];
+  const agent = sandbox?.agent;
   const route = agent?.inference.routes[0];
   const provider = document.spec.inferenceProviders.find(
     (candidate) => candidate.name === route?.providerRef,

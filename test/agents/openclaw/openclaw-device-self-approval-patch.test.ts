@@ -79,6 +79,10 @@ describe("OpenClaw bounded device self-approval patch (#4462)", () => {
 
       const apply = runPatch(dist);
       expect(apply.status, `${apply.stdout}${apply.stderr}`).toBe(0);
+      const patchedCli = fs.readFileSync(path.join(dist, "devices-cli.runtime-fixture.js"), "utf8");
+      expect(patchedCli).toContain(
+        "nemoclaw: exit after devices approve so leftover gateway handles cannot hang",
+      );
       const appliedAudit = runPatch(dist, true);
       expect(appliedAudit.status, `${appliedAudit.stdout}${appliedAudit.stderr}`).toBe(0);
       expect(appliedAudit.stdout.match(/already-applied/gu)).toHaveLength(6);

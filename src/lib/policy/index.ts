@@ -1915,6 +1915,7 @@ async function readCurrentSandboxPolicy(
   sandboxName: string,
   gatewayName?: string,
   runtimeSelection?: OpenShellRuntimeSelection,
+  timeoutMs?: number,
 ): Promise<string | null> {
   try {
     const selectedGateway =
@@ -1925,7 +1926,7 @@ async function readCurrentSandboxPolicy(
           sandboxName,
           selectedGateway,
           "base",
-          undefined,
+          timeoutMs,
           runtimeSelection,
         ),
       ) || null
@@ -2832,11 +2833,13 @@ async function getPresetContentGatewayState(
   presetContent: string,
   policyKey?: string,
   runtimeSelection?: OpenShellRuntimeSelection,
+  timeoutMs?: number,
 ): Promise<"match" | "absent" | "drift" | null> {
   const document = await readCurrentSandboxPolicy(
     sandboxName,
     runtimeSelection?.gatewayName,
     runtimeSelection,
+    timeoutMs,
   );
   return inspectPresetContentGatewayState({
     readPolicy: () => document ?? "",
