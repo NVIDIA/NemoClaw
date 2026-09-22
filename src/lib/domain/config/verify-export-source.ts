@@ -743,11 +743,13 @@ function expectedProfileWithObservedHostSettings(
 ): ManagedStartupProfile | null {
   try {
     let expected = supportedHostProfile(profile, expectedManagedStartupProfile(entry));
-    const servingPreset = profile.inference?.servingPreset ?? null;
+    const servingPreset = profile.inference?.servingPreset;
     if (
       entry.servingProfileProvenance?.preset.id === EXPORTED_VLLM_PROFILE_ID &&
       expected.inference &&
-      (servingPreset === null || servingPreset === EXPORTED_VLLM_PROFILE_ID)
+      (servingPreset === undefined ||
+        servingPreset === null ||
+        servingPreset === EXPORTED_VLLM_PROFILE_ID)
     ) {
       expected = { ...expected, inference: { ...expected.inference, servingPreset } };
     }
