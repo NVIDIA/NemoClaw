@@ -40,14 +40,12 @@ defaultRuntime.writeJson = (value) => {
   process.stdout.write(\`${"${JSON.stringify(value)}"}\\n\`);
   process.stderr.write("approved-stderr\\n");
 };
-let actionSettled = false;
-defaultRuntime.exit = (code) => realExit(actionSettled ? code : 23);
+defaultRuntime.exit = (code) => realExit(code);
 setInterval(() => {}, 1000);
 setApprovalFailures(${useLocalFallback ? '[new Error("scope-upgrade-pending")]' : "[]"});
 const opts = { json: ${String(json)} };
 approvePairingWithFallback(opts, "request-1")
   .then((result) => runDevicesApproveSuccess(result, opts))
-  .then(() => { actionSettled = true; })
   .catch((error) => {
     console.error(error);
     realExit(1);
@@ -78,7 +76,7 @@ describe("OpenClaw devices approve output before forced exit (#12064)", () => {
   it.each([
     [false, "Approved ok (request-1)\n"],
     [true, JSON.stringify({ requestId: "request-1", approved: true }) + "\n"],
-  ])("exits after direct gateway approval settles", (json, expected) => {
+  ])("exits after direct gateway approval with a leftover handle", (json, expected) => {
     expect(runPatchedApprove(json, false)).toBe(expected);
   });
 });

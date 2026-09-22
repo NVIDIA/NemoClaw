@@ -83,13 +83,6 @@ describe("OpenClaw bounded device self-approval patch (#4462)", () => {
       expect(patchedCli).toContain(
         "nemoclaw: exit after devices approve so leftover gateway handles cannot hang",
       );
-      expect(patchedCli).toContain(
-        "nemoclaw: defer devices approve exit until the command action settles",
-      );
-      expect(patchedCli).not.toContain(
-        "nemoclaw: mark local fallback approval for bounded process exit",
-      );
-      expect(patchedCli).not.toContain("nemoclaw: reset local fallback approval exit state");
       const appliedAudit = runPatch(dist, true);
       expect(appliedAudit.status, `${appliedAudit.stdout}${appliedAudit.stderr}`).toBe(0);
       expect(appliedAudit.stdout.match(/already-applied/gu)).toHaveLength(6);

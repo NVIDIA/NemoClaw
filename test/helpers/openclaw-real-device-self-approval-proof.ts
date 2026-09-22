@@ -1313,7 +1313,6 @@ export async function runRealOpenClawDeviceSelfApprovalProof(options: ProofOptio
     "nemoclaw: persist canonical CLI bootstrap credential",
     "nemoclaw: reach gateway for bounded same-device scope approval",
     "nemoclaw: exit after devices approve so leftover gateway handles cannot hang",
-    "nemoclaw: defer devices approve exit until the command action settles",
     "nemoclaw: route bounded CLI device-token scope upgrade into pairing",
     "nemoclaw: defer bounded silent CLI scope upgrade to pairing watcher",
     "nemoclaw: bounded same-device scope approval",
