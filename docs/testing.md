@@ -21,7 +21,7 @@ cargo clippy --workspace --all-targets -- -D warnings
 | CI / Images | `Images / linux_arm64`, `Images / linux_amd64` |
 | CI / Dependencies | `Dependencies / Policy` |
 | CD / Documentation | `Documentation / Validate`, then PR preview, staging, or release publication |
-| Live / Brev | Build and VM/image preparation in parallel, then lifecycle qualification and verified VM deletion |
+| Live / Brev | Bundle build, image build, and VM preparation in parallel, then lifecycle qualification and verified VM deletion |
 
 The first eight checks are required by the `v1` ruleset, including documentation validation.
 Keep the ruleset's check names aligned when renaming jobs; workflow display names do not identify required checks.
@@ -30,23 +30,24 @@ Running branch pushes finish; newer pushes replace older pending runs.
 Live runs use separate concurrency groups.
 The Brev workflow remains opt-in; see [live prerequisites and cleanup](testing/live.md#bare-brev).
 
-## Test Runner Pilot
+## Test Runner
 
-The Linux ARM64 native CI job uses cargo-nextest 0.9.144 for ordinary tests and the explicitly configured bundle fixtures.
-Other platforms retain the Cargo test runner while the pilot is measured.
+All native CI platforms use cargo-nextest 0.9.144 for ordinary tests and the explicitly configured bundle fixtures.
 The pinned prebuilt runner is installed with checksum verification; installation cannot fall back to compiling it.
 
 To run ordinary tests locally from the repository root, install the pinned runner once and use:
 
 ```sh
 cargo install cargo-nextest --version 0.9.144 --locked
-cargo nextest run --locked --workspace --profile ci
+cargo nextest run --locked --workspace --all-targets --profile ci
 cargo test --locked --workspace --doc
 ```
 
 The local install command compiles the tool; CI downloads its prebuilt executable.
 The `ci` profile runs at most eight tests concurrently, reports slow tests every 30 seconds, terminates a test after five minutes, and does not retry failures.
-The `lifecycle` profile limits the whole fixture run to two concurrent tests with the same timeout.
+The `lifecycle` profile selects the isolated bundle fixtures and native-state test, with four concurrent tests and the same timeout.
+CI retains the same workspace and target selection across both runs so Cargo can reuse the compiled tests.
+Lifecycle timing artifacts contain per-test durations for comparing scheduling changes.
 Both profiles finish the remaining tests after a failure.
 Use the [fixture prerequisites](testing/fixtures.md#opentofu-and-bundle-lifecycle) before selecting ignored tests; the profiles do not configure a bundle or authorize live resources.
 Nextest does not run doctests, so the separate Cargo command remains required.

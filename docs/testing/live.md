@@ -96,16 +96,17 @@ The workspace remains after destroy.
 ## Bare Brev
 
 The `Live / Brev` workflow provisions an ordinary Brev CPU VM rather than a NemoClaw Launchable.
-The build job creates the candidate Linux AMD64 bundle and test binary while an independent preparation job provisions the VM and builds the matching OpenClaw image there.
-The lifecycle job waits for both, transfers the candidate, and runs the real inference and deployment checks.
+Three jobs build the Linux AMD64 bundle and test binary, build the matching OpenClaw image, and provision the VM in parallel.
+The lifecycle job waits for all three, transfers the candidates, verifies the image archive checksum and source revision, and requires Docker to retain the built image digest after loading.
+It then runs the real inference and deployment checks on the fresh VM; image compilation happens on the CI runner.
 A separate cleanup job runs after success, failure, or cancellation and requires two confirmed observations that its owned VM is absent.
-The check list shows build, preparation, lifecycle, and deletion times separately; VM deletion remains part of successful qualification.
+The check list shows bundle build, image build, preparation, lifecycle, and deletion times separately; VM deletion remains part of successful qualification.
 The workflow requires repository secrets named `BREV_API_KEY` and `NVIDIA_API_KEY`.
 While `v1` is not the repository's default branch, run it by pushing the candidate to an intentionally named `run-brev-v1-e2e/*` branch in `NVIDIA/NemoClaw`.
 After the workflow file reaches the default branch, select `v1` with `workflow_dispatch` instead.
 
 The reviewed Brev startup script installs the required host packages, enables Docker, and waits on a readiness sentinel before candidate transfer.
-The VM must be AMD64, expose a working Docker daemon with Buildx and a Landlock kernel ABI, and have at least 80 GiB free after candidate artifacts arrive.
+The VM must be AMD64, expose a working Docker daemon with Buildx and a Landlock kernel ABI, and have at least 80 GiB free during the initial fresh-host check.
 The test refuses a host with a detected NemoClaw or OpenShell deployment.
 It uses the hosted NVIDIA OpenClaw fixture as the initial v1 configuration, replacing only its deployment UID and agent-image digest for the owned run.
 
@@ -117,7 +118,8 @@ Failures still request VM deletion; no keep-alive option is provided.
 If cleanup fails, rerun the original `Brev / Delete VM` job until deletion is verified.
 After successful cleanup, rerun all jobs for fresh qualification; rerunning only lifecycle qualification cannot reuse the deleted VM.
 Artifact and VM identities come from their producing jobs, including the original attempt when dependent jobs are retried.
-The intermediate artifact contains only the candidate bundle and test executable.
+Intermediate artifacts contain the candidate bundle, test executable, and image archive with its revision and digest manifest; no credentials are included.
+These artifacts expire after one day; images are not published to a registry.
 Qualification transfers the inference credential through a private temporary file; the runner copy is removed after transfer, and the VM copy disappears with verified VM deletion.
 
 Run the Rust test directly only on a fresh owned Linux AMD64 host with the same prerequisites:

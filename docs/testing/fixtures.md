@@ -57,9 +57,9 @@ NEMOCLAW_TEST_BUNDLE=/absolute/path/to/bundle \
   cargo test -p nemoclaw-e2e --test deployment --test export_observations --test fabric_deployment --test multiple_providers -- --ignored
 ```
 
-CI runs the fixture lifecycle tests with `--test-threads=2`.
+CI uses the [nextest lifecycle profile](../testing.md#test-runner) with four concurrent tests.
 Each Fabric harness is an independent ignored test with its own temporary state and gRPC fixture.
-To test one harness, append its test name, for example `-- --ignored harness_codex`; to run all harnesses with CI's concurrency bound, use `-- --ignored --test-threads=2`.
+To test one harness, append its test name, for example `-- --ignored harness_codex`; to run all harnesses with the same concurrency bound under Cargo, use `-- --ignored --test-threads=4`.
 
 These tests cover shared SDK/CLI state, interrupted creation, unchanged apply, readiness failure without replacement, failed observation without state loss, export/reapply, interrupted destroy, and retained workspace recovery.
 The registration lifecycle case recreates a missing selected registration while preserving its sandbox and profile, and the interrupted-create case permits unrelated intent edits while retaining pending resource configuration.
@@ -120,7 +120,7 @@ Authenticated OpenShell, stalled exec streams, and launch compatibility run in t
 The separately scheduled Fabric lifecycle cases and installed-adapter image tests exercise the supported harnesses.
 The `tls` test generates certificates and verifies both trust directions and bearer references through a real TLS connection.
 
-The native CI matrix builds and executes bundles on Linux ARM64/x64, macOS ARM64/x64, and Windows x64.
+The native CI matrix builds and executes bundles on Linux ARM64/x64, macOS ARM64, and Windows x64.
 CI's protocol and lifecycle fixtures do not establish local Docker, Podman, GPU, or real model availability on those platforms.
 Report build results separately from runtime test results.
 
