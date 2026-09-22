@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 
 import { containsAnswer } from "../../helpers/e2e-answer-assertions.ts";
 import {
+  isGatewayBackedOpenClawAgentText,
   nativeStateDoctorReportIsValid,
   nativeStateProcessIdentitiesAreValid,
   parseOpenClawAgentText,
@@ -12,6 +13,33 @@ import {
 import { buildOpenClawFirstTurnLatencyEvidence } from "../live/agent-turn-latency-helpers.ts";
 
 describe("OpenClaw agent-output fixture", () => {
+  const exactReply = JSON.stringify({
+    status: "ok",
+    result: { payloads: [{ text: "4" }], meta: {} },
+  });
+
+  it("accepts an exact reply without non-gateway transport evidence", () => {
+    expect(isGatewayBackedOpenClawAgentText({ stdout: exactReply, stderr: "" }, "4")).toBe(true);
+  });
+
+  it.each([
+    "EMBEDDED FALLBACK",
+    "[agent/embedded]",
+    "gateway connect failed",
+    "scope upgrade pending approval",
+    "device pairing required",
+    "pairing required",
+    '"fallbackFrom":"gateway"',
+    '"transport":"embedded"',
+  ])("rejects an exact reply with %s evidence on either stream", (marker) => {
+    expect(
+      isGatewayBackedOpenClawAgentText({ stdout: `${marker}\n${exactReply}`, stderr: "" }, "4"),
+    ).toBe(false);
+    expect(isGatewayBackedOpenClawAgentText({ stdout: exactReply, stderr: marker }, "4")).toBe(
+      false,
+    );
+  });
+
   it("preserves one hosted JSON reply and its agent-duration evidence", () => {
     const output = JSON.stringify({
       status: "ok",

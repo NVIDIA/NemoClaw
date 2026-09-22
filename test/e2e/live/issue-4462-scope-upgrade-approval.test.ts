@@ -9,7 +9,7 @@ import { type HostCliClient } from "../fixtures/clients/host.ts";
 import { type SandboxClient, validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { trackIssue4462FailureDiagnostics } from "../fixtures/issue-4462-diagnostics.ts";
-import { isExactOpenClawAgentText } from "../fixtures/openclaw-agent-output.ts";
+import { isGatewayBackedOpenClawAgentText } from "../fixtures/openclaw-agent-output.ts";
 import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
 import {
   adminApprovalConnectScript,
@@ -73,7 +73,7 @@ async function cleanup(host: HostCliClient, sandbox: SandboxClient): Promise<voi
     .catch(() => undefined);
 }
 test(
-  "settles operator.write during onboarding and requires explicit operator.admin approval (#4462)",
+  "allows the first gateway-backed agent request before explicit operator.admin approval (#4462)",
   {
     timeout: LIVE_TIMEOUT_MS,
     meta: { e2ePhases: ISSUE_4462_SCOPE_UPGRADE_PHASES },
@@ -179,8 +179,8 @@ test(
       "The first gateway-backed agent request failed; inspect the phase artifact",
     ).toBe(0);
     expect(
-      isExactOpenClawAgentText(agent.stdout, "4"),
-      "The first gateway-backed agent request did not return the expected answer",
+      isGatewayBackedOpenClawAgentText(agent, "4"),
+      "The first agent request did not return the expected gateway-backed answer",
     ).toBe(true);
 
     progress.phase("trigger and approve an operator.admin request through connect");
