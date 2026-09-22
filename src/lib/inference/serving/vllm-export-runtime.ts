@@ -232,12 +232,14 @@ export function observeManagedVllmForExport(
   recorded: ServingProfileProvenance | undefined,
   options: VllmExportRuntimeOptions = {},
 ): ObservedManagedVllmRuntime {
+  let diagnostic = "platform";
   try {
     if (
       (options.platform ?? process.platform) !== "linux" ||
       (options.architecture ?? process.arch) !== "x64"
     )
       fail();
+    diagnostic = "catalog";
     const expected = expectedRuntime(
       recorded ?? servingProfileProvenance(loadServingCatalog(), EXPORTED_VLLM_PROFILE_ID),
     );
@@ -249,6 +251,7 @@ export function observeManagedVllmForExport(
         timeout: INSPECTION_TIMEOUT_MS,
         maxBuffer: MAX_INSPECTION_BYTES,
       });
+    diagnostic = "image";
     const image = parse(
       inspect(
         "image",
@@ -262,6 +265,7 @@ export function observeManagedVllmForExport(
       image.Environment.some((value) => value.startsWith("VLLM_API_KEY="))
     )
       fail();
+    diagnostic = "network";
     const network = parse(
       inspect(
         "network",
@@ -271,6 +275,7 @@ export function observeManagedVllmForExport(
       NetworkSchema,
     );
     const bridge = validateManagedVllmBridgeHost(network.Config[0]!.Gateway);
+    diagnostic = "container";
     const row = parse(
       inspect(
         "container",
@@ -279,6 +284,7 @@ export function observeManagedVllmForExport(
       ),
       ContainerSchema,
     );
+    diagnostic = "authentication";
     const recovered = recoverHostLocalManagedVllmEndpoint({
       ...options.authentication,
       dockerInspect: () => JSON.stringify([row]),
@@ -310,6 +316,8 @@ export function observeManagedVllmForExport(
       startedAt: row.StartedAt,
     };
   } catch {
-    fail();
+    throw new Error(
+      `The fixed managed vLLM runtime could not be verified for export. [${diagnostic}]`,
+    );
   }
 }
