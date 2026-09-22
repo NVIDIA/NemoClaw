@@ -213,10 +213,10 @@ export PATH
 ${managedOpenClawAdminApprovalInput(requestId)}`,
         ],
         {
-          env: {
+          env: fixture.environment({
             ...prepareManagedAdminState(fixture.root, requestId),
             APPROVAL_DIAGNOSTIC_SECRET: secret,
-          },
+          }),
           killSignal: "SIGKILL",
           timeout: 10_000,
         },
@@ -257,10 +257,10 @@ export PATH
 ${managedOpenClawAdminApprovalInput(outputRequestId)}`,
         ],
         {
-          env: {
+          env: fixture.environment({
             ...prepareManagedAdminState(fixture.root, canonicalRequestId),
             MANAGED_ADMIN_APPROVE_LOG: approveLog,
-          },
+          }),
           killSignal: "SIGKILL",
           timeout: 10_000,
         },
