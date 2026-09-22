@@ -220,7 +220,7 @@ async fn schema_commands_do_not_require_inference_credentials() {
     fs::create_dir_all(bundle.tofu().parent().unwrap()).unwrap();
     fs::write(
         bundle.tofu(),
-        b"#!/bin/sh\n[ \"$TF_IN_AUTOMATION\" = 1 ] && [ \"$TF_INPUT\" = 0 ] && [ \"$CHECKPOINT_DISABLE\" = 1 ] && [ \"$TF_CLI_CONFIG_FILE\" = \"$PWD/providers.tfrc\" ] || exit 1\nprintf '{}\\n'\n",
+        b"#!/bin/sh\n[ \"$TF_IN_AUTOMATION\" = 1 ] && [ \"$TF_INPUT\" = 0 ] && [ \"$CHECKPOINT_DISABLE\" = 1 ] || exit 1\n[ \"$(basename \"$TF_CLI_CONFIG_FILE\")\" = providers.tfrc ] || exit 1\n[ \"$(cd \"$(dirname \"$TF_CLI_CONFIG_FILE\")\" && pwd -P)\" = \"$(pwd -P)\" ] || exit 1\nprintf '{}\\n'\n",
     )
     .unwrap();
     fs::set_permissions(bundle.tofu(), fs::Permissions::from_mode(0o700)).unwrap();
