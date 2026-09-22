@@ -285,18 +285,16 @@ export function observeManagedVllmForExport(
       NetworkSchema,
     );
     const bridge = validateManagedVllmBridgeHost(network.Config[0]!.Gateway);
-    diagnostic = "container-shape";
-    const row = parse(
-      inspect(
-        "container",
-        HOST_LOCAL_VLLM_CONTAINER_NAME,
-        containerFormat(expected, image, options.homeDirectory ?? os.homedir()),
-      ),
-      ContainerSchema,
-      (shape) => {
-        diagnostic = `container-shape:${shape}`;
-      },
+    diagnostic = "container-inspect";
+    const containerSource = inspect(
+      "container",
+      HOST_LOCAL_VLLM_CONTAINER_NAME,
+      containerFormat(expected, image, options.homeDirectory ?? os.homedir()),
     );
+    diagnostic = "container-parse";
+    const row = parse(containerSource, ContainerSchema, (shape) => {
+      diagnostic = `container-shape:${shape}`;
+    });
     if (!row.Matches) {
       diagnostic = `container-policy:${row.Diagnostic}`;
       fail();
