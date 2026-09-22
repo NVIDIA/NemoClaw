@@ -4,13 +4,8 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import YAML from "yaml";
-import { createProviders } from "../../../src/lib/adapters/openshell/providers.ts";
-import { OpenShellReadError } from "../../../src/lib/adapters/openshell/sdk-read.ts";
-import { namedOpenShellGateway } from "../../../src/lib/adapters/openshell/sandbox-observer.ts";
 import { EXPORTED_VLLM_PROFILE_ID } from "../../../src/lib/config/model.ts";
 import type {
-  V1Alpha1Export,
   V1Alpha1OllamaProxyService,
   V1Alpha1VllmService,
 } from "../../../src/lib/config/v1alpha1-export.ts";
@@ -21,6 +16,7 @@ import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText } from "../fixtures/clients/index.ts";
 import { trustedSandboxShellScript } from "../fixtures/clients/sandbox.ts";
+import { parseConfigExport } from "../fixtures/phases/config-export-validation.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import {
   assertAgentExecutionSucceeded,
@@ -551,8 +547,6 @@ exec ollama pull qwen2.5:0.5b`,
     const model = (
       JSON.parse(tags.stdout) as { models: Array<{ name: string; digest: string }> }
     ).models.find(({ name }) => name === "qwen2.5:0.5b");
-    expect(model?.digest).toMatch(/^(?:sha256:)?[a-f0-9]{64}$/u);
-
     progress.phase("export the attached Ollama configuration");
     const firstPath = path.join(directory, "first.yaml");
     const exported = await host.command(
@@ -562,9 +556,10 @@ exec ollama pull qwen2.5:0.5b`,
     );
     expect(exported.exitCode, resultText(exported)).toBe(0);
     const firstYaml = fs.readFileSync(firstPath, "utf8");
-    const first = YAML.parse(firstYaml) as V1Alpha1Export;
+    const first = parseConfigExport(firstYaml);
     const service = first.spec.services?.["ollama-auth"] as V1Alpha1OllamaProxyService | undefined;
     expect(service?.image).toBeNull();
+    expect(service?.upstream.model.digest).toBe(model!.digest.replace(/^sha256:/u, ""));
     const proxyToken = readTokenFileChecked(ollamaProxyTokenFile()).token;
     artifacts.addRedactionValues([proxyToken]);
     expect(
@@ -667,40 +662,6 @@ test(
     const apiKey = loadManagedVllmApiKey();
     artifacts.addRedactionValues([apiKey ?? ""]);
 
-    const providerEvidence = await (async () => {
-      try {
-        const provider = await createProviders().get({
-          target: namedOpenShellGateway("nemoclaw"),
-          workspace: "default",
-          name: "vllm-local",
-          configKeys: ["OPENAI_BASE_URL"],
-          signal: AbortSignal.timeout(30_000),
-        });
-        return provider
-          ? {
-              status: "observed",
-              workspace: provider.workspace,
-              name: provider.name,
-              type: provider.type,
-              credentialKeys: provider.credentialKeys,
-              configKeys: provider.configKeys,
-              profileWorkspace: provider.profileWorkspace ?? null,
-              managedProfile: provider.managedProfile ?? null,
-              hasOpenAiBaseUrl: Object.hasOwn(provider.config, "OPENAI_BASE_URL"),
-            }
-          : { status: "missing" };
-      } catch (error) {
-        return {
-          status: "error",
-          kind: error instanceof OpenShellReadError ? error.kind : "unknown",
-        };
-      }
-    })();
-    await artifacts.writeText(
-      "vllm-export-provider-evidence.json",
-      `${JSON.stringify(providerEvidence, null, 2)}\n`,
-    );
-
     progress.phase("export the managed vLLM configuration");
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-vllm-export-"));
     cleanup.trackDisposable("remove private managed vLLM export documents", () =>
@@ -719,7 +680,7 @@ test(
     );
     expect(exported.exitCode, resultText(exported)).toBe(0);
     const yaml = fs.readFileSync(outputPath, "utf8");
-    const document = YAML.parse(yaml) as V1Alpha1Export;
+    const document = parseConfigExport(yaml);
     const service = document.spec.services?.vllm as V1Alpha1VllmService | undefined;
     expect(service?.image).toBeNull();
     expect(apiKey && yaml.includes(apiKey)).toBe(false);

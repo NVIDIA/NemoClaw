@@ -25,13 +25,11 @@ onboard-probes.ts         onboarding-time inference validation probes
 
 Longer term, pure inference decisions should move under `src/lib/domain/inference/**`, and HTTP/process boundaries should move under `src/lib/adapters/**`.
 
-## Local inference export observations
+## Ollama export observations
 
-V1alpha1 configuration export supports attached Ollama and one fixed managed vLLM profile on native
-Linux Docker. Both mappings publish a named service with `image: null`. V0 does not own an official
-v1 service image digest, so a human must replace only that value with an official immutable image
-reference before submitting the document to v1. Current v1 local-inference documents contain one
-OpenClaw `agent`; source sandboxes with additional agents fail verification.
+V1alpha1 configuration export currently refuses attached Ollama before publication.
+The source observation checks below do not establish output compatibility.
+Successful export depends on #11928's named-service contract and #12012's exporter mapping.
 
 The native Linux Docker export slice composes the current proxy owner and nonsecret observer in
 `adapters/config/live-export-source.ts`. Each snapshot asks `ollama/proxy.ts` for a fresh probe of
@@ -50,7 +48,7 @@ flowchart LR
   host[Native host observation] --> observation[Nonsecret observation validation]
   owner --> observation
   observation --> export[Shared export snapshot and verifier]
-  export --> service[Named Ollama proxy service with null image]
+  export --> refusal[V1alpha1 compatibility refusal without publication]
 ```
 
 The proxy's authenticated `GET /_nemoclaw/proxy-config` reports its current PID, actual listener,
@@ -63,8 +61,7 @@ The `serving.backend: ollama` source model records the daemon as external and th
 NemoClaw-managed. It does not claim ownership of the daemon process, software installation, or model
 cache. Source verification covers the selected model on native Linux Docker with managed OpenClaw
 and no direct sandbox GPU. Read-only secondary agents must share the primary agent's verified
-route, model, and tuning, but any secondary agent prevents local-inference publication because the
-current v1 target shape is singular.
+route, model, and tuning. These source constraints remain separate from v1alpha1 output support.
 
 The pinned OpenShell release can bind the Ollama route to its `openai` provider type without
 a provider profile. The binding can be global or use the provider's own workspace. Export records
@@ -77,9 +74,3 @@ Ollama onboarding records no user credential. Source verification requires the g
 exactly the internal `NEMOCLAW_OLLAMA_PROXY_TOKEN` credential used by the managed proxy. It accepts
 either an absent user-credential selection or that explicit internal credential name, verifies the
 live proxy, and keeps the credential value inside the proxy owner.
-
-Managed vLLM observation starts from the retained fixed catalog profile and verifies the running
-container, immutable source image, model cache, network, authentication fingerprint, catalog labels,
-and runtime receipt. Export maps the verified model repository, revision, served name, host port, and
-fixed serving settings into the v1 `vllm` service. Catalog, profile, recipe, and source runtime-image
-provenance remain source-verification evidence; they are not copied into the target document.

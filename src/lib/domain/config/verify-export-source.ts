@@ -27,6 +27,7 @@ import {
   isValidNemoClawSandboxName,
   isSupportedInferenceApi,
   NemoClawManagedVllmServingSchema,
+  NemoClawOllamaServingSchema,
   NemoClawAgentToolsConfigSchema,
   NemoClawOpenClawObservabilitySchema,
   NemoClawInferenceTuningSchema,
@@ -34,9 +35,9 @@ import {
 } from "../../config/model";
 import { fingerprintOpenShellSandboxId } from "../sandbox/openshell-identity";
 import { HERMES_PROVIDER_NAME } from "../../onboard/inference-providers/hermes-provider-identity";
+import { OLLAMA_LOCAL_CREDENTIAL_ENV } from "../../inference/ollama/contract";
 import { ExportSourceValuesSchema } from "./export-evidence";
 import { inspectAgentInterfaces } from "./verify-agent-interfaces";
-import { validateOllamaServing } from "./verify-ollama-serving";
 import type {
   CanonicalExportPolicy,
   ExportFinding,
@@ -1083,6 +1084,46 @@ function validateManagedVllmRepresentation(snapshot: QualifiedExportSnapshot): E
   return [];
 }
 
+function validateOllamaRepresentation(snapshot: QualifiedExportSnapshot): ExportFinding[] {
+  const { inference } = snapshot;
+  const serving = inference.ollamaServing?.serving;
+  const validServing = serving === undefined ? false : Check(NemoClawOllamaServingSchema, serving);
+  const representationMatches = isDeepStrictEqual(
+    [
+      inference.topology,
+      inference.provider,
+      inference.api,
+      [null, OLLAMA_LOCAL_CREDENTIAL_ENV].includes(inference.credentialEnv),
+      validServing,
+      inference.model,
+      inference.endpoint,
+      serving?.model.servedName,
+      serving?.daemon.hostPort === serving?.proxy.hostPort,
+    ],
+    [
+      "local",
+      "ollama-local",
+      "openai-completions",
+      true,
+      true,
+      serving?.model.servedName,
+      `http://host.openshell.internal:${String(serving?.proxy.hostPort)}/v1`,
+      serving?.model.servedName,
+      false,
+    ],
+  );
+  if (!representationMatches) {
+    return [
+      finding(
+        "spec.services[].upstream",
+        "drifted",
+        "The attached Ollama daemon, managed proxy, model, or sandbox route could not be verified.",
+      ),
+    ];
+  }
+  return [];
+}
+
 function validateHostedInferenceRepresentation(snapshot: QualifiedExportSnapshot): ExportFinding[] {
   const { inference } = snapshot;
   const findings: ExportFinding[] = [];
@@ -1123,7 +1164,7 @@ function validateHostedInferenceRepresentation(snapshot: QualifiedExportSnapshot
 function validateInferenceRepresentation(snapshot: QualifiedExportSnapshot): ExportFinding[] {
   const { inference } = snapshot;
   if (inference.provider === "ollama-local" || inference.ollamaServing)
-    return validateOllamaServing(snapshot);
+    return validateOllamaRepresentation(snapshot);
   if (inference.topology === "managed") return validateManagedVllmRepresentation(snapshot);
   return validateHostedInferenceRepresentation(snapshot);
 }

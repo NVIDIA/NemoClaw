@@ -47,14 +47,12 @@ admitting that leaf in the residual profile comparison; other agent settings sti
 need their own supported projection. Apply the roster and route constraints only
 to documents using `tools.allow`, preserving existing v1 agent shapes.
 
-Attached Ollama and the fixed managed vLLM profile export as current-v1 named services.
-The source checks retain the Ollama model digest, shared tuning, external daemon ownership, and
-NemoClaw-managed proxy ownership. Managed vLLM checks retain the fixed catalog, profile, recipe,
-model, runtime image, and container identity. Export does not change any source resource.
-Both services emit `image: null`; a human replaces only that placeholder after an official immutable
-v1 image digest is available. The source runtime image and provenance qualify the source but do not
-authorize a target image. Current v1 represents local inference with one OpenClaw `agent`, so local
-sources with additional agents fail verification instead of losing roster state.
+The attached-Ollama source model admits the same roster constraints, but this does not authorize
+v1alpha1 publication. `config/verify-export-source.ts` rejects Ollama sources at the compatibility
+gate, and `config/export-document.ts` rejects local serving providers. Successful publication
+depends on the named-service contract in #11928 and the exporter mapping in #12012.
+The source checks retain the selected model, shared tuning, external daemon ownership, and
+NemoClaw-managed proxy ownership. Export does not change either resource.
 
 Managed OpenClaw exports `agents[].interfaces.dashboard` when the retained port agrees with the
 registry and remote bind agrees with recorded preparation. Port 18789 and loopback bind are omitted.

@@ -53,7 +53,6 @@ describe("Deep Agents config export (#11860)", () => {
     expect(document.spec.gateway).toEqual({
       management: "managed",
       endpoint: "http://127.0.0.1:8080",
-      networkCIDR: "172.30.142.0/24",
     });
     expect(document.spec.inferenceProviders).toEqual([
       {

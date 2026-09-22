@@ -13,12 +13,9 @@ import type { VerifiedExportSource } from "./export-evidence";
 const OLLAMA_SERVICE_NAME = "ollama-auth";
 const VLLM_SERVICE_NAME = "vllm";
 
-function targetNetwork(sandboxName: string) {
-  const subnet = createHash("sha256").update(sandboxName).digest()[0]!;
-  return {
-    networkCIDR: `172.30.${subnet}.0/24`,
-    bridgeAddress: `172.30.${subnet}.1`,
-  };
+function targetBridgeAddress(documentUid: NemoClawConfigDocumentUid): string {
+  const subnet = createHash("sha256").update(documentUid).digest()[0]!;
+  return `172.30.${subnet}.1`;
 }
 
 function providerLocalName(provider: string): string {
@@ -261,8 +258,7 @@ export function buildExportConfig(
   identity: ExportConfigBuildIdentity,
 ): V1Alpha1Export {
   const providerName = exportedProviderName(source.inference);
-  const network = targetNetwork(source.sandboxName);
-  const services = exportServices(source, network.bridgeAddress);
+  const services = exportServices(source, targetBridgeAddress(identity.documentUid));
   const sandbox = exportSandbox(source, providerName);
   const candidate = {
     apiVersion: "nemoclaw.nvidia.com/v1alpha1",
@@ -272,7 +268,6 @@ export function buildExportConfig(
       gateway: {
         management: "managed",
         endpoint: `http://127.0.0.1:${source.gateway.port}`,
-        networkCIDR: network.networkCIDR,
       },
       ...(services ? { services } : {}),
       inferenceProviders: [inferenceProvider(source, providerName)],

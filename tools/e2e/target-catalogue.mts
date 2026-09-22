@@ -791,7 +791,6 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
       "src/lib/config/v1alpha1-export.ts",
       "src/lib/domain/config/export-document.ts",
       "src/lib/domain/config/verify-export-source.ts",
-      "src/lib/domain/config/verify-ollama-serving.ts",
       "src/lib/inference/local-model-profile/cleanup.ts",
       "src/lib/inference/serving/vllm-export-runtime.ts",
     ],

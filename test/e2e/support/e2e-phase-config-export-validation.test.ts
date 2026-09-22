@@ -85,6 +85,7 @@ const artifactDirectories: string[] = [];
 function sha256(value: string): string {
   return createHash("sha256").update(value).digest("hex");
 }
+
 function target(expectation: TargetDefinition["configExport"]["expectation"]): TargetDefinition {
   return {
     ...listTargets().find((entry) => entry.id === "ubuntu-repo-cloud-openclaw")!,
@@ -94,6 +95,7 @@ function target(expectation: TargetDefinition["configExport"]["expectation"]): T
         : { expectation },
   };
 }
+
 function manifest(
   features?: Record<string, unknown>,
   credentialRefs = ["NVIDIA_INFERENCE_API_KEY"],
@@ -116,6 +118,7 @@ function manifest(
     },
   };
 }
+
 function document(
   overrides: {
     model?: string;
@@ -131,11 +134,7 @@ function document(
       uid: "123e4567-e89b-42d3-a456-426614174000",
     },
     spec: {
-      gateway: {
-        management: "managed",
-        endpoint: "http://127.0.0.1:8080",
-        networkCIDR: "172.30.50.0/24",
-      },
+      gateway: { management: "managed", endpoint: "http://127.0.0.1:8080" },
       inferenceProviders: [
         {
           name: "hosted-compatible-endpoint",
@@ -182,6 +181,7 @@ function document(
     },
   } as unknown as ConfigExportDocument;
 }
+
 function instance(expectedFailure = false): NemoClawInstance {
   return {
     onboarding: "cloud-openclaw",

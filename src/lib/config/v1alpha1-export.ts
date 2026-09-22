@@ -20,7 +20,7 @@ interface V1Alpha1HostedInferenceProvider {
   readonly serviceRef?: never;
 }
 
-interface V1Alpha1OllamaInferenceProvider {
+interface V1Alpha1ServiceInferenceProvider {
   readonly name: string;
   readonly provider: "openai";
   readonly api: "openai-completions";
@@ -126,10 +126,10 @@ export interface V1Alpha1Export {
   readonly kind: typeof NEMOCLAW_CONFIG_KIND;
   readonly metadata: Readonly<{ name: string; uid: string }>;
   readonly spec: Readonly<{
-    gateway: Readonly<{ management: "managed"; endpoint: string; networkCIDR: string }>;
+    gateway: Readonly<{ management: "managed"; endpoint: string }>;
     services?: Readonly<Record<string, Readonly<V1Alpha1ExportService>>>;
     inferenceProviders: readonly Readonly<
-      V1Alpha1HostedInferenceProvider | V1Alpha1OllamaInferenceProvider
+      V1Alpha1HostedInferenceProvider | V1Alpha1ServiceInferenceProvider
     >[];
     sandboxes: readonly V1Alpha1ExportSandbox[];
   }>;

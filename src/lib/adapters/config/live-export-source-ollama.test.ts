@@ -157,7 +157,7 @@ describe("attached Ollama export pipeline", () => {
         "ollama-auth": {
           kind: "ollamaProxy",
           image: null,
-          endpoint: "http://172.30.142.1:11440/v1",
+          endpoint: "http://172.30.48.1:11440/v1",
           upstream: {
             endpoint: "http://127.0.0.1:11439/v1",
             model: {
@@ -180,12 +180,6 @@ describe("attached Ollama export pipeline", () => {
       expect(publish).not.toHaveBeenCalled();
     },
   );
-
-  it("refuses attached Ollama without retained workload authority (#12012)", async () => {
-    const { source } = mockOllamaSource();
-    source.workload = undefined;
-    expectExportRefusal(await exportLiveSource(), { category: "missing-provenance" });
-  });
 
   it("refuses a stable proxy-port drift without publication (#12012)", async () => {
     const { observed } = mockOllamaSource();

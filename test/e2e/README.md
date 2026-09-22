@@ -511,29 +511,14 @@ inference through the managed route and backend, replacing two duplicate raw cha
 The GPU memory-offload assertion also rejects a missing matching process because its memory value
 is then `NaN`; a separate process-existence assertion is unnecessary. Authentication denial,
 runtime ownership, Ready state, and cleanup assertions remain unchanged.
-The `gpu-e2e` target also qualifies configuration export for attached Ollama and fixed managed vLLM
-on native Linux Docker.
-A separate OpenClaw scenario disables direct sandbox GPU and uses normal onboarding to create the
-managed proxy on the target's shared port. It stops the installer service before starting a fixture-owned
-daemon on port 11439 and preparing the selected `qwen2.5:0.5b` model.
-It exports through the candidate CLI and real SDK. It checks the selected model digest, named proxy
-service, `image: null`, and omission of credentials. The target retains the YAML as a standalone
-artifact.
-
-The managed-vLLM scenario onboards the fixed exportable profile and retains its exported YAML. It
-checks the named `vllm` service, `image: null`, and credential omission. The API key is registered
-with the artifact redactor before evidence publication. Cleanup uses the production ownership checks.
-
-The current v1 contract represents one agent in each local-inference sandbox, so both local exporters
-refuse a live sandbox that contains additional agents. Their `image: null` output becomes runnable
-only after a human replaces that field with an official immutable v1 service image digest.
-The existing CUDA, authentication, and inference lifecycle scenarios remain separate.
-Ollama onboarding and model preparation each have a 20-minute limit within the 75-minute test timeout.
-The fixed vLLM scenario has a 90-minute test timeout. The catalogue allows 150 minutes for the target.
+The `gpu-e2e` target also qualifies attached-Ollama and fixed managed-vLLM configuration export on
+native Linux Docker. Each scenario runs the candidate CLI, checks its named service and `image: null`,
+rejects credential disclosure, and retains the generated YAML. The existing CUDA, authentication,
+and inference lifecycle scenarios remain separate. The catalogue allows 150 minutes for this target.
 The fixture retries read-only daemon readiness checks on connection refusal or curl
 timeout, for at most 20 reads. It records each attempt and stops on any other failure; model
 preparation, onboarding, and export mutations are not retried.
-Cleanup destroys each sandbox before its inference runtime and removes the private output directory.
+Cleanup destroys each sandbox before its inference runtime and removes private output files.
 Retained workflow jobs are exceptions to the catalogue shape.
 Keep one only for a multi-job handoff, an unrepresented credential boundary, or an execution contract the reusable profile cannot represent.
 

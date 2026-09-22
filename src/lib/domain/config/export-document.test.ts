@@ -278,7 +278,7 @@ describe("export config builder", () => {
         "ollama-auth": {
           kind: "ollamaProxy",
           image: null,
-          endpoint: `http://172.30.142.1:${proxyPort}/v1`,
+          endpoint: `http://172.30.154.1:${proxyPort}/v1`,
           upstream: {
             endpoint: `http://127.0.0.1:${daemonPort}/v1`,
             model: {
@@ -289,7 +289,6 @@ describe("export config builder", () => {
         },
       });
       expect(result.spec.inferenceProviders[0]).not.toHaveProperty("credential");
-      expect(result.spec.gateway.networkCIDR).toBe("172.30.142.0/24");
       const sandbox = result.spec.sandboxes[0]!;
       expect(sandbox.agent.inference.routes[0]).toEqual({
         name: "primary",
