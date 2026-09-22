@@ -494,6 +494,33 @@ export function buildOpenClawPostUpgradeDoctorReleaseCommand(
   ].join("; ");
 }
 
+export function buildOpenClawBackupQuiescePromotionCommand(): string {
+  const marker = shellQuote(OPENCLAW_POST_UPGRADE_DOCTOR_MARKER);
+  const markerContent = shellQuote(OPENCLAW_BACKUP_QUIESCE_MARKER_CONTENT);
+  const promotionContent = shellQuote(OPENCLAW_BACKUP_QUIESCE_PROMOTE_DOCTOR_CONTENT);
+  const ready = shellQuote(OPENCLAW_POST_UPGRADE_DOCTOR_READY);
+  const readyContent = shellQuote(OPENCLAW_POST_UPGRADE_DOCTOR_READY_CONTENT);
+  return [
+    "set -e",
+    `[ -f ${marker} ] && [ ! -L ${marker} ] || exit 30`,
+    `marker_owner="$(stat -c '%u' ${marker} 2>/dev/null)"`,
+    `[ "$marker_owner" = "$(stat -c '%u' /sandbox/.openclaw 2>/dev/null)" ] || exit 31`,
+    `[ "$(stat -c '%a %h %s' ${marker} 2>/dev/null)" = '600 1 ${String(OPENCLAW_BACKUP_QUIESCE_MARKER_CONTENT.length + 1)}' ] || exit 31`,
+    `[ "$(cat ${marker})" = ${markerContent} ] || exit 32`,
+    `[ -f ${ready} ] && [ ! -L ${ready} ] || exit 33`,
+    `[ "$(stat -c '%u' ${ready} 2>/dev/null)" = "$marker_owner" ] || exit 34`,
+    `[ "$(stat -c '%a %h %s' ${ready} 2>/dev/null)" = '600 1 ${String(OPENCLAW_POST_UPGRADE_DOCTOR_READY_CONTENT.length + 1)}' ] || exit 34`,
+    `[ "$(cat ${ready})" = ${readyContent} ] || exit 35`,
+    'dir="/sandbox/.openclaw"',
+    'tmp="$(mktemp "$dir/.nemoclaw-post-upgrade-doctor.XXXXXX")" || exit 36',
+    "trap 'rm -f -- \"$tmp\"' EXIT",
+    'chmod 600 "$tmp"',
+    `printf '%s\\n' ${promotionContent} >"$tmp"`,
+    `mv -f -- "$tmp" ${marker}`,
+    "trap - EXIT",
+  ].join("; ");
+}
+
 export function buildOpenClawPostUpgradeDoctorAbortCommand(): string {
   const marker = shellQuote(OPENCLAW_POST_UPGRADE_DOCTOR_MARKER);
   const markerContent = shellQuote(OPENCLAW_POST_UPGRADE_DOCTOR_MARKER_CONTENT);
@@ -958,10 +985,60 @@ export async function releaseOpenClawPostRestoreDoctorForDelete(
   };
 }
 
-/** Release the verified maintenance gate, then prove final gateway health. */
-export async function finishOpenClawPostRestoreDoctor(
+async function promoteOpenClawBackupQuiesceToDoctor(
   window: OpenClawPostRestoreDoctorWindow,
-  deps: OpenClawPostRestoreDoctorDeps = OPENCLAW_POST_RESTORE_DOCTOR_DEPS,
+  deps: OpenClawPostRestoreDoctorDeps,
+): Promise<Exclude<OpenClawPostRestoreDoctorResult, { ok: true }> | { ok: true }> {
+  const { sandboxName, runtimeSelection } = window;
+  const promoted = await executeOpenClawDoctorGateCommand(
+    deps,
+    sandboxName,
+    buildOpenClawBackupQuiescePromotionCommand(),
+    30_000,
+    runtimeSelection,
+  );
+  if (!promoted || promoted.status !== 0) {
+    return {
+      ok: false,
+      stage: "doctor",
+      detail: "could not promote the restored backup window to post-upgrade doctor",
+    };
+  }
+
+  const reconciliationDeadlineMs = deps.now() + OPENCLAW_DOCTOR_RECONCILIATION_TIMEOUT_MS;
+  const ready = await waitUntilAsync(
+    async () => {
+      const remainingMs = reconciliationDeadlineMs - deps.now();
+      if (!Number.isFinite(remainingMs) || remainingMs <= 0) return false;
+      const result = await executeOpenClawDoctorGateCommand(
+        deps,
+        sandboxName,
+        buildOpenClawPostUpgradeDoctorWindowProbe(sandboxName),
+        Math.max(1, Math.min(15_000, Math.floor(remainingMs))),
+        runtimeSelection,
+      );
+      return result?.status === 0;
+    },
+    {
+      deadlineMs: reconciliationDeadlineMs,
+      initialIntervalMs: 3_000,
+      maxIntervalMs: 3_000,
+      backoffFactor: 1,
+      now: deps.now,
+      sleep: async (milliseconds) => await deps.sleep(milliseconds / 1_000),
+    },
+  );
+  if (ready) return { ok: true };
+  return {
+    ok: false,
+    stage: "doctor",
+    detail: "restored state did not complete post-upgrade doctor with the gateway held down",
+  };
+}
+
+async function releaseAndVerifyOpenClawMaintenanceWindow(
+  window: OpenClawPostRestoreDoctorWindow,
+  deps: OpenClawPostRestoreDoctorDeps,
 ): Promise<Exclude<OpenClawPostRestoreDoctorResult, { ok: true }> | { ok: true }> {
   const released = await releaseOpenClawPostRestoreDoctorForDelete(window, deps);
   if (!released.ok) return released;
@@ -1046,6 +1123,38 @@ export async function finishOpenClawPostRestoreDoctor(
     stage: "restart",
     detail: `the released sandbox did not return a healthy gateway${logDetail.length > 0 ? `\n${logDetail.join("\n")}` : ""}`,
   };
+}
+
+/** Release a backup-only gate without running doctor, then prove final gateway health. */
+export function finishOpenClawBackupQuiesce(
+  window: OpenClawPostRestoreDoctorWindow,
+  deps: OpenClawPostRestoreDoctorDeps = OPENCLAW_POST_RESTORE_DOCTOR_DEPS,
+): Promise<Exclude<OpenClawPostRestoreDoctorResult, { ok: true }> | { ok: true }> {
+  if (window.kind !== "backup") {
+    return Promise.resolve({
+      ok: false,
+      stage: "release",
+      detail: "refused to release a non-backup window through the backup-only path",
+    });
+  }
+  return releaseAndVerifyOpenClawMaintenanceWindow(window, deps);
+}
+
+/** Run doctor against restored state, release its gate, then prove final gateway health. */
+export async function finishOpenClawPostRestoreDoctor(
+  window: OpenClawPostRestoreDoctorWindow,
+  deps: OpenClawPostRestoreDoctorDeps = OPENCLAW_POST_RESTORE_DOCTOR_DEPS,
+): Promise<Exclude<OpenClawPostRestoreDoctorResult, { ok: true }> | { ok: true }> {
+  let verifiedWindow = window;
+  if (window.kind === "backup") {
+    const promoted = await promoteOpenClawBackupQuiesceToDoctor(window, deps);
+    if (!promoted.ok) return promoted;
+    verifiedWindow = {
+      sandboxName: window.sandboxName,
+      ...(window.runtimeSelection ? { runtimeSelection: window.runtimeSelection } : {}),
+    };
+  }
+  return await releaseAndVerifyOpenClawMaintenanceWindow(verifiedWindow, deps);
 }
 
 const OPENCLAW_UNREGISTERED_POST_RESTORE_DOCTOR_DEPS: OpenClawPostRestoreDoctorDeps = {

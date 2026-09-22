@@ -136,9 +136,9 @@ test.runIf(RUN_MANAGED_IMAGE_SECURITY)(
       image,
       [
         "rm -f /sandbox/.openclaw/openclaw.json",
-        `printf '%s\\n' '{"gateway":{"mode":"local"}}' | sh -c ${shellQuote(restoreCommand)}`,
-        'test "$(stat -c %a /sandbox/.openclaw/openclaw.json)" = 660',
-        "/usr/bin/setpriv --reuid=gateway --regid=gateway --init-groups -- sh -c 'printf \"\\n\" >>/sandbox/.openclaw/openclaw.json'",
+        `printf '%s\\n' '{"gateway":{"mode":"local"}}' | /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- sh -c ${shellQuote(restoreCommand)}`,
+        "test \"$(stat -c '%a %U:%G' /sandbox/.openclaw/openclaw.json)\" = '600 sandbox:sandbox'",
+        "/usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- sh -c 'printf \"\\n\" >>/sandbox/.openclaw/openclaw.json'",
       ].join("\n"),
       "managed-image-openclaw-missing-config-restore",
     );

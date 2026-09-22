@@ -3070,8 +3070,8 @@ Refer to [Continue an Interrupted Replacement](../manage-sandboxes/operate-sandb
 <AgentOnly variant="openclaw">
 
 During restore, the command keeps the replacement OpenClaw gateway stopped while it restores state and writes host-managed messaging and MCP configuration.
+After those offline write steps, it runs `openclaw doctor --fix` while the gateway remains held down.
 It then releases that maintenance window for one native OpenClaw start.
-It does not run `openclaw doctor --fix` on the restored configuration.
 
 </AgentOnly>
 <AgentOnly variant="hermes">
@@ -3195,8 +3195,9 @@ It preserves directories that exist only in the target manifest or whose backup 
 State replacement runs under the per-sandbox mutation lock.
 
 <AgentOnly variant="openclaw">
-For OpenClaw, restore stops the sandbox, installs the complete credential-sanitized native `openclaw.json` file without a selective merge or config hash, validates the restored state, and starts the sandbox.
+For OpenClaw, an in-place restore stops the sandbox before it changes state, installs the complete credential-sanitized native `openclaw.json` file without a selective merge or config hash, and runs `openclaw doctor --fix` while the gateway remains held down.
 This interrupts active agent work.
+It then releases the window for one native OpenClaw start.
 If restore fails after maintenance begins, the CLI reports whether the sandbox is stopped or its running state could not be verified.
 For a verified stopped sandbox, run `$$nemoclaw <name> start`.
 For an unverified running state, run `$$nemoclaw <name> stop`, then `$$nemoclaw <name> start`.

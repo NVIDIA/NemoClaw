@@ -15,6 +15,7 @@ export {
   abortUnregisteredOpenClawPostRestoreDoctor,
   beginUnregisteredOpenClawBackupQuiesce,
   beginOpenClawPostRestoreDoctor,
+  finishOpenClawBackupQuiesce,
   finishOpenClawPostRestoreDoctor,
   finishUnregisteredOpenClawPostRestoreDoctor,
   releaseOpenClawPostRestoreDoctorForDelete,

@@ -25,7 +25,7 @@ import { recordRebuildRecoveryBackup } from "./rebuild-recreate-journal";
 import {
   abortOpenClawPostRestoreDoctor,
   beginOpenClawBackupQuiesce,
-  finishOpenClawPostRestoreDoctor,
+  finishOpenClawBackupQuiesce,
   retireOpenClawPostRestoreDoctorForDelete,
   type OpenClawPostRestoreDoctorWindow,
 } from "./runtime/openclaw-lifecycle";
@@ -83,7 +83,7 @@ export interface RebuildBackupPhaseResult {
 }
 
 export async function releaseRebuildSourceOpenClawWindow(window: OpenClawPostRestoreDoctorWindow) {
-  const finished = await finishOpenClawPostRestoreDoctor(window);
+  const finished = await finishOpenClawBackupQuiesce(window);
   if (!finished.ok) await abortOpenClawPostRestoreDoctor(window);
   return finished;
 }

@@ -12,10 +12,12 @@ import {
   abortOpenClawPostRestoreDoctor,
   beginOpenClawBackupQuiesce,
   beginOpenClawPostRestoreDoctor,
+  buildOpenClawBackupQuiescePromotionCommand,
   buildOpenClawPostUpgradeDoctorAbortCommand,
   buildOpenClawPostUpgradeDoctorDeleteRetirementCommand,
   buildOpenClawPostUpgradeDoctorMarkerCommand,
   buildOpenClawPostUpgradeDoctorReleaseCommand,
+  finishOpenClawBackupQuiesce,
   finishOpenClawPostRestoreDoctor,
   releaseOpenClawPostRestoreDoctorForDelete,
   retireOpenClawPostRestoreDoctorForDelete,
@@ -227,6 +229,76 @@ describe("OpenClaw post-upgrade recovery doctor", () => {
     },
   );
 
+  it("promotes an exact backup gate to post-upgrade doctor atomically", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-doctor-promote-"));
+    const ready = path.join(root, "doctor-ready");
+    try {
+      execFileSync("bash", [
+        "-c",
+        buildOpenClawPostUpgradeDoctorMarkerCommand(
+          "nemoclaw-openclaw-backup-quiesce-v1",
+        ).replaceAll("/sandbox/.openclaw", root),
+      ]);
+      fs.writeFileSync(ready, "nemoclaw-openclaw-post-upgrade-doctor-ready-v1\n", {
+        mode: 0o600,
+      });
+      const command = buildOpenClawBackupQuiescePromotionCommand()
+        .replaceAll("/sandbox/.openclaw", root)
+        .replaceAll("/tmp/nemoclaw-post-upgrade-doctor-ready", ready);
+
+      execFileSync("bash", ["-c", command], { env: fakeGnuStatEnv(root) });
+
+      const marker = path.join(root, ".nemoclaw-post-upgrade-doctor");
+      expect(fs.readFileSync(marker, "utf8")).toBe(
+        "nemoclaw-openclaw-backup-quiesce-promote-doctor-v1\n",
+      );
+      expect(fs.statSync(marker).mode & 0o777).toBe(0o600);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it.each(["marker content", "ready content", "ready mode"])(
+    "refuses to promote an untrusted backup gate with invalid %s",
+    (invalid) => {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-doctor-promote-invalid-"));
+      const marker = path.join(root, ".nemoclaw-post-upgrade-doctor");
+      const ready = path.join(root, "doctor-ready");
+      try {
+        execFileSync("bash", [
+          "-c",
+          buildOpenClawPostUpgradeDoctorMarkerCommand(
+            invalid === "marker content"
+              ? "nemoclaw-openclaw-post-upgrade-doctor-v2"
+              : "nemoclaw-openclaw-backup-quiesce-v1",
+          ).replaceAll("/sandbox/.openclaw", root),
+        ]);
+        fs.writeFileSync(
+          ready,
+          invalid === "ready content"
+            ? "not-a-maintenance-receipt\n"
+            : "nemoclaw-openclaw-post-upgrade-doctor-ready-v1\n",
+          { mode: invalid === "ready mode" ? 0o644 : 0o600 },
+        );
+        const command = buildOpenClawBackupQuiescePromotionCommand()
+          .replaceAll("/sandbox/.openclaw", root)
+          .replaceAll("/tmp/nemoclaw-post-upgrade-doctor-ready", ready);
+
+        const result = spawnSync("bash", ["-c", command], {
+          encoding: "utf8",
+          env: fakeGnuStatEnv(root),
+        });
+
+        expect(result.status).not.toBe(0);
+        expect(fs.readFileSync(marker, "utf8")).not.toBe(
+          "nemoclaw-openclaw-backup-quiesce-promote-doctor-v1\n",
+        );
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  );
+
   it("holds a pinned restart after doctor, then releases one final healthy start", async () => {
     const execute = vi
       .fn()
@@ -326,6 +398,74 @@ describe("OpenClaw post-upgrade recovery doctor", () => {
       ["sandbox", "stop", "alpha"],
       ["sandbox", "start", "alpha"],
     ]);
+  });
+
+  it("promotes restored backup state through doctor before release", async () => {
+    const execute = vi.fn(async (_sandboxName: string, _command: string) => ({
+      status: 0,
+      stdout: "",
+      stderr: "",
+    }));
+    const deps = {
+      captureOpenshell: vi.fn() as never,
+      executeSandboxExecCommand: execute,
+      now: () => 0,
+      sleep: vi.fn(async () => undefined),
+    };
+
+    await expect(
+      finishOpenClawPostRestoreDoctor({ sandboxName: "alpha", kind: "backup" }, deps),
+    ).resolves.toEqual({ ok: true });
+
+    expect(execute.mock.calls[0]?.[1]).toBe(buildOpenClawBackupQuiescePromotionCommand());
+    expect(execute.mock.calls[1]?.[1]).toContain("nemoclaw-openclaw-post-upgrade-doctor-v2");
+    expect(execute.mock.calls[2]?.[1]).toBe(buildOpenClawPostUpgradeDoctorReleaseCommand());
+    expect(execute.mock.calls[3]?.[1]).not.toContain("curl");
+    expect(execute.mock.calls[4]?.[1]).not.toContain("curl");
+    expect(execute.mock.calls[5]?.[1]).toContain("curl");
+    expect(execute.mock.calls[6]?.[1]).not.toContain("curl");
+  });
+
+  it("refuses to bypass doctor through the backup-only release path", async () => {
+    const execute = vi.fn();
+
+    await expect(
+      finishOpenClawBackupQuiesce(
+        { sandboxName: "alpha" },
+        {
+          captureOpenshell: vi.fn() as never,
+          executeSandboxExecCommand: execute,
+          now: () => 0,
+          sleep: vi.fn(async () => undefined),
+        },
+      ),
+    ).resolves.toEqual({
+      ok: false,
+      stage: "release",
+      detail: "refused to release a non-backup window through the backup-only path",
+    });
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  it("keeps a restored backup gate closed when promotion fails", async () => {
+    const execute = vi.fn(async () => ({ status: 32, stdout: "", stderr: "" }));
+
+    await expect(
+      finishOpenClawPostRestoreDoctor(
+        { sandboxName: "alpha", kind: "backup" },
+        {
+          captureOpenshell: vi.fn() as never,
+          executeSandboxExecCommand: execute,
+          now: () => 0,
+          sleep: vi.fn(async () => undefined),
+        },
+      ),
+    ).resolves.toEqual({
+      ok: false,
+      stage: "doctor",
+      detail: "could not promote the restored backup window to post-upgrade doctor",
+    });
+    expect(execute).toHaveBeenCalledOnce();
   });
 
   it("proves delete-edge release consumption without waiting for gateway health", async () => {

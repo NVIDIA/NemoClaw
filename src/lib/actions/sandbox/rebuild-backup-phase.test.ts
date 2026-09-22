@@ -11,7 +11,7 @@ const mocks = vi.hoisted(() => ({
   abortOpenClawPostRestoreDoctor: vi.fn(),
   beginOpenClawBackupQuiesce: vi.fn(),
   captureRecordedSandboxBasePolicy: vi.fn(),
-  finishOpenClawPostRestoreDoctor: vi.fn(),
+  finishOpenClawBackupQuiesce: vi.fn(),
   retireOpenClawPostRestoreDoctorForDelete: vi.fn(),
   recordRebuildRecoveryBackup: vi.fn(),
   secureTempFile: vi.fn(),
@@ -32,12 +32,13 @@ vi.mock("./rebuild-recreate-journal", async (importOriginal) => ({
 vi.mock("./runtime/openclaw-lifecycle", () => ({
   abortOpenClawPostRestoreDoctor: mocks.abortOpenClawPostRestoreDoctor,
   beginOpenClawBackupQuiesce: mocks.beginOpenClawBackupQuiesce,
-  finishOpenClawPostRestoreDoctor: mocks.finishOpenClawPostRestoreDoctor,
+  finishOpenClawBackupQuiesce: mocks.finishOpenClawBackupQuiesce,
   retireOpenClawPostRestoreDoctorForDelete: mocks.retireOpenClawPostRestoreDoctorForDelete,
 }));
 
 import {
   type RebuildBackupPhaseInput,
+  releaseRebuildSourceOpenClawWindow,
   retireRebuildSourceOpenClawWindowForDelete,
   runRebuildBackupPhase,
 } from "./rebuild-backup-phase";
@@ -54,7 +55,7 @@ beforeEach(() => {
     .mockReset()
     .mockReturnValue("version: 1\nnetwork_policies: {}\n");
   mocks.recordRebuildRecoveryBackup.mockReset();
-  mocks.finishOpenClawPostRestoreDoctor.mockReset().mockResolvedValue({ ok: true });
+  mocks.finishOpenClawBackupQuiesce.mockReset().mockResolvedValue({ ok: true });
   mocks.retireOpenClawPostRestoreDoctorForDelete.mockReset().mockResolvedValue({ ok: true });
   mocks.secureTempFile.mockReset().mockImplementation(() => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-rebuild-policy-default-"));
@@ -96,7 +97,16 @@ describe("rebuild policy handoff", () => {
 
     expect(mocks.retireOpenClawPostRestoreDoctorForDelete).toHaveBeenCalledExactlyOnceWith(window);
     expect(mocks.abortOpenClawPostRestoreDoctor).not.toHaveBeenCalled();
-    expect(mocks.finishOpenClawPostRestoreDoctor).not.toHaveBeenCalled();
+    expect(mocks.finishOpenClawBackupQuiesce).not.toHaveBeenCalled();
+  });
+
+  it("releases an unchanged source backup without requesting doctor", async () => {
+    const window = { sandboxName: "alpha", kind: "backup" as const };
+
+    await expect(releaseRebuildSourceOpenClawWindow(window)).resolves.toEqual({ ok: true });
+
+    expect(mocks.finishOpenClawBackupQuiesce).toHaveBeenCalledExactlyOnceWith(window);
+    expect(mocks.abortOpenClawPostRestoreDoctor).not.toHaveBeenCalled();
   });
 
   it("captures the current OpenShell base policy in a private transaction file", async () => {
@@ -126,7 +136,7 @@ describe("rebuild policy handoff", () => {
       sandboxName: "alpha",
       kind: "backup",
     });
-    expect(mocks.finishOpenClawPostRestoreDoctor).not.toHaveBeenCalledWith({
+    expect(mocks.finishOpenClawBackupQuiesce).not.toHaveBeenCalledWith({
       sandboxName: "alpha",
     });
   });
