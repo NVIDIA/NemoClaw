@@ -17,7 +17,8 @@ diagnose_failure() {
   echo "::group::Sanitized Brev guest diagnostics"
   docker ps --all --format 'container={{.Names}} status={{.Status}} image={{.Image}}'
   redactor='import re,sys
-secret=open(sys.argv[1]).read()
+import pathlib
+secret=pathlib.Path(sys.argv[1]).read_text() if pathlib.Path(sys.argv[1]).exists() else ""
 text=sys.stdin.read().replace(secret,"[REDACTED]") if secret else sys.stdin.read()
 text=re.sub(r"(?i)(authorization[=: ]+bearer[ ]+)[^ ]+",r"\1[REDACTED]",text)
 text=re.sub(r"nvapi-[A-Za-z0-9_-]+","[REDACTED]",text)
@@ -55,10 +56,13 @@ sys.stdout.write(text)'
 }
 trap diagnose_failure ERR
 
-test "$(uname -m)" = x86_64
-command -v docker >/dev/null
-docker info >/dev/null
-python3 - <<'PY'
+phase="${1:-all}"
+case "${phase}" in prepare|qualify|all) ;; *) exit 2 ;; esac
+if test "${phase}" != qualify; then
+  test "$(uname -m)" = x86_64
+  command -v docker >/dev/null
+  docker info >/dev/null
+  python3 - <<'PY'
 import ctypes
 import errno
 
@@ -68,32 +72,39 @@ abi = libc.syscall(444, 0, 0, 1)
 if abi < 1:
     raise SystemExit(f"Landlock unavailable: result={abi} errno={ctypes.get_errno()}")
 PY
-available_kib="$(df --output=avail -k "${root}" | tail -1 | tr -d ' ')"
-test "${available_kib}" -ge $((80 * 1024 * 1024))
-test -z "$(docker ps -aq --filter 'name=nemoclaw' --filter 'name=openshell')"
-for inventory in container network volume; do
-  case "${inventory}" in
-    container) owned="$(docker ps -aq --filter 'label=nemoclaw.nvidia.com/uid')" ;;
-    network) owned="$(docker network ls -q --filter 'label=nemoclaw.nvidia.com/uid')" ;;
-    volume) owned="$(docker volume ls -q --filter 'label=nemoclaw.nvidia.com/uid')" ;;
-  esac
-  if test -n "${owned}"; then
-    echo "fresh host contains NemoClaw-owned ${inventory} resources: ${owned//$'\n'/,}" >&2
-    exit 1
-  fi
-done
-test ! -e "${HOME}/.nemoclaw"
-test ! -e "${HOME}/.config/openshell"
+  available_kib="$(df --output=avail -k "${root}" | tail -1 | tr -d ' ')"
+  test "${available_kib}" -ge $((80 * 1024 * 1024))
+  test -z "$(docker ps -aq --filter 'name=nemoclaw' --filter 'name=openshell')"
+  for inventory in container network volume; do
+    case "${inventory}" in
+      container) owned="$(docker ps -aq --filter 'label=nemoclaw.nvidia.com/uid')" ;;
+      network) owned="$(docker network ls -q --filter 'label=nemoclaw.nvidia.com/uid')" ;;
+      volume) owned="$(docker volume ls -q --filter 'label=nemoclaw.nvidia.com/uid')" ;;
+    esac
+    if test -n "${owned}"; then
+      echo "fresh host contains NemoClaw-owned ${inventory} resources: ${owned//$'\n'/,}" >&2
+      exit 1
+    fi
+  done
+  test ! -e "${HOME}/.nemoclaw"
+  test ! -e "${HOME}/.config/openshell"
 
-cd "${repo}"
-mkdir -p .build
-AGENT_PLATFORM=linux/amd64 docker buildx bake openclaw --load \
-  --metadata-file .build/brev-agent-image.json
-image_ref="$(docker image inspect nc-fabric:openclaw --format '{{index .RepoDigests 0}}')"
-case "${image_ref}" in
-  nc-fabric@sha256:*) ;;
-  *) echo "local image store did not retain an immutable repository digest" >&2; exit 1 ;;
-esac
+  cd "${repo}"
+  mkdir -p .build
+  AGENT_PLATFORM=linux/amd64 docker buildx bake openclaw --load \
+    --metadata-file .build/brev-agent-image.json
+  image_ref="$(docker image inspect nc-fabric:openclaw --format '{{index .RepoDigests 0}}')"
+  case "${image_ref}" in
+    nc-fabric@sha256:*) ;;
+    *) echo "local image store did not retain an immutable repository digest" >&2; exit 1 ;;
+  esac
+
+  printf '%s\n' "${image_ref}" > "${root}/image-ref"
+  printf '%s\n' "${available_kib}" > "${root}/available-kib"
+fi
+if test "${phase}" = prepare; then exit 0; fi
+image_ref="$(cat "${root}/image-ref")"
+available_kib="$(cat "${root}/available-kib")"
 
 config="${root}/brev.yaml"
 python3 - "${repo}/crates/nemoclaw-e2e/fixtures/openclaw-nvidia-hosted/v1.yaml" \

@@ -1,0 +1,26 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+name: Set up Brev
+description: Install and authenticate the pinned Brev CLI.
+inputs:
+  api-key:
+    description: Brev API key for the owned test workspace.
+    required: true
+runs:
+  using: composite
+  steps:
+    - name: Install and authenticate Brev
+      shell: bash
+      env:
+        BREV_API_KEY: ${{ inputs.api-key }}
+        BREV_CLI_VERSION: 0.6.335
+        BREV_CLI_SHA256: 89d778e6f1e5e52495f3e0f10393f1666a1b16d180001b13faec6f906955e6f8
+      run: |
+        set -euo pipefail
+        test -n "${BREV_API_KEY}"
+        archive="${RUNNER_TEMP}/brev-cli.tar.gz"
+        curl -fsSL -o "${archive}" "https://github.com/brevdev/brev-cli/releases/download/v${BREV_CLI_VERSION}/brev-cli_${BREV_CLI_VERSION}_linux_amd64.tar.gz"
+        printf '%s  %s\n' "${BREV_CLI_SHA256}" "${archive}" | sha256sum -c -
+        tar -xzf "${archive}" -C "${RUNNER_TEMP}" brev
+        sudo install -m 0755 "${RUNNER_TEMP}/brev" /usr/local/bin/brev
+        brev login --api-key "${BREV_API_KEY}"

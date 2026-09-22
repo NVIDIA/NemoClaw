@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-name: Rust desired-state
+name: CI / Native
 on:
   push:
     branches: [v1]
@@ -9,8 +9,12 @@ on:
   workflow_dispatch:
 permissions:
   contents: read
+concurrency:
+  group: ci-native-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
   native:
+    name: Native / ${{ matrix.platform }}
     strategy:
       fail-fast: false
       matrix:
@@ -36,39 +40,12 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Restore verified downloads
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      - uses: ./.github/actions/setup-rust
         with:
-          path: .build/downloads
-          key: native-downloads-v1-${{ matrix.platform }}-${{ hashFiles('versions.json') }}
-      - name: Install pinned local build tools
-        run: |
-          rustup show
-          python - <<'PY'
-          import hashlib, io, json, os, pathlib, urllib.request, zipfile
-          root = pathlib.Path.cwd()
-          pin = json.loads((root / 'versions.json').read_text())['platforms'][os.environ['TEST_PLATFORM']]['protoc']
-          data = urllib.request.urlopen(pin['url'], timeout=120).read()
-          assert hashlib.sha256(data).hexdigest() == pin['sha256']
-          destination = root / '.tools/protoc'
-          with zipfile.ZipFile(io.BytesIO(data)) as archive:
-              archive.extractall(destination)
-          binary = destination / 'bin' / ('protoc.exe' if os.name == 'nt' else 'protoc')
-          binary.chmod(0o755)
-          with open(os.environ['GITHUB_ENV'], 'a') as output:
-              output.write(f'PROTOC={binary}\n')
-          PY
-      - name: Restore native dependency cache
-        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2, repository-approved revision
-        with:
-          prefix-key: native-deps-v2
-          key: ${{ matrix.platform }}-${{ hashFiles('Cargo.toml') }}
-          add-rust-environment-hash-key: "true"
-          workspaces: . -> target
-          cache-targets: "true"
-          cache-all-crates: "false"
-          cache-workspace-crates: "false"
-          cache-bin: "false"
+          platform: ${{ matrix.platform }}
+      - name: Test CI orchestration
+        if: matrix.platform == 'linux_amd64'
+        run: python3 -B -m unittest discover -s tools/ci -p 'test_*.py'
       - name: Install test runner for Linux ARM64 pilot
         if: matrix.platform == 'linux_arm64'
         run: |
@@ -80,11 +57,14 @@ jobs:
           tar -xzf "$archive" cargo-nextest
           echo "$PWD" >> "$GITHUB_PATH"
           ./cargo-nextest nextest --version
-      - name: Formatting, lint, and deterministic behavior
+      - name: Check formatting
+        run: cargo fmt --check
+      - name: Lint Rust
+        run: cargo clippy --locked --workspace --all-targets -- -D warnings
+      - name: Build test executables
+        run: cargo build --locked --workspace --all-targets
+      - name: Run deterministic tests
         run: |
-          cargo fmt --check
-          cargo clippy --locked --workspace --all-targets -- -D warnings
-          cargo build --locked --workspace --all-targets
           if [ "$TEST_PLATFORM" = linux_arm64 ]; then
             cargo nextest run --locked --workspace --profile ci
             cargo test --locked --workspace --doc

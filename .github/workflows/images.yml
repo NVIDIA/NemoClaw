@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-name: Agent images
+name: CI / Images
 on:
   pull_request:
     branches: [v1]
@@ -23,6 +23,7 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
   images:
+    name: Images / linux_arm64
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 60
     env:
@@ -76,6 +77,7 @@ jobs:
               --entrypoint node nc-fabric:openclaw "/tests/$test"
           done
   agents-amd64:
+    name: Images / linux_amd64
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     env:

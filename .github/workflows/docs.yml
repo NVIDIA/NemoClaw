@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 # Adapted from main's Fern workflows; see fern/NOTICE.md.
-name: Docs / v1
+name: CD / Documentation
 on:
   pull_request:
     branches: [v1]
@@ -16,7 +16,7 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
   validate:
-    name: Validate sources and Fern output
+    name: Documentation / Validate
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
@@ -32,7 +32,7 @@ jobs:
         run: python3 tools/docs/fern.py check
 
   preview:
-    name: Publish PR preview
+    name: Documentation / PR preview
     needs: validate
     if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]'
     runs-on: ubuntu-24.04
@@ -80,7 +80,7 @@ jobs:
           PY
 
   staging:
-    name: Publish stable v1 staging preview
+    name: Documentation / Staging
     needs: validate
     if: github.event_name == 'push' && github.ref == 'refs/heads/v1'
     environment: docs-v1-staging
@@ -116,7 +116,7 @@ jobs:
           PY
 
   public:
-    name: Publish v1 release documentation
+    name: Documentation / Release
     needs: validate
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v1.') && vars.FERN_V1_PUBLIC_ENABLED == 'true'
     environment: docs-v1-public

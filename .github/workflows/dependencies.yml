@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-name: Rust dependency policy
+name: CI / Dependencies
 on:
   pull_request:
     branches: [v1]
@@ -15,8 +15,12 @@ on:
   workflow_dispatch:
 permissions:
   contents: read
+concurrency:
+  group: ci-dependencies-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
   policy:
+    name: Dependencies / Policy
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
