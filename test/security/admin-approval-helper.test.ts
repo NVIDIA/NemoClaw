@@ -24,6 +24,14 @@ const OTHER_PUBLIC_KEY_BYTES = Buffer.from(
 const OTHER_PUBLIC_KEY = OTHER_PUBLIC_KEY_BYTES.toString("base64url");
 const OTHER_DEVICE_ID = createHash("sha256").update(OTHER_PUBLIC_KEY_BYTES).digest("hex");
 const EXPECTED_IDENTITY = { deviceId: EXPECTED_DEVICE_ID, publicKey: EXPECTED_PUBLIC_KEY };
+const PAIRING_STATE_HELPER_PY = `import json
+from pathlib import Path
+
+def read_openclaw_pairing_state(state_dir, timeout=1):
+    fixture_path = Path(state_dir) / "pairing-state.json"
+    records = json.loads(fixture_path.read_text(encoding="utf-8")) if fixture_path.exists() else {}
+    return records, {"stateDir": state_dir, "timeout": timeout}
+`;
 
 type FakeFailureCommand = "devices:list" | "devices:approve" | "cron:add" | "cron:run";
 
@@ -66,14 +74,19 @@ function writeLocalIdentity(
   identity: Record<string, unknown> = EXPECTED_IDENTITY,
 ): string {
   const stateRoot = path.join(root, "state");
-  const identityRoot = path.join(stateRoot, "identity");
-  fs.mkdirSync(identityRoot, { recursive: true });
-  fs.writeFileSync(path.join(identityRoot, "device.json"), JSON.stringify(identity));
+  fs.mkdirSync(stateRoot, { recursive: true });
+  fs.writeFileSync(path.join(stateRoot, "pairing-state.json"), JSON.stringify({ identity }));
   return stateRoot;
 }
 
 function omitLocalIdentity(root: string, _identity: Record<string, unknown>): string {
   return path.join(root, "state");
+}
+
+function writePairingStateHelper(root: string): string {
+  const helperPath = path.join(root, "openclaw_pairing_state.py");
+  fs.writeFileSync(helperPath, PAIRING_STATE_HELPER_PY);
+  return helperPath;
 }
 
 function runSelector(
@@ -85,11 +98,16 @@ function runSelector(
   const statePath = path.join(root, "devices.json");
   const requestIdPath = path.join(root, "selected-request-id");
   const stateRoot = prepareIdentity(root, identity);
+  const helperPath = writePairingStateHelper(root);
   fs.writeFileSync(statePath, JSON.stringify(state));
   try {
     const result = spawnSync("python3", ["-", statePath, requestIdPath], {
       encoding: "utf-8",
-      env: { ...process.env, OPENCLAW_STATE_DIR: stateRoot },
+      env: {
+        ...process.env,
+        NEMOCLAW_OPENCLAW_PAIRING_STATE_HELPER: helperPath,
+        OPENCLAW_STATE_DIR: stateRoot,
+      },
       input: ADMIN_REQUEST_SELECTOR_PY,
     });
     const selectedRequestId = fs.existsSync(requestIdPath)
@@ -111,6 +129,7 @@ function runAdminApprovalScript(failureCommand?: FakeFailureCommand): {
   const devicesPath = path.join(root, "devices.json");
   const commandLogPath = path.join(root, "openclaw.log");
   const stateRoot = writeLocalIdentity(root);
+  const helperPath = writePairingStateHelper(root);
   fs.writeFileSync(
     cliPath,
     `#!/bin/sh
@@ -151,6 +170,7 @@ esac
     FAKE_DEVICES_STATE: devicesPath,
     FAKE_OPENCLAW_FAIL: failureCommand ?? "",
     FAKE_OPENCLAW_LOG: commandLogPath,
+    NEMOCLAW_OPENCLAW_PAIRING_STATE_HELPER: helperPath,
     OPENCLAW_STATE_DIR: stateRoot,
     OPENCLAW_ALLOW_INSECURE_PRIVATE_WS: "",
     OPENCLAW_GATEWAY_URL: "",
@@ -331,7 +351,7 @@ describe("prepared connect-shell administrative approval", () => {
     const result = runSelector(adminState(), EXPECTED_IDENTITY, omitLocalIdentity);
 
     expect(result.status).not.toBe(0);
-    expect(result.stderr).toContain("missing or invalid");
+    expect(result.stderr).toContain("must be an object");
     expect(result.selectedRequestId).toBe("");
   });
 
