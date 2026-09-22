@@ -18,6 +18,7 @@ import {
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import type { CleanupRegistry } from "../fixtures/cleanup.ts";
+import { ADMIN_REQUEST_SELECTOR_PY } from "../fixtures/admin-request-selector.ts";
 import {
   assertExitZero,
   type HostCliClient,
@@ -254,10 +255,17 @@ async function approveOpenClawAdminScope(
 export function managedOpenClawAdminApprovalInput(requestId: string): string {
   return [
     "set -euo pipefail",
+    'devices_json="$(mktemp)"',
+    'request_id_file="$(mktemp)"',
     'approval_output="$(mktemp)"',
-    "trap 'rm -f -- \"$approval_output\"' EXIT",
+    'trap \'rm -f -- "$devices_json" "$request_id_file" "$approval_output"\' EXIT',
+    'openclaw devices list --json >"$devices_json"',
+    `python3 - "$devices_json" "$request_id_file" ${shellQuote(requestId)} <<'PY_MANAGED_ADMIN_REQUEST'`,
+    ...ADMIN_REQUEST_SELECTOR_PY.split("\n"),
+    "PY_MANAGED_ADMIN_REQUEST",
+    'canonical_request_id="$(cat "$request_id_file")"',
     "approval_status=0",
-    `openclaw devices approve ${shellQuote(requestId)} >"$approval_output" 2>&1 || approval_status=$?`,
+    'openclaw devices approve "$canonical_request_id" >"$approval_output" 2>&1 || approval_status=$?',
     'python3 - "$approval_output" "$approval_status" <<\'PY_ADMIN_APPROVAL_DIAGNOSTIC\'',
     "import re, sys",
     "from pathlib import Path",

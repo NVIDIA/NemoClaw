@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs, { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import os from "node:os";
 import path, { join } from "node:path";
 
@@ -23,6 +24,65 @@ import {
   waitForManagedActivationSandboxAbsence,
 } from "../live/managed-image-activation-e2e-helpers.ts";
 import { pendingAdminRequestId } from "../fixtures/issue-4462-admin-approval-evidence.ts";
+
+const MANAGED_ADMIN_PUBLIC_KEY_BYTES = Buffer.from(
+  Array.from({ length: 32 }, (_value, index) => index),
+);
+const MANAGED_ADMIN_PUBLIC_KEY = MANAGED_ADMIN_PUBLIC_KEY_BYTES.toString("base64url");
+const MANAGED_ADMIN_DEVICE_ID = createHash("sha256")
+  .update(MANAGED_ADMIN_PUBLIC_KEY_BYTES)
+  .digest("hex");
+
+function prepareManagedAdminState(root: string, requestId: string): NodeJS.ProcessEnv {
+  const stateRoot = join(root, "state");
+  const devicesPath = join(root, "devices.json");
+  const helperPath = join(root, "openclaw_pairing_state.py");
+  const identity = { deviceId: MANAGED_ADMIN_DEVICE_ID, publicKey: MANAGED_ADMIN_PUBLIC_KEY };
+  const state = {
+    pending: [
+      {
+        requestId,
+        deviceId: MANAGED_ADMIN_DEVICE_ID,
+        publicKey: MANAGED_ADMIN_PUBLIC_KEY,
+        clientId: "cli",
+        clientMode: "cli",
+        role: "operator",
+        roles: ["operator"],
+        scopes: ["operator.pairing", "operator.read", "operator.write", "operator.admin"],
+      },
+    ],
+    paired: [
+      {
+        deviceId: MANAGED_ADMIN_DEVICE_ID,
+        publicKey: MANAGED_ADMIN_PUBLIC_KEY,
+        clientId: "cli",
+        clientMode: "cli",
+        role: "operator",
+        roles: ["operator"],
+        scopes: ["operator.pairing", "operator.write"],
+        approvedScopes: ["operator.pairing", "operator.write"],
+        tokens: [
+          {
+            role: "operator",
+            scopes: ["operator.pairing", "operator.read", "operator.write"],
+          },
+        ],
+      },
+    ],
+  };
+  fs.mkdirSync(stateRoot, { recursive: true });
+  fs.writeFileSync(join(stateRoot, "pairing-state.json"), JSON.stringify({ identity }));
+  fs.writeFileSync(devicesPath, JSON.stringify(state));
+  fs.writeFileSync(
+    helperPath,
+    `import json\nfrom pathlib import Path\ndef read_openclaw_pairing_state(state_dir, timeout=1):\n    records=json.loads((Path(state_dir) / "pairing-state.json").read_text(encoding="utf-8"))\n    return records, {"timeout": timeout}\n`,
+  );
+  return {
+    FAKE_DEVICES_STATE: devicesPath,
+    NEMOCLAW_OPENCLAW_PAIRING_STATE_HELPER: helperPath,
+    OPENCLAW_STATE_DIR: stateRoot,
+  };
+}
 
 function runPostRestartAgentTurnFixture(statuses: string[], times: number[]) {
   const fixture = createHostProcessWorkspace("nemoclaw-openclaw-restart-ready-");
@@ -124,7 +184,8 @@ describe("managed image activation failure diagnostics", () => {
 
     expect(pendingAdminRequestId(result)).toBe(requestId);
     const input = managedOpenClawAdminApprovalInput(requestId);
-    expect(input).toContain(`openclaw devices approve '${requestId}'`);
+    expect(input).toContain(`"$request_id_file" '${requestId}'`);
+    expect(input).toContain('openclaw devices approve "$canonical_request_id"');
     expect(input).toContain("NEMOCLAW_MANAGED_ADMIN_APPROVAL_OK");
     expect(input).not.toContain(result.stderr);
   });
@@ -136,6 +197,7 @@ describe("managed image activation failure diagnostics", () => {
     fixture.writeExecutable(
       "openclaw",
       `#!/bin/sh
+if [ "$1:$2" = "devices:list" ]; then cat "$FAKE_DEVICES_STATE"; exit 0; fi
 printf 'approval denied by policy token=%s\n' "$APPROVAL_DIAGNOSTIC_SECRET" >&2
 exit 91
 `,
@@ -151,7 +213,10 @@ export PATH
 ${managedOpenClawAdminApprovalInput(requestId)}`,
         ],
         {
-          env: { APPROVAL_DIAGNOSTIC_SECRET: secret },
+          env: {
+            ...prepareManagedAdminState(fixture.root, requestId),
+            APPROVAL_DIAGNOSTIC_SECRET: secret,
+          },
           killSignal: "SIGKILL",
           timeout: 10_000,
         },
@@ -164,6 +229,48 @@ ${managedOpenClawAdminApprovalInput(requestId)}`,
       );
       expect(result.stderr).not.toContain(secret);
       expect(result.stderr).not.toContain(requestId);
+    } finally {
+      fixture.remove();
+    }
+  });
+
+  it("refuses an output request ID that disagrees with canonical pending state", () => {
+    const fixture = createHostProcessWorkspace("nemoclaw-managed-admin-selection-");
+    const outputRequestId = "4edc8df0-20d0-4308-b0e8-850843ae0cf4";
+    const canonicalRequestId = "a96ada31-9cf9-4d99-97cc-978dcbb9fc39";
+    fixture.writeExecutable(
+      "openclaw",
+      `#!/bin/sh
+if [ "$1:$2" = "devices:list" ]; then cat "$FAKE_DEVICES_STATE"; exit 0; fi
+printf '%s\n' "$*" >"$MANAGED_ADMIN_APPROVE_LOG"
+`,
+    );
+
+    try {
+      const approveLog = fixture.path("approve.log");
+      const result = fixture.run(
+        "/bin/bash",
+        [
+          "-lc",
+          `PATH=${JSON.stringify(fixture.binDir)}:$PATH
+export PATH
+${managedOpenClawAdminApprovalInput(outputRequestId)}`,
+        ],
+        {
+          env: {
+            ...prepareManagedAdminState(fixture.root, canonicalRequestId),
+            MANAGED_ADMIN_APPROVE_LOG: approveLog,
+          },
+          killSignal: "SIGKILL",
+          timeout: 10_000,
+        },
+      );
+
+      expect(result.status).not.toBe(0);
+      expect(result.stderr).toContain("pending admin request does not match the triggered request");
+      expect(existsSync(approveLog)).toBe(false);
+      expect(result.stderr).not.toContain(outputRequestId);
+      expect(result.stderr).not.toContain(canonicalRequestId);
     } finally {
       fixture.remove();
     }
