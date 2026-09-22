@@ -201,6 +201,12 @@ const descriptorFiles = new Map();
 const descriptorReads = [];
 const process = {
   env: {},
+  stdout: globalThis.process?.stdout ?? {
+    write(_chunk, callback) { callback?.(); }
+  },
+  stderr: globalThis.process?.stderr ?? {
+    write(_chunk, callback) { callback?.(); }
+  },
   getBuiltinModule(name) {
     if (name !== "node:fs") throw new Error("unexpected builtin module");
     return {
@@ -441,6 +447,30 @@ async function approvePairingWithFallback(opts, requestId) {
     }
     return await approveDevicePairing(originalRequest?.requestId ?? requestId);
   }
+}
+const defaultRuntime = {
+  logs: [],
+  exits: [],
+  jsonWrites: [],
+  log(value) { this.logs.push(String(value)); },
+  writeJson(value) { this.jsonWrites.push(value); },
+  exit(code) { this.exits.push(code); }
+};
+const theme = {
+  success(value) { return value; },
+  command(value) { return value; },
+  muted(value) { return value; }
+};
+const resolvedRequestId = "request-1";
+function runDevicesApproveSuccess(result, opts) {
+  if (opts.json) {
+    defaultRuntime.writeJson(result);
+    return;
+  }
+  const resultRequestId = result?.requestId;
+  const approvedRequestId = typeof resultRequestId === "string" && resultRequestId.trim().length > 0 ? resultRequestId : resolvedRequestId;
+  const deviceId = result?.device?.deviceId;
+  defaultRuntime.log(\`\${theme.success("Approved")} \${theme.command(deviceId ?? "ok")} \${theme.muted(\`(\${approvedRequestId})\`)}\`);
 }
 `);
 }

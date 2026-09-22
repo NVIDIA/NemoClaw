@@ -665,7 +665,9 @@ describe("E2E workflow plan", () => {
   it.each([
     "scripts/install.sh",
     "src/lib/actions/global.ts",
+    "src/lib/actions/maintenance.ts",
     "src/lib/actions/sandbox/forward-recovery.ts",
+    "src/lib/actions/upgrade-sandboxes.ts",
   ])("selects both gateway-upgrade fixtures when %s changes", (changedFile) => {
     expect(catalogueTargetsForChangedFiles([changedFile]).map((target) => target.id)).toEqual([
       "openshell-gateway-upgrade-v0-0-89-x86-64",
@@ -788,6 +790,9 @@ describe("E2E workflow plan", () => {
 
   it.each([
     "nemoclaw-blueprint/router/pool-config.yaml",
+    "src/lib/actions/sandbox/destroy-preflight.ts",
+    "src/lib/onboard/model-router-process.ts",
+    "src/lib/onboard/model-router.ts",
     "test/e2e/live/model-router-provider-routed-inference-helpers.ts",
   ])("selects the Model Router target when %s changes", (changedFile) => {
     expect(catalogueTargetsForChangedFiles([changedFile]).map((target) => target.id)).toContain(

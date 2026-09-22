@@ -160,6 +160,7 @@ const DeepAgentsExportSandboxSchema = Type.Object(
 const AgentExportSandboxSchema = Type.Object(
   {
     ...ExportSandboxFields,
+    image: Type.Null(),
     harness: Type.Object(
       {
         kind: Type.Union([Type.Literal("hermes"), Type.Literal("openclaw")]),
@@ -580,7 +581,7 @@ function semanticsFromDocument(document: ConfigExportDocument): ConfigExportSema
     sandboxName: sandbox?.name ?? null,
     agent: sandbox?.harness.kind ?? null,
     runtimeProvider: sandbox?.runtime.provider ?? null,
-    imageRef: sandbox !== undefined && "image" in sandbox ? sandbox.image.ref : null,
+    imageRef: sandbox?.image?.ref ?? null,
     inferenceProviderName: provider?.name ?? null,
     inferenceProvider: provider?.provider ?? null,
     inferenceApi: provider?.api ?? null,
