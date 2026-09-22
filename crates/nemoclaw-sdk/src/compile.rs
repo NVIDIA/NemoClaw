@@ -4,7 +4,7 @@ use crate::config::{HarnessKind, InferenceProviderKind};
 
 use crate::{
     backend::Row,
-    config::{ConfigError, Document, InferenceProvider},
+    config::{ConfigError, Document, InferenceProvider, SearchProvider},
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -106,7 +106,7 @@ fn targets_with_plans(
         ]
         .into();
         let mut policy = sandbox.policy_proto(
-            settings.web_search.is_some(),
+            settings.web_search.as_ref().map(|search| search.provider),
             harness.observability.as_ref(),
         )?;
         for provider in document.sandbox_inference_providers(sandbox)? {
@@ -175,9 +175,10 @@ fn targets_with_plans(
             values,
         });
         if let Some(search) = settings.web_search {
-            let provider_name = crate::config::search_provider_name(&search.credential.env);
+            let provider_name =
+                crate::config::search_provider_name(search.provider, &search.credential.env);
             for (kind, name) in [
-                ("provider_profile", "nemoclaw-brave"),
+                ("provider_profile", search.provider.profile()),
                 ("provider", provider_name.as_str()),
             ] {
                 let mut values: Row = [
@@ -192,20 +193,26 @@ fn targets_with_plans(
                 .into();
                 if kind == "provider" {
                     values.extend([
-                        ("endpoint".into(), "https://api.search.brave.com".into()),
+                        ("endpoint".into(), search.provider.endpoint().into()),
                         ("credential_env".into(), search.credential.env.clone()),
-                        ("provider_type".into(), "brave".into()),
+                        ("provider_type".into(), search.provider.name().into()),
                     ]);
                 }
                 let target = Target {
                     kind: kind.into(),
                     address: if kind == "provider" {
+                        let logical = search
+                            .provider
+                            .profile_address()
+                            .strip_prefix("nemoclaw_provider_profile.")
+                            .unwrap();
+                        let prefix = format!("{}-search-", search.provider.name());
                         format!(
-                            "nemoclaw_provider.web_search_{}",
-                            provider_name.strip_prefix("brave-search-").unwrap()
+                            "nemoclaw_provider.{logical}_{}",
+                            provider_name.strip_prefix(&prefix).unwrap()
                         )
                     } else {
-                        "nemoclaw_provider_profile.web_search".into()
+                        search.provider.profile_address().into()
                     },
                     values,
                 };
@@ -387,7 +394,8 @@ pub(super) fn compile_with_plans(
                 .map(|provider| provider_dependencies[&provider.key].clone())
                 .collect();
             if let Some(search) = document.sandbox_runtime_settings(sandbox)?.web_search {
-                let name = crate::config::search_provider_name(&search.credential.env);
+                let name =
+                    crate::config::search_provider_name(search.provider, &search.credential.env);
                 dependencies.push(provider_dependencies[&name].clone());
             }
             attributes["depends_on"] = json!(dependencies);
@@ -399,7 +407,7 @@ pub(super) fn compile_with_plans(
             && target
                 .values
                 .get("provider_type")
-                .is_none_or(|kind| kind != "brave")
+                .is_none_or(|kind| SearchProvider::from_name(kind).is_none())
         {
             let logical = target.address.split_once('.').unwrap().1;
             let mut dependencies = vec![format!("nemoclaw_provider_profile.{logical}")];
@@ -413,12 +421,12 @@ pub(super) fn compile_with_plans(
             attributes["depends_on"] = json!(dependencies);
         }
         if target.kind == "provider"
-            && target
+            && let Some(search) = target
                 .values
                 .get("provider_type")
-                .is_some_and(|kind| kind == "brave")
+                .and_then(|kind| SearchProvider::from_name(kind))
         {
-            attributes["depends_on"] = json!(["nemoclaw_provider_profile.web_search"]);
+            attributes["depends_on"] = json!([search.profile_address()]);
         }
         attributes
             .as_object_mut()

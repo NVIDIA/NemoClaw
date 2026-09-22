@@ -9,25 +9,50 @@ use nemoclaw_sdk::{
     openshell::{OpenShell, Secrets},
 };
 use std::sync::Arc;
-struct Key;
+struct Key(&'static str);
 impl Secrets for Key {
     fn resolve(&self, name: &str) -> Result<String, ObservationError> {
         assert_eq!(name, "SEARCH_KEY");
-        Ok("owned-search-key".into())
+        Ok(self.0.into())
     }
 }
 #[tokio::test]
-async fn search_stores_credentials_in_openshell_omits_them_from_state_and_rejects_profile_drift() {
+async fn search_preserves_credentials_on_unchanged_ensure_and_removes_owned_registrations() {
+    for (provider_type, profile_address, profile_name, credential_env) in [
+        (
+            "brave",
+            "nemoclaw_provider_profile.web_search",
+            "nemoclaw-brave",
+            "BRAVE_API_KEY",
+        ),
+        (
+            "tavily",
+            "nemoclaw_provider_profile.web_search_tavily",
+            "nemoclaw-tavily",
+            "TAVILY_API_KEY",
+        ),
+    ] {
+        search_credential_lifecycle(provider_type, profile_address, profile_name, credential_env)
+            .await;
+    }
+}
+
+async fn search_credential_lifecycle(
+    provider_type: &str,
+    profile_address: &str,
+    profile_name: &str,
+    credential_env: &str,
+) {
     let fixture = Fixture::start().await;
     let mut doc =
         Document::parse(include_str!("../../../examples/fabric-openclaw.yaml").as_bytes()).unwrap();
     *doc.spec.gateway.endpoint_mut() = fixture.endpoint.clone();
     doc.spec.integrations = serde_json::from_value(serde_json::json!({
-        "search":{"kind":"webSearch","provider":"brave","credential":{"env":"SEARCH_KEY"}}
+        "search":{"kind":"webSearch","provider":provider_type,"credential":{"env":"SEARCH_KEY"}}
     }))
     .unwrap();
     doc.spec.sandboxes[0].agent.integration_refs = vec!["search".into()];
-    let client = OpenShell::connect(&doc.spec.gateway, Arc::new(Key)).unwrap();
+    let client = OpenShell::connect(&doc.spec.gateway, Arc::new(Key("owned-search-key"))).unwrap();
     let generations: Generations = ["workspace", "provider", "sandbox"]
         .map(|k| (k.into(), "a".repeat(32)))
         .into();
@@ -41,7 +66,7 @@ async fn search_stores_credentials_in_openshell_omits_them_from_state_and_reject
     );
     let profile = &targets
         .iter()
-        .find(|t| t.address == "nemoclaw_provider_profile.web_search")
+        .find(|t| t.address == profile_address)
         .unwrap()
         .values;
     fixture.state.lock().unwrap().lose_create = true;
@@ -58,7 +83,10 @@ async fn search_stores_credentials_in_openshell_omits_them_from_state_and_reject
     let target = &targets
         .iter()
         .find(|t| {
-            t.kind == "provider" && t.values.get("provider_type").is_some_and(|v| v == "brave")
+            t.kind == "provider"
+                && t.values
+                    .get("provider_type")
+                    .is_some_and(|v| v == provider_type)
         })
         .unwrap()
         .values;
@@ -74,11 +102,25 @@ async fn search_stores_credentials_in_openshell_omits_them_from_state_and_reject
     {
         let state = fixture.state.lock().unwrap();
         let stored = &state.providers[&key];
-        assert_eq!(stored.credentials["BRAVE_API_KEY"], "owned-search-key");
+        assert_eq!(stored.credentials[credential_env], "owned-search-key");
         assert!(stored.config.is_empty());
         assert_eq!(stored.profile_workspace, doc.workspace());
     }
-    let key = format!("{}/nemoclaw-brave", doc.workspace());
+    let effects = fixture.state.lock().unwrap().effects;
+    let changed_key_client =
+        OpenShell::connect(&doc.spec.gateway, Arc::new(Key("changed-search-key"))).unwrap();
+    let unchanged = changed_key_client.ensure("provider", target).await;
+    assert!(unchanged.error().is_none(), "{:?}", unchanged.error());
+    assert_eq!(unchanged.into_parts().0.unwrap()["id"], provider["id"]);
+    {
+        let state = fixture.state.lock().unwrap();
+        assert_eq!(state.effects, effects);
+        assert_eq!(
+            state.providers[&key].credentials[credential_env],
+            "owned-search-key"
+        );
+    }
+    let key = format!("{}/{profile_name}", doc.workspace());
     let original = fixture.state.lock().unwrap().profiles[&key].clone();
     fixture
         .state
@@ -88,7 +130,7 @@ async fn search_stores_credentials_in_openshell_omits_them_from_state_and_reject
         .get_mut(&key)
         .unwrap()
         .credentials[0]
-        .header_name = "Authorization".into();
+        .header_name = "X-Unexpected-Token".into();
     assert!(
         client
             .read("provider_profile", &profile, false)
@@ -115,6 +157,7 @@ async fn search_stores_credentials_in_openshell_omits_them_from_state_and_reject
         .await
         .unwrap();
     assert!(fixture.state.lock().unwrap().profiles.is_empty());
+    assert!(fixture.state.lock().unwrap().providers.is_empty());
 }
 
 #[tokio::test]
