@@ -196,6 +196,10 @@ export interface StatusSandboxRow {
   openshellVersion: string | null;
   policies: string[];
   agent: string;
+  configuredInference: {
+    provider: string | null;
+    model: string | null;
+  };
   phase?: "pending" | "configuring" | "active";
   dashboardPort?: number | null;
   isDefault: boolean;
@@ -289,7 +293,7 @@ function resolveDisplayAgent(sandbox: SandboxEntry): string {
   return sandbox.recoveredFromGateway ? "unknown" : "openclaw";
 }
 
-type PublicSandboxFields = Omit<StatusSandboxRow, "phase" | "isDefault">;
+type PublicSandboxFields = Omit<StatusSandboxRow, "configuredInference" | "phase" | "isDefault">;
 
 async function projectPublicSandboxFields(
   sandbox: SandboxEntry,
@@ -526,18 +530,30 @@ export async function listSandboxesCommand(deps: ListSandboxesCommandDeps): Prom
 async function buildStatusSandboxRow(
   sandbox: SandboxEntry,
   defaultSandbox: string | null,
+  liveInference: GatewayInference | null,
   portablePhase: "pending" | "configuring" | "active" | null,
   getPolicyPresets?: (sandboxName: string) => string[] | Promise<string[]>,
 ): Promise<StatusSandboxRow> {
   const isDefault = sandbox.name === defaultSandbox;
-  // #11412: this row's `model`/`provider` are the documented "configured"
-  // fields, meaning this sandbox's own recorded inference, not the shared
-  // live gateway route. Report `liveInference` (above, once per report) for
-  // the gateway-wide value.
-  const inference = getSandboxEntryDisplayInference(sandbox);
-  const publicFields = await projectPublicSandboxFields(sandbox, inference, getPolicyPresets);
+  const liveModel = isDefault ? liveInference?.model : null;
+  const liveProvider = isDefault ? liveInference?.provider : null;
+  const configuredInference = getSandboxEntryDisplayInference(sandbox);
+  // Preserve schema-version-1 `model`/`provider` semantics for existing
+  // consumers while publishing this sandbox's recorded route explicitly.
+  const publicFields = await projectPublicSandboxFields(
+    sandbox,
+    {
+      model: liveModel || configuredInference.model,
+      provider: liveProvider || configuredInference.provider,
+    },
+    getPolicyPresets,
+  );
   return {
     ...publicFields,
+    configuredInference: {
+      provider: safeStatusString(configuredInference.provider),
+      model: safeStatusString(configuredInference.model),
+    },
     ...(portablePhase ? { phase: portablePhase } : {}),
     isDefault,
   };
@@ -629,6 +645,7 @@ export async function getStatusReport(deps: ShowStatusCommandDeps): Promise<Stat
       buildStatusSandboxRow(
         sandbox,
         resolvedDefault,
+        liveInference,
         portablePhases.get(sandbox.name) ?? null,
         deps.getPolicyPresets,
       ),

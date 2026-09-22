@@ -55,16 +55,27 @@ describe("status inference row stays scoped to its own sandbox (#11412)", () => 
     expect(lines).not.toContain("      (onboarded: shared-model)");
   });
 
-  it("keeps status --json rows on each sandbox's own recorded route", async () => {
+  it("reports each sandbox's recorded route without changing version-1 row fields", async () => {
     const report = await getStatusReport({
       listSandboxes,
       getLiveInference,
       showServiceStatus: vi.fn(),
     });
 
+    expect(report.schemaVersion).toBe(1);
     expect(report.sandboxes).toMatchObject([
-      { name: "route-a", model: "llama3.2:1b", provider: "ollama-route-a" },
-      { name: "route-b", model: "qwen2.5:0.5b", provider: "ollama-route-b" },
+      {
+        name: "route-a",
+        model: "llama3.2:1b",
+        provider: "ollama-route-a",
+        configuredInference: { model: "llama3.2:1b", provider: "ollama-route-a" },
+      },
+      {
+        name: "route-b",
+        model: "llama3.2:1b",
+        provider: "ollama-route-a",
+        configuredInference: { model: "qwen2.5:0.5b", provider: "ollama-route-b" },
+      },
     ]);
   });
 });
