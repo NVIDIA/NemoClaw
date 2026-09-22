@@ -36,8 +36,8 @@
  *
  * Both gateway and local-fallback approvals can leave handles open after the
  * command prints Approved. Drain stdout and stderr, then force
- * `defaultRuntime.exit(0)` after a successful approve until upstream closes
- * those handles or exits after Approved (#12064).
+ * `defaultRuntime.exit(0)` after a successful approve. Use a bounded fallback
+ * when a stream does not report that its output drained (#12064).
  *
  * Remove this patch when upstream OpenClaw supports same-device, operator-only
  * scope approval through the gateway using the already-approved pairing scope
@@ -392,7 +392,7 @@ const CLI_APPROVE_EXIT_TARGET = [
   '\tdefaultRuntime.log(`${theme.success("Approved")} ${theme.command(deviceId ?? "ok")} ${theme.muted(`(${approvedRequestId})`)}`);',
   "}",
 ].join("\n");
-const CLI_APPROVE_EXIT_REPLACEMENT = [
+const CLI_APPROVE_EXIT_REPLACEMENT_UNBOUNDED = [
   "\tconst exitAfterDevicesApproveOutput = () => {",
   "\t\tlet remaining = 2;",
   "\t\tconst done = () => {",
@@ -419,6 +419,33 @@ const CLI_APPROVE_EXIT_REPLACEMENT = [
   "\texitAfterDevicesApproveOutput();",
   "}",
 ].join("\n");
+const CLI_APPROVE_EXIT_REPLACEMENT = CLI_APPROVE_EXIT_REPLACEMENT_UNBOUNDED.replace(
+  [
+    "\t\tlet remaining = 2;",
+    "\t\tconst done = () => {",
+    "\t\t\tremaining -= 1;",
+    "\t\t\tif (remaining === 0) defaultRuntime.exit(0);",
+    "\t\t};",
+  ].join("\n"),
+  [
+    "\t\tlet remaining = 2;",
+    "\t\tlet exited = false;",
+    "\t\tconst exit = () => {",
+    "\t\t\tif (exited) return;",
+    "\t\t\texited = true;",
+    "\t\t\tdefaultRuntime.exit(0);",
+    "\t\t};",
+    "\t\tconst timeout = setTimeout(exit, 1000);",
+    "\t\ttimeout.unref?.();",
+    "\t\tconst done = () => {",
+    "\t\t\tremaining -= 1;",
+    "\t\t\tif (remaining === 0) {",
+    "\t\t\t\tclearTimeout(timeout);",
+    "\t\t\t\texit();",
+    "\t\t\t}",
+    "\t\t};",
+  ].join("\n"),
+);
 
 function applyDevicesApproveExitPatch(source: string, file: string): ReplacementResult {
   const exitMarkerCount = countOccurrences(source, CLI_APPROVE_EXIT_MARKER);
@@ -426,7 +453,9 @@ function applyDevicesApproveExitPatch(source: string, file: string): Replacement
     return { source };
   }
   const isFresh = exitMarkerCount === 0 && source.includes(CLI_APPROVE_EXIT_TARGET);
-  if (!isFresh) {
+  const isUnbounded =
+    exitMarkerCount === 1 && source.includes(CLI_APPROVE_EXIT_REPLACEMENT_UNBOUNDED);
+  if (!isFresh && !isUnbounded) {
     return {
       source,
       error: `devices CLI approve exit patch in ${file}: partial, duplicate, or structurally changed patch (${exitMarkerCount} markers)`,
@@ -434,7 +463,7 @@ function applyDevicesApproveExitPatch(source: string, file: string): Replacement
   }
   return replaceExactlyOnce(
     source,
-    CLI_APPROVE_EXIT_TARGET,
+    isUnbounded ? CLI_APPROVE_EXIT_REPLACEMENT_UNBOUNDED : CLI_APPROVE_EXIT_TARGET,
     CLI_APPROVE_EXIT_REPLACEMENT,
     "devices CLI approve success exit target",
     file,

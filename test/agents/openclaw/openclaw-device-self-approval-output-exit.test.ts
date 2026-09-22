@@ -19,7 +19,7 @@ const APPROVAL = {
   device: { deviceId: "device-1" },
 };
 
-function runPatchedApprove(json: boolean, useLocalFallback = true) {
+function runPatchedApprove(json: boolean, useLocalFallback = true, stallDrain = false) {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-device-approve-output-"));
   const dist = path.join(tmp, "dist");
   fs.mkdirSync(dist);
@@ -41,6 +41,10 @@ defaultRuntime.writeJson = (value) => {
   process.stderr.write("approved-stderr\\n");
 };
 defaultRuntime.exit = (code) => realExit(code);
+if (${String(stallDrain)}) {
+  const realStderrWrite = process.stderr.write.bind(process.stderr);
+  process.stderr.write = (chunk, ...args) => chunk === "" ? true : realStderrWrite(chunk, ...args);
+}
 setInterval(() => {}, 1000);
 setApprovalFailures(${useLocalFallback ? '[new Error("scope-upgrade-pending")]' : "[]"});
 const opts = { json: ${String(json)} };
@@ -78,5 +82,9 @@ describe("OpenClaw devices approve output before forced exit (#12064)", () => {
     [true, JSON.stringify({ requestId: "request-1", approved: true }) + "\n"],
   ])("exits after direct gateway approval with a leftover handle", (json, expected) => {
     expect(runPatchedApprove(json, false)).toBe(expected);
+  });
+
+  it("exits within the bound when a drain callback does not run", () => {
+    expect(runPatchedApprove(false, false, true)).toBe("Approved ok (request-1)\n");
   });
 });

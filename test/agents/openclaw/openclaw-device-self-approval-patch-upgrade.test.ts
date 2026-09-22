@@ -124,7 +124,7 @@ describe("OpenClaw device self-approval patch upgrades (#4462)", () => {
     }
   });
 
-  it("adds process exit after devices approve on an earlier patched runtime (#12064)", () => {
+  it("adds and bounds process exit on earlier approval runtimes (#12064)", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-device-approve-exit-upgrade-"));
     const dist = path.join(tmp, "dist");
     fs.mkdirSync(dist);
@@ -135,9 +135,20 @@ describe("OpenClaw device self-approval patch upgrades (#4462)", () => {
       const current = [
         "\tconst exitAfterDevicesApproveOutput = () => {",
         "\t\tlet remaining = 2;",
+        "\t\tlet exited = false;",
+        "\t\tconst exit = () => {",
+        "\t\t\tif (exited) return;",
+        "\t\t\texited = true;",
+        "\t\t\tdefaultRuntime.exit(0);",
+        "\t\t};",
+        "\t\tconst timeout = setTimeout(exit, 1000);",
+        "\t\ttimeout.unref?.();",
         "\t\tconst done = () => {",
         "\t\t\tremaining -= 1;",
-        "\t\t\tif (remaining === 0) defaultRuntime.exit(0);",
+        "\t\t\tif (remaining === 0) {",
+        "\t\t\t\tclearTimeout(timeout);",
+        "\t\t\t\texit();",
+        "\t\t\t}",
         "\t\t};",
         "\t\tfor (const stream of [process.stdout, process.stderr]) {",
         "\t\t\ttry {",
@@ -179,6 +190,37 @@ describe("OpenClaw device self-approval patch upgrades (#4462)", () => {
       expect(upgraded).toContain(current);
       expect(upgraded).not.toContain(legacy);
       expect(runPatch(dist).status).toBe(0);
+
+      const unbounded = current.replace(
+        [
+          "\t\tlet remaining = 2;",
+          "\t\tlet exited = false;",
+          "\t\tconst exit = () => {",
+          "\t\t\tif (exited) return;",
+          "\t\t\texited = true;",
+          "\t\t\tdefaultRuntime.exit(0);",
+          "\t\t};",
+          "\t\tconst timeout = setTimeout(exit, 1000);",
+          "\t\ttimeout.unref?.();",
+          "\t\tconst done = () => {",
+          "\t\t\tremaining -= 1;",
+          "\t\t\tif (remaining === 0) {",
+          "\t\t\t\tclearTimeout(timeout);",
+          "\t\t\t\texit();",
+          "\t\t\t}",
+          "\t\t};",
+        ].join("\n"),
+        [
+          "\t\tlet remaining = 2;",
+          "\t\tconst done = () => {",
+          "\t\t\tremaining -= 1;",
+          "\t\t\tif (remaining === 0) defaultRuntime.exit(0);",
+          "\t\t};",
+        ].join("\n"),
+      );
+      fs.writeFileSync(file, upgraded.replace(current, unbounded));
+      expect(runPatch(dist).status).toBe(0);
+      expect(fs.readFileSync(file, "utf8")).toContain(current);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
@@ -193,12 +235,12 @@ describe("OpenClaw device self-approval patch upgrades (#4462)", () => {
       expect(runPatch(dist).status).toBe(0);
       const file = path.join(dist, "devices-cli.runtime-fixture.js");
       const source = fs.readFileSync(file, "utf8");
-      expect(source).toContain("if (remaining === 0) defaultRuntime.exit(0);");
+      expect(source).toContain("const timeout = setTimeout(exit, 1000);");
       fs.writeFileSync(
         file,
         source.replace(
-          "if (remaining === 0) defaultRuntime.exit(0);",
-          "if (remaining === 0) defaultRuntime.exit(1);",
+          "const timeout = setTimeout(exit, 1000);",
+          "const timeout = setTimeout(exit, 2000);",
         ),
       );
 
