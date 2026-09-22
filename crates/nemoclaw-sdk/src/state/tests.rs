@@ -336,3 +336,21 @@ fn legacy_pending_operations_keep_the_full_intent_guard_until_success() {
     record.finish_apply();
     assert!(record.validate_pending_intent(&revised).is_ok());
 }
+
+#[test]
+fn obsolete_plan_hash_is_read_but_not_retained_as_recovery_authority() {
+    let document =
+        Document::parse(include_bytes!("../../tests/fixtures/config/local.yaml").as_slice())
+            .unwrap();
+    let mut value = serde_json::to_value(Record::new(document).unwrap()).unwrap();
+    value["planDigest"] = serde_json::json!("old-failed-apply-plan");
+    let record: Record = serde_json::from_value(value).unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let store = Store::open(directory.path()).unwrap();
+    store.save(&record).unwrap();
+    let saved: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(directory.path().join("intent.json")).unwrap())
+            .unwrap();
+    assert!(saved.get("planDigest").is_none());
+    assert!(store.load().unwrap().is_some());
+}

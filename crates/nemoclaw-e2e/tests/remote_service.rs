@@ -199,6 +199,9 @@ async fn lifecycle(harness: &str, authenticated: bool, kind: &str, partial_destr
         save(root, "control.json", &json!({}));
         // OpenTofu can tear down the recorded subset without creating missing
         // compute or deleting retained data after a failed runtime operation.
+        // Recovery uses current bindings and a fresh teardown plan even when
+        // the failed operation's plan artifact is no longer available.
+        fs::remove_file(root.join("deployment/runtime/apply.plan")).unwrap();
         run(root, &bundle, "destroy", "", true).await;
         let destroyed = read(root, "engine.json");
         assert_eq!(destroyed["volume"], partial["volume"]);

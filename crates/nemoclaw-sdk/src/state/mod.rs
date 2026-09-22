@@ -28,8 +28,10 @@ pub(crate) struct Record {
     pub pending_creations: Option<BTreeMap<String, crate::backend::Row>>,
     pub succeeded: bool,
     pub digest: String,
-    #[serde(skip_serializing_if = "String::is_empty")]
-    pub plan_digest: String,
+    // Accept older version-7 records, but saved plan artifacts no longer
+    // authorize recovery. Current bindings and fresh plans determine it.
+    #[serde(rename = "planDigest", skip_serializing)]
+    pub _legacy_plan_digest: String,
     #[serde(skip_serializing_if = "is_false")]
     pub destroying: bool,
     #[serde(skip_serializing_if = "is_false")]

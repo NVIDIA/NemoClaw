@@ -179,7 +179,6 @@ impl Deployment {
         record.succeeded = false;
         record.destroyed = false;
         record.destroy_runtime = false;
-        record.plan_digest = crate::bundle::hash_file(&stage.directory.join("apply.plan"))?;
         store.save(record)?;
         self.tofu(
             bundle,
