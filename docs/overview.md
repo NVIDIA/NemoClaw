@@ -21,64 +21,40 @@ See [migration](migration.md) for earlier workflows and remaining documentation 
 
 ## Understand the Deployment
 
-The SDK owns deployment behavior and retained intent.
-OpenTofu executes the resource graph and keeps resource state; the provider calls the backend operations.
-OpenShell owns sandbox isolation and inference routing.
-Fabric hosts the native agent process inside the sandbox.
+A deployment describes a gateway, inference providers, and one to 32 named sandboxes.
+Each sandbox hosts one agent through Fabric and selects a harness such as OpenClaw or Pi.
+Sandboxes can use different harnesses and share inference definitions.
+
+OpenShell isolates sandboxes and routes their inference requests.
+The SDK coordinates deployment operations through OpenTofu; agents and managed services keep running after the CLI exits.
 
 ```mermaid
 flowchart TD
-    YAML[Desired-state YAML] --> CLI[NemoClaw CLI]
-    CLI --> SDK[Rust SDK]
-    App[Your application] --> SDK
-    SDK --> State[Retained deployment intent]
-    SDK --> Tofu[Bundled OpenTofu and provider]
-    Tofu --> Gateway[OpenShell gateway]
-    Tofu --> Service[Managed inference service]
-    Gateway --> Sandbox[Sandbox running Fabric and the native agent]
-    Sandbox --> Route[Native inference endpoints through OpenShell]
-    Route --> Service
-    Route --> External[External inference endpoint]
+    Config[Desired-state YAML] --> Client[CLI or Rust SDK]
+    Client --> Gateway[OpenShell gateway]
+    Client --> Managed[Managed inference]
+    Gateway --> Sandbox[Sandboxes running Fabric and agents]
+    Sandbox -->|OpenShell inference routing| Managed
+    Sandbox -->|OpenShell inference routing| External[External inference]
 ```
 
-A deployment can select multiple inference providers, including independently managed vLLM services.
-See [service limits](inference.md#combine-local-and-hosted-providers) for Ollama and shared-host constraints.
-The gateway may also be managed or external.
-The diagram separates deployment operations from the agent's requests: the CLI can exit while the agent and managed services keep running.
-
-Each document contains one to 32 named sandboxes, each selecting exactly one harness configuration.
-Sandboxes can use different harnesses and share inference definitions.
-Every sandbox declares one `agent` and hosts one Fabric runtime; OpenClaw also has one native gateway per sandbox.
-Deploy additional agents in separate sandboxes and share inference definitions as needed.
-Use the [agent guide](agents.md) for accepted harnesses and the [inference guide](inference.md) for their API restrictions.
-
-Managed resources follow NemoClaw's lifecycle and retention rules.
-External resources remain under their operator's control, although a deployment can still send requests to them.
-Read [resource ownership](usage.md#resource-ownership) before selecting a management mode.
-
-## Choose Your Next Task
-
-| Goal | Start here |
-|---|---|
-| Deploy an OpenClaw agent using an existing gateway and inference endpoint | [First deployment](get-started.md) |
-| Choose an API, endpoint, or managed model service | [Inference](inference.md), [models](models.md) |
-| Select a harness or open its native interface | [Agents](agents.md), [interfaces](interfaces.md) |
-| Change a deployment or recover a failed operation | [Use desired state](usage.md#updates-and-recovery), [troubleshooting](troubleshooting.md) |
-| Preserve data or evaluate a move from the earlier product | [State](state.md), [migration](migration.md) |
-| Embed deployment operations in a Rust program | [SDK](sdk.md) |
+Gateway and inference services can be managed or external independently.
+Managed resources follow NemoClaw's [ownership and retention rules](usage.md#resource-ownership); external servers remain under their operators' control.
+See [agents](agents.md) for harness choices, [inference](inference.md) for API and service constraints, and [architecture](design/architecture.md) for implementation boundaries.
 
 ## Plan for Change and Recovery
 
-Use the same state directory for every operation on a deployment.
-Plan observes resources without changing runtime resources; apply computes and checks its own plan.
-Unsupported replacement, changed ownership, and incomplete observations stop operations instead of authorizing recreation.
+Keep the same state directory and matching bundle for every operation on a deployment.
+Plan observes without mutating runtime resources; apply computes and checks its own plan.
+Unsupported replacement, changed ownership, and incomplete observations stop operations.
 
-Export captures configuration, not a backup of native agent data.
-Read [state](state.md), [recovery](usage.md#updates-and-recovery), and [destroy behavior](usage.md#destroy) before changing or retiring a deployment.
+Export captures configuration, not native agent data.
+Before changing or retiring a deployment, read [recovery](usage.md#updates-and-recovery) and [destroy behavior](usage.md#destroy): sandbox files and conversation history are deleted on destroy.
+Use the [documentation index](README.md) to find other tasks.
 
 ## Tested Configurations and Limits
 
-The [configuration validator](../crates/nemoclaw-sdk/src/config/validation.rs), [SDK lifecycle](../crates/nemoclaw-sdk/src/deployment/mod.rs), and [CLI parser](../crates/nemoclaw-cli/src/args.rs) implement these boundaries.
 The [accepted scope](design/scope.md) defines the product contract; [validation records](validation/README.md) identify tested revisions and environments.
+Parser acceptance or a reachable endpoint does not establish working inference.
 
 Enterprise deployment qualification and service-level support commitments: **TBD**.

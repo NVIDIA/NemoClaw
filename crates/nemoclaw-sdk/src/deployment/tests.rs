@@ -225,10 +225,13 @@ async fn schema_commands_do_not_require_inference_credentials() {
     .unwrap();
     fs::set_permissions(bundle.tofu(), fs::Permissions::from_mode(0o700)).unwrap();
     let state_directory = tempfile::tempdir().unwrap();
-    let store = Store::open(state_directory.path()).unwrap();
+    // macOS temporary paths may traverse /var -> /private/var; the shell's PWD
+    // uses the physical directory when checking the fixture's environment.
+    let state_path = state_directory.path().canonicalize().unwrap();
+    let store = Store::open(&state_path).unwrap();
     let secrets = Arc::new(Unavailable::default());
-    let deployment = Deployment::new(state_directory.path(), bundle_directory.path())
-        .with_secrets(secrets.clone());
+    let deployment =
+        Deployment::new(&state_path, bundle_directory.path()).with_secrets(secrets.clone());
     let mut document =
         Document::parse(include_str!("../../tests/fixtures/config/local.yaml").as_bytes()).unwrap();
     document.spec.inference_providers[0].credential = Some(Credential {
