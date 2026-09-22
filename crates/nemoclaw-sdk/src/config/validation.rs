@@ -120,14 +120,19 @@ impl Document {
             let harness = self.sandbox_harness(sandbox)?;
             sandbox.network.validate_runtime_access(harness.kind)?;
             let web_search = self.web_search(sandbox)?;
-            sandbox.policy_proto(web_search.is_some(), harness.observability.as_ref())?;
+            sandbox.policy_proto(
+                web_search.as_ref().map(|search| search.provider),
+                harness.observability.as_ref(),
+            )?;
             if let Some(search) = web_search {
                 require(
                     selected_providers.iter().all(|provider| {
                         provider.name != "brave-search"
                             && !provider.name.starts_with("brave-search-")
+                            && provider.name != "tavily-search"
+                            && !provider.name.starts_with("tavily-search-")
                     }),
-                    "brave-search names are reserved for web search",
+                    "brave-search and tavily-search names are reserved for web search",
                 )?;
                 search.validate(
                     harness.kind,

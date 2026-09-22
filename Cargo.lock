@@ -1787,6 +1787,7 @@ dependencies = [
  "nemoclaw-authoring",
  "nemoclaw-sdk",
  "nix 0.29.0",
+ "rustix",
  "serde-saphyr",
  "serde_json",
  "tempfile",

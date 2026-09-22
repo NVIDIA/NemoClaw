@@ -5,6 +5,8 @@ use super::*;
 use crate::{CancellationToken, Error};
 use std::time::Duration;
 
+const AGENT_READINESS_TIMEOUT: Duration = Duration::from_secs(300);
+
 fn startup_phase(status: proto::SandboxStatus) -> Result<i32, Error> {
     if let Ok(
         phase @ (proto::SandboxPhase::Error
@@ -45,7 +47,7 @@ async fn readiness_deadline(
 ) -> Result<(), Error> {
     tokio::select! {
         () = cancel.cancelled() => Err(Error::Cancelled),
-        result = tokio::time::timeout(Duration::from_secs(120), wait) =>
+        result = tokio::time::timeout(AGENT_READINESS_TIMEOUT, wait) =>
             result.map_err(|_| Error::Conflict("agent readiness timed out; resources retained"))?,
     }
 }
@@ -601,10 +603,10 @@ mod tests {
             .await
             .unwrap_err();
         assert!(error.to_string().contains("readiness timed out"));
-        assert_eq!(started.elapsed(), Duration::from_secs(120));
+        assert_eq!(started.elapsed(), AGENT_READINESS_TIMEOUT);
         readiness_deadline(
             async {
-                tokio::time::sleep(Duration::from_secs(119)).await;
+                tokio::time::sleep(AGENT_READINESS_TIMEOUT - Duration::from_secs(1)).await;
                 Ok(())
             },
             &cancel,

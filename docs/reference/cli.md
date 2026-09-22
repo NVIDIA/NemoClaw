@@ -37,6 +37,9 @@ The ordinary SDK apply computes its own checked plan after confirmation and writ
 If credential fulfillment, plan, or apply fails, retain the saved YAML and state directory for standalone diagnosis and recovery.
 
 `--generate-only` reports required credential reference names on stderr and exits without reading their values, discovering a runtime bundle, creating deployment state, planning, or applying.
+It changes the completion boundary, not the input mode.
+Interactive onboarding requires a terminal on stdin; a pipe or redirected file fails immediately with a `--non-interactive` hint.
+For scripts, run `nemoclaw onboard --generate-only --non-interactive` and supply any desired answer flags.
 This mode is independently usable even when no credential value or runtime service is available.
 Generated YAML is ordinary V1 configuration: later `plan FILE` and `apply FILE` use exactly the same parsing, credential, and SDK lifecycle implementation as equivalent hand-authored YAML.
 
@@ -55,7 +58,7 @@ Credential values are not written to desired state, output, diagnostics, or depl
 | `--state-dir DIR` | All commands | Deployment state directory for lifecycle commands; defaults to `.nemoclaw`; accepted but unused by generation-only onboarding |
 | `--bundle DIR` | All commands | Explicit verified bundle for lifecycle commands; defaults to the bundle containing the CLI; accepted but unused by generation-only onboarding |
 | `--verbose`, `-v` | All commands | Report completed-step timings and outcomes on stderr |
-| `--generate-only` | `onboard` | Save YAML and stop before resolving credentials, planning, or applying |
+| `--generate-only` | `onboard` | Save YAML and stop before resolving credentials, planning, or applying; does not imply non-interactive input |
 | `--output FILE`, `-o FILE` | `onboard`, `export` | Write YAML to a file; onboarding defaults to `deployment.yaml` |
 | `--output FORMAT`, `-o FORMAT` | `plan` | Select `text` (default) or `json` for the preview, including `--destroy` |
 | `--non-interactive` | `onboard` | Use direct flags/defaults, require environment credentials in composed mode, and apply without a confirmation prompt |
@@ -83,6 +86,7 @@ Apply and destroy write JSON to stdout.
 Export writes YAML to stdout or the selected output file.
 Onboarding writes YAML only to its selected output file and reports credential references, the composed plan preview, prompts, and errors on stderr.
 It atomically replaces an existing selected file; a failed write does not expose a partial document.
+On Unix, SIGINT or SIGTERM cancels an active terminal prompt and reports `operation interrupted`; any YAML already accepted and saved remains available for standalone recovery.
 Errors go to stderr with a nonzero exit status.
 Help and version output are plain text.
 A supported Fabric health failure writes JSON to stderr with `error: fabric_readiness`, the `health` observation, and `resourcesRetained: true`.

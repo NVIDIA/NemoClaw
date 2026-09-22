@@ -363,3 +363,237 @@ fn deep_agents_search_preserves_explicit_grants_and_rejects_read_only_agents() {
     value["spec"]["sandboxes"][0]["agent"]["tools"] = json!({"allow":["read"]});
     assert!(Document::parse(value.to_string().as_bytes()).is_err());
 }
+
+#[test]
+fn tavily_preserves_openclaw_and_hermes_intent_and_credential_references() {
+    for harness in ["openclaw", "hermes"] {
+        let mut value = input();
+        value["spec"]["sandboxes"][0]["harness"]["kind"] = json!(harness);
+        value["spec"]["sandboxes"][0]["integrations"]["search"]["provider"] = json!("tavily");
+        let doc = Document::parse(value.to_string().as_bytes()).expect("Tavily must parse");
+        assert!(
+            jsonschema::validator_for(&input_schema())
+                .unwrap()
+                .is_valid(&value)
+        );
+        assert_eq!(doc.credential_names(), vec!["SEARCH_KEY"]);
+        assert_eq!(
+            Document::parse(doc.yaml().unwrap().as_bytes()).unwrap(),
+            doc
+        );
+
+        let generations = ["workspace", "provider", "sandbox"]
+            .map(|key| (key.into(), "a".repeat(32)))
+            .into();
+        let rows = targets(&doc, &generations).unwrap();
+        let provider = rows
+            .iter()
+            .find(|row| {
+                row.kind == "provider"
+                    && row
+                        .values
+                        .get("provider_type")
+                        .is_some_and(|kind| kind == "tavily")
+            })
+            .unwrap();
+        assert_eq!(provider.values["endpoint"], "https://api.tavily.com");
+        assert_eq!(provider.values["credential_env"], "SEARCH_KEY");
+        assert!(provider.values["name"].starts_with("tavily-search-"));
+        let profile = rows
+            .iter()
+            .find(|row| row.address == "nemoclaw_provider_profile.web_search_tavily")
+            .unwrap();
+        assert_eq!(profile.values["name"], "nemoclaw-tavily");
+        let sandbox = rows.iter().find(|row| row.kind == "sandbox").unwrap();
+        let settings: Value = serde_json::from_str(&sandbox.values["inference_json"]).unwrap();
+        assert_eq!(settings["webSearch"]["provider"], "tavily");
+        assert_eq!(
+            settings["webSearch"]["credential"],
+            json!({"env":"SEARCH_KEY"})
+        );
+        let policy: Value = serde_json::from_str(&sandbox.values["policy_json"]).unwrap();
+        assert!(policy["network_policies"]["nemoclaw-brave"].is_null());
+        assert_eq!(
+            policy["network_policies"]["nemoclaw-tavily"]["binaries"],
+            json!([{"path":"/usr/local/bin/node"},{"path":"/usr/local/bin/python3.13"}])
+        );
+        let endpoint = &policy["network_policies"]["nemoclaw-tavily"]["endpoints"][0];
+        assert_eq!(endpoint["host"], "api.tavily.com");
+        assert_ne!(endpoint["request_body_credential_rewrite"], true);
+        assert_eq!(endpoint["tls"], "terminate");
+        assert_eq!(endpoint["enforcement"], "enforce");
+        assert_eq!(
+            endpoint["rules"],
+            json!([
+                {"allow":{"method":"POST","path":"/search"}},
+                {"allow":{"method":"POST","path":"/extract"}}
+            ])
+        );
+        let graph = compile(&doc, &generations, "0.1.0").unwrap();
+        assert_eq!(
+            graph["resource"]["nemoclaw_provider"][provider.address.split_once('.').unwrap().1]["depends_on"],
+            json!([
+                "nemoclaw_provider_profile.web_search_tavily",
+                "data.nemoclaw_gateway_capabilities.apply"
+            ])
+        );
+    }
+}
+
+#[test]
+fn unused_tavily_definition_does_not_add_credentials_resources_or_agent_grants() {
+    let mut value = input();
+    let baseline = Document::parse(value.to_string().as_bytes()).unwrap();
+    value["spec"]["integrations"] = json!({"unused": {
+        "kind":"webSearch", "provider":"tavily", "credential":{"env":"UNUSED_KEY"}
+    }});
+    let document = Document::parse(value.to_string().as_bytes()).unwrap();
+    let generations = ["workspace", "provider", "sandbox"]
+        .map(|key| (key.into(), "a".repeat(32)))
+        .into();
+    assert_eq!(
+        targets(&document, &generations).unwrap(),
+        targets(&baseline, &generations).unwrap()
+    );
+    assert_eq!(document.credential_names(), baseline.credential_names());
+}
+
+#[test]
+fn tavily_example_shares_one_registration_between_openclaw_and_hermes() {
+    let document =
+        Document::parse(include_bytes!("../../../examples/tavily-web-search.yaml").as_slice())
+            .unwrap();
+    let normalized = serde_json::to_value(&document).unwrap();
+    assert_eq!(
+        normalized["spec"]["integrations"]["search"]["provider"],
+        "tavily"
+    );
+    assert_eq!(document.credential_names(), ["TAVILY_API_KEY"]);
+    assert_eq!(
+        Document::parse(document.yaml().unwrap().as_bytes()).unwrap(),
+        document
+    );
+    let generations = ["workspace", "provider", "sandbox"]
+        .map(|key| (key.into(), "a".repeat(32)))
+        .into();
+    let rows = targets(&document, &generations).unwrap();
+    assert_eq!(
+        rows.iter()
+            .filter(|row| row
+                .values
+                .get("provider_type")
+                .is_some_and(|kind| kind == "tavily"))
+            .count(),
+        1
+    );
+    for row in rows.iter().filter(|row| row.kind == "sandbox") {
+        let settings: Value = serde_json::from_str(&row.values["inference_json"]).unwrap();
+        assert_eq!(settings["webSearch"]["provider"], "tavily");
+        assert_eq!(
+            settings["webSearch"]["agentRefs"],
+            json!([row.values["agent_name"]])
+        );
+    }
+}
+
+#[test]
+fn different_search_providers_keep_distinct_bindings_for_the_same_credential_reference() {
+    let mut value = input();
+    let generations = ["workspace", "provider", "sandbox"]
+        .map(|key| (key.into(), "a".repeat(32)))
+        .into();
+    let existing = targets(
+        &Document::parse(value.to_string().as_bytes()).unwrap(),
+        &generations,
+    )
+    .unwrap();
+    let mut tavily = value["spec"]["sandboxes"][0].clone();
+    tavily["name"] = json!("tavily-assistant");
+    tavily["integrations"]["search"]["provider"] = json!("tavily");
+    value["spec"]["sandboxes"]
+        .as_array_mut()
+        .unwrap()
+        .push(tavily);
+    let doc = Document::parse(value.to_string().as_bytes()).unwrap();
+    let rows = targets(&doc, &generations).unwrap();
+    for row in existing {
+        assert_eq!(
+            rows.iter()
+                .find(|candidate| candidate.address == row.address),
+            Some(&row)
+        );
+    }
+    let providers: Vec<_> = rows
+        .iter()
+        .filter(|row| {
+            row.kind == "provider"
+                && row
+                    .values
+                    .get("credential_env")
+                    .is_some_and(|name| name == "SEARCH_KEY")
+        })
+        .collect();
+    assert_eq!(providers.len(), 2);
+    assert_ne!(providers[0].address, providers[1].address);
+    assert_ne!(providers[0].values["name"], providers[1].values["name"]);
+    assert_eq!(doc.credential_names(), vec!["SEARCH_KEY"]);
+}
+
+#[test]
+fn tavily_rejects_unsupported_harnesses_and_restricted_agents() {
+    for harness in ["deepagents", "pi"] {
+        let mut value = input();
+        value["spec"]["sandboxes"][0]["harness"]["kind"] = json!(harness);
+        value["spec"]["sandboxes"][0]["integrations"]["search"]["provider"] = json!("tavily");
+        assert!(Document::parse(value.to_string().as_bytes()).is_err());
+    }
+    let mut value = input();
+    value["spec"]["sandboxes"][0]["integrations"]["search"]["provider"] = json!("tavily");
+    value["spec"]["sandboxes"][0]["agent"]["tools"] = json!({"allow":["read"]});
+    assert!(Document::parse(value.to_string().as_bytes()).is_err());
+}
+
+#[test]
+fn tavily_rejects_collisions_with_managed_profile_and_provider_names() {
+    for name in ["tavily-search", "tavily-search-custom"] {
+        let mut value = input();
+        value["spec"]["sandboxes"][0]["integrations"]["search"]["provider"] = json!("tavily");
+        value["spec"]["inferenceProviders"][0]["name"] = json!(name);
+        value["spec"]["sandboxes"][0]["agent"]["inference"]["routes"][0]["providerRef"] =
+            json!(name);
+        let error = Document::parse(value.to_string().as_bytes()).unwrap_err();
+        assert!(error.0.contains("reserved for web search"), "{error}");
+    }
+    let mut value = input();
+    value["spec"]["sandboxes"][0]["integrations"]["search"]["provider"] = json!("tavily");
+    let mut policy =
+        openshell_policy::sandbox_policy_to_json_value(&nemoclaw_sdk::openshell::policy()).unwrap();
+    policy["network_policies"] = json!({"custom-search": {
+            "name":"custom-search",
+            "endpoints":[{"host":"search.example.com","port":443}],
+            "binaries":[{"path":"/usr/local/bin/node"}]
+    }});
+    value["spec"]["sandboxes"][0]["network"] = json!({"policy": {"explicit": policy}});
+    Document::parse(value.to_string().as_bytes()).expect("non-colliding policy must be valid");
+    let rules = value["spec"]["sandboxes"][0]["network"]["policy"]["explicit"]["network_policies"]
+        .as_object_mut()
+        .unwrap();
+    let mut rule = rules.remove("custom-search").unwrap();
+    rule["name"] = json!("nemoclaw-tavily");
+    rules.insert("nemoclaw-tavily".into(), rule);
+    let error = Document::parse(value.to_string().as_bytes()).unwrap_err();
+    assert!(error.0.contains("reserved for web search"), "{error}");
+}
+
+#[test]
+fn attaching_brave_and_tavily_to_one_agent_does_not_discard_either_intent() {
+    let mut value = input();
+    let mut other = value["spec"]["sandboxes"][0]["integrations"]["search"].clone();
+    other["provider"] = json!("tavily");
+    value["spec"]["sandboxes"][0]["integrations"]["other"] = other;
+    value["spec"]["sandboxes"][0]["agent"]["integrationRefs"] = json!(["search", "other"]);
+    assert_eq!(
+        Document::parse(value.to_string().as_bytes()).unwrap_err().0,
+        "a sandbox supports only one attached web search definition"
+    );
+}

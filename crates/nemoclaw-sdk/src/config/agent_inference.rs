@@ -265,7 +265,10 @@ impl SandboxRuntimeSettings {
         if !self.agents.is_empty()
             && (!matches!(
                 harness,
-                HarnessKind::OpenClaw | HarnessKind::Pi | HarnessKind::DeepAgents
+                HarnessKind::OpenClaw
+                    | HarnessKind::Pi
+                    | HarnessKind::DeepAgents
+                    | HarnessKind::Hermes
             ) || self.agents.len() != 1
                 || self
                     .agents
@@ -419,6 +422,47 @@ impl Document {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn compiled_hermes_tavily_grants_validate_after_runtime_round_trip() {
+        for search_enabled in [false, true] {
+            let mut input: serde_json::Value =
+                serde_saphyr::from_str(include_str!("../../../../examples/hermes-auth.yaml"))
+                    .unwrap();
+            input["spec"]["sandboxes"][0]["harness"]["interfaces"] =
+                serde_json::json!({"dashboard": {"enabled": false}});
+            if search_enabled {
+                input["spec"]["integrations"] = serde_json::json!({"search": {
+                    "kind": "webSearch", "provider": "tavily",
+                    "credential": {"env": "TAVILY_API_KEY"}
+                }});
+                input["spec"]["sandboxes"][0]["agent"]["integrationRefs"] =
+                    serde_json::json!(["search"]);
+            }
+            let document = Document::parse(input.to_string().as_bytes()).unwrap();
+            let generations = ["workspace", "provider", "sandbox"]
+                .map(|kind| (kind.into(), "a".repeat(32)))
+                .into();
+            let targets = crate::compile::targets(&document, &generations).unwrap();
+            let sandbox = targets
+                .iter()
+                .find(|target| target.kind == "sandbox")
+                .unwrap();
+            let settings: SandboxRuntimeSettings =
+                serde_json::from_str(&sandbox.values["inference_json"]).unwrap();
+            assert!(settings.auth.is_some());
+            assert_eq!(settings.agents.len(), usize::from(search_enabled));
+            if search_enabled {
+                assert_eq!(settings.agents[0].name, "main");
+                let search = settings.web_search.as_ref().unwrap();
+                assert_eq!(search.provider, SearchProvider::Tavily);
+                assert_eq!(search.agent_refs, ["main"]);
+            } else {
+                assert!(settings.web_search.is_none());
+            }
+            settings.validate(HarnessKind::Hermes).unwrap();
+        }
+    }
 
     #[test]
     fn runtime_resolution_uses_the_supplied_sandbox_scope_not_its_memory_address() {

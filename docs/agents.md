@@ -141,8 +141,8 @@ The adapters write these settings when first creating native configuration:
 |---|---|
 | OpenClaw | Nested native sandbox mode `off`; execution host `gateway` and mode `full`, inside the OpenShell sandbox; coding tool profile |
 | OpenClaw | Memory search, cron, update checks, and automatic updates disabled |
-| Hermes local adapter | Local terminal backend in `/sandbox/workspace`, manual approvals, and `agent.max_turns: 8`; these settings also apply with Relay and explicit interfaces |
-| Hermes Relay without explicit interfaces | Upstream Fabric defaults `HERMES_YOLO_MODE=1` and `HERMES_ACCEPT_HOOKS=1` when unset; it does not install the local adapter's manual-approval configuration |
+| Hermes local adapter | Local terminal backend in `/sandbox/workspace`, manual approvals, and `agent.max_turns: 8`; these settings also apply with Relay and explicit interfaces or Tavily search |
+| Hermes Relay without explicit interfaces or Tavily search | Upstream Fabric defaults `HERMES_YOLO_MODE=1` and `HERMES_ACCEPT_HOOKS=1` when unset; it does not install the local adapter's manual-approval configuration |
 
 The nested OpenClaw sandbox setting does not disable the outer OpenShell sandbox.
 These defaults do not guarantee that arbitrary native tools are harmless or supply missing integration prerequisites.
@@ -271,7 +271,8 @@ observability:
 ```
 
 Fabric enables Hermes' in-process NeMo Relay integration.
-With explicit `interfaces`, it keeps the local API/dashboard adapter. Without `interfaces`, it selects the upstream Fabric adapter.
+With explicit `interfaces` or attached Tavily search, it keeps the local API/dashboard adapter.
+Otherwise, it selects the upstream Fabric adapter.
 Relay writes ATOF events and an ATIF trajectory under `/sandbox/artifacts/relay`; it does not run as a sidecar or add network egress.
 Full payload capture is disabled.
 With native interfaces, ATOF events appear during conversation turns; ATIF export follows native session finalization or graceful process shutdown. An open conversation may not yet have a trajectory file.
@@ -280,7 +281,7 @@ To trace the native API and dashboard, combine the declaration above with `inter
 The native processes inherit Fabric's generated Relay configuration; API and dashboard conversations remain separate.
 The local adapter keeps its manual-approval settings.
 Relay also cannot be combined with OpenClaw's `otlp` setting; `enabled: false` is rejected, so omit the declaration to select the default mode.
-With `interfaces` omitted, selecting the upstream adapter changes native approval behavior: the [pinned upstream adapter](https://github.com/NVIDIA/NeMo-Fabric/blob/51a28c1aefec56abd877070b6973d0a32a1e3003/adapters/python/hermes/src/nemo_fabric_adapters/hermes/adapter.py) defaults `HERMES_YOLO_MODE` and `HERMES_ACCEPT_HOOKS` to `1` when unset.
+With both `interfaces` and Tavily search omitted, selecting the upstream adapter changes native approval behavior: the [pinned upstream adapter](https://github.com/NVIDIA/NeMo-Fabric/blob/51a28c1aefec56abd877070b6973d0a32a1e3003/adapters/python/hermes/src/nemo_fabric_adapters/hermes/adapter.py) defaults `HERMES_YOLO_MODE` and `HERMES_ACCEPT_HOOKS` to `1` when unset.
 Do not rely on the local adapter's manual approvals when evaluating the upstream adapter.
 Its native home is under the Fabric artifact root at `.fabric/hermes/runtimes/<runtime-id>`, rather than the local API/dashboard homes.
 
@@ -301,7 +302,8 @@ Full payload capture being disabled does not establish that every trace is free 
 Trace files live in the sandbox and are deleted with it; there is no managed collector or independent archival lifecycle.
 Apply does not invoke Hermes or produce conversation traces.
 An explicitly requested upstream Relay agent probe uses a normal prompt and updates its in-memory conversation history; that probe is not isolated from the conversation. The local API adapter retains its isolated probe behavior when Relay is enabled.
-For Relay with explicit `interfaces`, use the normal local API/dashboard/token procedure. General interactive access to the upstream adapter remains **TBD**.
+For Relay with explicit `interfaces` or Tavily search, use the normal local API/dashboard/token procedure.
+General interactive access to the upstream adapter remains **TBD**.
 On failure, preserve deployment state and inspect the original error; do not replay an uncertain invocation merely to produce traces.
 
 The [Fabric configuration](../image/fabric/fabric.py), [observability tests](../crates/nemoclaw-sdk/tests/observability.rs), and [offline adapter experiment](../test/fabric_adapters.py) define this contract.
@@ -321,7 +323,7 @@ All three locations use the same [integration type](reference/configuration.md#i
 
 Enclosing definitions require an explicit reference; an agent's inline definitions attach directly to that agent.
 The [shared authoring rules](configuration-references.md#the-authoring-rule) define visibility, name collisions, and unused definitions.
-Only `kind: webSearch` with Brave is currently supported; VoiceClaw and other kinds are rejected.
+Only `kind: webSearch` with Brave or Tavily is currently supported; VoiceClaw and other kinds are rejected.
 
 ## Brave Web Search
 
@@ -363,7 +365,7 @@ agent:
 ```
 
 Inline definitions belong to that agent; use an enclosing definition and references to share one integration.
-The native gateway currently supports one attached Brave search definition per sandbox.
+Each sandbox supports one attached search definition, selecting either Brave or Tavily.
 Agents in different sandboxes may reference the same definition; attaching distinct search definitions to one agent is rejected, even when their settings are equal.
 Unused enclosing definitions create no provider, policy grant, or secret requirement.
 
@@ -401,9 +403,45 @@ The former `integrations.webSearch.agentRefs` input is rejected.
 Move its provider and credential fields into a named `kind: webSearch` definition and put `integrationRefs` on the selected agents.
 Retained intent with the old shape is not migrated automatically; use its matching previous bundle for export or teardown.
 
+## Tavily Web Search
+
+Select Tavily for an unrestricted OpenClaw or Hermes agent using the same [definition and reference scopes](#define-and-attach-integrations):
+
+```yaml
+agent:
+  name: researcher
+  integrations:
+    search:
+      kind: webSearch
+      provider: tavily
+      credential:
+        env: TAVILY_API_KEY
+```
+
+The [complete Tavily example](../examples/tavily-web-search.yaml) shares one definition between an OpenClaw sandbox and a Hermes sandbox.
+Replace its deployment UID, both image digests, endpoints, and model before applying.
+Build the matching [agent images](build.md#build-agent-images) from this revision; the example's zero digests are placeholders.
+OpenClaw uses the checksum-pinned official Tavily plugin.
+Hermes uses a bundled NemoClaw provider through its native web-provider interface, with Tavily explicitly selected for search and extraction and keyless fallback disabled.
+With Relay enabled, Hermes retains the local API/dashboard adapter so the search configuration is applied.
+Deep Agents and other harnesses do not accept Tavily, and one agent cannot attach both Brave and Tavily.
+
+Set the referenced environment variable on the host running `nemoclaw apply`.
+The host reference name may differ from `TAVILY_API_KEY`; OpenShell supplies the sandbox placeholder under that canonical name.
+Follow [credential storage and retirement](security.md#credentials-and-authentication) when replacing or revoking the key.
+The managed `nemoclaw-tavily` profile permits the native Node and Python 3.13 executables to POST `/search` and `/extract` at `api.tavily.com:443` with TLS termination and bearer-header credential injection.
+The adapters use bearer authentication without credentials in the request body.
+The rule name and inference provider names `tavily-search` and `tavily-search-*` are reserved when search is attached.
+Unused definitions create no Tavily resources, credentials, or grants.
+Export preserves the selected provider, definition scope, and credential reference.
+
+The [SDK tests](../crates/nemoclaw-sdk/tests/web_search.rs) cover intent, grants, profile selection, and reference preservation.
+The [OpenClaw fixture](../image/fabric/test_web_search.mts) exercises its pinned plugin; the [Hermes tests](../image/fabric/test_hermes_tavily.py) cover request mapping and native provider discovery.
+Live Tavily/OpenShell qualification is **TBD**; these fixtures do not establish key validity, account quota, or a real agent's search result.
+
 ## Hermes Native Server
 
-With Relay tracing omitted or `interfaces` explicitly declared, Fabric's local Hermes adapter owns one authenticated native HTTP API server per sandbox.
+With Relay tracing omitted, `interfaces` explicitly declared, or Tavily search attached, Fabric's local Hermes adapter owns one authenticated native HTTP API server per sandbox.
 This section's API, token, native-file, and probe-isolation behavior applies to that default adapter.
 It invokes the native Responses endpoint and chains completed turns within the Fabric runtime.
 A runtime restart starts a new Fabric conversation; native persisted history remains in `/sandbox/.hermes`.
@@ -538,7 +576,7 @@ The test creates and removes an owned sandbox against an existing inference serv
 
 ## Additional Agent Integrations
 
-The `integrations` field currently supports [Brave web search](#brave-web-search).
+The `integrations` field currently supports [Brave](#brave-web-search) and [Tavily web search](#tavily-web-search).
 [OpenClaw tracing](#openclaw-tracing) and experimental [Hermes Relay tracing](#hermes-relay-tracing) use the separate `observability` field.
 Native agent capabilities do not by themselves establish a complete NemoClaw deployment procedure.
 

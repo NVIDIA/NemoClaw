@@ -165,6 +165,12 @@ pub(super) fn constrain(root: &mut Value, normalized: bool) {
         &json!({"pattern": c::IMAGE}),
         normalized,
     );
+    defs["Image"]["properties"]["ref"]
+        .as_object_mut()
+        .unwrap()
+        .remove("default");
+    defs["Image"]["properties"]["ref"]["x-nemoclaw-default-rule"] =
+        json!("Omitted or empty selects the SDK pin for the selected harness.");
     let driver_values = defs["Runtime"]["properties"]["provider"]
         .as_object_mut()
         .unwrap()
@@ -409,7 +415,7 @@ pub(super) fn constrain(root: &mut Value, normalized: bool) {
         "Explicit sandbox policies are also checked by the pinned OpenShell policy parser and validator, including protocol-specific rule semantics, process identities, filesystem paths, and destination address restrictions.",
         "Explicit filesystem grants must permit reads of the selected harness runtime directories; parent and read-write grants count. This parser check does not inspect images, resolve symlinks, or establish runtime permissions.",
         "The schema requires an explicit default for multiple model choices. Rust checks unique route names, that the default names a route, and that the resolved harness supports the selected model count, tuning, and tools; omitted disclosure means progressive.",
-        "The parser resolves integrationRefs only from enclosing deployment or sandbox definitions, rejects name shadowing and incompatible agent grants, and permits at most one attached Brave search definition per sandbox. Agent-inline definitions attach directly; unused enclosing definitions grant no access.",
+        "The parser resolves integrationRefs only from enclosing deployment or sandbox definitions, rejects name shadowing and incompatible agent grants, and permits at most one attached web search definition per sandbox. Brave supports OpenClaw and Deep Agents; Tavily supports OpenClaw and Hermes. Agent-inline definitions attach directly; unused enclosing definitions grant no access.",
         "The schema requires exactly one sandbox harness or harnessRef and rejects agent-level harness selection. Rust resolves visible harnesses without shadowing. Each sandbox requires one agent and hosts one Fabric runtime using the sandbox-selected implementation. Shared definitions reuse configuration across sandboxes.",
         "The parser permits non-default reasoningEffort values only on the initial default choice. Managed inference services may constrain routes to their declared served model.",
         "Rust resolves inferenceRef from enclosing inferences, preserves declaration scope for nested provider references, and rejects missing names and shadowing. The schema rejects inline/reference ambiguity.",
