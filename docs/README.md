@@ -68,7 +68,7 @@ Use the [validation matrix](validation/README.md) to distinguish tested configur
 
 Start with the architecture page to follow one deployment through the SDK, OpenTofu, and backend APIs.
 Then use the runtime, execution-target, and recipe pages to understand decisions inside that lifecycle.
-Each explanation includes diagrams and links to the commits that established its boundaries; historical findings apply only to their recorded revisions and environments.
+The design decision defines current invariants; historical test results apply only to their recorded revisions and environments.
 
 | Topic | Owner |
 |---|---|
