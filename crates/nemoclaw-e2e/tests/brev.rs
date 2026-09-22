@@ -3,7 +3,7 @@
 use nemoclaw_sdk::{
     CancellationToken, Change, Deployment, OperationResult, Outcome,
     backend::Row,
-    config::Document,
+    config::{ComputeDriver, Document, Gateway, HarnessKind},
     openshell::{EnvironmentSecrets, OpenShell},
 };
 use serde_json::{Value, json};
@@ -180,14 +180,17 @@ async fn bare_brev_hosted_openclaw_lifecycle() {
     let directory = explicit_path("NEMOCLAW_LIVE_BREV_STATE");
     let bundle = explicit_path("NEMOCLAW_TEST_BUNDLE");
     let document = Document::parse(fs::File::open(&config).unwrap()).unwrap();
-    assert_eq!(document.spec.gateway.management, "managed");
-    assert_eq!(document.spec.sandboxes[0].runtime.provider, "docker");
+    assert!(matches!(document.spec.gateway, Gateway::Managed(_)));
+    assert_eq!(
+        document.spec.sandboxes[0].runtime.provider,
+        ComputeDriver::Docker
+    );
     assert_eq!(
         document
             .sandbox_harness(&document.spec.sandboxes[0])
             .unwrap()
             .kind,
-        "openclaw"
+        HarnessKind::OpenClaw
     );
     let providers = document.selected_inference_providers().unwrap();
     assert_eq!(providers.len(), 1);
@@ -262,7 +265,7 @@ async fn bare_brev_hosted_openclaw_lifecycle() {
 
     let client = OpenShell::connect(&document.spec.gateway, Arc::new(EnvironmentSecrets)).unwrap();
     client
-        .verify_gateway(&document.spec.sandboxes[0].runtime.provider)
+        .verify_gateway(document.spec.sandboxes[0].runtime.provider)
         .await
         .unwrap();
     let (before, binding) = bindings(&directory);

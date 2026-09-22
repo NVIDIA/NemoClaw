@@ -106,7 +106,6 @@ fn input_schema_rejects_missing_required_fields_and_structural_nulls() {
         "/spec",
         "/spec/gateway",
         "/spec/gateway/management",
-        "/spec/inferenceProviders",
         "/spec/inferenceProviders/0/name",
         "/spec/sandboxes",
         "/spec/sandboxes/0/name",
@@ -189,7 +188,6 @@ fn schema_and_parser_enforce_choices_bounds_and_conditional_forms() {
     for (file, path, replacement, accepted) in [
         ("local.yaml", "/apiVersion", json!("future"), false),
         ("local.yaml", "/metadata/name", json!("UPPER"), false),
-        ("local.yaml", "/spec/inferenceProviders", json!([]), false),
         (
             "local.yaml",
             "/spec/gateway/management",
@@ -218,24 +216,6 @@ fn schema_and_parser_enforce_choices_bounds_and_conditional_forms() {
             "local.yaml",
             "/spec/sandboxes/0/runtime/provider",
             json!("future"),
-            false,
-        ),
-        (
-            "local.yaml",
-            "/spec/sandboxes/0/harness/kind",
-            json!("claude"),
-            false,
-        ),
-        (
-            "fabric-claude.yaml",
-            "/spec/inferenceProviders/0/provider",
-            json!("openai"),
-            false,
-        ),
-        (
-            "fabric-pi.yaml",
-            "/spec/sandboxes/0/harness/kind",
-            json!("codex"),
             false,
         ),
         (
@@ -389,6 +369,22 @@ fn documented_parser_checks_remain_required_after_schema_validation() {
     assert!(schema["x-nemoclaw-parser-checks"].as_array().unwrap().len() >= 4);
     let validator = jsonschema::validator_for(&schema).unwrap();
     for (file, path, replacement) in [
+        ("local.yaml", "/spec/inferenceProviders", json!([])),
+        (
+            "local.yaml",
+            "/spec/sandboxes/0/harness/kind",
+            json!("claude"),
+        ),
+        (
+            "fabric-claude.yaml",
+            "/spec/inferenceProviders/0/provider",
+            json!("openai"),
+        ),
+        (
+            "fabric-pi.yaml",
+            "/spec/sandboxes/0/harness/kind",
+            json!("codex"),
+        ),
         (
             "local.yaml",
             "/spec/sandboxes/0/agent/inference/routes/0/providerRef",
@@ -505,4 +501,81 @@ fn every_sandbox_requires_one_singular_agent_and_rejects_legacy_lists() {
     agrees(&validator, &legacy, false);
     value["spec"]["sandboxes"][0]["agents"] = legacy["spec"]["sandboxes"][0]["agents"].clone();
     agrees(&validator, &value, false);
+}
+
+#[test]
+fn gateway_variants_reject_fields_owned_by_the_other_mode() {
+    let validator = jsonschema::validator_for(&input_schema()).unwrap();
+    for (field, value) in [
+        ("engine", json!("")),
+        ("image", json!("")),
+        ("networkCIDR", json!("")),
+        ("imagePullPolicy", json!("Never")),
+    ] {
+        let mut external = input("local.yaml");
+        external["spec"]["gateway"][field] = value;
+        agrees(&validator, &external, false);
+    }
+    for (field, value) in [
+        ("credential", json!({"env": "TOKEN"})),
+        (
+            "tls",
+            json!({"ca": {"env": "CA"}, "certificate": {"env": "CERT"}, "key": {"env": "KEY"}}),
+        ),
+    ] {
+        let mut managed = input("spark/spark-inline.yaml");
+        managed["spec"]["gateway"][field] = value;
+        agrees(&validator, &managed, false);
+    }
+}
+
+#[test]
+fn managed_gateway_schema_requires_one_compute_driver_including_defaulted_drivers() {
+    let validator = jsonschema::validator_for(&input_schema()).unwrap();
+    let mut value = input("managed-podman.yaml");
+    let mut second = value["spec"]["sandboxes"][0].clone();
+    second["name"] = json!("second");
+    second.as_object_mut().unwrap().remove("runtime");
+    value["spec"]["sandboxes"]
+        .as_array_mut()
+        .unwrap()
+        .push(second);
+    agrees(&validator, &value, false);
+}
+
+#[test]
+fn schema_errors_identify_the_contract_without_echoing_input_values_or_map_keys() {
+    let mut value = input("fabric-openclaw.yaml");
+    value["spec"]["harnesses"] = json!({"SECRET-MAP-KEY": {
+        "kind": "openclaw", "execution": {"timeoutSeconds": 0}
+    }});
+    let error = Document::parse(value.to_string().as_bytes())
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("schema"), "{error}");
+    assert!(!error.contains("SECRET-MAP-KEY"), "{error}");
+}
+
+#[test]
+fn schema_patterns_reject_trailing_newlines_in_identifiers_and_pins() {
+    let validator = jsonschema::validator_for(&input_schema()).unwrap();
+    for (file, path) in [
+        ("local.yaml", "/metadata/name"),
+        ("local.yaml", "/metadata/uid"),
+        ("local.yaml", "/spec/sandboxes/0/agent/name"),
+        (
+            "local.yaml",
+            "/spec/sandboxes/0/agent/inference/routes/0/overrides/model",
+        ),
+        ("spark/vllm.yaml", "/spec/services/qwen/image"),
+        (
+            "managed-ollama.yaml",
+            "/spec/services/ollama-server/model/digest",
+        ),
+    ] {
+        let mut value = input(file);
+        let target = value.pointer_mut(path).unwrap();
+        *target = json!(format!("{}\n", target.as_str().unwrap()));
+        agrees_at(&validator, &value, false, file, path);
+    }
 }

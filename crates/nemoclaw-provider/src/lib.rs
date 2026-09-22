@@ -27,13 +27,14 @@ impl Definition {
             fields: fields.to_vec(),
             mutable: mutable.to_vec(),
             computed_digest: behavior.computed_digest,
-            observed_running: behavior.observed_running || kind == "managed_gateway",
+            observed_running: behavior.observed_running
+                || matches!(kind, "managed_gateway" | "pi_configuration"),
         }
     }
 }
 
 /// Preserve established computed identity; mark immutable configuration changes
-/// for replacement. The resource adapter rejects replacement for OpenShell resources.
+/// for replacement. The resource adapter protects retained and stateful resources.
 pub fn plan_update(
     definition: &Definition,
     prior: &State,
@@ -77,15 +78,31 @@ pub fn plan_update(
             },
         );
     }
+    let authentication_changed = definition.kind == "provider"
+        && authentication_mode(prior) != authentication_mode(&proposed);
     let replacements = definition
         .fields
         .iter()
         .copied()
         .filter(|field| {
-            !definition.mutable.contains(field) && proposed.get(*field) != prior.get(*field)
+            (!definition.mutable.contains(field)
+                || (*field == "credential_env" && authentication_changed))
+                && proposed.get(*field) != prior.get(*field)
         })
         .collect();
     (proposed, replacements)
+}
+
+fn authentication_mode(state: &State) -> Option<bool> {
+    let mut authenticated = false;
+    for field in ["credential_env", "credential_source"] {
+        match state.get(field) {
+            Some(Value::Unknown) => return None,
+            Some(Value::Value(value)) => authenticated |= !value.is_empty(),
+            Some(Value::Null) | None => {}
+        }
+    }
+    Some(authenticated)
 }
 
 mod resource;
@@ -94,4 +111,6 @@ pub use resource::ResourceAdapter;
 mod capacity;
 mod gateway;
 mod provider;
+mod readiness;
+mod sandbox_readiness;
 pub use provider::NemoClawProvider;

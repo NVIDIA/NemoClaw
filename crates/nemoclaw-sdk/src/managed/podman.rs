@@ -3,6 +3,7 @@
 use super::Spec;
 #[cfg(unix)]
 use crate::ObservationError;
+use crate::config::ComputeDriver;
 use crate::{Error, docker::Engine};
 use bollard::models::ContainerInspectResponse;
 #[cfg(any(unix, test))]
@@ -63,7 +64,7 @@ impl Engine {
         name: &str,
     ) -> Result<Option<ContainerInspectResponse>, Error> {
         let container = self.container(name).await?;
-        if spec.compute_driver != "podman" || container.is_none() {
+        if spec.compute_driver != ComputeDriver::Podman || container.is_none() {
             return Ok(container);
         }
         #[cfg(unix)]

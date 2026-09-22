@@ -263,7 +263,12 @@ async fn cpu_runtime_provider_reconciles_compute_and_retains_data() {
         tofu(&bundle, root, &["init", "-input=false"]);
         tofu(&bundle, root, &["apply", "-auto-approve", "-input=false"]);
         let engine = Engine::connect(ENGINE).unwrap();
-        let original_id = crate::state::bindings(root).unwrap()[&address].id.clone();
+        let original_id =
+            crate::state::bindings(root, &bundle.tofu(), &crate::CancellationToken::new())
+                .await
+                .unwrap()[&address]
+                .id
+                .clone();
         assert!(
             !original_id.contains('/'),
             "Docker provider uses raw container IDs"
@@ -294,7 +299,12 @@ async fn cpu_runtime_provider_reconciles_compute_and_retains_data() {
                 .running
         );
         tofu(&bundle, root, &["apply", "-auto-approve", "-input=false"]);
-        let restarted_id = crate::state::bindings(root).unwrap()[&address].id.clone();
+        let restarted_id =
+            crate::state::bindings(root, &bundle.tofu(), &crate::CancellationToken::new())
+                .await
+                .unwrap()[&address]
+                .id
+                .clone();
         let observed = engine
             .observe_service(&spec, &restarted_id)
             .await
@@ -321,7 +331,12 @@ async fn cpu_runtime_provider_reconciles_compute_and_retains_data() {
             json!(port);
         write_graph(root, &graph);
         tofu(&bundle, root, &["apply", "-auto-approve", "-input=false"]);
-        let changed_id = crate::state::bindings(root).unwrap()[&address].id.clone();
+        let changed_id =
+            crate::state::bindings(root, &bundle.tofu(), &crate::CancellationToken::new())
+                .await
+                .unwrap()[&address]
+                .id
+                .clone();
         assert_ne!(changed_id, restarted_id);
         sentinel(&spec.name, false);
         assert_eq!(
@@ -338,7 +353,12 @@ async fn cpu_runtime_provider_reconciles_compute_and_retains_data() {
         docker(&["rm", "--force", &spec.name]);
         docker(&["network", "rm", &spec.network()]);
         tofu(&bundle, root, &["apply", "-auto-approve", "-input=false"]);
-        let recovered_id = crate::state::bindings(root).unwrap()[&address].id.clone();
+        let recovered_id =
+            crate::state::bindings(root, &bundle.tofu(), &crate::CancellationToken::new())
+                .await
+                .unwrap()[&address]
+                .id
+                .clone();
         assert_ne!(recovered_id, changed_id);
         let network_after: Value =
             serde_json::from_slice(&docker(&["network", "inspect", &spec.network()])).unwrap();

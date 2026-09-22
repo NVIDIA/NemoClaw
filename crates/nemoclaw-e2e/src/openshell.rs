@@ -29,6 +29,8 @@ pub struct State {
     pub exec_truncated: bool,
     pub exec_stalled: bool,
     pub exec_calls: Vec<Vec<String>>,
+    pub pi_models: HashMap<String, serde_json::Value>,
+    pub pi_stopped: bool,
     pub effects: usize,
     pub expected_bearer: Option<String>,
     pub conditional_updates: usize,
@@ -37,6 +39,9 @@ pub struct State {
     pub lose_delete: bool,
     pub delete_delay: std::time::Duration,
     pub delete_calls: usize,
+    pub sandbox_create_delay: std::time::Duration,
+    pub active_sandbox_creates: usize,
+    pub peak_sandbox_creates: usize,
     pub fail_read: Option<(&'static str, tonic::Code)>,
 }
 impl State {
@@ -186,7 +191,19 @@ impl tower::Service<http::Request<Body>> for Service {
                     unary(request, state, gateway_info).await
                 }
                 "/openshell.v1.OpenShell/CreateSandbox" => {
-                    unary(request, state, create_sandbox).await
+                    let delay = {
+                        let mut state = state.lock().unwrap();
+                        state.active_sandbox_creates += 1;
+                        state.peak_sandbox_creates =
+                            state.peak_sandbox_creates.max(state.active_sandbox_creates);
+                        state.sandbox_create_delay
+                    };
+                    if !delay.is_zero() {
+                        tokio::time::sleep(delay).await;
+                    }
+                    let response = unary(request, state.clone(), create_sandbox).await;
+                    state.lock().unwrap().active_sandbox_creates -= 1;
+                    response
                 }
                 "/openshell.v1.OpenShell/GetSandbox" => {
                     unary(request, state, |state, request| {
@@ -403,9 +420,30 @@ fn delete_provider(
     state: &mut State,
     q: &p::DeleteProviderRequest,
 ) -> Result<p::DeleteProviderResponse, Status> {
+    let workspace = workspace(&q.workspace_scope)?;
+    if !state
+        .providers
+        .contains_key(&format!("{workspace}/{}", q.name))
+    {
+        return Err(Status::not_found("absent"));
+    }
+    if state.sandboxes.values().any(|sandbox| {
+        sandbox
+            .metadata
+            .as_ref()
+            .is_some_and(|m| m.workspace == workspace)
+            && sandbox
+                .spec
+                .as_ref()
+                .is_some_and(|spec| spec.providers.contains(&q.name))
+    }) {
+        return Err(Status::failed_precondition(
+            "provider is attached to a sandbox",
+        ));
+    }
     let deleted = state
         .providers
-        .remove(&format!("{}/{}", workspace(&q.workspace_scope)?, q.name))
+        .remove(&format!("{workspace}/{}", q.name))
         .is_some();
     if !deleted {
         return Err(Status::not_found("absent"));
@@ -597,6 +635,42 @@ impl tonic::server::ServerStreamingService<p::ExecSandboxRequest> for Exec {
                 )),
             }));
         }
+        if request.command.get(2).is_some_and(|c| c == "configure")
+            && request.command.get(4).is_some_and(|c| c == "pi")
+            && state.exec_exit == 0
+        {
+            state.pi_models.insert(
+                request.sandbox_id.clone(),
+                serde_json::from_str(&request.command[5]).unwrap(),
+            );
+            state.pi_stopped = false;
+        }
+        if request
+            .command
+            .get(2)
+            .is_some_and(|c| c.contains("Read the existing Pi host status"))
+        {
+            let model = state.pi_models.get(&request.sandbox_id);
+            let sandbox = state
+                .sandboxes
+                .values()
+                .find(|s| s.metadata.as_ref().unwrap().id == request.sandbox_id)
+                .unwrap();
+            let agent = &sandbox.metadata.as_ref().unwrap().labels["nemoclaw.nvidia.com/agent"];
+            let config = model.map(|m| {
+                let mut selected = serde_json::json!({"model":m["model"]});
+                if let Some(metadata) = m.get("piModel") { selected["settings"] = serde_json::json!({"model_metadata":metadata}); }
+                serde_json::json!({"metadata":{"name":agent}, "harness":{"adapter_id":"nvidia.fabric.pi"}, "models":{"default":selected}})
+            });
+            let status = serde_json::json!({"ready":model.is_some() && !state.pi_stopped,"runtime_id":"pi-runtime","config":config});
+            events.push(Ok(p::ExecSandboxEvent {
+                payload: Some(p::exec_sandbox_event::Payload::Stdout(
+                    p::ExecSandboxStdout {
+                        data: serde_json::to_vec(&status).unwrap(),
+                    },
+                )),
+            }));
+        }
         let exit = if request
             .command
             .iter()
@@ -671,6 +745,20 @@ fn delete_profile(
     state: &mut State,
     q: p::DeleteProviderProfileRequest,
 ) -> Result<p::DeleteProviderProfileResponse, Status> {
+    if !state
+        .profiles
+        .contains_key(&format!("{}/{}", q.workspace, q.id))
+    {
+        return Err(Status::not_found("absent"));
+    }
+    // The pinned gateway refuses deletion while a registration uses the profile.
+    if state
+        .providers
+        .values()
+        .any(|provider| provider.profile_workspace == q.workspace && provider.r#type == q.id)
+    {
+        return Err(Status::failed_precondition("profile is in use"));
+    }
     let deleted = state
         .profiles
         .remove(&format!("{}/{}", q.workspace, q.id))

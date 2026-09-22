@@ -18,12 +18,15 @@ fn specs() -> Vec<String> {
     let document =
         Document::parse(include_bytes!("../../../../../examples/spark/two-models.yaml").as_slice())
             .unwrap();
+    specs_for(&document)
+}
+fn specs_for(document: &Document) -> Vec<String> {
     let generations = [
         ("managed_gateway".into(), "a".repeat(32)),
         ("inference_service".into(), "b".repeat(32)),
     ]
     .into();
-    compile::runtime_targets(&document, &generations)
+    compile::runtime_targets(document, &generations)
         .unwrap()
         .into_iter()
         .filter(|target| super::super::resource_behavior(&target.kind).runtime_process)
@@ -128,6 +131,7 @@ fn combined_accounting_includes_mixed_installers_and_dedicated_utilization() {
 struct Host {
     reads: Arc<AtomicUsize>,
     mode: &'static str,
+    capacity: Capacity,
 }
 #[async_trait::async_trait]
 impl HostObserver for Host {
@@ -136,8 +140,7 @@ impl HostObserver for Host {
         if self.mode == "unavailable" {
             return Err(ObservationError::Transport.into());
         }
-        let mut host = capacity();
-        host.available = 0;
+        let mut host = self.capacity.clone();
         if self.mode == "incomplete" {
             host.compute_capability = 0;
         }
@@ -173,6 +176,10 @@ async fn capacity_observation_uses_the_selected_engine_and_preserves_failures_wi
             .with_host_observer(Arc::new(Host {
                 reads: reads.clone(),
                 mode,
+                capacity: Capacity {
+                    available: 0,
+                    ..capacity()
+                },
             }))])
         .unwrap();
         let observed =
@@ -202,5 +209,55 @@ async fn capacity_observation_uses_the_selected_engine_and_preserves_failures_wi
             1,
             "invalid inputs reached host"
         );
+    }
+}
+
+#[tokio::test]
+async fn capacity_observation_counts_combined_budgets_and_largest_reserve_once() {
+    let fixture = Fixture::start(|request| {
+        assert_eq!(request.method, "GET");
+        assert_eq!(request.path, "/info");
+        Some((200, json!({"ID":"engine"}).to_string().into_bytes()))
+    })
+    .await;
+    let mut document =
+        Document::parse(include_bytes!("../../../../../examples/spark/two-models.yaml").as_slice())
+            .unwrap();
+    let super::super::ServiceDefinition::Vllm(service) =
+        document.spec.services.get_mut("smart").unwrap()
+    else {
+        panic!("expected vLLM");
+    };
+    service.memory.host_reserve_gib = 48;
+    service.memory.gpu_memory_gib = 52;
+    let mut specs = specs_for(&document);
+    for encoded in &mut specs {
+        let mut spec: Spec = serde_json::from_str(encoded).unwrap();
+        spec.process.as_mut().unwrap().engine = "ssh://operator@gpu-box".into();
+        *encoded = spec.json().unwrap();
+    }
+    let required = (20 + 52 + 48) * GIB;
+    for total in [required, required - 1] {
+        let reads = Arc::new(AtomicUsize::new(0));
+        let connections = Connections::fixed([fixture
+            .engine_for("ssh://operator@gpu-box")
+            .with_host_observer(Arc::new(Host {
+                reads: reads.clone(),
+                mode: "normal",
+                capacity: Capacity {
+                    total,
+                    available: 0,
+                    ..capacity()
+                },
+            }))])
+        .unwrap();
+        let observed = observe_service_capacity(&connections, "ssh://operator@gpu-box", &specs)
+            .await
+            .unwrap();
+        assert_eq!(observed.required_bytes, required);
+        assert_eq!(observed.observed_bytes, total);
+        assert_eq!(observed.compatible(), total == required);
+        assert_eq!(observed.require().is_ok(), total == required);
+        assert_eq!(reads.load(Ordering::SeqCst), 1);
     }
 }

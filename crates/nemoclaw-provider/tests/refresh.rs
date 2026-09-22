@@ -112,28 +112,42 @@ async fn failed_and_partial_observations_retain_protocol_state() {
     partial.remove("id");
     let mut foreign = row();
     foreign.insert("owner".into(), "someone-else".into());
-    for observation in [
-        Err(ObservationError::Transport),
-        Ok(Some(partial)),
-        Ok(Some(foreign)),
+    for kind in [
+        "workspace",
+        "provider_profile",
+        "provider",
+        "sandbox",
+        "pi_configuration",
     ] {
-        let resource = ResourceAdapter::new(
-            Definition::new("workspace", &["name", "owner", "generation"], &[]),
-            Arc::new(Fixture(observation)),
-        );
-        let mut diagnostics = Diagnostics::default();
-        let original = state(row());
-        let result = resource
-            .read(&mut diagnostics, original.clone(), Value::Null, Value::Null)
-            .await;
-        assert!(!diagnostics.errors.is_empty());
-        assert_eq!(result.unwrap().0, original);
+        for observation in [
+            Err(ObservationError::Transport),
+            Ok(Some(partial.clone())),
+            Ok(Some(foreign.clone())),
+        ] {
+            let resource = ResourceAdapter::new(
+                Definition::new(kind, &["name", "owner", "generation"], &[]),
+                Arc::new(Fixture(observation)),
+            );
+            let mut diagnostics = Diagnostics::default();
+            let original = state(row());
+            let result = resource
+                .read(&mut diagnostics, original.clone(), Value::Null, Value::Null)
+                .await;
+            assert!(!diagnostics.errors.is_empty(), "{kind}");
+            assert_eq!(result.unwrap().0, original, "{kind}");
+        }
     }
 }
 
 #[tokio::test]
-async fn missing_openshell_bindings_are_preserved_except_during_non_workspace_teardown() {
-    for kind in ["workspace", "provider_profile", "provider", "sandbox"] {
+async fn confirmed_absence_reconciles_registrations_but_preserves_stateful_bindings() {
+    for kind in [
+        "workspace",
+        "provider_profile",
+        "provider",
+        "sandbox",
+        "pi_configuration",
+    ] {
         for destroying in [false, true] {
             let resource = ResourceAdapter::new(
                 Definition::new(kind, &["name", "owner", "generation"], &[]),
@@ -147,7 +161,9 @@ async fn missing_openshell_bindings_are_preserved_except_during_non_workspace_te
             let result = resource
                 .read(&mut diagnostics, prior.clone(), Value::Null, Value::Null)
                 .await;
-            if destroying && kind != "workspace" {
+            if matches!(kind, "provider_profile" | "provider" | "pi_configuration")
+                || (destroying && kind == "sandbox")
+            {
                 assert!(result.is_none());
                 assert!(diagnostics.errors.is_empty());
             } else {
@@ -277,8 +293,14 @@ async fn immediate_exit_establishes_state_and_restart_preserves_identity() {
 }
 
 #[tokio::test]
-async fn openshell_planning_rejects_immutable_changes_and_requires_explicit_teardown() {
-    for kind in ["workspace", "provider_profile", "provider", "sandbox"] {
+async fn reconstructible_resources_plan_replacement_and_deletion_without_teardown_mode() {
+    for kind in [
+        "workspace",
+        "provider_profile",
+        "provider",
+        "sandbox",
+        "pi_configuration",
+    ] {
         let resource = ResourceAdapter::new(
             Definition::new(kind, &["name", "owner", "generation"], &[]),
             Arc::new(Fixture(Ok(None))),
@@ -287,20 +309,22 @@ async fn openshell_planning_rejects_immutable_changes_and_requires_explicit_tear
         let mut changed = prior.clone();
         changed.insert("name".into(), Value::Value("replacement".into()));
         let mut diagnostics = Diagnostics::default();
-        assert!(
-            resource
-                .plan_update(
-                    &mut diagnostics,
-                    prior.clone(),
-                    changed.clone(),
-                    changed,
-                    Value::Null,
-                    Value::Null
-                )
-                .await
-                .is_none()
-        );
-        assert!(!diagnostics.errors.is_empty());
+        let result = resource
+            .plan_update(
+                &mut diagnostics,
+                prior.clone(),
+                changed.clone(),
+                changed,
+                Value::Null,
+                Value::Null,
+            )
+            .await;
+        let reconstructible = matches!(kind, "provider_profile" | "provider" | "pi_configuration");
+        assert_eq!(result.is_some(), reconstructible, "{kind}");
+        assert_eq!(diagnostics.errors.is_empty(), reconstructible, "{kind}");
+        if let Some((_, _, replacements)) = result {
+            assert_eq!(replacements.len(), 1, "{kind}");
+        }
         for destroying in [false, true] {
             resource
                 .destroying
@@ -309,9 +333,47 @@ async fn openshell_planning_rejects_immutable_changes_and_requires_explicit_tear
             let result = resource
                 .plan_destroy(&mut diagnostics, prior.clone(), Value::Null, Value::Null)
                 .await;
-            let allowed = destroying && kind != "workspace";
-            assert_eq!(result.is_some(), allowed);
-            assert_eq!(diagnostics.errors.is_empty(), allowed);
+            let allowed = reconstructible || (destroying && kind == "sandbox");
+            assert_eq!(result.is_some(), allowed, "{kind}, destroy={destroying}");
+            assert_eq!(
+                diagnostics.errors.is_empty(),
+                allowed,
+                "{kind}, destroy={destroying}"
+            );
         }
     }
+}
+
+#[tokio::test]
+async fn removing_credential_reference_plans_unauthenticated_replacement() {
+    let resource = ResourceAdapter::new(
+        Definition::new(
+            "provider",
+            &["credential_env", "credential_source"],
+            &["credential_env"],
+        ),
+        Arc::new(Fixture(Ok(None))),
+    );
+    let prior = state(Row::from([
+        ("id".into(), "registration".into()),
+        ("credential_env".into(), "API_KEY".into()),
+        ("credential_source".into(), String::new()),
+    ]));
+    let mut config = prior.clone();
+    config.insert("credential_env".into(), Value::Null);
+    let mut diagnostics = Diagnostics::default();
+    let (planned, _, replacements) = resource
+        .plan_update(
+            &mut diagnostics,
+            prior.clone(),
+            prior,
+            config,
+            Value::Null,
+            Value::Null,
+        )
+        .await
+        .unwrap();
+    assert!(diagnostics.errors.is_empty());
+    assert_eq!(planned["credential_env"], Value::Value(String::new()));
+    assert_eq!(replacements.len(), 1);
 }

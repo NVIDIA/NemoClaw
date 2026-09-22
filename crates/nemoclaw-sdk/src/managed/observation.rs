@@ -1,5 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
+use crate::config::ComputeDriver;
 #[cfg(all(test, unix))]
 #[path = "observation_tests.rs"]
 mod tests;
@@ -201,7 +202,7 @@ pub(crate) fn verify_container(
             "managed container configuration or memory protection drifted",
         ));
     }
-    if spec.kind == crate::managed::GATEWAY_KIND && spec.compute_driver == "docker" {
+    if spec.kind == crate::managed::GATEWAY_KIND && spec.compute_driver == ComputeDriver::Docker {
         let address = container
             .network_settings
             .as_ref()
@@ -478,7 +479,7 @@ impl Engine {
             ));
         }
         let info = self.info().await?;
-        let network = if spec.compute_driver == "podman" {
+        let network = if spec.compute_driver == ComputeDriver::Podman {
             let network = self
                 .network(&spec.network())
                 .await?

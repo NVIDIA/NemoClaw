@@ -21,8 +21,10 @@ mod image_pull_policy;
 pub use image_pull_policy::ImagePullPolicy;
 mod network;
 pub use network::*;
+mod kinds;
 #[doc(hidden)]
 pub mod schema;
+pub use kinds::{ComputeDriver, HarnessKind, InferenceProviderKind};
 mod types;
 pub use inference::InferenceConnection;
 pub(crate) mod validation;
@@ -77,67 +79,7 @@ impl Document {
         options.reject_unsupported_tags = true;
         let tree: serde_json::Value = serde_saphyr::from_str_with_options(text, options)
             .map_err(|_| ConfigError::new("invalid or unsupported YAML document"))?;
-        fn has_null(value: &serde_json::Value) -> bool {
-            match value {
-                serde_json::Value::Null => true,
-                serde_json::Value::Array(values) => values.iter().any(has_null),
-                serde_json::Value::Object(values) => values.values().any(has_null),
-                _ => false,
-            }
-        }
-        // The agent owns values inside its opaque model object, including null.
-        // Keep the existing null policy everywhere else in deployment intent.
-        fn omit_model_metadata(inference: &mut serde_json::Value) {
-            if let Some(routes) = inference
-                .get_mut("routes")
-                .and_then(serde_json::Value::as_array_mut)
-            {
-                for route in routes {
-                    if let Some(overrides) = route
-                        .get_mut("overrides")
-                        .and_then(serde_json::Value::as_object_mut)
-                        && overrides
-                            .get("piModel")
-                            .is_some_and(serde_json::Value::is_object)
-                    {
-                        overrides.remove("piModel");
-                    }
-                }
-            }
-        }
-        fn omit_shared_metadata(scope: &mut serde_json::Value) {
-            if let Some(inferences) = scope
-                .get_mut("inferences")
-                .and_then(serde_json::Value::as_object_mut)
-            {
-                for inference in inferences.values_mut() {
-                    omit_model_metadata(inference);
-                }
-            }
-        }
-        let mut structural = tree.clone();
-        if let Some(spec) = structural.get_mut("spec") {
-            omit_shared_metadata(spec);
-            if let Some(sandboxes) = spec
-                .get_mut("sandboxes")
-                .and_then(serde_json::Value::as_array_mut)
-            {
-                for sandbox in sandboxes {
-                    omit_shared_metadata(sandbox);
-                    if let Some(inference) = sandbox
-                        .get_mut("agent")
-                        .and_then(|agent| agent.get_mut("inference"))
-                    {
-                        omit_model_metadata(inference);
-                    }
-                }
-            }
-        }
-        if has_null(&structural) {
-            return Err(ConfigError::new(
-                "omit optional fields instead of using null",
-            ));
-        }
+        schema::validate_input(&tree)?;
         let mut document: Self = serde_json::from_value(tree).map_err(|_| {
             ConfigError::new("configuration contains an unknown field or invalid field type")
         })?;
@@ -202,10 +144,10 @@ impl Document {
     pub fn credential_names(&self) -> Vec<&str> {
         let g = &self.spec.gateway;
         let mut names = Vec::new();
-        if let Some(c) = &g.credential {
+        if let Some(c) = g.credential() {
             names.push(c.env.as_str());
         }
-        if let Some(tls) = &g.tls {
+        if let Some(tls) = g.tls() {
             names.extend([
                 tls.ca.env.as_str(),
                 tls.certificate.env.as_str(),
@@ -235,7 +177,7 @@ impl Document {
     }
     pub fn defaults(&mut self) {
         let gateway = &mut self.spec.gateway;
-        if gateway.management == "managed" {
+        if let Gateway::Managed(gateway) = gateway {
             default_string(&mut gateway.endpoint, constraints::GATEWAY_ENDPOINT);
             default_string(&mut gateway.engine, constraints::GATEWAY_ENGINE);
             default_string(&mut gateway.image, DEFAULT_GATEWAY_IMAGE);
@@ -252,10 +194,6 @@ impl Document {
         }
         for sandbox in &mut self.spec.sandboxes {
             default_string(&mut sandbox.image.ref_, DEFAULT_AGENT_IMAGE);
-            default_string(&mut sandbox.runtime.provider, constraints::RUNTIME);
-            if sandbox.network.policy.is_none() {
-                default_string(&mut sandbox.network.tier, constraints::NETWORK_TIER);
-            }
         }
     }
 }
@@ -294,7 +232,7 @@ fn network_address(
         .ok_or_else(|| ConfigError::new(overflow))?;
     Ok(std::net::Ipv4Addr::from(address).to_string())
 }
-impl Gateway {
+impl ManagedGateway {
     pub(crate) fn runtime_settings(&self) -> Self {
         let mut settings = self.clone();
         // Acquisition policy is a mutable provider attribute, not container identity.
@@ -311,4 +249,51 @@ impl Gateway {
 }
 fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+impl Gateway {
+    /// The endpoint used to connect to either gateway configuration.
+    pub fn endpoint(&self) -> &str {
+        match self {
+            Self::Managed(gateway) => &gateway.endpoint,
+            Self::External(gateway) => &gateway.endpoint,
+        }
+    }
+    /// Change the connection endpoint without changing gateway management.
+    pub fn endpoint_mut(&mut self) -> &mut String {
+        match self {
+            Self::Managed(gateway) => &mut gateway.endpoint,
+            Self::External(gateway) => &mut gateway.endpoint,
+        }
+    }
+    /// Installation settings, when this deployment manages the gateway.
+    pub fn as_managed(&self) -> Option<&ManagedGateway> {
+        match self {
+            Self::Managed(gateway) => Some(gateway),
+            Self::External(_) => None,
+        }
+    }
+    /// Mutable installation settings, when this deployment manages the gateway.
+    pub fn as_managed_mut(&mut self) -> Option<&mut ManagedGateway> {
+        match self {
+            Self::Managed(gateway) => Some(gateway),
+            Self::External(_) => None,
+        }
+    }
+    pub(crate) fn managed(&self) -> Result<&ManagedGateway, ConfigError> {
+        self.as_managed()
+            .ok_or(ConfigError::new("operation requires a managed gateway"))
+    }
+    pub(crate) fn credential(&self) -> Option<&Credential> {
+        match self {
+            Self::Managed(_) => None,
+            Self::External(gateway) => gateway.credential.as_ref(),
+        }
+    }
+    pub(crate) fn tls(&self) -> Option<&TLS> {
+        match self {
+            Self::Managed(_) => None,
+            Self::External(gateway) => gateway.tls.as_ref(),
+        }
+    }
 }

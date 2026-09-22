@@ -12,7 +12,7 @@ async fn health_reads_the_owned_host_without_generation_and_preserves_busy_readi
         include_str!("../../nemoclaw-sdk/tests/fixtures/config/local.yaml").as_bytes(),
     )
     .unwrap();
-    doc.spec.gateway.endpoint = fixture.endpoint.clone();
+    *doc.spec.gateway.endpoint_mut() = fixture.endpoint.clone();
     let client = OpenShell::connect(
         &doc.spec.gateway,
         Arc::new(nemoclaw_sdk::openshell::EnvironmentSecrets),

@@ -68,13 +68,14 @@ Use the [validation matrix](validation/README.md) to distinguish tested configur
 
 Start with the architecture page to follow one deployment through the SDK, OpenTofu, and backend APIs.
 Then use the runtime, execution-target, and recipe pages to understand decisions inside that lifecycle.
-Each explanation includes diagrams and links to the commits that established its boundaries; historical findings apply only to their recorded revisions and environments.
+The design decision defines current invariants; historical test results apply only to their recorded revisions and environments.
 
 | Topic | Owner |
 |---|---|
 | Accepted scope, implementation boundaries, and invariants | [Design decision](design/scope.md) |
 | SDK ownership, durable state, staged apply, and retained storage | [Architecture](design/architecture.md) |
 | Process lifetime, watchdog recovery, and agent ownership | [Runtime design](design/runtime.md) |
+| Proposed shared Fabric management contract and two-adapter experiment | [Fabric management](design/fabric-management.md) |
 | Connections, engine identity, inference traffic, and host capacity | [Execution targets](design/execution-targets.md) |
 | Artifact ownership, preparation verification, and output manifests | [Recipe design](design/recipes.md) |
 | Current engine constraints and source locations | [Execution-engine assumptions](engine-assumptions.md) |

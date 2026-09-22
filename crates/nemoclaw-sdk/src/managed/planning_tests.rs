@@ -252,3 +252,39 @@ async fn planning_rejects_incompatible_and_unreadable_images_even_when_pulling_i
         }
     }
 }
+
+#[tokio::test]
+async fn legacy_gateway_specs_fail_closed_before_engine_access() {
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    };
+    let calls = Arc::new(AtomicUsize::new(0));
+    let observed = calls.clone();
+    let fixture = Fixture::start(move |_| {
+        observed.fetch_add(1, Ordering::SeqCst);
+        Some((500, b"{}".to_vec()))
+    })
+    .await;
+    let spec = runtime_specs().remove(0);
+    let backend = super::ManagedBackend::new(fixture.engine_for(spec.engine()));
+    for management in ["managed", "external"] {
+        let mut legacy = serde_json::to_value(&spec).unwrap();
+        legacy["gateway"]["management"] = json!(management);
+        let prior = Row::from([
+            ("spec".into(), legacy.to_string()),
+            ("id".into(), "retained-gateway".into()),
+        ]);
+        for kind in [super::GATEWAY_KIND, super::GATEWAY_STORAGE_KIND] {
+            assert!(backend.plan(kind, &prior, None).await.is_err());
+            if kind == super::GATEWAY_KIND {
+                assert!(backend.plan(kind, &prior, Some(&prior)).await.is_err());
+            }
+            assert!(backend.read(kind, &prior, false).await.is_err());
+            assert!(backend.read(kind, &prior, true).await.is_err());
+            assert!(backend.ensure(kind, &prior).await.error().is_some());
+            assert!(backend.remove(kind, &prior, true).await.is_err());
+        }
+    }
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+}

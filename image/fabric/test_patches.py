@@ -30,6 +30,23 @@ class UpstreamPatches(unittest.TestCase):
             with self.assertRaises(ValueError):
                 patch_hermes(root)
 
+    def test_pi_rejects_changed_lifecycle_without_partially_patching_source(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            relative = "adapters/typescript/pi"
+            shutil.copytree(Path(os.environ["NEMOCLAW_FABRIC_SOURCE"]) / relative, root / relative)
+            sdk = root / relative / "src/pi-sdk.ts"
+            sdk.write_text(
+                sdk.read_text().replace(
+                    "handle = new PiSdkSessionHandle(session, state, relay);",
+                    "handle = createSessionHandle(session, state, relay);",
+                )
+            )
+            before = {p: p.read_bytes() for p in (root / relative).rglob("*") if p.is_file()}
+            with self.assertRaisesRegex(ValueError, "lifecycle"):
+                patch_pi(root)
+            self.assertEqual(before, {p: p.read_bytes() for p in before})
+
     def test_pi_model_correction_rejects_an_already_modified_source(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

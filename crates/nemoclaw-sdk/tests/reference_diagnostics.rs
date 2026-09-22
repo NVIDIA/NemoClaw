@@ -106,7 +106,7 @@ fn malformed_reference_values_are_not_echoed() {
     v["spec"]["sandboxes"][0]["agent"]["inference"]["routes"][0]["providerRef"] =
         json!("https://user:secret@example.com\nforged diagnostic");
     let message = error(v);
-    assert!(message.contains("unknown provider \"<invalid name>\""));
+    assert!(message.contains("schema"));
     assert!(!message.contains("secret"));
     assert!(!message.contains('\n'));
 }

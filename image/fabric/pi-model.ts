@@ -36,8 +36,14 @@ export async function loadConfiguredModel(
         return [
           choices ? `nemoclaw-${alias.replaceAll("_", "-")}` : config.provider,
           {
-            baseUrl: config.base_url,
-            models: [{ ...(metadata as object), id: config.model, baseUrl: config.base_url }],
+            baseUrl: config.base_url ?? known?.baseUrl,
+            models: [
+              {
+                ...(metadata as object),
+                id: config.model,
+                baseUrl: config.base_url ?? known?.baseUrl,
+              },
+            ],
           },
         ];
       }),

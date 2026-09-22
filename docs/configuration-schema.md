@@ -15,6 +15,8 @@ flowchart LR
     Rules["Shared defaults and validation rules"] --> Schema
     Schema --> Reference["Generated field reference"]
     Schema --> Editor["YAML editor assistance"]
+    Schema --> Runtime["SDK input validation"]
+    Rules --> Normalized["SDK normalized-value validation"]
     Examples["Maintained YAML examples"] --> Tests["Parser and schema tests"]
     Schema --> Tests
 ```
@@ -42,7 +44,7 @@ Generation fails when a public field or object has no description.
 Run the focused tests and freshness check:
 
 ```sh
-cargo test --locked -p nemoclaw-sdk --test config_input --test config_schema
+cargo test --locked -p nemoclaw-sdk --test config_input --test config_schema --test config_validation
 cargo test --locked -p nemoclaw-build --test schema --lib
 cargo run --locked -p nemoclaw-build -- schema --check
 ```
@@ -59,7 +61,7 @@ Reusable application objects follow the [definitions and references contract](co
 Keep its coverage table accurate when adding a family or changing supported scopes.
 
 Schemars derives names, types, and unknown-field rejection from Serde declarations.
-Schema annotations restore required fields that the parser validates after deserialization.
+Schema annotations restore required fields that Serde otherwise defaults during deserialization.
 They also distinguish an omitted option from an explicit null value.
 The Pi metadata object is the one location that accepts nested nulls.
 
@@ -67,11 +69,22 @@ Defaults come from SDK normalization, which can replace an omitted value, empty 
 A JSON Schema `default` is an annotation; validation does not insert it.
 See [JSON Schema annotations](https://json-schema.org/understanding-json-schema/reference/annotations).
 
-Use shared constants when the same choice, bound, or default appears in runtime and schema validation.
-Keep conditional schema rules beside their tests.
-For a rule that the schema cannot express, document the parser check in the generated reference and test that distinction.
+The SDK validates authored input against the compiled schema before deserialization and defaulting.
+`Document::validate` checks directly constructed Rust documents against a normalized form of the same contract before checking semantics.
+The normalized form rejects unresolved empty-string and zero defaults, including fields that serialization would otherwise omit.
+Zero remains valid where it represents an effective value, such as KV-cache allocation with GPU utilization.
+Standalone service, harness-option, and policy validators use the same schema definitions.
+Validators are cached in memory and use the compiled SDK contract; deployment validation does not read the checked-in schema or fetch remote schemas.
 
-`Document::parse` remains authoritative for YAML syntax, cross-field comparisons, and transport policy.
+Put field shapes, scalar bounds, allowed values, and local conditional requirements in schema annotations or constraints.
+Share constants with normalization when a bound or default is also needed there.
+Keep reference resolution, uniqueness by name, compatibility of resolved selections, comparisons between values, UTF-8 byte limits, and transport policy in Rust.
+Do not approximate reference resolution with schema conditions for selected declaration layouts.
+The pinned OpenShell validator continues to own its policy semantics.
+For a semantic check outside the schema, document the distinction in the generated reference and test both acceptance boundaries.
+
+`Document::parse` owns YAML syntax restrictions and invokes both validation stages.
+Schema diagnostics identify trusted contract paths and constraints without echoing input values, unknown properties, or user-supplied map keys.
 Schema validation does not establish image availability, host capacity, credential access, ownership, or inference readiness.
 The [reference's validation limits](reference/configuration.md#validation-beyond-the-schema) list those boundaries.
 
@@ -86,7 +99,7 @@ Add the family to the authoring guide's coverage table only when its runtime beh
 ## Keep Generation Reproducible
 
 The generator selects JSON Schema Draft 2020-12 explicitly, sorts object keys, and writes LF-terminated files.
-Schemars and the test validator have fixed versions in [Cargo.toml](../Cargo.toml), with resolved dependencies in [Cargo.lock](../Cargo.lock).
+Schemars and the runtime validator have fixed versions in [Cargo.toml](../Cargo.toml), with resolved dependencies in [Cargo.lock](../Cargo.lock).
 Review generated changes when updating those dependencies.
 
 The schema's API version identifies the document format; accepted fields can change between source revisions without changing that version.

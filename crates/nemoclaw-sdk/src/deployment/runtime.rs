@@ -21,19 +21,21 @@ pub(super) fn check_runtime_plan(
         if plan::observation(change, &mut observations, allowed, true, false)? {
             continue;
         }
-        if !seen.insert(&change.address) {
-            return Err(Error::Conflict("runtime plan duplicated a resource"));
-        }
-        if plan::disposable(&change.address) {
+        if plan::disposable(&change.address) || change.deposed.is_some() {
             ordinary.resource_changes.push(plan::ResourceChange {
                 mode: change.mode.clone(),
                 address: change.address.clone(),
+                deposed: change.deposed.clone(),
                 change: plan::PlannedChange {
                     actions: change.change.actions.clone(),
                     before: change.change.before.clone(),
+                    after: change.change.after.clone(),
                 },
             });
             continue;
+        }
+        if !seen.insert(&change.address) {
+            return Err(Error::Conflict("runtime plan duplicated a resource"));
         }
         let expected = allowed.get(&change.address).ok_or(Error::Conflict(
             "runtime plan contains an undeclared resource",
@@ -61,18 +63,22 @@ pub(super) fn check_runtime_plan(
             ordinary.resource_changes.push(plan::ResourceChange {
                 mode: change.mode.clone(),
                 address: change.address.clone(),
+                deposed: change.deposed.clone(),
                 change: plan::PlannedChange {
                     actions: vec!["no-op".into()],
                     before: change.change.before.clone(),
+                    after: change.change.after.clone(),
                 },
             });
         } else {
             ordinary.resource_changes.push(plan::ResourceChange {
                 mode: change.mode.clone(),
                 address: change.address.clone(),
+                deposed: change.deposed.clone(),
                 change: plan::PlannedChange {
                     actions: change.change.actions.clone(),
                     before: change.change.before.clone(),
+                    after: change.change.after.clone(),
                 },
             });
         }
@@ -162,7 +168,7 @@ fn runtime_observations(
     let mut result = RuntimeValidation {
         expected: runtime_bindings(targets, bindings)?,
         replacements: BTreeSet::new(),
-        gateway_running: document.spec.gateway.management == "external",
+        gateway_running: document.spec.gateway.as_managed().is_none(),
     };
     let retained: BTreeSet<_> = targets
         .iter()
@@ -231,7 +237,19 @@ impl Deployment {
     ) -> Result<(Vec<Change>, bool), Error> {
         if !document.has_runtime() {
             let directory = store.directory.join("runtime");
-            if directory.exists() && !Store::open(&directory)?.bindings()?.is_empty() {
+            if directory.exists()
+                && !self
+                    .state_bindings(
+                        bundle,
+                        &Store::open(&directory)?,
+                        &record.document,
+                        &record.generations,
+                        true,
+                        cancel,
+                    )
+                    .await?
+                    .is_empty()
+            {
                 return Err(Error::Conflict(
                     "a configuration without runtime requires a new state directory; retain the existing runtime configuration and state for recovery or destroy",
                 ));
@@ -245,7 +263,9 @@ impl Deployment {
             }
         }
         let stage = Store::open(&store.directory.join("runtime"))?;
-        let bindings = stage.bindings()?;
+        let bindings = self
+            .state_bindings(bundle, &stage, document, &record.generations, true, cancel)
+            .await?;
         let targets = compile::runtime_targets(document, &record.generations)?;
         runtime_bindings(&targets, &bindings)?;
         self.prepare(
@@ -269,7 +289,12 @@ impl Deployment {
         let changes =
             check_runtime_plan(&plan, &checked.expected, &bindings, &checked.replacements)?;
         if !apply {
-            if !checked.gateway_running && !store.bindings()?.is_empty() {
+            if !checked.gateway_running
+                && !self
+                    .state_bindings(bundle, store, document, &record.generations, false, cancel)
+                    .await?
+                    .is_empty()
+            {
                 return Err(Error::Conflict(
                     "the managed gateway is not running, so plan cannot inspect OpenShell resources; run apply with the same configuration and state directory to restore the gateway",
                 ));
@@ -279,7 +304,7 @@ impl Deployment {
         }
         record.document = document.clone();
         record.digest = document.digest();
-        record.pending = true;
+        record.begin_runtime_apply();
         record.succeeded = false;
         record.destroyed = false;
         record.destroy_runtime = false;
@@ -289,47 +314,17 @@ impl Deployment {
             bundle,
             &stage,
             document,
-            &[
-                "apply",
-                "-input=false",
-                "-no-color",
-                "-parallelism=1",
-                "apply.plan",
-            ],
+            &["apply", "-input=false", "-no-color", "apply.plan"],
             cancel,
         )
         .await?;
-        record.pending = false;
+        record.finish_runtime_apply();
         store.save(record)?;
-        self.wait_runtime_services(document, &record.generations, &stage, cancel)
-            .await?;
         Ok((changes, false))
-    }
-    async fn wait_runtime_services(
-        &self,
-        document: &Document,
-        generations: &crate::compile::Generations,
-        stage: &Store,
-        cancel: &CancellationToken,
-    ) -> Result<(), Error> {
-        (self.progress)(Progress::Readiness);
-        self.timed("runtime.ready", async {
-            let bindings = stage.bindings()?;
-            crate::services::check_running(
-                document,
-                generations,
-                crate::services::InstallStage::Runtime,
-                &self.engines,
-                &bindings,
-                cancel,
-            )
-            .await?;
-            Ok(())
-        })
-        .await
     }
     pub(super) async fn export_runtime(
         &self,
+        bundle: &Bundle,
         store: &Store,
         record: &Record,
         cancel: &CancellationToken,
@@ -338,48 +333,8 @@ impl Deployment {
             return Ok(());
         }
         let stage = Store::open(&store.directory.join("runtime"))?;
-        let bindings = stage.bindings()?;
-        let targets = compile::runtime_targets(&record.document, &record.generations)?;
-        if bindings.len()
-            != targets
-                .iter()
-                .filter(|target| !target.address.starts_with("data."))
-                .count()
-        {
-            return Err(Error::Conflict(
-                "export requires all managed runtime bindings",
-            ));
-        }
-        let work = async {
-            for target in targets {
-                if target.address.starts_with("data.") {
-                    continue;
-                }
-                let binding = bindings.get(&target.address).ok_or(Error::Conflict(
-                    "export requires established runtime identity",
-                ))?;
-                if plan::disposable(&target.address) {
-                    self.export_compute(&target, binding).await?;
-                    continue;
-                }
-                if binding.spec != target.values["spec"] {
-                    return Err(Error::Conflict(
-                        "runtime state differs from intent; no YAML exported",
-                    ));
-                }
-                let mut row = target.values.clone();
-                row.insert("id".into(), binding.id.clone());
-                crate::services::BackendRegistry::new(&self.engines)
-                    .resolve(&target.kind, &row)?
-                    .ok_or(Error::State("runtime backend is unavailable"))?
-                    .read(&target.kind, &row, false)
-                    .await?
-                    .ok_or(Error::Conflict(
-                        "managed runtime is absent; no YAML exported",
-                    ))?;
-            }
-            Ok(())
-        };
-        tokio::select! {()=cancel.cancelled()=>Err(Error::Cancelled),result=work=>result}
+        self.export_observations(bundle, &stage, record, true, cancel)
+            .await?;
+        Ok(())
     }
 }

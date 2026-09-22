@@ -73,7 +73,7 @@ fn unsupported_or_out_of_range_options_fail_before_deployment() {
 }
 
 #[test]
-fn schema_and_parser_agree_on_api_families_and_harness_limits() {
+fn schema_checks_explicit_api_families_and_rust_checks_resolved_harness_limits() {
     let validator = jsonschema::validator_for(&input_schema()).unwrap();
     for harness in ["openclaw", "hermes", "claude", "codex", "deepagents", "pi"] {
         for api in [
@@ -97,7 +97,7 @@ fn schema_and_parser_agree_on_api_families_and_harness_limits() {
                         | ("deepagents", "openai-completions")
                 );
             assert_eq!(parse(&v).is_ok(), accepted, "{harness}/{api}");
-            assert_eq!(validator.is_valid(&v), accepted, "schema {harness}/{api}");
+            assert!(validator.is_valid(&v), "structural schema {harness}/{api}");
             v["spec"]["inferenceProviders"][0]["provider"] =
                 json!(if api == "anthropic-messages" {
                     "openai"
@@ -127,7 +127,7 @@ fn explicit_false_and_default_survive_and_auth_cannot_bypass_credentials() {
         v["spec"]["sandboxes"][0]["agent"]["auth"] = json!({"method":"api-key"});
         assert!(parse(&v).is_err());
         assert!(
-            !jsonschema::validator_for(&input_schema())
+            jsonschema::validator_for(&input_schema())
                 .unwrap()
                 .is_valid(&v)
         );
@@ -161,6 +161,6 @@ fn completion_adapters_accept_output_limits_without_openclaw_only_tuning() {
         v["spec"]["sandboxes"][0]["agent"]["inference"]["routes"][0]["overrides"]["reasoningEffort"] =
             json!("high");
         assert!(parse(&v).is_err());
-        assert!(!schema.is_valid(&v));
+        assert!(schema.is_valid(&v));
     }
 }

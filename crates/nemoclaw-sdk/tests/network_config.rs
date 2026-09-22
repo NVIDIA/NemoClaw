@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 use nemoclaw_sdk::{
     compile::{Generations, targets},
-    config::{Document, schema::input_schema},
+    config::{Document, Network, NetworkPolicy, Proxy, schema::input_schema},
 };
 use serde_json::{Value, json};
 
@@ -200,7 +200,7 @@ fn runtime_grants_accept_parents_and_writable_paths_without_rewriting_policy() {
         let document = parse(&value).unwrap();
         let expected = value["spec"]["sandboxes"][0]["network"]["policy"].clone();
         assert_eq!(
-            serde_json::to_value(&document.spec.sandboxes[0].network.policy).unwrap(),
+            serde_json::to_value(&document.spec.sandboxes[0].network).unwrap()["policy"],
             expected
         );
     }
@@ -241,15 +241,10 @@ async fn plan_and_apply_reject_a_blocked_runtime_before_opening_bundle_or_state(
     let mut document = parse(&input()).unwrap();
     let mut second = document.spec.sandboxes[0].clone();
     second.name = "blocked".into();
-    let filesystem = second
-        .network
-        .policy
-        .as_mut()
-        .unwrap()
-        .explicit
-        .filesystem_policy
-        .as_mut()
-        .unwrap();
+    let NetworkPolicy::Explicit(policy) = &mut second.network.policy else {
+        panic!("expected explicit policy");
+    };
+    let filesystem = policy.filesystem_policy.as_mut().unwrap();
     filesystem.read_only = Some(vec!["/usr".into()]);
     filesystem.include_workdir = Some(true);
     document.spec.sandboxes.push(second);
@@ -301,6 +296,72 @@ fn landlock_uses_runtime_spellings_without_main_branch_aliases() {
                     .unwrap()
                     .compatibility,
                 spelling
+            );
+        }
+    }
+}
+
+#[test]
+fn network_deserialization_rejects_conflicting_policy_choices() {
+    let explicit = input()["spec"]["sandboxes"][0]["network"]["policy"].clone();
+    for value in [
+        json!({"tier": "isolated", "policy": explicit}),
+        json!({"tier": "unrestricted"}),
+    ] {
+        assert!(serde_json::from_value::<Network>(value).is_err());
+    }
+}
+
+#[test]
+fn default_network_is_a_valid_isolated_policy() {
+    let default = Network::default();
+    default.validate().unwrap();
+    assert_eq!(default.policy, NetworkPolicy::Isolated);
+    for value in [json!({}), json!({"tier": ""}), json!({"tier": "isolated"})] {
+        assert_eq!(serde_json::from_value::<Network>(value).unwrap(), default);
+    }
+}
+
+#[test]
+fn policy_choice_and_proxy_are_independent_and_keep_the_export_shape() {
+    let explicit_input = input()["spec"]["sandboxes"][0]["network"]["policy"].clone();
+    let explicit = serde_json::from_value(explicit_input["explicit"].clone()).unwrap();
+    for (policy, expected) in [
+        (NetworkPolicy::Isolated, json!({"tier": "isolated"})),
+        (
+            NetworkPolicy::Explicit(explicit),
+            json!({"policy": explicit_input}),
+        ),
+    ] {
+        for proxy in [
+            None,
+            Some(Proxy {
+                host: "proxy.example.com".into(),
+                port: 3128,
+            }),
+        ] {
+            let network = Network {
+                policy: policy.clone(),
+                proxy: proxy.clone(),
+            };
+            network.validate().unwrap();
+            let mut expected = expected.clone();
+            if let Some(proxy) = &proxy {
+                expected["proxy"] = serde_json::to_value(proxy).unwrap();
+            }
+            assert_eq!(serde_json::to_value(&network).unwrap(), expected);
+            assert_eq!(
+                serde_json::from_value::<Network>(expected).unwrap(),
+                network
+            );
+            assert_eq!(
+                network.policy_proto().unwrap(),
+                Network {
+                    policy: policy.clone(),
+                    proxy: None
+                }
+                .policy_proto()
+                .unwrap()
             );
         }
     }

@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 use super::*;
+use crate::config::ComputeDriver;
 #[test]
 fn image_pull_policy_does_not_change_container_configuration() {
     let fixtures: Vec<serde_json::Value> =
@@ -24,32 +25,40 @@ fn image_pull_policy_does_not_change_container_configuration() {
     }
 }
 #[test]
-fn gateway_launch_uses_version_two_configuration_and_supported_process_flags() {
+fn gateway_configuration_preserves_driver_network_images_and_signing_paths() {
     let fixtures: Vec<serde_json::Value> =
         serde_json::from_str(include_str!("reference.json")).unwrap();
     let spec: Spec = serde_json::from_str(fixtures[0]["spec"].as_str().unwrap()).unwrap();
-    let launch = spec.container("/owned").unwrap();
-    let command = launch.cmd.unwrap();
-    for flag in command.iter().filter(|arg| arg.starts_with("--")) {
-        assert!(
-            ["--config", "--name", "--bind-address", "--port"].contains(&flag.as_str()),
-            "unsupported process flag: {flag}"
+    let data_path = "/owned data/quoted\"directory";
+    let config: toml::Value = toml::from_str(&spec.gateway_config(data_path)).unwrap();
+    let openshell = &config["openshell"];
+    assert_eq!(openshell["version"].as_integer(), Some(2));
+    assert_eq!(
+        openshell["gateway"]["compute_driver"].as_str(),
+        Some("docker")
+    );
+    let driver = &openshell["drivers"]["docker"];
+    assert_eq!(
+        driver["network_name"].as_str(),
+        Some(spec.network().as_str())
+    );
+    assert_eq!(
+        driver["sandbox_runtime_image"].as_str(),
+        Some(SANDBOX_RUNTIME_IMAGE)
+    );
+    assert_eq!(driver["supervisor_image"].as_str(), Some(SUPERVISOR_IMAGE));
+    let jwt = &openshell["gateway"]["gateway_jwt"];
+    for (field, suffix) in [
+        ("signing_key_path", "signing.pem"),
+        ("public_key_path", "public.pem"),
+        ("kid_path", "kid"),
+    ] {
+        assert_eq!(
+            jwt[field].as_str(),
+            Some(format!("{data_path}/tls/jwt/{suffix}").as_str())
         );
     }
-    assert!(
-        launch
-            .env
-            .unwrap()
-            .contains(&"OPENSHELL_DB_URL=sqlite:/owned/gateway.db".into())
-    );
-    let config = spec.gateway_config("/owned");
-    assert!(config.starts_with("[openshell]\nversion = 2\n"));
-    assert!(config.contains("compute_driver = \"docker\""));
-    assert!(!config.contains("ttl_secs = 0"));
-    assert!(config.contains("sandbox_runtime_image = \"ghcr.io/nvidia/openshell/sandbox@sha256:"));
-    assert!(config.contains("supervisor_image = \"ghcr.io/nvidia/openshell/supervisor@sha256:"));
-    assert!(!config.contains("supervisor_bin"));
-    assert!(!config.contains("ssh_socket_path"));
+    assert_eq!(jwt["gateway_id"].as_str(), Some(spec.name.as_str()));
 }
 #[test]
 fn invalid_placement_network_does_not_panic() {
@@ -264,7 +273,7 @@ fn managed_gateway_uses_driver_derived_docker_supervisor_callback() {
     for fixture in fixtures {
         let spec: Spec = serde_json::from_str(fixture["spec"].as_str().unwrap()).unwrap();
         let configuration = spec.gateway_config("/owned-data");
-        if spec.compute_driver == "docker" {
+        if spec.compute_driver == ComputeDriver::Docker {
             assert!(
                 !configuration.contains("grpc_endpoint ="),
                 "Docker must derive the supervisor callback from its managed bridge"
@@ -308,7 +317,7 @@ fn podman_gateway_namespace_survives_info_id_changes_but_not_network_replacement
     let fixtures: Vec<serde_json::Value> =
         serde_json::from_str(include_str!("reference.json")).unwrap();
     let mut spec: Spec = serde_json::from_str(fixtures[0]["spec"].as_str().unwrap()).unwrap();
-    spec.compute_driver = "podman".into();
+    spec.compute_driver = ComputeDriver::Podman;
     let network = "a".repeat(64);
     let first = spec
         .binding_namespace(Some("random-first"), Some(&network))
@@ -324,4 +333,19 @@ fn podman_gateway_namespace_survives_info_id_changes_but_not_network_replacement
             .unwrap()
     );
     assert!(spec.binding_namespace(Some("random-first"), None).is_err());
+}
+
+#[test]
+fn runtime_specs_reject_legacy_gateway_management_without_reinterpreting_it() {
+    let fixtures: Vec<serde_json::Value> =
+        serde_json::from_str(include_str!("reference.json")).unwrap();
+    for fixture in fixtures {
+        let current: serde_json::Value =
+            serde_json::from_str(fixture["spec"].as_str().unwrap()).unwrap();
+        for management in ["managed", "external"] {
+            let mut legacy = current.clone();
+            legacy["gateway"]["management"] = json!(management);
+            assert!(serde_json::from_value::<Spec>(legacy).is_err());
+        }
+    }
 }
