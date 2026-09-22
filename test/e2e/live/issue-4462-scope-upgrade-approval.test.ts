@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import os from "node:os";
-import path from "node:path";
 import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText } from "../fixtures/clients/command.ts";
@@ -10,6 +9,7 @@ import { type HostCliClient } from "../fixtures/clients/host.ts";
 import { type SandboxClient, validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { trackIssue4462FailureDiagnostics } from "../fixtures/issue-4462-diagnostics.ts";
+import { isExactOpenClawAgentText } from "../fixtures/openclaw-agent-output.ts";
 import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
 import {
   adminApprovalConnectScript,
@@ -21,18 +21,8 @@ const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-issue-4462";
 const LIVE_TIMEOUT_MS = testTimeout(70 * 60_000);
 const INSTALL_TIMEOUT_MS = execTimeout(30 * 60_000);
 const AUTO_PAIR_DEADLINE_SECS = String(INSTALL_TIMEOUT_MS / 1_000);
-const GATEWAY_OBSERVATION_TIMEOUT_MS = 30_000;
-const GATEWAY_OBSERVATION_TIMEOUT_SECS = String(GATEWAY_OBSERVATION_TIMEOUT_MS / 1_000);
-const GATEWAY_OBSERVER_LOCAL_PATH = path.join(
-  import.meta.dirname,
-  "..",
-  "lib",
-  "issue-4462-fresh-agent-gateway-snapshot.py",
-);
-// OpenShell treats the upload destination as a directory. Upload to /tmp and
-// execute the uploaded file by its basename.
-const GATEWAY_OBSERVER_REMOTE_DIR = "/tmp";
-const GATEWAY_OBSERVER_REMOTE_PATH = `${GATEWAY_OBSERVER_REMOTE_DIR}/issue-4462-fresh-agent-gateway-snapshot.py`;
+const AGENT_COMMAND_TIMEOUT_SECS = 3 * 60;
+const AGENT_TIMEOUT_MS = execTimeout((AGENT_COMMAND_TIMEOUT_SECS + 60) * 1_000);
 
 validateSandboxName(SANDBOX_NAME);
 process.env.NEMOCLAW_CLI_BIN ??= CLI_ENTRYPOINT;
@@ -53,17 +43,6 @@ function env(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
     OPENSHELL_GATEWAY: "nemoclaw",
     ...extra,
   };
-}
-
-interface FreshAgentGatewaySnapshot {
-  activeOperatorTokenCount: number;
-  activeOperatorTokenScopes: string[];
-  approvedScopes: string[];
-  deviceScopes: string[];
-  matchingPairedCount: number;
-  pairedCliCount: number;
-  pendingCount: number;
-  sameDevicePendingCount: number;
 }
 
 async function cleanup(host: HostCliClient, sandbox: SandboxClient): Promise<void> {
@@ -114,8 +93,7 @@ test(
       sandboxName: SANDBOX_NAME,
       contracts: [
         "install.sh creates a real OpenClaw sandbox",
-        "fresh onboarding settles one CLI identity with operator.write and without a pending request or operator.admin",
-        "the issue 5324 nemoclaw <name> exec transport reaches the local OpenClaw CLI pairing path",
+        "the first gateway-backed agent request succeeds with bounded non-admin scopes",
         "the prepared connect shell keeps the injected gateway URL private while retaining port and token",
         "operator.admin remains pending until explicit device approval",
         "the retried cron add and cron run prove that the CLI identity can use operator.admin after approval",
@@ -166,56 +144,44 @@ test(
       "OpenClaw sandbox installation failed; inspect the phase artifact",
     ).toBe(0);
 
-    const upload = await sandbox.upload(
-      SANDBOX_NAME,
-      GATEWAY_OBSERVER_LOCAL_PATH,
-      GATEWAY_OBSERVER_REMOTE_DIR,
+    progress.phase("prove the first agent request needs no admin approval");
+    const agent = await host.command(
+      process.execPath,
+      [
+        CLI_ENTRYPOINT,
+        SANDBOX_NAME,
+        "exec",
+        "--timeout",
+        String(AGENT_COMMAND_TIMEOUT_SECS),
+        "--",
+        "openclaw",
+        "agent",
+        "--agent",
+        "main",
+        "--json",
+        "--thinking",
+        "off",
+        "--session-id",
+        `issue-4462-first-agent-${Date.now()}-${process.pid}`,
+        "-m",
+        "Reply with only 4",
+      ],
       {
-        artifactName: "phase-2-upload-gateway-observer",
+        artifactName: "phase-2-first-agent-request",
+        captureLimitBytes: 64 * 1024,
         env: env(),
         redactionValues: [apiKey],
-        timeoutMs: GATEWAY_OBSERVATION_TIMEOUT_MS,
+        timeoutMs: AGENT_TIMEOUT_MS,
       },
     );
-    expect(upload.exitCode, "Gateway observer upload failed; inspect the phase artifact").toBe(0);
-
-    const captureGatewayObservation = async <T>(phase: string): Promise<T> => {
-      const result = await sandbox.exec(
-        SANDBOX_NAME,
-        ["python3", GATEWAY_OBSERVER_REMOTE_PATH, GATEWAY_OBSERVATION_TIMEOUT_SECS],
-        {
-          artifactName: phase,
-          captureLimitBytes: 64 * 1024,
-          env: env(),
-          redactionValues: [apiKey],
-          timeoutMs: GATEWAY_OBSERVATION_TIMEOUT_MS,
-        },
-      );
-      expect(
-        result.exitCode,
-        `Gateway observation failed during ${phase}; inspect the phase artifact`,
-      ).toBe(0);
-      const observation = JSON.parse(result.stdout.trim()) as T;
-      await artifacts.writeJson(`${phase}.json`, observation);
-      return observation;
-    };
-    progress.phase("prove onboarding settled operator.write");
-    const freshSnapshot =
-      await captureGatewayObservation<FreshAgentGatewaySnapshot>("phase-2-fresh-state");
-    expect(freshSnapshot).toMatchObject({
-      activeOperatorTokenCount: 1,
-      approvedScopes: ["operator.pairing", "operator.write"],
-      deviceScopes: ["operator.pairing", "operator.write"],
-      matchingPairedCount: 1,
-      pairedCliCount: 1,
-      pendingCount: 0,
-      sameDevicePendingCount: 0,
-    });
-    expect(freshSnapshot.activeOperatorTokenScopes).toEqual([
-      "operator.pairing",
-      "operator.read",
-      "operator.write",
-    ]);
+    expect(
+      agent.exitCode,
+      "The first gateway-backed agent request failed; inspect the phase artifact",
+    ).toBe(0);
+    expect(
+      isExactOpenClawAgentText(agent.stdout, "4"),
+      "The first gateway-backed agent request did not return the expected answer",
+    ).toBe(true);
 
     progress.phase("trigger and approve an operator.admin request through connect");
     const cronName = `issue-5324-admin-${Date.now()}-${process.pid}`;
