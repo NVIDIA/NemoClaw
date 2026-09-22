@@ -34,8 +34,21 @@ fn maintained_examples_parse_without_connecting_to_services() {
 }
 
 #[test]
+fn application_references_do_not_enable_yaml_anchors_aliases_or_merges() {
+    let original = include_str!("../../../examples/fabric-openclaw.yaml");
+    for replacement in [
+        "metadata: &metadata",
+        "metadata: *metadata",
+        "metadata:\n  <<: {name: merged}",
+    ] {
+        let yaml = original.replacen("metadata:", replacement, 1);
+        assert!(Document::parse(yaml.as_bytes()).is_err());
+    }
+}
+
+#[test]
 fn omitted_empty_and_zero_values_produce_the_same_defaults() {
-    let mut omitted = input("spark-inline.yaml");
+    let mut omitted = input("spark/spark-inline.yaml");
     for key in ["endpoint", "engine", "image", "networkCIDR"] {
         omitted["spec"]["gateway"]
             .as_object_mut()
@@ -49,7 +62,7 @@ fn omitted_empty_and_zero_values_produce_the_same_defaults() {
             .remove(key);
     }
     for key in ["serving", "memory"] {
-        omitted["spec"]["inferenceProviders"][0]["service"]
+        omitted["spec"]["services"]["qwen"]
             .as_object_mut()
             .unwrap()
             .remove(key);
@@ -62,12 +75,12 @@ fn omitted_empty_and_zero_values_produce_the_same_defaults() {
     explicit["spec"]["sandboxes"][0]["image"] = json!({"ref": ""});
     explicit["spec"]["sandboxes"][0]["runtime"] = json!({"provider": ""});
     explicit["spec"]["sandboxes"][0]["network"] = json!({"tier": ""});
-    explicit["spec"]["inferenceProviders"][0]["service"]["serving"] = json!({
+    explicit["spec"]["services"]["qwen"]["serving"] = json!({
         "port": 0, "contextTokens": 0, "maxSequences": 0, "batchTokens": 0,
         "startupTimeoutSeconds": 0, "speculativeTokens": 0,
         "toolParser": "", "reasoningParser": ""
     });
-    explicit["spec"]["inferenceProviders"][0]["service"]["memory"] = json!({
+    explicit["spec"]["services"]["qwen"]["memory"] = json!({
         "hostReserveGiB": 0, "kvCacheGiB": 0, "minAvailableGiB": 0,
         "minFreeGiB": 0, "freeGateGiB": 0, "consecutiveSamples": 0,
         "gpuMemoryGiB": 0
@@ -77,7 +90,7 @@ fn omitted_empty_and_zero_values_produce_the_same_defaults() {
     for path in [
         "/spec/gateway/endpoint",
         "/spec/sandboxes/0/image",
-        "/spec/inferenceProviders/0/service/serving/port",
+        "/spec/services/qwen/serving/port",
     ] {
         let mut invalid = explicit.clone();
         *invalid.pointer_mut(path).unwrap() = Value::Null;
@@ -97,7 +110,7 @@ fn required_fields_and_mutually_exclusive_provider_forms_are_rejected() {
         "/spec/gateway/endpoint",
         "/spec/inferenceProviders/0/name",
         "/spec/inferenceProviders/0/provider",
-        "/spec/sandboxes/0/agents/0/harness",
+        "/spec/sandboxes/0/harness",
     ] {
         let mut invalid = baseline.clone();
         let (parent, key) = path.rsplit_once('/').unwrap();
@@ -110,7 +123,7 @@ fn required_fields_and_mutually_exclusive_provider_forms_are_rejected() {
         assert!(parse(&invalid).is_err(), "{path}");
     }
     for field in ["endpoint", "credential", "ollama"] {
-        let mut invalid = input("spark-inline.yaml");
+        let mut invalid = input("spark/spark-inline.yaml");
         invalid["spec"]["inferenceProviders"][0][field] = match field {
             "endpoint" => json!("https://inference.example.com/v1"),
             "credential" => json!({"env": "MODEL_TOKEN"}),
@@ -123,9 +136,23 @@ fn required_fields_and_mutually_exclusive_provider_forms_are_rejected() {
 #[test]
 fn only_pi_metadata_permits_nested_null_values() {
     let mut value = input("fabric-pi.yaml");
-    let pointer = "/spec/sandboxes/0/agents/0/inference/routes/0/overrides/piModel";
+    let pointer = "/spec/sandboxes/0/agent/inference/routes/0/overrides/piModel";
     *value.pointer_mut(pointer).unwrap() = json!({"future": [null, {"nested": null}]});
     parse(&value).unwrap();
     *value.pointer_mut(pointer).unwrap() = Value::Null;
     assert!(parse(&value).is_err());
+}
+
+#[test]
+fn service_image_error_identifies_the_required_digest_pin() {
+    let original = input("spark/spark-inline.yaml");
+    for image in ["local/runtime:latest", "local/runtime@sha256:short"] {
+        let mut value = original.clone();
+        value["spec"]["services"]["qwen"]["image"] = json!(image);
+        assert_eq!(
+            parse(&value).unwrap_err().to_string(),
+            "service image must be pinned by a SHA-256 digest"
+        );
+    }
+    parse(&original).unwrap();
 }

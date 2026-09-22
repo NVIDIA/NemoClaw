@@ -1,0 +1,17 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+*
+!.dockerignore
+!image/
+!image/**
+!test/
+!test/**
+!tools/
+!tools/fabric-adapter-experiment.py
+!tools/fabric_management/
+!tools/fabric_management/**
+!ruff.toml
+!docker-bake.hcl
+**/node_modules
+**/__pycache__
+**/.ruff_cache

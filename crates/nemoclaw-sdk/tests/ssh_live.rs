@@ -18,7 +18,7 @@ async fn ssh_observes_the_selected_daemon_and_confirmed_absence() {
     );
     assert!(
         engine
-            .container("nc-ssh-proof-absent-9dc7dbe5")
+            .container("nc-ssh-transfer-test-absent-9dc7dbe5")
             .await
             .unwrap()
             .is_none()
@@ -30,7 +30,9 @@ async fn ssh_observes_the_selected_daemon_and_confirmed_absence() {
 async fn ssh_failure_is_an_observation_error_never_absence() {
     let engine = Engine::connect(&std::env::var("NEMOCLAW_TEST_SSH_ENGINE").unwrap()).unwrap();
     assert!(engine.info().await.is_err());
-    let result = engine.container("nc-ssh-proof-absent-9dc7dbe5").await;
+    let result = engine
+        .container("nc-ssh-transfer-test-absent-9dc7dbe5")
+        .await;
     assert!(result.is_err());
     let diagnostic = result.unwrap_err().to_string();
     assert!(!diagnostic.contains("ssh://"));
@@ -57,12 +59,12 @@ async fn ssh_upload_and_streamed_download_preserve_container_identity() {
     assert_eq!(before.state.unwrap().running, Some(false));
     let bytes = vec![b'x'; 128 * 1024];
     engine
-        .write_files(&id, "/tmp", &[("ssh-proof", &bytes, 0o600)])
+        .write_files(&id, "/tmp", &[("ssh-transfer-test", &bytes, 0o600)])
         .await
         .unwrap();
     assert_eq!(
         engine
-            .read_file(&id, "/tmp/ssh-proof", bytes.len())
+            .read_file(&id, "/tmp/ssh-transfer-test", bytes.len())
             .await
             .unwrap()
             .unwrap(),
@@ -75,13 +77,18 @@ async fn ssh_upload_and_streamed_download_preserve_container_identity() {
 }
 
 #[tokio::test]
-#[ignore = "requires explicit NEMOCLAW_TEST_SSH_ENGINE on a Linux ARM64 NVIDIA host; read-only remote host collection"]
+#[ignore = "requires explicit NEMOCLAW_TEST_SSH_ENGINE on a Linux ARM64 or AMD64 NVIDIA host; read-only remote host collection"]
 async fn ssh_capacity_belongs_to_the_selected_docker_host() {
     use nemoclaw_sdk::hardware::{HostObserver, SshHost};
     let engine = Engine::connect(&std::env::var("NEMOCLAW_TEST_SSH_ENGINE").unwrap()).unwrap();
     let observation = SshHost.observe(&engine).await.unwrap();
-    let daemon = engine.info().await.unwrap().id.unwrap();
-    let capacity = observation.for_engine(&daemon).unwrap();
-    assert_eq!(capacity.architecture, "arm64");
+    let info = engine.info().await.unwrap();
+    let capacity = observation.for_engine(info.id.as_deref().unwrap()).unwrap();
+    let expected = match info.architecture.as_deref().unwrap() {
+        "aarch64" | "arm64" => "arm64",
+        "x86_64" | "amd64" => "amd64",
+        other => panic!("unsupported test host architecture: {other}"),
+    };
+    assert_eq!(capacity.architecture, expected);
     assert!(capacity.total > 0 && capacity.disk_free > 0);
 }

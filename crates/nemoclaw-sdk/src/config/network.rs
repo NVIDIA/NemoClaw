@@ -1,30 +1,109 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
+use crate::config::HarnessKind;
 // Input contract adapted from NVIDIA/NemoClaw at be46805b51b0d626466538e9f8fe56c8ad157549:
 // schemas/network-policy.schema.json and src/lib/config/model.ts (Apache-2.0).
 // 2026-09-15: represented the export fields as strict Rust types, added explicit
 // preset selection, and delegated policy semantics to pinned openshell-policy.
-use super::{ConfigError, Network};
+// 2026-09-19: removed the main-branch Landlock spelling translation and the
+// redundant external-proxy ownership annotation.
+// 2026-09-21: made policy selection exclusive in Rust while preserving the input shape.
+use super::ConfigError;
 use openshell_core::proto;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
+/// Sandbox policy selection and optional agent HTTP proxy.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(try_from = "NetworkInput", into = "NetworkInput")]
+#[schemars(with = "NetworkInput")]
+pub struct Network {
+    /// Isolated preset or a complete authored policy; the two cannot coexist.
+    pub policy: NetworkPolicy,
+    /// Existing HTTP proxy used by the agent, independent of policy selection.
+    pub proxy: Option<Proxy>,
+}
+
+/// Sandbox policy source. Explicit policies replace the isolated preset completely.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub enum NetworkPolicy {
+    /// SDK-provided isolated policy.
+    #[default]
+    Isolated,
+    /// Complete authored OpenShell policy; no isolated defaults are merged.
+    Explicit(ExplicitPolicy),
+}
+
+// Keep the authored YAML shape at the serialization boundary. Runtime code
+// receives one policy choice, never independently mutable tier and policy fields.
+#[derive(Default, Serialize, Deserialize, schemars::JsonSchema)]
+#[schemars(!default, rename = "Network")]
+#[serde(default, deny_unknown_fields)]
+/// Sandbox policy selection and optional agent HTTP proxy.
+struct NetworkInput {
+    #[serde(rename = "tier")]
+    #[schemars(default)]
+    /// Isolated policy preset. Omit when declaring policy.explicit; omission without policy selects isolated.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    tier: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(default, with = "ExplicitPolicySelection")]
+    /// Complete authored OpenShell policy, replacing the isolated preset.
+    policy: Option<ExplicitPolicySelection>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(default, with = "Proxy")]
+    /// HTTP proxy address used by the agent process. Does not create a proxy or change gateway networking.
+    proxy: Option<Proxy>,
+}
+
+impl TryFrom<NetworkInput> for Network {
+    type Error = ConfigError;
+
+    fn try_from(input: NetworkInput) -> Result<Self, Self::Error> {
+        let policy = match (input.tier.as_str(), input.policy) {
+            ("", Some(policy)) => NetworkPolicy::Explicit(policy.explicit),
+            ("" | super::constraints::NETWORK_TIER, None) => NetworkPolicy::Isolated,
+            _ => {
+                return Err(ConfigError::new(
+                    "choose either isolated tier or an explicit policy",
+                ));
+            }
+        };
+        Ok(Self {
+            policy,
+            proxy: input.proxy,
+        })
+    }
+}
+
+impl From<Network> for NetworkInput {
+    fn from(network: Network) -> Self {
+        let (tier, policy) = match network.policy {
+            NetworkPolicy::Isolated => (super::constraints::NETWORK_TIER.into(), None),
+            NetworkPolicy::Explicit(explicit) => {
+                (String::new(), Some(ExplicitPolicySelection { explicit }))
+            }
+        };
+        Self {
+            tier,
+            policy,
+            proxy: network.proxy,
+        }
+    }
+}
+
 /// Select an explicit policy; no isolated defaults are merged into it.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
-pub struct ExplicitPolicySelection {
+struct ExplicitPolicySelection {
     /// Complete sandbox policy in OpenShell YAML field names.
-    pub explicit: ExplicitPolicy,
+    explicit: ExplicitPolicy,
 }
 
-/// Agent HTTP proxy, reachable from inside the sandbox. Credentials and URL syntax are excluded.
+/// Existing agent HTTP proxy, reachable from inside the sandbox. NemoClaw does not manage it. Credentials and URL syntax are excluded.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Proxy {
-    /// Optional external ownership declaration. Omission means external; NemoClaw does not create this proxy.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[schemars(with = "super::ExternalManagement")]
-    pub management: Option<super::ExternalManagement>,
     /// Proxy hostname or IPv4 address, without scheme, path, or credentials.
     pub host: String,
     /// Proxy TCP port, from 1 through 65535.
@@ -75,7 +154,7 @@ pub struct PolicyFilesystem {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct PolicyLandlock {
-    /// best_effort or hard_requirement. The main-branch spelling strict maps to hard_requirement.
+    /// best_effort or hard_requirement.
     pub compatibility: String,
 }
 
@@ -245,6 +324,10 @@ pub struct PolicyJsonRpc {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct PolicyMcp {
+    /// Supported MCP protocol revisions; omission uses the pinned OpenShell default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(default, with = "Vec<String>")]
+    pub versions: Option<Vec<String>>,
     /// Maximum buffered request bytes, 1 through 1048576.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(default, with = "u32")]
@@ -261,43 +344,54 @@ pub struct PolicyMcp {
 
 impl Proxy {
     pub fn validate(&self) -> Result<(), ConfigError> {
-        if self.port == 0
-            || self.host.is_empty()
-            || self.host.len() > 256
-            || !self
-                .host
-                .bytes()
-                .all(|c| c.is_ascii_alphanumeric() || b"._-".contains(&c))
-        {
-            return Err(ConfigError(
-                "proxy requires a hostname or IPv4 address and a port from 1 through 65535",
-            ));
-        }
-        Ok(())
+        super::schema::validate_definition("Proxy", self)
     }
 }
 impl Network {
-    pub fn validate(&self) -> Result<(), ConfigError> {
-        match &self.policy {
-            Some(policy) if self.tier.is_empty() => {
-                policy.explicit.to_proto()?;
-            }
-            None if self.tier == super::constraints::NETWORK_TIER => {}
-            _ => {
-                return Err(ConfigError(
-                    "choose either isolated tier or an explicit policy",
-                ));
+    pub(crate) fn validate_runtime_access(&self, harness: HarnessKind) -> Result<(), ConfigError> {
+        let NetworkPolicy::Explicit(policy) = &self.policy else {
+            return Ok(());
+        };
+        let Some(filesystem) = &policy.filesystem_policy else {
+            return Ok(());
+        };
+        for (required, diagnostic) in crate::openshell::runtime_read_requirements(harness) {
+            let covered = filesystem
+                .read_only
+                .iter()
+                .flatten()
+                .chain(filesystem.read_write.iter().flatten())
+                .any(|grant| {
+                    // Sandbox paths are POSIX paths even on a Windows client. Do not
+                    // resolve symlinks against the client filesystem or infer '..'.
+                    if !grant.starts_with('/') || grant.split('/').any(|part| part == "..") {
+                        return false;
+                    }
+                    let mut required = required.split('/').filter(|part| !part.is_empty());
+                    grant
+                        .split('/')
+                        .filter(|part| !part.is_empty() && *part != ".")
+                        .all(|part| required.next() == Some(part))
+                });
+            if !covered {
+                return Err(ConfigError::new(diagnostic));
             }
         }
-        if let Some(proxy) = &self.proxy {
-            proxy.validate()?;
+        Ok(())
+    }
+
+    pub fn validate(&self) -> Result<(), ConfigError> {
+        super::schema::validate_definition("Network", self)?;
+        if let NetworkPolicy::Explicit(policy) = &self.policy {
+            policy.to_proto()?;
         }
         Ok(())
     }
     pub fn policy_proto(&self) -> Result<proto::SandboxPolicy, ConfigError> {
-        self.policy
-            .as_ref()
-            .map_or_else(|| Ok(crate::openshell::policy()), |p| p.explicit.to_proto())
+        match &self.policy {
+            NetworkPolicy::Isolated => Ok(crate::openshell::policy()),
+            NetworkPolicy::Explicit(policy) => policy.to_proto(),
+        }
     }
 }
 pub(crate) const POLICY_PROTOCOLS: &[&str] = &["rest", "websocket", "json-rpc", "mcp"];
@@ -305,80 +399,15 @@ pub(crate) const POLICY_TLS: &[&str] = &["terminate", "passthrough", "skip"];
 pub(crate) const POLICY_ENFORCEMENT: &[&str] = &["enforce", "audit"];
 pub(crate) const POLICY_ACCESS: &[&str] = &["full", "read-only"];
 pub(crate) const POLICY_BODY_MAX: u32 = 1_048_576;
-impl PolicyEndpoint {
-    fn validate(&self) -> Result<(), ConfigError> {
-        let invalid = self.port.is_some() == self.ports.is_some()
-            || self.port == Some(0)
-            || self.ports.as_ref().is_some_and(|p| {
-                p.is_empty()
-                    || p.contains(&0)
-                    || p.iter().collect::<std::collections::BTreeSet<_>>().len() != p.len()
-            })
-            || (self.host.as_ref().is_none_or(String::is_empty)
-                && self.allowed_ips.as_ref().is_none_or(Vec::is_empty))
-            || self.rules.as_ref().is_some_and(Vec::is_empty)
-            || self.deny_rules.as_ref().is_some_and(Vec::is_empty)
-            || (self.access.is_some() && self.rules.is_some())
-            || self
-                .json_rpc
-                .as_ref()
-                .and_then(|r| r.max_body_bytes)
-                .is_some_and(|v| v == 0 || v > POLICY_BODY_MAX)
-            || self
-                .mcp
-                .as_ref()
-                .and_then(|r| r.max_body_bytes)
-                .is_some_and(|v| v == 0 || v > POLICY_BODY_MAX);
-        if invalid
-            || [
-                (&self.protocol, POLICY_PROTOCOLS),
-                (&self.tls, POLICY_TLS),
-                (&self.enforcement, POLICY_ENFORCEMENT),
-                (&self.access, POLICY_ACCESS),
-            ]
-            .iter()
-            .any(|(value, choices)| {
-                value
-                    .as_ref()
-                    .is_some_and(|v| !choices.contains(&v.as_str()))
-            })
-        {
-            return Err(ConfigError(
-                "invalid or conflicting policy endpoint options",
-            ));
-        }
-        Ok(())
-    }
-}
 impl ExplicitPolicy {
     pub fn to_proto(&self) -> Result<proto::SandboxPolicy, ConfigError> {
-        if self.version != 1 {
-            return Err(ConfigError("explicit policy requires version 1"));
-        }
-        for rule in self.network_policies.values() {
-            for endpoint in &rule.endpoints {
-                endpoint.validate()?;
-            }
-        }
-        let mut input =
-            serde_json::to_value(self).map_err(|_| ConfigError("cannot encode sandbox policy"))?;
-        // Main's exported schema spells strict enforcement differently from the pinned runtime.
-        if input
-            .pointer("/landlock/compatibility")
-            .and_then(|v| v.as_str())
-            == Some("strict")
-        {
-            input["landlock"]["compatibility"] = serde_json::json!("hard_requirement");
-        }
-        if self.landlock.as_ref().is_some_and(|l| {
-            !["strict", "best_effort", "hard_requirement"].contains(&l.compatibility.as_str())
-        }) {
-            return Err(ConfigError("unsupported Landlock compatibility"));
-        }
+        super::schema::validate_definition("ExplicitPolicy", self)?;
+        let input = serde_json::to_value(self)
+            .map_err(|_| ConfigError::new("cannot encode sandbox policy"))?;
         let policy = openshell_policy::parse_sandbox_policy(&input.to_string())
-            .map_err(|_| ConfigError("invalid or unsupported explicit sandbox policy"))?;
+            .map_err(|_| ConfigError::new("invalid or unsupported explicit sandbox policy"))?;
         openshell_policy::validate_sandbox_policy(&policy)
-            .map_err(|_| ConfigError("explicit sandbox policy failed OpenShell validation"))?;
+            .map_err(|_| ConfigError::new("explicit sandbox policy failed OpenShell validation"))?;
         Ok(policy)
     }
 }

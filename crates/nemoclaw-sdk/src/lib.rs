@@ -5,6 +5,10 @@
 
 use std::fmt;
 
+mod artifact_pins {
+    include!(concat!(env!("OUT_DIR"), "/artifact_pins.rs"));
+}
+
 /// Identity that must survive refresh, independently of configuration drift.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Binding {
@@ -66,20 +70,38 @@ pub enum ObservationError {
     BindingMismatch,
     /// A fixed, non-secret diagnostic from an owning backend.
     Backend(&'static str),
+    Hardware(crate::hardware::HardwareDiagnostic),
+    SandboxStartup {
+        phase: &'static str,
+        reason: &'static str,
+        exit_code: Option<i32>,
+    },
 }
 
 impl fmt::Display for ObservationError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(match self {
-            Self::Backend(message) => message,
-            Self::Authentication => "observation authentication failed",
-            Self::Permission => "observation permission denied",
-            Self::Transport => "observation transport failed",
-            Self::Query => "observation query failed",
-            Self::Extension => "observation extension failed",
-            Self::Incomplete => "observation is incomplete",
-            Self::BindingMismatch => "observed ownership, generation, or durable identity changed",
-        })
+        match self {
+            Self::SandboxStartup {
+                phase,
+                reason,
+                exit_code,
+            } => write!(
+                f,
+                "sandbox unavailable: {phase}, reason {reason}, exit code {}; resources retained",
+                exit_code.map_or_else(|| "unknown".into(), |code| code.to_string())
+            ),
+            Self::Hardware(diagnostic) => diagnostic.fmt(f),
+            Self::Backend(message) => f.write_str(message),
+            Self::Authentication => f.write_str("observation authentication failed"),
+            Self::Permission => f.write_str("observation permission denied"),
+            Self::Transport => f.write_str("observation transport failed"),
+            Self::Query => f.write_str("observation query failed"),
+            Self::Extension => f.write_str("observation extension failed"),
+            Self::Incomplete => f.write_str("observation is incomplete"),
+            Self::BindingMismatch => {
+                f.write_str("observed ownership, generation, or durable identity changed")
+            }
+        }
     }
 }
 
@@ -108,18 +130,20 @@ pub mod backend;
 pub mod compile;
 pub mod config;
 mod error;
+mod health;
+pub use health::{RuntimeHealth, SandboxHealth};
 pub mod openshell;
+#[doc(hidden)]
+pub mod services;
 mod state;
 pub use error::Error;
 pub mod bundle;
 mod process;
 pub use tokio_util::sync::CancellationToken;
 mod deployment;
-pub use deployment::{Change, Deployment, OperationResult, Outcome, Progress};
+pub use deployment::{Change, Deployment, OperationResult, Outcome, Progress, StepOutcome};
 
 pub mod snapshot;
-
-pub mod ollama;
 
 pub mod docker;
 
@@ -127,5 +151,12 @@ pub mod managed;
 
 pub mod hardware;
 
-pub mod backends;
-pub mod recipes;
+mod tofu_ui;
+
+mod download;
+pub use download::{
+    ByteProgress, DownloadPhase, DownloadProgress, with_download_progress,
+    with_provider_download_progress,
+};
+
+mod docker_compute;

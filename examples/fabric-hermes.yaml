@@ -23,12 +23,13 @@ spec:
         provider: docker
       network:
         tier: isolated
-      agents:
-        - name: main
-          harness: hermes
-          inference:
-            routes:
-              - name: primary
-                providerRef: local
-                overrides:
-                  model: qwen3:1.7b
+      harness:
+        kind: hermes
+      agent:
+        name: main
+        inference:
+          routes:
+            - name: primary
+              providerRef: local
+              overrides:
+                model: qwen3:1.7b

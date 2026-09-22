@@ -1,16 +1,17 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
+mod podman;
 mod spec;
 pub use spec::*;
 mod storage;
 pub use storage::*;
 mod observation;
 pub use observation::*;
-mod artifacts;
-mod capacity;
+mod backend;
+pub(crate) use backend::service_engine;
 mod gateway_storage;
 mod keys;
 mod mutation;
-pub use artifacts::RuntimeStatus;
-mod backend;
+#[cfg(all(test, unix))]
+mod planning_tests;
 pub use backend::{GATEWAY_STORAGE_KIND, ManagedBackend, connection_endpoint, runtime_engine};

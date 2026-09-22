@@ -11,17 +11,30 @@ pub enum Error {
     State(&'static str),
     #[error("{0}")]
     Bundle(&'static str),
+    #[error("Fabric readiness could not be established; resources retained")]
+    Health { health: Box<crate::SandboxHealth> },
     #[error("{0}")]
     Conflict(&'static str),
+    #[error(
+        "sandbox unavailable: {phase}, reason {reason}, exit code {exit_code}; resources retained"
+    )]
+    SandboxStartup {
+        phase: &'static str,
+        reason: &'static str,
+        exit_code: String,
+    },
     #[error("OpenTofu {operation} failed: {diagnostic}")]
     Execution {
         operation: String,
         diagnostic: String,
+        /// Data-source postconditions were the only reported apply failures.
+        /// Absent for incomplete output or an ambiguous resource operation.
+        postcondition_failures: Option<Vec<String>>,
     },
     #[error("operation interrupted; retain state and reapply the same configuration")]
     Cancelled,
-    #[error("Ollama connection refused; model inventory is unknown")]
-    OllamaStarting,
+    #[error("managed service connection refused; inventory is unknown")]
+    ServiceStarting,
     #[error("managed container is absent but owned persistent resources remain")]
     PartialRuntime,
 }

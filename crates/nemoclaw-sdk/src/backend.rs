@@ -8,6 +8,31 @@ use std::collections::BTreeMap;
 /// Non-secret attributes at the owning backend boundary.
 pub type Row = BTreeMap<String, String>;
 
+/// Persistence contract shared by graph compilation, operation policy, and
+/// provider reconciliation. Ownership must still be verified before mutation.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum OpenShellLifecycle {
+    /// Workspace identity survives deployment teardown.
+    Retained,
+    /// Sandbox files and history have no separately managed persistent storage.
+    /// Deletion requires explicit teardown; absence and replacement need recovery.
+    Stateful,
+    /// Registrations and configuration can be rebuilt from declared intent.
+    Reconstructible,
+}
+
+/// Classify either a backend kind or its full OpenTofu resource type.
+pub fn openshell_lifecycle(kind: &str) -> Option<OpenShellLifecycle> {
+    match kind.strip_prefix("nemoclaw_").unwrap_or(kind) {
+        "workspace" => Some(OpenShellLifecycle::Retained),
+        "sandbox" => Some(OpenShellLifecycle::Stateful),
+        "provider" | "provider_profile" | "pi_configuration" => {
+            Some(OpenShellLifecycle::Reconstructible)
+        }
+        _ => None,
+    }
+}
+
 /// A mutation can establish identity before a later step fails. Retain that
 /// state together with the diagnostic; never hide an established binding.
 /// Construct outcomes through `complete`, `failed`, or `partial` so an outcome
@@ -56,6 +81,17 @@ impl Mutation {
 /// Only authoritative absence may return `Ok(None)` from read.
 #[async_trait]
 pub trait Backend: Send + Sync {
+    /// Check a proposed configuration against current observations without
+    /// changing resources. Prior bindings are separate from desired intent.
+    async fn plan(
+        &self,
+        _kind: &str,
+        _desired: &Row,
+        _prior: Option<&Row>,
+    ) -> Result<(), crate::Error> {
+        Ok(())
+    }
+
     async fn read(
         &self,
         kind: &str,

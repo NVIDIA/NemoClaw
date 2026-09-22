@@ -3,6 +3,13 @@
 /.local/
 /.build/
 /dist/
+/fern/_generated/
+/fern/_main/
+/fern/.fern/
+/fern/.fern-cache/
+/.fern-cache/
 
 __pycache__/
 *.pyc
+/image/node_modules/
+.ruff_cache/

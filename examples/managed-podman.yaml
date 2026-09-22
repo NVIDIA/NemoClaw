@@ -1,0 +1,38 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# yaml-language-server: $schema=../schemas/nemoclaw-v1alpha1.schema.json
+
+# Local rootless Linux; see docs/usage.md for API and networking prerequisites.
+# Set the API socket and use an image digest from that Podman image store.
+apiVersion: nemoclaw.nvidia.com/v1alpha1
+kind: NemoClawConfig
+metadata:
+  name: podman-agent
+  uid: cf62ff28-bfcd-4631-8f6d-c508ed5a48f3
+spec:
+  gateway:
+    management: managed
+    engine: unix:///run/user/1000/podman/podman.sock
+    endpoint: http://127.0.0.1:17681
+  inferenceProviders:
+    - name: local
+      provider: openai
+      endpoint: http://172.20.0.1:11446/v1
+  sandboxes:
+    - name: assistant
+      image:
+        ref: nc-prototype-fabric@sha256:a6a0e5cf53501e765ae43457212989ff4716c6224352dc109ebd49c3780450cd
+      runtime:
+        provider: podman
+      network:
+        tier: isolated
+      harness:
+        kind: deepagents
+      agent:
+        name: main
+        inference:
+          routes:
+            - name: primary
+              providerRef: local
+              overrides:
+                model: qwen3:1.7b

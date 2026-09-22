@@ -1,6 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+#[path = "support/examples.rs"]
+mod examples;
+
 use nemoclaw_sdk::config::{Document, schema::input_schema};
 use serde_json::{Value, json};
 
@@ -25,6 +28,70 @@ fn agrees(validator: &jsonschema::Validator, value: &Value, accepted: bool) {
     );
 }
 
+fn agrees_at(
+    validator: &jsonschema::Validator,
+    value: &Value,
+    accepted: bool,
+    file: &str,
+    path: &str,
+) {
+    assert_eq!(
+        Document::parse(value.to_string().as_bytes()).is_ok(),
+        accepted,
+        "parser: {file} {path}: {value}"
+    );
+    assert_eq!(
+        validator.is_valid(value),
+        accepted,
+        "schema: {file} {path}: {:?}",
+        validator.iter_errors(value).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn image_pull_policy_accepts_only_supported_values_on_managed_containers() {
+    let validator = jsonschema::validator_for(&input_schema()).unwrap();
+    for (file, path) in [
+        ("spark/spark-inline.yaml", "/spec/gateway"),
+        ("spark/spark-inline.yaml", "/spec/services/qwen"),
+        ("managed-ollama.yaml", "/spec/services/ollama-server"),
+    ] {
+        for policy in ["Always", "IfNotPresent", "Never", "always", ""] {
+            let mut value = input(file);
+            value.pointer_mut(path).unwrap()["imagePullPolicy"] = json!(policy);
+            let accepted = matches!(policy, "IfNotPresent" | "Never");
+            agrees(&validator, &value, accepted);
+            if policy == "Always" {
+                let error = Document::parse(value.to_string().as_bytes())
+                    .unwrap_err()
+                    .to_string();
+                assert!(
+                    error.contains("IfNotPresent") && error.contains("Never"),
+                    "{error}"
+                );
+            }
+            if accepted {
+                let document = Document::parse(value.to_string().as_bytes()).unwrap();
+                let exported = document.yaml().unwrap();
+                assert_eq!(Document::parse(exported.as_bytes()).unwrap(), document);
+                assert_eq!(
+                    serde_json::to_value(document)
+                        .unwrap()
+                        .pointer(path)
+                        .unwrap()["imagePullPolicy"],
+                    policy
+                );
+            }
+        }
+    }
+    let mut external = input("local.yaml");
+    external["spec"]["gateway"]["imagePullPolicy"] = json!("Never");
+    agrees(&validator, &external, false);
+    let mut sandbox = input("local.yaml");
+    sandbox["spec"]["sandboxes"][0]["imagePullPolicy"] = json!("Never");
+    agrees(&validator, &sandbox, false);
+}
+
 #[test]
 fn input_schema_rejects_missing_required_fields_and_structural_nulls() {
     let validator = jsonschema::validator_for(&input_schema()).unwrap();
@@ -39,14 +106,13 @@ fn input_schema_rejects_missing_required_fields_and_structural_nulls() {
         "/spec",
         "/spec/gateway",
         "/spec/gateway/management",
-        "/spec/inferenceProviders",
         "/spec/inferenceProviders/0/name",
         "/spec/sandboxes",
         "/spec/sandboxes/0/name",
-        "/spec/sandboxes/0/agents",
-        "/spec/sandboxes/0/agents/0/harness",
-        "/spec/sandboxes/0/agents/0/inference",
-        "/spec/sandboxes/0/agents/0/inference/routes/0/overrides/model",
+        "/spec/sandboxes/0/agent",
+        "/spec/sandboxes/0/harness",
+        "/spec/sandboxes/0/agent/inference",
+        "/spec/sandboxes/0/agent/inference/routes/0/overrides/model",
     ] {
         let mut value = original.clone();
         let (parent, key) = path.rsplit_once('/').unwrap();
@@ -61,8 +127,8 @@ fn input_schema_rejects_missing_required_fields_and_structural_nulls() {
     for (parent, key) in [
         ("/spec/gateway", "credential"),
         ("/spec/gateway", "tls"),
-        ("/spec/inferenceProviders/0", "service"),
-        ("/spec/inferenceProviders/0", "ollama"),
+        ("/spec/inferenceProviders/0", "serviceRef"),
+        ("/spec", "services"),
     ] {
         let mut value = original.clone();
         value.pointer_mut(parent).unwrap()[key] = Value::Null;
@@ -73,7 +139,7 @@ fn input_schema_rejects_missing_required_fields_and_structural_nulls() {
 #[test]
 fn input_schema_preserves_defaults_strict_objects_and_opaque_pi_metadata() {
     let validator = jsonschema::validator_for(&input_schema()).unwrap();
-    let mut value = input("spark-inline.yaml");
+    let mut value = input("spark/spark-inline.yaml");
     for key in ["endpoint", "engine", "image", "networkCIDR"] {
         value["spec"]["gateway"]
             .as_object_mut()
@@ -87,7 +153,7 @@ fn input_schema_preserves_defaults_strict_objects_and_opaque_pi_metadata() {
             .remove(key);
     }
     for key in ["serving", "memory"] {
-        value["spec"]["inferenceProviders"][0]["service"]
+        value["spec"]["services"]["qwen"]
             .as_object_mut()
             .unwrap()
             .remove(key);
@@ -96,7 +162,7 @@ fn input_schema_preserves_defaults_strict_objects_and_opaque_pi_metadata() {
     value["spec"]["gateway"]["surprise"] = json!(true);
     agrees(&validator, &value, false);
     let mut value = input("fabric-pi.yaml");
-    let path = "/spec/sandboxes/0/agents/0/inference/routes/0/overrides/piModel";
+    let path = "/spec/sandboxes/0/agent/inference/routes/0/overrides/piModel";
     *value.pointer_mut(path).unwrap() = json!({"future": [null, {"value": null}]});
     agrees(&validator, &value, true);
     *value.pointer_mut(path).unwrap() = Value::Null;
@@ -107,8 +173,7 @@ fn input_schema_preserves_defaults_strict_objects_and_opaque_pi_metadata() {
 fn schema_and_parser_accept_every_maintained_example() {
     let validator = jsonschema::validator_for(&input_schema()).unwrap();
     let directory = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples");
-    for entry in std::fs::read_dir(directory).unwrap() {
-        let path = entry.unwrap().path();
+    for path in examples::yaml_files(&directory) {
         if path.extension().is_some_and(|ext| ext == "yaml") {
             let value: Value =
                 serde_saphyr::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
@@ -123,7 +188,6 @@ fn schema_and_parser_enforce_choices_bounds_and_conditional_forms() {
     for (file, path, replacement, accepted) in [
         ("local.yaml", "/apiVersion", json!("future"), false),
         ("local.yaml", "/metadata/name", json!("UPPER"), false),
-        ("local.yaml", "/spec/inferenceProviders", json!([]), false),
         (
             "local.yaml",
             "/spec/gateway/management",
@@ -155,128 +219,98 @@ fn schema_and_parser_enforce_choices_bounds_and_conditional_forms() {
             false,
         ),
         (
-            "local.yaml",
-            "/spec/sandboxes/0/agents/0/harness",
-            json!("claude"),
-            false,
-        ),
-        (
-            "fabric-claude.yaml",
-            "/spec/inferenceProviders/0/provider",
-            json!("openai"),
-            false,
-        ),
-        (
-            "fabric-pi.yaml",
-            "/spec/sandboxes/0/agents/0/harness",
-            json!("codex"),
-            false,
-        ),
-        (
             "managed-ollama.yaml",
-            "/spec/inferenceProviders/0/ollama/image",
+            "/spec/services/ollama-server/image",
             json!("ollama/ollama:latest"),
             false,
         ),
         (
-            "managed-ollama.yaml",
-            "/spec/sandboxes/0/agents/0/inference/routes/0/overrides/model",
-            json!("untagged"),
-            false,
-        ),
-        (
-            "vllm.yaml",
+            "spark/vllm.yaml",
             "/spec/inferenceProviders/0/endpoint",
             json!("https://api.example.com/v1"),
             false,
         ),
         (
-            "vllm.yaml",
+            "spark/vllm.yaml",
             "/spec/inferenceProviders/0/credential",
             json!({"env": "TOKEN"}),
             false,
         ),
         (
-            "vllm.yaml",
-            "/spec/inferenceProviders/0/service/backend",
+            "spark/vllm.yaml",
+            "/spec/services/qwen/kind",
             json!("removed-backend"),
             false,
         ),
         (
-            "vllm.yaml",
-            "/spec/inferenceProviders/0/service/serving/speculativeTokens",
+            "spark/vllm.yaml",
+            "/spec/services/qwen/serving/speculativeTokens",
             json!(1),
             false,
         ),
         (
-            "vllm.yaml",
-            "/spec/inferenceProviders/0/service/serving/startupTimeoutSeconds",
+            "spark/vllm.yaml",
+            "/spec/services/qwen/serving/startupTimeoutSeconds",
             json!(0),
             true,
         ),
         (
-            "vllm.yaml",
-            "/spec/inferenceProviders/0/service/serving/startupTimeoutSeconds",
+            "spark/vllm.yaml",
+            "/spec/services/qwen/serving/startupTimeoutSeconds",
             json!(59),
             false,
         ),
         (
-            "vllm.yaml",
-            "/spec/inferenceProviders/0/service/serving/startupTimeoutSeconds",
+            "spark/vllm.yaml",
+            "/spec/services/qwen/serving/startupTimeoutSeconds",
             json!(60),
             true,
         ),
         (
-            "vllm.yaml",
-            "/spec/inferenceProviders/0/service/serving/startupTimeoutSeconds",
+            "spark/vllm.yaml",
+            "/spec/services/qwen/serving/startupTimeoutSeconds",
             json!(3600),
             true,
         ),
         (
-            "vllm.yaml",
-            "/spec/inferenceProviders/0/service/serving/startupTimeoutSeconds",
+            "spark/vllm.yaml",
+            "/spec/services/qwen/serving/startupTimeoutSeconds",
             json!(3601),
             false,
         ),
         (
-            "vllm.yaml",
-            "/spec/inferenceProviders/0/service/memory/hostReserveGiB",
+            "spark/vllm.yaml",
+            "/spec/services/qwen/memory/hostReserveGiB",
             json!(27),
             false,
         ),
         (
-            "vllm.yaml",
-            "/spec/inferenceProviders/0/service/memory/hostReserveGiB",
+            "spark/vllm.yaml",
+            "/spec/services/qwen/memory/hostReserveGiB",
             json!(0),
             true,
         ),
         (
-            "vllm.yaml",
-            "/spec/sandboxes/0/agents/0/harness",
+            "spark/vllm.yaml",
+            "/spec/sandboxes/0/harness/kind",
             json!("deepagents"),
-            false,
+            true,
         ),
         (
-            "vllm.yaml",
-            "/spec/sandboxes/0/runtime/provider",
-            json!("podman"),
-            false,
-        ),
-        (
-            "spark-inline.yaml",
-            "/spec/inferenceProviders/0/service/recipe/apiVersion",
+            "spark/spark-inline.yaml",
+            "/spec/services/qwen/recipe/apiVersion",
             json!("future"),
             false,
         ),
         (
-            "spark-inline.yaml",
-            "/spec/inferenceProviders/0/service/memory/gpuMemoryGiB",
+            "spark/spark-inline.yaml",
+            "/spec/services/qwen/memory/gpuMemoryGiB",
             json!(16),
             false,
         ),
         (
-            "spark-inline.yaml",
-            "/spec/inferenceProviders/0/service/recipe/resources/preparedBytes",
+            "spark/spark-inline.yaml",
+            "/spec/services/qwen/recipe/resources/preparedBytes",
             json!(0),
             false,
         ),
@@ -284,11 +318,11 @@ fn schema_and_parser_enforce_choices_bounds_and_conditional_forms() {
         let mut value = input(file);
         let (parent, key) = path.rsplit_once('/').unwrap();
         value.pointer_mut(parent).unwrap()[key] = replacement;
-        agrees(&validator, &value, accepted);
+        agrees_at(&validator, &value, accepted, file, path);
     }
     for field in ["placement", "publication"] {
-        let mut value = input("remote-vllm.yaml");
-        value["spec"]["inferenceProviders"][0]["service"]
+        let mut value = input("spark/remote-vllm.yaml");
+        value["spec"]["services"]["qwen"]
             .as_object_mut()
             .unwrap()
             .remove(field);
@@ -303,7 +337,7 @@ fn defaulted_numeric_bounds_match_the_parser_at_each_boundary() {
         ("serving", "port", 1024, 65535),
         ("serving", "contextTokens", 8192, 65536),
         ("serving", "maxSequences", 1, 2),
-        ("serving", "batchTokens", 512, 2048),
+        ("serving", "batchTokens", 512, 4096),
         ("serving", "startupTimeoutSeconds", 60, 3600),
         ("memory", "hostReserveGiB", 28, 64),
         ("memory", "kvCacheGiB", 4, 12),
@@ -319,8 +353,8 @@ fn defaulted_numeric_bounds_match_the_parser_at_each_boundary() {
             (max, true),
             (max + 1, false),
         ] {
-            let mut value = input("vllm.yaml");
-            let service = &mut value["spec"]["inferenceProviders"][0]["service"];
+            let mut value = input("spark/vllm.yaml");
+            let service = &mut value["spec"]["services"]["qwen"];
             service["memory"]["minAvailableGiB"] = json!(6);
             service["memory"]["freeGateGiB"] = json!(24);
             service[section][field] = json!(number);
@@ -335,9 +369,25 @@ fn documented_parser_checks_remain_required_after_schema_validation() {
     assert!(schema["x-nemoclaw-parser-checks"].as_array().unwrap().len() >= 4);
     let validator = jsonschema::validator_for(&schema).unwrap();
     for (file, path, replacement) in [
+        ("local.yaml", "/spec/inferenceProviders", json!([])),
         (
             "local.yaml",
-            "/spec/sandboxes/0/agents/0/inference/routes/0/providerRef",
+            "/spec/sandboxes/0/harness/kind",
+            json!("claude"),
+        ),
+        (
+            "fabric-claude.yaml",
+            "/spec/inferenceProviders/0/provider",
+            json!("openai"),
+        ),
+        (
+            "fabric-pi.yaml",
+            "/spec/sandboxes/0/harness/kind",
+            json!("codex"),
+        ),
+        (
+            "local.yaml",
+            "/spec/sandboxes/0/agent/inference/routes/0/providerRef",
             json!("foreign"),
         ),
         (
@@ -346,14 +396,24 @@ fn documented_parser_checks_remain_required_after_schema_validation() {
             json!("http://remote.example.com"),
         ),
         (
-            "remote-vllm.yaml",
-            "/spec/inferenceProviders/0/service/publication/endpoint",
+            "spark/remote-vllm.yaml",
+            "/spec/services/qwen/publication/endpoint",
             json!("http://10.0.0.8:9999/v1"),
         ),
         (
-            "vllm.yaml",
-            "/spec/inferenceProviders/0/service/memory/freeGateGiB",
+            "spark/vllm.yaml",
+            "/spec/services/qwen/memory/freeGateGiB",
             json!(6),
+        ),
+        (
+            "managed-ollama.yaml",
+            "/spec/sandboxes/0/agent/inference/routes/0/overrides/model",
+            json!("untagged"),
+        ),
+        (
+            "spark/vllm.yaml",
+            "/spec/sandboxes/0/runtime/provider",
+            json!("podman"),
         ),
     ] {
         let mut value = input(file);
@@ -375,11 +435,7 @@ fn every_authored_example_selects_and_passes_the_checked_in_editor_schema() {
         .unwrap();
     let schema: Value = serde_json::from_slice(&std::fs::read(&expected).unwrap()).unwrap();
     let validator = jsonschema::validator_for(&schema).unwrap();
-    for entry in std::fs::read_dir(root.join("examples")).unwrap() {
-        let path = entry.unwrap().path();
-        if path.extension().is_none_or(|extension| extension != "yaml") {
-            continue;
-        }
+    for path in examples::yaml_files(&root.join("examples")) {
         let text = std::fs::read_to_string(&path).unwrap();
         let associations: Vec<_> = text
             .lines()
@@ -400,5 +456,126 @@ fn every_authored_example_selects_and_passes_the_checked_in_editor_schema() {
         );
         let value: Value = serde_saphyr::from_str(&text).unwrap();
         agrees(&validator, &value, true);
+    }
+}
+
+#[test]
+fn example_discovery_includes_nested_yaml_and_excludes_other_files() {
+    let root = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(root.path().join("nested/deeper")).unwrap();
+    let expected: std::collections::BTreeSet<_> =
+        ["top.yaml", "nested/child.yaml", "nested/deeper/leaf.yaml"]
+            .map(|name| root.path().join(name))
+            .into();
+    for path in &expected {
+        std::fs::write(path, "name: fixture\n").unwrap();
+    }
+    std::fs::write(root.path().join("nested/readme.md"), "not a deployment").unwrap();
+    std::fs::write(root.path().join("nested/deeper/data.json"), "{}").unwrap();
+    assert_eq!(
+        examples::yaml_files(root.path())
+            .into_iter()
+            .collect::<std::collections::BTreeSet<_>>(),
+        expected
+    );
+}
+
+#[test]
+fn every_sandbox_requires_one_singular_agent_and_rejects_legacy_lists() {
+    let validator = jsonschema::validator_for(&input_schema()).unwrap();
+    let mut value = input("local.yaml");
+    let sandbox = value["spec"]["sandboxes"][0].as_object_mut().unwrap();
+    if let Some(agents) = sandbox.remove("agents") {
+        sandbox.insert("agent".into(), agents[0].clone());
+    }
+    agrees(&validator, &value, true);
+    let mut missing = value.clone();
+    missing["spec"]["sandboxes"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("agent");
+    agrees(&validator, &missing, false);
+    let mut legacy = missing.clone();
+    legacy["spec"]["sandboxes"][0]["agents"] =
+        json!([value["spec"]["sandboxes"][0]["agent"].clone()]);
+    agrees(&validator, &legacy, false);
+    value["spec"]["sandboxes"][0]["agents"] = legacy["spec"]["sandboxes"][0]["agents"].clone();
+    agrees(&validator, &value, false);
+}
+
+#[test]
+fn gateway_variants_reject_fields_owned_by_the_other_mode() {
+    let validator = jsonschema::validator_for(&input_schema()).unwrap();
+    for (field, value) in [
+        ("engine", json!("")),
+        ("image", json!("")),
+        ("networkCIDR", json!("")),
+        ("imagePullPolicy", json!("Never")),
+    ] {
+        let mut external = input("local.yaml");
+        external["spec"]["gateway"][field] = value;
+        agrees(&validator, &external, false);
+    }
+    for (field, value) in [
+        ("credential", json!({"env": "TOKEN"})),
+        (
+            "tls",
+            json!({"ca": {"env": "CA"}, "certificate": {"env": "CERT"}, "key": {"env": "KEY"}}),
+        ),
+    ] {
+        let mut managed = input("spark/spark-inline.yaml");
+        managed["spec"]["gateway"][field] = value;
+        agrees(&validator, &managed, false);
+    }
+}
+
+#[test]
+fn managed_gateway_schema_requires_one_compute_driver_including_defaulted_drivers() {
+    let validator = jsonschema::validator_for(&input_schema()).unwrap();
+    let mut value = input("managed-podman.yaml");
+    let mut second = value["spec"]["sandboxes"][0].clone();
+    second["name"] = json!("second");
+    second.as_object_mut().unwrap().remove("runtime");
+    value["spec"]["sandboxes"]
+        .as_array_mut()
+        .unwrap()
+        .push(second);
+    agrees(&validator, &value, false);
+}
+
+#[test]
+fn schema_errors_identify_the_contract_without_echoing_input_values_or_map_keys() {
+    let mut value = input("fabric-openclaw.yaml");
+    value["spec"]["harnesses"] = json!({"SECRET-MAP-KEY": {
+        "kind": "openclaw", "execution": {"timeoutSeconds": 0}
+    }});
+    let error = Document::parse(value.to_string().as_bytes())
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("schema"), "{error}");
+    assert!(!error.contains("SECRET-MAP-KEY"), "{error}");
+}
+
+#[test]
+fn schema_patterns_reject_trailing_newlines_in_identifiers_and_pins() {
+    let validator = jsonschema::validator_for(&input_schema()).unwrap();
+    for (file, path) in [
+        ("local.yaml", "/metadata/name"),
+        ("local.yaml", "/metadata/uid"),
+        ("local.yaml", "/spec/sandboxes/0/agent/name"),
+        (
+            "local.yaml",
+            "/spec/sandboxes/0/agent/inference/routes/0/overrides/model",
+        ),
+        ("spark/vllm.yaml", "/spec/services/qwen/image"),
+        (
+            "managed-ollama.yaml",
+            "/spec/services/ollama-server/model/digest",
+        ),
+    ] {
+        let mut value = input(file);
+        let target = value.pointer_mut(path).unwrap();
+        *target = json!(format!("{}\n", target.as_str().unwrap()));
+        agrees_at(&validator, &value, false, file, path);
     }
 }

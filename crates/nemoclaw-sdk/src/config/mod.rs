@@ -3,19 +3,31 @@
 
 mod agent_inference;
 pub(crate) mod constraints;
+mod execution;
+pub(crate) mod integration_policy;
+mod integrations;
+pub use integrations::*;
+mod observability;
+pub use observability::*;
 mod inference;
 mod interfaces;
+mod providers;
+pub(crate) mod references;
+pub use crate::services::ServiceDefinition;
 pub use agent_inference::*;
+pub use execution::*;
 pub use interfaces::*;
-mod management;
-pub use management::*;
+mod image_pull_policy;
+pub use image_pull_policy::ImagePullPolicy;
 mod network;
 pub use network::*;
+mod kinds;
 #[doc(hidden)]
 pub mod schema;
+pub use kinds::{ComputeDriver, HarnessKind, InferenceProviderKind};
 mod types;
 pub use inference::InferenceConnection;
-mod validation;
+pub(crate) mod validation;
 use sha2::{Digest, Sha256};
 use std::{fmt, io::Read};
 pub use types::*;
@@ -23,16 +35,20 @@ pub use validation::{is_fabric_harness, validate_endpoint};
 
 pub const API_VERSION: &str = "nemoclaw.nvidia.com/v1alpha1";
 pub const MAX_DOCUMENT_BYTES: u64 = 1 << 20;
-pub const DEFAULT_AGENT_IMAGE: &str =
-    "nc-prototype-fabric@sha256:a608340846053d881c3c6b3bdd7541d4f2f53236deaaef8e0b8f44afd8d4e8dd";
-pub const DEFAULT_GATEWAY_IMAGE: &str = "ghcr.io/nvidia/openshell/gateway@sha256:3d08ad1e7d839a2ffb9ac85a66102b96dd6bc042c3a6f1eaa31351998fd65792";
+pub use crate::artifact_pins::DEFAULT_AGENT_IMAGE;
+pub use crate::artifact_pins::DEFAULT_GATEWAY_IMAGE;
 
-/// Configuration errors contain fixed diagnostic text, never source values.
+/// Configuration diagnostics omit credentials and arbitrary source values.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ConfigError(pub &'static str);
+pub struct ConfigError(pub String);
+impl ConfigError {
+    pub fn new(message: &'static str) -> Self {
+        Self(message.into())
+    }
+}
 impl fmt::Display for ConfigError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.0)
+        f.write_str(&self.0)
     }
 }
 impl std::error::Error for ConfigError {}
@@ -47,12 +63,12 @@ impl Document {
         input
             .take(MAX_DOCUMENT_BYTES + 1)
             .read_to_end(&mut bytes)
-            .map_err(|_| ConfigError("cannot read configuration"))?;
+            .map_err(|_| ConfigError::new("cannot read configuration"))?;
         if bytes.len() as u64 > MAX_DOCUMENT_BYTES {
-            return Err(ConfigError("configuration exceeds 1 MiB"));
+            return Err(ConfigError::new("configuration exceeds 1 MiB"));
         }
-        let text =
-            std::str::from_utf8(&bytes).map_err(|_| ConfigError("configuration must be UTF-8"))?;
+        let text = std::str::from_utf8(&bytes)
+            .map_err(|_| ConfigError::new("configuration must be UTF-8"))?;
         let mut options = serde_saphyr::Options::default();
         let mut budget = serde_saphyr::Budget::default();
         budget.max_aliases = 0;
@@ -62,53 +78,10 @@ impl Document {
         options.merge_keys = serde_saphyr::MergeKeyPolicy::Error;
         options.reject_unsupported_tags = true;
         let tree: serde_json::Value = serde_saphyr::from_str_with_options(text, options)
-            .map_err(|_| ConfigError("invalid or unsupported YAML document"))?;
-        fn has_null(value: &serde_json::Value) -> bool {
-            match value {
-                serde_json::Value::Null => true,
-                serde_json::Value::Array(values) => values.iter().any(has_null),
-                serde_json::Value::Object(values) => values.values().any(has_null),
-                _ => false,
-            }
-        }
-        // The agent owns values inside its opaque model object, including null.
-        // Keep the existing null policy everywhere else in deployment intent.
-        let mut structural = tree.clone();
-        if let Some(sandboxes) = structural
-            .pointer_mut("/spec/sandboxes")
-            .and_then(serde_json::Value::as_array_mut)
-        {
-            for sandbox in sandboxes {
-                if let Some(agents) = sandbox
-                    .get_mut("agents")
-                    .and_then(serde_json::Value::as_array_mut)
-                {
-                    for agent in agents {
-                        if let Some(routes) = agent
-                            .pointer_mut("/inference/routes")
-                            .and_then(serde_json::Value::as_array_mut)
-                        {
-                            for route in routes {
-                                if let Some(overrides) = route
-                                    .get_mut("overrides")
-                                    .and_then(serde_json::Value::as_object_mut)
-                                    && overrides
-                                        .get("piModel")
-                                        .is_some_and(serde_json::Value::is_object)
-                                {
-                                    overrides.remove("piModel");
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        if has_null(&structural) {
-            return Err(ConfigError("omit optional fields instead of using null"));
-        }
+            .map_err(|_| ConfigError::new("invalid or unsupported YAML document"))?;
+        schema::validate_input(&tree)?;
         let mut document: Self = serde_json::from_value(tree).map_err(|_| {
-            ConfigError("configuration contains an unknown field or invalid field type")
+            ConfigError::new("configuration contains an unknown field or invalid field type")
         })?;
         document.defaults();
         document.validate()?;
@@ -120,11 +93,33 @@ impl Document {
     /// Returns an error if validation or serialization fails.
     pub fn yaml(&self) -> Result<String, ConfigError> {
         self.validate()?;
-        serde_saphyr::to_string(self).map_err(|_| ConfigError("cannot serialize configuration"))
+        serde_saphyr::to_string(self)
+            .map_err(|_| ConfigError::new("cannot serialize configuration"))
     }
     pub fn digest(&self) -> String {
-        // Field order, omissions, and HTML escaping are part of the document digest contract.
-        let json = serde_json::to_string(self)
+        // Named declaration order is not deployment intent; retain authored order on export.
+        let mut canonical = self.clone();
+        canonical.spec.sandboxes.sort_by(|a, b| a.name.cmp(&b.name));
+        canonical
+            .spec
+            .inference_providers
+            .sort_by(|a, b| a.name.cmp(&b.name));
+        for inference in canonical.spec.inferences.values_mut() {
+            inference.routes.sort_by(|a, b| a.name.cmp(&b.name));
+        }
+        for sandbox in &mut canonical.spec.sandboxes {
+            sandbox
+                .inference_providers
+                .sort_by(|a, b| a.name.cmp(&b.name));
+            for inference in sandbox
+                .inferences
+                .values_mut()
+                .chain(sandbox.agent.inference.iter_mut())
+            {
+                inference.routes.sort_by(|a, b| a.name.cmp(&b.name));
+            }
+        }
+        let json = serde_json::to_string(&canonical)
             .expect("configuration contains only serializable values")
             .replace('&', "\\u0026")
             .replace('<', "\\u003c")
@@ -149,26 +144,40 @@ impl Document {
     pub fn credential_names(&self) -> Vec<&str> {
         let g = &self.spec.gateway;
         let mut names = Vec::new();
-        if let Some(c) = &g.credential {
+        if let Some(c) = g.credential() {
             names.push(c.env.as_str());
         }
-        if let Some(tls) = &g.tls {
+        if let Some(tls) = g.tls() {
             names.extend([
                 tls.ca.env.as_str(),
                 tls.certificate.env.as_str(),
                 tls.key.env.as_str(),
             ]);
         }
-        for provider in &self.spec.inference_providers {
-            if let Some(c) = &provider.credential {
-                names.push(c.env.as_str());
+        if let Ok(providers) = self.selected_inference_providers() {
+            for provider in providers {
+                if let Some(credential) = &provider.credential {
+                    names.push(credential.env.as_str());
+                }
             }
         }
+        for sandbox in &self.spec.sandboxes {
+            for binding in sandbox
+                .integration_bindings(&self.spec.integrations)
+                .expect("validated integration references")
+            {
+                match binding.definition {
+                    Integration::WebSearch(search) => names.push(&search.credential.env),
+                }
+            }
+        }
+        names.sort_unstable();
+        names.dedup();
         names
     }
     pub fn defaults(&mut self) {
         let gateway = &mut self.spec.gateway;
-        if gateway.management == "managed" {
+        if let Gateway::Managed(gateway) = gateway {
             default_string(&mut gateway.endpoint, constraints::GATEWAY_ENDPOINT);
             default_string(&mut gateway.engine, constraints::GATEWAY_ENGINE);
             default_string(&mut gateway.image, DEFAULT_GATEWAY_IMAGE);
@@ -180,17 +189,11 @@ impl Document {
                 ),
             );
         }
-        for provider in &mut self.spec.inference_providers {
-            if let Some(service) = &mut provider.service {
-                service.defaults();
-            }
+        for service in self.spec.services.values_mut() {
+            crate::services::defaults(service);
         }
         for sandbox in &mut self.spec.sandboxes {
             default_string(&mut sandbox.image.ref_, DEFAULT_AGENT_IMAGE);
-            default_string(&mut sandbox.runtime.provider, constraints::RUNTIME);
-            if sandbox.network.policy.is_none() {
-                default_string(&mut sandbox.network.tier, constraints::NETWORK_TIER);
-            }
         }
     }
 }
@@ -202,13 +205,19 @@ fn default_string(value: &mut String, default: &str) {
 pub(crate) fn bridge_address(cidr: &str) -> Result<String, ConfigError> {
     let network = cidr
         .parse::<ipnet::Ipv4Net>()
-        .map_err(|_| ConfigError("invalid bridge network"))?;
+        .map_err(|_| ConfigError::new("invalid bridge network"))?;
     let address = u32::from(network.network())
         .checked_add(1)
-        .ok_or(ConfigError("bridge address exceeds IPv4 range"))?;
+        .ok_or(ConfigError::new("bridge address exceeds IPv4 range"))?;
     Ok(std::net::Ipv4Addr::from(address).to_string())
 }
-impl Gateway {
+impl ManagedGateway {
+    pub(crate) fn runtime_settings(&self) -> Self {
+        let mut settings = self.clone();
+        // Acquisition policy is a mutable provider attribute, not container identity.
+        settings.image_pull_policy = None;
+        settings
+    }
     /// Resolve the first address after the configured network address.
     ///
     /// # Errors
@@ -217,64 +226,53 @@ impl Gateway {
         bridge_address(&self.network_cidr)
     }
 }
-impl Agent {
-    pub fn runtime(&self) -> String {
-        format!("fabric-{}", self.harness)
-    }
-}
-impl Service {
-    pub fn served_model(&self) -> &str {
-        if let Some(recipe) = &self.recipe {
-            return &recipe.serving.model_name;
-        }
-        &self.model.repository
-    }
-
-    pub fn defaults(&mut self) {
-        for (value, default) in [
-            (&mut self.serving.port, constraints::PORT.default),
-            (
-                &mut self.serving.context_tokens,
-                constraints::CONTEXT_TOKENS.default,
-            ),
-            (
-                &mut self.serving.max_sequences,
-                constraints::MAX_SEQUENCES.default,
-            ),
-            (
-                &mut self.serving.batch_tokens,
-                constraints::BATCH_TOKENS.default,
-            ),
-            (
-                &mut self.serving.startup_timeout_seconds,
-                constraints::STARTUP_TIMEOUT.default,
-            ),
-            (
-                &mut self.memory.host_reserve_gib,
-                constraints::HOST_RESERVE.default,
-            ),
-            (&mut self.memory.kv_cache_gib, constraints::KV_CACHE.default),
-            (
-                &mut self.memory.min_available_gib,
-                constraints::MIN_AVAILABLE.default,
-            ),
-            (&mut self.memory.min_free_gib, constraints::MIN_FREE.default),
-            (
-                &mut self.memory.free_gate_gib,
-                constraints::FREE_GATE.default,
-            ),
-            (
-                &mut self.memory.consecutive_samples,
-                constraints::CONSECUTIVE_SAMPLES.default,
-            ),
-        ] {
-            if *value == 0 {
-                *value = default;
-            }
-        }
-    }
-}
-
 fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+impl Gateway {
+    /// The endpoint used to connect to either gateway configuration.
+    pub fn endpoint(&self) -> &str {
+        match self {
+            Self::Managed(gateway) => &gateway.endpoint,
+            Self::External(gateway) => &gateway.endpoint,
+        }
+    }
+    /// Change the connection endpoint without changing gateway management.
+    pub fn endpoint_mut(&mut self) -> &mut String {
+        match self {
+            Self::Managed(gateway) => &mut gateway.endpoint,
+            Self::External(gateway) => &mut gateway.endpoint,
+        }
+    }
+    /// Installation settings, when this deployment manages the gateway.
+    pub fn as_managed(&self) -> Option<&ManagedGateway> {
+        match self {
+            Self::Managed(gateway) => Some(gateway),
+            Self::External(_) => None,
+        }
+    }
+    /// Mutable installation settings, when this deployment manages the gateway.
+    pub fn as_managed_mut(&mut self) -> Option<&mut ManagedGateway> {
+        match self {
+            Self::Managed(gateway) => Some(gateway),
+            Self::External(_) => None,
+        }
+    }
+    pub(crate) fn managed(&self) -> Result<&ManagedGateway, ConfigError> {
+        self.as_managed()
+            .ok_or(ConfigError::new("operation requires a managed gateway"))
+    }
+    pub(crate) fn credential(&self) -> Option<&Credential> {
+        match self {
+            Self::Managed(_) => None,
+            Self::External(gateway) => gateway.credential.as_ref(),
+        }
+    }
+    pub(crate) fn tls(&self) -> Option<&TLS> {
+        match self {
+            Self::Managed(_) => None,
+            Self::External(gateway) => gateway.tls.as_ref(),
+        }
+    }
 }

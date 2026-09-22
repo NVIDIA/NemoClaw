@@ -1,0 +1,11 @@
+{
+  "name": "vllm-amd64",
+  "platform": "linux_amd64",
+  "image": "nc-prototype-vllm-amd64:rust-v1",
+  "sourceDateEpoch": 1789488000,
+  "files": [
+    "Dockerfile",
+    "NOTICE.md"
+  ],
+  "downloads": {}
+}

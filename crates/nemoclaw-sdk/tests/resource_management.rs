@@ -1,216 +1,132 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-use nemoclaw_sdk::{
-    compile::{Generations, compile},
-    config::{Document, schema::input_schema},
-};
+use nemoclaw_sdk::config::{Document, schema::input_schema};
 use serde_json::{Value, json};
 
-fn input() -> Value {
-    serde_saphyr::from_str(include_str!("../../../examples/managed-ollama.yaml")).unwrap()
+fn input(source: &str) -> Value {
+    serde_saphyr::from_str(source).unwrap()
 }
 fn parse(value: &Value) -> Result<Document, nemoclaw_sdk::config::ConfigError> {
     Document::parse(value.to_string().as_bytes())
 }
+
 #[test]
-fn explicit_external_dependencies_preserve_the_resource_graph() {
-    let mut legacy = input();
-    legacy["spec"]["sandboxes"][0]["network"]["proxy"] =
-        json!({"host":"proxy.internal","port":3128});
-    let mut explicit = legacy.clone();
-    explicit["spec"]["inferenceProviders"][0]["ollama"]["network"] =
-        json!({"management":"external","name":"nc-prototype-slice"});
-    explicit["spec"]["sandboxes"][0]["network"]["proxy"]["management"] = json!("external");
-    let document = parse(&explicit).expect("external dependencies must parse");
-    assert!(
-        jsonschema::validator_for(&input_schema())
-            .unwrap()
-            .is_valid(&explicit)
-    );
-    let generations: Generations = ["workspace", "provider", "sandbox", "ollama"]
-        .map(|key| (key.into(), "a".repeat(32)))
-        .into();
-    assert_eq!(
-        compile(&document, &generations, "test").unwrap(),
-        compile(&parse(&legacy).unwrap(), &generations, "test").unwrap()
-    );
-    assert_eq!(
-        parse(&serde_saphyr::from_str::<Value>(&document.yaml().unwrap()).unwrap()).unwrap(),
-        document
-    );
-    let yaml = document.yaml().unwrap();
-    assert!(yaml.contains("management: external"));
-}
-#[test]
-fn unsupported_management_and_creation_fields_are_rejected() {
+fn ownership_follows_configuration_instead_of_optional_annotations() {
     let schema = jsonschema::validator_for(&input_schema()).unwrap();
-    for network in [
-        json!({"management":"managed","name":"shared"}),
-        json!({"management":"external","name":"shared","cidr":"172.20.0.0/24"}),
-        json!({"management":"external"}),
+    for (source, parent, field, declaration) in [
+        (
+            include_str!("../../../examples/fabric-openclaw.yaml"),
+            "/spec/inferenceProviders/0",
+            "management",
+            json!("external"),
+        ),
+        (
+            include_str!("../../../examples/managed-ollama-gpu.yaml"),
+            "/spec/inferenceProviders/0",
+            "management",
+            json!("managed"),
+        ),
+        (
+            include_str!("../../../examples/managed-ollama-gpu.yaml"),
+            "/spec/gateway",
+            "network",
+            json!({"management":"managed"}),
+        ),
+        (
+            include_str!("../../../examples/managed-ollama-gpu.yaml"),
+            "/spec/gateway",
+            "storage",
+            json!({"management":"managed"}),
+        ),
+        (
+            include_str!("../../../examples/managed-ollama-gpu.yaml"),
+            "/spec/services/qwen",
+            "management",
+            json!("managed"),
+        ),
+        (
+            include_str!("../../../examples/managed-ollama-gpu.yaml"),
+            "/spec/services/qwen",
+            "storage",
+            json!({"management":"managed"}),
+        ),
+        (
+            include_str!("../../../examples/managed-ollama-gpu.yaml"),
+            "/spec/services/qwen/model",
+            "management",
+            json!("managed"),
+        ),
+        (
+            include_str!("../../../examples/spark/vllm.yaml"),
+            "/spec/services/qwen",
+            "management",
+            json!("managed"),
+        ),
+        (
+            include_str!("../../../examples/spark/vllm.yaml"),
+            "/spec/services/qwen",
+            "storage",
+            json!({"management":"managed"}),
+        ),
+        (
+            include_str!("../../../examples/spark/vllm.yaml"),
+            "/spec/services/qwen/model",
+            "management",
+            json!("managed"),
+        ),
+        (
+            include_str!("../../../examples/spark/remote-vllm.yaml"),
+            "/spec/services/qwen/placement",
+            "network",
+            json!({"management":"managed"}),
+        ),
     ] {
-        let mut value = input();
-        value["spec"]["inferenceProviders"][0]["ollama"]["network"] = network;
+        let mut value = input(source);
+        let document = parse(&value).unwrap();
+        assert!(schema.is_valid(&value));
+        assert_eq!(
+            Document::parse(document.yaml().unwrap().as_bytes()).unwrap(),
+            document
+        );
+        value.pointer_mut(parent).unwrap()[field] = declaration;
+        assert!(
+            parse(&value).is_err(),
+            "{parent}/{field} must not restate ownership"
+        );
+        assert!(!schema.is_valid(&value), "{parent}/{field}");
+    }
+}
+
+#[test]
+fn external_proxy_is_a_connection_not_an_ownership_choice() {
+    let schema = jsonschema::validator_for(&input_schema()).unwrap();
+    let mut value = input(include_str!("../../../examples/fabric-openclaw.yaml"));
+    value["spec"]["sandboxes"][0]["network"]["proxy"] =
+        json!({"host":"proxy.internal","port":3128});
+    parse(&value).unwrap();
+    for management in ["external", "managed"] {
+        value["spec"]["sandboxes"][0]["network"]["proxy"]["management"] = json!(management);
         assert!(parse(&value).is_err());
         assert!(!schema.is_valid(&value));
     }
-    let mut value = input();
-    value["spec"]["sandboxes"][0]["network"]["proxy"] =
-        json!({"management":"managed","host":"proxy.internal","port":3128});
-    assert!(parse(&value).is_err());
-    assert!(!schema.is_valid(&value));
 }
 
 #[test]
-fn managed_dependencies_are_optional_and_do_not_replace_existing_resources() {
-    let legacy: Value =
-        serde_saphyr::from_str(include_str!("../../../examples/vllm.yaml")).unwrap();
-    let mut explicit = legacy.clone();
-    for path in ["/spec/gateway", "/spec/inferenceProviders/0/service"] {
-        let resource = explicit.pointer_mut(path).unwrap();
-        resource["storage"] = json!({"management":"managed"});
-    }
-    explicit["spec"]["gateway"]["network"] = json!({"management":"managed"});
-    explicit["spec"]["inferenceProviders"][0]["service"]["management"] = json!("managed");
-    explicit["spec"]["inferenceProviders"][0]["service"]["model"]["management"] = json!("managed");
-    let document = parse(&explicit).expect("managed declarations must parse");
+fn provider_selects_exactly_one_connection_form() {
     let schema = jsonschema::validator_for(&input_schema()).unwrap();
-    assert!(schema.is_valid(&explicit));
-    let generations: Generations = [
-        "workspace",
-        "provider",
-        "sandbox",
-        "managed_gateway",
-        "inference_service",
-    ]
-    .map(|key| (key.into(), "a".repeat(32)))
-    .into();
-    assert_eq!(
-        nemoclaw_sdk::compile::compile_runtime(&document, &generations, "test").unwrap(),
-        nemoclaw_sdk::compile::compile_runtime(&parse(&legacy).unwrap(), &generations, "test")
-            .unwrap()
-    );
-    assert_eq!(
-        Document::parse(document.yaml().unwrap().as_bytes()).unwrap(),
-        document
-    );
-    for path in [
-        "/spec/gateway/storage/management",
-        "/spec/gateway/network/management",
-        "/spec/inferenceProviders/0/service/management",
-        "/spec/inferenceProviders/0/service/storage/management",
-        "/spec/inferenceProviders/0/service/model/management",
+    let original = input(include_str!("../../../examples/managed-ollama-gpu.yaml"));
+    for fields in [
+        json!({}),
+        json!({"serviceRef":"qwen", "endpoint":"http://127.0.0.1:18888/v1"}),
+        json!({"serviceRef":"qwen", "credential":{"env":"UNUSED"}}),
     ] {
-        let mut invalid = explicit.clone();
-        *invalid.pointer_mut(path).unwrap() = json!("external");
-        assert!(parse(&invalid).is_err(), "{path}");
-        assert!(!schema.is_valid(&invalid), "{path}");
+        let mut value = original.clone();
+        let provider = value["spec"]["inferenceProviders"][0]
+            .as_object_mut()
+            .unwrap();
+        provider.remove("serviceRef");
+        provider.extend(fields.as_object().unwrap().clone());
+        assert!(parse(&value).is_err());
+        assert!(!schema.is_valid(&value));
     }
-    let mut external_gateway = input();
-    external_gateway["spec"]["gateway"]["storage"] = json!({"management":"managed"});
-    assert!(parse(&external_gateway).is_err());
-    assert!(!schema.is_valid(&external_gateway));
-}
-
-#[test]
-fn ollama_storage_and_model_management_preserve_existing_lifecycle() {
-    let legacy = input();
-    let mut explicit = legacy.clone();
-    let ollama = &mut explicit["spec"]["inferenceProviders"][0]["ollama"];
-    ollama["management"] = json!("managed");
-    ollama["storage"] = json!({"management":"managed"});
-    ollama["model"] = json!({"management":"managed"});
-    let document = parse(&explicit).expect("Ollama ownership declarations must parse");
-    let schema = jsonschema::validator_for(&input_schema()).unwrap();
-    assert!(schema.is_valid(&explicit));
-    let generations: Generations = ["workspace", "provider", "sandbox", "ollama"]
-        .map(|key| (key.into(), "a".repeat(32)))
-        .into();
-    assert_eq!(
-        compile(&document, &generations, "test").unwrap(),
-        compile(&parse(&legacy).unwrap(), &generations, "test").unwrap()
-    );
-    for path in [
-        "/spec/inferenceProviders/0/ollama/management",
-        "/spec/inferenceProviders/0/ollama/storage/management",
-        "/spec/inferenceProviders/0/ollama/model/management",
-    ] {
-        let mut invalid = explicit.clone();
-        *invalid.pointer_mut(path).unwrap() = json!("external");
-        assert!(parse(&invalid).is_err());
-        assert!(!schema.is_valid(&invalid));
-    }
-}
-
-#[test]
-fn inference_management_must_match_the_selected_service_form() {
-    let schema = jsonschema::validator_for(&input_schema()).unwrap();
-    for (source, mode) in [
-        (
-            include_str!("../../../examples/fabric-openclaw.yaml"),
-            "external",
-        ),
-        (
-            include_str!("../../../examples/managed-ollama.yaml"),
-            "managed",
-        ),
-        (include_str!("../../../examples/vllm.yaml"), "managed"),
-    ] {
-        let legacy: Value = serde_saphyr::from_str(source).unwrap();
-        let mut explicit = legacy.clone();
-        explicit["spec"]["inferenceProviders"][0]["management"] = json!(mode);
-        let document = parse(&explicit).expect("inference ownership must parse");
-        assert!(schema.is_valid(&explicit));
-        let generations: Generations = [
-            "workspace",
-            "provider",
-            "sandbox",
-            "ollama",
-            "managed_gateway",
-            "inference_service",
-        ]
-        .map(|key| (key.into(), "a".repeat(32)))
-        .into();
-        assert_eq!(
-            compile(&document, &generations, "test").unwrap(),
-            compile(&parse(&legacy).unwrap(), &generations, "test").unwrap()
-        );
-        explicit["spec"]["inferenceProviders"][0]["management"] = json!(if mode == "managed" {
-            "external"
-        } else {
-            "managed"
-        });
-        assert!(parse(&explicit).is_err());
-        assert!(!schema.is_valid(&explicit));
-    }
-}
-
-#[test]
-fn remote_network_management_does_not_change_placement_or_publication() {
-    let legacy: Value =
-        serde_saphyr::from_str(include_str!("../../../examples/remote-vllm.yaml")).unwrap();
-    let mut explicit = legacy.clone();
-    explicit["spec"]["inferenceProviders"][0]["service"]["placement"]["network"] =
-        json!({"management":"managed"});
-    let document = parse(&explicit).unwrap();
-    let schema = jsonschema::validator_for(&input_schema()).unwrap();
-    assert!(schema.is_valid(&explicit));
-    let generations: Generations = [
-        "workspace",
-        "provider",
-        "sandbox",
-        "managed_gateway",
-        "inference_service",
-    ]
-    .map(|key| (key.into(), "a".repeat(32)))
-    .into();
-    assert_eq!(
-        nemoclaw_sdk::compile::compile_runtime(&document, &generations, "test").unwrap(),
-        nemoclaw_sdk::compile::compile_runtime(&parse(&legacy).unwrap(), &generations, "test")
-            .unwrap()
-    );
-    explicit["spec"]["inferenceProviders"][0]["service"]["placement"]["network"]["management"] =
-        json!("external");
-    assert!(parse(&explicit).is_err());
-    assert!(!schema.is_valid(&explicit));
 }

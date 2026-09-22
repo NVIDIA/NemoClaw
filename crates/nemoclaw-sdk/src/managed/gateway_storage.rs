@@ -1,11 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
+use crate::config::ComputeDriver;
 #[cfg(all(test, unix))]
 #[path = "gateway_storage_tests.rs"]
 mod tests;
 
 use super::{
-    GATEWAY_KIND, SUPERVISOR_IMAGE, SUPERVISOR_SHA256, Spec,
+    GATEWAY_KIND, Spec,
     keys::CREDENTIAL_KEY_PATH,
     observation::{verify_labels, verify_network, verify_volume},
 };
@@ -83,16 +84,57 @@ impl Engine {
         id: &str,
         create: bool,
     ) -> Result<Option<String>, Error> {
+        Ok(self
+            .gateway_storage_binding(spec, id, create)
+            .await?
+            .map(|(id, _)| id))
+    }
+    pub(crate) async fn gateway_storage_binding(
+        &self,
+        spec: &Spec,
+        id: &str,
+        create: bool,
+    ) -> Result<Option<(String, String)>, Error> {
         spec.validate()?;
-        if spec.kind != GATEWAY_KIND || spec.layout != 0 || self.endpoint() != spec.engine() {
+        if spec.kind != GATEWAY_KIND
+            || !matches!(spec.layout, 0 | 1)
+            || self.endpoint() != spec.engine()
+        {
             return Err(Error::Conflict(
                 "invalid gateway storage specification or engine",
             ));
         }
+        if spec.compute_driver == ComputeDriver::Podman {
+            #[cfg(unix)]
+            {
+                let native = self.podman_json("info").await?;
+                let rootless = native["host"]["security"]["rootless"]
+                    .as_bool()
+                    .ok_or(ObservationError::Incomplete)?;
+                if rootless && native["host"]["rootlessNetworkCmd"] != serde_json::json!("pasta") {
+                    return Err(Error::Conflict(
+                        "managed rootless Podman requires an API that reports pasta networking for OpenShell callbacks",
+                    ));
+                }
+            }
+            let version = self.api.version().await.map_err(|error| remote(&error))?;
+            if !version
+                .components
+                .unwrap_or_default()
+                .iter()
+                .any(|part| part.name == "Podman Engine")
+            {
+                return Err(Error::Conflict(
+                    "Podman sandbox driver requires a Podman engine socket",
+                ));
+            }
+        }
         let info = self.info().await?;
         let mut volume = self.volume(&spec.volume()).await?;
         let network = self.network(&spec.network()).await?;
-        let helper = self.container(&format!("{}-initialize", spec.name)).await?;
+        let helper = self
+            .managed_container(spec, &format!("{}-initialize", spec.name))
+            .await?;
         if let Some(volume) = &volume {
             verify_volume(spec, volume, info.docker_root_dir.as_deref())?;
         }
@@ -120,7 +162,9 @@ impl Engine {
             };
         }
         if missing && create {
-            self.ensure_image(spec).await?;
+            if spec.layout == 0 {
+                self.ensure_image(spec).await?;
+            }
             self.ensure_network(spec).await?;
             if volume.is_none() {
                 self.api
@@ -155,8 +199,11 @@ impl Engine {
             ));
         }
         if create && (missing || created) {
+            if !missing && spec.layout == 0 {
+                self.ensure_image(spec).await?;
+            }
             self.initialize_gateway(spec, data_path).await?;
-            return Box::pin(self.gateway_storage(spec, id, false)).await;
+            return Box::pin(self.gateway_storage_binding(spec, id, false)).await;
         }
         if created && id.is_empty() {
             return Err(Error::PartialRuntime);
@@ -174,7 +221,7 @@ impl Engine {
             .await?;
         if config.is_none() && create && id.is_empty() {
             self.initialize_gateway(spec, data_path).await?;
-            return Box::pin(self.gateway_storage(spec, id, false)).await;
+            return Box::pin(self.gateway_storage_binding(spec, id, false)).await;
         }
         if config.is_none() && id.is_empty() {
             return Err(Error::PartialRuntime);
@@ -193,22 +240,27 @@ impl Engine {
             .await?
             .filter(|key| !key.is_empty())
             .ok_or(Error::Conflict("gateway signing identity is unobservable"))?;
-        self.credential_key(spec, helper_id, data_path, !id.is_empty(), create)
+        let encryption = self
+            .credential_key(spec, helper_id, data_path, !id.is_empty(), create)
             .await?;
         let volume = volume.ok_or(ObservationError::Incomplete)?;
         let network = network.ok_or(ObservationError::Incomplete)?;
-        let actual = format!(
+        let mut actual = format!(
             "{}/{}/{}/{}/{}",
-            info.id.ok_or(ObservationError::Incomplete)?,
+            spec.binding_namespace(info.id.as_deref(), network.id.as_deref())?,
             volume.name,
             volume.created_at.ok_or(ObservationError::Incomplete)?,
             network.id.ok_or(ObservationError::Incomplete)?,
             hash(&public)
         );
+        if spec.layout == 1 {
+            actual.push('/');
+            actual.push_str(&hash(&encryption));
+        }
         if !id.is_empty() && id != actual {
             return Err(ObservationError::BindingMismatch.into());
         }
-        Ok(Some(actual))
+        Ok(Some((actual, volume.mountpoint)))
     }
     async fn credential_key(
         &self,
@@ -234,7 +286,7 @@ impl Engine {
                 "gateway encryption key is missing; resources retained",
             ));
         }
-        if self.container(&spec.name).await?.is_some() {
+        if self.managed_container(spec, &spec.name).await?.is_some() {
             return Err(Error::Conflict(
                 "gateway has no persistent credential key; resources retained",
             ));
@@ -249,7 +301,7 @@ impl Engine {
     }
     async fn initialize_gateway(&self, spec: &Spec, data_path: &str) -> Result<(), Error> {
         let name = format!("{}-initialize", spec.name);
-        let mut helper = self.container(&name).await?;
+        let mut helper = self.managed_container(spec, &name).await?;
         if helper.is_none() {
             let created = self
                 .api
@@ -265,7 +317,7 @@ impl Engine {
             if created.id.is_empty() {
                 return Err(ObservationError::Incomplete.into());
             }
-            helper = self.container(&created.id).await?;
+            helper = self.managed_container(spec, &created.id).await?;
         }
         let helper = helper.ok_or(ObservationError::Incomplete)?;
         verify_initializer(spec, &helper, Some(data_path))?;
@@ -299,7 +351,6 @@ impl Engine {
         }
         self.credential_key(spec, helper_id, data_path, false, true)
             .await?;
-        self.copy_supervisor(spec, helper_id, data_path).await?;
         self.write_files(
             helper_id,
             data_path,
@@ -310,65 +361,5 @@ impl Engine {
             )],
         )
         .await
-    }
-    async fn copy_supervisor(
-        &self,
-        spec: &Spec,
-        helper: &str,
-        data_path: &str,
-    ) -> Result<(), Error> {
-        if self.image(SUPERVISOR_IMAGE).await?.is_none() {
-            self.pull_image(SUPERVISOR_IMAGE).await?;
-        }
-        let name = format!("{}-supervisor-source", spec.name);
-        let mut source = self.container(&name).await?;
-        if source.is_none() {
-            let config:ContainerCreateBody=serde_json::from_value(json!({"Image":SUPERVISOR_IMAGE,"Labels":spec.labels()?,"HostConfig":{"NetworkMode":"none"}})).map_err(|_|Error::State("invalid supervisor extraction specification"))?;
-            let created = self
-                .api
-                .create_container(
-                    Some(CreateContainerOptions {
-                        name: Some(name),
-                        ..Default::default()
-                    }),
-                    config,
-                )
-                .await
-                .map_err(|error| remote(&error))?;
-            source = self.container(&created.id).await?;
-        }
-        let source = source.ok_or(ObservationError::Incomplete)?;
-        let config = source.config.as_ref().ok_or(ObservationError::Incomplete)?;
-        if config.image.as_deref() != Some(SUPERVISOR_IMAGE)
-            || source.state.as_ref().and_then(|state| state.running) != Some(false)
-        {
-            return Err(Error::Conflict(
-                "supervisor extraction identity is unobservable",
-            ));
-        }
-        verify_labels(
-            &spec.labels()?,
-            config.labels.as_ref().ok_or(ObservationError::Incomplete)?,
-        )?;
-        let source_id = source
-            .id
-            .as_deref()
-            .filter(|id| !id.is_empty())
-            .ok_or(ObservationError::Incomplete)?;
-        let bytes = self
-            .read_file(source_id, "/openshell-sandbox", 128 << 20)
-            .await?
-            .ok_or(ObservationError::Incomplete)?;
-        if hash(&bytes) != SUPERVISOR_SHA256 {
-            return Err(Error::Conflict(
-                "supervisor source differs from pinned binary",
-            ));
-        }
-        self.write_files(helper, data_path, &[("openshell-sandbox", &bytes, 0o755)])
-            .await?;
-        self.api
-            .remove_container(source_id, None)
-            .await
-            .map_err(|error| remote(&error))
     }
 }

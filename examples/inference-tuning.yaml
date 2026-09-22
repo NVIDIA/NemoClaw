@@ -25,16 +25,17 @@ spec:
         provider: docker
       network:
         tier: isolated
-      agents:
-        - name: main
-          harness: openclaw
-          inference:
-            routes:
-              - name: primary
-                providerRef: local
-                overrides:
-                  model: example-reasoning-model
-                  contextWindow: 65536
-                  maxTokens: 8192
-                  reasoning: true
-                  reasoningEffort: high
+      harness:
+        kind: openclaw
+      agent:
+        name: main
+        inference:
+          routes:
+            - name: primary
+              providerRef: local
+              overrides:
+                model: example-reasoning-model
+                contextWindow: 65536
+                maxTokens: 8192
+                reasoning: true
+                reasoningEffort: high

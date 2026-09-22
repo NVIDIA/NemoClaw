@@ -8,6 +8,7 @@ Upstream: https://github.com/MiaAI-Lab/Qwen3.8-Flash-Next-Single-DGX-Spark
 Revision: d03809008834124e80223c3482f2ddb59577a48f
 Modified 2026-09-11: verify immutable inputs, preserve sources, and require packed PLE.
 Modified 2026-09-15: carry attribution and license notices into generated vLLM files.
+Modified 2026-09-18: name the generated-file hash mapping explicitly; output is unchanged.
 See AGPL-3.0-or-later.txt and NOTICE.md beside this file.
 """
 
@@ -94,15 +95,15 @@ def main():
         "qsa_nvidia_patched.py": "patch_qsa_fp8_kv.py",
         "mtp_patched.py": "patch_mtp_draft_vocab.py",
     }
-    receipt = {}
+    patched_file_hashes = {}
     for dest, source in targets.items():
         generated = files / dest
         patch = patch_sources.get(dest, "patch_ple_offload.py")
         generated.write_text(attribute_source(generated.read_text(), patch))
         py_compile.compile(str(generated), doraise=True)
         shutil.copyfile(generated, package / source)
-        receipt[source] = hashlib.sha256(generated.read_bytes()).hexdigest()
-    (root / "patched-files.json").write_text(json.dumps(receipt, indent=2) + "\n")
+        patched_file_hashes[source] = hashlib.sha256(generated.read_bytes()).hexdigest()
+    (root / "patched-files.json").write_text(json.dumps(patched_file_hashes, indent=2) + "\n")
 
 
 if __name__ == "__main__":

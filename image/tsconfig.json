@@ -1,0 +1,13 @@
+{
+  "compilerOptions": {
+    "noEmit": true,
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "module": "NodeNext",
+    "target": "ES2024",
+    "erasableSyntaxOnly": true,
+    "verbatimModuleSyntax": true,
+    "types": ["node"]
+  },
+  "include": ["fabric/test_openclaw*.mts", "fabric/test_web_search.mts", "fabric/*inference*.mts", "../test/*.d.ts"]
+}

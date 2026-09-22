@@ -22,6 +22,15 @@ struct Cli {
 }
 #[derive(Subcommand)]
 enum Action {
+    /// Render repository Markdown into Fern pages and check local links.
+    Docs {
+        /// Check generated output without changing it.
+        #[arg(long)]
+        check: bool,
+        /// Immutable source revision for repository links (defaults to HEAD).
+        #[arg(long)]
+        revision: Option<String>,
+    },
     /// Generate the configuration schema and reference, or check them for drift.
     Schema {
         #[arg(long)]
@@ -45,6 +54,8 @@ struct Pins {
     rust: String,
     protobuf: String,
     opentofu: String,
+    #[serde(rename = "dockerProvider")]
+    docker_provider: String,
     platforms: BTreeMap<String, BTreeMap<String, Artifact>>,
 }
 fn cargo() -> Command {
@@ -144,6 +155,13 @@ async fn bundle(pins: &Pins, platform: &str) -> Result<()> {
         .ok_or("missing platform pin")?;
     let bytes = download(artifact).await?;
     let binary = nemoclaw_build::extract_tofu(&bytes, platform.starts_with("windows"))?;
+    let docker_archive = download(
+        pins.platforms
+            .get(platform)
+            .and_then(|p| p.get("dockerProvider"))
+            .ok_or("missing Docker provider platform pin")?,
+    )
+    .await?;
     let version = nemoclaw_build::BUILDER_SOURCE_VERSION.to_owned();
     nemoclaw_build::verify_source_version(&version, &sources()?)?;
     let target = target(platform)?;
@@ -206,6 +224,14 @@ async fn bundle(pins: &Pins, platform: &str) -> Result<()> {
     manifest
         .files
         .insert("LICENSE".into(), bundle::hash_file(&root.join("LICENSE"))?);
+    manifest
+        .files
+        .extend(nemoclaw_build::docker_provider::install(
+            root,
+            &docker_archive,
+            &pins.docker_provider,
+            platform,
+        )?);
     nemoclaw_build::schema::add_to_bundle(root, &mut manifest)?;
     nemoclaw_build::verify_source_version(&version, &sources()?)?;
     fs::write(
@@ -226,6 +252,9 @@ async fn bundle(pins: &Pins, platform: &str) -> Result<()> {
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
+    if let Action::Docs { check, revision } = cli.command {
+        return nemoclaw_build::docs::generate(Path::new("."), check, revision.as_deref());
+    }
     if let Action::Schema { check } = cli.command {
         return nemoclaw_build::schema::generate(Path::new("."), check).map_err(Into::into);
     }
@@ -250,8 +279,8 @@ async fn main() -> Result<()> {
         return Err("build requires the pinned Protocol Buffers compiler".into());
     }
     match cli.command {
-        Action::Schema { .. } => {
-            unreachable!("schema generation returned before build tool checks")
+        Action::Schema { .. } | Action::Docs { .. } => {
+            unreachable!("documentation generation returned before build tool checks")
         }
         Action::Bundle { platform } => {
             bundle(&pins, &platform::select(platform, bundle::platform)?).await

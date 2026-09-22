@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+mod observations;
+
 use crate::{CancellationToken, Error};
 use process_wrap::tokio::{CommandWrap, KillOnDrop};
 use std::{collections::BTreeMap, path::Path, process::Stdio, time::Duration};
@@ -10,7 +12,8 @@ use tokio_util::task::AbortOnDropHandle;
 async fn capture(
     mut pipe: impl AsyncRead + Unpin,
     limit: usize,
-) -> std::io::Result<(Vec<u8>, bool)> {
+    mut ui: Option<crate::tofu_ui::Ui>,
+) -> std::io::Result<(Vec<u8>, bool, bool)> {
     let mut output = Vec::new();
     let mut overflow = false;
     let mut buffer = [0_u8; 8192];
@@ -19,11 +22,15 @@ async fn capture(
         if count == 0 {
             break;
         }
+        if let Some(ui) = &mut ui {
+            ui.feed(&buffer[..count]);
+        }
         let available = limit.saturating_sub(output.len());
         output.extend_from_slice(&buffer[..count.min(available)]);
         overflow |= count > available;
     }
-    Ok((output, overflow))
+    let valid_ui = ui.is_none_or(|ui| ui.finish().is_ok());
+    Ok((output, overflow, valid_ui))
 }
 pub(crate) async fn run(
     directory: &Path,
@@ -32,9 +39,23 @@ pub(crate) async fn run(
     overrides: &BTreeMap<String, String>,
     cancel: &CancellationToken,
 ) -> Result<Vec<u8>, Error> {
+    run_with_progress(directory, binary, args, overrides, cancel, None).await
+}
+pub(crate) async fn run_with_progress(
+    directory: &Path,
+    binary: &Path,
+    args: &[&str],
+    overrides: &BTreeMap<String, String>,
+    cancel: &CancellationToken,
+    progress: Option<std::sync::Arc<dyn Fn(crate::Progress) + Send + Sync>>,
+) -> Result<Vec<u8>, Error> {
     if cancel.is_cancelled() {
         return Err(Error::Cancelled);
     }
+    // Progress is optional: endpoint failures must not prevent an operation.
+    let downloads = progress
+        .as_ref()
+        .and_then(|callback| crate::download::Listener::start(callback.clone()).ok());
     let mut command = CommandWrap::with_new(binary, |command| {
         command
             .args(args)
@@ -53,6 +74,9 @@ pub(crate) async fn run(
             }
         }
         command.envs(overrides);
+        if let Some(downloads) = &downloads {
+            command.env("NEMOCLAW_INTERNAL_PROGRESS_ENDPOINT", &downloads.endpoint);
+        }
     });
     command.wrap(KillOnDrop);
     #[cfg(unix)]
@@ -62,14 +86,17 @@ pub(crate) async fn run(
     let mut child = command.spawn().map_err(|_| Error::Execution {
         operation: args.first().unwrap_or(&"command").to_string(),
         diagnostic: "cannot launch bundled executable".into(),
+        postcondition_failures: None,
     })?;
     let stdout = AbortOnDropHandle::new(tokio::spawn(capture(
         child.stdout().take().expect("piped stdout"),
         64 * 1024 * 1024,
+        progress.map(crate::tofu_ui::Ui::new),
     )));
     let stderr = AbortOnDropHandle::new(tokio::spawn(capture(
         child.stderr().take().expect("piped stderr"),
         16384,
+        None,
     )));
     let status = tokio::select! {
         status=child.wait()=>status,
@@ -100,15 +127,48 @@ pub(crate) async fn run(
             }
         )
     };
-    let ((output, overflow), (mut diagnostic, diagnostic_overflow)) = tokio::select! {
+    let ((output, overflow, valid_ui), (mut diagnostic, mut diagnostic_overflow, _)) = tokio::select! {
         ()=cancel.cancelled()=>return Err(Error::Cancelled),
         result=tokio::time::timeout(Duration::from_secs(5),capture)=>result.map_err(|_|Error::State("child exited but its output streams did not close; retain state for reconciliation"))??,
     };
-    if status.is_ok_and(|status| status.success()) && !overflow {
+    if status.as_ref().is_ok_and(|status| status.success()) && !overflow {
+        if !valid_ui {
+            return Err(Error::State("invalid or unsupported OpenTofu UI stream"));
+        }
         return Ok(output);
     }
+    let postcondition_failures = if args.first() == Some(&"apply")
+        && args.contains(&"-json")
+        && status.as_ref().is_ok_and(|status| status.code() == Some(1))
+        && valid_ui
+        && diagnostic.is_empty()
+        && !overflow
+        && !diagnostic_overflow
+    {
+        observations::postcondition_failures(&output)
+    } else {
+        None
+    };
     let mut message = String::from_utf8_lossy(&diagnostic).into_owned();
     diagnostic.fill(0);
+    if message.is_empty() {
+        for line in output.split(|byte| *byte == b'\n') {
+            if let Ok(value) = serde_json::from_slice::<serde_json::Value>(line)
+                && value["type"] == "diagnostic"
+            {
+                for key in ["summary", "detail"] {
+                    if let Some(text) = value["diagnostic"][key].as_str() {
+                        if message.len() + text.len() + 1 > 16384 {
+                            diagnostic_overflow = true;
+                            break;
+                        }
+                        message.push_str(text);
+                        message.push('\n');
+                    }
+                }
+            }
+        }
+    }
     for (name, value) in overrides.iter().filter(|(_, value)| !value.is_empty()) {
         if !matches!(
             name.as_str(),
@@ -133,7 +193,41 @@ pub(crate) async fn run(
     Err(Error::Execution {
         operation: args.first().unwrap_or(&"command").to_string(),
         diagnostic: message.trim().into(),
+        postcondition_failures,
     })
+}
+
+#[cfg(test)]
+#[cfg(unix)]
+#[tokio::test]
+async fn only_normal_apply_failure_can_establish_postcondition_evidence() {
+    use std::os::unix::fs::PermissionsExt;
+    let directory = tempfile::tempdir().unwrap();
+    let binary = directory.path().join("tofu");
+    std::fs::write(
+        &binary,
+        r##"#!/bin/sh
+printf '%s\n' '{"type":"version","ui":"1.2"}' '{"type":"diagnostic","diagnostic":{"severity":"error","summary":"Resource postcondition failed","snippet":{"context":"data.example_readiness.main.lifecycle.postcondition[0]"}}}'
+exit "$3"
+"##,
+    )
+    .unwrap();
+    std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o700)).unwrap();
+    for (exit, expected) in [("1", true), ("2", false)] {
+        let error = run_with_progress(
+            directory.path(),
+            &binary,
+            &["apply", "-json", exit],
+            &BTreeMap::new(),
+            &CancellationToken::new(),
+            Some(std::sync::Arc::new(|_| {})),
+        )
+        .await
+        .unwrap_err();
+        assert!(
+            matches!(error, Error::Execution { postcondition_failures, .. } if postcondition_failures.is_some() == expected)
+        );
+    }
 }
 
 #[cfg(test)]
@@ -226,7 +320,36 @@ mod tests {
 #[tokio::test]
 async fn exited_parent_cannot_leave_capture_waiting_for_an_escaped_descendant() {
     let directory = tempfile::tempdir().unwrap();
-    let result=tokio::time::timeout(Duration::from_secs(7),run(directory.path(),Path::new("/usr/bin/python3"),&["-c", "import os,time; pid=os.fork(); (os.setsid(),open('escaped.pid','w').write(str(os.getpid())),time.sleep(30)) if pid==0 else None"],&Default::default(),&CancellationToken::new())).await;
+    // The parent must not exit until the child leaves its process group.
+    // Otherwise ordinary group cleanup can win the race and close the pipes.
+    let script = r#"
+import os, time
+ready, notify = os.pipe()
+pid = os.fork()
+if pid == 0:
+    os.close(ready)
+    os.setsid()
+    with open('escaped.pid', 'w') as marker:
+        marker.write(str(os.getpid()))
+    os.write(notify, b'1')
+    os.close(notify)
+    time.sleep(30)
+else:
+    os.close(notify)
+    assert os.read(ready, 1) == b'1'
+    os.close(ready)
+"#;
+    let result = tokio::time::timeout(
+        Duration::from_secs(7),
+        run(
+            directory.path(),
+            Path::new("/usr/bin/python3"),
+            &["-c", script],
+            &Default::default(),
+            &CancellationToken::new(),
+        ),
+    )
+    .await;
     if let Ok(pid) = std::fs::read_to_string(directory.path().join("escaped.pid")) {
         let _ = std::process::Command::new("kill")
             .args(["-KILL", pid.trim()])
@@ -236,5 +359,68 @@ async fn exited_parent_cannot_leave_capture_waiting_for_an_escaped_descendant() 
         result.is_ok(),
         "capture outlived the exited command without a bound"
     );
-    assert!(result.unwrap().is_err());
+    assert!(matches!(
+        result.unwrap(),
+        Err(Error::State(
+            "child exited but its output streams did not close; retain state for reconciliation"
+        ))
+    ));
+}
+
+#[cfg(all(test, unix))]
+#[tokio::test]
+async fn progress_arrives_before_exit_and_cancellation_still_works() {
+    let directory = tempfile::tempdir().unwrap();
+    let token = CancellationToken::new();
+    let stop = token.clone();
+    let (send, mut receive) = tokio::sync::mpsc::unbounded_channel();
+    let progress = std::sync::Arc::new(move |event| {
+        send.send(event).unwrap();
+    });
+    let task = tokio::spawn(async move {
+        run_with_progress(directory.path(), Path::new("/bin/sh"),
+            &["-c", r#"printf '%s\n' '{"type":"version","ui":"1.0"}' '{"type":"apply_start","hook":{"resource":{"resource_type":"nemoclaw_sandbox"},"action":"create"}}'; sleep 100"#],
+            &Default::default(), &stop, Some(progress)).await
+    });
+    let event = tokio::time::timeout(Duration::from_secs(2), receive.recv()).await;
+    token.cancel();
+    assert!(matches!(task.await.unwrap(), Err(Error::Cancelled)));
+    assert!(matches!(
+        event.unwrap().unwrap(),
+        crate::Progress::Resource {
+            resource: "sandbox",
+            status: "started",
+            ..
+        }
+    ));
+}
+
+#[cfg(all(test, unix))]
+#[tokio::test]
+async fn json_diagnostics_preserve_failures_and_redact_credentials() {
+    let directory = tempfile::tempdir().unwrap();
+    let error = run_with_progress(directory.path(), Path::new("/bin/sh"),
+        &["-c", r#"printf '%s\n' '{"type":"version","ui":"1.0"}' '{"type":"diagnostic","diagnostic":{"summary":"provider failed","detail":"secret-sentinel"}}'; exit 1"#],
+        &[("CUSTOM_CREDENTIAL".into(), "secret-sentinel".into())].into(),
+        &CancellationToken::new(), Some(std::sync::Arc::new(|_| {}))).await.unwrap_err();
+    assert!(error.to_string().contains("provider failed"));
+    assert!(error.to_string().contains("[redacted]"));
+    assert!(!error.to_string().contains("secret-sentinel"));
+}
+
+#[cfg(all(test, unix))]
+#[tokio::test]
+async fn early_failure_keeps_stderr_even_without_a_ui_version() {
+    let directory = tempfile::tempdir().unwrap();
+    let error = run_with_progress(
+        directory.path(),
+        Path::new("/bin/sh"),
+        &["-c", "echo launch-failed >&2; exit 1"],
+        &Default::default(),
+        &CancellationToken::new(),
+        Some(std::sync::Arc::new(|_| {})),
+    )
+    .await
+    .unwrap_err();
+    assert!(error.to_string().contains("launch-failed"));
 }

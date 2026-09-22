@@ -5,6 +5,51 @@ use super::*;
 use crate::{CancellationToken, Error};
 use std::time::Duration;
 
+fn startup_phase(status: proto::SandboxStatus) -> Result<i32, Error> {
+    if let Ok(
+        phase @ (proto::SandboxPhase::Error
+        | proto::SandboxPhase::Deleting
+        | proto::SandboxPhase::Stopped
+        | proto::SandboxPhase::Completed),
+    ) = proto::SandboxPhase::try_from(status.phase)
+    {
+        return Err(Error::SandboxStartup {
+            phase: phase.as_str_name(),
+            // Conditions are backend-controlled. Only fixed known reasons may
+            // cross the diagnostic boundary; messages can contain credentials.
+            reason: status
+                .conditions
+                .iter()
+                .find_map(|condition| {
+                    if condition.r#type != "Ready" || condition.status != "False" {
+                        return None;
+                    }
+                    match condition.reason.as_str() {
+                        "ControlSupervisorExited" => Some("ControlSupervisorExited"),
+                        "ContainerExited" => Some("ContainerExited"),
+                        _ => None,
+                    }
+                })
+                .unwrap_or("unknown"),
+            exit_code: status
+                .exit_code
+                .map_or_else(|| "unknown".into(), |code| code.to_string()),
+        });
+    }
+    Ok(status.phase)
+}
+
+async fn readiness_deadline(
+    wait: impl std::future::Future<Output = Result<(), Error>>,
+    cancel: &CancellationToken,
+) -> Result<(), Error> {
+    tokio::select! {
+        () = cancel.cancelled() => Err(Error::Cancelled),
+        result = tokio::time::timeout(Duration::from_secs(120), wait) =>
+            result.map_err(|_| Error::Conflict("agent readiness timed out; resources retained"))?,
+    }
+}
+
 fn value<'a>(row: &'a Row, key: &str) -> &'a str {
     row.get(key).map(String::as_str).unwrap_or("")
 }
@@ -48,33 +93,12 @@ fn response_text(bytes: &[u8]) -> Result<String, Error> {
     Ok(text.into())
 }
 impl OpenShell {
-    pub async fn verify_gateway(&self, driver: &str) -> Result<(), Error> {
-        let info = self
-            .grpc()
-            .get_gateway_info(self.request(proto::GetGatewayInfoRequest {}))
-            .await
-            .map_err(|error| remote_error(&error))?
-            .into_inner();
-        if info.gateway_version != "0.0.116"
-            || info.compute_drivers.len() != 1
-            || (info.compute_drivers[0].name != driver
-                && info.compute_drivers[0]
-                    .capabilities
-                    .as_ref()
-                    .is_none_or(|capability| capability.driver_name != driver))
-        {
-            return Err(Error::Conflict(
-                "gateway version or compute driver does not satisfy the configuration",
-            ));
-        }
-        Ok(())
-    }
     async fn bound_sandbox(&self, binding: &Row) -> Result<proto::Sandbox, Error> {
         let sandbox = self
             .grpc()
             .get_sandbox(self.request(proto::GetSandboxRequest {
                 name: value(binding, "name").into(),
-                workspace: value(binding, "workspace").into(),
+                workspace_scope: Some(proto::workspace_selector(value(binding, "workspace"))),
             }))
             .await
             .map_err(|error| remote_error(&error))?
@@ -86,6 +110,15 @@ impl OpenShell {
             &base(sandbox.metadata.clone(), value(binding, "name"), false)?,
         )?;
         Ok(sandbox)
+    }
+    pub(crate) async fn check_sandbox_phase(&self, binding: &Row) -> Result<(), Error> {
+        startup_phase(
+            self.bound_sandbox(binding)
+                .await?
+                .status
+                .ok_or(ObservationError::Incomplete)?,
+        )?;
+        Ok(())
     }
     pub async fn exec_bound(
         &self,
@@ -113,7 +146,10 @@ impl OpenShell {
             sandbox_id: sandbox.metadata.ok_or(ObservationError::Incomplete)?.id,
             command,
             environment: environment.into_iter().collect(),
-            timeout_seconds: seconds,
+            execution_timeout: Some(
+                openshell_core::time::duration_from_std(Duration::from_secs(u64::from(seconds)))
+                    .expect("u32 seconds fit protobuf duration"),
+            ),
             ..Default::default()
         });
         request.set_timeout(Duration::from_secs(u64::from(seconds)));
@@ -165,15 +201,31 @@ impl OpenShell {
             command.push(harness.into());
         }
         if harness == "pi" {
-            command.push(
-                binding
-                    .get("pi_model_config")
-                    .filter(|value| !value.is_empty())
-                    .ok_or(Error::Conflict(
-                        "Pi configuration requires the declared route model",
-                    ))?
-                    .clone(),
-            );
+            let model = match binding
+                .get("pi_model_config")
+                .filter(|value| !value.is_empty())
+            {
+                Some(model) => model.clone(),
+                None => {
+                    // Refresh observes the immutable catalog, not the separate single-model binding.
+                    let settings =
+                        inference_settings(value(binding, "inference_json"), "fabric-pi")?
+                            .ok_or(ObservationError::Incomplete)?;
+                    let selection = settings
+                        .agents
+                        .iter()
+                        .find(|agent| agent.name == value(binding, "agent_name"))
+                        .and_then(|agent| agent.inference.as_ref())
+                        .ok_or(ObservationError::Incomplete)?;
+                    let model = selection
+                        .models
+                        .get(&selection.default)
+                        .and_then(|model| model.pi.as_ref())
+                        .ok_or(ObservationError::Incomplete)?;
+                    serde_json::to_string(model).map_err(|_| ObservationError::Query)?
+                }
+            };
+            command.push(model);
         }
         if let Some(settings) = binding.get("inference_json").filter(|s| !s.is_empty()) {
             inference_settings(settings, value(binding, "agent_runtime"))?;
@@ -184,24 +236,14 @@ impl OpenShell {
     pub async fn configure_pi(&self, binding: &Row, prepare: bool) -> Result<(), Error> {
         tokio::time::timeout(Duration::from_secs(120), async {
             loop {
-                let phase = self
-                    .bound_sandbox(binding)
-                    .await?
-                    .status
-                    .ok_or(ObservationError::Incomplete)?
-                    .phase;
+                let phase = startup_phase(
+                    self.bound_sandbox(binding)
+                        .await?
+                        .status
+                        .ok_or(ObservationError::Incomplete)?,
+                )?;
                 if phase == proto::SandboxPhase::Ready as i32 {
                     return Ok::<(), Error>(());
-                }
-                if matches!(
-                    proto::SandboxPhase::try_from(phase),
-                    Ok(proto::SandboxPhase::Error
-                        | proto::SandboxPhase::Deleting
-                        | proto::SandboxPhase::Stopped)
-                ) {
-                    return Err(Error::Conflict(
-                        "Pi sandbox is unavailable; resources retained",
-                    ));
                 }
                 tokio::time::sleep(Duration::from_secs(1)).await;
             }
@@ -245,17 +287,7 @@ impl OpenShell {
         let wait = async {
             loop {
                 let sandbox = self.bound_sandbox(binding).await?;
-                let phase = sandbox.status.ok_or(ObservationError::Incomplete)?.phase;
-                if matches!(
-                    proto::SandboxPhase::try_from(phase),
-                    Ok(proto::SandboxPhase::Error
-                        | proto::SandboxPhase::Deleting
-                        | proto::SandboxPhase::Stopped)
-                ) {
-                    return Err(Error::Conflict(
-                        "sandbox readiness failed; established identity retained",
-                    ));
-                }
+                let phase = startup_phase(sandbox.status.ok_or(ObservationError::Incomplete)?)?;
                 if phase == proto::SandboxPhase::Ready as i32 {
                     let (command, environment) = self.configuration_command(binding)?;
                     if let Ok((0, _)) = self.exec_bound(binding, command, environment, 20).await {
@@ -265,11 +297,36 @@ impl OpenShell {
                 tokio::time::sleep(Duration::from_secs(1)).await;
             }
         };
-        tokio::select! {
-            ()=cancel.cancelled()=>Err(Error::Cancelled),
-            result=tokio::time::timeout(Duration::from_secs(120),wait)=>result.map_err(|_|Error::Conflict("agent readiness timed out; resources retained"))?,
-        }
+        readiness_deadline(wait, cancel).await
     }
+
+    /// Query the existing hosted Fabric runtime; never invoke an agent or model.
+    pub async fn health(&self, binding: &Row) -> Result<crate::RuntimeHealth, Error> {
+        self.health_for(binding, None).await
+    }
+
+    pub(crate) async fn health_for(
+        &self,
+        binding: &Row,
+        agent: Option<&str>,
+    ) -> Result<crate::RuntimeHealth, Error> {
+        let mut command = [
+            "/opt/fabric/bin/python",
+            "/opt/nemoclaw/fabric.py",
+            "health",
+        ]
+        .map(String::from)
+        .to_vec();
+        command.extend(agent.map(String::from));
+        let (exit, output) = self.exec_bound(binding, command, Row::new(), 10).await?;
+        if exit != 0 {
+            return Err(Error::Conflict(
+                "Fabric health bridge unavailable; rebuild the agent image; resources retained",
+            ));
+        }
+        crate::RuntimeHealth::decode(&output)
+    }
+
     pub async fn inference_ready(&self, binding: &Row) -> Result<(), Error> {
         if value(binding, "agent_runtime") == "fabric-pi" {
             let model = binding
@@ -295,24 +352,15 @@ impl OpenShell {
                 ))
             };
         }
-        use crate::config::InferenceApi;
-        let api = inference_settings(
+        inference_settings(
             value(binding, "inference_json"),
             value(binding, "agent_runtime"),
         )?
-        .map(|s| s.api)
-        .unwrap_or_else(|| {
-            InferenceApi::for_harness(value(binding, "agent_runtime").trim_start_matches("fabric-"))
-        });
-        let script = match api {
-            InferenceApi::AnthropicMessages => ANTHROPIC_PROBE,
-            InferenceApi::OpenaiResponses => RESPONSES_PROBE,
-            InferenceApi::OpenaiCompletions => INFERENCE_PROBE,
-        };
+        .ok_or(ObservationError::Incomplete)?;
         let (exit, _) = self
             .exec_bound(
                 binding,
-                vec!["node".into(), "-e".into(), script.into()],
+                vec!["node".into(), "/opt/nemoclaw/inference-probe.mts".into()],
                 Row::new(),
                 90,
             )
@@ -389,13 +437,118 @@ impl OpenShell {
     }
 }
 
-const INFERENCE_PROBE: &str = r###"fetch('https://inference.local/v1/chat/completions',{method:'POST',headers:{'content-type':'application/json','authorization':'Bearer openshell-placeholder'},body:JSON.stringify({model:'primary',messages:[{role:'user',content:'Reply OK.'}],max_tokens:1,stream:false}),signal:AbortSignal.timeout(80000)}).then(async r=>{const b=await r.json();process.exit(r.ok&&Array.isArray(b.choices)&&b.choices.length>0?0:1)}).catch(()=>process.exit(1))"###;
-const ANTHROPIC_PROBE: &str = r###"fetch('https://inference.local/v1/messages',{method:'POST',headers:{'content-type':'application/json','x-api-key':'openshell-placeholder','anthropic-version':'2023-06-01'},body:JSON.stringify({model:'primary',messages:[{role:'user',content:'Reply OK.'}],max_tokens:1,stream:false}),signal:AbortSignal.timeout(80000)}).then(async r=>{const b=await r.json();process.exit(r.ok&&Array.isArray(b.content)&&b.content.length>0?0:1)}).catch(()=>process.exit(1))"###;
-const RESPONSES_PROBE: &str = r###"fetch('https://inference.local/v1/responses',{method:'POST',headers:{'content-type':'application/json','authorization':'Bearer openshell-placeholder'},body:JSON.stringify({model:'primary',input:'Reply OK.',max_output_tokens:16,stream:false}),signal:AbortSignal.timeout(80000)}).then(async r=>{const b=await r.json();process.exit(r.ok&&Array.isArray(b.output)&&b.output.length>0?0:1)}).catch(()=>process.exit(1))"###;
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test]
+    async fn observed_pi_catalog_supplies_its_declared_default_without_private_model_state() {
+        let mut value: serde_json::Value =
+            serde_saphyr::from_str(include_str!("../../../../examples/fabric-pi.yaml")).unwrap();
+        let inference = &mut value["spec"]["sandboxes"][0]["agent"]["inference"];
+        let mut fast = inference["routes"][0].clone();
+        fast["name"] = serde_json::json!("fast");
+        fast["overrides"]["model"] = serde_json::json!("fast-model");
+        inference["routes"]
+            .as_array_mut()
+            .unwrap()
+            .push(fast.clone());
+        inference["default"] = serde_json::json!("fast");
+        let doc = crate::config::Document::parse(value.to_string().as_bytes()).unwrap();
+        let generations = ["workspace", "provider", "sandbox"]
+            .map(|key| (key.into(), "a".repeat(32)))
+            .into();
+        let targets = crate::compile::targets(&doc, &generations).unwrap();
+        let mut row = targets
+            .iter()
+            .find(|row| row.kind == "sandbox")
+            .unwrap()
+            .values
+            .clone();
+        row.remove("pi_model_config");
+        let client =
+            OpenShell::connect(&doc.spec.gateway, std::sync::Arc::new(EnvironmentSecrets)).unwrap();
+        let (command, _) = client.configuration_command(&row).unwrap();
+        let model: serde_json::Value = serde_json::from_str(&command[5]).unwrap();
+        assert_eq!(model, fast["overrides"]);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn readiness_uses_the_full_deadline_without_wall_clock_waiting() {
+        let cancel = CancellationToken::new();
+        let started = tokio::time::Instant::now();
+        let error = readiness_deadline(std::future::pending(), &cancel)
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("readiness timed out"));
+        assert_eq!(started.elapsed(), Duration::from_secs(120));
+        readiness_deadline(
+            async {
+                tokio::time::sleep(Duration::from_secs(119)).await;
+                Ok(())
+            },
+            &cancel,
+        )
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn readiness_cancellation_and_terminal_errors_do_not_wait_for_the_deadline() {
+        let cancel = CancellationToken::new();
+        let started = tokio::time::Instant::now();
+        let (_, result) = tokio::join!(
+            async {
+                tokio::time::sleep(Duration::from_secs(2)).await;
+                cancel.cancel();
+            },
+            readiness_deadline(std::future::pending(), &cancel)
+        );
+        assert!(matches!(result, Err(Error::Cancelled)));
+        assert_eq!(started.elapsed(), Duration::from_secs(2));
+        let error = readiness_deadline(
+            async { Err(Error::Conflict("terminal")) },
+            &CancellationToken::new(),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(error.to_string(), "terminal");
+        assert_eq!(started.elapsed(), Duration::from_secs(2));
+    }
+
+    #[test]
+    fn terminal_sandbox_reports_known_failure_without_backend_text() {
+        for (kind, status, reason, expected) in [
+            (
+                "Ready",
+                "False",
+                "ControlSupervisorExited",
+                "ControlSupervisorExited",
+            ),
+            ("Ready", "False", "ContainerExited", "ContainerExited"),
+            ("Ready", "False", "secret-sentinel", "unknown"),
+            ("Ready", "True", "ControlSupervisorExited", "unknown"),
+            ("Other", "False", "ControlSupervisorExited", "unknown"),
+        ] {
+            let error = startup_phase(proto::SandboxStatus {
+                phase: proto::SandboxPhase::Error as i32,
+                conditions: vec![proto::SandboxCondition {
+                    r#type: kind.into(),
+                    status: status.into(),
+                    reason: reason.into(),
+                    message: "secret-sentinel".into(),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            })
+            .unwrap_err()
+            .to_string();
+            assert!(error.contains(&format!("reason {expected}")), "{error}");
+            assert!(error.contains("exit code unknown"));
+            assert!(error.contains("resources retained"));
+            assert!(!error.contains("secret-sentinel"));
+        }
+    }
+
     #[test]
     fn hermes_reply_requires_success_before_accepting_text() {
         assert_eq!(

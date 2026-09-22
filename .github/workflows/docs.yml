@@ -1,0 +1,139 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# Adapted from main's Fern workflows; see fern/NOTICE.md.
+name: Docs / v1
+on:
+  pull_request:
+    branches: [v1]
+  push:
+    branches: [v1]
+    tags: ["v1.*.*"]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: docs-v1-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+jobs:
+  validate:
+    name: Validate sources and Fern output
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-docs
+      - name: Test documentation generation and publication guards
+        run: |
+          cargo test --locked -p nemoclaw-build --test docs
+          python3 -B -m unittest discover -s tools/docs -p 'test_*.py'
+      - name: Check generated reference, local links, and Fern routes
+        run: python3 tools/docs/fern.py check
+
+  preview:
+    name: Publish PR preview
+    needs: validate
+    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Check preview availability
+        id: available
+        env:
+          FERN_TOKEN: ${{ secrets.FERN_TOKEN }}
+        run: |
+          if [ -n "$FERN_TOKEN" ]; then echo "enabled=true" >> "$GITHUB_OUTPUT"; fi
+      - uses: ./.github/actions/setup-docs
+        if: steps.available.outputs.enabled == 'true'
+      - name: Publish isolated PR preview
+        if: steps.available.outputs.enabled == 'true'
+        id: publish
+        env:
+          FERN_TOKEN: ${{ secrets.FERN_TOKEN }}
+          PREVIEW_ID: nemoclaw-v1-pr-${{ github.event.pull_request.number }}
+        run: python3 tools/docs/fern.py preview --id "$PREVIEW_ID"
+      - name: Comment with preview URL
+        if: steps.available.outputs.enabled == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PREVIEW_URL: ${{ steps.publish.outputs.preview_url }}
+        run: |
+          python3 - <<'PY'
+          import json, os, pathlib, subprocess
+          repo, number = os.environ['GH_REPO'], os.environ['PR_NUMBER']
+          marker = '<!-- fern-preview-docs-v1 -->'
+          pages = json.loads(subprocess.check_output(['gh', 'api', '--paginate', '--slurp', f'repos/{repo}/issues/{number}/comments']))
+          comment = next((c for page in pages for c in page if c['user']['login'] == 'github-actions[bot]' and marker in c['body']), None)
+          body = pathlib.Path(os.environ['RUNNER_TEMP']) / 'docs-preview-comment.json'
+          body.write_text(json.dumps({'body': f'**v1 documentation preview:** {os.environ["PREVIEW_URL"]}\n\n{marker}'}))
+          endpoint = f'repos/{repo}/issues/comments/{comment["id"]}' if comment else f'repos/{repo}/issues/{number}/comments'
+          subprocess.run(['gh', 'api', endpoint, '--method', 'PATCH' if comment else 'POST', '--input', str(body)], check=True)
+          PY
+
+  staging:
+    name: Publish stable v1 staging preview
+    needs: validate
+    if: github.event_name == 'push' && github.ref == 'refs/heads/v1'
+    environment: docs-v1-staging
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-docs
+      - name: Publish v1 without replacing main staging
+        env:
+          FERN_TOKEN: ${{ secrets.FERN_TOKEN }}
+        run: python3 tools/docs/fern.py preview --id nemoclaw-v1
+      - name: Remove merged v1 PR previews
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          COMMIT_SHA: ${{ github.sha }}
+          FERN_TOKEN: ${{ secrets.FERN_TOKEN }}
+        run: |
+          python3 - <<'PY'
+          import json, os, subprocess
+          endpoint = f'repos/{os.environ["GH_REPO"]}/commits/{os.environ["COMMIT_SHA"]}/pulls'
+          pages = json.loads(subprocess.check_output(['gh', 'api', '--paginate', '--slurp', endpoint]))
+          for page in pages:
+              for pr in page:
+                  if pr.get('merged_at') and pr['base']['ref'] == 'v1':
+                      subprocess.run(['python3', 'tools/docs/fern.py', 'delete', '--id', f'nemoclaw-v1-pr-{int(pr["number"])}'], check=True)
+          PY
+
+  public:
+    name: Publish v1 release documentation
+    needs: validate
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v1.') && vars.FERN_V1_PUBLIC_ENABLED == 'true'
+    environment: docs-v1-public
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Require a tag from v1 history
+        run: |
+          git fetch --no-tags origin v1
+          git merge-base --is-ancestor HEAD origin/v1
+      - uses: ./.github/actions/setup-docs
+      - name: Publish main and v1 through the version selector
+        env:
+          FERN_TOKEN: ${{ secrets.FERN_TOKEN }}
+          FERN_V1_PUBLIC_ENABLED: ${{ vars.FERN_V1_PUBLIC_ENABLED }}
+        run: python3 tools/docs/fern.py public

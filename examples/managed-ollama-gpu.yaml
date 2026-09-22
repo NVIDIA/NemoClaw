@@ -1,0 +1,55 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# yaml-language-server: $schema=../schemas/nemoclaw-v1alpha1.schema.json
+
+apiVersion: nemoclaw.nvidia.com/v1alpha1
+kind: NemoClawConfig
+metadata:
+  name: managed-ollama-gpu
+  uid: 8c70f665-5684-4c9e-bf5b-87f13a7cb832
+spec:
+  gateway:
+    management: managed
+    endpoint: http://127.0.0.1:17681
+    engine: unix:///var/run/docker.sock
+    image: ghcr.io/nvidia/openshell/gateway@sha256:ec2b0efea84fff198e888e97c85befb9c908acde92e8256f9b527877ed182d66
+    networkCIDR: 172.30.110.0/24
+  services:
+    qwen:
+      kind: ollama
+      hardware: {profile: dgx-spark}
+      # Replace with the digest of your locally built runtimes/ollama image.
+      image: nc-prototype-ollama@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+      model:
+        name: qwen3:0.6b
+        digest: 7df6b6e09427a769808717c0a93cadc4ae99ed4eb8bf5ca557c90846becea435
+      serving:
+        contextTokens: 8192
+        maxSequences: 1
+      memory:
+        gpuMemoryGiB: 16
+  inferenceProviders:
+  - name: qwen
+    provider: openai
+    api: openai-completions
+    serviceRef: qwen
+  sandboxes:
+  - name: assistant
+    image:
+      ref: nc-multi-models@sha256:3ab70ded67440e838a37d6c9f0e3b08b95e2acf416c6076f8817bac190525cf0
+    runtime:
+      provider: docker
+    network:
+      tier: isolated
+    harness:
+      kind: openclaw
+    agent:
+      name: assistant
+      inference:
+        routes:
+        - name: primary
+          providerRef: qwen
+          overrides:
+            model: qwen3:0.6b
+            contextWindow: 8192
+            maxTokens: 2048

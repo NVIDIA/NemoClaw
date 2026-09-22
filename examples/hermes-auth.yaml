@@ -27,15 +27,15 @@ spec:
         provider: docker
       network:
         tier: isolated
-      agents:
-        - name: main
-          harness: hermes
-          auth:
-            method: api-key
-            providerRef: local
-          inference:
-            routes:
-              - name: primary
-                providerRef: local
-                overrides:
-                  model: moonshotai/kimi-k2.6
+      harness:
+        kind: hermes
+      agent:
+        name: main
+        auth:
+          method: api-key
+        inference:
+          routes:
+            - name: primary
+              providerRef: local
+              overrides:
+                model: moonshotai/kimi-k2.6

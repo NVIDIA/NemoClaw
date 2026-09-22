@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 use nemoclaw_sdk::{
     compile::{Generations, targets},
-    config::{Document, schema::input_schema},
+    config::{Document, Network, NetworkPolicy, Proxy, schema::input_schema},
 };
 use serde_json::{Value, json};
 
@@ -12,7 +12,7 @@ fn input() -> Value {
     value["spec"]["sandboxes"][0]["network"] = json!({
         "policy": {"explicit": {
             "version": 1,
-            "filesystem_policy": {"include_workdir": false, "read_only": ["/usr", "/opt"], "read_write": ["/sandbox", "/tmp"]},
+            "filesystem_policy": {"include_workdir": false, "read_only": ["/usr", "/opt", "/app"], "read_write": ["/sandbox", "/tmp"]},
             "landlock": {"compatibility": "best_effort"},
             "process": {"run_as_user": "1000", "run_as_group": "1000"},
             "network_policies": {"docs": {"name": "docs", "endpoints": [{"host": "docs.example.com", "port": 443, "protocol": "rest", "tls": "terminate", "enforcement": "enforce", "rules": [{"allow": {"method": "GET", "path": "/docs/**"}}]}], "binaries": [{"path": "/usr/bin/curl"}]}}
@@ -141,10 +141,228 @@ fn policy_template_markers_remain_literal_in_opentofu_configuration() {
         .map(|k| (k.into(), format!("{k}-generation")))
         .into();
     let graph = nemoclaw_sdk::compile::compile(&document, &generations, "0.1.0").unwrap();
-    let encoded = graph["resource"]["nemoclaw_sandbox"]["agent"]["policy_json"]
+    let encoded = graph["resource"]["nemoclaw_sandbox"]["assistant"]["policy_json"]
         .as_str()
         .unwrap();
     assert!(encoded.contains("/docs/$${file}/%%{literal}"));
     let rows = targets(&document, &generations).unwrap();
     assert!(rows[3].values["policy_json"].contains("/docs/${file}/%{literal}"));
+}
+
+#[test]
+fn explicit_filesystem_policy_must_allow_the_selected_runtime() {
+    for (harness, extra) in [
+        ("openclaw", "/app"),
+        ("hermes", "/opt/hermes"),
+        ("pi", "/opt/fabric-source"),
+        ("deepagents", "/opt/fabric"),
+    ] {
+        let mut value = input();
+        value["spec"]["sandboxes"][0]["harness"] = json!({"kind": harness});
+        let fs = "/spec/sandboxes/0/network/policy/explicit/filesystem_policy";
+        value.pointer_mut(fs).unwrap()["read_only"] = json!(["/usr"]);
+        assert!(
+            parse(&value)
+                .unwrap_err()
+                .to_string()
+                .contains("/opt/fabric")
+        );
+        value.pointer_mut(fs).unwrap()["read_only"] =
+            json!(["/usr", "/opt/fabric", "/opt/nemoclaw", extra]);
+        parse(&value).unwrap();
+        if harness != "deepagents" {
+            value.pointer_mut(fs).unwrap()["read_only"] =
+                json!(["/usr", "/opt/fabric", "/opt/nemoclaw"]);
+            assert!(parse(&value).unwrap_err().to_string().contains(extra));
+        }
+        value.pointer_mut(fs).unwrap()["read_only"] = json!(["/usr", "/opt/fabric", extra]);
+        assert!(
+            parse(&value)
+                .unwrap_err()
+                .to_string()
+                .contains("/opt/nemoclaw")
+        );
+    }
+}
+
+#[test]
+fn runtime_grants_accept_parents_and_writable_paths_without_rewriting_policy() {
+    for grants in [
+        json!(["/opt", "/app"]),
+        json!(["/opt/fabric", "/opt/nemoclaw", "/app/"]),
+    ] {
+        let mut value = input();
+        let fs = value
+            .pointer_mut("/spec/sandboxes/0/network/policy/explicit/filesystem_policy")
+            .unwrap();
+        fs["read_only"] = json!(["/usr"]);
+        fs["read_write"] = grants;
+        let document = parse(&value).unwrap();
+        let expected = value["spec"]["sandboxes"][0]["network"]["policy"].clone();
+        assert_eq!(
+            serde_json::to_value(&document.spec.sandboxes[0].network).unwrap()["policy"],
+            expected
+        );
+    }
+    for grants in [
+        json!(["/op", "/app"]),
+        json!(["/opt/fabric-source", "/opt/nemoclaw", "/app"]),
+        json!(["/opt/../unrelated", "/app"]),
+    ] {
+        let mut value = input();
+        value["spec"]["sandboxes"][0]["network"]["policy"]["explicit"]["filesystem_policy"]["read_only"] =
+            grants;
+        assert!(parse(&value).is_err());
+    }
+}
+
+#[test]
+fn shared_harness_policy_is_checked_but_omitted_filesystem_grants_keep_defaults() {
+    let mut value = input();
+    value["spec"]["harnesses"] = json!({"shared": {"kind": "openclaw"}});
+    value["spec"]["sandboxes"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("harness");
+    value["spec"]["sandboxes"][0]["harnessRef"] = json!("shared");
+    let policy = &mut value["spec"]["sandboxes"][0]["network"]["policy"]["explicit"];
+    policy["filesystem_policy"]["read_only"] = json!(["/usr", "/opt"]);
+    assert!(parse(&value).unwrap_err().to_string().contains("/app"));
+    value["spec"]["sandboxes"][0]["network"]["policy"]["explicit"]
+        .as_object_mut()
+        .unwrap()
+        .remove("filesystem_policy");
+    parse(&value).unwrap();
+}
+
+#[tokio::test]
+async fn plan_and_apply_reject_a_blocked_runtime_before_opening_bundle_or_state() {
+    use nemoclaw_sdk::{CancellationToken, Deployment};
+    let mut document = parse(&input()).unwrap();
+    let mut second = document.spec.sandboxes[0].clone();
+    second.name = "blocked".into();
+    let NetworkPolicy::Explicit(policy) = &mut second.network.policy else {
+        panic!("expected explicit policy");
+    };
+    let filesystem = policy.filesystem_policy.as_mut().unwrap();
+    filesystem.read_only = Some(vec!["/usr".into()]);
+    filesystem.include_workdir = Some(true);
+    document.spec.sandboxes.push(second);
+    let directory = tempfile::tempdir().unwrap();
+    let state = directory.path().join("state");
+    let deployment = Deployment::new(&state, &directory.path().join("missing-bundle"));
+    let cancel = CancellationToken::new();
+    assert!(
+        deployment
+            .plan(&document, &cancel)
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("/opt/fabric")
+    );
+    assert!(
+        deployment
+            .apply(&document, &cancel)
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("/opt/fabric")
+    );
+    assert!(!state.exists());
+}
+
+#[test]
+fn landlock_uses_runtime_spellings_without_main_branch_aliases() {
+    let validator = jsonschema::validator_for(&input_schema()).unwrap();
+    for spelling in ["best_effort", "hard_requirement", "strict"] {
+        let mut value = input();
+        value["spec"]["sandboxes"][0]["network"]["policy"]["explicit"]["landlock"]["compatibility"] =
+            json!(spelling);
+        if spelling == "strict" {
+            assert!(
+                parse(&value).is_err(),
+                "removed alias must not be translated"
+            );
+            assert!(!validator.is_valid(&value));
+        } else {
+            assert!(validator.is_valid(&value));
+            let document = parse(&value).unwrap();
+            assert_eq!(
+                document.spec.sandboxes[0]
+                    .network
+                    .policy_proto()
+                    .unwrap()
+                    .landlock
+                    .unwrap()
+                    .compatibility,
+                spelling
+            );
+        }
+    }
+}
+
+#[test]
+fn network_deserialization_rejects_conflicting_policy_choices() {
+    let explicit = input()["spec"]["sandboxes"][0]["network"]["policy"].clone();
+    for value in [
+        json!({"tier": "isolated", "policy": explicit}),
+        json!({"tier": "unrestricted"}),
+    ] {
+        assert!(serde_json::from_value::<Network>(value).is_err());
+    }
+}
+
+#[test]
+fn default_network_is_a_valid_isolated_policy() {
+    let default = Network::default();
+    default.validate().unwrap();
+    assert_eq!(default.policy, NetworkPolicy::Isolated);
+    for value in [json!({}), json!({"tier": ""}), json!({"tier": "isolated"})] {
+        assert_eq!(serde_json::from_value::<Network>(value).unwrap(), default);
+    }
+}
+
+#[test]
+fn policy_choice_and_proxy_are_independent_and_keep_the_export_shape() {
+    let explicit_input = input()["spec"]["sandboxes"][0]["network"]["policy"].clone();
+    let explicit = serde_json::from_value(explicit_input["explicit"].clone()).unwrap();
+    for (policy, expected) in [
+        (NetworkPolicy::Isolated, json!({"tier": "isolated"})),
+        (
+            NetworkPolicy::Explicit(explicit),
+            json!({"policy": explicit_input}),
+        ),
+    ] {
+        for proxy in [
+            None,
+            Some(Proxy {
+                host: "proxy.example.com".into(),
+                port: 3128,
+            }),
+        ] {
+            let network = Network {
+                policy: policy.clone(),
+                proxy: proxy.clone(),
+            };
+            network.validate().unwrap();
+            let mut expected = expected.clone();
+            if let Some(proxy) = &proxy {
+                expected["proxy"] = serde_json::to_value(proxy).unwrap();
+            }
+            assert_eq!(serde_json::to_value(&network).unwrap(), expected);
+            assert_eq!(
+                serde_json::from_value::<Network>(expected).unwrap(),
+                network
+            );
+            assert_eq!(
+                network.policy_proto().unwrap(),
+                Network {
+                    policy: policy.clone(),
+                    proxy: None
+                }
+                .policy_proto()
+                .unwrap()
+            );
+        }
+    }
 }

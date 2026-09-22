@@ -2,9 +2,16 @@
 // SPDX-License-Identifier: Apache-2.0
 
 mod args;
+mod credentials;
+mod deployment;
 mod dispatch;
+mod formatting;
 mod io;
-use args::{Cli, Command};
+mod onboarding;
+#[cfg(test)]
+mod onboarding_scenarios;
+mod progress;
+use args::Cli;
 use clap::Parser;
 use nemoclaw_sdk::CancellationToken;
 use std::process::ExitCode;
@@ -24,6 +31,7 @@ async fn interrupt() {
 #[tokio::main]
 async fn main() -> ExitCode {
     let cli = Cli::parse();
+    let output_format = cli.command.output_format();
     let cancel = CancellationToken::new();
     let signal = cancel.clone();
     let signals = tokio::spawn(async move {
@@ -31,27 +39,31 @@ async fn main() -> ExitCode {
         signal.cancel();
     });
     let output_path = match &cli.command {
-        Command::Export { output } => output.clone(),
+        args::Command::Export { output } => output.clone(),
         _ => None,
     };
-    let result = dispatch::run(cli, tokio::io::stdin(), &cancel)
-        .await
-        .and_then(dispatch::CommandResult::render);
+    let result = dispatch::run(cli, tokio::io::stdin(), &cancel).await;
     signals.abort();
     match result {
-        Ok(output) => match io::write_output(
-            output_path.as_deref(),
-            output.as_bytes(),
-            std::io::stdout().lock(),
-        ) {
-            Ok(()) => ExitCode::SUCCESS,
-            Err(error) => {
-                eprintln!("{error}");
-                ExitCode::FAILURE
+        Ok(dispatch::CommandResult::OnboardExit) => ExitCode::SUCCESS,
+        Ok(result) => {
+            match formatting::render(result, output_format).and_then(|output| {
+                io::write_output(
+                    output_path.as_deref(),
+                    output.as_bytes(),
+                    std::io::stdout().lock(),
+                )?;
+                Ok(())
+            }) {
+                Ok(()) => ExitCode::SUCCESS,
+                Err(error) => {
+                    eprintln!("{error}");
+                    ExitCode::FAILURE
+                }
             }
-        },
+        }
         Err(error) => {
-            eprintln!("{error}");
+            eprintln!("{}", formatting::render_error(error.as_ref()));
             ExitCode::FAILURE
         }
     }

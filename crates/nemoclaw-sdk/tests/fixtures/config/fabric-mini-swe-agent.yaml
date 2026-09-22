@@ -24,12 +24,13 @@ spec:
         provider: docker
       network:
         tier: isolated
-      agents:
-        - name: main
-          harness: mini-swe-agent
-          inference:
-            routes:
-              - name: primary
-                providerRef: local
-                overrides:
-                  model: fixture-model
+      harness:
+        kind: mini-swe-agent
+      agent:
+        name: main
+        inference:
+          routes:
+            - name: primary
+              providerRef: local
+              overrides:
+                model: fixture-model

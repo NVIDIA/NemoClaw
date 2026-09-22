@@ -14,16 +14,23 @@ use tonic::{Request, Response, Status, body::Body};
 #[derive(Default)]
 pub struct State {
     pub driver: Option<String>,
+    pub gateway_info: Option<p::GetGatewayInfoResponse>,
+    pub gateway_reads: usize,
     pub workspaces: HashMap<String, p::Workspace>,
+    pub profiles: HashMap<String, p::ProviderProfile>,
     pub providers: HashMap<String, p::Provider>,
-    pub routes: HashMap<String, p::SetInferenceRouteRequest>,
     pub sandboxes: HashMap<String, p::Sandbox>,
     pub active_policy: Option<p::SandboxPolicy>,
+    pub sandbox_phase: Option<p::SandboxPhase>,
+    pub sandbox_conditions: Vec<p::SandboxCondition>,
     pub exec_exit: i32,
+    pub health_report: Option<serde_json::Value>,
     pub inference_exit: i32,
     pub exec_truncated: bool,
     pub exec_stalled: bool,
     pub exec_calls: Vec<Vec<String>>,
+    pub pi_models: HashMap<String, serde_json::Value>,
+    pub pi_stopped: bool,
     pub effects: usize,
     pub expected_bearer: Option<String>,
     pub conditional_updates: usize,
@@ -32,6 +39,9 @@ pub struct State {
     pub lose_delete: bool,
     pub delete_delay: std::time::Duration,
     pub delete_calls: usize,
+    pub sandbox_create_delay: std::time::Duration,
+    pub active_sandbox_creates: usize,
+    pub peak_sandbox_creates: usize,
     pub fail_read: Option<(&'static str, tonic::Code)>,
 }
 impl State {
@@ -181,7 +191,19 @@ impl tower::Service<http::Request<Body>> for Service {
                     unary(request, state, gateway_info).await
                 }
                 "/openshell.v1.OpenShell/CreateSandbox" => {
-                    unary(request, state, create_sandbox).await
+                    let delay = {
+                        let mut state = state.lock().unwrap();
+                        state.active_sandbox_creates += 1;
+                        state.peak_sandbox_creates =
+                            state.peak_sandbox_creates.max(state.active_sandbox_creates);
+                        state.sandbox_create_delay
+                    };
+                    if !delay.is_zero() {
+                        tokio::time::sleep(delay).await;
+                    }
+                    let response = unary(request, state.clone(), create_sandbox).await;
+                    state.lock().unwrap().active_sandbox_creates -= 1;
+                    response
                 }
                 "/openshell.v1.OpenShell/GetSandbox" => {
                     unary(request, state, |state, request| {
@@ -207,18 +229,6 @@ impl tower::Service<http::Request<Body>> for Service {
                     })
                     .await
                 }
-                "/openshell.inference.v1.Inference/GetInferenceRoute" => {
-                    unary(request, state, get_route).await
-                }
-                "/openshell.inference.v1.Inference/SetInferenceRoute" => {
-                    unary(request, state, set_route).await
-                }
-                "/openshell.inference.v1.Inference/DeleteInferenceRoute" => {
-                    unary(request, state, |state, request| {
-                        delete_route(state, &request)
-                    })
-                    .await
-                }
                 "/openshell.v1.OpenShell/GetWorkspace" => {
                     unary(request, state, |state, request| {
                         get_workspace(state, &request)
@@ -227,6 +237,15 @@ impl tower::Service<http::Request<Body>> for Service {
                 }
                 "/openshell.v1.OpenShell/CreateWorkspace" => {
                     unary(request, state, create_workspace).await
+                }
+                "/openshell.v1.OpenShell/GetProviderProfile" => {
+                    unary(request, state, get_profile).await
+                }
+                "/openshell.v1.OpenShell/ImportProviderProfiles" => {
+                    unary(request, state, import_profiles).await
+                }
+                "/openshell.v1.OpenShell/DeleteProviderProfile" => {
+                    unary(request, state, delete_profile).await
                 }
                 "/openshell.v1.OpenShell/GetProvider" => {
                     unary(request, state, |state, request| {
@@ -289,6 +308,14 @@ fn create_workspace(
         workspace: Some(workspace),
     })
 }
+fn workspace(selector: &Option<p::WorkspaceSelector>) -> Result<String, Status> {
+    match selector.as_ref().and_then(|s| s.selection.as_ref()) {
+        Some(p::workspace_selector::Selection::Workspace(name)) if !name.is_empty() => {
+            Ok(name.clone())
+        }
+        _ => Err(Status::invalid_argument("explicit workspace required")),
+    }
+}
 fn get_provider(
     state: &mut State,
     q: &p::GetProviderRequest,
@@ -296,13 +323,30 @@ fn get_provider(
     state.read("provider")?;
     let mut provider = state
         .providers
-        .get(&format!("{}/{}", q.workspace, q.name))
+        .get(&format!("{}/{}", workspace(&q.workspace_scope)?, q.name))
         .ok_or_else(|| Status::not_found("absent"))?
         .clone();
     provider.credentials.clear();
     Ok(p::ProviderResponse {
         provider: Some(provider),
+        ..Default::default()
     })
+}
+// Wire limits from the pinned OpenShell server (d1155aa), independently checked
+// here so an accepting protocol fixture cannot conceal invalid provider metadata.
+fn validate_provider_metadata(meta: &p::ObjectMeta) -> Result<(), Status> {
+    if meta
+        .labels
+        .values()
+        .any(|v| v.len() > 63 || !v.chars().all(|c| c.is_alphanumeric() || "-_.".contains(c)))
+        || meta.annotations.len() > 128
+        || meta.annotations.values().any(|v| v.len() > 8192)
+    {
+        return Err(Status::invalid_argument(
+            "provider metadata exceeds native gateway limits",
+        ));
+    }
+    Ok(())
 }
 fn create_provider(
     state: &mut State,
@@ -315,11 +359,15 @@ fn create_provider(
         .metadata
         .take()
         .ok_or_else(|| Status::invalid_argument("missing"))?;
-    let key = format!("{}/{}", q.workspace, meta.name);
+    validate_provider_metadata(&meta)?;
+    let key = format!("{}/{}", workspace(&q.workspace_scope)?, meta.name);
     if state.providers.contains_key(&key) {
         return Err(Status::already_exists("collision"));
     }
-    provider.metadata = Some(state.metadata(meta.name, q.workspace, meta.labels));
+    let mut created_metadata =
+        state.metadata(meta.name, workspace(&q.workspace_scope)?, meta.labels);
+    created_metadata.annotations = meta.annotations;
+    provider.metadata = Some(created_metadata);
     state.providers.insert(key, provider.clone());
     state.created("provider");
     if std::mem::take(&mut state.lose_create) {
@@ -328,6 +376,7 @@ fn create_provider(
     provider.credentials.clear();
     Ok(p::ProviderResponse {
         provider: Some(provider),
+        ..Default::default()
     })
 }
 fn update_provider(
@@ -341,7 +390,8 @@ fn update_provider(
         .metadata
         .as_mut()
         .ok_or_else(|| Status::invalid_argument("missing"))?;
-    let key = format!("{}/{}", q.workspace, meta.name);
+    validate_provider_metadata(meta)?;
+    let key = format!("{}/{}", workspace(&q.workspace_scope)?, meta.name);
     let prior = state
         .providers
         .get(&key)
@@ -355,6 +405,7 @@ fn update_provider(
     {
         return Err(Status::aborted("version conflict"));
     }
+    meta.workspace = prior.workspace.clone();
     meta.resource_version += 1;
     state.conditional_updates += 1;
     state.effects += 1;
@@ -362,15 +413,37 @@ fn update_provider(
     provider.credentials.clear();
     Ok(p::ProviderResponse {
         provider: Some(provider),
+        ..Default::default()
     })
 }
 fn delete_provider(
     state: &mut State,
     q: &p::DeleteProviderRequest,
 ) -> Result<p::DeleteProviderResponse, Status> {
+    let workspace = workspace(&q.workspace_scope)?;
+    if !state
+        .providers
+        .contains_key(&format!("{workspace}/{}", q.name))
+    {
+        return Err(Status::not_found("absent"));
+    }
+    if state.sandboxes.values().any(|sandbox| {
+        sandbox
+            .metadata
+            .as_ref()
+            .is_some_and(|m| m.workspace == workspace)
+            && sandbox
+                .spec
+                .as_ref()
+                .is_some_and(|spec| spec.providers.contains(&q.name))
+    }) {
+        return Err(Status::failed_precondition(
+            "provider is attached to a sandbox",
+        ));
+    }
     let deleted = state
         .providers
-        .remove(&format!("{}/{}", q.workspace, q.name))
+        .remove(&format!("{workspace}/{}", q.name))
         .is_some();
     if !deleted {
         return Err(Status::not_found("absent"));
@@ -379,7 +452,9 @@ fn delete_provider(
     if std::mem::take(&mut state.lose_delete) {
         return Err(Status::unavailable("lost delete reply secret"));
     }
-    Ok(p::DeleteProviderResponse { deleted })
+    Ok(p::DeleteProviderResponse {
+        outcome: p::DeletionOutcome::Completed.into(),
+    })
 }
 
 #[derive(Clone)]
@@ -402,8 +477,19 @@ fn gateway_info(
     state: &mut State,
     _: p::GetGatewayInfoRequest,
 ) -> Result<p::GetGatewayInfoResponse, Status> {
+    state.gateway_reads += 1;
+    state.read("gateway")?;
+    if let Some(info) = &state.gateway_info {
+        return Ok(info.clone());
+    }
     Ok(p::GetGatewayInfoResponse {
-        gateway_version: "0.0.116".into(),
+        gateway_version: serde_json::from_str::<serde_json::Value>(include_str!(
+            "../../../versions.json"
+        ))
+        .unwrap()["openshell"]
+            .as_str()
+            .unwrap()
+            .into(),
         compute_drivers: vec![p::ComputeDriverInfo {
             name: state.driver.clone().unwrap_or_else(|| "docker".into()),
             ..Default::default()
@@ -415,17 +501,19 @@ fn create_sandbox(
     state: &mut State,
     q: p::CreateSandboxRequest,
 ) -> Result<p::SandboxResponse, Status> {
-    let key = format!("{}/{}", q.workspace, q.name);
+    let key = format!("{}/{}", workspace(&q.workspace_scope)?, q.name);
     if state.sandboxes.contains_key(&key) {
         return Err(Status::already_exists("collision"));
     }
     let sandbox = p::Sandbox {
-        metadata: Some(state.metadata(q.name, q.workspace, q.labels)),
+        metadata: Some(state.metadata(q.name, workspace(&q.workspace_scope)?, q.labels)),
         spec: q.spec,
         status: Some(p::SandboxStatus {
-            phase: p::SandboxPhase::Ready as i32,
+            phase: state.sandbox_phase.unwrap_or(p::SandboxPhase::Ready) as i32,
+            conditions: state.sandbox_conditions.clone(),
             ..Default::default()
         }),
+        ..Default::default()
     };
     state.sandboxes.insert(key, sandbox.clone());
     state.created("sandbox");
@@ -439,7 +527,7 @@ fn get_sandbox(state: &mut State, q: &p::GetSandboxRequest) -> Result<p::Sandbox
         sandbox: Some(
             state
                 .sandboxes
-                .get(&format!("{}/{}", q.workspace, q.name))
+                .get(&format!("{}/{}", workspace(&q.workspace_scope)?, q.name))
                 .ok_or_else(|| Status::not_found("absent"))?
                 .clone(),
         ),
@@ -449,14 +537,15 @@ fn delete_sandbox(
     state: &mut State,
     q: &p::DeleteSandboxRequest,
 ) -> Result<p::DeleteSandboxResponse, Status> {
-    let deleted = state
+    let sandbox = state
         .sandboxes
-        .remove(&format!("{}/{}", q.workspace, q.name))
-        .is_some();
-    if deleted {
-        state.effects += 1;
-    }
-    Ok(p::DeleteSandboxResponse { deleted })
+        .remove(&format!("{}/{}", workspace(&q.workspace_scope)?, q.name))
+        .ok_or_else(|| Status::not_found("absent"))?;
+    state.effects += 1;
+    Ok(p::DeleteSandboxResponse {
+        outcome: p::DeletionOutcome::Completed.into(),
+        sandbox_id: sandbox.metadata.unwrap().id,
+    })
 }
 fn policy_status(
     state: &mut State,
@@ -465,65 +554,31 @@ fn policy_status(
     state.read("policy")?;
     let sandbox = state
         .sandboxes
-        .get(&format!("{}/{}", q.workspace, q.name))
+        .get(&format!("{}/{}", workspace(&q.workspace_scope)?, q.name))
         .ok_or_else(|| Status::not_found("absent"))?;
     Ok(p::GetSandboxPolicyStatusResponse {
         active_version: 1,
         revision: Some(p::SandboxPolicyRevision {
             version: 1,
-            policy: state
-                .active_policy
-                .clone()
-                .or_else(|| sandbox.spec.as_ref().unwrap().policy.clone()),
+            policy: state.active_policy.clone().or_else(|| {
+                let mut policy = sandbox.spec.as_ref().unwrap().policy.clone()?;
+                if !policy.network_policies.is_empty()
+                    && let Some(fs) = &mut policy.filesystem
+                    && !fs
+                        .read_only
+                        .iter()
+                        .chain(&fs.read_write)
+                        .any(|p| p == "/var/log")
+                {
+                    fs.read_only.push("/var/log".into());
+                }
+                Some(policy)
+            }),
             status: p::PolicyStatus::Loaded as i32,
             ..Default::default()
         }),
     })
 }
-fn get_route(
-    state: &mut State,
-    q: p::GetInferenceRouteRequest,
-) -> Result<p::GetInferenceRouteResponse, Status> {
-    state.read("route")?;
-    let route = state
-        .routes
-        .get(&q.workspace)
-        .ok_or_else(|| Status::not_found("absent"))?;
-    Ok(p::GetInferenceRouteResponse {
-        provider_name: route.provider_name.clone(),
-        model_id: route.model_id.clone(),
-        timeout_secs: route.timeout_secs,
-        workspace: q.workspace,
-        ..Default::default()
-    })
-}
-fn set_route(
-    state: &mut State,
-    q: p::SetInferenceRouteRequest,
-) -> Result<p::SetInferenceRouteResponse, Status> {
-    let response = p::SetInferenceRouteResponse {
-        provider_name: q.provider_name.clone(),
-        model_id: q.model_id.clone(),
-        timeout_secs: q.timeout_secs,
-        workspace: q.workspace.clone(),
-        ..Default::default()
-    };
-    state.routes.insert(q.workspace.clone(), q);
-    state.created("route");
-    state.effects += 1;
-    Ok(response)
-}
-fn delete_route(
-    state: &mut State,
-    q: &p::DeleteInferenceRouteRequest,
-) -> Result<p::DeleteInferenceRouteResponse, Status> {
-    let deleted = state.routes.remove(&q.workspace).is_some();
-    if deleted {
-        state.effects += 1;
-    }
-    Ok(p::DeleteInferenceRouteResponse { deleted })
-}
-
 struct Exec(Arc<Mutex<State>>);
 impl tonic::server::ServerStreamingService<p::ExecSandboxRequest> for Exec {
     type Response = p::ExecSandboxEvent;
@@ -545,6 +600,20 @@ impl tonic::server::ServerStreamingService<p::ExecSandboxRequest> for Exec {
             return std::future::ready(Ok(Response::new(Box::pin(tokio_stream::pending()))));
         }
         let mut events = Vec::new();
+        if request.command.last().is_some_and(|arg| arg == "health") {
+            let health = state.health_report.clone().unwrap_or_else(|| {
+                serde_json::json!({
+                    "supported": false, "report": null, "reason_code": "fabric_health_unsupported"
+                })
+            });
+            events.push(Ok(p::ExecSandboxEvent {
+                payload: Some(p::exec_sandbox_event::Payload::Stdout(
+                    p::ExecSandboxStdout {
+                        data: serde_json::to_vec(&health).unwrap(),
+                    },
+                )),
+            }));
+        }
         if request.command.first().is_some_and(|c| c == "openclaw") {
             events.push(Ok(p::ExecSandboxEvent {
                 payload: Some(p::exec_sandbox_event::Payload::Stdout(
@@ -566,9 +635,47 @@ impl tonic::server::ServerStreamingService<p::ExecSandboxRequest> for Exec {
                 )),
             }));
         }
-        let exit = if request.command.iter().any(|arg| {
-            arg.contains("fetch('https://inference.local/") || arg.ends_with("/pi-probe.js")
-        }) {
+        if request.command.get(2).is_some_and(|c| c == "configure")
+            && request.command.get(4).is_some_and(|c| c == "pi")
+            && state.exec_exit == 0
+        {
+            state.pi_models.insert(
+                request.sandbox_id.clone(),
+                serde_json::from_str(&request.command[5]).unwrap(),
+            );
+            state.pi_stopped = false;
+        }
+        if request
+            .command
+            .get(2)
+            .is_some_and(|c| c.contains("Read the existing Pi host status"))
+        {
+            let model = state.pi_models.get(&request.sandbox_id);
+            let sandbox = state
+                .sandboxes
+                .values()
+                .find(|s| s.metadata.as_ref().unwrap().id == request.sandbox_id)
+                .unwrap();
+            let agent = &sandbox.metadata.as_ref().unwrap().labels["nemoclaw.nvidia.com/agent"];
+            let config = model.map(|m| {
+                let mut selected = serde_json::json!({"model":m["model"]});
+                if let Some(metadata) = m.get("piModel") { selected["settings"] = serde_json::json!({"model_metadata":metadata}); }
+                serde_json::json!({"metadata":{"name":agent}, "harness":{"adapter_id":"nvidia.fabric.pi"}, "models":{"default":selected}})
+            });
+            let status = serde_json::json!({"ready":model.is_some() && !state.pi_stopped,"runtime_id":"pi-runtime","config":config});
+            events.push(Ok(p::ExecSandboxEvent {
+                payload: Some(p::exec_sandbox_event::Payload::Stdout(
+                    p::ExecSandboxStdout {
+                        data: serde_json::to_vec(&status).unwrap(),
+                    },
+                )),
+            }));
+        }
+        let exit = if request
+            .command
+            .iter()
+            .any(|arg| arg.ends_with("/inference-probe.mts") || arg.ends_with("/pi-probe.js"))
+        {
             state.inference_exit
         } else {
             state.exec_exit
@@ -583,4 +690,87 @@ impl tonic::server::ServerStreamingService<p::ExecSandboxRequest> for Exec {
         }
         std::future::ready(Ok(Response::new(Box::pin(tokio_stream::iter(events)))))
     }
+}
+
+fn get_profile(
+    state: &mut State,
+    q: p::GetProviderProfileRequest,
+) -> Result<p::ProviderProfileResponse, Status> {
+    state.read("provider_profile")?;
+    Ok(p::ProviderProfileResponse {
+        profile: Some(
+            state
+                .profiles
+                .get(&format!("{}/{}", q.workspace, q.id))
+                .ok_or_else(|| Status::not_found("absent"))?
+                .clone(),
+        ),
+    })
+}
+fn import_profiles(
+    state: &mut State,
+    q: p::ImportProviderProfilesRequest,
+) -> Result<p::ImportProviderProfilesResponse, Status> {
+    let mut profiles = vec![];
+    for item in q.profiles {
+        let mut profile = item
+            .profile
+            .ok_or_else(|| Status::invalid_argument("missing profile"))?;
+        let key = format!("{}/{}", q.workspace, profile.id);
+        if state.profiles.contains_key(&key) {
+            return Err(Status::already_exists("collision"));
+        }
+        profile.resource_version = 1;
+        profile.source = "user".into();
+        profile.scope = "workspace".into();
+        state.effects += 1;
+        state.profiles.insert(key, profile.clone());
+        // Import replies lack the catalog decoration added by GetProviderProfile.
+        profile.source.clear();
+        profile.scope.clear();
+        profiles.push(profile);
+    }
+    state.created("provider_profile");
+    if state.lose_create {
+        state.lose_create = false;
+        return Err(Status::unavailable("lost reply"));
+    }
+    Ok(p::ImportProviderProfilesResponse {
+        imported: true,
+        profiles,
+        ..Default::default()
+    })
+}
+fn delete_profile(
+    state: &mut State,
+    q: p::DeleteProviderProfileRequest,
+) -> Result<p::DeleteProviderProfileResponse, Status> {
+    if !state
+        .profiles
+        .contains_key(&format!("{}/{}", q.workspace, q.id))
+    {
+        return Err(Status::not_found("absent"));
+    }
+    // The pinned gateway refuses deletion while a registration uses the profile.
+    if state
+        .providers
+        .values()
+        .any(|provider| provider.profile_workspace == q.workspace && provider.r#type == q.id)
+    {
+        return Err(Status::failed_precondition("profile is in use"));
+    }
+    let deleted = state
+        .profiles
+        .remove(&format!("{}/{}", q.workspace, q.id))
+        .is_some();
+    if state.lose_delete {
+        state.lose_delete = false;
+        return Err(Status::unavailable("lost reply"));
+    }
+    if !deleted {
+        return Err(Status::not_found("absent"));
+    }
+    Ok(p::DeleteProviderProfileResponse {
+        outcome: p::DeletionOutcome::Completed.into(),
+    })
 }

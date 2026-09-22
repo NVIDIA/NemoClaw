@@ -3,10 +3,57 @@
 
 # Access Agent Interfaces
 
+The OpenShell gateway manages sandbox access.
+The OpenClaw gateway runs inside an OpenClaw sandbox and serves its agent and optional dashboard.
+
+## Select the Gateway and Workspace
+
+Use the pinned OpenShell development CLI at the revision in [versions.json](../versions.json) on the client host.
+These selectors choose an existing OpenShell gateway and deployment; they do not create services or provision credentials.
+Run them in every terminal used for forwarding or sandbox commands, from any directory.
+
+For an existing authenticated gateway profile supplied by its operator:
+
+```sh
+unset OPENSHELL_GATEWAY_ENDPOINT
+export OPENSHELL_GATEWAY=REPLACE_WITH_PROFILE_NAME
+```
+
+The profile's endpoint must match `spec.gateway.endpoint` in the deployment YAML.
+Its stored authentication must grant access to the deployment workspace.
+The endpoint override takes precedence over the profile, which is why this example clears it.
+NemoClaw's YAML credential and TLS environment references do not configure the OpenShell CLI's stored profile or credentials.
+Provisioning a new authenticated profile, including its issuer or mTLS client certificates, remains **TBD** pending a qualified operator procedure.
+
+For an existing plaintext loopback gateway instead, select its actual endpoint directly:
+
+```sh
+unset OPENSHELL_GATEWAY
+export OPENSHELL_GATEWAY_ENDPOINT=http://127.0.0.1:17671
+```
+
+Replace the example port with the one in your YAML.
+Use this variant only when that gateway is already listening on the client host's loopback interface.
+Do not replace an authenticated remote endpoint with plaintext or disable TLS verification to make access work.
+
+The workspace name comes from `metadata.uid`, not the deployment or sandbox name.
+Paste the exact UID from the applied YAML at the prompt:
+
+```sh
+python3 -c 'import hashlib; uid = input("Deployment metadata.uid: ").strip(); print("nc-" + hashlib.sha256(uid.encode()).hexdigest()[:16])'
+export OPENSHELL_WORKSPACE=REPLACE_WITH_PRINTED_WORKSPACE
+```
+
+This matches the SDK's [workspace derivation](../crates/nemoclaw-sdk/src/config/mod.rs).
+The gateway selectors follow the [pinned OpenShell CLI parser and resolver](https://github.com/NVIDIA/OpenShell/blob/1fe79f53991debf32776853a60f0cbd4e127dcfb/crates/openshell-cli/src/main.rs).
+The forward or sandbox command below verifies access to the selected workspace; setting an environment variable alone does not.
+On an authentication or missing-sandbox error, check the endpoint, workspace, sandbox name, and operator-provided credentials before changing deployment state.
+
 ## OpenClaw Dashboard
 
-Declare OpenClaw dashboard settings on the first agent in a sandbox.
-All agents share its native gateway; secondary agents must omit `interfaces`.
+Declare `interfaces` inside the selected OpenClaw harness configuration.
+Each sandbox selects this configuration for its OpenClaw gateway and sole agent.
+Use [a shared harness definition](configuration-references.md#reference-a-harness-configuration) to reuse the settings.
 
 ```yaml
 interfaces:
@@ -19,11 +66,11 @@ Declaring `dashboard` enables the native control UI with token authentication.
 At least one setting is required; omitted port defaults to 18789 and omitted bind defaults to loopback.
 Ports 8642 through 8652 are reserved for Hermes.
 Binding `0.0.0.0` listens on the sandbox's interfaces; it does not publish a host port.
-Omitting `interfaces` preserves the previous headless gateway behavior.
+Omitting `interfaces` preserves the headless OpenClaw gateway behavior.
 
 ## Build and Apply
 
-Build a fresh OpenClaw image from the repository root with `python3 image/fabric/build.py --harness openclaw`.
+Build a fresh OpenClaw image from the repository root with `AGENT_PLATFORM=linux/arm64 docker buildx bake openclaw --load`, selecting `linux/amd64` instead on an AMD64 host.
 Follow the [image prerequisites](inference.md#build-an-image-with-the-configuration-interface), including image availability on the sandbox compute daemon.
 Use its immutable digest in the [dashboard example](../examples/openclaw-dashboard.yaml), replacing the zero-digest placeholder, deployment UID, endpoint, and model values.
 Apply with the [desired-state workflow](usage.md).
@@ -33,11 +80,11 @@ Verify the new deployment before separately retiring the old one with its retain
 The adapter creates a random token in `/sandbox/.openclaw/interface-token`, readable only by the sandbox user.
 Native configuration refers to a process environment variable; the actual token is absent from YAML, OpenTofu state, and exported configuration.
 The adapter reuses the retained token across process restarts and refuses a missing or insecure token beside existing configuration.
-Readiness verifies the native settings and performs an authenticated gateway health RPC.
+Readiness verifies the native settings and performs an authenticated OpenClaw gateway health RPC.
 
 ## Connect through OpenShell
 
-Use an OpenShell 0.0.116 CLI configured for the deployment's gateway and workspace, with that gateway's required authentication.
+First [select the gateway and workspace](#select-the-gateway-and-workspace).
 From the client host, forward the same local and target ports:
 
 ```sh
@@ -66,28 +113,31 @@ The helper supplies the token through the native CLI environment, without puttin
 Browser origins are restricted to `localhost` and `127.0.0.1` at the declared port.
 
 Stop forwarding with Ctrl-C.
-The adapter stops its owned gateway when Fabric stops; forwarding has a separate client lifetime.
+The adapter stops its OpenClaw gateway when Fabric stops; forwarding has a separate client lifetime.
 The token remains with retained native state and is removed when that state is deleted.
-Do not edit or rotate the token file while the gateway is running.
+Do not edit or rotate the token file while the OpenClaw gateway is running.
 This version has no token-rotation command; use a new deployment when replacing a compromised credential.
 
 ## Diagnose Failures
 
 Configuration drift, a missing token, invalid file permissions, or failed authenticated health checks stop readiness or export.
 NemoClaw retains established resource identities and does not overwrite the native configuration to hide drift.
-Inspect the owned gateway logs and retained files, restore the intended settings and credential permissions, and reapply.
+Inspect the [native logs](troubleshooting.md#read-native-service-logs) and retained files, restore the intended settings and credential permissions, and reapply.
 
-Offline fixtures exercise the real native gateway and local protocol endpoints.
+Offline fixtures exercise the real OpenClaw gateway and local protocol endpoints.
 They do not establish browser compatibility or qualify a public dashboard deployment.
 
 ## Hermes API, Dashboard, and Browser TUI
+
+This procedure uses the default local Hermes adapter with Relay tracing omitted.
+Declare `interfaces` explicitly to combine these services with experimental [Relay tracing](agents.md#hermes-relay-tracing). Relay without `interfaces` selects the upstream adapter, which does not provide these services or their token files.
 
 Hermes exposes a native authenticated API on sandbox loopback port 8642 and a dashboard on port 18789 by default.
 The dashboard uses internal port 19119 behind a sandbox-local forwarder.
 OpenShell forwarding provides host access; none of these listeners publishes a host port automatically.
 The dashboard and its browser TUI share a native session engine and isolated state under `/sandbox/.hermes/profiles/dashboard-home`.
 Fabric invokes the separate HTTP API engine under `/sandbox/.hermes`.
-Both use the same configured OpenShell model route; they do not share active conversations, cancellation, or live steering.
+Both use the same configured native inference connection; they do not share active conversations, cancellation, or live steering.
 Standalone `hermes` terminal sessions also retain native behavior.
 
 ```mermaid
@@ -95,13 +145,13 @@ flowchart LR
     Fabric --> API["Hermes HTTP API"]
     Client["API client via OpenShell"] --> API
     Browser["Browser via OpenShell"] --> Dashboard["Dashboard and browser TUI"]
-    API --> Route["OpenShell inference route"]
+    API --> Route["Native endpoint through OpenShell proxy"]
     Dashboard --> Route
     API --> APIState["API session state"]
     Dashboard --> UIState["Dashboard session state"]
 ```
 
-Use the [Hermes interface example](../examples/hermes-interfaces.yaml) to override the ports:
+Use the [Hermes interface example](../examples/hermes-interfaces.yaml) to override the ports inside its `harness` configuration:
 
 ```yaml
 interfaces:
@@ -132,7 +182,7 @@ It does not unify API and dashboard conversations.
 From the repository root, follow the [image prerequisites](inference.md#build-an-image-with-the-configuration-interface) and run:
 
 ```sh
-python3 image/fabric/build.py --harness hermes
+AGENT_PLATFORM=linux/arm64 docker buildx bake hermes --load
 ```
 
 The build includes native dashboard and TUI assets; startup does not install Node dependencies or rebuild assets.
@@ -141,7 +191,7 @@ Use a fresh deployment UID and state directory when changing images or interface
 The [managed Hermes example](../examples/managed-hermes.yaml) uses managed Ollama and disables the dashboard.
 Apply using the [desired-state workflow](usage.md).
 
-With an authenticated OpenShell CLI configured for the deployment's gateway and workspace, run each desired forward in a separate terminal:
+After [selecting the gateway and workspace](#select-the-gateway-and-workspace), run each desired forward in a separate terminal:
 
 ```sh
 openshell forward service assistant --target-port 18800 --local 127.0.0.1:18800

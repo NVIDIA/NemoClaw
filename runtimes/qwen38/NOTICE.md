@@ -37,6 +37,8 @@ NVIDIA notices identify NemoClaw contributions; they do not replace upstream own
 | `prepare.py`, `verify.py` | NemoClaw JSON protocol adapters that invoke the separately licensed preparation and verification programs as subprocesses. | Apache-2.0 |
 | `test_prepare.py`, `test_attribution.py`, `crates/nemoclaw-e2e/fixtures/spark_preparation.py` | NemoClaw tests of recovery, generated notices, and the upstream packed-table format. | Apache-2.0 |
 
+On 2026-09-18, `apply_patches.py` renamed its generated-file hash mapping without changing `patched-files.json`.
+
 The adaptation headers were corrected on 2026-09-15.
 The same change makes generated vLLM files carry MiaAI Lab attribution, a patch-source reference, and a dated modification notice.
 Original vLLM copyright and Apache-2.0 license notices remain unchanged.
@@ -58,8 +60,8 @@ The recipe's generated draft vocabulary, `files/draft_vocab_en_code_47k.txt`, st
 ## Related NemoClaw Code
 
 The SDK's memory-policy and serving-budget credits are retained in `crates/nemoclaw-sdk/NOTICE.md` inside `supervisor-source.tar.gz`.
-`examples/spark-inline.yaml` records model settings informed by `start.sh`.
-The snapshot downloader, recipe protocol, supervisor lifecycle, and preparation receipts are NemoClaw implementations.
+`examples/spark/spark-inline.yaml` records model settings informed by `start.sh`.
+The snapshot downloader, recipe protocol, supervisor lifecycle, and preparation manifests are NemoClaw implementations.
 Calling a recipe program does not replace that program's license with the caller's license.
 
 ## Retained Sources
