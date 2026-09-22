@@ -9,6 +9,7 @@ on:
     paths:
       - image/**
       - test/**
+      - tools/ci/image_fixtures.py
       - tools/fabric-adapter-experiment.py
       - tools/fabric_management/**
       - docker-bake.hcl
@@ -48,13 +49,7 @@ jobs:
               --entrypoint /opt/fabric/bin/python "nc-fabric:$harness" -B /test.py
           done
       - name: Exercise native adapters against isolated protocol fixtures
-        run: |
-          for harness in deepagents claude codex mini-swe-agent nooa nooa-bench remote-agent pi; do
-            python3 tools/fabric-adapter-experiment.py --harness "$harness"
-          done
-          python3 tools/fabric-adapter-experiment.py --harness openclaw --interfaces --inference-api openai-responses
-          python3 tools/fabric-adapter-experiment.py --harness hermes --interfaces --inference-api openai-completions
-          python3 tools/fabric-adapter-experiment.py --harness hermes --hermes-relay --inference-api anthropic-messages
+        run: python3 tools/ci/image_fixtures.py linux_arm64
       - name: Qualify the experimental Fabric management contract
         run: |
           for harness in pi deepagents; do
@@ -102,7 +97,7 @@ jobs:
               --entrypoint /opt/fabric/bin/python "nc-fabric:$harness" -B /test.py
           done
       - name: Exercise AMD64 native adapters against isolated protocol fixtures
-        run: python3 tools/fabric-adapter-experiment.py --harness deepagents
+        run: python3 tools/ci/image_fixtures.py linux_amd64
       - name: Exercise AMD64 OpenClaw tools, execution, search, and tracing
         run: |
           docker run --rm --runtime=runc --network none --user 0 \
