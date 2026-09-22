@@ -14,7 +14,7 @@ mod progress;
 use args::Cli;
 use clap::Parser;
 use nemoclaw_sdk::CancellationToken;
-use std::process::ExitCode;
+use std::{io::IsTerminal, process::ExitCode};
 
 async fn interrupt() {
     #[cfg(unix)]
@@ -31,6 +31,13 @@ async fn interrupt() {
 #[tokio::main]
 async fn main() -> ExitCode {
     let cli = Cli::parse();
+    let requires_terminal_input = cli.command.requires_terminal_input();
+    if requires_terminal_input && !std::io::stdin().is_terminal() {
+        eprintln!(
+            "interactive onboarding requires a terminal on stdin; use --non-interactive for scripts"
+        );
+        return ExitCode::FAILURE;
+    }
     let output_format = cli.command.output_format();
     let cancel = CancellationToken::new();
     let signal = cancel.clone();
@@ -42,6 +49,16 @@ async fn main() -> ExitCode {
         args::Command::Export { output } => output.clone(),
         _ => None,
     };
+    #[cfg(unix)]
+    let result = if requires_terminal_input {
+        match io::TerminalInput::open() {
+            Ok(stdin) => dispatch::run(cli, stdin, &cancel).await,
+            Err(error) => Err(error.into()),
+        }
+    } else {
+        dispatch::run(cli, tokio::io::stdin(), &cancel).await
+    };
+    #[cfg(not(unix))]
     let result = dispatch::run(cli, tokio::io::stdin(), &cancel).await;
     signals.abort();
     match result {

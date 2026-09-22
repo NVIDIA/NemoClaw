@@ -196,7 +196,7 @@
             ],
             "properties": {
               "provider": {
-                "const": "brave"
+                "enum": ["brave", "tavily"]
               },
               "agentRefs": {
                 "type": "array",

@@ -28,7 +28,7 @@ sha1 = "0.11"
 regex = "1"
 url = "2"
 ipnet = "2"
-nix = { version = "0.29", features = ["term"] }
+nix = { version = "0.29", features = ["signal", "term"] }
 openshell-core = { git = "https://github.com/NVIDIA/OpenShell", rev = "1fe79f53991debf32776853a60f0cbd4e127dcfb", default-features = false }
 openshell-policy = { git = "https://github.com/NVIDIA/OpenShell", rev = "1fe79f53991debf32776853a60f0cbd4e127dcfb", default-features = false }
 tonic = { version = "0.14", features = ["tls-ring", "tls-native-roots"] }

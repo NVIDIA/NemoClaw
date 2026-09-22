@@ -33,7 +33,7 @@ pub(crate) struct Cli {
 pub(crate) enum Command {
     /// Author desired state, preview it, and optionally apply it.
     #[command(
-        after_help = "Examples:\n  nemoclaw onboard\n  nemoclaw onboard --generate-only --output deployment.yaml"
+        after_help = "Examples:\n  nemoclaw onboard\n  nemoclaw onboard --generate-only --non-interactive --output deployment.yaml"
     )]
     Onboard {
         /// Generate configuration and stop before plan or apply.
@@ -117,6 +117,16 @@ impl Command {
             _ => OutputFormat::Json,
         }
     }
+
+    pub(crate) fn requires_terminal_input(&self) -> bool {
+        matches!(
+            self,
+            Self::Onboard {
+                non_interactive: false,
+                ..
+            }
+        )
+    }
 }
 #[cfg(test)]
 mod tests {
@@ -187,6 +197,7 @@ mod tests {
     #[test]
     fn onboard_supports_composed_and_generation_only_modes() {
         let cli = Cli::try_parse_from(["nemoclaw", "onboard"]).unwrap();
+        assert!(cli.command.requires_terminal_input());
         let Command::Onboard {
             generate_only,
             output,
@@ -199,17 +210,16 @@ mod tests {
         assert!(!generate_only);
         assert_eq!(output, PathBuf::from("deployment.yaml"));
         assert!(!non_interactive);
-        assert!(
-            Cli::try_parse_from([
-                "nemoclaw",
-                "onboard",
-                "--generate-only",
-                "--output",
-                "deployment.yaml",
-                "--non-interactive",
-            ])
-            .is_ok()
-        );
+        let scripted = Cli::try_parse_from([
+            "nemoclaw",
+            "onboard",
+            "--generate-only",
+            "--output",
+            "deployment.yaml",
+            "--non-interactive",
+        ])
+        .unwrap();
+        assert!(!scripted.command.requires_terminal_input());
         assert!(
             Cli::try_parse_from([
                 "nemoclaw",
