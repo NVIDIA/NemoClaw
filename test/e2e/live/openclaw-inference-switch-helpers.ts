@@ -7,7 +7,56 @@
 // accepted while echoed or embedded tokens are rejected, without gating on
 // NEMOCLAW_RUN_LIVE_E2E=1.
 
+import fs from "node:fs";
+import path from "node:path";
+
 import type { RetryFailureClass } from "../../../tools/e2e/retry-evidence.mts";
+
+export const BAKED_STALE_CONTEXT_WINDOW = 131_072;
+export const BAKED_STALE_MAX_TOKENS = 4_095;
+
+export function stageNonRootCustomOpenClawImageDockerfile(
+  home: string,
+  imageReference: string,
+): string {
+  const buildContext = path.join(home, "custom-image");
+  const dockerfile = path.join(buildContext, "Dockerfile");
+  fs.mkdirSync(buildContext, { recursive: true });
+  fs.writeFileSync(
+    dockerfile,
+    [
+      `FROM ${imageReference}`,
+      "ARG NEMOCLAW_TOOL_DISCLOSURE=progressive",
+      "ENV NEMOCLAW_TOOL_DISCLOSURE=${NEMOCLAW_TOOL_DISCLOSURE}",
+      "USER root",
+      "RUN node <<'NODE'",
+      'const fs = require("node:fs");',
+      'const configPath = "/sandbox/.openclaw/openclaw.json";',
+      'const config = JSON.parse(fs.readFileSync(configPath, "utf8"));',
+      'const staleModel = "nvidia/baked-stale-model";',
+      "config.agents.defaults.model.primary = `inference/${staleModel}`;",
+      "const model = config.models.providers.inference.models[0];",
+      "model.id = staleModel;",
+      "model.name = `inference/${staleModel}`;",
+      `model.contextWindow = ${BAKED_STALE_CONTEXT_WINDOW};`,
+      `model.maxTokens = ${BAKED_STALE_MAX_TOKENS};`,
+      "fs.writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\\n`);",
+      "NODE",
+      "RUN cd /sandbox/.openclaw && sha256sum openclaw.json >.config-hash && chown sandbox:sandbox openclaw.json .config-hash && chmod 660 openclaw.json .config-hash",
+      "USER sandbox",
+      "",
+    ].join("\n"),
+  );
+  return dockerfile;
+}
+
+export async function whenCustomImage(
+  dockerfile: string | undefined,
+  verify: () => Promise<void>,
+): Promise<void> {
+  if (!dockerfile) return;
+  await verify();
+}
 
 export interface OpenClawPostSwitchInferenceAttempt {
   exitCode: number | null;

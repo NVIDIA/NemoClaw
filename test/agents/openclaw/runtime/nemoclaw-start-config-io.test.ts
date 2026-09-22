@@ -81,21 +81,28 @@ describe("runtime model override (#759)", () => {
     ].join("\n");
     const script = path.join(root, "run.sh");
     fs.writeFileSync(script, wrapper, { mode: 0o700 });
-    const result = spawnSync("bash", [script], {
-      encoding: "utf-8",
-      env: { ...process.env, ...env },
-    });
-    const configBytes = fs.readFileSync(configPath);
-    const config = JSON.parse(configBytes.toString("utf-8"));
-    const configDigest = createHash("sha256").update(configBytes).digest("hex");
-    const hash = fs.readFileSync(hashPath, "utf-8");
-    const modes = {
-      dir: fs.statSync(openclawDir).mode & 0o7777,
-      config: fs.statSync(configPath).mode & 0o777,
-      hash: fs.statSync(hashPath).mode & 0o777,
-    };
-    fs.rmSync(root, { recursive: true, force: true });
-    return { result, config, configDigest, hash, initialModes, modes };
+    const configFd = fs.openSync(configPath, "r");
+    const hashFd = fs.openSync(hashPath, "r");
+    try {
+      const result = spawnSync("bash", [script], {
+        encoding: "utf-8",
+        env: { ...process.env, ...env },
+      });
+      const configBytes = fs.readFileSync(configFd);
+      const config = JSON.parse(configBytes.toString("utf-8"));
+      const configDigest = createHash("sha256").update(configBytes).digest("hex");
+      const hash = fs.readFileSync(hashFd, "utf-8");
+      const modes = {
+        dir: fs.statSync(openclawDir).mode & 0o7777,
+        config: fs.fstatSync(configFd).mode & 0o777,
+        hash: fs.fstatSync(hashFd).mode & 0o777,
+      };
+      return { result, config, configDigest, hash, initialModes, modes };
+    } finally {
+      fs.closeSync(hashFd);
+      fs.closeSync(configFd);
+      fs.rmSync(root, { recursive: true, force: true });
+    }
   }
 
   it("applies model, API, context, max-token, and reasoning overrides and recomputes the hash", () => {

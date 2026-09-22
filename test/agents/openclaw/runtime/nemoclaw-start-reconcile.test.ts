@@ -32,6 +32,7 @@ interface RunReconcileOptions {
   gatewayExitCode?: number;
   gatewayDelaySeconds?: number;
   userId?: number;
+  useActualUser?: boolean;
   symlink?: "config" | "hash";
   configWritable?: boolean;
   hashFailure?: boolean;
@@ -103,7 +104,9 @@ describe("agent identity reconciliation with provider (#3175)", () => {
 
     const helperFns = [
       "normalize_mutable_config_perms() { :; }",
-      'run_openclaw_config_as_owner() { "$@"; }',
+      options.useActualUser
+        ? extractShellFunction("run_openclaw_config_as_owner")
+        : 'run_openclaw_config_as_owner() { "$@"; }',
       options.hashFailure
         ? "ensure_mutable_openclaw_config_hash() { return 19; }"
         : `ensure_mutable_openclaw_config_hash() { (cd ${JSON.stringify(openclawDir)} && sha256sum openclaw.json >.config-hash); }`,
@@ -115,7 +118,7 @@ describe("agent identity reconciliation with provider (#3175)", () => {
     const wrapper = [
       "#!/usr/bin/env bash",
       "set -euo pipefail",
-      `id() { echo ${options.userId ?? 0}; }`,
+      ...(options.useActualUser ? [] : [`id() { echo ${options.userId ?? 0}; }`]),
       helperFns,
       fn,
       "reconcile_agent_model_with_provider",
@@ -257,39 +260,51 @@ describe("agent identity reconciliation with provider (#3175)", () => {
     expect(hash).toBe("oldhash\n");
   });
 
-  it("reconciles a sandbox-owned config as a non-root custom image user (#12033)", () => {
-    const { result, config, hash } = runReconcile(
-      {
-        agents: { defaults: { model: { primary: "inference/nvidia-routed" } } },
-        models: {
-          providers: {
-            inference: {
-              api: "openai-completions",
-              models: [{ id: "nvidia-routed", name: "inference/nvidia-routed" }],
+  it.runIf(typeof process.getuid === "function" && process.getuid() !== 0)(
+    "reconciles an actually owned config as the current non-root user (#12033)",
+    () => {
+      const { result, config, hash } = runReconcile(
+        {
+          agents: { defaults: { model: { primary: "inference/nvidia-routed" } } },
+          models: {
+            providers: {
+              inference: {
+                api: "openai-completions",
+                models: [
+                  {
+                    id: "nvidia-routed",
+                    name: "inference/nvidia-routed",
+                    contextWindow: 131072,
+                    maxTokens: 4096,
+                  },
+                ],
+              },
             },
           },
         },
-      },
-      {
-        gatewayRawOutput:
-          "\\x1b[32mGateway Inference:\\x1b[0m\n  Provider: nvidia-prod\n  Model: nvidia/nemotron-3-super-120b-a12b\n",
-        userId: 1000,
-      },
-    );
+        {
+          gatewayRawOutput:
+            "\\x1b[32mGateway Inference:\\x1b[0m\n  Provider: nvidia-prod\n  Model: nvidia/nemotron-3-super-120b-a12b\n",
+          useActualUser: true,
+        },
+      );
 
-    expect(result.status).toBe(0);
-    expect(config.agents.defaults.model.primary).toBe(
-      "inference/nvidia/nemotron-3-super-120b-a12b",
-    );
-    expect(config.models.providers.inference.models[0].name).toBe(
-      "inference/nvidia/nemotron-3-super-120b-a12b",
-    );
-    expect(config.models.providers.inference.models[0].id).toBe(
-      "nvidia/nemotron-3-super-120b-a12b",
-    );
-    expect(hash).not.toBe("oldhash\n");
-    expect(hash).toContain("openclaw.json");
-  });
+      expect(result.status, result.stderr || result.stdout).toBe(0);
+      expect(config.agents.defaults.model.primary).toBe(
+        "inference/nvidia/nemotron-3-super-120b-a12b",
+      );
+      expect(config.models.providers.inference.models[0].name).toBe(
+        "inference/nvidia/nemotron-3-super-120b-a12b",
+      );
+      expect(config.models.providers.inference.models[0].id).toBe(
+        "nvidia/nemotron-3-super-120b-a12b",
+      );
+      expect(config.models.providers.inference.models[0]).not.toHaveProperty("contextWindow");
+      expect(config.models.providers.inference.models[0]).not.toHaveProperty("maxTokens");
+      expect(hash).not.toBe("oldhash\n");
+      expect(hash).toContain("openclaw.json");
+    },
+  );
 
   it("explains why a non-root user cannot reconcile a sealed config (#12033)", () => {
     const initial = {
