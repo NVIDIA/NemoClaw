@@ -11,6 +11,65 @@ from fabric import configuration, hermes_relay_enabled
 
 
 class HermesServerConfiguration(unittest.TestCase):
+    def test_tavily_keeps_explicit_search_and_extract_selection_without_storing_keys(self):
+        inference = {
+            "api": "openai-completions",
+            "agents": [{"name": "main"}],
+            "webSearch": {
+                "provider": "tavily",
+                "agentRefs": ["main"],
+                "credential": {"env": "SEARCH_KEY"},
+            },
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory)
+            adapter.initialize(inference, home)
+            path = home / "config.yaml"
+            original = path.read_bytes()
+            config = json.loads(original)
+            self.assertEqual(
+                config["web"],
+                {
+                    "backend": "tavily",
+                    "search_backend": "tavily",
+                    "extract_backend": "tavily",
+                    "keyless_fallback": False,
+                },
+            )
+            self.assertNotIn("SEARCH_KEY", original.decode())
+            self.assertNotIn("TAVILY_API_KEY", original.decode())
+            adapter.initialize(inference, home)
+            self.assertEqual(path.read_bytes(), original)
+            config["web"]["backend"] = "exa"
+            path.write_text(json.dumps(config))
+            changed = path.read_bytes()
+            with self.assertRaises(RuntimeError):
+                adapter.initialize(inference, home)
+            self.assertEqual(path.read_bytes(), changed)
+
+        for provider, refs in (("brave", ["main"]), ("tavily", ["missing"])):
+            inference["webSearch"].update(provider=provider, agentRefs=refs)
+            with self.assertRaises(ValueError):
+                adapter.native_configuration(inference)
+
+    def test_relay_with_tavily_keeps_native_search_configuration_and_telemetry(self):
+        inference = {
+            "api": "openai-completions",
+            "agents": [{"name": "main"}],
+            "webSearch": {
+                "provider": "tavily",
+                "agentRefs": ["main"],
+                "credential": {"env": "SEARCH_KEY"},
+            },
+            "observability": {"relay": {"enabled": True}},
+        }
+        config = configuration("main", "hermes", inference=inference)
+        self.assertEqual(config["harness"]["adapter_id"], "nemoclaw.local.hermes")
+        self.assertEqual(config["harness"]["settings"]["inference"], inference)
+        self.assertEqual(config["telemetry"], {"providers": {"relay": {}}})
+        self.assertNotIn("max_turns", config["runtime"])
+        self.assertEqual(adapter.native_configuration(inference)["approvals"], {"mode": "manual"})
+
     def test_fabric_selects_owned_native_server(self):
         config = configuration("main", "hermes")
         self.assertEqual(config["harness"]["adapter_id"], "nemoclaw.local.hermes")

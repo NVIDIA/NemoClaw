@@ -51,7 +51,7 @@ def search_agents(inference):
     if (
         not isinstance(search, dict)
         or set(search) != {"provider", "agentRefs", "credential"}
-        or search["provider"] != "brave"
+        or search["provider"] not in ("brave", "tavily")
         or not isinstance(search["agentRefs"], list)
         or not search["agentRefs"]
         or any(not isinstance(n, str) for n in search["agentRefs"])
@@ -65,21 +65,26 @@ def search_agents(inference):
         or not isinstance(search["credential"]["env"], str)
         or not re.fullmatch(r"[A-Z_][A-Z0-9_]*", search["credential"]["env"])
     ):
-        raise ValueError("invalid Brave search configuration")
+        raise ValueError("invalid web search configuration")
     return search["agentRefs"]
 
 
 def native_features(inference):
     result = tracing_features(inference)
     if search_agents(inference):
+        provider = inference["webSearch"]["provider"]
         plugins = result.setdefault("plugins", {"allow": [], "entries": {}})
-        plugins["allow"].append("brave")
-        plugins["load"] = {"paths": ["/opt/nemoclaw/plugins/brave"]}
-        plugins["entries"]["brave"] = {
+        plugins["allow"].append(provider)
+        plugins["load"] = {"paths": [f"/opt/nemoclaw/plugins/{provider}"]}
+        plugins["entries"][provider] = {
             "enabled": True,
             "config": {
                 "webSearch": {
-                    "apiKey": {"source": "env", "provider": "default", "id": "BRAVE_API_KEY"}
+                    "apiKey": {
+                        "source": "env",
+                        "provider": "default",
+                        "id": f"{provider.upper()}_API_KEY",
+                    }
                 }
             },
         }

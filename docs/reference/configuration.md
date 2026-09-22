@@ -22,7 +22,7 @@ Empty or zero selects a default only where stated.
 - Explicit sandbox policies are also checked by the pinned OpenShell policy parser and validator, including protocol-specific rule semantics, process identities, filesystem paths, and destination address restrictions.
 - Explicit filesystem grants must permit reads of the selected harness runtime directories; parent and read-write grants count. This parser check does not inspect images, resolve symlinks, or establish runtime permissions.
 - The schema requires an explicit default for multiple model choices. Rust checks unique route names, that the default names a route, and that the resolved harness supports the selected model count, tuning, and tools; omitted disclosure means progressive.
-- The parser resolves integrationRefs only from enclosing deployment or sandbox definitions, rejects name shadowing and incompatible agent grants, and permits at most one attached Brave search definition per sandbox. Agent-inline definitions attach directly; unused enclosing definitions grant no access.
+- The parser resolves integrationRefs only from enclosing deployment or sandbox definitions, rejects name shadowing and incompatible agent grants, and permits at most one attached web search definition per sandbox. Brave supports OpenClaw and Deep Agents; Tavily supports OpenClaw and Hermes. Agent-inline definitions attach directly; unused enclosing definitions grant no access.
 - The schema requires exactly one sandbox harness or harnessRef and rejects agent-level harness selection. Rust resolves visible harnesses without shadowing. Each sandbox requires one agent and hosts one Fabric runtime using the sandbox-selected implementation. Shared definitions reuse configuration across sandboxes.
 - The parser permits non-default reasoningEffort values only on the initial default choice. Managed inference services may constrain routes to their declared served model.
 - Rust resolves inferenceRef from enclosing inferences, preserves declaration scope for nested provider references, and rejects missing names and shadowing. The schema rejects inline/reference ambiguity.
@@ -623,12 +623,12 @@ Accepted input: object.
 
 ### Alternative 1
 
-Brave Search with gateway-held credentials and explicit agent grants.
+Web search with gateway-held credentials and explicit agent grants.
 
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
-| `credential` | [Credential](#credential) | Yes | — | Host environment reference. OpenShell supplies a BRAVE_API_KEY placeholder to the sandbox. |
+| `credential` | [Credential](#credential) | Yes | — | Host environment reference. OpenShell supplies the search provider's placeholder to the sandbox. |
 | `kind` | string | Yes | — | Integration implementation selected by this definition. Constraints: `"webSearch"`. |
 | `provider` | [SearchProvider](#searchprovider) | Yes | — | Supported search service. |
 
@@ -1189,7 +1189,7 @@ Paths:
 
 Accepted input: string.
 
-Constraints: `"brave"`.
+Constraints: `"brave"` or `"tavily"`.
 
 ## ServiceAuthentication
 

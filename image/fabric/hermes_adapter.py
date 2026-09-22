@@ -41,7 +41,7 @@ def interface_settings(inference):
 def native_configuration(inference):
     api = (inference or {}).get("api", "openai-completions")
     connection = model_connection(inference)
-    return {
+    config = {
         "model": {
             "default": connection["model"],
             "provider": "custom:openshell",
@@ -61,6 +61,20 @@ def native_configuration(inference):
         "approvals": {"mode": "manual"},
         "nemoclaw_interfaces": interface_settings(inference),
     }
+    search = (inference or {}).get("webSearch")
+    if search is not None:
+        from openclaw_features import search_agents
+
+        grants = search_agents(inference)
+        if search["provider"] != "tavily" or len(grants) != 1:
+            raise ValueError("Hermes web search requires one Tavily agent grant")
+        config["web"] = {
+            "backend": "tavily",
+            "search_backend": "tavily",
+            "extract_backend": "tavily",
+            "keyless_fallback": False,
+        }
+    return config
 
 
 def configuration_matches(inference, home=None):

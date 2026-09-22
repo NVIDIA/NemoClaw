@@ -21,20 +21,27 @@ fn labels(want: &Row) -> HashMap<String, String> {
 }
 impl OpenShell {
     async fn provider(&self, want: &Row) -> Result<proto::Provider, ObservationError> {
+        let search = crate::config::SearchProvider::from_name(value(want, "provider_type"));
         let (kind, endpoint_key, secret_key) = match value(want, "provider_type") {
             "" => ("openai", "OPENAI_BASE_URL", "OPENAI_API_KEY"),
             "anthropic" => ("anthropic", "ANTHROPIC_BASE_URL", "ANTHROPIC_API_KEY"),
-            "brave"
-                if value(want, "name")
-                    == crate::config::search_provider_name(value(want, "credential_env"))
-                    && value(want, "endpoint") == "https://api.search.brave.com"
-                    && !value(want, "credential_env").is_empty() =>
+            "brave" | "tavily"
+                if search.is_some_and(|provider| {
+                    value(want, "name")
+                        == crate::config::search_provider_name(
+                            provider,
+                            value(want, "credential_env"),
+                        )
+                        && value(want, "endpoint") == provider.endpoint()
+                        && !value(want, "credential_env").is_empty()
+                }) =>
             {
-                ("nemoclaw-brave", "", "BRAVE_API_KEY")
+                let search = search.unwrap();
+                (search.profile(), "", search.credential_env())
             }
             _ => return Err(ObservationError::Query),
         };
-        let native = kind != "nemoclaw-brave";
+        let native = search.is_none();
         let source = value(want, "credential_source");
         let profile = if native {
             Some(inference_profile(
@@ -356,5 +363,83 @@ impl Backend for OpenShell {
         tokio::time::timeout(Duration::from_secs(300), self.delete_bound(kind, prior))
             .await
             .map_err(|_| ObservationError::Transport)?
+    }
+}
+
+#[cfg(test)]
+mod search_tests {
+    use super::*;
+    use crate::config::{Gateway, SearchProvider};
+    use std::sync::Arc;
+
+    struct SearchSecrets;
+    impl Secrets for SearchSecrets {
+        fn resolve(&self, reference: &str) -> Result<String, ObservationError> {
+            if reference == "SEARCH_KEY" {
+                Ok("fixture-secret".into())
+            } else {
+                Err(ObservationError::Authentication)
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn search_creation_resolves_only_the_reference_and_observation_drops_the_value() {
+        let mut gateway = Gateway::default();
+        *gateway.endpoint_mut() = "http://127.0.0.1:1".into();
+        let client = OpenShell::connect(&gateway, Arc::new(SearchSecrets)).unwrap();
+        for provider in [SearchProvider::Brave, SearchProvider::Tavily] {
+            let name = crate::config::search_provider_name(provider, "SEARCH_KEY");
+            let want: Row = [
+                ("name", name.as_str()),
+                ("workspace", "workspace"),
+                ("owner", "deployment"),
+                ("generation", "generation"),
+                ("provider_type", provider.name()),
+                ("endpoint", provider.endpoint()),
+                ("credential_env", "SEARCH_KEY"),
+            ]
+            .into_iter()
+            .map(|(key, value)| (key.into(), value.into()))
+            .collect();
+            let mut message = client.provider(&want).await.unwrap();
+            assert_eq!(message.r#type, provider.profile());
+            assert_eq!(message.credentials.len(), 1);
+            assert_eq!(
+                message.credentials[provider.credential_env()],
+                "fixture-secret"
+            );
+            assert!(message.config.is_empty());
+            let metadata = message.metadata.as_mut().unwrap();
+            metadata.id = "physical".into();
+            metadata.workspace = "workspace".into();
+            let observed = super::super::provider_row(
+                proto::ProviderResponse {
+                    provider: Some(message.clone()),
+                    ..Default::default()
+                },
+                &name,
+                false,
+            )
+            .unwrap();
+            assert_eq!(observed["credential_env"], "SEARCH_KEY");
+            assert_eq!(observed["provider_type"], provider.name());
+            assert!(
+                !observed
+                    .values()
+                    .any(|value| value.contains("fixture-secret"))
+            );
+            for (key, value) in [
+                ("name", "other"),
+                ("endpoint", "https://other.example"),
+                ("credential_env", ""),
+            ] {
+                let mut changed = want.clone();
+                changed.insert(key.into(), value.into());
+                assert!(client.provider(&changed).await.is_err());
+            }
+            message.r#type = "nemoclaw-other".into();
+            assert!(profile::provider_row(message, &name, false).is_err());
+        }
     }
 }

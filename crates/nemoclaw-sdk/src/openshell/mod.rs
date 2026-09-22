@@ -93,7 +93,7 @@ fn provider_row(
     removing: bool,
 ) -> Result<Row, ObservationError> {
     let provider = response.provider.ok_or(ObservationError::Incomplete)?;
-    if provider.r#type == "nemoclaw-brave" {
+    if crate::config::SearchProvider::from_profile(&provider.r#type).is_some() {
         return profile::provider_row(provider, name, removing);
     }
     if provider.r#type != format!("nemoclaw-inference-{name}")
