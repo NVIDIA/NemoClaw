@@ -328,7 +328,76 @@ describe("OpenClaw device self-approval patch upgrades (#4462)", () => {
           existingPairedDevice: { publicKey: "different", scopes: ["operator.pairing"] },
         }),
       ).toBe(true);
-      expect(decideInlineApproval({ ...boundedUpgrade, scopes: ["operator.admin"] })).toBe(true);
+      expect(
+        decideInlineApproval({
+          ...boundedUpgrade,
+          existingPairedDevice: {
+            publicKey: "public-key-1",
+            scopes: ["operator.pairing", "operator.write"],
+          },
+          scopes: ["operator.admin"],
+        }),
+      ).toBe(false);
+      expect(runPatch(dist).status).toBe(0);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("requires explicit admin approval after the prior watcher deferral (#12064)", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-device-admin-upgrade-"));
+    const dist = path.join(tmp, "dist");
+    fs.mkdirSync(dist);
+    writeCurrentGatewayCallFixtureDist(dist);
+    try {
+      expect(runPatch(dist).status).toBe(0);
+      const file = path.join(dist, "message-handler-fixture.js");
+      const source = fs.readFileSync(file, "utf8");
+      const prior = source
+        .replace(
+          '\t\t\tconst nemoclawAllowedAdminUpgradeScopes = new Set([...nemoclawAllowedUpgradeScopes, "operator.admin"]);\n',
+          "",
+        )
+        .replace(
+          [
+            "\t\t\t\tArray.isArray(scopes) &&",
+            "\t\t\t\tnemoclawRequestedScopes.length > 0 &&",
+            "\t\t\t\tnemoclawRequestedScopes.length === scopes.length &&",
+            "\t\t\t\t(",
+            "\t\t\t\t\t(",
+            "\t\t\t\t\t\tnemoclawExistingScopes.length === 1 &&",
+            '\t\t\t\t\t\tnemoclawExistingScopes[0] === "operator.pairing" &&',
+            "\t\t\t\t\t\tnemoclawRequestedScopes.every((scope) => nemoclawAllowedUpgradeScopes.has(scope))",
+            "\t\t\t\t\t) ||",
+            "\t\t\t\t\t(",
+            '\t\t\t\t\t\tnemoclawExistingScopes.includes("operator.pairing") &&',
+            "\t\t\t\t\t\tnemoclawExistingScopes.every((scope) => nemoclawAllowedUpgradeScopes.has(scope)) &&",
+            '\t\t\t\t\t\tnemoclawRequestedScopes.includes("operator.admin") &&',
+            "\t\t\t\t\t\tnemoclawRequestedScopes.every((scope) => nemoclawAllowedAdminUpgradeScopes.has(scope)) // nemoclaw: require explicit approval for CLI operator.admin upgrade (#12064)",
+            "\t\t\t\t\t)",
+            "\t\t\t\t);",
+          ].join("\n"),
+          [
+            "\t\t\t\tnemoclawExistingScopes.length === 1 &&",
+            '\t\t\t\tnemoclawExistingScopes[0] === "operator.pairing" &&',
+            "\t\t\t\tArray.isArray(scopes) &&",
+            "\t\t\t\tnemoclawRequestedScopes.length > 0 &&",
+            "\t\t\t\tnemoclawRequestedScopes.length === scopes.length &&",
+            "\t\t\t\tnemoclawRequestedScopes.every((scope) => nemoclawAllowedUpgradeScopes.has(scope));",
+          ].join("\n"),
+        );
+      expect(prior).not.toBe(source);
+      expect(prior).not.toContain(
+        "nemoclaw: require explicit approval for CLI operator.admin upgrade",
+      );
+      fs.writeFileSync(file, prior);
+
+      const upgrade = runPatch(dist);
+      expect(upgrade.status, `${upgrade.stdout}${upgrade.stderr}`).toBe(0);
+      const upgraded = fs.readFileSync(file, "utf8");
+      expect(
+        upgraded.match(/nemoclaw: require explicit approval for CLI operator.admin upgrade/gu),
+      ).toHaveLength(1);
       expect(runPatch(dist).status).toBe(0);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });

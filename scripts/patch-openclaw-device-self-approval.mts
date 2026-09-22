@@ -86,6 +86,8 @@ const AUTH_SCOPE_UPGRADE_MARKER =
   "nemoclaw: route bounded CLI device-token scope upgrade into pairing";
 const AUTH_DEFER_SILENT_SCOPE_UPGRADE_MARKER =
   "nemoclaw: defer bounded silent CLI scope upgrade to pairing watcher";
+const AUTH_REQUIRE_EXPLICIT_ADMIN_UPGRADE_MARKER =
+  "nemoclaw: require explicit approval for CLI operator.admin upgrade";
 const HANDLER_MARKER = "nemoclaw: bounded same-device scope approval";
 const STATE_MARKER = "nemoclaw: validate bounded self-approval inside pairing lock";
 const STATE_TRANSACTION_MARKER = "nemoclaw: recover bounded self-approval state transaction";
@@ -950,7 +952,7 @@ const AUTH_DEVICE_TOKEN_SQLITE_REPLACEMENT = [
 
 const AUTH_INLINE_APPROVAL_TARGET =
   "\t\t\tconst inlineApprovalAttempted = trustedProxyApprovalScopes !== null || pairing.request.silent === true;";
-const AUTH_INLINE_APPROVAL_REPLACEMENT = [
+const AUTH_INLINE_APPROVAL_REPLACEMENT_PREVIOUS = [
   "\t\t\tconst nemoclawExistingScopes = normalizeSortedUniqueTrimmedStringList(existingPairedDevice ? resolvePairedAccessScopes(existingPairedDevice) : []);",
   "\t\t\tconst nemoclawRequestedScopes = normalizeSortedUniqueTrimmedStringList(scopes);",
   '\t\t\tconst nemoclawAllowedUpgradeScopes = new Set(["operator.pairing", "operator.read", "operator.write"]);',
@@ -972,6 +974,40 @@ const AUTH_INLINE_APPROVAL_REPLACEMENT = [
   "\t\t\t\tnemoclawRequestedScopes.every((scope) => nemoclawAllowedUpgradeScopes.has(scope));",
   `\t\t\tconst inlineApprovalAttempted = trustedProxyApprovalScopes !== null || pairing.request.silent === true && !nemoclawDeferSilentCliScopeUpgrade; // ${AUTH_DEFER_SILENT_SCOPE_UPGRADE_MARKER} (#9844)`,
 ].join("\n");
+const AUTH_INLINE_APPROVAL_REPLACEMENT = AUTH_INLINE_APPROVAL_REPLACEMENT_PREVIOUS.replace(
+  '\t\t\tconst nemoclawAllowedUpgradeScopes = new Set(["operator.pairing", "operator.read", "operator.write"]);',
+  [
+    '\t\t\tconst nemoclawAllowedUpgradeScopes = new Set(["operator.pairing", "operator.read", "operator.write"]);',
+    '\t\t\tconst nemoclawAllowedAdminUpgradeScopes = new Set([...nemoclawAllowedUpgradeScopes, "operator.admin"]);',
+  ].join("\n"),
+).replace(
+  [
+    "\t\t\t\tnemoclawExistingScopes.length === 1 &&",
+    '\t\t\t\tnemoclawExistingScopes[0] === "operator.pairing" &&',
+    "\t\t\t\tArray.isArray(scopes) &&",
+    "\t\t\t\tnemoclawRequestedScopes.length > 0 &&",
+    "\t\t\t\tnemoclawRequestedScopes.length === scopes.length &&",
+    "\t\t\t\tnemoclawRequestedScopes.every((scope) => nemoclawAllowedUpgradeScopes.has(scope));",
+  ].join("\n"),
+  [
+    "\t\t\t\tArray.isArray(scopes) &&",
+    "\t\t\t\tnemoclawRequestedScopes.length > 0 &&",
+    "\t\t\t\tnemoclawRequestedScopes.length === scopes.length &&",
+    "\t\t\t\t(",
+    "\t\t\t\t\t(",
+    "\t\t\t\t\t\tnemoclawExistingScopes.length === 1 &&",
+    '\t\t\t\t\t\tnemoclawExistingScopes[0] === "operator.pairing" &&',
+    "\t\t\t\t\t\tnemoclawRequestedScopes.every((scope) => nemoclawAllowedUpgradeScopes.has(scope))",
+    "\t\t\t\t\t) ||",
+    "\t\t\t\t\t(",
+    '\t\t\t\t\t\tnemoclawExistingScopes.includes("operator.pairing") &&',
+    "\t\t\t\t\t\tnemoclawExistingScopes.every((scope) => nemoclawAllowedUpgradeScopes.has(scope)) &&",
+    '\t\t\t\t\t\tnemoclawRequestedScopes.includes("operator.admin") &&',
+    `\t\t\t\t\t\tnemoclawRequestedScopes.every((scope) => nemoclawAllowedAdminUpgradeScopes.has(scope)) // ${AUTH_REQUIRE_EXPLICIT_ADMIN_UPGRADE_MARKER} (#12064)`,
+    "\t\t\t\t\t)",
+    "\t\t\t\t);",
+  ].join("\n"),
+);
 
 const HANDLER_HELPER = [
   "function resolveNemoClawSelfApprovalIdentity(pending, authz, client) {",
@@ -2152,6 +2188,21 @@ const BASE_FILE_SPECS: FileSpec[] = [
           AUTH_INLINE_APPROVAL_TARGET,
           AUTH_INLINE_APPROVAL_REPLACEMENT,
           "SQLite gateway deferred silent scope-upgrade target",
+          file,
+        );
+        if (result.error) return { source, status: "no-match", error: result.error };
+        changed = true;
+      }
+      if (
+        sqliteLayout &&
+        result.source.includes(AUTH_DEFER_SILENT_SCOPE_UPGRADE_MARKER) &&
+        !result.source.includes(AUTH_REQUIRE_EXPLICIT_ADMIN_UPGRADE_MARKER)
+      ) {
+        result = replaceExactlyOnce(
+          result.source,
+          AUTH_INLINE_APPROVAL_REPLACEMENT_PREVIOUS,
+          AUTH_INLINE_APPROVAL_REPLACEMENT,
+          "SQLite gateway explicit admin scope-upgrade target",
           file,
         );
         if (result.error) return { source, status: "no-match", error: result.error };

@@ -14,7 +14,7 @@ import {
 } from "../../helpers/openclaw-device-self-approval-patch-harness";
 
 describe("OpenClaw bounded current-layout scope upgrade patch", () => {
-  it("defers only the bounded silent CLI upgrade to the watcher", () => {
+  it("keeps silent CLI admin upgrades pending for explicit approval", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-device-current-defer-"));
     const dist = path.join(tmp, "dist");
     fs.mkdirSync(dist);
@@ -77,7 +77,26 @@ describe("OpenClaw bounded current-layout scope upgrade patch", () => {
           },
         }),
       ).toBe(true);
-      expect(shouldAttemptInlineApproval({ ...exact, scopes: ["operator.admin"] })).toBe(true);
+      expect(
+        shouldAttemptInlineApproval({
+          ...exact,
+          existingPairedDevice: {
+            publicKey: "public-key-1",
+            scopes: ["operator.pairing", "operator.write"],
+          },
+          scopes: ["operator.admin"],
+        }),
+      ).toBe(false);
+      expect(
+        shouldAttemptInlineApproval({
+          ...exact,
+          existingPairedDevice: {
+            publicKey: "public-key-1",
+            scopes: ["operator.pairing", "operator.write"],
+          },
+          scopes: ["operator.admin", "operator.unknown"],
+        }),
+      ).toBe(true);
       expect(
         shouldAttemptInlineApproval({ ...exact, scopes: ["operator.write", "operator.write"] }),
       ).toBe(true);
