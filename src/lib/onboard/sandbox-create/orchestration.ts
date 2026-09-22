@@ -109,27 +109,7 @@ type ManagedBootstrapRuntimePatch = Readonly<{
   allowsNotReadyLifecycleRevalidation?(): boolean;
 }>;
 
-export function bindRebuildPolicyProvidersToCreateArgs(
-  createArgs: readonly string[],
-  policy: Pick<import("../initial-policy").InitialSandboxPolicy, "credentialBindingProviders">,
-): string[] {
-  const result = [...createArgs];
-  const attached = new Set(
-    result.flatMap((value, index) =>
-      index > 0 && result[index - 1] === "--provider" ? [value] : [],
-    ),
-  );
-  for (const provider of policy.credentialBindingProviders ?? []) {
-    if (attached.has(provider)) continue;
-    const startupCommandSeparator = result.indexOf("--");
-    const insertionIndex = startupCommandSeparator < 0 ? result.length : startupCommandSeparator;
-    result.splice(insertionIndex, 0, "--provider", provider);
-    attached.add(provider);
-  }
-  return result;
-}
-
-function bindRebuildPolicyProvidersToCreateRequest(
+export function bindRebuildPolicyProvidersToCreateRequest(
   request: PlannedOpenShellSandboxCreateRequest,
   policy: Pick<import("../initial-policy").InitialSandboxPolicy, "credentialBindingProviders">,
 ): PlannedOpenShellSandboxCreateRequest {
@@ -192,7 +172,6 @@ export function beginRecreateDeleteAfterPolicyPreflight<T>(input: {
 }
 
 export function resolveRebuildPolicyProviderAuthority(input: {
-  readonly createArgs?: readonly string[];
   readonly createProviders?: readonly string[];
   readonly messagingPlan:
     | Pick<SandboxMessagingPlan, "credentialBindings" | "disabledChannels">
@@ -201,11 +180,7 @@ export function resolveRebuildPolicyProviderAuthority(input: {
   readonly policyDocument?: string | null;
   readonly policyProviders?: readonly string[];
 }): string[] {
-  const providers = new Set(
-    (input.createArgs ?? []).flatMap((value, index, args) =>
-      index > 0 && args[index - 1] === "--provider" ? [value] : [],
-    ),
-  );
+  const providers = new Set(input.createProviders ?? []);
   for (const provider of input.createProviders ?? []) providers.add(provider);
   const disabledChannels = new Set(input.messagingPlan?.disabledChannels ?? []);
   for (const binding of input.messagingPlan?.credentialBindings ?? []) {
@@ -2706,16 +2681,6 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         sandboxStartupCommand,
       },
     } = preparedOnboardLaunch;
-    const materializedCreateArgv =
-      preparedOnboardLaunch.createRequestPlan === null
-        ? preparedOnboardLaunch.launch.createArgv
-        : null;
-    const requireMaterializedPortableCreateArgv = (): string[] => {
-      if (!materializedCreateArgv) {
-        throw new Error("Portable sandbox workload is missing its materialized create arguments.");
-      }
-      return materializedCreateArgv;
-    };
     const rebuildMessagingPolicyDeltas = resolveRebuildMessagingPolicyDeltas(
       plannedMessagingState?.plan,
       {
@@ -2735,9 +2700,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       materializedInitialSandboxPolicy.sourceBytes?.toString("utf8") ??
       fs.readFileSync(materializedInitialSandboxPolicy.policyPath, "utf8");
     const rebuildPolicyProviderAuthority = resolveRebuildPolicyProviderAuthority({
-      ...(materializedCreateRequestPlan
-        ? { createProviders: materializedCreateRequestPlan.providers }
-        : { createArgs: requireMaterializedPortableCreateArgv() }),
+      createProviders: materializedCreateRequestPlan.providers,
       messagingPlan: plannedMessagingState?.plan,
       ...(rebuildPolicySource
         ? { policyProviders: rebuildPolicySource.providers }
@@ -2763,22 +2726,6 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
           rebuildPolicySource?.document,
         )
       : materializedInitialSandboxPolicy;
-    const createArgv = materializedCreateArgv
-      ? createIntent?.rebuildPolicySourcePath
-        ? bindRebuildPolicyProvidersToCreateArgs(
-            materializedCreateArgv.map((value, index, argv) =>
-              index > 0 && argv[index - 1] === "--policy" ? initialSandboxPolicy.policyPath : value,
-            ),
-            initialSandboxPolicy,
-          )
-        : materializedCreateArgv
-      : null;
-    const requirePortableCreateArgv = (): string[] => {
-      if (!createArgv) {
-        throw new Error("Portable sandbox workload is missing its raw create arguments.");
-      }
-      return createArgv;
-    };
     const createRequestPlan = selectRebuildCreateRequestPlan({
       request: materializedCreateRequestPlan,
       rebuildPolicySourcePath: createIntent?.rebuildPolicySourcePath,
@@ -3078,15 +3025,10 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         ),
       );
     const runCreateFlow = async (
-      createSubmission:
-        | Readonly<{
-            kind: "ordinary";
-            request: import("../../adapters/openshell/sandbox-lifecycle").CreateOpenShellSandboxRequest;
-          }>
-        | Readonly<{ kind: "portable"; argv: string[] }>,
+      createRequest: import("../../adapters/openshell/sandbox-lifecycle").CreateOpenShellSandboxRequest,
       hermesPortableReadyCapture?: import("../sandbox-gpu-create-flow").HermesPortableReadyCapture,
       hermesPortableReadyRunner?: import("../sandbox-gpu-create-flow").HermesPortableReadyRunner,
-      createWorkingDirectory?: string,
+      createSandbox?: import("../../adapters/openshell/sandbox-lifecycle").OpenShellSandboxLifecycle["createSandbox"],
       effectivePolicySourcePath?: string,
       runDeferredProviderEffects?: (context: VerifiedSandboxCreateEffectsContext) => Promise<void>,
     ) => {
@@ -3300,10 +3242,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
               gatewayName: GATEWAY_NAME,
               gatewayPort: GATEWAY_PORT,
               sandboxReadyTimeoutSecs,
-              ...(createSubmission.kind === "ordinary"
-                ? { createRequest: createSubmission.request }
-                : { createArgv: createSubmission.argv }),
-              ...(createWorkingDirectory ? { createWorkingDirectory } : {}),
+              createRequest,
               sandboxEnv: createFlowEnvironment,
               sandboxStartupCommand,
               lifecycleGeneration: createdSandboxLifecycle.generation,
@@ -3348,6 +3287,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
               ),
               sleep: sleepSeconds,
               openshellArgv,
+              ...(createSandbox ? { createSandbox } : {}),
               verifyDirectSandboxGpu: createGpuVerifier,
             },
           );
@@ -3536,7 +3476,15 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         gatewayName: GATEWAY_NAME,
         lifecycleGeneration: createdSandboxLifecycle.generation,
         portableRuntime: portableRuntimeContext,
-        createArgv: requirePortableCreateArgv(),
+        createRequest: finalizeOrdinaryCreateRequest({
+          plan: createRequestPlan,
+          gatewayName: GATEWAY_NAME,
+          startupCommand: sandboxStartupCommand,
+          environment: createFlowEnvironment,
+          compatibilityPolicyPath,
+          compatibility: false,
+          rebuildPolicySourcePath: createIntent?.rebuildPolicySourcePath,
+        }),
         createPolicyPath: initialSandboxPolicy.policyPath,
         startup: {
           agent: hermesPortableAuthority.agent,
@@ -3550,10 +3498,10 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         childEnv: sandboxEnv,
         openshellArgv,
         createSandbox: (
-          attemptArgv,
+          attemptRequest,
           readyCapture,
           readyRunner,
-          buildContextPath,
+          lifecycleCreateSandbox,
           effectivePolicySourcePath,
         ) =>
           runSandboxCreateWithProviderEffects({
@@ -3561,10 +3509,10 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
             providerEffectBoundary,
             create: (runAfterVerifiedCreate) =>
               runCreateFlow(
-                { kind: "portable", argv: [...attemptArgv] },
+                attemptRequest,
                 readyCapture,
                 readyRunner,
-                buildContextPath,
+                lifecycleCreateSandbox,
                 effectivePolicySourcePath,
                 runAfterVerifiedCreate,
               ),
