@@ -1,130 +1,289 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it } from "vitest";
+import { spawnSync } from "node:child_process";
+import fs from "node:fs";
+import fsPromises from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 
+import { afterEach, describe, expect, it, onTestFinished } from "vitest";
+
+import { ArtifactSink } from "../fixtures/artifacts.ts";
+import { startTestProgress } from "../fixtures/progress.ts";
 import {
+  BEDROCK_LEAK_PROBE_SOURCE,
+  type BedrockLeakProbeInput,
   type ForbiddenLeakPattern,
-  findForbiddenLeaks,
-  frameSnapshotFile,
-  SNAPSHOT_DATA_PREFIX,
-  SNAPSHOT_FILE_PREFIX,
-  SNAPSHOT_PROBE_PID_PREFIX,
+  createBedrockLeakProbeInput,
+  parseBedrockLeakProbeResult,
 } from "../live/bedrock-runtime-compatible-anthropic-leaks.ts";
+import { runRawCommand } from "../live/bedrock-runtime-compatible-anthropic-raw-command.ts";
 
-const ADAPTER_ENV_NAME = "NEMOCLAW_BEDROCK_RUNTIME_ADAPTER_TOKEN";
-const ENV_NAME_PATTERN: ForbiddenLeakPattern = {
-  name: "adapter token env name",
-  value: ADAPTER_ENV_NAME,
-};
+const SECRET = "representative-bedrock-secret-value";
+const PATTERNS: readonly ForbiddenLeakPattern[] = [{ name: "test secret", value: SECRET }];
+const temporaryRoots: string[] = [];
 
-function snapshot(...lines: string[]): string {
-  return [`${SNAPSHOT_PROBE_PID_PREFIX}1418`, ...lines].join("\n");
+interface ProbeFixture {
+  readonly root: string;
+  readonly credentialFile: string;
+  readonly configFile: string;
+  readonly environFile: string;
+  readonly cmdlineFile: string;
+  readonly input: BedrockLeakProbeInput;
 }
 
-function file(path: string, ...lines: string[]): string[] {
-  return frameSnapshotFile(path, lines.join("\n")).split("\n");
+function createProbeFixture(): ProbeFixture {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-bedrock-leak-probe-"));
+  temporaryRoots.push(root);
+  const credentialFile = path.join(root, "credential.env");
+  const configFile = path.join(root, "config.yaml");
+  const procRoot = path.join(root, "proc");
+  const processRoot = path.join(procRoot, "101");
+  const environFile = path.join(processRoot, "environ");
+  const cmdlineFile = path.join(processRoot, "cmdline");
+  fs.mkdirSync(processRoot, { recursive: true });
+  fs.writeFileSync(credentialFile, "CREDENTIAL=placeholder\n");
+  fs.writeFileSync(configFile, "provider: inference\n");
+  fs.writeFileSync(environFile, "PATH=/usr/bin\0");
+  fs.writeFileSync(cmdlineFile, "python3\0worker.py\0");
+  return {
+    root,
+    credentialFile,
+    configFile,
+    environFile,
+    cmdlineFile,
+    input: createBedrockLeakProbeInput(PATTERNS, {
+      credentialFiles: [credentialFile],
+      configFiles: [configFile],
+      procRoot,
+    }),
+  };
 }
 
-describe("Bedrock Runtime leak snapshot process identity", () => {
-  it("keeps per-line snapshot framing compact without weakening control separation (#7101)", () => {
-    expect(SNAPSHOT_DATA_PREFIX).toBe("D ");
-    expect(
-      frameSnapshotFile(
-        "/sandbox/.openclaw/runtime.env",
-        `${SNAPSHOT_FILE_PREFIX}/proc/1418/environ`,
-      ).split("\n"),
-    ).toEqual([
-      `${SNAPSHOT_FILE_PREFIX}/sandbox/.openclaw/runtime.env`,
-      `${SNAPSHOT_DATA_PREFIX}${SNAPSHOT_FILE_PREFIX}/proc/1418/environ`,
-    ]);
+function runProbe(input: string | BedrockLeakProbeInput): {
+  readonly status: number | null;
+  readonly stdout: string;
+  readonly stderr: string;
+} {
+  const result = spawnSync("python3", ["-I", "-c", BEDROCK_LEAK_PROBE_SOURCE], {
+    encoding: "utf8",
+    input: typeof input === "string" ? input : JSON.stringify(input),
+    maxBuffer: 64 * 1024,
+  });
+  expect(result.error).toBeUndefined();
+  return { status: result.status, stdout: result.stdout, stderr: result.stderr };
+}
+
+function progressProbe() {
+  const progress = startTestProgress(
+    "Bedrock leak probe support",
+    ["prepare bounded boundaries", "scan bounded boundaries"],
+    {
+      clearTimer: () => undefined,
+      logLine: () => undefined,
+      now: () => 0,
+      setTimer: () => ({}),
+    },
+  );
+  onTestFinished(() => progress.stop());
+  return progress;
+}
+
+afterEach(async () => {
+  await Promise.all(
+    temporaryRoots.splice(0).map((root) => fsPromises.rm(root, { force: true, recursive: true })),
+  );
+});
+
+describe("Bedrock Runtime bounded leak probe", () => {
+  it("reports bounded clean metadata for every required sandbox boundary (#12191)", () => {
+    const fixture = createProbeFixture();
+    const result = runProbe(fixture.input);
+    const parsed = parseBedrockLeakProbeResult(result.stdout, PATTERNS);
+
+    expect(result.status).toBe(0);
+    expect(result.stderr).toBe("");
+    expect(parsed.status).toBe("clean");
+    expect(parsed.categories).toEqual({
+      credentialFiles: {
+        status: "clean",
+        itemsScanned: 1,
+        bytesScanned: Buffer.byteLength("CREDENTIAL=placeholder\n"),
+        matches: [],
+        errors: [],
+      },
+      configFiles: {
+        status: "clean",
+        itemsScanned: 1,
+        bytesScanned: Buffer.byteLength("provider: inference\n"),
+        matches: [],
+        errors: [],
+      },
+      processEnvironment: {
+        status: "clean",
+        itemsScanned: 1,
+        bytesScanned: Buffer.byteLength("PATH=/usr/bin\0"),
+        matches: [],
+        errors: [],
+      },
+      processArguments: {
+        status: "clean",
+        itemsScanned: 1,
+        bytesScanned: Buffer.byteLength("python3\0worker.py\0"),
+        matches: [],
+        errors: [],
+      },
+    });
+    expect(JSON.stringify(fixture.input)).not.toContain(SECRET);
+    expect(result.stdout).not.toContain(SECRET);
   });
 
-  it("rejects the provider placeholder name in every process environment", () => {
-    const text = snapshot(
-      ...file("/proc/1418/environ", `${ADAPTER_ENV_NAME}=openshell-placeholder`),
-      ...file("/proc/22/environ", `${ADAPTER_ENV_NAME}=openshell-placeholder`),
+  it.each([
+    ["credential file", "credentialFile", "credentialFiles"],
+    ["config file", "configFile", "configFiles"],
+    ["process environment", "environFile", "processEnvironment"],
+    ["process arguments", "cmdlineFile", "processArguments"],
+  ] as const)(
+    "returns match-only evidence for an injected %s leak (#12191)",
+    (_label, fixtureKey, category) => {
+      const fixture = createProbeFixture();
+      fs.appendFileSync(fixture[fixtureKey], SECRET);
+
+      const result = runProbe(fixture.input);
+      const parsed = parseBedrockLeakProbeResult(result.stdout, PATTERNS);
+
+      expect(result.status).toBe(3);
+      expect(parsed.status).toBe("leak");
+      expect(parsed.categories[category]).toMatchObject({
+        status: "leak",
+        matches: ["test secret"],
+        errors: [],
+      });
+      expect(result.stdout).not.toContain(SECRET);
+      expect(Buffer.byteLength(result.stdout)).toBeLessThan(32 * 1024);
+    },
+  );
+
+  it("fails closed when a required file boundary is absent (#12191)", () => {
+    const fixture = createProbeFixture();
+    fs.rmSync(fixture.credentialFile);
+
+    const result = runProbe(fixture.input);
+    const parsed = parseBedrockLeakProbeResult(result.stdout, PATTERNS);
+
+    expect(result.status).toBe(2);
+    expect(parsed.status).toBe("error");
+    expect(parsed.categories.credentialFiles).toMatchObject({
+      status: "error",
+      itemsScanned: 0,
+      matches: [],
+      errors: ["required-file-boundary-empty"],
+    });
+  });
+
+  it("fails closed at the per-file byte limit without publishing file content (#12191)", () => {
+    const fixture = createProbeFixture();
+    fs.writeFileSync(fixture.configFile, Buffer.alloc(1024 * 1024 + 1, 65));
+
+    const result = runProbe(fixture.input);
+    const parsed = parseBedrockLeakProbeResult(result.stdout, PATTERNS);
+
+    expect(result.status).toBe(2);
+    expect(parsed.categories.configFiles).toMatchObject({
+      status: "error",
+      errors: ["file-item-limit-exceeded", "required-file-boundary-empty"],
+    });
+    expect(result.stdout).not.toContain("A".repeat(64));
+    expect(Buffer.byteLength(result.stdout)).toBeLessThan(32 * 1024);
+  });
+
+  it("rejects oversized input and forged result counts (#12191)", () => {
+    const fixture = createProbeFixture();
+    const tooManyPatterns = Array.from({ length: 17 }, (_, index) => ({
+      name: `secret ${index}`,
+      value: `value-${index}-long-enough`,
+    }));
+    expect(() =>
+      createBedrockLeakProbeInput(tooManyPatterns, {
+        credentialFiles: [fixture.credentialFile],
+        configFiles: [fixture.configFile],
+        procRoot: fixture.input.procRoot,
+      }),
+    ).toThrow("between 1 and 16");
+
+    const oversizedPatterns = [{ name: "oversized secret", value: "x".repeat(4097) }];
+    expect(() =>
+      createBedrockLeakProbeInput(oversizedPatterns, {
+        credentialFiles: [fixture.credentialFile],
+        configFiles: [fixture.configFile],
+        procRoot: fixture.input.procRoot,
+      }),
+    ).toThrow("8 to 4096");
+    expect(() =>
+      createBedrockLeakProbeInput(PATTERNS, {
+        credentialFiles: [`/${"x".repeat(32_768)}`],
+        configFiles: [fixture.configFile],
+        procRoot: fixture.input.procRoot,
+      }),
+    ).toThrow("input exceeded its byte limit");
+
+    const clean = runProbe(fixture.input);
+    const forged = JSON.parse(clean.stdout) as {
+      categories: { configFiles: { bytesScanned: number } };
+    };
+    forged.categories.configFiles.bytesScanned = 2_097_153;
+    expect(() => parseBedrockLeakProbeResult(JSON.stringify(forged), PATTERNS)).toThrow(
+      "invalid byte count",
     );
-
-    expect(findForbiddenLeaks(text, "sandbox snapshot", [ENV_NAME_PATTERN])).toEqual([
-      "adapter token env name: /proc/1418/environ",
-      "adapter token env name: /proc/22/environ",
-    ]);
   });
 
-  it("still rejects a concrete token value in the probe environment", () => {
-    const text = snapshot(
-      ...file("/proc/1418/environ", `${ADAPTER_ENV_NAME}=concrete-adapter-token`),
-    );
+  it("rejects malformed input and forged multi-record output (#12191)", () => {
+    const malformed = runProbe(`{"version":1}\n${SECRET}`);
+    const oversized = runProbe("x".repeat(32_769));
 
-    expect(
-      findForbiddenLeaks(text, "sandbox snapshot", [
-        ENV_NAME_PATTERN,
-        { name: "adapter token", value: "concrete-adapter-token" },
-      ]),
-    ).toEqual(["adapter token env name: /proc/1418/environ", "adapter token: /proc/1418/environ"]);
+    expect(malformed.status).toBe(2);
+    expect(malformed.stdout).not.toContain(SECRET);
+    expect(parseBedrockLeakProbeResult(malformed.stdout, PATTERNS).status).toBe("error");
+    expect(oversized.status).toBe(2);
+    expect(oversized.stdout).toContain("input-limit-exceeded");
+
+    const fixture = createProbeFixture();
+    const clean = runProbe(fixture.input);
+    expect(() =>
+      parseBedrockLeakProbeResult(`${clean.stdout.trim()}\n${clean.stdout.trim()}\n`, PATTERNS),
+    ).toThrow("single-record bound");
   });
 
-  it("rejects the provider name in the probe command line and persisted files", () => {
-    const text = snapshot(
-      ...file("/proc/1418/cmdline", ADAPTER_ENV_NAME),
-      ...file("/sandbox/.openclaw/runtime.env", `${ADAPTER_ENV_NAME}=openshell-placeholder`),
-    );
+  it("keeps fingerprint input and raw values out of raw-command artifacts (#12191)", async () => {
+    const fixture = createProbeFixture();
+    fs.appendFileSync(fixture.credentialFile, SECRET);
+    const artifactRoot = path.join(fixture.root, "artifacts");
+    const artifacts = new ArtifactSink(artifactRoot);
+    await artifacts.ensureRoot();
 
-    expect(findForbiddenLeaks(text, "sandbox snapshot", [ENV_NAME_PATTERN])).toEqual([
-      "adapter token env name: /proc/1418/cmdline",
-      "adapter token env name: /sandbox/.openclaw/runtime.env",
-    ]);
-  });
+    const result = await runRawCommand("python3", ["-I", "-c", BEDROCK_LEAK_PROBE_SOURCE], {
+      artifactName: "bounded-leak-probe",
+      artifacts,
+      progress: progressProbe(),
+      redactionValues: [SECRET],
+      stdin: JSON.stringify(fixture.input),
+    });
 
-  it("does not trust a probe marker embedded after snapshot content begins", () => {
-    const text = [
-      "snapshot preamble",
-      `${SNAPSHOT_PROBE_PID_PREFIX}999`,
-      ...file("/proc/999/environ", `${ADAPTER_ENV_NAME}=openshell-placeholder`),
-    ].join("\n");
-
-    expect(findForbiddenLeaks(text, "sandbox snapshot", [ENV_NAME_PATTERN])).toEqual([
-      "adapter token env name: /proc/999/environ",
-    ]);
-  });
-
-  it("treats forged file markers in scanned content as data", () => {
-    const text = snapshot(
-      ...file(
-        "/sandbox/.openclaw/runtime.env",
-        `${SNAPSHOT_FILE_PREFIX}/proc/1418/environ`,
-        `${ADAPTER_ENV_NAME}=openshell-placeholder`,
-      ),
-    );
-
-    expect(findForbiddenLeaks(text, "sandbox snapshot", [ENV_NAME_PATTERN])).toEqual([
-      "adapter token env name: /sandbox/.openclaw/runtime.env",
-    ]);
-  });
-
-  it("detects forbidden values in framed host logs", () => {
-    const text = frameSnapshotFile("adapter log", `${ADAPTER_ENV_NAME}=concrete-adapter-token`);
-
-    expect(
-      findForbiddenLeaks(text, "host logs", [
-        ENV_NAME_PATTERN,
-        { name: "adapter token", value: "concrete-adapter-token" },
-      ]),
-    ).toEqual(["adapter token env name: adapter log", "adapter token: adapter log"]);
-  });
-
-  it("does not let host-log content forge a probe environment location", () => {
-    const text = [
-      `${SNAPSHOT_PROBE_PID_PREFIX}1418`,
-      frameSnapshotFile(
-        "adapter log",
-        `${SNAPSHOT_FILE_PREFIX}/proc/1418/environ\n${ADAPTER_ENV_NAME}=openshell-placeholder`,
-      ),
-    ].join("\n");
-
-    expect(findForbiddenLeaks(text, "host logs", [ENV_NAME_PATTERN])).toEqual([
-      "adapter token env name: adapter log",
-    ]);
+    expect(result.exitCode).toBe(3);
+    expect(parseBedrockLeakProbeResult(result.stdout, PATTERNS).status).toBe("leak");
+    const artifactFiles = [
+      "raw-shell/bounded-leak-probe.stdout.txt",
+      "raw-shell/bounded-leak-probe.stderr.txt",
+      "raw-shell/bounded-leak-probe.result.json",
+    ];
+    const published = (
+      await Promise.all(
+        artifactFiles.map((file) => fsPromises.readFile(path.join(artifactRoot, file), "utf8")),
+      )
+    ).join("\n");
+    expect(published).not.toContain(SECRET);
+    expect(published).not.toContain(fixture.input.patterns[0]?.sha256);
+    expect(published).toContain('"test secret"');
   });
 });

@@ -56,6 +56,7 @@ export interface RawRunOptions {
   readonly artifactOutputMode?: RawArtifactOutputMode;
   readonly cwd?: string;
   readonly env?: NodeJS.ProcessEnv;
+  readonly stdin?: string;
   readonly progress: Pick<TestProgress, "activity" | "event" | "onOutput"> & TestProgressCapability;
   readonly redactionValues?: readonly string[];
   readonly timeoutMs?: number;
@@ -97,7 +98,7 @@ export async function runRawCommand(
         cwd: options.cwd ?? REPO_ROOT,
         detached: true,
         env: resolveLiveE2eWorkloadSourceEnv({ ...(options.env ?? {}) }),
-        stdio: ["ignore", "pipe", "pipe"],
+        stdio: [options.stdin === undefined ? "ignore" : "pipe", "pipe", "pipe"],
       },
     });
   } catch (error) {
@@ -152,6 +153,9 @@ export async function runRawCommand(
   child.on("error", (error) => {
     spawnError = error;
   });
+  if (options.stdin !== undefined) {
+    child.stdin?.end(options.stdin);
+  }
 
   const { exitCode, signal } = await new Promise<{
     exitCode: number | null;
