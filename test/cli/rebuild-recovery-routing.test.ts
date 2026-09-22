@@ -262,4 +262,37 @@ describe("CLI rebuild recovery routing", () => {
       }
     },
   );
+
+  it(
+    "rejects sibling-root retirement while owning-root legacy authority remains",
+    testTimeoutOptions(35_000),
+    () => {
+      const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-retire-recovery-legacy-"));
+      try {
+        writeOpenShellStub(home, false);
+        const { handoffPath, recordPath } = writeRecoveryFixture(home);
+        const owningStateDir = path.join(home, ".nemoclaw", "gateways", "9000", "state");
+        fs.mkdirSync(owningStateDir, { recursive: true, mode: 0o700 });
+        fs.writeFileSync(
+          path.join(owningStateDir, "shields-timer-gw1-sb.json"),
+          "legacy authority\n",
+          { mode: 0o600 },
+        );
+
+        const result = runWithEnv(`gw1-sb rebuild --retire-recovery ${TRANSACTION_ID} --yes`, {
+          HOME: home,
+          PATH: `${path.join(home, "bin")}:${process.env.PATH || ""}`,
+        });
+
+        expect(result.code).toBe(1);
+        expect(result.out).toContain(
+          "still has recovery artifacts from the removed Shields feature",
+        );
+        expect(fs.existsSync(handoffPath)).toBe(true);
+        expect(fs.existsSync(recordPath)).toBe(true);
+      } finally {
+        fs.rmSync(home, { recursive: true, force: true });
+      }
+    },
+  );
 });

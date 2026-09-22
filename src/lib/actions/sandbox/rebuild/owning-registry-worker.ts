@@ -4,6 +4,7 @@
 import fs from "node:fs";
 
 import type { RebuildSandboxOptions } from "../../../domain/lifecycle/options";
+import { enforceRemovedImmutabilityMigrationBoundary } from "../../../state/migrations/removed-immutability";
 import { withSandboxLifecycleLock } from "../lifecycle/lock";
 import { rebuildSandbox } from "../rebuild-pipeline";
 import { redactBoundedRebuildFailure } from "../rebuild-preflight-confirmation";
@@ -74,9 +75,12 @@ function workerIdentity(input: OwningRegistryWorkerInput): Omit<OwningRegistryWo
 
 async function run(input: OwningRegistryWorkerInput): Promise<void> {
   if (input.operation === "retire-recovery") {
-    const retired = await withSandboxLifecycleLock(input.sandboxName, () =>
-      retireRebuildRecoveryBackup(input),
-    );
+    const retired = await withSandboxLifecycleLock(input.sandboxName, () => {
+      enforceRemovedImmutabilityMigrationBoundary(input.sandboxName, {
+        allowStateRecord: true,
+      });
+      return retireRebuildRecoveryBackup(input);
+    });
     console.log(
       `Retired rebuild recovery '${retired.transactionId}' for sandbox '${input.sandboxName}' from ${retired.backupPath}.`,
     );
