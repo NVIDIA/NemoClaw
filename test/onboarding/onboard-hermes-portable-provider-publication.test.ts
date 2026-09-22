@@ -230,7 +230,25 @@ require.cache[sandboxGpuCreateFlowId].exports = {
     gpuCreateCalls += 1;
     events.push(input.resumeVerifiedCreate ? "sandbox:resume" : "sandbox:create");
     if (!input.resumeVerifiedCreate) {
-      const observedCreateArgv = [...input.createArgv];
+      const observedCreateArgv = input.createArgv
+        ? [...input.createArgv]
+        : [
+            "openshell",
+            "sandbox",
+            "create",
+            "-g",
+            input.createRequest.target.gatewayName,
+            "--from",
+            input.createRequest.source.reference,
+            "--name",
+            input.createRequest.sandboxName,
+            ...Object.entries(input.createRequest.labels ?? {}).flatMap(([name, value]) => [
+              "--label",
+              name + "=" + value,
+            ]),
+            "--",
+            ...input.createRequest.startupCommand,
+          ];
       if (!observedCreateArgv.some((value) => value.startsWith("ai.nvidia.nemoclaw.create-attempt="))) {
         const separator = observedCreateArgv.indexOf("--");
         observedCreateArgv.splice(

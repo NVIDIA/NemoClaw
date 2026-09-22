@@ -392,8 +392,13 @@
     },
     {
       "live": "test/e2e/live/bedrock-runtime-compatible-anthropic.test.ts",
-      "liveSources": ["test/e2e/live/bedrock-runtime-compatible-anthropic-raw-command.ts"],
+      "liveSources": [
+        "test/e2e/live/bedrock-runtime-compatible-anthropic-leak-probe.py",
+        "test/e2e/live/bedrock-runtime-compatible-anthropic-leaks.ts",
+        "test/e2e/live/bedrock-runtime-compatible-anthropic-raw-command.ts"
+      ],
       "fast": [
+        "test/e2e/support/bedrock-runtime-compatible-anthropic-leaks.test.ts",
         "test/e2e/support/bedrock-runtime-compatible-anthropic-progress.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts",

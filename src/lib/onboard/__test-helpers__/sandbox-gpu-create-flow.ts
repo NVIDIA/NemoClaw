@@ -46,6 +46,14 @@ export function createGpuFlowInput(): SandboxGpuCreateFlowInput {
     gatewayPort: 8080,
     sandboxReadyTimeoutSecs: 60,
     createArgv: ["openshell", "sandbox", "create", "--gpu"],
+    createRequest: {
+      sandboxName: "alpha",
+      target: { kind: "named", gatewayName: "nemoclaw" },
+      source: { reference: "openshell/sandbox-from:test" },
+      gpu: {},
+      startupCommand: ["nemoclaw-start"],
+      environment: {},
+    },
     sandboxEnv: {},
     sandboxStartupCommand: ["nemoclaw-start"],
     prebuild: {
