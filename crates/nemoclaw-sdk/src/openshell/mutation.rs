@@ -161,7 +161,12 @@ impl OpenShell {
         let workspace = value(want, "workspace");
         match self.observe(kind, workspace, name, false).await {
             Ok(Some(row)) => {
-                verify_identity(want, &row)?;
+                // The mutation response establishes the physical binding even when
+                // the desired row did not yet have an ID. Never adopt a substituted
+                // object during readback or discard the established recovery state.
+                if let Err(error) = verify_identity(&established, &row) {
+                    return Ok(Mutation::partial(established, error));
+                }
                 if want
                     .iter()
                     .any(|(key, v)| key != "id" && row.get(key) != Some(v))

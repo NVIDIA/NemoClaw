@@ -815,3 +815,121 @@ resource "nemoclaw_pi_configuration" "agent" {
     assert!(fixture.state.lock().unwrap().sandboxes.is_empty());
     assert_eq!(writes(), 4, "destroy must not reconfigure Pi");
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires explicit NEMOCLAW_TEST_TOFU and NEMOCLAW_TEST_PROVIDER; isolated OpenShell fixture"]
+async fn standalone_create_readback_rejects_substitution_and_retains_established_binding() {
+    for field in [
+        "id",
+        "nemoclaw.nvidia.com/uid",
+        "nemoclaw.nvidia.com/generation",
+    ] {
+        let fixture = Fixture::start().await;
+        let tofu = Standalone::new(&fixture.endpoint);
+        fixture
+            .state
+            .lock()
+            .unwrap()
+            .substitute_sandbox_after_create = Some((field, "substituted".into()));
+        tofu.run(&["apply", "-auto-approve", "-input=false"], false);
+        let effects = fixture.state.lock().unwrap().effects;
+        let partial: Value = serde_json::from_slice(&tofu.state()).unwrap();
+        let sandbox = partial["resources"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|resource| resource["type"] == "nemoclaw_sandbox")
+            .expect("failed readback must preserve the create response binding");
+        assert_eq!(
+            sandbox["instances"][0]["attributes"]["id"],
+            format!("id-{effects}")
+        );
+        assert_eq!(sandbox["instances"][0]["status"], "tainted");
+        let prior = tofu.state();
+        tofu.run(&["plan", "-input=false"], false);
+        tofu.run(
+            &[
+                "apply",
+                "-auto-approve",
+                "-input=false",
+                "-var=enabled=false",
+                "-var=destroying=true",
+            ],
+            false,
+        );
+        assert_eq!(tofu.state(), prior);
+        let state = fixture.state.lock().unwrap();
+        assert_eq!(state.effects, effects);
+        assert_eq!(state.delete_calls, 0);
+        assert_eq!(state.sandboxes.len(), 1);
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires explicit NEMOCLAW_TEST_TOFU and NEMOCLAW_TEST_PROVIDER; isolated OpenShell fixture"]
+async fn standalone_registrations_recover_after_absence_was_committed_by_refresh_only() {
+    let fixture = Fixture::start().await;
+    let tofu = Standalone::new(&fixture.endpoint);
+    tofu.apply();
+    let sandboxes = fixture.state.lock().unwrap().sandboxes.clone();
+    fixture.state.lock().unwrap().providers.clear();
+    let effects = fixture.state.lock().unwrap().effects;
+    tofu.run(
+        &["apply", "-refresh-only", "-auto-approve", "-input=false"],
+        true,
+    );
+    tofu.run(&["plan", "-input=false", "-out=recover.plan"], true);
+    let plan: Value =
+        serde_json::from_slice(&tofu.run(&["show", "-json", "recover.plan"], true).stdout).unwrap();
+    assert!(
+        plan.get("resource_drift")
+            .is_none_or(|drift| drift.as_array().unwrap().is_empty())
+    );
+    let registration = plan["resource_changes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|change| change["type"] == "nemoclaw_provider")
+        .unwrap();
+    assert_eq!(registration["change"]["actions"], json!(["create"]));
+    assert_eq!(fixture.state.lock().unwrap().effects, effects);
+    tofu.run(&["apply", "-input=false", "recover.plan"], true);
+    tofu.noop();
+    let state = fixture.state.lock().unwrap();
+    assert_eq!(state.effects, effects + 1);
+    assert_eq!(state.sandboxes, sandboxes);
+    assert_eq!(state.providers.len(), 1);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires explicit NEMOCLAW_TEST_TOFU and NEMOCLAW_TEST_PROVIDER; isolated OpenShell fixture"]
+async fn standalone_lost_create_reply_requires_original_intent_to_recover_untracked_registration() {
+    let fixture = Fixture::start().await;
+    let tofu = Standalone::new(&fixture.endpoint);
+    tofu.registrations_only();
+    fixture.state.lock().unwrap().lose_create = true;
+    tofu.run(&["apply", "-auto-approve", "-input=false"], false);
+    let profiles = fixture.state.lock().unwrap().profiles.clone();
+    assert_eq!(profiles.len(), 1);
+    let effects = fixture.state.lock().unwrap().effects;
+    // Core cannot refresh an identity it never received. Removing this intent
+    // succeeds but leaves the remote profile untracked; the SDK must retain its
+    // ambiguous-creation guard until the API supplies a stronger contract.
+    tofu.run(
+        &[
+            "apply",
+            "-auto-approve",
+            "-input=false",
+            "-var=enabled=false",
+        ],
+        true,
+    );
+    assert_eq!(fixture.state.lock().unwrap().profiles, profiles);
+    assert_eq!(fixture.state.lock().unwrap().effects, effects);
+    // Replaying the original declaration observes and verifies that profile.
+    tofu.apply();
+    tofu.noop();
+    let state = fixture.state.lock().unwrap();
+    assert_eq!(state.profiles, profiles);
+    assert_eq!(state.effects, effects + 1);
+}
