@@ -350,7 +350,9 @@ function commonEgressTarget(options: {
 const GATEWAY_UPGRADE_OWNING_PATHS = Object.freeze([
   "scripts/install.sh",
   "src/lib/actions/global.ts",
+  "src/lib/actions/maintenance.ts",
   "src/lib/actions/sandbox/forward-recovery.ts",
+  "src/lib/actions/upgrade-sandboxes.ts",
   "tools/e2e/openshell-gateway-upgrade-fixture.mts",
   "test/e2e/live/openshell-gateway-upgrade-helpers.ts",
   "test/e2e/live/openshell-gateway-upgrade-old-installer.ts",
