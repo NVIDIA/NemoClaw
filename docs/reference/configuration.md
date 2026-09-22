@@ -124,10 +124,25 @@ Paths:
 - `spec.sandboxes[].harness.observability`
 - `spec.sandboxes[].harnesses.{key}.observability`
 
+Accepted input: object.
+
+### Alternative 1
+
+Export OpenClaw traces to an externally operated local OTLP/HTTP collector.
+
+
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
-| `otlp` | [OtlpTracing](#otlptracing) | No | — | Export OpenClaw traces to an externally operated local OTLP/HTTP collector. |
-| `relay` | [RelayTracing](#relaytracing) | No | — | Emit Hermes ATOF and ATIF traces through its in-process NeMo Relay integration. |
+| `otlp` | [OtlpTracing](#otlptracing) | Yes | — | Collector and sampling settings. |
+
+### Alternative 2
+
+Emit Hermes ATOF and ATIF traces through its in-process NeMo Relay integration.
+
+
+| Field | Input type | Required | Default | Description and constraints |
+|---|---|---|---|---|
+| `relay` | [RelayTracing](#relaytracing) | Yes | — | In-process Relay tracing settings. |
 
 ## AgentTools
 
@@ -447,7 +462,7 @@ Paths:
 
 ## HermesDashboard
 
-Native Hermes dashboard with isolated configuration and active sessions.
+Native Hermes dashboard, either disabled or enabled with service settings.
 
 Guide: [Agent interfaces](../interfaces.md).
 

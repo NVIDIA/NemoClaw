@@ -49,3 +49,48 @@ fn hermes_native_interfaces_preserve_explicit_enablement_and_reject_collisions()
         assert!(parse(&v).is_err());
     }
 }
+
+#[test]
+fn disabled_dashboard_cannot_deserialize_with_settings() {
+    use nemoclaw_sdk::config::HermesDashboard;
+
+    for field in [
+        json!({"port": 18800}),
+        json!({"internalPort": 19120}),
+        json!({"tui": {"enabled": false}}),
+    ] {
+        let mut value = json!({"enabled": false});
+        value
+            .as_object_mut()
+            .unwrap()
+            .extend(field.as_object().unwrap().clone());
+        assert!(
+            serde_json::from_value::<HermesDashboard>(value.clone()).is_err(),
+            "{value}"
+        );
+    }
+    for value in [
+        json!({"enabled": false}),
+        json!({"enabled": true}),
+        json!({"enabled": true, "port": 18800, "internalPort": 19120, "tui": {"enabled": false}}),
+    ] {
+        let dashboard: HermesDashboard = serde_json::from_value(value.clone()).unwrap();
+        assert_eq!(serde_json::to_value(&dashboard).unwrap(), value);
+        let yaml = serde_saphyr::to_string(&dashboard).unwrap();
+        assert_eq!(serde_saphyr::from_str::<Value>(&yaml).unwrap(), value);
+    }
+}
+
+#[test]
+fn sdk_dashboard_choices_preserve_disabled_and_enabled_defaults() {
+    use nemoclaw_sdk::config::{HermesDashboard, HermesDashboardSettings};
+
+    assert_eq!(
+        serde_json::to_value(HermesDashboard::Disabled).unwrap(),
+        json!({"enabled": false})
+    );
+    assert_eq!(
+        serde_json::to_value(HermesDashboard::Enabled(HermesDashboardSettings::default())).unwrap(),
+        json!({"enabled": true})
+    );
+}

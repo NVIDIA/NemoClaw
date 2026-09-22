@@ -8,15 +8,17 @@ pub(crate) const OTLP_ENDPOINT: &str = "http://host.openshell.internal:4318";
 /// Harness-native telemetry shared by the sandbox.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct AgentObservability {
+pub enum AgentObservability {
     /// Export OpenClaw traces to an externally operated local OTLP/HTTP collector.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[schemars(default, with = "OtlpTracing")]
-    pub otlp: Option<OtlpTracing>,
+    Otlp(
+        /// Collector and sampling settings.
+        OtlpTracing,
+    ),
     /// Emit Hermes ATOF and ATIF traces through its in-process NeMo Relay integration.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[schemars(default, with = "RelayTracing")]
-    pub relay: Option<RelayTracing>,
+    Relay(
+        /// In-process Relay tracing settings.
+        RelayTracing,
+    ),
 }
 /// Explicitly enabled HTTP/protobuf tracing. The collector is not managed by NemoClaw.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -45,6 +47,6 @@ impl AgentObservability {
     }
 
     pub(crate) fn uses_otlp(&self) -> bool {
-        self.otlp.is_some()
+        matches!(self, Self::Otlp(_))
     }
 }

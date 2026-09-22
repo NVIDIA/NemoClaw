@@ -135,3 +135,24 @@ fn relay_tracing_rejects_unsupported_combinations() {
     assert!(Document::parse(with_interfaces.to_string().as_bytes()).is_ok());
     assert!(schema.is_valid(&with_interfaces));
 }
+
+#[test]
+fn tracing_choice_is_enforced_when_deserializing_the_sdk_type() {
+    use nemoclaw_sdk::config::AgentObservability;
+
+    for value in [
+        json!({}),
+        json!({"otlp": telemetry()["otlp"], "relay": {"enabled": true}}),
+    ] {
+        assert!(
+            serde_json::from_value::<AgentObservability>(value.clone()).is_err(),
+            "{value}"
+        );
+    }
+    for value in [telemetry(), relay()] {
+        let tracing: AgentObservability = serde_json::from_value(value.clone()).unwrap();
+        assert_eq!(serde_json::to_value(&tracing).unwrap(), value);
+        let yaml = serde_saphyr::to_string(&tracing).unwrap();
+        assert_eq!(serde_saphyr::from_str::<Value>(&yaml).unwrap(), value);
+    }
+}
