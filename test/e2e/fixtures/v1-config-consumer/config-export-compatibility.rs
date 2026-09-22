@@ -9,6 +9,9 @@ use std::{env, fs, path::Path};
 
 #[test]
 fn parses_exports_and_generates_native_runtime_settings() {
+    for name in ["NVIDIA_INFERENCE_API_KEY", "GH_TOKEN"] {
+        assert!(env::var_os(name).is_none(), "consumer received {name}");
+    }
     let input = env::var("NEMOCLAW_V1_CONFIG_INPUTS").expect("missing config input directory");
     let output =
         env::var("NEMOCLAW_V1_SETTINGS_OUTPUT").expect("missing settings output directory");

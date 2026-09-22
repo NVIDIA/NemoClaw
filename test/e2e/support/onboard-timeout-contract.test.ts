@@ -6,6 +6,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { getDockerGpuSupervisorReconnectTimeoutSecs } from "../../../src/lib/onboard/docker-gpu-supervisor-reconnect.ts";
 import {
   CONFIG_EXPORT_COMMAND_TIMEOUT_MS,
+  CONFIG_EXPORT_CONSUMER_BUDGET_MS,
+  CONFIG_EXPORT_CONSUMER_BUILD_TIMEOUT_MS,
+  CONFIG_EXPORT_CONSUMER_COMMAND_TIMEOUT_MS,
   CONFIG_EXPORT_POLICY_TIMEOUT_MS,
   DCODE_INVALID_CREDENTIAL_LIFECYCLE_BUDGET_MS,
   DCODE_TYPED_TARGET_TEST_TIMEOUT_MS,
@@ -27,6 +30,10 @@ import { validateE2eWorkflow } from "../../../tools/e2e/workflow-boundary.mts";
 import { buildE2eWorkflowPlan } from "../../../tools/e2e/workflow-plan.mts";
 import { readWorkflow } from "../../helpers/e2e-workflow-contract.ts";
 import { DEFAULT_CLEANUP_TIMEOUT_MS } from "../fixtures/cleanup.ts";
+import {
+  REVISION_MATCHED_CONSUMER_BUILD_TIMEOUT_MS,
+  REVISION_MATCHED_CONSUMER_COMMAND_TIMEOUT_MS,
+} from "../fixtures/revision-matched-v1-consumer.ts";
 import { listTargets } from "../registry/registry.ts";
 import { CONFIG_EXPORT_EXPECTATIONS, type ConfigExportExpectation } from "../registry/types.ts";
 
@@ -85,12 +92,21 @@ describe("onboard final-handoff timeout contract", () => {
   });
 
   it("pins the reviewed command, test, and target timeout values", () => {
+    expect(CONFIG_EXPORT_CONSUMER_COMMAND_TIMEOUT_MS).toBe(
+      REVISION_MATCHED_CONSUMER_COMMAND_TIMEOUT_MS,
+    );
+    expect(CONFIG_EXPORT_CONSUMER_BUILD_TIMEOUT_MS).toBe(
+      REVISION_MATCHED_CONSUMER_BUILD_TIMEOUT_MS,
+    );
     expect({
       finalHandoffCommandMinutes: ONBOARD_FINAL_HANDOFF_COMMAND_TIMEOUT_MS / MINUTE_MS,
       singleFinalHandoffTestMinutes: ONBOARD_SINGLE_FINAL_HANDOFF_TEST_TIMEOUT_MS / MINUTE_MS,
       singleFinalHandoffTargetMinutes: ONBOARD_SINGLE_FINAL_HANDOFF_TARGET_TIMEOUT_MINUTES,
       noRecreateCommandMinutes: ONBOARD_NO_RECREATE_COMMAND_TIMEOUT_MS / MINUTE_MS,
       configExportCommandMinutes: CONFIG_EXPORT_COMMAND_TIMEOUT_MS / MINUTE_MS,
+      configExportConsumerCommandSeconds: CONFIG_EXPORT_CONSUMER_COMMAND_TIMEOUT_MS / 1_000,
+      configExportConsumerBuildMinutes: CONFIG_EXPORT_CONSUMER_BUILD_TIMEOUT_MS / MINUTE_MS,
+      configExportConsumerBudgetMinutes: CONFIG_EXPORT_CONSUMER_BUDGET_MS / MINUTE_MS,
       configExportPolicyMinutes: CONFIG_EXPORT_POLICY_TIMEOUT_MS / MINUTE_MS,
       dcodeLifecycleMinutes: DCODE_INVALID_CREDENTIAL_LIFECYCLE_BUDGET_MS / MINUTE_MS,
       dcodeExpectedRefusalTestMinutes: dcodeExpectedRefusalTimeout.testTimeoutMs! / MINUTE_MS,
@@ -105,6 +121,9 @@ describe("onboard final-handoff timeout contract", () => {
       singleFinalHandoffTargetMinutes: 75,
       noRecreateCommandMinutes: 15,
       configExportCommandMinutes: 2,
+      configExportConsumerCommandSeconds: 30,
+      configExportConsumerBuildMinutes: 4,
+      configExportConsumerBudgetMinutes: 5.5,
       configExportPolicyMinutes: 1,
       dcodeLifecycleMinutes: 20,
       dcodeExpectedRefusalTestMinutes: 132,
@@ -165,7 +184,7 @@ describe("onboard final-handoff timeout contract", () => {
 
   it.each(CONFIG_EXPORT_EXPECTATIONS)("assigns an explicit timeout to %s", (expectation) => {
     const expected = {
-      required: { testTimeoutMs: 33 * MINUTE_MS, targetTimeoutMinutes: 53 },
+      required: { testTimeoutMs: 38.5 * MINUTE_MS, targetTimeoutMinutes: 59 },
       "expected-refusal": { testTimeoutMs: 32 * MINUTE_MS, targetTimeoutMinutes: 52 },
       "no-usable-sandbox": { targetTimeoutMinutes: 45 },
     };
@@ -180,7 +199,7 @@ describe("onboard final-handoff timeout contract", () => {
   });
 
   it.each([
-    { lifecycle: undefined, expectation: "required", minimumMinutes: 33 },
+    { lifecycle: undefined, expectation: "required", minimumMinutes: 38.5 },
     { lifecycle: undefined, expectation: "expected-refusal", minimumMinutes: 32 },
     {
       lifecycle: "dcode-rebuild-invalid-credential",
@@ -195,12 +214,16 @@ describe("onboard final-handoff timeout contract", () => {
 
       const extended = liveTargetTimeoutContract(lifecycle, expectation);
       expect(extended.testTimeoutMs).toBe(overrideMs);
-      expect(extended.targetTimeoutMinutes).toBe(minimumMinutes + 51);
+      expect(extended.targetTimeoutMinutes).toBe(
+        Math.ceil((overrideMs + jobHeadroomMs) / MINUTE_MS),
+      );
 
       vi.stubEnv("NEMOCLAW_TEST_TIMEOUT", "1");
       const bounded = liveTargetTimeoutContract(lifecycle, expectation);
       expect(bounded.testTimeoutMs).toBe(minimumMinutes * MINUTE_MS);
-      expect(bounded.targetTimeoutMinutes).toBe(minimumMinutes + 20);
+      expect(bounded.targetTimeoutMinutes).toBe(
+        Math.ceil((minimumMinutes * MINUTE_MS + jobHeadroomMs) / MINUTE_MS),
+      );
     },
   );
 
@@ -210,7 +233,9 @@ describe("onboard final-handoff timeout contract", () => {
     const expectation = target.configExport.expectation;
     const configExportBudgetMs =
       CONFIG_EXPORT_COMMAND_TIMEOUT_MS +
-      (expectation === "required" ? CONFIG_EXPORT_POLICY_TIMEOUT_MS : 0);
+      (expectation === "required"
+        ? CONFIG_EXPORT_POLICY_TIMEOUT_MS + CONFIG_EXPORT_CONSUMER_BUDGET_MS
+        : 0);
     const contract = liveTargetTimeoutContract(target.environment.lifecycle, expectation);
     const lifecycleTestBudgetMs =
       target.environment.lifecycle === "dcode-rebuild-invalid-credential"
@@ -225,9 +250,11 @@ describe("onboard final-handoff timeout contract", () => {
 
   it("derives the registry job timeout from its test and post-test headroom", () => {
     const contract = liveTargetTimeoutContract(undefined, "required");
+    const requiredBudgetMs = contract.testTimeoutMs! + jobHeadroomMs;
 
     expect(jobHeadroomMs).toBe(DEFAULT_CLEANUP_TIMEOUT_MS + workflowFinalizationHeadroomMs);
-    expect(contract.targetTimeoutMinutes * MINUTE_MS).toBe(contract.testTimeoutMs! + jobHeadroomMs);
+    expect(contract.targetTimeoutMinutes * MINUTE_MS).toBeGreaterThanOrEqual(requiredBudgetMs);
+    expect(contract.targetTimeoutMinutes * MINUTE_MS - requiredBudgetMs).toBeLessThan(MINUTE_MS);
   });
 
   it("rejects a live workflow that ignores its typed job timeout", () => {
@@ -247,6 +274,9 @@ describe("onboard final-handoff timeout contract", () => {
     ONBOARD_FINAL_HANDOFF_COMMAND_TIMEOUT_MS,
     ONBOARD_NO_RECREATE_COMMAND_TIMEOUT_MS,
     CONFIG_EXPORT_COMMAND_TIMEOUT_MS,
+    CONFIG_EXPORT_CONSUMER_BUDGET_MS,
+    CONFIG_EXPORT_CONSUMER_BUILD_TIMEOUT_MS,
+    CONFIG_EXPORT_CONSUMER_COMMAND_TIMEOUT_MS,
     CONFIG_EXPORT_POLICY_TIMEOUT_MS,
     DCODE_INVALID_CREDENTIAL_LIFECYCLE_BUDGET_MS,
     LIVE_TARGET_BASE_TEST_TIMEOUT_MS,

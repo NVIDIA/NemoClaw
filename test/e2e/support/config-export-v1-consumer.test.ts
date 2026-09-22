@@ -3,7 +3,7 @@
 
 import { createHash } from "node:crypto";
 
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { exportSnapshots } from "../../../src/lib/actions/config/export-test-fixture.ts";
 import {
@@ -20,11 +20,15 @@ async function rawExport(source: ReturnType<typeof snapshot>): Promise<string> {
   return exported.writeStdout.mock.calls[0]![0];
 }
 
+afterEach(() => vi.unstubAllEnvs());
+
 describe("revision-matched v1 config consumer", () => {
   it(
     "preserves exported defaults through parsing and native generation (#12132)",
     testTimeoutOptions(12 * 60 * 1_000),
     async () => {
+      vi.stubEnv("NVIDIA_INFERENCE_API_KEY", "must-not-reach-consumer");
+      vi.stubEnv("GH_TOKEN", "must-not-reach-consumer");
       const openclaw = await rawExport(snapshot());
       const openclawTuned = await rawExport(tunedSnapshot());
       const hermesDisabled = await rawExport(hermesSnapshot());

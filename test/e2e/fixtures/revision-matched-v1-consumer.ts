@@ -16,8 +16,21 @@ import type { SandboxEntry } from "../../../src/lib/state/registry/types.ts";
 import { REPO_ROOT } from "./paths.ts";
 
 const FIXTURE_ROOT = path.join(REPO_ROOT, "test/e2e/fixtures/v1-config-consumer");
-const CONSUMER_COMMAND_TIMEOUT_MS = 30_000;
-const CONSUMER_BUILD_TIMEOUT_MS = 4 * 60_000;
+export const REVISION_MATCHED_CONSUMER_COMMAND_TIMEOUT_MS = 30_000;
+export const REVISION_MATCHED_CONSUMER_BUILD_TIMEOUT_MS = 4 * 60_000;
+const CONSUMER_RUNTIME_ENVIRONMENT_KEYS = [
+  "CARGO_HOME",
+  "HOME",
+  "LANG",
+  "LC_ALL",
+  "PATH",
+  "RUSTUP_HOME",
+  "RUSTUP_TOOLCHAIN",
+  "SYSTEMROOT",
+  "TEMP",
+  "TMP",
+  "TMPDIR",
+] as const;
 type RevisionMatchedLiveEntry = Pick<SandboxEntry, "name" | "agent" | "workload" | "hermesApiPort">;
 
 interface ConsumerInput {
@@ -43,6 +56,21 @@ interface ConsumerEvidence {
 
 function sha256(value: string): string {
   return createHash("sha256").update(value).digest("hex");
+}
+
+function consumerEnvironment(
+  inputDirectory: string,
+  settingsDirectory: string,
+  cargoTargetDirectory?: string,
+): NodeJS.ProcessEnv {
+  const environment: NodeJS.ProcessEnv = {};
+  for (const key of CONSUMER_RUNTIME_ENVIRONMENT_KEYS) {
+    if (process.env[key] !== undefined) environment[key] = process.env[key];
+  }
+  environment.NEMOCLAW_V1_CONFIG_INPUTS = inputDirectory;
+  environment.NEMOCLAW_V1_SETTINGS_OUTPUT = settingsDirectory;
+  if (cargoTargetDirectory) environment.CARGO_TARGET_DIR = cargoTargetDirectory;
+  return environment;
 }
 
 function openClawTargetDefaults(): Record<string, unknown> {
@@ -178,7 +206,7 @@ export function validateWithRevisionMatchedV1Consumer(
         encoding: "utf8",
         killSignal: "SIGKILL",
         stdio: "pipe",
-        timeout: CONSUMER_COMMAND_TIMEOUT_MS,
+        timeout: REVISION_MATCHED_CONSUMER_COMMAND_TIMEOUT_MS,
       },
     );
     fs.mkdirSync(consumer);
@@ -186,7 +214,7 @@ export function validateWithRevisionMatchedV1Consumer(
       encoding: "utf8",
       killSignal: "SIGKILL",
       stdio: "pipe",
-      timeout: CONSUMER_COMMAND_TIMEOUT_MS,
+      timeout: REVISION_MATCHED_CONSUMER_COMMAND_TIMEOUT_MS,
     });
     fs.copyFileSync(
       path.join(FIXTURE_ROOT, "config-export-compatibility.rs"),
@@ -198,19 +226,15 @@ export function validateWithRevisionMatchedV1Consumer(
       {
         cwd: consumer,
         encoding: "utf8",
-        env: {
-          ...process.env,
-          CARGO_TARGET_DIR: path.join(
-            os.tmpdir(),
-            `nemoclaw-v1-target-${V1ALPHA1_RUNTIME_DEFAULTS_REVISION}`,
-          ),
-          NEMOCLAW_V1_CONFIG_INPUTS: inputDirectory,
-          NEMOCLAW_V1_SETTINGS_OUTPUT: settingsDirectory,
-        },
+        env: consumerEnvironment(
+          inputDirectory,
+          settingsDirectory,
+          path.join(temporaryRoot, "cargo-target"),
+        ),
         maxBuffer: 10 * 1024 * 1024,
         killSignal: "SIGKILL",
         stdio: "pipe",
-        timeout: CONSUMER_BUILD_TIMEOUT_MS,
+        timeout: REVISION_MATCHED_CONSUMER_BUILD_TIMEOUT_MS,
       },
     );
     execFileSync(
@@ -228,10 +252,11 @@ export function validateWithRevisionMatchedV1Consumer(
       ],
       {
         encoding: "utf8",
+        env: consumerEnvironment(inputDirectory, settingsDirectory),
         killSignal: "SIGKILL",
         maxBuffer: 10 * 1024 * 1024,
         stdio: "pipe",
-        timeout: CONSUMER_COMMAND_TIMEOUT_MS,
+        timeout: REVISION_MATCHED_CONSUMER_COMMAND_TIMEOUT_MS,
       },
     );
     const evidence = JSON.parse(fs.readFileSync(evidencePath, "utf8")) as Omit<

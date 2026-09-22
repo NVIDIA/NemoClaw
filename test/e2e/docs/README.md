@@ -120,11 +120,12 @@ references must still be declared by the manifest.
 
 The typed live-target timeout contract budgets a two-minute config export
 ceiling for `required` and `expected-refusal`. A `required` target also budgets
-a one-minute effective-policy read. A `no-usable-sandbox` target adds neither
-ceiling because it does not invoke config export. The
+a one-minute effective-policy read and 5.5 minutes for the revision-matched v1
+consumer. A `no-usable-sandbox` target adds none of these ceilings because it
+does not invoke config export. The
 `dcode-rebuild-invalid-credential` target has a 130-minute base budget for its
 lifecycle and ordered cloud checks. With required export, its default test
-timeout is 133 minutes and its job ceiling is 153 minutes.
+timeout is 138.5 minutes and its job ceiling is 159 minutes.
 `NEMOCLAW_TEST_TIMEOUT`, in milliseconds, can raise but cannot
 lower the derived test timeout. The derived job ceiling keeps at least 20
 minutes of headroom and rounds up to a whole minute.
@@ -147,10 +148,11 @@ secrets and internal credential transport markers before publication.
 The secret scan covers registered fixture values, not arbitrary unregistered
 secrets. Review selected exports before retaining them as migration fixtures.
 
-After a live target succeeds, the E2E workflow requires both
-`config-export-evidence.v1.json` and `config-export.yaml` before artifact
-upload. A missing file fails the target job. The workflow uploads both files
-with the target's retained artifacts.
+After a live target succeeds, the E2E workflow requires
+`config-export-evidence.v1.json`. It also requires `config-export.yaml` when
+the evidence classification is `success`; `expected-refusal` and
+`no-usable-sandbox` do not publish YAML. A missing required file fails the
+target job.
 
 `suiteIds` remain metadata for reporting and migration planning. They do not
 dispatch shell validation suites.

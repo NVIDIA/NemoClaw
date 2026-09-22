@@ -5,6 +5,7 @@ import argparse
 import copy
 import importlib
 import json
+import os
 import sys
 import types
 from pathlib import Path
@@ -112,6 +113,13 @@ def main():
     parser.add_argument("--manifest", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
+    for name in ("NVIDIA_INFERENCE_API_KEY", "GH_TOKEN"):
+        if name in os.environ:
+            raise AssertionError(f"consumer received {name}")
+    if Path(os.environ["NEMOCLAW_V1_SETTINGS_OUTPUT"]) != args.settings:
+        raise AssertionError("consumer settings path was not preserved")
+    if not Path(os.environ["NEMOCLAW_V1_CONFIG_INPUTS"]).is_dir():
+        raise AssertionError("consumer input path was not preserved")
     manifest = json.loads(args.manifest.read_text(encoding="utf-8"))
     openclaw, hermes = load_adapters(args.consumer)
     documents = []
