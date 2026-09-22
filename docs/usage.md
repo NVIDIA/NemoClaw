@@ -4,7 +4,7 @@
 # Use Desired State
 
 Use a [verified native bundle](build.md) with its `bin` directory on `PATH`.
-For a first deployment, follow [get started](get-started.md) or [interactive onboarding](reference/cli.md#commands).
+For a first deployment, follow [get started](get-started.md).
 When copying an [example](../examples/), assign a fresh UUID and replace endpoints and image pins with values for your resources.
 Keep the matching bundle and the same state directory throughout the deployment.
 
