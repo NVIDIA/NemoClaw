@@ -38,8 +38,8 @@
  * handles open. OpenClaw then prints Approved and returns without exiting, so
  * `openclaw devices approve` hangs and `nemoclaw connect` waits with it
  * (#12064). Drain stdout and stderr, then force `defaultRuntime.exit(0)` after
- * a successful approve until upstream closes those handles or exits after
- * Approved.
+ * a successful local fallback approve until upstream closes those handles or
+ * exits after Approved.
  *
  * Remove this patch when upstream OpenClaw supports same-device, operator-only
  * scope approval through the gateway using the already-approved pairing scope
@@ -65,6 +65,10 @@ const CLI_BOOTSTRAP_AUTH_STORE_MARKER = "nemoclaw: persist canonical CLI bootstr
 const CLI_PAIRED_TOKEN_MARKER = "nemoclaw: preflight bounded paired token before live pairing list";
 const CLI_APPROVE_EXIT_MARKER =
   "nemoclaw: exit after devices approve so leftover gateway handles cannot hang";
+const CLI_APPROVE_LOCAL_FALLBACK_MARKER =
+  "nemoclaw: mark local fallback approval for bounded process exit";
+const CLI_APPROVE_LOCAL_FALLBACK_RESET_MARKER =
+  "nemoclaw: reset local fallback approval exit state";
 const CALL_FORCE_IDENTITY_MARKER = "nemoclaw: force device identity for loopback pairing bootstrap";
 const CALL_STORED_IDENTITY_MARKER =
   "nemoclaw: retain stored CLI device identity for loopback shared-token scope enforcement";
@@ -394,7 +398,7 @@ const CLI_APPROVE_EXIT_TARGET = [
   '\tdefaultRuntime.log(`${theme.success("Approved")} ${theme.command(deviceId ?? "ok")} ${theme.muted(`(${approvedRequestId})`)}`);',
   "}",
 ].join("\n");
-const CLI_APPROVE_EXIT_REPLACEMENT = [
+const CLI_APPROVE_EXIT_REPLACEMENT_PREVIOUS = [
   "\tconst exitAfterDevicesApproveOutput = () => {",
   "\t\tlet remaining = 2;",
   "\t\tconst done = () => {",
@@ -421,18 +425,76 @@ const CLI_APPROVE_EXIT_REPLACEMENT = [
   "\texitAfterDevicesApproveOutput();",
   "}",
 ].join("\n");
+const CLI_APPROVE_EXIT_REPLACEMENT = CLI_APPROVE_EXIT_REPLACEMENT_PREVIOUS.replace(
+  "\tconst exitAfterDevicesApproveOutput = () => {",
+  [
+    "\tconst nemoclawExitAfterDevicesApprove =",
+    '\t\topts[Symbol.for("nemoclaw.devices-approve.local-fallback")] === true;',
+    "\tconst exitAfterDevicesApproveOutput = () => {",
+    "\t\tif (!nemoclawExitAfterDevicesApprove) return;",
+  ].join("\n"),
+);
+
+const CLI_APPROVE_LOCAL_FALLBACK_RESET_TARGET =
+  '\tif (nemoclawRefuseUnsafeApproval) throw new Error("bounded same-device approval context changed before gateway approval");';
+const CLI_APPROVE_LOCAL_FALLBACK_RESET_REPLACEMENT = [
+  CLI_APPROVE_LOCAL_FALLBACK_RESET_TARGET,
+  `\tdelete opts[Symbol.for("nemoclaw.devices-approve.local-fallback")]; // ${CLI_APPROVE_LOCAL_FALLBACK_RESET_MARKER} (#12064)`,
+].join("\n");
+const CLI_APPROVE_LOCAL_FALLBACK_TARGET = [
+  "\t\tconst fallback = resolveLocalPairingFallback(opts, error);",
+  "\t\tif (!fallback) {",
+].join("\n");
+const CLI_APPROVE_LOCAL_FALLBACK_REPLACEMENT = [
+  "\t\tconst fallback = resolveLocalPairingFallback(opts, error);",
+  `\t\tif (fallback) Object.defineProperty(opts, Symbol.for("nemoclaw.devices-approve.local-fallback"), { configurable: true, value: true }); // ${CLI_APPROVE_LOCAL_FALLBACK_MARKER} (#12064)`,
+  "\t\tif (!fallback) {",
+].join("\n");
 
 function applyDevicesApproveExitPatch(source: string, file: string): ReplacementResult {
-  if (source.includes(CLI_APPROVE_EXIT_MARKER)) {
+  const exitMarkerCount = countOccurrences(source, CLI_APPROVE_EXIT_MARKER);
+  const fallbackMarkerCount = countOccurrences(source, CLI_APPROVE_LOCAL_FALLBACK_MARKER);
+  const fallbackResetMarkerCount = countOccurrences(
+    source,
+    CLI_APPROVE_LOCAL_FALLBACK_RESET_MARKER,
+  );
+  if (exitMarkerCount === 1 && fallbackMarkerCount === 1 && fallbackResetMarkerCount === 1) {
     return { source };
   }
-  return replaceExactlyOnce(
+  const isFresh =
+    exitMarkerCount === 0 && fallbackMarkerCount === 0 && fallbackResetMarkerCount === 0;
+  const isPrevious =
+    exitMarkerCount === 1 && fallbackMarkerCount === 0 && fallbackResetMarkerCount === 0;
+  if (!isFresh && !isPrevious) {
+    return {
+      source,
+      error: `devices CLI approve exit patch in ${file}: partial or duplicate patch markers (${exitMarkerCount}, ${fallbackMarkerCount}, ${fallbackResetMarkerCount})`,
+    };
+  }
+  let result = replaceExactlyOnce(
     source,
-    CLI_APPROVE_EXIT_TARGET,
+    exitMarkerCount === 1 ? CLI_APPROVE_EXIT_REPLACEMENT_PREVIOUS : CLI_APPROVE_EXIT_TARGET,
     CLI_APPROVE_EXIT_REPLACEMENT,
     "devices CLI approve success exit target",
     file,
   );
+  if (result.error) return result;
+  result = replaceExactlyOnce(
+    result.source,
+    CLI_APPROVE_LOCAL_FALLBACK_RESET_TARGET,
+    CLI_APPROVE_LOCAL_FALLBACK_RESET_REPLACEMENT,
+    "devices CLI local fallback exit reset target",
+    file,
+  );
+  if (result.error) return result;
+  result = replaceExactlyOnce(
+    result.source,
+    CLI_APPROVE_LOCAL_FALLBACK_TARGET,
+    CLI_APPROVE_LOCAL_FALLBACK_REPLACEMENT,
+    "devices CLI local fallback exit target",
+    file,
+  );
+  return result;
 }
 
 const CLI_TARGET = [
@@ -1962,7 +2024,7 @@ const BASE_FILE_SPECS: FileSpec[] = [
             upgradedSource = result.source;
             changed = true;
           }
-          if (!upgradedSource.includes(CLI_APPROVE_EXIT_MARKER)) {
+          if (!upgradedSource.includes(CLI_APPROVE_LOCAL_FALLBACK_MARKER)) {
             const result = applyDevicesApproveExitPatch(upgradedSource, file);
             if (result.error) return { source, status: "no-match", error: result.error };
             upgradedSource = result.source;
