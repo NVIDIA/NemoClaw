@@ -25,11 +25,12 @@ describe.skipIf(!dockerClientAvailable)("managed vLLM Docker format boundary", (
     expect(fixture.run().serving.hostPort).toBe(18000);
   });
 
-  it("accepts Docker null defaults for unused runtime settings", () => {
+  it("accepts Docker-normalized runtime settings", () => {
     Object.assign(fixture.objects.container.HostConfig, {
       Devices: null,
       CapAdd: null,
-      SecurityOpt: null,
+      SecurityOpt: ["label=disable"],
+      Ulimits: null,
     });
     Reflect.deleteProperty(fixture.objects.container.HostConfig, "Tmpfs");
     Object.assign(fixture.objects.container.HostConfig.DeviceRequests[0]!, { DeviceIDs: null });
