@@ -162,7 +162,7 @@ def scan_files(paths, patterns, scan_budget):
     for raw_path in paths:
         descriptor = None
         try:
-            descriptor = os.open(raw_path, os.O_RDONLY | os.O_NOFOLLOW)
+            descriptor = os.open(raw_path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
             opened = os.fstat(descriptor)
             if not stat.S_ISREG(opened.st_mode):
                 errors.append("unsafe-file-boundary")
