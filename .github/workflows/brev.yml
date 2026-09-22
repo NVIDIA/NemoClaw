@@ -102,6 +102,11 @@ jobs:
                   fi
                 else
                   absent=0
+                  # Brev can acknowledge a deletion and later surface the
+                  # workspace as unhealthy instead of removing it. Reissue the
+                  # idempotent delete while the owned workspace is still
+                  # present so cleanup can recover from that transition.
+                  brev delete "${INSTANCE_NAME}" >/dev/null 2>&1 || true
                 fi
                 brev refresh >/dev/null 2>&1 || true
                 sleep 15
