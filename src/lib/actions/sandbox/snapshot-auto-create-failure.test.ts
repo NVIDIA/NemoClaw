@@ -62,11 +62,18 @@ const registerSandboxMock = vi.fn(
   (
     entry: Record<string, unknown>,
     _routeReservation?: unknown,
-    options: { pending?: boolean } = {},
+    options: { pending?: boolean; reservationSessionId?: string } = {},
   ) => {
     harness.entries.set(String(entry.name), {
       ...entry,
-      ...(options.pending === true ? { pendingRouteReservation: true } : {}),
+      ...(options.pending === true
+        ? {
+            pendingRouteReservation: true,
+            ...(options.reservationSessionId
+              ? { reservationSessionId: options.reservationSessionId }
+              : {}),
+          }
+        : {}),
     });
   },
 );
@@ -85,6 +92,22 @@ const reserveSandboxInferenceRouteMock = vi.fn((name: string, route: Record<stri
     ...route,
   });
   return true;
+});
+const finalizeSandboxRouteReservationMock = vi.fn((name: string, sessionId: string) => {
+  const entry = harness.entries.get(name);
+  if (entry?.pendingRouteReservation !== true || entry.reservationSessionId !== sessionId) {
+    return false;
+  }
+  harness.entries.set(name, {
+    ...entry,
+    pendingRouteReservation: undefined,
+  });
+  return true;
+});
+const removeSandboxRouteReservationIfCurrentMock = vi.fn((expected: Record<string, unknown>) => {
+  const name = String(expected.name);
+  if (harness.entries.get(name) !== expected) return false;
+  return harness.entries.delete(name);
 });
 const restoreSandboxStateMock = vi.fn();
 const captureSnapshotRestoreAuthorityMock = vi.fn();
@@ -261,8 +284,22 @@ vi.mock("../../state/registry", () => ({
     defaultSandbox: "alpha",
   })),
   finalizePendingSandboxRegistration: finalizePendingSandboxRegistrationMock,
+  finalizeSandboxRouteReservation: finalizeSandboxRouteReservationMock,
   registerSandbox: registerSandboxMock,
   reserveSandboxInferenceRoute: reserveSandboxInferenceRouteMock,
+  removeSandboxRouteReservationIfCurrent: removeSandboxRouteReservationIfCurrentMock,
+  normalizeSandboxInferenceRouteSelection: vi.fn((selection) => ({
+    provider: selection.provider ?? null,
+    model: selection.model ?? null,
+    endpointUrl: selection.endpointUrl ?? null,
+    endpointSource: selection.endpointUrl ? (selection.endpointSource ?? null) : null,
+    credentialEnv: selection.credentialEnv ?? null,
+    preferredInferenceApi: selection.preferredInferenceApi ?? null,
+  })),
+  isRouteOnlySandboxReservation: vi.fn(
+    (entry: Record<string, unknown>) =>
+      entry.pendingRouteReservation === true && entry.createdAt === undefined,
+  ),
   removeSandbox: vi.fn((name: string) => harness.entries.delete(name)),
   updateSandbox: vi.fn(),
 }));
@@ -438,6 +475,53 @@ describe("snapshot restore auto-create failures", () => {
     expect(restoreSandboxStateMock).not.toHaveBeenCalled();
   });
 
+  it("keeps waiting when create-attempt identity metadata is pending (#12118)", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    captureOpenshellMock.mockImplementation((args: string[]) => {
+      const selectorIndex = args.indexOf("--selector");
+      const selector = args[selectorIndex + 1] ?? "";
+      const separatorIndex = selector.indexOf("=");
+      return selectorIndex >= 0
+        ? {
+            status: 0,
+            output: JSON.stringify([
+              {
+                id: "beta-runtime-id",
+                name: "beta",
+                labels: {
+                  [selector.slice(0, separatorIndex)]: selector.slice(separatorIndex + 1),
+                },
+              },
+            ]),
+          }
+        : {
+            status: 0,
+            output:
+              args[0] === "policy"
+                ? "version: 1\nnetwork_policies: {}\n"
+                : "alpha Ready\nbeta Ready\nId: beta-runtime-id\n",
+          };
+    });
+    streamSandboxCreateMock.mockImplementationOnce(async (_command, _args, _env, options) => {
+      expect(options.readyCheck?.()).toBe(false);
+      return {
+        status: 7,
+        output: "spawn failed: injected create failure (ENOENT)",
+        sawProgress: false,
+        forcedReady: false,
+      };
+    });
+    const { runSandboxSnapshot } = await import("./snapshot");
+
+    await expect(
+      runSandboxSnapshot("alpha", { kind: "restore", to: "beta" }),
+    ).rejects.toMatchObject({ exitCode: 1 });
+
+    expect(registerSandboxMock).not.toHaveBeenCalled();
+    expect(restoreSandboxStateMock).not.toHaveBeenCalled();
+  });
+
   it("releases an exact host-local clone reservation when auto-create fails", async () => {
     const receipt = serializedLlamaCppHostLocalInferenceReceipt();
     harness.entries.set("alpha", {
@@ -520,10 +604,123 @@ describe("snapshot restore auto-create failures", () => {
     expect(streamSandboxCreateMock).toHaveBeenCalledOnce();
     expect(getSandboxMock("beta")).toMatchObject({
       pendingRouteReservation: true,
+      reservationSessionId: expect.stringMatching(/^[0-9a-f]{62}$/u),
       hostLocalInferenceReceipt: receipt,
     });
     expect(registerSandboxMock).not.toHaveBeenCalled();
     expect(restoreSandboxStateMock).not.toHaveBeenCalled();
+  });
+
+  it("retains a matching clone before absence permits a retry (#12118)", async () => {
+    const receipt = serializedLlamaCppHostLocalInferenceReceipt();
+    const source = {
+      ...sourceEntry(),
+      openshellDriver: "docker",
+      provider: "llama-cpp-local",
+      model: "llama-cpp-model",
+      endpointUrl: "https://inference.local/v1",
+      endpointSource: "inference-set",
+      credentialEnv: "NEMOCLAW_LLAMACPP_LOCAL_TOKEN",
+      preferredInferenceApi: "openai-completions",
+      gatewayName: "nemoclaw",
+      gatewayPort: 8080,
+      hostLocalInferenceReceipt: receipt,
+      hostLocalInferenceProvenance: createSandboxHostLocalInferenceProvenance("alpha", receipt),
+    };
+    const retainedNonce = "b".repeat(62);
+    let createSubmitted = false;
+    harness.entries.set("alpha", source);
+    harness.entries.set("beta", {
+      name: "beta",
+      pendingRouteReservation: true,
+      reservationSessionId: retainedNonce,
+      provider: source.provider,
+      model: source.model,
+      endpointUrl: source.endpointUrl,
+      endpointSource: source.endpointSource,
+      credentialEnv: source.credentialEnv,
+      preferredInferenceApi: source.preferredInferenceApi,
+      gatewayName: source.gatewayName,
+      gatewayPort: source.gatewayPort,
+      openshellDriver: source.openshellDriver,
+      hostLocalInferenceReceipt: source.hostLocalInferenceReceipt,
+      hostLocalInferenceProvenance: source.hostLocalInferenceProvenance,
+    });
+    captureOpenshellMock.mockImplementation((args: string[]) => {
+      const selectorIndex = args.indexOf("--selector");
+      const selector = args[selectorIndex + 1] ?? "";
+      if (selector.endsWith(retainedNonce)) return defaultCaptureOpenshell(args);
+      return {
+        status: 0,
+        output: args[0] === "policy" ? "version: 1\nnetwork_policies: {}\n" : "alpha Ready\n",
+      };
+    });
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    const { runSandboxSnapshot } = await import("./snapshot");
+
+    await expect(
+      runSandboxSnapshot("alpha", { kind: "restore", to: "beta" }),
+    ).rejects.toMatchObject({
+      lines: expect.arrayContaining([
+        expect.stringContaining("OpenShell still reports a sandbox for the create-attempt label"),
+      ]),
+    });
+
+    expect(streamSandboxCreateMock).not.toHaveBeenCalled();
+    expect(getSandboxMock("beta")).toMatchObject({ reservationSessionId: retainedNonce });
+
+    captureOpenshellMock.mockImplementation((args: string[]) => {
+      const selectorIndex = args.indexOf("--selector");
+      const selector = args[selectorIndex + 1] ?? "";
+      if (selector.endsWith(retainedNonce)) return { status: 0, output: "[]" };
+      if (selectorIndex >= 0) return defaultCaptureOpenshell(args);
+      return {
+        status: 0,
+        output:
+          args[0] === "policy"
+            ? "version: 1\nnetwork_policies: {}\n"
+            : createSubmitted
+              ? "alpha Ready\nbeta Ready\nId: beta-runtime-id\n"
+              : "alpha Ready\n",
+      };
+    });
+    streamSandboxCreateMock.mockImplementationOnce(async () => {
+      createSubmitted = true;
+      return {
+        status: 0,
+        output: "created",
+        sawProgress: true,
+        forcedReady: false,
+      };
+    });
+    restoreSandboxStateMock.mockReturnValue({
+      success: true,
+      restoredDirs: [],
+      restoredFiles: [],
+      failedDirs: [],
+      failedFiles: [],
+    });
+
+    await expect(
+      runSandboxSnapshot("alpha", { kind: "restore", to: "beta" }),
+    ).resolves.toBeUndefined();
+
+    expect(removeSandboxRouteReservationIfCurrentMock).toHaveBeenCalledWith(
+      expect.objectContaining({ reservationSessionId: retainedNonce }),
+    );
+    expect(streamSandboxCreateMock).toHaveBeenCalledOnce();
+    expect(reserveSandboxInferenceRouteMock).toHaveBeenCalledWith(
+      "beta",
+      expect.objectContaining({
+        reservationSessionId: expect.not.stringMatching(new RegExp(`^${retainedNonce}$`, "u")),
+      }),
+    );
+    expect(finalizeSandboxRouteReservationMock).toHaveBeenCalledWith(
+      "beta",
+      expect.stringMatching(/^[0-9a-f]{62}$/u),
+    );
+    expect(restoreSandboxStateMock).toHaveBeenCalledOnce();
   });
 
   it("releases an exact host-local clone reservation when auto-create rejects", async () => {
