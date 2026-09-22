@@ -24,6 +24,7 @@ import { trustedSandboxShellScript, type SandboxClient } from "./clients/sandbox
 import type { CleanupRegistry } from "./cleanup.ts";
 import { CLI_ENTRYPOINT, REPO_ROOT } from "./paths.ts";
 import { inspectConfigExportArtifactSafety } from "./phases/config-export-validation.ts";
+import { redactString } from "./redaction.ts";
 import { validateLiveExportWithRevisionMatchedV1Consumer } from "./revision-matched-v1-consumer.ts";
 
 interface HermesConfigExportLiveInput {
@@ -59,6 +60,7 @@ interface HermesConfigExportPublishedEvidence {
   readonly launchersSucceeded: boolean;
   readonly policyMatches: boolean;
   readonly revisionMatchedV1ConsumerAccepted: boolean;
+  readonly revisionMatchedV1ConsumerDiagnostic?: string;
   readonly sandboxNameMatches: boolean;
 }
 
@@ -79,6 +81,7 @@ export type HermesConfigExportLiveEvidence =
 const CREDENTIAL_HTTP_REFUSAL =
   "V1alpha1 requires HTTPS when an inference provider declares a credential.";
 const CREDENTIAL_HTTP_REFUSAL_DIAGNOSTIC = `Config export failed (unsupported).\n${CREDENTIAL_HTTP_REFUSAL}`;
+const MAX_CONSUMER_DIAGNOSTIC_LENGTH = 2_048;
 
 function normalizeCommandDiagnostics(stdout: string, stderr: string): string {
   return [stdout, stderr]
@@ -363,10 +366,17 @@ export async function verifyHermesConfigExportLive(
   }
 
   let revisionMatchedV1ConsumerAccepted = false;
+  let revisionMatchedV1ConsumerDiagnostic: string | undefined;
   try {
     validateLiveExportWithRevisionMatchedV1Consumer(nemoclawRaw, entry);
     revisionMatchedV1ConsumerAccepted = true;
-  } catch {}
+  } catch (error) {
+    const diagnostic = error instanceof Error ? error.message : String(error);
+    revisionMatchedV1ConsumerDiagnostic = redactString(diagnostic, input.redactionValues).slice(
+      0,
+      MAX_CONSUMER_DIAGNOSTIC_LENGTH,
+    );
+  }
 
   const evidence: HermesConfigExportLiveEvidence = {
     outcome: "published",
@@ -397,6 +407,7 @@ export async function verifyHermesConfigExportLive(
         (expectedPolicy as { network_policies?: unknown }).network_policies,
       ),
     revisionMatchedV1ConsumerAccepted,
+    ...(revisionMatchedV1ConsumerDiagnostic ? { revisionMatchedV1ConsumerDiagnostic } : {}),
     sandboxNameMatches: sandbox.name === input.sandboxName,
   };
   const passed = passesHermesConfigExportLiveEvidence(evidence);

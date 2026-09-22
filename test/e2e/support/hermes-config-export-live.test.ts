@@ -371,15 +371,29 @@ describe("Hermes config export live evidence", () => {
       .mockImplementationOnce(writeExport)
       .mockResolvedValue({ exitCode: 1, stderr: "sandbox identity drifted", stdout: "" });
     mocks.validateV1Consumer.mockImplementationOnce(() => {
-      throw new Error("pinned consumer rejected the export");
+      throw new Error(`pinned consumer rejected secret-value ${"x".repeat(3_000)}`);
     });
 
-    await expect(runEnabledFixture()).resolves.toEqual({ checked: true, passed: false });
+    await expect(runEnabledFixture(["secret-value"])).resolves.toEqual({
+      checked: true,
+      passed: false,
+    });
     expect(mocks.validateV1Consumer).toHaveBeenCalledWith("{}", expect.any(Object));
     expect(mocks.writeJson).toHaveBeenCalledWith(
       "hermes-config-export-live-evidence.json",
-      expect.objectContaining({ revisionMatchedV1ConsumerAccepted: false }),
+      expect.objectContaining({
+        revisionMatchedV1ConsumerAccepted: false,
+        revisionMatchedV1ConsumerDiagnostic: expect.not.stringContaining("secret-value"),
+      }),
     );
+    const evidence = mocks.writeJson.mock.calls.at(-1)?.[1] as HermesConfigExportLiveEvidence;
+    expect(evidence).toMatchObject({
+      revisionMatchedV1ConsumerDiagnostic: expect.stringContaining("[REDACTED]"),
+    });
+    expect(
+      (evidence as Extract<HermesConfigExportLiveEvidence, { outcome: "published" }>)
+        .revisionMatchedV1ConsumerDiagnostic,
+    ).toHaveLength(2_048);
     expect(mocks.writeText).not.toHaveBeenCalled();
   });
 });
