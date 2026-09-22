@@ -40,7 +40,7 @@ import {
 import { validateManagedVllmBridgeHost } from "./vllm-host-local-network";
 
 const { Type } = require("typebox") as typeof TypeBoxModule;
-const { Check } = require("typebox/value") as typeof TypeBoxValueModule;
+const { Check, Errors } = require("typebox/value") as typeof TypeBoxValueModule;
 const MAX_INSPECTION_BYTES = 64 * 1024;
 const INSPECTION_TIMEOUT_MS = 5_000;
 const Id = Type.String({ pattern: "^[a-f0-9]{64}$" });
@@ -111,10 +111,19 @@ function fail(): never {
 function parse<T extends TypeBoxModule.Type.TSchema>(
   source: string,
   schema: T,
+  onInvalid?: (diagnostic: string) => void,
 ): TypeBoxModule.Type.Static<T> {
   if (!source || Buffer.byteLength(source) > MAX_INSPECTION_BYTES) fail();
   const value: unknown = JSON.parse(source);
-  if (!Check(schema, value)) fail();
+  if (!Check(schema, value)) {
+    onInvalid?.(
+      Errors(schema, value)
+        .slice(0, 8)
+        .map(({ instancePath, keyword }) => `${instancePath || "/"}:${keyword}`)
+        .join(","),
+    );
+    fail();
+  }
   return value;
 }
 
@@ -284,6 +293,9 @@ export function observeManagedVllmForExport(
         containerFormat(expected, image, options.homeDirectory ?? os.homedir()),
       ),
       ContainerSchema,
+      (shape) => {
+        diagnostic = `container-shape:${shape}`;
+      },
     );
     if (!row.Matches) {
       diagnostic = `container-policy:${row.Diagnostic}`;
