@@ -535,9 +535,10 @@ function prepareManagedLlamaCppMenu(input: {
       )
     : null;
   const resolution = discovery?.resolution ?? null;
-  if (platform === "n1x" && resolution?.kind === "rejected") {
+  if ((platform === "n1x" || platform === "linux") && resolution?.kind === "rejected") {
+    const platformName = platform === "n1x" ? "N1x" : "Linux";
     deps.note(
-      `  Managed llama.cpp is unavailable on this N1x host: ${resolution.reason} Fix the reported readiness or runtime-provider requirement, then rerun onboarding.`,
+      `  Managed llama.cpp is unavailable on this ${platformName} host: ${resolution.reason} Fix the reported readiness or runtime-provider requirement, then rerun onboarding.`,
     );
   }
   return {

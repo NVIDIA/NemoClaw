@@ -103,6 +103,22 @@ function sparkCollectionOptions(): Omit<
   };
 }
 
+function linuxCollectionOptions(): Omit<
+  CollectHostObservationsOptions,
+  "detectGpu" | "containerGpuProof"
+> {
+  return {
+    architecture: "x64",
+    assess: () => dockerHostAssessment(false),
+    collectPlatformIdentity: () => ({
+      nvidiaPlatform: "linux",
+      productName: "NVIDIA RTX PRO 6000 Blackwell Server Edition",
+    }),
+    detectHostGpuPlatform: () => "linux",
+    detectNvidiaDriverVersion: () => "595.84",
+  };
+}
+
 function n1xProofHarness(proofPassed: boolean, requestedProvider: string | null) {
   const selection = managedSelectionFixture(
     "llama-cpp.qwen3-6-35b-a3b.n1x-wsl.v1",
@@ -265,6 +281,108 @@ describe("managed llama.cpp profile onboarding", () => {
       );
     },
   );
+
+  it("installs the Linux profile that automatic discovery selects from the shipped catalog (#12155)", async () => {
+    const catalog = loadManagedInferenceCatalog();
+    const gpu = {
+      type: "nvidia",
+      name: "NVIDIA RTX PRO 6000 Blackwell Server Edition",
+      platform: "linux" as const,
+      count: 1,
+      totalMemoryMB: 96_000,
+      perGpuMB: 96_000,
+      nimCapable: true,
+    } as never;
+    const discoverManagedLlamaCppSelections = vi.fn(
+      (env, detectedGpu, _catalog, _collectionOptions, selectionOptions) =>
+        discoverManagedLlamaCppSelectionsForGpu(
+          env,
+          detectedGpu,
+          catalog,
+          linuxCollectionOptions(),
+          selectionOptions,
+        ),
+    );
+    const installManagedLlamaCpp = vi.fn<NonNullable<SetupNimFlowDeps["installManagedLlamaCpp"]>>(
+      async (selection) => ({
+        ok: true as const,
+        apiKey: "a".repeat(64),
+        model: selection.recipe.spec.model.servedName,
+        receipt: { schemaVersion: 1 } as never,
+      }),
+    );
+    const handleLlamaCppSelection = vi.fn<SetupNimFlowDeps["handleLlamaCppSelection"]>(
+      async (state, requestedModel) => {
+        state.provider = "llama-cpp-local";
+        state.model = requestedModel;
+        return "selected";
+      },
+    );
+    const selectFromNumberedMenu = vi.fn<SetupNimFlowDeps["selectFromNumberedMenu"]>(
+      (_rawChoice, _defaultIndex, options) => {
+        const managed = options.find(
+          ({ managedLlamaCppRecipeId }) =>
+            managedLlamaCppRecipeId === "llama-cpp.nemotron-3-nano-30b-a3b.spark-single.v1",
+        );
+        expect(managed).toMatchObject({
+          key: "install-llama-cpp",
+          label:
+            "Managed llama.cpp: NVIDIA Nemotron 3 Nano 30B-A3B on one Linux x86_64 NVIDIA GPU (recommended)",
+        });
+        return managed!;
+      },
+    );
+    const setupNim = createSetupNim(
+      makeDeps({
+        discoverManagedLlamaCppSelections,
+        handleLlamaCppSelection,
+        installManagedLlamaCpp,
+        prompt: async () => "1",
+        selectFromNumberedMenu,
+      }),
+    );
+
+    await expect(setupNim(gpu, "linux-agent")).resolves.toMatchObject({
+      provider: "llama-cpp-local",
+      model: "nvidia-nemotron-3-nano-30b-a3b",
+      servingProfileProvenance: {
+        preset: {
+          id: "llama-cpp.linux-amd64-nvidia.single.nemotron-3-nano-30b-a3b",
+        },
+        recipe: { id: "llama-cpp.nemotron-3-nano-30b-a3b.spark-single.v1" },
+      },
+    });
+    expect(discoverManagedLlamaCppSelections).toHaveBeenCalledTimes(2);
+    expect(discoverManagedLlamaCppSelections).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ NEMOCLAW_LLAMACPP_RECIPE: "", NEMOCLAW_SERVING_PRESET: "" }),
+      gpu,
+      undefined,
+      undefined,
+      { runtimeProviderId: "docker" },
+    );
+    const menuDiscovery = discoverManagedLlamaCppSelections.mock.results[0]?.value;
+    expect(menuDiscovery).toMatchObject({
+      resolution: {
+        kind: "selected",
+        selection: {
+          selection: "automatic",
+          preset: {
+            metadata: {
+              id: "llama-cpp.linux-amd64-nvidia.single.nemotron-3-nano-30b-a3b",
+            },
+          },
+        },
+      },
+    });
+    const installDiscovery = discoverManagedLlamaCppSelections.mock.results[1]?.value;
+    const installSelection =
+      installDiscovery?.resolution.kind === "selected"
+        ? installDiscovery.resolution.selection
+        : null;
+    expect(installSelection).not.toBeNull();
+    expect(installManagedLlamaCpp.mock.calls[0]?.[0]).toBe(installSelection);
+  });
 
   it("installs the serving preset a profile request exports through the managed llama.cpp provider", async () => {
     vi.stubEnv("NEMOCLAW_SERVING_PRESET", "llama-cpp.dgx-spark-gb10.single.muse-glimmer-30b");
@@ -738,6 +856,48 @@ describe("managed llama.cpp profile onboarding", () => {
     });
     expect(note).toHaveBeenCalledWith(
       "  Managed llama.cpp profiles unavailable: managed-inference catalog is unavailable",
+    );
+  });
+
+  it("explains a Linux profile rejection while keeping other providers available", async () => {
+    const note = vi.fn();
+    const selectFromNumberedMenu = vi.fn<SetupNimFlowDeps["selectFromNumberedMenu"]>(
+      (_rawChoice, _defaultIndex, options) => {
+        expect(options.map(({ key }) => key)).not.toContain("install-llama-cpp");
+        return options.find(({ key }) => key === "build")!;
+      },
+    );
+    const handleRemoteProviderSelection = vi.fn<SetupNimFlowDeps["handleRemoteProviderSelection"]>(
+      async (_args, state) => {
+        state.provider = "nvidia-prod";
+        state.model = "nvidia/nemotron-3-super-120b-a12b";
+        state.endpointUrl = "https://integrate.api.nvidia.com/v1";
+        state.credentialEnv = "NVIDIA_INFERENCE_API_KEY";
+        state.preferredInferenceApi = "openai-completions";
+        return "selected";
+      },
+    );
+    const setupNim = createSetupNim(
+      makeDeps({
+        discoverManagedLlamaCppSelections: () => ({
+          choices: [],
+          resolution: {
+            kind: "rejected",
+            reason: "host.gpu.cdi_healthy is absent.",
+          },
+        }),
+        handleRemoteProviderSelection,
+        note,
+        prompt: async () => "1",
+        selectFromNumberedMenu,
+      }),
+    );
+
+    await expect(setupNim({ platform: "linux" } as never, "linux-agent")).resolves.toMatchObject({
+      provider: "nvidia-prod",
+    });
+    expect(note).toHaveBeenCalledWith(
+      "  Managed llama.cpp is unavailable on this Linux host: host.gpu.cdi_healthy is absent. Fix the reported readiness or runtime-provider requirement, then rerun onboarding.",
     );
   });
 });
