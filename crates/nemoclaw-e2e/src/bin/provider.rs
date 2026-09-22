@@ -17,6 +17,43 @@ impl Fixture {
 }
 #[async_trait]
 impl Backend for Fixture {
+    async fn plan(
+        &self,
+        kind: &str,
+        desired: &Row,
+        _: Option<&Row>,
+    ) -> Result<(), nemoclaw_sdk::Error> {
+        if kind != "inference_service" {
+            return Ok(());
+        }
+        if self.mode() == "capacity-unavailable" {
+            return Err(ObservationError::Transport.into());
+        }
+        let spec: nemoclaw_sdk::managed::Spec = serde_json::from_str(&desired["spec"]).unwrap();
+        let definition: nemoclaw_sdk::services::ServiceDefinition =
+            serde_json::from_str(&spec.process.unwrap().configuration).unwrap();
+        let nemoclaw_sdk::services::ServiceDefinition::Vllm(service) = definition else {
+            panic!("expected vLLM")
+        };
+        use nemoclaw_sdk::hardware::{Capacity, GIB};
+        let capacity = Capacity {
+            architecture: "arm64".into(),
+            gpu: "NVIDIA GB10".into(),
+            compute_capability: 121,
+            driver_major: if self.mode() == "old-driver" {
+                570
+            } else {
+                610
+            },
+            total: 128 * GIB,
+            available: 120 * GIB,
+            disk_free: 500 * GIB,
+            ..Default::default()
+        };
+        nemoclaw_sdk::services::installers::vllm::hardware_capacity::check_memory(
+            &service, &capacity, false,
+        )
+    }
     async fn read(&self, _: &str, _: &Row, _: bool) -> Result<Option<Row>, ObservationError> {
         let mode = self.mode();
         if mode == "read-error" {
@@ -40,9 +77,12 @@ impl Backend for Fixture {
         }
         Ok(Some(row))
     }
-    async fn ensure(&self, _: &str, want: &Row) -> Mutation {
+    async fn ensure(&self, kind: &str, want: &Row) -> Mutation {
         let mut row = want.clone();
         row.insert("id".into(), "fixture-id".into());
+        if kind == "inference_service" {
+            row.insert("running".into(), "true".into());
+        }
         fs::write(
             self.directory.join("resource.json"),
             serde_json::to_vec(&row).unwrap(),
@@ -81,11 +121,20 @@ impl Provider for FixtureProvider {
             &["name", "owner", "generation", "endpoint"],
             &["endpoint"],
         );
-        Some(HashMap::from([(
-            "provider".into(),
-            Box::new(ResourceAdapter::new(definition, self.backend.clone()))
-                as Box<dyn DynamicResource>,
-        )]))
+        Some(HashMap::from([
+            (
+                "provider".into(),
+                Box::new(ResourceAdapter::new(definition, self.backend.clone()))
+                    as Box<dyn DynamicResource>,
+            ),
+            (
+                "inference_service".into(),
+                Box::new(ResourceAdapter::new(
+                    Definition::new("inference_service", &["spec", "running"], &["running"]),
+                    self.backend.clone(),
+                )) as Box<dyn DynamicResource>,
+            ),
+        ]))
     }
 }
 #[tokio::main]

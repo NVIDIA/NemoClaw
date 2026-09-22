@@ -454,6 +454,10 @@ async fn connect(State(state): State<Arc<ServerState>>, request: Request) -> Res
         }
     }
 
+    // Target revalidation can outlive the grant admitted at request arrival.
+    if state.clock.now() >= state.expires_at {
+        return pre_stream_failure(guard, StatusCode::UNAUTHORIZED, "credential_expired");
+    }
     let expires_at = state.expires_at.format(&Rfc3339).unwrap_or_default();
     let (tx, rx) = mpsc::channel::<Vec<u8>>(2);
     let stream_state = state.clone();
@@ -554,6 +558,11 @@ async fn semantic_probe(State(state): State<Arc<ServerState>>, request: Request)
         Ok(ProbeResult::Unavailable) | Err(_) => {
             return error(StatusCode::SERVICE_UNAVAILABLE, "agent_unavailable");
         }
+    }
+    // Readiness may await remote work. Expiry must precede one-shot reservation
+    // and native dispatch, not merely limit how long we wait for their result.
+    if state.clock.now() >= state.expires_at {
+        return error(StatusCode::UNAUTHORIZED, "credential_expired");
     }
     if !matches!(*state.connection.borrow(), ConnectionState::Connected) {
         return error(StatusCode::SERVICE_UNAVAILABLE, "connection_lost");

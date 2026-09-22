@@ -3,49 +3,60 @@
 
 # Accepted Scope and Invariants
 
-Decision: Accept.
-Maintainer cvillela owns this design and its acceptance, recorded on 2026-09-14.
+Accepted by maintainer cvillela on 2026-09-14.
+This page defines implementation requirements; the [architecture guide](architecture.md) explains them.
 
-NemoClaw provides a public desired-state SDK, its CLI, and an OpenTofu provider.
-The SDK owns deployment behavior; the CLI owns arguments, terminal output, and exit codes.
-OpenTofu owns graph execution and resource state, with the provider adapting its protocol to shared typed backend operations.
-Add a crate only when it has a consumer and a dependency or deployment boundary that justifies it.
+## Responsibilities
 
-The [architecture](architecture.md), [runtime](runtime.md), [execution-target](execution-targets.md), and [recipe](recipes.md) guides explain these boundaries and the evidence behind them.
+NemoClaw provides a public desired-state SDK, CLI, and OpenTofu provider.
+
+| Owner | Responsibility |
+|---|---|
+| SDK | Deployment behavior |
+| CLI | Arguments, terminal output, and exit codes |
+| OpenTofu | Graph execution and resource state |
+| Docker provider | Docker gateway, inference, and proxy containers; images, model-cache volumes, and service-owned networks |
+| NemoClaw provider | OpenShell operations, Podman gateway processes, gateway initialization and retained bridges, and application-specific persistence |
+| Hosted runtime | Startup capacity checks, model preparation, and application health |
+| Fabric | Agent runtime health semantics and adapter checks |
+
+Add a crate only for an existing consumer and a justified dependency or deployment boundary.
+Backward compatibility with earlier schemas, SDK APIs, or state formats is not required; reject unsupported state without adopting, replacing, or deleting its resources.
 
 ## Ownership and Recovery
 
-Backward compatibility with earlier schemas, SDK APIs, or state formats is not required.
-Reject unsupported state without silently adopting, replacing, or deleting its resources.
+- Validate configuration strictly; retain intent, digests, secret references, and durable data bindings.
+- Lock deployment state during operations; retain provider state and progress for partial-creation and deletion recovery.
+- Verify ownership, generation, and durable identity before modifying gateway storage, credentials, Podman gateway processes, or OpenShell resources.
+- Let the Docker provider reconcile disposable containers, service networks, and reproducible caches during explicit apply without requiring stable physical IDs.
+- Let OpenTofu reconcile reconstructible OpenShell profiles, registrations, and Pi configuration through provider lifecycle contracts.
+- Protect sandbox replacement and missing bindings: ordinary apply must not discard files or conversation history that lack separate retained storage.
+- Only confirmed absence may remove a resource from state; authentication, transport, extension, query, and incomplete-observation failures must stop planning and preserve bindings.
+- Retain storage on destroy by default, and persistent data and provider state after readiness failure; recovery need not reuse the same container.
+- Missing or substituted bound credential storage must stop planning before compute changes; keep credentials in separate durable volumes.
 
-- Validate configuration strictly and retain intent, ownership generations, durable identities, configuration digests, and secret references across operations.
-- Lock deployment state while coordinating an operation and preserve enough evidence to recover from partial creation or deletion.
-- Verify ownership, generation, and durable identity before modifying an existing resource; keep configuration and policy drift observable.
-- Only confirmed absence may remove a resource from state.
-- Authentication, transport, extension, query, and incomplete-observation failures must stop planning and preserve prior bindings.
-- Plan must not create or mutate runtime resources.
-- Storage survives destroy by default; failed readiness must preserve established identities and persistent data.
+## Operations and Runtime
 
-## Runtime and Observation
-
-Refresh and export share typed observations.
-Choose collectors from implementation evidence.
+Plan must not mutate runtime resources.
+Apply checks resources, configuration, and readiness; model or agent responses require an explicit request.
+Report hosted-runtime observations while preserving unknown and unsupported results.
+Refresh and export must share typed observations verified against their source APIs or host interfaces.
 Mutations, conditional-write checks, active probes, and local credential or state reads remain direct.
 
-Memory protection stays active beside inference after the CLI exits and must not trigger an automatic restart loop.
-Model-specific tools belong to versioned recipe artifacts; retain applicable upstream licenses and source notices.
-SDK errors and progress must not expose secret values.
+Memory protection must stay beside inference after the CLI exits, without automatic restart loops.
+The engine and its provider own container limits and image acquisition; orchestration consumes application readiness.
+The runtime rebuilds artifacts when explicit apply recreates a missing model cache.
+Model-specific tools belong to versioned recipe artifacts with their upstream licenses and source notices.
+See [runtime](runtime.md), [execution targets](execution-targets.md), and [recipes](recipes.md) for rationale.
 
-OpenShell transport must retain mTLS, bearer credential references, bounded calls, and no automatic mutation retry.
-Use the pinned generated OpenShell clients with telemetry disabled.
+SDK errors and progress must not expose secrets.
+OpenShell transport must use pinned generated clients with telemetry disabled, mTLS, bearer credential references, bounded calls, and no automatic mutation retry.
 Verify certificate trust in both directions independently of plaintext protocol tests.
 
 ## Validation
 
 Use behavioral tests for ownership, observation failures, drift, replacement, partial creation, recovery, unchanged apply, export/reapply, and destroy.
 Exercise SDK apply, CLI export, SDK unchanged apply, and CLI destroy against the same state.
-Qualify the provider against the pinned OpenTofu binary and use an explicitly verified bundle for deployment tests.
-Keep deterministic tests separate from opt-in live qualification, and identify the tested revision, platform, and environment.
-Compilation alone does not establish state migration or platform qualification.
-
-[Retained validation records](../validation/README.md) describe tested contracts and their limits.
+Qualify the provider against pinned OpenTofu and use an explicitly verified bundle for deployment tests.
+Separate deterministic tests from opt-in live qualification; record revision, platform, and environment in [validation records](../validation/README.md).
+Compilation alone does not qualify migration or platforms.

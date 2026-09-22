@@ -4,19 +4,32 @@
 //! This implementation combines pressure samples and latches a trip.
 //! Source revision and attribution: crates/nemoclaw-sdk/NOTICE.md.
 //! Host observations and validated memory protection, independent of a recipe.
-use crate::{Error, config::Service};
+use crate::Error;
 use std::{collections::BTreeMap, io::Read};
+mod diagnostic;
+pub use diagnostic::HardwareDiagnostic;
+pub(crate) use diagnostic::{architecture, at_least};
 pub const GIB: u64 = 1 << 30;
 #[derive(Clone, Debug, Default)]
 pub struct Capacity {
     pub architecture: String,
     pub gpu: String,
     pub driver_major: u32,
+    /// Observed major times ten plus minor, independent of memory architecture.
+    pub compute_capability: u32,
+    /// Framebuffer counters; None means the device reports them as unsupported.
+    pub gpu_memory: Option<GpuMemory>,
     pub total: u64,
     pub available: u64,
     pub free: u64,
     pub disk_free: u64,
     pub foreign_gpu_processes: usize,
+}
+/// GPU framebuffer memory counters in bytes, independent of compute capability.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GpuMemory {
+    pub total: u64,
+    pub free: u64,
 }
 pub fn read_memory(reader: impl Read) -> Result<Capacity, Error> {
     let mut text = String::new();
@@ -85,16 +98,6 @@ impl ProtectionPolicy {
             consecutive,
         })
     }
-    pub fn for_service(service: &Service) -> Result<Self, Error> {
-        service.validate()?;
-        let memory = &service.memory;
-        Self::new(
-            memory.min_available_gib as u64 * GIB,
-            memory.min_free_gib as u64 * GIB,
-            memory.free_gate_gib as u64 * GIB,
-            memory.consecutive_samples as u64,
-        )
-    }
 }
 pub struct Watchdog {
     policy: ProtectionPolicy,
@@ -102,9 +105,6 @@ pub struct Watchdog {
     tripped: bool,
 }
 impl Watchdog {
-    pub fn new(service: &Service) -> Result<Self, Error> {
-        Ok(Self::from_policy(ProtectionPolicy::for_service(service)?))
-    }
     pub fn from_policy(policy: ProtectionPolicy) -> Self {
         Self {
             policy,
@@ -124,11 +124,6 @@ impl Watchdog {
         self.tripped
     }
 }
-
-mod capacity;
-mod spark;
-pub use capacity::check_capacity;
-pub(crate) use spark::validate_memory;
 
 #[cfg(target_os = "linux")]
 pub mod linux;

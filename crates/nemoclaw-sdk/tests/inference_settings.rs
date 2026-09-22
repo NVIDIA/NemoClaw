@@ -8,7 +8,7 @@ use serde_json::{Value, json};
 fn input(harness: &str) -> Value {
     let mut v: Value =
         serde_saphyr::from_str(include_str!("../../../examples/local.yaml")).unwrap();
-    v["spec"]["sandboxes"][0]["agents"][0]["harness"] = json!(harness);
+    v["spec"]["sandboxes"][0]["harness"]["kind"] = json!(harness);
     v
 }
 fn parse(v: &Value) -> Result<Document, nemoclaw_sdk::config::ConfigError> {
@@ -18,7 +18,7 @@ fn parse(v: &Value) -> Result<Document, nemoclaw_sdk::config::ConfigError> {
 fn api_and_tuning_survive_compilation_and_yaml() {
     let mut v = input("openclaw");
     v["spec"]["inferenceProviders"][0]["api"] = json!("openai-responses");
-    let route = &mut v["spec"]["sandboxes"][0]["agents"][0]["inference"]["routes"][0]["overrides"];
+    let route = &mut v["spec"]["sandboxes"][0]["agent"]["inference"]["routes"][0]["overrides"];
     route["contextWindow"] = json!(65536);
     route["maxTokens"] = json!(8192);
     route["reasoning"] = json!(true);
@@ -42,13 +42,12 @@ fn api_and_tuning_survive_compilation_and_yaml() {
 #[test]
 fn hermes_auth_requires_the_routed_credential_provider() {
     let mut v = input("hermes");
-    let name = v["spec"]["inferenceProviders"][0]["name"].clone();
     v["spec"]["inferenceProviders"][0]["endpoint"] =
         json!("https://inference-api.nousresearch.com/v1");
     v["spec"]["inferenceProviders"][0]["credential"] = json!({"env":"NOUS_API_KEY"});
-    v["spec"]["sandboxes"][0]["agents"][0]["auth"] = json!({"method":"api-key","providerRef":name});
+    v["spec"]["sandboxes"][0]["agent"]["auth"] = json!({"method":"api-key"});
     assert!(parse(&v).is_ok());
-    v["spec"]["sandboxes"][0]["agents"][0]["auth"]["providerRef"] = json!("foreign");
+    v["spec"]["sandboxes"][0]["agent"]["auth"]["providerRef"] = json!("foreign");
     assert!(parse(&v).is_err());
 }
 #[test]
@@ -60,8 +59,7 @@ fn unsupported_or_out_of_range_options_fail_before_deployment() {
         ("reasoningEffort", json!("extreme")),
     ] {
         let mut v = input("openclaw");
-        v["spec"]["sandboxes"][0]["agents"][0]["inference"]["routes"][0]["overrides"][field] =
-            value;
+        v["spec"]["sandboxes"][0]["agent"]["inference"]["routes"][0]["overrides"][field] = value;
         assert!(parse(&v).is_err());
         assert!(
             !jsonschema::validator_for(&input_schema())
@@ -75,7 +73,7 @@ fn unsupported_or_out_of_range_options_fail_before_deployment() {
 }
 
 #[test]
-fn schema_and_parser_agree_on_api_families_and_harness_limits() {
+fn schema_checks_explicit_api_families_and_rust_checks_resolved_harness_limits() {
     let validator = jsonschema::validator_for(&input_schema()).unwrap();
     for harness in ["openclaw", "hermes", "claude", "codex", "deepagents", "pi"] {
         for api in [
@@ -99,7 +97,7 @@ fn schema_and_parser_agree_on_api_families_and_harness_limits() {
                         | ("deepagents", "openai-completions")
                 );
             assert_eq!(parse(&v).is_ok(), accepted, "{harness}/{api}");
-            assert_eq!(validator.is_valid(&v), accepted, "schema {harness}/{api}");
+            assert!(validator.is_valid(&v), "structural schema {harness}/{api}");
             v["spec"]["inferenceProviders"][0]["provider"] =
                 json!(if api == "anthropic-messages" {
                     "openai"
@@ -115,24 +113,21 @@ fn schema_and_parser_agree_on_api_families_and_harness_limits() {
 #[test]
 fn explicit_false_and_default_survive_and_auth_cannot_bypass_credentials() {
     let mut v = input("openclaw");
-    let overrides =
-        &mut v["spec"]["sandboxes"][0]["agents"][0]["inference"]["routes"][0]["overrides"];
+    let overrides = &mut v["spec"]["sandboxes"][0]["agent"]["inference"]["routes"][0]["overrides"];
     overrides["reasoning"] = json!(false);
     overrides["reasoningEffort"] = json!("default");
     let d = parse(&v).unwrap();
     let exported: Value = serde_saphyr::from_str(&d.yaml().unwrap()).unwrap();
     assert_eq!(
-        exported["spec"]["sandboxes"][0]["agents"][0]["inference"]["routes"][0]["overrides"]["reasoning"],
+        exported["spec"]["sandboxes"][0]["agent"]["inference"]["routes"][0]["overrides"]["reasoning"],
         false
     );
     for harness in ["hermes", "openclaw"] {
         let mut v = input(harness);
-        let name = v["spec"]["inferenceProviders"][0]["name"].clone();
-        v["spec"]["sandboxes"][0]["agents"][0]["auth"] =
-            json!({"method":"api-key", "providerRef":name});
+        v["spec"]["sandboxes"][0]["agent"]["auth"] = json!({"method":"api-key"});
         assert!(parse(&v).is_err());
         assert!(
-            !jsonschema::validator_for(&input_schema())
+            jsonschema::validator_for(&input_schema())
                 .unwrap()
                 .is_valid(&v)
         );
@@ -143,13 +138,29 @@ fn explicit_false_and_default_survive_and_auth_cannot_bypass_credentials() {
         ("unexpected", json!(true)),
     ] {
         let mut v = input("openclaw");
-        v["spec"]["sandboxes"][0]["agents"][0]["inference"]["routes"][0]["overrides"][field] =
-            value;
+        v["spec"]["sandboxes"][0]["agent"]["inference"]["routes"][0]["overrides"][field] = value;
         assert!(parse(&v).is_err());
         assert!(
             !jsonschema::validator_for(&input_schema())
                 .unwrap()
                 .is_valid(&v)
         );
+    }
+}
+
+#[test]
+fn completion_adapters_accept_output_limits_without_openclaw_only_tuning() {
+    let schema = jsonschema::validator_for(&input_schema()).unwrap();
+    for harness in ["deepagents", "mini-swe-agent", "remote-agent"] {
+        let mut v = input(harness);
+        v["spec"]["sandboxes"][0]["agent"]["inference"]["routes"][0]["overrides"]["maxTokens"] =
+            json!(128);
+        let doc = parse(&v).unwrap();
+        assert!(schema.is_valid(&v), "{harness}");
+        assert_eq!(parse(&serde_json::to_value(&doc).unwrap()).unwrap(), doc);
+        v["spec"]["sandboxes"][0]["agent"]["inference"]["routes"][0]["overrides"]["reasoningEffort"] =
+            json!("high");
+        assert!(parse(&v).is_err());
+        assert!(schema.is_valid(&v));
     }
 }

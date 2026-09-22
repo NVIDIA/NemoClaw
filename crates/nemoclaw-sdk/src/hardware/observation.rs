@@ -41,21 +41,7 @@ impl HostObserver for LocalHost {
                 return Err(Error::Conflict("capacity requires a local Linux engine"));
             }
             let mut capacity = super::linux::memory()?;
-            capacity.architecture = if std::env::consts::ARCH == "aarch64" {
-                "arm64"
-            } else if std::env::consts::ARCH == "x86_64" {
-                "amd64"
-            } else {
-                std::env::consts::ARCH
-            }
-            .into();
-            let gpu = super::nvidia::query("--query-gpu=name,driver_version").await?;
-            let processes = super::nvidia::query("--query-compute-apps=pid").await?;
-            (
-                capacity.gpu,
-                capacity.driver_major,
-                capacity.foreign_gpu_processes,
-            ) = super::nvidia::inventory(&gpu, &processes)?;
+            super::nvidia::populate(&mut capacity).await?;
             let root = info
                 .docker_root_dir
                 .ok_or(Error::State("Docker storage root is unobservable"))?;
@@ -74,7 +60,7 @@ impl HostObserver for LocalHost {
         {
             let _ = engine;
             Err(Error::Conflict(
-                "Spark capacity requires a local Linux ARM64 host",
+                "capacity requires a local Linux ARM64 or AMD64 host",
             ))
         }
     }

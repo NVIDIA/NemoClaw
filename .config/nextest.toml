@@ -1,0 +1,14 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+[profile.ci]
+fail-fast = false
+status-level = "slow"
+failure-output = "immediate-final"
+retries = 0
+test-threads = 8
+slow-timeout = { period = "30s", terminate-after = 10 }
+
+[profile.lifecycle]
+inherits = "ci"
+test-threads = 2

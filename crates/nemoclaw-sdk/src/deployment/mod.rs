@@ -5,23 +5,19 @@
 mod tests;
 
 mod export;
-mod ollama;
 mod plan;
 mod runtime;
+mod timing;
+mod voice;
 use crate::{
-    Binding, CancellationToken, Error,
-    backend::{Backend, Row},
+    CancellationToken, Error,
+    backend::Row,
     bundle::Bundle,
     compile::{self, Target},
     config::{Credential, Document},
-    openshell::{EnvironmentSecrets, OpenShell, Secrets, verify_identity},
+    openshell::{EnvironmentSecrets, Secrets},
     state::{Record, StateBinding, Store, atomic_write, save_json},
-    voice::{
-        AccessGrant, Bootstrap, CloseReason, ConnectionState, ServerConfig, SystemClock,
-        TargetProbe, VoiceServer,
-    },
 };
-use async_trait::async_trait;
 use plan::{Plan, check_destroy_plan, check_plan};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -31,16 +27,37 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use time::OffsetDateTime;
+pub use voice::IntegrationResult;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub use timing::StepOutcome;
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Progress {
-    Preflight,
+    Download(crate::DownloadProgress),
+    /// A resource operation observed in OpenTofu's machine-readable UI.
+    Resource {
+        resource: &'static str,
+        action: &'static str,
+        status: &'static str,
+        elapsed: std::time::Duration,
+    },
+    /// A step that has started or is still waiting.
+    Waiting {
+        operation: &'static str,
+        elapsed: std::time::Duration,
+    },
+    Validating,
     Planning,
     Applying,
     Readiness,
     Exporting,
     Destroying,
+    /// A completed step with a fixed operation label and no diagnostic payload.
+    Completed {
+        operation: &'static str,
+        elapsed: std::time::Duration,
+        outcome: StepOutcome,
+    },
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -61,21 +78,12 @@ pub struct OperationResult {
     pub changes: Vec<Change>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub deferred: Vec<String>,
-    #[serde(default, skip_serializing_if = "String::is_empty")]
-    pub agent_response: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub retained: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub health: Vec<crate::SandboxHealth>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub integrations: Vec<IntegrationResult>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct IntegrationResult {
-    pub name: String,
-    pub status: String,
-    pub process_lifecycle: String,
-    pub reason: String,
 }
 impl OperationResult {
     fn planned(changes: Vec<Change>) -> Self {
@@ -83,8 +91,8 @@ impl OperationResult {
             outcome: Outcome::Planned,
             changes,
             deferred: Vec::new(),
-            agent_response: String::new(),
             retained: Vec::new(),
+            health: Vec::new(),
             integrations: Vec::new(),
         }
     }
@@ -93,29 +101,21 @@ impl OperationResult {
 /// The same desired-state operations used by the CLI. The selected state
 /// directory is locked for each operation; callers retain it across failures.
 pub struct Deployment {
+    voiceclaw: Option<crate::voice::Bootstrap>,
     state_directory: PathBuf,
     bundle_directory: PathBuf,
     secrets: Arc<dyn Secrets>,
     progress: Arc<dyn Fn(Progress) + Send + Sync>,
-    engines: crate::docker::Connections,
-    voiceclaw: Option<Bootstrap>,
 }
 impl Deployment {
     pub fn new(state_directory: &Path, bundle_directory: &Path) -> Self {
         Self {
+            voiceclaw: None,
             state_directory: state_directory.into(),
             bundle_directory: bundle_directory.into(),
             secrets: Arc::new(EnvironmentSecrets),
             progress: Arc::new(|_| {}),
-            engines: crate::docker::Connections::default(),
-            voiceclaw: None,
         }
-    }
-    /// Supply in-process engine connections. Provider subprocesses independently
-    /// connect to the same explicit endpoints carried by compiled resource specs.
-    pub fn with_engines(mut self, engines: crate::docker::Connections) -> Self {
-        self.engines = engines;
-        self
     }
     pub fn with_secrets(mut self, secrets: Arc<dyn Secrets>) -> Self {
         self.secrets = secrets;
@@ -125,12 +125,13 @@ impl Deployment {
         self.progress = progress;
         self
     }
-    pub fn with_voiceclaw(mut self, bootstrap: Bootstrap) -> Self {
-        self.voiceclaw = Some(bootstrap);
-        self
-    }
     fn open(&self) -> Result<(Bundle, Store), Error> {
-        let bundle = Bundle::open(&self.bundle_directory)?;
+        let started = std::time::Instant::now();
+        let bundle = self.report_timing(
+            "bundle.verify",
+            started,
+            Bundle::open(&self.bundle_directory),
+        )?;
         let state = std::path::absolute(&self.state_directory)
             .map_err(|_| Error::State("cannot resolve state directory"))?;
         Ok((bundle, Store::open(&state)?))
@@ -174,29 +175,23 @@ impl Deployment {
             ));
         }
         if record.document.metadata.uid != document.metadata.uid
-            || record.document.spec.gateway.endpoint != document.spec.gateway.endpoint
-            || record.document.spec.gateway.management != document.spec.gateway.management
+            || record.document.spec.gateway.endpoint() != document.spec.gateway.endpoint()
+            || std::mem::discriminant(&record.document.spec.gateway)
+                != std::mem::discriminant(&document.spec.gateway)
         {
             return Err(Error::Conflict(
                 "state is bound to a different deployment UID or gateway",
             ));
         }
-        if record.pending && record.digest != document.digest() {
-            return Err(Error::Conflict(
-                "unfinished apply has different intent; reapply its original configuration",
-            ));
+        for kind in crate::services::generation_kinds(&document)? {
+            if record.generations.get(kind).is_none_or(String::is_empty) {
+                record.generations.insert(
+                    kind.into(),
+                    Record::new(document.clone())?.generations[kind].clone(),
+                );
+            }
         }
-        if document.spec.inference_providers[0].ollama.is_some()
-            && record
-                .generations
-                .get("ollama")
-                .is_none_or(String::is_empty)
-        {
-            record.generations.insert(
-                "ollama".into(),
-                Record::new(document.clone())?.generations["ollama"].clone(),
-            );
-        }
+        record.validate_pending_intent(&document)?;
         let (runtime_changes, deferred) = self
             .runtime_stage(&bundle, &store, &document, &mut record, apply, cancel)
             .await?;
@@ -207,22 +202,29 @@ impl Deployment {
                 .push("OpenShell registration and sandbox require the managed gateway".into());
             return Ok(result);
         }
-        let client = OpenShell::connect(&document.spec.gateway, self.secrets.clone())?;
-        let bindings = store.bindings()?;
+        let bindings = self
+            .state_bindings(
+                &bundle,
+                &store,
+                &document,
+                &record.generations,
+                false,
+                cancel,
+            )
+            .await?;
         let targets = compile::targets(&document, &record.generations)?;
-        let mut allowed = allowed(&targets);
-        ollama::extend_allowed(&document, &record.generations, &mut allowed)?;
-        if bindings
-            .iter()
-            .any(|(address, binding)| !allowed.contains_key(address) || !binding.spec.is_empty())
-        {
+        let allowed = allowed(&targets);
+        if bindings.iter().any(|(address, binding)| {
+            (!allowed.contains_key(address)
+                && !plan::disposable(address)
+                && !plan::reconstructible(address))
+                || !binding.spec.is_empty()
+        }) {
             return Err(Error::Conflict(
                 "undeclared resource binding in deployment state",
             ));
         }
-        tokio::select! { ()=cancel.cancelled()=>return Err(Error::Cancelled), result=self.preflight_ollama(&document, &record.generations, &bindings)=>result? }
-        (self.progress)(Progress::Preflight);
-        tokio::select! {()=cancel.cancelled()=>return Err(Error::Cancelled),result=self.preflight(&client,&document,&targets,&bindings)=>result?}
+        (self.progress)(Progress::Validating);
         self.prepare(
             &bundle,
             &store,
@@ -236,33 +238,21 @@ impl Deployment {
             cancel,
         )
         .await?;
-        let (recovery_changes, deferred) = self
-            .recover_ollama(&bundle, &store, &document, &mut record, apply, cancel)
-            .await?;
-        let mut runtime_changes = runtime_changes;
-        runtime_changes.extend(recovery_changes);
-        if deferred {
-            let mut result = OperationResult::planned(runtime_changes);
-            result.deferred.push("Model inventory and the complete deployment plan require recovery of the stopped Ollama service".into());
-            return Ok(result);
-        }
         (self.progress)(Progress::Planning);
         let plan = self
             .saved_plan(&bundle, &store, &document, "apply.plan", cancel)
             .await?;
+        let root_changes = check_plan(&plan, &allowed, &bindings)?;
+        let creations = root_changes
+            .iter()
+            .filter(|change| {
+                !plan::disposable(&change.resource)
+                    && change.actions.iter().any(|action| action == "create")
+            })
+            .map(|change| (change.resource.clone(), allowed[&change.resource].clone()))
+            .collect();
         let mut changes = runtime_changes;
-        changes.extend(check_plan(&plan, &allowed, &bindings)?);
-        let agent = &document.spec.sandboxes[0].agents[0];
-        if !fresh
-            && agent.harness == "pi"
-            && agent.inference.routes[0].overrides
-                != record.document.spec.sandboxes[0].agents[0].inference.routes[0].overrides
-        {
-            changes.push(Change {
-                resource: format!("fabric_runtime.{}", agent.name),
-                actions: vec!["update".into()],
-            });
-        }
+        changes.extend(root_changes);
         let mut result = OperationResult::planned(changes);
         if !apply {
             if fresh {
@@ -272,172 +262,170 @@ impl Deployment {
         }
         record.document = document.clone();
         record.digest = document.digest();
-        record.pending = true;
+        record.begin_apply(creations);
         record.succeeded = false;
         record.destroyed = false;
         record.destroy_runtime = false;
         record.plan_digest = crate::bundle::hash_file(&store.directory.join("apply.plan"))?;
         store.save(&record)?;
         (self.progress)(Progress::Applying);
-        if agent.harness == "pi"
-            && let Some(binding) = bindings.get(&targets[3].address)
-        {
-            let mut sandbox = targets[3].values.clone();
-            sandbox.insert("id".into(), binding.id.clone());
-            sandbox.insert(
-                "pi_model_config".into(),
-                serde_json::to_string(&agent.inference.routes[0].overrides)
-                    .map_err(|_| Error::State("cannot encode Pi model configuration"))?,
-            );
-            tokio::select! {()=cancel.cancelled()=>return Err(Error::Cancelled),result=client.configure_pi(&sandbox, true)=>result?}
+        let applied = self
+            .tofu(
+                &bundle,
+                &store,
+                &document,
+                &["apply", "-input=false", "-no-color", "apply.plan"],
+                cancel,
+            )
+            .await;
+        if let Err(error) = applied {
+            // Only a complete UI stream proving exclusively data postcondition
+            // failures can settle durable mutations. Never replace an unrelated
+            // apply error with a health report retained from an earlier apply.
+            if let Error::Execution {
+                postcondition_failures: Some(addresses),
+                ..
+            } = &error
+                && let Ok(observations) = self
+                    .sandbox_observations(&bundle, &store, &document, &plan, cancel)
+                    .await
+                && !addresses.is_empty()
+                && addresses.iter().all(|address| {
+                    observations.iter().any(|(sandbox, observed)| {
+                        *address == format!("data.nemoclaw_sandbox_readiness.{sandbox}")
+                            && observed["ready"] == false
+                    })
+                })
+            {
+                record.finish_apply();
+                store.save(&record)?;
+                if let Some(health) = observations.iter().find_map(|(name, observed)| {
+                    let health =
+                        crate::RuntimeHealth::decode(observed["health_json"].as_str()?.as_bytes())
+                            .ok()?;
+                    let agent = document.sandbox(name).ok()?.agent.name.clone();
+                    (!health.allows_apply_completion()).then(|| crate::SandboxHealth {
+                        sandbox: name.clone(),
+                        agents: vec![agent],
+                        health,
+                    })
+                }) {
+                    return Err(Error::Health {
+                        health: Box::new(health),
+                    });
+                }
+            }
+            return Err(error);
         }
-        self.tofu(
-            &bundle,
-            &store,
-            &document,
-            &[
-                "apply",
-                "-input=false",
-                "-no-color",
-                "-parallelism=1",
-                "apply.plan",
-            ],
-            cancel,
-        )
-        .await?;
-        record.pending = false;
+        record.finish_apply();
         store.save(&record)?;
-        let bindings = store.bindings()?;
-        let mut sandbox = targets[3].values.clone();
-        sandbox.insert(
-            "id".into(),
-            bindings
-                .get(&targets[3].address)
-                .ok_or(Error::State("sandbox has no established identity"))?
-                .id
-                .clone(),
-        );
-        (self.progress)(Progress::Readiness);
-        let agent = &document.spec.sandboxes[0].agents[0];
-        if agent.harness == "pi" {
-            sandbox.insert(
-                "pi_model_config".into(),
-                serde_json::to_string(&agent.inference.routes[0].overrides)
-                    .map_err(|_| Error::State("cannot encode Pi model configuration"))?,
-            );
-            tokio::select! {()=cancel.cancelled()=>return Err(Error::Cancelled),result=client.configure_pi(&sandbox, false)=>result?}
-        }
-        client.ready(&sandbox, cancel).await?;
-        tokio::select! {()=cancel.cancelled()=>return Err(Error::Cancelled),result=client.inference_ready(&sandbox)=>result?}
-        if document.spec.inference_providers[0].service.is_some() {
-            result.agent_response = tokio::select! {()=cancel.cancelled()=>return Err(Error::Cancelled),result=client.agent_response(&sandbox)=>result?};
-        }
+        result.health = self
+            .sandbox_observations(&bundle, &store, &document, &plan, cancel)
+            .await?
+            .into_iter()
+            .map(|(name, observed)| {
+                Ok(crate::SandboxHealth {
+                    agents: vec![document.sandbox(&name)?.agent.name.clone()],
+                    sandbox: name,
+                    health: crate::RuntimeHealth::decode(
+                        observed["health_json"]
+                            .as_str()
+                            .ok_or(Error::State("sandbox health observation is absent"))?
+                            .as_bytes(),
+                    )?,
+                })
+            })
+            .collect::<Result<_, Error>>()?;
         record.succeeded = true;
         store.save(&record)?;
-        if let Some(integration) = document.spec.integrations.first() {
-            let bootstrap = self.voiceclaw.as_ref().ok_or(Error::Conflict(
-                "VoiceClaw integration requires an operator-approved bootstrap path; agent retained",
-            ))?;
-            bootstrap.prepare(&store.directory, cancel).await?;
-
-            let bindings = store.bindings()?;
-            let mut current = targets[3].values.clone();
-            let established = bindings
-                .get(&targets[3].address)
-                .ok_or(Error::State("sandbox has no established identity"))?;
-            current.insert("id".into(), established.id.clone());
-            if client.voice_ready(&current).await != crate::voice::ProbeResult::Ready {
-                return Err(Error::Conflict(
-                    "VoiceClaw target revalidation failed; agent retained",
-                ));
-            }
-            let owner = format!("{}/{}", document.metadata.uid, integration.name);
-            let generation = current
-                .get("generation")
-                .ok_or(Error::State("sandbox generation is unavailable"))?;
-            let native_id = current
-                .get("id")
-                .ok_or(Error::State("sandbox identity is unavailable"))?;
-            let authority = Binding::new(&owner, generation, native_id)?;
-            let target_ref = voice_target_ref(&owner, generation, native_id);
-            let grant =
-                AccessGrant::issue(&target_ref, authority.clone(), OffsetDateTime::now_utc())
-                    .map_err(|_| Error::State("cannot issue VoiceClaw access"))?;
-            let probe = Arc::new(DeploymentVoiceProbe {
-                client: client.clone(),
-                sandbox: current,
-                authority,
-            });
-            let server = VoiceServer::bind(
-                "127.0.0.1:0".parse().expect("fixed loopback address"),
-                &grant,
-                probe,
-                Arc::new(SystemClock),
-                ServerConfig::default(),
-            )
-            .await
-            .map_err(|_| Error::State("cannot start private VoiceClaw semantic server"))?;
-            let ready = bootstrap
-                .connect(&store.directory, server.endpoint(), &grant, cancel)
-                .await?;
-            if !matches!(
-                server.connection_state(),
-                ConnectionState::Connected | ConnectionState::Closed(_)
-            ) {
-                return Err(Error::Conflict(
-                    "VoiceClaw reported ready without a semantic connection; agent retained",
-                ));
-            }
-            drop(ready);
-            drop(grant);
-            let run_cancel = CancellationToken::new();
-            let reason = tokio::select! {
-                result = server.wait_for_run(&run_cancel) => result?,
-                () = cancel.cancelled() => {
-                    server.stop();
-                    let _ = tokio::time::timeout(
-                        std::time::Duration::from_secs(5),
-                        server.wait_for_run(&run_cancel),
-                    ).await;
-                    return Err(Error::Cancelled);
-                }
-            };
-            result.integrations.push(IntegrationResult {
-                name: integration.name.clone(),
-                status: "disconnected".into(),
-                process_lifecycle: "not-managed".into(),
-                reason: close_reason(reason).into(),
-            });
-        }
+        self.connect_voiceclaw(&bundle, &store, &record, &mut result, cancel)
+            .await?;
         result.outcome = Outcome::Succeeded;
         Ok(result)
     }
-    async fn preflight(
+    async fn sandbox_observations(
         &self,
-        client: &OpenShell,
+        bundle: &Bundle,
+        store: &Store,
         document: &Document,
-        targets: &[Target],
-        bindings: &BTreeMap<String, StateBinding>,
-    ) -> Result<(), Error> {
-        client
-            .verify_gateway(&document.spec.sandboxes[0].runtime.provider)
+        plan: &Plan,
+        cancel: &CancellationToken,
+    ) -> Result<Vec<(String, Value)>, Error> {
+        let bytes = self
+            .tofu(bundle, store, document, &["show", "-json"], cancel)
             .await?;
-        for target in targets {
-            let mut expected = target.values.clone();
-            if let Some(binding) = bindings.get(&target.address) {
-                expected.insert("id".into(), binding.id.clone());
-            }
-            match client.read(&target.kind, &expected, false).await? {
-                Some(observed) => verify_identity(&expected, &observed)?,
-                None if bindings.contains_key(&target.address) => {
-                    return Err(Error::Conflict(
-                        "managed resource disappeared; automatic replacement is forbidden",
+        let state: Value = serde_json::from_slice(&bytes)
+            .map_err(|_| Error::State("invalid OpenTofu health observations"))?;
+        if state["format_version"]
+            .as_str()
+            .is_none_or(|version| version.split('.').next() != Some("1"))
+        {
+            return Err(Error::State("unsupported OpenTofu state JSON version"));
+        }
+        let observations = crate::state::parse_resources(&state["values"])?;
+        document
+            .spec
+            .sandboxes
+            .iter()
+            .map(|sandbox| {
+                let address = format!("data.nemoclaw_sandbox_readiness.{}", sandbox.name);
+                let observed = observations
+                    .get(&address)
+                    .ok_or(Error::State("sandbox readiness observation is absent"))?;
+                let previous = plan
+                    .resource_changes
+                    .iter()
+                    .find(|change| change.address == address)
+                    .ok_or(Error::State("sandbox readiness was not scheduled"))?;
+                let token = observed["read_trigger"]
+                    .as_str()
+                    .filter(|value| !value.is_empty())
+                    .ok_or(Error::State(
+                        "sandbox readiness observation has no operation identity",
+                    ))?;
+                if previous.change.before["read_trigger"].as_str() == Some(token) {
+                    return Err(Error::State(
+                        "sandbox readiness observation predates this apply",
                     ));
                 }
-                None => {}
-            }
+                Ok((sandbox.name.clone(), observed.clone()))
+            })
+            .collect()
+    }
+    async fn state_bindings(
+        &self,
+        bundle: &Bundle,
+        store: &Store,
+        document: &Document,
+        generations: &compile::Generations,
+        runtime: bool,
+        cancel: &CancellationToken,
+    ) -> Result<BTreeMap<String, StateBinding>, Error> {
+        if !store
+            .directory
+            .join("terraform.tfstate")
+            .try_exists()
+            .map_err(|_| Error::State("cannot inspect OpenTofu state"))?
+        {
+            return Ok(BTreeMap::new());
         }
-        Ok(())
+        // show needs the exact provider schemas. Reinitialize from the current
+        // verified bundle, including after an SDK upgrade or state-directory move.
+        let graph = if runtime {
+            compile::compile_runtime(document, generations, &bundle.manifest.version)?
+        } else {
+            compile::compile(document, generations, &bundle.manifest.version)?
+        };
+        self.prepare(bundle, store, &graph)?;
+        crate::process::run(
+            &store.directory,
+            &bundle.tofu(),
+            &["init", "-upgrade", "-input=false", "-no-color"],
+            &crate::state::schema_environment(&store.directory),
+            cancel,
+        )
+        .await?;
+        store.bindings(&bundle.tofu(), cancel).await
     }
     fn prepare(&self, bundle: &Bundle, store: &Store, graph: &Value) -> Result<(), Error> {
         for entry in fs::read_dir(&store.directory)
@@ -477,8 +465,36 @@ impl Deployment {
         args: &[&str],
         cancel: &CancellationToken,
     ) -> Result<Vec<u8>, Error> {
-        let env = command_environment(document, self.secrets.as_ref(), &store.directory)?;
-        crate::process::run(&store.directory, &bundle.tofu(), args, &env, cancel).await
+        let operation = match args.first().copied() {
+            Some("init") => "tofu.init",
+            Some("plan") => "tofu.plan",
+            Some("show") => "tofu.show",
+            Some("apply") => "tofu.apply",
+            _ => "tofu.command",
+        };
+        self.timed(operation, async {
+            let env = if matches!(args.first(), Some(&"init" | &"show")) {
+                crate::state::schema_environment(&store.directory)
+            } else {
+                command_environment(document, self.secrets.as_ref(), &store.directory)?
+            };
+            if matches!(args.first(), Some(&"plan" | &"apply")) {
+                let mut args = args.to_vec();
+                args.insert(1, "-json");
+                crate::process::run_with_progress(
+                    &store.directory,
+                    &bundle.tofu(),
+                    &args,
+                    &env,
+                    cancel,
+                    Some(self.progress.clone()),
+                )
+                .await
+            } else {
+                crate::process::run(&store.directory, &bundle.tofu(), args, &env, cancel).await
+            }
+        })
+        .await
     }
     async fn saved_plan(
         &self,
@@ -492,13 +508,7 @@ impl Deployment {
             bundle,
             store,
             document,
-            &[
-                "plan",
-                "-input=false",
-                "-no-color",
-                "-parallelism=1",
-                &format!("-out={name}"),
-            ],
+            &["plan", "-input=false", "-no-color", &format!("-out={name}")],
             cancel,
         )
         .await?;
@@ -521,56 +531,6 @@ impl Deployment {
         self.teardown_stages(cancel, preview).await
     }
 }
-
-struct DeploymentVoiceProbe {
-    client: OpenShell,
-    sandbox: Row,
-    authority: Binding,
-}
-
-#[async_trait]
-impl TargetProbe for DeploymentVoiceProbe {
-    async fn probe(&self, authority: &Binding) -> crate::voice::ProbeResult {
-        if authority != &self.authority {
-            return crate::voice::ProbeResult::Replaced;
-        }
-        self.client.voice_ready(&self.sandbox).await
-    }
-
-    async fn dispatch(&self, authority: &Binding) -> crate::voice::DispatchResult {
-        if authority != &self.authority {
-            return crate::voice::DispatchResult::TargetReplaced;
-        }
-        self.client.voice_response(&self.sandbox).await
-    }
-}
-
-fn voice_target_ref(owner: &str, generation: &str, native_id: &str) -> String {
-    use sha2::{Digest, Sha256};
-    let mut digest = Sha256::new();
-    for value in [owner, generation, native_id] {
-        digest.update((value.len() as u64).to_be_bytes());
-        digest.update(value.as_bytes());
-    }
-    format!(
-        "nvr0-{}",
-        digest
-            .finalize()
-            .iter()
-            .map(|byte| format!("{byte:02x}"))
-            .collect::<String>()
-    )
-}
-
-fn close_reason(reason: CloseReason) -> &'static str {
-    match reason {
-        CloseReason::ClientDisconnected => "client_disconnected",
-        CloseReason::CredentialExpired => "credential_expired",
-        CloseReason::AgentUnavailable => "agent_unavailable",
-        CloseReason::TargetReplaced => "target_replaced",
-        CloseReason::ServerStopping => "server_stopping",
-    }
-}
 fn allowed(targets: &[Target]) -> BTreeMap<String, Row> {
     targets
         .iter()
@@ -583,22 +543,36 @@ fn command_environment(
     secrets: &dyn Secrets,
     directory: &Path,
 ) -> Result<BTreeMap<String, String>, Error> {
-    let mut env: BTreeMap<String, String> = [
-        ("TF_IN_AUTOMATION", "1"),
-        ("TF_INPUT", "0"),
-        ("CHECKPOINT_DISABLE", "1"),
-    ]
-    .into_iter()
-    .map(|(k, v)| (k.into(), v.into()))
-    .collect();
-    env.insert(
-        "TF_CLI_CONFIG_FILE".into(),
-        directory
-            .join("providers.tfrc")
-            .to_string_lossy()
-            .into_owned(),
-    );
-    for name in document.credential_names() {
+    credential_environment(document.credential_names(), secrets, directory)
+}
+
+fn gateway_environment(
+    document: &Document,
+    secrets: &dyn Secrets,
+    directory: &Path,
+) -> Result<BTreeMap<String, String>, Error> {
+    let gateway = &document.spec.gateway;
+    let mut names = BTreeSet::new();
+    if let Some(credential) = gateway.credential() {
+        names.insert(credential.env.as_str());
+    }
+    if let Some(tls) = gateway.tls() {
+        names.extend([
+            tls.ca.env.as_str(),
+            tls.certificate.env.as_str(),
+            tls.key.env.as_str(),
+        ]);
+    }
+    credential_environment(names, secrets, directory)
+}
+
+fn credential_environment<'a>(
+    names: impl IntoIterator<Item = &'a str>,
+    secrets: &dyn Secrets,
+    directory: &Path,
+) -> Result<BTreeMap<String, String>, Error> {
+    let mut env = crate::state::schema_environment(directory);
+    for name in names {
         if ["TF_", "TOFU_", "PLUGIN_", "NEMOCLAW_INTERNAL_"]
             .iter()
             .any(|prefix| name.starts_with(prefix))

@@ -3,7 +3,7 @@
 use nemoclaw_sdk::{docker::Engine, managed::Spec};
 
 #[tokio::test]
-#[ignore = "requires explicit NEMOCLAW_TEST_RUNTIME_STATE; reads existing owned runtimes only"]
+#[ignore = "requires explicit NEMOCLAW_TEST_RUNTIME_STATE and NEMOCLAW_TEST_RUNTIME_ENGINE; reads existing owned runtimes only"]
 async fn existing_spark_runtime_bindings_are_observed_without_mutations() {
     let path = std::path::PathBuf::from(
         std::env::var_os("NEMOCLAW_TEST_RUNTIME_STATE").expect("explicit state file"),
@@ -15,22 +15,41 @@ async fn existing_spark_runtime_bindings_are_observed_without_mutations() {
     for resource in state["resources"].as_array().unwrap() {
         if !matches!(
             resource["type"].as_str(),
-            Some("nemoclaw_managed_gateway" | "nemoclaw_inference_service")
+            Some("nemoclaw_managed_gateway" | "docker_container")
         ) {
             continue;
         }
         let instances = resource["instances"].as_array().unwrap();
         assert_eq!(instances.len(), 1);
         let attributes = &instances[0]["attributes"];
-        let spec: Spec = serde_json::from_str(attributes["spec"].as_str().unwrap()).unwrap();
-        let engine = Engine::connect(&spec.gateway.engine).unwrap();
         let id = attributes["id"].as_str().unwrap();
-        let runtime = engine
-            .observe_runtime(&spec, id)
-            .await
-            .unwrap_or_else(|error| panic!("{}: {error}", spec.kind))
-            .expect("bound runtime exists");
-        assert_eq!(runtime.id, id);
+        if resource["type"] == "docker_container" {
+            let endpoint = std::env::var("NEMOCLAW_TEST_RUNTIME_ENGINE")
+                .expect("explicit Docker engine for native provider bindings");
+            let engine = Engine::connect(&endpoint).unwrap();
+            let actual = engine
+                .container(id)
+                .await
+                .unwrap()
+                .expect("bound service exists");
+            assert_eq!(actual.id.as_deref(), Some(id));
+            assert_eq!(
+                actual
+                    .name
+                    .as_deref()
+                    .map(|name| name.trim_start_matches('/')),
+                attributes["name"].as_str()
+            );
+        } else {
+            let spec: Spec = serde_json::from_str(attributes["spec"].as_str().unwrap()).unwrap();
+            let engine = Engine::connect(spec.engine()).unwrap();
+            let runtime = engine
+                .observe_gateway(&spec, id)
+                .await
+                .unwrap()
+                .expect("bound gateway exists");
+            assert_eq!(runtime.id, id);
+        }
         observed += 1;
     }
     assert_eq!(observed, 2, "both gateway and inference must be observed");
@@ -43,7 +62,7 @@ async fn existing_spark_runtime_bindings_are_observed_without_mutations() {
 
 #[tokio::test]
 #[ignore = "requires explicit NEMOCLAW_TEST_RUNTIME_STATE; reads retained owned storage only"]
-async fn retained_inference_volume_preserves_its_reference_binding() {
+async fn retained_inference_credentials_preserve_their_reference_binding() {
     let path = std::path::PathBuf::from(
         std::env::var_os("NEMOCLAW_TEST_RUNTIME_STATE").expect("explicit state file"),
     );

@@ -3,60 +3,115 @@
 
 use crate::{
     args::{Cli, Command},
+    credentials,
+    deployment::create as deployment,
     io::document,
+    onboarding,
 };
-use nemoclaw_sdk::{
-    CancellationToken, Deployment, Error, OperationResult, config::Document, voice::Bootstrap,
-};
-use tokio::io::AsyncRead;
+use nemoclaw_sdk::{CancellationToken, OperationResult, config::Document};
+use std::path::Path;
+use tokio::io::{AsyncBufReadExt, AsyncRead};
 
 pub(crate) enum CommandResult {
+    OnboardExit,
     Export(Box<Document>),
     Operation(OperationResult),
-}
-impl CommandResult {
-    pub(crate) fn render(self) -> Result<String, Box<dyn std::error::Error>> {
-        match self {
-            Self::Export(document) => Ok(document.yaml()?),
-            Self::Operation(result) => Ok(format!("{}\n", serde_json::to_string(&result)?)),
-        }
-    }
 }
 
 pub(crate) async fn run<R: AsyncRead + Unpin>(
     cli: Cli,
-    stdin: R,
+    mut stdin: R,
     cancel: &CancellationToken,
 ) -> Result<CommandResult, Box<dyn std::error::Error>> {
-    let bundle = match cli.bundle_dir {
-        Some(path) => path,
-        None => std::env::current_exe()?
-            .parent()
-            .and_then(|p| p.parent())
-            .ok_or(Error::Bundle("cannot locate runtime bundle"))?
-            .into(),
+    let Cli {
+        state_dir,
+        bundle_dir,
+        verbose,
+        command,
+    } = cli;
+    let command = match command {
+        Command::Onboard {
+            generate_only,
+            output,
+            non_interactive,
+            edit,
+            name,
+            sandbox,
+            agent,
+            provider,
+            model,
+            credential_env,
+        } => {
+            let result = onboarding::run(
+                onboarding::Options {
+                    state_dir,
+                    bundle_dir,
+                    verbose,
+                    generate_only,
+                    output,
+                    non_interactive,
+                    edit,
+                    name,
+                    sandbox,
+                    agent,
+                    provider,
+                    model,
+                    credential_env,
+                },
+                stdin,
+                cancel,
+            )
+            .await?;
+            return Ok(result.map_or(CommandResult::OnboardExit, CommandResult::Operation));
+        }
+        command => command,
     };
-    let mut deployment = Deployment::new(&cli.state_dir, &bundle);
-    let result = match cli.command {
+    let mut deployment = deployment(&state_dir, bundle_dir.as_deref(), verbose)?;
+    let result = match command {
         Command::Plan { destroy: true, .. } => deployment.plan_destroy(cancel).await?,
         Command::Plan {
-            file: Some(file), ..
+            file: Some(file),
+            non_interactive,
+            ..
         } => {
-            deployment
-                .plan(&document(&file, stdin, cancel).await?, cancel)
-                .await?
+            let document = document(&file, &mut stdin, cancel).await?;
+            let mut lines = tokio::io::BufReader::new(stdin).lines();
+            deployment = credentials::attach(
+                deployment,
+                &document,
+                non_interactive,
+                file != Path::new("-"),
+                &mut lines,
+                cancel,
+            )
+            .await?;
+            deployment.plan(&document, cancel).await?
         }
-        Command::Apply { file, voiceclaw } => {
+        Command::Apply {
+            file,
+            non_interactive,
+            voiceclaw,
+        } => {
+            let document = document(&file, &mut stdin, cancel).await?;
+            let mut lines = tokio::io::BufReader::new(stdin).lines();
+            deployment = credentials::attach(
+                deployment,
+                &document,
+                non_interactive,
+                file != Path::new("-"),
+                &mut lines,
+                cancel,
+            )
+            .await?;
             if let Some(root) = voiceclaw {
-                deployment = deployment.with_voiceclaw(Bootstrap::new(&root)?);
+                deployment = deployment.with_voiceclaw(nemoclaw_sdk::voice::Bootstrap::new(&root)?);
             }
-            deployment
-                .apply(&document(&file, stdin, cancel).await?, cancel)
-                .await?
+            deployment.apply(&document, cancel).await?
         }
         Command::Plan {
             file: None,
             destroy: false,
+            ..
         } => return Err("configuration input is required".into()),
         Command::Export { .. } => {
             return Ok(CommandResult::Export(Box::new(
@@ -64,6 +119,7 @@ pub(crate) async fn run<R: AsyncRead + Unpin>(
             )));
         }
         Command::Destroy => deployment.destroy(cancel).await?,
+        Command::Onboard { .. } => unreachable!("onboarding returns before lifecycle setup"),
     };
     Ok(CommandResult::Operation(result))
 }

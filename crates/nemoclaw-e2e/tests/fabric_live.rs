@@ -1,10 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
+use nemoclaw_sdk::config::HarnessKind;
 
 use nemoclaw_sdk::{
-    CancellationToken, Deployment,
+    CancellationToken, Deployment, OperationResult, Outcome,
     backend::Row,
-    config::Document,
+    config::{Document, Gateway},
     openshell::{EnvironmentSecrets, OpenShell},
 };
 use serde_json::{Value, json};
@@ -76,8 +77,10 @@ fn bindings(directory: &Path) -> (Value, Row) {
     let mut ids = serde_json::Map::new();
     let mut sandbox = None;
     let resources = state["resources"].as_array().unwrap();
-    assert_eq!(resources.len(), 4);
     for resource in resources {
+        if resource["mode"] == "data" {
+            continue;
+        }
         let instances = resource["instances"].as_array().unwrap();
         assert_eq!(instances.len(), 1);
         let attributes = &instances[0]["attributes"];
@@ -90,7 +93,12 @@ fn bindings(directory: &Path) -> (Value, Row) {
             attributes["id"].clone(),
         );
         if resource["type"] == "nemoclaw_sandbox" {
-            sandbox = Some(serde_json::from_value(attributes.clone()).unwrap());
+            assert!(
+                sandbox
+                    .replace(serde_json::from_value(attributes.clone()).unwrap())
+                    .is_none(),
+                "expected one sandbox binding"
+            );
         }
     }
     (Value::Object(ids), sandbox.unwrap())
@@ -103,6 +111,9 @@ fn managed_bindings(directory: &Path) -> Value {
     let state: Value = serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
     let mut result = serde_json::Map::new();
     for resource in state["resources"].as_array().unwrap() {
+        if resource["mode"] == "data" {
+            continue;
+        }
         assert_eq!(resource["instances"].as_array().unwrap().len(), 1);
         result.insert(
             format!(
@@ -123,6 +134,29 @@ async fn exec(client: &OpenShell, binding: &Row, command: Vec<String>) -> Vec<u8
     assert_eq!(exit, 0, "native runtime command failed");
     output
 }
+async fn openclaw_reply(client: &OpenShell, binding: &Row, name: &str, key: &str) -> Vec<u8> {
+    let params = json!({"agentId":name,"sessionKey":format!("agent:{name}:{key}"),"message":"Reply with exactly the word FOUR.","idempotencyKey":key,"deliver":false}).to_string();
+    exec(
+        client,
+        binding,
+        [
+            "openclaw",
+            "gateway",
+            "call",
+            "agent",
+            "--params",
+            &params,
+            "--expect-final",
+            "--json",
+            "--timeout",
+            "280000",
+        ]
+        .map(String::from)
+        .to_vec(),
+    )
+    .await
+}
+
 async fn runtime_id(client: &OpenShell, binding: &Row) -> String {
     let output = exec(client, binding, ["/opt/fabric/bin/python", "-c", "import socket; s=socket.socket(socket.AF_UNIX); s.connect('/sandbox/fabric.sock'); s.sendall(b'{\"operation\":\"check\"}\\n'); print(s.makefile().readline())"].map(String::from).to_vec()).await;
     let value: Value = serde_json::from_slice(&output).unwrap();
@@ -144,30 +178,21 @@ async fn fabric_native_access_and_reconciliation_preserve_the_hosted_runtime() {
         Document::parse(fs::File::open(explicit("NEMOCLAW_LIVE_FABRIC_CONFIG")).unwrap()).unwrap();
     let directory = explicit("NEMOCLAW_LIVE_FABRIC_STATE");
     let bundle = explicit("NEMOCLAW_TEST_BUNDLE");
-    let provider = &document.spec.inference_providers[0];
-    let agent = &document.spec.sandboxes[0].agents[0];
-    assert_eq!(document.spec.gateway.management, "external");
-    // Ollama recovery/destroy is fixture-qualified separately; this live target
-    // has not qualified its complete agent lifecycle.
-    assert!(provider.ollama.is_none());
+    let provider = document.inference_provider().unwrap();
+    let agent = &document.spec.sandboxes[0].agent;
+    assert!(matches!(document.spec.gateway, Gateway::External(_)));
+    // Managed-service installation is qualified separately; this live target
+    // exercises only an external inference provider.
+    assert!(provider.service_ref.is_none());
     fs::create_dir_all(&directory).unwrap();
-    let save = |name: &str, value: &Value| {
-        fs::write(
-            directory.join(name),
-            serde_json::to_vec_pretty(value).unwrap(),
-        )
-        .unwrap()
-    };
     let deployment = Deployment::new(&directory, &bundle);
     let cancel = CancellationToken::new();
-    save(
-        "apply.json",
-        &serde_json::to_value(deployment.apply(&document, &cancel).await.unwrap()).unwrap(),
-    );
+    let applied = deployment.apply(&document, &cancel).await.unwrap();
+    assert_eq!(applied.outcome, Outcome::Succeeded);
     let (before, binding) = bindings(&directory);
     let managed_before = managed_bindings(&directory);
     let client = OpenShell::connect(&document.spec.gateway, Arc::new(EnvironmentSecrets)).unwrap();
-    if document.spec.sandboxes[0].network.tier == "isolated" {
+    if document.spec.sandboxes[0].network.policy == nemoclaw_sdk::config::NetworkPolicy::Isolated {
         let denial = exec(
             &client,
             &binding,
@@ -178,13 +203,14 @@ async fn fabric_native_access_and_reconciliation_preserve_the_hosted_runtime() {
             String::from_utf8(denial).unwrap().trim(),
             "policy-denied-403"
         );
-        save(
-            "policy-denial.json",
-            &json!({"externalEgressDenied":true,"proxyStatus":403}),
-        );
     }
     let hosted = runtime_id(&client, &binding).await;
-    if agent.harness == "openclaw" {
+    if document
+        .sandbox_harness(&document.spec.sandboxes[0])
+        .unwrap()
+        .kind
+        == HarnessKind::OpenClaw
+    {
         exec(
             &client,
             &binding,
@@ -203,14 +229,6 @@ async fn fabric_native_access_and_reconciliation_preserve_the_hosted_runtime() {
     }
     let unchanged = deployment.apply(&document, &cancel).await.unwrap();
     assert!(unchanged.changes.is_empty());
-    assert_eq!(
-        unchanged.agent_response.is_empty(),
-        provider.service.is_none()
-    );
-    save(
-        "unchanged-apply.json",
-        &serde_json::to_value(unchanged).unwrap(),
-    );
     let exported = deployment.export(&cancel).await.unwrap();
     assert_eq!(exported, document);
     assert!(
@@ -224,7 +242,12 @@ async fn fabric_native_access_and_reconciliation_preserve_the_hosted_runtime() {
     assert_eq!(bindings(&directory).0, before);
     assert_eq!(managed_bindings(&directory), managed_before);
     assert_eq!(runtime_id(&client, &binding).await, hosted);
-    let response = if agent.harness == "openclaw" {
+    let response = if document
+        .sandbox_harness(&document.spec.sandboxes[0])
+        .unwrap()
+        .kind
+        == HarnessKind::OpenClaw
+    {
         let setting = exec(
             &client,
             &binding,
@@ -234,48 +257,138 @@ async fn fabric_native_access_and_reconciliation_preserve_the_hosted_runtime() {
         )
         .await;
         assert!(String::from_utf8_lossy(&setting).contains("per-channel-peer"));
-        // Managed Spark apply uses this shared active probe. Qualify it against
-        // the same Fabric-hosted OpenClaw runtime as native sandbox access.
+        // Check the Fabric-hosted agent before using the native interface.
         let reply = client.agent_response(&binding).await.unwrap();
-        save("managed-agent-probe.json", &json!({"response": reply}));
+        assert!(!reply.trim().is_empty());
         assert_eq!(runtime_id(&client, &binding).await, hosted);
-        let params = json!({"agentId":agent.name,"sessionKey":format!("agent:{}:native-live",agent.name),"message":"Reply with exactly the word FOUR.","idempotencyKey":format!("{}-native-live",document.metadata.uid),"deliver":false}).to_string();
-        exec(
+        openclaw_reply(
             &client,
             &binding,
-            [
-                "openclaw",
-                "gateway",
-                "call",
-                "agent",
-                "--params",
-                &params,
-                "--expect-final",
-                "--json",
-                "--timeout",
-                "280000",
-            ]
-            .map(String::from)
-            .to_vec(),
+            &agent.name,
+            &format!("{}-native-live", document.metadata.uid),
         )
         .await
     } else {
         // This is a one-shot Fabric SDK call, not a conversation injected into
         // the hosted runtime by plan/apply or a new NemoClaw invocation API.
-        exec(&client, &binding, ["/opt/fabric/bin/python", "-c", "import sys,asyncio,json; sys.path.insert(0,'/opt/nemoclaw'); from fabric import configuration; from nemo_fabric import Fabric,FabricConfig; c=configuration(sys.argv[1]) if sys.argv[2]=='deepagents' else configuration(sys.argv[1],sys.argv[2]); c['runtime']['artifacts']='/sandbox/sdk-smoke'; print(json.dumps(asyncio.run(Fabric().run(FabricConfig.model_validate(c),input='Reply with exactly the word FOUR.',base_dir='/sandbox')).to_mapping()))", &agent.name, &agent.harness].map(String::from).to_vec()).await
+        exec(&client, &binding, ["/opt/fabric/bin/python", "-c", "import sys,asyncio,json; sys.path.insert(0,'/opt/nemoclaw'); from fabric import configuration; from nemo_fabric import Fabric,FabricConfig; c=configuration(sys.argv[1]) if sys.argv[2]=='deepagents' else configuration(sys.argv[1],sys.argv[2]); c['runtime']['artifacts']='/sandbox/sdk-smoke'; print(json.dumps(asyncio.run(Fabric().run(FabricConfig.model_validate(c),input='Reply with exactly the word FOUR.',base_dir='/sandbox')).to_mapping()))", &agent.name, document.sandbox_harness(&document.spec.sandboxes[0]).unwrap().kind.as_str()].map(String::from).to_vec()).await
     };
-    fs::write(directory.join("native-response.json"), &response).unwrap();
     assert!(
-        confirmed_reply(&agent.harness, &response),
+        confirmed_reply(
+            document
+                .sandbox_harness(&document.spec.sandboxes[0])
+                .unwrap()
+                .kind
+                .as_str(),
+            &response
+        ),
         "no confirmed successful native reply"
     );
     assert_eq!(runtime_id(&client, &binding).await, hosted);
-    save(
-        "destroy.json",
-        &serde_json::to_value(deployment.destroy(&cancel).await.unwrap()).unwrap(),
+    let destroyed = deployment.destroy(&cancel).await.unwrap();
+    assert_eq!(destroyed.outcome, Outcome::Destroyed);
+}
+
+fn uses_independent_openclaw_inference(document: &Document) -> bool {
+    document
+        .sandbox_harness(&document.spec.sandboxes[0])
+        .is_ok_and(|harness| harness.kind == HarnessKind::OpenClaw)
+        && document
+            .selected_inference_providers()
+            .is_ok_and(|providers| {
+                providers.len() == 1
+                    && providers
+                        .iter()
+                        .all(|provider| provider.service_ref.is_none())
+            })
+}
+
+#[test]
+fn apply_exit_test_requires_independent_openclaw_inference() {
+    for (input, accepted) in [
+        (include_str!("../../../examples/fabric-openclaw.yaml"), true),
+        (
+            include_str!("../../../examples/inline-inference.yaml"),
+            true,
+        ),
+        (include_str!("../../../examples/managed-ollama.yaml"), false),
+        (include_str!("../../../examples/spark/vllm.yaml"), false),
+        (include_str!("../../../examples/fabric-hermes.yaml"), false),
+    ] {
+        assert_eq!(
+            uses_independent_openclaw_inference(&Document::parse(input.as_bytes()).unwrap()),
+            accepted
+        );
+    }
+}
+
+#[tokio::test]
+#[ignore = "requires explicit NEMOCLAW_UPGRADE_CONFIG, fresh NEMOCLAW_UPGRADE_STATE, and NEMOCLAW_TEST_BUNDLE; real independent inference and owned deployment"]
+async fn dependency_upgrade_survives_apply_process_exit() {
+    let explicit = |name| {
+        let path = PathBuf::from(std::env::var_os(name).expect(name));
+        assert!(path.is_absolute(), "{name} must be absolute");
+        path
+    };
+    let config = explicit("NEMOCLAW_UPGRADE_CONFIG");
+    let directory = explicit("NEMOCLAW_UPGRADE_STATE");
+    let bundle = explicit("NEMOCLAW_TEST_BUNDLE");
+    let document = Document::parse(fs::File::open(&config).unwrap()).unwrap();
+    assert!(
+        uses_independent_openclaw_inference(&document),
+        "use one OpenClaw agent and one independent inference provider"
     );
-    save(
-        "proof.json",
-        &json!({"passed":true,"deployment":document.metadata.uid,"harness":agent.harness,"resourceBindings":before,"managedRuntimeBindings":managed_before,"runtimeId":hosted,"unchangedApply":true,"exportReapply":true,"nativeResponse":true,"hostedRuntimePreserved":true,"destroyed":true}),
+    fs::create_dir(&directory).expect("test requires a fresh owned state directory");
+    let executable = bundle
+        .join("bin")
+        .join(nemoclaw_sdk::bundle::executable("nemoclaw"));
+    // Wait for the real CLI to exit before probing the hosted agent. This test
+    // neither serves inference nor starts a replacement agent through exec.
+    let apply = std::process::Command::new(&executable)
+        .args(["apply", "--state-dir"])
+        .arg(&directory)
+        .arg(&config)
+        .output()
+        .unwrap();
+    assert!(
+        apply.status.success(),
+        "apply failed: {}",
+        String::from_utf8_lossy(&apply.stderr)
     );
+    let applied: OperationResult = serde_json::from_slice(&apply.stdout).unwrap();
+    assert_eq!(applied.outcome, Outcome::Succeeded);
+    let deployment = Deployment::new(&directory, &bundle);
+    let cancel = CancellationToken::new();
+    let client = OpenShell::connect(&document.spec.gateway, Arc::new(EnvironmentSecrets)).unwrap();
+    client
+        .verify_gateway(document.spec.sandboxes[0].runtime.provider)
+        .await
+        .unwrap();
+    let (before, binding) = bindings(&directory);
+    let hosted = runtime_id(&client, &binding).await;
+    let reply = openclaw_reply(
+        &client,
+        &binding,
+        &document.spec.sandboxes[0].agent.name,
+        &format!("{}-upgrade", document.metadata.uid),
+    )
+    .await;
+    assert!(
+        confirmed_reply("openclaw", &reply),
+        "no confirmed hosted agent reply"
+    );
+    let exported = deployment.export(&cancel).await.unwrap();
+    assert_eq!(exported, document);
+    assert!(
+        deployment
+            .apply(&exported, &cancel)
+            .await
+            .unwrap()
+            .changes
+            .is_empty()
+    );
+    assert_eq!(bindings(&directory).0, before);
+    assert_eq!(runtime_id(&client, &binding).await, hosted);
+    let destroyed = deployment.destroy(&cancel).await.unwrap();
+    assert_eq!(destroyed.outcome, Outcome::Destroyed);
 }

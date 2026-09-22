@@ -17,12 +17,16 @@ Empty or zero selects a default only where stated.
 
 ## Validation Beyond the Schema
 
-- Document::parse remains authoritative. It rejects YAML aliases, anchors, merge keys, unsupported tags, duplicate keys, multiple documents, and input larger than 1 MiB.
-- The parser checks endpoint transport and address policy, managed gateway port bounds, canonical private IPv4 /24 networks, Docker engine syntax, and publication address/port/network agreement.
+- Document::parse rejects YAML aliases, anchors, merge keys, unsupported tags, duplicate keys, multiple documents, and input larger than 1 MiB. It applies the compiled input schema before defaulting; Document::validate applies the normalized schema and semantic checks, including for directly constructed Rust values.
+- The parser checks endpoint transport and address policy, managed gateway port bounds, canonical private IPv4 /24 networks, local engine socket syntax, and publication address/port/network agreement.
 - Explicit sandbox policies are also checked by the pinned OpenShell policy parser and validator, including protocol-specific rule semantics, process identities, filesystem paths, and destination address restrictions.
-- The parser checks unique agent names, identical inference settings across multiple OpenClaw agents, and a shared disclosure mode among unrestricted agents; omitted disclosure means progressive.
-- The parser checks that a VoiceClaw integration's agentRef exactly matches the one declared OpenClaw agent.
-- The parser compares providerRef with provider.name, route model with the served model, and snapshot identity with the service model.
+- Explicit filesystem grants must permit reads of the selected harness runtime directories; parent and read-write grants count. This parser check does not inspect images, resolve symlinks, or establish runtime permissions.
+- The schema requires an explicit default for multiple model choices. Rust checks unique route names, that the default names a route, and that the resolved harness supports the selected model count, tuning, and tools; omitted disclosure means progressive.
+- The parser resolves integrationRefs only from enclosing deployment or sandbox definitions, rejects name shadowing and incompatible agent grants, and permits at most one attached Brave search definition per sandbox. Agent-inline definitions attach directly; unused enclosing definitions grant no access.
+- The schema requires exactly one sandbox harness or harnessRef and rejects agent-level harness selection. Rust resolves visible harnesses without shadowing. Each sandbox requires one agent and hosts one Fabric runtime using the sandbox-selected implementation. Shared definitions reuse configuration across sandboxes.
+- The parser permits non-default reasoningEffort values only on the initial default choice. Managed inference services may constrain routes to their declared served model.
+- Rust resolves inferenceRef from enclosing inferences, preserves declaration scope for nested provider references, and rejects missing names and shadowing. The schema rejects inline/reference ambiguity.
+- The parser resolves providerRef from enclosing inferenceProviders, rejects shadowing, conflicting selected names, more than 32 selected providers, incompatible managed-service combinations, and compares route models and authentication with the selected provider. Provider/agent compatibility is checked after reference resolution for both inline and shared definitions. Unselected definitions create no resources. Snapshot identity must match the service model.
 - The parser checks memory threshold ordering and GPU/KV budget relationships; recipe path safety, byte-length limits, environment-map conflicts, snapshot file uniqueness, directory conflicts, and total-size overflow.
 - Schema validation does not observe hardware, image labels, model weights, credentials, ownership, connectivity, or inference readiness. Those checks run during the relevant SDK operation.
 
@@ -45,22 +49,23 @@ Paths:
 
 ## Agent
 
-One Fabric harness and its inference route.
+One agent instance with its own inference choices, tools, and integrations.
 
 Guide: [Agent runtimes](../agents.md).
 
 Paths:
 
-- `spec.sandboxes[].agents[]`
+- `spec.sandboxes[].agent`
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
 | `auth` | [AgentAuth](#agentauth) | No | — | Hermes API-key authentication through the routed provider. The provider must declare a credential reference. |
-| `harness` | string | Yes | — | Agent harness. Harnesses other than openclaw require external gateway and inference services. Constraints: `"deepagents"` or `"hermes"` or `"openclaw"` or `"claude"` or `"codex"` or `"mini-swe-agent"` or `"nooa"` or `"nooa-bench"` or `"remote-agent"` or `"pi"`. |
-| `inference` | [Inference](#inference) | Yes | — | Primary inference route for this agent. |
-| `interfaces` | [AgentInterfaces](#agentinterfaces) | No | — | Native dashboard access, declared only on the first agent in a sandbox. |
+| `inference` | [Inference](#inference) | No | — | Inline inference configuration. Exactly one of inference or inferenceRef is required. |
+| `inferenceRef` | string | No | — | Name of an enclosing inference configuration. Excludes inline inference. Constraints: pattern `^[a-z][a-z0-9-]{0,39}$`. |
+| `integrationRefs` | array of string | No | — | Unique integration names selected from spec.integrations or this sandbox's integrations. Omission selects no enclosing definitions. Constraints: items: pattern `^[a-z][a-z0-9-]{0,39}$`. |
+| `integrations` | map of [Integration](#integration) | No | — | Named integration definitions attached directly to this agent. Names must not collide with definitions in enclosing scopes. Constraints: keys: pattern `^[a-z][a-z0-9-]{0,39}$`. |
 | `name` | string | Yes | — | Lowercase agent name. Constraints: pattern `^[a-z][a-z0-9-]{0,39}$`. |
-| `tools` | [AgentTools](#agenttools) | No | — | OpenClaw tool restriction or disclosure mode. Omission selects progressive discovery without restricting tools. allow: [read] restricts tools, not OS-level filesystem access. |
+| `tools` | [AgentTools](#agenttools) | No | — | Read-only tools for OpenClaw, Deep Agents, or Pi, or OpenClaw disclosure mode. Omission preserves native defaults. allow: [read] restricts tools, not OS-level filesystem access. |
 
 ## AgentAuth
 
@@ -70,12 +75,28 @@ Guide: [Inference configuration](../inference.md).
 
 Paths:
 
-- `spec.sandboxes[].agents[].auth`
+- `spec.sandboxes[].agent.auth`
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
 | `method` | [AuthMethod](#authmethod) | Yes | — | API-key authentication. Interactive login is not supported. |
-| `providerRef` | string | Yes | — | Must equal the primary route's providerRef. Secret values stay in OpenShell. Constraints: pattern `^[a-z][a-z0-9-]{0,39}$`. |
+
+## AgentExecution
+
+Execution timeout shared by the sandbox; native heartbeat settings are OpenClaw-only.
+
+Guide: [Agent runtimes](../agents.md).
+
+Paths:
+
+- `spec.harnesses.{key}.execution`
+- `spec.sandboxes[].harness.execution`
+- `spec.sandboxes[].harnesses.{key}.execution`
+
+| Field | Input type | Required | Default | Description and constraints |
+|---|---|---|---|---|
+| `heartbeatEvery` | string | No | — | Heartbeat duration in seconds, minutes, or hours, such as 30m. Zero disables heartbeat. Omission leaves native defaults; an explicit interval uses an isolated heartbeat session. Constraints: pattern `^[0-9]+[smh]$(?![\s\S])`; maximum characters 256. |
+| `timeoutSeconds` | integer | No | — | Agent-turn timeout in seconds. Omission selects 600 for OpenClaw and 300 for other harnesses. OpenClaw adds 60 seconds to the enclosing Fabric timeout; readiness and health checks use separate budgets. Constraints: minimum 1; maximum 1000000000. |
 
 ## AgentInterfaces
 
@@ -85,21 +106,40 @@ Guide: [Agent interfaces](../interfaces.md).
 
 Paths:
 
-- `spec.sandboxes[].agents[].interfaces`
+- `spec.harnesses.{key}.interfaces`
+- `spec.sandboxes[].harness.interfaces`
+- `spec.sandboxes[].harnesses.{key}.interfaces`
 
 Accepted input: [OpenClawInterfaces](#openclawinterfaces) or [HermesInterfaces](#hermesinterfaces).
 
-## AgentTools
+## AgentObservability
 
-OpenClaw tool restriction or discovery mode. These forms are mutually exclusive.
+Harness-native telemetry shared by the sandbox.
 
 Guide: [Agent runtimes](../agents.md).
 
 Paths:
 
-- `spec.sandboxes[].agents[].tools`
+- `spec.harnesses.{key}.observability`
+- `spec.sandboxes[].harness.observability`
+- `spec.sandboxes[].harnesses.{key}.observability`
 
-Accepted input: object or object.
+| Field | Input type | Required | Default | Description and constraints |
+|---|---|---|---|---|
+| `otlp` | [OtlpTracing](#otlptracing) | No | — | Export OpenClaw traces to an externally operated local OTLP/HTTP collector. |
+| `relay` | [RelayTracing](#relaytracing) | No | — | Emit Hermes ATOF and ATIF traces through its in-process NeMo Relay integration. |
+
+## AgentTools
+
+Native read-only tool restriction or OpenClaw discovery mode. These forms are mutually exclusive.
+
+Guide: [Agent runtimes](../agents.md).
+
+Paths:
+
+- `spec.sandboxes[].agent.tools`
+
+Accepted input: object.
 
 ### Alternative 1
 
@@ -112,22 +152,22 @@ Expose only the read tool, independently of the gateway's discovery mode.
 
 ### Alternative 2
 
-Select the shared gateway's tool discovery mode without granting additional tools.
+Select the gateway's tool discovery mode without granting additional tools.
 
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
-| `disclosure` | [ToolDisclosure](#tooldisclosure) | Yes | — | Progressive uses structured tool search; direct exposes tools directly. Unrestricted agents must agree; omission means progressive. |
+| `disclosure` | [ToolDisclosure](#tooldisclosure) | Yes | — | Progressive uses structured tool search; direct exposes tools directly. Omission means progressive. |
 
 ## AllowedTool
 
-Tool supported by the read-only OpenClaw policy.
+Tool supported by the native read-only policy.
 
 Guide: [Agent runtimes](../agents.md).
 
 Paths:
 
-- `spec.sandboxes[].agents[].tools.allow[]`
+- `spec.sandboxes[].agent.tools.allow[]`
 
 Accepted input: string.
 
@@ -141,7 +181,7 @@ Guide: [Inference configuration](../inference.md).
 
 Paths:
 
-- `spec.sandboxes[].agents[].auth.method`
+- `spec.sandboxes[].agent.auth.method`
 
 Accepted input: string.
 
@@ -155,7 +195,7 @@ Guide: [Inline model recipes](../recipes.md).
 
 Paths:
 
-- `spec.inferenceProviders[].service.recipe.compatibility`
+- `spec.services.{key}.recipe.compatibility`
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
@@ -173,7 +213,7 @@ Guide: [Inline model recipes](../recipes.md).
 
 Paths:
 
-- `spec.inferenceProviders[].service.recipe.serving.compilation`
+- `spec.services.{key}.recipe.serving.compilation`
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
@@ -194,6 +234,13 @@ Paths:
 - `spec.gateway.tls.certificate`
 - `spec.gateway.tls.key`
 - `spec.inferenceProviders[].credential`
+- `spec.inferences.{key}.routes[].provider.credential`
+- `spec.integrations.{key}.credential`
+- `spec.sandboxes[].agent.inference.routes[].provider.credential`
+- `spec.sandboxes[].agent.integrations.{key}.credential`
+- `spec.sandboxes[].inferenceProviders[].credential`
+- `spec.sandboxes[].inferences.{key}.routes[].provider.credential`
+- `spec.sandboxes[].integrations.{key}.credential`
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
@@ -207,11 +254,30 @@ Guide: [Agent interfaces](../interfaces.md).
 
 Paths:
 
-- `spec.sandboxes[].agents[].interfaces.dashboard.bind`
+- `spec.harnesses.{key}.interfaces.dashboard.bind`
+- `spec.sandboxes[].harness.interfaces.dashboard.bind`
+- `spec.sandboxes[].harnesses.{key}.interfaces.dashboard.bind`
 
 Accepted input: string.
 
 Constraints: `"127.0.0.1"` or `"0.0.0.0"`.
+
+## DedicatedHardware
+
+Requirements for one NVIDIA GPU with dedicated memory on Linux AMD64. Declaring requirements does not qualify a model or host.
+
+Guide: [Managed models](../models.md).
+
+Paths:
+
+- `spec.services.{key}.hardware`
+
+| Field | Input type | Required | Default | Description and constraints |
+|---|---|---|---|---|
+| `architecture` | string | Yes | — | CPU architecture; this dedicated-memory contract requires amd64. Constraints: `"amd64"`. |
+| `minComputeCapability` | integer | Yes | — | Minimum NVIDIA compute capability, encoded as major times ten plus minor; 90 means 9.0. Constraints: minimum 10; maximum 999. |
+| `minDriverMajor` | integer | Yes | — | Minimum installed NVIDIA driver major version. Constraints: minimum 1; maximum 9999. |
+| `minGpuMemoryBytes` | integer | Yes | — | Minimum total dedicated GPU memory in bytes. Host RAM is measured separately. Constraints: minimum 4294967296; maximum 4398046511104. |
 
 ## ExplicitPolicy
 
@@ -245,35 +311,35 @@ Paths:
 |---|---|---|---|---|
 | `explicit` | [ExplicitPolicy](#explicitpolicy) | Yes | — | Complete sandbox policy in OpenShell YAML field names. |
 
-## ExternalManagement
+## ExternalOllama
 
-NemoClaw uses this resource without managing its lifecycle or administrative configuration.
+External Ollama daemon observed by the managed proxy installer.
 
-Guide: [Resource ownership](../usage.md#resource-ownership).
-
-Paths:
-
-- `spec.inferenceProviders[].ollama.network.management`
-- `spec.sandboxes[].network.proxy.management`
-
-Accepted input: string.
-
-Constraints: `"external"`.
-
-## ExternalNetwork
-
-Identify a network owned outside this deployment.
-
-Guide: [Resource ownership](../usage.md#resource-ownership).
+Guide: [Configuration and credentials](../usage.md#configuration-and-credentials).
 
 Paths:
 
-- `spec.inferenceProviders[].ollama.network`
+- `spec.services.{key}.upstream`
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
-| `management` | [ExternalManagement](#externalmanagement) | No | — | Optional external ownership declaration. Omission means external. |
-| `name` | string | Yes | — | Existing network name on the Ollama Docker engine. Constraints: pattern `^[a-z][a-z0-9-]{0,39}$`. |
+| `endpoint` | string | Yes | — | Loopback-only Ollama HTTP endpoint ending in /v1. |
+| `model` | [ExternalOllamaModel](#externalollamamodel) | Yes | — | Existing model verified before the proxy starts. |
+
+## ExternalOllamaModel
+
+Existing Ollama model installation, independently owned outside the deployment.
+
+Guide: [Inference configuration](../inference.md).
+
+Paths:
+
+- `spec.services.{key}.upstream.model`
+
+| Field | Input type | Required | Default | Description and constraints |
+|---|---|---|---|---|
+| `digest` | string | Yes | — | Lowercase 64-character model digest reported by Ollama's /api/tags API. Constraints: pattern `^[a-f0-9]{64}$`. |
+| `name` | string | Yes | — | Installed Ollama model name including its tag. Constraints: pattern `^[a-z0-9][a-z0-9._-]*:[a-z0-9][a-z0-9._-]*$`. |
 
 ## File
 
@@ -283,7 +349,7 @@ Guide: [Inline model recipes](../recipes.md).
 
 Paths:
 
-- `spec.inferenceProviders[].service.recipe.snapshot.files[]`
+- `spec.services.{key}.recipe.snapshot.files[]`
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
@@ -293,7 +359,7 @@ Paths:
 
 ## Gateway
 
-Choose a managed local Docker gateway or connect to an external gateway. Credentials and TLS require HTTPS.
+Install a local gateway or connect to an existing gateway.
 
 Guide: [Configuration and credentials](../usage.md#configuration-and-credentials).
 
@@ -301,17 +367,67 @@ Paths:
 
 - `spec.gateway`
 
+Accepted input: object.
+
+### Alternative 1
+
+A gateway installed and managed by this deployment.
+Managed Podman targets local rootless Linux; rootful, remote, and other platforms are unqualified.
+
+
+| Field | Input type | Required | Default | Description and constraints |
+|---|---|---|---|---|
+| `endpoint` | string | No | `"http://127.0.0.1:17681"` | Local gateway HTTP origin with an unprivileged loopback port. Constraints: `""` or pattern `^http://127\.0\.0\.1:[0-9]+/?$`. Omitted or empty selects the default. |
+| `engine` | string | No | `"unix:///var/run/docker.sock"` | Managed gateway Unix engine socket; Podman requires its API service socket. Constraints: `""` or pattern `^unix:///`. Omitted or empty selects the default. |
+| `image` | string | No | `"ghcr.io/nvidia/openshell/gateway@sha256:ec2b0efea84fff198e888e97c85befb9c908acde92e8256f9b527877ed182d66"` | Managed gateway image pinned by the SDK. Constraints: `""` or `"ghcr.io/nvidia/openshell/gateway@sha256:ec2b0efea84fff198e888e97c85befb9c908acde92e8256f9b527877ed182d66"`. Omitted or empty selects the default. |
+| `imagePullPolicy` | [ImagePullPolicy](#imagepullpolicy) | No | — | Image acquisition before container creation. Docker accepts IfNotPresent (the default) or Never; Podman also accepts Always before creation or restart. |
+| `management` | string | Yes | — | Whether this deployment manages the gateway. Constraints: `"managed"`. |
+| `networkCIDR` | string | No | — | Canonical private IPv4 /24 for a managed gateway. Constraints: `""` or pattern `/24$`. Omitted or empty selects 172.30.N.0/24, where N is the first byte of SHA-256(metadata.uid). |
+
+### Alternative 2
+
+An existing gateway managed outside this deployment.
+
+
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
 | `credential` | [Credential](#credential) | No | — | Optional bearer credential reference for an external HTTPS gateway. |
-| `endpoint` | string | When external | — | Gateway HTTP(S) origin, without a path. Required for an external gateway; managed gateways use unprivileged loopback HTTP ports. Managed only: omitted or empty selects http://127.0.0.1:17681. |
-| `engine` | string | No | — | Managed gateway Docker socket. Omit or leave empty for an external gateway. Managed only: omitted or empty selects unix:///var/run/docker.sock. |
-| `image` | string | No | — | Managed gateway image pinned by the SDK. Omit or leave empty for an external gateway. Managed only: omitted or empty selects ghcr.io/nvidia/openshell/gateway@sha256:3d08ad1e7d839a2ffb9ac85a66102b96dd6bc042c3a6f1eaa31351998fd65792. |
-| `management` | string | Yes | — | Whether the SDK manages the gateway or connects to an existing one. Constraints: `"managed"` or `"external"`. |
-| `network` | [ManagedResource](#managedresource) | No | — | Optional ownership declaration for the gateway network configured by networkCIDR. Omission means managed for a managed gateway. |
-| `networkCIDR` | string | No | — | Canonical private IPv4 /24 for a managed gateway. Omit or leave empty for an external gateway. Managed only: omitted or empty selects 172.30.N.0/24, where N is the first byte of SHA-256(metadata.uid). |
-| `storage` | [ManagedResource](#managedresource) | No | — | Optional ownership declaration for gateway storage. Omission means managed for a managed gateway; external gateways cannot declare storage. |
+| `endpoint` | string | Yes | — | Gateway HTTP(S) origin, without a path. Constraints: pattern `^https?://`. |
+| `management` | string | Yes | — | Whether this deployment manages the gateway. Constraints: `"external"`. |
 | `tls` | [TLS](#tls) | No | — | Optional mutual TLS references for an external HTTPS gateway. |
+
+## HardwareProfile
+
+GPU-family contracts, not model or whole-system qualifications. System profiles fix ARM64; GPU profiles require architecture. Each currently requires one visible GPU.
+
+Guide: [Managed models](../models.md).
+
+Paths:
+
+- `spec.services.{key}.hardware.profile`
+
+Accepted input: string.
+
+Constraints: `"dgx-spark"` or `"dgx-station"` or `"gb200"` or `"gb300"` or `"gh200"` or `"h100"` or `"h200"` or `"a100"` or `"a10"` or `"a10g"` or `"a40"` or `"l4"` or `"l40"` or `"l40s"` or `"t4"` or `"rtx-6000-ada"` or `"rtx-pro-6000-blackwell"` or `"rtx-3090"` or `"rtx-4090"` or `"rtx-5090"`.
+
+## Harness
+
+One harness runtime configuration. Every sandbox runs its own instance for its configured agent.
+
+Guide: [Configuration and credentials](../usage.md#configuration-and-credentials).
+
+Paths:
+
+- `spec.harnesses.{key}`
+- `spec.sandboxes[].harness`
+- `spec.sandboxes[].harnesses.{key}`
+
+| Field | Input type | Required | Default | Description and constraints |
+|---|---|---|---|---|
+| `execution` | [AgentExecution](#agentexecution) | No | — | OpenClaw timeout and heartbeat defaults shared by the sandbox. |
+| `interfaces` | [AgentInterfaces](#agentinterfaces) | No | — | Native dashboard access for this sandbox runtime. |
+| `kind` | string | Yes | — | Fabric harness implementation for the sandbox agent. Constraints: `"deepagents"` or `"hermes"` or `"openclaw"` or `"claude"` or `"codex"` or `"mini-swe-agent"` or `"nooa"` or `"nooa-bench"` or `"remote-agent"` or `"pi"`. |
+| `observability` | [AgentObservability](#agentobservability) | No | — | Harness-native tracing shared by the sandbox. |
 
 ## HermesApi
 
@@ -321,7 +437,9 @@ Guide: [Agent interfaces](../interfaces.md).
 
 Paths:
 
-- `spec.sandboxes[].agents[].interfaces.api`
+- `spec.harnesses.{key}.interfaces.api`
+- `spec.sandboxes[].harness.interfaces.api`
+- `spec.sandboxes[].harnesses.{key}.interfaces.api`
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
@@ -335,7 +453,9 @@ Guide: [Agent interfaces](../interfaces.md).
 
 Paths:
 
-- `spec.sandboxes[].agents[].interfaces.dashboard`
+- `spec.harnesses.{key}.interfaces.dashboard`
+- `spec.sandboxes[].harness.interfaces.dashboard`
+- `spec.sandboxes[].harnesses.{key}.interfaces.dashboard`
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
@@ -352,7 +472,9 @@ Guide: [Agent interfaces](../interfaces.md).
 
 Paths:
 
-- `spec.sandboxes[].agents[].interfaces`
+- `spec.harnesses.{key}.interfaces`
+- `spec.sandboxes[].harness.interfaces`
+- `spec.sandboxes[].harnesses.{key}.interfaces`
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
@@ -367,7 +489,9 @@ Guide: [Agent interfaces](../interfaces.md).
 
 Paths:
 
-- `spec.sandboxes[].agents[].interfaces.dashboard.tui`
+- `spec.harnesses.{key}.interfaces.dashboard.tui`
+- `spec.sandboxes[].harness.interfaces.dashboard.tui`
+- `spec.sandboxes[].harnesses.{key}.interfaces.dashboard.tui`
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
@@ -385,7 +509,22 @@ Paths:
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
-| `ref` | string | No | `"nc-prototype-fabric@sha256:a608340846053d881c3c6b3bdd7541d4f2f53236deaaef8e0b8f44afd8d4e8dd"` | Immutable image reference. Omitted or empty selects the SDK-pinned Fabric image. Constraints: `""` or pattern `^[a-zA-Z0-9][a-zA-Z0-9._:/-]*@sha256:[a-f0-9]{64}$`. Omitted or empty selects the default. |
+| `ref` | string | No | `"nc-multi-models@sha256:3ab70ded67440e838a37d6c9f0e3b08b95e2acf416c6076f8817bac190525cf0"` | Immutable image reference. Omitted or empty selects the SDK-pinned Fabric image. Constraints: `""` or pattern `^[a-zA-Z0-9][a-zA-Z0-9._:/-]*@sha256:[a-f0-9]{64}$`. Omitted or empty selects the default. |
+
+## ImagePullPolicy
+
+Controls image acquisition on the selected container engine. Does not control model downloads or OpenShell sandbox images.
+
+Guide: [Container image downloads](../usage.md#control-container-image-downloads).
+
+Paths:
+
+- `spec.gateway.imagePullPolicy`
+- `spec.services.{key}.imagePullPolicy`
+
+Accepted input: string.
+
+Constraints: `"Always"` or `"IfNotPresent"` or `"Never"`.
 
 ## Inference
 
@@ -395,11 +534,14 @@ Guide: [Inference configuration](../inference.md).
 
 Paths:
 
-- `spec.sandboxes[].agents[].inference`
+- `spec.inferences.{key}`
+- `spec.sandboxes[].agent.inference`
+- `spec.sandboxes[].inferences.{key}`
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
-| `routes` | array of [Route](#route) | Yes | — | Exactly one route named primary. Constraints: minimum items 1; maximum items 1. |
+| `default` | string | No | — | Initial model choice by route name. Required with multiple routes; omission selects the sole route. Constraints: pattern `^[a-z][a-z0-9-]{0,39}$`. |
+| `routes` | array of [Route](#route) | Yes | — | One or more uniquely named model choices. Multiple choices require OpenClaw or Pi. Constraints: minimum items 1; maximum items 32. |
 
 ## InferenceApi
 
@@ -410,6 +552,10 @@ Guide: [Inference configuration](../inference.md).
 Paths:
 
 - `spec.inferenceProviders[].api`
+- `spec.inferences.{key}.routes[].provider.api`
+- `spec.sandboxes[].agent.inference.routes[].provider.api`
+- `spec.sandboxes[].inferenceProviders[].api`
+- `spec.sandboxes[].inferences.{key}.routes[].provider.api`
 
 Accepted input: string.
 
@@ -417,24 +563,26 @@ Constraints: `"openai-completions"` or `"openai-responses"` or `"anthropic-messa
 
 ## InferenceProvider
 
-Choose endpoint for external inference, endpoint plus ollama for managed Ollama, or service for managed vLLM.
+Choose an endpoint for external inference or serviceRef for a managed service.
 
 Guide: [Inference configuration](../inference.md).
 
 Paths:
 
 - `spec.inferenceProviders[]`
+- `spec.inferences.{key}.routes[].provider`
+- `spec.sandboxes[].agent.inference.routes[].provider`
+- `spec.sandboxes[].inferenceProviders[]`
+- `spec.sandboxes[].inferences.{key}.routes[].provider`
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
 | `api` | [InferenceApi](#inferenceapi) | No | — | Request API. Omission selects anthropic-messages for Claude, openai-responses for Codex, and openai-completions for other non-Pi harnesses. Pi requires omission and selects its API through native model metadata. |
-| `credential` | [Credential](#credential) | No | — | Optional API credential reference for an external HTTPS endpoint. Excluded by service and ollama. |
-| `endpoint` | string | Without service | — | Inference HTTP(S) URL. Required without service; omit or leave empty with service. HTTP requires a literal private or loopback address. |
-| `management` | [Management](#management) | No | — | Optional server ownership. Omission means managed with service or ollama, external with endpoint alone. The OpenShell provider registration remains deployment-owned in either mode. |
-| `name` | string | Yes | — | Provider name referenced by the primary route. Constraints: pattern `^[a-z][a-z0-9-]{0,39}$`. |
-| `ollama` | [ManagedOllama](#managedollama) | No | — | Manage Ollama through a local Unix Docker socket and an existing network. Requires an explicit private or loopback IP:port/v1 HTTP endpoint. |
+| `credential` | [Credential](#credential) | No | — | Optional API credential reference for an external HTTPS endpoint. Excluded by serviceRef. |
+| `endpoint` | string | Without serviceRef | — | Inference HTTP(S) URL owned outside the deployment. Required without serviceRef and excluded with serviceRef. |
+| `name` | string | Yes | — | Provider name referenced by model choices. Constraints: pattern `^[a-z][a-z0-9-]{0,39}$`. |
 | `provider` | string | Yes | — | OpenShell provider implementation. Must match the selected API family. Constraints: `"openai"` or `"anthropic"`. |
-| `service` | [Service](#service) | No | — | Manage vLLM from a pinned runtime image and model. Excludes ollama and credential; endpoint must be omitted or empty. |
+| `serviceRef` | string | No | — | Name of a managed service in spec.services. Excludes endpoint and credential. Constraints: pattern `^[a-z][a-z0-9-]{0,39}$`. |
 
 ## InlineRecipe
 
@@ -444,7 +592,7 @@ Guide: [Inline model recipes](../recipes.md).
 
 Paths:
 
-- `spec.inferenceProviders[].service.recipe`
+- `spec.services.{key}.recipe`
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
@@ -461,93 +609,38 @@ Paths:
 
 ## Integration
 
-A semantic integration owned outside the NemoClaw sandbox.
+Integration configuration attached inline to an agent or selected through integrationRefs. Unsupported kinds are rejected.
 
-Guide: [Configuration and credentials](../usage.md#configuration-and-credentials).
+Guide: [Agent runtimes](../agents.md).
 
 Paths:
 
-- `spec.integrations[]`
+- `spec.integrations.{key}`
+- `spec.sandboxes[].agent.integrations.{key}`
+- `spec.sandboxes[].integrations.{key}`
+
+Accepted input: object.
+
+### Alternative 1
+
+Brave Search with gateway-held credentials and explicit agent grants.
+
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
-| `agentRef` | string | Yes | — | Name of the one OpenClaw agent authorized for this integration. Constraints: pattern `^[a-z][a-z0-9-]{0,39}$`. |
-| `kind` | string | Yes | — | External integration kind. R0 supports only voiceclaw. Constraints: `"voiceclaw"`. |
-| `name` | string | Yes | — | Integration name within this deployment. Constraints: pattern `^[a-z][a-z0-9-]{0,39}$`. |
+| `credential` | [Credential](#credential) | Yes | — | Host environment reference. OpenShell supplies a BRAVE_API_KEY placeholder to the sandbox. |
+| `kind` | string | Yes | — | Integration implementation selected by this definition. Constraints: `"webSearch"`. |
+| `provider` | [SearchProvider](#searchprovider) | Yes | — | Supported search service. |
 
-## ManagedManagement
+### Alternative 2
 
-NemoClaw manages this resource's lifecycle. Storage retention is independent of ownership.
+Explicit VoiceClaw R0 connection to the selected OpenClaw agent.
 
-Guide: [Resource ownership](../usage.md#resource-ownership).
-
-Paths:
-
-- `spec.gateway.network.management`
-- `spec.gateway.storage.management`
-- `spec.inferenceProviders[].ollama.management`
-- `spec.inferenceProviders[].ollama.model.management`
-- `spec.inferenceProviders[].ollama.storage.management`
-- `spec.inferenceProviders[].service.management`
-- `spec.inferenceProviders[].service.model.management`
-- `spec.inferenceProviders[].service.placement.network.management`
-- `spec.inferenceProviders[].service.storage.management`
-
-Accepted input: string.
-
-Constraints: `"managed"`.
-
-## ManagedOllama
-
-Managed Ollama uses a pinned image, an existing Docker network, and an explicit model:tag on the route.
-
-Guide: [Configuration and credentials](../usage.md#configuration-and-credentials).
-
-Paths:
-
-- `spec.inferenceProviders[].ollama`
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
-| `engine` | string | Yes | — | Local Unix Docker socket URL. Constraints: pattern `^unix:///`. |
-| `image` | string | Yes | — | Immutable ollama/ollama image reference. Constraints: pattern `^ollama/ollama@sha256:[a-f0-9]{64}$`. |
-| `management` | [ManagedManagement](#managedmanagement) | No | — | Optional ownership declaration for the Ollama daemon container. Omission means managed. |
-| `model` | [ManagedResource](#managedresource) | No | — | Optional ownership declaration for installing the route model. Omission means managed; this does not change the selected model. |
-| `network` | [NetworkReference](#networkreference) | Yes | — | Name of the existing Docker network. |
-| `storage` | [ManagedResource](#managedresource) | No | — | Optional model-volume ownership declaration. Omission means managed; the volume survives destroy. |
-
-## ManagedResource
-
-Explicit ownership for a dependency whose creation settings remain on its parent. Only managed ownership is implemented.
-
-Guide: [Resource ownership](../usage.md#resource-ownership).
-
-Paths:
-
-- `spec.gateway.network`
-- `spec.gateway.storage`
-- `spec.inferenceProviders[].ollama.model`
-- `spec.inferenceProviders[].ollama.storage`
-- `spec.inferenceProviders[].service.placement.network`
-- `spec.inferenceProviders[].service.storage`
-
-| Field | Input type | Required | Default | Description and constraints |
-|---|---|---|---|---|
-| `management` | [ManagedManagement](#managedmanagement) | Yes | — | Managed ownership. Omit the enclosing object to keep the same behavior. |
-
-## Management
-
-Ownership of the inference server, separate from NemoClaw's owned routing registration.
-
-Guide: [Resource ownership](../usage.md#resource-ownership).
-
-Paths:
-
-- `spec.inferenceProviders[].management`
-
-Accepted input: string or string.
-
-Constraints: `"managed"` or `"external"`.
+| `agentRef` | string | Yes | — | Name of the attached OpenClaw agent. Constraints: pattern `^[a-z][a-z0-9-]{0,39}$`. |
+| `kind` | string | Yes | — | Integration implementation selected by this definition. Constraints: `"voiceclawR0"`. |
 
 ## Manifest
 
@@ -557,7 +650,7 @@ Guide: [Inline model recipes](../recipes.md).
 
 Paths:
 
-- `spec.inferenceProviders[].service.recipe.snapshot`
+- `spec.services.{key}.recipe.snapshot`
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
@@ -573,15 +666,16 @@ Guide: [Managed models](../models.md).
 
 Paths:
 
-- `spec.inferenceProviders[].service.memory`
+- `spec.services.{key}.memory`
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
 | `consecutiveSamples` | integer | No | `5` | Consecutive low-memory samples before the watchdog stops the owned process. Constraints: `0` or minimum 1; maximum 5. Omitted or zero selects the default. |
 | `freeGateGiB` | integer | No | `12` | Available-memory gate in GiB for minFreeGiB. Must be at least minAvailableGiB after defaults. Constraints: `0` or minimum 6; maximum 24. Omitted or zero selects the default. |
-| `gpuMemoryGiB` | integer | No | — | Total GPU budget in GiB without a recipe. Must be omitted or zero with a recipe, which supplies its own byte budget. Constraints: minimum 0; maximum 96. Omitted or zero stays zero in the document. Without a recipe, the backend uses 16 GiB. With a recipe, resources.gpuMemoryBytes supplies the budget. |
+| `gpuMemoryGiB` | integer | No | — | Total GPU budget in GiB without a recipe. Must be omitted or zero with a recipe, which supplies its own byte budget. Constraints: minimum 0; maximum 96. Omitted or zero stays zero in the document. Without a recipe or gpuMemoryUtilization, the backend uses 16 GiB. A recipe supplies resources.gpuMemoryBytes; gpuMemoryUtilization requires zero here. |
+| `gpuMemoryUtilization` | number | No | — | Optional fraction of observed dedicated GPU memory, from 0.05 through 0.95. Requires hardware with explicit minGpuMemoryBytes, including dedicated-memory named profiles. Excludes unified-memory profiles, recipe, fixed gpuMemoryGiB and explicit KV-cache allocation; vLLM sizes its cache natively. Constraints: minimum 0.05; maximum 0.95. |
 | `hostReserveGiB` | integer | No | `32` | Host memory reserve in GiB excluded from the serving budget. Constraints: `0` or minimum 28; maximum 64. Omitted or zero selects the default. |
-| `kvCacheGiB` | integer | No | `8` | KV cache allocation in GiB for ordinary vLLM. Recipe serving does not emit this explicit cache-allocation flag. Constraints: `0` or minimum 4; maximum 12. Omitted or zero selects the default. |
+| `kvCacheGiB` | integer | No | `8` | KV cache allocation in GiB for ordinary vLLM. Omitted or zero defaults to 8, except gpuMemoryUtilization requires zero and lets vLLM allocate its cache. Recipe serving does not emit this flag. Constraints: minimum 0. Omitted or zero selects 8 GiB, except gpuMemoryUtilization keeps zero and lets vLLM allocate its cache. |
 | `minAvailableGiB` | integer | No | `8` | Available-memory threshold in GiB that contributes a low-memory sample. Constraints: `0` or minimum 6; maximum 16. Omitted or zero selects the default. |
 | `minFreeGiB` | integer | No | `3` | Free-memory threshold in GiB, used when available memory is below freeGateGiB. Constraints: `0` or minimum 2; maximum 8. Omitted or zero selects the default. |
 
@@ -608,11 +702,10 @@ Guide: [Managed models](../models.md).
 
 Paths:
 
-- `spec.inferenceProviders[].service.model`
+- `spec.services.{key}.model`
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
-| `management` | [ManagedManagement](#managedmanagement) | No | — | Optional ownership declaration for downloading and preparing this model installation. Omission means managed. |
 | `repository` | string | Yes | — | Public Hugging Face owner/repository name. Constraints: pattern `^[a-zA-Z0-9][a-zA-Z0-9._-]*/[a-zA-Z0-9][a-zA-Z0-9._-]*$`; maximum characters 200. |
 | `revision` | string | Yes | — | Full lowercase 40-hex commit revision; branches and tags are rejected. Constraints: pattern `^[a-f0-9]{40}$`. |
 
@@ -632,19 +725,57 @@ Paths:
 | `proxy` | [Proxy](#proxy) | No | — | HTTP proxy address used by the agent process. Does not create a proxy or change gateway networking. |
 | `tier` | string | No | `"isolated"` | Isolated policy preset. Omit when declaring policy.explicit; omission without policy selects isolated. Constraints: `""` or `"isolated"`. Omitted or empty selects isolated only without policy.explicit. |
 
-## NetworkReference
+## OllamaMemory
 
-An existing container network on the selected engine. NemoClaw attaches its container but does not create or delete the network.
+Ollama GPU budget and host memory protection.
 
-Guide: [Resource ownership](../usage.md#resource-ownership).
+Guide: [Configuration and credentials](../usage.md#configuration-and-credentials).
 
 Paths:
 
-- `spec.inferenceProviders[].ollama.network`
+- `spec.services.{key}.memory`
 
-Accepted input: string or [ExternalNetwork](#externalnetwork).
+| Field | Input type | Required | Default | Description and constraints |
+|---|---|---|---|---|
+| `consecutiveSamples` | integer | No | `5` | Consecutive low-memory samples before stopping the owned process. Constraints: `0` or minimum 1; maximum 5. Omitted or zero selects the default. |
+| `freeGateGiB` | integer | No | `12` | Available-memory gate for the free-memory threshold. Constraints: `0` or minimum 6; maximum 24. Omitted or zero selects the default. |
+| `gpuMemoryGiB` | integer | No | `0` | Fixed serving budget in GiB when utilization is omitted. Omission or zero selects 16 GiB. Constraints: `0` or minimum 0; maximum 96. Omitted or zero stays zero in the document. Without gpuMemoryUtilization, the installer uses 16 GiB. |
+| `gpuMemoryUtilization` | number | No | — | Optional fraction of observed dedicated GPU memory. Constraints: minimum 0.05; maximum 0.95. |
+| `hostReserveGiB` | integer | No | `32` | Host memory reserve excluded from serving. Constraints: `0` or minimum 28; maximum 64. Omitted or zero selects the default. |
+| `minAvailableGiB` | integer | No | `8` | Available-memory threshold used by the bounded runtime watchdog. Constraints: `0` or minimum 6; maximum 16. Omitted or zero selects the default. |
+| `minFreeGiB` | integer | No | `3` | Free-memory threshold used below freeGateGiB. Constraints: `0` or minimum 2; maximum 8. Omitted or zero selects the default. |
 
-Constraints: pattern `^[a-z][a-z0-9-]{0,39}$`.
+## OllamaModel
+
+One immutable Ollama registry model installation.
+
+Guide: [Configuration and credentials](../usage.md#configuration-and-credentials).
+
+Paths:
+
+- `spec.services.{key}.model`
+
+| Field | Input type | Required | Default | Description and constraints |
+|---|---|---|---|---|
+| `digest` | string | Yes | — | Lowercase SHA-256 of the registry manifest selected for that tag. Constraints: pattern `^[a-f0-9]{64}$`. |
+| `name` | string | Yes | — | Public library model name including its tag. Constraints: pattern `^[a-z0-9][a-z0-9._-]*:[a-z0-9][a-z0-9._-]*$`. |
+
+## OllamaServing
+
+Native Ollama serving controls supported by the managed installer.
+
+Guide: [Configuration and credentials](../usage.md#configuration-and-credentials).
+
+Paths:
+
+- `spec.services.{key}.serving`
+
+| Field | Input type | Required | Default | Description and constraints |
+|---|---|---|---|---|
+| `contextTokens` | integer | No | `32768` | Maximum model context length. Constraints: `0` or minimum 8192; maximum 65536. Omitted or zero selects the default. |
+| `maxSequences` | integer | No | `1` | Maximum concurrent sequences. Constraints: `0` or minimum 1; maximum 2. Omitted or zero selects the default. |
+| `port` | integer | No | `18888` | Inference listening port. Constraints: `0` or minimum 1024; maximum 65535. Omitted or zero selects the default. |
+| `startupTimeoutSeconds` | integer | No | `1800` | Seconds allowed for model loading and readiness. Constraints: `0` or minimum 60; maximum 3600. Omitted or zero selects the default. |
 
 ## OpenClawDashboard
 
@@ -654,7 +785,9 @@ Guide: [Agent interfaces](../interfaces.md).
 
 Paths:
 
-- `spec.sandboxes[].agents[].interfaces.dashboard`
+- `spec.harnesses.{key}.interfaces.dashboard`
+- `spec.sandboxes[].harness.interfaces.dashboard`
+- `spec.sandboxes[].harnesses.{key}.interfaces.dashboard`
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
@@ -663,32 +796,55 @@ Paths:
 
 ## OpenClawInterfaces
 
-Native agent interfaces. Declare once on the first agent in a shared sandbox.
+Native interfaces belonging to the sandbox harness runtime.
 
 Guide: [Agent interfaces](../interfaces.md).
 
 Paths:
 
-- `spec.sandboxes[].agents[].interfaces`
+- `spec.harnesses.{key}.interfaces`
+- `spec.sandboxes[].harness.interfaces`
+- `spec.sandboxes[].harnesses.{key}.interfaces`
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
 | `dashboard` | [OpenClawDashboard](#openclawdashboard) | Yes | — | Enable the OpenClaw dashboard with sandbox-local token authentication. |
 
+## OtlpTracing
+
+Explicitly enabled HTTP/protobuf tracing. The collector is not managed by NemoClaw.
+
+Guide: [Agent runtimes](../agents.md).
+
+Paths:
+
+- `spec.harnesses.{key}.observability.otlp`
+- `spec.sandboxes[].harness.observability.otlp`
+- `spec.sandboxes[].harnesses.{key}.observability.otlp`
+
+| Field | Input type | Required | Default | Description and constraints |
+|---|---|---|---|---|
+| `enabled` | boolean | Yes | — | Must be true. Omit observability to leave native telemetry unconfigured. Constraints: `true`. |
+| `endpoint` | string | Yes | — | Local collector base URL; currently http://host.openshell.internal:4318. Constraints: `"http://host.openshell.internal:4318"`. |
+| `sampleRate` | number | Yes | — | Fraction of traces sampled, from 0 through 1 inclusive. Constraints: minimum 0; maximum 1. |
+| `serviceName` | string | Yes | — | Nonempty printable ASCII service name, without leading or trailing spaces, at most 256 characters. Constraints: pattern `^[!-~](?:[ -~]*[!-~])?$(?![\s\S])`; minimum characters 1; maximum characters 256. |
+
 ## Overrides
 
-Model overrides on the primary route.
+Model settings for one named inference choice.
 
 Guide: [Inference configuration](../inference.md).
 
 Paths:
 
-- `spec.sandboxes[].agents[].inference.routes[].overrides`
+- `spec.inferences.{key}.routes[].overrides`
+- `spec.sandboxes[].agent.inference.routes[].overrides`
+- `spec.sandboxes[].inferences.{key}.routes[].overrides`
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
 | `contextWindow` | integer | No | — | Model context capacity in tokens. Does not resize the inference server. Constraints: minimum 1; maximum 4194304. |
-| `maxTokens` | integer | No | — | Maximum output tokens advertised to OpenClaw. Constraints: minimum 1; maximum 1000000000. |
+| `maxTokens` | integer | No | — | Maximum output tokens for OpenClaw, Deep Agents, mini-swe-agent, or remote-agent. Constraints: minimum 1; maximum 1000000000. |
 | `model` | string | Yes | — | Model identifier. For a managed service, match its recipe serving.modelName or, without a recipe, model.repository. Constraints: pattern `^[a-zA-Z0-9][a-zA-Z0-9._:/-]{0,199}$`. |
 | `piModel` | object | No | — | Opaque custom model metadata for the pi harness. Its object may contain nested null values; the piModel value itself must be an object. |
 | `reasoning` | boolean | No | — | Whether the model supports reasoning. |
@@ -754,7 +910,7 @@ Paths:
 | `access` | string | No | — | full or read-only preset; mutually exclusive with rules. Constraints: `"full"` or `"read-only"`. |
 | `allow_encoded_slash` | boolean | No | — | Allow encoded slash path segments when required by the upstream API. |
 | `allowed_ips` | array of string | No | — | Resolved IP addresses or CIDRs allowed by OpenShell destination validation. |
-| `deny_rules` | array of [PolicyMatcher](#policymatcher) | No | — | Application-protocol deny rules, evaluated before allow rules. |
+| `deny_rules` | array of [PolicyMatcher](#policymatcher) | No | — | Application-protocol deny rules, evaluated before allow rules. Constraints: minimum items 1. |
 | `enforcement` | string | No | — | enforce or audit; omission follows OpenShell defaults. Constraints: `"enforce"` or `"audit"`. |
 | `host` | string | No | — | Destination hostname or DNS glob; may be omitted with allowed_ips. |
 | `json_rpc` | [PolicyJsonRpc](#policyjsonrpc) | No | — | JSON-RPC inspection limits. |
@@ -764,7 +920,7 @@ Paths:
 | `ports` | array of integer | No | — | Nonempty unique TCP ports; mutually exclusive with port. Constraints: minimum items 1; items: minimum 1; maximum 65535. |
 | `protocol` | string | No | — | rest, websocket, json-rpc, or mcp; omit for TCP. Constraints: `"rest"` or `"websocket"` or `"json-rpc"` or `"mcp"`. |
 | `request_body_credential_rewrite` | boolean | No | — | Enable OpenShell placeholder rewriting in supported REST request bodies. |
-| `rules` | array of [PolicyAllowRule](#policyallowrule) | No | — | Application-protocol allow rules. |
+| `rules` | array of [PolicyAllowRule](#policyallowrule) | No | — | Application-protocol allow rules. Constraints: minimum items 1. |
 | `tls` | string | No | — | terminate, passthrough, or skip, subject to protocol validation. Constraints: `"terminate"` or `"passthrough"` or `"skip"`. |
 | `websocket_credential_rewrite` | boolean | No | — | Enable OpenShell placeholder rewriting after an allowed REST WebSocket upgrade. |
 
@@ -810,7 +966,7 @@ Paths:
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
-| `compatibility` | string | Yes | — | best_effort or hard_requirement. The main-branch spelling strict maps to hard_requirement. Constraints: `"best_effort"` or `"hard_requirement"` or `"strict"`. |
+| `compatibility` | string | Yes | — | best_effort or hard_requirement. Constraints: `"best_effort"` or `"hard_requirement"`. |
 
 ## PolicyMatcher
 
@@ -845,6 +1001,7 @@ Paths:
 | `allow_all_known_mcp_methods` | boolean | No | — | Allow known MCP methods, subject to tool restrictions; defaults to false. |
 | `max_body_bytes` | integer | No | — | Maximum buffered request bytes, 1 through 1048576. Constraints: minimum 1; maximum 1048576. |
 | `strict_tool_names` | boolean | No | — | Enforce standard MCP tool-name syntax; defaults to true. |
+| `versions` | array of string | No | — | Supported MCP protocol revisions; omission uses the pinned OpenShell default. |
 
 ## PolicyProcess
 
@@ -894,7 +1051,7 @@ Accepted input: string or [PolicyAnyMatcher](#policyanymatcher).
 
 ## Proxy
 
-Agent HTTP proxy, reachable from inside the sandbox. Credentials and URL syntax are excluded.
+Existing agent HTTP proxy, reachable from inside the sandbox. NemoClaw does not manage it. Credentials and URL syntax are excluded.
 
 Guide: [Sandbox policy and proxy](../sandbox-network.md).
 
@@ -905,7 +1062,6 @@ Paths:
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
 | `host` | string | Yes | — | Proxy hostname or IPv4 address, without scheme, path, or credentials. Constraints: pattern `^[A-Za-z0-9._-]+$`; minimum characters 1; maximum characters 256. |
-| `management` | [ExternalManagement](#externalmanagement) | No | — | Optional external ownership declaration. Omission means external; NemoClaw does not create this proxy. |
 | `port` | integer | Yes | — | Proxy TCP port, from 1 through 65535. Constraints: minimum 1; maximum 65535. |
 
 ## ReasoningEffort
@@ -916,11 +1072,29 @@ Guide: [Inference configuration](../inference.md).
 
 Paths:
 
-- `spec.sandboxes[].agents[].inference.routes[].overrides.reasoningEffort`
+- `spec.inferences.{key}.routes[].overrides.reasoningEffort`
+- `spec.sandboxes[].agent.inference.routes[].overrides.reasoningEffort`
+- `spec.sandboxes[].inferences.{key}.routes[].overrides.reasoningEffort`
 
 Accepted input: string.
 
 Constraints: `"default"` or `"low"` or `"medium"` or `"high"`.
+
+## RelayTracing
+
+Explicitly enabled in-process NeMo Relay tracing.
+
+Guide: [Agent runtimes](../agents.md).
+
+Paths:
+
+- `spec.harnesses.{key}.observability.relay`
+- `spec.sandboxes[].harness.observability.relay`
+- `spec.sandboxes[].harnesses.{key}.observability.relay`
+
+| Field | Input type | Required | Default | Description and constraints |
+|---|---|---|---|---|
+| `enabled` | boolean | Yes | — | Must be true. Omit observability to leave Relay tracing disabled. Constraints: `true`. |
 
 ## Resources
 
@@ -930,7 +1104,7 @@ Guide: [Inline model recipes](../recipes.md).
 
 Paths:
 
-- `spec.inferenceProviders[].service.recipe.resources`
+- `spec.services.{key}.recipe.resources`
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
@@ -947,7 +1121,7 @@ Guide: [Inline model recipes](../recipes.md).
 
 Paths:
 
-- `spec.inferenceProviders[].service.recipe.reuse`
+- `spec.services.{key}.recipe.reuse`
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
@@ -956,19 +1130,22 @@ Paths:
 
 ## Route
 
-Primary inference route supplied through OpenShell.
+Native model connection authorized through an attached OpenShell provider.
 
 Guide: [Inference configuration](../inference.md).
 
 Paths:
 
-- `spec.sandboxes[].agents[].inference.routes[]`
+- `spec.inferences.{key}.routes[]`
+- `spec.sandboxes[].agent.inference.routes[]`
+- `spec.sandboxes[].inferences.{key}.routes[]`
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
-| `name` | string | Yes | — | The primary route name. Constraints: `"primary"`. |
+| `name` | string | Yes | — | Unique lowercase name for this model choice. Constraints: pattern `^[a-z][a-z0-9-]{0,39}$`. |
 | `overrides` | [Overrides](#overrides) | Yes | — | Model selection, optional OpenClaw tuning, and optional Pi model metadata. |
-| `providerRef` | string | Yes | — | Must equal the declared inference provider name. Constraints: pattern `^[a-z][a-z0-9-]{0,39}$`. |
+| `provider` | [InferenceProvider](#inferenceprovider) | No | — | Inline inference definition owned by this route. Excludes providerRef and must not shadow an enclosing definition. |
+| `providerRef` | string | No | — | Name of an enclosing inference provider. Exactly one of providerRef or provider is required. Constraints: pattern `^[a-z][a-z0-9-]{0,39}$`. |
 
 ## Runtime
 
@@ -986,7 +1163,7 @@ Paths:
 
 ## Sandbox
 
-The gateway owns sandbox creation. Only OpenClaw accepts managed gateway or inference dependencies.
+The gateway owns sandbox creation. OpenClaw and Hermes accept managed gateway or inference dependencies.
 
 Guide: [Configuration and credentials](../usage.md#configuration-and-credentials).
 
@@ -996,34 +1173,163 @@ Paths:
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
-| `agents` | array of [Agent](#agent) | Yes | — | One or more named OpenClaw agents sharing identical inference settings. Other harnesses require one agent. Constraints: minimum items 1. |
+| `agent` | [Agent](#agent) | Yes | — | The configured agent hosted by this sandbox in one Fabric runtime. Deploy additional agents in separate sandboxes. |
+| `harness` | [Harness](#harness) | No | — | Inline harness configuration. Exactly one of harness or harnessRef is required. The sandbox agent uses this harness implementation. |
+| `harnessRef` | string | No | — | Name of a visible harness configuration. Excludes inline harness. Constraints: pattern `^[a-z][a-z0-9-]{0,39}$`. |
+| `harnesses` | map of [Harness](#harness) | No | — | Named harness configurations available through harnessRef. Selecting a definition reuses configuration; runtime processes belong to each sandbox. Constraints: keys: pattern `^[a-z][a-z0-9-]{0,39}$`. |
 | `image` | [Image](#image) | No | — | Sandbox agent image; omission selects the SDK default. |
+| `inferenceProviders` | array of [InferenceProvider](#inferenceprovider) | No | — | Named inference definitions visible to this sandbox's routes. Names must not shadow deployment definitions. |
+| `inferences` | map of [Inference](#inference) | No | — | Named inference configurations available through inferenceRef. Definitions resolve providers in their own scope and create no resources until selected. Constraints: keys: pattern `^[a-z][a-z0-9-]{0,39}$`. |
+| `integrations` | map of [Integration](#integration) | No | — | Named integration definitions selected by this sandbox's agent through integrationRefs. Names must not collide with deployment definitions. Constraints: keys: pattern `^[a-z][a-z0-9-]{0,39}$`. |
 | `name` | string | Yes | — | Lowercase sandbox name. Constraints: pattern `^[a-z][a-z0-9-]{0,39}$`. |
-| `network` | [Network](#network) | No | — | Sandbox network policy; omission selects isolated inference routing. |
-| `runtime` | [Runtime](#runtime) | No | — | Sandbox driver; omission selects Docker. A managed gateway requires Docker. |
+| `network` | [Network](#network) | No | — | Sandbox network policy; omission selects isolated egress with grants for declared inference. |
+| `runtime` | [Runtime](#runtime) | No | — | Sandbox driver; omission selects Docker. Every sandbox on a managed gateway must select the same driver. |
 
-## Service
+## SearchProvider
 
-Managed vLLM service. Explicit placement and publication must appear together.
+Search provider supported by the managed profile.
+
+Guide: [Agent runtimes](../agents.md).
+
+Paths:
+
+- `spec.integrations.{key}.provider`
+- `spec.sandboxes[].agent.integrations.{key}.provider`
+- `spec.sandboxes[].integrations.{key}.provider`
+
+Accepted input: string.
+
+Constraints: `"brave"`.
+
+## ServiceAuthentication
+
+Generated bearer authentication for a managed inference service.
+
+Guide: [Configuration and credentials](../usage.md#configuration-and-credentials).
+
+Paths:
+
+- `spec.services.{key}.authentication`
+
+Accepted input: string.
+
+Constraints: `"bearer"`.
+
+## ServiceContainer
+
+Managed inference IPC and shared-memory settings.
 
 Guide: [Managed models](../models.md).
 
 Paths:
 
-- `spec.inferenceProviders[].service`
+- `spec.services.{key}.container`
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
-| `backend` | string | Yes | — | Managed inference backend. Constraints: `"vllm"`. |
-| `image` | string | Yes | — | Immutable runtime image containing vLLM, the supervisor, and any declared recipe tools. Constraints: pattern `^[a-zA-Z0-9][a-zA-Z0-9._:/-]*@sha256:[a-f0-9]{64}$`. |
-| `management` | [ManagedManagement](#managedmanagement) | No | — | Optional managed ownership declaration. Omission means managed. |
+| `ipc` | [ServiceIpc](#serviceipc) | No | — | IPC namespace. Omission uses private; host shares the execution host's IPC namespace. |
+| `sharedMemoryGiB` | integer | No | — | Shared-memory size in GiB, from 1 through 64. Omission uses 8; host IPC uses the host's existing shared-memory mount instead. Constraints: minimum 1; maximum 64. |
+
+## ServiceDefinition
+
+One explicitly supported managed container package.
+
+Guide: [Configuration and credentials](../usage.md#configuration-and-credentials).
+
+Paths:
+
+- `spec.services.{key}`
+
+Accepted input: object.
+
+### Alternative 1
+
+Managed Ollama daemon and selected model.
+
+
+| Field | Input type | Required | Default | Description and constraints |
+|---|---|---|---|---|
+| `container` | [ServiceContainer](#servicecontainer) | No | — | Optional IPC and shared-memory settings for the runtime container. |
+| `hardware` | [ServiceHardware](#servicehardware) | Yes | — | Explicit supported GPU or system profile. |
+| `image` | string | Yes | — | Immutable runtime image containing Ollama and the NemoClaw supervisor. Constraints: pattern `^[a-zA-Z0-9][a-zA-Z0-9._:/-]*@sha256:[a-f0-9]{64}$`. |
+| `imagePullPolicy` | [ImagePullPolicy](#imagepullpolicy) | No | — | Image acquisition before container creation. Omission means IfNotPresent. Constraints: `"IfNotPresent"` or `"Never"`. |
+| `kind` | string | Yes | — | Supported installer selected by this service definition. Constraints: `"ollama"`. |
+| `memory` | [OllamaMemory](#ollamamemory) | No | — | GPU budget and resident memory-protection thresholds. |
+| `model` | [OllamaModel](#ollamamodel) | Yes | — | Selected immutable Ollama registry model. |
+| `placement` | [ServicePlacement](#serviceplacement) | No | — | Optional remote Docker placement. Requires publication. |
+| `publication` | [ServicePublication](#servicepublication) | No | — | Private inference address for an explicitly placed service. |
+| `serving` | [OllamaServing](#ollamaserving) | No | — | Ollama serving limits. |
+
+### Alternative 2
+
+Managed authentication proxy for an external Ollama daemon and model.
+
+
+| Field | Input type | Required | Default | Description and constraints |
+|---|---|---|---|---|
+| `endpoint` | string | Yes | — | Private or loopback HTTP IPv4:port/v1 published by the proxy and reachable by OpenShell. |
+| `engine` | string | No | — | Local Docker Unix socket. Omission uses the managed gateway engine. Constraints: pattern `^unix:///[^?#\x00]*$`. |
+| `image` | string | Yes | — | Immutable NemoClaw proxy image. The external daemon runs on the selected Docker host. Constraints: pattern `^[a-zA-Z0-9][a-zA-Z0-9._:/-]*@sha256:[a-f0-9]{64}$`. |
+| `imagePullPolicy` | [ImagePullPolicy](#imagepullpolicy) | No | — | Image acquisition before container creation. Omission means IfNotPresent. Constraints: `"IfNotPresent"` or `"Never"`. |
+| `kind` | string | Yes | — | Supported installer selected by this service definition. Constraints: `"ollamaProxy"`. |
+| `upstream` | [ExternalOllama](#externalollama) | Yes | — | External loopback-only daemon and already-installed model. |
+
+### Alternative 3
+
+Managed vLLM runtime and immutable model snapshot.
+
+
+| Field | Input type | Required | Default | Description and constraints |
+|---|---|---|---|---|
+| `authentication` | [ServiceAuthentication](#serviceauthentication) | No | — | Optional native bearer authentication. The runtime generates and retains the key; omission preserves unauthenticated serving. |
+| `container` | [ServiceContainer](#servicecontainer) | No | — | Optional managed container IPC and shared-memory settings. Omission uses private IPC and 8 GiB of shared memory. |
+| `hardware` | [ServiceHardware](#servicehardware) | Without recipe | — | Explicit hardware contract: a named GPU or system profile, or dedicated GPU requirements for Linux AMD64. Required without an inline recipe; excludes recipe. |
+| `image` | string | Yes | — | Immutable runtime image containing vLLM, the NemoClaw supervisor, and any declared recipe tools. Constraints: pattern `^[a-zA-Z0-9][a-zA-Z0-9._:/-]*@sha256:[a-f0-9]{64}$`. |
+| `imagePullPolicy` | [ImagePullPolicy](#imagepullpolicy) | No | — | Image acquisition before container creation. Omission means IfNotPresent. Constraints: `"IfNotPresent"` or `"Never"`. |
+| `kind` | string | Yes | — | Supported installer selected by this service definition. Constraints: `"vllm"`. |
 | `memory` | [Memory](#memory) | No | — | GPU budget and resident watchdog thresholds. Omission selects the SDK defaults. |
 | `model` | [Model](#model) | Yes | — | Public Hugging Face repository and immutable commit. |
 | `placement` | [ServicePlacement](#serviceplacement) | With external gateway or Podman; paired with publication | — | SSH Docker placement. Required with an external gateway or Podman sandbox; requires publication. |
 | `publication` | [ServicePublication](#servicepublication) | With placement | — | Private inference address reachable by OpenShell. Required with placement. |
-| `recipe` | [InlineRecipe](#inlinerecipe) | No | — | Optional inline preparation and serving contract supplied by the pinned runtime image. |
+| `recipe` | [InlineRecipe](#inlinerecipe) | Without hardware | — | Inline preparation and serving contract supplied by the pinned runtime image. Required without hardware; excludes hardware. |
 | `serving` | [Serving](#serving) | No | — | Service limits. Omission selects the SDK defaults; recipe serving settings select recipe-specific parsers and execution options. |
-| `storage` | [ManagedResource](#managedresource) | No | — | Optional ownership declaration for model storage. Omission means managed; existing retention behavior is unchanged. |
+
+## ServiceHardware
+
+Explicit execution hardware: a named profile or dedicated GPU requirements. Excludes an inline recipe.
+
+Guide: [Managed models](../models.md).
+
+Paths:
+
+- `spec.services.{key}.hardware`
+
+Accepted input: [DedicatedHardware](#dedicatedhardware) or object.
+
+### Alternative 2
+
+A named hardware contract with fixed compatibility requirements.
+
+
+| Field | Input type | Required | Default | Description and constraints |
+|---|---|---|---|---|
+| `architecture` | string | No | — | Host CPU architecture: amd64 or arm64. Required for GPU profiles; system profiles fix arm64 and reject a conflicting value. Constraints: `"amd64"` or `"arm64"`. |
+| `minGpuMemoryBytes` | integer | No | — | Minimum dedicated GPU memory in bytes, from 4 GiB through 4 TiB. Required with gpuMemoryUtilization; forbidden for unified-memory profiles. Fixed budgets otherwise use observed capacity. Constraints: minimum 4294967296; maximum 4398046511104. |
+| `profile` | [HardwareProfile](#hardwareprofile) | Yes | — | GPU family and memory architecture. Every profile requires observed compute capability and driver major 580 or newer. Unified-memory profiles budget host RAM; dedicated-memory profiles require GPU total/free counters. |
+
+## ServiceIpc
+
+IPC namespace used by the managed inference container.
+
+Guide: [Managed models](../models.md).
+
+Paths:
+
+- `spec.services.{key}.container.ipc`
+
+Accepted input: string.
+
+Constraints: `"private"` or `"host"`.
 
 ## ServicePlacement
 
@@ -1033,12 +1339,11 @@ Guide: [SSH model service](../remote-service.md).
 
 Paths:
 
-- `spec.inferenceProviders[].service.placement`
+- `spec.services.{key}.placement`
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
-| `engine` | string | Yes | — | SSH Docker endpoint, for example ssh://gpu-box. Constraints: pattern `^ssh://`. |
-| `network` | [ManagedResource](#managedresource) | No | — | Optional ownership declaration for the network configured by networkCIDR. Omission means managed. |
+| `engine` | string | Yes | — | SSH Docker endpoint used for an explicitly placed service. Constraints: pattern `^ssh://`. |
 | `networkCidr` | string | Yes | — | Canonical private IPv4 /24 on the selected Docker engine. Constraints: pattern `/24$`. |
 
 ## ServicePublication
@@ -1049,7 +1354,7 @@ Guide: [SSH model service](../remote-service.md).
 
 Paths:
 
-- `spec.inferenceProviders[].service.publication`
+- `spec.services.{key}.publication`
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
@@ -1064,18 +1369,21 @@ Guide: [Managed models](../models.md).
 
 Paths:
 
-- `spec.inferenceProviders[].service.serving`
+- `spec.services.{key}.serving`
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
-| `batchTokens` | integer | No | `1024` | Maximum tokens in a scheduled batch. Constraints: `0` or minimum 512; maximum 2048. Omitted or zero selects the default. |
+| `batchTokens` | integer | No | `1024` | Maximum tokens in a scheduled batch. Constraints: `0` or minimum 512; maximum 4096. Omitted or zero selects the default. |
 | `contextTokens` | integer | No | `32768` | Maximum model context length in tokens. Constraints: `0` or minimum 8192; maximum 65536. Omitted or zero selects the default. |
+| `enforceEager` | boolean | No | — | Without a recipe, omission or true enables eager execution; false leaves compilation and CUDA graphs at vLLM's native defaults. |
+| `mambaBackend` | string | No | `""` | Native Mamba backend without a recipe. Empty uses vLLM's default; flashinfer selects the pinned image's FlashInfer backend. Constraints: `""` or `"flashinfer"`. |
 | `maxSequences` | integer | No | `1` | Maximum concurrent sequences. Constraints: `0` or minimum 1; maximum 2. Omitted or zero selects the default. |
+| `modelName` | string | No | `""` | Optional advertised model name without a recipe. Omission uses the model repository; routes must match the advertised name. Constraints: `""` or pattern `^[a-zA-Z0-9][a-zA-Z0-9._:/-]{0,199}$`. |
 | `port` | integer | No | `18888` | Inference listening port. Explicit publication must use this port. Constraints: `0` or minimum 1024; maximum 65535. Omitted or zero selects the default. |
-| `reasoningParser` | string | No | `""` | Native vLLM reasoning parser used when no recipe is declared. Empty omits the parser flag. Constraints: `""` or `"qwen3"` or `"deepseek_r1"`. |
+| `reasoningParser` | string | No | `""` | Native vLLM reasoning parser used when no recipe is declared. Empty omits the parser flag. Constraints: `""` or `"qwen3"` or `"deepseek_r1"` or `"nemotron_v3"`. |
 | `speculativeTokens` | integer | No | `0` | MTP speculative tokens. Must be zero without a recipe. Constraints: minimum 0; maximum 3. |
 | `startupTimeoutSeconds` | integer | No | `1800` | Seconds allowed for backend readiness before startup fails. Constraints: `0` or minimum 60; maximum 3600. Omitted or zero selects the default. |
-| `toolParser` | string | No | `""` | Native vLLM tool-call parser used when no recipe is declared. Empty omits the parser flag. Constraints: `""` or `"hermes"` or `"qwen3_coder"` or `"llama3_json"` or `"mistral"`. |
+| `toolParser` | string | No | `""` | Native vLLM tool-call parser used when no recipe is declared. Empty omits the parser flag. Constraints: `""` or `"hermes"` or `"qwen3_coder"` or `"qwen3_xml"` or `"llama3_json"` or `"mistral"`. |
 
 ## Settings
 
@@ -1085,7 +1393,7 @@ Guide: [Inline model recipes](../recipes.md).
 
 Paths:
 
-- `spec.inferenceProviders[].service.recipe.serving`
+- `spec.services.{key}.recipe.serving`
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
@@ -1102,7 +1410,7 @@ Paths:
 
 ## Spec
 
-The configuration requires one inference provider and one sandbox.
+The configuration requires one to 32 named sandboxes and at least one selected inference provider. Managed packages declared under services are installed independently of their consumers.
 
 Guide: [Configuration and credentials](../usage.md#configuration-and-credentials).
 
@@ -1113,9 +1421,12 @@ Paths:
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
 | `gateway` | [Gateway](#gateway) | Yes | — | OpenShell gateway connection or managed gateway settings. |
-| `inferenceProviders` | array of [InferenceProvider](#inferenceprovider) | Yes | — | Exactly one external endpoint, managed Ollama server, or managed vLLM service. Constraints: minimum items 1; maximum items 1. |
-| `integrations` | array of [Integration](#integration) | No | — | Optional external integrations. R0 permits one VoiceClaw integration bound to the deployment's OpenClaw agent. Constraints: maximum items 1. |
-| `sandboxes` | array of [Sandbox](#sandbox) | Yes | — | Exactly one sandbox with one or more OpenClaw agents sharing a primary inference route, or one agent of another harness. Constraints: minimum items 1; maximum items 1. |
+| `harnesses` | map of [Harness](#harness) | No | — | Named harness configurations available through harnessRef. Selecting a definition reuses configuration; runtime processes belong to each sandbox. Constraints: keys: pattern `^[a-z][a-z0-9-]{0,39}$`. |
+| `inferenceProviders` | array of [InferenceProvider](#inferenceprovider) | No | — | Named inference definitions available to sandbox routes. Unselected definitions create no resources or credential requirements. |
+| `inferences` | map of [Inference](#inference) | No | — | Named inference configurations available through inferenceRef. Definitions resolve providers in their own scope and create no resources until selected. Constraints: keys: pattern `^[a-z][a-z0-9-]{0,39}$`. |
+| `integrations` | map of [Integration](#integration) | No | — | Named integration definitions shared by agents through integrationRefs. Definitions alone grant no access. Constraints: keys: pattern `^[a-z][a-z0-9-]{0,39}$`. |
+| `sandboxes` | array of [Sandbox](#sandbox) | Yes | — | One to 32 uniquely named sandboxes. Each selects one harness: one or more OpenClaw or Deep Agents instances, or one agent of another harness. Declaration order does not select a default sandbox or agent. Constraints: minimum items 1; maximum items 32. |
+| `services` | map of [ServiceDefinition](#servicedefinition) | No | — | Named managed container services to install, verify once, and remove during destroy. Inference providers may consume their connection through serviceRef. Constraints: keys: pattern `^[a-z][a-z0-9-]{0,39}$`. |
 
 ## TLS
 
@@ -1141,8 +1452,8 @@ Guide: [Inline model recipes](../recipes.md).
 
 Paths:
 
-- `spec.inferenceProviders[].service.recipe.preparation`
-- `spec.inferenceProviders[].service.recipe.verification`
+- `spec.services.{key}.recipe.preparation`
+- `spec.services.{key}.recipe.verification`
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
@@ -1157,8 +1468,8 @@ Guide: [Agent runtimes](../agents.md).
 
 Paths:
 
-- `spec.sandboxes[].agents[].tools.disclosure`
+- `spec.sandboxes[].agent.tools.disclosure`
 
-Accepted input: string or string.
+Accepted input: string.
 
 Constraints: `"progressive"` or `"direct"`.

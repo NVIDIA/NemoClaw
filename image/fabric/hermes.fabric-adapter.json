@@ -32,5 +32,16 @@
       "models",
       "models.base_url"
     ]
+  },
+  "telemetry": {
+    "providers": {
+      "relay": {
+        "outputs": [
+          "atif",
+          "otel",
+          "openinference"
+        ]
+      }
+    }
   }
 }

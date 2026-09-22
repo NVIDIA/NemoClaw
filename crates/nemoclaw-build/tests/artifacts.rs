@@ -120,7 +120,7 @@ fn extracted_sources_build_without_git_and_ignore_generated_outputs() {
 
 #[test]
 fn runtime_build_inputs_are_selected_by_the_artifact_manifest() {
-    let input = br#"{"name":"fixture","image":"local/fixture:test","sourceDateEpoch":1234,"files":["Dockerfile","NOTICE.md"],"downloads":{}}"#;
+    let input = br#"{"name":"fixture","platform":"linux_arm64","image":"local/fixture:test","sourceDateEpoch":1234,"files":["Dockerfile","NOTICE.md"],"downloads":{}}"#;
     let recipe = nemoclaw_build::RuntimeArtifact::parse(input).unwrap();
     assert_eq!(recipe.name, "fixture");
     assert_eq!(recipe.files, ["Dockerfile", "NOTICE.md"]);
@@ -140,7 +140,7 @@ fn runtime_manifest_errors_distinguish_json_identity_paths_and_downloads() {
     let error = RuntimeArtifact::parse(b"{").err().unwrap();
     assert!(matches!(error, RuntimeArtifactError::Json(_)));
     assert!(error.source().unwrap().is::<serde_json::Error>());
-    let valid = serde_json::json!({"name":"fixture","image":"local/fixture:test","sourceDateEpoch":1234,"files":["Dockerfile"],"downloads":{}});
+    let valid = serde_json::json!({"name":"fixture","platform":"linux_arm64","image":"local/fixture:test","sourceDateEpoch":1234,"files":["Dockerfile"],"downloads":{}});
     let mut invalid = valid.clone();
     invalid["name"] = "".into();
     assert!(matches!(
@@ -201,6 +201,90 @@ fn supervisor_archive_excludes_every_recipe_and_retains_rust_sources_and_notices
 
 #[test]
 fn artifact_inputs_cannot_overwrite_the_retained_build_manifest() {
-    let input = br#"{"name":"fixture","image":"local/fixture:test","sourceDateEpoch":1234,"files":["Dockerfile","build.json"],"downloads":{}}"#;
+    let input = br#"{"name":"fixture","platform":"linux_arm64","image":"local/fixture:test","sourceDateEpoch":1234,"files":["Dockerfile","build.json"],"downloads":{}}"#;
     assert!(nemoclaw_build::RuntimeArtifact::parse(input).is_err());
+}
+
+#[test]
+fn runtime_artifacts_can_select_native_linux_amd64() {
+    let input = serde_json::json!({"name":"vllm-amd64","platform":"linux_amd64","image":"nc-vllm-amd64:test","sourceDateEpoch":1789516800,"files":["Dockerfile","NOTICE.md"],"downloads":{}});
+    let artifact = nemoclaw_build::RuntimeArtifact::parse(&serde_json::to_vec(&input).unwrap())
+        .expect("AMD64 runtime manifest must parse");
+    artifact.require_native_host("linux_amd64").unwrap();
+    assert!(artifact.require_native_host("linux_arm64").is_err());
+    let mut invalid = input;
+    invalid["platform"] = "darwin_arm64".into();
+    assert!(
+        nemoclaw_build::RuntimeArtifact::parse(&serde_json::to_vec(&invalid).unwrap()).is_err()
+    );
+}
+
+#[test]
+fn runtime_artifacts_require_an_explicit_platform() {
+    let input = br#"{"name":"fixture","image":"local/fixture:test","sourceDateEpoch":1234,"files":["Dockerfile"],"downloads":{}}"#;
+    assert!(nemoclaw_build::RuntimeArtifact::parse(input).is_err());
+}
+
+#[test]
+fn every_bundle_platform_pins_the_docker_provider_archive() {
+    let pins: serde_json::Value =
+        serde_json::from_str(include_str!("../../../versions.json")).unwrap();
+    let version = pins["dockerProvider"]
+        .as_str()
+        .expect("Docker provider pin");
+    for (platform, artifacts) in pins["platforms"].as_object().unwrap() {
+        assert_eq!(
+            artifacts["dockerProvider"]["url"],
+            format!(
+                "https://github.com/kreuzwerker/terraform-provider-docker/releases/download/v{version}/terraform-provider-docker_{version}_{platform}.zip"
+            )
+        );
+        let checksum = artifacts["dockerProvider"]["sha256"].as_str().unwrap();
+        assert_eq!(checksum.len(), 64);
+        assert!(checksum.bytes().all(|byte| byte.is_ascii_hexdigit()));
+    }
+}
+
+#[test]
+fn docker_provider_bundle_retains_the_verified_binary_and_license() {
+    let mut zip = zip::ZipWriter::new(Cursor::new(Vec::new()));
+    for (name, bytes) in [
+        ("terraform-provider-docker_v4.6.0", "binary"),
+        ("LICENSE", "upstream MPL license"),
+    ] {
+        zip.start_file(name, zip::write::SimpleFileOptions::default())
+            .unwrap();
+        zip.write_all(bytes.as_bytes()).unwrap();
+    }
+    let bytes = zip.finish().unwrap().into_inner();
+    let root = tempfile::tempdir().unwrap();
+    let files =
+        nemoclaw_build::docker_provider::install(root.path(), &bytes, "4.6.0", "linux_arm64")
+            .unwrap();
+    let binary = "providers/registry.opentofu.org/kreuzwerker/docker/4.6.0/linux_arm64/terraform-provider-docker_v4.6.0";
+    assert_eq!(std::fs::read(root.path().join(binary)).unwrap(), b"binary");
+    assert_eq!(
+        std::fs::read(root.path().join("licenses/docker-provider-LICENSE")).unwrap(),
+        b"upstream MPL license"
+    );
+    assert_eq!(files.len(), 2);
+    for (path, hash) in files {
+        assert_eq!(
+            hash,
+            nemoclaw_sdk::bundle::hash_file(&root.path().join(path)).unwrap()
+        );
+    }
+    assert!(
+        nemoclaw_build::docker_provider::install(
+            root.path(),
+            &archive("terraform-provider-docker_v4.6.0", b"binary"),
+            "4.6.0",
+            "linux_arm64"
+        )
+        .is_err()
+    );
+    assert!(
+        nemoclaw_build::docker_provider::install(root.path(), &bytes, "4.5.0", "linux_arm64")
+            .is_err()
+    );
 }

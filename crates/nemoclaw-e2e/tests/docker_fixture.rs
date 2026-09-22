@@ -3,7 +3,10 @@
 #![cfg(unix)]
 
 use nemoclaw_e2e::docker::Fixture;
-use std::sync::{Arc, Mutex};
+use std::{
+    io::Write,
+    sync::{Arc, Mutex},
+};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 #[tokio::test]
@@ -46,4 +49,33 @@ async fn fixture_preserves_request_bytes_and_recovers_after_a_lost_reply() {
     let socket_path = std::path::PathBuf::from(path);
     drop(fixture);
     assert!(!socket_path.exists());
+}
+
+#[tokio::test]
+async fn disconnected_clients_do_not_stop_the_engine_fixture() {
+    let fixture = Fixture::start(|_| Some((200, b"healthy".to_vec()))).await;
+    let path = fixture.endpoint.strip_prefix("unix://").unwrap();
+    // Synchronous writes ensure the client closes before the server can respond.
+    for request in [
+        &b"GET /containers/json HTTP/1.1\r\n\r\n"[..],
+        &b"GET /containers"[..],
+        &b"POST /containers/create HTTP/1.1\r\nContent-Length: 8\r\n\r\nx"[..],
+    ] {
+        let mut client = std::os::unix::net::UnixStream::connect(path).unwrap();
+        client.write_all(request).unwrap();
+        drop(client);
+        let response = tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            let mut client = tokio::net::UnixStream::connect(path).await.unwrap();
+            client
+                .write_all(b"GET /version HTTP/1.1\r\n\r\n")
+                .await
+                .unwrap();
+            let mut response = String::new();
+            client.read_to_string(&mut response).await.unwrap();
+            response
+        })
+        .await
+        .unwrap();
+        assert!(response.ends_with("healthy"), "{response:?}");
+    }
 }

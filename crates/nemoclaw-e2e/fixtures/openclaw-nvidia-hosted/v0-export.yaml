@@ -1,0 +1,54 @@
+apiVersion: nemoclaw.nvidia.com/v1alpha1
+kind: NemoClawConfig
+metadata:
+  name: openclaw-nvidia-hosted
+  uid: b8f25ac9-8e58-4c0b-98c3-17648f9a5575
+spec:
+  gateway:
+    management: managed
+    endpoint: http://127.0.0.1:17691
+  inferenceProviders:
+    - name: hosted-nvidia-prod
+      provider: openai
+      api: openai-completions
+      endpoint: https://integrate.api.nvidia.com/v1
+      credential:
+        env: NVIDIA_INFERENCE_API_KEY
+  sandboxes:
+    - name: assistant
+      runtime:
+        provider: docker
+      network:
+        policy:
+          explicit:
+            version: 1
+            process:
+              run_as_user: "1000"
+              run_as_group: "1000"
+            network_policies:
+              hosted-inference:
+                name: hosted-inference
+                endpoints:
+                  - host: integrate.api.nvidia.com
+                    port: 443
+                binaries:
+                  - path: /usr/bin/openclaw
+            filesystem_policy:
+              include_workdir: true
+              read_only:
+                - /usr
+                - /opt/fabric
+                - /opt/nemoclaw
+                - /app
+              read_write:
+                - /sandbox
+      harness:
+        kind: openclaw
+      agents:
+        - name: primary
+          inference:
+            routes:
+              - name: primary
+                providerRef: hosted-nvidia-prod
+                overrides:
+                  model: nvidia/nemotron-3-super-120b-a12b

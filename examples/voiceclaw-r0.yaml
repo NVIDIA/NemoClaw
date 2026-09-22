@@ -6,27 +6,34 @@ apiVersion: nemoclaw.nvidia.com/v1alpha1
 kind: NemoClawConfig
 metadata:
   name: voiceclaw-r0
-  uid: 30000000-0000-4000-8000-000000000001
+  uid: c892587f-6439-44b5-9a70-a43e8936461f
 spec:
   gateway:
     management: external
-    endpoint: http://127.0.0.1:8080
+    endpoint: http://127.0.0.1:17681
   inferenceProviders:
-    - name: model
+    - name: local
       provider: openai
-      endpoint: http://127.0.0.1:8000/v1
+      endpoint: http://172.20.0.1:11446/v1
   sandboxes:
-    - name: voiceclaw-r0
-      agents:
-        - name: assistant
-          harness: openclaw
-          inference:
-            routes:
-              - name: primary
-                providerRef: model
-                overrides:
-                  model: test/model
+    - name: assistant
+      runtime:
+        provider: docker
+      network:
+        tier: isolated
+      harness:
+        kind: openclaw
+      agent:
+        integrationRefs: [voice]
+        name: assistant
+        inference:
+          routes:
+            - name: primary
+              providerRef: local
+              overrides:
+                model: qwen3:4b
+
   integrations:
-    - name: voice
-      kind: voiceclaw
+    voice:
+      kind: voiceclawR0
       agentRef: assistant

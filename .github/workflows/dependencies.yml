@@ -1,0 +1,34 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+name: Rust dependency policy
+on:
+  pull_request:
+    branches: [v1]
+  push:
+    branches: [v1]
+    paths:
+      - '**/Cargo.toml'
+      - '**/Cargo.lock'
+      - rust-toolchain.toml
+      - deny.toml
+      - .github/workflows/dependencies.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  policy:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: taiki-e/install-action@43aecc8d72668fbcfe75c31400bc4f890f1c5853 # v2
+        with:
+          tool: cargo-deny@0.20.2
+          fallback: none
+      - name: Check licenses and approved dependency sources
+        run: cargo deny --locked check licenses sources
+      - name: Check current vulnerability advisories
+        if: github.event_name == 'workflow_dispatch'
+        run: cargo deny --locked check advisories

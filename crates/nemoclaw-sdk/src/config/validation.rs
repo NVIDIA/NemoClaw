@@ -2,25 +2,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::*;
-use regex::Regex;
-use std::{
-    net::{IpAddr, SocketAddr},
-    sync::LazyLock,
-};
+use std::net::{IpAddr, SocketAddr};
 use url::Url;
 
-pub(super) static SLUG: LazyLock<Regex> = LazyLock::new(|| Regex::new(constraints::SLUG).unwrap());
-static UUID: LazyLock<Regex> = LazyLock::new(|| Regex::new(constraints::UUID).unwrap());
-static ENV: LazyLock<Regex> = LazyLock::new(|| Regex::new(constraints::ENV).unwrap());
-static MODEL: LazyLock<Regex> = LazyLock::new(|| Regex::new(constraints::MODEL).unwrap());
-static OLLAMA_MODEL: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(constraints::OLLAMA_MODEL).unwrap());
-static IMAGE: LazyLock<Regex> = LazyLock::new(|| Regex::new(constraints::IMAGE).unwrap());
-fn require(valid: bool, reason: &'static str) -> Result<(), ConfigError> {
+pub(crate) fn require(valid: bool, reason: &'static str) -> Result<(), ConfigError> {
     if valid {
         Ok(())
     } else {
-        Err(ConfigError(reason))
+        Err(ConfigError::new(reason))
     }
 }
 fn private(ip: IpAddr) -> bool {
@@ -29,17 +18,14 @@ fn private(ip: IpAddr) -> bool {
         IpAddr::V6(ip) => ip.is_unique_local(),
     }
 }
-fn local(ip: IpAddr) -> bool {
-    ip.is_loopback() || private(ip)
-}
 fn host_ip(url: &Url) -> Option<IpAddr> {
     url.host_str()?.trim_matches(['[', ']']).parse().ok()
 }
-fn credential(value: &Option<Credential>) -> Result<(), ConfigError> {
-    require(
-        value.as_ref().is_none_or(|c| ENV.is_match(&c.env)),
-        "credential references require an uppercase environment variable name",
-    )
+pub(super) fn credential(value: &Option<Credential>) -> Result<(), ConfigError> {
+    if let Some(credential) = value {
+        schema::validate_definition("Credential", credential)?;
+    }
+    Ok(())
 }
 
 pub fn validate_endpoint(raw: &str, gateway: bool) -> Result<(), ConfigError> {
@@ -47,7 +33,8 @@ pub fn validate_endpoint(raw: &str, gateway: bool) -> Result<(), ConfigError> {
         !raw.contains(['\r', '\n', '\t', '$', '%', '{', '}', '\\']),
         "endpoint contains unsupported characters",
     )?;
-    let url = Url::parse(raw).map_err(|_| ConfigError("expected an HTTP or HTTPS endpoint"))?;
+    let url =
+        Url::parse(raw).map_err(|_| ConfigError::new("expected an HTTP or HTTPS endpoint"))?;
     require(
         url.has_host()
             && url.username().is_empty()
@@ -105,243 +92,103 @@ pub fn validate_endpoint(raw: &str, gateway: bool) -> Result<(), ConfigError> {
 }
 
 pub fn is_fabric_harness(harness: &str) -> bool {
-    constraints::HARNESSES.contains(&harness)
+    harness.parse::<super::HarnessKind>().is_ok()
 }
 impl Document {
     pub fn validate(&self) -> Result<(), ConfigError> {
-        require(
-            self.api_version == API_VERSION && self.kind == constraints::KIND,
-            "expected nemoclaw.nvidia.com/v1alpha1 NemoClawConfig",
-        )?;
-        require(
-            SLUG.is_match(&self.metadata.name) && UUID.is_match(&self.metadata.uid),
-            "metadata requires a lowercase name and immutable UUID",
-        )?;
+        schema::validate_document(self)?;
         let gateway = &self.spec.gateway;
-        require(
-            constraints::MANAGEMENT.contains(&gateway.management.as_str()),
-            "gateway management must be external or managed",
-        )?;
-        if gateway.management == "managed" {
+        if let Gateway::Managed(gateway) = gateway {
             gateway.validate_managed()?;
-        } else {
-            require(
-                gateway.engine.is_empty()
-                    && gateway.image.is_empty()
-                    && gateway.network_cidr.is_empty()
-                    && gateway.network.is_none()
-                    && gateway.storage.is_none(),
-                "external gateway cannot declare managed runtime settings",
-            )?;
         }
-        validate_endpoint(&gateway.endpoint, true)?;
-        credential(&gateway.credential)?;
-        if let Some(tls) = &gateway.tls {
-            for c in [&tls.ca, &tls.certificate, &tls.key] {
+        validate_endpoint(gateway.endpoint(), true)?;
+        self.validate_harness_references()?;
+        self.voiceclaw_r0_binding()?;
+        let selected_providers = self.selected_inference_providers()?;
+        crate::services::validate(self)?;
+        self.validate_inference_references()?;
+        for definition in self.provider_definitions() {
+            self.validate_provider(definition)?;
+        }
+        let mut sandbox_names = std::collections::BTreeSet::new();
+        for sandbox in &self.spec.sandboxes {
+            require(
+                sandbox_names.insert(&sandbox.name),
+                "sandbox names must be unique",
+            )?;
+            sandbox.network.validate()?;
+            let harness = self.sandbox_harness(sandbox)?;
+            sandbox.network.validate_runtime_access(harness.kind)?;
+            let web_search = self.web_search(sandbox)?;
+            sandbox.policy_proto(web_search.is_some(), harness.observability.as_ref())?;
+            if let Some(search) = web_search {
                 require(
-                    ENV.is_match(&c.env),
-                    "TLS requires environment variable references",
+                    selected_providers.iter().all(|provider| {
+                        provider.name != "brave-search"
+                            && !provider.name.starts_with("brave-search-")
+                    }),
+                    "brave-search names are reserved for web search",
+                )?;
+                search.validate(
+                    harness.kind,
+                    std::iter::once((sandbox.agent.name.as_str(), sandbox.agent.tools.as_ref())),
                 )?;
             }
-        }
-        require(
-            !gateway.endpoint.starts_with("http:")
-                || (gateway.credential.is_none() && gateway.tls.is_none()),
-            "gateway credentials require HTTPS",
-        )?;
-        require(
-            self.spec.inference_providers.len() == 1 && self.spec.sandboxes.len() == 1,
-            "this slice requires exactly one inference provider and one sandbox",
-        )?;
-        let provider = &self.spec.inference_providers[0];
-        let management = if provider.service.is_some() || provider.ollama.is_some() {
-            Management::Managed
-        } else {
-            Management::External
-        };
-        require(
-            provider
-                .management
-                .is_none_or(|declared| declared == management),
-            "inference management must match service or Ollama (managed) or endpoint alone (external)",
-        )?;
-        require(
-            SLUG.is_match(&provider.name)
-                && constraints::PROVIDERS.contains(&provider.provider.as_str()),
-            "provider requires a lowercase name and openai or anthropic implementation",
-        )?;
-        if let Some(service) = &provider.service {
-            require(
-                provider.endpoint.is_empty()
-                    && provider.ollama.is_none()
-                    && provider.credential.is_none(),
-                "managed service excludes endpoint, Ollama, and external credentials",
-            )?;
-            require(
-                gateway.management == "managed" || service.placement.is_some(),
-                "service requires a managed gateway or explicit placement",
-            )?;
-            service.validate()?;
-        } else {
-            validate_endpoint(&provider.endpoint, false)?;
-        }
-        credential(&provider.credential)?;
-        require(
-            provider.credential.is_none() || !provider.endpoint.starts_with("http:"),
-            "inference credentials require HTTPS",
-        )?;
-        let sandbox = &self.spec.sandboxes[0];
-        require(
-            SLUG.is_match(&sandbox.name) && IMAGE.is_match(&sandbox.image.ref_),
-            "sandbox requires a lowercase name and image pinned by SHA-256 digest",
-        )?;
-        require(
-            constraints::RUNTIMES.contains(&sandbox.runtime.provider.as_str()),
-            "sandbox runtime must be docker or podman",
-        )?;
-        require(
-            gateway.management != "managed" || sandbox.runtime.provider == "docker",
-            "managed gateway requires the qualified Docker driver",
-        )?;
-        sandbox.network.validate()?;
-        require(!sandbox.agents.is_empty(), "at least one agent is required")?;
-        ToolDisclosure::shared(sandbox.agents.iter().map(|a| a.tools.as_ref()))?;
-        let mut names = std::collections::BTreeSet::new();
-        for agent in &sandbox.agents {
-            require(names.insert(&agent.name), "agent names must be unique")?;
-            require(
-                sandbox.agents.len() == 1
-                    || (agent.harness == "openclaw"
-                        && agent.inference == sandbox.agents[0].inference),
-                "multiple agents require OpenClaw and identical inference settings",
-            )?;
-            require(
-                agent.tools.is_none() || agent.harness == "openclaw",
-                "tool restrictions require OpenClaw",
-            )?;
-            require(
-                SLUG.is_match(&agent.name),
-                "agent requires a lowercase name",
-            )?;
-            require(
-                is_fabric_harness(&agent.harness),
-                "agent requires a supported harness",
-            )?;
-            require(
-                matches!(agent.harness.as_str(), "openclaw" | "hermes")
-                    || (gateway.management == "external"
-                        && provider.service.is_none()
-                        && provider.ollama.is_none()),
-                "this harness requires external gateway and inference services",
-            )?;
-            require(
-                agent.harness != "pi" || provider.api.is_none(),
-                "Pi selects its API through model metadata; omit provider api",
-            )?;
-            let api = provider
-                .api
-                .unwrap_or(InferenceApi::for_harness(&agent.harness));
-            require(
-                api.supported(&agent.harness)
-                    && (api == InferenceApi::AnthropicMessages)
-                        == (provider.provider == "anthropic"),
-                "API must match the provider implementation and be supported by the harness",
-            )?;
-            if let Some(interfaces) = &agent.interfaces {
-                require(
-                    agent.name == sandbox.agents[0].name,
-                    "interfaces belong to the first agent in a shared sandbox",
-                )?;
-                interfaces.validate(&agent.harness)?;
-            }
-            if let Some(auth) = &agent.auth {
-                require(
-                    agent.harness == "hermes"
-                        && auth.provider_ref == provider.name
-                        && provider.credential.is_some(),
-                    "Hermes API-key auth must reference the routed provider with a credential",
-                )?;
+            let agent = &sandbox.agent;
+
+            if let Some(tools) = &agent.tools {
+                tools.validate(harness.kind)?;
             }
             require(
-                agent.inference.routes.len() == 1,
-                "this slice requires exactly one primary route",
+                self.sandbox_inference(sandbox)?.routes.len() == 1
+                    || matches!(harness.kind, HarnessKind::OpenClaw | HarnessKind::Pi),
+                "multiple model choices require OpenClaw or Pi",
             )?;
-            let route = &agent.inference.routes[0];
-            require(
-                route.name == "primary"
-                    && route.provider_ref == provider.name
-                    && MODEL.is_match(&route.overrides.model),
-                "primary route must reference the declared provider and valid model",
-            )?;
-            route.overrides.tuning.validate(&agent.harness)?;
-            require(
-                route.overrides.pi_model.is_none() || agent.harness == "pi",
-                "piModel is supported only by the Pi harness",
-            )?;
-            require(
-                provider.service.is_none()
-                    || (route.overrides.model == provider.service.as_ref().unwrap().served_model()
-                        && (sandbox.runtime.provider == "docker"
-                            || provider.service.as_ref().unwrap().placement.is_some())),
-                "service requires its declared served model and compatible sandbox placement",
-            )?;
-            if let Some(ollama) = &provider.ollama {
-                let url = Url::parse(&provider.endpoint)
-                    .map_err(|_| ConfigError("invalid Ollama endpoint"))?;
-                let authority = provider
-                    .endpoint
-                    .strip_prefix("http://")
-                    .unwrap_or("")
-                    .split('/')
-                    .next()
-                    .unwrap_or("");
-                let bind = authority.parse::<SocketAddr>().ok();
+            let inference = self.scoped_inference(sandbox)?;
+            for route in &inference.inference.routes {
+                let selected = self.route_provider(route, &inference)?;
+                let provider = selected.definition;
                 require(
-                    provider.credential.is_none()
-                        && url.scheme() == "http"
-                        && url.path() == "/v1"
-                        && bind.is_some_and(|a| a.port() != 0 && local(a.ip())),
-                    "Ollama requires an explicit private IP:port/v1 HTTP endpoint without credentials",
+                    harness.kind != HarnessKind::Pi || provider.api.is_none(),
+                    "Pi selects its API through model metadata; omit provider api",
                 )?;
+                let api = provider
+                    .api
+                    .unwrap_or(InferenceApi::for_harness(harness.kind));
                 require(
-                    ollama.engine.starts_with("unix:///")
-                        && !ollama
-                            .engine
-                            .contains(['$', '%', '{', '}', '\r', '\n', '\0'])
-                        && SLUG.is_match(ollama.network.name())
-                        && IMAGE.is_match(&ollama.image)
-                        && ollama.image.starts_with("ollama/ollama@sha256:"),
-                    "Ollama requires a local Unix socket, named network, and pinned ollama/ollama image",
+                    api.supported(harness.kind)
+                        && (provider.api.is_some()
+                            || (api == InferenceApi::AnthropicMessages)
+                                == (provider.provider == InferenceProviderKind::Anthropic)),
+                    "API must match the provider implementation and be supported by the harness",
                 )?;
+                if agent.auth.is_some() {
+                    require(
+                        harness.kind == HarnessKind::Hermes
+                            && crate::services::provider_authenticated(self, provider)?,
+                        "Hermes API-key auth must reference the routed provider with a credential",
+                    )?;
+                }
+                route.overrides.tuning.validate(harness.kind)?;
                 require(
-                    OLLAMA_MODEL.is_match(&route.overrides.model),
-                    "Ollama requires an explicit registry-library model:tag",
+                    route.overrides.pi_model.is_none() || harness.kind == HarnessKind::Pi,
+                    "piModel is supported only by the Pi harness",
+                )?;
+                crate::services::validate_route(
+                    self,
+                    provider,
+                    sandbox.runtime.provider,
+                    harness.kind,
+                    &route.overrides.model,
                 )?;
             }
-        }
-        require(
-            self.spec.integrations.len() <= 1,
-            "R0 permits at most one external integration",
-        )?;
-        for integration in &self.spec.integrations {
-            require(
-                SLUG.is_match(&integration.name) && integration.kind == "voiceclaw",
-                "integration requires a lowercase name and supported kind",
-            )?;
-            require(
-                sandbox.agents.len() == 1
-                    && sandbox.agents[0].harness == "openclaw"
-                    && integration.agent_ref == sandbox.agents[0].name,
-                "VoiceClaw R0 requires the one declared OpenClaw agent",
-            )?;
         }
         Ok(())
     }
 }
-impl Gateway {
+impl super::ManagedGateway {
     pub fn validate_managed(&self) -> Result<(), ConfigError> {
-        let url =
-            Url::parse(&self.endpoint).map_err(|_| ConfigError("invalid gateway endpoint"))?;
+        schema::validate_definition("Gateway", &Gateway::Managed(self.clone()))?;
         let authority = self
             .endpoint
             .strip_prefix("http://")
@@ -351,14 +198,9 @@ impl Gateway {
             .unwrap_or("");
         let bind = authority.parse::<SocketAddr>().ok();
         require(
-            url.scheme() == "http"
-                && url.host_str() == Some("127.0.0.1")
-                && bind.is_some_and(|a| a.port() >= 1024)
-                && self.credential.is_none()
-                && self.tls.is_none()
-                && self.engine == constraints::GATEWAY_ENGINE
-                && self.image == DEFAULT_GATEWAY_IMAGE,
-            "managed gateway requires pinned image, local Docker, and unprivileged loopback HTTP port without credentials",
+            bind.is_some_and(|a| a.port() >= 1024)
+                && crate::docker::Engine::validate_endpoint(&self.engine).is_ok(),
+            "managed gateway requires pinned image, a local engine socket, and unprivileged loopback HTTP port without credentials",
         )?;
         let net = self.network_cidr.parse::<ipnet::Ipv4Net>().ok();
         require(
@@ -369,53 +211,20 @@ impl Gateway {
         )
     }
 }
-impl Service {
-    pub fn validate(&self) -> Result<(), ConfigError> {
-        require(
-            self.placement.is_some() == self.publication.is_some(),
-            "service placement and publication must be declared together",
-        )?;
-        if let (Some(placement), Some(publication)) = (&self.placement, &self.publication) {
-            require(
-                placement.engine.starts_with("ssh://"),
-                "explicit service placement requires SSH Docker",
-            )?;
-            require(
-                crate::docker::Engine::validate_endpoint(&placement.engine).is_ok(),
-                "invalid service engine",
-            )?;
-            let network: ipnet::Ipv4Net = placement
-                .network_cidr
-                .parse()
-                .map_err(|_| ConfigError("invalid service network"))?;
-            require(
-                network.prefix_len() == 24
-                    && network.addr() == network.network()
-                    && private(network.addr().into()),
-                "service network requires a private IPv4 /24",
-            )?;
-            validate_endpoint(&publication.endpoint, false)?;
-            let endpoint = url::Url::parse(&publication.endpoint).unwrap();
-            let address: std::net::Ipv4Addr = publication
-                .bind_address
-                .parse()
-                .map_err(|_| ConfigError("invalid service bind address"))?;
-            require(
-                private(address.into())
-                    && !address.is_loopback()
-                    && !network.contains(&address)
-                    && endpoint.scheme() == "http"
-                    && endpoint.host_str() == Some(publication.bind_address.as_str())
-                    && endpoint.port() == Some(self.serving.port as u16)
-                    && endpoint.path() == "/v1",
-                "service publication must match its private bind address, serving port and /v1 path",
-            )?;
+impl Document {
+    fn validate_provider(&self, provider: &InferenceProvider) -> Result<(), ConfigError> {
+        let managed = crate::services::validate_provider(self, provider)?;
+        if !managed {
+            validate_endpoint(&provider.endpoint, false)?;
         }
-
-        require(
-            IMAGE.is_match(&self.image),
-            "Spark requires qualified backend, pinned model, and immutable image",
-        )?;
-        crate::backends::validation::validate(self)
+        Ok(())
     }
+}
+
+pub(crate) fn valid_model(model: &str) -> bool {
+    schema::validate_property("Overrides", "model", &model).is_ok()
+}
+
+pub(crate) fn valid_name(name: &str) -> bool {
+    schema::validate_property("Metadata", "name", &name).is_ok()
 }

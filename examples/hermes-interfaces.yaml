@@ -24,21 +24,22 @@ spec:
         provider: docker
       network:
         tier: isolated
-      agents:
-        - name: main
-          harness: hermes
-          interfaces:
-            api:
-              port: 8643
-            dashboard:
+      harness:
+        kind: hermes
+        interfaces:
+          api:
+            port: 8643
+          dashboard:
+            enabled: true
+            port: 18800
+            internalPort: 19120
+            tui:
               enabled: true
-              port: 18800
-              internalPort: 19120
-              tui:
-                enabled: true
-          inference:
-            routes:
-              - name: primary
-                providerRef: local
-                overrides:
-                  model: qwen3:1.7b
+      agent:
+        name: main
+        inference:
+          routes:
+            - name: primary
+              providerRef: local
+              overrides:
+                model: qwen3:1.7b

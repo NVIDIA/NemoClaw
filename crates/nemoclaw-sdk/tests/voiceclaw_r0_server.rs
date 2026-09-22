@@ -960,3 +960,85 @@ async fn refuses_non_loopback_listeners() {
     .await;
     assert!(matches!(result, Err(error) if error.kind() == std::io::ErrorKind::InvalidInput));
 }
+
+struct ExpiringProbe {
+    inner: Probe,
+    clock: AdjustableClock,
+    expire_on_call: usize,
+}
+
+#[async_trait]
+impl TargetProbe for ExpiringProbe {
+    async fn probe(&self, binding: &Binding) -> ProbeResult {
+        let result = self.inner.probe(binding).await;
+        if self.inner.calls() == self.expire_on_call {
+            self.clock.set(clock().now() + time::Duration::minutes(15));
+        }
+        result
+    }
+
+    async fn dispatch(&self, binding: &Binding) -> DispatchResult {
+        self.inner.dispatch(binding).await
+    }
+}
+
+async fn expiry_during_target_revalidation(connect_first: bool) {
+    let probe = Probe::always(ProbeResult::Ready);
+    let adjustable = AdjustableClock::new(clock().now());
+    let server = VoiceServer::bind(
+        "127.0.0.1:0".parse().unwrap(),
+        &grant(Duration::from_secs(900)),
+        Arc::new(ExpiringProbe {
+            inner: probe.clone(),
+            clock: adjustable.clone(),
+            expire_on_call: if connect_first { 2 } else { 1 },
+        }),
+        Arc::new(adjustable),
+        ServerConfig {
+            heartbeat_interval: Duration::from_secs(300),
+            probe_interval: Duration::from_secs(300),
+            ..ServerConfig::default()
+        },
+    )
+    .await
+    .unwrap();
+    let client = Client::new();
+    let connect_body = json!({"profile":PROFILE,"targetRef":TARGET});
+    let mut stream = None;
+    if connect_first {
+        let response = request(&client, &server, Some(SECRET), connect_body.clone())
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let mut connected = response.bytes_stream();
+        connected.next().await.unwrap().unwrap();
+        stream = Some(connected);
+    }
+    let response = if connect_first {
+        probe_request(
+            &client,
+            &server,
+            Some(SECRET),
+            json!({"profile":PROFILE,"targetRef":TARGET,"question":QUESTION}).to_string(),
+        )
+    } else {
+        request(&client, &server, Some(SECRET), connect_body)
+    }
+    .send()
+    .await
+    .unwrap();
+    error(response, StatusCode::UNAUTHORIZED, "credential_expired").await;
+    assert_eq!(probe.dispatches(), 0);
+    drop(stream);
+}
+
+#[tokio::test]
+async fn connection_rejects_expiry_during_target_revalidation() {
+    expiry_during_target_revalidation(false).await;
+}
+
+#[tokio::test]
+async fn semantic_probe_rejects_expiry_during_target_revalidation() {
+    expiry_during_target_revalidation(true).await;
+}

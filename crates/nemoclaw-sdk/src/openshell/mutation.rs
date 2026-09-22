@@ -5,7 +5,7 @@ mod create;
 mod update;
 
 use super::*;
-use crate::backend::{Backend, Mutation};
+use crate::backend::{Backend, Mutation, OpenShellLifecycle, openshell_lifecycle};
 use async_trait::async_trait;
 use std::{collections::HashMap, time::Duration};
 
@@ -20,15 +20,66 @@ fn labels(want: &Row) -> HashMap<String, String> {
     .into()
 }
 impl OpenShell {
-    fn provider(&self, want: &Row) -> Result<proto::Provider, ObservationError> {
+    async fn provider(&self, want: &Row) -> Result<proto::Provider, ObservationError> {
         let (kind, endpoint_key, secret_key) = match value(want, "provider_type") {
             "" => ("openai", "OPENAI_BASE_URL", "OPENAI_API_KEY"),
             "anthropic" => ("anthropic", "ANTHROPIC_BASE_URL", "ANTHROPIC_API_KEY"),
+            "brave"
+                if value(want, "name")
+                    == crate::config::search_provider_name(value(want, "credential_env"))
+                    && value(want, "endpoint") == "https://api.search.brave.com"
+                    && !value(want, "credential_env").is_empty() =>
+            {
+                ("nemoclaw-brave", "", "BRAVE_API_KEY")
+            }
             _ => return Err(ObservationError::Query),
         };
-        let credential = match value(want, "credential_env") {
-            "" => "empty".into(),
-            reference => self.secrets.resolve(reference)?,
+        let native = kind != "nemoclaw-brave";
+        let source = value(want, "credential_source");
+        let profile = if native {
+            Some(inference_profile(
+                value(want, "name"),
+                value(want, "endpoint"),
+                kind.parse().map_err(|_| ObservationError::Query)?,
+                !source.is_empty() || !value(want, "credential_env").is_empty(),
+            )?)
+        } else {
+            None
+        };
+        if let Some(profile) = &profile {
+            let bound = self
+                .observe_profile(value(want, "workspace"), &profile.id)
+                .await?
+                .ok_or(ObservationError::BindingMismatch)?;
+            if ["owner", "generation", "endpoint", "provider_type"]
+                .iter()
+                .any(|key| value(&bound, key) != value(want, key))
+                || value(&bound, "authenticated")
+                    != if profile.credentials.is_empty() {
+                        "false"
+                    } else {
+                        "true"
+                    }
+            {
+                return Err(ObservationError::BindingMismatch);
+            }
+        }
+        let credential = if !source.is_empty() {
+            if !value(want, "credential_env").is_empty() {
+                return Err(ObservationError::BindingMismatch);
+            }
+            crate::services::authentication::Source::parse(
+                source,
+                value(want, "owner"),
+                value(want, "endpoint"),
+            )?
+            .resolve()
+            .await?
+        } else {
+            match value(want, "credential_env") {
+                "" => "empty".into(),
+                reference => self.secrets.resolve(reference)?,
+            }
         };
         let mut labels = labels(want);
         labels.insert(CREDENTIAL.into(), value(want, "credential_env").into());
@@ -36,11 +87,27 @@ impl OpenShell {
             metadata: Some(proto::ObjectMeta {
                 name: value(want, "name").into(),
                 labels,
+                annotations: credential_metadata::pack(source)?,
                 ..Default::default()
             }),
-            r#type: kind.into(),
-            config: [(endpoint_key.into(), value(want, "endpoint").into())].into(),
-            credentials: [(secret_key.into(), credential)].into(),
+            r#type: profile
+                .as_ref()
+                .map(|p| p.id.clone())
+                .unwrap_or_else(|| kind.into()),
+            profile_workspace: value(want, "workspace").into(),
+            config: if endpoint_key.is_empty() {
+                Default::default()
+            } else {
+                [(endpoint_key.into(), value(want, "endpoint").into())].into()
+            },
+            credentials: match profile {
+                Some(profile) => profile
+                    .credentials
+                    .first()
+                    .map(|c| [(c.name.clone(), credential)].into())
+                    .unwrap_or_default(),
+                None => [(secret_key.into(), credential)].into(),
+            },
             ..Default::default()
         })
     }
@@ -53,7 +120,7 @@ impl OpenShell {
     async fn reconcile_inner(&self, kind: &str, want: &Row) -> Result<Mutation, ObservationError> {
         let name = value(want, "name");
         let workspace = value(want, "workspace");
-        let parent = if kind != "workspace" {
+        if kind != "workspace" {
             let parent = self
                 .observe("workspace", "", workspace, false)
                 .await?
@@ -61,10 +128,7 @@ impl OpenShell {
             if value(&parent, "owner") != value(want, "owner") {
                 return Err(ObservationError::BindingMismatch);
             }
-            Some(parent)
-        } else {
-            None
-        };
+        }
         let live = self.observe(kind, workspace, name, false).await?;
         if let Some(row) = &live {
             verify_identity(want, row)?;
@@ -76,7 +140,7 @@ impl OpenShell {
                 self.update_resource(kind, want, &row).await?;
                 row
             }
-            None => self.create_resource(kind, want, parent.as_ref()).await?,
+            None => self.create_resource(kind, want).await?,
         };
         self.readback(kind, want, established).await
     }
@@ -103,19 +167,6 @@ impl OpenShell {
             Err(error) => Ok(Mutation::partial(established, error)),
         }
     }
-    async fn set_route(&self, want: &Row) -> Result<(), ObservationError> {
-        self.inference()
-            .set_inference_route(self.request(proto::SetInferenceRouteRequest {
-                workspace: value(want, "workspace").into(),
-                provider_name: value(want, "provider_name").into(),
-                model_id: value(want, "model").into(),
-                timeout_secs: 120,
-                ..Default::default()
-            }))
-            .await
-            .map_err(|error| remote_error(&error))?;
-        Ok(())
-    }
     async fn delete_bound(&self, kind: &str, want: &Row) -> Result<(), ObservationError> {
         let name = value(want, "name");
         let workspace = value(want, "workspace");
@@ -131,27 +182,33 @@ impl OpenShell {
         let result = match kind {
             "sandbox" => {
                 let mut request = self.request(proto::DeleteSandboxRequest {
+                    allow_missing: false,
                     name: name.into(),
-                    workspace: workspace.into(),
+                    workspace_scope: Some(proto::workspace_selector(workspace)),
+                    ..Default::default()
                 });
                 // Podman's default graceful stop is 45 seconds. Allow cleanup
                 // after that stop without retrying an ambiguous deletion.
                 request.set_timeout(std::time::Duration::from_secs(90));
                 self.grpc().delete_sandbox(request).await.map(|_| ())
             }
-            "provider" => self
+            "provider_profile" => self
                 .grpc()
-                .delete_provider(self.request(proto::DeleteProviderRequest {
-                    name: name.into(),
+                .delete_provider_profile(self.request(proto::DeleteProviderProfileRequest {
+                    allow_missing: false,
+                    id: name.into(),
                     workspace: workspace.into(),
+                    ..Default::default()
                 }))
                 .await
                 .map(|_| ()),
-            "route" => self
-                .inference()
-                .delete_inference_route(self.request(proto::DeleteInferenceRouteRequest {
-                    workspace: workspace.into(),
-                    route_name: String::new(),
+            "provider" => self
+                .grpc()
+                .delete_provider(self.request(proto::DeleteProviderRequest {
+                    allow_missing: false,
+                    name: name.into(),
+                    workspace_scope: Some(proto::workspace_selector(workspace)),
+                    ..Default::default()
                 }))
                 .await
                 .map(|_| ()),
@@ -173,12 +230,40 @@ impl OpenShell {
 }
 #[async_trait]
 impl Backend for OpenShell {
+    async fn plan(
+        &self,
+        kind: &str,
+        desired: &Row,
+        prior: Option<&Row>,
+    ) -> Result<(), crate::Error> {
+        if kind == "pi_configuration" {
+            return self.plan_pi(desired).await;
+        }
+        // Bound resources were refreshed by OpenTofu. New resources still need
+        // an ownership check: their names may already exist in the gateway.
+        if prior.is_none()
+            && let Some(observed) = self
+                .observe(
+                    kind,
+                    value(desired, "workspace"),
+                    value(desired, "name"),
+                    false,
+                )
+                .await?
+        {
+            verify_identity(desired, &observed)?;
+        }
+        Ok(())
+    }
     async fn read(
         &self,
         kind: &str,
         prior: &Row,
         removing: bool,
     ) -> Result<Option<Row>, ObservationError> {
+        if kind == "pi_configuration" {
+            return self.read_pi(prior, removing).await;
+        }
         let observed = self
             .observe(
                 kind,
@@ -187,6 +272,27 @@ impl Backend for OpenShell {
                 removing,
             )
             .await?;
+        if kind == "sandbox"
+            && !removing
+            && let Some(row) = &observed
+        {
+            verify_identity(prior, row)?;
+            self.check_sandbox_phase(row)
+                .await
+                .map_err(|error| match error {
+                    crate::Error::Observation(error) => error,
+                    crate::Error::SandboxStartup {
+                        phase,
+                        reason,
+                        exit_code,
+                    } => ObservationError::SandboxStartup {
+                        phase,
+                        reason,
+                        exit_code: exit_code.parse().ok(),
+                    },
+                    _ => ObservationError::Query,
+                })?;
+        }
         if kind == "sandbox"
             && !removing
             && let Some(row) = &observed
@@ -203,17 +309,13 @@ impl Backend for OpenShell {
         Ok(observed)
     }
     async fn ensure(&self, kind: &str, desired: &Row) -> Mutation {
+        if kind == "pi_configuration" {
+            return self.ensure_pi(desired).await;
+        }
         let fields: &[&str] = match kind {
             "workspace" => &["name", "owner", "generation"],
+            "provider_profile" => &["name", "owner", "generation", "workspace"],
             "provider" => &["name", "owner", "generation", "workspace", "endpoint"],
-            "route" => &[
-                "name",
-                "owner",
-                "generation",
-                "workspace",
-                "provider_name",
-                "model",
-            ],
             "sandbox" => &[
                 "name",
                 "owner",
@@ -241,7 +343,14 @@ impl Backend for OpenShell {
         prior: &Row,
         destroying: bool,
     ) -> Result<(), ObservationError> {
-        if !destroying || !matches!(kind, "sandbox" | "provider" | "route") {
+        if kind == "pi_configuration" {
+            return self.remove_pi(prior, destroying).await;
+        }
+        if !matches!(
+            openshell_lifecycle(kind),
+            Some(OpenShellLifecycle::Reconstructible)
+        ) && !(destroying && openshell_lifecycle(kind) == Some(OpenShellLifecycle::Stateful))
+        {
             return Err(ObservationError::Query);
         }
         tokio::time::timeout(Duration::from_secs(300), self.delete_bound(kind, prior))

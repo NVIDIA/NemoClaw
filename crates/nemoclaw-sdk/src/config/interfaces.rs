@@ -1,11 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 use super::ConfigError;
+use crate::config::HarnessKind;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
-/// Native agent interfaces. Declare once on the first agent in a shared sandbox.
+/// Native interfaces belonging to the sandbox harness runtime.
 pub struct OpenClawInterfaces {
     /// Enable the OpenClaw dashboard with sandbox-local token authentication.
     pub dashboard: OpenClawDashboard,
@@ -86,42 +87,15 @@ pub struct HermesTui {
     pub enabled: bool,
 }
 impl AgentInterfaces {
-    pub fn validate(&self, harness: &str) -> Result<(), ConfigError> {
-        let valid = match self {
-            Self::OpenClaw(i) => {
-                let d = &i.dashboard;
-                harness == "openclaw"
-                    && (d.port.is_some() || d.bind.is_some())
-                    && d.port
-                        .is_none_or(|p| p >= 1024 && !(8642..=8652).contains(&p))
-            }
-            Self::Hermes(i) => {
-                harness == "hermes"
-                    && (i.dashboard.is_some() || i.api.is_some())
-                    && i.api
-                        .as_ref()
-                        .is_none_or(|a| (8642..=8652).contains(&a.port))
-                    && i.dashboard.as_ref().is_none_or(|d| {
-                        if !d.enabled {
-                            return d.port.is_none()
-                                && d.internal_port.is_none()
-                                && d.tui.is_none();
-                        }
-                        let port = d.port.unwrap_or(18789);
-                        let internal = d.internal_port.unwrap_or(19119);
-                        port != internal
-                            && [port, internal]
-                                .into_iter()
-                                .all(|p| p >= 1024 && !(8642..=8652).contains(&p) && p != 18642)
-                    })
-            }
-        };
-        if valid {
-            Ok(())
-        } else {
-            Err(ConfigError(
-                "invalid or unsupported native interface settings",
-            ))
+    pub fn validate(&self, harness: HarnessKind) -> Result<(), ConfigError> {
+        super::schema::validate_harness_field("interfaces", self, harness)?;
+        if let Self::Hermes(interfaces) = self
+            && let Some(dashboard) = &interfaces.dashboard
+            && dashboard.enabled
+            && dashboard.port.unwrap_or(18789) == dashboard.internal_port.unwrap_or(19119)
+        {
+            return Err(ConfigError::new("Hermes dashboard ports must differ"));
         }
+        Ok(())
     }
 }

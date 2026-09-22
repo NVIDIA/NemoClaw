@@ -35,8 +35,13 @@ pub struct Bootstrap {
 
 impl Bootstrap {
     pub fn new(root: &Path) -> Result<Self, Error> {
+        if !cfg!(unix) {
+            return Err(Error::Conflict(
+                "VoiceClaw R0 bootstrap requires Unix credential descriptor support",
+            ));
+        }
         if !root.is_absolute() {
-            return Err(Error::Configuration(crate::config::ConfigError(
+            return Err(Error::Configuration(crate::config::ConfigError::new(
                 "VoiceClaw bootstrap path must be absolute",
             )));
         }
@@ -328,6 +333,24 @@ mod tests {
         assert_eq!(
             fs::metadata(exchange.path()).unwrap().permissions().mode() & 0o777,
             0o700
+        );
+    }
+}
+
+#[cfg(all(test, not(unix)))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bootstrap_rejects_platforms_without_credential_descriptor_support() {
+        let root = tempfile::tempdir().unwrap();
+        fs::create_dir(root.path().join("bin")).unwrap();
+        fs::write(root.path().join("bin").join(ENTRYPOINT), b"unused").unwrap();
+        let error = Bootstrap::new(root.path()).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("Unix credential descriptor support")
         );
     }
 }

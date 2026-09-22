@@ -98,3 +98,144 @@ fn mutation_identity_checks_reject_foreign_ownership_and_replacements() {
     unbound.insert("id".into(), String::new());
     assert!(verify_identity(&unbound, &row).is_ok());
 }
+
+#[test]
+fn deletion_timestamp_presence_blocks_observation_but_allows_cleanup() {
+    let mut meta = metadata();
+    // Even a zero deletion timestamp marks the resource for deletion; only an absent timestamp allows normal observation.
+    meta.deletion_time = Some(Default::default());
+    assert!(base(Some(meta.clone()), "workspace", false).is_err());
+    assert!(base(Some(meta), "workspace", true).is_ok());
+}
+
+#[test]
+fn loaded_policy_accepts_only_the_runtime_log_directory_enrichment() {
+    let mut declared = policy();
+    let profile = native_profile::definition(
+        "local",
+        "http://172.30.122.1:18899/v1",
+        crate::config::InferenceProviderKind::Openai,
+        false,
+    )
+    .unwrap();
+    declared.network_policies.insert(
+        profile.id.clone(),
+        proto::NetworkPolicyRule {
+            name: profile.id,
+            endpoints: profile.endpoints,
+            binaries: profile.binaries,
+        },
+    );
+    let expected = policy_json(&declared).unwrap();
+    let mut loaded = declared.clone();
+    loaded
+        .filesystem
+        .as_mut()
+        .unwrap()
+        .read_only
+        .push("/var/log".into());
+    let response = |policy| proto::GetSandboxPolicyStatusResponse {
+        active_version: 2,
+        revision: Some(proto::SandboxPolicyRevision {
+            version: 2,
+            status: proto::PolicyStatus::Loaded as i32,
+            policy: Some(policy),
+            ..Default::default()
+        }),
+    };
+    assert!(active_policy(response(loaded.clone()), &expected).is_ok());
+    loaded
+        .filesystem
+        .as_mut()
+        .unwrap()
+        .read_only
+        .push("/private".into());
+    assert!(active_policy(response(loaded), &expected).is_err());
+    let mut writable = declared.clone();
+    writable
+        .filesystem
+        .as_mut()
+        .unwrap()
+        .read_write
+        .push("/var/log".into());
+    assert!(active_policy(response(writable), &expected).is_err());
+    let mut missing = declared.clone();
+    missing
+        .filesystem
+        .as_mut()
+        .unwrap()
+        .read_only
+        .retain(|p| p != "/usr");
+    assert!(active_policy(response(missing), &expected).is_err());
+    assert!(active_policy(response(declared), &expected).is_ok());
+}
+
+#[test]
+fn sparse_filesystem_policy_accepts_proxy_baseline_but_rejects_other_drift() {
+    let mut declared = policy();
+    declared.filesystem = Some(proto::FilesystemPolicy {
+        include_workdir: true,
+        read_only: vec![
+            "/usr".into(),
+            "/opt/fabric".into(),
+            "/opt/nemoclaw".into(),
+            "/app".into(),
+        ],
+        read_write: vec!["/sandbox".into()],
+    });
+    let profile = native_profile::definition(
+        "inference",
+        "https://example.com/v1",
+        crate::config::InferenceProviderKind::Openai,
+        false,
+    )
+    .unwrap();
+    declared.network_policies.insert(
+        "inference".into(),
+        proto::NetworkPolicyRule {
+            name: "inference".into(),
+            endpoints: profile.endpoints,
+            binaries: profile.binaries,
+        },
+    );
+    let expected = policy_json(&declared).unwrap();
+    let mut loaded = declared.clone();
+    let fs = loaded.filesystem.as_mut().unwrap();
+    fs.read_only
+        .extend(["/lib", "/etc", "/var/log", "/proc", "/dev/urandom"].map(String::from));
+    fs.read_write
+        .extend(["/tmp", "/dev/null"].map(String::from));
+    assert!(network::loaded_policy_matches(&loaded, &expected).unwrap());
+    let mut drift = loaded.clone();
+    drift
+        .filesystem
+        .as_mut()
+        .unwrap()
+        .read_write
+        .push("/etc".into());
+    assert!(!network::loaded_policy_matches(&drift, &expected).unwrap());
+    let mut drift = loaded.clone();
+    drift
+        .filesystem
+        .as_mut()
+        .unwrap()
+        .read_only
+        .retain(|p| p != "/opt/fabric");
+    assert!(!network::loaded_policy_matches(&drift, &expected).unwrap());
+    let mut drift = loaded.clone();
+    drift
+        .network_policies
+        .get_mut("inference")
+        .unwrap()
+        .endpoints[0]
+        .host = "other.example.com".into();
+    assert!(!network::loaded_policy_matches(&drift, &expected).unwrap());
+    // Existing explicit read-only restrictions must not be promoted to writable.
+    declared
+        .filesystem
+        .as_mut()
+        .unwrap()
+        .read_only
+        .push("/tmp".into());
+    assert!(!network::loaded_policy_matches(&loaded, &policy_json(&declared).unwrap()).unwrap());
+}

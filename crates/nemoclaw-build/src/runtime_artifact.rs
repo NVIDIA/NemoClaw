@@ -5,6 +5,7 @@ use std::collections::BTreeMap;
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct RuntimeArtifact {
+    pub platform: String,
     pub name: String,
     pub image: String,
     pub source_date_epoch: u64,
@@ -28,8 +29,18 @@ pub enum RuntimeArtifactError {
     InvalidInputPath,
     #[error("artifact source requires HTTPS and SHA-256")]
     InvalidDownload,
+    #[error("runtime images require a native Linux build host matching the artifact platform")]
+    IncompatibleHost,
 }
 impl RuntimeArtifact {
+    /// Require a native build so the retained supervisor matches the image architecture.
+    pub fn require_native_host(&self, platform: &str) -> Result<(), RuntimeArtifactError> {
+        if platform != self.platform {
+            return Err(RuntimeArtifactError::IncompatibleHost);
+        }
+        Ok(())
+    }
+
     /// Decode and validate the build inputs declared by a runtime manifest.
     ///
     /// # Errors
@@ -52,7 +63,8 @@ impl RuntimeArtifact {
             "build.json",
         ];
         let mut names = std::collections::BTreeSet::new();
-        if !filename(&value.name)
+        if !["linux_arm64", "linux_amd64"].contains(&value.platform.as_str())
+            || !filename(&value.name)
             || value.source_date_epoch == 0
             || value.image.is_empty()
             || value.image.starts_with('-')

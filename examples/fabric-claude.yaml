@@ -25,12 +25,13 @@ spec:
         provider: docker
       network:
         tier: isolated
-      agents:
-        - name: main
-          harness: claude
-          inference:
-            routes:
-              - name: primary
-                providerRef: local
-                overrides:
-                  model: fixture-model
+      harness:
+        kind: claude
+      agent:
+        name: main
+        inference:
+          routes:
+            - name: primary
+              providerRef: local
+              overrides:
+                model: fixture-model

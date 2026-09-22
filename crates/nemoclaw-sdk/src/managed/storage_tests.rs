@@ -146,5 +146,5 @@ async fn changed_connection_cannot_adopt_an_identical_volume_on_a_different_daem
     let backend = crate::managed::ManagedBackend::new(Engine::connect(&a.endpoint).unwrap());
     use crate::backend::{Backend, Row};
     let row = Row::from([("spec".into(), encoded), ("id".into(), id)]);
-    assert!(backend.ensure(STORAGE_KIND, &row).await.error().is_some());
+    assert!(backend.ensure("test_storage", &row).await.error().is_some());
 }

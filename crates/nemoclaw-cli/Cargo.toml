@@ -7,12 +7,17 @@ license.workspace = true
 publish = false
 
 [dependencies]
+nemoclaw-authoring = { path = "../nemoclaw-authoring" }
 nemoclaw-sdk = { path = "../nemoclaw-sdk" }
 clap.workspace = true
 serde_json.workspace = true
+serde-saphyr.workspace = true
 tokio = { workspace = true, features = ["signal", "io-std", "io-util"] }
 
 tempfile.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+nix.workspace = true
 
 [[bin]]
 name = "nemoclaw"
