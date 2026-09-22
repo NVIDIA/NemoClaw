@@ -719,7 +719,7 @@ function classifyProfileEquality(
       finding(
         "spec.inferenceProviders",
         "drifted",
-        `The managed startup profile and the registered inference selection differ (${differingFields.join(", ") || "inference"}).`,
+        `The managed startup profile and the registered inference selection differ (${differingFields.join(", ") || "inference"}; servingPreset=${JSON.stringify(profile.inference?.servingPreset)}; expectedServingPreset=${JSON.stringify(expected.inference?.servingPreset)}).`,
       ),
     );
   }
