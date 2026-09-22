@@ -17,6 +17,7 @@
       "pages": [
         {"title": "Build local artifacts", "source": "docs/build.md", "slug": "build"},
         {"title": "Use desired state", "source": "docs/usage.md", "slug": "usage"},
+        {"title": "Run the Kubernetes backend", "source": "docs/kubernetes.md", "slug": "kubernetes"},
         {"title": "Definitions and references", "source": "docs/configuration-references.md", "slug": "configuration-references"},
         {"title": "Locate and preserve state", "source": "docs/state.md", "slug": "state"},
         {"title": "Troubleshoot deployment operations", "source": "docs/troubleshooting.md", "slug": "troubleshooting"},

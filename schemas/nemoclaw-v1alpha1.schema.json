@@ -937,9 +937,10 @@
               "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:/-]*@sha256:[a-f0-9]{64}$"
             }
           ],
-          "description": "Immutable image reference. Omitted or empty selects the SDK pin for the selected harness.",
+          "description": "Immutable image reference. Kubernetes requires an explicit nonempty reference. For other drivers, omitted or empty selects the SDK pin for the selected harness.",
           "type": "string",
-          "x-nemoclaw-default-rule": "Omitted or empty selects the SDK pin for the selected harness."
+          "x-nemoclaw-default-rule": "Kubernetes requires an explicit immutable image reference. For other drivers, omitted or empty selects the SDK pin for the selected harness.",
+          "x-nemoclaw-required": "For Kubernetes sandboxes"
         }
       },
       "type": "object"
@@ -2384,12 +2385,13 @@
             {
               "enum": [
                 "docker",
-                "podman"
+                "podman",
+                "kubernetes"
               ]
             }
           ],
           "default": "docker",
-          "description": "Docker or Podman driver. A managed service with Podman requires explicit service placement.",
+          "description": "Docker, Podman, or Kubernetes driver. Kubernetes requires an external gateway and external inference endpoints. A managed service with Podman requires explicit service placement.",
           "type": "string",
           "x-nemoclaw-default-rule": "Omitted or empty selects the default."
         }
@@ -2399,6 +2401,42 @@
     "Sandbox": {
       "additionalProperties": false,
       "allOf": [
+        {
+          "if": {
+            "properties": {
+              "runtime": {
+                "properties": {
+                  "provider": {
+                    "const": "kubernetes"
+                  }
+                },
+                "required": [
+                  "provider"
+                ]
+              }
+            },
+            "required": [
+              "runtime"
+            ]
+          },
+          "then": {
+            "properties": {
+              "image": {
+                "properties": {
+                  "ref": {
+                    "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:/-]*@sha256:[a-f0-9]{64}$"
+                  }
+                },
+                "required": [
+                  "ref"
+                ]
+              }
+            },
+            "required": [
+              "image"
+            ]
+          }
+        },
         {
           "oneOf": [
             {
@@ -2451,7 +2489,8 @@
         },
         "image": {
           "$ref": "#/$defs/Image",
-          "description": "Sandbox agent image; omission selects the SDK pin for the selected harness."
+          "description": "Kubernetes requires an explicit immutable agent image compatible with the gateway's runtime user and group IDs. For other drivers, omission selects the SDK pin for the selected harness.",
+          "x-nemoclaw-required": "For Kubernetes sandboxes"
         },
         "inferenceProviders": {
           "description": "Named inference definitions visible to this sandbox's routes. Names must not shadow deployment definitions.",
@@ -3673,6 +3712,81 @@
             ]
           }
         ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "spec": {
+            "properties": {
+              "sandboxes": {
+                "contains": {
+                  "properties": {
+                    "runtime": {
+                      "properties": {
+                        "provider": {
+                          "const": "kubernetes"
+                        }
+                      },
+                      "required": [
+                        "provider"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "runtime"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "sandboxes"
+            ]
+          }
+        },
+        "required": [
+          "spec"
+        ]
+      },
+      "then": {
+        "allOf": [
+          {
+            "properties": {
+              "spec": {
+                "properties": {
+                  "gateway": {
+                    "properties": {
+                      "management": {
+                        "const": "external"
+                      }
+                    },
+                    "required": [
+                      "management"
+                    ]
+                  }
+                },
+                "required": [
+                  "gateway"
+                ]
+              }
+            },
+            "required": [
+              "spec"
+            ]
+          },
+          {
+            "properties": {
+              "spec": {
+                "properties": {
+                  "services": {
+                    "maxProperties": 0
+                  }
+                }
+              }
+            }
+          }
+        ],
+        "x-nemoclaw-error": "Kubernetes requires an external gateway and external inference endpoints; managed services are not supported"
       }
     }
   ],

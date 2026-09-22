@@ -60,3 +60,15 @@ Exercise SDK apply, CLI export, SDK unchanged apply, and CLI destroy against the
 Qualify the provider against pinned OpenTofu and use an explicitly verified bundle for deployment tests.
 Separate deterministic tests from opt-in live qualification; record revision, platform, and environment in [validation records](../validation/README.md).
 Compilation alone does not qualify migration or platforms.
+
+## Kubernetes Development Branch
+
+The user requested a Kubernetes backend on a branch from `v1` on 2026-09-22.
+This branch accepts `runtime.provider: kubernetes` through an existing, exactly version-matched OpenShell Kubernetes gateway and preserves the SDK's lifecycle and ownership rules.
+Kubernetes requires an external gateway and external inference connections; local managed gateway and service configurations are rejected.
+A separate, explicitly invoked local installer may create one owned kind cluster and deploy the pinned upstream OpenShell chart, its Agent Sandbox prerequisite, an enforcing CNI, and a scoped development authentication fixture.
+The optional pinned CPU inference fixture and Kubernetes builds of the existing agent images may be deployed there for lifecycle and inference tests.
+Those builds must preserve private workspace permissions while matching the upstream Kubernetes driver's non-root identity.
+The SDK continues to own OpenShell resources; the platform installer owns the Kubernetes prerequisites and retains them after SDK destroy.
+This decision does not create a maintained OpenShell fork, a NemoClaw Kubernetes operator, or production and compatibility claims.
+See the [Kubernetes procedure](../kubernetes.md) for credential custody, retained state, validation, and explicit cluster cleanup.

@@ -1,0 +1,23 @@
+{
+  "openshell": {
+    "url": "https://codeload.github.com/NVIDIA/OpenShell/tar.gz/1fe79f53991debf32776853a60f0cbd4e127dcfb",
+    "sha256": "a194dacc451919a2c9457f9db4608fa7b613fcf55a2570abda746b0a4027b23a",
+    "directory": "OpenShell-1fe79f53991debf32776853a60f0cbd4e127dcfb"
+  },
+  "agentSandbox": {
+    "url": "https://github.com/kubernetes-sigs/agent-sandbox/releases/download/v0.5.0/manifest.yaml",
+    "sha256": "ccfe3649de8b33f0ee0ec635e2c7b40e1c468ad9fde6aac7c7379501327d9c4c"
+  },
+  "calico": {
+    "url": "https://raw.githubusercontent.com/projectcalico/calico/v3.32.2/manifests/calico.yaml",
+    "sha256": "a8c828a06a87c629a282ebbc424895b77f3a030251993e41ea400a743675bb02"
+  },
+  "kindNode": "kindest/node:v1.35.0@sha256:452d707d4862f52530247495d180205e029056831160e22870e37e3f6c1ac31f",
+  "policyProbeImage": "busybox:1.37.0@sha256:9db7b59979c38555a39def84a31fb98b5296952f9e3afd4f6f11f05b07adfab0",
+  "dependencyImages": {
+    "registry.k8s.io/agent-sandbox/agent-sandbox-controller:v0.5.0": "sha256:e99cac42f10cac69cab09a91e59f982c9d525b2933a5f5b7dfd52dae09340aa2",
+    "quay.io/calico/cni:v3.32.2": "sha256:0ef740bc587f25565905adf1d1f61a7faff0d571c449c6bdd789feed743d3ef7",
+    "quay.io/calico/node:v3.32.2": "sha256:99b03fe91e8bfbcb153ae65ef4b701b24ce541ffdd74ff314eb041096008f7fd",
+    "quay.io/calico/kube-controllers:v3.32.2": "sha256:7870b67ebb13fabc3005252b44fe6e78b21635649bd3072b80afa1684b6565d0"
+  }
+}

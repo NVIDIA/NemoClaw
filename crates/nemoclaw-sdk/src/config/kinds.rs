@@ -70,7 +70,7 @@ impl FromStr for HarnessKind {
     }
 }
 
-/// Container engine used to run a sandbox or managed process.
+/// OpenShell compute driver selected for a sandbox or managed process.
 #[derive(
     Clone,
     Copy,
@@ -91,12 +91,15 @@ pub enum ComputeDriver {
     Docker,
     #[serde(rename = "podman")]
     Podman,
+    #[serde(rename = "kubernetes")]
+    Kubernetes,
 }
 impl ComputeDriver {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Docker => "docker",
             Self::Podman => "podman",
+            Self::Kubernetes => "kubernetes",
         }
     }
 }
@@ -111,6 +114,7 @@ impl FromStr for ComputeDriver {
         match value {
             "docker" => Ok(Self::Docker),
             "podman" => Ok(Self::Podman),
+            "kubernetes" => Ok(Self::Kubernetes),
             _ => Err(super::ConfigError::new("unsupported compute driver")),
         }
     }

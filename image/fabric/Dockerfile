@@ -98,6 +98,18 @@ COPY image/fabric/openclaw_adapter.py image/fabric/openclaw_features.py image/fa
 ENV HOME=/sandbox OPENCLAW_HOME=/sandbox OPENCLAW_STATE_DIR=/sandbox/.openclaw OPENCLAW_CONFIG_PATH=/sandbox/.openclaw/openclaw.json
 USER node
 
+FROM openclaw AS openclaw-kubernetes
+# The pinned Kubernetes driver selects 10001:10001 before seeding the PVC.
+# Keep the image workspace private while making it readable by that identity.
+USER root
+RUN groupmod --gid 10001 node && usermod --uid 10001 --gid 10001 node \
+    && chown -R 10001:10001 /sandbox /home/node && chmod 0700 /sandbox \
+    && install -d -m 0700 -o 10001 -g 10001 /sandbox/tmp /sandbox/.cache \
+    && chmod -R a+rX /opt/nemoclaw \
+    && chmod a+r /app/node_modules/.pnpm-workspace-state-v1.json \
+    && python3 -c 'import json; from pathlib import Path; p = Path("/opt/nemoclaw/provenance.json"); v = json.loads(p.read_text()); v["runtime_profile"] = "kubernetes"; p.write_text(json.dumps(v, indent=2) + "\n")'
+USER node
+
 FROM base AS hermes-assets
 ARG HERMES_REVISION=29112bef099274229cadff79cdff7bf7b99c4b77
 ARG HERMES_SHA256=76b99a8be9b77d66833c3cfe2b35c6d6f6a58e4ff9637ef8effcfc1f420ab35a

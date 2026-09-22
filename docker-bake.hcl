@@ -83,6 +83,12 @@ target "ollama-proxy" {
   tags = ["${IMAGE_PREFIX}:ollama-proxy"]
 }
 
+target "openclaw-kubernetes" {
+  inherits = ["openclaw"]
+  target = "openclaw-kubernetes"
+  tags = ["${IMAGE_PREFIX}:openclaw-kubernetes"]
+}
+
 # Checks use disposable build stages and never start deployed resources.
 group "check" {
   targets = ["lint", "unit-tests", "pi-tests", "proxy-tests"]

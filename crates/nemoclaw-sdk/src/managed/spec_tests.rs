@@ -2,6 +2,37 @@
 // SPDX-License-Identifier: Apache-2.0
 use super::*;
 use crate::config::ComputeDriver;
+
+fn assert_kubernetes_rejected_by_managed_entrypoints(mut spec: Spec) {
+    spec.validate().unwrap();
+    spec.compute_driver = ComputeDriver::Kubernetes;
+    assert!(matches!(
+        spec.validate(),
+        Err(Error::Conflict("unsupported managed compute driver"))
+    ));
+    assert!(spec.json().is_err());
+    assert!(spec.container("/owned-data").is_err());
+    assert!(spec.runtime_configuration().is_err());
+}
+
+#[test]
+fn kubernetes_cannot_select_a_managed_gateway() {
+    let fixtures: Vec<serde_json::Value> =
+        serde_json::from_str(include_str!("reference.json")).unwrap();
+    let spec: Spec = serde_json::from_str(fixtures[0]["spec"].as_str().unwrap()).unwrap();
+    assert!(spec.process.is_none());
+    assert_kubernetes_rejected_by_managed_entrypoints(spec);
+}
+
+#[test]
+fn kubernetes_cannot_select_a_managed_service_process() {
+    let fixtures: Vec<serde_json::Value> =
+        serde_json::from_str(include_str!("reference.json")).unwrap();
+    let spec: Spec = serde_json::from_str(fixtures[1]["spec"].as_str().unwrap()).unwrap();
+    assert!(spec.process.is_some());
+    assert_kubernetes_rejected_by_managed_entrypoints(spec);
+}
+
 #[test]
 fn image_pull_policy_does_not_change_container_configuration() {
     let fixtures: Vec<serde_json::Value> =

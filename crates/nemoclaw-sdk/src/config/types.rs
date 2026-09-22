@@ -242,7 +242,8 @@ pub struct Sandbox {
     pub name: String,
     #[serde(rename = "image")]
     #[schemars(default)]
-    /// Sandbox agent image; omission selects the SDK pin for the selected harness.
+    #[schemars(extend("x-nemoclaw-required" = "For Kubernetes sandboxes"))]
+    /// Kubernetes requires an explicit immutable agent image compatible with the gateway's runtime user and group IDs. For other drivers, omission selects the SDK pin for the selected harness.
     pub image: Image,
     #[serde(rename = "runtime")]
     #[schemars(default)]
@@ -264,7 +265,8 @@ pub struct Sandbox {
 pub struct Image {
     #[serde(rename = "ref")]
     #[schemars(default)]
-    /// Immutable image reference. Omitted or empty selects the SDK pin for the selected harness.
+    #[schemars(extend("x-nemoclaw-required" = "For Kubernetes sandboxes"))]
+    /// Immutable image reference. Kubernetes requires an explicit nonempty reference. For other drivers, omitted or empty selects the SDK pin for the selected harness.
     pub ref_: String,
 }
 
@@ -275,7 +277,7 @@ pub struct Image {
 pub struct Runtime {
     #[serde(rename = "provider", deserialize_with = "super::kinds::runtime_driver")]
     #[schemars(default)]
-    /// Docker or Podman driver. A managed service with Podman requires explicit service placement.
+    /// Docker, Podman, or Kubernetes driver. Kubernetes requires an external gateway and external inference endpoints. A managed service with Podman requires explicit service placement.
     pub provider: super::ComputeDriver,
 }
 

@@ -45,7 +45,7 @@ fn requirements(diags: &mut Diagnostics, config: &GatewayState) -> Option<()> {
     if !valid {
         diags.error(
             "Invalid gateway requirements",
-            "Select at least one compute driver: docker or podman.",
+            "Select at least one compute driver: docker, podman, or kubernetes.",
             AttributePath::new("required_compute_drivers"),
         );
         return None;
@@ -220,6 +220,8 @@ mod tests {
             (Value::Unknown, true),
             (Value::Value(vec![Value::Unknown]), true),
             (Value::Value(vec![Value::Value("docker".into())]), true),
+            (Value::Value(vec![Value::Value("podman".into())]), true),
+            (Value::Value(vec![Value::Value("kubernetes".into())]), true),
             (Value::Null, false),
             (Value::Value(vec![]), false),
             (Value::Value(vec![Value::Null]), false),

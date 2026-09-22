@@ -1,0 +1,67 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# yaml-language-server: $schema=../../schemas/nemoclaw-v1alpha1.schema.json
+# Inference and agent settings match the Docker hosted-NVIDIA fixture at
+# crates/nemoclaw-e2e/fixtures/openclaw-nvidia-hosted/v1.yaml.
+# Replace the deployment UID and image digest before applying.
+apiVersion: nemoclaw.nvidia.com/v1alpha1
+kind: NemoClawConfig
+metadata:
+  name: kubernetes-hosted-nvidia
+  uid: ab7d47cd-5466-4ae0-abfc-69155b4e07f2
+spec:
+  gateway:
+    management: external
+    endpoint: https://127.0.0.1:17671
+    credential: {env: NEMOCLAW_K8S_TOKEN}
+    tls:
+      ca: {env: NEMOCLAW_K8S_CA}
+      certificate: {env: NEMOCLAW_K8S_CERT}
+      key: {env: NEMOCLAW_K8S_KEY}
+  inferenceProviders:
+    - name: hosted-nvidia-prod
+      provider: openai
+      api: openai-completions
+      endpoint: https://integrate.api.nvidia.com/v1
+      credential:
+        env: NVIDIA_INFERENCE_API_KEY
+  sandboxes:
+    - name: assistant
+      harness:
+        kind: openclaw
+      image:
+        ref: registry.example.com/nemoclaw/openclaw-kubernetes@sha256:0000000000000000000000000000000000000000000000000000000000000000
+      runtime:
+        provider: kubernetes
+      network:
+        policy:
+          explicit:
+            version: 1
+            process:
+              run_as_user: "10001"
+              run_as_group: "10001"
+            network_policies:
+              hosted-inference:
+                name: hosted-inference
+                endpoints:
+                  - host: integrate.api.nvidia.com
+                    port: 443
+                binaries:
+                  - path: /usr/bin/openclaw
+            filesystem_policy:
+              include_workdir: true
+              read_only:
+                - /usr
+                - /opt/fabric
+                - /opt/nemoclaw
+                - /app
+              read_write:
+                - /sandbox
+      agent:
+        name: primary
+        inference:
+          routes:
+            - name: primary
+              providerRef: hosted-nvidia-prod
+              overrides:
+                model: nvidia/nemotron-3-super-120b-a12b

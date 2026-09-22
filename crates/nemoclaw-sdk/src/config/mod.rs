@@ -206,7 +206,9 @@ impl Document {
                 } else {
                     DEFAULT_AGENT_IMAGE
                 };
-            default_string(&mut sandbox.image.ref_, default_image);
+            if sandbox.runtime.provider != ComputeDriver::Kubernetes {
+                default_string(&mut sandbox.image.ref_, default_image);
+            }
         }
     }
 }

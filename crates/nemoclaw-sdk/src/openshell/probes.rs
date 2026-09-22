@@ -55,6 +55,26 @@ async fn readiness_deadline(
 fn value<'a>(row: &'a Row, key: &str) -> &'a str {
     row.get(key).map(String::as_str).unwrap_or("")
 }
+fn response_agent(binding: &Row) -> Result<String, Error> {
+    let runtime = value(binding, "agent_runtime");
+    if runtime == "fabric-openclaw"
+        && let Some(settings) = inference_settings(value(binding, "inference_json"), runtime)?
+    {
+        // The hosted runtime is named after the sandbox. Its explicit native
+        // agent roster may use a different name; never guess among agents.
+        match settings.agents.as_slice() {
+            [agent] => return Ok(agent.name.clone()),
+            [] => {}
+            _ => {
+                return Err(Error::Conflict(
+                    "agent response requires one declared OpenClaw agent",
+                ));
+            }
+        }
+    }
+    // Preserve the legacy roster-free runtime and other harness contracts.
+    Ok(value(binding, "agent_name").into())
+}
 fn hermes_response_text(bytes: &[u8]) -> Result<String, Error> {
     if bytes.len() > 1 << 20 {
         return Err(Error::Conflict("agent response exceeds the probe limit"));
@@ -375,6 +395,7 @@ impl OpenShell {
         Ok(())
     }
     pub async fn agent_response(&self, binding: &Row) -> Result<String, Error> {
+        let agent = response_agent(binding)?;
         let mut random = [0_u8; 16];
         getrandom::fill(&mut random).map_err(|_| Error::State("cannot generate probe session"))?;
         random[6] = (random[6] & 15) | 64;
@@ -394,7 +415,7 @@ impl OpenShell {
                 "/opt/fabric/bin/python".into(),
                 "/opt/nemoclaw/fabric.py".into(),
                 "probe".into(),
-                value(binding, "agent_name").into(),
+                agent.clone(),
                 "hermes".into(),
             ]
         } else {
@@ -402,7 +423,7 @@ impl OpenShell {
                 "openclaw",
                 "agent",
                 "--agent",
-                value(binding, "agent_name"),
+                &agent,
                 "--session-id",
                 &session,
                 "--message",
@@ -442,6 +463,42 @@ impl OpenShell {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn openclaw_response_targets_the_declared_agent_instead_of_the_hosted_runtime() {
+        let document = crate::config::Document::parse(
+            include_bytes!("../../tests/fixtures/config/local.yaml").as_slice(),
+        )
+        .unwrap();
+        let mut settings = document
+            .sandbox_runtime_settings(&document.spec.sandboxes[0])
+            .unwrap();
+        let mut binding: Row = [
+            ("agent_name".into(), "assistant".into()),
+            ("agent_runtime".into(), "fabric-openclaw".into()),
+            (
+                "inference_json".into(),
+                serde_json::to_string(&settings).unwrap(),
+            ),
+        ]
+        .into();
+        assert_eq!(response_agent(&binding).unwrap(), "main");
+        let mut second = settings.agents[0].clone();
+        second.name = "another".into();
+        settings.agents.push(second);
+        binding.insert(
+            "inference_json".into(),
+            serde_json::to_string(&settings).unwrap(),
+        );
+        assert!(response_agent(&binding).is_err());
+        settings.agents.clear();
+        binding.insert(
+            "inference_json".into(),
+            serde_json::to_string(&settings).unwrap(),
+        );
+        assert_eq!(response_agent(&binding).unwrap(), "assistant");
+    }
+
     #[tokio::test]
     async fn observed_pi_catalog_supplies_its_declared_default_without_private_model_state() {
         let mut value: serde_json::Value =

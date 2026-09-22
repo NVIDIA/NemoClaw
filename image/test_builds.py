@@ -59,6 +59,16 @@ class ImageBuilds(unittest.TestCase):
         target = self.plan("deepagents", platform="linux/amd64")["target"]["deepagents"]
         self.assertEqual(target["platforms"], ["linux/amd64"])
 
+    def test_kubernetes_image_inherits_the_selected_openclaw_build(self):
+        for platform in ("linux/arm64", "linux/amd64"):
+            targets = self.plan("openclaw", "openclaw-kubernetes", platform=platform)["target"]
+            ordinary = targets["openclaw"]
+            adapted = targets["openclaw-kubernetes"]
+            self.assertEqual(adapted["args"], ordinary["args"])
+            self.assertEqual(adapted["platforms"], [platform])
+            self.assertEqual(adapted["target"], "openclaw-kubernetes")
+            self.assertNotEqual(adapted["tags"], ordinary["tags"])
+
     def test_proxy_has_an_independent_build(self):
         targets = self.plan("ollama-proxy")["target"]
         self.assertEqual(set(targets), {"ollama-proxy"})

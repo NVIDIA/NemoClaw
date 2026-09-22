@@ -90,6 +90,26 @@ mod tests {
     use super::*;
 
     #[test]
+    fn kubernetes_gateway_requires_the_pinned_version_and_matching_driver() {
+        let driver = "kubernetes".parse().unwrap();
+        let mut capabilities = GatewayCapabilities {
+            gateway_version: crate::artifact_pins::OPENSHELL_VERSION.into(),
+            compute_drivers: vec![BTreeSet::from(["kubernetes".into()])],
+        };
+        capabilities.require(driver).unwrap();
+        assert!(
+            capabilities
+                .require(crate::config::ComputeDriver::Docker)
+                .is_err()
+        );
+        capabilities.gateway_version = "other".into();
+        assert!(capabilities.require(driver).is_err());
+        capabilities.gateway_version = crate::artifact_pins::OPENSHELL_VERSION.into();
+        capabilities.compute_drivers = vec![BTreeSet::from(["docker".into()])];
+        assert!(capabilities.require(driver).is_err());
+    }
+
+    #[test]
     fn gateway_compatibility_preserves_driver_aliases_and_rejects_ambiguous_or_incomplete_metadata()
     {
         let driver = proto::ComputeDriverInfo {

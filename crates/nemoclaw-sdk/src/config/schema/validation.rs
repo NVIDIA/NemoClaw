@@ -149,7 +149,10 @@ pub(super) fn constrain(root: &mut Value, normalized: bool) {
         "sandboxes",
         json!({"minItems":1,"maxItems":32}),
     );
-    defs["Sandbox"]["allOf"] = json!([]);
+    defs["Sandbox"]["allOf"] = json!([{
+        "if": at("runtime/provider", json!({"const":"kubernetes"}), true),
+        "then": at("image/ref", json!({"pattern":c::IMAGE}), true)
+    }]);
     optional_string(
         &mut defs["Image"],
         "ref",
@@ -161,8 +164,9 @@ pub(super) fn constrain(root: &mut Value, normalized: bool) {
         .as_object_mut()
         .unwrap()
         .remove("default");
-    defs["Image"]["properties"]["ref"]["x-nemoclaw-default-rule"] =
-        json!("Omitted or empty selects the SDK pin for the selected harness.");
+    defs["Image"]["properties"]["ref"]["x-nemoclaw-default-rule"] = json!(
+        "Kubernetes requires an explicit immutable image reference. For other drivers, omitted or empty selects the SDK pin for the selected harness."
+    );
     let driver_values = defs["Runtime"]["properties"]["provider"]
         .as_object_mut()
         .unwrap()
@@ -396,6 +400,18 @@ pub(super) fn constrain(root: &mut Value, normalized: bool) {
             at("spec/sandboxes/[]/runtime/provider", json!({"enum":["", "docker"]}), false),
             at("spec/sandboxes/[]/runtime/provider", json!({"const":"podman"}), true)
         ]}
+    }));
+    root["allOf"].as_array_mut().unwrap().push(json!({
+        "if": at("spec/sandboxes", json!({
+            "contains": at("runtime/provider", json!({"const":"kubernetes"}), true)
+        }), true),
+        "then": {
+            "allOf": [
+                at("spec/gateway/management", json!({"const":"external"}), true),
+                at("spec/services", json!({"maxProperties":0}), false)
+            ],
+            "x-nemoclaw-error": "Kubernetes requires an external gateway and external inference endpoints; managed services are not supported"
+        }
     }));
     root["x-nemoclaw-parser-checks"] = json!([
         "Document::parse rejects YAML aliases, anchors, merge keys, unsupported tags, duplicate keys, multiple documents, and input larger than 1 MiB. It applies the compiled input schema before defaulting; Document::validate applies the normalized schema and semantic checks, including for directly constructed Rust values.",

@@ -23,6 +23,7 @@ The [DGX Station Qwen3-4B and OpenClaw test](dgx-station-qwen3-openclaw-linux-ar
 The [DGX Station shared-model test](dgx-station-shared-model-linux-arm64.md) records separate OpenClaw and Pi responses through one managed Qwen3-4B service on the same Station class.
 The [harness and provider expansion](rust-harness-expansion-linux-arm64.md) records passing Docker-backed native inference, feature-specific limits, and the managed Podman blocker at that revision.
 The subsequent [managed Podman qualification](rust-managed-podman-linux-arm64.md) records the upstream TLS fix, real Deep Agents inference, lifecycle checks, and Docker upgrade results.
+The [Kubernetes kind development validation](kubernetes-kind-linux-amd64.md) records the local Linux AMD64 stack, lifecycle checks, immutable artifacts, and upstream reliability limit.
 
 | Behavior | Tests and Results |
 |---|---|
