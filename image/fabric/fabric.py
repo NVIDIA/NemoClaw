@@ -356,6 +356,14 @@ def configuration_matches(observed, expected):
     return isinstance(observed, dict) and intent(observed) == intent(expected)
 
 
+async def native_health(config, inference):
+    if config["harness"]["adapter_id"] != "nemoclaw.local.hermes":
+        return None
+    from hermes_adapter import healthy
+
+    return await asyncio.to_thread(healthy, inference)
+
+
 @asynccontextmanager
 async def hosted_runtime(config, start):
     runtime = await start(config)
@@ -414,6 +422,8 @@ async def serve():
                         "ready": runtime.status == RuntimeStatus.ACTIVE,
                         "inference": inference,
                     }
+                    if (healthy := await native_health(config, inference)) is not None:
+                        response["native_healthy"] = healthy
                 elif request == {"operation": "probe"} and config["harness"]["adapter_id"] in (
                     "nemoclaw.local.hermes",
                     "nvidia.fabric.hermes",
@@ -480,9 +490,7 @@ async def client(operation, argument, harness="deepagents", model=None, inferenc
             return 0 if result == {"prepared": True} else 2
         if operation in ("check", "configure"):
             if harness == "hermes" and expected["harness"]["adapter_id"] == "nemoclaw.local.hermes":
-                from hermes_adapter import healthy
-
-                if not await asyncio.to_thread(healthy, inference):
+                if result.get("native_healthy") is not True:
                     return 2
             if harness == "openclaw":
                 from openclaw_adapter import healthy

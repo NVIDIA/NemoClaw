@@ -157,6 +157,12 @@ pub(super) fn constrain(root: &mut Value, normalized: bool) {
         &json!({"pattern": c::IMAGE}),
         normalized,
     );
+    defs["Image"]["properties"]["ref"]
+        .as_object_mut()
+        .unwrap()
+        .remove("default");
+    defs["Image"]["properties"]["ref"]["x-nemoclaw-default-rule"] =
+        json!("Omitted or empty selects the SDK pin for the selected harness.");
     let driver_values = defs["Runtime"]["properties"]["provider"]
         .as_object_mut()
         .unwrap()

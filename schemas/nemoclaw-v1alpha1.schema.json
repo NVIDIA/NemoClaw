@@ -941,10 +941,9 @@
               "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:/-]*@sha256:[a-f0-9]{64}$"
             }
           ],
-          "default": "nc-multi-models@sha256:3ab70ded67440e838a37d6c9f0e3b08b95e2acf416c6076f8817bac190525cf0",
-          "description": "Immutable image reference. Omitted or empty selects the SDK-pinned Fabric image.",
+          "description": "Immutable image reference. Omitted or empty selects the SDK pin for the selected harness.",
           "type": "string",
-          "x-nemoclaw-default-rule": "Omitted or empty selects the default."
+          "x-nemoclaw-default-rule": "Omitted or empty selects the SDK pin for the selected harness."
         }
       },
       "type": "object"
@@ -2456,7 +2455,7 @@
         },
         "image": {
           "$ref": "#/$defs/Image",
-          "description": "Sandbox agent image; omission selects the SDK default."
+          "description": "Sandbox agent image; omission selects the SDK pin for the selected harness."
         },
         "inferenceProviders": {
           "description": "Named inference definitions visible to this sandbox's routes. Names must not shadow deployment definitions.",
