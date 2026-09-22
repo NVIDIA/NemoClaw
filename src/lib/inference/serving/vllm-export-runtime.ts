@@ -207,7 +207,7 @@ function containerFormat(
     emptyArray(".HostConfig.SecurityOpt"),
     `(eq (len .HostConfig.Ulimits) 2)`,
     "$ulimits",
-    `(or ${equalJson(".HostConfig.Tmpfs", null)} ${equalJson(".HostConfig.Tmpfs", {})})`,
+    `(or ${equalJson('(index .HostConfig "Tmpfs")', null)} ${equalJson('(index .HostConfig "Tmpfs")', {})})`,
     equalJson(".HostConfig.Memory", 0),
     equalJson(".HostConfig.NanoCpus", 0),
     `(eq (len .HostConfig.DeviceRequests) 1)`,

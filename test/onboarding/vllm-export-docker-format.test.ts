@@ -30,8 +30,8 @@ describe.skipIf(!dockerClientAvailable)("managed vLLM Docker format boundary", (
       Devices: null,
       CapAdd: null,
       SecurityOpt: null,
-      Tmpfs: null,
     });
+    Reflect.deleteProperty(fixture.objects.container.HostConfig, "Tmpfs");
     Object.assign(fixture.objects.container.HostConfig.DeviceRequests[0]!, { DeviceIDs: null });
     expect(fixture.run().serving.hostPort).toBe(18000);
   });
