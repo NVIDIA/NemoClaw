@@ -779,30 +779,30 @@ process.stdout.write("x".repeat(1024 * 1024 + 2048 - Buffer.byteLength(suffix, "
     );
   });
 
-  it("validates the staged v1alpha1 Deep Agents document (#11860)", () => {
+  it("validates staged managed and Deep Agents documents (#11860, #12131)", () => {
+    const managed = document();
+    const expectInvalidShape = (candidate: unknown) =>
+      expect(() => parseConfigExport(JSON.stringify(candidate))).toThrow(/complete staged/u);
+    const parsed = parseConfigExport(JSON.stringify(managed));
+    expect(parsed.spec.sandboxes[0]?.agent.name).toBe("primary");
+    const plural = structuredClone(managed);
+    const pluralSandbox = plural.spec.sandboxes[0]! as unknown as Record<string, unknown>;
+    pluralSandbox.agents = [pluralSandbox.agent];
+    Reflect.deleteProperty(pluralSandbox, "agent");
+    expectInvalidShape(plural);
     const candidate = structuredClone(document());
     const sandbox = candidate.spec.sandboxes[0]!;
-    const image = { ref: IMAGE_REF };
-    Object.assign(sandbox, { harness: { kind: "deepagents" }, image });
+    Object.assign(sandbox, { harness: { kind: "deepagents" }, image: { ref: IMAGE_REF } });
     expect(parseConfigExport(JSON.stringify(candidate)).spec.sandboxes[0]).toMatchObject({
       image: { ref: IMAGE_REF },
       harness: { kind: "deepagents" },
-      agent: { name: "primary" },
     });
     const missingImage = structuredClone(candidate);
     Reflect.deleteProperty(missingImage.spec.sandboxes[0]!, "image");
-    expect(() => parseConfigExport(JSON.stringify(missingImage))).toThrow(
-      "complete staged v1alpha1 shape",
-    );
+    expectInvalidShape(missingImage);
     const missingEndpoint = structuredClone(candidate);
     Reflect.deleteProperty(missingEndpoint.spec.gateway, "endpoint");
-    expect(() => parseConfigExport(JSON.stringify(missingEndpoint))).toThrow(
-      "complete staged v1alpha1 shape",
-    );
-    Object.assign(sandbox, { agents: [sandbox.agent], agent: undefined });
-    expect(() => parseConfigExport(JSON.stringify(candidate))).toThrow(
-      "complete staged v1alpha1 shape",
-    );
+    expectInvalidShape(missingEndpoint);
   });
   it("rejects an export that violates the canonical config schema (#11485)", async () => {
     const valid = document();

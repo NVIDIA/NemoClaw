@@ -27,7 +27,10 @@ import {
 } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
-import { parseConfigExport } from "../fixtures/phases/config-export-validation.ts";
+import {
+  parseConfigExport,
+  readProtectedConfigExportFile,
+} from "../fixtures/phases/config-export-validation.ts";
 import { ensureConfiguredRuntimeProviderAvailable } from "../fixtures/runtime-provider.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import {
@@ -36,9 +39,9 @@ import {
 } from "../support/network-policy-probe.ts";
 import {
   type NetworkPolicyConfigExportLiveEvidence,
+  passesNetworkPolicyConfigExportLiveEvidence,
   requireEffectivePolicyDocument,
 } from "../support/config-export-policy-evidence.ts";
-import { readProtectedConfigExportFile } from "../support/config-export-file-evidence.ts";
 import { writeSecretFreeConfigExportArtifact } from "../support/config-export-secret-scan.ts";
 import { runRestrictedOnboardWithRetry } from "./restricted-onboard-helpers.ts";
 
@@ -406,7 +409,6 @@ test(
       effectivePolicy.network_policies,
     );
     expect(exportedSandbox.image).toBeNull();
-    expect(effectivePolicyMatches).toBe(true);
     const exportArtifact = "config-export-live.yaml";
     await writeSecretFreeConfigExportArtifact(artifacts, exportArtifact, raw, [apiKey]);
 
@@ -444,6 +446,7 @@ test(
         sha256: createHash("sha256").update(raw).digest("hex"),
       },
     };
+    expect(passesNetworkPolicyConfigExportLiveEvidence(exportEvidence)).toBe(true);
     await artifacts.writeJson("config-export-live-evidence.json", exportEvidence);
 
     progress.phase("deny default egress and hot-reload one host-gateway port");

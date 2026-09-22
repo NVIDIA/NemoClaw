@@ -192,18 +192,6 @@ describe("export config builder", () => {
     });
   });
 
-  it("uses a null managed image placeholder until v1 release (#12131)", () => {
-    const result = buildExportConfig(source, {
-      documentName: alphaDocumentName,
-      documentUid: firstUid,
-    });
-
-    expect(result.spec.sandboxes[0]).toMatchObject({
-      harness: { kind: "openclaw" },
-      image: null,
-    });
-  });
-
   it("binds verified Hermes API-key authentication to its inference provider (#11432)", () => {
     const result = buildExportConfig(
       {

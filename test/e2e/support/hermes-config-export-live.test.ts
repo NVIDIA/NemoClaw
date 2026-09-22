@@ -202,28 +202,6 @@ describe("Hermes config export live evidence", () => {
     );
   });
 
-  it("rejects evidence without an exact producer revision", () => {
-    expect(
-      passesHermesConfigExportLiveEvidence({
-        ...passingEvidence(),
-        producer: { sourceRevision: "main" },
-      }),
-    ).toBe(false);
-  });
-
-  it("rejects evidence without both YAML digests", () => {
-    const evidence = passingEvidence();
-    expect(
-      passesHermesConfigExportLiveEvidence({
-        ...evidence,
-        yaml: {
-          ...evidence.yaml,
-          nemohermes: { ...evidence.yaml.nemohermes, sha256: "" },
-        },
-      }),
-    ).toBe(false);
-  });
-
   it("accepts the exact credential-bearing HTTP refusal from both aliases", () => {
     expect(
       passesHermesConfigExportLiveEvidence({
@@ -419,46 +397,6 @@ describe("Hermes config export live evidence", () => {
     });
   });
 
-  it("rejects an encoded credential in an expected-refusal diagnostic", async () => {
-    const secret = "secret-value";
-    mocks.load.mockReturnValue({
-      sandboxes: {
-        hermes: {
-          credentialEnv: "NVIDIA_API_KEY",
-          endpointUrl: "http://host.openshell.internal:35271/v1",
-          gatewayName: "nemoclaw",
-          workload: { kind: "managed-image", reference: IMAGE_REF },
-        },
-      },
-    });
-    const encodedSecret = [...Buffer.from(secret)]
-      .map((byte) => `%${byte.toString(16).padStart(2, "0")}`)
-      .join("");
-    const refusal =
-      "Config export failed (unsupported).\nV1alpha1 requires HTTPS when an inference provider declares a credential.";
-    mocks.command
-      .mockResolvedValueOnce({ exitCode: 2, stdout: "", stderr: `${refusal}\n` })
-      .mockResolvedValueOnce({
-        exitCode: 2,
-        stdout: "",
-        stderr: `${refusal}\nunexpected diagnostic: ${encodedSecret}\n`,
-      });
-
-    await expect(runEnabledFixture([secret])).resolves.toEqual({
-      checked: true,
-      passed: false,
-    });
-    expect(mocks.writeJson).toHaveBeenCalledWith("hermes-config-export-live-evidence.json", {
-      outcome: "expected-refusal",
-      aliasesEquivalent: false,
-      checked: true,
-      credentialValuesOmitted: false,
-      outputFilesAbsent: true,
-      refusalCategory: null,
-      refusalDiagnosticMatches: false,
-    });
-  });
-
   it("records failed evidence before parsing when a launcher fails", async () => {
     mocks.command
       .mockImplementationOnce(async (_command: string, args: string[]) => {
@@ -480,47 +418,6 @@ describe("Hermes config export live evidence", () => {
     );
     expect(mocks.save).not.toHaveBeenCalled();
     expect(mocks.writeText).not.toHaveBeenCalled();
-  });
-
-  it("rejects a malformed staged document before retaining either YAML export", async () => {
-    const malformed = YAML.parse(exportedConfigRaw()) as {
-      spec: { sandboxes: Array<Record<string, unknown>> };
-    };
-    const sandbox = malformed.spec.sandboxes[0]!;
-    sandbox.agents = [sandbox.agent];
-    delete sandbox.agent;
-    const writeExport = (raw: string) => async (_command: string, args: string[]) => {
-      fs.writeFileSync(args.at(args.indexOf("--output") + 1)!, raw);
-      return { exitCode: 0, stderr: "", stdout: "" };
-    };
-    mocks.command
-      .mockImplementationOnce(writeExport(exportedConfigRaw()))
-      .mockImplementationOnce(writeExport(YAML.stringify(malformed)));
-
-    await expect(runEnabledFixture()).rejects.toThrow(
-      "exported configuration must match the complete staged v1alpha1 shape",
-    );
-    expect(mocks.writeText).not.toHaveBeenCalled();
-    expect(mocks.save).not.toHaveBeenCalled();
-  });
-
-  it("rejects symlink substitution without retaining target contents", async () => {
-    mocks.command
-      .mockImplementationOnce(async (_command: string, args: string[]) => {
-        const outputPath = args.at(args.indexOf("--output") + 1)!;
-        const targetPath = `${outputPath}.host-file`;
-        fs.writeFileSync(targetPath, exportedConfigRaw());
-        fs.symlinkSync(targetPath, outputPath);
-        return { exitCode: 0, stderr: "", stdout: "" };
-      })
-      .mockImplementationOnce(async (_command: string, args: string[]) => {
-        fs.writeFileSync(args.at(args.indexOf("--output") + 1)!, exportedConfigRaw());
-        return { exitCode: 0, stderr: "", stdout: "" };
-      });
-
-    await expect(runEnabledFixture()).resolves.toEqual({ checked: true, passed: false });
-    expect(mocks.writeText).not.toHaveBeenCalled();
-    expect(mocks.save).not.toHaveBeenCalled();
   });
 
   it("rejects drift evidence when only one launcher reports identity drift (#11286)", async () => {

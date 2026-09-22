@@ -402,6 +402,48 @@ const DEFAULT_DEPENDENCIES: ConfigExportValidationDependencies = {
   removeDirectory: (directory) => fs.rmSync(directory, { force: true, recursive: true }),
 };
 
+export type ProtectedConfigExportRead =
+  | { readonly ok: true; readonly raw: string }
+  | { readonly ok: false; readonly reason: string };
+
+/** Read candidate-created YAML without following links or trusting its path after open. */
+export function readProtectedConfigExportFile(
+  filePath: string,
+  limitBytes = CONFIG_EXPORT_FILE_LIMIT_BYTES,
+  dependencies: ConfigExportValidationDependencies = DEFAULT_DEPENDENCIES,
+): ProtectedConfigExportRead {
+  let file: number | undefined;
+  try {
+    file = dependencies.openFileNoFollow(filePath);
+    const opened = dependencies.inspectOpenFile(file);
+    if (!opened.isFile) return { ok: false, reason: "config export output is not a regular file" };
+    if (opened.linkCount !== 1) {
+      return { ok: false, reason: "config export output must have exactly one hard link" };
+    }
+    if (opened.size > limitBytes) {
+      return { ok: false, reason: `config export output exceeds the ${limitBytes}-byte limit` };
+    }
+    const raw = dependencies.readOpenFile(file, limitBytes);
+    if (Buffer.byteLength(raw, "utf8") > limitBytes) {
+      return { ok: false, reason: `config export output exceeds the ${limitBytes}-byte limit` };
+    }
+    const published = dependencies.inspectFile(filePath);
+    if (
+      !published.isFile ||
+      published.linkCount !== 1 ||
+      published.device !== opened.device ||
+      published.inode !== opened.inode
+    ) {
+      return { ok: false, reason: "config export output changed while it was being read" };
+    }
+    return { ok: true, raw };
+  } catch {
+    return { ok: false, reason: "config export output could not be opened safely" };
+  } finally {
+    if (file !== undefined) dependencies.closeFile(file);
+  }
+}
+
 function requiredRecord(value: unknown, field: string): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new Error(`exported configuration field '${field}' must be an object`);
@@ -882,38 +924,13 @@ export class ConfigExportValidationPhaseFixture {
         if (result.exitCode !== 0 || !outputExists) {
           throw new Error(`config export failed: ${resultText(result)}`);
         }
-        const outputFile = this.dependencies.openFileNoFollow(outputPath);
-        try {
-          const output = this.dependencies.inspectOpenFile(outputFile);
-          if (!output.isFile) {
-            throw new Error("config export output is not a regular file");
-          }
-          if (output.linkCount !== 1) {
-            throw new Error("config export output must have exactly one hard link");
-          }
-          if (output.size > CONFIG_EXPORT_FILE_LIMIT_BYTES) {
-            throw new Error(
-              `config export output exceeds the ${CONFIG_EXPORT_FILE_LIMIT_BYTES}-byte limit`,
-            );
-          }
-          raw = this.dependencies.readOpenFile(outputFile, CONFIG_EXPORT_FILE_LIMIT_BYTES);
-          if (Buffer.byteLength(raw, "utf8") > CONFIG_EXPORT_FILE_LIMIT_BYTES) {
-            throw new Error(
-              `config export output exceeds the ${CONFIG_EXPORT_FILE_LIMIT_BYTES}-byte limit`,
-            );
-          }
-          const published = this.dependencies.inspectFile(outputPath);
-          if (
-            !published.isFile ||
-            published.linkCount !== 1 ||
-            published.device !== output.device ||
-            published.inode !== output.inode
-          ) {
-            throw new Error("config export output changed while it was being read");
-          }
-        } finally {
-          this.dependencies.closeFile(outputFile);
-        }
+        const protectedOutput = readProtectedConfigExportFile(
+          outputPath,
+          CONFIG_EXPORT_FILE_LIMIT_BYTES,
+          this.dependencies,
+        );
+        if (!protectedOutput.ok) throw new Error(protectedOutput.reason);
+        raw = protectedOutput.raw;
         failureStage = "security";
         const secretValues = this.secrets.redactionValues();
         const encodedSecrets = encodedSensitiveValues(secretValues);

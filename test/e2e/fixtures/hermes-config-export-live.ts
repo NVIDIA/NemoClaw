@@ -22,8 +22,10 @@ import type { HostCliClient } from "./clients/host.ts";
 import { trustedSandboxShellScript, type SandboxClient } from "./clients/sandbox.ts";
 import type { CleanupRegistry } from "./cleanup.ts";
 import { CLI_ENTRYPOINT, REPO_ROOT } from "./paths.ts";
-import { parseConfigExport } from "./phases/config-export-validation.ts";
-import { readProtectedConfigExportFile } from "../support/config-export-file-evidence.ts";
+import {
+  parseConfigExport,
+  readProtectedConfigExportFile,
+} from "./phases/config-export-validation.ts";
 import { requireEffectivePolicyDocument } from "../support/config-export-policy-evidence.ts";
 import {
   containsSensitiveText,
