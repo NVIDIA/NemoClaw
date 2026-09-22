@@ -20,7 +20,7 @@ env:
 
 jobs:
   build:
-    name: Brev / Build
+    name: Build
     if: >-
       github.repository == 'NVIDIA/NemoClaw' &&
       ((github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/v1') ||
@@ -64,7 +64,7 @@ jobs:
           if-no-files-found: error
 
   image:
-    name: Brev / Build image
+    name: Build image
     if: >-
       github.repository == 'NVIDIA/NemoClaw' &&
       ((github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/v1') ||
@@ -103,7 +103,7 @@ jobs:
           if-no-files-found: error
 
   prepare:
-    name: Brev / Prepare VM
+    name: Prepare VM
     if: >-
       github.repository == 'NVIDIA/NemoClaw' &&
       ((github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/v1') ||
@@ -129,7 +129,7 @@ jobs:
         run: bash tools/e2e/brev-v1-host.sh prepare
 
   load-image:
-    name: Brev / Load image
+    name: Load image
     needs: [image, prepare]
     runs-on: ubuntu-22.04
     timeout-minutes: 20
@@ -151,7 +151,7 @@ jobs:
         run: bash tools/e2e/brev-v1-host.sh load-image
 
   qualify:
-    name: Brev / Lifecycle
+    name: Lifecycle
     needs: [build, prepare, load-image]
     runs-on: ubuntu-22.04
     timeout-minutes: 30
@@ -184,7 +184,7 @@ jobs:
           retention-days: 14
 
   cleanup:
-    name: Brev / Delete VM
+    name: Delete VM
     needs: [build, image, prepare, load-image, qualify]
     if: always() && needs.prepare.outputs.instance != ''
     runs-on: ubuntu-22.04

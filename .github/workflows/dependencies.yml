@@ -20,7 +20,7 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
   policy:
-    name: Dependencies / Policy
+    name: Policy
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:

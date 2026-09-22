@@ -17,10 +17,10 @@ cargo clippy --workspace --all-targets -- -D warnings
 
 | Workflow | Checks |
 |---|---|
-| CI / Native | `Native / linux_arm64`, `Native / linux_amd64`, `Native / darwin_arm64`, `Native / windows_amd64` |
-| CI / Images | `Images / linux_arm64`, `Images / linux_amd64` |
-| CI / Dependencies | `Dependencies / Policy` |
-| CD / Documentation | `Documentation / Validate`, then PR preview, staging, or release publication |
+| CI / Native | `Test / linux_arm64`, `Test / linux_amd64`, `Test / darwin_arm64`, `Test / windows_amd64` |
+| CI / Images | `Build / linux_arm64`, `Build / linux_amd64` |
+| CI / Dependencies | `Policy` |
+| CD / Documentation | `Validate`, then PR preview, staging, or release publication |
 | Live / Brev | Bundle build, image build, and VM preparation in parallel, then lifecycle qualification and verified VM deletion |
 
 The first eight checks are required by the `v1` ruleset, including documentation validation.

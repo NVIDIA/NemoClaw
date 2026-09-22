@@ -117,7 +117,7 @@ It checks unchanged apply, export/reapply, stable resource and Fabric runtime id
 Destroy must remove the provider, profile, sandbox, and managed gateway while retaining the documented workspace and gateway storage.
 The workflow uploads a sanitized Boolean proof and verifies that the Brev VM is absent before completing.
 Failures still request VM deletion; no keep-alive option is provided.
-If cleanup fails, rerun the original `Brev / Delete VM` job until deletion is verified.
+If cleanup fails, rerun the original `Delete VM` job until deletion is verified.
 After successful cleanup, rerun all jobs for fresh qualification; rerunning only lifecycle qualification cannot reuse the deleted VM.
 Artifact and VM identities come from their producing jobs, including the original attempt when dependent jobs are retried.
 Intermediate artifacts contain the candidate bundle, test executable, and image archive with its revision and digest manifest; no credentials are included.

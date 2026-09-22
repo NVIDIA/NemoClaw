@@ -16,7 +16,7 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
   validate:
-    name: Documentation / Validate
+    name: Validate
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
@@ -32,7 +32,7 @@ jobs:
         run: python3 tools/docs/fern.py check
 
   preview:
-    name: Documentation / PR preview
+    name: PR preview
     needs: validate
     if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]'
     runs-on: ubuntu-24.04
@@ -80,7 +80,7 @@ jobs:
           PY
 
   staging:
-    name: Documentation / Staging
+    name: Staging
     needs: validate
     if: github.event_name == 'push' && github.ref == 'refs/heads/v1'
     environment: docs-v1-staging
@@ -116,7 +116,7 @@ jobs:
           PY
 
   public:
-    name: Documentation / Release
+    name: Release
     needs: validate
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v1.') && vars.FERN_V1_PUBLIC_ENABLED == 'true'
     environment: docs-v1-public
