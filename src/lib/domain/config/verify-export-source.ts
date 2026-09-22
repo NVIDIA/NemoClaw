@@ -564,7 +564,10 @@ function expectedManagedStartupProfile(entry: ObservedExportRegistry): ManagedSt
     observabilityEnabled: deepAgentsObservability(agent),
     environment:
       entry.servingProfileProvenance?.preset.id === EXPORTED_VLLM_PROFILE_ID
-        ? { NEMOCLAW_CONTEXT_WINDOW: String(EXPORTED_VLLM_CONTEXT_WINDOW) }
+        ? {
+            NEMOCLAW_CONTEXT_WINDOW: String(EXPORTED_VLLM_CONTEXT_WINDOW),
+            NEMOCLAW_SERVING_PRESET: EXPORTED_VLLM_PROFILE_ID,
+          }
         : {},
     corporateCa: null,
   }).profile;
