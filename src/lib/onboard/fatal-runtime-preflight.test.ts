@@ -1100,15 +1100,14 @@ describe("readiness-gated runtime preflight", () => {
       .fn()
       .mockReturnValueOnce({
         status: 0,
-        stdout:
-          "Test PASSED\nNEMOCLAW_GPU_DEVICE=GPU-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeee0, 0, NVIDIA RTX Spark N1X, 63936, 60000\n",
+        stdout: `Test PASSED\nNEMOCLAW_GPU_DEVICE=GPU-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeee0, 0, ${gpuName}, 63936, 60000\n`,
         stderr: "",
       })
       .mockReturnValueOnce({ status: 0, stdout: "", stderr: "" });
     const provider = createDockerRuntimeProviderBundle({ captureHostCommand });
     const runCaptureImpl = vi.fn((command: readonly string[]) =>
       command[0] === "nvidia-smi" && command.some((arg) => arg.includes("name,memory.total"))
-        ? `${gpuName}, 999999, 999999\n`
+        ? `${gpuName}, 63936, 60000\n`
         : "",
     );
 
@@ -1178,7 +1177,7 @@ describe("readiness-gated runtime preflight", () => {
       platform: "linux",
       containerGpuProof: { providerId: "docker", passed: true },
       n1xWslProduct: false,
-      totalMemoryMB: 999_999,
+      totalMemoryMB: 63_936,
       computeConstrained: true,
     });
     expect(selectDefaultOllamaModel(["qwen3.5:9b", "qwen3.6:35b"], gpu)).toBe("qwen3.5:9b");
