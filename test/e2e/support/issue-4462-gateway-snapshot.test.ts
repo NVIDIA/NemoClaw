@@ -78,6 +78,74 @@ describe("fresh-agent gateway snapshot artifacts", () => {
     }
   });
 
+  it("reads the canonical OpenClaw SQLite layout through the reviewed state adapter (#9844)", () => {
+    const fixtureRoot = mkdtempSync(path.join(tmpdir(), "nemoclaw-issue-4462-sqlite-"));
+    const stateRoot = path.join(fixtureRoot, "state-root");
+    const sqlitePath = path.join(stateRoot, "state", "openclaw.sqlite");
+    const helperPath = path.join(fixtureRoot, "openclaw_pairing_state.py");
+    const records = {
+      identity: {
+        deviceId: DEVICE_ID,
+        publicKey: PUBLIC_KEY,
+      },
+      pending: {},
+      paired: {
+        paired: {
+          approvedScopes: ["operator.pairing", "operator.write"],
+          clientId: "cli",
+          clientMode: "cli",
+          deviceId: DEVICE_ID,
+          publicKey: PUBLIC_KEY,
+          scopes: ["operator.pairing", "operator.write"],
+          tokens: {
+            operator: {
+              role: "operator",
+              scopes: ["operator.pairing", "operator.read", "operator.write"],
+              token: TOKEN,
+            },
+          },
+        },
+      },
+    };
+    mkdirSync(path.dirname(sqlitePath), { recursive: true });
+    writeFileSync(sqlitePath, "canonical-layout-sentinel", "utf8");
+    writeFileSync(
+      helperPath,
+      [
+        "import json",
+        `records = json.loads(${JSON.stringify(JSON.stringify(records))})`,
+        "def read_openclaw_pairing_state(state_dir, timeout=1):",
+        "    return records, {'stateDir': state_dir, 'timeout': timeout}",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+    try {
+      const result = spawnSync("python3", [SNAPSHOT_SCRIPT, "30", stateRoot, helperPath], {
+        encoding: "utf8",
+        timeout: 10_000,
+      });
+      expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+      const snapshot = JSON.parse(result.stdout) as Record<string, unknown>;
+      expect(snapshot).toEqual({
+        activeOperatorTokenCount: 1,
+        activeOperatorTokenScopes: ["operator.pairing", "operator.read", "operator.write"],
+        approvedScopes: ["operator.pairing", "operator.write"],
+        deviceScopes: ["operator.pairing", "operator.write"],
+        matchingPairedCount: 1,
+        pairedCliCount: 1,
+        pendingCount: 0,
+        sameDevicePendingCount: 0,
+      });
+      const serialized = JSON.stringify(snapshot);
+      expect(serialized).not.toContain(DEVICE_ID);
+      expect(serialized).not.toContain(PUBLIC_KEY);
+      expect(serialized).not.toContain(TOKEN);
+    } finally {
+      rmSync(fixtureRoot, { force: true, recursive: true });
+    }
+  });
+
   it("rejects a local CLI identity whose device ID is not bound to its public key (#4462)", () => {
     const fixtureRoot = mkdtempSync(path.join(tmpdir(), "nemoclaw-issue-4462-binding-"));
     const stateRoot = path.join(fixtureRoot, "state");
