@@ -10,8 +10,8 @@ export function asExportedConfig(value: unknown): V1Alpha1Export {
 
 export function exportedDeepAgentsSandbox(
   sandbox: V1Alpha1ExportSandbox,
-): Extract<V1Alpha1ExportSandbox, { readonly harness: Readonly<{ kind: "deepagents" }> }> {
-  if (!("image" in sandbox) || sandbox.harness.kind !== "deepagents") {
+): Extract<V1Alpha1ExportSandbox, { readonly image: Readonly<{ ref: string }> }> {
+  if (sandbox.image === null || sandbox.harness.kind !== "deepagents") {
     throw new Error("The export requires a Deep Agents sandbox");
   }
   return sandbox;

@@ -61,8 +61,9 @@ beforeEach(() => {
       ],
       sandboxes: [
         {
-          agents: [{ name: "primary" }],
+          agent: { name: "primary" },
           harness: { kind: "hermes" },
+          image: null,
           name: "hermes",
           network: { policy: { explicit: null } },
           runtime: { provider: "docker" },
@@ -82,7 +83,7 @@ function passingEvidence(): Extract<HermesConfigExportLiveEvidence, { outcome: "
     credentialValuesOmitted: true,
     identityDriftPreventedPublication: true,
     identityDriftReported: true,
-    immutableManagedImageMatches: true,
+    managedImageIsNull: true,
     interfacesMatch: true,
     dashboardRuntimeMatches: true,
     inferenceEndpointMatches: true,
@@ -140,7 +141,7 @@ describe("Hermes config export live evidence", () => {
     "credentialValuesOmitted",
     "identityDriftPreventedPublication",
     "identityDriftReported",
-    "immutableManagedImageMatches",
+    "managedImageIsNull",
     "interfacesMatch",
     "dashboardRuntimeMatches",
     "inferenceEndpointMatches",

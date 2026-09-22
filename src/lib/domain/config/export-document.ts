@@ -164,6 +164,7 @@ export function buildExportConfig(
         }
       : {
           ...sandboxBase,
+          image: null,
           harness: { kind: source.agent, ...agentSettings(source) },
           agent: exportAgent(source, providerName, { name: "primary", primary: true }),
         };
