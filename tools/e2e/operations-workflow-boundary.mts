@@ -39,6 +39,49 @@ const COLD_ONBOARD_PERFORMANCE_EVIDENCE_PATH =
   "e2e-artifacts/live/${{ matrix.id }}/onboard-progress-budget.json";
 const CONFIG_EXPORT_EVIDENCE_PATH =
   "e2e-artifacts/live/${{ matrix.id }}/config-export-evidence.v1.json";
+const CONFIG_EXPORT_YAML_PATH = "e2e-artifacts/live/${{ matrix.id }}/config-export.yaml";
+const CONFIG_EXPORT_ARTIFACT_REQUIREMENT_SCRIPT =
+  [
+    "set -euo pipefail",
+    `evidence_path="${CONFIG_EXPORT_EVIDENCE_PATH}"`,
+    `yaml_path="${CONFIG_EXPORT_YAML_PATH}"`,
+    '[[ -f "$evidence_path" && ! -L "$evidence_path" ]] || {',
+    '  echo "::error::automatic config export evidence is missing or invalid" >&2',
+    "  exit 1",
+    "}",
+    'classification="$(jq -er \'select(.passed == true) | .classification | select(. == "success" or . == "expected-refusal" or . == "no-usable-sandbox")\' "$evidence_path")" || {',
+    '  echo "::error::automatic config export evidence has no passing classification" >&2',
+    "  exit 1",
+    "}",
+    'case "$classification" in',
+    "  success)",
+    '    [[ -f "$yaml_path" && ! -L "$yaml_path" ]] || {',
+    '      echo "::error::successful config export did not retain validated YAML" >&2',
+    "      exit 1",
+    "    }",
+    '    expected_sha256="$(jq -er \'.export.sha256 | select(type == "string" and test("^[a-f0-9]{64}$"))\' "$evidence_path")" || {',
+    '      echo "::error::successful config export evidence has no valid YAML digest" >&2',
+    "      exit 1",
+    "    }",
+    '    actual_sha256="$(LC_ALL=C shasum -a 256 "$yaml_path")"',
+    '    actual_sha256="${actual_sha256%% *}"',
+    '    [[ "$actual_sha256" == "$expected_sha256" ]] || {',
+    '      echo "::error::retained config export YAML does not match validated evidence" >&2',
+    "      exit 1",
+    "    }",
+    "    ;;",
+    "  expected-refusal|no-usable-sandbox)",
+    '    [[ ! -e "$yaml_path" && ! -L "$yaml_path" ]] || {',
+    '      echo "::error::non-export config classification retained unexpected YAML" >&2',
+    "      exit 1",
+    "    }",
+    "    ;;",
+    "  *)",
+    '    echo "::error::automatic config export evidence classification is invalid" >&2',
+    "    exit 1",
+    "    ;;",
+    "esac",
+  ].join("\n") + "\n";
 const MANAGED_SOURCE_CONDITION =
   "${{ inputs.pr_number == '' || steps.select_pr_source.outputs.selection == 'base-cohort' }}";
 const BASE_PUBLICATION_CONDITION =
@@ -1020,11 +1063,13 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
   if (!uploadPaths.includes(CONFIG_EXPORT_EVIDENCE_PATH)) {
     errors.push("live E2E must upload automatic config export evidence");
   }
+  if (!uploadPaths.includes(CONFIG_EXPORT_YAML_PATH)) {
+    errors.push("live E2E must upload the validated config export YAML");
+  }
   if (
     requireConfigExportEvidence.if !== "${{ success() }}" ||
     requireConfigExportEvidence.shell !== "bash" ||
-    String(requireConfigExportEvidence.run ?? "").trim() !==
-      `test -f "${CONFIG_EXPORT_EVIDENCE_PATH}"` ||
+    String(requireConfigExportEvidence.run ?? "") !== CONFIG_EXPORT_ARTIFACT_REQUIREMENT_SCRIPT ||
     (requireConfigExportEvidence["continue-on-error"] !== undefined &&
       requireConfigExportEvidence["continue-on-error"] !== false) ||
     liveSteps.indexOf(requireConfigExportEvidence) <=

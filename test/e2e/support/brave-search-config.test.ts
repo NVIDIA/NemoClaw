@@ -8,9 +8,10 @@ import {
   parseNemoClawConfigDocumentName,
   parseNemoClawConfigDocumentUid,
 } from "../../../src/lib/config/model.ts";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { assertBraveConfig, assertBraveExport } from "../live/brave-search-helpers.ts";
+import { publishValidatedConfigExportYaml } from "../fixtures/phases/config-export-validation.ts";
 
 const VERSIONED_PLACEHOLDER = "openshell:resolve:env:v12590243949725316565_BRAVE_API_KEY";
 const UNVERSIONED_PLACEHOLDER = "openshell:resolve:env:BRAVE_API_KEY";
@@ -64,7 +65,9 @@ function exportedBraveConfig() {
         api: "openai-completions",
         endpoint: "https://integrate.api.nvidia.com/v1",
         credentialEnv: "NVIDIA_INFERENCE_API_KEY",
+        overrides: { contextWindow: 131072 },
       },
+      interfaces: { dashboard: { port: 18789 } },
       webSearch: {
         provider: "brave",
         agentRefs: ["primary"],
@@ -89,6 +92,30 @@ function exportedBraveConfig() {
 }
 
 describe("Brave Search E2E export assertion", () => {
+  it.each([
+    ["base64", (secret: string) => Buffer.from(secret, "utf8").toString("base64")],
+    [
+      "YAML-escaped",
+      (secret: string) =>
+        [...secret]
+          .map((value) => `\\u${value.charCodeAt(0).toString(16).padStart(4, "0")}`)
+          .join(""),
+    ],
+  ])("withholds retained YAML containing a %s credential", async (_encoding, encode) => {
+    const writeText = vi.fn();
+    const secret = "synthetic-brave-secret";
+
+    await expect(
+      publishValidatedConfigExportYaml(
+        { writeText },
+        "brave-config-export.yaml",
+        `value: "${encode(secret)}"\n`,
+        [secret],
+      ),
+    ).rejects.toThrow();
+    expect(writeText).not.toHaveBeenCalled();
+  });
+
   it("returns the expected public spec without comparing generated document identity (#10904)", () => {
     const document = exportedBraveConfig();
     expect(assertBraveExport(YAML.stringify(document), ["synthetic-secret"])).toEqual(

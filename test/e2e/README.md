@@ -531,7 +531,8 @@ Keep one only for a multi-job handoff, an unrepresented credential boundary, or 
 The `brave-search` target qualifies configuration export after normal Brave-enabled OpenClaw onboarding.
 It validates two exports through the public schema, compares their specs, and requires a `BRAVE_API_KEY` reference without credential values or internal transports.
 The target retains checks of the materialized OpenClaw search configuration, credential isolation, real agent search, direct Brave API results, and disabled-search reuse.
-Private YAML files are removed during cleanup; artifacts retain redacted command results and an allowlisted qualification summary.
+Temporary YAML files are removed during cleanup. Artifacts retain the first validated export after
+schema, credential, and transport checks alongside the allowlisted qualification summary.
 The export assertions replace redundant checks within the same Brave lifecycle.
 Live policy qualification and a real Brave response cover the initial policy command and hostname substring.
 Successful agent execution and its answer cover the negative diagnostic-text check.
@@ -539,6 +540,12 @@ Retained sandbox identity, materialized configuration, and HTTP egress cover the
 Complete JSON parsing and expected configuration fields cover config-read exit codes; valid exact UUID continuity covers sandbox-read exit codes.
 The retained nonzero HTTP response covers the extra egress command exit check.
 The lower direct assertion count is recorded in the census; transitive coverage remains unchanged.
+
+The `config-export-v1-consumer` contract owns revision-matched parsing and native-settings
+generation for effective export defaults. Its deterministic coverage exercises raw OpenClaw and
+Hermes exports against the recorded v1 revision. The live OpenClaw and Hermes scenarios pass the
+real CLI output through the same consumer and compare its generated native settings with retained
+source state before they publish YAML evidence.
 
 For manual PR qualification, select `jobs=brave-search` with Docker and leave `targets` empty.
 Confirm that the target executes: an unavailable optional Brave credential can remove it from the plan.

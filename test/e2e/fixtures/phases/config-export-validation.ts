@@ -38,6 +38,7 @@ import {
 } from "../hosted-inference.ts";
 import { CLI_DIST_ENTRYPOINT, REPO_ROOT } from "../paths.ts";
 import type { SecretStore } from "../secrets.ts";
+import { validateLiveExportWithRevisionMatchedV1Consumer } from "../revision-matched-v1-consumer.ts";
 import type { NemoClawInstance } from "./onboarding.ts";
 
 const { Type } = require("typebox") as typeof TypeBoxModule;
@@ -45,6 +46,7 @@ const { Check } = require("typebox/value") as typeof TypeBoxValueModule;
 
 export const CONFIG_EXPORT_EVIDENCE_CONTRACT = "nemoclaw.config-export-evidence/v1" as const;
 const EVIDENCE_FILE = "config-export-evidence.v1.json";
+const EXPORT_FILE = "config-export.yaml";
 const CONFIG_EXPORT_CAPTURE_LIMIT_BYTES = 64 * 1024;
 const CONFIG_EXPORT_FILE_LIMIT_BYTES = 1024 * 1024;
 const MAX_DIAGNOSTIC_LENGTH = 2_048;
@@ -284,7 +286,6 @@ export interface ConfigExportEvidenceEnvelope {
   verifications: ConfigExportVerification[];
   command?: ConfigExportCommandOutcome;
   export?: {
-    bytes: string;
     byteLength: number;
     sha256: string;
   };
@@ -314,6 +315,7 @@ export type ConfigExportRegistryEntry = Pick<
   | "model"
   | "credentialEnv"
   | "dcodeAutoApprovalMode"
+  | "hermesApiPort"
   | "workload"
   | "observabilityEnabled"
   | "toolDisclosure"
@@ -352,6 +354,7 @@ export interface ConfigExportValidationDependencies {
   producer(): ConfigExportProducer;
   readOpenFile(file: number, limitBytes: number): string;
   removeDirectory(directory: string): void;
+  validateV1Consumer(raw: string, entry: ConfigExportRegistryEntry): void;
 }
 
 const DEFAULT_DEPENDENCIES: ConfigExportValidationDependencies = {
@@ -395,7 +398,53 @@ const DEFAULT_DEPENDENCIES: ConfigExportValidationDependencies = {
     return buffer.subarray(0, offset).toString("utf8");
   },
   removeDirectory: (directory) => fs.rmSync(directory, { force: true, recursive: true }),
+  validateV1Consumer: (raw, entry) => {
+    validateLiveExportWithRevisionMatchedV1Consumer(raw, entry);
+  },
 };
+
+/** Read one bounded regular export file without following or racing a replacement link. */
+export function readConfigExportFileSafely(
+  filePath: string,
+  dependencies: Pick<
+    ConfigExportValidationDependencies,
+    "closeFile" | "inspectFile" | "inspectOpenFile" | "openFileNoFollow" | "readOpenFile"
+  > = DEFAULT_DEPENDENCIES,
+): string {
+  const file = dependencies.openFileNoFollow(filePath);
+  try {
+    const opened = dependencies.inspectOpenFile(file);
+    if (!opened.isFile) {
+      throw new Error("config export output is not a regular file");
+    }
+    if (opened.linkCount !== 1) {
+      throw new Error("config export output must have exactly one hard link");
+    }
+    if (opened.size > CONFIG_EXPORT_FILE_LIMIT_BYTES) {
+      throw new Error(
+        `config export output exceeds the ${CONFIG_EXPORT_FILE_LIMIT_BYTES}-byte limit`,
+      );
+    }
+    const raw = dependencies.readOpenFile(file, CONFIG_EXPORT_FILE_LIMIT_BYTES);
+    if (Buffer.byteLength(raw, "utf8") > CONFIG_EXPORT_FILE_LIMIT_BYTES) {
+      throw new Error(
+        `config export output exceeds the ${CONFIG_EXPORT_FILE_LIMIT_BYTES}-byte limit`,
+      );
+    }
+    const published = dependencies.inspectFile(filePath);
+    if (
+      !published.isFile ||
+      published.linkCount !== 1 ||
+      published.device !== opened.device ||
+      published.inode !== opened.inode
+    ) {
+      throw new Error("config export output changed while it was being read");
+    }
+    return raw;
+  } finally {
+    dependencies.closeFile(file);
+  }
+}
 
 function requiredRecord(value: unknown, field: string): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -803,6 +852,49 @@ function containsInternalTransportText(raw: string): boolean {
   return containsSensitiveText(raw, INTERNAL_TRANSPORT_MARKERS);
 }
 
+export interface ConfigExportArtifactSafety {
+  readonly internalTransportsAbsent: boolean;
+  readonly knownSecretsAbsent: boolean;
+}
+
+/** Inspect raw and decoded YAML before it crosses the retained-artifact boundary. */
+export function inspectConfigExportArtifactSafety(
+  raw: string,
+  secretValues: readonly string[],
+  decoded: unknown = YAML.parse(raw),
+): ConfigExportArtifactSafety {
+  const encodedSecrets = encodedSensitiveValues(secretValues);
+  return {
+    knownSecretsAbsent:
+      !containsKnownSecretText(raw, secretValues) &&
+      !decodedScalarsMatch(decoded, (value) =>
+        [...secretValues, ...encodedSecrets].some(
+          (secret) => secret.length > 0 && value.includes(secret),
+        ),
+      ),
+    internalTransportsAbsent:
+      !containsInternalTransportText(raw) &&
+      !decodedScalarsMatch(decoded, (value) => INTERNAL_TRANSPORT_PATTERN.test(value)),
+  };
+}
+
+/** Publish config YAML only after the complete fail-closed artifact safety scan. */
+export async function publishValidatedConfigExportYaml(
+  artifacts: Pick<ArtifactSink, "writeText">,
+  relativePath: string,
+  raw: string,
+  secretValues: readonly string[],
+): Promise<void> {
+  const safety = inspectConfigExportArtifactSafety(raw, secretValues);
+  if (!safety.knownSecretsAbsent) {
+    throw new Error("config export exposed a known fixture secret");
+  }
+  if (!safety.internalTransportsAbsent) {
+    throw new Error("config export exposed an internal credential transport");
+  }
+  await artifacts.writeText(relativePath, raw);
+}
+
 export class ConfigExportValidationPhaseFixture {
   constructor(
     private readonly host: HostCliClient,
@@ -930,55 +1022,17 @@ export class ConfigExportValidationPhaseFixture {
         if (result.exitCode !== 0 || !outputExists) {
           throw new Error(`config export failed: ${resultText(result)}`);
         }
-        const outputFile = this.dependencies.openFileNoFollow(outputPath);
-        try {
-          const output = this.dependencies.inspectOpenFile(outputFile);
-          if (!output.isFile) {
-            throw new Error("config export output is not a regular file");
-          }
-          if (output.linkCount !== 1) {
-            throw new Error("config export output must have exactly one hard link");
-          }
-          if (output.size > CONFIG_EXPORT_FILE_LIMIT_BYTES) {
-            throw new Error(
-              `config export output exceeds the ${CONFIG_EXPORT_FILE_LIMIT_BYTES}-byte limit`,
-            );
-          }
-          raw = this.dependencies.readOpenFile(outputFile, CONFIG_EXPORT_FILE_LIMIT_BYTES);
-          if (Buffer.byteLength(raw, "utf8") > CONFIG_EXPORT_FILE_LIMIT_BYTES) {
-            throw new Error(
-              `config export output exceeds the ${CONFIG_EXPORT_FILE_LIMIT_BYTES}-byte limit`,
-            );
-          }
-          const published = this.dependencies.inspectFile(outputPath);
-          if (
-            !published.isFile ||
-            published.linkCount !== 1 ||
-            published.device !== output.device ||
-            published.inode !== output.inode
-          ) {
-            throw new Error("config export output changed while it was being read");
-          }
-        } finally {
-          this.dependencies.closeFile(outputFile);
-        }
+        raw = readConfigExportFileSafely(outputPath, this.dependencies);
         failureStage = "security";
         const secretValues = this.secrets.redactionValues();
-        const encodedSecrets = encodedSensitiveValues(secretValues);
-        const rawSecretsAbsent = !containsKnownSecretText(raw, secretValues);
         failureStage = "verification";
         const decoded = YAML.parse(raw) as unknown;
         failureStage = "security";
-        knownSecretsAbsent =
-          rawSecretsAbsent &&
-          !decodedScalarsMatch(decoded, (value) =>
-            [...secretValues, ...encodedSecrets].some(
-              (secret) => secret.length > 0 && value.includes(secret),
-            ),
-          );
-        internalTransportsAbsent =
-          !containsInternalTransportText(raw) &&
-          !decodedScalarsMatch(decoded, (value) => INTERNAL_TRANSPORT_PATTERN.test(value));
+        ({ knownSecretsAbsent, internalTransportsAbsent } = inspectConfigExportArtifactSafety(
+          raw,
+          secretValues,
+          decoded,
+        ));
         if (!knownSecretsAbsent) throw new Error("config export exposed a known fixture secret");
         if (!internalTransportsAbsent) {
           throw new Error("config export exposed an internal credential transport");
@@ -989,6 +1043,17 @@ export class ConfigExportValidationPhaseFixture {
         failureStage = "verification";
         if (!expected) throw new Error("config export expectations were not captured");
         verifications = compareSemantics(expected, observed);
+        if (expected.agent === "openclaw" || expected.agent === "hermes") {
+          const sourceEntry = registryBeforeExport?.[instance.sandboxName];
+          if (!sourceEntry) throw new Error("the live export source was not retained");
+          this.dependencies.validateV1Consumer(raw, sourceEntry);
+          verifications.push({
+            id: "revisionMatchedV1Consumer",
+            passed: true,
+            expected: "accepted by the pinned parser and native adapter",
+            actual: "accepted",
+          });
+        }
         const registryAfterExport = this.dependencies.loadRegistry().sandboxes;
         verifications.push({
           id: "sourceRegistryUnchanged",
@@ -1043,7 +1108,6 @@ export class ConfigExportValidationPhaseFixture {
       ...(passed && cleanupSucceeded && raw
         ? {
             export: {
-              bytes: raw,
               byteLength: Buffer.byteLength(raw, "utf8"),
               sha256: sha256(raw),
             },
@@ -1060,6 +1124,14 @@ export class ConfigExportValidationPhaseFixture {
       ...(diagnostic ? { diagnostic } : {}),
     };
     await this.artifacts.writeJson(EVIDENCE_FILE, evidence);
+    if (evidence.classification === "success" && evidence.export && raw) {
+      await publishValidatedConfigExportYaml(
+        this.artifacts,
+        EXPORT_FILE,
+        raw,
+        this.secrets.redactionValues(),
+      );
+    }
     if (!evidence.passed) {
       throw new Error(
         `automatic config export validation failed for '${target.id}': ${diagnostic ?? "unknown failure"}`,

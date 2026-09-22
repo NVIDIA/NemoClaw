@@ -189,10 +189,11 @@ export function assertBraveExport(raw: string, credentialValues: readonly string
   }
   const document = asExportedConfig(YAML.parse(raw));
   const webSearch = document.spec.sandboxes[0]?.integrations?.["brave-search"];
-  expect(webSearch?.provider).toBe("brave");
   expect(webSearch?.credential.env).toBe("BRAVE_API_KEY");
   const sandbox = document.spec.sandboxes[0]!;
-  expect(sandbox.agent.integrationRefs).toEqual(["brave-search"]);
+  const primary = sandbox.agent;
+  expect(primary?.inference.routes[0]?.overrides.contextWindow).toBe(131072);
+  expect(sandbox.harness.interfaces).toEqual({ dashboard: { port: 18789 } });
   return document.spec;
 }
 

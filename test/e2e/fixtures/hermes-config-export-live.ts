@@ -10,6 +10,7 @@ import { isDeepStrictEqual } from "node:util";
 import YAML from "yaml";
 
 import { HERMES_INTERFACE_DEFAULTS } from "../../../src/lib/config/model.ts";
+import { V1ALPHA1_RUNTIME_DEFAULTS } from "../../../src/lib/domain/config/v1alpha1-runtime-defaults.ts";
 import { fingerprintOpenShellSandboxId } from "../../../src/lib/adapters/openshell/sandbox-identity.ts";
 import {
   namedOpenShellGateway,
@@ -22,6 +23,11 @@ import type { HostCliClient } from "./clients/host.ts";
 import { trustedSandboxShellScript, type SandboxClient } from "./clients/sandbox.ts";
 import type { CleanupRegistry } from "./cleanup.ts";
 import { CLI_ENTRYPOINT, REPO_ROOT } from "./paths.ts";
+import {
+  publishValidatedConfigExportYaml,
+  readConfigExportFileSafely,
+} from "./phases/config-export-validation.ts";
+import { validateLiveExportWithRevisionMatchedV1Consumer } from "./revision-matched-v1-consumer.ts";
 
 interface HermesConfigExportLiveInput {
   readonly artifacts: ArtifactSink;
@@ -33,6 +39,7 @@ interface HermesConfigExportLiveInput {
   readonly host: HostCliClient;
   readonly redactionValues: readonly string[];
   readonly sandboxName: string;
+  readonly validateV1Consumer?: typeof validateLiveExportWithRevisionMatchedV1Consumer;
 }
 
 export interface HermesConfigExportLiveResult {
@@ -55,6 +62,7 @@ interface HermesConfigExportPublishedEvidence {
   readonly inferenceEndpointMatches: boolean;
   readonly launchersSucceeded: boolean;
   readonly policyMatches: boolean;
+  readonly revisionMatchedConsumer: boolean;
   readonly sandboxNameMatches: boolean;
 }
 
@@ -109,6 +117,7 @@ export function passesHermesConfigExportLiveEvidence(
     evidence.inferenceEndpointMatches &&
     evidence.launchersSucceeded &&
     evidence.policyMatches &&
+    evidence.revisionMatchedConsumer &&
     evidence.sandboxNameMatches
   );
 }
@@ -120,20 +129,29 @@ function hermesTuiEnabled(env: NodeJS.ProcessEnv): boolean {
 }
 
 function expectedHermesInterfaces(input: HermesConfigExportLiveInput) {
+  const targetDefaults = V1ALPHA1_RUNTIME_DEFAULTS.hermes.interfaces;
   const port = Number(input.env.NEMOCLAW_DASHBOARD_PORT ?? HERMES_INTERFACE_DEFAULTS.dashboardPort);
   const internalPort = Number(
     input.env.NEMOCLAW_HERMES_DASHBOARD_INTERNAL_PORT ??
       HERMES_INTERFACE_DEFAULTS.dashboardInternalPort,
   );
   const apiPort = Number(input.env.NEMOCLAW_HERMES_API_PORT ?? HERMES_INTERFACE_DEFAULTS.apiPort);
-  const api = apiPort === HERMES_INTERFACE_DEFAULTS.apiPort ? undefined : { port: apiPort };
-  if (!input.dashboardEnabled) return api ? { api } : undefined;
+  const api = apiPort === targetDefaults.api.port ? undefined : { port: apiPort };
+  if (!input.dashboardEnabled) {
+    return {
+      ...(targetDefaults.dashboard.enabled ? { dashboard: { enabled: false as const } } : {}),
+      ...(api ? { api } : {}),
+    };
+  }
+  const tuiEnabled = hermesTuiEnabled(input.env);
   return {
     dashboard: {
       enabled: true,
-      ...(port === HERMES_INTERFACE_DEFAULTS.dashboardPort ? {} : { port }),
-      ...(internalPort === HERMES_INTERFACE_DEFAULTS.dashboardInternalPort ? {} : { internalPort }),
-      ...(hermesTuiEnabled(input.env) ? { tui: { enabled: true } } : {}),
+      ...(port === targetDefaults.dashboard.port ? {} : { port }),
+      ...(internalPort === targetDefaults.dashboard.internalPort ? {} : { internalPort }),
+      ...(tuiEnabled === targetDefaults.dashboard.tuiEnabled
+        ? {}
+        : { tui: { enabled: tuiEnabled } }),
     },
     ...(api ? { api } : {}),
   };
@@ -234,8 +252,8 @@ export async function verifyHermesConfigExportLive(
   );
 
   const launchersSucceeded = nemoclaw.exitCode === 0 && nemohermes.exitCode === 0;
-  const nemoclawRaw = nemoclaw.exitCode === 0 ? fs.readFileSync(nemoclawPath, "utf8") : "";
-  const nemohermesRaw = nemohermes.exitCode === 0 ? fs.readFileSync(nemohermesPath, "utf8") : "";
+  const nemoclawRaw = nemoclaw.exitCode === 0 ? readConfigExportFileSafely(nemoclawPath) : "";
+  const nemohermesRaw = nemohermes.exitCode === 0 ? readConfigExportFileSafely(nemohermesPath) : "";
   const nemoclawDiagnostics = normalizeCommandDiagnostics(nemoclaw.stdout, nemoclaw.stderr);
   const nemohermesDiagnostics = normalizeCommandDiagnostics(nemohermes.stdout, nemohermes.stderr);
   const containsCredential = input.redactionValues.some(
@@ -285,6 +303,7 @@ export async function verifyHermesConfigExportLive(
       inferenceEndpointMatches: false,
       launchersSucceeded,
       policyMatches: false,
+      revisionMatchedConsumer: false,
       sandboxNameMatches: false,
     };
     await input.artifacts.writeJson("hermes-config-export-live-evidence.json", evidence);
@@ -296,6 +315,16 @@ export async function verifyHermesConfigExportLive(
   const sandbox = nemoclawDocument.spec.sandboxes[0]!;
   const hostedProvider = nemoclawDocument.spec.inferenceProviders[0];
   const expectedPolicy = policy.ok ? YAML.parse(policy.value.document) : null;
+  let revisionMatchedConsumer = false;
+  try {
+    (input.validateV1Consumer ?? validateLiveExportWithRevisionMatchedV1Consumer)(
+      nemoclawRaw,
+      entry,
+    );
+    revisionMatchedConsumer = true;
+  } catch {
+    revisionMatchedConsumer = false;
+  }
 
   const nemoclawMismatchPath = path.join(exportDirectory, "nemoclaw-mismatch.yaml");
   const nemohermesMismatchPath = path.join(exportDirectory, "nemohermes-mismatch.yaml");
@@ -367,8 +396,18 @@ export async function verifyHermesConfigExportLive(
         (sandbox.network.policy.explicit as { network_policies?: unknown }).network_policies,
         (expectedPolicy as { network_policies?: unknown }).network_policies,
       ),
+    revisionMatchedConsumer,
     sandboxNameMatches: sandbox.name === input.sandboxName,
   };
+  const passed = passesHermesConfigExportLiveEvidence(evidence);
   await input.artifacts.writeJson("hermes-config-export-live-evidence.json", evidence);
-  return { checked: true, passed: passesHermesConfigExportLiveEvidence(evidence) };
+  if (passed) {
+    await publishValidatedConfigExportYaml(
+      input.artifacts,
+      "hermes-config-export.yaml",
+      nemoclawRaw,
+      input.redactionValues,
+    );
+  }
+  return { checked: true, passed };
 }

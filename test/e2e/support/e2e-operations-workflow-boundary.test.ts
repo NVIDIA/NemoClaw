@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -23,6 +24,9 @@ const COLD_ONBOARD_PERFORMANCE_EVIDENCE_PATH =
   "e2e-artifacts/live/${{ matrix.id }}/onboard-progress-budget.json";
 const CONFIG_EXPORT_EVIDENCE_PATH =
   "e2e-artifacts/live/${{ matrix.id }}/config-export-evidence.v1.json";
+const CONFIG_EXPORT_YAML_PATH = "e2e-artifacts/live/${{ matrix.id }}/config-export.yaml";
+const CONFIG_EXPORT_YAML = "apiVersion: nemoclaw.nvidia.com/v1alpha1\n";
+const CONFIG_EXPORT_YAML_SHA256 = createHash("sha256").update(CONFIG_EXPORT_YAML).digest("hex");
 
 function workflowScript(jobName: string, stepName: string): string {
   const workflow = readE2eOperationsWorkflow();
@@ -70,8 +74,29 @@ describe("E2E operations workflow", testTimeoutOptions(15_000), () => {
       "live E2E must upload automatic config export evidence",
     );
   });
+  it("requires validated config export YAML in retained live artifacts (#12132)", () => {
+    const workflow = readE2eOperationsWorkflow();
+    const upload = workflow.jobs.live.steps!.find((step) => step.name === "Upload E2E artifacts")!;
+    upload.with!.path = String(upload.with!.path)
+      .split("\n")
+      .filter((line) => line.trim() !== CONFIG_EXPORT_YAML_PATH)
+      .join("\n");
+
+    expect(validateE2eOperationsWorkflow(workflow)).toContain(
+      "live E2E must upload the validated config export YAML",
+    );
+  });
   it.each([
     { mode: "removed check", run: "true", continueOnError: false },
+    {
+      mode: "missing YAML check",
+      run: [
+        "set -euo pipefail",
+        `evidence="${CONFIG_EXPORT_EVIDENCE_PATH}"`,
+        'test -f "$evidence"',
+      ].join("\n"),
+      continueOnError: false,
+    },
     {
       mode: "ignored shell failure",
       run: `test -f "${CONFIG_EXPORT_EVIDENCE_PATH}" || true`,
@@ -100,6 +125,55 @@ describe("E2E operations workflow", testTimeoutOptions(15_000), () => {
       expect(validateE2eOperationsWorkflow(workflow)).toContain(
         "live E2E must require automatic config export evidence before upload",
       );
+    },
+  );
+  it.each([
+    ["success with matching YAML", "success", ["config-export.yaml"], CONFIG_EXPORT_YAML_SHA256, 0],
+    ["success without YAML", "success", [], CONFIG_EXPORT_YAML_SHA256, 1],
+    ["success without a YAML digest", "success", ["config-export.yaml"], undefined, 1],
+    ["success with replaced YAML", "success", ["config-export.yaml"], "0".repeat(64), 1],
+    ["expected refusal without YAML", "expected-refusal", [], undefined, 0],
+    ["no usable sandbox without YAML", "no-usable-sandbox", [], undefined, 0],
+    ["expected refusal with YAML", "expected-refusal", ["config-export.yaml"], undefined, 1],
+    ["failed evidence without YAML", "failure", [], undefined, 1],
+  ] as const)(
+    "checks classification-aware config export artifacts for %s (#12132)",
+    (_caseName, classification, yamlFileNames, sha256, expectedStatus) => {
+      const workflow = readE2eOperationsWorkflow();
+      const requirement = workflow.jobs.live.steps!.find(
+        (step) => step.name === "Require automatic config export evidence",
+      )!;
+      const directory = mkdtempSync(join(tmpdir(), "nemoclaw-config-export-artifacts-"));
+      const artifactDirectory = join(directory, "e2e-artifacts", "live", "target");
+      mkdirSync(artifactDirectory, { recursive: true });
+      writeFileSync(
+        join(artifactDirectory, "config-export-evidence.v1.json"),
+        `${JSON.stringify({
+          classification,
+          passed: classification !== "failure",
+          ...(sha256 === undefined ? {} : { export: { sha256 } }),
+        })}\n`,
+      );
+      yamlFileNames.forEach((fileName) =>
+        writeFileSync(join(artifactDirectory, fileName), CONFIG_EXPORT_YAML),
+      );
+
+      const result = spawnSync(
+        "bash",
+        [
+          "--noprofile",
+          "--norc",
+          "-c",
+          String(requirement.run).replaceAll("${{ matrix.id }}", "target"),
+        ],
+        { cwd: directory, encoding: "utf8" },
+      );
+
+      try {
+        expect(result.status, result.stderr).toBe(expectedStatus);
+      } finally {
+        rmSync(directory, { force: true, recursive: true });
+      }
     },
   );
   it("requires the scorecard to wait for every reporting dependency", () => {
