@@ -30,6 +30,15 @@ before those targets run; local runners must provide it themselves.
   This workflow does not publish or satisfy `Release qualification`.
 - `.github/workflows/portable-profile-e2e.yaml` publishes experimental portable-profile evidence.
 - `.github/workflows/podman-cpu-proof.yaml` publishes PR-only experimental runtime evidence.
+- `.github/workflows/pr-self-hosted.yaml` selects a credential-free physical WSL ARM64
+  multi-GPU qualification when either provider-owned ARM64 GPU-proof authority changes.
+  The copied-PR selector binds the branch to the exact open PR head and requires the
+  repository variable `WSL_ARM64_MULTI_GPU_RUNNER_LABEL` to name a reviewed Windows
+  ARM64 runner with Ubuntu WSL2, Docker Desktop GPU integration, `/dev/dxg`, and at
+  least two NVIDIA GPUs. The job proves every provider-visible GPU through the bounded
+  CUDA workload, verifies onboarding keeps sandbox GPU access enabled, and
+  retains the exact-head qualification artifacts. A missing runner label or boundary
+  fails closed and cannot be replaced with Linux ARM64 or AMD64 evidence.
 - `.github/workflows/sandbox-images.yaml` provides reusable sandbox-image build and test evidence.
   `.github/workflows/e2e.yaml` selects free-standing jobs, including `whatsapp-qr-compact` and `ollama-auth-proxy`.
 
