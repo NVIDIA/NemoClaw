@@ -18,7 +18,7 @@ import {
 } from "../adapters/openshell/sandbox-identity";
 import { namedOpenShellGateway } from "../adapters/openshell/sandbox-observer";
 import { printSandboxCreateRecoveryHints } from "../build-context";
-import { streamSandboxCreate, type StreamSandboxCreateResult } from "../sandbox/create-stream";
+import type { StreamSandboxCreateResult } from "../sandbox/create-stream";
 import { getReadyCheckOutputPatternsForAgent } from "../sandbox/create-stream-ready-gate";
 import type { SandboxGpuProofResult } from "../state/registry";
 import { classifySandboxCreateFailure } from "../validation";
@@ -83,15 +83,14 @@ const REPLACEMENT_STABLE_READY_POLLS = 2;
 const SANDBOX_READY_PROBE_TIMEOUT_MS = 5_000;
 const CREATED_SANDBOX_PUBLICATION_POLL_INTERVAL_SECONDS = 1;
 
-async function streamSandboxCreateWithPublicImageCredentialIsolation(
+async function streamSandboxCreateWithPublicImageCredentialIsolation<
+  T extends StreamSandboxCreateResult,
+>(
   isolate: boolean,
   sandboxName: string,
   sandboxEnv: NodeJS.ProcessEnv,
-  run: (
-    env: NodeJS.ProcessEnv,
-    dockerClientConfigDirectory: string | null,
-  ) => Promise<StreamSandboxCreateResult>,
-): Promise<StreamSandboxCreateResult> {
+  run: (env: NodeJS.ProcessEnv, dockerClientConfigDirectory: string | null) => Promise<T>,
+): Promise<T> {
   if (!isolate) return run(sandboxEnv, null);
   // Detect against the same environment the create command runs with. The
   // sandbox env drops DOCKER_CONFIG and DOCKER_CONTEXT, so process.env can
@@ -121,14 +120,6 @@ async function streamSandboxCreateWithPublicImageCredentialIsolation(
 const ANSI_RE = /\x1B(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1B\\)|[@-_])/gu;
 const OPENSHELL_SANDBOX_NOT_READY =
   /^Error: code: 'The system is not in a state required for the operation's execution', message: "sandbox is not ready"$/iu;
-
-/** Reject caller policy flags while leaving workload arguments after `--` untouched. */
-export function assertPolicylessSandboxCreateArgv(argv: readonly string[]): void {
-  const createArgs = argv.slice(0, argv.indexOf("--") < 0 ? argv.length : argv.indexOf("--"));
-  if (createArgs.some((arg) => arg === "--policy" || arg.startsWith("--policy="))) {
-    throw new Error("APF interceptor sandbox creation must not supply a caller policy.");
-  }
-}
 
 function createPortableRuntimePatch(
   input: SandboxGpuCreateFlowInput,
@@ -186,27 +177,6 @@ type OpenShellSandboxIdentityProbe =
   | { state: "identified"; sandboxId: string }
   | { state: "not_ready" }
   | { state: "failed" };
-
-function addCreateAttemptIdentityLabel(argv: readonly string[], nonce: string): string[] {
-  const optionEnd = argv.indexOf("--");
-  const insertAt = optionEnd === -1 ? argv.length : optionEnd;
-  const labelPrefix = `${NEMOCLAW_CREATE_ATTEMPT_LABEL}=`;
-  for (let index = 0; index < insertAt; index += 1) {
-    const argument = argv[index] ?? "";
-    if (
-      (argument === "--label" && (argv[index + 1] ?? "").startsWith(labelPrefix)) ||
-      argument.startsWith(`--label=${labelPrefix}`)
-    ) {
-      throw new Error("OpenShell create arguments override NemoClaw's reserved identity label.");
-    }
-  }
-  return [
-    ...argv.slice(0, insertAt),
-    "--label",
-    `${NEMOCLAW_CREATE_ATTEMPT_LABEL}=${nonce}`,
-    ...argv.slice(insertAt),
-  ];
-}
 
 function remainingReadinessProbeTimeout(getRemainingMs: () => number): number | null {
   const remainingMs = Math.floor(getRemainingMs());
@@ -546,18 +516,10 @@ export function createSandboxGpuCreateAttemptRunner(
     const hasRequiredLegacyUlimits =
       input.managedImage !== true && (input.requiredUlimits?.length ?? 0) > 0;
     const unboundAttemptRequest = state.compatibilityRequest ?? input.createRequest;
-    const unboundAttemptArgv = input.createArgv;
-    if (portableLifecycle && !unboundAttemptArgv) {
-      throw new Error("Portable sandbox creation has no executable create command.");
-    }
-    if (!portableLifecycle && !unboundAttemptRequest) {
-      throw new Error("Ordinary sandbox creation has no semantic create request.");
-    }
     if (input.requirePolicylessCreate) {
-      if (unboundAttemptRequest?.policyPath) {
+      if (unboundAttemptRequest.policyPath) {
         throw new Error("APF interceptor sandbox creation must not supply a caller policy.");
       }
-      if (unboundAttemptArgv) assertPolicylessSandboxCreateArgv(unboundAttemptArgv);
     }
     const createAttemptNonce = resolveCreateAttemptNonce(input, deferPostCreateEffects);
     const persistIdentitySettlementRecovery = (
@@ -624,18 +586,12 @@ export function createSandboxGpuCreateAttemptRunner(
         },
       } as const;
     };
-    const attemptRequest =
-      createAttemptNonce && unboundAttemptRequest
-        ? withCreateAttemptLabel(unboundAttemptRequest, createAttemptNonce)
-        : unboundAttemptRequest;
+    const attemptRequest = createAttemptNonce
+      ? withCreateAttemptLabel(unboundAttemptRequest, createAttemptNonce)
+      : unboundAttemptRequest;
     const createFailureRecoveryEvidence = () => ({
-      ...(input.prebuild.createArgs ? { createArgs: input.prebuild.createArgs } : {}),
-      ...(attemptRequest ? { createContext: createSandboxRecoveryContext(attemptRequest) } : {}),
+      createContext: createSandboxRecoveryContext(attemptRequest),
     });
-    const attemptArgv =
-      createAttemptNonce && unboundAttemptArgv
-        ? addCreateAttemptIdentityLabel(unboundAttemptArgv, createAttemptNonce)
-        : unboundAttemptArgv;
     const persistRestartSafeStartup =
       input.persistStartupCommand === true &&
       (route !== "native" || !input.terminalAgent || hasRequiredLegacyUlimits);
@@ -678,7 +634,6 @@ export function createSandboxGpuCreateAttemptRunner(
         : queryOpenShellDockerSandboxRuntimeSnapshot(input.sandboxName);
       return snapshot.ok ? snapshot : null;
     };
-    const [createExecutable, ...createExecutableArgs] = attemptArgv ?? [];
     let readyCheckCreatedSandboxId: string | null = null;
     let readyCheckCreatedIdentityFailure: unknown = null;
     const failReadyCheckCreatedIdentity = (diagnostic: string): true => {
@@ -818,7 +773,6 @@ export function createSandboxGpuCreateAttemptRunner(
         input.sandboxEnv,
         (createEnv, dockerClientConfigDirectory) => {
           const createOptions = {
-            ...(input.createWorkingDirectory ? { cwd: input.createWorkingDirectory } : {}),
             readyCheck: () => {
               const list = deps.runCaptureOpenshell(["sandbox", "list", "-g", input.gatewayName], {
                 ignoreError: true,
@@ -894,18 +848,6 @@ export function createSandboxGpuCreateAttemptRunner(
                 ? "create"
                 : undefined,
           } as const;
-          if (portableLifecycle) {
-            if (!createExecutable) throw new Error("Sandbox create executable is missing.");
-            return streamSandboxCreate(
-              createExecutable,
-              createExecutableArgs,
-              createEnv,
-              createOptions,
-            );
-          }
-          if (!attemptRequest) {
-            throw new Error("Ordinary sandbox creation has no semantic create request.");
-          }
           return deps.createSandbox(
             Object.freeze({
               ...attemptRequest,
@@ -933,7 +875,7 @@ export function createSandboxGpuCreateAttemptRunner(
       }
       return createResult;
     };
-    let createResult: Awaited<ReturnType<typeof streamSandboxCreate>> | null = null;
+    let createResult: Awaited<ReturnType<typeof deps.createSandbox>> | null = null;
     let resumedSandboxId: string | null = null;
     const failAfterCreatedSandboxVerification = (message: string, status: number): never => {
       if (createdSandboxVerified) throw new Error(message);
