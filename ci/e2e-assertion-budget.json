@@ -13,30 +13,30 @@
   },
   "limits": {
     "testFileCount": 78,
-    "liveFileCount": 189,
+    "liveFileCount": 188,
     "direct": {
-      "expectCalls": 1401,
-      "matcherAssertions": 1380,
+      "expectCalls": 1385,
+      "matcherAssertions": 1364,
       "nodeAssertions": 103,
-      "namedAssertionHelpers": 461,
+      "namedAssertionHelpers": 447,
       "failCalls": 0,
       "throwGuards": 71,
       "objectFieldAssertions": 171,
-      "assertionPoints": 2186,
-      "generatedProbeBlocks": 95,
-      "generatedProbeConditions": 243
+      "assertionPoints": 2156,
+      "generatedProbeBlocks": 94,
+      "generatedProbeConditions": 239
     },
     "unique": {
-      "expectCalls": 1844,
-      "matcherAssertions": 1818,
+      "expectCalls": 1828,
+      "matcherAssertions": 1802,
       "nodeAssertions": 112,
-      "namedAssertionHelpers": 697,
+      "namedAssertionHelpers": 683,
       "failCalls": 1,
-      "throwGuards": 540,
+      "throwGuards": 557,
       "objectFieldAssertions": 248,
-      "assertionPoints": 3416,
-      "generatedProbeBlocks": 236,
-      "generatedProbeConditions": 838
+      "assertionPoints": 3403,
+      "generatedProbeBlocks": 235,
+      "generatedProbeConditions": 834
     },
     "fileMetricOrder": [
       "directExpectCalls",
@@ -47,7 +47,7 @@
     ],
     "files": {
       "test/e2e/live/agent-turn-latency.test.ts": [19,22,28,42,1],
-      "test/e2e/live/bedrock-runtime-compatible-anthropic.test.ts": [28,64,28,68,5],
+      "test/e2e/live/bedrock-runtime-compatible-anthropic.test.ts": [12,34,12,55,4],
       "test/e2e/live/bootstrap-install-smoke.test.ts": [0,0,14,30,3],
       "test/e2e/live/brave-search.test.ts": [17,20,27,32,1],
       "test/e2e/live/brev-workspace-cleanup.test.ts": [0,0,0,1,0],
