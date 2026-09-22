@@ -71,6 +71,17 @@ PY
 available_kib="$(df --output=avail -k "${root}" | tail -1 | tr -d ' ')"
 test "${available_kib}" -ge $((80 * 1024 * 1024))
 test -z "$(docker ps -aq --filter 'name=nemoclaw' --filter 'name=openshell')"
+for inventory in container network volume; do
+  case "${inventory}" in
+    container) owned="$(docker ps -aq --filter 'label=nemoclaw.nvidia.com/uid')" ;;
+    network) owned="$(docker network ls -q --filter 'label=nemoclaw.nvidia.com/uid')" ;;
+    volume) owned="$(docker volume ls -q --filter 'label=nemoclaw.nvidia.com/uid')" ;;
+  esac
+  if test -n "${owned}"; then
+    echo "fresh host contains NemoClaw-owned ${inventory} resources: ${owned//$'\n'/,}" >&2
+    exit 1
+  fi
+done
 test ! -e "${HOME}/.nemoclaw"
 test ! -e "${HOME}/.config/openshell"
 
