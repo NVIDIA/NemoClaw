@@ -182,6 +182,13 @@ impl Spec {
     pub fn bridge(&self) -> Result<String, Error> {
         crate::config::bridge_address(self.network_cidr()).map_err(Into::into)
     }
+    /// Resolve the gateway container address on the managed network.
+    ///
+    /// # Errors
+    /// Returns a configuration error for malformed IPv4 CIDRs or address overflow.
+    pub fn gateway_address(&self) -> Result<String, Error> {
+        crate::config::gateway_address(self.network_cidr()).map_err(Into::into)
+    }
     /// Validate and extract the service configuration used inside the runtime.
     ///
     /// # Errors
@@ -247,6 +254,7 @@ impl Spec {
         if self.kind == GATEWAY_KIND {
             let url = url::Url::parse(&self.gateway.endpoint)
                 .map_err(|_| Error::Conflict("invalid gateway endpoint"))?;
+            let port = url.port().ok_or(Error::Conflict("missing gateway port"))?;
             config["User"] = json!("0:0");
             config["Env"] = json!([
                 format!("XDG_STATE_HOME={data_path}/state"),
@@ -259,14 +267,16 @@ impl Spec {
                 "--name",
                 &self.name,
                 "--bind-address",
-                "127.0.0.1",
+                if self.compute_driver == ComputeDriver::Docker {
+                    "0.0.0.0"
+                } else {
+                    "127.0.0.1"
+                },
                 "--port",
-                &url.port()
-                    .ok_or(Error::Conflict("missing gateway port"))?
-                    .to_string()
+                &port.to_string()
             ]);
-            host["NetworkMode"] = json!("host");
             if self.compute_driver == ComputeDriver::Podman {
+                host["NetworkMode"] = json!("host");
                 config["Hostname"] = json!(self.name);
                 config["Env"].as_array_mut().unwrap().extend([
                     json!("container=podman"),
@@ -277,6 +287,18 @@ impl Spec {
                 host["PidMode"] = json!("private");
                 host["IpcMode"] = json!("private");
                 host["Ulimits"] = json!([{"Name":"nofile","Soft":65536,"Hard":65536},{"Name":"nproc","Soft":8192,"Hard":8192}]);
+            } else {
+                host["NetworkMode"] = json!(self.network());
+                host["PortBindings"] = json!({format!("{port}/tcp"):[
+                    {
+                        "HostIp":url.host_str().ok_or(Error::Conflict("missing gateway host"))?,
+                        "HostPort":port.to_string()
+                    }
+                ]});
+                config["ExposedPorts"] = json!({format!("{port}/tcp"): {}});
+                config["NetworkingConfig"] = json!({"EndpointsConfig":{
+                    self.network():{"IPAMConfig":{"IPv4Address":self.gateway_address()?}}
+                }});
             }
             host["Mounts"] = json!([{"Type":"volume","Source":self.volume(),"Target":data_path},{"Type":"bind","Source":self.gateway.engine.strip_prefix("unix://").ok_or(Error::Conflict("managed gateway requires a Unix socket"))?,"Target":"/var/run/docker.sock"}]);
         } else {
@@ -309,8 +331,22 @@ impl Spec {
             .map_err(|_| Error::State("invalid compiled runtime launch specification"))
     }
     pub fn gateway_config(&self, data_path: &str) -> String {
+        let grpc_endpoint = if self.compute_driver == ComputeDriver::Docker {
+            String::new()
+        } else {
+            format!("grpc_endpoint = {:?}\n", self.gateway.endpoint)
+        };
+        let host_gateway_ip = if self.compute_driver == ComputeDriver::Docker {
+            format!(
+                "host_gateway_ip = {:?}\n",
+                self.gateway_address()
+                    .expect("validated managed gateway network")
+            )
+        } else {
+            String::new()
+        };
         format!(
-            "[openshell]\nversion = 2\n\n[openshell.gateway]\ncompute_driver = {:?}\ndisable_tls = true\n\n[openshell.drivers.{}]{}\nnetwork_name = {:?}\nsandbox_runtime_image = {:?}\nsupervisor_image = {:?}\n\n[openshell.gateway.gateway_jwt]\nsigning_key_path = {:?}\npublic_key_path = {:?}\nkid_path = {:?}\ngateway_id = {:?}\n\n[openshell.gateway.auth]\nallow_unauthenticated_users = true\n",
+            "[openshell]\nversion = 2\n\n[openshell.gateway]\ncompute_driver = {:?}\ndisable_tls = true\n\n[openshell.drivers.{}]{}\nnetwork_name = {:?}\n{}sandbox_runtime_image = {:?}\nsupervisor_image = {:?}\n{}\n[openshell.gateway.gateway_jwt]\nsigning_key_path = {:?}\npublic_key_path = {:?}\nkid_path = {:?}\ngateway_id = {:?}\n\n[openshell.gateway.auth]\nallow_unauthenticated_users = true\n",
             self.compute_driver.as_str(),
             self.compute_driver,
             if self.compute_driver == ComputeDriver::Podman {
@@ -319,8 +355,10 @@ impl Spec {
                 ""
             },
             self.network(),
+            host_gateway_ip,
             SANDBOX_RUNTIME_IMAGE,
             SUPERVISOR_IMAGE,
+            grpc_endpoint,
             format!("{data_path}/tls/jwt/signing.pem"),
             format!("{data_path}/tls/jwt/public.pem"),
             format!("{data_path}/tls/jwt/kid"),

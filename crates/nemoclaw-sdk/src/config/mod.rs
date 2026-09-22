@@ -216,12 +216,33 @@ fn default_string(value: &mut String, default: &str) {
     }
 }
 pub(crate) fn bridge_address(cidr: &str) -> Result<String, ConfigError> {
+    network_address(
+        cidr,
+        1,
+        "invalid bridge network",
+        "bridge address exceeds IPv4 range",
+    )
+}
+pub(crate) fn gateway_address(cidr: &str) -> Result<String, ConfigError> {
+    network_address(
+        cidr,
+        2,
+        "invalid gateway network",
+        "gateway address exceeds IPv4 range",
+    )
+}
+fn network_address(
+    cidr: &str,
+    offset: u32,
+    invalid: &'static str,
+    overflow: &'static str,
+) -> Result<String, ConfigError> {
     let network = cidr
         .parse::<ipnet::Ipv4Net>()
-        .map_err(|_| ConfigError::new("invalid bridge network"))?;
+        .map_err(|_| ConfigError::new(invalid))?;
     let address = u32::from(network.network())
-        .checked_add(1)
-        .ok_or(ConfigError::new("bridge address exceeds IPv4 range"))?;
+        .checked_add(offset)
+        .ok_or_else(|| ConfigError::new(overflow))?;
     Ok(std::net::Ipv4Addr::from(address).to_string())
 }
 impl ManagedGateway {

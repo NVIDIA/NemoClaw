@@ -225,7 +225,15 @@ async fn gateway_failed_startup_and_explicit_recovery_keep_container_and_storage
     let fixtures: Vec<Value> = serde_json::from_str(include_str!("reference.json")).unwrap();
     let data = &fixtures[0];
     let spec: Spec = serde_json::from_str(data["spec"].as_str().unwrap()).unwrap();
-    let container = json!({"Id":"container","Name":format!("/{}",spec.name),"Image":"sha256:runtime","Config":data["config"],"HostConfig":data["hostConfig"],"State":{"Running":false,"StartedAt":"2026-09-14T00:00:00Z"},"Mounts":[{"Type":"volume","Name":spec.volume(),"Destination":"/var/lib/docker/volumes/fixture/_data","RW":true},{"Type":"bind","Source":"/var/run/docker.sock","Destination":"/var/run/docker.sock","RW":true}]});
+    let launch = serde_json::to_value(
+        spec.container("/var/lib/docker/volumes/fixture/_data")
+            .unwrap(),
+    )
+    .unwrap();
+    let mut config = launch.clone();
+    config.as_object_mut().unwrap().remove("HostConfig");
+    config.as_object_mut().unwrap().remove("NetworkingConfig");
+    let container = json!({"Id":"container","Name":format!("/{}",spec.name),"Image":"sha256:runtime","Config":config,"HostConfig":launch["HostConfig"],"NetworkSettings":{"Networks":{spec.network():{"IPAddress":spec.gateway_address().unwrap()}}},"State":{"Running":false,"StartedAt":"2026-09-14T00:00:00Z"},"Mounts":[{"Type":"volume","Name":spec.volume(),"Destination":"/var/lib/docker/volumes/fixture/_data","RW":true},{"Type":"bind","Source":"/var/run/docker.sock","Destination":"/var/run/docker.sock","RW":true}]});
     let volume = json!({"Name":spec.volume(),"Driver":"local","Scope":"local","Mountpoint":"/var/lib/docker/volumes/fixture/_data","CreatedAt":"2026-09-14T00:00:00Z","Labels":spec.labels().unwrap(),"Options":{}});
     let network = json!({"Id":"network","Name":spec.network(),"Driver":"bridge","Internal":false,"EnableIPv6":false,"Labels":spec.labels().unwrap(),"IPAM":{"Driver":"default","Config":[{"Subnet":spec.gateway.network_cidr,"Gateway":spec.gateway.bridge().unwrap()}]}});
     let state = Arc::new(Mutex::new(State {

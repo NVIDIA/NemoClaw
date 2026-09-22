@@ -202,6 +202,17 @@ pub(crate) fn verify_container(
             "managed container configuration or memory protection drifted",
         ));
     }
+    if spec.kind == crate::managed::GATEWAY_KIND && spec.compute_driver == ComputeDriver::Docker {
+        let address = container
+            .network_settings
+            .as_ref()
+            .and_then(|settings| settings.networks.as_ref())
+            .and_then(|networks| networks.get(&spec.network()))
+            .and_then(|endpoint| endpoint.ip_address.as_deref());
+        if address != Some(spec.gateway_address()?.as_str()) {
+            return Err(Error::Conflict("managed gateway address drifted"));
+        }
+    }
     let actual = serde_json::to_value(host).map_err(|_| ObservationError::Incomplete)?;
     let expected_json = serde_json::to_value(expected_host).expect("host serialization");
     for field in ["CapDrop", "SecurityOpt", "DeviceRequests", "Ulimits"] {

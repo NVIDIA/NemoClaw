@@ -97,6 +97,36 @@ fn managed_graph_separates_retained_storage_from_replaceable_processes() {
         graph["resource"]["docker_container"]["managed_gateway_runtime"]["depends_on"],
         json!(["nemoclaw_gateway_storage.runtime"])
     );
+    let gateway = &graph["resource"]["docker_container"]["managed_gateway_runtime"];
+    let gateway_spec: nemoclaw_sdk::managed::Spec = serde_json::from_str(
+        graph["resource"]["nemoclaw_gateway_storage"]["runtime"]["spec"]
+            .as_str()
+            .unwrap(),
+    )
+    .unwrap();
+    let command = gateway["command"].as_array().unwrap();
+    let gateway_port = command.windows(2).find(|pair| pair[0] == "--port").unwrap()[1]
+        .as_str()
+        .unwrap()
+        .parse::<u16>()
+        .unwrap();
+    assert!(gateway.get("network_mode").is_none());
+    assert_eq!(
+        gateway["networks_advanced"],
+        json!([{
+            "name": gateway_spec.network(),
+            "ipv4_address": gateway_spec.gateway_address().unwrap()
+        }])
+    );
+    assert_eq!(
+        gateway["ports"],
+        json!([{
+            "internal": gateway_port,
+            "external": gateway_port,
+            "ip": "127.0.0.1",
+            "protocol": "tcp"
+        }])
+    );
     assert_eq!(
         dependencies(&graph["resource"]["docker_container"]["inference_service_inference_qwen"]),
         BTreeSet::from([
