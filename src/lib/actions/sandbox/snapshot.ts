@@ -41,7 +41,6 @@ import {
   formatGatewayRouteConflict,
 } from "../../inference/gateway-route-compatibility";
 import { withGatewayRouteMutationLock } from "../../inference/gateway-route-mutation-lock";
-import { normalizeInferenceSelection } from "../../inference/selection";
 import * as nim from "../../inference/nim";
 import { deleteSandboxProviderRegistrations } from "../../onboard/sandbox-provider-cleanup";
 import { withDashboardPortReservationLock } from "../../onboard/dashboard-port";
@@ -880,10 +879,12 @@ function pendingSnapshotCloneRouteMatchesSource(
       pending.hostLocalInferenceProvenance,
       sourceEntry.hostLocalInferenceProvenance,
     ) &&
-    isDeepStrictEqual(
-      registry.normalizeSandboxInferenceRouteSelection(normalizeInferenceSelection(pending)),
-      registry.normalizeSandboxInferenceRouteSelection(normalizeInferenceSelection(sourceEntry)),
-    )
+    (pending.provider ?? null) === (sourceEntry.provider ?? null) &&
+    (pending.model ?? null) === (sourceEntry.model ?? null) &&
+    (pending.endpointUrl ?? null) === (sourceEntry.endpointUrl ?? null) &&
+    (pending.endpointSource ?? null) === (sourceEntry.endpointSource ?? null) &&
+    (pending.credentialEnv ?? null) === (sourceEntry.credentialEnv ?? null) &&
+    (pending.preferredInferenceApi ?? null) === (sourceEntry.preferredInferenceApi ?? null)
   );
 }
 

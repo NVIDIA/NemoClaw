@@ -95,19 +95,19 @@ const reserveSandboxInferenceRouteMock = vi.fn((name: string, route: Record<stri
 });
 const finalizeSandboxRouteReservationMock = vi.fn((name: string, sessionId: string) => {
   const entry = harness.entries.get(name);
-  if (entry?.pendingRouteReservation !== true || entry.reservationSessionId !== sessionId) {
-    return false;
-  }
-  harness.entries.set(name, {
-    ...entry,
-    pendingRouteReservation: undefined,
-  });
-  return true;
+  const owned = entry?.pendingRouteReservation === true && entry.reservationSessionId === sessionId;
+  return owned
+    ? Boolean(
+        harness.entries.set(name, {
+          ...entry,
+          pendingRouteReservation: undefined,
+        }),
+      )
+    : false;
 });
 const removeSandboxRouteReservationIfCurrentMock = vi.fn((expected: Record<string, unknown>) => {
   const name = String(expected.name);
-  if (harness.entries.get(name) !== expected) return false;
-  return harness.entries.delete(name);
+  return harness.entries.get(name) === expected ? harness.entries.delete(name) : false;
 });
 const restoreSandboxStateMock = vi.fn();
 const captureSnapshotRestoreAuthorityMock = vi.fn();
@@ -288,14 +288,6 @@ vi.mock("../../state/registry", () => ({
   registerSandbox: registerSandboxMock,
   reserveSandboxInferenceRoute: reserveSandboxInferenceRouteMock,
   removeSandboxRouteReservationIfCurrent: removeSandboxRouteReservationIfCurrentMock,
-  normalizeSandboxInferenceRouteSelection: vi.fn((selection) => ({
-    provider: selection.provider ?? null,
-    model: selection.model ?? null,
-    endpointUrl: selection.endpointUrl ?? null,
-    endpointSource: selection.endpointUrl ? (selection.endpointSource ?? null) : null,
-    credentialEnv: selection.credentialEnv ?? null,
-    preferredInferenceApi: selection.preferredInferenceApi ?? null,
-  })),
   isRouteOnlySandboxReservation: vi.fn(
     (entry: Record<string, unknown>) =>
       entry.pendingRouteReservation === true && entry.createdAt === undefined,
@@ -649,11 +641,12 @@ describe("snapshot restore auto-create failures", () => {
     captureOpenshellMock.mockImplementation((args: string[]) => {
       const selectorIndex = args.indexOf("--selector");
       const selector = args[selectorIndex + 1] ?? "";
-      if (selector.endsWith(retainedNonce)) return defaultCaptureOpenshell(args);
-      return {
-        status: 0,
-        output: args[0] === "policy" ? "version: 1\nnetwork_policies: {}\n" : "alpha Ready\n",
-      };
+      return selector.endsWith(retainedNonce)
+        ? defaultCaptureOpenshell(args)
+        : {
+            status: 0,
+            output: args[0] === "policy" ? "version: 1\nnetwork_policies: {}\n" : "alpha Ready\n",
+          };
     });
     vi.spyOn(console, "error").mockImplementation(() => {});
     vi.spyOn(console, "log").mockImplementation(() => {});
@@ -673,17 +666,19 @@ describe("snapshot restore auto-create failures", () => {
     captureOpenshellMock.mockImplementation((args: string[]) => {
       const selectorIndex = args.indexOf("--selector");
       const selector = args[selectorIndex + 1] ?? "";
-      if (selector.endsWith(retainedNonce)) return { status: 0, output: "[]" };
-      if (selectorIndex >= 0) return defaultCaptureOpenshell(args);
-      return {
-        status: 0,
-        output:
-          args[0] === "policy"
-            ? "version: 1\nnetwork_policies: {}\n"
-            : createSubmitted
-              ? "alpha Ready\nbeta Ready\nId: beta-runtime-id\n"
-              : "alpha Ready\n",
-      };
+      return selector.endsWith(retainedNonce)
+        ? { status: 0, output: "[]" }
+        : selectorIndex >= 0
+          ? defaultCaptureOpenshell(args)
+          : {
+              status: 0,
+              output:
+                args[0] === "policy"
+                  ? "version: 1\nnetwork_policies: {}\n"
+                  : createSubmitted
+                    ? "alpha Ready\nbeta Ready\nId: beta-runtime-id\n"
+                    : "alpha Ready\n",
+            };
     });
     streamSandboxCreateMock.mockImplementationOnce(async () => {
       createSubmitted = true;
