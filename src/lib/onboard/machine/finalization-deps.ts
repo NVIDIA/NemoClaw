@@ -36,6 +36,10 @@ type GatewayRestartDeps = Pick<
 type SandboxLifecycleLock = typeof import("../../state/mcp-lifecycle-lock").withMcpLifecycleLock;
 type GatewayRouteLock =
   typeof import("../../inference/gateway-route-mutation-lock").withGatewayRouteMutationLock;
+type HermesPortableOnboardingDeps = Pick<
+  typeof import("../experimental/hermes-portable-onboarding"),
+  "assertHermesPortableOnboardingReadiness" | "hermesPortableOnboardingLifecycleLockOptions"
+>;
 
 export type OrdinaryOpenClawPairingSettlementResult =
   | { readonly kind: "settled" }
@@ -112,6 +116,8 @@ export const finalizationHandlerRuntime = {
     require("../../state/mcp-lifecycle-lock") as typeof import("../../state/mcp-lifecycle-lock"),
   loadGatewayRouteLock: () =>
     require("../../inference/gateway-route-mutation-lock") as typeof import("../../inference/gateway-route-mutation-lock"),
+  loadHermesPortableOnboarding: () =>
+    require("../experimental/hermes-portable-onboarding") as HermesPortableOnboardingDeps,
 };
 
 export async function restartNativeGatewayForInitialSetup(
@@ -403,6 +409,35 @@ export const finalizationHandlerDeps = {
       (result.wasRunning !== false || result.recovered === true) &&
       !("secretBoundaryRefused" in result && result.secretBoundaryRefused === true)
     );
+  },
+  async checkHermesPortableSandboxReadiness(
+    name: string,
+    environment: NodeJS.ProcessEnv,
+  ): Promise<boolean> {
+    try {
+      const registry = finalizationHandlerRuntime.loadRegistryPersistence();
+      const entry = registry.load().sandboxes[name];
+      const gatewayName = entry?.gatewayName;
+      if (!entry || typeof gatewayName !== "string") return false;
+      const portableOnboarding = finalizationHandlerRuntime.loadHermesPortableOnboarding();
+      const lockOptions =
+        portableOnboarding.hermesPortableOnboardingLifecycleLockOptions(environment);
+      return await finalizationHandlerRuntime.loadSandboxLifecycleLock().withMcpLifecycleLock(
+        name,
+        async () => {
+          await portableOnboarding.assertHermesPortableOnboardingReadiness(
+            name,
+            entry,
+            environment,
+            (sandboxName) => registry.load().sandboxes[sandboxName] ?? null,
+          );
+          return true;
+        },
+        lockOptions,
+      );
+    } catch {
+      return false;
+    }
   },
   settleOrdinaryOpenClawPairing(name: string): Promise<OrdinaryOpenClawPairingSettlementResult> {
     return settleOrdinaryOpenClawPairing(name, defaultPairingSettlementDeps());

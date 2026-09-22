@@ -53,15 +53,14 @@ export function createFinalOnboardFlowPhases<
       ...finalizationHandlerDeps,
       ...(portableRuntime
         ? {
-            checkAndRecoverSandboxProcesses: (name: string, options: { quiet: boolean }) => {
+            checkAndRecoverSandboxProcesses: (name: string, _options: { quiet: boolean }) => {
               if (!portableRuntime.environmentScope) {
                 throw new Error(
                   "Hermes portable finalization requires onboarding environment authority",
                 );
               }
-              return finalizationHandlerDeps.checkAndRecoverSandboxProcesses(
+              return finalizationHandlerDeps.checkHermesPortableSandboxReadiness(
                 name,
-                options,
                 portableRuntime.environmentScope.createHermesPortablePodmanSourceEnvironment(
                   portableRuntime.authority,
                 ),

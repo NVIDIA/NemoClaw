@@ -48,7 +48,7 @@ describe("createFinalOnboardFlowPhases", () => {
     expect(phases).toEqual([{ state: "agent_setup" }]);
   });
 
-  it("hands finalization only the selectors admitted by the active onboarding scope", async () => {
+  it("uses receipt-qualified Hermes readiness for portable finalization (#11892)", async () => {
     const authority = {
       schemaVersion: 1 as const,
       kind: "podman" as const,
@@ -65,8 +65,9 @@ describe("createFinalOnboardFlowPhases", () => {
       containersConf: "/home/kiosk/.config/nemoclaw/portable/containers.conf",
       socketPath: authority.socketPath,
     });
+    const genericRecovery = vi.spyOn(finalizationHandlerDeps, "checkAndRecoverSandboxProcesses");
     const check = vi
-      .spyOn(finalizationHandlerDeps, "checkAndRecoverSandboxProcesses")
+      .spyOn(finalizationHandlerDeps, "checkHermesPortableSandboxReadiness")
       .mockResolvedValue(true);
     createFinalOnboardFlowPhases({
       branchState: "agent_setup",
@@ -82,16 +83,16 @@ describe("createFinalOnboardFlowPhases", () => {
     ).resolves.toBe(true);
     expect(check).toHaveBeenLastCalledWith(
       "fresh-hermes",
-      { quiet: true },
       expect.objectContaining({ HOME: authority.homeDir }),
     );
-    const clean = check.mock.calls[0]![2]!;
+    expect(genericRecovery).not.toHaveBeenCalled();
+    const clean = check.mock.calls[0]![1]!;
     expect(clean).not.toHaveProperty("DOCKER_HOST");
     expect(clean).not.toHaveProperty("CONTAINERS_CONF");
     expect(env.DOCKER_HOST).toBe(`unix://${authority.socketPath}`);
 
     env.DOCKER_HOST = "tcp://unexpected.invalid:2375";
     await finalization.checkAndRecoverSandboxProcesses("fresh-hermes", { quiet: true });
-    expect(check.mock.calls[1]![2]).toHaveProperty("DOCKER_HOST", "tcp://unexpected.invalid:2375");
+    expect(check.mock.calls[1]![1]).toHaveProperty("DOCKER_HOST", "tcp://unexpected.invalid:2375");
   });
 });

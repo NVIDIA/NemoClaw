@@ -765,6 +765,82 @@ describe("finalizationHandlerDeps.readRegistryAgent", () => {
   });
 });
 
+describe("Hermes portable finalization readiness", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  function installPortableReadinessHarness(assertReady: () => Promise<void>) {
+    const entry = {
+      name: "alpha",
+      agent: "hermes",
+      gatewayName: "nemoclaw-19080",
+      lifecycleGeneration: "generation-1",
+      openshellDriver: "docker",
+      provider: "ollama-local",
+    };
+    const load = vi.fn(() => ({ sandboxes: { alpha: entry } }));
+    vi.spyOn(finalizationHandlerRuntime, "loadRegistryPersistence").mockReturnValue({
+      load,
+    } as never);
+    const assertHermesPortableOnboardingReadiness = vi.fn(assertReady);
+    vi.spyOn(finalizationHandlerRuntime, "loadHermesPortableOnboarding").mockReturnValue({
+      assertHermesPortableOnboardingReadiness,
+      hermesPortableOnboardingLifecycleLockOptions: vi.fn(() => ({
+        stateDir: "/portable/state",
+      })),
+    });
+    const withMcpLifecycleLock = vi.fn(async (_name, operation) => await operation());
+    vi.spyOn(finalizationHandlerRuntime, "loadSandboxLifecycleLock").mockReturnValue({
+      withMcpLifecycleLock,
+    } as never);
+    return { assertHermesPortableOnboardingReadiness, entry, load, withMcpLifecycleLock };
+  }
+
+  it("accepts receipt-qualified authenticated Hermes health (#11892)", async () => {
+    const harness = installPortableReadinessHarness(async () => undefined);
+    const environment = { HOME: "/home/kiosk", PATH: "/usr/bin" };
+
+    await expect(
+      finalizationHandlerDeps.checkHermesPortableSandboxReadiness("alpha", environment),
+    ).resolves.toBe(true);
+
+    expect(harness.withMcpLifecycleLock).toHaveBeenCalledWith("alpha", expect.any(Function), {
+      stateDir: "/portable/state",
+    });
+    expect(harness.assertHermesPortableOnboardingReadiness).toHaveBeenCalledWith(
+      "alpha",
+      harness.entry,
+      environment,
+      expect.any(Function),
+    );
+  });
+
+  it("fails closed when portable Hermes readiness is unavailable (#11892)", async () => {
+    installPortableReadinessHarness(async () => {
+      throw new Error("untrusted runtime diagnostic");
+    });
+
+    await expect(
+      finalizationHandlerDeps.checkHermesPortableSandboxReadiness("alpha", {
+        HOME: "/home/kiosk",
+      }),
+    ).resolves.toBe(false);
+  });
+
+  it("fails closed when the portable Hermes registry cannot be read (#11892)", async () => {
+    vi.spyOn(finalizationHandlerRuntime, "loadRegistryPersistence").mockImplementation(() => {
+      throw new Error("untrusted registry diagnostic");
+    });
+
+    await expect(
+      finalizationHandlerDeps.checkHermesPortableSandboxReadiness("alpha", {
+        HOME: "/home/kiosk",
+      }),
+    ).resolves.toBe(false);
+  });
+});
+
 describe("finalization process-recovery refusal propagation", () => {
   beforeEach(() => {
     vi.spyOn(finalizationHandlerRuntime, "loadLaunchReadiness").mockReturnValue({

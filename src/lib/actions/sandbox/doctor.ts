@@ -64,6 +64,7 @@ import {
   dockerInspectGateway,
   gatewayDoctorStartHint,
   inspectSandboxDoctorPortableAuthority,
+  observeSandboxDoctorHermesReadiness,
   ollamaDoctorCheck,
   oneLine,
   shouldInspectLegacyGatewayContainer,
@@ -109,9 +110,10 @@ const sandboxCommandExecutor = createCliOpenShellSandboxCommandExecutor({ hostCw
 function hermesPortableDoctorReport(
   sandboxName: string,
   phase: "pending" | "configuring" | "active",
+  readiness: "ready" | "unavailable" | null,
 ): DoctorReport {
   const active = phase === "active";
-  return buildDoctorReport(sandboxName, [
+  const checks: DoctorCheck[] = [
     {
       group: "Sandbox",
       label: "Portable lifecycle",
@@ -119,7 +121,24 @@ function hermesPortableDoctorReport(
       detail: `agent=Hermes; phase=${phase}`,
       ...(active ? {} : { hint: "resume the existing Hermes portable onboarding transaction" }),
     },
-  ]);
+  ];
+  if (active) {
+    checks.push({
+      group: "Sandbox",
+      label: "Hermes gateway",
+      status: readiness === "ready" ? "ok" : "fail",
+      detail:
+        readiness === "ready"
+          ? "receipt-qualified gateway readiness is confirmed"
+          : "receipt-qualified gateway readiness could not be confirmed",
+      ...(readiness === "ready"
+        ? {}
+        : {
+            hint: `run ${CLI_NAME} ${sandboxName} recover, then retry this command`,
+          }),
+    });
+  }
+  return buildDoctorReport(sandboxName, checks);
 }
 
 function parseDoctorIntent(sandboxName: string, args: string[]): DoctorIntent | null {
@@ -655,7 +674,12 @@ export async function runSandboxDoctor(
   const outcome = await withSandboxDoctorLifecycleLock(sandboxName, async () => {
     const portable = inspectSandboxDoctorPortableAuthority(sandboxName, registry.getSandbox);
     if (portable.kind === "hermes") {
-      const report = hermesPortableDoctorReport(sandboxName, portable.phase);
+      const readiness = await observeSandboxDoctorHermesReadiness(
+        sandboxName,
+        portable,
+        registry.getSandbox,
+      );
+      const report = hermesPortableDoctorReport(sandboxName, portable.phase, readiness);
       if (intent.asJson && options.quietJson) return { report };
       const exitCode = renderDoctorReport(report, intent.asJson);
       return { exitCode };
