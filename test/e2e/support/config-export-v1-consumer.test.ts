@@ -2,8 +2,21 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { createHash } from "node:crypto";
+import { execFileSync, type ExecFileSyncOptions } from "node:child_process";
+import fs from "node:fs";
+import path from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+
+const childProcess = vi.hoisted(() => ({
+  actualExecFileSync: undefined as typeof execFileSync | undefined,
+}));
+
+vi.mock("node:child_process", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:child_process")>();
+  childProcess.actualExecFileSync = actual.execFileSync;
+  return { ...actual, execFileSync: vi.fn(actual.execFileSync) };
+});
 
 import { exportSnapshots } from "../../../src/lib/actions/config/export-test-fixture.ts";
 import {
@@ -20,6 +33,7 @@ import {
 } from "../../../src/lib/domain/config/export-source-test-fixture.ts";
 import { testTimeoutOptions } from "../../helpers/timeouts.ts";
 import {
+  RevisionMatchedConsumerError,
   revisionMatchedConsumerInputFromLiveSource,
   validateWithRevisionMatchedV1Consumer,
 } from "../fixtures/revision-matched-v1-consumer.ts";
@@ -115,4 +129,34 @@ describe("revision-matched v1 config consumer", () => {
       );
     },
   );
+
+  it("removes the Cargo target directory when native validation fails (#12132)", async () => {
+    const source = snapshot();
+    const raw = await rawExport(source);
+    let cargoTargetDirectory: string | undefined;
+    vi.mocked(execFileSync)
+      .mockImplementationOnce(childProcess.actualExecFileSync!)
+      .mockImplementationOnce(childProcess.actualExecFileSync!)
+      .mockImplementationOnce(
+        (
+          _file: string,
+          _args: readonly string[] | undefined,
+          options: ExecFileSyncOptions | undefined,
+        ) => {
+          cargoTargetDirectory = options?.env?.CARGO_TARGET_DIR;
+          expect(cargoTargetDirectory).toEqual(expect.any(String));
+          fs.mkdirSync(cargoTargetDirectory!, { recursive: true });
+          fs.writeFileSync(path.join(cargoTargetDirectory!, "partial-build"), "incomplete");
+          throw new Error("native validation failed");
+        },
+      );
+
+    expect(() =>
+      validateWithRevisionMatchedV1Consumer([
+        revisionMatchedConsumerInputFromLiveSource(raw, source.registry),
+      ]),
+    ).toThrow(new RevisionMatchedConsumerError("cargo-test"));
+    expect(cargoTargetDirectory).toEqual(expect.any(String));
+    expect(fs.existsSync(cargoTargetDirectory!)).toBe(false);
+  });
 });

@@ -229,10 +229,7 @@ export function validateWithRevisionMatchedV1Consumer(
           encoding: "utf8",
           env: {
             ...process.env,
-            CARGO_TARGET_DIR: path.join(
-              os.tmpdir(),
-              `nemoclaw-v1-target-${V1ALPHA1_RUNTIME_DEFAULTS_REVISION}`,
-            ),
+            CARGO_TARGET_DIR: path.join(temporaryRoot, "cargo-target"),
             NEMOCLAW_V1_CONFIG_INPUTS: inputDirectory,
             NEMOCLAW_V1_SETTINGS_OUTPUT: settingsDirectory,
           },
