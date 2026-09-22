@@ -2024,12 +2024,13 @@ const BASE_FILE_SPECS: FileSpec[] = [
             upgradedSource = result.source;
             changed = true;
           }
-          if (!upgradedSource.includes(CLI_APPROVE_LOCAL_FALLBACK_MARKER)) {
-            const result = applyDevicesApproveExitPatch(upgradedSource, file);
-            if (result.error) return { source, status: "no-match", error: result.error };
-            upgradedSource = result.source;
-            changed = true;
+          const approvalExitSource = upgradedSource;
+          const approvalExitResult = applyDevicesApproveExitPatch(upgradedSource, file);
+          if (approvalExitResult.error) {
+            return { source, status: "no-match", error: approvalExitResult.error };
           }
+          upgradedSource = approvalExitResult.source;
+          changed ||= upgradedSource !== approvalExitSource;
           return {
             source: upgradedSource,
             status: changed ? "would-apply" : "already-applied",

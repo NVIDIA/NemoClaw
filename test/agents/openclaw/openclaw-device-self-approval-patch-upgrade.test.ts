@@ -179,6 +179,38 @@ describe("OpenClaw device self-approval patch upgrades (#4462)", () => {
     }
   });
 
+  it.each([
+    ["missing", "nemoclaw: exit after devices approve so leftover gateway handles cannot hang"],
+    ["duplicate", "nemoclaw: exit after devices approve so leftover gateway handles cannot hang"],
+    ["missing", "nemoclaw: mark local fallback approval for bounded process exit"],
+    ["duplicate", "nemoclaw: mark local fallback approval for bounded process exit"],
+    ["missing", "nemoclaw: reset local fallback approval exit state"],
+    ["duplicate", "nemoclaw: reset local fallback approval exit state"],
+  ] as const)("rejects a %s devices approve exit marker: %s (#12064)", (state, marker) => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-device-approve-marker-"));
+    const dist = path.join(tmp, "dist");
+    fs.mkdirSync(dist);
+    writeFixtureDist(dist);
+    try {
+      expect(runPatch(dist).status).toBe(0);
+      const file = path.join(dist, "devices-cli.runtime-fixture.js");
+      const source = fs.readFileSync(file, "utf8");
+      expect(source).toContain(marker);
+      fs.writeFileSync(
+        file,
+        state === "missing"
+          ? source.replace(marker, "nemoclaw: removed approval exit marker")
+          : `${source}\n// ${marker}\n`,
+      );
+
+      const apply = runPatch(dist);
+      expect(apply.status).not.toBe(0);
+      expect(`${apply.stdout}${apply.stderr}`).toContain("partial or duplicate patch markers");
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("adds watcher deferral to an earlier patched current gateway runtime (#9844)", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-device-defer-upgrade-"));
     const dist = path.join(tmp, "dist");
