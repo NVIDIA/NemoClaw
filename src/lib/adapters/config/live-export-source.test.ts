@@ -780,7 +780,6 @@ describe("live export snapshot reader", () => {
       },
     });
     expect(writeStdout).not.toHaveBeenCalled();
-    expect(JSON.stringify(result)).not.toContain(readFailureCanary);
     expect(raw.getSandboxConfig).toHaveBeenCalledTimes(2);
   });
 

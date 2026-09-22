@@ -985,8 +985,6 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     selector: "^network-policy:",
     shard: "live-probes",
     owningPaths: [
-      "test/e2e/support/config-export-policy-evidence.ts",
-      "test/e2e/support/config-export-secret-scan.ts",
       "test/e2e/live/network-policy-transient-provider.ts",
       "test/e2e/live/restricted-onboard-helpers.ts",
       "src/commands/config/",
@@ -1338,8 +1336,6 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
       "src/lib/adapters/fs/config-export-file.ts",
       "src/lib/config/",
       "src/lib/domain/config/",
-      "test/e2e/support/config-export-policy-evidence.ts",
-      "test/e2e/support/config-export-secret-scan.ts",
       "test/e2e/fixtures/hermes-config-export-live.ts",
       "test/e2e/live/hermes-skill-lifecycle.ts",
     ],

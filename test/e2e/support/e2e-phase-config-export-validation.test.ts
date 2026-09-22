@@ -520,7 +520,6 @@ if (process.argv.includes("--output")) {
       dependencies: independentDependencies,
       host: successfulHost(raw),
     });
-
     const evidence = await test.phase.from(target("required"), instance());
     const persistedEvidence = JSON.parse(
       fs.readFileSync(path.join(artifactRoot, "config-export-evidence.v1.json"), "utf8"),
@@ -779,31 +778,32 @@ process.stdout.write("x".repeat(1024 * 1024 + 2048 - Buffer.byteLength(suffix, "
     );
   });
 
-  it("validates staged managed and Deep Agents documents (#11860, #12131)", () => {
-    const managed = document();
-    const expectInvalidShape = (candidate: unknown) =>
-      expect(() => parseConfigExport(JSON.stringify(candidate))).toThrow(/complete staged/u);
-    const parsed = parseConfigExport(JSON.stringify(managed));
-    expect(parsed.spec.sandboxes[0]?.agent.name).toBe("primary");
-    const plural = structuredClone(managed);
-    const pluralSandbox = plural.spec.sandboxes[0]! as unknown as Record<string, unknown>;
-    pluralSandbox.agents = [pluralSandbox.agent];
-    Reflect.deleteProperty(pluralSandbox, "agent");
-    expectInvalidShape(plural);
+  it("validates the current v1alpha1 Deep Agents document (#11860)", () => {
     const candidate = structuredClone(document());
     const sandbox = candidate.spec.sandboxes[0]!;
-    Object.assign(sandbox, { harness: { kind: "deepagents" }, image: { ref: IMAGE_REF } });
+    const image = { ref: IMAGE_REF };
+    Object.assign(sandbox, { harness: { kind: "deepagents" }, image });
     expect(parseConfigExport(JSON.stringify(candidate)).spec.sandboxes[0]).toMatchObject({
       image: { ref: IMAGE_REF },
       harness: { kind: "deepagents" },
+      agent: { name: "primary" },
     });
     const missingImage = structuredClone(candidate);
     Reflect.deleteProperty(missingImage.spec.sandboxes[0]!, "image");
-    expectInvalidShape(missingImage);
+    expect(() => parseConfigExport(JSON.stringify(missingImage))).toThrow(
+      "complete v1alpha1 export contract",
+    );
     const missingEndpoint = structuredClone(candidate);
     Reflect.deleteProperty(missingEndpoint.spec.gateway, "endpoint");
-    expectInvalidShape(missingEndpoint);
+    expect(() => parseConfigExport(JSON.stringify(missingEndpoint))).toThrow(
+      "complete v1alpha1 export contract",
+    );
+    Object.assign(sandbox, { agents: [sandbox.agent], agent: undefined });
+    expect(() => parseConfigExport(JSON.stringify(candidate))).toThrow(
+      "complete v1alpha1 export contract",
+    );
   });
+
   it("rejects an export that violates the canonical config schema (#11485)", async () => {
     const valid = document();
     const raw = JSON.stringify({

@@ -38,10 +38,6 @@ import {
 } from "../hosted-inference.ts";
 import { CLI_DIST_ENTRYPOINT, REPO_ROOT } from "../paths.ts";
 import type { SecretStore } from "../secrets.ts";
-import {
-  containsSensitiveText,
-  encodedSensitiveValues,
-} from "../../support/config-export-secret-scan.ts";
 import type { NemoClawInstance } from "./onboarding.ts";
 
 const { Type } = require("typebox") as typeof TypeBoxModule;
@@ -161,7 +157,7 @@ const DeepAgentsExportSandboxSchema = Type.Object(
   },
   { additionalProperties: false },
 );
-const ManagedAgentExportSandboxSchema = Type.Object(
+const AgentExportSandboxSchema = Type.Object(
   {
     ...ExportSandboxFields,
     image: Type.Null(),
@@ -214,7 +210,7 @@ const ConfigExportDocumentSchema = Type.Object(
           { minItems: 1 },
         ),
         sandboxes: Type.Array(
-          Type.Union([DeepAgentsExportSandboxSchema, ManagedAgentExportSandboxSchema]),
+          Type.Union([DeepAgentsExportSandboxSchema, AgentExportSandboxSchema]),
           { minItems: 1, maxItems: 1 },
         ),
       },
@@ -402,48 +398,6 @@ const DEFAULT_DEPENDENCIES: ConfigExportValidationDependencies = {
   removeDirectory: (directory) => fs.rmSync(directory, { force: true, recursive: true }),
 };
 
-export type ProtectedConfigExportRead =
-  | { readonly ok: true; readonly raw: string }
-  | { readonly ok: false; readonly reason: string };
-
-/** Read candidate-created YAML without following links or trusting its path after open. */
-export function readProtectedConfigExportFile(
-  filePath: string,
-  limitBytes = CONFIG_EXPORT_FILE_LIMIT_BYTES,
-  dependencies: ConfigExportValidationDependencies = DEFAULT_DEPENDENCIES,
-): ProtectedConfigExportRead {
-  let file: number | undefined;
-  try {
-    file = dependencies.openFileNoFollow(filePath);
-    const opened = dependencies.inspectOpenFile(file);
-    if (!opened.isFile) return { ok: false, reason: "config export output is not a regular file" };
-    if (opened.linkCount !== 1) {
-      return { ok: false, reason: "config export output must have exactly one hard link" };
-    }
-    if (opened.size > limitBytes) {
-      return { ok: false, reason: `config export output exceeds the ${limitBytes}-byte limit` };
-    }
-    const raw = dependencies.readOpenFile(file, limitBytes);
-    if (Buffer.byteLength(raw, "utf8") > limitBytes) {
-      return { ok: false, reason: `config export output exceeds the ${limitBytes}-byte limit` };
-    }
-    const published = dependencies.inspectFile(filePath);
-    if (
-      !published.isFile ||
-      published.linkCount !== 1 ||
-      published.device !== opened.device ||
-      published.inode !== opened.inode
-    ) {
-      return { ok: false, reason: "config export output changed while it was being read" };
-    }
-    return { ok: true, raw };
-  } catch {
-    return { ok: false, reason: "config export output could not be opened safely" };
-  } finally {
-    if (file !== undefined) dependencies.closeFile(file);
-  }
-}
-
 function requiredRecord(value: unknown, field: string): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new Error(`exported configuration field '${field}' must be an object`);
@@ -461,7 +415,7 @@ function requiredString(value: unknown, field: string): string {
 export function parseConfigExport(raw: string): ConfigExportDocument {
   const document: unknown = YAML.parse(raw);
   if (!Check(ConfigExportDocumentSchema, document)) {
-    throw new Error("exported configuration must match the complete staged v1alpha1 shape");
+    throw new Error("exported configuration must match the complete v1alpha1 export contract");
   }
   return document as ConfigExportDocument;
 }
@@ -789,6 +743,59 @@ function decodedScalarsMatch(
   );
 }
 
+function encodedSensitiveValues(values: readonly string[]): string[] {
+  const encoded = new Set<string>();
+  for (const value of values) {
+    if (value.length === 0) continue;
+    const base64 = Buffer.from(value, "utf8").toString("base64");
+    encoded.add(base64);
+    encoded.add(base64.replace(/=+$/u, ""));
+    const base64url = base64.replace(/\+/gu, "-").replace(/\//gu, "_");
+    encoded.add(base64url);
+    encoded.add(base64url.replace(/=+$/u, ""));
+  }
+  return [...encoded];
+}
+
+function decodePercentEncodedText(raw: string): string {
+  let decoded = raw;
+  for (let pass = 0; pass < 4; pass += 1) {
+    const next = decoded.replace(/(?:%[0-9a-f]{2})+/giu, (encoded) => {
+      try {
+        return decodeURIComponent(encoded);
+      } catch {
+        return encoded;
+      }
+    });
+    if (next === decoded) return decoded;
+    decoded = next;
+  }
+  return decoded;
+}
+
+function normalizedSecretScanText(raw: string): string {
+  const decodedEscapes = decodePercentEncodedText(raw)
+    .replace(/\\x([0-9a-f]{2})/giu, (_match, hex: string) =>
+      String.fromCodePoint(Number.parseInt(hex, 16)),
+    )
+    .replace(/\\u([0-9a-f]{4})/giu, (_match, hex: string) =>
+      String.fromCodePoint(Number.parseInt(hex, 16)),
+    )
+    .replace(/\\U([0-9a-f]{8})/gu, (_match, hex: string) => {
+      const codePoint = Number.parseInt(hex, 16);
+      return codePoint <= 0x10ffff ? String.fromCodePoint(codePoint) : "";
+    })
+    .replace(/\\[nrt]/gu, "");
+  return decodedEscapes.replace(/[\s#'"`>|\\]/gu, "");
+}
+
+function containsSensitiveText(raw: string, values: readonly string[]): boolean {
+  const normalizedRaw = normalizedSecretScanText(raw);
+  return [...values, ...encodedSensitiveValues(values)].some(
+    (value) => value.length > 0 && normalizedRaw.includes(normalizedSecretScanText(value)),
+  );
+}
+
 function containsKnownSecretText(raw: string, secretValues: readonly string[]): boolean {
   return containsSensitiveText(raw, secretValues);
 }
@@ -924,13 +931,38 @@ export class ConfigExportValidationPhaseFixture {
         if (result.exitCode !== 0 || !outputExists) {
           throw new Error(`config export failed: ${resultText(result)}`);
         }
-        const protectedOutput = readProtectedConfigExportFile(
-          outputPath,
-          CONFIG_EXPORT_FILE_LIMIT_BYTES,
-          this.dependencies,
-        );
-        if (!protectedOutput.ok) throw new Error(protectedOutput.reason);
-        raw = protectedOutput.raw;
+        const outputFile = this.dependencies.openFileNoFollow(outputPath);
+        try {
+          const output = this.dependencies.inspectOpenFile(outputFile);
+          if (!output.isFile) {
+            throw new Error("config export output is not a regular file");
+          }
+          if (output.linkCount !== 1) {
+            throw new Error("config export output must have exactly one hard link");
+          }
+          if (output.size > CONFIG_EXPORT_FILE_LIMIT_BYTES) {
+            throw new Error(
+              `config export output exceeds the ${CONFIG_EXPORT_FILE_LIMIT_BYTES}-byte limit`,
+            );
+          }
+          raw = this.dependencies.readOpenFile(outputFile, CONFIG_EXPORT_FILE_LIMIT_BYTES);
+          if (Buffer.byteLength(raw, "utf8") > CONFIG_EXPORT_FILE_LIMIT_BYTES) {
+            throw new Error(
+              `config export output exceeds the ${CONFIG_EXPORT_FILE_LIMIT_BYTES}-byte limit`,
+            );
+          }
+          const published = this.dependencies.inspectFile(outputPath);
+          if (
+            !published.isFile ||
+            published.linkCount !== 1 ||
+            published.device !== output.device ||
+            published.inode !== output.inode
+          ) {
+            throw new Error("config export output changed while it was being read");
+          }
+        } finally {
+          this.dependencies.closeFile(outputFile);
+        }
         failureStage = "security";
         const secretValues = this.secrets.redactionValues();
         const encodedSecrets = encodedSensitiveValues(secretValues);

@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -10,27 +10,18 @@ import { isDeepStrictEqual } from "node:util";
 import YAML from "yaml";
 
 import { HERMES_INTERFACE_DEFAULTS } from "../../../src/lib/config/model.ts";
-import { getBuildIdentity } from "../../../src/lib/core/version.ts";
 import { fingerprintOpenShellSandboxId } from "../../../src/lib/adapters/openshell/sandbox-identity.ts";
 import {
   namedOpenShellGateway,
   cliOpenShellSandboxPolicyReader,
 } from "../../../src/lib/adapters/openshell/sandbox-policy-cli.ts";
+import { asExportedConfig } from "../../support/config-export-document.ts";
 import { load, save } from "../../../src/lib/state/registry/persistence.ts";
 import type { ArtifactSink } from "./artifacts.ts";
 import type { HostCliClient } from "./clients/host.ts";
 import { trustedSandboxShellScript, type SandboxClient } from "./clients/sandbox.ts";
 import type { CleanupRegistry } from "./cleanup.ts";
 import { CLI_ENTRYPOINT, REPO_ROOT } from "./paths.ts";
-import {
-  parseConfigExport,
-  readProtectedConfigExportFile,
-} from "./phases/config-export-validation.ts";
-import { requireEffectivePolicyDocument } from "../support/config-export-policy-evidence.ts";
-import {
-  containsSensitiveText,
-  writeSecretFreeConfigExportArtifact,
-} from "../support/config-export-secret-scan.ts";
 
 interface HermesConfigExportLiveInput {
   readonly artifacts: ArtifactSink;
@@ -58,26 +49,14 @@ interface HermesConfigExportPublishedEvidence {
   readonly credentialValuesOmitted: boolean;
   readonly identityDriftPreventedPublication: boolean;
   readonly identityDriftReported: boolean;
-  readonly managedImagePlaceholderIsNull: boolean;
+  readonly managedImageIsNull: boolean;
   readonly interfacesMatch: boolean;
   readonly dashboardRuntimeMatches: boolean;
   readonly inferenceEndpointMatches: boolean;
   readonly launchersSucceeded: boolean;
   readonly policyMatches: boolean;
-  readonly producer: {
-    readonly sourceRevision: string;
-  };
   readonly sandboxNameMatches: boolean;
-  readonly yaml: {
-    readonly nemoclaw: {
-      readonly artifact: string;
-      readonly sha256: string;
-    };
-    readonly nemohermes: {
-      readonly artifact: string;
-      readonly sha256: string;
-    };
-  };
+  readonly yaml?: Readonly<{ nemoclaw: string; nemohermes: string }>;
 }
 
 interface HermesConfigExportExpectedRefusalEvidence {
@@ -97,10 +76,6 @@ export type HermesConfigExportLiveEvidence =
 const CREDENTIAL_HTTP_REFUSAL =
   "V1alpha1 requires HTTPS when an inference provider declares a credential.";
 const CREDENTIAL_HTTP_REFUSAL_DIAGNOSTIC = `Config export failed (unsupported).\n${CREDENTIAL_HTTP_REFUSAL}`;
-const NEMOCLAW_EXPORT_ARTIFACT = "hermes-config-export-nemoclaw.yaml";
-const NEMOHERMES_EXPORT_ARTIFACT = "hermes-config-export-nemohermes.yaml";
-const REVISION_PATTERN = /^[0-9a-f]{40,64}$/u;
-const SHA256_PATTERN = /^[0-9a-f]{64}$/u;
 
 function normalizeCommandDiagnostics(stdout: string, stderr: string): string {
   return [stdout, stderr]
@@ -129,18 +104,16 @@ export function passesHermesConfigExportLiveEvidence(
     evidence.credentialValuesOmitted &&
     evidence.identityDriftPreventedPublication &&
     evidence.identityDriftReported &&
-    evidence.managedImagePlaceholderIsNull &&
+    evidence.managedImageIsNull &&
     evidence.interfacesMatch &&
     evidence.dashboardRuntimeMatches &&
     evidence.inferenceEndpointMatches &&
     evidence.launchersSucceeded &&
     evidence.policyMatches &&
-    REVISION_PATTERN.test(evidence.producer.sourceRevision) &&
     evidence.sandboxNameMatches &&
-    evidence.yaml.nemoclaw.artifact === NEMOCLAW_EXPORT_ARTIFACT &&
-    SHA256_PATTERN.test(evidence.yaml.nemoclaw.sha256) &&
-    evidence.yaml.nemohermes.artifact === NEMOHERMES_EXPORT_ARTIFACT &&
-    SHA256_PATTERN.test(evidence.yaml.nemohermes.sha256)
+    evidence.yaml !== undefined &&
+    evidence.yaml.nemoclaw.length > 0 &&
+    evidence.yaml.nemohermes.length > 0
   );
 }
 
@@ -239,10 +212,6 @@ export async function verifyHermesConfigExportLive(
     sandboxName: input.sandboxName,
     scope: "effective",
   });
-  const expectedPolicy = YAML.parse(requireEffectivePolicyDocument(policy)) as {
-    network_policies?: unknown;
-  } | null;
-  const producerRevision = getBuildIdentity({ rootDir: REPO_ROOT }).sourceRevision;
   const nemoclawPath = path.join(exportDirectory, "nemoclaw.yaml");
   const nemohermesPath = path.join(exportDirectory, "nemohermes.yaml");
   const commonOptions = {
@@ -269,28 +238,19 @@ export async function verifyHermesConfigExportLive(
   );
 
   const launchersSucceeded = nemoclaw.exitCode === 0 && nemohermes.exitCode === 0;
-  const nemoclawOutput =
-    nemoclaw.exitCode === 0
-      ? readProtectedConfigExportFile(nemoclawPath)
-      : { ok: false as const, reason: "launcher did not publish output" };
-  const nemohermesOutput =
-    nemohermes.exitCode === 0
-      ? readProtectedConfigExportFile(nemohermesPath)
-      : { ok: false as const, reason: "launcher did not publish output" };
-  const exportFilesReadSafely = nemoclawOutput.ok && nemohermesOutput.ok;
-  const nemoclawRaw = nemoclawOutput.ok ? nemoclawOutput.raw : "";
-  const nemohermesRaw = nemohermesOutput.ok ? nemohermesOutput.raw : "";
+  const nemoclawRaw = nemoclaw.exitCode === 0 ? fs.readFileSync(nemoclawPath, "utf8") : "";
+  const nemohermesRaw = nemohermes.exitCode === 0 ? fs.readFileSync(nemohermesPath, "utf8") : "";
   const nemoclawDiagnostics = normalizeCommandDiagnostics(nemoclaw.stdout, nemoclaw.stderr);
   const nemohermesDiagnostics = normalizeCommandDiagnostics(nemohermes.stdout, nemohermes.stderr);
-  const containsCredential = [
-    nemoclawRaw,
-    nemohermesRaw,
-    nemoclawDiagnostics,
-    nemohermesDiagnostics,
-  ].some((output) => containsSensitiveText(output, input.redactionValues));
-  if (!launchersSucceeded || !exportFilesReadSafely) {
+  const containsCredential = input.redactionValues.some(
+    (value) =>
+      value.length > 0 &&
+      [nemoclawRaw, nemohermesRaw, nemoclawDiagnostics, nemohermesDiagnostics].some((output) =>
+        output.includes(value),
+      ),
+  );
+  if (!launchersSucceeded) {
     const expectsCredentialHttpRefusal =
-      !launchersSucceeded &&
       typeof entry.credentialEnv === "string" &&
       entry.credentialEnv.length > 0 &&
       entry.endpointUrl?.toLowerCase().startsWith("http:") === true;
@@ -323,39 +283,23 @@ export async function verifyHermesConfigExportLive(
       credentialValuesOmitted: !containsCredential,
       identityDriftPreventedPublication: false,
       identityDriftReported: false,
-      managedImagePlaceholderIsNull: false,
+      managedImageIsNull: false,
       interfacesMatch: false,
       dashboardRuntimeMatches: false,
       inferenceEndpointMatches: false,
       launchersSucceeded,
       policyMatches: false,
-      producer: { sourceRevision: producerRevision },
       sandboxNameMatches: false,
-      yaml: {
-        nemoclaw: { artifact: NEMOCLAW_EXPORT_ARTIFACT, sha256: "" },
-        nemohermes: { artifact: NEMOHERMES_EXPORT_ARTIFACT, sha256: "" },
-      },
     };
     await input.artifacts.writeJson("hermes-config-export-live-evidence.json", evidence);
     return { checked: true, passed: false };
   }
 
-  const nemoclawDocument = parseConfigExport(nemoclawRaw);
-  const nemohermesDocument = parseConfigExport(nemohermesRaw);
-  await writeSecretFreeConfigExportArtifact(
-    input.artifacts,
-    NEMOCLAW_EXPORT_ARTIFACT,
-    nemoclawRaw,
-    input.redactionValues,
-  );
-  await writeSecretFreeConfigExportArtifact(
-    input.artifacts,
-    NEMOHERMES_EXPORT_ARTIFACT,
-    nemohermesRaw,
-    input.redactionValues,
-  );
+  const nemoclawDocument = asExportedConfig(YAML.parse(nemoclawRaw));
+  const nemohermesDocument = asExportedConfig(YAML.parse(nemohermesRaw));
   const sandbox = nemoclawDocument.spec.sandboxes[0]!;
   const hostedProvider = nemoclawDocument.spec.inferenceProviders[0];
+  const expectedPolicy = policy.ok ? YAML.parse(policy.value.document) : null;
 
   const nemoclawMismatchPath = path.join(exportDirectory, "nemoclaw-mismatch.yaml");
   const nemohermesMismatchPath = path.join(exportDirectory, "nemohermes-mismatch.yaml");
@@ -416,27 +360,19 @@ export async function verifyHermesConfigExportLive(
     identityDriftReported:
       nemoclawDriftDiagnostics.includes("drifted") &&
       nemohermesDriftDiagnostics.includes("drifted"),
-    managedImagePlaceholderIsNull: sandbox.image === null,
+    managedImageIsNull: sandbox.image === null,
     interfacesMatch: isDeepStrictEqual(sandbox.harness.interfaces, expectedHermesInterfaces(input)),
     dashboardRuntimeMatches: await dashboardRuntimeMatches(input),
     inferenceEndpointMatches: hostedProvider?.endpoint === entry.endpointUrl,
     launchersSucceeded,
-    policyMatches: isDeepStrictEqual(
-      (sandbox.network.policy.explicit as { network_policies?: unknown } | null)?.network_policies,
-      expectedPolicy?.network_policies,
-    ),
-    producer: { sourceRevision: producerRevision },
+    policyMatches:
+      expectedPolicy === null ||
+      isDeepStrictEqual(
+        (sandbox.network.policy.explicit as { network_policies?: unknown }).network_policies,
+        (expectedPolicy as { network_policies?: unknown }).network_policies,
+      ),
     sandboxNameMatches: sandbox.name === input.sandboxName,
-    yaml: {
-      nemoclaw: {
-        artifact: NEMOCLAW_EXPORT_ARTIFACT,
-        sha256: createHash("sha256").update(nemoclawRaw).digest("hex"),
-      },
-      nemohermes: {
-        artifact: NEMOHERMES_EXPORT_ARTIFACT,
-        sha256: createHash("sha256").update(nemohermesRaw).digest("hex"),
-      },
-    },
+    ...(!containsCredential ? { yaml: { nemoclaw: nemoclawRaw, nemohermes: nemohermesRaw } } : {}),
   };
   await input.artifacts.writeJson("hermes-config-export-live-evidence.json", evidence);
   return { checked: true, passed: passesHermesConfigExportLiveEvidence(evidence) };

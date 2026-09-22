@@ -29,7 +29,7 @@ digest pass workload authority validation. CA state still participates in stable
 Missing, malformed, or mismatched CA state must prevent publication. Export does not change sandbox trust or transfer
 source-host trust to another deployment; configure that deployment's CA through onboarding.
 
-Managed OpenClaw exports `agent.tools.disclosure: direct` only when the registry selection agrees with
+Managed OpenClaw exports `agents[].tools.disclosure: direct` only when the registry selection agrees with
 the validated startup profile. Absent or explicit `progressive` selection keeps
 the canonical omission. Model compatibility can still downgrade runtime tool
 behavior. Preserve managed-image authority and full residual profile equality;
@@ -37,8 +37,15 @@ admitting disclosure must not admit extra tool gateways or minimal-bootstrap set
 Hermes keeps its canonical export without `tools`; a retained direct selection or
 profile is unsupported even when those two sources agree.
 
-V1alpha1 export publishes one primary `agent`. Managed OpenClaw sources with secondary agents are
-unsupported and must not publish output; runtime support does not authorize a plural export shape.
+One or more uniquely named read-only secondary OpenClaw agents can share the primary hosted route
+on Docker and export in runtime order. Runtime `main` remains the sole default and exports as
+`primary`; each secondary keeps its compatible, nonreserved ID and exports
+`tools: {allow: [read]}`. Execution, interfaces, authentication, and observability remain primary-owned. The
+generator and exporter use the same manifest normalizer in `src/lib/extra-agents-validation.ts`.
+Canonical workspace paths stay implicit. Verify the whole retained manifest before
+admitting that leaf in the residual profile comparison; other agent settings still
+need their own supported projection. Apply the roster and route constraints only
+to documents using `tools.allow`, preserving existing v1 agent shapes.
 
 The attached-Ollama source model admits the same roster constraints, but this does not authorize
 v1alpha1 publication. `config/verify-export-source.ts` rejects Ollama sources at the compatibility
@@ -47,7 +54,7 @@ depends on the named-service contract in #11928 and the exporter mapping in #120
 The source checks retain the selected model, shared tuning, external daemon ownership, and
 NemoClaw-managed proxy ownership. Export does not change either resource.
 
-Managed OpenClaw exports `harness.interfaces.dashboard` when the retained port agrees with the
+Managed OpenClaw exports `agents[].interfaces.dashboard` when the retained port agrees with the
 registry and remote bind agrees with recorded preparation. Port 18789 and loopback bind are omitted.
 Legacy registry entries may omit the port only for the canonical loopback/default-port profile.
 Custom URLs, WSL exposure and device-auth changes remain unsupported. Export does not establish

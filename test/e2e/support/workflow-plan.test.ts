@@ -787,15 +787,6 @@ describe("E2E workflow plan", () => {
   });
 
   it.each([
-    "test/e2e/support/config-export-policy-evidence.ts",
-    "test/e2e/support/config-export-secret-scan.ts",
-  ])("selects both live export owners when shared evidence helper %s changes", (changedFile) => {
-    expect(catalogueTargetsForChangedFiles([changedFile]).map((target) => target.id)).toEqual(
-      expect.arrayContaining(["network-policy", "security-posture-hermes"]),
-    );
-  });
-
-  it.each([
     "nemoclaw-blueprint/router/pool-config.yaml",
     "test/e2e/live/model-router-provider-routed-inference-helpers.ts",
   ])("selects the Model Router target when %s changes", (changedFile) => {

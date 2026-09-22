@@ -1,17 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
-import { isDeepStrictEqual } from "node:util";
-import YAML from "yaml";
 import { fingerprintOpenShellSandboxId } from "../../../src/lib/adapters/openshell/sandbox-identity.ts";
-import {
-  namedOpenShellGateway,
-  cliOpenShellSandboxPolicyReader,
-} from "../../../src/lib/adapters/openshell/sandbox-policy-cli.ts";
-import { getBuildIdentity } from "../../../src/lib/core/version.ts";
 import { load, save } from "../../../src/lib/state/registry/persistence.ts";
 import { createServer, type Server } from "node:http";
 import path from "node:path";
@@ -26,23 +19,13 @@ import {
   validateSandboxName,
 } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
-import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
-import {
-  parseConfigExport,
-  readProtectedConfigExportFile,
-} from "../fixtures/phases/config-export-validation.ts";
+import { CLI_ENTRYPOINT } from "../fixtures/paths.ts";
 import { ensureConfiguredRuntimeProviderAvailable } from "../fixtures/runtime-provider.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import {
   buildNetworkPolicyCurlProbe,
   parseNetworkPolicyCurlOutput,
 } from "../support/network-policy-probe.ts";
-import {
-  type NetworkPolicyConfigExportLiveEvidence,
-  passesNetworkPolicyConfigExportLiveEvidence,
-  requireEffectivePolicyDocument,
-} from "../support/config-export-policy-evidence.ts";
-import { writeSecretFreeConfigExportArtifact } from "../support/config-export-secret-scan.ts";
 import { runRestrictedOnboardWithRetry } from "./restricted-onboard-helpers.ts";
 
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-net-policy";
@@ -360,6 +343,12 @@ test(
       apiKey,
       scenarioLabel: "network-policy",
       scenarioSlug: "network-policy",
+      extraOnboardEnv: {
+        NEMOCLAW_EXTRA_AGENTS_JSON: JSON.stringify([
+          { id: "researcher", tools: { allow: ["read"] } },
+          { id: "reviewer", tools: { allow: ["read"] } },
+        ]),
+      },
       preCleanupArtifactPrefix: "pre-cleanup-nemoclaw-destroy-network-policy",
       onboardArtifactPrefix: "onboard-restricted-network-policy",
       onboardTimeoutMs: ONBOARD_TIMEOUT_MS,
@@ -376,41 +365,15 @@ test(
     );
     const registry = load();
     const entry = registry.sandboxes[SANDBOX_NAME];
-    const policy = await cliOpenShellSandboxPolicyReader.readSandboxPolicy({
-      target: namedOpenShellGateway(entry.gatewayName ?? ""),
-      sandboxName: SANDBOX_NAME,
-      scope: "effective",
-    });
-    const effectivePolicy = YAML.parse(requireEffectivePolicyDocument(policy)) as {
-      network_policies?: unknown;
-    };
     const outputPath = path.join(exportDirectory, "config.yaml");
-    const exported = await runNemoclaw(
+    const refused = await runNemoclaw(
       host,
       ["config", "export", SANDBOX_NAME, "--output", outputPath, "--json"],
-      { artifactName: "config-export-live-success", redactionValues: [apiKey] },
+      { artifactName: "config-export-live-secondary-agents-refusal", redactionValues: [apiKey] },
     );
-    const protectedOutput =
-      exported.exitCode === 0
-        ? readProtectedConfigExportFile(outputPath)
-        : { ok: false as const, reason: "launcher did not publish output" };
-    expect(
-      protectedOutput.ok,
-      [text(exported), protectedOutput.ok ? "" : protectedOutput.reason].filter(Boolean).join("\n"),
-    ).toBe(true);
-    const raw = protectedOutput.ok ? protectedOutput.raw : "";
-    const document = parseConfigExport(raw);
-    const exportedSandbox = document.spec.sandboxes[0];
-    const exportedNetworkPolicies = (
-      exportedSandbox.network.policy.explicit as { network_policies?: unknown }
-    ).network_policies;
-    const effectivePolicyMatches = isDeepStrictEqual(
-      exportedNetworkPolicies,
-      effectivePolicy.network_policies,
-    );
-    expect(exportedSandbox.image).toBeNull();
-    const exportArtifact = "config-export-live.yaml";
-    await writeSecretFreeConfigExportArtifact(artifacts, exportArtifact, raw, [apiKey]);
+    expect(refused.exitCode, text(refused)).not.toBe(0);
+    expect(text(refused)).toContain("unsupported");
+    expect(fs.existsSync(outputPath), "Secondary agents must prevent publication").toBe(false);
 
     const mismatchPath = path.join(exportDirectory, "must-not-exist.yaml");
     try {
@@ -435,19 +398,12 @@ test(
     } finally {
       save(registry);
     }
-    const exportEvidence: NetworkPolicyConfigExportLiveEvidence = {
+    await artifacts.writeJson("config-export-live-evidence.json", {
       sandboxName: SANDBOX_NAME,
-      managedImagePlaceholderIsNull: exportedSandbox.image === null,
-      effectivePolicyMatches,
+      secondaryAgentExportRefused: true,
+      secondaryAgentOutputWithheld: true,
       identityDriftPreventedPublication: true,
-      producer: { sourceRevision: getBuildIdentity({ rootDir: REPO_ROOT }).sourceRevision },
-      yaml: {
-        artifact: exportArtifact,
-        sha256: createHash("sha256").update(raw).digest("hex"),
-      },
-    };
-    expect(passesNetworkPolicyConfigExportLiveEvidence(exportEvidence)).toBe(true);
-    await artifacts.writeJson("config-export-live-evidence.json", exportEvidence);
+    });
 
     progress.phase("deny default egress and hot-reload one host-gateway port");
     const defaultDenied = await probeUrl(

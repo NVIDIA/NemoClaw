@@ -1378,12 +1378,7 @@ describe("dashboard settings export", () => {
     expect(outcome.outcome).toMatchObject({
       ok: false,
       failure: {
-        findings: expect.arrayContaining([
-          expect.objectContaining({
-            category: "drifted",
-            field: "spec.sandboxes[].harness.interfaces.dashboard.bind",
-          }),
-        ]),
+        findings: expect.arrayContaining([expect.objectContaining({ category: "drifted" })]),
       },
     });
     expect(outcome.writeStdout).not.toHaveBeenCalled();

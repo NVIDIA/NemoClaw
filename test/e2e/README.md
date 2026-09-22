@@ -390,23 +390,25 @@ This preserves the locked dependency versions and avoids npm resolving a new pee
 Both jobs verify that the SDK connection API loads before running tests.
 This keeps the private optional dependency available for SDK-backed commands such as configuration export.
 
-The `network-policy` target also owns live configuration-export evidence for #10938, #11854, #12131, and PR #11065.
-After restricted single-agent OpenClaw onboarding, it invokes the candidate `config export` command through the real SDK connection.
-It validates the staged document, requires `image: null`, and compares the exported `network_policies` value with the effective sandbox policy's `network_policies` value.
-It then changes the fixture's recorded sandbox fingerprint and requires export to fail without creating a file.
+The `network-policy` target also owns live configuration-export evidence for #10938, #11854, and PR #11065.
+After restricted OpenClaw onboarding with two read-only agents, it invokes the candidate `config export` command through the real SDK connection.
+It requires the command to reject the secondary-agent roster without producing a document.
+It then changes the fixture's recorded sandbox fingerprint and again requires export to fail without creating a file.
 The fixture restores the registry in `finally` and removes private export files through its existing cleanup registry.
-The fixture stores the secret-free YAML, its SHA-256 digest, and the installed CLI source revision as review evidence.
-The exported `network_policies` value must match the independent CLI policy observation.
-Deterministic adapter tests own individual wire shapes and malformed responses.
+This proves that the real SDK connection reaches the fail-closed secondary-agent and identity-drift
+boundaries. It does not qualify successful export or effective-policy preservation. Deterministic
+adapter tests own individual wire shapes and malformed responses, while successful single-agent
+export evidence remains with its owning scenarios. The assertion budget is lowered with the removed
+successful-export checks.
 
 The `security-posture-hermes` target owns the corresponding live Hermes export evidence for #11286.
 After canonical hosted-inference onboarding, it invokes `config export` through both the `nemoclaw`
 and `nemohermes` launchers and requires the validated documents to have identical specs. It checks
-the Hermes agent type, null managed-image placeholder, hosted route, effective policy, and omission of
-credential values. It retains both secret-free YAML documents with their SHA-256 digests and the
-installed CLI source revision. It then changes the fixture's recorded sandbox fingerprint and requires both
-launchers to fail without publishing a file before restoring the registry. The assertion budget is
-unchanged because this contract replaces a redundant nonempty-log assertion in the same scenario.
+the Hermes agent type, null managed-image placeholder, hosted route, effective policy, and omission
+of credential values, and retains both YAML documents as evidence. It then changes the fixture's
+recorded sandbox fingerprint and requires both launchers to fail without publishing a file before
+restoring the registry. The assertion budget is unchanged because this contract replaces a redundant
+nonempty-log assertion in the same scenario.
 
 The `ubuntu-repo-cloud-langchain-deepagents-code` target owns live Deep Agents export evidence for
 Issue #11860. Its ordered checks first exercise opt-in observability and thread approval, then restore
