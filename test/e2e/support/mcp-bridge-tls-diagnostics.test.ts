@@ -7,7 +7,7 @@ import https from "node:https";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, it, vi } from "vitest";
-import { startFakeMcpHttpsServer } from "../e2e/live/mcp-bridge-servers";
+import { startFakeMcpHttpsServer } from "../live/mcp-bridge-servers";
 
 it("records a TLS rejection before any MCP request without application credentials", async () => {
   const directory = mkdtempSync(join(tmpdir(), "mcp-tls-diagnostic-"));

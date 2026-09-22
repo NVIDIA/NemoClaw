@@ -3111,6 +3111,14 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
                     console.log("  ✓ Released the managed startup hold");
                   }
                   managedBootstrapCreateFinished = true;
+                  if (managedStartupRootApplyRequest.corporateCaB64 !== null) {
+                    console.log("  Activating corporate CA trust in the OpenShell supervisor...");
+                    await managedWorkloadOnboard.refreshManagedStartupCorporateCaTrust({
+                      sandboxName,
+                      sandboxIdentityFingerprint: boundary.lifecycleLiveIdentityFingerprint,
+                      target: { kind: "named", gatewayName: boundary.gatewayName },
+                    });
+                  }
                   context.revalidateSandboxIdentity(
                     `confirming managed startup profile for sandbox '${sandboxName}'`,
                   );
