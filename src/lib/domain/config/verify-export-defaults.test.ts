@@ -4,10 +4,7 @@
 import YAML from "yaml";
 import { describe, expect, it } from "vitest";
 import { exportSnapshots } from "../../actions/config/export-test-fixture";
-import {
-  asExportedConfig,
-  exportedAgentList,
-} from "../../../../test/support/config-export-document";
+import { asExportedConfig } from "../../../../test/support/config-export-document";
 import { snapshot, tunedSnapshot } from "./export-source-test-fixture";
 
 describe("effective v1alpha1 export defaults (#12132)", () => {
@@ -26,7 +23,7 @@ describe("effective v1alpha1 export defaults (#12132)", () => {
     expect(explicit.writeStdout.mock.calls).toEqual(baseline.writeStdout.mock.calls);
     const config = asExportedConfig(YAML.parse(explicit.writeStdout.mock.calls[0]![0]));
     const sandbox = config.spec.sandboxes[0]!;
-    expect(exportedAgentList(sandbox)[0]!.inference.routes[0]!.overrides).toEqual({
+    expect(sandbox.agent.inference.routes[0]!.overrides).toEqual({
       model: "gpt-5",
       contextWindow: 131072,
     });

@@ -94,6 +94,66 @@ describe("OpenClaw device self-approval patch upgrades (#4462)", () => {
     }
   });
 
+  it("adds process exit after devices approve on an earlier patched runtime (#12064)", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-device-approve-exit-upgrade-"));
+    const dist = path.join(tmp, "dist");
+    fs.mkdirSync(dist);
+    writeFixtureDist(dist);
+    try {
+      expect(runPatch(dist).status).toBe(0);
+      const file = path.join(dist, "devices-cli.runtime-fixture.js");
+      const current = [
+        "\tconst exitAfterDevicesApproveOutput = () => {",
+        "\t\tlet remaining = 2;",
+        "\t\tconst done = () => {",
+        "\t\t\tremaining -= 1;",
+        "\t\t\tif (remaining === 0) defaultRuntime.exit(0);",
+        "\t\t};",
+        "\t\tfor (const stream of [process.stdout, process.stderr]) {",
+        "\t\t\ttry {",
+        '\t\t\t\tstream.write("", done);',
+        "\t\t\t} catch {",
+        "\t\t\t\tdone();",
+        "\t\t\t}",
+        "\t\t}",
+        "\t}; // nemoclaw: exit after devices approve so leftover gateway handles cannot hang (#12064)",
+        "\tif (opts.json) {",
+        "\t\tdefaultRuntime.writeJson(result);",
+        "\t\texitAfterDevicesApproveOutput();",
+        "\t\treturn;",
+        "\t}",
+        "\tconst resultRequestId = result?.requestId;",
+        '\tconst approvedRequestId = typeof resultRequestId === "string" && resultRequestId.trim().length > 0 ? resultRequestId : resolvedRequestId;',
+        "\tconst deviceId = result?.device?.deviceId;",
+        '\tdefaultRuntime.log(`${theme.success("Approved")} ${theme.command(deviceId ?? "ok")} ${theme.muted(`(${approvedRequestId})`)}`);',
+        "\texitAfterDevicesApproveOutput();",
+        "}",
+      ].join("\n");
+      const legacy = [
+        "\tif (opts.json) {",
+        "\t\tdefaultRuntime.writeJson(result);",
+        "\t\treturn;",
+        "\t}",
+        "\tconst resultRequestId = result?.requestId;",
+        '\tconst approvedRequestId = typeof resultRequestId === "string" && resultRequestId.trim().length > 0 ? resultRequestId : resolvedRequestId;',
+        "\tconst deviceId = result?.device?.deviceId;",
+        '\tdefaultRuntime.log(`${theme.success("Approved")} ${theme.command(deviceId ?? "ok")} ${theme.muted(`(${approvedRequestId})`)}`);',
+        "}",
+      ].join("\n");
+      const source = fs.readFileSync(file, "utf8");
+      expect(source).toContain(current);
+      fs.writeFileSync(file, source.replace(current, legacy));
+
+      expect(runPatch(dist).status).toBe(0);
+      const upgraded = fs.readFileSync(file, "utf8");
+      expect(upgraded).toContain(current);
+      expect(upgraded).not.toContain(legacy);
+      expect(runPatch(dist).status).toBe(0);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("adds watcher deferral to an earlier patched current gateway runtime (#9844)", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-device-defer-upgrade-"));
     const dist = path.join(tmp, "dist");

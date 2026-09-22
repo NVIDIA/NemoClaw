@@ -20,7 +20,7 @@ function mismatch(
   category: ExportFinding["category"],
   diagnostic: string,
 ): ExportFinding {
-  return { field: `spec.sandboxes[].agents[].interfaces.${leaf}`, category, diagnostic };
+  return { field: `spec.sandboxes[].harness.interfaces.${leaf}`, category, diagnostic };
 }
 
 type OpenClawDashboard = Extract<ManagedStartupProfile["dashboard"], { agent: "openclaw" }>;

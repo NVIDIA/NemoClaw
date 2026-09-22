@@ -13,10 +13,12 @@ import {
 export {
   abortOpenClawPostRestoreDoctor,
   abortUnregisteredOpenClawPostRestoreDoctor,
+  beginUnregisteredOpenClawBackupQuiesce,
   beginOpenClawPostRestoreDoctor,
   beginUnregisteredOpenClawPostRestoreDoctor,
   finishOpenClawPostRestoreDoctor,
   finishUnregisteredOpenClawPostRestoreDoctor,
+  promoteUnregisteredOpenClawBackupQuiesceToPostRestoreDoctor,
   promoteOpenClawBackupQuiesceToPostRestoreDoctor,
   releaseOpenClawPostRestoreDoctorForDelete,
 } from "../process-recovery";

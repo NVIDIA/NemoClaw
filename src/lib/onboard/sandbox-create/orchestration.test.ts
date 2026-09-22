@@ -63,42 +63,48 @@ describe("managed startup hold release", () => {
 describe("created Hermes credential environment reconciliation", () => {
   const plan = { agent: "hermes" } as never;
 
-  it("uses direct native health instead of the retired managed probe", async () => {
-    const wait = vi
-      .spyOn(processRecovery, "waitForRecoveredSandboxGateway")
-      .mockResolvedValueOnce(true);
-    const runtime = createHermesCredentialEnvReconciliationRuntime(vi.fn() as never, vi.fn());
-
-    await expect(runtime.waitForGateway("alpha", vi.fn())).resolves.toBe(true);
-
-    expect(wait).toHaveBeenCalledWith(
-      "alpha",
-      expect.objectContaining({ managedProbeImpl: expect.any(Function) }),
-    );
-    expect(wait.mock.calls[0]![1]!.managedProbeImpl!("alpha")).toBeNull();
-    wait.mockRestore();
-  });
-
-  it("revalidates identity after the secret boundary and before native restart", async () => {
+  it("uses the native restart recovery path after the secret boundary", async () => {
     const events: string[] = [];
-    const execute = vi
-      .spyOn(processRecovery, "executeSandboxExecCommand")
-      .mockImplementation(async (_sandboxName, command) => {
-        events.push(command === "hermes gateway restart" ? "restart" : "unexpected");
-        return { status: 0, stdout: "", stderr: "" };
+    const restart = vi
+      .spyOn(processRecovery, "restartSandboxGateway")
+      .mockImplementation(async () => {
+        events.push("restart");
+        return { ok: true, restarted: true, healthPassed: true, forwardRecovered: true };
       });
     const runtime = createHermesCredentialEnvReconciliationRuntime(vi.fn() as never, vi.fn());
 
     await expect(
       runtime.restartGateway("alpha", (operation) => events.push(`identity:${operation}`)),
-    ).resolves.toEqual({ status: 0, stdout: "", stderr: "" });
+    ).resolves.toEqual({
+      status: 0,
+      stdout: "Hermes gateway restarted and forwards recovered.",
+      stderr: "",
+    });
 
     expect(events).toEqual([
       "identity:restarting Hermes gateway for sandbox 'alpha'",
       "restart",
       "identity:confirming Hermes gateway restart for sandbox 'alpha'",
     ]);
-    execute.mockRestore();
+    expect(restart).toHaveBeenCalledWith("alpha", { quiet: true });
+    restart.mockRestore();
+  });
+
+  it("preserves native restart recovery failures for onboarding", async () => {
+    const restart = vi.spyOn(processRecovery, "restartSandboxGateway").mockResolvedValueOnce({
+      ok: false,
+      failureLayer: "health timeout",
+      detail: "gateway process restarted but health did not pass before timeout",
+    });
+    const runtime = createHermesCredentialEnvReconciliationRuntime(vi.fn() as never, vi.fn());
+
+    await expect(runtime.restartGateway("alpha", vi.fn())).resolves.toEqual({
+      status: 1,
+      stdout: "",
+      stderr: "health timeout: gateway process restarted but health did not pass before timeout",
+    });
+
+    restart.mockRestore();
   });
 
   it("finalizes sandbox registration before reconciling credentials (#9833)", async () => {
@@ -123,7 +129,7 @@ describe("created Hermes credential environment reconciliation", () => {
     ]);
   });
 
-  it("restarts and rechecks the native gateway after changing the env file", async () => {
+  it("accepts the native restart recovery result without a second health wait", async () => {
     const events: string[] = [];
     const restart = { status: 0, stdout: "managed completion", stderr: "" };
 
@@ -139,10 +145,6 @@ describe("created Hermes credential environment reconciliation", () => {
           events.push("restart");
           return restart;
         },
-        waitForGateway: async () => {
-          events.push("wait");
-          return true;
-        },
       },
       vi.fn(),
     );
@@ -152,14 +154,12 @@ describe("created Hermes credential environment reconciliation", () => {
       "reconcile",
       expect.stringMatching(/^identity:confirming/u),
       "restart",
-      "wait",
       expect.stringMatching(/^identity:completing/u),
     ]);
   });
 
   it("does not restart when the env file was already reconciled", async () => {
     const restartGateway = vi.fn();
-    const waitForGateway = vi.fn();
 
     await reconcileCreatedHermesCredentialEnvironment(
       { sandboxName: "alpha", plan },
@@ -167,13 +167,11 @@ describe("created Hermes credential environment reconciliation", () => {
         revalidateSandboxIdentity: vi.fn(),
         reconcileCredentialEnv: () => ({ changed: false }),
         restartGateway,
-        waitForGateway,
       },
       vi.fn(),
     );
 
     expect(restartGateway).not.toHaveBeenCalled();
-    expect(waitForGateway).not.toHaveBeenCalled();
   });
 
   it("refuses a same-name replacement at the credential mutation edge (#9833)", async () => {
@@ -199,7 +197,6 @@ describe("created Hermes credential environment reconciliation", () => {
             return { changed: true };
           }) as never,
           restartGateway: vi.fn(),
-          waitForGateway: vi.fn(),
         },
         vi.fn(),
       ),
@@ -220,7 +217,6 @@ describe("created Hermes credential environment reconciliation", () => {
             stdout: "",
             stderr: "failed",
           }),
-          waitForGateway: vi.fn(),
         },
         recordRecovery,
       ),
