@@ -542,9 +542,7 @@ describe("fixed catalog vLLM installs", () => {
 
     expect(result).toEqual({ ok: true });
     const declaration = spies.logSpy.mock.calls.map(([line]) => String(line));
-    expect(declaration).not.toContain(
-      `    Image download on first run (${declaredImageSize(selection)}), cached after`,
-    );
+    expect(declaration.filter((line) => line.includes("Image download on first run"))).toEqual([]);
     expect(declaration).toContain(
       `    Model download on first run (${declaredModelSize(selection)}), cached after`,
     );

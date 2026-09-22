@@ -397,6 +397,9 @@ describe("managed-cluster vLLM installer selection", () => {
     const capability = readyCapability();
     const selection = fixtureManagedClusterSelection();
     const messages: string[] = [];
+    const log = vi.fn((message?: string) => {
+      messages.push(message ?? "");
+    });
     const promptFn = vi.fn(async () => "no");
 
     await tryInstallManagedClusterManagedVllm(
@@ -407,20 +410,22 @@ describe("managed-cluster vLLM installer selection", () => {
         resolveSelection: () => selection,
         claimCapability: vi.fn(),
         assertNoRuntimeReceipts: vi.fn(),
-        log: (message?: string) => {
-          messages.push(message ?? "");
-        },
+        log,
         error: vi.fn(),
       },
     );
 
+    const gate = promptFn.mock.invocationCallOrder[0]!;
+    const declaredBeforeGate = log.mock.invocationCallOrder
+      .map((order, index) => (order < gate ? messages[index]! : null))
+      .filter((line): line is string => line !== null);
     expect(promptFn).toHaveBeenCalled();
-    expect(messages).toContain(
+    expect(declaredBeforeGate).toContain(
       `    Image download per node on first run (${formatStorageBytes(
         BigInt(selection.recipe.spec.runtime.imageDownloadSizeBytes),
       )}), cached after`,
     );
-    expect(messages).toContain(
+    expect(declaredBeforeGate).toContain(
       `    Model download per node on first run (${formatStorageBytes(
         BigInt(selection.recipe.spec.model.downloadSizeBytes),
       )}), cached after`,
