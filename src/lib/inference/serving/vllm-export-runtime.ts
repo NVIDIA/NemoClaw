@@ -285,6 +285,14 @@ export function observeManagedVllmForExport(
       resolveBridgeHost: () => bridge,
     });
     if (!recovered || recovered.containerId !== row.Id || row.Image !== image.Id) fail();
+    if (
+      row.Config.Labels[HOST_LOCAL_VLLM_CATALOG_LABEL] !== expected.current.catalogDigest ||
+      row.Config.Labels[HOST_LOCAL_VLLM_PRESET_LABEL] !== expected.current.preset.id ||
+      row.Config.Labels[HOST_LOCAL_VLLM_PRESET_DIGEST_LABEL] !== expected.current.preset.digest ||
+      row.Config.Labels[HOST_LOCAL_VLLM_RECIPE_LABEL] !== expected.current.recipe.id ||
+      row.Config.Labels[HOST_LOCAL_VLLM_RECIPE_DIGEST_LABEL] !== expected.current.recipe.digest
+    )
+      fail();
     const hostPort = Number(new URL(recovered.baseUrl).port);
     const serving: NemoClawManagedVllmServing = {
       backend: "vllm",

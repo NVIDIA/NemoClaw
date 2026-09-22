@@ -177,6 +177,27 @@ describe("fixed managed vLLM export observation", () => {
       },
     ],
     [
+      "stale matching serving identity",
+      (f: ReturnType<typeof fixture>) => {
+        const catalogDigest = `sha256:${"d".repeat(64)}`;
+        f.container.Config.Labels[HOST_LOCAL_VLLM_CATALOG_LABEL] = catalogDigest;
+        persistHostLocalVllmRuntimeReceipt(
+          {
+            containerId,
+            authFingerprint: runtimeAuthFingerprint(key),
+            serving: {
+              catalogDigest,
+              presetId: f.provenance.preset.id,
+              presetDigest: f.provenance.preset.digest,
+              recipeId: f.provenance.recipe.id,
+              recipeDigest: f.provenance.recipe.digest,
+            },
+          },
+          f.directory,
+        );
+      },
+    ],
+    [
       "mismatched token",
       (f: ReturnType<typeof fixture>) => {
         f.container.Config.Env = [`VLLM_API_KEY=${"d".repeat(64)}`];

@@ -584,6 +584,7 @@ test(
   },
   async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox }) => {
     const exportEnv = vllmExportEnv();
+    let managedVllmOnboarded = false;
     await artifacts.target.declare({
       id: "gpu-e2e",
       boundary:
@@ -617,7 +618,9 @@ test(
     cleanup.trackDisposable("remove the exact managed vLLM runtime", () => {
       const result = cleanupLocalModelRuntimes({ env: exportEnv, sandboxName: SANDBOX_NAME });
       expect(
-        result.ok && result.removed.some((resource) => resource.startsWith("container:")),
+        result.ok &&
+          (!managedVllmOnboarded ||
+            result.removed.some((resource) => resource.startsWith("container:"))),
         JSON.stringify(result),
       ).toBe(true);
     });
@@ -659,6 +662,7 @@ test(
       },
     );
     expect(onboard.exitCode, resultText(onboard)).toBe(0);
+    managedVllmOnboarded = true;
     const apiKey = loadManagedVllmApiKey();
     artifacts.addRedactionValues([apiKey ?? ""]);
 
