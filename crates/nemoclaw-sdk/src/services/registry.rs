@@ -193,8 +193,8 @@ impl ServiceDefinition {
             .iter()
             .all(|sandbox| sandbox.runtime.provider == ComputeDriver::Docker);
         let (placement, package) = match self {
-            Self::Ollama(service) => (service.placement.as_ref(), "Ollama"),
-            Self::Vllm(service) => (service.placement.as_ref(), "vLLM"),
+            Self::Ollama(service) => (service.published_placement()?, "Ollama"),
+            Self::Vllm(service) => (service.published_placement()?, "vLLM"),
             Self::OllamaProxy(service) => {
                 return crate::config::validation::require(
                     local_docker || service.engine.is_some(),
@@ -214,33 +214,26 @@ impl ServiceDefinition {
     }
 
     fn allocation(&self, gateway: &Gateway) -> Result<Option<NetworkAllocation>, ConfigError> {
-        let (placement, publication, port) = match self {
-            Self::Ollama(service) => (
-                &service.placement,
-                &service.publication,
-                service.serving.port,
-            ),
-            Self::Vllm(service) => (
-                &service.placement,
-                &service.publication,
-                service.serving.port,
-            ),
+        let (placement, port) = match self {
+            Self::Ollama(service) => (service.published_placement()?, service.serving.port),
+            Self::Vllm(service) => (service.published_placement()?, service.serving.port),
             Self::OllamaProxy(_) => return Ok(None),
         };
-        let (engine, network_cidr) = match placement {
-            Some(placement) => (&placement.engine, &placement.network_cidr),
+        let (engine, network_cidr, bind_address) = match placement {
+            Some(explicit) => (
+                &explicit.placement.engine,
+                &explicit.placement.network_cidr,
+                explicit.publication.bind_address.clone(),
+            ),
             None => {
                 let gateway = gateway.managed()?;
-                (&gateway.engine, &gateway.network_cidr)
+                (&gateway.engine, &gateway.network_cidr, gateway.bridge()?)
             }
         };
         Ok(Some(NetworkAllocation {
             engine: engine.clone(),
             network_cidr: network_cidr.clone(),
-            bind_address: publication.as_ref().map_or_else(
-                || gateway.managed()?.bridge(),
-                |publication| Ok(publication.bind_address.clone()),
-            )?,
+            bind_address,
             port,
         }))
     }
@@ -374,7 +367,7 @@ fn definition<'a>(
     document: &'a Document,
     provider: &InferenceProvider,
 ) -> Result<Option<(&'a str, &'a ServiceDefinition)>, ConfigError> {
-    let Some(name) = provider.service_ref.as_deref() else {
+    let crate::config::InferenceTarget::Service { name } = provider.target()? else {
         return Ok(None);
     };
     document
@@ -410,8 +403,12 @@ pub(crate) fn provider_authenticated(
     document: &Document,
     provider: &InferenceProvider,
 ) -> Result<bool, ConfigError> {
-    Ok(provider.credential.is_some()
-        || resolve(document, provider)?.is_some_and(|service| service.requires_authentication))
+    match provider.target()? {
+        crate::config::InferenceTarget::External { credential, .. } => Ok(credential.is_some()),
+        crate::config::InferenceTarget::Service { .. } => {
+            Ok(resolve(document, provider)?.is_some_and(|service| service.requires_authentication))
+        }
+    }
 }
 
 /// Installer results retained for one graph compilation.
@@ -507,16 +504,13 @@ pub(crate) fn validate_route(
     model: &str,
 ) -> Result<(), ConfigError> {
     use crate::config::validation::require;
-    let Some((_, definition)) = definition(document, provider)? else {
+    let Some((name, definition)) = definition(document, provider)? else {
         return Ok(());
     };
     let inference = definition
         .inference()
         .ok_or_else(|| ConfigError::new("serviceRef must name an inference-capable service"))?;
-    let resolved = inference.resolve(
-        document,
-        provider.service_ref.as_deref().unwrap_or_default(),
-    )?;
+    let resolved = inference.resolve(document, name)?;
     require(
         model == resolved.served_model,
         "service requires its declared served model",

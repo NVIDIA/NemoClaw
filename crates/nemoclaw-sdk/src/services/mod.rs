@@ -9,6 +9,7 @@
 pub(crate) mod authentication;
 pub(crate) mod capacity;
 mod contract;
+pub mod placement;
 pub use capacity::{ServiceCapacity, observe_service_capacity, validate_capacity_specs};
 pub mod installers;
 mod readiness;

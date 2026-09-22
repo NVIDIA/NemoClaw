@@ -26,7 +26,7 @@ mod kinds;
 pub mod schema;
 pub use kinds::{ComputeDriver, HarnessKind, InferenceProviderKind};
 mod types;
-pub use inference::InferenceConnection;
+pub use inference::{InferenceConnection, InferenceTarget};
 pub(crate) mod validation;
 use sha2::{Digest, Sha256};
 use std::{fmt, io::Read};
