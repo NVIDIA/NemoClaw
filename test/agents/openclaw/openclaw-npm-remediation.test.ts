@@ -133,7 +133,11 @@ function writeLegacyCoreFixture(tarVersion = "7.5.11"): string {
       {
         name: "openclaw",
         version: "2026.3.11",
-        dependencies: { commander: "14.0.3", tar: tarVersion },
+        dependencies: {
+          "@whiskeysockets/baileys": "7.0.0-rc.9",
+          commander: "14.0.3",
+          tar: tarVersion,
+        },
       },
       null,
       2,
@@ -356,6 +360,62 @@ function writeLegacyCoreArchiveFixtures(): {
   const tarArchive = path.join(root, "tar-7.5.21-source.tgz");
   packFixture(tarDirectory, tarArchive);
 
+  const baileysDirectory = path.join(root, "baileys-package");
+  mkdirSync(baileysDirectory, { recursive: true });
+  writeFileSync(
+    path.join(baileysDirectory, "package.json"),
+    `${JSON.stringify(
+      {
+        name: "@whiskeysockets/baileys",
+        version: "7.0.0-rc.9",
+        license: "MIT",
+        engines: { node: ">=20.0.0" },
+        gitHead: "cb8b3717aaede47460ba700651ee936f268c0ce4",
+        dependencies: {
+          "@cacheable/node-cache": "^1.4.0",
+          "@hapi/boom": "^9.1.3",
+          "async-mutex": "^0.5.0",
+          libsignal: "git+https://github.com/whiskeysockets/libsignal-node",
+          "lru-cache": "^11.1.0",
+          "music-metadata": "^11.7.0",
+          "p-queue": "^9.0.0",
+          pino: "^9.6",
+          protobufjs: "^7.2.4",
+          ws: "^8.13.0",
+        },
+        peerDependencies: {
+          "audio-decode": "^2.1.3",
+          jimp: "^1.6.0",
+          "link-preview-js": "^3.0.0",
+          sharp: "*",
+        },
+      },
+      null,
+      2,
+    )}\n`,
+  );
+  const baileysArchive = path.join(root, "whiskeysockets-baileys-7.0.0-rc.9-source.tgz");
+  packFixture(baileysDirectory, baileysArchive);
+
+  const libsignalDirectory = path.join(root, "libsignal-package");
+  mkdirSync(libsignalDirectory, { recursive: true });
+  writeFileSync(
+    path.join(libsignalDirectory, "package.json"),
+    `${JSON.stringify(
+      {
+        name: "libsignal",
+        version: "6.0.0",
+        license: "GPL-3.0",
+        gitHead: "bcea72df9ec34d9d9140ab30619cf479c7c144c7",
+        dependencies: { "curve25519-js": "^0.0.4", protobufjs: "^7.5.5" },
+      },
+      null,
+      2,
+    )}\n`,
+  );
+  const libsignalArchive = path.join(root, "libsignal-6.0.0-source.tgz");
+  packFixture(libsignalDirectory, libsignalArchive);
+
   const npmExecutable = path.join(root, "npm-fixture.sh");
   writeFileSync(
     npmExecutable,
@@ -363,20 +423,34 @@ function writeLegacyCoreArchiveFixtures(): {
       "#!/usr/bin/env bash",
       "set -euo pipefail",
       `tar_archive=${JSON.stringify(tarArchive)}`,
+      `baileys_archive=${JSON.stringify(baileysArchive)}`,
+      `libsignal_archive=${JSON.stringify(libsignalArchive)}`,
       'case "$1:$2:${3:-}" in',
       '  "view:tar@7.5.21:dist.integrity") value="sha512-XdhtCvlMywwxpCW8YEq3lOXBJpUPTR2OHHcwLPO3HwsJqOHa2Ok/oJ7ruGzp+JrKoRPVCzJwAdEjqLW/vNRPHA==" ;;',
       '  "view:tar@7.5.21:dist.tarball") value="https://registry.npmjs.org/tar/-/tar-7.5.21.tgz" ;;',
       '  "pack:tar@7.5.21:--pack-destination") ;;',
+      '  "view:@whiskeysockets/baileys@7.0.0-rc.9:dist.integrity") value="sha512-YFm5gKXfDP9byCXCW3OPHKXLzrAKzolzgVUlRosHHgwbnf2YOO3XknkMm6J7+F0ns8OA0uuSBhgkRHTDtqkacw==" ;;',
+      '  "view:@whiskeysockets/baileys@7.0.0-rc.9:dist.tarball") value="https://registry.npmjs.org/@whiskeysockets/baileys/-/baileys-7.0.0-rc.9.tgz" ;;',
+      '  "pack:@whiskeysockets/baileys@7.0.0-rc.9:--pack-destination") ;;',
+      '  "view:libsignal@6.0.0:dist.integrity") value="sha512-d/5V3YFtDljbFMufz4ncyUYGYhJl+vzAe+c2EFFBQ6bz1h8Q3IOMEGXYMzlibU60I+e8GagMMpji18iez3P1hA==" ;;',
+      '  "view:libsignal@6.0.0:dist.tarball") value="https://registry.npmjs.org/libsignal/-/libsignal-6.0.0.tgz" ;;',
+      '  "pack:libsignal@6.0.0:--pack-destination") ;;',
       '  *) echo "unexpected npm fixture invocation: $*" >&2; exit 1 ;;',
       "esac",
       'if [ "$1" = "view" ]; then printf "%s\\n" "$value"; exit 0; fi',
+      'package_spec="$2"',
       'destination=""',
       'while [ "$#" -gt 0 ]; do',
       '  if [ "$1" = "--pack-destination" ]; then destination="$2"; shift 2; continue; fi',
       "  shift",
       "done",
-      'cp "$tar_archive" "$destination/tar-7.5.21.tgz"',
-      'printf \'[{"filename":"tar-7.5.21.tgz","integrity":"sha512-XdhtCvlMywwxpCW8YEq3lOXBJpUPTR2OHHcwLPO3HwsJqOHa2Ok/oJ7ruGzp+JrKoRPVCzJwAdEjqLW/vNRPHA=="}]\\n\'',
+      'case "$package_spec" in',
+      '  "tar@7.5.21") archive="$tar_archive"; filename="tar-7.5.21.tgz"; integrity="sha512-XdhtCvlMywwxpCW8YEq3lOXBJpUPTR2OHHcwLPO3HwsJqOHa2Ok/oJ7ruGzp+JrKoRPVCzJwAdEjqLW/vNRPHA==" ;;',
+      '  "@whiskeysockets/baileys@7.0.0-rc.9") archive="$baileys_archive"; filename="whiskeysockets-baileys-7.0.0-rc.9.tgz"; integrity="sha512-YFm5gKXfDP9byCXCW3OPHKXLzrAKzolzgVUlRosHHgwbnf2YOO3XknkMm6J7+F0ns8OA0uuSBhgkRHTDtqkacw==" ;;',
+      '  "libsignal@6.0.0") archive="$libsignal_archive"; filename="libsignal-6.0.0.tgz"; integrity="sha512-d/5V3YFtDljbFMufz4ncyUYGYhJl+vzAe+c2EFFBQ6bz1h8Q3IOMEGXYMzlibU60I+e8GagMMpji18iez3P1hA==" ;;',
+      "esac",
+      'cp "$archive" "$destination/$filename"',
+      'printf \'[{"filename":"%s","integrity":"%s"}]\\n\' "$filename" "$integrity"',
       "",
     ].join("\n"),
     { mode: 0o700 },
@@ -775,11 +849,39 @@ describe("OpenClaw npm remediation", () => {
         bundledDependencies?: string[];
         dependencies?: Record<string, string>;
       }>(path.join(extracted, "package", "package.json")),
-    ).toMatchObject({ bundledDependencies: ["tar"], dependencies: { tar: "7.5.21" } });
+    ).toMatchObject({
+      bundledDependencies: ["tar", "@whiskeysockets/baileys", "libsignal"],
+      dependencies: {
+        "@whiskeysockets/baileys": "7.0.0-rc.9",
+        libsignal: "6.0.0",
+        tar: "7.5.21",
+      },
+    });
     expect(
       readJson<{ name?: string; version?: string }>(
         path.join(extracted, "package", "node_modules", "tar", "package.json"),
       ),
     ).toMatchObject({ name: "tar", version: "7.5.21" });
+    expect(
+      readJson<{ dependencies?: Record<string, string>; name?: string; version?: string }>(
+        path.join(
+          extracted,
+          "package",
+          "node_modules",
+          "@whiskeysockets",
+          "baileys",
+          "package.json",
+        ),
+      ),
+    ).toMatchObject({
+      name: "@whiskeysockets/baileys",
+      version: "7.0.0-rc.9",
+      dependencies: { libsignal: "6.0.0" },
+    });
+    expect(
+      readJson<{ name?: string; version?: string }>(
+        path.join(extracted, "package", "node_modules", "libsignal", "package.json"),
+      ),
+    ).toMatchObject({ name: "libsignal", version: "6.0.0" });
   }, 60_000);
 });

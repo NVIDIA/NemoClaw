@@ -210,7 +210,7 @@ describe("NemoClawConfig v1", () => {
     mutate(context);
     const { value } = context;
     expect(() => validateNemoClawConfig(value)).toThrow(
-      "/spec/sandboxes/0/agents must contain primary followed by uniquely named read-only OpenClaw agents sharing its hosted route",
+      "/spec/sandboxes/0/agents must contain primary followed by uniquely named read-only OpenClaw agents sharing its hosted or attached-Ollama route",
     );
   });
 
@@ -234,7 +234,7 @@ describe("NemoClawConfig v1", () => {
     const { value, reviewer } = threeAgentConfig();
     reviewer.inference.routes[0]!.overrides.model = "other";
     expect(() => validateNemoClawConfig(value)).toThrow(
-      "/spec/sandboxes/0/agents must contain primary followed by uniquely named read-only OpenClaw agents sharing its hosted route",
+      "/spec/sandboxes/0/agents must contain primary followed by uniquely named read-only OpenClaw agents sharing its hosted or attached-Ollama route",
     );
   });
 
@@ -1026,9 +1026,18 @@ describe("fixed managed serving public contract", () => {
   });
 });
 
-function ollamaConfig(model = "qwen3.5:9b") {
+function ollamaConfig(model = "qwen3.5:9b", names: string[] = [], tuning = {}) {
   const value = config();
-  value.spec.sandboxes[0]!.agents[0]!.inference.routes[0]!.overrides.model = model;
+  const agents = value.spec.sandboxes[0]!.agents;
+  const primary = agents[0]!;
+  Object.assign(primary.inference.routes[0]!.overrides, { model, ...tuning });
+  agents.push(
+    ...names.map((name) => ({
+      ...structuredClone(primary),
+      name,
+      tools: { allow: ["read"] },
+    })),
+  );
   return {
     ...value,
     spec: {
@@ -1051,6 +1060,65 @@ function ollamaConfig(model = "qwen3.5:9b") {
 }
 
 describe("attached Ollama serving public contract", () => {
+  it("round trips an ordered Ollama roster with identical tuning (#11858)", () => {
+    const value = ollamaConfig("qwen2.5:0.5b", ["researcher", "reviewer"], {
+      contextWindow: 32768,
+      maxTokens: 8192,
+      reasoning: true,
+      reasoningEffort: "high",
+    });
+    expect(validateNemoClawConfig(YAML.parse(renderInput(value).yaml))).toEqual(value);
+  });
+
+  it.each([
+    { field: "execution", change: { execution: { timeoutSeconds: 1 } } },
+    { field: "interfaces", change: { interfaces: { dashboard: { port: 19000 } } } },
+    {
+      field: "authentication",
+      change: { auth: { method: "api-key", providerRef: "hosted-openai" } },
+    },
+    {
+      field: "observability",
+      change: {
+        observability: {
+          otlp: {
+            enabled: true,
+            endpoint: "http://host.openshell.internal:4318",
+            serviceName: "reviewer",
+            sampleRate: 1,
+          },
+        },
+      },
+    },
+  ])("rejects secondary $field on the shared Ollama route (#11858)", ({ change }) => {
+    const value = ollamaConfig("qwen2.5:0.5b", ["researcher", "reviewer"]);
+    Object.assign(value.spec.sandboxes[0]!.agents[2]!, change);
+    expect(() => validateNemoClawConfig(value)).toThrow();
+  });
+
+  it.each([
+    { model: "qwen3.5:9b" },
+    { contextWindow: 32768 },
+    { maxTokens: 4096 },
+    { reasoning: false },
+    { reasoningEffort: "low" },
+  ])("rejects divergent Ollama model or tuning on the last agent %# (#11858)", (change) => {
+    const value = ollamaConfig("qwen2.5:0.5b", ["researcher", "reviewer"]);
+    Object.assign(value.spec.sandboxes[0]!.agents[2]!.inference.routes[0]!.overrides, change);
+    expect(() => validateNemoClawConfig(value)).toThrow();
+  });
+
+  it("keeps managed vLLM rosters outside the supported contract (#11858)", () => {
+    const { value } = managedServingConfig();
+    const primary = value.spec.sandboxes[0]!.agents[0]!;
+    value.spec.sandboxes[0]!.agents.push({
+      ...structuredClone(primary),
+      name: "researcher",
+      ...{ tools: { allow: ["read"] } },
+    });
+    expect(() => validateNemoClawConfig(value)).toThrow("hosted or attached-Ollama route");
+  });
+
   it.each(["qwen3.5:9b", "qwen2.5:0.5b"])(
     "round trips the selected model %s and external daemon (#11857)",
     (model) => {

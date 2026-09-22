@@ -38,6 +38,12 @@ HERMES_HOME = Path("/sandbox/.hermes")
 SANDBOX_HOME = Path("/sandbox")
 NEMOCLAW_HOME = SANDBOX_HOME / ".nemoclaw"
 CONTROL_LOCK_PATH = Path("/run/nemoclaw/hermes-cron-restore-control.lock")
+GATEWAY_RECOVERY_REQUEST_PATH = Path(
+    "/tmp/nemoclaw-hermes-gateway-recovery/request"
+)
+GATEWAY_RECOVERY_WAITING_PATH = Path(
+    "/tmp/nemoclaw-hermes-gateway-recovery-waiting"
+)
 CONTROL_MARKER_NAME = "hermes-cron-restore-drain.json"
 RELEASE_RECOVERY_NAME = "hermes-cron-restore-release-recovery.json"
 RECEIPT_PREFIX = "NEMOCLAW_HERMES_CRON_RESTORE_V1:"
@@ -47,6 +53,7 @@ DRAIN_MARKER_ROLLBACK_FAILED_CODE = "drain-marker-rollback-failed"
 BEGIN_TIMEOUT_SECONDS = 60.0
 RELEASE_TIMEOUT_SECONDS = 15.0
 POLL_SECONDS = 0.1
+GATEWAY_RECOVERY_WAIT_SECONDS = 2.0
 MAX_JOBS_BYTES = 8 * 1024 * 1024
 MAX_MARKER_BYTES = 4096
 ROOT_UID = 0
@@ -397,6 +404,170 @@ def _write_owned_record(
             staged_path.unlink(missing_ok=True)
 
 
+def _read_gateway_recovery_generation() -> str | None:
+    """Read the unprivileged supervisor's opaque, one-use generation."""
+    try:
+        expected_uid = HERMES_HOME.lstat().st_uid
+    except OSError as error:
+        raise ControlError("Hermes home identity is unavailable") from error
+    flags = os.O_RDONLY | os.O_CLOEXEC | os.O_NONBLOCK
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    try:
+        descriptor = os.open(GATEWAY_RECOVERY_WAITING_PATH, flags)
+    except FileNotFoundError:
+        return None
+    except OSError as error:
+        raise ControlError("Hermes gateway recovery generation is unreadable") from error
+    try:
+        metadata = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(metadata.st_mode)
+            or metadata.st_uid != expected_uid
+            or stat.S_IMODE(metadata.st_mode) != 0o600
+            or metadata.st_nlink != 1
+            or metadata.st_size != 68
+        ):
+            raise ControlError("Hermes gateway recovery generation metadata is unsafe")
+        raw = os.read(descriptor, 69)
+    except OSError as error:
+        raise ControlError("Hermes gateway recovery generation is unreadable") from error
+    finally:
+        os.close(descriptor)
+    try:
+        payload = raw.decode("ascii")
+    except UnicodeError as error:
+        raise ControlError("Hermes gateway recovery generation is invalid") from error
+    if (
+        not payload.startswith("v1 ")
+        or not payload.endswith("\n")
+        or len(payload) != 68
+        or any(character not in "0123456789abcdef" for character in payload[3:-1])
+    ):
+        raise ControlError("Hermes gateway recovery generation is invalid")
+    return payload[3:-1]
+
+
+def _wait_for_gateway_recovery_generation() -> str | None:
+    deadline = time.monotonic() + GATEWAY_RECOVERY_WAIT_SECONDS
+    while True:
+        generation = _read_gateway_recovery_generation()
+        if generation is not None:
+            return generation
+        if time.monotonic() >= deadline:
+            return None
+        time.sleep(POLL_SECONDS)
+
+
+def _self_process_identity() -> tuple[int, int]:
+    """Return the controller PID and Linux process start time."""
+    pid = os.getpid()
+    try:
+        raw = Path("/proc/self/stat").read_text(encoding="ascii")
+    except OSError as error:
+        raise ControlError("Hermes recovery controller identity is unavailable") from error
+    closing_paren = raw.rfind(")")
+    fields = raw[closing_paren + 2 :].split() if closing_paren >= 0 else []
+    try:
+        start_time = int(fields[19])
+    except (IndexError, ValueError) as error:
+        raise ControlError("Hermes recovery controller identity is invalid") from error
+    if pid <= 1 or start_time < 0:
+        raise ControlError("Hermes recovery controller identity is invalid")
+    return pid, start_time
+
+
+def _prepare_gateway_recovery_runtime_root(runtime_root: Path) -> None:
+    """Create the root-owned handoff directory that survives sandbox Landlock."""
+    try:
+        runtime_root.mkdir(mode=0o755)
+    except FileExistsError:
+        # A prior controller invocation may have created this directory; revalidate its descriptor below.
+        pass
+    except OSError as error:
+        raise ControlError("Hermes gateway recovery runtime is unavailable") from error
+
+    flags = os.O_RDONLY | os.O_CLOEXEC
+    if hasattr(os, "O_DIRECTORY"):
+        flags |= os.O_DIRECTORY
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    try:
+        descriptor = os.open(runtime_root, flags)
+    except OSError as error:
+        raise ControlError("Hermes gateway recovery runtime is unavailable") from error
+    try:
+        metadata = os.fstat(descriptor)
+        if (
+            not stat.S_ISDIR(metadata.st_mode)
+            or metadata.st_uid != ROOT_UID
+            or metadata.st_gid != ROOT_GID
+            or stat.S_IMODE(metadata.st_mode) & 0o022
+        ):
+            raise ControlError("Hermes gateway recovery runtime metadata is unsafe")
+        os.fchmod(descriptor, 0o755)
+        if stat.S_IMODE(os.fstat(descriptor).st_mode) != 0o755:
+            raise ControlError("Hermes gateway recovery runtime metadata is unsafe")
+    except OSError as error:
+        raise ControlError("Hermes gateway recovery runtime is unavailable") from error
+    finally:
+        os.close(descriptor)
+
+
+def _publish_gateway_recovery_request(
+    generation: str, requester_pid: int, requester_start_time: int
+) -> None:
+    """Publish one root-owned request after recovery gating is durable."""
+    runtime_root = GATEWAY_RECOVERY_REQUEST_PATH.parent
+    _prepare_gateway_recovery_runtime_root(runtime_root)
+    payload = f"v2 {generation} {requester_pid} {requester_start_time}\n".encode(
+        "ascii"
+    )
+    descriptor = -1
+    staged_path: Path | None = None
+    try:
+        try:
+            current = GATEWAY_RECOVERY_REQUEST_PATH.lstat()
+        except FileNotFoundError:
+            current = None
+        if current is not None and (
+            not stat.S_ISREG(current.st_mode)
+            or current.st_uid != ROOT_UID
+            or current.st_gid != ROOT_GID
+            or stat.S_IMODE(current.st_mode) != 0o444
+            or current.st_nlink != 1
+        ):
+            raise ControlError("Hermes gateway recovery request metadata is unsafe")
+
+        descriptor, staged_raw = tempfile.mkstemp(
+            prefix=".hermes-gateway-recovery-request-",
+            dir=runtime_root,
+        )
+        staged_path = Path(staged_raw)
+        os.fchown(descriptor, ROOT_UID, ROOT_GID)
+        os.fchmod(descriptor, 0o444)
+        written = os.write(descriptor, payload)
+        if written != len(payload):
+            raise OSError("short recovery request write")
+        os.fsync(descriptor)
+        os.close(descriptor)
+        descriptor = -1
+        os.replace(staged_path, GATEWAY_RECOVERY_REQUEST_PATH)
+        staged_path = None
+        _fsync_directory(runtime_root, "NemoClaw runtime root")
+    except ControlError:
+        raise
+    except OSError as error:
+        raise ControlError(
+            "Hermes gateway recovery request could not be published"
+        ) from error
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+        if staged_path is not None:
+            staged_path.unlink(missing_ok=True)
+
+
 def _write_owned_drain(drain_token: str, *, started_at_ns: int | None = None) -> None:
     payload = json.dumps(
         {"token": drain_token, "version": 1},
@@ -740,11 +911,14 @@ def _receipt(
     print(f"{RECEIPT_PREFIX}{json.dumps(payload, separators=(',', ':'), sort_keys=True)}")
 
 
-def _prepare_recovery_receipt(drain_acquired: bool) -> None:
+def _prepare_recovery_receipt(
+    drain_acquired: bool, gateway_recovery_requested: bool
+) -> None:
     payload = {
         "version": 1,
         "action": "prepare-recover",
         "drain_acquired": drain_acquired,
+        "gateway_recovery_requested": gateway_recovery_requested,
         "disposition": "gate-prepared" if drain_acquired else "not-required",
     }
     print(f"{RECEIPT_PREFIX}{json.dumps(payload, separators=(',', ':'), sort_keys=True)}")
@@ -896,7 +1070,14 @@ def _prepare_owned_drain() -> str | None:
 def prepare_recovery() -> None:
     """Re-establish any persisted NemoClaw gate before host gateway repair."""
     with _control_lock():
-        _prepare_recovery_receipt(_prepare_owned_drain() is not None)
+        drain_acquired = _prepare_owned_drain() is not None
+        generation = _wait_for_gateway_recovery_generation()
+        if generation is not None:
+            requester_pid, requester_start_time = _self_process_identity()
+            _publish_gateway_recovery_request(
+                generation, requester_pid, requester_start_time
+            )
+        _prepare_recovery_receipt(drain_acquired, generation is not None)
 
 
 def begin_drain() -> str:

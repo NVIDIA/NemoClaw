@@ -54,6 +54,9 @@ describe("createSandbox installer restore intent", () => {
       const execActionPath = JSON.stringify(
         path.join(repoRoot, "src", "lib", "actions", "sandbox", "exec.ts"),
       );
+      const processRecoveryPath = JSON.stringify(
+        path.join(repoRoot, "src", "lib", "actions", "sandbox", "process-recovery.ts"),
+      );
 
       fs.mkdirSync(fakeBin, { recursive: true });
       writeOkOpenshell(fakeBin);
@@ -66,11 +69,18 @@ fixtureMocks.mockManagedStateVolumeOnboardLifecycle();
 const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
 const registry = require(${registryPath});
 const sandboxState = require(${sandboxStatePath});
+const processRecovery = require(${processRecoveryPath});
 const childProcess = require("node:child_process");
 const { EventEmitter } = require("node:events");
 
 const PRE_UPGRADE_BACKUP = "/tmp/fake-pre-upgrade-backup";
 const events = [];
+processRecovery.beginUnregisteredOpenClawPostRestoreDoctor = async (sandboxName) => ({
+  ok: true,
+  window: { sandboxName },
+});
+processRecovery.finishUnregisteredOpenClawPostRestoreDoctor = async () => ({ ok: true });
+processRecovery.abortUnregisteredOpenClawPostRestoreDoctor = async () => ({ ok: true });
 const createdSandbox = fixtureMocks.createCreatedSandboxFixture({
   sandboxName: "my-assistant",
   lifecycleState: "created",

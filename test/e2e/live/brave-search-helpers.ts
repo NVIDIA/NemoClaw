@@ -191,7 +191,8 @@ export function assertBraveExport(raw: string, credentialValues: readonly string
   const webSearch = document.spec.sandboxes[0]?.integrations?.["brave-search"];
   expect(webSearch?.provider).toBe("brave");
   expect(webSearch?.credential.env).toBe("BRAVE_API_KEY");
-  expect(document.spec.sandboxes[0]?.agents[0]?.integrationRefs).toEqual(["brave-search"]);
+  const sandbox = document.spec.sandboxes[0]!;
+  expect(sandbox.agent.integrationRefs).toEqual(["brave-search"]);
   return document.spec;
 }
 

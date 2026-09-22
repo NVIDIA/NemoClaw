@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Preserve explicit Hermes auxiliary output limits on managed inference.
 
-Hermes v0.20.6 drops ``max_tokens`` from auxiliary OpenAI-compatible
+Hermes v0.21.3 drops ``max_tokens`` from auxiliary OpenAI-compatible
 requests unless the provider belongs to a small allowlist. This removes the
 64-token limit from session-title generation on NemoClaw's managed Ollama
 route. A thinking model can then occupy Ollama's only inference slot until it
@@ -19,22 +19,14 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-UNPATCHED = """        if (
-            _is_anthropic_compat_endpoint(provider, _effective_base)
-            or _nous_on_messages
-            or _is_nvidia_nim
-            or _is_moa
-            or _is_gemini_native
-        ):"""
+UNPATCHED = '''        or _is_managed_local_endpoint(effective_base)
+    )
+'''
 
-PATCHED = """        if (
-            _is_anthropic_compat_endpoint(provider, _effective_base)
-            or _nous_on_messages
-            or _is_nvidia_nim
-            or _is_moa
-            or _is_gemini_native
-            or base_url_host_matches(_effective_base, "inference.local")
-        ):"""
+PATCHED = '''        or _is_managed_local_endpoint(effective_base)
+        or base_url_host_matches(effective_base, "inference.local")
+    )
+'''
 
 
 def patch_file(path: Path) -> None:

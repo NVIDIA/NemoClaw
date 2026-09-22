@@ -113,6 +113,7 @@ import {
   hasCompatibleEndpointReasoningDrift,
   hasHermesCompatibleAnthropicInferenceRouteDrift,
   hasHostMountConfigDrift,
+  hasMessagingChannelConfigDrift,
   replacesSameNameSandbox,
   requiresSandboxRecreation,
   resolveToolDisclosureResumeSignals,
@@ -814,9 +815,10 @@ class SandboxStateFlow<
       hermesPortableLifecyclePending:
         this.options.hermesPortableLifecycle === true &&
         registryEntry?.pendingRouteReservation === true,
-      messagingChannelConfigChanged: !this.deps.messagingChannelConfigsEqual(
+      messagingChannelConfigChanged: hasMessagingChannelConfigDrift(
         effectiveMessagingConfig,
         storedMessagingConfig,
+        this.deps.messagingChannelConfigsEqual,
       ),
       messagingCredentialChanged,
       hermesToolGatewayConfigChanged: !this.deps.stringSetsEqual(
@@ -1199,6 +1201,36 @@ class SandboxStateFlow<
       openshellDriver: entry.openshellDriver ?? undefined,
       hostLocalInferenceReceipt: entry.hostLocalInferenceReceipt,
       hostLocalInferenceProvenance: entry.hostLocalInferenceProvenance,
+      reservationSessionId: sessionId,
+    });
+    if (!reserved) {
+      throw new Error(`Failed to reserve the inference route for sandbox '${sandboxName}'.`);
+    }
+  }
+
+  // Sandbox creation admits only a pending route reservation owned by this
+  // session. A resumed run whose inference step was skipped still holds the
+  // published row of the sandbox it is about to replace, so convert that row
+  // into the session's reservation before the create transaction starts.
+  private reserveCreateRouteForSession(sandboxName: string): void {
+    const sessionId = this.options.session?.sessionId;
+    const entry = this.deps.getSandboxRegistryEntry(sandboxName);
+    if (
+      !sessionId ||
+      !entry ||
+      entry.pendingRouteReservation === true ||
+      entry.hostLocalInferenceProvenance !== undefined
+    ) {
+      return;
+    }
+    const reserved = this.deps.reserveSandboxInferenceRoute(sandboxName, {
+      provider: this.options.provider,
+      model: this.options.model,
+      endpointUrl: this.options.endpointUrl,
+      endpointSource: this.options.endpointSource ?? null,
+      credentialEnv: this.options.credentialEnv,
+      preferredInferenceApi: this.options.preferredInferenceApi,
+      gatewayName: this.options.gatewayName,
       reservationSessionId: sessionId,
     });
     if (!reserved) {
@@ -2221,6 +2253,7 @@ class SandboxStateFlow<
       let sandboxName: string;
       try {
         this.reserveHostLocalCreateRoute(requestedSandboxName);
+        this.reserveCreateRouteForSession(requestedSandboxName);
         sandboxName = await withSandboxPhaseTrace(
           requestedSandboxName,
           this.options.provider,

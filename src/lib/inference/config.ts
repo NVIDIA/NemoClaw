@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * Inference provider selection config, model resolution, and gateway
- * inference output parsing. All functions are pure.
+ * Inference provider selection, model resolution, and route reconciliation.
+ * All functions are pure.
  */
 
 import { isSafeModelId, shouldSkipResponsesProbe } from "../validation";
@@ -21,7 +21,6 @@ import { VLLM_LOCAL_CREDENTIAL_ENV } from "./serving/vllm-credential-contract";
 
 export { isSafeModelId };
 export { OLLAMA_LOCAL_CREDENTIAL_ENV };
-export { buildGatewayInferenceGetArgs } from "./gateway/command-args";
 
 export const INFERENCE_ROUTE_URL = "https://inference.local/v1";
 export const NOUS_RECOMMENDED_MODELS_URL =
@@ -422,33 +421,6 @@ export function resolveAgentProviderInferenceApi(
     provider,
     coerceAgentInferenceApi(agent, preferredInferenceApi),
   );
-}
-
-export function parseGatewayInference(output: string | null | undefined): GatewayInference | null {
-  if (!output) return null;
-  const stripped = output.replace(/\u001b\[[0-9;]*m/g, "");
-  const lines = stripped.split("\n");
-  let inGateway = false;
-  let provider: string | null = null;
-  let model: string | null = null;
-  for (const line of lines) {
-    if (/^(?:Gateway )?Inference:\s*$/i.test(line)) {
-      inGateway = true;
-      continue;
-    }
-    if (inGateway && /^\S.*:$/.test(line)) {
-      break;
-    }
-    if (inGateway) {
-      const trimmed = line.trim();
-      const p = trimmed.match(/^Provider:\s*(.+)/);
-      const m = trimmed.match(/^Model:\s*(.+)/);
-      if (p) provider = p[1].trim();
-      if (m) model = m[1].trim();
-    }
-  }
-  if (!provider && !model) return null;
-  return { provider, model };
 }
 
 export interface RecordedInferenceRoute {

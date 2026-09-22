@@ -38,7 +38,7 @@ const TARGETS: readonly TargetDefinition[] = [
       "dcode-rebuild-invalid-credential",
     ),
     expectedStateId: "cloud-deepagents-code-ready",
-    configExport: { expectation: "expected-refusal", failureCategory: "unsupported" },
+    configExport: { expectation: "required" },
     suiteIds: ["smoke", "inference", "terminal-agent", "deepagents-code-policy"],
     requiredSecrets: ["NVIDIA_INFERENCE_API_KEY"],
     gatewayRuntimes: E2E_GATEWAY_RUNTIMES,

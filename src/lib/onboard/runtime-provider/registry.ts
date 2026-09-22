@@ -85,8 +85,6 @@ const HOST_PLATFORMS = new Set<NodeJS.Platform>([
 ]);
 const MUTATION_OPERATIONS = new Set<RuntimeProviderMutationOperation>([
   "registration",
-  "start",
-  "stop",
   "inference-set",
   "rebuild",
   "clone",
@@ -405,7 +403,6 @@ function validateCapabilitiesSurface(surface: Record<string, unknown>): void {
   requireSupported("capabilities", surface);
   for (const field of [
     "hostLocalInference",
-    "directLifecycle",
     "legacyGatewayContainerInspection",
     "workloadImageCleanup",
   ] as const) {
@@ -497,9 +494,6 @@ function validateLifecycleSurface(providerId: string, surface: Record<string, un
         `lifecycle for '${providerId}' has an invalid channel-stop transport`,
       );
     }
-    requireFunction(surface, "start", "lifecycle");
-    requireFunction(surface, "verifyStarted", "lifecycle");
-    requireFunction(surface, "stop", "lifecycle");
     if (
       surface.containerMutationTimeoutMs !== undefined &&
       (!Number.isSafeInteger(surface.containerMutationTimeoutMs) ||
@@ -682,7 +676,6 @@ function validateSupportedSurfaceSchemas(
   }
   if (
     surfaces.capabilities.hostLocalInference !== (surfaces.hostLocalInference.supported === true) ||
-    surfaces.capabilities.directLifecycle !== (surfaces.lifecycle.supported === true) ||
     surfaces.capabilities.workloadImageCleanup !== (surfaces.cleanup.supported === true) ||
     surfaces.capabilities.legacyGatewayContainerInspection !==
       surfaces.gateway.inspectLegacyContainer

@@ -28,7 +28,6 @@ const requireDist = createRequire(import.meta.url);
 describe("printGatewayLifecycleHint multi-instance hints", () => {
   let gatewayState: GatewayStateModule;
   let captureOpenshellSpy: MockInstance;
-  let getSandboxDockerRuntimeSpy: MockInstance;
   let getNamedGatewayLifecycleStateSpy: MockInstance;
   let getSandboxSpy: MockInstance;
   let findSandboxAcrossGatewayRootsSpy: MockInstance;
@@ -53,7 +52,6 @@ describe("printGatewayLifecycleHint multi-instance hints", () => {
     const gatewayRuntime = requireDist("../../gateway-runtime-action.js");
     const registry = requireDist("../../state/registry.js");
     const crossPortRegistry = requireDist("../../state/registry/cross-port.js");
-    const dockerHealth = requireDist("./docker-health.js");
     const gatewaySelect = requireDist("./gateway-select.js");
     vi.spyOn(gatewayDrift, "detectOpenShellStateRpcPreflightIssue").mockResolvedValue(null);
     vi.spyOn(gatewayDrift, "detectOpenShellStateRpcResultIssue").mockResolvedValue(null);
@@ -78,12 +76,6 @@ describe("printGatewayLifecycleHint multi-instance hints", () => {
           ? { entry, gatewayPort: entry.gatewayPort ?? null, registryFile: "/test/sandboxes.json" }
           : null;
       });
-    getSandboxDockerRuntimeSpy = vi.spyOn(dockerHealth, "getSandboxDockerRuntime").mockReturnValue({
-      health: "none",
-      paused: false,
-      running: true,
-      containerName: "openshell-instance-a-abc",
-    });
     vi.spyOn(gatewaySelect, "selectSandboxOwningGateway").mockReturnValue({
       outcome: "selected",
       gatewayName: "nemoclaw",
@@ -230,14 +222,24 @@ describe("printGatewayLifecycleHint multi-instance hints", () => {
     );
   });
 
-  it("reports a stopped container without crash guidance (#8695)", async () => {
-    mockSandboxPhase("Error");
-    getSandboxDockerRuntimeSpy.mockReturnValue({
-      health: "none",
-      paused: false,
-      running: false,
-      containerName: "openshell-instance-a-abc",
-    });
+  it.each([
+    {
+      phase: "Stopped",
+      expected: "Sandbox 'instance-a' is stopped.",
+      rejected: "rebuild --yes",
+    },
+    {
+      phase: "Error",
+      expected: "nemoclaw instance-a start",
+      rejected: "docker unpause",
+    },
+    {
+      phase: "Failed",
+      expected: "nemoclaw instance-a rebuild --yes",
+      rejected: "docker unpause",
+    },
+  ])("uses the OpenShell $phase phase for recovery guidance", async (testCase) => {
+    mockSandboxPhase(testCase.phase);
     const lines: string[] = [];
     vi.spyOn(console, "error").mockImplementation((line = "") => {
       lines.push(String(line));
@@ -251,115 +253,8 @@ describe("printGatewayLifecycleHint multi-instance hints", () => {
     );
 
     const output = lines.join("\n");
-    expect(output).toContain("Sandbox 'instance-a' is stopped.");
-    expect(output).toContain("Workspace state is preserved.");
-    expect(output).toContain("nemoclaw instance-a start");
-    expect(output).not.toContain("rebuild --yes");
-    expect(output).not.toContain("process crash");
-    expect(output).not.toContain("stuck in 'Error'");
-    expect(exitSpy).toHaveBeenCalledWith(1);
-  });
-
-  it("steers a non-paused Error sandbox to the workspace-preserving start path (#7222)", async () => {
-    mockSandboxPhase("Error");
-    const lines: string[] = [];
-    vi.spyOn(console, "error").mockImplementation((line = "") => {
-      lines.push(String(line));
-    });
-    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
-      throw new Error(`process.exit(${code ?? 0})`);
-    }) as never);
-
-    await expect(gatewayState.ensureLiveSandboxOrExit("instance-a")).rejects.toThrow(
-      "process.exit(1)",
-    );
-
-    const output = lines.join("\n");
-    expect(output).toContain("nemoclaw instance-a start");
-    expect(output).toContain("workspace state preserved");
-    expect(output).not.toContain("docker unpause");
-    expect(getSandboxDockerRuntimeSpy).toHaveBeenCalledWith("instance-a");
-    expect(exitSpy).toHaveBeenCalledWith(1);
-  });
-
-  it("keeps rebuild guidance when an Error sandbox has no recoverable container", async () => {
-    mockSandboxPhase("Error");
-    getSandboxDockerRuntimeSpy.mockReturnValue({
-      health: "none",
-      paused: false,
-      running: true,
-      containerName: null,
-    });
-    const lines: string[] = [];
-    vi.spyOn(console, "error").mockImplementation((line = "") => {
-      lines.push(String(line));
-    });
-    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
-      throw new Error(`process.exit(${code ?? 0})`);
-    }) as never);
-
-    await expect(gatewayState.ensureLiveSandboxOrExit("instance-a")).rejects.toThrow(
-      "process.exit(1)",
-    );
-
-    const output = lines.join("\n");
-    expect(output).toContain("nemoclaw instance-a rebuild --yes");
-    expect(output).not.toContain("nemoclaw instance-a start");
-    expect(exitSpy).toHaveBeenCalledWith(1);
-  });
-
-  it("keeps rebuild guidance for a paused container in a terminal phase other than Error", async () => {
-    mockSandboxPhase("Failed");
-    getSandboxDockerRuntimeSpy.mockReturnValue({
-      health: "none",
-      paused: true,
-      running: true,
-      containerName: "openshell-instance-a-abc",
-    });
-    const lines: string[] = [];
-    vi.spyOn(console, "error").mockImplementation((line = "") => {
-      lines.push(String(line));
-    });
-    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
-      throw new Error(`process.exit(${code ?? 0})`);
-    }) as never);
-
-    await expect(gatewayState.ensureLiveSandboxOrExit("instance-a")).rejects.toThrow(
-      "process.exit(1)",
-    );
-
-    const output = lines.join("\n");
-    expect(output).toContain("nemoclaw instance-a rebuild --yes");
-    expect(output).not.toContain("nemoclaw instance-a start");
-    expect(output).not.toContain("docker unpause");
-    expect(getSandboxDockerRuntimeSpy).toHaveBeenCalledWith("instance-a");
-    expect(exitSpy).toHaveBeenCalledWith(1);
-  });
-
-  it("preserves docker-unpause recovery for a paused Error sandbox (#4495)", async () => {
-    mockSandboxPhase("Error");
-    getSandboxDockerRuntimeSpy.mockReturnValue({
-      health: "none",
-      paused: true,
-      running: true,
-      containerName: "openshell-instance-a-abc",
-    });
-    const lines: string[] = [];
-    vi.spyOn(console, "error").mockImplementation((line = "") => {
-      lines.push(String(line));
-    });
-    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
-      throw new Error(`process.exit(${code ?? 0})`);
-    }) as never);
-
-    await expect(gatewayState.ensureLiveSandboxOrExit("instance-a")).rejects.toThrow(
-      "process.exit(1)",
-    );
-
-    const output = lines.join("\n");
-    expect(output).toContain("docker unpause openshell-instance-a-abc");
-    expect(output).not.toContain("nemoclaw instance-a start");
-    expect(output).not.toContain("rebuild --yes");
+    expect(output).toContain(testCase.expected);
+    expect(output).not.toContain(testCase.rejected);
     expect(exitSpy).toHaveBeenCalledWith(1);
   });
 

@@ -151,6 +151,7 @@ export async function inspectMcpProvider(
   providerName: string | undefined,
   runtimeSelection?: McpProviderInspectionRuntimeSelection,
   providerAdapter?: OpenShellProviderAdapter,
+  timeoutMs?: number,
 ): Promise<McpProviderInspection> {
   if (!providerName) {
     return {
@@ -165,7 +166,11 @@ export async function inspectMcpProvider(
     throw new McpBridgeError("MCP provider inspection requires an OpenShell runtime target.");
   }
   const { adapter, target } = createMcpProviderAdapterBoundary(runtimeSelection, providerAdapter);
-  const result = await adapter.getProvider({ providerName, target });
+  const result = await adapter.getProvider({
+    providerName,
+    target,
+    ...(timeoutMs === undefined ? {} : { timeoutMs }),
+  });
   if (!result.ok) {
     if (result.error.kind === "command" && result.error.reason === "not_found") {
       return {
@@ -198,6 +203,7 @@ export async function inspectMcpProviderAttachments(
   sandboxName: string,
   runtimeSelection?: McpProviderInspectionRuntimeSelection,
   providerAdapter?: OpenShellProviderAdapter,
+  timeoutMs?: number,
 ): Promise<McpProviderAttachmentInspection> {
   if (!runtimeSelection) {
     return {
@@ -206,12 +212,28 @@ export async function inspectMcpProviderAttachments(
     };
   }
   const { adapter, target } = createMcpProviderAdapterBoundary(runtimeSelection, providerAdapter);
-  const result = await adapter.listProviderAttachments({ sandboxName, target });
+  const deadlineMs = timeoutMs === undefined ? undefined : performance.now() + timeoutMs;
+  const remainingTimeoutMs = (): number | undefined => {
+    if (deadlineMs === undefined) return undefined;
+    const remainingMs = Math.floor(deadlineMs - performance.now());
+    if (remainingMs <= 0) throw new Error("Provider attachment inspection deadline expired");
+    return remainingMs;
+  };
+  const result = await adapter.listProviderAttachments({
+    sandboxName,
+    target,
+    ...(timeoutMs === undefined ? {} : { timeoutMs: remainingTimeoutMs() }),
+  });
   if (!result.ok) return { attachments: null, error: result.error.message };
   try {
     const attachments = await Promise.all(
       result.value.names.map(async (name) => {
-        const provider = await inspectMcpProvider(name, runtimeSelection, adapter);
+        const provider = await inspectMcpProvider(
+          name,
+          runtimeSelection,
+          adapter,
+          remainingTimeoutMs(),
+        );
         if (
           provider.exists !== true ||
           !provider.id ||

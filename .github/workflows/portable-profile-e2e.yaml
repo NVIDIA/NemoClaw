@@ -46,6 +46,7 @@ on:
       - "src/lib/state/onboard/portable-runtime-authority.ts"
       - "src/lib/state/registry/**"
       - "agents/hermes/Dockerfile"
+      - "agents/hermes/Dockerfile.base"
       - "agents/hermes/dashboard-external-host.patch"
       - "agents/hermes/start.sh"
       - "src/lib/actions/sandbox/forward-recovery.ts"
@@ -89,6 +90,7 @@ on:
     paths:
       - ".github/workflows/portable-profile-e2e.yaml"
       - "agents/hermes/Dockerfile"
+      - "agents/hermes/Dockerfile.base"
       - "agents/hermes/manifest.yaml"
       - "agents/hermes/start.sh"
       - "agents/hermes/dashboard-external-host.patch"
@@ -141,7 +143,7 @@ concurrency:
 jobs:
   rootless-linux:
     runs-on: ubuntu-26.04
-    timeout-minutes: 25
+    timeout-minutes: 45
     env:
       E2E_SOURCE_REVISION: ${{ github.event.pull_request.head.sha || github.sha }}
       PODMAN_APT_VERSION: "5.7.0+ds2-3build1"
@@ -246,11 +248,22 @@ jobs:
           test "$(grep -Ec "$signal_rule" "$pasta_profile")" -eq 1
           sudo apparmor_parser -r "$pasta_profile"
 
+      - name: Build the exact Hermes base for portable validation
+        env:
+          XDG_DATA_HOME: ${{ runner.temp }}/nemoclaw-hermes-base-storage
+        run: >-
+          podman build
+          --file agents/hermes/Dockerfile.base
+          --tag localhost/nemoclaw-hermes-base:portable-e2e
+          .
+
       - name: Exercise portable profile in the rootless environment
         env:
           E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/portable-profile
+          E2E_HERMES_BASE_STORAGE_HOME: ${{ runner.temp }}/nemoclaw-hermes-base-storage
           E2E_TARGET_ID: portable-profile
           NEMOCLAW_RUN_LIVE_E2E: "1"
+          NEMOCLAW_HERMES_E2E_BASE_IMAGE: localhost/nemoclaw-hermes-base:portable-e2e
         run: >-
           npx vitest run --project e2e-live
           test/e2e/live/portable-profile-rootless-linux.test.ts

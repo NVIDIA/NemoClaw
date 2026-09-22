@@ -18,7 +18,8 @@ current diff and repository evidence while evaluating these gates and expectatio
 3. **Security correctness** — No sandbox escape, SSRF, credential exposure, policy bypass, or installer trust violation exists.
    Run the nine-category security review first when a PR touches a [risky area](RISKY-AREAS.md).
 4. **CI green** — all required checks in `statusCheckRollup` must pass.
-5. **No merge conflicts** — `mergeStateStatus` must be clean.
+5. **No merge conflicts** — GitHub must report `mergeable: MERGEABLE`.
+   A `BEHIND` merge state alone does not block approval.
 6. **No unresolved major or critical CodeRabbit findings** — Correctness and safety findings block the PR. Style comments do not. Assess borderline cases.
 7. **Tests for touched risky code** — risky areas must have test coverage, either added in the PR or pre-existing. No exceptions.
 

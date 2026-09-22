@@ -93,6 +93,8 @@ export type ResolveSandboxCreateIntentInput = {
 export type MaterializeSandboxCreatePlanInput = {
   intent: SandboxCreateIntent;
   fromRef: string;
+  /** Preserve raw command materialization for the Portable consumer deferred to #12119. */
+  portableLifecycle?: boolean;
   managedStateMounts?: readonly ManagedStateVolumeMount[];
   /** Opaque provider-owned OpenShell driver-config key for the managed state mount. */
   managedStateMountDriverId?: string | null;
