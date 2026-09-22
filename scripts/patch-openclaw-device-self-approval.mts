@@ -436,7 +436,6 @@ const CLI_APPROVE_EXIT_REPLACEMENT = CLI_APPROVE_EXIT_REPLACEMENT_UNBOUNDED.repl
     "\t\t\tdefaultRuntime.exit(code);",
     "\t\t};",
     "\t\tconst timeout = setTimeout(() => exit(1), 1000); // nemoclaw: report uncertain approval output as failure (#12064)",
-    "\t\ttimeout.unref?.();",
     "\t\tconst done = (error) => {",
     "\t\t\tif (error) {",
     "\t\t\t\tclearTimeout(timeout);",

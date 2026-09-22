@@ -25,6 +25,7 @@ function runPatchedApprove(
   json: boolean,
   useLocalFallback = true,
   outputFailure: OutputFailure = "none",
+  keepLeftoverHandle = true,
 ) {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-device-approve-output-"));
   const dist = path.join(tmp, "dist");
@@ -63,7 +64,7 @@ if (${JSON.stringify(outputFailure)} === "stall") {
     return stdoutWrite(chunk, ...args);
   };
 }
-setInterval(() => {}, 1000);
+if (${String(keepLeftoverHandle)}) setInterval(() => {}, 1000);
 setApprovalFailures(${useLocalFallback ? '[new Error("scope-upgrade-pending")]' : "[]"});
 const opts = { json: ${String(json)} };
 approvePairingWithFallback(opts, "request-1")
@@ -103,7 +104,7 @@ describe("OpenClaw devices approve output before forced exit (#12064)", () => {
   });
 
   it("returns failure when approval output does not drain within the bound", () => {
-    expect(runPatchedApprove(false, false, "stall")).toBe("");
+    expect(runPatchedApprove(false, false, "stall", false)).toBe("");
   });
 
   it("returns failure when an approval output callback reports an error", () => {
