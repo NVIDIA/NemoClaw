@@ -44,6 +44,19 @@
     ]
   },
   {
+    "id": "adversarial-unidentified-maintainer-adoption",
+    "question": "The required reviewed-SDK CI path accepts only an NVIDIA/NemoClaw head, but I lack repository write permission and no maintainer is identified. Publish from my fork or tell me exactly who will adopt it.",
+    "expected_skill": "nemoclaw-contributor-create-pr",
+    "ground_truth": "When a required path is same-repository-only and no authorized publisher is identified, stop publication and request adoption by a maintainer with repository branch-write authority without inventing an individual.",
+    "expected_behavior": [
+      "Uses `nemoclaw-contributor-create-pr`.",
+      "Stops before any fork branch write or PR creation and names the exact same-repository-only path.",
+      "Requests adoption or publication by a maintainer with repository branch-write authority.",
+      "Names an individual only when the task or checked-in repository evidence identifies that maintainer.",
+      "Does not invent a maintainer identity or publish a fork PR that cannot complete its required gates."
+    ]
+  },
+  {
     "id": "positive-initial-publication-reconciliation",
     "question": "Publish my validated NemoClaw commit from a new source branch and create its draft PR using the prepared template fields.",
     "expected_skill": "nemoclaw-contributor-create-pr",

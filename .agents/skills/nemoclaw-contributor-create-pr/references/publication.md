@@ -22,9 +22,10 @@ Treat this as a pre-publication hard stop. If any required path is same-reposito
 1. Read `viewerPermission` for `NVIDIA/NemoClaw`. Use a same-repository source branch only when the
    authenticated actor has `WRITE`, `MAINTAIN`, or `ADMIN` and the requested task authorizes the
    repository branch write.
-2. Otherwise stop before pushing or creating a PR. Name the exact required path and the repository
-   maintainer who must adopt or publish the branch. Do not create a fork PR that cannot complete its
-   required gates and do not describe its known failure as pending evidence.
+2. Otherwise stop before pushing or creating a PR. Name the exact required path and request adoption
+   or publication by a maintainer with repository branch-write authority. Name an individual only when
+   the task or checked-in repository evidence identifies that maintainer. Do not create a fork PR that
+   cannot complete its required gates and do not describe its known failure as pending evidence.
 
 When all required paths support fork heads, use the declared authorized fork. Record the selected
 source repository, the canonical rule that permits it, and the permission observation with the other
