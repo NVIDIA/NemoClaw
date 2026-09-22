@@ -35,9 +35,9 @@
  * record and must not select stored device authentication.
  *
  * Both gateway and local-fallback approvals can leave handles open after the
- * command prints Approved. Drain stdout and stderr, then force
- * `defaultRuntime.exit(0)` after a successful approve. Use a bounded fallback
- * when a stream does not report that its output drained (#12064).
+ * command prints Approved. Exit 0 only after stdout and stderr report that
+ * output drained. Exit 1 when either callback fails or does not complete
+ * within one second (#12064).
  *
  * Remove this patch when upstream OpenClaw supports same-device, operator-only
  * scope approval through the gateway using the already-approved pairing scope
@@ -437,7 +437,12 @@ const CLI_APPROVE_EXIT_REPLACEMENT = CLI_APPROVE_EXIT_REPLACEMENT_UNBOUNDED.repl
     "\t\t};",
     "\t\tconst timeout = setTimeout(() => exit(1), 1000); // nemoclaw: report uncertain approval output as failure (#12064)",
     "\t\ttimeout.unref?.();",
-    "\t\tconst done = () => {",
+    "\t\tconst done = (error) => {",
+    "\t\t\tif (error) {",
+    "\t\t\t\tclearTimeout(timeout);",
+    "\t\t\t\texit(1);",
+    "\t\t\t\treturn;",
+    "\t\t\t}",
     "\t\t\tremaining -= 1;",
     "\t\t\tif (remaining === 0) {",
     "\t\t\t\tclearTimeout(timeout);",
@@ -445,6 +450,9 @@ const CLI_APPROVE_EXIT_REPLACEMENT = CLI_APPROVE_EXIT_REPLACEMENT_UNBOUNDED.repl
     "\t\t\t}",
     "\t\t};",
   ].join("\n"),
+).replace(
+  "\t\t\t} catch {\n\t\t\t\tdone();",
+  "\t\t\t} catch {\n\t\t\t\tclearTimeout(timeout);\n\t\t\t\texit(1);",
 );
 
 function applyDevicesApproveExitPatch(source: string, file: string): ReplacementResult {

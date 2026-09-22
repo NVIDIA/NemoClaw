@@ -124,7 +124,7 @@ describe("OpenClaw device self-approval patch upgrades (#4462)", () => {
     }
   });
 
-  it("adds and bounds process exit on earlier approval runtimes (#12064)", () => {
+  it("adds failure-aware bounded process exit on earlier approval runtimes (#12064)", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-device-approve-exit-upgrade-"));
     const dist = path.join(tmp, "dist");
     fs.mkdirSync(dist);
@@ -143,7 +143,12 @@ describe("OpenClaw device self-approval patch upgrades (#4462)", () => {
         "\t\t};",
         "\t\tconst timeout = setTimeout(() => exit(1), 1000); // nemoclaw: report uncertain approval output as failure (#12064)",
         "\t\ttimeout.unref?.();",
-        "\t\tconst done = () => {",
+        "\t\tconst done = (error) => {",
+        "\t\t\tif (error) {",
+        "\t\t\t\tclearTimeout(timeout);",
+        "\t\t\t\texit(1);",
+        "\t\t\t\treturn;",
+        "\t\t\t}",
         "\t\t\tremaining -= 1;",
         "\t\t\tif (remaining === 0) {",
         "\t\t\t\tclearTimeout(timeout);",
@@ -154,7 +159,8 @@ describe("OpenClaw device self-approval patch upgrades (#4462)", () => {
         "\t\t\ttry {",
         '\t\t\t\tstream.write("", done);',
         "\t\t\t} catch {",
-        "\t\t\t\tdone();",
+        "\t\t\t\tclearTimeout(timeout);",
+        "\t\t\t\texit(1);",
         "\t\t\t}",
         "\t\t}",
         "\t}; // nemoclaw: exit after devices approve so leftover gateway handles cannot hang (#12064)",
@@ -191,33 +197,43 @@ describe("OpenClaw device self-approval patch upgrades (#4462)", () => {
       expect(upgraded).not.toContain(legacy);
       expect(runPatch(dist).status).toBe(0);
 
-      const unbounded = current.replace(
-        [
-          "\t\tlet remaining = 2;",
-          "\t\tlet exited = false;",
-          "\t\tconst exit = (code) => {",
-          "\t\t\tif (exited) return;",
-          "\t\t\texited = true;",
-          "\t\t\tdefaultRuntime.exit(code);",
-          "\t\t};",
-          "\t\tconst timeout = setTimeout(() => exit(1), 1000); // nemoclaw: report uncertain approval output as failure (#12064)",
-          "\t\ttimeout.unref?.();",
-          "\t\tconst done = () => {",
-          "\t\t\tremaining -= 1;",
-          "\t\t\tif (remaining === 0) {",
-          "\t\t\t\tclearTimeout(timeout);",
-          "\t\t\t\texit(0);",
-          "\t\t\t}",
-          "\t\t};",
-        ].join("\n"),
-        [
-          "\t\tlet remaining = 2;",
-          "\t\tconst done = () => {",
-          "\t\t\tremaining -= 1;",
-          "\t\t\tif (remaining === 0) defaultRuntime.exit(0);",
-          "\t\t};",
-        ].join("\n"),
-      );
+      const unbounded = current
+        .replace(
+          [
+            "\t\tlet remaining = 2;",
+            "\t\tlet exited = false;",
+            "\t\tconst exit = (code) => {",
+            "\t\t\tif (exited) return;",
+            "\t\t\texited = true;",
+            "\t\t\tdefaultRuntime.exit(code);",
+            "\t\t};",
+            "\t\tconst timeout = setTimeout(() => exit(1), 1000); // nemoclaw: report uncertain approval output as failure (#12064)",
+            "\t\ttimeout.unref?.();",
+            "\t\tconst done = (error) => {",
+            "\t\t\tif (error) {",
+            "\t\t\t\tclearTimeout(timeout);",
+            "\t\t\t\texit(1);",
+            "\t\t\t\treturn;",
+            "\t\t\t}",
+            "\t\t\tremaining -= 1;",
+            "\t\t\tif (remaining === 0) {",
+            "\t\t\t\tclearTimeout(timeout);",
+            "\t\t\t\texit(0);",
+            "\t\t\t}",
+            "\t\t};",
+          ].join("\n"),
+          [
+            "\t\tlet remaining = 2;",
+            "\t\tconst done = () => {",
+            "\t\t\tremaining -= 1;",
+            "\t\t\tif (remaining === 0) defaultRuntime.exit(0);",
+            "\t\t};",
+          ].join("\n"),
+        )
+        .replace(
+          "\t\t\t} catch {\n\t\t\t\tclearTimeout(timeout);\n\t\t\t\texit(1);",
+          "\t\t\t} catch {\n\t\t\t\tdone();",
+        );
       fs.writeFileSync(file, upgraded.replace(current, unbounded));
       expect(runPatch(dist).status).toBe(0);
       expect(fs.readFileSync(file, "utf8")).toContain(current);

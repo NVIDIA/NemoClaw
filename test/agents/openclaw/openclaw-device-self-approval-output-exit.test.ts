@@ -19,7 +19,13 @@ const APPROVAL = {
   device: { deviceId: "device-1" },
 };
 
-function runPatchedApprove(json: boolean, useLocalFallback = true, stallOutput = false) {
+type OutputFailure = "none" | "stall" | "callback-error";
+
+function runPatchedApprove(
+  json: boolean,
+  useLocalFallback = true,
+  outputFailure: OutputFailure = "none",
+) {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-device-approve-output-"));
   const dist = path.join(tmp, "dist");
   fs.mkdirSync(dist);
@@ -41,9 +47,21 @@ defaultRuntime.writeJson = (value) => {
   process.stderr.write("approved-stderr\\n");
 };
 defaultRuntime.exit = (code) => realExit(code);
-if (${String(stallOutput)}) {
+if (${JSON.stringify(outputFailure)} === "stall") {
   process.stdout.write = () => false;
   process.stderr.write = () => false;
+} else if (${JSON.stringify(outputFailure)} === "callback-error") {
+  const stdoutWrite = process.stdout.write.bind(process.stdout);
+  process.stdout.write = (chunk, ...args) => {
+    if (String(chunk).length === 0) {
+      const callback = args.at(-1);
+      if (typeof callback === "function") {
+        queueMicrotask(() => callback(new Error("stdout-drain-failed")));
+      }
+      return false;
+    }
+    return stdoutWrite(chunk, ...args);
+  };
 }
 setInterval(() => {}, 1000);
 setApprovalFailures(${useLocalFallback ? '[new Error("scope-upgrade-pending")]' : "[]"});
@@ -62,9 +80,9 @@ approvePairingWithFallback(opts, "request-1")
   });
   fs.rmSync(tmp, { recursive: true, force: true });
   expect(result.error).toBeUndefined();
-  expect(result.status, `${result.stdout}${result.stderr}`).toBe(stallOutput ? 1 : 0);
+  expect(result.status, `${result.stdout}${result.stderr}`).toBe(outputFailure === "none" ? 0 : 1);
   expect(result.signal).toBeNull();
-  expect(result.stderr).toBe(stallOutput ? "" : "approved-stderr\n");
+  expect(result.stderr).toBe(outputFailure === "stall" ? "" : "approved-stderr\n");
   return result.stdout;
 }
 
@@ -85,6 +103,10 @@ describe("OpenClaw devices approve output before forced exit (#12064)", () => {
   });
 
   it("returns failure when approval output does not drain within the bound", () => {
-    expect(runPatchedApprove(false, false, true)).toBe("");
+    expect(runPatchedApprove(false, false, "stall")).toBe("");
+  });
+
+  it("returns failure when an approval output callback reports an error", () => {
+    expect(runPatchedApprove(false, false, "callback-error")).toBe("Approved ok (request-1)\n");
   });
 });
