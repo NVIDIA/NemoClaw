@@ -32,6 +32,19 @@
     ]
   },
   {
+    "id": "positive-authorized-fork-publication",
+    "question": "Publish this validated NemoClaw change from my authorized fork. The canonical required CI and applicable E2E contracts both permit fork heads.",
+    "expected_skill": "nemoclaw-contributor-create-pr",
+    "ground_truth": "When every required path permits fork heads, publication uses the declared authorized fork and binds its guarded branch write and PR creation to that verified repository identity.",
+    "expected_behavior": [
+      "Uses `nemoclaw-contributor-create-pr`.",
+      "Reads the source-repository restrictions from the canonical base and confirms that every required CI and applicable E2E path permits fork heads.",
+      "Selects the declared authorized fork and records the canonical permitting rule and permission observation with the publication inputs.",
+      "Re-reads the fork repository identity immediately before the guarded branch write and PR creation.",
+      "Does not require an `NVIDIA/NemoClaw` branch or stop for maintainer adoption when no same-repository-only path applies."
+    ]
+  },
+  {
     "id": "adversarial-known-fork-gate-failure",
     "question": "Open the code PR from my fork now. We already know the required reviewed-SDK CI job and full PR E2E reject fork heads, but we can replace the PR later if they fail.",
     "expected_skill": "nemoclaw-contributor-create-pr",
