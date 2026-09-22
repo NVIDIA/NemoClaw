@@ -17,7 +17,11 @@ import {
 
 vi.mock("../sandbox/config", () => ({ setOpenClawConfigValue: vi.fn() }));
 
+const recovery =
+  require("../actions/sandbox/process-recovery") as typeof import("../actions/sandbox/process-recovery");
+
 const LOOPBACK = "http://127.0.0.1:18789";
+const RUNTIME = { gatewayName: "recorded", workspace: "default" };
 
 const OPENCLAW_TARGET: AgentConfigTarget = {
   agentName: "openclaw",
@@ -43,6 +47,7 @@ function makeDeps(config: ConfigObject, target: AgentConfigTarget = OPENCLAW_TAR
   const info = vi.fn((_msg: string): void => {});
   const warn = vi.fn((_msg: string): void => {});
   const deps: RegisterTunnelOriginDeps = {
+    resolveRuntimeSelection: () => RUNTIME,
     resolveAgentConfig,
     readConfig,
     writeAllowedOrigins,
@@ -152,13 +157,16 @@ describe("computeTunnelAllowedOrigins", () => {
 });
 
 describe("registerTunnelOrigin", () => {
-  it("routes the default write through the shared native config owner", async () => {
+  it("writes tunnel origins to the sandbox's recorded gateway", async () => {
+    vi.stubEnv("OPENSHELL_GATEWAY", "ambient-other-gateway");
+    vi.stubEnv("OPENSHELL_WORKSPACE", "ambient-other-workspace");
     const config: ConfigObject = {
       gateway: { controlUi: { allowedOrigins: [LOOPBACK] } },
     };
     const { resolveAgentConfig, readConfig, reloadGateway, info, warn } = makeDeps(config);
 
     await registerTunnelOrigin("sb", "https://good.trycloudflare.com/route", {
+      resolveRuntimeSelection: () => RUNTIME,
       resolveAgentConfig,
       readConfig,
       reloadGateway,
@@ -166,11 +174,49 @@ describe("registerTunnelOrigin", () => {
       warn,
     });
 
-    expect(setOpenClawConfigValue).toHaveBeenCalledWith("sb", "gateway.controlUi.allowedOrigins", [
-      LOOPBACK,
-      "https://good.trycloudflare.com",
-    ]);
+    expect(setOpenClawConfigValue).toHaveBeenCalledWith(
+      "sb",
+      "gateway.controlUi.allowedOrigins",
+      [LOOPBACK, "https://good.trycloudflare.com"],
+      RUNTIME,
+    );
     expect(reloadGateway).toHaveBeenCalledTimes(1);
+    expect(readConfig).toHaveBeenCalledWith("sb", OPENCLAW_TARGET, RUNTIME);
+    expect(reloadGateway).toHaveBeenCalledWith("sb", RUNTIME);
+  });
+
+  it("reports a failed restart on the same recorded runtime after writing the origin", async () => {
+    const restart = vi.spyOn(recovery, "restartSandboxGateway").mockResolvedValue({
+      ok: false,
+      failureLayer: "health timeout",
+      detail: "gateway health probe failed",
+    });
+    const { deps, warn, writeAllowedOrigins } = makeDeps({});
+    const { reloadGateway: _reload, ...withDefaultReload } = deps;
+    try {
+      await registerTunnelOrigin("sb", "https://good.trycloudflare.com", withDefaultReload);
+      expect(writeAllowedOrigins).toHaveBeenCalledWith(
+        "sb",
+        ["https://good.trycloudflare.com"],
+        RUNTIME,
+      );
+      expect(restart).toHaveBeenCalledExactlyOnceWith("sb", { runtimeSelection: RUNTIME });
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining("restart failed"));
+    } finally {
+      restart.mockRestore();
+    }
+  });
+
+  it("does not read or mutate a sandbox when its recorded target is unavailable", async () => {
+    const { deps, readConfig, writeAllowedOrigins, reloadGateway, warn } = makeDeps({});
+    deps.resolveRuntimeSelection = () => {
+      throw new Error("recorded target unavailable");
+    };
+    await registerTunnelOrigin("sb", "https://good.trycloudflare.com", deps);
+    expect(readConfig).not.toHaveBeenCalled();
+    expect(writeAllowedOrigins).not.toHaveBeenCalled();
+    expect(reloadGateway).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("recorded target unavailable"));
   });
 
   // Scenario 8
@@ -182,12 +228,13 @@ describe("registerTunnelOrigin", () => {
 
     await registerTunnelOrigin("sb", "https://good.trycloudflare.com/route", deps);
 
-    expect(writeAllowedOrigins).toHaveBeenCalledWith("sb", [
-      LOOPBACK,
-      "https://good.trycloudflare.com",
-    ]);
+    expect(writeAllowedOrigins).toHaveBeenCalledWith(
+      "sb",
+      [LOOPBACK, "https://good.trycloudflare.com"],
+      RUNTIME,
+    );
     expect(reloadGateway).toHaveBeenCalledTimes(1);
-    expect(reloadGateway).toHaveBeenCalledWith("sb");
+    expect(reloadGateway).toHaveBeenCalledWith("sb", RUNTIME);
   });
 
   // Scenario 9
@@ -266,6 +313,10 @@ describe("registerTunnelOrigin", () => {
 
     await registerTunnelOrigin("sb", "https://a.trycloudflare.com", deps);
 
-    expect(writeAllowedOrigins).toHaveBeenCalledWith("sb", ["https://a.trycloudflare.com"]);
+    expect(writeAllowedOrigins).toHaveBeenCalledWith(
+      "sb",
+      ["https://a.trycloudflare.com"],
+      RUNTIME,
+    );
   });
 });

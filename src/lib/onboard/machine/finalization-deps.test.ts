@@ -678,6 +678,28 @@ describe("finalizationHandlerDeps.waitForSandboxControlPlaneReady", () => {
     vi.unstubAllEnvs();
   });
 
+  it("reports the readiness failure without exposing credentials or unbounded output", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    vi.spyOn(finalizationHandlerRuntime, "loadProcessRecovery").mockReturnValue({
+      checkAndRecoverSandboxProcesses: vi.fn(),
+      waitForStartedNativeGatewayProcess: vi.fn(async () => true),
+      waitForRecreatedSandboxOpenShellReady: vi.fn(async (_name, options) => {
+        options?.onFailure?.({
+          failure: "openshell-readiness-failure",
+          openshellError: `Authorization: Bearer super-secret-token ${"x".repeat(2000)}`,
+        });
+        return false;
+      }),
+    });
+    await expect(finalizationHandlerDeps.waitForSandboxControlPlaneReady("alpha")).resolves.toBe(
+      false,
+    );
+    const message = String(error.mock.calls[0]?.[0]);
+    expect(message).toContain("openshell-readiness-failure");
+    expect(message).not.toContain("super-secret-token");
+    expect(message.length).toBeLessThan(1200);
+  });
+
   it("delegates timeout selection to the recovery readiness helper", async () => {
     vi.stubEnv("NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS", "75");
     vi.stubEnv("NEMOCLAW_SANDBOX_READY_TIMEOUT", "180");
@@ -700,7 +722,9 @@ describe("finalizationHandlerDeps.waitForSandboxControlPlaneReady", () => {
     await expect(
       finalizationHandlerDeps.waitForSandboxControlPlaneReady("policy-box"),
     ).resolves.toBe(true);
-    expect(waitForRecreatedSandboxOpenShellReady).toHaveBeenCalledWith("policy-box");
+    expect(waitForRecreatedSandboxOpenShellReady).toHaveBeenCalledWith("policy-box", {
+      onFailure: expect.any(Function),
+    });
     expect(effectiveTimeoutSeconds).toBe(75);
   });
 });
@@ -809,6 +833,7 @@ describe("finalization process-recovery refusal propagation", () => {
   });
 
   it("pauses before recovery when initial OpenClaw startup does not settle", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
     const recover = vi.fn();
     vi.spyOn(finalizationHandlerRuntime, "loadLaunchReadiness").mockReturnValue({
       resolveOrdinaryOpenClawPairingTarget: () => ({ gatewayName: "nemoclaw" }),
@@ -823,6 +848,30 @@ describe("finalization process-recovery refusal propagation", () => {
       finalizationHandlerDeps.checkAndRecoverSandboxProcesses("alpha", { quiet: true }),
     ).resolves.toBe(false);
     expect(recover).not.toHaveBeenCalled();
+    expect(error).toHaveBeenCalledWith(expect.stringContaining("startup did not settle"));
+  });
+
+  it("reports bounded redacted recovery failure details even in quiet onboarding", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.spyOn(finalizationHandlerRuntime, "loadProcessRecovery").mockReturnValue({
+      checkAndRecoverSandboxProcesses: vi.fn(async () => ({
+        checked: true,
+        wasRunning: false,
+        recovered: false,
+        forwardRecovered: false,
+        recoveryFailureDetail:
+          "transport failed Authorization: Bearer secret-value " + "x".repeat(2000),
+      })),
+      waitForRecreatedSandboxOpenShellReady: vi.fn(async () => true),
+      waitForStartedNativeGatewayProcess: vi.fn(async () => true),
+    });
+    await expect(
+      finalizationHandlerDeps.checkAndRecoverSandboxProcesses("alpha", { quiet: true }),
+    ).resolves.toBe(false);
+    const diagnostic = error.mock.calls.flat().join("\n");
+    expect(diagnostic).toContain("transport failed");
+    expect(diagnostic).not.toContain("secret-value");
+    expect(diagnostic.length).toBeLessThan(1100);
   });
 
   it("passes the scope-validated portable environment to process recovery", async () => {

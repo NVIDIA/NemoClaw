@@ -8,6 +8,10 @@ const configMocks = vi.hoisted(() => ({
   restartSandboxAgentAfterConfigSet: vi.fn(),
   resolveAgentConfig: vi.fn(),
   setOpenClawConfigValue: vi.fn(),
+  resolveSandboxConfigRuntimeSelection: vi.fn(() => ({
+    gatewayName: "recorded",
+    workspace: "default",
+  })),
 }));
 
 vi.mock("../sandbox/config", async (importOriginal) => ({
@@ -16,6 +20,9 @@ vi.mock("../sandbox/config", async (importOriginal) => ({
   restartSandboxAgentAfterConfigSet: configMocks.restartSandboxAgentAfterConfigSet,
   resolveAgentConfig: configMocks.resolveAgentConfig,
   setOpenClawConfigValue: configMocks.setOpenClawConfigValue,
+}));
+vi.mock("../actions/sandbox/mcp-bridge-provider-inspection", () => ({
+  resolveSandboxConfigRuntimeSelection: configMocks.resolveSandboxConfigRuntimeSelection,
 }));
 import {
   createConfigureOpenclawSandbox,
@@ -228,6 +235,8 @@ describe("fresh OpenClaw reuse web search reconciliation", () => {
   });
 
   it("uses the native writer and reloads OpenClaw when disabling stale web search (#11764)", async () => {
+    vi.stubEnv("OPENSHELL_GATEWAY", "ambient-other-gateway");
+    vi.stubEnv("OPENSHELL_WORKSPACE", "ambient-other-workspace");
     configMocks.resolveAgentConfig.mockReturnValue({ agentName: "openclaw" });
     configMocks.readSandboxConfig.mockReturnValue({
       tools: { web: { search: { enabled: true } } },
@@ -236,14 +245,23 @@ describe("fresh OpenClaw reuse web search reconciliation", () => {
 
     await reconcileOpenClawWebSearchForReuse("alpha", null);
 
+    expect(configMocks.readSandboxConfig).toHaveBeenCalledWith(
+      "alpha",
+      { agentName: "openclaw" },
+      { gatewayName: "recorded", workspace: "default" },
+    );
+
     expect(configMocks.setOpenClawConfigValue).toHaveBeenCalledExactlyOnceWith(
       "alpha",
       "tools.web.search.enabled",
       false,
+      { gatewayName: "recorded", workspace: "default" },
     );
     expect(configMocks.restartSandboxAgentAfterConfigSet).toHaveBeenCalledExactlyOnceWith(
       "alpha",
       "openclaw",
+      undefined,
+      { gatewayName: "recorded", workspace: "default" },
     );
     expect(configMocks.setOpenClawConfigValue).toHaveBeenCalledBefore(
       configMocks.restartSandboxAgentAfterConfigSet,
@@ -254,17 +272,34 @@ describe("fresh OpenClaw reuse web search reconciliation", () => {
     const disable = vi.fn(async () => undefined);
 
     await reconcileOpenClawWebSearchForReuse("alpha", null, undefined, {
+      resolveRuntimeSelection: configMocks.resolveSandboxConfigRuntimeSelection,
       readEnabled: () => true,
       disable,
     });
 
-    expect(disable).toHaveBeenCalledExactlyOnceWith("alpha");
+    expect(disable).toHaveBeenCalledExactlyOnceWith("alpha", {
+      gatewayName: "recorded",
+      workspace: "default",
+    });
+  });
+
+  it("does not read or mutate web search when its recorded target cannot be resolved", async () => {
+    configMocks.resolveSandboxConfigRuntimeSelection.mockImplementationOnce(() => {
+      throw new Error("recorded target unavailable");
+    });
+    await expect(reconcileOpenClawWebSearchForReuse("alpha", null)).rejects.toThrow(
+      "recorded target unavailable",
+    );
+    expect(configMocks.readSandboxConfig).not.toHaveBeenCalled();
+    expect(configMocks.setOpenClawConfigValue).not.toHaveBeenCalled();
+    expect(configMocks.restartSandboxAgentAfterConfigSet).not.toHaveBeenCalled();
   });
 
   it("leaves an already-disabled live config unchanged (#10404)", async () => {
     const disable = vi.fn(async () => undefined);
 
     await reconcileOpenClawWebSearchForReuse("alpha", null, undefined, {
+      resolveRuntimeSelection: configMocks.resolveSandboxConfigRuntimeSelection,
       readEnabled: () => false,
       disable,
     });
@@ -276,6 +311,7 @@ describe("fresh OpenClaw reuse web search reconciliation", () => {
     const disable = vi.fn(async () => undefined);
 
     await reconcileOpenClawWebSearchForReuse("alpha", null, undefined, {
+      resolveRuntimeSelection: configMocks.resolveSandboxConfigRuntimeSelection,
       readEnabled: () => undefined,
       disable,
     });
@@ -288,6 +324,7 @@ describe("fresh OpenClaw reuse web search reconciliation", () => {
     const disable = vi.fn(async () => undefined);
 
     await reconcileOpenClawWebSearchForReuse("alpha", { fetchEnabled: true }, undefined, {
+      resolveRuntimeSelection: configMocks.resolveSandboxConfigRuntimeSelection,
       readEnabled,
       disable,
     });
@@ -305,12 +342,16 @@ describe("fresh OpenClaw reuse web search reconciliation", () => {
 
     await expect(
       reconcileOpenClawWebSearchForReuse("alpha", null, revalidateSandboxIdentity, {
+        resolveRuntimeSelection: configMocks.resolveSandboxConfigRuntimeSelection,
         readEnabled,
         disable,
       }),
     ).rejects.toThrow("sandbox identity changed");
 
-    expect(readEnabled).toHaveBeenCalledExactlyOnceWith("alpha");
+    expect(readEnabled).toHaveBeenCalledExactlyOnceWith("alpha", {
+      gatewayName: "recorded",
+      workspace: "default",
+    });
     expect(revalidateSandboxIdentity).toHaveBeenCalledExactlyOnceWith(
       "disable OpenClaw web search in sandbox 'alpha'",
     );

@@ -7,6 +7,8 @@ import {
   resolveAgentConfig,
   setOpenClawConfigValue,
 } from "../sandbox/config";
+import { resolveSandboxConfigRuntimeSelection } from "../actions/sandbox/mcp-bridge-provider-inspection";
+import type { OpenShellRuntimeSelection } from "../adapters/openshell/runtime-selection";
 import type { ConfigObject } from "../security/credential-filter";
 import { isConfigObject } from "../security/credential-filter";
 
@@ -81,10 +83,19 @@ export function computeTunnelAllowedOrigins(
 }
 
 export interface RegisterTunnelOriginDeps {
+  resolveRuntimeSelection: (sandboxName: string) => OpenShellRuntimeSelection;
   resolveAgentConfig: (sandboxName: string) => AgentConfigTarget;
-  readConfig: (sandboxName: string, target: AgentConfigTarget) => ConfigObject;
-  writeAllowedOrigins: (sandboxName: string, origins: string[]) => Promise<void>;
-  reloadGateway: (sandboxName: string) => Promise<void>;
+  readConfig: (
+    sandboxName: string,
+    target: AgentConfigTarget,
+    runtime: OpenShellRuntimeSelection,
+  ) => ConfigObject;
+  writeAllowedOrigins: (
+    sandboxName: string,
+    origins: string[],
+    runtime: OpenShellRuntimeSelection,
+  ) => Promise<void>;
+  reloadGateway: (sandboxName: string, runtime: OpenShellRuntimeSelection) => Promise<void>;
   info?: (msg: string) => void;
   warn?: (msg: string) => void;
 }
@@ -92,23 +103,33 @@ export interface RegisterTunnelOriginDeps {
 async function writeNativeOpenClawAllowedOrigins(
   sandboxName: string,
   origins: string[],
+  runtime: OpenShellRuntimeSelection,
 ): Promise<void> {
-  setOpenClawConfigValue(sandboxName, "gateway.controlUi.allowedOrigins", origins);
+  setOpenClawConfigValue(sandboxName, "gateway.controlUi.allowedOrigins", origins, runtime);
 }
 
 /**
  * Default reload: the same managed gateway restart `config set --restart` uses.
  * A container restart re-reads the freshly written in-sandbox config on start.
  */
-async function defaultReloadGateway(sandboxName: string): Promise<void> {
+async function defaultReloadGateway(
+  sandboxName: string,
+  runtimeSelection: OpenShellRuntimeSelection,
+): Promise<void> {
   const { restartSandboxGateway } = require("../actions/sandbox/process-recovery") as {
-    restartSandboxGateway: (name: string) => Promise<{ ok: boolean }>;
+    restartSandboxGateway: (
+      name: string,
+      options: { runtimeSelection: OpenShellRuntimeSelection },
+    ) => Promise<{ ok: boolean }>;
   };
-  await restartSandboxGateway(sandboxName);
+  const result = await restartSandboxGateway(sandboxName, { runtimeSelection });
+  if (!result.ok)
+    throw new Error("OpenClaw gateway restart failed after writing the tunnel origin");
 }
 
 function resolveDeps(deps: Partial<RegisterTunnelOriginDeps>): Required<RegisterTunnelOriginDeps> {
   return {
+    resolveRuntimeSelection: deps.resolveRuntimeSelection ?? resolveSandboxConfigRuntimeSelection,
     resolveAgentConfig: deps.resolveAgentConfig ?? resolveAgentConfig,
     readConfig: deps.readConfig ?? readSandboxConfig,
     writeAllowedOrigins: deps.writeAllowedOrigins ?? writeNativeOpenClawAllowedOrigins,
@@ -152,18 +173,19 @@ export async function registerTunnelOrigin(
       return;
     }
 
-    const config = resolved.readConfig(sandboxName, target);
+    const runtime = resolved.resolveRuntimeSelection(sandboxName);
+    const config = resolved.readConfig(sandboxName, target, runtime);
     const { origins, changed } = computeTunnelAllowedOrigins(readAllowedOrigins(config), tunnelUrl);
     if (!changed) {
       info(`Tunnel origin already registered: ${origin}`);
       return;
     }
 
-    await resolved.writeAllowedOrigins(sandboxName, origins);
+    await resolved.writeAllowedOrigins(sandboxName, origins, runtime);
     info(`Registered tunnel origin with gateway: ${origin}`);
 
     info("Reloading gateway to apply tunnel origin...");
-    await resolved.reloadGateway(sandboxName);
+    await resolved.reloadGateway(sandboxName, runtime);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     warn(`Could not register tunnel origin (${message}); open the Web UI from the gateway host.`);

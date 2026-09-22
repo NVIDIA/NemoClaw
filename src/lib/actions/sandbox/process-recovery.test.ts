@@ -79,6 +79,23 @@ function sequencedExecutor(
 }
 
 describe("recreated sandbox OpenShell readiness", () => {
+  it("preserves the final OpenShell error for onboarding diagnostics without another probe", async () => {
+    const onFailure = vi.fn();
+    const commandExecutor = sequencedExecutor(completed(1, "Error: target rejected"));
+    await expect(
+      waitForRecreatedSandboxOpenShellReady("recreated-box", {
+        commandExecutor,
+        onFailure,
+        timeoutSeconds: 0,
+      }),
+    ).resolves.toBe(false);
+    expect(commandExecutor.runBuffered).toHaveBeenCalledOnce();
+    expect(onFailure).toHaveBeenCalledWith({
+      ready: false,
+      failure: "openshell-readiness-failure",
+      openshellError: "Error: target rejected",
+    });
+  });
   afterEach(() => {
     vi.unstubAllEnvs();
   });

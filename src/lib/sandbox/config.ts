@@ -103,7 +103,10 @@ interface ConfigUrlValidationOptions {
   allowPrivateUrls?: boolean;
 }
 
-type ManagedGatewayRestart = (sandboxName: string) => Promise<{ ok: boolean }>;
+type ManagedGatewayRestart = (
+  sandboxName: string,
+  options?: { runtimeSelection: OpenShellRuntimeSelection },
+) => Promise<{ ok: boolean }>;
 
 export class SandboxConfigError extends Error {
   readonly lines: readonly string[];
@@ -126,11 +129,12 @@ async function restartSandboxAgentAfterConfigSet(
   sandboxName: string,
   agentName: string,
   restartImpl?: ManagedGatewayRestart,
+  runtimeSelection?: OpenShellRuntimeSelection,
 ): Promise<void> {
   const restart =
     restartImpl ??
     (require("../actions/sandbox/process-recovery").restartSandboxGateway as ManagedGatewayRestart);
-  const result = await restart(sandboxName);
+  const result = await restart(sandboxName, ...(runtimeSelection ? [{ runtimeSelection }] : []));
   if (!result.ok) {
     // The config write already completed, but the running agent was not
     // reloaded. Say so plainly and point to the idempotent retry rather than

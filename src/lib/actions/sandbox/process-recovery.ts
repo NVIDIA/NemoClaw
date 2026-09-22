@@ -2007,6 +2007,10 @@ type RecreatedSandboxOpenShellReadinessResult =
     };
 
 type RecreatedSandboxOpenShellReadyOptions = {
+  onFailure?: (failure: {
+    failure: RecreatedSandboxOpenShellReadinessFailure;
+    openshellError?: string;
+  }) => void;
   commandExecutor?: OpenShellSandboxBufferedCommandExecutor;
   beforeProbe?: (timeoutMs: number) => boolean | null;
   intervalSeconds?: number;
@@ -2186,7 +2190,9 @@ export async function waitForRecreatedSandboxOpenShellReady(
   sandboxName: string,
   options: RecreatedSandboxOpenShellReadyOptions = {},
 ): Promise<boolean> {
-  return (await waitForRecreatedSandboxOpenShellReadyResult(sandboxName, options)).ready;
+  const result = await waitForRecreatedSandboxOpenShellReadyResult(sandboxName, options);
+  if (!result.ready) options.onFailure?.(result);
+  return result.ready;
 }
 
 function gatewayRecoveryTimeoutSeconds(

@@ -8,7 +8,9 @@ import {
   resolveAgentConfig,
   setOpenClawConfigValue,
 } from "../sandbox/config";
+import { resolveSandboxConfigRuntimeSelection } from "../actions/sandbox/mcp-bridge-provider-inspection";
 import type { OpenShellSandboxBufferedCommandExecutor } from "../adapters/openshell/sandbox-command";
+import type { OpenShellRuntimeSelection } from "../adapters/openshell/runtime-selection";
 
 type WebSearchSelection = { fetchEnabled?: boolean } | null;
 const OPENCLAW_ALIVE_HTTP_CODES = new Set([200, 401]);
@@ -62,23 +64,28 @@ export function createOpenclawGatewayReadinessProbe(
 }
 
 interface OpenClawWebSearchReuseDeps {
-  readEnabled(sandboxName: string): unknown;
-  disable(sandboxName: string): Promise<void>;
+  resolveRuntimeSelection(sandboxName: string): OpenShellRuntimeSelection;
+  readEnabled(sandboxName: string, runtime: OpenShellRuntimeSelection): unknown;
+  disable(sandboxName: string, runtime: OpenShellRuntimeSelection): Promise<void>;
 }
 
 const defaultWebSearchReuseDeps: OpenClawWebSearchReuseDeps = {
-  readEnabled: (sandboxName) => {
+  resolveRuntimeSelection: resolveSandboxConfigRuntimeSelection,
+  readEnabled: (sandboxName, runtime) => {
     const target = resolveAgentConfig(sandboxName);
     if (target.agentName !== "openclaw") {
       throw new Error(
         `Cannot reconcile OpenClaw web search for '${sandboxName}': the sandbox runs '${target.agentName}'.`,
       );
     }
-    return extractDotpath(readSandboxConfig(sandboxName, target), "tools.web.search.enabled");
+    return extractDotpath(
+      readSandboxConfig(sandboxName, target, runtime),
+      "tools.web.search.enabled",
+    );
   },
-  disable: async (sandboxName) => {
-    setOpenClawConfigValue(sandboxName, "tools.web.search.enabled", false);
-    await restartSandboxAgentAfterConfigSet(sandboxName, "openclaw");
+  disable: async (sandboxName, runtime) => {
+    setOpenClawConfigValue(sandboxName, "tools.web.search.enabled", false, runtime);
+    await restartSandboxAgentAfterConfigSet(sandboxName, "openclaw", undefined, runtime);
   },
 };
 
@@ -95,9 +102,10 @@ export async function reconcileOpenClawWebSearchForReuse(
   deps: OpenClawWebSearchReuseDeps = defaultWebSearchReuseDeps,
 ): Promise<void> {
   if (webSearchConfig?.fetchEnabled === true) return;
-  if (deps.readEnabled(sandboxName) !== true) return;
+  const runtime = deps.resolveRuntimeSelection(sandboxName);
+  if (deps.readEnabled(sandboxName, runtime) !== true) return;
   revalidateSandboxIdentity?.(`disable OpenClaw web search in sandbox '${sandboxName}'`);
-  await deps.disable(sandboxName);
+  await deps.disable(sandboxName, runtime);
 }
 
 export interface ConfigureOpenclawSandboxDeps {

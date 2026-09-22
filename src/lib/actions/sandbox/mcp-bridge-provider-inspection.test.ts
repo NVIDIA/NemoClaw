@@ -10,13 +10,16 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { setProviderCommandRuntimeHooksForTest } from "../../adapters/openshell/provider-command";
 import {
   getMcpProviderInspectionRuntimeSelection,
+  resolveSandboxConfigRuntimeSelection,
   inspectMcpProvider,
 } from "./mcp-bridge-provider-inspection";
+import * as gatewayTargets from "./gateway-target";
 
 const temporaryDirectories: string[] = [];
 const runtimeSelection = { gatewayName: "nemoclaw-8080", workspace: "default" } as const;
 
 afterEach(() => {
+  vi.restoreAllMocks();
   setProviderCommandRuntimeHooksForTest({});
   vi.unstubAllEnvs();
   for (const directory of temporaryDirectories.splice(0)) {
@@ -58,6 +61,42 @@ function writeExternalGatewayDeclaration(home: string, endpoint: string, stateDi
 }
 
 describe("MCP provider runtime selection", () => {
+  it("resolves native config operations from the recorded row despite ambient drift", () => {
+    const home = temporaryDirectory("nemoclaw-config-runtime-");
+    vi.stubEnv("HOME", home);
+    vi.stubEnv("OPENSHELL_GATEWAY", "wrong-gateway");
+    vi.stubEnv("OPENSHELL_WORKSPACE", "wrong-workspace");
+    vi.stubEnv("OPENSHELL_LOCAL_TLS_DIR", "/wrong/tls");
+    const localTlsDir = path.join(
+      home,
+      ".local",
+      "state",
+      "nemoclaw",
+      "openshell-docker-gateway-8091",
+      "tls",
+    );
+    writeClientTlsBundle(localTlsDir);
+    const readTarget = vi.spyOn(gatewayTargets, "getKnownSandboxTarget").mockReturnValue({
+      name: "alpha",
+      gatewayName: "nemoclaw-8091",
+      gatewayPort: 8091,
+    });
+    expect(resolveSandboxConfigRuntimeSelection("alpha")).toEqual({
+      gatewayName: "nemoclaw-8091",
+      workspace: "default",
+      localTlsDir,
+    });
+    expect(readTarget).toHaveBeenCalledExactlyOnceWith("alpha");
+  });
+
+  it("refuses native config access without a recorded sandbox target", () => {
+    vi.stubEnv("OPENSHELL_GATEWAY", "wrong-gateway");
+    vi.spyOn(gatewayTargets, "getKnownSandboxTarget").mockReturnValue(null);
+    expect(() => resolveSandboxConfigRuntimeSelection("missing")).toThrow(
+      "no recorded runtime target",
+    );
+  });
+
   it("binds a nondefault managed gateway to its own client TLS directory (#10514)", () => {
     const home = temporaryDirectory("nemoclaw-provider-runtime-");
     vi.stubEnv("HOME", home);
