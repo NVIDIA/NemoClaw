@@ -39,7 +39,6 @@ import {
   startupInput,
   entry,
   inventory,
-  openAiProviderProfile,
 } from "./live-export-source-test-fixture";
 import { managedBraveProfile } from "../../../../test/fixtures/openshell-provider-profile";
 
@@ -128,22 +127,24 @@ function mockManagedVllmSource(
   Object.assign(liveSandbox.sandbox.spec, { providers: ["vllm-local"] });
   raw.getSandbox.mockResolvedValue(liveSandbox);
   const credentials = { NEMOCLAW_VLLM_LOCAL_TOKEN: readFailureCanary };
-  raw.getProvider.mockResolvedValue({
-    provider: {
-      metadata: {
-        id: "provider-id",
-        name: "vllm-local",
-        workspace: "default",
-        resourceVersion: 8n,
-      },
-      type: "openai",
-      profileWorkspace: "default",
-      credentials,
-      config: { OPENAI_BASE_URL: source.endpointUrl },
+  const localProvider = {
+    metadata: {
+      id: "provider-id",
+      name: "vllm-local",
+      workspace: "default",
+      resourceVersion: 8n,
     },
+    type: "openai",
+    credentials,
+    config: { OPENAI_BASE_URL: source.endpointUrl },
+  };
+  raw.getProvider.mockResolvedValue({
+    provider: localProvider,
   });
-  raw.getProviderProfile.mockResolvedValue(openAiProviderProfile());
-  return { source, observed };
+  raw.getProviderProfile.mockImplementation(async () => {
+    throw new Error(readFailureCanary);
+  });
+  return { source, observed, localProvider };
 }
 
 describe("managed vLLM export pipeline", () => {
@@ -304,6 +305,7 @@ describe("managed vLLM export pipeline", () => {
         ...overrides,
       });
       expect(document.spec.services?.vllm).toMatchObject({ kind: "vllm", image: null });
+      expect(raw.getProviderProfile).not.toHaveBeenCalled();
       expect(publish).not.toHaveBeenCalled();
     },
   );
@@ -391,8 +393,9 @@ describe("managed vLLM export pipeline", () => {
     expectExportRefusal(await exportLiveSource(), { category: "unstable-source" });
   });
 
-  it("rejects a shadowed OpenAI profile with additional endpoint behavior", async () => {
-    mockManagedVllmSource();
+  it("rejects an unexpected OpenAI profile binding without reading the profile", async () => {
+    const { localProvider } = mockManagedVllmSource();
+    Object.assign(localProvider, { profileWorkspace: "default" });
     raw.getProviderProfile.mockResolvedValue({
       profile: {
         id: "openai",
@@ -409,21 +412,16 @@ describe("managed vLLM export pipeline", () => {
       kind: "read-failed",
       stage: "provider-metadata",
     });
+    expect(raw.getProviderProfile).not.toHaveBeenCalled();
   });
 
-  it("detects resolved provider profile revision changes", async () => {
-    mockManagedVllmSource();
-    let revision = 4n;
-    raw.getProviderProfile.mockImplementation(async () => ({
-      profile: {
-        id: "openai",
-        source: "user",
-        scope: "workspace",
-        resourceVersion: revision++,
-        credentials: [],
-        endpoints: [],
-        binaries: [],
-        inferenceCapable: true,
+  it("detects direct provider revision changes", async () => {
+    const { localProvider } = mockManagedVllmSource();
+    let revision = 8n;
+    raw.getProvider.mockImplementation(async () => ({
+      provider: {
+        ...localProvider,
+        metadata: { ...localProvider.metadata, resourceVersion: revision++ },
       },
     }));
     expect(
@@ -433,6 +431,7 @@ describe("managed vLLM export pipeline", () => {
       attempts: 2,
       findings: [expect.objectContaining({ category: "unstable-source" })],
     });
+    expect(raw.getProviderProfile).not.toHaveBeenCalled();
   });
 
   it("contains runtime failures before provider metadata or publication", async () => {

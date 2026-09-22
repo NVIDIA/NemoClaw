@@ -176,8 +176,11 @@ function matchesProviderMetadata(
 ): boolean {
   const { type, configKey } = providerContract(normalized.preferredInferenceApi);
   const builtin = provider.builtinInferenceEndpoint !== undefined;
+  const managedBindingMatches =
+    !managed || (provider.profileWorkspace === undefined && provider.managedProfile === undefined);
   return (
     type !== null &&
+    managedBindingMatches &&
     isDeepStrictEqual(
       [provider.name, provider.type, provider.credentialKeys, provider.configKeys],
       [
@@ -198,12 +201,12 @@ async function readProviderEvidence(
   managedServing?: ObservedManagedVllmRuntime,
 ): Promise<ObservedExportEndpointEvidence> {
   const { configKey } = providerContract(normalized.preferredInferenceApi);
-  const managedProfile = !!managedServing || routeProvider === "ollama-local";
+  const inspectOpenAiProfile = routeProvider === "ollama-local";
   const provider = await createProviders().get({
     target: namedOpenShellGateway(gatewayName),
     workspace: "default",
     name: routeProvider,
-    ...(managedProfile ? { profileContract: "openai" as const } : {}),
+    ...(inspectOpenAiProfile ? { profileContract: "openai" as const } : {}),
     configKeys: [configKey],
     signal,
   });
@@ -213,7 +216,7 @@ async function readProviderEvidence(
     throw new Error("The live inference provider metadata does not match the registry.");
   }
   return {
-    provider: providerIdentity(provider, gatewayName, managedProfile),
+    provider: providerIdentity(provider, gatewayName, inspectOpenAiProfile),
     endpoint: provider.builtinInferenceEndpoint ?? provider.config[configKey] ?? "",
     source: builtin
       ? { kind: "builtin-profile", profileId: "nvidia" }
