@@ -297,7 +297,7 @@ describe("preparePortableExperimentalHost", () => {
     expect(prepared).not.toBeNull();
     expect(prepared?.authority.uid).toBe(1001);
   });
-
+  /** Registry configuration and host publication must name the same reachable IPv4 authority. */
   it("prepares the rootless socket and managed portable registry deterministically", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-portable-"));
     tempDirs.push(home);
@@ -391,7 +391,7 @@ describe("preparePortableExperimentalHost", () => {
       home,
       ".config/containers/registries.conf.d/99-nemoclaw-portable.conf",
     );
-    expect(fs.readFileSync(registryConfig, "utf-8")).toContain('location = "localhost:5000"');
+    expect(fs.readFileSync(registryConfig, "utf-8")).toContain('prefix = "localhost:5000"');
     expect(fs.statSync(registryConfig).mode & 0o777).toBe(0o600);
     const containersConf = path.join(home, ".config/nemoclaw/portable/containers.conf");
     expect(fs.readFileSync(containersConf, "utf-8")).toContain(

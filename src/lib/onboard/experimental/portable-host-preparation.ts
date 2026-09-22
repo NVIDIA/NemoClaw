@@ -26,7 +26,9 @@ import {
   PORTABLE_DOCKER_NETWORK_SUBNET,
   PORTABLE_HOST_GATEWAY_IP,
   PORTABLE_LOCAL_REGISTRY,
+  PORTABLE_REGISTRY_HOST,
   PORTABLE_REGISTRY_IP,
+  PORTABLE_REGISTRY_PORT,
   resolveDockerDriverNetworkName,
 } from "../docker-driver-platform";
 import {
@@ -68,7 +70,13 @@ const REGISTRY_IMAGE =
   "docker.io/library/registry:2@sha256:a3d8aaa63ed8681a604f1dea0aa03f100d5895b6a58ace528858a7b332415373";
 const HOST_COMMAND_TIMEOUT_MS = 30_000;
 const REGISTRY_COMMAND_TIMEOUT_MS = 300_000;
+// Stored image references can retain localhost; resolve them through the same IPv4 listener.
 const REGISTRY_FRAGMENT = `[[registry]]
+location = "${PORTABLE_LOCAL_REGISTRY}"
+insecure = true
+
+[[registry]]
+prefix = "localhost:5000"
 location = "${PORTABLE_LOCAL_REGISTRY}"
 insecure = true
 `;
@@ -700,6 +708,7 @@ function registryInspectionArgs(networkName: string): readonly string[] {
   ];
 }
 
+/** Reconcile only an owned registry; preserve running instances and reject foreign network identity. */
 function ensureRegistryContainer(
   env: NodeJS.ProcessEnv,
   docker: NonNullable<PortableHostPreparationDeps["docker"]>,
@@ -755,7 +764,7 @@ function ensureRegistryContainer(
         "--ip",
         PORTABLE_REGISTRY_IP,
         "-p",
-        "127.0.0.1:5000:5000",
+        `${PORTABLE_REGISTRY_HOST}:${PORTABLE_REGISTRY_PORT}:5000`,
         "--restart=always",
         REGISTRY_IMAGE,
       ],

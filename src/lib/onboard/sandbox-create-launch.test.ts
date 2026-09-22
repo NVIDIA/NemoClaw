@@ -24,6 +24,7 @@ const disabledHermesDashboardState = { config: null, enabled: false };
 const IMAGE_ID = `sha256:${"a".repeat(64)}`;
 const temporaryBuildContexts: string[] = [];
 
+/** Stage a private generated context that satisfies prebuild trust checks and is cleaned after each test. */
 function createTrustedBuildContext(): string {
   const buildCtx = fs.mkdtempSync(path.join(os.tmpdir(), SANDBOX_BUILD_CONTEXT_PREFIX));
   temporaryBuildContexts.push(buildCtx);
@@ -31,7 +32,9 @@ function createTrustedBuildContext(): string {
   return buildCtx;
 }
 
+/** Restore global probes and remove staged contexts after either success or failure. */
 afterEach(() => {
+  vi.restoreAllMocks();
   for (const buildCtx of temporaryBuildContexts.splice(0)) {
     fs.rmSync(buildCtx, { recursive: true, force: true });
   }
@@ -773,7 +776,10 @@ describe("prepareSandboxCreateLaunchWithPrebuild", () => {
     expect(result.createCommand).not.toContain("nemoclaw-sandbox-local");
   });
 
+  /** A healthy registry must not suppress the existing portable build-failure fallback. */
   it("preserves the rootless gateway path for a generated portable Hermes image", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("{}", { status: 200 }));
+    const buildImage = vi.fn().mockResolvedValue(1);
     const buildCtx = createTrustedBuildContext();
     const dockerfile = path.join(buildCtx, "Dockerfile");
     const result = await prepareSandboxCreateLaunchWithPrebuild({
@@ -797,7 +803,7 @@ describe("prepareSandboxCreateLaunchWithPrebuild", () => {
           NEMOCLAW_EXPERIMENTAL_PROFILE: "portable",
           NEMOCLAW_SANDBOX_PREBUILD: "1",
         },
-        buildImage: async () => 1,
+        buildImage,
         log: vi.fn(),
         origin: "generated",
       },
@@ -808,5 +814,6 @@ describe("prepareSandboxCreateLaunchWithPrebuild", () => {
       imageRef: null,
       imageId: null,
     });
+    expect(buildImage).toHaveBeenCalledOnce();
   });
 });

@@ -1318,17 +1318,21 @@ describe("garbageCollectImages", () => {
     expect(mocks.assertNoHermesPortableHostAuthority).toHaveBeenCalledWith(stateDir, "gc");
   });
 
-  it("surfaces a local-repo orphan while preserving a registered local image (#6301)", async () => {
+  it.each([
+    "nemoclaw-sandbox-local",
+    "localhost:5000/nemoclaw-sandbox-local",
+    "127.0.0.1:5000/nemoclaw-sandbox-local",
+  ])("surfaces an orphan in %s while preserving a registered image (#6301)", async (imageRepo) => {
     // Local repo holds an orphan (gc-test-orphan-111) plus a still-registered
     // image (live-222); the gateway repo holds only an in-use image.
     mocks.dockerListImagesFormat.mockImplementation((repo: string) =>
-      repo === "nemoclaw-sandbox-local"
-        ? "nemoclaw-sandbox-local:gc-test-orphan-111\t3GB\nnemoclaw-sandbox-local:live-222\t2GB"
+      repo === imageRepo
+        ? `${imageRepo}:gc-test-orphan-111\t3GB\n${imageRepo}:live-222\t2GB`
         : "openshell/sandbox-from:in-use\t1GB",
     );
     mocks.listSandboxes.mockReturnValue({
       sandboxes: [
-        { imageTag: "nemoclaw-sandbox-local:live-222" },
+        { imageTag: `${imageRepo}:live-222` },
         { imageTag: "openshell/sandbox-from:in-use" },
       ],
       defaultSandbox: null,
@@ -1342,10 +1346,10 @@ describe("garbageCollectImages", () => {
 
     // The local orphan is reported, the still-registered local image is not,
     // and both repos are scanned.
-    expect(out).toContain("nemoclaw-sandbox-local:gc-test-orphan-111");
-    expect(out).not.toContain("nemoclaw-sandbox-local:live-222");
+    expect(out).toContain(`${imageRepo}:gc-test-orphan-111`);
+    expect(out).not.toContain(`${imageRepo}:live-222`);
     const scannedRepos = mocks.dockerListImagesFormat.mock.calls.map((call) => call[0]);
     expect(scannedRepos).toContain("openshell/sandbox-from");
-    expect(scannedRepos).toContain("nemoclaw-sandbox-local");
+    expect(scannedRepos).toContain(imageRepo);
   });
 });
