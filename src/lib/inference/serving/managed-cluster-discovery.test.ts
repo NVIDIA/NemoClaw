@@ -978,7 +978,9 @@ describe("production pinned peer transport", () => {
   });
 
   it("routes canonical readiness through the dedicated os-release transport", () => {
-    const readOsRelease = vi.fn(() => 'ID=ubuntu\nVERSION_ID="24.04"\n');
+    const readOsRelease = vi.fn(
+      () => 'ID=ubuntu\nVERSION_ID="24.04"\nPRETTY_NAME="Ubuntu 24.04.4 LTS"\n',
+    );
     const candidate: ManagedClusterReadOnlyHostTransport = {
       execute: (argv) => ({
         status: 0,
@@ -991,7 +993,7 @@ describe("production pinned peer transport", () => {
     };
     const deps = createManagedClusterDiscoveryDeps(() => ({ status: 0, stdout: "", stderr: "" }));
 
-    deps.createReadiness(
+    const result = deps.createReadiness(
       host("local"),
       candidate,
       { nemoclawVersion: "0.1.0", sourceRevision: SOURCE_REVISION },
@@ -999,6 +1001,15 @@ describe("production pinned peer transport", () => {
     );
 
     expect(readOsRelease).toHaveBeenCalledWith("/etc/os-release", "/usr/lib/os-release", 4096);
+    expect(result.observations).toEqual(
+      expect.arrayContaining([
+        { id: "host.os.distribution", state: "present", value: "ubuntu" },
+        { id: "host.os.version", state: "present", value: "24.04" },
+        { id: "host.os.pretty_name", state: "present", value: "Ubuntu 24.04.4 LTS" },
+      ]),
+    );
+    expect(result.findings.map(({ id }) => id)).not.toContain("host.os.release_unqualified");
+    expect(result.findings.map(({ id }) => id)).not.toContain("host.os.release_inconclusive");
   });
 
   it("uses the bounded os-release reader through the pinned SSH transport", () => {

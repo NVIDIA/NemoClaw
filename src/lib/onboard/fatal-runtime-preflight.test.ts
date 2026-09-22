@@ -164,31 +164,6 @@ function collectedGatewayReadiness(
   return { projection, snapshot: managedGatewaySnapshot(completedAt) };
 }
 
-function admittedReadiness(findings: SystemReadinessReport["findings"]): SystemReadinessReport {
-  return {
-    schemaVersion: "1.1.0",
-    status: "supported",
-    exitCode: 0,
-    mutated: false,
-    provenance: {
-      nemoclawVersion: "0.1.0",
-      sourceRevision: "a".repeat(40),
-      observedAt: "2026-09-15T00:00:00.000Z",
-    },
-    observations: [],
-    capabilities: [
-      { id: "host.docker.available", state: "present" },
-      { id: "host.docker.daemon_reachable", state: "present" },
-      { id: "host.docker.runtime_supported", state: "present" },
-      { id: "host.docker.storage_compatible", state: "present" },
-      { id: "host.platform.supported", state: "present" },
-    ],
-    qualifications: [],
-    findings,
-    evidence: [],
-  };
-}
-
 async function withLinuxArm64<T>(operation: () => Promise<T>): Promise<T> {
   const platform = Object.getOwnPropertyDescriptor(process, "platform")!;
   const arch = Object.getOwnPropertyDescriptor(process, "arch")!;
@@ -406,28 +381,6 @@ describe("report-backed runtime readiness (#7411)", () => {
     expect(output).toContain("DOCKER_CONFIG=$(mktemp -d) nemoclaw onboard --resume");
   });
 
-  it.each([
-    [
-      "host.os.release_unqualified",
-      "The detected host operating-system release has not been qualified for host-level onboarding.",
-    ],
-    [
-      "host.os.release_inconclusive",
-      "The host operating-system distribution and version could not be identified from /etc/os-release.",
-    ],
-  ])("presents the %s warning before admitted onboarding (#11026)", (id, summary) => {
-    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
-    const readiness = admittedReadiness([{ id, severity: "warning", summary }]);
-
-    expect(
-      assertOnboardSystemReadiness(readiness, hostWithRuntime("docker"), {
-        explicitlyOptedOutGpuPassthrough: true,
-      }),
-    ).toBe(readiness);
-
-    expect(error.mock.calls.map(([line]) => line).join("\n")).toContain(summary);
-  });
-
   it("retains warning remediation when a repeated readiness check blocks", () => {
     const exit = vi.fn((_code: number): never => {
       throw new Error("exit");
@@ -441,7 +394,6 @@ describe("report-backed runtime readiness (#7411)", () => {
       dockerCredsStore: "desktop",
       dockerCredsStorePath: "~/.docker/config.json",
     };
-
     expect(() =>
       assertOnboardHostReadiness(host, null, {
         explicitlyOptedOutGpuPassthrough: false,

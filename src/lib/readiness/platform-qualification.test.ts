@@ -163,6 +163,26 @@ describe("platform readiness qualification (#7410)", () => {
     });
   });
 
+  it("collects OS release identity through the descriptor-backed reader (#11026)", () => {
+    const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-os-release-"));
+    const osReleasePath = path.join(fixtureRoot, "os-release");
+    try {
+      fs.writeFileSync(
+        osReleasePath,
+        'ID=ubuntu\nVERSION_ID="24.04"\nPRETTY_NAME="Ubuntu 24.04.4 LTS"\n',
+      );
+      const identity = collectPlatformIdentity({ osReleasePath });
+
+      expect(identity).toMatchObject({
+        osId: "ubuntu",
+        osVersionId: "24.04",
+        osPrettyName: "Ubuntu 24.04.4 LTS",
+      });
+    } finally {
+      fs.rmSync(fixtureRoot, { recursive: true, force: true });
+    }
+  });
+
   it("rejects NUL-bearing OS release evidence as malformed (#11026)", () => {
     const missing = (): never => {
       const error = new Error("missing fixture") as NodeJS.ErrnoException;
