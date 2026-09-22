@@ -11,9 +11,14 @@ import {
   V1ALPHA1_RUNTIME_DEFAULTS,
   V1ALPHA1_RUNTIME_DEFAULTS_REVISION,
 } from "../../../src/lib/domain/config/v1alpha1-runtime-defaults.ts";
-import { REPO_ROOT } from "../fixtures/paths.ts";
+import { decodeManagedStartupProfile } from "../../../src/lib/onboard/managed-startup/profile.ts";
+import type { SandboxEntry } from "../../../src/lib/state/registry/types.ts";
+import { REPO_ROOT } from "./paths.ts";
 
 const FIXTURE_ROOT = path.join(REPO_ROOT, "test/e2e/fixtures/v1-config-consumer");
+const CONSUMER_COMMAND_TIMEOUT_MS = 30_000;
+const CONSUMER_BUILD_TIMEOUT_MS = 4 * 60_000;
+type RevisionMatchedLiveEntry = Pick<SandboxEntry, "name" | "agent" | "workload" | "hermesApiPort">;
 
 interface ConsumerInput {
   readonly name: string;
@@ -69,6 +74,68 @@ function hermesTargetDefaults(): Record<string, unknown> {
   };
 }
 
+function requiredNumber(value: number | null, field: string): number {
+  if (value === null) throw new Error(`the live source is missing ${field}`);
+  return value;
+}
+
+function openClawSource(entry: RevisionMatchedLiveEntry): Record<string, unknown> {
+  if (entry.workload?.kind !== "managed-image") {
+    throw new Error("revision-matched validation requires a managed-image workload");
+  }
+  const profile = decodeManagedStartupProfile(entry.workload.encodedProfile);
+  if (
+    profile.agent !== "openclaw" ||
+    profile.agentConfig.agent !== "openclaw" ||
+    profile.dashboard.agent !== "openclaw"
+  ) {
+    throw new Error("the live OpenClaw source does not match its managed startup profile");
+  }
+  return {
+    contextWindow: requiredNumber(profile.tuning.contextWindow, "OpenClaw context window"),
+    maxTokens: requiredNumber(profile.tuning.maxTokens, "OpenClaw maximum tokens"),
+    reasoning: profile.tuning.reasoning,
+    timeoutSeconds: profile.agentConfig.agentTimeoutSeconds,
+    heartbeatPresent: profile.agentConfig.heartbeatEvery !== null,
+    dashboardEnabled: true,
+    dashboardPort: profile.dashboard.port,
+    dashboardBind: profile.dashboard.bindAddress === "127.0.0.1" ? "loopback" : "lan",
+    toolDisclosure: profile.tools.disclosure,
+    explicitAgentOwnership: true,
+    thinkingDefaultPresent: profile.tuning.reasoningEffort !== "default",
+  };
+}
+
+function hermesSource(entry: RevisionMatchedLiveEntry): Record<string, unknown> {
+  if (entry.workload?.kind !== "managed-image") {
+    throw new Error("revision-matched validation requires a managed-image workload");
+  }
+  const profile = decodeManagedStartupProfile(entry.workload.encodedProfile);
+  if (
+    profile.agent !== "hermes" ||
+    profile.agentConfig.agent !== "hermes" ||
+    profile.dashboard.agent !== "hermes"
+  ) {
+    throw new Error("the live Hermes source does not match its managed startup profile");
+  }
+  const defaults = V1ALPHA1_RUNTIME_DEFAULTS.hermes.interfaces;
+  const dashboard =
+    profile.dashboard.mode === "loopback-forwarded"
+      ? {
+          enabled: true,
+          port: profile.dashboard.publicPort,
+          internalPort: profile.dashboard.internalPort,
+          tui: { enabled: profile.dashboard.tuiEnabled },
+        }
+      : {
+          enabled: false,
+          port: defaults.dashboard.port,
+          internalPort: defaults.dashboard.internalPort,
+          tui: { enabled: defaults.dashboard.tuiEnabled },
+        };
+  return { apiPort: entry.hermesApiPort ?? defaults.api.port, dashboard };
+}
+
 /** Parse raw exports and evaluate their generated native settings with the pinned v1 consumer. */
 export function validateWithRevisionMatchedV1Consumer(
   inputs: readonly ConsumerInput[],
@@ -107,12 +174,19 @@ export function validateWithRevisionMatchedV1Consumer(
         `--output=${consumerArchive}`,
         V1ALPHA1_RUNTIME_DEFAULTS_REVISION,
       ],
-      { encoding: "utf8", stdio: "pipe" },
+      {
+        encoding: "utf8",
+        killSignal: "SIGKILL",
+        stdio: "pipe",
+        timeout: CONSUMER_COMMAND_TIMEOUT_MS,
+      },
     );
     fs.mkdirSync(consumer);
     execFileSync("tar", ["-xf", consumerArchive, "-C", consumer], {
       encoding: "utf8",
+      killSignal: "SIGKILL",
       stdio: "pipe",
+      timeout: CONSUMER_COMMAND_TIMEOUT_MS,
     });
     fs.copyFileSync(
       path.join(FIXTURE_ROOT, "config-export-compatibility.rs"),
@@ -134,7 +208,9 @@ export function validateWithRevisionMatchedV1Consumer(
           NEMOCLAW_V1_SETTINGS_OUTPUT: settingsDirectory,
         },
         maxBuffer: 10 * 1024 * 1024,
+        killSignal: "SIGKILL",
         stdio: "pipe",
+        timeout: CONSUMER_BUILD_TIMEOUT_MS,
       },
     );
     execFileSync(
@@ -150,7 +226,13 @@ export function validateWithRevisionMatchedV1Consumer(
         "--output",
         evidencePath,
       ],
-      { encoding: "utf8", maxBuffer: 10 * 1024 * 1024, stdio: "pipe" },
+      {
+        encoding: "utf8",
+        killSignal: "SIGKILL",
+        maxBuffer: 10 * 1024 * 1024,
+        stdio: "pipe",
+        timeout: CONSUMER_COMMAND_TIMEOUT_MS,
+      },
     );
     const evidence = JSON.parse(fs.readFileSync(evidencePath, "utf8")) as Omit<
       ConsumerEvidence,
@@ -160,4 +242,32 @@ export function validateWithRevisionMatchedV1Consumer(
   } finally {
     fs.rmSync(temporaryRoot, { force: true, recursive: true });
   }
+}
+
+function revisionMatchedConsumerInputFromLiveSource(
+  raw: string,
+  entry: RevisionMatchedLiveEntry,
+): ConsumerInput {
+  if (entry.agent !== "openclaw" && entry.agent !== "hermes") {
+    throw new Error(
+      `revision-matched validation does not support agent '${entry.agent ?? "unknown"}'`,
+    );
+  }
+  return {
+    name: `live-${entry.name}`,
+    harness: entry.agent,
+    raw,
+    ...(entry.agent === "openclaw" ? { agentName: "primary" } : {}),
+    source: entry.agent === "openclaw" ? openClawSource(entry) : hermesSource(entry),
+  };
+}
+
+/** Validate one live CLI export against independently retained source state. */
+export function validateLiveExportWithRevisionMatchedV1Consumer(
+  raw: string,
+  entry: RevisionMatchedLiveEntry,
+): ConsumerEvidence {
+  return validateWithRevisionMatchedV1Consumer([
+    revisionMatchedConsumerInputFromLiveSource(raw, entry),
+  ]);
 }

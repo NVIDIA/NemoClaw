@@ -289,6 +289,7 @@ function dependencies(
     removeDirectory:
       options.removeDirectory ??
       ((directory) => fs.rmSync(directory, { force: true, recursive: true })),
+    validateV1Consumer: () => undefined,
   };
 }
 
@@ -1008,10 +1009,10 @@ process.stdout.write("x".repeat(1024 * 1024 + 2048 - Buffer.byteLength(suffix, "
     },
   );
 
-  it("classifies invalid exported configuration as verification failure (#11485)", async () => {
+  it("withholds YAML when the revision-matched consumer rejects the export (#12132)", async () => {
     const invalid = dependencies();
-    invalid.parseConfig = () => {
-      throw new Error("invalid exported configuration");
+    invalid.validateV1Consumer = () => {
+      throw new Error("revision-matched v1 consumer rejected the live export");
     };
     const test = fixture({ dependencies: invalid });
 
@@ -1020,7 +1021,6 @@ process.stdout.write("x".repeat(1024 * 1024 + 2048 - Buffer.byteLength(suffix, "
     expect(test.writes.at(-1)).toMatchObject({
       classification: "failure",
       failureStage: "verification",
-      command: { exitCode: 0, timedOut: false, outputPublished: true },
     });
     expect(test.writes.at(-1)).not.toHaveProperty("export");
   });

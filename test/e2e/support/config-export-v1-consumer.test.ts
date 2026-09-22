@@ -11,7 +11,7 @@ import {
   snapshot,
 } from "../../../src/lib/domain/config/export-source-test-fixture.ts";
 import { testTimeoutOptions } from "../../helpers/timeouts.ts";
-import { validateWithRevisionMatchedV1Consumer } from "./v1-config-consumer.ts";
+import { validateWithRevisionMatchedV1Consumer } from "../fixtures/revision-matched-v1-consumer.ts";
 
 async function rawExport(source: ReturnType<typeof snapshot>): Promise<string> {
   const exported = await exportSnapshots([source]);

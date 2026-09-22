@@ -87,7 +87,11 @@ describe("E2E operations workflow", testTimeoutOptions(15_000), () => {
     { mode: "removed check", run: "true", continueOnError: false },
     {
       mode: "missing YAML check",
-      run: `test -f "${CONFIG_EXPORT_EVIDENCE_PATH}"`,
+      run: [
+        "set -euo pipefail",
+        `evidence="${CONFIG_EXPORT_EVIDENCE_PATH}"`,
+        'test -f "$evidence"',
+      ].join("\n"),
       continueOnError: false,
     },
     {

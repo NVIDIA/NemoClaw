@@ -38,6 +38,7 @@ import {
 } from "../hosted-inference.ts";
 import { CLI_DIST_ENTRYPOINT, REPO_ROOT } from "../paths.ts";
 import type { SecretStore } from "../secrets.ts";
+import { validateLiveExportWithRevisionMatchedV1Consumer } from "../revision-matched-v1-consumer.ts";
 import type { NemoClawInstance } from "./onboarding.ts";
 
 const { Type } = require("typebox") as typeof TypeBoxModule;
@@ -315,6 +316,7 @@ export type ConfigExportRegistryEntry = Pick<
   | "model"
   | "credentialEnv"
   | "dcodeAutoApprovalMode"
+  | "hermesApiPort"
   | "workload"
   | "observabilityEnabled"
   | "toolDisclosure"
@@ -353,6 +355,7 @@ export interface ConfigExportValidationDependencies {
   producer(): ConfigExportProducer;
   readOpenFile(file: number, limitBytes: number): string;
   removeDirectory(directory: string): void;
+  validateV1Consumer(raw: string, entry: ConfigExportRegistryEntry): void;
 }
 
 const DEFAULT_DEPENDENCIES: ConfigExportValidationDependencies = {
@@ -396,6 +399,7 @@ const DEFAULT_DEPENDENCIES: ConfigExportValidationDependencies = {
     return buffer.subarray(0, offset).toString("utf8");
   },
   removeDirectory: (directory) => fs.rmSync(directory, { force: true, recursive: true }),
+  validateV1Consumer: validateLiveExportWithRevisionMatchedV1Consumer,
 };
 
 function requiredRecord(value: unknown, field: string): Record<string, unknown> {
@@ -990,6 +994,17 @@ export class ConfigExportValidationPhaseFixture {
         failureStage = "verification";
         if (!expected) throw new Error("config export expectations were not captured");
         verifications = compareSemantics(expected, observed);
+        if (expected.agent === "openclaw" || expected.agent === "hermes") {
+          const sourceEntry = registryBeforeExport?.[instance.sandboxName];
+          if (!sourceEntry) throw new Error("the live export source was not retained");
+          this.dependencies.validateV1Consumer(raw, sourceEntry);
+          verifications.push({
+            id: "revisionMatchedV1Consumer",
+            passed: true,
+            expected: "accepted by the pinned parser and native adapter",
+            actual: "accepted",
+          });
+        }
         const registryAfterExport = this.dependencies.loadRegistry().sandboxes;
         verifications.push({
           id: "sourceRegistryUnchanged",

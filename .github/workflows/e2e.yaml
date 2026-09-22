@@ -2956,8 +2956,15 @@ jobs:
         if: ${{ success() }}
         shell: bash
         run: |
-          test -f "e2e-artifacts/live/${{ matrix.id }}/config-export-evidence.v1.json"
-          test -f "e2e-artifacts/live/${{ matrix.id }}/config-export.yaml"
+          set -euo pipefail
+          evidence="e2e-artifacts/live/${{ matrix.id }}/config-export-evidence.v1.json"
+          yaml="e2e-artifacts/live/${{ matrix.id }}/config-export.yaml"
+          test -f "$evidence"
+          case "$(jq -er '.classification' "$evidence")" in
+            success) test -f "$yaml" ;;
+            expected-refusal|no-usable-sandbox) ;;
+            *) exit 1 ;;
+          esac
 
       - name: Upload E2E artifacts
         if: always()

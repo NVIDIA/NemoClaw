@@ -40,6 +40,18 @@ const COLD_ONBOARD_PERFORMANCE_EVIDENCE_PATH =
 const CONFIG_EXPORT_EVIDENCE_PATH =
   "e2e-artifacts/live/${{ matrix.id }}/config-export-evidence.v1.json";
 const CONFIG_EXPORT_YAML_PATH = "e2e-artifacts/live/${{ matrix.id }}/config-export.yaml";
+const CONFIG_EXPORT_REQUIREMENT_SCRIPT =
+  [
+    "set -euo pipefail",
+    `evidence="${CONFIG_EXPORT_EVIDENCE_PATH}"`,
+    `yaml="${CONFIG_EXPORT_YAML_PATH}"`,
+    'test -f "$evidence"',
+    'case "$(jq -er \'.classification\' "$evidence")" in',
+    '  success) test -f "$yaml" ;;',
+    "  expected-refusal|no-usable-sandbox) ;;",
+    "  *) exit 1 ;;",
+    "esac",
+  ].join("\n") + "\n";
 const MANAGED_SOURCE_CONDITION =
   "${{ inputs.pr_number == '' || steps.select_pr_source.outputs.selection == 'base-cohort' }}";
 const BASE_PUBLICATION_CONDITION =
@@ -1027,10 +1039,7 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
   if (
     requireConfigExportEvidence.if !== "${{ success() }}" ||
     requireConfigExportEvidence.shell !== "bash" ||
-    String(requireConfigExportEvidence.run ?? "").trim() !==
-      [`test -f "${CONFIG_EXPORT_EVIDENCE_PATH}"`, `test -f "${CONFIG_EXPORT_YAML_PATH}"`].join(
-        "\n",
-      ) ||
+    String(requireConfigExportEvidence.run ?? "") !== CONFIG_EXPORT_REQUIREMENT_SCRIPT ||
     (requireConfigExportEvidence["continue-on-error"] !== undefined &&
       requireConfigExportEvidence["continue-on-error"] !== false) ||
     liveSteps.indexOf(requireConfigExportEvidence) <=
