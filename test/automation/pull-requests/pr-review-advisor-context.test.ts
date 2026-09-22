@@ -17,6 +17,7 @@ import {
   extractIssueRefs,
   hasOpenPrReplacement,
   type OpenPrOverlap,
+  reconstructCoordinatorReviewHistory,
   writeGitHubReviewContext,
 } from "../../../tools/pr-review-advisor/github-context.mts";
 import { buildSystemPrompt } from "../../../tools/pr-review-advisor/trusted-guidance.mts";
@@ -166,7 +167,81 @@ describe("PR review advisor", () => {
       ),
     ).toBe(false);
     expect(allPullRequestCommitsVerified(commits, "d".repeat(40))).toBe(false);
+    expect(allPullRequestCommitsVerified([null, ...commits], currentHead)).toBe(false);
+    expect(allPullRequestCommitsVerified([...commits, null], currentHead)).toBe(false);
     expect(allPullRequestCommitsVerified([], currentHead)).toBe(false);
+  });
+
+  it("reconstructs frozen findings and exact-head writes from trusted reviews", () => {
+    const priorHead = "b".repeat(40);
+    const currentHead = "c".repeat(40);
+    const history = reconstructCoordinatorReviewHistory(
+      [
+        {
+          id: 11,
+          state: "CHANGES_REQUESTED",
+          commit_id: priorHead,
+          submitted_at: "2026-09-20T10:00:00Z",
+          author_association: "MEMBER",
+          user: { login: "maintainer", type: "User" },
+          body: "Please fix this.\n\n<!-- nemoclaw-review-coordinator-finding:F-security-1 -->",
+        },
+        {
+          id: 12,
+          state: "APPROVED",
+          commit_id: currentHead,
+          submitted_at: "2026-09-20T11:00:00Z",
+          author_association: "COLLABORATOR",
+          user: { login: "second-maintainer", type: "User" },
+        },
+      ],
+      [],
+      currentHead,
+    );
+
+    expect(history).toEqual({
+      contractEvidence: "complete",
+      frozenContractKeys: ["F-security-1"],
+      writes: [
+        { headSha: priorHead, kind: "request-changes" },
+        { headSha: currentHead, kind: "approve" },
+      ],
+    });
+  });
+
+  it("marks unresolved unstructured feedback incomplete and clears it after approval", () => {
+    const priorHead = "b".repeat(40);
+    const currentHead = "c".repeat(40);
+    const request = {
+      id: 21,
+      state: "CHANGES_REQUESTED",
+      commit_id: priorHead,
+      submitted_at: "2026-09-20T10:00:00Z",
+      author_association: "OWNER",
+      user: { login: "maintainer", type: "User" },
+      body: "Please fix this without a machine-readable finding marker.",
+    };
+
+    expect(reconstructCoordinatorReviewHistory([request], [], currentHead)).toMatchObject({
+      contractEvidence: "incomplete",
+      frozenContractKeys: [],
+    });
+    expect(
+      reconstructCoordinatorReviewHistory(
+        [
+          request,
+          {
+            ...request,
+            id: 22,
+            state: "APPROVED",
+            commit_id: currentHead,
+            submitted_at: "2026-09-20T11:00:00Z",
+          },
+        ],
+        [],
+        currentHead,
+      ),
+    ).toMatchObject({ contractEvidence: "none", frozenContractKeys: [] });
   });
 
   it("cancels a delayed pagination request at the shared context deadline", async () => {

@@ -34,6 +34,13 @@ manual dispatches remain pending and cannot propose a review. The trusted aggreg
 exact-head P0/P1 ledger entries eligible for the shadow decision. A `product-scope` finding keeps the
 approval gate closed; otherwise shadow mode records that no missing-scope defect was reported.
 
+Shadow mode reconstructs prior writes from trusted maintainer reviews and the dedicated coordinator
+bot. Future coordinator-generated changes-requested reviews must carry a hidden
+`nemoclaw-review-coordinator-finding` marker for every frozen finding. Those markers let a later
+exact-head run distinguish a repeated blocker from a newly proven blocker without repeating feedback.
+If unresolved older feedback has no marker, the contract is ambiguous and the coordinator stays quiet;
+it never treats that PR as a first review or proposes approval.
+
 The policy preserves the maintainer review loop's important behavior. Its input is reconciled
 Advisor evidence: the adapter must retain only P0/P1 ledger findings and label whether each finding
 belongs to the frozen contract or was newly proven on the exact follow-up delta.

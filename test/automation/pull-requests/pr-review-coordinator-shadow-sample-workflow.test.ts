@@ -8,6 +8,10 @@ import {
   type WorkflowJob,
   type WorkflowStep,
 } from "../../helpers/e2e-workflow-contract.ts";
+import {
+  parseEligibleSourceRun,
+  validateShadowSampleWorkflowCondition,
+} from "../../../tools/pr-review-coordinator/shadow-sample.mts";
 
 const WORKFLOW_PATH = ".github/workflows/pr-review-coordinator-shadow-sample.yaml";
 
@@ -21,6 +25,20 @@ type SampleWorkflow = {
   };
   permissions: Record<string, string>;
   jobs: { collect: WorkflowJob };
+};
+
+const SOURCE_RUN_ID = 101;
+const trustedSourceRun = {
+  id: SOURCE_RUN_ID,
+  run_attempt: 2,
+  created_at: "2026-09-21T12:00:00Z",
+  path: ".github/workflows/pr-review-advisor.yaml",
+  event: "workflow_run",
+  status: "completed",
+  conclusion: "success",
+  head_branch: "main",
+  repository: { full_name: "NVIDIA/NemoClaw" },
+  head_repository: { full_name: "NVIDIA/NemoClaw" },
 };
 
 function workflow(): SampleWorkflow {
@@ -57,18 +75,33 @@ describe("coordinator shadow sample workflow boundary", () => {
     expect(Object.keys(value.jobs)).toEqual(["collect"]);
   });
 
-  // source-shape-contract: security -- Exact event provenance keeps untrusted pull request runs from entering the trusted sample collector
+  it("accepts only the complete trusted Advisor source-run identity", () => {
+    validateShadowSampleWorkflowCondition(workflow().jobs.collect.if);
+    expect(parseEligibleSourceRun(trustedSourceRun, SOURCE_RUN_ID)).toEqual({
+      id: SOURCE_RUN_ID,
+      attempt: 2,
+      createdAt: "2026-09-21T12:00:00Z",
+    });
+    expect(
+      parseEligibleSourceRun({ ...trustedSourceRun, conclusion: "failure" }, SOURCE_RUN_ID),
+    ).toEqual({
+      id: SOURCE_RUN_ID,
+      attempt: 2,
+      createdAt: "2026-09-21T12:00:00Z",
+    });
+  });
+
   it.each([
-    "github.repository == 'NVIDIA/NemoClaw'",
-    "github.event.workflow_run.status == 'completed'",
-    "github.event.workflow_run.conclusion == 'success' ||",
-    "github.event.workflow_run.conclusion == 'failure'",
-    "github.event.workflow_run.event == 'workflow_run'",
-    "github.event.workflow_run.head_branch == 'main'",
-    "github.event.workflow_run.head_repository.full_name == 'NVIDIA/NemoClaw'",
-    "github.event.workflow_run.path == '.github/workflows/pr-review-advisor.yaml'",
-  ])("fails closed on exact automatic Advisor evidence [%s]", (fragment) => {
-    expect(workflow().jobs.collect.if).toContain(fragment);
+    ["run id", { id: SOURCE_RUN_ID + 1 }],
+    ["workflow path", { path: ".github/workflows/pr.yaml" }],
+    ["event", { event: "pull_request" }],
+    ["status", { status: "in_progress" }],
+    ["conclusion", { conclusion: "cancelled" }],
+    ["head branch", { head_branch: "feature" }],
+    ["repository", { repository: { full_name: "fork/NemoClaw" } }],
+    ["head repository", { head_repository: { full_name: "fork/NemoClaw" } }],
+  ])("rejects an untrusted source run with the wrong %s", (_case, change) => {
+    expect(parseEligibleSourceRun({ ...trustedSourceRun, ...change }, SOURCE_RUN_ID)).toBeNull();
   });
 
   it("serializes collection with read-only permissions and trusted code", () => {
@@ -76,6 +109,7 @@ describe("coordinator shadow sample workflow boundary", () => {
     expect(job.concurrency).toEqual({
       group: "pr-review-coordinator-shadow-sample",
       "cancel-in-progress": false,
+      queue: "max",
     });
     expect(job.permissions).toEqual({ actions: "read", contents: "read" });
     expect(job["runs-on"]).toBe("ubuntu-24.04");

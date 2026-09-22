@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 
 import { decideReviewAction } from "../../../tools/pr-review-coordinator/decision.mts";
@@ -8,6 +9,7 @@ import {
   type CoordinatorShadowResult,
   parseCoordinatorShadowResult,
   selectCoordinatorShadowSample,
+  verifyArtifactDownload,
 } from "../../../tools/pr-review-coordinator/shadow-sample.mts";
 
 const HEAD = "a".repeat(40);
@@ -38,7 +40,7 @@ function result(prNumber = 12090): CoordinatorShadowResult {
       commitsVerified: true,
       productScope: "accepted" as const,
     },
-    history: { frozenContractKeys: [], writes: [] },
+    history: { contractEvidence: "none" as const, frozenContractKeys: [], writes: [] },
   };
   return { mode: "read-only-shadow", snapshot, decision: decideReviewAction(snapshot) };
 }
@@ -101,5 +103,15 @@ describe("coordinator shadow rollout sample", () => {
         sourceRun,
       ),
     ).toThrow("distinct pull requests");
+  });
+
+  it("validates downloaded bytes independently from artifact metadata size", () => {
+    const bytes = Buffer.from("zip bytes");
+    const digest = `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
+
+    expect(verifyArtifactDownload(bytes, { id: 44, digest, size: 1 })).toEqual(bytes);
+    expect(() => verifyArtifactDownload(Buffer.alloc(0), { id: 44, digest, size: 1 })).toThrow(
+      "download size is invalid",
+    );
   });
 });

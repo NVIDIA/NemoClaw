@@ -38,6 +38,7 @@ export type CoordinatorSnapshot = Readonly<{
     productScope: "accepted" | "missing";
   }>;
   history: Readonly<{
+    contractEvidence: "none" | "complete" | "incomplete";
     frozenContractKeys: readonly string[];
     writes: readonly Readonly<{
       headSha: string;
@@ -114,6 +115,13 @@ export function decideReviewAction(snapshot: CoordinatorSnapshot): CoordinatorDe
       snapshot,
       "prerequisites-not-ready",
       "Required checks are not complete for this exact head.",
+    );
+  }
+  if (snapshot.history.contractEvidence === "incomplete") {
+    return quiet(
+      snapshot,
+      "ambiguous-follow-up",
+      "Prior review feedback is not machine-readable, so the coordinator will not publish or approve.",
     );
   }
 
@@ -326,6 +334,13 @@ function validateSnapshot(snapshot: unknown): asserts snapshot is CoordinatorSna
 
   const history = snapshot.history;
   if (!isRecord(history)) throw new Error("history must be a JSON object");
+  if (
+    history.contractEvidence !== "none" &&
+    history.contractEvidence !== "complete" &&
+    history.contractEvidence !== "incomplete"
+  ) {
+    throw new Error("history.contractEvidence is invalid");
+  }
   if (
     !Array.isArray(history.frozenContractKeys) ||
     history.frozenContractKeys.some((key) => typeof key !== "string")

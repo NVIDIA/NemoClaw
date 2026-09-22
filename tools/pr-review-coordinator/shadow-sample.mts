@@ -24,6 +24,8 @@ const MAX_JSON_BYTES = 256 * 1024;
 const SHA256_PATTERN = /^sha256:[0-9a-f]{64}$/u;
 const TIMESTAMP_PATTERN = /^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$/u;
 const USER_AGENT = "nemoclaw-review-coordinator-shadow-sample";
+const EXPECTED_WORKFLOW_CONDITION =
+  "${{ github.repository == 'NVIDIA/NemoClaw' && github.event.workflow_run.status == 'completed' && (github.event.workflow_run.conclusion == 'success' || github.event.workflow_run.conclusion == 'failure') && github.event.workflow_run.event == 'workflow_run' && github.event.workflow_run.head_branch == 'main' && github.event.workflow_run.head_repository.full_name == 'NVIDIA/NemoClaw' && github.event.workflow_run.path == '.github/workflows/pr-review-advisor.yaml' }}";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -44,7 +46,7 @@ export type CoordinatorShadowSample = Readonly<{
   result: CoordinatorShadowResult;
 }>;
 
-type SourceRun = Readonly<{
+export type SourceRun = Readonly<{
   id: number;
   attempt: number;
   createdAt: string;
@@ -183,7 +185,7 @@ async function githubJson(apiPath: string, githubToken: string): Promise<unknown
   return response.json();
 }
 
-function parseEligibleSourceRun(value: unknown, expectedId: number): SourceRun | null {
+export function parseEligibleSourceRun(value: unknown, expectedId: number): SourceRun | null {
   const run = record(value, "source workflow run");
   const repository = record(run.repository, "source workflow repository");
   const headRepository = record(run.head_repository, "source workflow head repository");
@@ -203,6 +205,15 @@ function parseEligibleSourceRun(value: unknown, expectedId: number): SourceRun |
     return null;
   }
   return { id, attempt, createdAt };
+}
+
+export function validateShadowSampleWorkflowCondition(value: unknown): void {
+  if (
+    typeof value !== "string" ||
+    value.replace(/\s+/gu, " ").trim() !== EXPECTED_WORKFLOW_CONDITION
+  ) {
+    throw new Error("shadow sample workflow must retain the exact trusted source-run condition");
+  }
 }
 
 function parseArtifactList(value: unknown, expectedName: string): Artifact[] {
@@ -267,7 +278,14 @@ async function downloadArtifact(artifact: Artifact, githubToken: string): Promis
     throw new Error(`artifact ${artifact.id} download failed with HTTP ${response.status}`);
   }
   const bytes = Buffer.from(await response.arrayBuffer());
-  if (bytes.length !== artifact.size || bytes.length > MAX_ARCHIVE_BYTES) {
+  return verifyArtifactDownload(bytes, artifact);
+}
+
+export function verifyArtifactDownload(
+  bytes: Buffer,
+  artifact: Readonly<{ digest: string; id: number; size: number }>,
+): Buffer {
+  if (bytes.length === 0 || bytes.length > MAX_ARCHIVE_BYTES) {
     throw new Error(`artifact ${artifact.id} download size is invalid`);
   }
   const digest = `sha256:${createHash("sha256").update(bytes).digest("hex")}`;

@@ -322,11 +322,6 @@
       "category": "compatibility"
     },
     {
-      "file": "test/automation/pull-requests/pr-review-coordinator-shadow-sample-workflow.test.ts",
-      "test": "fails closed on exact automatic Advisor evidence [%s]",
-      "category": "security"
-    },
-    {
       "file": "test/automation/releases/release-daily-brev-image.test.ts",
       "test": "attests one daily request before the isolated dispatch job (#9799)",
       "category": "security"

@@ -15,6 +15,7 @@ import {
   parseAdvisorFindingLedger,
 } from "../pr-review-advisor/finding-ledger.mts";
 import {
+  type CoordinatorReviewHistory,
   type GitHubReviewContext,
   readPreparedGitHubContext,
 } from "../pr-review-advisor/github-context.mts";
@@ -50,6 +51,8 @@ export function buildCoordinatorShadowSnapshot(input: ShadowInput): CoordinatorS
   const productScopeMissing = input.ledgers.some((ledger) =>
     ledger.findings.some((finding) => finding.kind === "product-scope"),
   );
+  const history = coordinatorHistory(input.context.coordinatorHistory);
+  const frozen = new Set(history.frozenContractKeys);
 
   const findings = input.ledgers.flatMap((ledger) =>
     ledger.findings.map((finding) => ({
@@ -58,11 +61,12 @@ export function buildCoordinatorShadowSnapshot(input: ShadowInput): CoordinatorS
       severity: finding.severity,
       summary: finding.summary,
       path: finding.path,
-      // The trusted aggregate has already validated the exact-head ledger
-      // schema, specialist inventory, and blocker severity. Shadow mode uses
-      // that same evidence so its decisions can be compared before writes.
-      validation: "validated" as const,
-      relationship: "existing-contract" as const,
+      validation:
+        history.contractEvidence === "incomplete" ? ("ambiguous" as const) : ("validated" as const),
+      relationship:
+        history.contractEvidence === "complete" && !frozen.has(finding.id)
+          ? ("newly-proven-on-delta" as const)
+          : ("existing-contract" as const),
     })),
   );
   const advisor =
@@ -104,10 +108,7 @@ export function buildCoordinatorShadowSnapshot(input: ShadowInput): CoordinatorS
       commitsVerified: input.context.commitsVerified === true,
       productScope: productScopeMissing ? "missing" : "accepted",
     },
-    history: {
-      frozenContractKeys: [],
-      writes: [],
-    },
+    history,
   };
 }
 
@@ -142,6 +143,44 @@ function requiredEnv(name: string): string {
 function record(value: unknown, label: string): Record<string, unknown> {
   if (!isObjectRecord(value)) throw new Error(`Coordinator shadow ${label} must be an object`);
   return value;
+}
+
+function coordinatorHistory(value: unknown): CoordinatorReviewHistory {
+  const history = record(value, "review history");
+  const contractEvidence = history.contractEvidence;
+  if (
+    contractEvidence !== "none" &&
+    contractEvidence !== "complete" &&
+    contractEvidence !== "incomplete"
+  ) {
+    throw new Error("Coordinator shadow review history has invalid contract evidence");
+  }
+  if (
+    !Array.isArray(history.frozenContractKeys) ||
+    history.frozenContractKeys.some((key) => typeof key !== "string" || key.length === 0)
+  ) {
+    throw new Error("Coordinator shadow review history has invalid frozen contract keys");
+  }
+  if (!Array.isArray(history.writes)) {
+    throw new Error("Coordinator shadow review history has invalid writes");
+  }
+  const writes = history.writes.map((value): CoordinatorReviewHistory["writes"][number] => {
+    const write = record(value, "review history write");
+    const kind = write.kind;
+    if (
+      typeof write.headSha !== "string" ||
+      !/^[0-9a-f]{40}$/u.test(write.headSha) ||
+      (kind !== "request-changes" && kind !== "approve")
+    ) {
+      throw new Error("Coordinator shadow review history has an invalid write");
+    }
+    return { headSha: write.headSha, kind };
+  });
+  return {
+    contractEvidence,
+    frozenContractKeys: history.frozenContractKeys,
+    writes,
+  };
 }
 
 async function main(): Promise<void> {

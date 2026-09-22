@@ -31,6 +31,7 @@ jobs:
     concurrency:
       group: pr-review-coordinator-shadow-sample
       cancel-in-progress: false
+      queue: max
     permissions:
       actions: read
       contents: read
