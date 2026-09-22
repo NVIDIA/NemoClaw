@@ -1305,10 +1305,7 @@ if os.environ.get("RECONCILE_SOURCE") == "gateway":
     if not isinstance(first, dict):
         first = {}
         models_list[0] = first
-    provider_model_unchanged = (
-        first.get("name") == provider_model
-        and first.get("id") in (bare, provider_model)
-    )
+    provider_model_unchanged = first.get("id") in (bare, provider_model)
     first["id"] = bare
     first["name"] = provider_model
     if not provider_model_unchanged:
