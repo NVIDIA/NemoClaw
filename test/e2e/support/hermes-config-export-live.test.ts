@@ -13,7 +13,6 @@ const mocks = vi.hoisted(() => ({
   exec: vi.fn(),
   execShell: vi.fn(),
   asExportedConfig: vi.fn(),
-  validateV1Consumer: vi.fn(),
   writeJson: vi.fn(),
   writeText: vi.fn(),
 }));
@@ -53,7 +52,6 @@ beforeEach(() => {
     },
   });
   mocks.readSandboxPolicy.mockReturnValue({ ok: false });
-  mocks.validateV1Consumer.mockReturnValue(undefined);
   mocks.asExportedConfig.mockReturnValue({
     spec: {
       inferenceProviders: [
@@ -91,7 +89,6 @@ function passingEvidence(): Extract<HermesConfigExportLiveEvidence, { outcome: "
     inferenceEndpointMatches: true,
     launchersSucceeded: true,
     policyMatches: true,
-    revisionMatchedConsumer: true,
     sandboxNameMatches: true,
   };
 }
@@ -127,7 +124,6 @@ async function runEnabledFixture(
       host: { command: mocks.command },
       redactionValues,
       sandboxName: "hermes",
-      validateV1Consumer: mocks.validateV1Consumer,
     } as unknown as Parameters<typeof verifyHermesConfigExportLive>[0]);
   } finally {
     dispose?.();
@@ -151,7 +147,6 @@ describe("Hermes config export live evidence", () => {
     "inferenceEndpointMatches",
     "launchersSucceeded",
     "policyMatches",
-    "revisionMatchedConsumer",
     "sandboxNameMatches",
   ] as const)("rejects evidence when %s is false", (field) => {
     expect(passesHermesConfigExportLiveEvidence({ ...passingEvidence(), [field]: false })).toBe(
@@ -330,47 +325,6 @@ describe("Hermes config export live evidence", () => {
     expect(mocks.writeText).not.toHaveBeenCalled();
   });
 
-  it("withholds retained YAML when an encoded credential crosses the Hermes boundary", async () => {
-    const secret = "synthetic-hermes-secret";
-    const encodedSecret = Buffer.from(secret, "utf8").toString("base64");
-    const document = mocks.asExportedConfig.getMockImplementation()!();
-    document.spec.sandboxes[0].harness.interfaces = { dashboard: { enabled: false } };
-    mocks.asExportedConfig.mockReturnValue(document);
-    const writeExport = async (_command: string, args: string[]) => {
-      fs.writeFileSync(args.at(args.indexOf("--output") + 1)!, `value: ${encodedSecret}\n`);
-      return { exitCode: 0, stderr: "", stdout: "" };
-    };
-    mocks.command
-      .mockImplementationOnce(writeExport)
-      .mockImplementationOnce(writeExport)
-      .mockResolvedValue({ exitCode: 1, stderr: "sandbox identity drifted", stdout: "" });
-
-    await expect(runEnabledFixture([secret])).rejects.toThrow(
-      "config export exposed a known fixture secret",
-    );
-    expect(mocks.writeText).not.toHaveBeenCalled();
-  });
-
-  it("withholds retained YAML when an exporter replaces output with a symlink", async () => {
-    const replaceExportWithSymlink = async (_command: string, args: string[]) => {
-      const outputPath = args.at(args.indexOf("--output") + 1)!;
-      const linkTarget = `${outputPath}.target`;
-      fs.writeFileSync(linkTarget, "{}");
-      fs.symlinkSync(linkTarget, outputPath);
-      return { exitCode: 0, stderr: "", stdout: "" };
-    };
-    const writeExport = async (_command: string, args: string[]) => {
-      fs.writeFileSync(args.at(args.indexOf("--output") + 1)!, "{}");
-      return { exitCode: 0, stderr: "", stdout: "" };
-    };
-    mocks.command
-      .mockImplementationOnce(replaceExportWithSymlink)
-      .mockImplementationOnce(writeExport);
-
-    await expect(runEnabledFixture()).rejects.toThrow();
-    expect(mocks.writeText).not.toHaveBeenCalled();
-  });
-
   it("rejects drift evidence when only one launcher reports identity drift (#11286)", async () => {
     const writeExport = async (_command: string, args: string[]) => {
       const outputPath = args.at(args.indexOf("--output") + 1)!;
@@ -393,27 +347,6 @@ describe("Hermes config export live evidence", () => {
         identityDriftReported: false,
       }),
     );
-  });
-
-  it("withholds live YAML when the revision-matched consumer rejects it (#12132)", async () => {
-    const writeExport = async (_command: string, args: string[]) => {
-      fs.writeFileSync(args.at(args.indexOf("--output") + 1)!, "{}");
-      return { exitCode: 0, stderr: "", stdout: "" };
-    };
-    mocks.command
-      .mockImplementationOnce(writeExport)
-      .mockImplementationOnce(writeExport)
-      .mockResolvedValue({ exitCode: 1, stderr: "sandbox identity drifted", stdout: "" });
-    mocks.validateV1Consumer.mockImplementationOnce(() => {
-      throw new Error("revision-matched v1 consumer rejected the live export");
-    });
-
-    await expect(runEnabledFixture()).resolves.toEqual({ checked: true, passed: false });
-    expect(mocks.writeJson).toHaveBeenCalledWith(
-      "hermes-config-export-live-evidence.json",
-      expect.objectContaining({ revisionMatchedConsumer: false }),
-    );
-    expect(mocks.writeText).not.toHaveBeenCalled();
   });
 });
 

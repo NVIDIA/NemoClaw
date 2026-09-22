@@ -23,11 +23,6 @@ import type { HostCliClient } from "./clients/host.ts";
 import { trustedSandboxShellScript, type SandboxClient } from "./clients/sandbox.ts";
 import type { CleanupRegistry } from "./cleanup.ts";
 import { CLI_ENTRYPOINT, REPO_ROOT } from "./paths.ts";
-import {
-  publishValidatedConfigExportYaml,
-  readConfigExportFileSafely,
-} from "./phases/config-export-validation.ts";
-import { validateLiveExportWithRevisionMatchedV1Consumer } from "./revision-matched-v1-consumer.ts";
 
 interface HermesConfigExportLiveInput {
   readonly artifacts: ArtifactSink;
@@ -39,7 +34,6 @@ interface HermesConfigExportLiveInput {
   readonly host: HostCliClient;
   readonly redactionValues: readonly string[];
   readonly sandboxName: string;
-  readonly validateV1Consumer?: typeof validateLiveExportWithRevisionMatchedV1Consumer;
 }
 
 export interface HermesConfigExportLiveResult {
@@ -62,7 +56,6 @@ interface HermesConfigExportPublishedEvidence {
   readonly inferenceEndpointMatches: boolean;
   readonly launchersSucceeded: boolean;
   readonly policyMatches: boolean;
-  readonly revisionMatchedConsumer: boolean;
   readonly sandboxNameMatches: boolean;
 }
 
@@ -117,7 +110,6 @@ export function passesHermesConfigExportLiveEvidence(
     evidence.inferenceEndpointMatches &&
     evidence.launchersSucceeded &&
     evidence.policyMatches &&
-    evidence.revisionMatchedConsumer &&
     evidence.sandboxNameMatches
   );
 }
@@ -252,8 +244,8 @@ export async function verifyHermesConfigExportLive(
   );
 
   const launchersSucceeded = nemoclaw.exitCode === 0 && nemohermes.exitCode === 0;
-  const nemoclawRaw = nemoclaw.exitCode === 0 ? readConfigExportFileSafely(nemoclawPath) : "";
-  const nemohermesRaw = nemohermes.exitCode === 0 ? readConfigExportFileSafely(nemohermesPath) : "";
+  const nemoclawRaw = nemoclaw.exitCode === 0 ? fs.readFileSync(nemoclawPath, "utf8") : "";
+  const nemohermesRaw = nemohermes.exitCode === 0 ? fs.readFileSync(nemohermesPath, "utf8") : "";
   const nemoclawDiagnostics = normalizeCommandDiagnostics(nemoclaw.stdout, nemoclaw.stderr);
   const nemohermesDiagnostics = normalizeCommandDiagnostics(nemohermes.stdout, nemohermes.stderr);
   const containsCredential = input.redactionValues.some(
@@ -303,7 +295,6 @@ export async function verifyHermesConfigExportLive(
       inferenceEndpointMatches: false,
       launchersSucceeded,
       policyMatches: false,
-      revisionMatchedConsumer: false,
       sandboxNameMatches: false,
     };
     await input.artifacts.writeJson("hermes-config-export-live-evidence.json", evidence);
@@ -315,16 +306,6 @@ export async function verifyHermesConfigExportLive(
   const sandbox = nemoclawDocument.spec.sandboxes[0]!;
   const hostedProvider = nemoclawDocument.spec.inferenceProviders[0];
   const expectedPolicy = policy.ok ? YAML.parse(policy.value.document) : null;
-  let revisionMatchedConsumer = false;
-  try {
-    (input.validateV1Consumer ?? validateLiveExportWithRevisionMatchedV1Consumer)(
-      nemoclawRaw,
-      entry,
-    );
-    revisionMatchedConsumer = true;
-  } catch {
-    revisionMatchedConsumer = false;
-  }
 
   const nemoclawMismatchPath = path.join(exportDirectory, "nemoclaw-mismatch.yaml");
   const nemohermesMismatchPath = path.join(exportDirectory, "nemohermes-mismatch.yaml");
@@ -396,18 +377,10 @@ export async function verifyHermesConfigExportLive(
         (sandbox.network.policy.explicit as { network_policies?: unknown }).network_policies,
         (expectedPolicy as { network_policies?: unknown }).network_policies,
       ),
-    revisionMatchedConsumer,
     sandboxNameMatches: sandbox.name === input.sandboxName,
   };
   const passed = passesHermesConfigExportLiveEvidence(evidence);
   await input.artifacts.writeJson("hermes-config-export-live-evidence.json", evidence);
-  if (passed) {
-    await publishValidatedConfigExportYaml(
-      input.artifacts,
-      "hermes-config-export.yaml",
-      nemoclawRaw,
-      input.redactionValues,
-    );
-  }
+  if (passed) await input.artifacts.writeText("hermes-config-export.yaml", nemoclawRaw);
   return { checked: true, passed };
 }

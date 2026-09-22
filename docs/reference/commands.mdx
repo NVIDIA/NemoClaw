@@ -292,23 +292,19 @@ It emits the immutable image as `image.ref`, the `deepagents` harness, and one `
 The command rejects other Deep Agents settings instead of omitting them.
 When a managed OpenClaw sandbox uses Brave Search, the export includes its `webSearch` integration and the `BRAVE_API_KEY` environment-variable reference, never the key.
 When retained managed proxy settings differ from the default, the export includes the validated host and port under `network.proxy`.
-For hosted OpenClaw inference, export preserves each context-window, maximum-token, reasoning, and reasoning-effort setting as a route override when omitting it would change the target's effective behavior.
+For hosted OpenClaw inference, the export preserves nondefault managed context-window, maximum-token, reasoning, and reasoning-effort settings as route overrides.
 It preserves nondefault agent timeout and heartbeat settings under `execution`.
 The command rejects a managed OpenClaw sandbox with secondary agents and produces no document.
 Secondary-agent export remains deferred until the v1 schema defines that representation.
-For OpenClaw, it retains an `interfaces.dashboard` marker because an absent target dashboard disables the interface.
-For the managed default port and loopback bind, the marker includes `port: 18789`; otherwise, it includes each retained port or bind value that differs from the target default.
+For OpenClaw, it preserves a nondefault managed dashboard port or bind address under `interfaces.dashboard`.
 When managed OpenClaw uses direct tool disclosure, the export includes `tools.disclosure: direct`.
 It omits the default progressive disclosure setting.
 When OpenClaw conversation diagnostics are enabled, the export includes the fixed local OTLP endpoint, service name, and sample rate under agent observability.
 It never includes collector credentials.
-For supported settings, export compares the source behavior with the v1 target behavior when that setting is absent.
-It omits a setting only when absence gives the target the same effective behavior.
+It omits settings that equal the managed defaults.
 Hermes export fails when Hermes tool gateways are enabled.
-It preserves Hermes dashboard and browser terminal UI behavior against the target defaults.
-A disabled dashboard or disabled browser terminal UI remains explicit because absence enables it in the target.
-It also preserves nondefault dashboard or internal ports and a nondefault allocated API port under `interfaces`.
-The default API port is omitted.
+It preserves an enabled Hermes dashboard, nondefault dashboard or internal ports, enabled browser terminal UI, and a nondefault allocated API port under `interfaces`.
+A disabled dashboard and default API port are omitted.
 It exports Hermes API-key authentication only when the retained authentication proof matches the managed Hermes provider, OpenAI-compatible API, endpoint, and `NOUS_API_KEY` credential reference.
 The exporter validates that source binding, then emits API-key authentication without a provider reference because v1 derives the association from the provider configuration.
 OAuth authentication and other unsupported profiles fail with a diagnostic instead of producing an incomplete document.

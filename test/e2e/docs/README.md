@@ -102,17 +102,8 @@ it invokes the CLI, and removes the directory before it writes retained evidence
 
 For `required` coverage, the fixture checks the producer-owned v1alpha1 envelope
 and all fields used in its semantic comparison. Cross-branch import
-compatibility remains a separate contract. The `config-export-v1-consumer`
-e2e-support test archives the revision recorded by the target-default map, passes
-raw deterministic exports through that revision's Rust `Document::parse` and
-`compile::targets`, and evaluates the compiled settings with its OpenClaw and
-Hermes native adapter functions. It compares both preserved source behavior and
-target omission defaults, so a target-default change fails at the consumer
-boundary. This deterministic test uses no live credential or deployment state.
-Before a live OpenClaw or Hermes scenario publishes YAML, it sends the real CLI
-output through that same revision-matched consumer and compares the generated
-native settings with the retained registry and managed-startup source state. A
-consumer rejection records failed evidence and withholds the YAML artifact.
+compatibility remains a separate contract. The `config-export-v1-consumer` test
+checks deterministic exports with the recorded v1 parser and native adapters.
 Semantic expectations remain
 independent of the exporter. The fixture reads the target manifest and host
 registry directly, then queries the effective policy through the OpenShell CLI.
@@ -143,10 +134,11 @@ revision, CLI version, and compiled CLI entry-point hash. Each record includes
 elapsed time and a structured command outcome when the fixture invokes the
 CLI. A timed-out, signaled, or otherwise incomplete command fails as a
 transport error before refusal classification. Successful `required` evidence
-includes the validated export's byte count and SHA-256 hash after the security
-checks and cleanup pass. It publishes the validated document once as
-`config-export.yaml` so reviewers can inspect and parse it directly. Refusal
-and failure evidence do not publish the YAML file or export metadata.
+includes the exact validated export bytes, byte count, and SHA-256 hash after
+the security checks and cleanup pass. It also publishes those exact bytes as
+`config-export.yaml` so reviewers can inspect and parse the exported document
+directly. Refusal and failure evidence do not publish the YAML file or export
+metadata.
 Its failure stage distinguishes transport errors from export failures, while
 cleanup has its own diagnostic so it cannot hide the primary failure. Evidence
 diagnostics are bounded and remove literal, encoded, wrapped, or escaped known
@@ -155,13 +147,10 @@ secrets and internal credential transport markers before publication.
 The secret scan covers registered fixture values, not arbitrary unregistered
 secrets. Review selected exports before retaining them as migration fixtures.
 
-After a live target succeeds, the E2E workflow always requires
-`config-export-evidence.v1.json` before artifact upload. A `success`
-classification also requires `config-export.yaml`, verifies its SHA-256 against
-the evidence, and uploads it.
-`expected-refusal` and `no-usable-sandbox` classifications must not retain the
-YAML file. A missing required file or an unexpected YAML file fails the target
-job.
+After a live target succeeds, the E2E workflow requires both
+`config-export-evidence.v1.json` and `config-export.yaml` before artifact
+upload. A missing file fails the target job. The workflow uploads both files
+with the target's retained artifacts.
 
 `suiteIds` remain metadata for reporting and migration planning. They do not
 dispatch shell validation suites.
