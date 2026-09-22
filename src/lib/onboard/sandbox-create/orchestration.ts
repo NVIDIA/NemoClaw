@@ -3492,36 +3492,41 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       });
       cleanupBuildContext();
     } else {
-      const created = await activateManagedStartupCorporateCaTrustAfterSandboxCreate({
-        create: runSandboxCreateWithProviderEffects({
-          resumingVerifiedCreate: Boolean(resumeVerifiedCreateInput),
-          providerEffectBoundary,
-          create: (runAfterVerifiedCreate) =>
-            runCreateFlow(
-              createArgv,
-              undefined,
-              undefined,
-              undefined,
-              undefined,
-              runAfterVerifiedCreate,
-            ),
-        }),
-        activate: async () => {
-          if (!managedStartupRootApplyRequest?.corporateCaB64) return;
-          console.log("  Activating corporate CA trust in the OpenShell supervisor...");
-          const boundary = requireVerifiedCreateBoundary();
-          await activateManagedStartupCorporateCaTrustBeforeIdentityRevalidation({
-            corporateCaB64: managedStartupRootApplyRequest.corporateCaB64,
-            sandboxName,
-            boundary,
-            refreshCorporateCaTrust: (request) =>
-              managedWorkloadOnboard.refreshManagedStartupCorporateCaTrust(request),
-            revalidateSandboxIdentity: (operation) =>
-              revalidateVerifiedCreateIdentity(boundary, operation),
-          });
-        },
-      });
       try {
+        const created = await activateManagedStartupCorporateCaTrustAfterSandboxCreate({
+          create: runSandboxCreateWithProviderEffects({
+            resumingVerifiedCreate: Boolean(resumeVerifiedCreateInput),
+            providerEffectBoundary,
+            create: (runAfterVerifiedCreate) =>
+              runCreateFlow(
+                createArgv,
+                undefined,
+                undefined,
+                undefined,
+                undefined,
+                runAfterVerifiedCreate,
+              ),
+          }),
+          activate: async () => {
+            if (!managedStartupRootApplyRequest?.corporateCaB64) return;
+            await runAsyncWithPostCreateRecovery(
+              async () => {
+                console.log("  Activating corporate CA trust in the OpenShell supervisor...");
+                const boundary = requireVerifiedCreateBoundary();
+                await activateManagedStartupCorporateCaTrustBeforeIdentityRevalidation({
+                  corporateCaB64: managedStartupRootApplyRequest.corporateCaB64,
+                  sandboxName,
+                  boundary,
+                  refreshCorporateCaTrust: (request) =>
+                    managedWorkloadOnboard.refreshManagedStartupCorporateCaTrust(request),
+                  revalidateSandboxIdentity: (operation) =>
+                    revalidateVerifiedCreateIdentity(boundary, operation),
+                });
+              },
+              () => recordPostCreateRecovery("onboarding finalization"),
+            );
+          },
+        });
         await finalizeCreatedSandboxBeforeHermesCredentialReconciliation(
           async () => {
             const registration = await runAsyncWithPostCreateRecovery(
