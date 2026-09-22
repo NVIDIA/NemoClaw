@@ -1819,7 +1819,6 @@ function stoppedWechatCleanupFailureGuidance(
 async function clearSandboxChannelDurableState(
   sandboxName: string,
   channelName: string,
-  options: { readonly allowAbsentStoppedState?: boolean } = {},
 ): Promise<boolean> {
   const agent = resolveAgentForSandbox(sandboxName);
   const paths = getSandboxChannelStatePaths(agent, channelName);
@@ -1837,7 +1836,6 @@ async function clearSandboxChannelDurableState(
     typeof result.stdout === "string" &&
     result.stdout.includes(CHANNEL_CLEAR_SENTINEL);
 
-  let absentStoppedState = false;
   if (agent.name === "openclaw" && channelName === "wechat") {
     const stoppedCleanup = policyChannelDependencies.clearStoppedSandboxStateRoots(
       sandboxName,
@@ -1847,13 +1845,6 @@ async function clearSandboxChannelDurableState(
       console.log(`  ${G}✓${R} Cleared stopped-sandbox '${channelName}' channel state.`);
       return true;
     }
-    absentStoppedState =
-      options.allowAbsentStoppedState === true &&
-      [
-        "sandbox-registry-unavailable",
-        "provider-cleanup-unavailable",
-        "no-eligible-stopped-runtime",
-      ].includes(stoppedCleanup.failure);
     if (
       ![
         "runtime-not-stopped",
@@ -1873,12 +1864,6 @@ async function clearSandboxChannelDurableState(
   try {
     result = await executeSandboxExecCommand(sandboxName, cmd);
   } catch (error) {
-    if (
-      absentStoppedState &&
-      error instanceof SandboxCommandTransportError &&
-      (error.kind === "unavailable" || error.kind === "malformed")
-    )
-      return true;
     if (!(error instanceof SandboxCommandTransportError)) throw error;
     console.error(
       `  ${YW}⚠${R} Could not clear in-sandbox '${channelName}' channel state: ${error.message}`,
@@ -1888,7 +1873,6 @@ async function clearSandboxChannelDurableState(
     );
     return false;
   }
-  if (!sentinelSeen(result) && absentStoppedState) return true;
   if (!sentinelSeen(result)) {
     console.error(
       `  ${YW}⚠${R} Could not clear in-sandbox '${channelName}' channel state at ${paths.join(", ")}.`,
@@ -2006,14 +1990,11 @@ async function removeSandboxChannelUnlocked(
   // Bailing here is the only way to keep #3998 from recurring on cleanup
   // error. OpenClaw WeChat also checks for physical residue after an earlier
   // interrupted removal erased its logical plan or policy record. A missing
-  // registry, unavailable provider cleanup, or absent stopped runtime remains a quiet
-  // no-op only when no logical residue exists (#4001 review).
+  // registry or unavailable stopped-state cleanup does not prove durable state is absent.
   if (
     requiresStateCleanupBeforeTeardown &&
     (hasChannelResidue || recoverPhysicalWechatResidue) &&
-    !(await clearSandboxChannelDurableState(sandboxName, canonical, {
-      allowAbsentStoppedState: !hasChannelResidue,
-    }))
+    !(await clearSandboxChannelDurableState(sandboxName, canonical))
   ) {
     console.error(
       `  Refusing to proceed: '${canonical}' session state is still inside the sandbox.`,

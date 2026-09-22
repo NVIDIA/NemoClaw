@@ -157,6 +157,10 @@ export async function assertTrustedPrivateMcpRebindingDenied(
       MCP_PROBE_CONTROL_BEARER,
     ),
   );
+  await options.artifacts.writeJson(
+    `${options.artifactPrefix}-mcp-trusted-private-tls-failures.json`,
+    rebindMcp.tlsFailures,
+  );
   expectExitZero(status, `${options.artifactPrefix} inspects trusted-private route after add`);
   const controlProbe = rebindMcp.requests
     .slice(trustedPrivateRequestOffset)

@@ -111,6 +111,60 @@ describe("policy channel remove/enable flows", () => {
     }
   }
 
+  it.each([
+    {
+      label: "failed command",
+      outcome: () => Promise.resolve({ status: 1, stdout: "", stderr: "cleanup denied" }),
+    },
+    {
+      label: "missing confirmation",
+      outcome: () => Promise.resolve({ status: 0, stdout: "", stderr: "" }),
+    },
+    {
+      label: "confirmation with failure",
+      outcome: () =>
+        Promise.resolve({
+          status: 1,
+          stdout: "NEMOCLAW_CHANNEL_CLEAR_OK",
+          stderr: "cleanup failed",
+        }),
+    },
+    {
+      label: "unavailable transport",
+      outcome: () => Promise.reject(new SandboxCommandTransportError("unavailable")),
+    },
+    {
+      label: "malformed transport",
+      outcome: () => Promise.reject(new SandboxCommandTransportError("malformed")),
+    },
+  ])("retains orphaned WeChat state after $label", async ({ outcome }) => {
+    vi.spyOn(defs, "loadAgent").mockReturnValue({
+      name: "openclaw",
+      displayName: "OpenClaw",
+      configPaths: { dir: "/sandbox/.openclaw" },
+      stateDirs: ["wechat", "openclaw-weixin"],
+    } as unknown as defs.AgentDefinition);
+    vi.spyOn(registry, "getSandbox").mockReturnValue({ name: "alpha", agent: "openclaw" });
+    vi.spyOn(registry, "getConfiguredMessagingChannelsFromEntry").mockReturnValue([]);
+    vi.spyOn(policies, "getAppliedPresets").mockResolvedValue([]);
+    const updateSandbox = vi.spyOn(registry, "updateSandbox").mockReturnValue(true);
+    const removePreset = vi.spyOn(policies, "removePreset").mockResolvedValue(true);
+    const rebuildSandbox = vi
+      .spyOn(policyChannelDependencies, "rebuildSandbox")
+      .mockResolvedValue(undefined);
+    const stoppedCleanup = vi
+      .spyOn(policyChannelDependencies, "clearStoppedSandboxStateRoots")
+      .mockReturnValue({ cleared: false, failure: "provider-cleanup-unavailable" });
+    vi.mocked(processRecovery.executeSandboxExecCommand).mockImplementation(outcome);
+    await expect(removeChannelNonInteractive("wechat")).rejects.toThrow("process.exit(1)");
+    expect(stoppedCleanup).toHaveBeenCalledOnce();
+    expect(processRecovery.executeSandboxExecCommand).toHaveBeenCalledOnce();
+    expect(processRecovery.executeSandboxCommand).not.toHaveBeenCalled();
+    expect(updateSandbox).not.toHaveBeenCalled();
+    expect(removePreset).not.toHaveBeenCalled();
+    expect(rebuildSandbox).not.toHaveBeenCalled();
+  });
+
   it("reports remove usage and exits before touching channel state when no channel is supplied", async () => {
     await expect(removeSandboxChannel("alpha", {})).rejects.toThrow("process.exit(1)");
 

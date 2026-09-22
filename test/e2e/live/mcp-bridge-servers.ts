@@ -52,6 +52,7 @@ export interface FakeMcpRequest {
 }
 
 export interface FakeMcpHttpsServer extends StartedHttpServer {
+  readonly tlsFailures: Array<{ code: string; message: string }>;
   setSecret(secret: string): void;
   observations: FakeMcpRequest[];
   requests: FakeMcpRequest[];
@@ -1442,8 +1443,18 @@ export async function startFakeMcpHttpsServer(options: {
     });
   });
 
+  // TLS failures happen before an HTTP request enters the ledger. Retain a
+  // bounded diagnostic so a trust failure is distinguishable from an unrouted
+  // private endpoint without recording headers or application credentials.
+  const tlsFailures: Array<{ code: string; message: string }> = [];
+  server.on("tlsClientError", (error: Error & { code?: string }) => {
+    if (tlsFailures.length < 10) {
+      tlsFailures.push({ code: error.code ?? "UNKNOWN", message: error.message });
+    }
+  });
   await listenOnRandomPort(server);
   return {
+    tlsFailures,
     port: requireTcpPort(server, "fake MCP endpoint"),
     observations,
     requests,
