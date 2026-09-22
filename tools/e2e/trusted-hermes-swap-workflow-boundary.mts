@@ -230,7 +230,7 @@ const JOB_CONDITIONS = {
 
 const JOB_NEEDS = {
   "hermes-e2e": ["base-image-publication", "generate-matrix", "package-openshell-sdk"],
-  "mcp-bridge": ["base-image-publication", "generate-matrix"],
+  "mcp-bridge": ["base-image-publication", "generate-matrix", "package-openshell-sdk"],
 } as const;
 
 function asRecord(value: unknown): WorkflowRecord {

@@ -595,7 +595,7 @@ describe("deterministic PR risk plan", () => {
     "src/lib/core/json-types.ts",
     "src/lib/core/ports.ts",
     "src/lib/messaging/runtime.ts",
-    "src/lib/onboard/managed-bootstrap/envelope.ts",
+    "src/lib/onboard/managed-startup/transport.ts",
     "src/lib/onboard/managed-startup/image-runtime.ts",
     "src/lib/security/credential-hash.ts",
     "src/lib/state/paths.ts",
@@ -622,7 +622,7 @@ describe("deterministic PR risk plan", () => {
     const result = plan(activation);
     const activatedImplementation = plan(
       "scripts/checks/run-managed-image-openshell-e2e.ts",
-      "src/lib/onboard/managed-bootstrap/docker.ts",
+      "src/lib/onboard/sandbox-create-launch.ts",
       "src/lib/onboard/managed-workload/onboard-orchestration.ts",
       "test/e2e/live/managed-image-protected-runtime.test.ts",
     );
@@ -833,7 +833,7 @@ describe("deterministic PR risk plan", () => {
 
   it.each([
     "src/lib/actions/sandbox/status-snapshot.ts",
-    "src/lib/onboard/docker-driver-sandbox-recovery.ts",
+    "src/lib/onboard/docker-driver-container-observation.ts",
     "src/lib/onboard/docker-startup-command-agent.ts",
     "src/lib/onboard/sandbox-create-step.ts",
   ])("selects sandbox survival for Docker delivery changes in %s (#7824)", (changedFile) => {

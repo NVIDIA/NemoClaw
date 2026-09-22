@@ -55,6 +55,45 @@ export type OpenShellForwardRuntimeError =
 
 export type OpenShellForwardError = OpenShellForwardValidationError | OpenShellForwardRuntimeError;
 
+/** Fixed, non-sensitive classification for a direct-forward startup failure. */
+export type OpenShellForwardStartFailure =
+  | Readonly<{
+      stage: "spawn";
+      reason:
+        | "invocation_failed"
+        | "executable_not_found"
+        | "permission_denied"
+        | "child_error"
+        | "listener_registration_failed"
+        | "invalid_child_identity";
+    }>
+  | Readonly<{
+      stage: "startup";
+      reason: "child_exited";
+      exitStatus?: number;
+    }>
+  | Readonly<{
+      stage: "startup";
+      reason: "child_signaled";
+      signal?: "SIGABRT" | "SIGHUP" | "SIGINT" | "SIGKILL" | "SIGPIPE" | "SIGTERM";
+    }>
+  | Readonly<{
+      stage: "reachability";
+      reason: "probe_failed";
+    }>;
+
+/** Format a fixed, non-sensitive direct-forward startup classification. */
+export function formatOpenShellForwardStartFailure(failure: OpenShellForwardStartFailure): string {
+  let failureValue = "";
+  if (failure.reason === "child_exited" && failure.exitStatus !== undefined) {
+    failureValue = ` status=${String(failure.exitStatus)}`;
+  }
+  if (failure.reason === "child_signaled" && failure.signal) {
+    failureValue = ` signal=${failure.signal}`;
+  }
+  return `forward-start ${failure.stage}/${failure.reason}${failureValue}`;
+}
+
 type OpenShellOwnedForward = Readonly<{
   state: "owned";
   forward: OpenShellForwardIdentity;
@@ -113,6 +152,7 @@ export type OpenShellForwardStartResult =
       forward: OpenShellForwardIdentity;
       effect: "none";
       error: OpenShellForwardRuntimeError;
+      failure?: OpenShellForwardStartFailure;
     }>
   | Readonly<{
       state: "failed";
@@ -124,6 +164,7 @@ export type OpenShellForwardStartResult =
       forward: OpenShellForwardIdentity;
       effect: "possible";
       error: OpenShellForwardRuntimeError;
+      failure?: OpenShellForwardStartFailure;
     }>;
 
 export type OpenShellLegacyForwardRetirementResult =

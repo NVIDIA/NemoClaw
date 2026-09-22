@@ -35,6 +35,7 @@ describe("Docker daemon outage classification (#4428)", () => {
     const localBin = path.join(home, "bin");
     const callLog = path.join(home, "runtime-calls.log");
     fs.mkdirSync(localBin, { recursive: true });
+    fs.writeFileSync(callLog, "");
     // The Docker-outage reclassification only applies to Docker-driver
     // sandboxes (#4428); record the driver so the gate matches.
     writeSandboxRegistry(home, "v053-baseline", {
@@ -182,21 +183,30 @@ describe("Docker daemon outage classification (#4428)", () => {
     }
   });
 
-  it("start reports the Docker outage before any lifecycle mutation (#11715)", () => {
+  it("start preserves the sandbox when its owning gateway cannot be loaded (#11715)", () => {
     const { callLog, home, env } = setupDockerOutageEnv("nemoclaw-cli-11715-start-down-", {
       dockerInfoOk: false,
       logCalls: true,
     });
+    const registryFile = path.join(home, ".nemoclaw", "sandboxes.json");
+    const registryBefore = fs.readFileSync(registryFile, "utf8");
     try {
       const r = runWithEnv("v053-baseline start", env);
       expect(r.code).toBe(1);
-      expect(r.out).toContain(DOCKER_DOWN_HEADER);
-      expect(r.out).toContain(DOCKER_DOWN_HINT);
-
+      expect(r.out).toContain("OpenShell could not start sandbox");
+      expect(r.out).toContain("Sandbox state is unverified");
+      expect(r.out).toContain("Preserve the sandbox; do not rebuild, destroy, or re-onboard");
+      expect(r.out).toContain("Run `docker info` on the owning gateway's host");
+      expect(r.out).toContain("v053-baseline status` before retrying");
+      expect(r.out).not.toContain(DOCKER_DOWN_HEADER);
+      expect(r.out).not.toContain("v053-baseline rebuild");
+      expect(fs.readFileSync(registryFile, "utf8")).toBe(registryBefore);
+      // CLI capability discovery may read Docker's version, but lifecycle has no engine fallback.
       const calls = fs.readFileSync(callLog, "utf8");
-      expect(calls).toContain("docker:info --format {{json .}}");
-      expect(calls).not.toMatch(/^docker:ps(?:\s|$)/mu);
-      expect(calls).not.toMatch(/^openshell:sandbox (?:start|recover|restart)(?:\s|$)/mu);
+      expect(calls).not.toMatch(/^docker:(?!version(?:\s|$))/mu);
+      expect(calls).not.toMatch(
+        /^openshell:sandbox (?:start|stop|recover|restart|delete)(?:\s|$)/mu,
+      );
     } finally {
       fs.rmSync(home, { recursive: true, force: true });
     }
@@ -206,14 +216,14 @@ describe("Docker daemon outage classification (#4428)", () => {
     "permission denied while connecting to the Docker socket",
     "context missing: context not found",
     "TLS certificate verification failed",
-  ])("start requires Docker diagnosis before remediation for %s", (dockerInfoError) => {
+  ])("status requires Docker diagnosis before remediation for %s", (dockerInfoError) => {
     const { callLog, home, env } = setupDockerOutageEnv("nemoclaw-cli-11715-access-", {
       dockerInfoOk: false,
       dockerInfoError,
       logCalls: true,
     });
     try {
-      const r = runWithEnv("v053-baseline start", env);
+      const r = runWithEnv("v053-baseline status", env);
       expect(r.code).toBe(1);
       expect(r.out).toContain(DOCKER_DOWN_HEADER);
       expect(r.out).toContain(DOCKER_DOWN_HINT);
@@ -223,7 +233,7 @@ describe("Docker daemon outage classification (#4428)", () => {
       expect(r.out).not.toContain("Start the Docker daemon");
       expect(r.out).not.toContain("Docker runtime outage");
       const calls = fs.readFileSync(callLog, "utf8");
-      expect(calls).not.toMatch(/^docker:ps(?:\s|$)/mu);
+      expect(calls).not.toMatch(/^docker:(?:start|stop|restart|rm|kill|unpause|pause)(?:\s|$)/mu);
       expect(calls).not.toMatch(/^openshell:sandbox (?:start|recover|restart)(?:\s|$)/mu);
     } finally {
       fs.rmSync(home, { recursive: true, force: true });

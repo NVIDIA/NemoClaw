@@ -24,7 +24,7 @@ import type {
   DockerGpuPatchFailureContext,
   DockerGpuPatchResult,
 } from "./docker-gpu-patch-types";
-import { captureDockerContainerFailureEvidence } from "./managed-bootstrap/docker-container-failure-evidence";
+import { captureDockerContainerFailureEvidence } from "./compute/docker-container-failure-evidence";
 
 const PRE_ROLLBACK_DIAGNOSTICS_TOTAL_BUDGET_MS = 10_000;
 const PRE_ROLLBACK_DIAGNOSTICS_CALL_TIMEOUT_MS = 2_000;

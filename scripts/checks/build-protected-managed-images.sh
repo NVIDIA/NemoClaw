@@ -194,6 +194,19 @@ for command in curl docker jq node sha256sum; do
   }
 done
 
+# docker/setup-buildx-action records its selected builder below DOCKER_CONFIG
+# unless BUILDX_CONFIG is explicit. The protected E2E workflow installs Buildx
+# before Docker authentication, and authentication then selects an isolated
+# DOCKER_CONFIG. Keep the trusted setup action's builder visible to candidate
+# builds dispatched from workflow revisions that predate the explicit job env.
+if [[ -z "${BUILDX_CONFIG:-}" && "${GITHUB_ACTIONS:-}" == "true" && -n "${DOCKER_CONFIG:-}" && -n "${HOME:-}" ]]; then
+  setup_buildx_config="${HOME}/.docker/buildx"
+  if [[ -d "$setup_buildx_config" && ! -L "$setup_buildx_config" ]]; then
+    BUILDX_CONFIG="$(cd -- "$setup_buildx_config" && pwd -P)"
+    export BUILDX_CONFIG
+  fi
+fi
+
 work_dir="$(mktemp -d "${RUNNER_TEMP:-/tmp}/nemoclaw-protected-images.XXXXXX")"
 seed_overlay_active=0
 seed_backup="$work_dir/npm-cache-seed-original"

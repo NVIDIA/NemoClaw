@@ -16,10 +16,7 @@ import {
   parseNemoClawConfigDocumentName,
   parseNemoClawConfigDocumentUid,
 } from "../../config/model";
-import {
-  asExportedConfig,
-  exportedAgentList,
-} from "../../../../test/support/config-export-document";
+import { asExportedConfig } from "../../../../test/support/config-export-document";
 
 import { resolveGatewayStateDirForPort } from "../../onboard/gateway/state-dir";
 import { buildManagedStartupProfile } from "../../onboard/managed-startup/profile-builder";
@@ -754,7 +751,7 @@ describe("live export snapshot reader", () => {
     expect(JSON.stringify(result)).not.toContain(readFailureCanary);
   });
 
-  it("exports an ordered agent roster through SDK observations without provider credentials (#11854)", async () => {
+  it("refuses an observed agent roster before publishing singular v1alpha1 output (#12131)", async () => {
     const built = buildManagedStartupProfile({
       ...startupInput,
       environment: {
@@ -773,26 +770,16 @@ describe("live export snapshot reader", () => {
       },
     });
     const { result, writeStdout } = await exportLiveSource();
-    expect(result.ok).toBe(true);
-    const yaml = writeStdout.mock.calls[0]![0];
-    const config = asExportedConfig(YAML.parse(yaml));
-    const sandbox = config.spec.sandboxes[0]!;
-    const [primary, ...additional] = exportedAgentList(sandbox);
-    expect(primary!.name).toBe("primary");
-    expect(additional).toEqual([
-      {
-        name: "researcher",
-        tools: { allow: ["read"] },
-        inference: primary!.inference,
+    expect(result).toMatchObject({
+      ok: false,
+      failure: {
+        kind: "observation",
+        findings: expect.arrayContaining([
+          expect.objectContaining({ field: "spec.sandboxes[].agent", category: "unsupported" }),
+        ]),
       },
-      {
-        name: "reviewer",
-        tools: { allow: ["read"] },
-        inference: primary!.inference,
-      },
-    ]);
-    expect(config.spec.inferenceProviders).toHaveLength(1);
-    expect(yaml).not.toContain(readFailureCanary);
+    });
+    expect(writeStdout).not.toHaveBeenCalled();
     expect(raw.getSandboxConfig).toHaveBeenCalledTimes(2);
   });
 
@@ -925,7 +912,7 @@ describe("dashboard export observation", () => {
       kind: "openclaw",
       interfaces: { dashboard: { port: 19000, bind: "0.0.0.0" } },
     });
-    expect(exportedAgentList(document.spec.sandboxes[0]!)[0]).toMatchObject({
+    expect(document.spec.sandboxes[0]!.agent).toMatchObject({
       tools: { disclosure: "direct" },
     });
   });
