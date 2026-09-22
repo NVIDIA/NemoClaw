@@ -20,6 +20,7 @@ import {
   RUNTIME_ID,
 } from "../local-model-profile/cleanup.test-support";
 import { finalizeManagedLlamaCppLifecycleCleanup } from "../local-model-profile/cleanup";
+import type { ManagedLlamaCppLifecycleRehydrationOptions } from "./managed-installer";
 import { createManagedLlamaCppLifecycleAdapter } from "./managed-lifecycle-adapter";
 import { loadManagedLlamaCppReceipt, managedLlamaCppStatePaths } from "./managed-state";
 
@@ -183,5 +184,92 @@ describe("managed llama.cpp lifecycle adapter", () => {
     });
     expect(harness.capture).toHaveBeenCalledWith(["rm", "--force", RUNTIME_ID], expect.any(Number));
     expect(harness.capture).toHaveBeenCalledWith(["network", "rm", NETWORK_ID], expect.any(Number));
+  });
+
+  it("forwards non-local Docker authority only for cleanup", () => {
+    const homeDir = temporaryHome();
+    const gatewayPort = 8080;
+    const harness = engineHarness();
+    createManagedState(homeDir, harness.engine, { gatewayPort });
+    const receipt = loadManagedLlamaCppReceipt(managedLlamaCppStatePaths(homeDir, gatewayPort))!;
+    const operation: HostLocalInferenceOperation = {
+      providerId: "docker",
+      engine: harness.engine,
+      bindingSha256: receipt.engineAuthority.bindingSha256,
+      assertAuthority: vi.fn(),
+      spawn: vi.fn(),
+      createLlamaCppLifecycle: vi.fn(),
+    };
+    const unavailable = (): never => {
+      throw new Error("non-local lifecycle is cleanup-only");
+    };
+    const runtime: HostLocalInferenceRuntime = {
+      providerId: "docker",
+      authorityId: harness.engine.authorityId,
+      services: ["llama-cpp"],
+      translateContainerArgs: (args) => args,
+      qualifyOllama: unavailable,
+      startManaged: unavailable,
+      inspectManaged: unavailable,
+      stopManaged: unavailable,
+      preserveForRebuild: unavailable,
+      prepareDestroy: vi.fn((value) => value),
+      destroy: vi.fn((value) => ({ status: "removed" as const, receipt: value })),
+    };
+    const runtimeProvider = createInMemoryRuntimeProviderBundle({
+      providerId: "docker",
+      workloadProfile: TEST_WORKLOAD_PROFILE,
+      hostLocalInference: {
+        services: ["llama-cpp"],
+        createOperation: () => operation,
+      },
+    });
+    const commonOptions = {
+      runtimeProvider,
+      runtimeOwnerSandboxName: "spark-agent",
+      expectedModel: "llama-cpp-model",
+      expectedReceipt: receipt,
+      gatewayPort,
+      homeDir,
+      environment: { DOCKER_CONTEXT: "remote-builder" },
+      operation,
+    };
+    expect(() =>
+      createManagedLlamaCppLifecycleAdapter({
+        ...commonOptions,
+        rehydrate: vi.fn(() => {
+          throw new Error("non-local Docker authority was not admitted for cleanup");
+        }),
+      }),
+    ).toThrow("not admitted for cleanup");
+    const rehydrate = vi.fn(
+      (_options: ManagedLlamaCppLifecycleRehydrationOptions) =>
+        ({
+          lifecycle: {
+            recoverUnfinished: unavailable,
+            resume: unavailable,
+            runtime,
+            start: unavailable,
+          },
+          operation,
+          receipt,
+          selection: { recipe: { spec: { model: { servedName: "llama-cpp-model" } } } },
+        }) as never,
+    );
+    const adapter = createManagedLlamaCppLifecycleAdapter({
+      ...commonOptions,
+      allowNonLocalDockerAuthorityForCleanup: true,
+      rehydrate,
+      finalizeCleanup: vi.fn(() => ({ ok: true as const, removed: ["state"], preserved: [] })),
+    });
+    expect(rehydrate).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        allowNonLocalDockerAuthorityForCleanup: true,
+        env: { DOCKER_CONTEXT: "remote-builder" },
+      }),
+    );
+    expect(() => adapter.prepareStartup()).toThrow("cleanup-only");
+    expect(adapter.runtime.prepareDestroy(receipt)).toEqual(receipt);
+    expect(adapter.runtime.destroy(receipt)).toEqual({ status: "removed", receipt });
   });
 });

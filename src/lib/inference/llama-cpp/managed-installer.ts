@@ -628,12 +628,27 @@ export function rehydrateManagedLlamaCppLifecycle(
     options.operation,
   );
   operation.assertAuthority();
-  requirePersistedEngineAuthority(
-    receipt.engineAuthority,
-    operation.providerId,
-    operation.engine,
-    operation.bindingSha256,
-  );
+  try {
+    requirePersistedEngineAuthority(
+      receipt.engineAuthority,
+      operation.providerId,
+      operation.engine,
+      operation.bindingSha256,
+    );
+  } catch (error) {
+    if (
+      authorityFailure &&
+      options.allowNonLocalDockerAuthorityForCleanup === true &&
+      error instanceof Error &&
+      error.message.startsWith("Qualified ")
+    ) {
+      throw new Error(
+        `Managed llama.cpp cleanup could not verify the selected Docker authority. Restore the Docker selector used during onboarding and run 'nemoclaw ${owner.sandboxName} destroy' again.`,
+        { cause: error },
+      );
+    }
+    throw error;
+  }
   const current = currentManagedLlamaCppArtifact(selection, homeDir);
   const lifecycle = lifecycleFor({
     selection,

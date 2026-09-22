@@ -901,20 +901,20 @@ describe("managed llama.cpp installer", () => {
     const createLifecycle = vi.fn(() => lifecycle);
     const operation = managedOperation(harness.engine, createLifecycle);
     const runtimeProvider = managedRuntimeProvider(harness.engine, createLifecycle);
-    const mismatchedOperation = managedOperation(
-      { ...harness.engine, engineId: "other-engine" },
-      createLifecycle,
-    );
+    const mismatchedEngine = { ...harness.engine, authorityId: "test:other-docker-endpoint" };
+    const mismatchedOperation = managedOperation(mismatchedEngine, createLifecycle);
+    const mismatchedRuntimeProvider = managedRuntimeProvider(mismatchedEngine, createLifecycle);
 
     expect(() =>
       rehydrateManagedLlamaCppLifecycle({
-        runtimeProvider,
+        runtimeProvider: mismatchedRuntimeProvider,
         runtimeOwnerSandboxName: "spark-agent",
+        allowNonLocalDockerAuthorityForCleanup: true,
         homeDir,
-        env: { DOCKER_CONTEXT: "default" },
+        env: { DOCKER_CONTEXT: "remote-builder" },
         operation: mismatchedOperation,
       }),
-    ).toThrow("returned mismatched host-local-inference authority");
+    ).toThrow(/Restore the Docker selector.+nemoclaw spark-agent destroy.+again/u);
     expect(createLifecycle).not.toHaveBeenCalled();
 
     const rehydrated = rehydrateManagedLlamaCppLifecycle({
