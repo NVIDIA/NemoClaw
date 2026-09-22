@@ -103,3 +103,91 @@ fn failure_json_and_progress_stay_separate_when_either_stream_is_redirected() {
         }
     }
 }
+
+#[cfg(unix)]
+#[test]
+fn terminal_brand_and_color_respect_streams_and_no_color() {
+    use std::{io::Read, process::Stdio};
+    for (format, mode, no_color) in [
+        ("text", "auto", false),
+        ("json", "auto", false),
+        ("text", "auto", true),
+        ("text", "plain", false),
+        ("text", "off", false),
+    ] {
+        let directory = tempfile::tempdir().unwrap();
+        let pty = nix::pty::openpty(
+            Some(&nix::pty::Winsize {
+                ws_row: 24,
+                ws_col: 80,
+                ws_xpixel: 0,
+                ws_ypixel: 0,
+            }),
+            None,
+        )
+        .unwrap();
+        let mut command = Command::new(env!("CARGO_BIN_EXE_nemoclaw"));
+        command
+            .args([
+                "destroy",
+                "-o",
+                format,
+                "--progress",
+                mode,
+                "--verbose",
+                "--bundle",
+            ])
+            .arg(directory.path().join("missing-bundle"))
+            .arg("--state-dir")
+            .arg(directory.path().join("state"))
+            .env("TERM", "xterm-256color")
+            .env_remove("NO_COLOR")
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::from(fs::File::from(pty.slave)));
+        if no_color {
+            command.env("NO_COLOR", "1");
+        }
+        let child = command.spawn().unwrap();
+        drop(command);
+        let reader = std::thread::spawn(move || {
+            let mut file = fs::File::from(pty.master);
+            let mut bytes = Vec::new();
+            let mut chunk = [0; 4096];
+            while let Ok(count) = file.read(&mut chunk) {
+                if count == 0 {
+                    break;
+                }
+                bytes.extend_from_slice(&chunk[..count]);
+            }
+            String::from_utf8(bytes).unwrap()
+        });
+        let output = child.wait_with_output().unwrap();
+        let terminal = reader.join().unwrap();
+        assert_eq!(output.status.code(), Some(1));
+        let stdout = String::from_utf8(output.stdout).unwrap();
+        assert!(!stdout.contains('\x1b'));
+        assert!(!stdout.contains("NVIDIA"));
+        if format == "json" {
+            assert_eq!(
+                serde_json::from_str::<serde_json::Value>(&stdout).unwrap()["outcome"],
+                "failed"
+            );
+        }
+        assert_eq!(
+            terminal.matches("NVIDIA").count(),
+            usize::from(mode == "auto"),
+            "{terminal:?}"
+        );
+        let green = "\x1b[38;2;118;185;0";
+        assert_eq!(
+            terminal.contains(green),
+            mode == "auto" && !no_color,
+            "{terminal:?}"
+        );
+        if no_color || mode == "plain" {
+            assert!(!terminal.contains("38;2;"), "{terminal:?}");
+            assert!(!terminal.contains("\x1b[31m"), "{terminal:?}");
+        }
+    }
+}

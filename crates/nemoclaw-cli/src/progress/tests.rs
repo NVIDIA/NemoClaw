@@ -81,7 +81,7 @@ fn concurrent_resources_stay_distinct_and_failures_leave_the_active_panel() {
         .observe(resource("alpha", "failed"), false, now)
         .unwrap();
     assert!(failure.contains("failed"));
-    insert_line(&mut terminal, &failure).unwrap();
+    insert_line(&mut terminal, &failure, Palette::default(), Tone::Error).unwrap();
     draw(&mut terminal, &model, now, Duration::ZERO).unwrap();
     assert_eq!(model.active.len(), 1);
     assert!(contents(&terminal).contains("failed"));
@@ -210,7 +210,7 @@ fn event_bursts_update_the_panel_at_most_four_times_per_second_without_delaying_
     let failure = model
         .observe(resource("alpha", "failed"), false, now)
         .unwrap();
-    insert_line(&mut terminal, &failure).unwrap();
+    insert_line(&mut terminal, &failure, Palette::default(), Tone::Error).unwrap();
     assert!(
         contents(&terminal).contains("failed"),
         "failure must remain immediate even between frames"
@@ -227,4 +227,32 @@ fn event_bursts_update_the_panel_at_most_four_times_per_second_without_delaying_
         contents(&terminal).contains("beta"),
         "latest state appears on next frame"
     );
+}
+
+#[test]
+fn startup_wordmark_remains_above_the_first_progress_frame() {
+    let mut terminal = Terminal::with_options(
+        TestBackend::new(80, 24),
+        TerminalOptions {
+            viewport: Viewport::Inline(8),
+        },
+    )
+    .unwrap();
+    insert_header(
+        &mut terminal,
+        "Plan · demo.yaml\nState: state",
+        Palette { enabled: true },
+    )
+    .unwrap();
+    draw(
+        &mut terminal,
+        &Model::default(),
+        Instant::now(),
+        Duration::ZERO,
+    )
+    .unwrap();
+    let text = contents(&terminal);
+    assert!(text.contains("NVIDIA / NemoClaw"), "{text}");
+    assert!(text.contains("Plan · demo.yaml"), "{text}");
+    assert!(text.contains("State: state"), "{text}");
 }

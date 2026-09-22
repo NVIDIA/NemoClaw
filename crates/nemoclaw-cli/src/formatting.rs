@@ -4,9 +4,11 @@
 use crate::{
     args::{Cli, Command, OutputFormat},
     dispatch::CommandResult,
+    style::{Palette, Tone},
 };
 use nemoclaw_sdk::{Error, OperationResult, Outcome};
 use std::{
+    io::IsTerminal,
     path::PathBuf,
     time::{Duration, Instant},
 };
@@ -18,6 +20,8 @@ pub(crate) struct RenderContext {
     input: Option<PathBuf>,
     verbose: bool,
     started: Instant,
+    output_palette: Palette,
+    error_palette: Palette,
 }
 
 impl RenderContext {
@@ -35,6 +39,14 @@ impl RenderContext {
             state_dir: cli.state_dir.clone(),
             verbose: cli.verbose,
             started: Instant::now(),
+            output_palette: Palette::detect(
+                std::io::stdout().is_terminal()
+                    && !matches!(cli.progress, crate::args::ProgressMode::Plain),
+            ),
+            error_palette: Palette::detect(
+                std::io::stderr().is_terminal()
+                    && !matches!(cli.progress, crate::args::ProgressMode::Plain),
+            ),
         }
     }
 
@@ -156,6 +168,17 @@ fn action_label(actions: &[String]) -> String {
     }
 }
 
+fn styled_action(actions: &[String], palette: Palette) -> String {
+    let tone = if actions.iter().any(|action| action == "delete") {
+        Tone::Warning
+    } else if actions.iter().all(|action| action == "create") {
+        Tone::Success
+    } else {
+        Tone::Accent
+    };
+    palette.paint(&action_label(actions), tone)
+}
+
 fn operation(result: &OperationResult, context: &RenderContext) -> String {
     let planned = result.outcome == Outcome::Planned;
     let mut output = if planned {
@@ -190,6 +213,16 @@ fn operation(result: &OperationResult, context: &RenderContext) -> String {
         }
         summary
     };
+    let tone = if !result.deferred.is_empty() || result.outcome == Outcome::Destroyed {
+        Tone::Warning
+    } else if planned {
+        Tone::Accent
+    } else {
+        Tone::Success
+    };
+    if let Some((heading, rest)) = output.split_once('\n') {
+        output = format!("{}\n{rest}", context.output_palette.paint(heading, tone));
+    }
     if !result.changes.is_empty() {
         output.push_str(if planned {
             "\nPlanned actions:\n"
@@ -202,7 +235,7 @@ fn operation(result: &OperationResult, context: &RenderContext) -> String {
                 *images.entry(change.actions.clone()).or_default() += 1;
                 continue;
             }
-            let action = action_label(&change.actions);
+            let action = styled_action(&change.actions, context.output_palette);
             let label = resource_label(&change.resource);
             output.push_str(&format!("  {action}  {label}\n"));
             if context.verbose && label != change.resource {
@@ -226,7 +259,7 @@ fn operation(result: &OperationResult, context: &RenderContext) -> String {
         for (actions, count) in images {
             output.push_str(&format!(
                 "  {}  {count} image binding{}\n",
-                action_label(&actions),
+                styled_action(&actions, context.output_palette),
                 if count == 1 { "" } else { "s" }
             ));
         }
@@ -268,6 +301,14 @@ fn operation(result: &OperationResult, context: &RenderContext) -> String {
         } else {
             "readiness unknown or not ready"
         };
+        let status = context.output_palette.paint(
+            status,
+            if runtime.supported && runtime.allows_apply_completion() {
+                Tone::Success
+            } else {
+                Tone::Warning
+            },
+        );
         output.push_str(&format!(
             "\nFabric health · sandbox/{}: {status}",
             terminal_text(&health.sandbox)
@@ -388,6 +429,14 @@ pub(crate) fn render_error(
                 if interrupted { "interrupted" } else { "failed" },
                 duration(context.started.elapsed())
             );
+            output = context.error_palette.paint(
+                &output,
+                if interrupted {
+                    Tone::Warning
+                } else {
+                    Tone::Error
+                },
+            );
             if let Some(input) = &context.input {
                 output.push_str(&format!(
                     "Input: {}\n",
@@ -463,6 +512,37 @@ mod tests {
             &RenderContext::new(&cli),
         )
         .unwrap()
+    }
+
+    #[test]
+    fn colored_results_keep_destructive_actions_explicit_and_json_unstyled() {
+        let cli = Cli::try_parse_from(["nemoclaw", "destroy"]).unwrap();
+        let mut context = RenderContext::new(&cli);
+        context.output_palette = Palette { enabled: true };
+        let value = json!({
+            "outcome": "destroyed",
+            "changes": [{"resource": "nemoclaw_sandbox.assistant", "actions": ["delete"]}]
+        });
+        let colored = super::render(
+            CommandResult::Operation(serde_json::from_value(value.clone()).unwrap()),
+            OutputFormat::Text,
+            &context,
+        )
+        .unwrap();
+        assert!(colored.contains("\x1b[33mDestroy complete"));
+        assert!(colored.contains("\x1b[33mdelete\x1b[0m  sandbox/assistant"));
+        assert!(colored.contains("Sandbox files and conversation history deleted."));
+        let machine = super::render(
+            CommandResult::Operation(serde_json::from_value(value).unwrap()),
+            OutputFormat::Json,
+            &context,
+        )
+        .unwrap();
+        assert!(!machine.contains('\x1b'));
+        assert_eq!(
+            serde_json::from_str::<Value>(&machine).unwrap()["outcome"],
+            "destroyed"
+        );
     }
 
     #[test]

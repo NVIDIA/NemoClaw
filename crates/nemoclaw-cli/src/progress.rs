@@ -4,11 +4,13 @@
 use crate::{
     args::ProgressMode,
     formatting::{duration, resource_label, terminal_text},
+    style::{Palette, Tone},
 };
 use nemoclaw_sdk::{DownloadPhase, Progress, StepOutcome};
 use ratatui::{
     Terminal, TerminalOptions, Viewport,
     backend::Backend,
+    text::{Line, Span, Text},
     widgets::{Paragraph, Widget, Wrap},
 };
 use std::{
@@ -83,6 +85,7 @@ struct Active {
 #[derive(Default)]
 struct Model {
     active: BTreeMap<String, Active>,
+    palette: Palette,
 }
 
 impl Model {
@@ -198,7 +201,7 @@ fn run(receiver: mpsc::Receiver<Option<Progress>>, inline: bool, verbose: bool, 
         return;
     };
     let mut output = io::stderr();
-    let _ = writeln!(output, "{header}");
+    let palette = Palette::detect(inline);
     let mut terminal = inline
         .then(|| {
             OutputBackend::new()
@@ -213,8 +216,19 @@ fn run(receiver: mpsc::Receiver<Option<Progress>>, inline: bool, verbose: bool, 
                 .ok()
         })
         .flatten();
+    if let Some(display) = terminal.as_mut() {
+        if insert_header(display, &header, palette).is_err() {
+            finish_terminal(&mut terminal);
+            let _ = writeln!(output, "{header}");
+        }
+    } else {
+        let _ = writeln!(output, "{header}");
+    }
     let mut terminal_size = terminal.as_ref().and_then(|terminal| terminal.size().ok());
-    let mut model = Model::default();
+    let mut model = Model {
+        palette,
+        ..Model::default()
+    };
     let started = Instant::now();
     let mut heartbeat = started;
     let mut next_frame = started;
@@ -242,16 +256,17 @@ fn run(receiver: mpsc::Receiver<Option<Progress>>, inline: bool, verbose: bool, 
                 .ok();
             terminal_size = terminal.as_ref().and_then(|display| display.size().ok());
         }
-        if let Some(event) = next.take()
-            && let Some(line) = model.observe(event, verbose, now)
-        {
-            if let Some(display) = terminal.as_mut() {
-                if insert_line(display, &line).is_err() {
-                    finish_terminal(&mut terminal);
+        if let Some(event) = next.take() {
+            let tone = event_tone(&event);
+            if let Some(line) = model.observe(event, verbose, now) {
+                if let Some(display) = terminal.as_mut() {
+                    if insert_line(display, &line, palette, tone).is_err() {
+                        finish_terminal(&mut terminal);
+                        let _ = writeln!(output, "{line}");
+                    }
+                } else {
                     let _ = writeln!(output, "{line}");
                 }
-            } else {
-                let _ = writeln!(output, "{line}");
             }
         }
         if let Some(display) = terminal.as_mut() {
@@ -299,8 +314,72 @@ fn finish_terminal(terminal: &mut Option<Terminal<OutputBackend>>) {
     }
 }
 
-fn insert_line<B: Backend>(terminal: &mut Terminal<B>, line: &str) -> Result<(), B::Error> {
-    let paragraph = Paragraph::new(line).wrap(Wrap { trim: false });
+fn event_tone(event: &Progress) -> Tone {
+    match event {
+        Progress::Completed {
+            outcome: StepOutcome::Failed,
+            ..
+        }
+        | Progress::Resource {
+            status: "failed" | "errored",
+            ..
+        } => Tone::Error,
+        Progress::Completed {
+            outcome: StepOutcome::Cancelled,
+            ..
+        }
+        | Progress::Destroying => Tone::Warning,
+        Progress::Completed {
+            outcome: StepOutcome::Succeeded,
+            ..
+        }
+        | Progress::Resource {
+            status: "complete", ..
+        } => Tone::Success,
+        _ => Tone::Muted,
+    }
+}
+
+fn insert_line<B: Backend>(
+    terminal: &mut Terminal<B>,
+    line: &str,
+    palette: Palette,
+    tone: Tone,
+) -> Result<(), B::Error> {
+    let marker = match tone {
+        Tone::Success => "✓ ",
+        Tone::Error => "✗ ",
+        Tone::Warning => "! ",
+        _ => "· ",
+    };
+    let paragraph = Paragraph::new(Line::from(vec![
+        Span::styled(marker, palette.style(tone)),
+        Span::raw(line),
+    ]));
+    insert_paragraph(terminal, paragraph)
+}
+
+fn insert_header<B: Backend>(
+    terminal: &mut Terminal<B>,
+    header: &str,
+    palette: Palette,
+) -> Result<(), B::Error> {
+    let mut lines = vec![
+        Line::from(vec![
+            Span::styled("NVIDIA", palette.style(Tone::Accent)),
+            Span::raw(" / NemoClaw"),
+        ]),
+        Line::default(),
+    ];
+    lines.extend(header.lines().map(Line::raw));
+    insert_paragraph(terminal, Paragraph::new(Text::from(lines)))
+}
+
+fn insert_paragraph<B: Backend>(
+    terminal: &mut Terminal<B>,
+    paragraph: Paragraph<'_>,
+) -> Result<(), B::Error> {
+    let paragraph = paragraph.wrap(Wrap { trim: false });
     let width = terminal.size()?.width.max(1);
     let height = paragraph.line_count(width).min(u16::MAX as usize) as u16;
     terminal.insert_before(height.max(1), |buffer| {
@@ -339,7 +418,11 @@ fn draw<B: Backend>(
             let mut y = area.y;
             let lines = model.lines(now);
             for (index, line) in lines.iter().enumerate() {
-                let paragraph = Paragraph::new(line.as_str()).wrap(Wrap { trim: false });
+                let paragraph = Paragraph::new(Line::from(vec![
+                    Span::styled("› ", model.palette.style(Tone::Accent)),
+                    Span::raw(line.as_str()),
+                ]))
+                .wrap(Wrap { trim: false });
                 let height = paragraph
                     .line_count(area.width)
                     .max(1)
@@ -365,7 +448,8 @@ fn draw<B: Backend>(
             }
             if area.height > 0 {
                 frame.render_widget(
-                    Paragraph::new(format!("Elapsed: {}", duration(elapsed))),
+                    Paragraph::new(format!("Elapsed: {}", duration(elapsed)))
+                        .style(model.palette.style(Tone::Muted)),
                     ratatui::layout::Rect::new(area.x, area.bottom() - 1, area.width, 1),
                 );
             }

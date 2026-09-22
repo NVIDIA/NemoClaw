@@ -8,6 +8,7 @@ mod dispatch;
 mod formatting;
 mod io;
 mod progress;
+mod style;
 use args::Cli;
 use clap::Parser;
 use nemoclaw_sdk::CancellationToken;

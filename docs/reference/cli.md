@@ -76,6 +76,10 @@ See [apply health](../usage.md#fabric-health-during-apply) and [retention](../st
 Progress goes to stderr independently of the result format.
 The default inline Ratatui display uses the normal terminal screen, preserving completed milestones in scrollback.
 It shows active resource operations and elapsed time without taking keyboard input or entering fullscreen mode.
+Interactive progress starts with a compact NVIDIA / NemoClaw wordmark.
+Color accents identify completion, incomplete or destructive results, and failures; labels carry the same meaning without color.
+A nonempty `NO_COLOR` disables styling while preserving inline progress.
+Redirected streams and JSON/YAML results have no added styling; `--progress plain` also disables styling and the wordmark.
 Plain output reports stage changes and throttled waiting updates without cursor movement; use `--progress plain` for a terminal transcript or accessibility.
 Use `--progress off` to suppress progress while preserving results and errors.
 Redirected stderr uses plain progress by default, so scripts requiring a quiet stream should explicitly select `off`.
