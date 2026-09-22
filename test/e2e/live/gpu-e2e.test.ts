@@ -662,6 +662,21 @@ test(
     expect(onboard.exitCode, resultText(onboard)).toBe(0);
     const apiKey = loadManagedVllmApiKey();
     artifacts.addRedactionValues([apiKey ?? ""]);
+    await host.command(
+      "docker",
+      [
+        "container",
+        "inspect",
+        "--format",
+        '{"idLength":{{len .Id}},"environmentCount":{{len .Config.Env}},"labelCount":{{len .Config.Labels}},"portCount":{{len .NetworkSettings.Ports}},"vllmPortBindingCount":{{len (index .NetworkSettings.Ports "8000/tcp")}},"deviceRequestCount":{{len .HostConfig.DeviceRequests}},"mountCount":{{len .Mounts}}}',
+        HOST_LOCAL_VLLM_CONTAINER_NAME,
+      ],
+      {
+        artifactName: "vllm-export-container-shape",
+        env: exportEnv,
+        timeoutMs: 30_000,
+      },
+    );
     let verifierDiagnostic = "verified";
     try {
       observeManagedVllmForExport(undefined);
