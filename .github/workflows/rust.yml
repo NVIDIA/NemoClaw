@@ -61,8 +61,10 @@ jobs:
           curl --fail --location --retry 3 "https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-0.9.144/$archive" -o "$archive"
           python -c 'import hashlib, pathlib, sys; assert hashlib.sha256(pathlib.Path(sys.argv[1]).read_bytes()).hexdigest() == sys.argv[2], "nextest checksum mismatch"' "$archive" "$checksum"
           tar -xzf "$archive"
-          echo "$PWD" >> "$GITHUB_PATH"
+          python -c 'import os, pathlib; open(os.environ["GITHUB_PATH"], "a").write(str(pathlib.Path.cwd()) + "\n")'
           ./cargo-nextest nextest --version
+      - name: Verify test runner on PATH
+        run: cargo nextest --version
       - name: Check formatting
         run: cargo fmt --check
       - name: Lint Rust
