@@ -13,11 +13,13 @@ import {
 } from "../../../src/lib/domain/config/v1alpha1-runtime-defaults.ts";
 import { decodeManagedStartupProfile } from "../../../src/lib/onboard/managed-startup/profile.ts";
 import type { SandboxEntry } from "../../../src/lib/state/registry/types.ts";
+import {
+  CONFIG_EXPORT_CONSUMER_BUILD_TIMEOUT_MS,
+  CONFIG_EXPORT_CONSUMER_COMMAND_TIMEOUT_MS,
+} from "../../../tools/e2e/onboard-timeout-contract.mts";
 import { REPO_ROOT } from "./paths.ts";
 
 const FIXTURE_ROOT = path.join(REPO_ROOT, "test/e2e/fixtures/v1-config-consumer");
-export const REVISION_MATCHED_CONSUMER_COMMAND_TIMEOUT_MS = 30_000;
-export const REVISION_MATCHED_CONSUMER_BUILD_TIMEOUT_MS = 4 * 60_000;
 const CONSUMER_RUNTIME_ENVIRONMENT_KEYS = [
   "CARGO_HOME",
   "HOME",
@@ -206,7 +208,7 @@ export function validateWithRevisionMatchedV1Consumer(
         encoding: "utf8",
         killSignal: "SIGKILL",
         stdio: "pipe",
-        timeout: REVISION_MATCHED_CONSUMER_COMMAND_TIMEOUT_MS,
+        timeout: CONFIG_EXPORT_CONSUMER_COMMAND_TIMEOUT_MS,
       },
     );
     fs.mkdirSync(consumer);
@@ -214,7 +216,7 @@ export function validateWithRevisionMatchedV1Consumer(
       encoding: "utf8",
       killSignal: "SIGKILL",
       stdio: "pipe",
-      timeout: REVISION_MATCHED_CONSUMER_COMMAND_TIMEOUT_MS,
+      timeout: CONFIG_EXPORT_CONSUMER_COMMAND_TIMEOUT_MS,
     });
     fs.copyFileSync(
       path.join(FIXTURE_ROOT, "config-export-compatibility.rs"),
@@ -234,7 +236,7 @@ export function validateWithRevisionMatchedV1Consumer(
         maxBuffer: 10 * 1024 * 1024,
         killSignal: "SIGKILL",
         stdio: "pipe",
-        timeout: REVISION_MATCHED_CONSUMER_BUILD_TIMEOUT_MS,
+        timeout: CONFIG_EXPORT_CONSUMER_BUILD_TIMEOUT_MS,
       },
     );
     execFileSync(
@@ -256,7 +258,7 @@ export function validateWithRevisionMatchedV1Consumer(
         killSignal: "SIGKILL",
         maxBuffer: 10 * 1024 * 1024,
         stdio: "pipe",
-        timeout: REVISION_MATCHED_CONSUMER_COMMAND_TIMEOUT_MS,
+        timeout: CONFIG_EXPORT_CONSUMER_COMMAND_TIMEOUT_MS,
       },
     );
     const evidence = JSON.parse(fs.readFileSync(evidencePath, "utf8")) as Omit<

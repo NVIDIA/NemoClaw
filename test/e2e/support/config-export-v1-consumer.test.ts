@@ -7,7 +7,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { exportSnapshots } from "../../../src/lib/actions/config/export-test-fixture.ts";
 import {
+  hermesImageRef,
+  hermesProfileInput,
   hermesSnapshot,
+  managedWorkload,
   snapshot,
   tunedSnapshot,
 } from "../../../src/lib/domain/config/export-source-test-fixture.ts";
@@ -18,6 +21,34 @@ async function rawExport(source: ReturnType<typeof snapshot>): Promise<string> {
   const exported = await exportSnapshots([source]);
   expect(exported.outcome.ok).toBe(true);
   return exported.writeStdout.mock.calls[0]![0];
+}
+
+function hermesDashboardSnapshot(tuiEnabled: boolean): ReturnType<typeof snapshot> {
+  const port = 19_000;
+  const internalPort = 19_120;
+  return hermesSnapshot({
+    dashboardPort: port,
+    hermesApiPort: 8643,
+    hermesDashboardEnabled: true,
+    hermesDashboardPort: port,
+    hermesDashboardInternalPort: internalPort,
+    ...(tuiEnabled ? { hermesDashboardTui: true } : {}),
+    workload: managedWorkload(
+      {
+        ...hermesProfileInput(),
+        dashboard: {
+          agent: "hermes",
+          mode: "loopback-forwarded",
+          url: `http://127.0.0.1:${port}`,
+          browserUrl: `http://127.0.0.1:${port}`,
+          publicPort: port,
+          internalPort,
+          tuiEnabled,
+        },
+      },
+      hermesImageRef,
+    ),
+  });
 }
 
 afterEach(() => vi.unstubAllEnvs());
@@ -32,6 +63,8 @@ describe("revision-matched v1 config consumer", () => {
       const openclaw = await rawExport(snapshot());
       const openclawTuned = await rawExport(tunedSnapshot());
       const hermesDisabled = await rawExport(hermesSnapshot());
+      const hermesDashboard = await rawExport(hermesDashboardSnapshot(true));
+      const hermesDashboardWithoutTui = await rawExport(hermesDashboardSnapshot(false));
       const openClawSource = {
         contextWindow: 131_072,
         maxTokens: 4096,
@@ -82,15 +115,38 @@ describe("revision-matched v1 config consumer", () => {
             },
           },
         },
+        ...[
+          { name: "hermes-dashboard", raw: hermesDashboard, tuiEnabled: true },
+          {
+            name: "hermes-dashboard-without-tui",
+            raw: hermesDashboardWithoutTui,
+            tuiEnabled: false,
+          },
+        ].map(({ name, raw, tuiEnabled }) => ({
+          name,
+          harness: "hermes" as const,
+          raw,
+          source: {
+            apiPort: 8643,
+            dashboard: {
+              enabled: true,
+              port: 19_000,
+              internalPort: 19_120,
+              tui: { enabled: tuiEnabled },
+            },
+          },
+        })),
       ]);
 
       expect(evidence.revision).toBe("88c6600c06b0937907290362eef86912052c4ad0");
-      expect(evidence.documents).toHaveLength(3);
+      expect(evidence.documents).toHaveLength(5);
       expect(evidence.documents.map(({ harness, sha256 }) => ({ harness, sha256 }))).toEqual(
         [
           ["openclaw", openclaw],
           ["openclaw", openclawTuned],
           ["hermes", hermesDisabled],
+          ["hermes", hermesDashboard],
+          ["hermes", hermesDashboardWithoutTui],
         ].map(([harness, raw]) => ({
           harness,
           sha256: createHash("sha256").update(raw).digest("hex"),

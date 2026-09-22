@@ -95,6 +95,22 @@ describe("E2E operations workflow", testTimeoutOptions(15_000), () => {
       continueOnError: false,
     },
     {
+      mode: "missing YAML digest binding",
+      run: [
+        "set -euo pipefail",
+        `evidence="${CONFIG_EXPORT_EVIDENCE_PATH}"`,
+        `yaml="${CONFIG_EXPORT_YAML_PATH}"`,
+        'test -f "$evidence"',
+        "jq -e '.passed == true' \"$evidence\" >/dev/null",
+        'case "$(jq -er \'.classification\' "$evidence")" in',
+        '  success) test -f "$yaml" ;;',
+        "  expected-refusal|no-usable-sandbox) ;;",
+        "  *) exit 1 ;;",
+        "esac",
+      ].join("\n"),
+      continueOnError: false,
+    },
+    {
       mode: "ignored shell failure",
       run: `test -f "${CONFIG_EXPORT_EVIDENCE_PATH}" || true`,
       continueOnError: false,

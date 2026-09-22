@@ -865,6 +865,40 @@ function numericConstantInitializer(sourceFile: ts.SourceFile, name: string): ts
   return null;
 }
 
+function importedNumericConstantInitializer(
+  sourceFile: ts.SourceFile,
+  name: string,
+): { initializer: ts.Expression; sourceFile: ts.SourceFile } | null {
+  for (const statement of sourceFile.statements) {
+    if (
+      !ts.isImportDeclaration(statement) ||
+      !ts.isStringLiteral(statement.moduleSpecifier) ||
+      statement.importClause?.isTypeOnly
+    ) {
+      continue;
+    }
+    const bindings = statement.importClause?.namedBindings;
+    if (!bindings || !ts.isNamedImports(bindings)) continue;
+    const binding = bindings.elements.find(
+      (element) => !element.isTypeOnly && element.name.text === name,
+    );
+    if (!binding) continue;
+    const importedFile = resolveE2EImport(sourceFile.fileName, statement.moduleSpecifier.text);
+    if (!importedFile) return null;
+    const importedSource = ts.createSourceFile(
+      importedFile,
+      fs.readFileSync(importedFile, "utf8"),
+      ts.ScriptTarget.Latest,
+      true,
+      ts.ScriptKind.TS,
+    );
+    const importedName = binding.propertyName?.text ?? binding.name.text;
+    const initializer = numericConstantInitializer(importedSource, importedName);
+    return initializer ? { initializer, sourceFile: importedSource } : null;
+  }
+  return null;
+}
+
 function numericExpressionValue(
   expression: ts.Expression,
   sourceFile: ts.SourceFile,
@@ -898,12 +932,17 @@ function numericExpressionValue(
     const whenFalse = numericExpressionValue(expression.whenFalse, sourceFile, seen);
     return whenTrue === null || whenFalse === null ? null : Math.max(whenTrue, whenFalse);
   }
-  if (ts.isIdentifier(expression) && !seen.has(expression.text)) {
-    const initializer = numericConstantInitializer(sourceFile, expression.text);
-    if (!initializer) return null;
+  if (ts.isIdentifier(expression)) {
+    const identity = `${sourceFile.fileName}:${expression.text}`;
+    if (seen.has(identity)) return null;
     const nextSeen = new Set(seen);
-    nextSeen.add(expression.text);
-    return numericExpressionValue(initializer, sourceFile, nextSeen);
+    nextSeen.add(identity);
+    const initializer = numericConstantInitializer(sourceFile, expression.text);
+    if (initializer) return numericExpressionValue(initializer, sourceFile, nextSeen);
+    const imported = importedNumericConstantInitializer(sourceFile, expression.text);
+    return imported
+      ? numericExpressionValue(imported.initializer, imported.sourceFile, nextSeen)
+      : null;
   }
   return null;
 }

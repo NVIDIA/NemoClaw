@@ -30,10 +30,6 @@ import { validateE2eWorkflow } from "../../../tools/e2e/workflow-boundary.mts";
 import { buildE2eWorkflowPlan } from "../../../tools/e2e/workflow-plan.mts";
 import { readWorkflow } from "../../helpers/e2e-workflow-contract.ts";
 import { DEFAULT_CLEANUP_TIMEOUT_MS } from "../fixtures/cleanup.ts";
-import {
-  REVISION_MATCHED_CONSUMER_BUILD_TIMEOUT_MS,
-  REVISION_MATCHED_CONSUMER_COMMAND_TIMEOUT_MS,
-} from "../fixtures/revision-matched-v1-consumer.ts";
 import { listTargets } from "../registry/registry.ts";
 import { CONFIG_EXPORT_EXPECTATIONS, type ConfigExportExpectation } from "../registry/types.ts";
 
@@ -92,12 +88,6 @@ describe("onboard final-handoff timeout contract", () => {
   });
 
   it("pins the reviewed command, test, and target timeout values", () => {
-    expect(CONFIG_EXPORT_CONSUMER_COMMAND_TIMEOUT_MS).toBe(
-      REVISION_MATCHED_CONSUMER_COMMAND_TIMEOUT_MS,
-    );
-    expect(CONFIG_EXPORT_CONSUMER_BUILD_TIMEOUT_MS).toBe(
-      REVISION_MATCHED_CONSUMER_BUILD_TIMEOUT_MS,
-    );
     expect({
       finalHandoffCommandMinutes: ONBOARD_FINAL_HANDOFF_COMMAND_TIMEOUT_MS / MINUTE_MS,
       singleFinalHandoffTestMinutes: ONBOARD_SINGLE_FINAL_HANDOFF_TEST_TIMEOUT_MS / MINUTE_MS,
