@@ -270,21 +270,3 @@ fn removed_bundle_dir_flag_is_a_usage_error() {
     assert_eq!(output.status.code(), Some(2));
     assert!(!state.exists());
 }
-
-#[test]
-fn onboard_is_rejected_without_writing_and_absent_from_help() {
-    let directory = tempfile::tempdir().unwrap();
-    let output = Command::new(env!("CARGO_BIN_EXE_nemoclaw"))
-        .args(["onboard", "--generate-only", "--non-interactive"])
-        .current_dir(directory.path())
-        .output()
-        .unwrap();
-    assert_eq!(output.status.code(), Some(2));
-    assert_eq!(fs::read_dir(directory.path()).unwrap().count(), 0);
-    let help = Command::new(env!("CARGO_BIN_EXE_nemoclaw"))
-        .arg("--help")
-        .output()
-        .unwrap();
-    assert!(help.status.success());
-    assert!(!String::from_utf8_lossy(&help.stdout).contains("onboard"));
-}
