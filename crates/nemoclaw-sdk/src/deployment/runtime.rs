@@ -333,58 +333,8 @@ impl Deployment {
             return Ok(());
         }
         let stage = Store::open(&store.directory.join("runtime"))?;
-        let bindings = self
-            .state_bindings(
-                bundle,
-                &stage,
-                &record.document,
-                &record.generations,
-                true,
-                cancel,
-            )
+        self.export_observations(bundle, &stage, record, true, cancel)
             .await?;
-        super::export::settled(&bindings)?;
-        let targets = compile::runtime_targets(&record.document, &record.generations)?;
-        if bindings.len()
-            != targets
-                .iter()
-                .filter(|target| !target.address.starts_with("data."))
-                .count()
-        {
-            return Err(Error::Conflict(
-                "export requires all managed runtime bindings",
-            ));
-        }
-        let work = async {
-            for target in targets {
-                if target.address.starts_with("data.") {
-                    continue;
-                }
-                let binding = bindings.get(&target.address).ok_or(Error::Conflict(
-                    "export requires established runtime identity",
-                ))?;
-                if plan::disposable(&target.address) {
-                    self.export_compute(&target, binding).await?;
-                    continue;
-                }
-                if binding.spec != target.values["spec"] {
-                    return Err(Error::Conflict(
-                        "runtime state differs from intent; no YAML exported",
-                    ));
-                }
-                let mut row = target.values.clone();
-                row.insert("id".into(), binding.id.clone());
-                crate::services::BackendRegistry::new(&self.engines)
-                    .resolve(&target.kind, &row)?
-                    .ok_or(Error::State("runtime backend is unavailable"))?
-                    .read(&target.kind, &row, false)
-                    .await?
-                    .ok_or(Error::Conflict(
-                        "managed runtime is absent; no YAML exported",
-                    ))?;
-            }
-            Ok(())
-        };
-        tokio::select! {()=cancel.cancelled()=>Err(Error::Cancelled),result=work=>result}
+        Ok(())
     }
 }
