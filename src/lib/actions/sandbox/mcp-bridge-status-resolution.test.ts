@@ -417,13 +417,19 @@ describeConcurrentProbeSuite("MCP status wire-level credential-resolution probe"
     });
   });
 
-  it("reports a policy-derived entry as configured when direct adapter inspection succeeds", async (context) => {
-    const home = createTempHome("nemoclaw-mcp-resolution-policy-source-");
-    const { stdout } = await runHarness(
-      context,
-      home,
-      String.raw`
+  it.for([false, true])(
+    "reports policy-derived adapter availability (transport failure: %s)",
+    async (transportFailure, context) => {
+      const home = createTempHome("nemoclaw-mcp-resolution-policy-source-");
+      const { stdout } = await runHarness(
+        context,
+        home,
+        String.raw`
   policyOnlySourceEnabled = true;
+  if (${transportFailure}) {
+    const { SandboxCommandTransportError } = require("./src/lib/adapters/sandbox/command-transport.js");
+    processRecovery.executeSandboxCommand = async () => { throw new SandboxCommandTransportError("unavailable"); };
+  }
   const [status] = await bridge.statusMcpBridge("alpha", "github");
   writeHarnessResult(JSON.stringify({
     adapter: status.adapter,
@@ -431,16 +437,14 @@ describeConcurrentProbeSuite("MCP status wire-level credential-resolution probe"
     provider: status.provider,
   }));
 `,
-    );
-    const payload = JSON.parse(stdout) as {
-      adapter: { registered: boolean | null };
-      policy: { state: string };
-      provider: { state: string };
-    };
-    expect(payload.adapter.registered).toBe(true);
-    expect(payload.policy.state).toBe("configured");
-    expect(payload.provider.state).toBe("configured");
-  });
+      );
+      const payload = JSON.parse(stdout);
+      expect(payload.adapter.registered).toBe(transportFailure ? null : true);
+      expect(payload.adapter.detail ?? "").toContain(transportFailure ? "unavailable" : "");
+      expect(payload.policy.state).toBe(transportFailure ? "orphaned" : "configured");
+      expect(payload.provider.state).toBe(transportFailure ? "orphaned" : "configured");
+    },
+  );
 
   it("refuses status while a legacy source still requires explicit migration", async (context) => {
     const home = createTempHome("nemoclaw-mcp-resolution-legacy-");

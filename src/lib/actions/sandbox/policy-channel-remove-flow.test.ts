@@ -3,6 +3,9 @@
 
 import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
 
+import { SandboxCommandTransportError } from "../../adapters/sandbox/command-transport";
+import * as gatewayRuntime from "../../gateway-runtime-action";
+import * as channels from "../../sandbox/channels";
 import * as openshellRuntime from "../../adapters/openshell/runtime";
 import * as defs from "../../agent/defs";
 import {
@@ -40,7 +43,7 @@ describe("policy channel remove/enable flows", () => {
     vi.restoreAllMocks();
   });
 
-  async function arrangeHermesWhatsappRemoval() {
+  async function arrangeHermesChannelRemoval(channel = "whatsapp") {
     const plan = await new MessagingWorkflowPlanner(
       createBuiltInChannelManifestRegistry(),
       // WhatsApp declares an enroll hook for its reply mode, so the planner
@@ -53,7 +56,7 @@ describe("policy channel remove/enable flows", () => {
       agent: "hermes",
       workflow: "onboard",
       isInteractive: false,
-      configuredChannels: ["whatsapp"],
+      configuredChannels: [channel],
     });
     const current = {
       name: "alpha",
@@ -70,13 +73,13 @@ describe("policy channel remove/enable flows", () => {
       stateDirs: ["platforms", "profiles", "dashboard-home"],
     } as unknown as defs.AgentDefinition);
     vi.spyOn(registry, "getSandbox").mockReturnValue(current);
-    vi.spyOn(registry, "getConfiguredMessagingChannelsFromEntry").mockReturnValue(["whatsapp"]);
+    vi.spyOn(registry, "getConfiguredMessagingChannelsFromEntry").mockReturnValue([channel]);
     vi.spyOn(registry, "getDisabledChannels").mockReturnValue([]);
     const updateSandbox = vi.spyOn(registry, "updateSandbox").mockReturnValue(true);
     vi.spyOn(openshellRuntime, "runOpenshell").mockImplementation(((args: string[]) =>
       args.includes("cat") ? { status: 1, stderr: "missing" } : { status: 0 }) as never);
-    vi.spyOn(policies, "getAppliedPresets").mockResolvedValue(["whatsapp"]);
-    vi.spyOn(policies, "listPresets").mockReturnValue([{ name: "whatsapp" } as never]);
+    vi.spyOn(policies, "getAppliedPresets").mockResolvedValue([channel]);
+    vi.spyOn(policies, "listPresets").mockReturnValue([{ name: channel } as never]);
     const removePreset = vi.spyOn(policies, "removePreset").mockResolvedValue(true);
     const rebuildSandbox = vi
       .spyOn(policyChannelDependencies, "rebuildSandbox")
@@ -92,11 +95,11 @@ describe("policy channel remove/enable flows", () => {
     expect(String(command)).toContain("/sandbox/.hermes/dashboard-home/platforms/whatsapp/session");
   }
 
-  async function removeWhatsappNonInteractive() {
+  async function removeChannelNonInteractive(channel = "whatsapp") {
     const previousNonInteractive = process.env.NEMOCLAW_NON_INTERACTIVE;
     process.env.NEMOCLAW_NON_INTERACTIVE = "1";
     try {
-      await removeSandboxChannel("alpha", { channel: "whatsapp" });
+      await removeSandboxChannel("alpha", { channel });
     } finally {
       Reflect.deleteProperty(process.env, "NEMOCLAW_NON_INTERACTIVE");
       Object.assign(
@@ -150,9 +153,9 @@ describe("policy channel remove/enable flows", () => {
   });
 
   it("clears Hermes WhatsApp default, profile, and legacy sessions before removal", async () => {
-    const { updateSandbox } = await arrangeHermesWhatsappRemoval();
+    const { updateSandbox } = await arrangeHermesChannelRemoval();
 
-    await expect(removeWhatsappNonInteractive()).resolves.toBeUndefined();
+    await expect(removeChannelNonInteractive()).resolves.toBeUndefined();
 
     const clearCommand = String(
       vi.mocked(processRecovery.executeSandboxExecCommand).mock.calls[0]?.[1] ?? "",
@@ -170,13 +173,17 @@ describe("policy channel remove/enable flows", () => {
     ).toBeLessThan(updateSandbox.mock.invocationCallOrder[0]);
   });
 
-  it.each(["cancelled", "timeout", "malformed", "unavailable"] as const)(
+  it.each(["cancelled", "timeout", "malformed", "unavailable", "capture", "invocation"] as const)(
     "keeps channel state unchanged after %s without another transport",
     async (kind) => {
-      const { rebuildSandbox, removePreset, updateSandbox } = await arrangeHermesWhatsappRemoval();
-      const error = new Error(kind);
+      const { rebuildSandbox, removePreset, updateSandbox } = await arrangeHermesChannelRemoval();
+      const error = new SandboxCommandTransportError(kind);
       vi.mocked(processRecovery.executeSandboxExecCommand).mockRejectedValue(error);
-      await expect(removeWhatsappNonInteractive()).rejects.toBe(error);
+      await expect(removeChannelNonInteractive()).rejects.toThrow("process.exit(1)");
+      expect(console.error).toHaveBeenCalledWith(expect.stringContaining(error.message));
+      expect(console.error).toHaveBeenCalledWith(
+        expect.stringContaining("Restore sandbox lifecycle access"),
+      );
       expect(processRecovery.executeSandboxExecCommand).toHaveBeenCalledOnce();
       expect(processRecovery.executeSandboxCommand).not.toHaveBeenCalled();
       expect(updateSandbox).not.toHaveBeenCalled();
@@ -185,10 +192,60 @@ describe("policy channel remove/enable flows", () => {
     },
   );
 
+  it.each(["cancelled", "timeout", "malformed", "unavailable", "capture", "invocation"] as const)(
+    "keeps the token-channel rebuild path after %s cleanup failure",
+    async (kind) => {
+      const { updateSandbox, removePreset } = await arrangeHermesChannelRemoval("telegram");
+      vi.spyOn(gatewayRuntime, "recoverNamedGatewayRuntime").mockResolvedValue({
+        recovered: true,
+      } as never);
+      const clearTokens = vi
+        .spyOn(channels, "clearChannelTokens")
+        .mockImplementation(() => undefined);
+      const cleanup = vi
+        .spyOn(policyChannelDependencies, "cleanupMessagingProviders")
+        .mockResolvedValue({
+          removedProviderNames: [],
+          absentProviderNames: [],
+          detachedAttachments: [],
+          residualProviders: [],
+        });
+      const error = new SandboxCommandTransportError(kind);
+      vi.mocked(processRecovery.executeSandboxExecCommand).mockImplementation(
+        async (_name, command) =>
+          command.includes("rm -rf --")
+            ? Promise.reject(error)
+            : { status: 0, stdout: "NEMOCLAW_CHANNEL_CLEAR_OK", stderr: "" },
+      );
+      await expect(removeChannelNonInteractive("telegram")).resolves.toBeUndefined();
+      expect(updateSandbox).toHaveBeenCalled();
+      expect(removePreset).toHaveBeenCalled();
+      expect(cleanup).toHaveBeenCalled();
+      expect(clearTokens).toHaveBeenCalled();
+      expect(console.error).toHaveBeenCalledWith(expect.stringContaining(error.message));
+      expect(logSpy).toHaveBeenCalledWith(
+        expect.stringContaining("rebuild' to apply (remove 'telegram')"),
+      );
+      expect(
+        vi
+          .mocked(processRecovery.executeSandboxExecCommand)
+          .mock.calls.filter(([, command]) => command.includes("rm -rf --")),
+      ).toHaveLength(1);
+    },
+  );
+
+  it("propagates unexpected cleanup authority errors before changing channel state", async () => {
+    const { updateSandbox } = await arrangeHermesChannelRemoval();
+    const error = new Error("authority refused");
+    vi.mocked(processRecovery.executeSandboxExecCommand).mockRejectedValue(error);
+    await expect(removeChannelNonInteractive()).rejects.toBe(error);
+    expect(updateSandbox).not.toHaveBeenCalled();
+  });
+
   it.each(["", "NEMOCLAW_CHANNEL_CLEAR_OK"])(
     "keeps channel state unchanged after a remote failure with stdout %j",
     async (stdout) => {
-      const { rebuildSandbox, removePreset, updateSandbox } = await arrangeHermesWhatsappRemoval();
+      const { rebuildSandbox, removePreset, updateSandbox } = await arrangeHermesChannelRemoval();
       const runOpenshell = vi.spyOn(openshellRuntime, "runOpenshell");
       vi.mocked(processRecovery.executeSandboxExecCommand).mockResolvedValue({
         status: 1,
@@ -201,7 +258,7 @@ describe("policy channel remove/enable flows", () => {
         stderr: "ssh unavailable",
       });
 
-      await expect(removeWhatsappNonInteractive()).rejects.toThrow("process.exit(1)");
+      await expect(removeChannelNonInteractive()).rejects.toThrow("process.exit(1)");
 
       expectHermesSessionCleanup(
         vi.mocked(processRecovery.executeSandboxExecCommand).mock.calls[0]?.[1],

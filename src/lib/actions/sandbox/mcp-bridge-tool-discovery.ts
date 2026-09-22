@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { SandboxCommandTransportError } from "../../adapters/sandbox/command-transport";
+
 import type { AgentMcpAdapter } from "../../agent/defs";
 import { shellQuote } from "../../core/shell-quote";
 import {
@@ -336,9 +338,14 @@ export async function discoverMcpTools(
       "tool discovery skipped: no valid managed endpoint is available",
     );
   }
-  return classifyMcpToolDiscoveryResult(
-    await executeSandboxCommand(sandboxName, discoveryCommand.command, { runtimeSelection }),
-    entry,
-    discoveryCommand.resultMarker,
-  );
+  try {
+    return classifyMcpToolDiscoveryResult(
+      await executeSandboxCommand(sandboxName, discoveryCommand.command, { runtimeSelection }),
+      entry,
+      discoveryCommand.resultMarker,
+    );
+  } catch (error) {
+    if (!(error instanceof SandboxCommandTransportError)) throw error;
+    return failure(error.message, "runtime", "runtime", null);
+  }
 }

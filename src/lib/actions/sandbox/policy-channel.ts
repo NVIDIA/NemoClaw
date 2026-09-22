@@ -1879,7 +1879,14 @@ async function clearSandboxChannelDurableState(
       (error.kind === "unavailable" || error.kind === "malformed")
     )
       return true;
-    throw error;
+    if (!(error instanceof SandboxCommandTransportError)) throw error;
+    console.error(
+      `  ${YW}⚠${R} Could not clear in-sandbox '${channelName}' channel state: ${error.message}`,
+    );
+    console.error(
+      `    Restore sandbox lifecycle access, then re-run: ${CLI_NAME} ${sandboxName} channels remove ${channelName}`,
+    );
+    return false;
   }
   if (!sentinelSeen(result) && absentStoppedState) return true;
   if (!sentinelSeen(result)) {

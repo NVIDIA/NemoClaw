@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { SandboxCommandTransportError } from "../../adapters/sandbox/command-transport";
 import { type AgentDefinition, type AgentMcpAdapter, loadAgent } from "../../agent/defs";
 import {
   buildDeepAgentsMcpStatusCommand,
@@ -163,7 +164,13 @@ async function getAdapterRegistration(
       : adapter === "hermes-config"
         ? buildHermesMcpStatusCommand(entry, credentialRevision)
         : buildDeepAgentsMcpStatusCommand(entry, credentialRevision);
-  const result = await executeSandboxCommand(sandboxName, command, { runtimeSelection });
+  let result: Awaited<ReturnType<typeof executeSandboxCommand>>;
+  try {
+    result = await executeSandboxCommand(sandboxName, command, { runtimeSelection });
+  } catch (error) {
+    if (!(error instanceof SandboxCommandTransportError)) throw error;
+    return credentialInspectionFailure ?? { registered: null, detail: error.message };
+  }
   if (!result)
     return credentialInspectionFailure ?? { registered: null, detail: "sandbox unreachable" };
   const unsafeProjection =
@@ -202,7 +209,7 @@ export interface McpBridgeStatusOptions {
   allowCredentialProbeWithAdapterMismatch?: boolean;
   /**
    * Run the wire-level credential-resolution probe for each entry (#6379).
-   * Costs one SSH round trip plus an in-sandbox MCP initialize per entry, so
+   * Costs one native command plus an in-sandbox MCP initialize per entry, so
    * the dispatch layer enables it only where the operator asked for it.
    */
   probeCredentialResolution?: boolean;

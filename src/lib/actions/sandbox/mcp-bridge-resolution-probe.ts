@@ -49,6 +49,8 @@
  *   reviewed signal for the exact attached provider revision and generated route.
  */
 
+import { SandboxCommandTransportError } from "../../adapters/sandbox/command-transport";
+
 import type { AgentMcpAdapter } from "../../agent/defs";
 import type { McpSourceEntry } from "./mcp-bridge-contracts";
 import { authorizationValue } from "./mcp-bridge-adapter-status";
@@ -88,9 +90,9 @@ export const MCP_PROBE_CONTROL_EXIT_MARKER = "NEMOCLAW_MCP_CONTROL_CURL_EXIT=";
  */
 export const MCP_PROBE_CONTROL_BEARER = "nemoclaw-mcp-probe-control-unresolvable";
 
-// executeSandboxCommand enforces a 15s spawnSync timeout; two sequential
+// executeSandboxCommand enforces a 15s native command timeout; two sequential
 // adapter HTTP probes must both fit comfortably below it so a slow endpoint
-// classifies as a probe timeout instead of an ambiguous SSH failure.
+// classifies as a probe timeout instead of an ambiguous command transport failure.
 const PROBE_HTTP_MAX_TIME_SECONDS = 6;
 
 /**
@@ -215,14 +217,14 @@ export function buildCredentialResolutionProbeCommand(
     controlProbe,
     "crc=$?",
     `printf '\\n${markers.controlExit}%s\\n' "$crc"`,
-    // Always exit 0 so a nonzero SSH status unambiguously means transport
-    // failure, never a probe outcome.
+    // Keep probe outcomes in the marked result; a nonzero command exit
+    // means the probe script failed before producing its result.
     "exit 0",
   ].join("\n");
   return {
     resultMarker,
     command: [
-      // SSH sessions can miss the sandbox proxy environment (#2704). Validate
+      // Native commands need the sandbox proxy environment (#2704). Validate
       // the cross-user file and suppress source-time output before framing any
       // probe result, so preamble text cannot impersonate result markers.
       buildTrustedProxyEnvSourceShell(),
@@ -448,8 +450,13 @@ export async function probeCredentialResolution(
   }
   const probeCommand = buildCredentialResolutionProbeCommand(entry, adapter, credentialRevision);
   if (!probeCommand) return { ok: null, detail: "no credential binding or safe endpoint to probe" };
-  const result = await executeSandboxCommand(sandboxName, probeCommand.command, {
-    runtimeSelection,
-  });
-  return classifyCredentialResolutionProbe(result, entry, probeCommand.resultMarker);
+  try {
+    const result = await executeSandboxCommand(sandboxName, probeCommand.command, {
+      runtimeSelection,
+    });
+    return classifyCredentialResolutionProbe(result, entry, probeCommand.resultMarker);
+  } catch (error) {
+    if (!(error instanceof SandboxCommandTransportError)) throw error;
+    return { ok: null, detail: error.message };
+  }
 }

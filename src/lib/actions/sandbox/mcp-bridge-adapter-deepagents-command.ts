@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { SandboxCommandTransportError } from "../../adapters/sandbox/command-transport";
+
 import type { McpSourceEntry } from "./mcp-bridge-contracts";
 import type { AdapterMutationOptions } from "./mcp-bridge-adapter-inspection";
 import { McpBridgeError } from "./mcp-bridge-contracts";
@@ -16,7 +18,13 @@ export async function runDeepAgentsAdapterCommand(
   runtimeSelection: McpProviderInspectionRuntimeSelection,
   options: AdapterMutationOptions = {},
 ): Promise<string> {
-  const result = await executeSandboxCommand(sandboxName, command, { runtimeSelection });
+  let result: Awaited<ReturnType<typeof executeSandboxCommand>>;
+  try {
+    result = await executeSandboxCommand(sandboxName, command, { runtimeSelection });
+  } catch (error) {
+    if (!(error instanceof SandboxCommandTransportError) || !options.bestEffort) throw error;
+    return "";
+  }
   const output = redactBridgeSecretsForDisplay(
     [result?.stdout, result?.stderr].filter(Boolean).join("\n").trim(),
     entry,

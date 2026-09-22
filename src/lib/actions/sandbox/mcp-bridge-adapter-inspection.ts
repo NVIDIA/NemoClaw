@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { SandboxCommandTransportError } from "../../adapters/sandbox/command-transport";
+
 import type { McpSourceEntry } from "./mcp-bridge-contracts";
 import { redactBridgeSecretsForDisplay } from "./mcp-bridge-output";
 import type { McpProviderInspectionRuntimeSelection } from "./mcp-bridge-provider-inspection";
@@ -58,12 +60,17 @@ export async function inspectAdapterRegistrationCommand(
   runtimeSelection: McpProviderInspectionRuntimeSelection,
   timeoutMs?: number,
 ): Promise<AdapterRegistrationInspection> {
-  const result = await executeSandboxCommand(sandboxName, command, {
-    runtimeSelection,
-    ...(timeoutMs === undefined ? {} : { timeout: timeoutMs }),
-  });
-  if (!result) return { state: "error", detail: "sandbox unreachable" };
-  return parseAdapterRegistrationInspection(result, entry);
+  try {
+    const result = await executeSandboxCommand(sandboxName, command, {
+      runtimeSelection,
+      ...(timeoutMs === undefined ? {} : { timeout: timeoutMs }),
+    });
+    if (!result) return { state: "error", detail: "sandbox unreachable" };
+    return parseAdapterRegistrationInspection(result, entry);
+  } catch (error) {
+    if (!(error instanceof SandboxCommandTransportError)) throw error;
+    return { state: "error", detail: error.message };
+  }
 }
 
 export async function restartMcpGatewayThroughSupervisor(sandboxName: string) {
