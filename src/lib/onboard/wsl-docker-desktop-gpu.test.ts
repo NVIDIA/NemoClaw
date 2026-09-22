@@ -5,6 +5,7 @@ import { spawnSync } from "node:child_process";
 import { describe, expect, it, vi } from "vitest";
 import { createInMemoryRuntimeProviderBundle } from "../../../test/helpers/runtime-provider-bundle";
 import {
+  aggregateVerifiedGpuCapacity,
   NVIDIA_CONTAINER_GPU_PROOF_SCRIPT,
   NVIDIA_CONTAINER_GPU_SNAPSHOT_AWK,
 } from "../container-gpu-proof";
@@ -294,10 +295,14 @@ describe("createArm64ContainerGpuProver (#4565)", () => {
       log: () => undefined,
     });
 
-    expect(prover(["JMJWOA-Generic-GPU"])).toMatchObject({
+    const result = prover(["JMJWOA-Generic-GPU"]);
+    expect(result).toMatchObject({
       providerId: "podman",
       passed: true,
-      verifiedCapacity: { totalMemoryMB: 63_936, availableMemoryMB: 60_000 },
+    });
+    expect(aggregateVerifiedGpuCapacity(result?.verifiedDevices)).toEqual({
+      totalMemoryMB: 63_936,
+      availableMemoryMB: 60_000,
     });
     expect(captureNvidiaContainer).toHaveBeenCalledWith(
       "host-local-inference",
@@ -339,11 +344,15 @@ describe("createArm64ContainerGpuProver (#4565)", () => {
     })(["NVIDIA RTX PRO 4000 Blackwell", "NVIDIA GB300"]);
     expect(result).toMatchObject({
       passed: true,
-      verifiedCapacity: { totalMemoryMB: 281170, availableMemoryMB: 250000 },
       verifiedDevices: [
         { name: "NVIDIA RTX PRO 4000 Blackwell", totalMemoryMB: 24467 },
         { name: "NVIDIA GB300", totalMemoryMB: 256703 },
       ],
+    });
+    expect(result).not.toHaveProperty("verifiedCapacity");
+    expect(aggregateVerifiedGpuCapacity(result?.verifiedDevices)).toEqual({
+      totalMemoryMB: 281170,
+      availableMemoryMB: 250000,
     });
   });
 

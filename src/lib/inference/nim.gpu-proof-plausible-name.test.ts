@@ -28,15 +28,27 @@ const passingProver = (
     availableMemoryMB: number;
   }[],
 ) =>
-  vi.fn(() => ({
-    providerId,
-    passed: true,
-    timedOut: false,
-    exitCode: 0,
-    diagnostic: "",
-    ...(verifiedCapacity ? { verifiedCapacity } : {}),
-    ...(verifiedDevices ? { verifiedDevices } : {}),
-  }));
+  vi.fn(() => {
+    const devices =
+      verifiedDevices ??
+      (verifiedCapacity
+        ? [
+            {
+              name: PLAUSIBLE_NAME,
+              totalMemoryMB: verifiedCapacity.totalMemoryMB,
+              availableMemoryMB: verifiedCapacity.availableMemoryMB,
+            },
+          ]
+        : undefined);
+    return {
+      providerId,
+      passed: true,
+      timedOut: false,
+      exitCode: 0,
+      diagnostic: "",
+      ...(devices ? { verifiedDevices: devices } : {}),
+    };
+  });
 
 const failingProver = () =>
   vi.fn(() => ({
@@ -504,22 +516,25 @@ describe("detectGpu trust-gate rejection reasons (#9000)", () => {
     ]);
   });
 
-  it("rejects matching multi-device evidence without an aggregate capacity snapshot (#12073)", () => {
+  it("derives aggregate capacity only from matching verified device rows (#12073)", () => {
     const secondName = "NVIDIA GB300";
     const prover = passingProver(undefined, "docker", [
       { name: PLAUSIBLE_NAME, totalMemoryMB: 8192, availableMemoryMB: 8000 },
       { name: secondName, totalMemoryMB: 16384, availableMemoryMB: 16000 },
     ]);
     onWsl2Arm64WithoutKernelInterface(() => {
-      expect(
-        detectGpu({
-          proveArm64ContainerGpu: prover,
-          runCaptureImpl: makeRunCapture(
-            `${PLAUSIBLE_NAME}, 8192, 7000\n${secondName}, 16384, 15000\n`,
-          ),
-          isWsl: true,
-        }),
-      ).toBeNull();
+      const gpu = detectGpu({
+        proveArm64ContainerGpu: prover,
+        runCaptureImpl: makeRunCapture(
+          `${PLAUSIBLE_NAME}, 8192, 7000\n${secondName}, 16384, 15000\n`,
+        ),
+        isWsl: true,
+      });
+      expect(gpu).toMatchObject({
+        totalMemoryMB: 24576,
+        availableMemoryMB: 24000,
+        computeConstrained: true,
+      });
     });
   });
 

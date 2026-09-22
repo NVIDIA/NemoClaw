@@ -3,6 +3,7 @@
 
 import { randomUUID } from "node:crypto";
 import {
+  aggregateVerifiedGpuCapacity,
   escapeGpuNameForTerminal,
   NVIDIA_CONTAINER_GPU_PROOF_IMAGE,
   NVIDIA_CONTAINER_GPU_PROOF_SCRIPT,
@@ -166,15 +167,6 @@ function runRuntimeProviderGpuProof(
     const diagnosticSource = result.stderr || result.stdout;
     const workloadPassed = result.status === 0 && !timedOut && result.error === undefined;
     const verifiedDevices = workloadPassed ? parseContainerGpuProofDevices(result.stdout) : null;
-    const verifiedCapacity = verifiedDevices
-      ? {
-          totalMemoryMB: verifiedDevices.reduce((sum, device) => sum + device.totalMemoryMB, 0),
-          availableMemoryMB: verifiedDevices.reduce(
-            (sum, device) => sum + device.availableMemoryMB,
-            0,
-          ),
-        }
-      : null;
     const cleanup = cleanupContainer(
       resource,
       timedOut || result.error !== undefined ? "until-deadline" : "immediate",
@@ -186,7 +178,6 @@ function runRuntimeProviderGpuProof(
       timedOut,
       exitCode: result.status,
       diagnostic: diagnosticSource.slice(0, 300),
-      ...(passed && verifiedCapacity ? { verifiedCapacity } : {}),
       ...(passed && verifiedDevices ? { verifiedDevices } : {}),
       ...(cleanup ? { cleanup } : {}),
     };
@@ -238,9 +229,10 @@ export function createArm64ContainerGpuProver(
     };
     if (result.passed) {
       log(`  ✓ ${provider.identity.displayName} GPU proof passed; trusting the reported GPU.`);
-      if (result.verifiedCapacity) {
+      const verifiedCapacity = aggregateVerifiedGpuCapacity(result.verifiedDevices);
+      if (verifiedCapacity) {
         log(
-          `  ✓ ${provider.identity.displayName} GPU capacity proof: ${String(result.verifiedCapacity.availableMemoryMB)} MiB available of ${String(result.verifiedCapacity.totalMemoryMB)} MiB.`,
+          `  ✓ ${provider.identity.displayName} GPU capacity proof: ${String(verifiedCapacity.availableMemoryMB)} MiB available of ${String(verifiedCapacity.totalMemoryMB)} MiB.`,
         );
       } else {
         log(

@@ -27,11 +27,6 @@ export interface ContainerGpuProofResult {
   timedOut: boolean;
   exitCode: number | null;
   diagnostic: string;
-  /** Capacity reported from the same container-visible device that ran the CUDA workload. */
-  verifiedCapacity?: {
-    totalMemoryMB: number;
-    availableMemoryMB: number;
-  };
   /** Per-device identity and capacity observed inside the proved container namespace. */
   verifiedDevices?: readonly {
     name: string;
@@ -42,6 +37,18 @@ export interface ContainerGpuProofResult {
     readonly resourceName: string;
     readonly status: "absent" | "removed" | "failed";
   };
+}
+
+/** Derive the only accepted aggregate capacity from provider-verified device rows. */
+export function aggregateVerifiedGpuCapacity(
+  devices: ContainerGpuProofResult["verifiedDevices"],
+): { totalMemoryMB: number; availableMemoryMB: number } | undefined {
+  return devices
+    ? {
+        totalMemoryMB: devices.reduce((sum, device) => sum + device.totalMemoryMB, 0),
+        availableMemoryMB: devices.reduce((sum, device) => sum + device.availableMemoryMB, 0),
+      }
+    : undefined;
 }
 
 /** Minimal provider-bound proof state safe to project into readiness reports. */

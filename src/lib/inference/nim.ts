@@ -31,6 +31,7 @@ import {
   readBoundedNvidiaFirmwareValue,
 } from "./dgx-station-identity";
 import {
+  aggregateVerifiedGpuCapacity,
   type Arm64ContainerGpuProver,
   type ContainerGpuProofResult,
   type ContainerGpuProofStatus,
@@ -506,7 +507,7 @@ function gpuRowsMatch(
 
 function isN1xWslOllamaEligible(
   proofPassed: boolean,
-  capacity: ContainerGpuProofResult["verifiedCapacity"],
+  capacity: ReturnType<typeof aggregateVerifiedGpuCapacity>,
   platform: NvidiaPlatform,
   n1xWslProduct: boolean | null | undefined,
 ): boolean {
@@ -604,7 +605,7 @@ export function detectGpu(deps: DetectGpuDeps = {}): GpuDetection | null {
           if (!proof.passed) return { proof: null, rejection: "the bounded CUDA proof failed" };
           if (parsed.length > 1) {
             const verified = proof.verifiedDevices;
-            if (!verified || !proof.verifiedCapacity || !gpuRowsMatch(parsed, verified)) {
+            if (!verified || !gpuRowsMatch(parsed, verified)) {
               return {
                 proof: null,
                 rejection: "the bounded CUDA proof did not verify every reported GPU row",
@@ -686,7 +687,7 @@ export function detectGpu(deps: DetectGpuDeps = {}): GpuDetection | null {
         // Only surface a single name when every GPU reports the same model;
         // a mixed-GPU host would otherwise be misreported as `Nx <firstName>`.
         const allSameName = !!firstName && trusted.every((p: ParsedGpu) => p.name === firstName);
-        const verifiedCapacity = boundedCudaProof?.verifiedCapacity;
+        const verifiedCapacity = aggregateVerifiedGpuCapacity(boundedCudaProof?.verifiedDevices);
         // OEM N1X units report chassis models such as `SKU 1` or `83N7`, so
         // the proof-backed GPU identity qualifies on its own; the chassis
         // observation remains an alternative for a GPU name outside the
