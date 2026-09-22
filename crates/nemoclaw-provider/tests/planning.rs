@@ -54,3 +54,31 @@ fn stopped_managed_process_reapplies_install_without_promising_readiness_or_repl
         }
     }
 }
+
+#[test]
+fn provider_authentication_mode_requires_replacement_but_reference_rotation_updates() {
+    let definition = Definition::new(
+        "provider",
+        &["credential_env", "credential_source"],
+        &["credential_env"],
+    );
+    for (before, after, replaces) in [
+        ("", "API_KEY", true),
+        ("API_KEY", "", true),
+        ("OLD_KEY", "NEW_KEY", false),
+    ] {
+        let prior = BTreeMap::from([
+            ("id".into(), Value::Value("registration".into())),
+            ("credential_env".into(), Value::Value(before.into())),
+            ("credential_source".into(), Value::Value(String::new())),
+        ]);
+        let mut desired = prior.clone();
+        desired.insert("credential_env".into(), Value::Value(after.into()));
+        let (_, replacements) = plan_update(&definition, &prior, desired);
+        assert_eq!(
+            replacements.contains(&"credential_env"),
+            replaces,
+            "{before:?} -> {after:?}"
+        );
+    }
+}

@@ -229,3 +229,91 @@ fn runtime_reconciliation_does_not_clear_unfinished_openshell_recovery() {
     record.finish_runtime_apply();
     assert!(record.pending && !record.runtime_pending);
 }
+
+#[test]
+fn pending_creation_guards_only_unresolved_targets_and_survives_runtime_recovery() {
+    let document =
+        Document::parse(include_bytes!("../../tests/fixtures/config/local.yaml").as_slice())
+            .unwrap();
+    let mut record = Record::new(document.clone()).unwrap();
+    let targets = crate::compile::targets(&document, &record.generations).unwrap();
+    let pending = targets
+        .iter()
+        .find(|target| target.kind == "sandbox")
+        .unwrap();
+    record.pending = true;
+    record.pending_creations = Some([(pending.address.clone(), pending.values.clone())].into());
+    let mut revised = document.clone();
+    let mut unrelated = revised.spec.inference_providers[0].clone();
+    unrelated.name = "unrelated".into();
+    revised.spec.inference_providers.push(unrelated);
+    assert!(record.validate_pending_intent(&revised).is_ok());
+    revised.spec.sandboxes[0].image.ref_ =
+        format!("example.invalid/changed@sha256:{}", "b".repeat(64));
+    revised.validate().unwrap();
+    assert!(matches!(
+        record.validate_pending_intent(&revised),
+        Err(Error::Conflict(_))
+    ));
+    revised.spec.sandboxes[0].name = "replacement".into();
+    revised.validate().unwrap();
+    assert!(matches!(
+        record.validate_pending_intent(&revised),
+        Err(Error::Conflict(_))
+    ));
+    record.begin_runtime_apply();
+    record.finish_runtime_apply();
+    assert!(record.pending && !record.runtime_pending);
+    assert_eq!(
+        record.pending_creations.as_ref().unwrap()[&pending.address],
+        pending.values
+    );
+    let directory = tempfile::tempdir().unwrap();
+    let store = Store::open(directory.path()).unwrap();
+    store.save(&record).unwrap();
+    assert_eq!(store.load().unwrap().unwrap(), record);
+}
+
+#[test]
+fn subsequent_apply_preserves_all_unresolved_creations_until_success() {
+    let document =
+        Document::parse(include_bytes!("../../tests/fixtures/config/local.yaml").as_slice())
+            .unwrap();
+    let mut record = Record::new(document.clone()).unwrap();
+    let targets = crate::compile::targets(&document, &record.generations).unwrap();
+    let first = &targets[0];
+    let second = &targets[1];
+    record.begin_apply([(first.address.clone(), first.values.clone())].into());
+    record.begin_apply([(second.address.clone(), second.values.clone())].into());
+    assert_eq!(record.pending_creations.as_ref().unwrap().len(), 2);
+    record.begin_apply(BTreeMap::new());
+    assert!(record.pending && !record.runtime_pending);
+    assert_eq!(record.pending_creations.as_ref().unwrap().len(), 2);
+    record.finish_apply();
+    assert!(!record.pending && record.pending_creations.is_none());
+    record.begin_apply(BTreeMap::new());
+    assert!(record.pending && record.runtime_pending);
+    assert!(record.validate_pending_intent(&document).is_ok());
+}
+
+#[test]
+fn legacy_pending_operations_keep_the_full_intent_guard_until_success() {
+    let document =
+        Document::parse(include_bytes!("../../tests/fixtures/config/local.yaml").as_slice())
+            .unwrap();
+    let mut record = Record::new(document.clone()).unwrap();
+    record.pending = true;
+    let mut revised = document.clone();
+    revised.spec.sandboxes[0].image.ref_ =
+        format!("example.invalid/changed@sha256:{}", "b".repeat(64));
+    revised.validate().unwrap();
+    assert!(record.validate_pending_intent(&revised).is_err());
+    let target = crate::compile::targets(&document, &record.generations)
+        .unwrap()
+        .remove(0);
+    record.begin_apply([(target.address, target.values)].into());
+    assert!(record.pending_creations.is_none());
+    assert!(record.validate_pending_intent(&revised).is_err());
+    record.finish_apply();
+    assert!(record.validate_pending_intent(&revised).is_ok());
+}
