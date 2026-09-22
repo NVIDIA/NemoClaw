@@ -787,6 +787,26 @@ describe("E2E workflow plan", () => {
   });
 
   it.each([
+    "test/e2e/support/config-export-file-evidence.ts",
+    "test/e2e/support/config-export-policy-evidence.ts",
+    "test/e2e/support/config-export-secret-scan.ts",
+  ])("selects the OpenClaw export owner when shared evidence helper %s changes", (changedFile) => {
+    expect(catalogueTargetsForChangedFiles([changedFile]).map((target) => target.id)).toContain(
+      "network-policy",
+    );
+  });
+
+  it.each([
+    "test/e2e/support/config-export-file-evidence.ts",
+    "test/e2e/support/config-export-policy-evidence.ts",
+    "test/e2e/support/config-export-secret-scan.ts",
+  ])("selects the Hermes export owner when shared evidence helper %s changes", (changedFile) => {
+    expect(catalogueTargetsForChangedFiles([changedFile]).map((target) => target.id)).toContain(
+      "security-posture-hermes",
+    );
+  });
+
+  it.each([
     "nemoclaw-blueprint/router/pool-config.yaml",
     "test/e2e/live/model-router-provider-routed-inference-helpers.ts",
   ])("selects the Model Router target when %s changes", (changedFile) => {

@@ -38,6 +38,7 @@ import {
   type NetworkPolicyConfigExportLiveEvidence,
   requireEffectivePolicyDocument,
 } from "../support/config-export-policy-evidence.ts";
+import { readProtectedConfigExportFile } from "../support/config-export-file-evidence.ts";
 import { writeSecretFreeConfigExportArtifact } from "../support/config-export-secret-scan.ts";
 import { runRestrictedOnboardWithRetry } from "./restricted-onboard-helpers.ts";
 
@@ -386,8 +387,15 @@ test(
       ["config", "export", SANDBOX_NAME, "--output", outputPath, "--json"],
       { artifactName: "config-export-live-success", redactionValues: [apiKey] },
     );
-    expect(exported.exitCode, text(exported)).toBe(0);
-    const raw = fs.readFileSync(outputPath, "utf8");
+    const protectedOutput =
+      exported.exitCode === 0
+        ? readProtectedConfigExportFile(outputPath)
+        : { ok: false as const, reason: "launcher did not publish output" };
+    expect(
+      protectedOutput.ok,
+      [text(exported), protectedOutput.ok ? "" : protectedOutput.reason].filter(Boolean).join("\n"),
+    ).toBe(true);
+    const raw = protectedOutput.ok ? protectedOutput.raw : "";
     const document = parseConfigExport(raw);
     const exportedSandbox = document.spec.sandboxes[0];
     const exportedNetworkPolicies = (

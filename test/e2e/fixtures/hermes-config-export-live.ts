@@ -16,13 +16,14 @@ import {
   namedOpenShellGateway,
   cliOpenShellSandboxPolicyReader,
 } from "../../../src/lib/adapters/openshell/sandbox-policy-cli.ts";
-import { asExportedConfig } from "../../support/config-export-document.ts";
 import { load, save } from "../../../src/lib/state/registry/persistence.ts";
 import type { ArtifactSink } from "./artifacts.ts";
 import type { HostCliClient } from "./clients/host.ts";
 import { trustedSandboxShellScript, type SandboxClient } from "./clients/sandbox.ts";
 import type { CleanupRegistry } from "./cleanup.ts";
 import { CLI_ENTRYPOINT, REPO_ROOT } from "./paths.ts";
+import { parseConfigExport } from "./phases/config-export-validation.ts";
+import { readProtectedConfigExportFile } from "../support/config-export-file-evidence.ts";
 import { requireEffectivePolicyDocument } from "../support/config-export-policy-evidence.ts";
 import {
   containsSensitiveText,
@@ -266,8 +267,17 @@ export async function verifyHermesConfigExportLive(
   );
 
   const launchersSucceeded = nemoclaw.exitCode === 0 && nemohermes.exitCode === 0;
-  const nemoclawRaw = nemoclaw.exitCode === 0 ? fs.readFileSync(nemoclawPath, "utf8") : "";
-  const nemohermesRaw = nemohermes.exitCode === 0 ? fs.readFileSync(nemohermesPath, "utf8") : "";
+  const nemoclawOutput =
+    nemoclaw.exitCode === 0
+      ? readProtectedConfigExportFile(nemoclawPath)
+      : { ok: false as const, reason: "launcher did not publish output" };
+  const nemohermesOutput =
+    nemohermes.exitCode === 0
+      ? readProtectedConfigExportFile(nemohermesPath)
+      : { ok: false as const, reason: "launcher did not publish output" };
+  const exportFilesReadSafely = nemoclawOutput.ok && nemohermesOutput.ok;
+  const nemoclawRaw = nemoclawOutput.ok ? nemoclawOutput.raw : "";
+  const nemohermesRaw = nemohermesOutput.ok ? nemohermesOutput.raw : "";
   const nemoclawDiagnostics = normalizeCommandDiagnostics(nemoclaw.stdout, nemoclaw.stderr);
   const nemohermesDiagnostics = normalizeCommandDiagnostics(nemohermes.stdout, nemohermes.stderr);
   const containsCredential = [
@@ -276,8 +286,9 @@ export async function verifyHermesConfigExportLive(
     nemoclawDiagnostics,
     nemohermesDiagnostics,
   ].some((output) => containsSensitiveText(output, input.redactionValues));
-  if (!launchersSucceeded) {
+  if (!launchersSucceeded || !exportFilesReadSafely) {
     const expectsCredentialHttpRefusal =
+      !launchersSucceeded &&
       typeof entry.credentialEnv === "string" &&
       entry.credentialEnv.length > 0 &&
       entry.endpointUrl?.toLowerCase().startsWith("http:") === true;
@@ -327,8 +338,8 @@ export async function verifyHermesConfigExportLive(
     return { checked: true, passed: false };
   }
 
-  const nemoclawDocument = asExportedConfig(YAML.parse(nemoclawRaw));
-  const nemohermesDocument = asExportedConfig(YAML.parse(nemohermesRaw));
+  const nemoclawDocument = parseConfigExport(nemoclawRaw);
+  const nemohermesDocument = parseConfigExport(nemohermesRaw);
   await writeSecretFreeConfigExportArtifact(
     input.artifacts,
     NEMOCLAW_EXPORT_ARTIFACT,
