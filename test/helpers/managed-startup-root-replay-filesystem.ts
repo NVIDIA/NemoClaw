@@ -71,11 +71,13 @@ export function mockRootReplayFilesystem(
 } {
   const directories = new Set([
     "/",
+    "/sandbox",
     "/etc",
     "/etc/ssl",
     "/etc/ssl/certs",
     "/run",
     "/run/nemoclaw",
+    "/tmp",
     "/usr",
     "/usr/local",
     "/usr/local/share",
@@ -101,6 +103,11 @@ export function mockRootReplayFilesystem(
     ]),
   );
   const directoryModes = new Map([...directories].map((target) => [target, 0o755]));
+  const directoryUids = new Map([...directories].map((target) => [target, 0]));
+  const directoryGids = new Map([...directories].map((target) => [target, 0]));
+  directoryUids.set("/sandbox", 999);
+  directoryGids.set("/sandbox", 999);
+  directoryModes.set("/tmp", 0o1777);
   const symlinkDirectories = new Set<string>();
   const fileModes = new Map([...fixtureFiles].map(([target, file]) => [target, file.mode]));
   let nextFileInode = 2n;
@@ -149,21 +156,21 @@ export function mockRootReplayFilesystem(
         descriptorSnapshots.set(descriptor, { ...snapshot, ctimeNs: nextCtime });
     }
   };
-  const stat = (kind: "directory" | "file" | "symlink", mode: number) =>
+  const stat = (kind: "directory" | "file" | "symlink", mode: number, uid = 0, gid = 0) =>
     ({
-      gid: 0,
+      gid,
       isDirectory: () => kind === "directory",
       isFile: () => kind === "file",
       isSymbolicLink: () => kind === "symlink",
       mode,
       nlink: 1,
-      uid: 0,
+      uid,
     }) as fs.Stats;
   const bigDirectoryStat = (target: string) =>
     ({
       ctimeNs: 1n,
       dev: 1n,
-      gid: 0n,
+      gid: BigInt(directoryGids.get(target) ?? 0),
       ino: 1n,
       isDirectory: () => true,
       isFile: () => false,
@@ -172,7 +179,7 @@ export function mockRootReplayFilesystem(
       mtimeNs: 1n,
       nlink: 1n,
       size: 0n,
-      uid: 0n,
+      uid: BigInt(directoryUids.get(target) ?? 0),
     }) as fs.BigIntStats;
   const bigFileStat = (bytes: Buffer, mode: number, ino: bigint, ctimeNs: bigint, nlink: bigint) =>
     ({
@@ -223,6 +230,8 @@ export function mockRootReplayFilesystem(
         : stat(
             symlinkDirectories.has(resolved) ? "symlink" : "directory",
             directoryModes.get(resolved) ?? 0o755,
+            directoryUids.get(resolved) ?? 0,
+            directoryGids.get(resolved) ?? 0,
           )
       : bytes === undefined
         ? missing()
@@ -248,7 +257,12 @@ export function mockRootReplayFilesystem(
     directoryModes.set(resolved, options?.mode ?? 0o777);
     return undefined;
   }) as typeof fs.mkdirSync);
-  vi.spyOn(fs, "chownSync").mockImplementation(() => undefined);
+  vi.spyOn(fs, "chownSync").mockImplementation(((target: fs.PathLike, uid: number, gid: number) => {
+    const resolved = String(target);
+    if (!directories.has(resolved)) missing();
+    directoryUids.set(resolved, uid);
+    directoryGids.set(resolved, gid);
+  }) as typeof fs.chownSync);
   vi.spyOn(fs, "chmodSync").mockImplementation(((target: fs.PathLike, mode: fs.Mode) => {
     const resolved = String(target);
     const numeric = typeof mode === "number" ? mode : Number.parseInt(mode, 8);

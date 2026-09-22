@@ -34,6 +34,7 @@ function runUnmodifiedWrapperWithTrustedPython(
   const realHermes = path.join(dir, "hermes.real");
   fs.copyFileSync(WRAPPER, wrapper);
   fs.copyFileSync(VALIDATOR, validator);
+  fs.writeFileSync(path.join(dir, ".env"), "API_SERVER_HOST=127.0.0.1\nAPI_SERVER_PORT=8642\n");
   fs.writeFileSync(realHermes, "#!/usr/bin/env bash\nexit 0\n", { mode: 0o755 });
   const candidates = `(${trustedPythonCandidates.map((value) => JSON.stringify(value)).join(", ")},)`;
   const driver = [
@@ -77,6 +78,23 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.py", () => {
     expect(run.realInvoked).toBe(false);
   });
 
+  it("refuses gateway restart when the env file changes during validation", () => {
+    const validatorScript = `#!/usr/bin/env python3
+import pathlib
+import sys
+if sys.argv[1] == "env-file":
+    pathlib.Path(sys.argv[2]).write_text("SLACK_BOT_TOKEN=xoxb-mutated-secret\\n")
+raise SystemExit(0)
+`;
+    const run = runWrapper(["gateway", "restart"], {}, { validatorScript });
+
+    expect(run.status).toBe(1);
+    expect(run.stderr).toContain("env file changed during secret-boundary validation");
+    expect(run.stderr).toContain("SECRET_BOUNDARY_REFUSED");
+    expect(run.stderr).not.toContain("xoxb-mutated-secret");
+    expect(run.realInvoked).toBe(false);
+  });
+
   it("cannot be bypassed by shadowing python3 on PATH after review (#4981)", () => {
     // PATH is part of the untrusted env; a planted python3 that exits 0 must not
     // let the gateway start with a raw secret. The wrapper uses a trusted
@@ -107,134 +125,28 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.py", () => {
     expect(run.realEnv.HERMES_LAZY_INSTALL_TARGET).toBe("/sandbox/.hermes/lazy-packages");
   });
 
-  it("scrubs package-manager and Python startup inputs before a root-separated gateway exec", () => {
-    const run = runWrapper(
-      ["gateway", "run"],
-      {
-        HERMES_LAZY_INSTALL_TARGET: "/run/nemoclaw/hermes-gateway-lazy-packages",
-        UV_CONFIG_FILE: "/sandbox/uv.toml",
-        UV_INDEX_URL: "file:///sandbox/wheels",
-        UV_NO_CONFIG: "0",
-        PIP_CONFIG_FILE: "/sandbox/pip.conf",
-        PIP_INDEX_URL: "file:///sandbox/wheels",
-        PIP_DISABLE_PIP_VERSION_CHECK: "0",
-        PYTHONPATH: "/sandbox/python",
-        PYTHONHOME: "/sandbox/python-home",
-        PYTHONSAFEPATH: "0",
-        PYTHONNOUSERSITE: "0",
-        PYTHONUTF8: "0",
-        LD_PRELOAD: "/sandbox/hostile.so",
-        BASH_ENV: "/sandbox/bash-env",
-        VIRTUAL_ENV: "/sandbox/venv",
-        PATH: "/sandbox/bin",
-      },
-      {
-        validatorScript: [
-          "import json, os, sys",
-          "logical_env = json.load(sys.stdin)",
-          "assert logical_env.get('PIP_CONFIG_FILE') == '/sandbox/pip.conf'",
-          "assert logical_env.get('LD_PRELOAD') == '/sandbox/hostile.so'",
-          "assert os.environ.get('HERMES_LAZY_INSTALL_TARGET') == '/run/nemoclaw/hermes-gateway-lazy-packages'",
-          "blocked = ('BASH_ENV', 'ENV', 'PATH', 'VIRTUAL_ENV')",
-          "prefixes = ('DYLD_', 'LD_', 'UV_', 'PIP_', 'PYTHON')",
-          "assert not any(key in os.environ for key in blocked)",
-          "assert not any(key.startswith(prefixes) for key in os.environ)",
-          "raise SystemExit(0)",
-          "",
-        ].join("\n"),
-      },
-    );
-
-    expect(run.status, run.stderr).toBe(0);
-    expect(run.realInvoked).toBe(true);
-    expect(run.realEnv.HERMES_HOME).toBe("/sandbox/.hermes");
-    expect(run.realEnv.HERMES_BUNDLED_PLUGINS).toBe("/opt/hermes/plugins");
-    expect(run.realEnv.HERMES_LAZY_INSTALL_TARGET).toBe(
-      "/run/nemoclaw/hermes-gateway-lazy-packages",
-    );
-    expect(run.realEnv.HOME).toBe("/sandbox");
-    const packageEnvironment = Object.fromEntries(
-      Object.entries(run.realEnv).filter(
-        ([name]) =>
-          name.startsWith("UV_") ||
-          name.startsWith("PIP_") ||
-          name.startsWith("PYTHON") ||
-          name.startsWith("LD_") ||
-          ["BASH_ENV", "VIRTUAL_ENV", "PATH"].includes(name),
-      ),
-    );
-    expect(packageEnvironment).toEqual({
-      UV_NO_CONFIG: "1",
-      UV_NO_CACHE: "1",
-      UV_CACHE_DIR: "/run/nemoclaw/hermes-gateway-lazy-packages/.uv-cache",
-      PIP_CONFIG_FILE: "/dev/null",
-      PIP_DISABLE_PIP_VERSION_CHECK: "1",
-      PYTHONSAFEPATH: "1",
-      PYTHONNOUSERSITE: "1",
-      PYTHONUTF8: "1",
-      PATH: "/usr/local/bin:/opt/hermes/.venv/bin:/usr/sbin:/usr/bin:/sbin:/bin",
-    });
-  });
-
-  it("uses only managed package-manager and Python startup values for a same-identity gateway exec", () => {
+  it("preserves native plugin and package-manager controls for gateway execution (#11766)", () => {
     const run = runWrapper(["gateway", "run"], {
+      HERMES_LAZY_INSTALL_TARGET: "/sandbox/custom-lazy-packages",
+      HERMES_BUNDLED_PLUGINS: "/sandbox/custom-plugins",
+      HERMES_ENABLE_PROJECT_PLUGINS: "1",
       UV_CONFIG_FILE: "/sandbox/uv.toml",
       UV_INDEX_URL: "file:///sandbox/wheels",
-      UV_NO_CONFIG: "0",
       PIP_CONFIG_FILE: "/sandbox/pip.conf",
       PIP_INDEX_URL: "file:///sandbox/wheels",
-      PIP_DISABLE_PIP_VERSION_CHECK: "0",
       PYTHONPATH: "/sandbox/python",
-      PYTHONHOME: "/sandbox/python-home",
-      PYTHONSAFEPATH: "0",
-      PYTHONNOUSERSITE: "0",
-      PYTHONUTF8: "0",
-      LD_PRELOAD: "/sandbox/hostile.so",
-      BASH_ENV: "/sandbox/bash-env",
-      VIRTUAL_ENV: "/sandbox/venv",
-      PATH: "/sandbox/bin",
     });
 
     expect(run.status, run.stderr).toBe(0);
     expect(run.realInvoked).toBe(true);
     expect(run.realEnv.HERMES_HOME).toBe("/sandbox/.hermes");
-    expect(run.realEnv.HERMES_BUNDLED_PLUGINS).toBe("/opt/hermes/plugins");
-    expect(run.realEnv.HERMES_LAZY_INSTALL_TARGET).toBe("/sandbox/.hermes/lazy-packages");
+    expect(run.realEnv.HERMES_BUNDLED_PLUGINS).toBe("/sandbox/custom-plugins");
+    expect(run.realEnv.HERMES_ENABLE_PROJECT_PLUGINS).toBe("1");
+    expect(run.realEnv.HERMES_LAZY_INSTALL_TARGET).toBe("/sandbox/custom-lazy-packages");
     expect(run.realEnv.HOME).toBe("/sandbox");
-    const packageEnvironment = Object.fromEntries(
-      Object.entries(run.realEnv).filter(
-        ([name]) =>
-          name.startsWith("UV_") ||
-          name.startsWith("PIP_") ||
-          name.startsWith("PYTHON") ||
-          name.startsWith("LD_") ||
-          ["BASH_ENV", "VIRTUAL_ENV", "PATH"].includes(name),
-      ),
-    );
-    expect(packageEnvironment).toEqual({
-      UV_NO_CONFIG: "1",
-      UV_NO_CACHE: "1",
-      UV_CACHE_DIR: "/sandbox/.hermes/lazy-packages/.uv-cache",
-      PIP_CONFIG_FILE: "/dev/null",
-      PIP_DISABLE_PIP_VERSION_CHECK: "1",
-      PYTHONSAFEPATH: "1",
-      PYTHONNOUSERSITE: "1",
-      PYTHONUTF8: "1",
-      PATH: "/usr/local/bin:/opt/hermes/.venv/bin:/usr/sbin:/usr/bin:/sbin:/bin",
-    });
-  });
-
-  it("rejects an arbitrary gateway lazy target without exposing its value", () => {
-    const arbitraryTarget = "/tmp/attacker-controlled-python";
-    const run = runWrapper(["gateway", "run"], {
-      HERMES_LAZY_INSTALL_TARGET: arbitraryTarget,
-    });
-
-    expect(run.status).toBe(1);
-    expect(run.stderr).toContain("HERMES_LAZY_INSTALL_TARGET");
-    expect(run.stderr).not.toContain(arbitraryTarget);
-    expect(run.stdout).not.toContain(arbitraryTarget);
-    expect(run.realInvoked).toBe(false);
+    expect(run.realEnv.UV_CONFIG_FILE).toBe("/sandbox/uv.toml");
+    expect(run.realEnv.PIP_CONFIG_FILE).toBe("/sandbox/pip.conf");
+    expect(run.realEnv.PYTHONPATH).toBe("/sandbox/python");
   });
 
   it("rejects a package-prefixed raw secret without exposing its value", () => {
@@ -267,7 +179,7 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.py", () => {
         timeout: 5000,
         env: {
           PATH: process.env.PATH ?? "",
-          HERMES_LAZY_INSTALL_TARGET: "/run/nemoclaw/hermes-gateway-lazy-packages",
+          HERMES_LAZY_INSTALL_TARGET: "/sandbox/.hermes/lazy-packages",
         },
       },
     );
@@ -325,7 +237,7 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.py", () => {
     },
   );
 
-  it("invokes the runtime-env validator with python3 -I (isolated mode)", () => {
+  it("invokes the env-file validator with python3 -I before the runtime guard", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-wrapper-argv-"));
     try {
       const argvLog = path.join(dir, "argv.log");
@@ -339,7 +251,8 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.py", () => {
       expect(run.status).not.toBe(0);
       const argv = fs.readFileSync(argvLog, "utf-8").trim().split("\n");
       expect(argv[0]).toBe("-I");
-      expect(argv[argv.length - 1]).toBe("runtime-env-json");
+      expect(argv[argv.length - 2]).toBe("env-file");
+      expect(path.basename(argv[argv.length - 1] as string)).toBe(".env");
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }

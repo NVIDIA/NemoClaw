@@ -94,6 +94,11 @@ export function parseSandboxPhase(getOutput: string): string | null {
   return match ? match[1] : null;
 }
 
+/** True only for the OpenShell phase that requires a lifecycle start. */
+export function sandboxPhaseNeedsLifecycleStart(phase: string | null): boolean {
+  return phase === "Stopped";
+}
+
 // Phases that represent a settled, non-transitional failure rather than a
 // sandbox still coming up. OpenShell only reports these when it has real
 // state, so a Docker-outage reclassification must NOT hide them — the user

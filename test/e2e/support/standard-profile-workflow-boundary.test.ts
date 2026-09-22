@@ -18,7 +18,6 @@ import {
 import { validateStandardProfileWorkflowBoundary } from "../../../tools/e2e/standard-profile-workflow-boundary.mts";
 import { catalogueTarget } from "../../../tools/e2e/target-catalogue.mts";
 import { readWorkflow } from "../../helpers/e2e-workflow-contract";
-import { parseSingleNpmPackResult } from "../../helpers/npm-pack-result";
 
 const REPO_ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 
@@ -151,136 +150,6 @@ describe("standard E2E execution profile", () => {
     );
   });
 
-  it(
-    "installs the verified SDK archive when npm omits the credential-free optional dependency",
-    { timeout: 30_000 },
-    () => {
-      const profile = YAML.parse(
-        fs.readFileSync(
-          path.join(REPO_ROOT, ".github", "workflows", "e2e-standard-profile.yaml"),
-          "utf8",
-        ),
-      ) as { jobs: { run: { steps: Array<{ name?: string; run?: string }> } } };
-      const installScript = profile.jobs.run.steps.find(
-        (step) =>
-          step.name === "Install reviewed OpenShell SDK archive without package credentials",
-      )!.run!;
-      const directory = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-reviewed-sdk-install-"));
-      const packageDirectory = path.join(directory, "package");
-      const artifactDirectory = path.join(directory, "runner", "openshell-sdk");
-      const projectDirectory = path.join(directory, "project");
-      fs.mkdirSync(packageDirectory, { recursive: true });
-      fs.mkdirSync(artifactDirectory, { recursive: true });
-      fs.mkdirSync(projectDirectory, { recursive: true });
-      fs.writeFileSync(
-        path.join(packageDirectory, "package.json"),
-        JSON.stringify({
-          exports: "./index.js",
-          name: "@nvidia/openshell-sdk",
-          type: "module",
-          version: "0.0.116",
-        }),
-      );
-      fs.writeFileSync(
-        path.join(packageDirectory, "index.js"),
-        "export class OpenShellClient { static connect() {} }\n",
-      );
-      try {
-        const packed = spawnSync(
-          "npm",
-          ["pack", packageDirectory, "--pack-destination", artifactDirectory, "--json"],
-          {
-            encoding: "utf8",
-            env: { ...process.env, NPM_CONFIG_CACHE: path.join(directory, "npm-cache") },
-          },
-        );
-        expect(packed.status, packed.stderr).toBe(0);
-        const { filename, integrity } = parseSingleNpmPackResult(packed.stdout);
-        expect(filename).toBe("nvidia-openshell-sdk-0.0.116.tgz");
-        fs.writeFileSync(
-          path.join(projectDirectory, "package.json"),
-          JSON.stringify({
-            name: "credential-free-sdk-fixture",
-            optionalDependencies: { "@nvidia/openshell-sdk": "0.0.116" },
-            private: true,
-            version: "1.0.0",
-          }),
-        );
-        fs.writeFileSync(
-          path.join(projectDirectory, "package-lock.json"),
-          JSON.stringify({
-            lockfileVersion: 3,
-            name: "credential-free-sdk-fixture",
-            packages: {
-              "": {
-                name: "credential-free-sdk-fixture",
-                optionalDependencies: { "@nvidia/openshell-sdk": "0.0.116" },
-                version: "1.0.0",
-              },
-              "node_modules/@nvidia/openshell-sdk": {
-                integrity,
-                optional: true,
-                resolved:
-                  "https://127.0.0.1:9/download/@nvidia/openshell-sdk/0.0.116/reviewed-fixture",
-                version: "0.0.116",
-              },
-            },
-            requires: true,
-            version: "1.0.0",
-          }),
-        );
-
-        const result = spawnSync("bash", ["-c", installScript], {
-          cwd: projectDirectory,
-          encoding: "utf8",
-          env: {
-            ...process.env,
-            GH_TOKEN: "must-not-be-used",
-            GITHUB_TOKEN: "must-not-be-used",
-            NODE_AUTH_TOKEN: "must-not-be-used",
-            NPM_CONFIG_FETCH_RETRIES: "0",
-            NPM_CONFIG_FETCH_TIMEOUT: "100",
-            NPM_CONFIG_CACHE: path.join(directory, "npm-cache"),
-            RUNNER_TEMP: path.join(directory, "runner"),
-          },
-        });
-
-        expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
-        expect(
-          fs.existsSync(
-            path.join(projectDirectory, "node_modules", "@nvidia", "openshell-sdk", "index.js"),
-          ),
-        ).toBe(true);
-
-        fs.rmSync(path.join(projectDirectory, "node_modules"), { force: true, recursive: true });
-        const lock = JSON.parse(
-          fs.readFileSync(path.join(projectDirectory, "package-lock.json"), "utf8"),
-        ) as { packages: Record<string, { integrity?: string }> };
-        lock.packages["node_modules/@nvidia/openshell-sdk"]!.integrity =
-          "sha512-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==";
-        fs.writeFileSync(path.join(projectDirectory, "package-lock.json"), JSON.stringify(lock));
-
-        const rejected = spawnSync("bash", ["-c", installScript], {
-          cwd: projectDirectory,
-          encoding: "utf8",
-          env: {
-            ...process.env,
-            NPM_CONFIG_FETCH_RETRIES: "0",
-            NPM_CONFIG_FETCH_TIMEOUT: "100",
-            NPM_CONFIG_CACHE: path.join(directory, "npm-cache"),
-            RUNNER_TEMP: path.join(directory, "runner"),
-          },
-        });
-        expect(rejected.status).not.toBe(0);
-        expect(rejected.stderr).toContain(
-          "OpenShell SDK lock entry does not identify exactly one reviewed archive",
-        );
-      } finally {
-        fs.rmSync(directory, { force: true, recursive: true });
-      }
-    },
-  );
-
   it("rejects a catalogue caller that does not consume its SDK artifact", () => {
     const workflow = readWorkflow() as { jobs: Record<string, { with: Record<string, string> }> };
     workflow.jobs["catalogue-nvidia-inference"]!.with.openshell_sdk_artifact_name = "unrelated";
@@ -325,6 +194,7 @@ describe("standard E2E execution profile", () => {
             if?: string;
             name?: string;
             run?: string;
+            uses?: string;
             with?: Record<string, string>;
           }>;
         };
@@ -334,15 +204,13 @@ describe("standard E2E execution profile", () => {
     steps.find((step) => step.name === "Validate catalogue execution plan")!.run = "echo skipped";
     steps.find((step) => step.name === "Provision trusted Hermes E2E swap")!.run +=
       "\necho candidate-controlled";
-    steps.find((step) => step.name === "Add swap for Hermes image rebuild")!.run =
-      "echo unsafe swap";
     steps.find((step) => step.name === "Install reviewed cloudflared")!.run =
       "sudo apt-get install cloudflared";
     steps.find((step) => step.name === "Download reviewed OpenShell SDK archive")!.with!.name =
       "unrelated";
     steps.find(
       (step) => step.name === "Install reviewed OpenShell SDK archive without package credentials",
-    )!.run = "npm install @nvidia/openshell-sdk";
+    )!.uses = "./.github/actions/install-reviewed-openshell-sdk";
     steps.find((step) => step.name === "Initialize runner comparison telemetry")!.run =
       "echo skipped";
     steps.find((step) => step.name === "Run catalogue E2E target")!.env!.COMPATIBLE_API_KEY =
@@ -360,7 +228,6 @@ describe("standard E2E execution profile", () => {
         expect.arrayContaining([
           "standard E2E profile must derive validated execution paths before candidate checkout",
           "standard E2E profile must preserve trusted Hermes swap before candidate checkout",
-          "standard E2E profile must add the reviewed Hermes rebuild swap after CLI restore",
           "standard E2E profile must install only the reviewed cloudflared package",
           "standard E2E profile must download the run-scoped reviewed SDK archive",
           "standard E2E profile must install one reviewed SDK archive without credentials or package scripts",

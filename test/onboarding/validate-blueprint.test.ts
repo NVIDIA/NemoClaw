@@ -127,6 +127,25 @@ describe("effective sandbox policy behavior", () => {
           .map((candidate) => candidate.host),
       ).toEqual(["clawhub.ai"]);
 
+      const openclawApi = endpoint(policy, "openclaw_api", "openclaw.ai");
+      expect(openclawApi).toMatchObject({
+        port: 443,
+        protocol: "rest",
+        enforcement: "enforce",
+      });
+      expect(methods(openclawApi)).toEqual(["GET", "POST"]);
+
+      const openclawCatalog = endpoint(policy, "openclaw_api", "catalog.openclaw.ai");
+      expect(openclawCatalog).toMatchObject({
+        port: 443,
+        protocol: "rest",
+        enforcement: "enforce",
+      });
+      expect(openclawCatalog.rules).toEqual([{ allow: { method: "GET", path: "/**" } }]);
+      expect(binaries(policy, "openclaw_api")).toEqual(
+        ["/usr/local/bin/node", "/usr/local/bin/openclaw"].sort(),
+      );
+
       expect(binaries(policy, "npm_registry")).toEqual(["/usr/local/bin/openclaw"]);
       expect(JSON.stringify(networkPolicies)).not.toContain("/usr/local/bin/claude");
 

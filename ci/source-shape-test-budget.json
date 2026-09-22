@@ -32,6 +32,46 @@
       "category": "compatibility"
     },
     {
+      "file": "test/e2e/support/e2e-live-registry-discovery.test.ts",
+      "test": "rejects a target whose %s has no executable route (#11407)",
+      "category": "compatibility"
+    },
+    {
+      "file": "test/e2e/support/e2e-live-registry-discovery.test.ts",
+      "test": "rejects unresolved execution coverage (#11407)",
+      "category": "compatibility"
+    },
+    {
+      "file": "test/e2e/support/e2e-live-registry-discovery.test.ts",
+      "test": "compiles a run plan from executable target behavior",
+      "category": "compatibility"
+    },
+    {
+      "file": "test/e2e/support/e2e-matrix.test.ts",
+      "test": "fails loudly when a platform has no default runner mapping",
+      "category": "compatibility"
+    },
+    {
+      "file": "test/e2e/support/e2e-registry.test.ts",
+      "test": "should reject duplicate target IDs",
+      "category": "compatibility"
+    },
+    {
+      "file": "test/e2e/support/e2e-registry.test.ts",
+      "test": "should reject target IDs that are unsafe for workflow regex filters and artifact paths",
+      "category": "security"
+    },
+    {
+      "file": "test/e2e/support/e2e-registry.test.ts",
+      "test": "contains only the three executable typed targets (#11407)",
+      "category": "compatibility"
+    },
+    {
+      "file": "test/e2e/support/e2e-registry.test.ts",
+      "test": "rejects dangling expected-state references (#11407)",
+      "category": "compatibility"
+    },
+    {
       "file": "test/e2e/support/e2e-host-dependency-workflow-boundary.test.ts",
       "test": "rejects drift in the reviewed action and script contents",
       "category": "security"
@@ -93,7 +133,7 @@
     },
     {
       "file": "test/e2e/support/pr-self-hosted-llama-selector.test.ts",
-      "test": "binds trusted base publication to the generic NVIDIA GPU job",
+      "test": "binds the exact PR publication to the generic NVIDIA GPU job",
       "category": "security"
     },
     {
@@ -187,6 +227,11 @@
       "category": "security"
     },
     {
+      "file": "test/agents/openclaw/openclaw-managed-messaging-offline-build.test.ts",
+      "test": "binds npm's clean-install view to the versions shipped in reviewed bundles",
+      "category": "security"
+    },
+    {
       "file": "test/agents/openclaw/openclaw-real-patched-dist-harness.test.ts",
       "test": "accepts an explicit absolute Node runtime in the reviewed production lane",
       "category": "security"
@@ -224,6 +269,11 @@
     {
       "file": "test/automation/pull-requests/pr-workflow-contract.test.ts",
       "test": "verifies changed Hugging Face catalog references without credentials",
+      "category": "security"
+    },
+    {
+      "file": "test/automation/pull-requests/pr-workflow-contract.test.ts",
+      "test": "requires the real patched OpenClaw distribution proof before merge",
       "category": "security"
     },
     {
@@ -303,7 +353,7 @@
     },
     {
       "file": "test/agents/hermes/hermes-image-build-probes.test.ts",
-      "test": "binds every image build probe pin to its source digest",
+      "test": "binds the image build probes and cron restore controller to their source digests",
       "category": "security"
     },
     {
@@ -354,6 +404,11 @@
     {
       "file": "test/e2e/support/managed-image-protected-runtime-workflow.test.ts",
       "test": "cleans the protected registry before passing risk evidence",
+      "category": "security"
+    },
+    {
+      "file": "test/e2e/support/managed-image-protected-runtime-workflow.test.ts",
+      "test": "builds the candidate shared boundary before direct managed-image contracts",
       "category": "security"
     },
     {

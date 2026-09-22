@@ -84,14 +84,15 @@ describe("cleanupSandboxServices Google Chat tunnel cleanup (#7317)", () => {
 
   it("removes the Google Chat PID directory after a successful tunnel stop", async () => {
     const rmSync = vi.fn();
+    const stopAll = vi.fn();
     const stopGooglechatWebhookTunnel = vi.fn(() => googlechatPidDir);
     const googlechatWebhookTunnelPidDir = vi.fn(() => googlechatPidDir);
 
     await cleanupSandboxServices(
       SANDBOX,
-      { stopHostServices: true },
+      { stopHostServices: true, channelStopTransport: "openshell" },
       {
-        stopAll: vi.fn(),
+        stopAll,
         getSandbox: vi.fn(() => null),
         rmSync,
         runOpenshell: vi.fn(() => ({ status: 0 })),
@@ -101,6 +102,9 @@ describe("cleanupSandboxServices Google Chat tunnel cleanup (#7317)", () => {
     );
 
     expect(rmSync).toHaveBeenCalledWith(googlechatPidDir, { recursive: true, force: true });
+    expect(stopAll).toHaveBeenCalledWith(
+      expect.objectContaining({ channelStopTransport: "openshell", sandboxName: SANDBOX }),
+    );
   });
 });
 
@@ -210,6 +214,33 @@ describe("assertUnambiguousDestroyContainerIdentity (#8999)", () => {
         classify: classify as never,
       }),
     ).toEqual({ identity: undefined, providerIdentity });
+    expect(captureProviderIdentityByName).toHaveBeenCalledWith("destroytest");
+    expect(classify).not.toHaveBeenCalled();
+  });
+
+  it("uses provider-owned name lookup for a partial registry row", () => {
+    const classify = vi.fn();
+    const providerIdentity = {
+      schemaVersion: 1 as const,
+      providerId: "podman",
+      resourceHandle: "a".repeat(64),
+      ownershipSha256: "b".repeat(64),
+    };
+    const captureProviderIdentity = vi.fn();
+    const captureProviderIdentityByName = vi.fn(() => providerIdentity);
+    const sandbox = { name: "destroytest", agent: "openclaw" as const, openshellDriver: null };
+
+    expect(
+      assertUnambiguousDestroyContainerIdentity("destroytest", {
+        providerId: "podman",
+        redact: String,
+        sandbox,
+        captureProviderIdentity,
+        captureProviderIdentityByName,
+        classify: classify as never,
+      }),
+    ).toEqual({ identities: undefined, providerIdentity });
+    expect(captureProviderIdentity).not.toHaveBeenCalled();
     expect(captureProviderIdentityByName).toHaveBeenCalledWith("destroytest");
     expect(classify).not.toHaveBeenCalled();
   });

@@ -97,14 +97,19 @@ Do not use `observedAt` as build identity.
 
 ## Interpret Docker storage
 
-The report rejects an unsupported explicit `DOCKER_HOST` before it uses Docker daemon evidence.
+When `DOCKER_CONTEXT` is unset, the report rejects an unsupported explicit `DOCKER_HOST` before it uses Docker daemon evidence.
 `host.docker.host_invalid` records whether the configured endpoint is invalid, `host.docker.endpoint_supported` is absent when a configured endpoint is not an absolute local `unix://` socket, and the blocking `host.docker.host_invalid` finding identifies that condition.
 TCP, SSH, relative Unix socket, and unsafe path values do not fall back to the default Docker socket.
-When `DOCKER_HOST` is unset, NemoClaw first probes the Docker CLI's selected authority, including `DOCKER_CONTEXT` and its `DOCKER_CONFIG` directory when set, without a host override.
+`DOCKER_CONTEXT` overrides `DOCKER_HOST`, matching the Docker CLI, and NemoClaw never replaces a selected context with a discovered fallback socket.
+When `DOCKER_CONTEXT` names a context, NemoClaw resolves that context to its endpoint, so readiness, onboarding, and every later Docker command measure the daemon you selected.
+A context that resolves to an absolute local `unix://` socket becomes the selected `DOCKER_HOST`.
+A context that does not resolve, or that names any other endpoint, is reported through `host.docker.host_invalid` and the `invalid_docker_host` advisory instead of falling back to the default Docker socket.
+
+When neither variable is set, NemoClaw first probes the Docker CLI's selected authority, including its `DOCKER_CONFIG` directory when set, without a host override.
 If that authority completes with an unreachable result, NemoClaw probes a bounded set of local Unix sockets and accepts only an endpoint with valid server-version evidence.
 On Linux, the set includes the rootless Docker socket at `/run/user/<UID>/docker.sock`.
 If the probe times out or cannot start, NemoClaw keeps the selected authority. `host probe` reports `host.docker.probe_inconclusive`; onboarding reports the `docker_probe_inconclusive` advisory with a command to verify that authority.
-When it selects a fallback socket, NemoClaw clears the unreachable `DOCKER_CONTEXT` so later Docker commands use the selected `DOCKER_HOST`.
+When it selects a fallback socket, NemoClaw clears the ambient `DOCKER_CONTEXT` so later Docker commands use the selected `DOCKER_HOST`.
 A mixed set of reachable Docker and Podman fallbacks, or a fallback with an unknown server identity, produces no automatic `DOCKER_HOST` override.
 When two reachable fallbacks identify as different engines, onboarding reports the blocking `docker_authority_conflict` advisory.
 The advisory names both sockets and their engines and provides a `DOCKER_HOST` command for the Docker socket.
@@ -333,14 +338,11 @@ Bounded evidence for a rejected set appears under `host.probe.stale` or `gateway
 The policy permits only these narrow exceptions:
 
 - An explicit CPU-only sandbox mode makes NVIDIA GPU passthrough findings irrelevant to that run.
-- The experimental portable profile can prepare its rootless runtime after an initial admission check.
 - A NemoClaw-managed gateway can apply the documented Docker storage remediation when the report says it is available.
 - A NemoClaw-managed gateway can reconcile version drift after its ownership and port checks pass.
 - An explicit runtime path that does not use the standard Docker driver can admit its documented runtime exception.
 
-The portable profile discards its earlier host and gateway observations after preparation.
-It collects both again before the runtime probes or later lifecycle effects.
-No other blocking finding or unknown required capability is waived.
+No blocking finding or unknown required capability is waived.
 
 Resume does not trust a cached preflight result for live host or gateway facts.
 It collects both again before a container-backed WSL GPU proof, GPU validation, or bridge and DNS probes.

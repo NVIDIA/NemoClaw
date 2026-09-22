@@ -20,10 +20,8 @@ const { PROTECTED_MANAGED_IMAGE_ACTIVATION_PATH, PROTECTED_MANAGED_IMAGE_MULTIAR
 
 export const RISK_PLAN_VERSION = 25 as const;
 
-export const PR_E2E_TYPED_TARGET_IDS = [
-  "ubuntu-repo-cloud-langchain-deepagents-code",
-  "ubuntu-repo-docker-post-reboot-recovery",
-] as const;
+export const PR_E2E_TYPED_TARGET_IDS = ["ubuntu-repo-cloud-langchain-deepagents-code"] as const;
+const SANDBOX_LIFECYCLE_TARGET_ID = "sandbox-survival";
 
 const PR_E2E_TYPED_TARGET_ID_SET = new Set<string>(PR_E2E_TYPED_TARGET_IDS);
 const PR_E2E_PLANNING_OMITTED_JOB_IDS = new Set(["jetson-nvmap-gpu"]);
@@ -39,12 +37,11 @@ const JOURNALED_RECREATE_RESUME_RUNTIME_FILES = new Set([
   "src/lib/onboard/machine/handlers/sandbox-resume.ts",
   "src/lib/onboard/machine/handlers/sandbox.ts",
 ]);
-const POST_REBOOT_DELIVERY_RUNTIME_FILES = new Set([
+const SANDBOX_LIFECYCLE_RUNTIME_FILES = new Set([
   "src/lib/actions/sandbox/status-snapshot.ts",
-  "src/lib/onboard/docker-driver-sandbox-recovery.ts",
+  "src/lib/onboard/docker-driver-container-observation.ts",
   "src/lib/onboard/docker-startup-command-agent.ts",
   "src/lib/onboard/sandbox-create-step.ts",
-  "tools/e2e/onboard-timeout-contract.mts",
 ]);
 export const GATEWAY_TOPOLOGY_FILES = [
   "src/lib/core/gateway-address.ts",
@@ -97,7 +94,6 @@ const BREV_LAUNCHABLE_SCENARIO_FILE =
   /^test\/e2e\/(?:fixtures|live)\/full-e2e(?:[./-].*)?\.[cm]?[jt]s$/;
 const GATEWAY_TOPOLOGY_FILE_SET = new Set<string>(GATEWAY_TOPOLOGY_FILES);
 const MANAGED_STARTUP_E2E_JOB_IDS = [
-  "device-auth-health",
   "issue-4462-scope-upgrade-approval",
   "openclaw-inference-switch",
 ] as const;
@@ -356,7 +352,7 @@ export function focusedPrE2eTargetsForChangedFiles(
     ),
   );
   const postRebootMatchedFiles = stableUnique(
-    changedFiles.filter((file) => POST_REBOOT_DELIVERY_RUNTIME_FILES.has(file)),
+    changedFiles.filter((file) => SANDBOX_LIFECYCLE_RUNTIME_FILES.has(file)),
   );
   return [
     ...(deepAgentsMatchedFiles.length > 0
@@ -370,7 +366,7 @@ export function focusedPrE2eTargetsForChangedFiles(
     ...(postRebootMatchedFiles.length > 0
       ? [
           {
-            id: PR_E2E_TYPED_TARGET_IDS[1],
+            id: SANDBOX_LIFECYCLE_TARGET_ID,
             matchedFiles: postRebootMatchedFiles,
           },
         ]
@@ -624,7 +620,7 @@ export const RISK_RULES: readonly RiskRule[] = [
     summary:
       "Credential and security-boundary changes must preserve secrecy, sanitization, and fail-closed policy behavior.",
     tier: 3,
-    requiredJobs: ["cloud-inference", "security-posture"],
+    requiredJobs: ["full-e2e", "security-posture"],
     invariants: [
       "plaintext credentials do not cross logs, snapshots, artifacts, or sandbox boundaries",
       "invalid or missing security state fails closed",
@@ -642,7 +638,7 @@ export const RISK_RULES: readonly RiskRule[] = [
     summary:
       "E2E selection, execution, and evidence changes must preserve trusted dispatch and fail-closed result classification.",
     tier: 3,
-    requiredJobs: ["cloud-onboard", "cloud-inference", "security-posture"],
+    requiredJobs: ["cloud-onboard", "full-e2e", "security-posture"],
     invariants: [
       "the controller selects only trusted jobs and binds results to the intended PR commit",
       "single-shard and matrix jobs both emit complete evidence through the canonical reporter",

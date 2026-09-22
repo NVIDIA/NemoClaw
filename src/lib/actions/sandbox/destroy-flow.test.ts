@@ -181,6 +181,9 @@ describe("destroySandbox flow", () => {
             trace.push("delete");
             harness.setSandboxPresent(false);
             return { status: 0, stdout: "", stderr: "" };
+          case "sandbox:get":
+            trace.push("get");
+            return { status: 1, stdout: "", stderr: "Error: sandbox alpha not found" };
           case "sandbox:list":
             trace.push("list");
             return { status: 0, stdout: '[{"name":"alpha","phase":"Ready"}]', stderr: "" };
@@ -195,7 +198,7 @@ describe("destroySandbox flow", () => {
         gatewayPort: 19080,
       });
       expect(cleanup).toHaveBeenCalledOnce();
-      expect(trace).toEqual(["prepare", "list", "delete", "cleanup"]);
+      expect(trace).toEqual(["prepare", "list", "delete", "get", "get", "cleanup"]);
       expect(harness.removeSandboxSpy).toHaveBeenCalledWith("alpha");
       expect(harness.retirePortableLifecycleReceiptSpy).toHaveBeenCalledWith("alpha");
       expect(exitSpy).not.toHaveBeenCalled();
@@ -238,6 +241,8 @@ describe("destroySandbox flow", () => {
               crossedDeleteBoundary = true;
               harness.setSandboxPresent(false);
               return { status: 0, stdout: "", stderr: "" };
+            case "sandbox:get":
+              return { status: 1, stdout: "", stderr: "Error: sandbox alpha not found" };
             case "sandbox:list":
               return {
                 status: 0,
@@ -492,7 +497,7 @@ describe("destroySandbox flow", () => {
         ok: true,
         alreadyGone: false,
         deleteOutput: "",
-        deleteResult: { status: 0, stdout: "", stderr: "" },
+        deleteResult: { kind: "accepted", diagnostic: "", exitCode: 0 },
         detachOutcome: { detached: [], failures: [] },
         forcedLocalCleanup: false,
         commonLlamaCppAuthorityRetired: true,
@@ -613,7 +618,7 @@ describe("destroySandbox flow", () => {
     await expect(harness.destroySandbox("alpha", { yes: true })).resolves.toBeUndefined();
     expect(harness.preparePortableDestroyAuthoritySpy).toHaveBeenCalledTimes(2);
     expect(harness.runOpenshellSpy).toHaveBeenCalledWith(
-      ["sandbox", "delete", "alpha"],
+      ["sandbox", "delete", "-g", "nemoclaw-19080", "alpha"],
       expect.any(Object),
     );
   });

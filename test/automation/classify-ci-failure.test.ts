@@ -209,6 +209,13 @@ function classifierTemporaryDirectories(prefix: "nemoclaw-ci-log." | "nemoclaw-c
 async function waitForFile(path: string): Promise<void> {
   await vi.waitFor(() => expect(existsSync(path)).toBe(true), { timeout: 2_000, interval: 10 });
 }
+async function waitForProcessExit(pid: number): Promise<void> {
+  // A killed descendant can remain visible until the kernel and its reaper finish.
+  await vi.waitFor(() => expect(() => process.kill(pid, 0)).toThrow(), {
+    timeout: 2_000,
+    interval: 10,
+  });
+}
 type FakePath = {
   type: "directory" | "file" | "symlink";
   mode?: number;
@@ -1018,7 +1025,7 @@ describe.skipIf(process.platform !== "linux")("CI failure classifier process", (
     expect(Date.now() - started).toBeGreaterThanOrEqual(200);
     expect(result.exitCode).not.toBe(0);
     expect(result.timedOut).toBe(true);
-    expect(() => process.kill(descendantPid, 0)).toThrow();
+    await waitForProcessExit(descendantPid);
   });
 
   test("drains a process group whose command exits promptly on SIGTERM", async () => {
@@ -1051,8 +1058,8 @@ describe.skipIf(process.platform !== "linux")("CI failure classifier process", (
     );
     expect(result).toEqual({ code: 143, signal: null });
     expect(readFileSync(signals, "utf8").trim().split("\n")).toEqual(["SIGTERM"]);
-    expect(() => process.kill(wrapperPid, 0)).toThrow();
-    expect(() => process.kill(commandPid, 0)).toThrow();
+    await waitForProcessExit(wrapperPid);
+    await waitForProcessExit(commandPid);
     expect(classifierTemporaryDirectories("nemoclaw-ci-log.")).toEqual([]);
     expect(classifierTemporaryDirectories("nemoclaw-ci-classify.")).toEqual([]);
   });
@@ -1147,8 +1154,8 @@ describe.skipIf(process.platform !== "linux")("CI failure classifier process", (
           child.once("close", (code, closeSignal) => resolve({ code, signal: closeSignal })),
       );
       expect(result).toEqual({ code: exitCode, signal: null });
-      expect(() => process.kill(groupPid, 0)).toThrow();
-      expect(() => process.kill(descendantPid, 0)).toThrow();
+      await waitForProcessExit(groupPid);
+      await waitForProcessExit(descendantPid);
       expect(stderr.length).toBeLessThanOrEqual(2000);
       const temporaryRoot = `/tmp/nemoclaw-ci-classifier-${uid}`;
       const remaining = existsSync(temporaryRoot)

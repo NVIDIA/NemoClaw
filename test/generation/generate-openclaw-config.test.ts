@@ -229,14 +229,14 @@ describe("generate-openclaw-config.mts: config generation", () => {
     expect(result.stderr).toContain("NEMOCLAW_OPENCLAW_OTEL_ENDPOINT must not include credentials");
   });
 
-  it("sets dangerouslyDisableDeviceAuth to false for loopback URL", () => {
+  it("omits the retired device-auth bypass for loopback URL", () => {
     const config = runConfigScript({ CHAT_UI_URL: "http://127.0.0.1:18789" });
-    expect(config.gateway.controlUi.dangerouslyDisableDeviceAuth).toBe(false);
+    expect(config.gateway.controlUi.dangerouslyDisableDeviceAuth).toBeUndefined();
   });
 
   it("treats loopback-looking URL userinfo before a remote host as remote", () => {
     const config = buildConfigDirect({ CHAT_UI_URL: "http://127.0.0.1:18789@evil.example" });
-    expect(config.gateway.controlUi.dangerouslyDisableDeviceAuth).toBe(true);
+    expect(config.gateway.controlUi.dangerouslyDisableDeviceAuth).toBeUndefined();
     expect(config.gateway.controlUi.allowedOrigins).toContain("http://evil.example");
     expect(config.gateway.controlUi.allowedOrigins).not.toContain(
       "http://127.0.0.1:18789@evil.example",
@@ -245,23 +245,23 @@ describe("generate-openclaw-config.mts: config generation", () => {
 
   it("treats localhost userinfo before a remote host as remote", () => {
     const config = buildConfigDirect({ CHAT_UI_URL: "http://localhost@evil.example" });
-    expect(config.gateway.controlUi.dangerouslyDisableDeviceAuth).toBe(true);
+    expect(config.gateway.controlUi.dangerouslyDisableDeviceAuth).toBeUndefined();
     expect(config.gateway.controlUi.allowedOrigins).toContain("http://evil.example");
   });
 
-  it("sets dangerouslyDisableDeviceAuth to true when env var is '1'", () => {
+  it("does not restore the retired device-auth bypass when the legacy env var is '1'", () => {
     const config = runConfigScript({ NEMOCLAW_DISABLE_DEVICE_AUTH: "1" });
-    expect(config.gateway.controlUi.dangerouslyDisableDeviceAuth).toBe(true);
+    expect(config.gateway.controlUi.dangerouslyDisableDeviceAuth).toBeUndefined();
   });
 
-  it("sets allowInsecureAuth to true for http scheme", () => {
+  it("omits the retired allowInsecureAuth key for http scheme", () => {
     const config = runConfigScript({ CHAT_UI_URL: "http://127.0.0.1:18789" });
-    expect(config.gateway.controlUi.allowInsecureAuth).toBe(true);
+    expect(config.gateway.controlUi.allowInsecureAuth).toBeUndefined();
   });
 
-  it("sets allowInsecureAuth to false for https scheme", () => {
+  it("omits the retired allowInsecureAuth key for https scheme", () => {
     const config = runConfigScript({ CHAT_UI_URL: "https://nemoclaw0-xxx.brevlab.com:18789" });
-    expect(config.gateway.controlUi.allowInsecureAuth).toBe(false);
+    expect(config.gateway.controlUi.allowInsecureAuth).toBeUndefined();
   });
 
   it("falls back to text input when NEMOCLAW_INFERENCE_INPUTS is empty", () => {
@@ -326,7 +326,7 @@ describe("generate-openclaw-config.mts: config generation", () => {
   it("normalizes schemeless CHAT_UI_URL values before parsing", () => {
     const config = buildConfigDirect({ CHAT_UI_URL: "remote.example:18790" });
     expect(config.gateway.port).toBe(18790);
-    expect(config.gateway.controlUi.dangerouslyDisableDeviceAuth).toBe(true);
+    expect(config.gateway.controlUi.dangerouslyDisableDeviceAuth).toBeUndefined();
     expect(config.gateway.controlUi.allowedOrigins).toContain("http://remote.example:18790");
     expect(config.gateway.controlUi.allowedOrigins).toContain("http://remote.example");
   });
@@ -458,11 +458,7 @@ describe("generate-openclaw-config.mts: config generation", () => {
       NEMOCLAW_WECHAT_CONFIG_B64: wechatConfig,
     });
 
-    expect(config.plugins?.installs?.["openclaw-weixin"]).toEqual({
-      source: "npm",
-      spec: "@tencent-weixin/openclaw-weixin@2.4.3",
-      installPath: "/sandbox/.openclaw/extensions/openclaw-weixin",
-    });
+    expect(config.plugins?.installs).toBeUndefined();
     expect(config.plugins?.load?.paths ?? []).not.toContain(
       "/sandbox/.openclaw/extensions/openclaw-weixin",
     );
@@ -485,7 +481,7 @@ describe("generate-openclaw-config.mts: config generation", () => {
     expect(config.plugins?.entries?.["openclaw-weixin"]).toBeUndefined();
   });
 
-  it("preserves existing plugin install registry entries without enabling WeChat", () => {
+  it("preserves native plugin install records without enabling WeChat", () => {
     const configPath = path.join(tmpDir, ".openclaw", "openclaw.json");
     fs.mkdirSync(path.dirname(configPath), { recursive: true });
     const installEntry = {
@@ -771,11 +767,9 @@ describe("generate-openclaw-config.mts: config generation", () => {
     expect(config.agents.defaults.thinkingDefault).toBe("off");
   });
 
-  // ─── agents.list bake ─────────────────────────────────────────────────────
-  // Even with no NEMOCLAW_EXTRA_AGENTS_JSON_B64 set, agents.list must exist
-  // with the canonical main entry pinned as default. Otherwise a wholesale
-  // list overwrite could leave OpenClaw resolving default to agents[0]
-  // without "main" present.
+  // ─── agents.entries bake ──────────────────────────────────────────────────
+  // OpenClaw 2026.9.1 persists the canonical keyed roster. Emitting that shape
+  // directly keeps native baseline setup read-only after the gateway starts.
 
   const TOOLS_OK = { profile: "minimal", allow: ["read"], deny: ["exec"] };
 
@@ -793,14 +787,13 @@ describe("generate-openclaw-config.mts: config generation", () => {
     return Buffer.from(JSON.stringify(extras)).toString("base64");
   }
 
-  it("always writes agents.list with a default 'main' entry first", () => {
+  it("always writes agents.entries with a default 'main' entry", () => {
     const config = runConfigScript();
-    expect(Array.isArray(config.agents.list)).toBe(true);
-    expect(config.agents.list).toHaveLength(1);
-    expect(config.agents.list[0]).toEqual({ id: "main", default: true });
+    expect(config.agents.entries).toEqual({ main: { default: true } });
+    expect(config.agents.list).toBeUndefined();
   });
 
-  it("appends NEMOCLAW_EXTRA_AGENTS_JSON_B64 entries after main", () => {
+  it("keys NEMOCLAW_EXTRA_AGENTS_JSON_B64 entries after main", () => {
     const extras = [
       makeExtra({ id: "research" }),
       makeExtra({
@@ -812,25 +805,25 @@ describe("generate-openclaw-config.mts: config generation", () => {
     const config = runConfigScript({
       NEMOCLAW_EXTRA_AGENTS_JSON_B64: extraAgentsB64(extras),
     });
-    expect(config.agents.list).toHaveLength(3);
-    expect(config.agents.list[0]).toEqual({ id: "main", default: true });
-    expect(config.agents.list[1]).toMatchObject({ id: "research" });
-    expect(config.agents.list[2]).toMatchObject({ id: "writing" });
+    expect(Object.keys(config.agents.entries)).toEqual(["main", "research", "writing"]);
+    expect(config.agents.entries.main).toEqual({ default: true });
+    expect(config.agents.entries.research).toMatchObject({
+      workspace: "/sandbox/.openclaw/workspace-research",
+    });
+    expect(config.agents.entries.writing).toMatchObject({
+      workspace: "/sandbox/.openclaw/workspace-writing",
+    });
   });
 
   it("keeps 'main' as the default even when extras are present", () => {
-    // Wholesale list replacement would leave agents[0] = first extra, so
-    // resolveDefaultAgentId would silently re-elect the first extra as
-    // default. The bake must always emit { id: "main", default: true } first.
     const config = runConfigScript({
       NEMOCLAW_EXTRA_AGENTS_JSON_B64: extraAgentsB64([makeExtra()]),
     });
-    const defaultEntries = config.agents.list.filter(
-      (entry: { default?: boolean }) => entry.default === true,
-    );
+    const entries = config.agents.entries as Record<string, { default?: boolean }>;
+    const defaultEntries = Object.entries(entries).filter(([, entry]) => entry.default === true);
     expect(defaultEntries).toHaveLength(1);
-    expect(defaultEntries[0].id).toBe("main");
-    expect(config.agents.list[0].id).toBe("main");
+    expect(defaultEntries[0][0]).toBe("main");
+    expect(Object.keys(config.agents.entries)[0]).toBe("main");
   });
 
   it("rejects extras that claim id 'main'", () => {
@@ -956,7 +949,7 @@ describe("generate-openclaw-config.mts: config generation", () => {
     const config = runConfigScript({
       NEMOCLAW_EXTRA_AGENTS_JSON_B64: extraAgentsB64([makeExtra()]),
     });
-    expect(config.agents.list[1]).not.toHaveProperty("subagents");
+    expect(config.agents.entries.research).not.toHaveProperty("subagents");
   });
 
   it("rejects per-agent subagents.maxSpawnDepth with a migration hint", () => {
@@ -1022,11 +1015,11 @@ describe("generate-openclaw-config.mts: config generation", () => {
         }),
       ]),
     });
-    expect(config.agents.list[1].workspace).toBe("/sandbox/.openclaw/workspace-research");
-    expect(config.agents.list[1].agentDir).toBe("/sandbox/.openclaw/agents/research");
+    expect(config.agents.entries.research.workspace).toBe("/sandbox/.openclaw/workspace-research");
+    expect(config.agents.entries.research.agentDir).toBe("/sandbox/.openclaw/agents/research");
   });
 
-  it("strips operator entries to the allowlist when writing agents.list", () => {
+  it("strips operator entries to the allowlist when writing agents.entries", () => {
     // The validator must drop unknown keys at every nesting level before
     // they reach the baked image. (The previous tests confirm unknown
     // fields fail; this test guards against an allowlist drift where an
@@ -1048,8 +1041,7 @@ describe("generate-openclaw-config.mts: config generation", () => {
         },
       ]),
     });
-    expect(config.agents.list[1]).toEqual({
-      id: "research",
+    expect(config.agents.entries.research).toEqual({
       workspace: "/sandbox/.openclaw/workspace-research",
       agentDir: "/sandbox/.openclaw/agents/research",
       tools: TOOLS_OK,
@@ -1058,12 +1050,7 @@ describe("generate-openclaw-config.mts: config generation", () => {
     });
   });
 
-  it("matches OpenClaw's resolveDefaultAgentId fallback shape for the baked list", () => {
-    // OpenClaw's resolver: pick the first entry with default === true; if
-    // none, fall back to agents[0]. Simulate that locally over the baked
-    // list to prove the bake satisfies the upstream contract today. The
-    // authoritative resolver still lives in the openclaw npm package; see
-    // agents/openclaw/manifest.yaml -> expected_version for the pinned tag.
+  it("matches OpenClaw's canonical keyed default-agent roster", () => {
     const config = runConfigScript({
       NEMOCLAW_EXTRA_AGENTS_JSON_B64: extraAgentsB64([
         makeExtra({ id: "research" }),
@@ -1074,8 +1061,8 @@ describe("generate-openclaw-config.mts: config generation", () => {
         }),
       ]),
     });
-    const list: Array<{ id: string; default?: boolean }> = config.agents.list;
-    const resolved = list.find((entry) => entry.default === true)?.id ?? list[0]?.id;
+    const entries = Object.entries(config.agents.entries) as Array<[string, { default?: boolean }]>;
+    const resolved = entries.find(([, entry]) => entry.default === true)?.[0] ?? entries[0]?.[0];
     expect(resolved).toBe("main");
   });
 
@@ -1681,11 +1668,6 @@ describe("generate-openclaw-config.mts: config generation", () => {
     expect(config.plugins.entries.bonjour.config).toBeUndefined();
   });
 
-  it("omits stale disabled entries for optional bundled plugins", () => {
-    const config = runConfigScript({ NEMOCLAW_PROVIDER_KEY: "inference" });
-    expect(Object.keys(config.plugins.entries)).toEqual(["bonjour"]);
-  });
-
   it("keeps the selected bundled provider plugin available", () => {
     const config = runConfigScript({ NEMOCLAW_PROVIDER_KEY: "anthropic" });
     expect(config.plugins.entries.anthropic).toBeUndefined();
@@ -1718,57 +1700,57 @@ describe("generate-openclaw-config.mts: config generation", () => {
   });
 });
 
-describe("generate-openclaw-config.mts: non-loopback auto-disable device auth", () => {
-  it("auto-disables device auth for Brev Launchable URL", () => {
+describe("generate-openclaw-config.mts: retired device-auth bypass", () => {
+  it("omits the retired bypass for a Brev Launchable URL", () => {
     const config = runConfigScript({
       CHAT_UI_URL: "https://nemoclaw0-xxx.brevlab.com:18789",
     });
-    expect(config.gateway.controlUi.dangerouslyDisableDeviceAuth).toBe(true);
+    expect(config.gateway.controlUi.dangerouslyDisableDeviceAuth).toBeUndefined();
   });
 
-  it("auto-disables device auth for any non-loopback URL", () => {
+  it("omits the retired bypass for any non-loopback URL", () => {
     const config = runConfigScript({
       CHAT_UI_URL: "http://my-server.local:18789",
     });
-    expect(config.gateway.controlUi.dangerouslyDisableDeviceAuth).toBe(true);
+    expect(config.gateway.controlUi.dangerouslyDisableDeviceAuth).toBeUndefined();
   });
 
-  it("keeps device auth enabled for 127.0.0.1", () => {
+  it("omits the retired bypass for 127.0.0.1", () => {
     const config = runConfigScript({ CHAT_UI_URL: "http://127.0.0.1:18789" });
-    expect(config.gateway.controlUi.dangerouslyDisableDeviceAuth).toBe(false);
+    expect(config.gateway.controlUi.dangerouslyDisableDeviceAuth).toBeUndefined();
   });
 
-  it("keeps device auth enabled for localhost", () => {
+  it("omits the retired bypass for localhost", () => {
     const config = runConfigScript({ CHAT_UI_URL: "http://localhost:18789" });
-    expect(config.gateway.controlUi.dangerouslyDisableDeviceAuth).toBe(false);
+    expect(config.gateway.controlUi.dangerouslyDisableDeviceAuth).toBeUndefined();
   });
 
-  it("keeps device auth enabled for IPv6 loopback", () => {
+  it("omits the retired bypass for IPv6 loopback", () => {
     const config = runConfigScript({ CHAT_UI_URL: "http://[::1]:18789" });
-    expect(config.gateway.controlUi.dangerouslyDisableDeviceAuth).toBe(false);
+    expect(config.gateway.controlUi.dangerouslyDisableDeviceAuth).toBeUndefined();
   });
 
-  it("honors explicit env var override on loopback URL", () => {
+  it("does not emit the retired bypass for an explicit legacy opt-out", () => {
     const config = runConfigScript({
       CHAT_UI_URL: "http://127.0.0.1:18789",
       NEMOCLAW_DISABLE_DEVICE_AUTH: "1",
     });
-    expect(config.gateway.controlUi.dangerouslyDisableDeviceAuth).toBe(true);
+    expect(config.gateway.controlUi.dangerouslyDisableDeviceAuth).toBeUndefined();
   });
 
-  it("URL trumps env var — cannot re-enable device auth for non-loopback", () => {
+  it("does not emit the retired bypass for a non-loopback legacy input", () => {
     const config = runConfigScript({
       CHAT_UI_URL: "https://nemoclaw0-xxx.brevlab.com:18789",
       NEMOCLAW_DISABLE_DEVICE_AUTH: "0",
     });
-    expect(config.gateway.controlUi.dangerouslyDisableDeviceAuth).toBe(true);
+    expect(config.gateway.controlUi.dangerouslyDisableDeviceAuth).toBeUndefined();
   });
 });
 
 describe("generate-openclaw-config.mts: empty-string env vars fall back to defaults", () => {
   it("treats empty CHAT_UI_URL as unset and uses the loopback default", () => {
     const config = runConfigScript({ CHAT_UI_URL: "" });
-    expect(config.gateway.controlUi.dangerouslyDisableDeviceAuth).toBe(false);
+    expect(config.gateway.controlUi.dangerouslyDisableDeviceAuth).toBeUndefined();
     expect(config.gateway.controlUi.allowedOrigins).toEqual(["http://127.0.0.1:18789"]);
   });
 

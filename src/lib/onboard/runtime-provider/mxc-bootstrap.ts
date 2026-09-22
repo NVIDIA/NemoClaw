@@ -6,6 +6,7 @@ import { createHash } from "node:crypto";
 import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
 
+import { isValidName } from "../../name-validation";
 import { parseNativeArtifactWorkloadReceiptV1 } from "../workload/native-artifact";
 import {
   RUNTIME_PROVIDER_NATIVE_ARTIFACT_BOOTSTRAP_CONTRACT_VERSION,
@@ -18,7 +19,6 @@ import {
 } from "./contract";
 
 const MXC_PROVIDER_ID = "mxc";
-const SANDBOX_NAME_PATTERN = /^[a-z][a-z0-9-]{0,62}$/u;
 const SHA256_PATTERN = /^[a-f0-9]{64}$/u;
 const PROVIDER_HANDLE_PATTERN = /^mxc-native-artifact-v1:[a-f0-9]{64}$/u;
 const CONTROL_CHARACTER_PATTERN = /[\u0000-\u001f\u007f-\u009f]/u;
@@ -102,7 +102,7 @@ function preparePlan(
   if (input.providerId !== MXC_PROVIDER_ID) {
     throw new MxcNativeArtifactBootstrapError("provider identity does not match 'mxc'");
   }
-  if (!SANDBOX_NAME_PATTERN.test(input.sandboxName)) {
+  if (!isValidName(input.sandboxName)) {
     throw new MxcNativeArtifactBootstrapError("sandbox name is not a canonical OpenShell name");
   }
   if (

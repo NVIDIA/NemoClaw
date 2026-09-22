@@ -22,20 +22,13 @@ def _get_process_hermes_home() -> Path:
     return HOME
 
 def _get_pid_path() -> Path:
-    """Return the path to the gateway PID file, respecting HERMES_HOME."""
-    home = _get_process_hermes_home()
-    return home / "gateway.pid"
+    return _get_process_hermes_home() / "gateway.pid"
 
 def _get_gateway_lock_path(pid_path: Optional[Path] = None) -> Path:
-    """Return the path to the runtime gateway lock file."""
-    if pid_path is not None:
-        return pid_path.with_name(_GATEWAY_LOCK_FILENAME)
-    home = _get_process_hermes_home()
-    return home / _GATEWAY_LOCK_FILENAME
+    return (pid_path or _get_pid_path()).with_name(_GATEWAY_LOCK_FILENAME)
 
 def _get_runtime_status_path() -> Path:
-    """Return the persisted runtime health/status file path."""
-    return _get_pid_path().with_name(_RUNTIME_STATUS_FILE)
+    return _get_process_hermes_home() / _RUNTIME_STATUS_FILE
 
 if __name__ == "__main__":
     print(_get_pid_path())
@@ -87,8 +80,8 @@ describe("Hermes writable gateway runtime metadata", () => {
 
   it("fails closed when the pinned Hermes helper shape changes", () => {
     const drifted = UPSTREAM_FIXTURE.replace(
-      'return home / "gateway.pid"',
-      'return home / "changed-gateway.pid"',
+      'return _get_process_hermes_home() / "gateway.pid"',
+      'return _get_process_hermes_home() / "changed-gateway.pid"',
     );
     const { result, statusPath, tmp } = runPatcher(drifted);
     try {
