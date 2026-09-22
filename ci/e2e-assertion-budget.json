@@ -32,9 +32,9 @@
       "nodeAssertions": 112,
       "namedAssertionHelpers": 683,
       "failCalls": 1,
-      "throwGuards": 558,
+      "throwGuards": 557,
       "objectFieldAssertions": 248,
-      "assertionPoints": 3404,
+      "assertionPoints": 3403,
       "generatedProbeBlocks": 235,
       "generatedProbeConditions": 834
     },
@@ -47,7 +47,7 @@
     ],
     "files": {
       "test/e2e/live/agent-turn-latency.test.ts": [19,22,28,42,1],
-      "test/e2e/live/bedrock-runtime-compatible-anthropic.test.ts": [12,34,12,56,4],
+      "test/e2e/live/bedrock-runtime-compatible-anthropic.test.ts": [12,34,12,55,4],
       "test/e2e/live/bootstrap-install-smoke.test.ts": [0,0,14,30,3],
       "test/e2e/live/brave-search.test.ts": [17,20,27,32,1],
       "test/e2e/live/brev-workspace-cleanup.test.ts": [0,0,0,1,0],

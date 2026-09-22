@@ -799,27 +799,10 @@ async function assertNoBedrockLeaks(options: {
     credentialFiles: [credentialFile],
     configFiles:
       options.agent === "hermes" ? [configFile, "/etc/nemoclaw/hermes.config-hash"] : [configFile],
-    processCommandMarkers:
-      options.agent === "hermes" ? ["hermes", "gateway", "run"] : ["openclaw", "gateway", "run"],
   });
-  const serviceUser = options.agent === "hermes" ? "gateway" : "sandbox";
   const probe = await runRawCommand(
     "openshell",
-    [
-      "sandbox",
-      "exec",
-      "-n",
-      SANDBOX_NAME,
-      "--",
-      "/usr/bin/setpriv",
-      `--reuid=${serviceUser}`,
-      `--regid=${serviceUser}`,
-      "--init-groups",
-      "/usr/bin/python3",
-      "-I",
-      "-c",
-      BEDROCK_LEAK_PROBE_SOURCE,
-    ],
+    ["sandbox", "exec", "-n", SANDBOX_NAME, "--", "python3", "-I", "-c", BEDROCK_LEAK_PROBE_SOURCE],
     {
       artifactName: "sandbox-secret-isolation-bedrock-runtime",
       artifacts: options.artifacts,

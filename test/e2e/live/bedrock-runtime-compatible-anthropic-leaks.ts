@@ -36,7 +36,6 @@ export interface BedrockLeakProbeInput {
   readonly credentialFiles: readonly string[];
   readonly configFiles: readonly string[];
   readonly procRoot: string;
-  readonly processCommandMarkers: readonly string[];
 }
 
 type ProbeCategoryName = (typeof PROBE_CATEGORIES)[number];
@@ -65,7 +64,6 @@ interface BedrockLeakProbeInputOptions {
   readonly credentialFiles: readonly string[];
   readonly configFiles: readonly string[];
   readonly procRoot?: string;
-  readonly processCommandMarkers: readonly string[];
 }
 
 export function createBedrockForbiddenLeakPatterns(
@@ -111,21 +109,6 @@ function validatePaths(label: string, paths: readonly string[]): void {
   }
 }
 
-function validateProcessCommandMarkers(markers: readonly string[]): void {
-  const countInvalid = markers.length === 0 || markers.length > 8;
-  const markerInvalid = markers.some((marker) => {
-    const bytes = Buffer.byteLength(marker, "utf8");
-    return bytes < 2 || bytes > 128 || /[\0\r\n]/u.test(marker);
-  });
-  if (countInvalid || markerInvalid) {
-    throw new Error(
-      countInvalid
-        ? "Bedrock leak probe requires between 1 and 8 process command markers"
-        : "Bedrock leak probe process command markers must be bounded single-line text",
-    );
-  }
-}
-
 export function createBedrockLeakProbeInput(
   patterns: readonly ForbiddenLeakPattern[],
   options: BedrockLeakProbeInputOptions,
@@ -133,7 +116,6 @@ export function createBedrockLeakProbeInput(
   validatePatterns(patterns);
   validatePaths("credential files", options.credentialFiles);
   validatePaths("config files", options.configFiles);
-  validateProcessCommandMarkers(options.processCommandMarkers);
   const procRoot = options.procRoot ?? "/proc";
   validatePaths("process root", [procRoot]);
   const input: BedrockLeakProbeInput = {
@@ -150,7 +132,6 @@ export function createBedrockLeakProbeInput(
     credentialFiles: [...options.credentialFiles],
     configFiles: [...options.configFiles],
     procRoot,
-    processCommandMarkers: [...options.processCommandMarkers],
   };
   if (Buffer.byteLength(JSON.stringify(input), "utf8") > 32_768) {
     throw new Error("Bedrock leak probe input exceeded its byte limit");

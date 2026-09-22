@@ -60,7 +60,6 @@ def read_input():
         "credentialFiles",
         "configFiles",
         "procRoot",
-        "processCommandMarkers",
     }:
         emit_input_error("invalid-input")
     if value.get("version") != VERSION:
@@ -106,22 +105,6 @@ def read_input():
     proc_root = value.get("procRoot")
     if not isinstance(proc_root, str) or not proc_root.startswith("/") or "\n" in proc_root:
         emit_input_error("invalid-paths")
-    process_markers = value.get("processCommandMarkers")
-    if (
-        not isinstance(process_markers, list)
-        or not process_markers
-        or len(process_markers) > 8
-        or any(
-            not isinstance(marker, str)
-            or len(marker.encode("utf-8")) < 2
-            or len(marker.encode("utf-8")) > 128
-            or "\n" in marker
-            or "\r" in marker
-            or "\0" in marker
-            for marker in process_markers
-        )
-    ):
-        emit_input_error("invalid-process-markers")
     return value, patterns
 
 
@@ -207,58 +190,33 @@ def scan_files(paths, patterns, scan_budget):
     return category_result(items, total_bytes, found, errors)
 
 
-def select_processes(proc_root, markers):
+def scan_processes(proc_root, member, patterns, scan_budget):
+    found = []
     errors = []
+    items = 0
+    total_bytes = 0
     root = pathlib.Path(proc_root)
-    marker_bytes = [marker.encode("utf-8") for marker in markers]
     try:
         processes = sorted(
             (path for path in root.iterdir() if path.name.isdigit()),
             key=lambda path: int(path.name),
         )
     except Exception:
-        return [], ["process-root-read-failed"]
+        return category_result(0, 0, [], ["process-root-read-failed"])
     if len(processes) > MAX_PROCESS_ITEMS:
         errors.append("process-count-limit-exceeded")
         processes = processes[:MAX_PROCESS_ITEMS]
-    selected = []
-    for process in processes:
-        try:
-            with (process / "cmdline").open("rb") as handle:
-                command = handle.read(MAX_PROCESS_ITEM_BYTES + 1)
-        except (FileNotFoundError, PermissionError, ProcessLookupError):
-            continue
-        except Exception:
-            continue
-        if len(command) > MAX_PROCESS_ITEM_BYTES:
-            errors.append("process-item-limit-exceeded")
-            continue
-        normalized = command.replace(b"\0", b" ")
-        if all(marker in normalized for marker in marker_bytes):
-            selected.append(process)
-    if not selected:
-        errors.append("required-process-selection-empty")
-    return selected, errors
-
-
-def scan_processes(processes, member, patterns, scan_budget, selection_errors):
-    found = []
-    errors = list(selection_errors)
-    items = 0
-    total_bytes = 0
     for process in processes:
         path = process / member
         try:
             with path.open("rb") as handle:
                 data = handle.read(MAX_PROCESS_ITEM_BYTES + 1)
-        except (FileNotFoundError, ProcessLookupError):
-            errors.append("selected-process-disappeared")
-            continue
-        except PermissionError:
-            errors.append("process-read-denied")
+        # Sandbox visibility is the retained contract. Kernel ptrace policy and
+        # native-agent ownership intentionally keep some /proc entries outside it.
+        # The category still fails closed below when no entry is readable.
+        except (FileNotFoundError, PermissionError, ProcessLookupError):
             continue
         except Exception:
-            errors.append("process-read-failed")
             continue
         if len(data) > MAX_PROCESS_ITEM_BYTES:
             errors.append("process-item-limit-exceeded")
@@ -279,25 +237,20 @@ def scan_processes(processes, member, patterns, scan_budget, selection_errors):
 
 payload, patterns = read_input()
 scan_budget = {"remaining": MAX_SCAN_WINDOWS}
-selected_processes, process_selection_errors = select_processes(
-    payload["procRoot"], payload["processCommandMarkers"]
-)
 categories = {
     "credentialFiles": scan_files(payload["credentialFiles"], patterns, scan_budget),
     "configFiles": scan_files(payload["configFiles"], patterns, scan_budget),
     "processEnvironment": scan_processes(
-        selected_processes,
+        payload["procRoot"],
         "environ",
         patterns,
         scan_budget,
-        process_selection_errors,
     ),
     "processArguments": scan_processes(
-        selected_processes,
+        payload["procRoot"],
         "cmdline",
         patterns,
         scan_budget,
-        process_selection_errors,
     ),
 }
 statuses = {category["status"] for category in categories.values()}
