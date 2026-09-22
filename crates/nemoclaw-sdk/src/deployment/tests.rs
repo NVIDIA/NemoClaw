@@ -81,6 +81,30 @@ fn ordinary_plan_cannot_delete_replace_or_recreate_a_bound_resource() {
     }
 }
 #[test]
+fn reconstructible_recreation_uses_opentofu_state_after_refresh_only() {
+    // After OpenTofu commits refresh, its next plan need not report absence again.
+    // Supplied bindings must not override OpenTofu's reconstructible transitions.
+    let address = "nemoclaw_provider.example";
+    let allowed = [(address.into(), Row::new())].into();
+    let bindings = [(
+        address.into(),
+        StateBinding {
+            id: "previous-registration".into(),
+            ..Default::default()
+        },
+    )]
+    .into();
+    let plan: Plan = serde_json::from_value(json!({"resource_changes": [{
+        "address": address,
+        "change": {"actions": ["create"], "before": null, "after": {"name": "example"}}
+    }]}))
+    .unwrap();
+    let changes = check_plan(&plan, &allowed, &bindings).unwrap();
+    assert_eq!(changes.len(), 1);
+    assert_eq!(changes[0].actions, ["create"]);
+}
+
+#[test]
 fn reconstructible_resources_support_removal_replacement_and_confirmed_absence() {
     for kind in ["provider", "provider_profile", "pi_configuration"] {
         let address = format!("nemoclaw_{kind}.example");
@@ -112,7 +136,7 @@ fn reconstructible_resources_support_removal_replacement_and_confirmed_absence()
         }]}))
         .unwrap();
         assert!(check_plan(&removal, &BTreeMap::new(), &bindings).is_ok());
-        let mut recreation: Plan = serde_json::from_value(json!({
+        let recreation: Plan = serde_json::from_value(json!({
             "resource_changes":[{"address":address,"change":{"actions":["create"],"after":{"name":"desired"}}}],
             "resource_drift":[{"address":address,"change":{"actions":["delete"],"before":{"id":"physical"}}}]
         })).unwrap();
@@ -122,40 +146,33 @@ fn reconstructible_resources_support_removal_replacement_and_confirmed_absence()
             "resource_drift":[{"address":address,"change":{"actions":["delete"],"before":{"id":"physical"}}}]
         })).unwrap();
         assert!(check_plan(&removed_and_absent, &BTreeMap::new(), &bindings).is_ok());
-        recreation.resource_drift[0].change.after = json!({"id":"physical"});
-        assert!(check_plan(&recreation, &expected, &bindings).is_err());
-        recreation.resource_drift[0].change.after = Value::Null;
-        recreation.resource_drift[0].change.before["id"] = json!("foreign");
-        assert!(check_plan(&recreation, &expected, &bindings).is_err());
-        recreation.resource_drift.clear();
-        assert!(check_plan(&recreation, &expected, &bindings).is_err());
     }
 }
 
 #[test]
-fn reconstructible_resource_plans_cannot_forget_or_change_recorded_identity() {
+fn reconstructible_resource_plans_keep_scope_without_rechecking_provider_identity() {
     let address = "nemoclaw_provider.example";
     let expected = [(address.into(), Row::new())].into();
     let bindings = [(
         address.into(),
         StateBinding {
-            id: "physical".into(),
+            id: "previous".into(),
             ..Default::default()
         },
     )]
     .into();
-    for (actions, id) in [
-        (json!(["delete"]), "foreign"),
-        (json!(["forget"]), "physical"),
-    ] {
-        let plan: Plan = serde_json::from_value(json!({"resource_changes":[{
-            "address":address,"change":{"actions":actions,"before":{"id":id}}
-        }]}))
-        .unwrap();
-        assert!(check_plan(&plan, &expected, &bindings).is_err());
-    }
+    let plan: Plan = serde_json::from_value(json!({"resource_changes": [{
+        "address": address, "change": {"actions": ["no-op"], "before": {"id": "refreshed"}, "after": {"id": "refreshed"}}
+    }]})).unwrap();
+    assert!(check_plan(&plan, &expected, &bindings).unwrap().is_empty());
+    assert!(check_plan(&plan, &BTreeMap::new(), &BTreeMap::new()).is_err());
     let omitted: Plan = serde_json::from_value(json!({"resource_changes":[]})).unwrap();
-    assert!(check_plan(&omitted, &BTreeMap::new(), &bindings).is_err());
+    assert!(
+        check_plan(&omitted, &BTreeMap::new(), &bindings)
+            .unwrap()
+            .is_empty()
+    );
+    assert!(check_plan(&omitted, &expected, &bindings).is_err());
 }
 
 #[test]
@@ -762,11 +779,6 @@ fn removed_disposable_compute_accepts_confirmed_absence() {
             .unwrap()
             .is_empty()
     );
-    let mut unexplained = plan;
-    unexplained.resource_drift[0].change.after = json!({"id": "still-present"});
-    assert!(check_plan(&unexplained, &BTreeMap::new(), &bindings).is_err());
-    unexplained.resource_drift.clear();
-    assert!(check_plan(&unexplained, &BTreeMap::new(), &bindings).is_err());
 }
 
 #[tokio::test]
@@ -825,7 +837,7 @@ async fn changing_gateway_management_at_the_same_endpoint_preserves_saved_state(
 }
 
 #[test]
-fn replacement_cleanup_is_bound_to_the_recorded_old_compute_object() {
+fn replacement_cleanup_reports_opentofu_objects_within_deployment_scope() {
     let address = "docker_container.runtime";
     let allowed = BTreeMap::from([(address.into(), Row::new())]);
     let bindings = BTreeMap::from([(
@@ -850,22 +862,18 @@ fn replacement_cleanup_is_bound_to_the_recorded_old_compute_object() {
         1
     );
     assert!(export::settled(&bindings).is_err());
-    for (field, value) in [
-        ("deposed", json!("unknown")),
-        ("address", json!("docker_volume.cache")),
-    ] {
-        let mut invalid = old.clone();
-        invalid[field] = value;
-        assert!(check_plan(&plan(json!([current, invalid])), &allowed, &bindings).is_err());
-    }
-    for change in [
-        json!({"actions":["delete"],"before":{"id":"current"}}),
-        json!({"actions":["update"],"before":{"id":"old"}}),
-    ] {
-        let mut invalid = old.clone();
-        invalid["change"] = change;
-        assert!(check_plan(&plan(json!([current, invalid])), &allowed, &bindings).is_err());
-    }
+    let mut refreshed = old.clone();
+    refreshed["deposed"] = json!("refreshed-key");
+    refreshed["change"]["before"]["id"] = json!("refreshed-old-object");
+    assert_eq!(
+        check_plan(&plan(json!([current, refreshed])), &allowed, &bindings)
+            .unwrap()
+            .len(),
+        1
+    );
+    let mut outside = old.clone();
+    outside["address"] = json!("docker_container.foreign");
+    assert!(check_plan(&plan(json!([current, outside])), &allowed, &bindings).is_err());
     assert!(check_plan(&plan(json!([current, old, old])), &allowed, &bindings).is_err());
     let mut delete = current.clone();
     delete["change"]["actions"] = json!(["delete"]);
@@ -905,9 +913,6 @@ fn replacement_cleanup_is_bound_to_the_recorded_old_compute_object() {
         .unwrap()
         .is_empty()
     );
-    let mut invalid = absent.clone();
-    invalid["change"]["after"] = json!({"id":"unrecorded"});
-    assert!(check_plan(&plan(json!([current, invalid])), &allowed, &bindings).is_err());
     assert!(check_plan(&plan(json!([current])), &allowed, &bindings).is_ok());
     for durable in [
         "docker_volume.cache",
