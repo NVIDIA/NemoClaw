@@ -12,6 +12,7 @@ import { createHermesCredentialEnvReconciliationRuntime } from "../../actions/sa
 import type { SandboxEntry } from "../../state/registry";
 import { runSandboxProviderPreDeleteCleanup } from "../sandbox-provider-cleanup";
 import {
+  activateManagedStartupCorporateCaTrustBeforeIdentityRevalidation,
   assertApfCreateIntent,
   completeHermesPortableSandboxRegistration,
   createProviderEffectBoundary,
@@ -29,14 +30,12 @@ import {
   runSandboxCreateWithIdentityVerification,
   runWithPostCreateRecovery,
 } from "./orchestration";
-
 const UNVERIFIED_RECOVERY_CONTEXT = {
   gatewayName: "nemoclaw",
   gatewayPort: 8080,
   lifecycleGeneration: "generation-1",
   createAttemptNonce: "a".repeat(62),
 } as const;
-
 describe("managed startup hold release", () => {
   it("retries a transient exact-container release failure before retained recovery", () => {
     const release = vi
@@ -45,24 +44,54 @@ describe("managed startup hold release", () => {
         throw new Error("release unavailable");
       })
       .mockImplementationOnce(() => undefined);
-
     expect(() => releaseManagedStartupHoldWithRetry(release)).not.toThrow();
     expect(release).toHaveBeenCalledTimes(2);
   });
-
   it("bounds persistent release failures", () => {
     const release = vi.fn(() => {
       throw new Error("release unavailable");
     });
-
     expect(() => releaseManagedStartupHoldWithRetry(release)).toThrow("release unavailable");
     expect(release).toHaveBeenCalledTimes(3);
   });
 });
-
+describe("managed startup corporate CA activation", () => {
+  it("refreshes the exact sandbox before revalidation only when a corporate CA exists", async () => {
+    let completeRefresh!: () => void;
+    const refreshCorporateCaTrust = vi.fn(
+      () => new Promise<void>((resolve) => (completeRefresh = resolve)),
+    );
+    const revalidateSandboxIdentity = vi.fn();
+    const activate = (corporateCaB64: string | null) =>
+      activateManagedStartupCorporateCaTrustBeforeIdentityRevalidation({
+        corporateCaB64,
+        sandboxName: "alpha",
+        boundary: {
+          gatewayName: "owned-gateway",
+          lifecycleLiveIdentityFingerprint: "a".repeat(64),
+        },
+        refreshCorporateCaTrust,
+        revalidateSandboxIdentity,
+      });
+    const activation = activate("Y2EtYnVuZGxl");
+    expect(refreshCorporateCaTrust).toHaveBeenCalledExactlyOnceWith({
+      sandboxName: "alpha",
+      sandboxIdentityFingerprint: "a".repeat(64),
+      target: { kind: "named", gatewayName: "owned-gateway" },
+    });
+    expect(revalidateSandboxIdentity).not.toHaveBeenCalled();
+    completeRefresh();
+    await activation;
+    expect(revalidateSandboxIdentity).toHaveBeenCalledOnce();
+    refreshCorporateCaTrust.mockClear();
+    revalidateSandboxIdentity.mockClear();
+    await activate(null);
+    expect(refreshCorporateCaTrust).not.toHaveBeenCalled();
+    expect(revalidateSandboxIdentity).toHaveBeenCalledOnce();
+  });
+});
 describe("created Hermes credential environment reconciliation", () => {
   const plan = { agent: "hermes" } as never;
-
   it("uses the native restart recovery path after the secret boundary", async () => {
     const events: string[] = [];
     const restart = vi

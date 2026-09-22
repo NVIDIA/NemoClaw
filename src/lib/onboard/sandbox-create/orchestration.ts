@@ -1020,6 +1020,32 @@ export function releaseManagedStartupHoldWithRetry(release: () => void): void {
   throw failure;
 }
 
+export async function activateManagedStartupCorporateCaTrustBeforeIdentityRevalidation(input: {
+  readonly corporateCaB64: string | null;
+  readonly sandboxName: string;
+  readonly boundary: Pick<
+    VerifiedSandboxCreateBoundary,
+    "gatewayName" | "lifecycleLiveIdentityFingerprint"
+  >;
+  readonly refreshCorporateCaTrust: (request: {
+    readonly sandboxName: string;
+    readonly sandboxIdentityFingerprint: string;
+    readonly target: { readonly kind: "named"; readonly gatewayName: string };
+  }) => Promise<void>;
+  readonly revalidateSandboxIdentity: (operation: string) => void;
+}): Promise<void> {
+  if (input.corporateCaB64 !== null) {
+    await input.refreshCorporateCaTrust({
+      sandboxName: input.sandboxName,
+      sandboxIdentityFingerprint: input.boundary.lifecycleLiveIdentityFingerprint,
+      target: { kind: "named", gatewayName: input.boundary.gatewayName },
+    });
+  }
+  input.revalidateSandboxIdentity(
+    `confirming managed startup profile for sandbox '${input.sandboxName}'`,
+  );
+}
+
 /**
  * Keep every effect after an unverified create behind one exact-identity gate.
  *
@@ -3113,15 +3139,15 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
                   managedBootstrapCreateFinished = true;
                   if (managedStartupRootApplyRequest.corporateCaB64 !== null) {
                     console.log("  Activating corporate CA trust in the OpenShell supervisor...");
-                    await managedWorkloadOnboard.refreshManagedStartupCorporateCaTrust({
-                      sandboxName,
-                      sandboxIdentityFingerprint: boundary.lifecycleLiveIdentityFingerprint,
-                      target: { kind: "named", gatewayName: boundary.gatewayName },
-                    });
                   }
-                  context.revalidateSandboxIdentity(
-                    `confirming managed startup profile for sandbox '${sandboxName}'`,
-                  );
+                  await activateManagedStartupCorporateCaTrustBeforeIdentityRevalidation({
+                    corporateCaB64: managedStartupRootApplyRequest.corporateCaB64,
+                    sandboxName,
+                    boundary,
+                    refreshCorporateCaTrust: (request) =>
+                      managedWorkloadOnboard.refreshManagedStartupCorporateCaTrust(request),
+                    revalidateSandboxIdentity: context.revalidateSandboxIdentity,
+                  });
                   console.log("  ✓ Revalidated the managed startup sandbox identity");
                 }
                 if (runDeferredProviderEffects) await runDeferredProviderEffects(context);
