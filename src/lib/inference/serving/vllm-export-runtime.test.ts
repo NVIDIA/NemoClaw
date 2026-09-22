@@ -64,6 +64,7 @@ function fixture() {
     Image: imageId,
     StartedAt: "2026-09-10T10:00:00Z",
     Matches: true,
+    Diagnostic: "",
     State: { Running: true },
     Config: {
       Env: [`VLLM_API_KEY=${key}`],
