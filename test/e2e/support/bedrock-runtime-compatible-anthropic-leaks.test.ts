@@ -111,7 +111,7 @@ afterEach(async () => {
 });
 
 describe("Bedrock Runtime bounded leak probe", () => {
-  it("forwards probe input through the explicit OpenShell stdin boundary (#12191)", () => {
+  it("uses the pinned OpenShell piped-stdin command contract (#12191)", () => {
     const args = createBedrockLeakProbeExecArgs("e2e-bedrock");
 
     expect(args.slice(0, -1)).toEqual([
@@ -119,12 +119,12 @@ describe("Bedrock Runtime bounded leak probe", () => {
       "exec",
       "-n",
       "e2e-bedrock",
-      "--stdin",
       "--",
       "python3",
       "-I",
       "-c",
     ]);
+    expect(args).not.toContain("--stdin");
     expect(args.at(-1)).toBe(BEDROCK_LEAK_PROBE_SOURCE);
   });
 

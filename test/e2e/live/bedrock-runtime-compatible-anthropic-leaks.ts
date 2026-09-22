@@ -66,7 +66,6 @@ export function createBedrockLeakProbeExecArgs(sandboxName: string): readonly st
     "exec",
     "-n",
     sandboxName,
-    "--stdin",
     "--",
     "python3",
     "-I",
