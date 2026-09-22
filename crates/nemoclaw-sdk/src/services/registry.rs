@@ -134,36 +134,11 @@ pub(crate) fn constrain_schema(
     }
 }
 
-trait InferenceCapability {
-    fn resolve(&self, document: &Document, name: &str) -> Result<ResolvedInference, ConfigError>;
-
-    fn validate_route(
-        &self,
-        provider: &InferenceProvider,
-        sandbox_runtime: ComputeDriver,
-        harness: HarnessKind,
-        model: &str,
-    ) -> Result<(), ConfigError>;
-
-    fn credential_source(
-        &self,
-        document: &Document,
-        name: &str,
-        generations: &Generations,
-    ) -> Result<Option<String>, crate::Error>;
-}
-
 impl ServiceDefinition {
     fn stage(&self) -> InstallStage {
         match self {
             Self::Ollama(_) | Self::Vllm(_) => InstallStage::Runtime,
             Self::OllamaProxy(_) => InstallStage::Deployment,
-        }
-    }
-
-    fn inference(&self) -> Option<&dyn InferenceCapability> {
-        match self {
-            Self::Ollama(_) | Self::OllamaProxy(_) | Self::Vllm(_) => Some(self),
         }
     }
 
@@ -260,7 +235,7 @@ impl Installer for ServiceDefinition {
     }
 }
 
-impl InferenceCapability for ServiceDefinition {
+impl ServiceDefinition {
     fn resolve(&self, document: &Document, name: &str) -> Result<ResolvedInference, ConfigError> {
         Ok(match self {
             ServiceDefinition::Ollama(service) => ResolvedInference {
@@ -385,11 +360,7 @@ pub(crate) fn resolve(
     let Some((name, definition)) = definition(document, provider)? else {
         return Ok(None);
     };
-    definition
-        .inference()
-        .ok_or_else(|| ConfigError::new("serviceRef must name an inference-capable service"))?
-        .resolve(document, name)
-        .map(Some)
+    definition.resolve(document, name).map(Some)
 }
 
 pub(crate) fn provider_authenticated(
@@ -478,15 +449,7 @@ pub(crate) fn validate_provider(
     document: &Document,
     provider: &InferenceProvider,
 ) -> Result<bool, ConfigError> {
-    use crate::config::validation::require;
-    let Some((_, definition)) = definition(document, provider)? else {
-        return Ok(false);
-    };
-    require(
-        definition.inference().is_some(),
-        "serviceRef must name an inference-capable service",
-    )?;
-    Ok(true)
+    Ok(definition(document, provider)?.is_some())
 }
 
 pub(crate) fn validate_route(
@@ -500,15 +463,12 @@ pub(crate) fn validate_route(
     let Some((name, definition)) = definition(document, provider)? else {
         return Ok(());
     };
-    let inference = definition
-        .inference()
-        .ok_or_else(|| ConfigError::new("serviceRef must name an inference-capable service"))?;
-    let resolved = inference.resolve(document, name)?;
+    let resolved = definition.resolve(document, name)?;
     require(
         model == resolved.served_model,
         "service requires its declared served model",
     )?;
-    inference.validate_route(provider, sandbox_runtime, harness, model)
+    definition.validate_route(provider, sandbox_runtime, harness, model)
 }
 
 pub(crate) fn credential_source_json(
@@ -520,8 +480,6 @@ pub(crate) fn credential_source_json(
         return Ok(None);
     };
     definition
-        .inference()
-        .ok_or_else(|| ConfigError::new("serviceRef must name an inference-capable service"))?
         .credential_source(document, name, generations)
         .map_err(|_| ConfigError::new("invalid managed credential source"))
 }
@@ -585,7 +543,7 @@ impl<'a> BackendRegistry<'a> {
         &self,
         kind: &str,
         row: &Row,
-    ) -> Result<Option<RegisteredBackend>, ObservationError> {
+    ) -> Result<Option<Box<dyn Backend>>, ObservationError> {
         if matches!(
             kind,
             installers::vllm::SERVICE_KIND
@@ -607,16 +565,15 @@ impl<'a> BackendRegistry<'a> {
             };
             let engine = crate::managed::runtime_engine(self.connections, kind, row)
                 .map_err(|_| ObservationError::Backend("engine connection unavailable"))?;
-            return Ok(Some(RegisteredBackend(Box::new(
-                crate::managed::ManagedBackend::storage(engine, storage_kind),
+            return Ok(Some(Box::new(crate::managed::ManagedBackend::storage(
+                engine,
+                storage_kind,
             ))));
         }
         if crate::managed::ManagedBackend::supports(kind) {
             let engine = crate::managed::runtime_engine(self.connections, kind, row)
                 .map_err(|_| ObservationError::Backend("engine connection unavailable"))?;
-            return Ok(Some(RegisteredBackend(Box::new(
-                crate::managed::ManagedBackend::new(engine),
-            ))));
+            return Ok(Some(Box::new(crate::managed::ManagedBackend::new(engine))));
         }
         if installers::ollama::ProxyBackend::supports(kind) {
             let endpoint = row
@@ -627,47 +584,11 @@ impl<'a> BackendRegistry<'a> {
                 .connections
                 .resolve(endpoint)
                 .map_err(|_| ObservationError::Backend("engine connection unavailable"))?;
-            return Ok(Some(RegisteredBackend(Box::new(
-                installers::ollama::ProxyBackend::new(engine),
+            return Ok(Some(Box::new(installers::ollama::ProxyBackend::new(
+                engine,
             ))));
         }
         Ok(None)
-    }
-}
-
-pub struct RegisteredBackend(Box<dyn Backend>);
-
-#[async_trait::async_trait]
-impl Backend for RegisteredBackend {
-    async fn plan(
-        &self,
-        kind: &str,
-        desired: &Row,
-        prior: Option<&Row>,
-    ) -> Result<(), crate::Error> {
-        self.0.plan(kind, desired, prior).await
-    }
-
-    async fn read(
-        &self,
-        kind: &str,
-        prior: &Row,
-        removing: bool,
-    ) -> Result<Option<Row>, ObservationError> {
-        self.0.read(kind, prior, removing).await
-    }
-
-    async fn ensure(&self, kind: &str, desired: &Row) -> crate::backend::Mutation {
-        self.0.ensure(kind, desired).await
-    }
-
-    async fn remove(
-        &self,
-        kind: &str,
-        prior: &Row,
-        destroying: bool,
-    ) -> Result<(), ObservationError> {
-        self.0.remove(kind, prior, destroying).await
     }
 }
 

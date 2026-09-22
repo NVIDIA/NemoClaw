@@ -28,8 +28,8 @@ pub use installers::ollama::{
 };
 pub(crate) use registry::InstallPlans;
 pub use registry::{
-    BackendRegistry, RegisteredBackend, ResourceBehavior, ResourceSchema, ServiceDefinition,
-    resource_behavior, resource_schemas,
+    BackendRegistry, ResourceBehavior, ResourceSchema, ServiceDefinition, resource_behavior,
+    resource_schemas,
 };
 pub(crate) use registry::{
     constrain_schema, credential_source_json, defaults, generation_kinds, has_runtime,
