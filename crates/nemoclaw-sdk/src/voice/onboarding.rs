@@ -224,12 +224,12 @@ fn read_result<T: for<'de> Deserialize<'de>>(path: &Path) -> Result<T, Error> {
     }
     let file = File::open(path)
         .map_err(|_| Error::Conflict("VoiceClaw result cannot be opened; agent retained"))?;
-    let after = file
-        .metadata()
-        .map_err(|_| Error::Conflict("VoiceClaw result cannot be inspected; agent retained"))?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::MetadataExt;
+        let after = file
+            .metadata()
+            .map_err(|_| Error::Conflict("VoiceClaw result cannot be inspected; agent retained"))?;
         if before.dev() != after.dev() || before.ino() != after.ino() {
             return Err(Error::Conflict(
                 "VoiceClaw result changed during inspection; agent retained",
