@@ -761,6 +761,42 @@ describe("prompt machinery (unchanged)", () => {
     expect(result.status).toBe(0);
   });
 
+  it("masks a secret prompt when stdin is a TTY and stderr is captured (#12167)", () => {
+    // The readline fallback keys terminal mode off stdin, and terminal mode
+    // echoes keystrokes to its output, so a captured stderr must not be
+    // allowed to demote a secret prompt to that path.
+    const script = `
+const { prompt } = require(${JSON.stringify(path.join(import.meta.dirname, "../..", "src", "lib", "credentials", "store.ts"))});
+process.stdin.isTTY = true;
+process.stderr.isTTY = false;
+process.stdin.ref = () => process.stdin;
+process.stdin.resume = () => process.stdin;
+process.stdin.pause = () => process.stdin;
+process.stdin.unref = () => process.stdin;
+process.stdin.setRawMode = () => process.stdin;
+const written = [];
+process.stderr.write = (chunk) => { written.push(String(chunk)); return true; };
+const pending = prompt('api key: ', { secret: true });
+setImmediate(() => {
+  process.stdin.emit('data', 'nvapi-supersecret');
+  process.stdin.emit('data', '\\r');
+});
+pending.then((answer) => {
+  console.log('ANSWER=' + answer);
+  console.log('ECHOED=' + String(written.join('').includes('nvapi-supersecret')));
+  console.log('MASKED=' + String(written.join('').includes('*')));
+});
+`;
+    const result = spawnSync(process.execPath, ["-e", script], {
+      encoding: "utf-8",
+      timeout: 5000,
+    });
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("ANSWER=nvapi-supersecret");
+    expect(result.stdout).toContain("ECHOED=false");
+    expect(result.stdout).toContain("MASKED=true");
+  });
+
   it("settles the outer prompt promise on secret prompt errors", () => {
     const script = `
 const { prompt } = require(${JSON.stringify(path.join(import.meta.dirname, "../..", "src", "lib", "credentials", "store.ts"))});

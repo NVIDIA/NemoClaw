@@ -697,7 +697,13 @@ export function promptSecret(question: string, maskCap?: number): Promise<string
 /**
  * Prompt the user on stderr and resolve to their trimmed answer. Pass
  * `{ secret: true }` to mask input on a TTY (falls back to plain readline
- * when stdin/stderr is non-interactive, e.g. in CI).
+ * when stdin is non-interactive, e.g. in CI).
+ *
+ * A TTY stdin alone selects the masked reader. The readline fallback keys
+ * its terminal mode off stdin so Ctrl-C keeps working when stderr is
+ * captured, and terminal mode echoes what is typed — which would write the
+ * secret itself into the redirected stderr. The masked reader only ever
+ * writes asterisks, and it needs nothing from stderr but a writable stream.
  */
 export function prompt(
   question: string,
@@ -712,7 +718,7 @@ export function prompt(
     if (typeof process.stdin.ref === "function") {
       process.stdin.ref();
     }
-    const silent = opts.secret === true && process.stdin.isTTY && process.stderr.isTTY;
+    const silent = opts.secret === true && process.stdin.isTTY === true;
     if (silent) {
       promptSecret(question, opts.maskCap)
         .then(resolve)
