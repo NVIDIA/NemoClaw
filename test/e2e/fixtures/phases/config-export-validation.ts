@@ -157,7 +157,7 @@ const DeepAgentsExportSandboxSchema = Type.Object(
   },
   { additionalProperties: false },
 );
-const LegacyExportSandboxSchema = Type.Object(
+const AgentExportSandboxSchema = Type.Object(
   {
     ...ExportSandboxFields,
     harness: Type.Object(
@@ -167,109 +167,7 @@ const LegacyExportSandboxSchema = Type.Object(
       },
       { additionalProperties: false },
     ),
-    agents: Type.Array(ExportAgentSchema, { minItems: 1 }),
-  },
-  { additionalProperties: false },
-);
-const SingletonOpenClawExportSandboxSchema = Type.Object(
-  {
-    ...ExportSandboxFields,
-    harness: Type.Object(
-      { kind: Type.Literal("openclaw"), ...ExportHarnessFields },
-      { additionalProperties: false },
-    ),
     agent: ExportAgentSchema,
-  },
-  { additionalProperties: false },
-);
-const HostedInferenceProviderSchema = Type.Object(
-  {
-    name: LocalNameSchema,
-    provider: Type.Union([Type.Literal("anthropic"), Type.Literal("openai")]),
-    api: Type.Union([
-      Type.Literal("anthropic-messages"),
-      Type.Literal("openai-completions"),
-      Type.Literal("openai-responses"),
-    ]),
-    endpoint: NonEmptyStringSchema,
-    credential: Type.Optional(CredentialSchema),
-  },
-  { additionalProperties: false },
-);
-const OllamaInferenceProviderSchema = Type.Object(
-  {
-    name: LocalNameSchema,
-    provider: Type.Literal("openai"),
-    api: Type.Literal("openai-completions"),
-    serviceRef: LocalNameSchema,
-  },
-  { additionalProperties: false },
-);
-const OllamaProxyServiceSchema = Type.Object(
-  {
-    kind: Type.Literal("ollamaProxy"),
-    image: Type.Null(),
-    endpoint: NonEmptyStringSchema,
-    upstream: Type.Object(
-      {
-        endpoint: NonEmptyStringSchema,
-        model: Type.Object(
-          {
-            name: NonEmptyStringSchema,
-            digest: Type.String({ pattern: "^[a-f0-9]{64}$" }),
-          },
-          { additionalProperties: false },
-        ),
-      },
-      { additionalProperties: false },
-    ),
-  },
-  { additionalProperties: false },
-);
-const VllmServiceSchema = Type.Object(
-  {
-    kind: Type.Literal("vllm"),
-    authentication: Type.Literal("bearer"),
-    hardware: Type.Object(
-      {
-        architecture: Type.Literal("amd64"),
-        minComputeCapability: Type.Literal(90),
-        minGpuMemoryBytes: Type.Literal(96_000_000_000),
-        minDriverMajor: Type.Literal(580),
-      },
-      { additionalProperties: false },
-    ),
-    container: Type.Object(
-      { ipc: Type.Literal("host"), sharedMemoryGiB: Type.Literal(32) },
-      { additionalProperties: false },
-    ),
-    image: Type.Null(),
-    model: Type.Object(
-      {
-        repository: NonEmptyStringSchema,
-        revision: Type.String({ pattern: "^[a-f0-9]{40}$" }),
-      },
-      { additionalProperties: false },
-    ),
-    serving: Type.Object(
-      {
-        modelName: NonEmptyStringSchema,
-        mambaBackend: Type.Literal("flashinfer"),
-        enforceEager: Type.Literal(false),
-        toolParser: Type.Literal("qwen3_coder"),
-        reasoningParser: Type.Literal("nemotron_v3"),
-        port: Type.Integer({ minimum: 1024, maximum: 65_535 }),
-        contextTokens: Type.Literal(65_536),
-        maxSequences: Type.Literal(1),
-        batchTokens: Type.Literal(4096),
-        startupTimeoutSeconds: Type.Literal(1800),
-      },
-      { additionalProperties: false },
-    ),
-    memory: Type.Object(
-      { gpuMemoryUtilization: Type.Literal(0.75) },
-      { additionalProperties: false },
-    ),
   },
   { additionalProperties: false },
 );
@@ -295,18 +193,24 @@ const ConfigExportDocumentSchema = Type.Object(
           { additionalProperties: false },
         ),
         inferenceProviders: Type.Array(
-          Type.Union([HostedInferenceProviderSchema, OllamaInferenceProviderSchema]),
+          Type.Object(
+            {
+              name: LocalNameSchema,
+              provider: Type.Union([Type.Literal("anthropic"), Type.Literal("openai")]),
+              api: Type.Union([
+                Type.Literal("anthropic-messages"),
+                Type.Literal("openai-completions"),
+                Type.Literal("openai-responses"),
+              ]),
+              endpoint: NonEmptyStringSchema,
+              credential: Type.Optional(CredentialSchema),
+            },
+            { additionalProperties: false },
+          ),
           { minItems: 1 },
         ),
-        services: Type.Optional(
-          Type.Record(LocalNameSchema, Type.Union([OllamaProxyServiceSchema, VllmServiceSchema])),
-        ),
         sandboxes: Type.Array(
-          Type.Union([
-            DeepAgentsExportSandboxSchema,
-            SingletonOpenClawExportSandboxSchema,
-            LegacyExportSandboxSchema,
-          ]),
+          Type.Union([DeepAgentsExportSandboxSchema, AgentExportSandboxSchema]),
           { minItems: 1, maxItems: 1 },
         ),
       },
@@ -545,8 +449,6 @@ function exportedHarnessKind(agent: string | null | undefined): string | null {
 
 function exportedProviderName(provider: string | null | undefined): string | null {
   if (!provider) return null;
-  if (provider === "vllm-local") return "managed-vllm";
-  if (provider === "ollama-local") return "local";
   const normalized = provider
     .toLowerCase()
     .replace(/[^a-z0-9-]+/gu, "-")
@@ -670,16 +572,11 @@ async function readEffectivePolicyDocument(
 
 function semanticsFromDocument(document: ConfigExportDocument): ConfigExportSemantics {
   const sandbox = document.spec.sandboxes[0];
-  const agent =
-    sandbox === undefined ? undefined : "agent" in sandbox ? sandbox.agent : sandbox.agents[0];
+  const agent = sandbox?.agent;
   const route = agent?.inference.routes[0];
   const provider = document.spec.inferenceProviders.find(
     (candidate) => candidate.name === route?.providerRef,
   );
-  const service =
-    provider && "serviceRef" in provider && typeof provider.serviceRef === "string"
-      ? document.spec.services?.[provider.serviceRef]
-      : undefined;
   return {
     sandboxName: sandbox?.name ?? null,
     agent: sandbox?.harness.kind ?? null,
@@ -688,12 +585,7 @@ function semanticsFromDocument(document: ConfigExportDocument): ConfigExportSema
     inferenceProviderName: provider?.name ?? null,
     inferenceProvider: provider?.provider ?? null,
     inferenceApi: provider?.api ?? null,
-    inferenceEndpoint:
-      provider && "endpoint" in provider && typeof provider.endpoint === "string"
-        ? provider.endpoint
-        : service && "endpoint" in service
-          ? service.endpoint
-          : null,
+    inferenceEndpoint: provider?.endpoint ?? null,
     model: route?.overrides?.model ?? null,
     credentialReference:
       provider && "credential" in provider ? (provider.credential?.env ?? null) : null,
@@ -772,10 +664,7 @@ async function expectedSemantics(
     inferenceProvider:
       entry.preferredInferenceApi === "anthropic-messages" ? "anthropic" : "openai",
     inferenceApi: entry.preferredInferenceApi ?? null,
-    inferenceEndpoint:
-      entry.provider === "vllm-local" || entry.provider === "ollama-local"
-        ? null
-        : (entry.endpointUrl ?? null),
+    inferenceEndpoint: entry.endpointUrl ?? null,
     model: entry.model ?? null,
     credentialReference,
     routeName: "primary",
@@ -1171,7 +1060,6 @@ export class ConfigExportValidationPhaseFixture {
       ...(classification === "failure" ? { failureStage } : {}),
       ...(diagnostic ? { diagnostic } : {}),
     };
-    if (evidence.passed && raw) await this.artifacts.writeText("config-export.yaml", raw);
     await this.artifacts.writeJson(EVIDENCE_FILE, evidence);
     if (!evidence.passed) {
       throw new Error(

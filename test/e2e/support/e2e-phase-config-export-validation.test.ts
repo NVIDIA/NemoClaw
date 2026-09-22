@@ -25,10 +25,6 @@ import { SecretStore } from "../fixtures/secrets.ts";
 import { ShellProbe, type ShellProbeResult } from "../fixtures/shell-probe.ts";
 import { listTargets } from "../registry/registry.ts";
 import type { NemoClawInstanceManifest, TargetDefinition } from "../registry/types.ts";
-import {
-  configExportDocument as document,
-  CONFIG_EXPORT_POLICY as POLICY,
-} from "./config-export-validation-fixture.ts";
 
 const IMAGE_REF = `nvcr.io/nvidia/nemoclaw@sha256:${"a".repeat(64)}`;
 const SOURCE_REVISION = "b".repeat(40);
@@ -73,13 +69,22 @@ const INTERNAL_TRANSPORT_REPRESENTATIONS = [
     value: `${ENCODED_INTERNAL_TRANSPORT.slice(0, 16)}\n# ${ENCODED_INTERNAL_TRANSPORT.slice(16)}`,
   },
 ] as const;
-const createdDirectories: string[] = [],
-  artifactDirectories: string[] = [];
+const POLICY = {
+  version: 1,
+  network_policies: {
+    inference: {
+      name: "inference",
+      endpoints: [{ host: "inference.example", port: 443 }],
+      binaries: [{ path: "/usr/bin/openclaw" }],
+    },
+  },
+};
+const createdDirectories: string[] = [];
+const artifactDirectories: string[] = [];
 
 function sha256(value: string): string {
   return createHash("sha256").update(value).digest("hex");
 }
-
 function target(expectation: TargetDefinition["configExport"]["expectation"]): TargetDefinition {
   return {
     ...listTargets().find((entry) => entry.id === "ubuntu-repo-cloud-openclaw")!,
@@ -89,7 +94,6 @@ function target(expectation: TargetDefinition["configExport"]["expectation"]): T
         : { expectation },
   };
 }
-
 function manifest(
   features?: Record<string, unknown>,
   credentialRefs = ["NVIDIA_INFERENCE_API_KEY"],
@@ -112,7 +116,72 @@ function manifest(
     },
   };
 }
-
+function document(
+  overrides: {
+    model?: string;
+    observability?: boolean;
+    credentialReference?: string;
+  } = {},
+): ConfigExportDocument {
+  return {
+    apiVersion: "nemoclaw.nvidia.com/v1alpha1",
+    kind: "NemoClawConfig",
+    metadata: {
+      name: "export",
+      uid: "123e4567-e89b-42d3-a456-426614174000",
+    },
+    spec: {
+      gateway: {
+        management: "managed",
+        endpoint: "http://127.0.0.1:8080",
+        networkCIDR: "172.30.50.0/24",
+      },
+      inferenceProviders: [
+        {
+          name: "hosted-compatible-endpoint",
+          provider: "openai",
+          api: "openai-completions",
+          endpoint: "https://inference.example/v1",
+          credential: { env: overrides.credentialReference ?? "NVIDIA_INFERENCE_API_KEY" },
+        },
+      ],
+      sandboxes: [
+        {
+          name: "sandbox",
+          runtime: { provider: "docker" },
+          network: { policy: { explicit: POLICY } },
+          harness: {
+            kind: "openclaw",
+            ...(overrides.observability
+              ? {
+                  observability: {
+                    otlp: {
+                      enabled: true,
+                      endpoint: "http://host.openshell.internal:4318",
+                      serviceName: "openclaw",
+                      sampleRate: 1,
+                    },
+                  },
+                }
+              : {}),
+          },
+          agent: {
+            name: "primary",
+            inference: {
+              routes: [
+                {
+                  name: "primary",
+                  providerRef: "hosted-compatible-endpoint",
+                  overrides: { model: overrides.model ?? "nvidia/model" },
+                },
+              ],
+            },
+          },
+        },
+      ],
+    },
+  } as unknown as ConfigExportDocument;
+}
 function instance(expectedFailure = false): NemoClawInstance {
   return {
     onboarding: "cloud-openclaw",
@@ -279,7 +348,6 @@ function fixture(
   const artifacts =
     options.artifacts ??
     ({
-      writeText: vi.fn(async () => "config-export.yaml"),
       writeJson: vi.fn(async (_name: string, value: ConfigExportEvidenceEnvelope) => {
         writes.push(value);
         return "evidence.json";
@@ -472,7 +540,6 @@ if (process.argv.includes("--output")) {
       byteLength: Buffer.byteLength(raw, "utf8"),
       sha256: sha256(raw),
     });
-    expect(fs.readFileSync(path.join(artifactRoot, "config-export.yaml"), "utf8")).toBe(raw);
     expect(persistedEvidence.verifications.map((entry) => entry.id)).toEqual(
       expect.arrayContaining([
         "sandboxName",
@@ -714,10 +781,8 @@ process.stdout.write("x".repeat(1024 * 1024 + 2048 - Buffer.byteLength(suffix, "
   it("validates the current v1alpha1 Deep Agents document (#11860)", () => {
     const candidate = structuredClone(document());
     const sandbox = candidate.spec.sandboxes[0]!;
-    const agents = Reflect.get(sandbox, "agents") as unknown[];
     const image = { ref: IMAGE_REF };
-    Object.assign(sandbox, { harness: { kind: "deepagents" }, image, agent: agents[0] });
-    Reflect.deleteProperty(sandbox, "agents");
+    Object.assign(sandbox, { harness: { kind: "deepagents" }, image });
     expect(parseConfigExport(JSON.stringify(candidate)).spec.sandboxes[0]).toMatchObject({
       image: { ref: IMAGE_REF },
       harness: { kind: "deepagents" },
@@ -731,6 +796,10 @@ process.stdout.write("x".repeat(1024 * 1024 + 2048 - Buffer.byteLength(suffix, "
     const missingEndpoint = structuredClone(candidate);
     Reflect.deleteProperty(missingEndpoint.spec.gateway, "endpoint");
     expect(() => parseConfigExport(JSON.stringify(missingEndpoint))).toThrow(
+      "complete v1alpha1 export contract",
+    );
+    Object.assign(sandbox, { agents: [sandbox.agent], agent: undefined });
+    expect(() => parseConfigExport(JSON.stringify(candidate))).toThrow(
       "complete v1alpha1 export contract",
     );
   });

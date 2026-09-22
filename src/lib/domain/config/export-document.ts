@@ -178,23 +178,6 @@ function exportAgent(
   };
 }
 
-function exportAgents(
-  source: VerifiedExportSource,
-  providerName: string,
-): readonly V1Alpha1ExportAgent[] {
-  const primary = exportAgent(source, providerName, { name: "primary", primary: true });
-  return [
-    primary,
-    ...(source.additionalAgents ?? []).map((agent) =>
-      exportAgent(source, providerName, {
-        name: agent.name,
-        primary: false,
-        tools: agent.tools,
-      }),
-    ),
-  ];
-}
-
 function targetProcess(policy: Record<string, unknown>): void {
   const process = policy.process as Record<string, unknown> | undefined;
   if (process?.run_as_user === "sandbox") process.run_as_user = "1000";
@@ -229,11 +212,7 @@ function targetPolicy(source: VerifiedExportSource): Record<string, unknown> {
   return policy;
 }
 
-function exportSandbox(
-  source: VerifiedExportSource,
-  providerName: string,
-  singletonLocalInference: boolean,
-): V1Alpha1ExportSandbox {
+function exportSandbox(source: VerifiedExportSource, providerName: string): V1Alpha1ExportSandbox {
   const sandboxBase = {
     name: source.sandboxName,
     runtime: {
@@ -255,26 +234,20 @@ function exportSandbox(
           },
         }),
   };
-  if (source.agent === "langchain-deepagents-code") {
-    return {
-      ...sandboxBase,
-      image: { ref: source.runtime.imageRef },
-      harness: { kind: "deepagents", ...agentSettings(source) },
-      agent: exportAgent(source, providerName, { name: "primary", primary: true }),
-    };
-  }
-  if (singletonLocalInference) {
-    return {
-      ...sandboxBase,
-      harness: { kind: "openclaw", ...agentSettings(source) },
-      agent: exportAgent(source, providerName, { name: "primary", primary: true }),
-    };
-  }
-  return {
-    ...sandboxBase,
-    harness: { kind: source.agent, ...agentSettings(source) },
-    agents: exportAgents(source, providerName),
-  };
+  const sandbox: V1Alpha1ExportSandbox =
+    source.agent === "langchain-deepagents-code"
+      ? {
+          ...sandboxBase,
+          image: { ref: source.runtime.imageRef },
+          harness: { kind: "deepagents", ...agentSettings(source) },
+          agent: exportAgent(source, providerName, { name: "primary", primary: true }),
+        }
+      : {
+          ...sandboxBase,
+          harness: { kind: source.agent, ...agentSettings(source) },
+          agent: exportAgent(source, providerName, { name: "primary", primary: true }),
+        };
+  return sandbox;
 }
 
 export interface ExportConfigBuildIdentity {
@@ -288,10 +261,9 @@ export function buildExportConfig(
   identity: ExportConfigBuildIdentity,
 ): V1Alpha1Export {
   const providerName = exportedProviderName(source.inference);
-  const singletonLocalInference = "serving" in source.inference;
   const network = targetNetwork(source.sandboxName);
   const services = exportServices(source, network.bridgeAddress);
-  const sandbox = exportSandbox(source, providerName, singletonLocalInference);
+  const sandbox = exportSandbox(source, providerName);
   const candidate = {
     apiVersion: "nemoclaw.nvidia.com/v1alpha1",
     kind: "NemoClawConfig",

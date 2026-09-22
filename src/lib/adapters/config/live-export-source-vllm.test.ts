@@ -10,10 +10,7 @@ import {
 import { createHash } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
 import YAML from "yaml";
-import {
-  asExportedConfig,
-  exportedAgentList,
-} from "../../../../test/support/config-export-document";
+import { asExportedConfig } from "../../../../test/support/config-export-document";
 import { runConfigExport } from "../../actions/config/export";
 import {
   parseNemoClawConfigDocumentName,
@@ -187,7 +184,7 @@ describe("managed vLLM export pipeline", () => {
               field: "spec.sandboxes[].agent",
               category: "unsupported",
               diagnostic:
-                "Current-v1 local inference export supports one OpenClaw agent per sandbox.",
+                "V1alpha1 export does not support an OpenClaw sandbox with secondary agents.",
             }),
           ],
         },
@@ -245,7 +242,7 @@ describe("managed vLLM export pipeline", () => {
         },
       },
     });
-    expect(exportedAgentList(document.spec.sandboxes[0]!)[0]).toMatchObject({
+    expect(document.spec.sandboxes[0]!.agent).toMatchObject({
       tools: { disclosure: "direct" },
       integrationRefs: ["brave-search"],
     });
@@ -302,9 +299,7 @@ describe("managed vLLM export pipeline", () => {
       expect(result).toEqual({ ok: true, completion: { kind: "stdout" } });
       const document = asExportedConfig(YAML.parse(writeStdout.mock.calls[0]![0]));
       expect(document.spec.sandboxes[0]!.harness.execution).toEqual(execution);
-      expect(
-        exportedAgentList(document.spec.sandboxes[0]!)[0]!.inference.routes[0]!.overrides,
-      ).toEqual({
+      expect(document.spec.sandboxes[0]!.agent.inference.routes[0]!.overrides).toEqual({
         model: "nvidia-nemotron-3.5-lightning-30b-a3b-nvfp4",
         ...overrides,
       });

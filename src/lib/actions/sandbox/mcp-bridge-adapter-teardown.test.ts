@@ -19,6 +19,7 @@ const mocks = vi.hoisted(() => ({
   inspectExactMcpDestroyProvider: vi.fn(),
   inspectMcpProvider: vi.fn(),
   assertMcpProviderRecoverable: vi.fn(),
+  assertMcpAdapterTeardownRuntimeCapabilities: vi.fn(),
   preflightMcpEntryTargets: vi.fn(),
   detachProvider: vi.fn(),
   observeMcpCredentialRevision: vi.fn(),
@@ -67,7 +68,7 @@ vi.mock("./mcp-bridge-restart", () => ({
   restoreExistingMcpBridgeRuntime: mocks.restoreExistingMcpBridgeRuntime,
 }));
 vi.mock("./mcp-bridge-runtime-capabilities", () => ({
-  assertMcpAdapterTeardownRuntimeCapabilities: vi.fn(),
+  assertMcpAdapterTeardownRuntimeCapabilities: mocks.assertMcpAdapterTeardownRuntimeCapabilities,
 }));
 vi.mock("./mcp-bridge-state", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./mcp-bridge-state")>()),
@@ -85,6 +86,7 @@ import { scrubManagedMcpAdapterOrThrow } from "./mcp-bridge-adapter-teardown";
 import {
   prepareMcpBridgesForAbsentSandboxRebuild,
   prepareMcpBridgesForRebuild,
+  restoreMcpBridgesAfterRebuild,
 } from "./mcp-bridge-rebuild";
 
 const sandbox = { agent: "hermes" } as SandboxEntry;
@@ -119,6 +121,7 @@ describe("MCP adapter teardown rollback", () => {
       type: "nemoclaw-mcp-v1",
     });
     mocks.inspectMcpProvider.mockReset().mockReturnValue({ exists: false });
+    mocks.assertMcpAdapterTeardownRuntimeCapabilities.mockReset().mockResolvedValue(undefined);
     mocks.observeMcpCredentialRevision.mockReset().mockResolvedValue("v12");
     mocks.removeGeneratedPolicy.mockReset().mockImplementation(async () => {
       throw new Error("forced lifecycle failure after adapter scrub");
@@ -200,6 +203,42 @@ describe("MCP adapter teardown rollback", () => {
       { replaceExisting: true, teardownRollback: true },
     );
     expect(mocks.restoreExistingMcpBridgeRuntime).not.toHaveBeenCalled();
+  });
+
+  it("preserves an existing Hermes entry through legacy teardown and replacement restore", async () => {
+    mocks.captureRecordedSandboxBasePolicy
+      .mockReset()
+      .mockResolvedValueOnce("version: 1\nnetwork_policies:\n  mcp_bridge_github: {}\n")
+      .mockResolvedValueOnce("version: 1\nnetwork_policies: {}\n");
+    mocks.removeGeneratedPolicy.mockReset().mockResolvedValue(undefined);
+    mocks.detachProvider.mockReset().mockResolvedValue("detached");
+    mocks.restoreExistingMcpBridgeRuntime.mockReset().mockResolvedValue(undefined);
+
+    const preparation = await prepareMcpBridgesForRebuild("alpha", [entry]);
+
+    expect(mocks.assertMcpAdapterTeardownRuntimeCapabilities).toHaveBeenCalledWith(
+      "alpha",
+      sandbox,
+      [entry],
+      runtimeSelection,
+    );
+    expect(mocks.unregisterAgentAdapter).toHaveBeenCalledOnce();
+    expect(mocks.removeGeneratedPolicy).toHaveBeenCalledOnce();
+    expect(mocks.detachProvider).toHaveBeenCalledOnce();
+    expect(preparation).toMatchObject({
+      entries: [entry],
+      detachedProviderEntries: [entry],
+      scrubbedAdapterEntries: [expect.objectContaining(entry)],
+      policyHandoff: "version: 1\nnetwork_policies:\n  mcp_bridge_github: {}\n",
+      runtimeSelection,
+    });
+
+    await restoreMcpBridgesAfterRebuild("alpha", preparation.entries, runtimeSelection);
+
+    expect(mocks.restoreExistingMcpBridgeRuntime).toHaveBeenCalledWith("alpha", [entry], {
+      applyPolicy: false,
+      runtimeSelection,
+    });
   });
 
   it("does not derive a Hermes credential revision from an exact provider resource version", async () => {

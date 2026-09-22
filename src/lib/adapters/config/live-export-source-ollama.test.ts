@@ -10,10 +10,7 @@ import {
 import os from "node:os";
 import YAML from "yaml";
 import { describe, expect, it, vi } from "vitest";
-import {
-  asExportedConfig,
-  exportedSingletonSandbox,
-} from "../../../../test/support/config-export-document";
+import { asExportedConfig } from "../../../../test/support/config-export-document";
 import { createOllamaExportProbe } from "../../inference/ollama/proxy";
 import { OLLAMA_LOCAL_CREDENTIAL_ENV } from "../../inference/ollama/contract";
 import type { ObservedOllamaProxy } from "../../inference/ollama/proxy-observation";
@@ -56,9 +53,9 @@ function ollamaProbe(observed: ObservedOllamaProxy) {
   };
 }
 
-function mockOllamaSource(model: string = "qwen3.5:9b", environment: NodeJS.ProcessEnv = {}) {
+function mockOllamaSource(model: string = "qwen3.5:9b") {
   vi.spyOn(os, "platform").mockReturnValue("linux");
-  const { source, observed } = ollamaSource(model, environment);
+  const { source, observed } = ollamaSource(model);
   mockSupportedLiveSource(3, 3, source);
   const effective = configuration();
   effective.policy.network_policies.api.endpoints = [
@@ -170,7 +167,7 @@ describe("attached Ollama export pipeline", () => {
           },
         },
       });
-      const sandbox = exportedSingletonSandbox(document.spec.sandboxes[0]!);
+      const sandbox = document.spec.sandboxes[0]!;
       expect(sandbox.agent.inference.routes[0]).toMatchObject({
         providerRef: "local",
         overrides: { model },
@@ -183,40 +180,6 @@ describe("attached Ollama export pipeline", () => {
       expect(publish).not.toHaveBeenCalled();
     },
   );
-
-  it("preserves selected Ollama route tuning without exporting credentials (#12012)", async () => {
-    mockOllamaSource("qwen2.5:0.5b", {
-      NEMOCLAW_CONTEXT_WINDOW: "32768",
-      NEMOCLAW_MAX_TOKENS: "2048",
-      NEMOCLAW_REASONING: "true",
-      NEMOCLAW_REASONING_EFFORT: "medium",
-    });
-    const { result, writeStdout } = await exportLiveSource();
-    expect(result).toEqual({ ok: true, completion: { kind: "stdout" } });
-    const document = asExportedConfig(YAML.parse(writeStdout.mock.calls[0]![0]));
-    const sandbox = exportedSingletonSandbox(document.spec.sandboxes[0]!);
-    expect(sandbox.agent.inference.routes[0]!.overrides).toEqual({
-      model: "qwen2.5:0.5b",
-      contextWindow: 32_768,
-      maxTokens: 2048,
-      reasoning: true,
-      reasoningEffort: "medium",
-    });
-    expect(document.spec.inferenceProviders[0]).not.toHaveProperty("credential");
-  });
-
-  it("refuses attached Ollama when one live sandbox contains additional agents (#12012)", async () => {
-    mockOllamaSource("qwen2.5:0.5b", {
-      NEMOCLAW_EXTRA_AGENTS_JSON: JSON.stringify([
-        { id: "researcher", tools: { allow: ["read"] } },
-      ]),
-    });
-
-    expectExportRefusal(await exportLiveSource(), {
-      field: "spec.sandboxes[].agent",
-      category: "unsupported",
-    });
-  });
 
   it("refuses attached Ollama without retained workload authority (#12012)", async () => {
     const { source } = mockOllamaSource();

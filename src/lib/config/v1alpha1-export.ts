@@ -115,12 +115,8 @@ export type V1Alpha1ExportSandbox = V1Alpha1ExportSandboxBase &
         agent: Readonly<V1Alpha1ExportAgent>;
       }>
     | Readonly<{
-        harness: V1Alpha1ExportHarness & Readonly<{ kind: "openclaw" }>;
-        agent: Readonly<V1Alpha1ExportAgent>;
-      }>
-    | Readonly<{
         harness: V1Alpha1ExportHarness & Readonly<{ kind: "hermes" | "openclaw" }>;
-        agents: readonly Readonly<V1Alpha1ExportAgent>[];
+        agent: Readonly<V1Alpha1ExportAgent>;
       }>
   );
 

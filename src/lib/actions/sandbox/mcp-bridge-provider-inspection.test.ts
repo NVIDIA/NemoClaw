@@ -157,6 +157,25 @@ describe("MCP provider runtime selection", () => {
 });
 
 describe("MCP provider absence inspection", () => {
+  it("forwards a caller deadline to the synchronous provider CLI", async () => {
+    let observedTimeout: number | undefined;
+    setProviderCommandRuntimeHooksForTest({
+      runOpenshell: ((_args: string[], options: { timeout?: number }) => {
+        observedTimeout = options.timeout;
+        return {
+          status: 1,
+          stdout: "",
+          stderr: "provider 'alpha-mcp-fake' not found",
+        };
+      }) as never,
+    });
+
+    await expect(
+      inspectMcpProvider("alpha-mcp-fake", runtimeSelection, undefined, 4_321),
+    ).resolves.toMatchObject({ exists: false });
+    expect(observedTimeout).toBe(4_321);
+  });
+
   it("accepts only an exact provider-specific absence diagnostic (#10514)", async () => {
     setProviderCommandRuntimeHooksForTest({
       runOpenshell: (() => ({

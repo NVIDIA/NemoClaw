@@ -163,9 +163,10 @@ and sandbox, records the authenticated discovery diagnostics, scans the evidence
 credentials, and must pass.
 These are two required acceptance executions, not retries; either failure remains a failed check.
 The concurrent-add probe retries only the rejected command after status proves that the other
-command committed one coherent bridge. The rejected command must report either the exact portable
-host-lock timeout or the reviewed Hermes restart transport failure. The retry runs once, has its own
-command artifact, and must succeed idempotently from the verified committed source.
+command committed one coherent bridge. The rejected command must report the exact portable
+host-lock timeout. The retry runs once, has its own command artifact, and must succeed idempotently
+from the verified committed source. Production Hermes add owns reload-transport reconciliation, so
+the E2E boundary does not retry a Hermes mutation after transport loss.
 The workflow records one publication cohort before its PR producer matrix runs. Failed-job reruns
 reuse that cohort and replace only the stable run-scoped artifact owned by each retried agent.
 Consumers accept one complete cohort from the same run at the current or an earlier attempt. They
@@ -391,17 +392,14 @@ This keeps the private optional dependency available for SDK-backed commands suc
 
 The `network-policy` target also owns live configuration-export evidence for #10938, #11854, and PR #11065.
 After restricted OpenClaw onboarding with two read-only agents, it invokes the candidate `config export` command through the real SDK connection.
-It compares the ordered agent roster, sandbox name, immutable managed image, hosted endpoint, and explicit policy with the fixture's registered and effective state.
-It then changes the fixture's recorded sandbox fingerprint and requires export to fail without creating a file.
+It requires the command to reject the secondary-agent roster without producing a document.
+It then changes the fixture's recorded sandbox fingerprint and again requires export to fail without creating a file.
 The fixture restores the registry in `finally` and removes private export files through its existing cleanup registry.
-The exported effective policy comes from the SDK configuration response and is compared with the
-independent CLI policy observation. This covers the SDK connection and complete export observation boundary; the deterministic adapter tests remain the owners of individual wire shapes and malformed responses.
-The assertion budget is unchanged. Nine export assertions replace nine redundant checks in the same target:
-
-- Two CLI-file and two OpenShell-version checks are covered by the retained successful onboarding checks.
-- Two intermediate process-start comparisons are covered by the retained comparison after all policy and traffic probes.
-- The approved HTTP status check is redundant with the marker server response, which always returns that marker with status 200.
-- Two web-fetch success-marker checks duplicate the retained probe exit-status check; the probe rejects missing approved content and unexpected denied-port access.
+This proves that the real SDK connection reaches the fail-closed secondary-agent and identity-drift
+boundaries. It does not qualify successful export or effective-policy preservation. Deterministic
+adapter tests own individual wire shapes and malformed responses, while successful single-agent
+export evidence remains with its owning scenarios. The assertion budget is lowered with the removed
+successful-export checks.
 
 The `security-posture-hermes` target owns the corresponding live Hermes export evidence for #11286.
 After canonical hosted-inference onboarding, it invokes `config export` through both the `nemoclaw`
@@ -518,22 +516,13 @@ on native Linux Docker.
 A separate OpenClaw scenario disables direct sandbox GPU and uses normal onboarding to create the
 managed proxy on the target's shared port. It stops the installer service before starting a fixture-owned
 daemon on port 11439 and preparing the selected `qwen2.5:0.5b` model.
-It exports twice through the candidate CLI and real SDK, validates both documents through the public
-export schema, compares their specs, and checks the selected model digest, named proxy service,
-`image: null`, and omission of credentials. It then stops the daemon
-and requires export to fail without publishing a file.
-Private YAML files are removed through the cleanup registry. The retained evidence contains the exact
-validated YAML as a standalone artifact and in a summary with its byte count, SHA-256 hash, selected
-model, ports, and qualification results.
+It exports through the candidate CLI and real SDK. It checks the selected model digest, named proxy
+service, `image: null`, and omission of credentials. The target retains the YAML as a standalone
+artifact.
 
-The managed-vLLM scenario selects the exact exportable catalog profile, downloads and starts its
-fixed model server, onboards OpenClaw, and exports twice. It verifies the named `vllm` service,
-`image: null`, model revision, fixed serving settings, singular agent, network CIDR, stable output,
-and credential omission. Retained evidence includes the standalone YAML plus the catalog, profile,
-recipe, source runtime-image, and export hashes used to qualify the source. The API key is registered
-with the artifact redactor before any evidence write. Cleanup first destroys the sandbox and gateway,
-then removes only the exact container ID after rechecking its managed label, API key fingerprint,
-persisted key, and runtime receipt.
+The managed-vLLM scenario onboards the fixed exportable profile and retains its exported YAML. It
+checks the named `vllm` service, `image: null`, and credential omission. The API key is registered
+with the artifact redactor before evidence publication. Cleanup uses the production ownership checks.
 
 The current v1 contract represents one agent in each local-inference sandbox, so both local exporters
 refuse a live sandbox that contains additional agents. Their `image: null` output becomes runnable
@@ -544,9 +533,7 @@ The fixed vLLM scenario has a 90-minute test timeout. The catalogue allows 150 m
 The fixture retries read-only daemon readiness checks on connection refusal or curl
 timeout, for at most 20 reads. It records each attempt and stops on any other failure; model
 preparation, onboarding, and export mutations are not retried.
-After stopped-daemon refusal, cleanup restores the fixture daemon so sandbox destruction can unload
-models through the saved endpoint. Cleanup destroys the sandbox before stopping that daemon and
-removes the private output directory.
+Cleanup destroys each sandbox before its inference runtime and removes the private output directory.
 Retained workflow jobs are exceptions to the catalogue shape.
 Keep one only for a multi-job handoff, an unrepresented credential boundary, or an execution contract the reusable profile cannot represent.
 

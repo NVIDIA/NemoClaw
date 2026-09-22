@@ -80,9 +80,31 @@ OpenShell can retain the same `s…` stable handle after a provider update; veri
 Retry rebuild only after `provider.credentialReady` and `adapter.registered` are both `true`.
 If the re-add still cannot prove the credential handle, repair the reported OpenShell provider, policy, or adapter condition before retrying teardown.
 
+<AgentOnly variant="hermes">
+
+## Hermes Add Outcome Is Unknown
+
+If Hermes reports an unknown outcome after losing its OpenShell exec relay, do not rerun `mcp add`.
+Do not force-remove or remove and re-add the server.
+NemoClaw proved neither committed state nor absence, so another mutation can conflict with the in-flight or committed transaction.
+
+Inspect the current state without changing it:
+
+```bash
+$$nemoclaw <sandbox> mcp status <server> --json
+$$nemoclaw <sandbox> logs --tail 200
+```
+
+Preserve the reported diagnostic.
+Repair any reported sandbox readiness, gateway health, provider, policy, attachment, or adapter problem before another MCP lifecycle command.
+Keep the registration unchanged while status remains unavailable, conflicting, or incomplete.
+</AgentOnly>
+
 ## Add Transaction Is Incomplete
 
-If `mcp add` is interrupted, inspect the native source and live status first. If no native registration exists, rerun the original command with the same URL, environment-variable name, and any `--deny-tool` options. If the native registration exists, remove it and then re-add it after re-exporting the credential.
+For an interrupted `mcp add` that does not report an unknown outcome, inspect the native source and live status first.
+If no native registration exists, rerun the original command with the same URL, environment-variable name, and any `--deny-tool` options.
+If the native registration exists, remove it and then re-add it after re-exporting the credential.
 
 To abandon the transaction, run `mcp remove <server> --force`.
 NemoClaw disables the native agent entry first and cleans only live resources whose ownership it can prove. It preserves the workspace provider and reports any residual policy or attachment cleanup.
@@ -107,6 +129,16 @@ Use `nemo-deepagents <name> mcp ...` for servers that need OpenShell credential 
 </AgentOnly>
 
 <AgentOnly variant="hermes">
+If Hermes reports that reconcile-finality capability version 1 is unavailable, the MCP mutation did not start.
+Rebuild the sandbox onto a current image, then retry the original MCP command:
+
+```bash
+$$nemoclaw <sandbox> rebuild
+```
+
+Rebuild uses the older helper only to remove exact managed entries from the retiring sandbox.
+The replacement helper must report capability version 1 before it restores those entries.
+
 If a Hermes sandbox is alive but its gateway is not running after a supervisor or container restart, run `$$nemoclaw <sandbox> recover` before retrying the MCP command.
 Recovery re-establishes the managed service lifecycle, API forwarding, and the exit-75 reload loop used for transactional MCP configuration changes.
 </AgentOnly>
