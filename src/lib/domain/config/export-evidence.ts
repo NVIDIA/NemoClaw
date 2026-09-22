@@ -30,6 +30,8 @@ import {
 import type { SandboxConfiguration } from "../sandbox/configuration";
 import type { SandboxEntry } from "../../state/registry/types";
 import type { ObservedOllamaProxy } from "../../inference/ollama/proxy-observation";
+import { webSearchEnvFor } from "../../inference/web-search";
+import { HERMES_TAVILY_PROVIDER_PROFILE_ID } from "../../messaging/applier/web-search-provider-profile";
 
 const { Type } = require("typebox") as typeof TypeBoxModule;
 
@@ -90,6 +92,28 @@ type ObservedExportRegistryKey = (typeof EXPORT_REGISTRY_EVIDENCE_KEYS)[number];
 
 export type ObservedExportRegistry = DeepReadonly<Pick<SandboxEntry, ObservedExportRegistryKey>>;
 
+export function exportWebSearchBinding(
+  entry: Pick<ObservedExportRegistry, "name" | "agent" | "webSearchEnabled" | "webSearchProvider">,
+) {
+  const provider = entry.webSearchProvider;
+  if (
+    entry.webSearchEnabled !== true ||
+    (provider !== "brave" && provider !== "tavily") ||
+    (entry.agent !== "openclaw" && entry.agent !== "hermes") ||
+    (entry.agent === "hermes" && provider !== "tavily")
+  )
+    return undefined;
+  return {
+    provider,
+    name: `${entry.name}-${provider}-search`,
+    profileId:
+      provider === "tavily" && entry.agent === "hermes"
+        ? HERMES_TAVILY_PROVIDER_PROFILE_ID
+        : provider,
+    credentialEnv: webSearchEnvFor(provider),
+  } as const;
+}
+
 declare const CANONICAL_EXPORT_POLICY: unique symbol;
 export type CanonicalExportPolicy = Readonly<Record<string, unknown>> & {
   readonly [CANONICAL_EXPORT_POLICY]: true;
@@ -112,7 +136,7 @@ export interface ObservedExportEndpointEvidence {
     readonly profileWorkspace?: string;
     /** null means the OpenAI profile was read at its binding and confirmed absent. */
     readonly managedProfile?: {
-      readonly id: "brave" | "openai";
+      readonly id: "brave" | "openai" | "tavily" | "tavily-hermes-v1";
       readonly source: "builtin" | "user";
       readonly scope: "" | "platform" | "workspace";
       readonly resourceVersion: string;
@@ -282,6 +306,14 @@ const ExportInferenceSchema = Type.Union([
   ),
 ]);
 
+const ExportWebSearchSchema = Type.Object(
+  {
+    ...NemoClawBraveSearchConfigSchema.properties,
+    provider: Type.Union([Type.Literal("brave"), Type.Literal("tavily")]),
+  },
+  { additionalProperties: false },
+);
+
 /** Representable values only; provenance and policy qualification remain separate. */
 const exportSourceFields = {
   sandboxName: Type.Refine(SandboxNameSchema, isValidNemoClawSandboxName),
@@ -296,7 +328,7 @@ const exportSourceFields = {
   proxy: Type.Optional(NemoClawManagedProxyConfigSchema),
   inference: ExportInferenceSchema,
   observability: Type.Optional(NemoClawOpenClawObservabilitySchema),
-  webSearch: Type.Optional(NemoClawBraveSearchConfigSchema),
+  webSearch: Type.Optional(ExportWebSearchSchema),
 };
 
 export const ExportSourceValuesSchema = Type.Refine(
@@ -325,10 +357,9 @@ export const ExportSourceValuesSchema = Type.Refine(
       value.observability !== undefined
     )
       return false;
-    return (
-      value.agent === "hermes" ||
-      (value.auth === undefined && value.webSearch === undefined && value.interfaces === undefined)
-    );
+    return value.agent === "hermes"
+      ? value.webSearch === undefined || value.webSearch.provider === "tavily"
+      : value.auth === undefined && value.webSearch === undefined && value.interfaces === undefined;
   },
 );
 

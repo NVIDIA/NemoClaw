@@ -409,6 +409,12 @@ credential values. It then changes the fixture's recorded sandbox fingerprint an
 launchers to fail without publishing a file before restoring the registry. The assertion budget is
 unchanged because this contract replaces a redundant nonempty-log assertion in the same scenario.
 
+The shared config-export evidence compares the selected search provider, credential reference, and
+primary-agent grant against registered source intent. Its producer-shape check admits OpenClaw
+Brave/Tavily and Hermes Tavily, and rejects dangling grants or unsupported agent/provider pairs.
+E2E-support tests own these mappings and refusals. A retained live artifact qualifies only the
+agent/provider pair and source/target revisions actually exercised; it does not qualify another pair.
+
 The `ubuntu-repo-cloud-langchain-deepagents-code` target owns live Deep Agents export evidence for
 Issue #11860. Its ordered checks first exercise opt-in observability and thread approval, then restore
 the disabled baseline. The TUI check then runs without changing that registry baseline. The installed

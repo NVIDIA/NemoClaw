@@ -291,6 +291,11 @@ Deep Agents export requires hosted OpenAI Completions inference and explicitly d
 It emits the immutable image as `image.ref`, the `deepagents` harness, and one `agent`.
 The command rejects other Deep Agents settings instead of omitting them.
 When a managed OpenClaw sandbox uses Brave Search, the export includes its `webSearch` integration and the `BRAVE_API_KEY` environment-variable reference, never the key.
+Managed OpenClaw and Hermes sources can also export Tavily with a `tavily-search` integration, the `TAVILY_API_KEY` reference, and a grant for the primary agent.
+Export verifies the source's provider and profile binding, including the Hermes-specific `tavily-hermes-v1` profile.
+Missing or mismatched search evidence prevents publication.
+Disabled search remains ungranted.
+Hermes with Brave and search-enabled Deep Agents sources remain unsupported.
 When retained managed proxy settings differ from the default, the export includes the validated host and port under `network.proxy`.
 For hosted OpenClaw inference, the export preserves nondefault managed context-window, maximum-token, reasoning, and reasoning-effort settings as route overrides.
 It preserves nondefault agent timeout and heartbeat settings under `execution`.

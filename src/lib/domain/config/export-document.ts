@@ -70,7 +70,7 @@ function exportAgent(
     name: agent.name,
     ...(tools === undefined ? {} : { tools }),
     ...(source.webSearch?.agentRefs.some((reference) => reference === agent.name)
-      ? { integrationRefs: ["brave-search" as const] }
+      ? { integrationRefs: [`${source.webSearch.provider}-search` as const] }
       : {}),
     ...(agent.primary && source.auth !== undefined ? { auth: { method: source.auth.method } } : {}),
     inference: {
@@ -146,7 +146,7 @@ export function buildExportConfig(
       ? {}
       : {
           integrations: {
-            "brave-search": {
+            [`${source.webSearch.provider}-search`]: {
               kind: "webSearch" as const,
               provider: source.webSearch.provider,
               credential: source.webSearch.credential,

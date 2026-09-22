@@ -152,6 +152,43 @@ describe("export config builder", () => {
     ).not.toHaveProperty("integrations");
   });
 
+  it.each(["openclaw", "hermes"] as const)(
+    "emits a Tavily integration granted only to the exported %s agent (#12138)",
+    (agent) => {
+      const document = buildExportConfig(
+        {
+          ...source,
+          agent,
+          interfaces: undefined,
+          webSearch: {
+            provider: "tavily",
+            agentRefs: ["primary"],
+            credential: { env: "TAVILY_API_KEY" },
+          },
+        },
+        { documentName: alphaDocumentName, documentUid: firstUid },
+      );
+      const sandbox = document.spec.sandboxes[0]!;
+      expect(sandbox.harness.kind).toBe(agent);
+      expect(sandbox.integrations).toEqual({
+        "tavily-search": {
+          kind: "webSearch",
+          provider: "tavily",
+          credential: { env: "TAVILY_API_KEY" },
+        },
+      });
+      expect(sandbox.agent.integrationRefs).toEqual(["tavily-search"]);
+      expect(sandbox.agent.name).toBe("primary");
+      expect(document.spec.inferenceProviders).toHaveLength(1);
+      expect(sandbox.agent.inference).toEqual(
+        buildExportConfig(source, {
+          documentName: alphaDocumentName,
+          documentUid: firstUid,
+        }).spec.sandboxes[0]!.agent.inference,
+      );
+    },
+  );
+
   it("uses the supplied identity and keeps derived references deterministic (#10938)", () => {
     const first = buildExportConfig(source, {
       documentName: alphaDocumentName,

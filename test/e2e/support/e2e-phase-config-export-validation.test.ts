@@ -1,399 +1,187 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { ArtifactSink } from "../fixtures/artifacts.ts";
-import { CleanupRegistry } from "../fixtures/cleanup.ts";
 import { HostCliClient } from "../fixtures/clients/host.ts";
 import {
   CONFIG_EXPORT_EVIDENCE_CONTRACT,
-  type ConfigExportDocument,
   type ConfigExportEvidenceEnvelope,
-  type ConfigExportValidationDependencies,
-  ConfigExportValidationPhaseFixture,
   parseConfigExport,
 } from "../fixtures/phases/config-export-validation.ts";
-import type { NemoClawInstance } from "../fixtures/phases/onboarding.ts";
 import { startTestProgress } from "../fixtures/progress.ts";
-import { SecretStore } from "../fixtures/secrets.ts";
-import { ShellProbe, type ShellProbeResult } from "../fixtures/shell-probe.ts";
-import { listTargets } from "../registry/registry.ts";
-import type { NemoClawInstanceManifest, TargetDefinition } from "../registry/types.ts";
+import { ShellProbe } from "../fixtures/shell-probe.ts";
 
-const IMAGE_REF = `nvcr.io/nvidia/nemoclaw@sha256:${"a".repeat(64)}`;
-const SOURCE_REVISION = "b".repeat(40);
-const SECRET = "fixture-secret-value";
-const ENCODED_SECRET = Buffer.from(SECRET, "utf8").toString("base64");
-const DIAGNOSTIC_SECRET_REPRESENTATIONS = [
-  { name: "literal", value: SECRET },
-  { name: "wrapped-literal", value: `${SECRET.slice(0, 7)}\n# ${SECRET.slice(7)}` },
-  {
-    name: "escaped-literal",
-    value: `\\u${SECRET.charCodeAt(0).toString(16).padStart(4, "0")}${SECRET.slice(1)}`,
-  },
-  { name: "base64", value: ENCODED_SECRET },
-  {
-    name: "wrapped-base64",
-    value: `${ENCODED_SECRET.slice(0, 12)}\n# ${ENCODED_SECRET.slice(12)}`,
-  },
-  {
-    name: "escaped-base64",
-    value: `\\u${ENCODED_SECRET.charCodeAt(0).toString(16).padStart(4, "0")}${ENCODED_SECRET.slice(1)}`,
-  },
-] as const;
-const INTERNAL_TRANSPORT = "openshell:resolve:env:KEY";
-const ENCODED_INTERNAL_TRANSPORT = Buffer.from(INTERNAL_TRANSPORT, "utf8").toString("base64");
-const INTERNAL_TRANSPORT_REPRESENTATIONS = [
-  {
-    name: "escaped",
-    value: [...INTERNAL_TRANSPORT]
-      .map((character) => `\\u${character.charCodeAt(0).toString(16).padStart(4, "0")}`)
-      .join(""),
-  },
-  { name: "base64", value: ENCODED_INTERNAL_TRANSPORT },
-  {
-    name: "base64url",
-    value: Buffer.from("openshell:resolve:env:ÿ", "utf8")
-      .toString("base64")
-      .replace(/\+/gu, "-")
-      .replace(/\//gu, "_"),
-  },
-  {
-    name: "wrapped-base64",
-    value: `${ENCODED_INTERNAL_TRANSPORT.slice(0, 16)}\n# ${ENCODED_INTERNAL_TRANSPORT.slice(16)}`,
-  },
-] as const;
-const POLICY = {
-  version: 1,
-  network_policies: {
-    inference: {
-      name: "inference",
-      endpoints: [{ host: "inference.example", port: 443 }],
-      binaries: [{ path: "/usr/bin/openclaw" }],
-    },
-  },
-};
-const createdDirectories: string[] = [];
-const artifactDirectories: string[] = [];
+import {
+  IMAGE_REF,
+  SOURCE_REVISION,
+  SECRET,
+  ENCODED_SECRET,
+  DIAGNOSTIC_SECRET_REPRESENTATIONS,
+  INTERNAL_TRANSPORT,
+  ENCODED_INTERNAL_TRANSPORT,
+  INTERNAL_TRANSPORT_REPRESENTATIONS,
+  POLICY,
+  createdDirectories,
+  artifactDirectories,
+  sha256,
+  target,
+  document,
+  searchDocument,
+  instance,
+  dependencies,
+  successfulHost,
+  refusalHost,
+  fixture,
+  captureFailure,
+} from "./config-export-validation-test-fixture.ts";
 
-function sha256(value: string): string {
-  return createHash("sha256").update(value).digest("hex");
-}
-
-function target(expectation: TargetDefinition["configExport"]["expectation"]): TargetDefinition {
-  return {
-    ...listTargets().find((entry) => entry.id === "ubuntu-repo-cloud-openclaw")!,
-    configExport:
-      expectation === "expected-refusal"
-        ? { expectation, failureCategory: "unsupported" }
-        : { expectation },
-  };
-}
-
-function manifest(
-  features?: Record<string, unknown>,
-  credentialRefs = ["NVIDIA_INFERENCE_API_KEY"],
-): NemoClawInstanceManifest {
-  return {
-    apiVersion: "nemoclaw.io/v1",
-    kind: "NemoClawInstance",
-    metadata: { name: "openclaw" },
-    spec: {
-      setup: { install: {}, runtime: {}, platform: {} },
-      onboarding: {
-        agent: "openclaw",
-        provider: "nvidia",
-        modelRoute: "inference-local",
-        policyTier: "personal",
-        messaging: [],
-        ...(features ? { features } : {}),
-      },
-      state: { credentialRefs },
-    },
-  };
-}
-
-function document(
-  overrides: {
-    model?: string;
-    observability?: boolean;
-    credentialReference?: string;
-  } = {},
-): ConfigExportDocument {
-  return {
-    apiVersion: "nemoclaw.nvidia.com/v1alpha1",
-    kind: "NemoClawConfig",
-    metadata: {
-      name: "export",
-      uid: "123e4567-e89b-42d3-a456-426614174000",
-    },
-    spec: {
-      gateway: { management: "managed", endpoint: "http://127.0.0.1:8080" },
-      inferenceProviders: [
-        {
-          name: "hosted-compatible-endpoint",
-          provider: "openai",
-          api: "openai-completions",
-          endpoint: "https://inference.example/v1",
-          credential: { env: overrides.credentialReference ?? "NVIDIA_INFERENCE_API_KEY" },
+describe("automatic config export validation phase", () => {
+  it.each([
+    ["openclaw", "brave"],
+    ["openclaw", "tavily"],
+    ["hermes", "tavily"],
+  ] as const)(
+    "accepts the %s %s export shape and rejects missing grants (#12138)",
+    (agent, provider) => {
+      const candidate = searchDocument(provider, agent);
+      expect(parseConfigExport(JSON.stringify(candidate))).toEqual(candidate);
+      const invalid = {
+        ...candidate,
+        spec: {
+          ...candidate.spec,
+          sandboxes: [
+            { ...candidate.spec.sandboxes[0]!, agent: document().spec.sandboxes[0]!.agent },
+          ],
         },
-      ],
-      sandboxes: [
-        {
-          name: "sandbox",
-          runtime: { provider: "docker" },
-          network: { policy: { explicit: POLICY } },
-          harness: {
-            kind: "openclaw",
-            ...(overrides.observability
-              ? {
-                  observability: {
-                    otlp: {
-                      enabled: true,
-                      endpoint: "http://host.openshell.internal:4318",
-                      serviceName: "openclaw",
-                      sampleRate: 1,
-                    },
-                  },
-                }
-              : {}),
-          },
-          agent: {
-            name: "primary",
-            inference: {
-              routes: [
-                {
-                  name: "primary",
-                  providerRef: "hosted-compatible-endpoint",
-                  overrides: { model: overrides.model ?? "nvidia/model" },
-                },
-              ],
-            },
-          },
-        },
-      ],
-    },
-  } as unknown as ConfigExportDocument;
-}
-
-function instance(expectedFailure = false): NemoClawInstance {
-  return {
-    onboarding: "cloud-openclaw",
-    sandboxName: "sandbox",
-    agent: "openclaw",
-    provider: "nvidia",
-    providerEnv: "cloud",
-    gatewayUrl: "http://127.0.0.1:18789",
-    result: {} as NemoClawInstance["result"],
-    ...(expectedFailure
-      ? {
-          expectedFailure: {
-            phase: "onboarding" as const,
-            errorClass: "policy-presets-required" as const,
-          },
-        }
-      : {}),
-  };
-}
-
-function dependencies(
-  options: {
-    credentialRefs?: string[];
-    features?: Record<string, unknown>;
-    parsedDocument?: ConfigExportDocument;
-    removeDirectory?: (directory: string) => void;
-  } = {},
-): ConfigExportValidationDependencies {
-  return {
-    closeFile: fs.closeSync,
-    inspectFile: (filePath) => {
-      const stat = fs.lstatSync(filePath);
-      return {
-        device: stat.dev,
-        inode: stat.ino,
-        isFile: stat.isFile(),
-        linkCount: stat.nlink,
-        size: stat.size,
       };
-    },
-    inspectOpenFile: (file) => {
-      const stat = fs.fstatSync(file);
-      return {
-        device: stat.dev,
-        inode: stat.ino,
-        isFile: stat.isFile(),
-        linkCount: stat.nlink,
-        size: stat.size,
-      };
-    },
-    loadManifest: (filePath) => ({
-      filePath,
-      document: manifest(options.features, options.credentialRefs),
-    }),
-    loadRegistry: () => ({
-      defaultSandbox: "sandbox",
-      sandboxes: {
-        sandbox: {
-          name: "sandbox",
-          agent: "openclaw",
-          openshellDriver: "docker",
-          gatewayName: "nemoclaw",
-          provider: "compatible-endpoint",
-          preferredInferenceApi: "openai-completions",
-          endpointUrl: "https://inference.example/v1",
-          model: "nvidia/model",
-          credentialEnv: "NVIDIA_INFERENCE_API_KEY",
-          workload: {
-            schemaVersion: 1,
-            kind: "managed-image",
-            reference: IMAGE_REF,
-            platform: "linux/amd64",
-            release: "test",
-            sourceRevision: SOURCE_REVISION,
-            sourceCohort: "test",
-            capabilityContractVersion: 1,
-            startupProfileContractVersion: 1,
-            encodedProfile: "profile",
-            startupProfileSha256: `sha256:${"c".repeat(64)}`,
-            credentialProxyReplayRequired: true,
-            shared: true,
-          },
-        },
-      },
-    }),
-    makeTempDirectory: (prefix) => {
-      const directory = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
-      createdDirectories.push(directory);
-      return directory;
-    },
-    now: vi.fn().mockReturnValueOnce(100).mockReturnValue(125),
-    openFileNoFollow: (filePath) =>
-      fs.openSync(filePath, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW),
-    parseConfig: () => options.parsedDocument ?? document(),
-    producer: () => ({
-      sourceRevision: SOURCE_REVISION,
-      cliVersion: "0.1.0",
-      cliArtifactSha256: "d".repeat(64),
-    }),
-    readOpenFile: (file, limitBytes) => {
-      const buffer = Buffer.alloc(limitBytes + 1);
-      const bytesRead = fs.readSync(file, buffer, 0, buffer.length, null);
-      return buffer.subarray(0, bytesRead).toString("utf8");
-    },
-    removeDirectory:
-      options.removeDirectory ??
-      ((directory) => fs.rmSync(directory, { force: true, recursive: true })),
-  };
-}
-
-function successfulHost(raw: string) {
-  return {
-    command: vi.fn(
-      async (): Promise<
-        Pick<ShellProbeResult, "exitCode" | "signal" | "timedOut" | "stdout" | "stderr">
-      > => ({
-        exitCode: 0,
-        signal: null,
-        timedOut: false,
-        stdout: `Version: 1\n---\n${JSON.stringify(POLICY)}`,
-        stderr: "",
-      }),
-    ),
-    nemoclaw: vi.fn(async (args: string[]) => {
-      const outputPath = args.at(args.indexOf("--output") + 1)!;
-      fs.writeFileSync(outputPath, raw, "utf8");
-      return { exitCode: 0, signal: null, timedOut: false, stdout: "", stderr: "" };
-    }),
-    openshellCommandPath: "openshell",
-  };
-}
-
-function refusalHost(
-  message = "Config export failed (unsupported).\nThe source cannot be exported.",
-) {
-  return {
-    command: vi.fn(async () => ({
-      exitCode: 0,
-      signal: null,
-      timedOut: false,
-      stdout: `Version: 1\n---\n${JSON.stringify(POLICY)}`,
-      stderr: "",
-    })),
-    nemoclaw: vi.fn(async () => ({
-      exitCode: 1,
-      signal: null,
-      timedOut: false,
-      stdout: "",
-      stderr: message,
-    })),
-    openshellCommandPath: "openshell",
-  };
-}
-
-function fixture(
-  options: {
-    artifacts?: ArtifactSink;
-    dependencies?: ConfigExportValidationDependencies;
-    host?: ReturnType<typeof successfulHost> | HostCliClient;
-    secret?: string;
-  } = {},
-) {
-  const writes: ConfigExportEvidenceEnvelope[] = [];
-  const artifacts =
-    options.artifacts ??
-    ({
-      writeJson: vi.fn(async (_name: string, value: ConfigExportEvidenceEnvelope) => {
-        writes.push(value);
-        return "evidence.json";
-      }),
-    } as unknown as ArtifactSink);
-  const cleanup = new CleanupRegistry();
-  const host = options.host ?? successfulHost(JSON.stringify(document()));
-  const secrets = new SecretStore(
-    options.secret ? { FIXTURE_API_KEY: options.secret } : {},
-    (message) => {
-      throw new Error(message);
+      expect(() => parseConfigExport(JSON.stringify(invalid))).toThrow("agent grants");
     },
   );
-  return {
-    cleanup,
-    host,
-    phase: new ConfigExportValidationPhaseFixture(
-      host as never,
-      secrets,
-      cleanup,
-      artifacts,
-      options.dependencies ?? dependencies(),
-    ),
-    writes,
-  };
-}
 
-async function captureFailure(operation: Promise<unknown>): Promise<Error> {
-  try {
-    await operation;
-  } catch (error) {
-    expect(error).toBeInstanceOf(Error);
-    return error as Error;
-  }
-  throw new Error("expected the config export validation operation to fail");
-}
+  it.each([
+    {
+      label: "a missing search definition",
+      change: { integrations: undefined },
+      message: "agent grants",
+    },
+    {
+      label: "a mismatched search grant",
+      change: {
+        agent: { ...document().spec.sandboxes[0]!.agent, integrationRefs: ["brave-search"] },
+      },
+      message: "agent grants",
+    },
+    {
+      label: "search-enabled Deep Agents",
+      change: { harness: { kind: "deepagents" }, image: { ref: IMAGE_REF } },
+      message: "supported unrestricted agent",
+    },
+    {
+      label: "a restricted search agent",
+      change: {
+        agent: { ...searchDocument("tavily").spec.sandboxes[0]!.agent, tools: { allow: ["read"] } },
+      },
+      message: "supported unrestricted agent",
+    },
+  ])("refuses $label (#12138)", ({ change, message }) => {
+    const value = searchDocument("tavily");
+    const sandbox = value.spec.sandboxes[0]!;
+    const invalid = {
+      ...value,
+      spec: { ...value.spec, sandboxes: [{ ...sandbox, ...change }] },
+    };
+    expect(() => parseConfigExport(JSON.stringify(invalid))).toThrow(message);
+  });
 
-afterEach(() => {
-  for (const directory of createdDirectories.splice(0)) {
-    fs.rmSync(directory, { force: true, recursive: true });
-  }
-  for (const directory of artifactDirectories.splice(0)) {
-    fs.rmSync(directory, { force: true, recursive: true });
-  }
-});
-describe("automatic config export validation phase", () => {
+  it("refuses Hermes Brave exports (#12138)", () => {
+    expect(() => parseConfigExport(JSON.stringify(searchDocument("brave", "hermes")))).toThrow(
+      "supported unrestricted agent",
+    );
+  });
+
+  it.each(["brave", "tavily"] as const)(
+    "retains the observed %s provider, credential reference and agent grant in evidence (#12138)",
+    async (provider) => {
+      const key = provider === "brave" ? "BRAVE_API_KEY" : "TAVILY_API_KEY";
+      const exported = searchDocument(provider);
+      const setup = fixture({
+        host: successfulHost(JSON.stringify(exported)),
+        dependencies: dependencies({
+          parsedDocument: exported,
+          features: { webSearch: true },
+          searchProvider: provider,
+          credentialRefs: ["NVIDIA_INFERENCE_API_KEY", key],
+        }),
+      });
+      const evidence = await setup.phase.from(target("required"), instance());
+      expect(evidence.passed).toBe(true);
+      expect(evidence.observed?.webSearch).toEqual({
+        provider,
+        credentialReference: key,
+        agentRefs: ["primary"],
+      });
+      expect(evidence.verifications.find((check) => check.id === "webSearch")?.passed).toBe(true);
+    },
+  );
+
+  it("refuses otherwise valid Brave output for a Tavily source (#12138)", async () => {
+    const exported = searchDocument("brave");
+    const setup = fixture({
+      host: successfulHost(JSON.stringify(exported)),
+      dependencies: dependencies({
+        parsedDocument: exported,
+        features: { webSearch: true },
+        searchProvider: "tavily",
+        credentialRefs: ["NVIDIA_INFERENCE_API_KEY", "TAVILY_API_KEY"],
+      }),
+    });
+    await captureFailure(setup.phase.from(target("required"), instance()));
+    expect(setup.writes.at(-1)?.passed).toBe(false);
+    expect(
+      setup.writes.at(-1)?.verifications.find((check) => check.id === "webSearch")?.passed,
+    ).toBe(false);
+  });
+
+  it("refuses undeclared search credentials before running the exporter (#12138)", async () => {
+    const test = fixture({ dependencies: dependencies({ searchProvider: "tavily" }) });
+    await captureFailure(test.phase.from(target("required"), instance()));
+    expect(test.writes.at(-1)).toMatchObject({
+      classification: "failure",
+      failureStage: "observation",
+      diagnostic:
+        "enabled web search requires a recognized provider and a credential reference declared in the target manifest",
+    });
+    expect(test.host.nemoclaw).not.toHaveBeenCalled();
+    expect(test.writes.at(-1)).not.toHaveProperty("export");
+  });
+
+  it.each([undefined, null])(
+    "refuses enabled search without a provider (%s) (#12138)",
+    async (provider) => {
+      const deps = dependencies();
+      const registry = deps.loadRegistry();
+      registry.sandboxes.sandbox!.webSearchEnabled = true;
+      registry.sandboxes.sandbox!.webSearchProvider = provider;
+      deps.loadRegistry = () => registry;
+      const test = fixture({ dependencies: deps });
+      await captureFailure(test.phase.from(target("required"), instance()));
+      expect(test.writes.at(-1)).toMatchObject({
+        classification: "failure",
+        failureStage: "observation",
+        diagnostic:
+          "enabled web search requires a recognized provider and a credential reference declared in the target manifest",
+      });
+      expect(test.host.nemoclaw).not.toHaveBeenCalled();
+      expect(test.writes.at(-1)).not.toHaveProperty("export");
+    },
+  );
+
   it.each([
     {
       hosted: "1",

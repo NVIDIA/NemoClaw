@@ -33,7 +33,7 @@ import {
 } from "../../config/model";
 import { fingerprintOpenShellSandboxId } from "../sandbox/openshell-identity";
 import { HERMES_PROVIDER_NAME } from "../../onboard/inference-providers/hermes-provider-identity";
-import { ExportSourceValuesSchema } from "./export-evidence";
+import { ExportSourceValuesSchema, exportWebSearchBinding } from "./export-evidence";
 import { inspectAgentInterfaces } from "./verify-agent-interfaces";
 import type {
   CanonicalExportPolicy,
@@ -145,10 +145,6 @@ function hasEntries(value: unknown): boolean {
   return Array.isArray(value)
     ? value.length > 0
     : value !== undefined && value !== null && value !== false;
-}
-
-function hasBraveSearch(entry: ObservedExportRegistry): boolean {
-  return entry.webSearchEnabled === true && entry.webSearchProvider === "brave";
 }
 
 function classifyHermesExcludedCapabilities(entry: ObservedExportRegistry): ExportFinding[] {
@@ -346,7 +342,7 @@ function classifyExcludedCapabilities(entry: ObservedExportRegistry): ExportFind
     ["spec.sandboxes[].observability", entry.observabilityEnabled, "observability"],
     [
       "spec.sandboxes[].integrations.webSearch",
-      !hasBraveSearch(entry) && (entry.webSearchEnabled || entry.webSearchProvider),
+      !exportWebSearchBinding(entry) && (entry.webSearchEnabled || entry.webSearchProvider),
       "web search",
     ],
     ["spec.sandboxes[].integrations.messaging", entry.messaging, "messaging"],
@@ -540,6 +536,7 @@ function expectedManagedStartupProfile(entry: ObservedExportRegistry): ManagedSt
     selected.preferredInferenceApi,
   );
   const projection = EXPORT_AGENT_PROFILE_PROJECTIONS[agent](inference);
+  const search = exportWebSearchBinding(entry);
   return buildManagedStartupProfile({
     agent,
     inference: {
@@ -553,7 +550,7 @@ function expectedManagedStartupProfile(entry: ObservedExportRegistry): ManagedSt
       compatibility: projection.compatibility,
     },
     dashboard: projection.dashboard,
-    webSearch: hasBraveSearch(entry) ? { fetchEnabled: true, provider: "brave" } : null,
+    webSearch: search ? { fetchEnabled: true, provider: search.provider } : null,
     toolDisclosure: registeredToolDisclosure(entry),
     hermesToolGateways: [],
     messagingPlan: null,
@@ -888,7 +885,8 @@ function validateSandboxConfiguration(snapshot: QualifiedExportSnapshot): Export
       ),
     );
   const additionalProviders = sandbox.providerNames.filter((name) => name !== inference.provider);
-  const expectedAdditionalProviders = hasBraveSearch(entry) ? [`${entry.name}-brave-search`] : [];
+  const search = exportWebSearchBinding(entry);
+  const expectedAdditionalProviders = search ? [search.name] : [];
   if (
     !isDeepStrictEqual(additionalProviders, expectedAdditionalProviders) ||
     new Set(sandbox.providerNames).size !== sandbox.providerNames.length
@@ -903,11 +901,12 @@ function validateSandboxConfiguration(snapshot: QualifiedExportSnapshot): Export
   return findings;
 }
 
-function validBraveProfile(
+function validSearchProfile(
   provider: NonNullable<QualifiedExportSnapshot["webSearchProvider"]>,
+  profileId: string,
 ): boolean {
   const { profile, profileWorkspace } = provider;
-  if (!profile || profile.id !== "brave" || !isValidNemoClawBoundedText(profile.resourceVersion))
+  if (!profile || profile.id !== profileId || !isValidNemoClawBoundedText(profile.resourceVersion))
     return false;
   if (profile.source === "builtin") {
     return isDeepStrictEqual(
@@ -925,22 +924,24 @@ function validBraveProfile(
 
 function validateWebSearchProvider(snapshot: QualifiedExportSnapshot): ExportFinding[] {
   const { registry, webSearchProvider: provider, sandbox, gateway } = snapshot;
-  if (!hasBraveSearch(registry)) {
+  const search = exportWebSearchBinding(registry);
+  if (!search) {
     return provider === undefined
       ? []
       : [finding("source.webSearch", "ambiguous", "Unexpected web-search provider evidence.")];
   }
+  const label = search.provider === "brave" ? "Brave" : "Tavily";
   if (!provider) {
     return [
       finding(
         "source.webSearch",
         "missing-provenance",
-        "Live Brave provider evidence is required.",
+        `Live ${label} provider evidence is required.`,
       ),
     ];
   }
   if (
-    !validBraveProfile(provider) ||
+    !validSearchProfile(provider, search.profileId) ||
     !isValidNemoClawBoundedText(provider.id) ||
     !isValidNemoClawBoundedText(provider.resourceVersion) ||
     !/^[1-9][0-9]*$/u.test(provider.resourceVersion) ||
@@ -953,21 +954,14 @@ function validateWebSearchProvider(snapshot: QualifiedExportSnapshot): ExportFin
         provider.credentialKeys,
         provider.configKeys,
       ],
-      [
-        gateway.name,
-        sandbox.workspace,
-        `${registry.name}-brave-search`,
-        "brave",
-        ["BRAVE_API_KEY"],
-        [],
-      ],
+      [gateway.name, sandbox.workspace, search.name, search.profileId, [search.credentialEnv], []],
     )
   ) {
     return [
       finding(
         "source.webSearch",
         "drifted",
-        "The live Brave provider does not match its managed binding.",
+        `The live ${label} provider does not match its managed binding.`,
       ),
     ];
   }
@@ -1341,12 +1335,13 @@ function projectVerifiedExecution(settings: ReturnType<typeof projectAgentSettin
 }
 
 function projectVerifiedWebSearch(entry: ObservedExportRegistry) {
-  if (!hasBraveSearch(entry)) return {};
+  const search = exportWebSearchBinding(entry);
+  if (!search) return {};
   return {
     webSearch: {
-      provider: "brave" as const,
+      provider: search.provider,
       agentRefs: ["primary"],
-      credential: { env: "BRAVE_API_KEY" },
+      credential: { env: search.credentialEnv },
     },
   };
 }

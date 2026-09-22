@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { NEMOCLAW_CONFIG_KIND } from "./model";
+import type { WebSearchProvider } from "../inference/web-search/provider";
 
 export const V1ALPHA1_EXPORT_API_VERSION = "nemoclaw.nvidia.com/v1alpha1" as const;
 
@@ -24,7 +25,7 @@ export interface V1Alpha1ExportAgent {
   readonly tools?:
     | Readonly<{ disclosure: "direct" | "progressive" }>
     | Readonly<{ allow: readonly "read"[] }>;
-  readonly integrationRefs?: readonly "brave-search"[];
+  readonly integrationRefs?: readonly `${WebSearchProvider}-search`[];
 }
 
 interface V1Alpha1ExportSandboxBase {
@@ -34,13 +35,18 @@ interface V1Alpha1ExportSandboxBase {
     policy: Readonly<{ explicit: Readonly<Record<string, unknown>> }>;
     proxy?: Readonly<{ host: string; port: number }>;
   }>;
-  readonly integrations?: Readonly<{
-    "brave-search": Readonly<{
-      kind: "webSearch";
-      provider: "brave";
-      credential: Readonly<{ env: string }>;
-    }>;
-  }>;
+  readonly integrations?: Readonly<
+    Partial<
+      Record<
+        `${WebSearchProvider}-search`,
+        Readonly<{
+          kind: "webSearch";
+          provider: WebSearchProvider;
+          credential: Readonly<{ env: string }>;
+        }>
+      >
+    >
+  >;
 }
 
 interface V1Alpha1ExportHarness {

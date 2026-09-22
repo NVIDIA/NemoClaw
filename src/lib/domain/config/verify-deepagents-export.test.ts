@@ -121,6 +121,12 @@ describe("Deep Agents config export (#11860)", () => {
       category: "unsupported",
     },
     {
+      label: "enabled Tavily web search",
+      observed: () => dcodeSnapshot({ webSearchEnabled: true, webSearchProvider: "tavily" }),
+      field: "spec.sandboxes[].integrations.webSearch",
+      category: "unsupported",
+    },
+    {
       label: "missing web search provenance",
       observed: () => dcodeSnapshot({ webSearchEnabled: undefined, webSearchProvider: undefined }),
       field: "spec.sandboxes[].integrations.webSearch",

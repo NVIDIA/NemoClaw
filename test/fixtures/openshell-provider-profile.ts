@@ -51,3 +51,42 @@ export function managedBraveProfile() {
     ),
   };
 }
+
+export function managedTavilyProfile(agent: "openclaw" | "hermes" = "openclaw") {
+  const base = managedBraveProfile();
+  return {
+    ...base,
+    id: agent === "hermes" ? "tavily-hermes-v1" : "tavily",
+    credentials: [
+      {
+        ...base.credentials[0],
+        envVars: ["TAVILY_API_KEY"],
+        authStyle: "bearer",
+        headerName: "authorization",
+      },
+    ],
+    endpoints: [
+      {
+        ...base.endpoints[0],
+        host: "api.tavily.com",
+        requestBodyCredentialRewrite: true,
+        rules: ["/search", "/extract"].map((path) => ({
+          allow: {
+            method: "POST",
+            path,
+            command: "",
+            query: {},
+            params: {},
+            operationType: "",
+            operationName: "",
+            fields: [],
+          },
+        })),
+      },
+    ],
+    binaries: (agent === "hermes"
+      ? ["/opt/hermes/.venv/bin/python", "/usr/local/bin/curl", "/usr/bin/curl"]
+      : ["/opt/venv/bin/python3*", ...base.binaries.map((binary) => binary.path)]
+    ).map((path) => ({ path })),
+  };
+}
