@@ -12,6 +12,12 @@ const DEEPAGENTS_CODE_DISTRIBUTION = "deepagents-code";
 const DEEPAGENTS_CODE_RUNTIME_CONTRACT_PATH =
   "/usr/local/lib/nemoclaw/validate-dcode-runtime-contract.py";
 const DEEPAGENTS_CODE_RUNTIME_CONTRACT_OK = "nemoclaw-dcode-runtime-contract-ok";
+const DEEPAGENTS_CODE_RUNTIME_CONTRACT_PROBE = [
+  "import importlib.metadata",
+  "import runpy",
+  `runpy.run_path("${DEEPAGENTS_CODE_RUNTIME_CONTRACT_PATH}", run_name="__main__")`,
+  `print(importlib.metadata.version("${DEEPAGENTS_CODE_DISTRIBUTION}"))`,
+].join("; ");
 const DEEPAGENTS_CODE_DOS2UNIX_PROBE_OK = "nemoclaw-dcode-dos2unix-ok";
 const DEEPAGENTS_CODE_BASE_IMAGE_PROBE_GUARDS = [
   "--network",
@@ -47,7 +53,8 @@ export function deepAgentsCodeBaseImageMatchesVersion(
       "/opt/venv/bin/python3",
       imageRef,
       "-I",
-      DEEPAGENTS_CODE_RUNTIME_CONTRACT_PATH,
+      "-c",
+      DEEPAGENTS_CODE_RUNTIME_CONTRACT_PROBE,
     ],
     { ignoreError: true, timeout: 20_000 },
   );
@@ -60,7 +67,7 @@ export function deepAgentsCodeBaseImageMatchesVersion(
     );
     return false;
   }
-  return contractOutput === DEEPAGENTS_CODE_RUNTIME_CONTRACT_OK;
+  return contractOutput === `${DEEPAGENTS_CODE_RUNTIME_CONTRACT_OK}\n${expectedVersion}`;
 }
 
 /**

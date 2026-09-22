@@ -290,7 +290,7 @@ A registry-side tag change cannot silently select another managed sandbox image.
 
 ## Auth Profile Permissions
 
-For managed `inference.local` routes, the entrypoint removes the exact legacy NemoClaw-generated profile and clears its credential environment aliases before launching sandbox processes. Direct custom-image routes and user-managed profiles remain in `auth-profiles.json`; the entrypoint and migration flows enforce `chmod 600` on those files under `~/.openclaw`.
+For managed `inference.local` routes, the entrypoint removes the exact legacy NemoClaw-generated profile, preserves non-matching user-managed profiles, and clears credential environment aliases before launching sandbox processes. Direct custom-image routes create or replace `auth-profiles.json` with the generated direct-route profile. The entrypoint and migration flows enforce `chmod 600` on auth-profile files under `~/.openclaw`.
 This prevents other users on the host from reading stored credentials that remain.
 
 | Aspect | Detail |

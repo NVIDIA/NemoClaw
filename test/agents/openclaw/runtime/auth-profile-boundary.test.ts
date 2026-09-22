@@ -15,6 +15,7 @@ const START_SCRIPT = path.join(
   "scripts",
   "nemoclaw-start.sh",
 );
+const START_SOURCE = fs.readFileSync(START_SCRIPT, "utf-8");
 const WRAPPER = [
   "set -euo pipefail",
   `eval "$(sed -n '/^write_auth_profile() {$/,/^}$/p' "$1")"`,
@@ -58,6 +59,54 @@ function seedAuthProfile(profile: Record<string, unknown>): (authPath: string) =
     fs.mkdirSync(path.dirname(authPath), { recursive: true });
     fs.writeFileSync(authPath, JSON.stringify(profile));
   };
+}
+
+function startupCredentialBoundaryBlock(kind: "non-root" | "root"): string {
+  const regionStart = START_SOURCE.indexOf(
+    kind === "non-root"
+      ? "# ── Non-root fallback"
+      : "# ── Root path (full privilege separation via setpriv)",
+  );
+  const startMarker =
+    kind === "non-root"
+      ? "  apply_messaging_runtime_env_aliases\n"
+      : "setup_auth_profile_as_sandbox\n";
+  const endMarker =
+    kind === "non-root" ? "\n  configure_messaging_channels" : "\nprepare_auto_pair_log";
+  const start = START_SOURCE.indexOf(startMarker, regionStart);
+  const end = START_SOURCE.indexOf(endMarker, start);
+  expect(
+    regionStart !== -1 && start !== -1 && end !== -1 && end > start,
+    `Expected ${kind} credential-boundary block in scripts/nemoclaw-start.sh`,
+  ).toBe(true);
+  return START_SOURCE.slice(start, end);
+}
+
+function runStartupCredentialBoundary(kind: "non-root" | "root") {
+  const wrapper = [
+    "set -euo pipefail",
+    `eval "$(sed -n '/^clear_managed_inference_credentials() {$/,/^}$/p' "$1")"`,
+    "NEMOCLAW_CMD=(probe)",
+    "STEP_DOWN_PREFIX_SANDBOX=(env)",
+    "apply_messaging_runtime_env_aliases() { :; }",
+    "write_auth_profile() { :; }",
+    "harden_auth_profiles() { :; }",
+    "setup_auth_profile_as_sandbox() { :; }",
+    "install_messaging_runtime_preloads() { :; }",
+    "verify_messaging_runtime_secret_scans() { :; }",
+    'run_oneshot_command() { bash -c \'printf "NVIDIA_INFERENCE_API_KEY=%s\\\\nNVIDIA_API_KEY=%s\\\\n" "${NVIDIA_INFERENCE_API_KEY-unset}" "${NVIDIA_API_KEY-unset}"\'; }',
+    startupCredentialBoundaryBlock(kind),
+  ].join("\n");
+  return spawnSync("bash", ["-s", "--", START_SCRIPT], {
+    input: wrapper,
+    env: {
+      PATH: process.env.PATH,
+      NVIDIA_INFERENCE_API_KEY: "primary-secret",
+      NVIDIA_API_KEY: "legacy-secret",
+      NEMOCLAW_INFERENCE_BASE_URL: "https://inference.local/v1",
+    },
+    encoding: "utf-8",
+  });
 }
 
 const legacyManagedProfile = {
@@ -237,6 +286,19 @@ describe("write_auth_profile (#1332)", () => {
       fs.rmSync(fixture.home, { recursive: true, force: true });
     }
   });
+
+  it.each(["non-root", "root"] as const)(
+    "clears both managed credential aliases in the %s startup ordering before one-shot execution",
+    (kind) => {
+      const result = runStartupCredentialBoundary(kind);
+
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout).toContain("NVIDIA_INFERENCE_API_KEY=unset");
+      expect(result.stdout).toContain("NVIDIA_API_KEY=unset");
+      expect(result.stdout).not.toContain("primary-secret");
+      expect(result.stdout).not.toContain("legacy-secret");
+    },
+  );
 
   it("rejects a symlinked auth-profile parent without changing its target", () => {
     const externalContents = JSON.stringify({ "inference:manual": legacyManagedProfile });
