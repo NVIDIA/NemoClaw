@@ -706,6 +706,22 @@ describe("maintainer PR comparator contributor compliance", () => {
     expect(comparatorOutput.failures).toContain("substantive:mergeable=MERGEABLE,state=BLOCKED");
   });
 
+  it("rejects an unstable merge state as comparator evidence", () => {
+    const result = runComparatorGate({
+      body: "Signed-off-by: Example User <user@example.com>",
+      verified: true,
+      mergeStateStatus: "UNSTABLE",
+    });
+
+    const output = JSON.parse(result.stdout);
+    expect(output.gates.mergeable).toBe(false);
+    expect(output.details).toMatchObject({
+      mergeable: "MERGEABLE",
+      merge_state_status: "UNSTABLE",
+    });
+    expect(output.failures).toContain("substantive:mergeable=MERGEABLE,state=UNSTABLE");
+  });
+
   it("passes when DCO and every commit are verified", () => {
     const result = runComparatorGate({
       body: "Signed-off-by: Example User <user@example.com>",

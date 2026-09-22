@@ -98,13 +98,14 @@ gate_ci_green=$(
   [ "$ci_failure_count" = "0" ] && [ "$ci_pending_count" = "0" ] && [ "$missing_check_count" = "0" ] && echo true || echo false
 )
 
-# Gate 3: mergeable without conflicts or an unidentified protection blocker.
-# BEHIND alone does not make the candidate ineligible, but BLOCKED fails closed
-# because this collector cannot prove every GitHub branch-protection condition.
+# Gate 3: mergeable without conflicts, transient merge-state evidence, or an
+# unidentified protection blocker. BEHIND alone does not make the candidate
+# ineligible, but UNSTABLE and BLOCKED fail closed because this collector cannot
+# prove a stable merge result or every GitHub branch-protection condition.
 mergeable=$(printf '%s' "$raw" | jq -r .mergeable)
 merge_state=$(printf '%s' "$raw" | jq -r .mergeStateStatus)
 case "$merge_state" in
-  BEHIND | CLEAN | HAS_HOOKS | UNSTABLE) merge_state_permitted=true ;;
+  BEHIND | CLEAN | HAS_HOOKS) merge_state_permitted=true ;;
   *) merge_state_permitted=false ;;
 esac
 gate_mergeable=$(
