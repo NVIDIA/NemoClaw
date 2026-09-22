@@ -19,7 +19,7 @@ The [accepted scope](scope.md) defines the invariants; this page explains the re
 
 Operation coordination belongs in the SDK so applications and the CLI share the same recovery behavior.
 The SDK checks deployment scope and recovery constraints; providers decide resource transitions and verify remote identity before mutation.
-For reconstructible OpenShell resources and disposable Docker resources, the SDK reports OpenTofu's actions without reconstructing absence or replacement cleanup from plan history.
+For reconstructible OpenShell resources and non-retained disposable Docker resources, apply and teardown report OpenTofu's actions without reconstructing absence or replacement cleanup from plan history.
 Durable identity, retained storage, and undeclared-resource checks remain deployment constraints.
 OpenTofu executes the graph with its default parallelism.
 The SDK and NemoClaw provider share backend library code.
@@ -90,12 +90,15 @@ Failures involving only observations, established updates or deletions, or dispo
 They cannot clear earlier unresolved OpenShell creations; those must be reconciled before teardown.
 An OpenShell-stage apply without non-disposable resource creations does not start a pending-creation guard; export can verify its established bindings through OpenTofu even after that apply fails.
 Managed-runtime failures retain their separate stage recovery evidence.
+Teardown recovery validates current bindings and fresh plans; the failed apply's saved plan file and hash do not authorize the next operation.
 The [recovery guide](../usage.md#recover-an-interrupted-operation) describes the caller's next steps.
 
 ## Storage and Resource Lifetimes
 
 Processes and their data have different lifetimes.
 Separate storage bindings let compute change while gateway signing keys, credentials, and model files survive.
+OpenTofu selects Podman gateway replacement through the provider contract, without an SDK whitelist inferred from specification changes.
+The SDK requires the gateway's independent storage binding, the compiler orders the dependency and protects retained storage, and the provider rechecks identity before replacing the process.
 Missing or substituted bound credentials and gateway storage stop planning; reproducible model caches can be rebuilt.
 
 The shared [OpenShell lifecycle contract](../../crates/nemoclaw-sdk/src/backend.rs) distinguishes retained workspace identity, stateful sandboxes, and reconstructible registrations and configuration.
