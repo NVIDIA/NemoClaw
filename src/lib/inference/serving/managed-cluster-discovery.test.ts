@@ -949,6 +949,7 @@ describe("production pinned peer transport", () => {
     const usrLib = path.join(root, "usr", "lib");
     const primary = path.join(etc, "os-release");
     const fallback = path.join(usrLib, "os-release");
+    const outside = path.join(root, "outside");
     fs.mkdirSync(etc, { recursive: true });
     fs.mkdirSync(usrLib, { recursive: true });
     fs.writeFileSync(fallback, 'ID=ubuntu\nVERSION_ID="24.04"\n');
@@ -965,6 +966,7 @@ describe("production pinned peer transport", () => {
       );
 
       fs.unlinkSync(primary);
+      fs.writeFileSync(outside, 'ID=ubuntu\nVERSION_ID="24.04"\n');
       fs.symlinkSync("../outside", primary);
       expect(transport.readOsRelease?.(primary, fallback, 4096)).toBeUndefined();
 
