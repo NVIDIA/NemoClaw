@@ -12,12 +12,13 @@ nemoclaw-sdk = { path = "../nemoclaw-sdk" }
 clap.workspace = true
 serde_json.workspace = true
 serde-saphyr.workspace = true
-tokio = { workspace = true, features = ["signal", "io-std", "io-util"] }
+tokio = { workspace = true, features = ["signal", "io-std", "io-util", "net"] }
 
 tempfile.workspace = true
 
 [target.'cfg(unix)'.dependencies]
 nix.workspace = true
+rustix.workspace = true
 
 [[bin]]
 name = "nemoclaw"
