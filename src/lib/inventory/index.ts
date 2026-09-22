@@ -699,9 +699,14 @@ export async function showStatusCommand(deps: ShowStatusCommandDeps): Promise<vo
       // Prefer the live gateway model for the default sandbox so `status`
       // agrees with `openshell inference get` (#2369).
       const liveModel = safeStatusString(isDefault && live ? live.model : null);
+      const liveProvider = safeStatusString(isDefault && live ? live.provider : null);
       const inference = getSandboxEntryDisplayInference(sb);
       const storedModel = safeStatusString(inference.model);
       const storedProvider = safeStatusString(inference.provider);
+      const liveRouteDrifted = Boolean(
+        (liveModel && liveModel !== storedModel) ||
+        (liveProvider && liveProvider !== storedProvider),
+      );
       const model = liveModel || storedModel;
       const name = safeStatusString(sb.name) ?? "unknown";
       const portSuffix = sb.dashboardPort != null ? ` :${sb.dashboardPort}` : "";
@@ -723,6 +728,10 @@ export async function showStatusCommand(deps: ShowStatusCommandDeps): Promise<vo
       if (storedProvider || storedModel) {
         const parts = [storedProvider, storedModel].filter(Boolean).join(" / ");
         log(`      Inference (configured): ${parts}`);
+      }
+      if (liveRouteDrifted) {
+        const parts = [liveProvider, liveModel].filter(Boolean).join(" / ");
+        log(`      Inference (live): ${parts}`);
       }
       if (deps.getActiveSessionCount && !portablePhase) {
         const count = deps.getActiveSessionCount(sb.name);

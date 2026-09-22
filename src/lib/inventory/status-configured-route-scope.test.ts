@@ -35,6 +35,24 @@ describe("status inference row stays scoped to its own sandbox (#11412)", () => 
     expect(lines).toContain("      (onboarded: qwen2.5:0.5b)");
     expect(lines).toContain("      Inference (configured): ollama-route-a / llama3.2:1b");
     expect(lines).toContain("      Inference (configured): ollama-route-b / qwen2.5:0.5b");
+    expect(lines).toContain("      Inference (live): ollama-route-a / llama3.2:1b");
+  });
+
+  it("surfaces provider-only live-route drift when the model stays the same", async () => {
+    const lines: string[] = [];
+    await showStatusCommand({
+      listSandboxes: () => ({
+        sandboxes: [{ name: "route-b", model: "shared-model", provider: "provider-b" }],
+        defaultSandbox: "route-b",
+      }),
+      getLiveInference: () => ({ provider: "provider-a", model: "shared-model" }),
+      showServiceStatus: vi.fn(),
+      log: (message = "") => lines.push(message),
+    });
+
+    expect(lines).toContain("      Inference (configured): provider-b / shared-model");
+    expect(lines).toContain("      Inference (live): provider-a / shared-model");
+    expect(lines).not.toContain("      (onboarded: shared-model)");
   });
 
   it("keeps status --json rows on each sandbox's own recorded route", async () => {
