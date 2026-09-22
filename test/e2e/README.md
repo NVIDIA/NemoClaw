@@ -33,20 +33,18 @@ before those targets run; local runners must provide it themselves.
 - `.github/workflows/sandbox-images.yaml` provides reusable sandbox-image build and test evidence.
   `.github/workflows/e2e.yaml` selects free-standing jobs, including `whatsapp-qr-compact` and `ollama-auth-proxy`.
 
-The `agent-turn-latency` target checks the configured host CLI with both text and
-JSON output, including explicit local mode and a requested timeout. For inline
-messages, the fixture keeps the host pipe open while the wrapper closes the dispatch
-child's stdin. The fixture holds its writer open until command completion, so
-inheriting that pipe blocks until the test timeout, regardless of the model-time cap.
-File-message turns use a relative symlink chain to a file with spaces in its path,
-with competing stdin, in both output formats. Each turn must return the answer
-from the selected input. Parser combinations and stdin aliases belong to the
-unit and real-child tests; this target does not repeat native file-permission errors.
-The first JSON turn also requires at most 60 seconds outside OpenClaw's reported
-agent duration. Missing or inconsistent timing fails that bound.
-These cases are selectable for both Docker and Podman through the existing runtime
-matrix. Host stdin is preserved for nonempty message-file arguments because only
-the sandbox can resolve their paths.
+The `agent-turn-latency` target makes one JSON OpenClaw hosted turn and one Hermes
+hosted API turn. The OpenClaw fixture keeps the host pipe open while the wrapper
+closes the dispatch child's stdin. The fixture holds its writer open until command
+completion, so inheriting that pipe blocks until the test timeout, regardless of
+the model-time cap. The OpenClaw turn also requires at most 60 seconds outside
+OpenClaw's reported agent duration. Missing or inconsistent timing fails that bound.
+Both turns record the selected provider, model, answer, and elapsed time. The Hermes
+turn also records the HTTP status. Parser combinations, explicit local forwarding,
+requested timeouts, message-file input, and stdin aliases belong to deterministic
+tests. The real-child input cases include a relative symbolic-link chain to a regular
+file with spaces while stdin contains competing data. This target is selectable for
+Docker and Podman through the existing runtime matrix.
 
 ## CI execution shape
 
