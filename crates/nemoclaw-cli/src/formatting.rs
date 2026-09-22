@@ -9,7 +9,6 @@ pub(crate) fn render(
     format: OutputFormat,
 ) -> Result<String, Box<dyn std::error::Error>> {
     match result {
-        CommandResult::OnboardExit => Ok(String::new()),
         CommandResult::Export(document) => Ok(document.yaml()?),
         CommandResult::Operation(result) => match format {
             OutputFormat::Text => Ok(plan(&result)),

@@ -28,9 +28,13 @@ Implementation starts at [Deployment](../../crates/nemoclaw-sdk/src/deployment/m
 
 ## Configuration
 
-The [authoring library](../../crates/nemoclaw-authoring/src/lib.rs) turns onboarding answers and draft edits into YAML without terminal dependencies or deployment operations.
-It retains credential references, not values, and supports a subset of SDK configuration.
-Both authored and directly supplied YAML pass through the SDK's [configuration validation](../configuration-schema.md).
+The [authoring library](../../crates/nemoclaw-authoring/src/lib.rs) owns an SDK `Document` while a frontend edits or reviews it, without terminal dependencies or deployment operations.
+It can open any valid V1 document without reducing it to onboarding fields.
+Its guided API derives current values and compatible choices from the document and a curated preset table; a document with additional V1 configuration remains available for review but does not permit a lossy guided edit.
+Preset projection constructs SDK configuration types and then passes the result through the same [configuration validation](../configuration-schema.md) as directly supplied YAML.
+The library retains credential references, not values.
+The [example onboarding TUI](../../examples/onboarding-tui/README.md) renders the guided field query and sends typed field changes back to the library, so compatibility rules do not live in the terminal frontend.
+It is a separate generation-only binary and does not define a prescribed onboarding flow or extend the lifecycle CLI.
 The native [bundle](../build.md#build-a-native-bundle) ships the matching CLI, schema, OpenTofu, and providers; source-derived provider versions prevent stale installations from being reused.
 
 ## Why Managed Apply Has Two Stages

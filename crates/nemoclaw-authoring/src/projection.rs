@@ -3,8 +3,12 @@
 
 use crate::diagnostics::diagnostic;
 use crate::{Answers, AuthoredDocument, Capabilities, CompletionBoundary, Diagnostic, Diagnostics};
-use nemoclaw_sdk::config::Document;
-use serde_json::json;
+use nemoclaw_sdk::config::{
+    API_VERSION, Agent, Credential, Document, ExplicitPolicy, Gateway, Harness, Inference,
+    InferenceProvider, ManagedGateway, Metadata, Network, NetworkPolicy, Overrides, PolicyBinary,
+    PolicyEndpoint, PolicyFilesystem, PolicyProcess, PolicyRule, Route, Runtime, Sandbox, Spec,
+};
+use std::collections::BTreeMap;
 
 /// Holds one deployment identity across projections and draft edits.
 #[derive(Clone, Debug)]
@@ -106,55 +110,58 @@ impl Session {
             return Err(Diagnostics { items });
         }
         let scenario = scenario.expect("validated scenario capability");
-        let read_only = [
-            "/usr",
-            "/opt/fabric",
-            "/opt/nemoclaw",
-            scenario.filesystem_read_only,
-        ];
-
-        let source = json!({
-            "apiVersion": nemoclaw_sdk::config::API_VERSION,
-            "kind": "NemoClawConfig",
-            "metadata": {"name": answers.deployment_name, "uid": self.uid},
-            "spec": {
-                "gateway": {"management": "managed"},
-                "inferenceProviders": [{
-                    "name": answers.provider_name,
-                    "provider": scenario.provider_kind,
-                    "api": scenario.provider_api,
-                    "endpoint": scenario.endpoint,
-                    "credential": {"env": answers.credential_env}
+        let source = Document {
+            api_version: API_VERSION.into(),
+            kind: "NemoClawConfig".into(),
+            metadata: Metadata {
+                name: answers.deployment_name.clone(),
+                uid: self.uid.clone(),
+            },
+            spec: Spec {
+                gateway: Gateway::Managed(ManagedGateway::default()),
+                inference_providers: vec![InferenceProvider {
+                    name: answers.provider_name.clone(),
+                    provider: scenario.provider_kind,
+                    api: Some(scenario.provider_api),
+                    endpoint: scenario.endpoint.into(),
+                    credential: Some(Credential {
+                        env: answers.credential_env.clone(),
+                    }),
+                    service_ref: None,
                 }],
-                "sandboxes": [{
-                    "name": answers.sandbox_name,
-                    "harness": {"kind": scenario.harness_kind},
-                    "runtime": {"provider": "docker"},
-                    "network": {"policy": {"explicit": {
-                        "version": 1,
-                        "process": {"run_as_user": "1000", "run_as_group": "1000"},
-                        "network_policies": {"hosted-inference": {
-                            "name": "hosted-inference",
-                            "endpoints": [{"host": "integrate.api.nvidia.com", "port": 443}],
-                            "binaries": [{"path": scenario.network_binary}]
-                        }},
-                        "filesystem_policy": {
-                            "include_workdir": true,
-                            "read_only": read_only,
-                            "read_write": ["/sandbox"]
-                        }
-                    }}},
-                    "agent": {
-                        "name": answers.agent_name,
-                        "inference": {"routes": [{
-                            "name": "primary",
-                            "providerRef": answers.provider_name,
-                            "overrides": {"model": answers.model}
-                        }]}
-                    }
-                }]
-            }
-        });
+                sandboxes: vec![Sandbox {
+                    harness: Some(Harness {
+                        kind: scenario.harness_kind,
+                        observability: None,
+                        execution: None,
+                        interfaces: None,
+                    }),
+                    name: answers.sandbox_name.clone(),
+                    runtime: Runtime {
+                        provider: answers.runtime,
+                    },
+                    network: preset_network(scenario),
+                    agent: Agent {
+                        name: answers.agent_name.clone(),
+                        inference: Some(Inference {
+                            default: None,
+                            routes: vec![Route {
+                                name: "primary".into(),
+                                provider_ref: Some(answers.provider_name.clone()),
+                                provider: None,
+                                overrides: Overrides {
+                                    model: answers.model.clone(),
+                                    ..Overrides::default()
+                                },
+                            }],
+                        }),
+                        ..Agent::default()
+                    },
+                    ..Sandbox::default()
+                }],
+                ..Spec::default()
+            },
+        };
         let yaml = serde_saphyr::to_string(&source)
             .map_err(|_| diagnostic("document", "could not serialize configuration"))?;
         let document = Document::parse(yaml.as_bytes())
@@ -164,6 +171,62 @@ impl Session {
             document,
             completion_boundary: CompletionBoundary::GeneratedDesiredState,
         })
+    }
+}
+
+fn preset_network(scenario: &crate::Scenario) -> Network {
+    Network {
+        policy: NetworkPolicy::Explicit(ExplicitPolicy {
+            version: 1,
+            filesystem_policy: Some(PolicyFilesystem {
+                include_workdir: Some(true),
+                read_only: Some(
+                    [
+                        "/usr",
+                        "/opt/fabric",
+                        "/opt/nemoclaw",
+                        scenario.filesystem_read_only,
+                    ]
+                    .into_iter()
+                    .map(str::to_owned)
+                    .collect(),
+                ),
+                read_write: Some(vec!["/sandbox".into()]),
+            }),
+            landlock: None,
+            process: Some(PolicyProcess {
+                run_as_user: Some("1000".into()),
+                run_as_group: Some("1000".into()),
+            }),
+            network_policies: BTreeMap::from([(
+                "hosted-inference".into(),
+                PolicyRule {
+                    name: "hosted-inference".into(),
+                    endpoints: vec![PolicyEndpoint {
+                        host: Some("integrate.api.nvidia.com".into()),
+                        port: Some(443),
+                        ports: None,
+                        path: None,
+                        protocol: None,
+                        tls: None,
+                        enforcement: None,
+                        access: None,
+                        allowed_ips: None,
+                        rules: None,
+                        deny_rules: None,
+                        allow_encoded_slash: None,
+                        websocket_credential_rewrite: None,
+                        request_body_credential_rewrite: None,
+                        json_rpc: None,
+                        mcp: None,
+                    }],
+                    binaries: vec![PolicyBinary {
+                        path: scenario.network_binary.into(),
+                    }],
+                },
+            )]),
+        }),
+        proxy: None,
     }
 }
 

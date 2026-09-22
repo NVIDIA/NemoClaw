@@ -6,14 +6,12 @@ use crate::{
     credentials,
     deployment::create as deployment,
     io::document,
-    onboarding,
 };
 use nemoclaw_sdk::{CancellationToken, OperationResult, config::Document};
 use std::path::Path;
 use tokio::io::{AsyncBufReadExt, AsyncRead};
 
 pub(crate) enum CommandResult {
-    OnboardExit,
     Export(Box<Document>),
     Operation(OperationResult),
 }
@@ -29,43 +27,6 @@ pub(crate) async fn run<R: AsyncRead + Unpin>(
         verbose,
         command,
     } = cli;
-    let command = match command {
-        Command::Onboard {
-            generate_only,
-            output,
-            non_interactive,
-            edit,
-            name,
-            sandbox,
-            agent,
-            provider,
-            model,
-            credential_env,
-        } => {
-            let result = onboarding::run(
-                onboarding::Options {
-                    state_dir,
-                    bundle_dir,
-                    verbose,
-                    generate_only,
-                    output,
-                    non_interactive,
-                    edit,
-                    name,
-                    sandbox,
-                    agent,
-                    provider,
-                    model,
-                    credential_env,
-                },
-                stdin,
-                cancel,
-            )
-            .await?;
-            return Ok(result.map_or(CommandResult::OnboardExit, CommandResult::Operation));
-        }
-        command => command,
-    };
     let mut deployment = deployment(&state_dir, bundle_dir.as_deref(), verbose)?;
     let result = match command {
         Command::Plan { destroy: true, .. } => deployment.plan_destroy(cancel).await?,
@@ -115,7 +76,6 @@ pub(crate) async fn run<R: AsyncRead + Unpin>(
             )));
         }
         Command::Destroy => deployment.destroy(cancel).await?,
-        Command::Onboard { .. } => unreachable!("onboarding returns before lifecycle setup"),
     };
     Ok(CommandResult::Operation(result))
 }

@@ -1,45 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-use nemoclaw_sdk::config::Document;
-use std::{
-    fs,
-    process::{Child, Command, Output},
-    thread,
-    time::{Duration, Instant},
-};
+use std::{fs, process::Command};
 
-const PROCESS_TIMEOUT: Duration = Duration::from_secs(10);
-
-fn wait_with_output(mut child: Child, timeout: Duration) -> Output {
-    let deadline = Instant::now() + timeout;
-    loop {
-        match child.try_wait().unwrap() {
-            Some(_) => return child.wait_with_output().unwrap(),
-            None if Instant::now() < deadline => thread::sleep(Duration::from_millis(10)),
-            None => {
-                child.kill().unwrap();
-                let output = child.wait_with_output().unwrap();
-                panic!(
-                    "command did not exit within {timeout:?}: {}",
-                    String::from_utf8_lossy(&output.stderr)
-                );
-            }
-        }
-    }
-}
-
-#[cfg(unix)]
-fn wait_for_file(path: &std::path::Path, expected: &str, timeout: Duration) {
-    let deadline = Instant::now() + timeout;
-    while Instant::now() < deadline {
-        if fs::read_to_string(path).is_ok_and(|text| text.contains(expected)) {
-            return;
-        }
-        thread::sleep(Duration::from_millis(10));
-    }
-    panic!("command did not write {expected:?} within {timeout:?}");
-}
 #[test]
 fn invalid_configuration_fails_before_creating_state_or_echoing_secrets() {
     let directory = tempfile::tempdir().unwrap();
@@ -58,6 +21,7 @@ fn invalid_configuration_fails_before_creating_state_or_echoing_secrets() {
     assert!(output.stdout.is_empty());
     assert!(!String::from_utf8_lossy(&output.stderr).contains("secret-sentinel"));
 }
+
 #[test]
 fn bundle_flag_selects_an_explicit_bundle() {
     let directory = tempfile::tempdir().unwrap();
@@ -142,19 +106,15 @@ fn verbose_reports_failed_steps_on_stderr_without_changing_stdout() {
 }
 
 fn generate_credential_document(directory: &std::path::Path) -> std::path::PathBuf {
+    use nemoclaw_authoring::{Answers, Capabilities, Session};
+
     let path = directory.join("credential-input.yaml");
-    let output = Command::new(env!("CARGO_BIN_EXE_nemoclaw"))
-        .args([
-            "onboard",
-            "--generate-only",
-            "--non-interactive",
-            "--output",
-        ])
-        .arg(&path)
-        .args(["--credential-env", "STORY_CREDENTIAL_KEY"])
-        .output()
-        .unwrap();
-    assert!(output.status.success());
+    let capabilities = Capabilities::available();
+    let mut answers = Answers::onboarding_defaults();
+    answers.credential_env = "STORY_CREDENTIAL_KEY".into();
+    let authored = Session::new().unwrap();
+    let authored = authored.project(&capabilities, &answers).unwrap();
+    fs::write(&path, authored.yaml()).unwrap();
     path
 }
 
@@ -301,218 +261,13 @@ fn qualify_generated_lifecycle_boundary() {
 }
 
 #[test]
-fn non_interactive_onboarding_saves_yaml_without_lifecycle_dependencies() {
-    let directory = tempfile::tempdir().unwrap();
-    let output_path = directory.path().join("deployment.yaml");
-    fs::write(&output_path, "complete prior file").unwrap();
-    let state_path = directory.path().join("state-must-not-exist");
-    let child = Command::new(env!("CARGO_BIN_EXE_nemoclaw"))
-        .args([
-            "onboard",
-            "--generate-only",
-            "--non-interactive",
-            "--output",
-        ])
-        .arg(&output_path)
-        .args(["--name", "direct-deployment", "--bundle"])
-        .arg(directory.path().join("missing-bundle"))
-        .arg("--state-dir")
-        .arg(&state_path)
-        .env("NVIDIA_INFERENCE_API_KEY", "nvapi-secret-sentinel")
-        .stdin(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn()
-        .unwrap();
-    // Keep the pipe open without sending input. Scripted generation must not
-    // poll stdin or wait for EOF.
-    let output = wait_with_output(child, PROCESS_TIMEOUT);
-    assert!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    assert!(output.stdout.is_empty());
-    assert!(!state_path.exists());
-    let bytes = fs::read(&output_path).unwrap();
-    assert!(!String::from_utf8_lossy(&bytes).contains("secret-sentinel"));
-    let document = Document::parse(bytes.as_slice()).unwrap();
-    assert_eq!(document.metadata.name, "direct-deployment");
-    assert_eq!(document.credential_names(), ["NVIDIA_INFERENCE_API_KEY"]);
-    assert!(
-        String::from_utf8_lossy(&output.stderr)
-            .contains("Credential references: NVIDIA_INFERENCE_API_KEY")
-    );
-    assert!(!String::from_utf8_lossy(&output.stderr).contains("secret-sentinel"));
-}
-
-#[test]
-fn interactive_onboarding_rejects_open_non_tty_input_without_writing() {
-    let directory = tempfile::tempdir().unwrap();
-    let output_path = directory.path().join("deployment.yaml");
-    fs::write(&output_path, "complete prior file").unwrap();
-    let child = Command::new(env!("CARGO_BIN_EXE_nemoclaw"))
-        .args(["onboard", "--generate-only", "--output"])
-        .arg(&output_path)
-        .stdin(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn()
-        .unwrap();
-
-    let output = wait_with_output(child, PROCESS_TIMEOUT);
-    assert_eq!(output.status.code(), Some(1));
-    assert!(output.stdout.is_empty());
-    assert_eq!(
-        fs::read_to_string(output_path).unwrap(),
-        "complete prior file"
-    );
-    assert_eq!(
-        String::from_utf8(output.stderr).unwrap(),
-        "interactive onboarding requires a terminal on stdin; use --non-interactive for scripts\n"
-    );
-}
-
-#[cfg(unix)]
-#[test]
-fn interactive_onboarding_exits_on_interrupt_or_termination_without_writing() {
-    use nix::{
-        pty::openpty,
-        sys::signal::{Signal, kill},
-        unistd::Pid,
-    };
-    use std::{fs::File, process::Stdio};
-
-    for signal in [Signal::SIGINT, Signal::SIGTERM] {
-        let directory = tempfile::tempdir().unwrap();
-        let output_path = directory.path().join("deployment.yaml");
-        let stderr_path = directory.path().join("stderr");
-        let terminal = openpty(None, None).unwrap();
-        let stderr = File::create(&stderr_path).unwrap();
-        let child = Command::new(env!("CARGO_BIN_EXE_nemoclaw"))
-            .args(["onboard", "--generate-only", "--output"])
-            .arg(&output_path)
-            .stdin(Stdio::from(terminal.slave))
-            .stdout(Stdio::null())
-            .stderr(Stdio::from(stderr))
-            .spawn()
-            .unwrap();
-        let _open_terminal = terminal.master;
-        wait_for_file(&stderr_path, "Deployment name", PROCESS_TIMEOUT);
-        kill(Pid::from_raw(child.id() as i32), signal).unwrap();
-
-        let output = wait_with_output(child, PROCESS_TIMEOUT);
-        assert_eq!(output.status.code(), Some(1), "{signal:?}");
-        assert!(!output_path.exists(), "{signal:?}");
-        let stderr = fs::read_to_string(&stderr_path).unwrap();
-        assert!(
-            stderr.contains("operation interrupted"),
-            "{signal:?}: {stderr}"
-        );
-    }
-}
-
-#[test]
-fn generation_only_stops_before_credential_fulfillment() {
-    let directory = tempfile::tempdir().unwrap();
-    let output_path = directory.path().join("deployment.yaml");
+fn core_cli_does_not_expose_the_example_onboarding_command() {
     let output = Command::new(env!("CARGO_BIN_EXE_nemoclaw"))
-        .args([
-            "onboard",
-            "--generate-only",
-            "--non-interactive",
-            "--output",
-        ])
-        .arg(&output_path)
-        .args(["--credential-env", "GENERATION_ONLY_MISSING_KEY"])
-        .env_remove("GENERATION_ONLY_MISSING_KEY")
+        .arg("onboard")
         .output()
         .unwrap();
-
-    assert!(output.status.success());
-    assert!(output.stdout.is_empty());
-    assert!(output_path.exists());
-    assert!(!String::from_utf8_lossy(&output.stderr).contains("missing credential"));
-}
-
-#[test]
-fn composed_onboarding_saves_yaml_before_credential_or_plan_failure() {
-    let directory = tempfile::tempdir().unwrap();
-    let output_path = directory.path().join("deployment.yaml");
-    let state_path = directory.path().join("state-must-not-exist");
-    let bundle_path = directory.path().join("missing-bundle");
-
-    let missing_credential = Command::new(env!("CARGO_BIN_EXE_nemoclaw"))
-        .args(["onboard", "--non-interactive", "--output"])
-        .arg(&output_path)
-        .args(["--credential-env", "COMPOSED_MISSING_KEY", "--bundle"])
-        .arg(&bundle_path)
-        .arg("--state-dir")
-        .arg(&state_path)
-        .env_remove("COMPOSED_MISSING_KEY")
-        .output()
-        .unwrap();
-    assert_eq!(missing_credential.status.code(), Some(1));
-    assert!(output_path.exists());
-    assert!(
-        String::from_utf8_lossy(&missing_credential.stderr)
-            .contains("missing credential environment variables: COMPOSED_MISSING_KEY")
-    );
-    assert!(!state_path.exists());
-
-    let failed_plan = Command::new(env!("CARGO_BIN_EXE_nemoclaw"))
-        .args(["onboard", "--non-interactive", "--output"])
-        .arg(&output_path)
-        .args(["--credential-env", "COMPOSED_MISSING_KEY", "--bundle"])
-        .arg(&bundle_path)
-        .arg("--state-dir")
-        .arg(&state_path)
-        .env("COMPOSED_MISSING_KEY", "secret-sentinel")
-        .output()
-        .unwrap();
-    assert_eq!(failed_plan.status.code(), Some(1));
-    Document::parse(fs::read(&output_path).unwrap().as_slice()).unwrap();
-    let stderr = String::from_utf8(failed_plan.stderr).unwrap();
-    assert_eq!(
-        stderr,
-        "Credential references: COMPOSED_MISSING_KEY\nbundle directory is unavailable\n"
-    );
-    assert!(!stderr.contains("secret-sentinel"));
-    assert!(!state_path.exists());
-}
-
-#[test]
-fn failed_write_preserves_target() {
-    let directory = tempfile::tempdir().unwrap();
-    let target = directory.path().join("existing-directory");
-    fs::create_dir(&target).unwrap();
-    let failed = Command::new(env!("CARGO_BIN_EXE_nemoclaw"))
-        .args([
-            "onboard",
-            "--generate-only",
-            "--non-interactive",
-            "--output",
-        ])
-        .arg(&target)
-        .output()
-        .unwrap();
-    assert!(!failed.status.success());
-    assert!(target.is_dir());
-    assert_eq!(fs::read_dir(directory.path()).unwrap().count(), 1);
-
-    let missing_target = directory.path().join("missing-parent/deployment.yaml");
-    let failed = Command::new(env!("CARGO_BIN_EXE_nemoclaw"))
-        .args([
-            "onboard",
-            "--generate-only",
-            "--non-interactive",
-            "--output",
-        ])
-        .arg(&missing_target)
-        .output()
-        .unwrap();
-    assert!(!failed.status.success());
-    assert!(!missing_target.exists());
+    assert_eq!(output.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("unrecognized subcommand"));
 }
 
 #[test]

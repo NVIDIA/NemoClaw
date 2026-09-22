@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-use nemoclaw_sdk::config::{HarnessKind, InferenceProviderKind};
+use nemoclaw_sdk::config::{HarnessKind, InferenceApi, InferenceProviderKind};
 
 use crate::{Answers, ApiChoice, HarnessChoice, InferenceChoice, RuntimeChoice};
 
@@ -15,7 +15,7 @@ pub struct Scenario {
     pub(crate) api: ApiChoice,
     pub(crate) harness_kind: HarnessKind,
     pub(crate) provider_kind: InferenceProviderKind,
-    pub(crate) provider_api: &'static str,
+    pub(crate) provider_api: InferenceApi,
     pub(crate) endpoint: &'static str,
     pub(crate) network_binary: &'static str,
     pub(crate) filesystem_read_only: &'static str,
@@ -59,10 +59,10 @@ impl Capabilities {
                     harness: HarnessChoice::OpenClaw,
                     runtime: RuntimeChoice::Docker,
                     inference: InferenceChoice::NvidiaHosted,
-                    api: ApiChoice::OpenAiCompletions,
+                    api: ApiChoice::OpenaiCompletions,
                     harness_kind: HarnessKind::OpenClaw,
                     provider_kind: InferenceProviderKind::Openai,
-                    provider_api: "openai-completions",
+                    provider_api: InferenceApi::OpenaiCompletions,
                     endpoint: "https://integrate.api.nvidia.com/v1",
                     network_binary: "/usr/bin/openclaw",
                     filesystem_read_only: "/app",
@@ -72,10 +72,10 @@ impl Capabilities {
                     harness: HarnessChoice::OpenClaw,
                     runtime: RuntimeChoice::Docker,
                     inference: InferenceChoice::NvidiaHosted,
-                    api: ApiChoice::OpenAiResponses,
+                    api: ApiChoice::OpenaiResponses,
                     harness_kind: HarnessKind::OpenClaw,
                     provider_kind: InferenceProviderKind::Openai,
-                    provider_api: "openai-responses",
+                    provider_api: InferenceApi::OpenaiResponses,
                     endpoint: "https://integrate.api.nvidia.com/v1",
                     network_binary: "/usr/bin/openclaw",
                     filesystem_read_only: "/app",
@@ -85,10 +85,10 @@ impl Capabilities {
                     harness: HarnessChoice::Hermes,
                     runtime: RuntimeChoice::Docker,
                     inference: InferenceChoice::NvidiaHosted,
-                    api: ApiChoice::OpenAiCompletions,
+                    api: ApiChoice::OpenaiCompletions,
                     harness_kind: HarnessKind::Hermes,
                     provider_kind: InferenceProviderKind::Openai,
-                    provider_api: "openai-completions",
+                    provider_api: InferenceApi::OpenaiCompletions,
                     endpoint: "https://integrate.api.nvidia.com/v1",
                     network_binary: "/opt/fabric/bin/python",
                     filesystem_read_only: "/opt/hermes",

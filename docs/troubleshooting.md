@@ -4,9 +4,7 @@
 # Diagnose a Failed Deployment Operation
 
 Retain the original YAML, matching bundle, and entire state directory when an operation fails.
-Onboarding saves its selected YAML before resolving credentials and planning, so a credential, plan, or apply failure leaves that recovery input in place.
-Retry the failed stage with standalone `nemoclaw plan FILE` or `nemoclaw apply FILE` after resolving the cause; do not rerun authoring and replace the deployment identity.
-If you decline the separate apply prompt, the saved YAML remains available and no apply is attempted.
+Retry the failed stage with `nemoclaw plan FILE` or `nemoclaw apply FILE` after resolving the cause; do not rerun authoring and replace the deployment identity.
 Do not delete bindings or substitute a fresh state directory to bypass an ownership error.
 See [state locations](state.md) and the [recovery procedure](usage.md#updates-and-recovery).
 

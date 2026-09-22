@@ -2,30 +2,22 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::capabilities::NVIDIA_MODEL;
+use nemoclaw_sdk::config::{ComputeDriver, HarnessKind, InferenceApi};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum HarnessChoice {
-    OpenClaw,
-    Hermes,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum RuntimeChoice {
-    Docker,
-}
+pub type HarnessChoice = HarnessKind;
+pub type RuntimeChoice = ComputeDriver;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum InferenceChoice {
     NvidiaHosted,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ApiChoice {
-    OpenAiCompletions,
-    OpenAiResponses,
-}
+pub type ApiChoice = InferenceApi;
 
-/// Complete authoring inputs, validated when projected or reviewed.
+/// Inputs for one curated guided-onboarding projection.
+///
+/// This is a frontend view, not a second desired-state schema. [`crate::Draft`]
+/// owns the SDK's complete [`nemoclaw_sdk::config::Document`].
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Answers {
     pub deployment_name: String,
@@ -65,7 +57,7 @@ impl Answers {
             harness: HarnessChoice::OpenClaw,
             runtime: RuntimeChoice::Docker,
             inference: InferenceChoice::NvidiaHosted,
-            api: ApiChoice::OpenAiCompletions,
+            api: ApiChoice::OpenaiCompletions,
             provider_name: "hosted-nvidia-prod".into(),
             model: NVIDIA_MODEL.into(),
             credential_env: "NVIDIA_INFERENCE_API_KEY".into(),

@@ -42,7 +42,7 @@ fn default_onboarding_authors_openclaw_with_hosted_nvidia() {
 fn onboarding_authors_openclaw_with_the_responses_api() {
     let authored = author_onboarding(AnswerOverrides {
         deployment_name: Some("openclaw-responses".into()),
-        api: Some(ApiChoice::OpenAiResponses),
+        api: Some(ApiChoice::OpenaiResponses),
         credential_env: Some("NVIDIA_RESPONSES_API_KEY".into()),
         ..AnswerOverrides::default()
     });
