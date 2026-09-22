@@ -32,9 +32,11 @@ Compare the results with the required checks in `repo-policy.md`.
 ## Gate 3: Mergeable, no conflicts
 
 Require `mergeable: MERGEABLE` and one of these `mergeStateStatus` values:
-`BEHIND`, `BLOCKED`, `CLEAN`, `HAS_HOOKS`, or `UNSTABLE`.
-These are the same conflict conditions used by the trusted merge gate.
+`BEHIND`, `CLEAN`, `HAS_HOOKS`, or `UNSTABLE`.
 A `BEHIND` state alone does not fail this gate.
+`BLOCKED` fails closed because the comparator does not verify every GitHub branch-protection
+condition. The trusted approval gate may accept `BLOCKED` because a missing approval can itself
+produce that state, but that does not establish eligibility for a merge recommendation.
 
 Separately confirm whether an active rule requires the branch to be up to date.
 If it does, integrate the base and rerun all candidate evidence before declaring the PR eligible to merge.
@@ -42,6 +44,7 @@ If it does, integrate the base and rerun all candidate evidence before declaring
 **Common failure modes:**
 
 - `CONFLICTING` — base branch has diverged
+- `BLOCKED`: GitHub reports an unresolved merge requirement
 - `DIRTY` — staged changes block merge
 - `UNKNOWN` — GitHub has not established mergeability
 

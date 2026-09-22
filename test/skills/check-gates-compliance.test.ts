@@ -682,6 +682,30 @@ describe("maintainer PR comparator contributor compliance", () => {
     expect(comparatorOutput.failures).not.toContain("substantive:mergeable=MERGEABLE,state=BEHIND");
   });
 
+  it("keeps blocked PRs eligible for approval but rejects them as merge candidates", () => {
+    const fixture = {
+      body: "Signed-off-by: Example User <user@example.com>",
+      verified: true,
+      mergeStateStatus: "BLOCKED",
+      reviewDecision: "APPROVED",
+    };
+    const mergeGate = runGate(fixture);
+    const comparator = runComparatorGate(fixture);
+
+    const mergeGateOutput = JSON.parse(mergeGate.stdout);
+    const comparatorOutput = JSON.parse(comparator.stdout);
+    expect(mergeGateOutput.gates.conflicts).toMatchObject({
+      pass: true,
+      mergeable: "MERGEABLE",
+      mergeStateStatus: "BLOCKED",
+    });
+    expect(comparatorOutput.gates).toMatchObject({
+      mergeable: false,
+      branch_protection: true,
+    });
+    expect(comparatorOutput.failures).toContain("substantive:mergeable=MERGEABLE,state=BLOCKED");
+  });
+
   it("passes when DCO and every commit are verified", () => {
     const result = runComparatorGate({
       body: "Signed-off-by: Example User <user@example.com>",
