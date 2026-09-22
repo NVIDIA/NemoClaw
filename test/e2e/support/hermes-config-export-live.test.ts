@@ -50,7 +50,10 @@ beforeEach(() => {
       },
     },
   });
-  mocks.readSandboxPolicy.mockReturnValue({ ok: false });
+  mocks.readSandboxPolicy.mockReturnValue({
+    ok: true,
+    value: { appliedRevision: 1, document: "version: 1" },
+  });
   mocks.asExportedConfig.mockReturnValue({
     spec: {
       inferenceProviders: [
@@ -172,6 +175,19 @@ describe("Hermes config export live evidence", () => {
         refusalDiagnosticMatches: true,
       }),
     ).toBe(true);
+  });
+
+  it("stops before export when the effective policy observation fails", async () => {
+    mocks.readSandboxPolicy.mockReturnValue({
+      ok: false,
+      error: { kind: "command", reason: "failed", message: "policy unavailable" },
+    });
+
+    await expect(runEnabledFixture()).rejects.toThrow(
+      "the effective sandbox policy could not be read: policy unavailable",
+    );
+    expect(mocks.command).not.toHaveBeenCalled();
+    expect(mocks.writeJson).not.toHaveBeenCalled();
   });
 
   it.each([

@@ -4,6 +4,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
+import { isDeepStrictEqual } from "node:util";
 import YAML from "yaml";
 import { fingerprintOpenShellSandboxId } from "../../../src/lib/adapters/openshell/sandbox-identity.ts";
 import {
@@ -32,6 +33,7 @@ import {
   buildNetworkPolicyCurlProbe,
   parseNetworkPolicyCurlOutput,
 } from "../support/network-policy-probe.ts";
+import { requireEffectivePolicyDocument } from "../support/config-export-policy-evidence.ts";
 import { writeSecretFreeConfigExportArtifact } from "../support/config-export-secret-scan.ts";
 import { runRestrictedOnboardWithRetry } from "./restricted-onboard-helpers.ts";
 
@@ -371,6 +373,9 @@ test(
       sandboxName: SANDBOX_NAME,
       scope: "effective",
     });
+    const effectivePolicy = YAML.parse(requireEffectivePolicyDocument(policy)) as {
+      network_policies?: unknown;
+    };
     const outputPath = path.join(exportDirectory, "config.yaml");
     const exported = await runNemoclaw(
       host,
@@ -381,15 +386,15 @@ test(
     const raw = fs.readFileSync(outputPath, "utf8");
     const document = parseConfigExport(raw);
     const exportedSandbox = document.spec.sandboxes[0];
-    expect(exportedSandbox.image).toBeNull();
-    expect(
-      (document.spec.sandboxes[0].network.policy.explicit as { network_policies?: unknown })
-        .network_policies,
-    ).toEqual(
-      policy.ok
-        ? (YAML.parse(policy.value.document) as { network_policies?: unknown }).network_policies
-        : undefined,
+    const exportedNetworkPolicies = (
+      exportedSandbox.network.policy.explicit as { network_policies?: unknown }
+    ).network_policies;
+    const effectivePolicyMatches = isDeepStrictEqual(
+      exportedNetworkPolicies,
+      effectivePolicy.network_policies,
     );
+    expect(exportedSandbox.image).toBeNull();
+    expect(effectivePolicyMatches).toBe(true);
     const exportArtifact = "config-export-live.yaml";
     await writeSecretFreeConfigExportArtifact(artifacts, exportArtifact, raw, [apiKey]);
 
@@ -419,7 +424,7 @@ test(
     await artifacts.writeJson("config-export-live-evidence.json", {
       sandboxName: SANDBOX_NAME,
       managedImagePlaceholderIsNull: exportedSandbox.image === null,
-      effectivePolicyMatches: true,
+      effectivePolicyMatches,
       identityDriftPreventedPublication: true,
       yaml: {
         artifact: exportArtifact,

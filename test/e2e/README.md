@@ -392,11 +392,11 @@ This keeps the private optional dependency available for SDK-backed commands suc
 
 The `network-policy` target also owns live configuration-export evidence for #10938, #11854, #12131, and PR #11065.
 After restricted single-agent OpenClaw onboarding, it invokes the candidate `config export` command through the real SDK connection.
-It validates the staged document, requires `image: null`, and compares the explicit policy with the effective sandbox policy.
+It validates the staged document, requires `image: null`, and compares the exported `network_policies` value with the effective sandbox policy's `network_policies` value.
 It then changes the fixture's recorded sandbox fingerprint and requires export to fail without creating a file.
 The fixture restores the registry in `finally` and removes private export files through its existing cleanup registry.
 The fixture stores the secret-free YAML and its SHA-256 digest as review evidence.
-The exported effective policy comes from the SDK response and must match the independent CLI policy observation.
+The exported `network_policies` value must match the independent CLI policy observation.
 Deterministic adapter tests own individual wire shapes and malformed responses.
 
 The `security-posture-hermes` target owns the corresponding live Hermes export evidence for #11286.

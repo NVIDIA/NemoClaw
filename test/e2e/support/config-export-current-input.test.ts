@@ -102,6 +102,24 @@ describe("config export artifact secret boundary", () => {
     expect(writer.writeText).not.toHaveBeenCalled();
   });
 
+  it("rejects percent encoding that exceeds the decode limit before writing evidence", async () => {
+    const writer = { writeText: vi.fn(async () => undefined) };
+    const nestedEncoding = Array.from({ length: 12 }).reduce<string>(
+      (value) => encodeURIComponent(value),
+      percentEncodedSecret,
+    );
+
+    await expect(
+      writeSecretFreeConfigExportArtifact(
+        writer,
+        "config-export-live.yaml",
+        `value: ${nestedEncoding}`,
+        [secret],
+      ),
+    ).rejects.toThrow("config export exposed a known fixture secret");
+    expect(writer.writeText).not.toHaveBeenCalled();
+  });
+
   it("writes YAML only after the shared secret scan passes", async () => {
     const writer = { writeText: vi.fn(async () => undefined) };
     const raw = JSON.stringify(currentInput());

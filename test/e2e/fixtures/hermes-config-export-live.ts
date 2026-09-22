@@ -22,6 +22,7 @@ import type { HostCliClient } from "./clients/host.ts";
 import { trustedSandboxShellScript, type SandboxClient } from "./clients/sandbox.ts";
 import type { CleanupRegistry } from "./cleanup.ts";
 import { CLI_ENTRYPOINT, REPO_ROOT } from "./paths.ts";
+import { requireEffectivePolicyDocument } from "../support/config-export-policy-evidence.ts";
 
 interface HermesConfigExportLiveInput {
   readonly artifacts: ArtifactSink;
@@ -208,6 +209,9 @@ export async function verifyHermesConfigExportLive(
     sandboxName: input.sandboxName,
     scope: "effective",
   });
+  const expectedPolicy = YAML.parse(requireEffectivePolicyDocument(policy)) as {
+    network_policies?: unknown;
+  } | null;
   const nemoclawPath = path.join(exportDirectory, "nemoclaw.yaml");
   const nemohermesPath = path.join(exportDirectory, "nemohermes.yaml");
   const commonOptions = {
@@ -295,7 +299,6 @@ export async function verifyHermesConfigExportLive(
   const nemohermesDocument = asExportedConfig(YAML.parse(nemohermesRaw));
   const sandbox = nemoclawDocument.spec.sandboxes[0]!;
   const hostedProvider = nemoclawDocument.spec.inferenceProviders[0];
-  const expectedPolicy = policy.ok ? YAML.parse(policy.value.document) : null;
 
   const nemoclawMismatchPath = path.join(exportDirectory, "nemoclaw-mismatch.yaml");
   const nemohermesMismatchPath = path.join(exportDirectory, "nemohermes-mismatch.yaml");
@@ -361,12 +364,10 @@ export async function verifyHermesConfigExportLive(
     dashboardRuntimeMatches: await dashboardRuntimeMatches(input),
     inferenceEndpointMatches: hostedProvider?.endpoint === entry.endpointUrl,
     launchersSucceeded,
-    policyMatches:
-      expectedPolicy === null ||
-      isDeepStrictEqual(
-        (sandbox.network.policy.explicit as { network_policies?: unknown }).network_policies,
-        (expectedPolicy as { network_policies?: unknown }).network_policies,
-      ),
+    policyMatches: isDeepStrictEqual(
+      (sandbox.network.policy.explicit as { network_policies?: unknown } | null)?.network_policies,
+      expectedPolicy?.network_policies,
+    ),
     sandboxNameMatches: sandbox.name === input.sandboxName,
   };
   await input.artifacts.writeJson("hermes-config-export-live-evidence.json", evidence);

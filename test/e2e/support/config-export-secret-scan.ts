@@ -5,6 +5,8 @@ export interface ConfigExportArtifactWriter {
   writeText(artifactName: string, contents: string): Promise<unknown>;
 }
 
+const MAX_PERCENT_DECODE_PASSES = 8;
+
 export function encodedSensitiveValues(values: readonly string[]): string[] {
   const encoded = new Set<string>();
   for (const value of values) {
@@ -19,24 +21,26 @@ export function encodedSensitiveValues(values: readonly string[]): string[] {
   return [...encoded];
 }
 
-function decodePercentEncodedText(raw: string): string {
+function decodePercentEncodedText(raw: string): string | null {
   let decoded = raw;
-  let previous: string;
-  do {
-    previous = decoded;
-    decoded = decoded.replace(/(?:%[0-9a-f]{2})+/giu, (encoded) => {
+  for (let pass = 0; pass < MAX_PERCENT_DECODE_PASSES; pass += 1) {
+    const next = decoded.replace(/(?:%[0-9a-f]{2})+/giu, (encoded) => {
       try {
         return decodeURIComponent(encoded);
       } catch {
         return encoded;
       }
     });
-  } while (decoded !== previous);
-  return decoded;
+    if (next === decoded) return decoded;
+    decoded = next;
+  }
+  return null;
 }
 
-function normalizedSecretScanText(raw: string): string {
-  const decodedEscapes = decodePercentEncodedText(raw)
+function normalizedSecretScanText(raw: string): string | null {
+  const percentDecoded = decodePercentEncodedText(raw);
+  if (percentDecoded === null) return null;
+  const decodedEscapes = percentDecoded
     .replace(/\\x([0-9a-f]{2})/giu, (_match, hex: string) =>
       String.fromCodePoint(Number.parseInt(hex, 16)),
     )
@@ -53,9 +57,12 @@ function normalizedSecretScanText(raw: string): string {
 
 export function containsSensitiveText(raw: string, values: readonly string[]): boolean {
   const normalizedRaw = normalizedSecretScanText(raw);
-  return [...values, ...encodedSensitiveValues(values)].some(
-    (value) => value.length > 0 && normalizedRaw.includes(normalizedSecretScanText(value)),
-  );
+  if (normalizedRaw === null) return true;
+  return [...values, ...encodedSensitiveValues(values)].some((value) => {
+    if (value.length === 0) return false;
+    const normalizedValue = normalizedSecretScanText(value);
+    return normalizedValue === null || normalizedRaw.includes(normalizedValue);
+  });
 }
 
 export function assertNoKnownSecretInConfigExport(
