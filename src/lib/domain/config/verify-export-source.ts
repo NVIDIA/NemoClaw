@@ -742,7 +742,15 @@ function expectedProfileWithObservedHostSettings(
   profile: ManagedStartupProfile,
 ): ManagedStartupProfile | null {
   try {
-    const expected = supportedHostProfile(profile, expectedManagedStartupProfile(entry));
+    let expected = supportedHostProfile(profile, expectedManagedStartupProfile(entry));
+    const servingPreset = profile.inference?.servingPreset ?? null;
+    if (
+      entry.servingProfileProvenance?.preset.id === EXPORTED_VLLM_PROFILE_ID &&
+      expected.inference &&
+      (servingPreset === null || servingPreset === EXPORTED_VLLM_PROFILE_ID)
+    ) {
+      expected = { ...expected, inference: { ...expected.inference, servingPreset } };
+    }
     // Managed workload authority validates the CA bundle and digest before this comparison.
     // V1 omits the source host's CA trust; all other profile fields remain checked.
     return { ...expected, corporateCa: profile.corporateCa };
