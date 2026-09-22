@@ -33,6 +33,7 @@ import { createPodmanRuntimeProviderBundle } from "../../onboard/runtime-provide
 import { isLlamaCppServingRecipe } from "../serving/adapter-registry";
 import { loadManagedInferenceCatalog } from "../serving/catalog-loader";
 import type { ResolvedLlamaCppInferenceSelection } from "../serving/types";
+import { LLAMA_CPP_CREDENTIAL_ENV } from "./contract";
 import {
   inspectManagedLlamaCppRuntimeExact,
   installManagedLlamaCpp,
@@ -528,6 +529,7 @@ describe("managed llama.cpp installer", () => {
     await expect(
       resumeManagedLlamaCppRuntime("spark-agent", {
         homeDir,
+        env: { DOCKER_CONTEXT: "default" },
         runtimeProvider: managedRuntimeProvider(harness.engine, () => lifecycle),
         verifyGguf: vi.fn(async () => verifiedArtifact(selected, homeDir)),
         checkPort: vi.fn(async () => ({ ok: true })),
@@ -1386,7 +1388,7 @@ describe("managed llama.cpp installer", () => {
       runtime: {} as DockerLlamaCppManagedLifecycle["runtime"],
       start: vi.fn(() => receipt),
     } satisfies DockerLlamaCppManagedLifecycle;
-    const env: NodeJS.ProcessEnv = {};
+    const env: NodeJS.ProcessEnv = { DOCKER_CONTEXT: "default" };
     const verifyGguf = vi.fn(async () => artifact);
 
     await expect(
@@ -1404,6 +1406,43 @@ describe("managed llama.cpp installer", () => {
       path.join(home.canonical, ".cache", "huggingface"),
     );
     expect(env.NEMOCLAW_LLAMACPP_LOCAL_TOKEN).toMatch(/^[0-9a-f]{64}$/u);
+  });
+
+  it.each([
+    ["a remote Docker host", { DOCKER_HOST: "ssh://gpu.example.test" }],
+    ["a non-default Docker context", { DOCKER_CONTEXT: "remote-builder" }],
+  ])("rejects resume through %s before runtime effects", async (_label, dockerEnv) => {
+    const selected = selection();
+    const homeDir = temporaryHome();
+    const paths = managedLlamaCppStatePaths(homeDir);
+    reserveManagedLlamaCppOwner(paths, {
+      schemaVersion: 1,
+      sandboxName: "spark-agent",
+      catalogDigest: selected.catalogDigest,
+      presetDigest: selected.presetDigest,
+      recipeDigest: selected.recipeDigest,
+      recipeId: selected.recipe.metadata.id,
+    });
+    const harness = engineHarness();
+    const lifecycle = dormantManagedLifecycle();
+    const runtimeProvider = managedRuntimeProvider(harness.engine, () => lifecycle);
+    const env: NodeJS.ProcessEnv = { ...dockerEnv };
+
+    await expect(
+      resumeManagedLlamaCppRuntime("spark-agent", {
+        homeDir,
+        env,
+        runtimeProvider,
+      }),
+    ).rejects.toThrow(
+      "Managed llama.cpp requires DOCKER_HOST to be unset and the effective Docker context to be default.",
+    );
+    expect(runtimeProvider.hostLocalInference.createOperation).not.toHaveBeenCalled();
+    expect(lifecycle.recoverUnfinished).not.toHaveBeenCalled();
+    expect(lifecycle.start).not.toHaveBeenCalled();
+    expect(lifecycle.resume).not.toHaveBeenCalled();
+    expect(loadManagedLlamaCppApiKey(paths)).toBeNull();
+    expect(env[LLAMA_CPP_CREDENTIAL_ENV]).toBeUndefined();
   });
 
   it("rejects resume for a different sandbox owner before engine effects", async () => {

@@ -31,6 +31,7 @@ import type {
   LlamaCppHostLocalLaunchContract,
   VerifiedLocalModelArtifact,
 } from "./host-local-runtime";
+import { managedLlamaCppHostLocalDockerAuthorityFailure } from "./managed-selection";
 import {
   claimManagedLlamaCppOwner,
   createManagedLlamaCppReceiptWriter,
@@ -795,6 +796,11 @@ export async function resumeManagedLlamaCppRuntime(
   }
 
   const selection = resolveManagedLlamaCppOwnerSelection(owner);
+  const authorityFailure = managedLlamaCppHostLocalDockerAuthorityFailure(
+    selection.recipe.metadata.id,
+    env,
+  );
+  if (authorityFailure) throw new Error(authorityFailure);
   const operation = requireRuntimeProviderHostLocalInferenceOperation(
     options.runtimeProvider,
     "llama-cpp",
