@@ -889,7 +889,13 @@ describe("managed llama.cpp installer", () => {
     const lifecycle = {
       recoverUnfinished: vi.fn(() => ({ recovered: [], failures: [] })),
       resume: vi.fn(() => receipt),
-      runtime: {} as DockerLlamaCppManagedLifecycle["runtime"],
+      runtime: {
+        prepareDestroy: (value: HostLocalInferenceReceipt) => value,
+        destroy: (value: HostLocalInferenceReceipt) => ({
+          status: "removed" as const,
+          receipt: value,
+        }),
+      } as unknown as DockerLlamaCppManagedLifecycle["runtime"],
       start: vi.fn(() => receipt),
     } satisfies DockerLlamaCppManagedLifecycle;
     const createLifecycle = vi.fn(() => lifecycle);
@@ -905,6 +911,7 @@ describe("managed llama.cpp installer", () => {
         runtimeProvider,
         runtimeOwnerSandboxName: "spark-agent",
         homeDir,
+        env: { DOCKER_CONTEXT: "default" },
         operation: mismatchedOperation,
       }),
     ).toThrow("returned mismatched host-local-inference authority");
@@ -914,6 +921,7 @@ describe("managed llama.cpp installer", () => {
       runtimeProvider,
       runtimeOwnerSandboxName: "spark-agent",
       homeDir,
+      env: { DOCKER_CONTEXT: "default" },
       operation,
     });
 
@@ -931,6 +939,27 @@ describe("managed llama.cpp installer", () => {
         }),
       }),
     );
+
+    const rehydrateFor = (env: NodeJS.ProcessEnv, cleanup = false) =>
+      rehydrateManagedLlamaCppLifecycle({
+        runtimeProvider,
+        runtimeOwnerSandboxName: "spark-agent",
+        allowNonLocalDockerAuthorityForCleanup: cleanup,
+        homeDir,
+        env,
+        operation,
+      });
+    expect(() => rehydrateFor({ DOCKER_HOST: "ssh://gpu.example.test" })).toThrow(
+      "Restore the Docker selector used during onboarding and run 'nemoclaw spark-agent destroy'",
+    );
+    expect(createLifecycle).toHaveBeenCalledOnce();
+
+    const cleanup = rehydrateFor({ DOCKER_CONTEXT: "remote-builder" }, true);
+    expect(() => cleanup.lifecycle.resume(receipt)).toThrow(/available only for destroy cleanup/u);
+    expect(() => cleanup.lifecycle.runtime.preserveForRebuild(receipt)).toThrow(/destroy cleanup/u);
+    expect(cleanup.lifecycle.runtime.prepareDestroy(receipt)).toBe(receipt);
+    expect(cleanup.lifecycle.runtime.destroy(receipt)).toEqual({ status: "removed", receipt });
+    expect(createLifecycle).toHaveBeenCalledTimes(2);
     [...before].forEach(([target, contents]) => {
       expect(fs.readFileSync(target)).toEqual(contents);
     });
