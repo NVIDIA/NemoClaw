@@ -50,7 +50,6 @@ import {
 import { isPortableExperimentalProfile } from "./portable-profile";
 import { defaultPortableDemoStateDir } from "./portable-runtime-receipt-readiness";
 import { portableLifecycleLockOptions } from "./portable-lifecycle-lock";
-import { assertHermesPortableSandboxLifecycleAuthority } from "./hermes-portable-lifecycle";
 export { defaultPortableDemoStateDir as defaultHermesPortableStateDir };
 
 type McpLifecycleLock = <R>(
@@ -68,35 +67,6 @@ export function bindHermesPortableOnboardingLifecycleLock(
     await withMcpLifecycleLock(sandboxName, operation, portableLifecycleLockOptions(env));
 }
 
-export function hermesPortableOnboardingLifecycleLockOptions(env: NodeJS.ProcessEnv): {
-  readonly stateDir: string;
-} {
-  return portableLifecycleLockOptions(env);
-}
-
-/** Confirm the receipt-owned Hermes gateway before onboarding publishes readiness. */
-export async function assertHermesPortableOnboardingReadiness(
-  sandboxName: string,
-  entry: SandboxEntry,
-  environment: NodeJS.ProcessEnv,
-  readRegistry: (name: string) => SandboxEntry | null,
-): Promise<void> {
-  const gatewayName = entry.gatewayName;
-  if (typeof gatewayName !== "string") {
-    throw new Error("Hermes portable onboarding requires a registered gateway");
-  }
-  await assertHermesPortableSandboxLifecycleAuthority(
-    sandboxName,
-    {
-      agent: entry.agent,
-      gatewayName,
-      lifecycleGeneration: entry.lifecycleGeneration,
-      openshellDriver: entry.openshellDriver,
-      provider: entry.provider,
-    },
-    { env: environment, readRegistry },
-  );
-}
 import {
   assertCurrentHermesPortableContainer,
   enrollHermesPortableContainer,

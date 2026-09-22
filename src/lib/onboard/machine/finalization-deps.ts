@@ -36,10 +36,26 @@ type GatewayRestartDeps = Pick<
 type SandboxLifecycleLock = typeof import("../../state/mcp-lifecycle-lock").withMcpLifecycleLock;
 type GatewayRouteLock =
   typeof import("../../inference/gateway-route-mutation-lock").withGatewayRouteMutationLock;
-type HermesPortableOnboardingDeps = Pick<
-  typeof import("../experimental/hermes-portable-onboarding"),
-  "assertHermesPortableOnboardingReadiness" | "hermesPortableOnboardingLifecycleLockOptions"
+type HermesPortableLifecycleDeps = Pick<
+  typeof import("../experimental/hermes-portable-lifecycle"),
+  "assertHermesPortableSandboxLifecycleAuthority"
 >;
+type PortableLifecycleLockDeps = Pick<
+  typeof import("../experimental/portable-lifecycle-lock"),
+  "portableLifecycleLockOptions"
+>;
+
+export type SandboxProcessReadinessFailureReason =
+  | "portable-hermes-registry-authority-unavailable"
+  | "portable-hermes-native-gateway-unavailable"
+  | "portable-hermes-lifecycle-lock-unavailable";
+
+export type SandboxProcessReadinessResult =
+  | boolean
+  | {
+      readonly ready: false;
+      readonly reason: SandboxProcessReadinessFailureReason;
+    };
 
 export type OrdinaryOpenClawPairingSettlementResult =
   | { readonly kind: "settled" }
@@ -116,8 +132,10 @@ export const finalizationHandlerRuntime = {
     require("../../state/mcp-lifecycle-lock") as typeof import("../../state/mcp-lifecycle-lock"),
   loadGatewayRouteLock: () =>
     require("../../inference/gateway-route-mutation-lock") as typeof import("../../inference/gateway-route-mutation-lock"),
-  loadHermesPortableOnboarding: () =>
-    require("../experimental/hermes-portable-onboarding") as HermesPortableOnboardingDeps,
+  loadHermesPortableLifecycle: () =>
+    require("../experimental/hermes-portable-lifecycle") as HermesPortableLifecycleDeps,
+  loadPortableLifecycleLock: () =>
+    require("../experimental/portable-lifecycle-lock") as PortableLifecycleLockDeps,
 };
 
 export async function restartNativeGatewayForInitialSetup(
@@ -413,30 +431,66 @@ export const finalizationHandlerDeps = {
   async checkHermesPortableSandboxReadiness(
     name: string,
     environment: NodeJS.ProcessEnv,
-  ): Promise<boolean> {
+  ): Promise<SandboxProcessReadinessResult> {
+    let registry: ReturnType<typeof finalizationHandlerRuntime.loadRegistryPersistence>;
+    let entry: import("../../state/registry/types").SandboxEntry | undefined;
+    let gatewayName: string;
     try {
-      const registry = finalizationHandlerRuntime.loadRegistryPersistence();
-      const entry = registry.load().sandboxes[name];
-      const gatewayName = entry?.gatewayName;
-      if (!entry || typeof gatewayName !== "string") return false;
-      const portableOnboarding = finalizationHandlerRuntime.loadHermesPortableOnboarding();
-      const lockOptions =
-        portableOnboarding.hermesPortableOnboardingLifecycleLockOptions(environment);
+      registry = finalizationHandlerRuntime.loadRegistryPersistence();
+      entry = registry.load().sandboxes[name];
+      if (!entry || typeof entry.gatewayName !== "string") {
+        return { ready: false, reason: "portable-hermes-registry-authority-unavailable" };
+      }
+      gatewayName = entry.gatewayName;
+    } catch {
+      return { ready: false, reason: "portable-hermes-registry-authority-unavailable" };
+    }
+    try {
+      const lockOptions = finalizationHandlerRuntime
+        .loadPortableLifecycleLock()
+        .portableLifecycleLockOptions(environment);
       return await finalizationHandlerRuntime.loadSandboxLifecycleLock().withMcpLifecycleLock(
         name,
         async () => {
-          await portableOnboarding.assertHermesPortableOnboardingReadiness(
-            name,
-            entry,
-            environment,
-            (sandboxName) => registry.load().sandboxes[sandboxName] ?? null,
-          );
-          return true;
+          let registryReadFailed = false;
+          try {
+            await finalizationHandlerRuntime
+              .loadHermesPortableLifecycle()
+              .assertHermesPortableSandboxLifecycleAuthority(
+                name,
+                {
+                  agent: entry.agent,
+                  gatewayName,
+                  lifecycleGeneration: entry.lifecycleGeneration,
+                  openshellDriver: entry.openshellDriver,
+                  provider: entry.provider,
+                },
+                {
+                  env: environment,
+                  readRegistry: (sandboxName) => {
+                    try {
+                      return registry.load().sandboxes[sandboxName] ?? null;
+                    } catch (error) {
+                      registryReadFailed = true;
+                      throw error;
+                    }
+                  },
+                },
+              );
+            return true;
+          } catch {
+            return {
+              ready: false,
+              reason: registryReadFailed
+                ? ("portable-hermes-registry-authority-unavailable" as const)
+                : ("portable-hermes-native-gateway-unavailable" as const),
+            };
+          }
         },
         lockOptions,
       );
     } catch {
-      return false;
+      return { ready: false, reason: "portable-hermes-lifecycle-lock-unavailable" };
     }
   },
   settleOrdinaryOpenClawPairing(name: string): Promise<OrdinaryOpenClawPairingSettlementResult> {

@@ -770,7 +770,9 @@ describe("Hermes portable finalization readiness", () => {
     vi.restoreAllMocks();
   });
 
-  function installPortableReadinessHarness(assertReady: () => Promise<void>) {
+  function installPortableReadinessHarness(
+    assertReady: typeof import("../experimental/hermes-portable-lifecycle").assertHermesPortableSandboxLifecycleAuthority,
+  ) {
     const entry = {
       name: "alpha",
       agent: "hermes",
@@ -783,18 +785,27 @@ describe("Hermes portable finalization readiness", () => {
     vi.spyOn(finalizationHandlerRuntime, "loadRegistryPersistence").mockReturnValue({
       load,
     } as never);
-    const assertHermesPortableOnboardingReadiness = vi.fn(assertReady);
-    vi.spyOn(finalizationHandlerRuntime, "loadHermesPortableOnboarding").mockReturnValue({
-      assertHermesPortableOnboardingReadiness,
-      hermesPortableOnboardingLifecycleLockOptions: vi.fn(() => ({
-        stateDir: "/portable/state",
-      })),
+    const assertHermesPortableSandboxLifecycleAuthority = vi.fn(assertReady);
+    vi.spyOn(finalizationHandlerRuntime, "loadHermesPortableLifecycle").mockReturnValue({
+      assertHermesPortableSandboxLifecycleAuthority,
+    });
+    const portableLifecycleLockOptions = vi.fn(() => ({
+      stateDir: "/portable/state",
+    }));
+    vi.spyOn(finalizationHandlerRuntime, "loadPortableLifecycleLock").mockReturnValue({
+      portableLifecycleLockOptions,
     });
     const withMcpLifecycleLock = vi.fn(async (_name, operation) => await operation());
     vi.spyOn(finalizationHandlerRuntime, "loadSandboxLifecycleLock").mockReturnValue({
       withMcpLifecycleLock,
     } as never);
-    return { assertHermesPortableOnboardingReadiness, entry, load, withMcpLifecycleLock };
+    return {
+      assertHermesPortableSandboxLifecycleAuthority,
+      entry,
+      load,
+      portableLifecycleLockOptions,
+      withMcpLifecycleLock,
+    };
   }
 
   it("accepts receipt-qualified authenticated Hermes health (#11892)", async () => {
@@ -808,12 +819,20 @@ describe("Hermes portable finalization readiness", () => {
     expect(harness.withMcpLifecycleLock).toHaveBeenCalledWith("alpha", expect.any(Function), {
       stateDir: "/portable/state",
     });
-    expect(harness.assertHermesPortableOnboardingReadiness).toHaveBeenCalledWith(
+    expect(harness.portableLifecycleLockOptions).toHaveBeenCalledWith(environment);
+    expect(harness.assertHermesPortableSandboxLifecycleAuthority).toHaveBeenCalledWith(
       "alpha",
-      harness.entry,
-      environment,
-      expect.any(Function),
+      {
+        agent: "hermes",
+        gatewayName: "nemoclaw-19080",
+        lifecycleGeneration: "generation-1",
+        openshellDriver: "docker",
+        provider: "ollama-local",
+      },
+      { env: environment, readRegistry: expect.any(Function) },
     );
+    const readinessDeps = harness.assertHermesPortableSandboxLifecycleAuthority.mock.calls[0]?.[2];
+    expect(readinessDeps?.readRegistry?.("alpha")).toEqual(harness.entry);
   });
 
   it("fails closed when portable Hermes readiness is unavailable (#11892)", async () => {
@@ -825,7 +844,10 @@ describe("Hermes portable finalization readiness", () => {
       finalizationHandlerDeps.checkHermesPortableSandboxReadiness("alpha", {
         HOME: "/home/kiosk",
       }),
-    ).resolves.toBe(false);
+    ).resolves.toEqual({
+      ready: false,
+      reason: "portable-hermes-native-gateway-unavailable",
+    });
   });
 
   it("fails closed when the portable Hermes registry cannot be read (#11892)", async () => {
@@ -837,7 +859,52 @@ describe("Hermes portable finalization readiness", () => {
       finalizationHandlerDeps.checkHermesPortableSandboxReadiness("alpha", {
         HOME: "/home/kiosk",
       }),
-    ).resolves.toBe(false);
+    ).resolves.toEqual({
+      ready: false,
+      reason: "portable-hermes-registry-authority-unavailable",
+    });
+  });
+
+  it("classifies registry authority loss during native readiness without exposing it (#11892)", async () => {
+    const harness = installPortableReadinessHarness(async () => undefined);
+    harness.load
+      .mockReturnValueOnce({ sandboxes: { alpha: harness.entry } })
+      .mockImplementation(() => {
+        throw new Error("untrusted registry diagnostic");
+      });
+    harness.assertHermesPortableSandboxLifecycleAuthority.mockImplementation(
+      async (_name, _context, deps) => {
+        expect(deps?.readRegistry).toBeTypeOf("function");
+        deps?.readRegistry?.("alpha");
+      },
+    );
+
+    await expect(
+      finalizationHandlerDeps.checkHermesPortableSandboxReadiness("alpha", {
+        HOME: "/home/kiosk",
+      }),
+    ).resolves.toEqual({
+      ready: false,
+      reason: "portable-hermes-registry-authority-unavailable",
+    });
+  });
+
+  it("classifies a lifecycle lock failure without exposing its diagnostic (#11892)", async () => {
+    installPortableReadinessHarness(async () => undefined);
+    vi.spyOn(finalizationHandlerRuntime, "loadSandboxLifecycleLock").mockReturnValue({
+      withMcpLifecycleLock: vi.fn(async () => {
+        throw new Error("untrusted lock diagnostic");
+      }),
+    } as never);
+
+    await expect(
+      finalizationHandlerDeps.checkHermesPortableSandboxReadiness("alpha", {
+        HOME: "/home/kiosk",
+      }),
+    ).resolves.toEqual({
+      ready: false,
+      reason: "portable-hermes-lifecycle-lock-unavailable",
+    });
   });
 });
 
