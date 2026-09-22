@@ -10,6 +10,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { rebuildOwningRegistryDependencies } from "../../dist/lib/actions/sandbox/rebuild/owning-registry";
+import { withSandboxLifecycleLock } from "../../dist/lib/actions/sandbox/lifecycle/lock";
 import { testTimeout } from "../helpers/timeouts";
 
 const TRANSACTION_ID = "11111111-1111-4111-8111-111111111111";
@@ -95,6 +96,22 @@ function writeCredentialProbeOpenShell(home: string, marker: string): string {
       `fs.writeFileSync(${JSON.stringify(marker)}, String(process.ppid));`,
       'process.on("SIGTERM", () => {});',
       "setInterval(() => {}, 1000);",
+    ].join("\n"),
+    { mode: 0o755 },
+  );
+  return executable;
+}
+
+function writeMissingSandboxOpenShell(home: string): string {
+  const executable = path.join(home, "missing-sandbox-openshell.cjs");
+  fs.writeFileSync(
+    executable,
+    [
+      "#!/usr/bin/env node",
+      'if (process.argv[2] === "sandbox" && process.argv[3] === "get") {',
+      '  console.error("no such sandbox alpha");',
+      "}",
+      "process.exitCode = 1;",
     ].join("\n"),
     { mode: 0o755 },
   );
@@ -273,6 +290,62 @@ describe("compiled rebuild owning-registry worker", () => {
         }),
       );
     } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("waits for the owning sandbox lifecycle lock before retiring recovery", async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-worker-retirement-lock-"));
+    let releaseLock: () => void = vi.fn();
+    try {
+      const manifest = writeRecoveryFixture(home);
+      vi.stubEnv("HOME", home);
+      vi.stubEnv("NEMOCLAW_OPENSHELL_BIN", writeMissingSandboxOpenShell(home));
+      const stateDir = path.join(home, ".nemoclaw", "gateways", "9000");
+      let markLockHeld: () => void = vi.fn();
+      const lockHeld = new Promise<void>((resolve) => {
+        markLockHeld = resolve;
+      });
+      const release = new Promise<void>((resolve) => {
+        releaseLock = resolve;
+      });
+      const holder = withSandboxLifecycleLock(
+        "alpha",
+        async () => {
+          markLockHeld();
+          await release;
+        },
+        { stateDir },
+      );
+      await lockHeld;
+
+      const worker = rebuildOwningRegistryDependencies.runWorker(
+        {
+          operation: "retire-recovery",
+          sandboxName: "alpha",
+          transactionId: TRANSACTION_ID,
+          confirmDataRecovered: true,
+        },
+        9000,
+      );
+
+      const outcome = await Promise.race([
+        worker.then(() => "completed" as const),
+        new Promise<"waiting">((resolve) => setTimeout(() => resolve("waiting"), 250)),
+      ]);
+      expect(outcome).toBe("waiting");
+      expect(
+        fs.existsSync(path.join(manifest.backupPath, manifest.rebuildPolicyHandoff.file)),
+      ).toBe(true);
+
+      releaseLock();
+      await holder;
+      await worker;
+      expect(
+        fs.existsSync(path.join(manifest.backupPath, manifest.rebuildPolicyHandoff.file)),
+      ).toBe(false);
+    } finally {
+      releaseLock();
       fs.rmSync(home, { recursive: true, force: true });
     }
   });

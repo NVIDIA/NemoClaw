@@ -17,6 +17,7 @@ import {
   type DcodeAutoApprovalMode,
 } from "../../lib/onboard/dcode-auto-approval";
 import { TOOL_DISCLOSURE_VALUES, type ToolDisclosure } from "../../lib/tool-disclosure";
+import { enforceRemovedImmutabilityMigrationBoundary } from "../../lib/state/migrations/removed-immutability";
 import { REGISTRY_FILE } from "../../lib/state/registry/persistence";
 
 function rebuildOptionsFromFlags(flags: {
@@ -86,6 +87,9 @@ export default class RebuildCliCommand extends NemoClawCommand {
     const { args, flags } = parsed;
     const recoveryTransactionId = flags["retire-recovery"];
     if (recoveryTransactionId) {
+      enforceRemovedImmutabilityMigrationBoundary(args.sandboxName, {
+        allowStateRecord: true,
+      });
       return await delegateRecoveryRetirementToOwningRegistry(
         {
           sandboxName: args.sandboxName,

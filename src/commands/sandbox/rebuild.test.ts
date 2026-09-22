@@ -7,9 +7,12 @@ import path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { testTimeoutOptions } from "../../../test/helpers/timeouts";
+
 const mocks = vi.hoisted(() => ({
   delegateRebuildToOwningRegistry: vi.fn(async () => false),
   delegateRecoveryRetirementToOwningRegistry: vi.fn(async () => false),
+  enforceRemovedImmutabilityMigrationBoundary: vi.fn(),
   rebuildSandbox: vi.fn(async () => undefined),
   retireRebuildRecoveryBackup: vi.fn(() => ({
     backupPath: "/backups/alpha/2026-09-01",
@@ -23,13 +26,17 @@ vi.mock("../../lib/actions/sandbox/rebuild/owning-registry", () => ({
   delegateRebuildToOwningRegistry: mocks.delegateRebuildToOwningRegistry,
   delegateRecoveryRetirementToOwningRegistry: mocks.delegateRecoveryRetirementToOwningRegistry,
 }));
+vi.mock("../../lib/state/migrations/removed-immutability", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../lib/state/migrations/removed-immutability")>()),
+  enforceRemovedImmutabilityMigrationBoundary: mocks.enforceRemovedImmutabilityMigrationBoundary,
+}));
 
 import RebuildCliCommand from "./rebuild";
 
 const rootDir = process.cwd();
 let home: string;
 
-describe("sandbox:rebuild command", () => {
+describe("sandbox:rebuild command", testTimeoutOptions(15_000), () => {
   beforeEach(() => {
     vi.clearAllMocks();
     home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-rebuild-command-"));
@@ -79,6 +86,25 @@ describe("sandbox:rebuild command", () => {
 
     expect(mocks.retireRebuildRecoveryBackup).not.toHaveBeenCalled();
     expect(mocks.rebuildSandbox).not.toHaveBeenCalled();
+  });
+
+  it("blocks delegated recovery retirement at the legacy-authority boundary", async () => {
+    mocks.enforceRemovedImmutabilityMigrationBoundary.mockImplementationOnce(() => {
+      throw new Error("legacy recovery artifacts remain");
+    });
+
+    await expect(
+      RebuildCliCommand.run(
+        ["alpha", "--retire-recovery", "11111111-1111-4111-8111-111111111111", "--yes"],
+        rootDir,
+      ),
+    ).rejects.toThrow("legacy recovery artifacts remain");
+
+    expect(mocks.enforceRemovedImmutabilityMigrationBoundary).toHaveBeenCalledWith("alpha", {
+      allowStateRecord: true,
+    });
+    expect(mocks.delegateRecoveryRetirementToOwningRegistry).not.toHaveBeenCalled();
+    expect(mocks.retireRebuildRecoveryBackup).not.toHaveBeenCalled();
   });
 
   it("does not infer data-recovery confirmation when --yes is absent", async () => {

@@ -4,6 +4,7 @@
 import fs from "node:fs";
 
 import type { RebuildSandboxOptions } from "../../../domain/lifecycle/options";
+import { withSandboxLifecycleLock } from "../lifecycle/lock";
 import { rebuildSandbox } from "../rebuild-pipeline";
 import { redactBoundedRebuildFailure } from "../rebuild-preflight-confirmation";
 import type { RebuildSandboxExecutionOptions } from "../rebuild-prepared-recovery";
@@ -73,7 +74,9 @@ function workerIdentity(input: OwningRegistryWorkerInput): Omit<OwningRegistryWo
 
 async function run(input: OwningRegistryWorkerInput): Promise<void> {
   if (input.operation === "retire-recovery") {
-    const retired = retireRebuildRecoveryBackup(input);
+    const retired = await withSandboxLifecycleLock(input.sandboxName, () =>
+      retireRebuildRecoveryBackup(input),
+    );
     console.log(
       `Retired rebuild recovery '${retired.transactionId}' for sandbox '${input.sandboxName}' from ${retired.backupPath}.`,
     );
