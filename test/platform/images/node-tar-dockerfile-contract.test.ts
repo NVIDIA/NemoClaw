@@ -427,7 +427,7 @@ describe("node-tar image remediation contract", () => {
       expect(patchCopy, file).toBeGreaterThan(helperCopy);
       expect(firstPatchRun, file).toBeGreaterThan(patchInputReady);
       const aptInstall = source.indexOf(
-        "RUN apt-get update && apt-get install -y --no-install-recommends",
+        "apt-get install -y --no-install-recommends",
         patchInputReady,
       );
       const curlPackage = source.indexOf("curl=8.14.1-2+deb13u5", aptInstall);
@@ -527,6 +527,25 @@ describe("reviewed npm image remediation contract", () => {
     expect(tarRun).toBeGreaterThan(upgradeRun);
     expect(braceRun).toBeGreaterThan(tarRun);
     expect(ipAddressRun).toBeGreaterThan(braceRun);
+  });
+
+  // source-shape-contract: security -- the reviewed Debian CDN fallback must keep apt signature verification fail-closed.
+  it("uses the documented Debian CDN fallback for the root npm build stage", () => {
+    const dockerfile = fs.readFileSync(path.join(repoRoot, "Dockerfile"), "utf8");
+    const npm12 = directNodeStages("Dockerfile", dockerfile).find(({ name }) => name === "npm12");
+    const installScript = fs.readFileSync(
+      path.join(repoRoot, "scripts/install-npm12-apt.sh"),
+      "utf8",
+    );
+    assert(npm12, "Dockerfile must contain the npm12 stage");
+
+    expect(npm12.source).toContain(
+      "RUN --mount=type=bind,source=scripts/install-npm12-apt.sh,target=/tmp/install.sh sh /tmp/install.sh",
+    );
+    expect(installScript).toContain("apt-get update -o APT::Update::Error-Mode=any");
+    expect(installScript).toContain("http://deb.debian.org/");
+    expect(installScript).toContain("http://cdn-fastly.deb.debian.org/");
+    expect(installScript).not.toContain("--allow-unauthenticated");
   });
 
   // source-shape-contract: compatibility -- Hermes archive staging and adjacent runtime checks must share existing layers so the final image stays within the Docker import ceiling.

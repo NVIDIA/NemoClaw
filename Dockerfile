@@ -14,7 +14,7 @@ ARG CODEX_ACP_LINUX_ARM64_0_11_1_INTEGRITY=sha512-I1f6WoSLbLlsWq4zH+vtwdoc4Y41mq
 FROM scratch AS reviewed-npm-archive
 ADD --chmod=0444 --checksum=sha256:5dbb86c71d07a1957f2e90734092dd6a58bdcd9ebc2d8d41ca1c6e6a21d364e1 https://registry.npmjs.org/npm/-/npm-12.0.2.tgz /npm-12.0.2.tgz
 FROM node:24.18.1-trixie-slim@sha256:ac39e4b5fcb2b1b34b20364fd58b2e898f3bb80731ee6f62a7536f9df3d6aadc AS npm12
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates=20250419 curl=8.14.1-2+deb13u5 && rm -rf /var/lib/apt/lists/*
+RUN --mount=type=bind,source=scripts/install-npm12-apt.sh,target=/tmp/install.sh sh /tmp/install.sh
 COPY scripts/lib/reviewed-npm-archive.mts scripts/lib/bundled-npm-package.mts scripts/lib/reviewed-npm-audit.mts scripts/lib/patch-bundled-npm-ip-address.mts scripts/lib/reviewed-npm-identity.mts /scripts/lib/
 COPY scripts/patch-bundled-npm-brace-expansion.mts scripts/patch-bundled-npm-tar.mts scripts/upgrade-bundled-npm.mts /scripts/
 COPY ci/reviewed-npm-audit.json /ci/reviewed-npm-audit.json
