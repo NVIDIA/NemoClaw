@@ -1093,16 +1093,15 @@ describe("readiness-gated runtime preflight", () => {
 
   const ACCEPTED_N1X_GPU_NAME = "NVIDIA RTX Spark N1X (6144-core Blackwell RTX GPU)";
   const UNLISTED_N1X_GPU_NAME = "NVIDIA RTX Spark N1X Laptop GPU";
-
   async function runRealProviderPreflight(gpuName: string, n1xWslProduct: boolean | undefined) {
-    // The proof phase lets `detectGpu()` detect WSL itself, and the N1x
-    // classification requires WSL.
+    // The proof phase lets `detectGpu()` detect WSL itself; N1x classification requires WSL.
     vi.stubEnv("WSL_DISTRO_NAME", "Ubuntu");
     const captureHostCommand = vi
       .fn()
       .mockReturnValueOnce({
         status: 0,
-        stdout: "Test PASSED\nNEMOCLAW_GPU_MEMORY_MIB=63936, 60000\n",
+        stdout:
+          "Test PASSED\nNEMOCLAW_GPU_DEVICE=GPU-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeee0, 0, NVIDIA RTX Spark N1X, 63936, 60000\n",
         stderr: "",
       })
       .mockReturnValueOnce({ status: 0, stdout: "", stderr: "" });

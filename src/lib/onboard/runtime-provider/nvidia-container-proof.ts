@@ -15,7 +15,6 @@ import type { RuntimeProviderBundle, RuntimeProviderOwnedContainerResource } fro
 // both linux/amd64 and linux/arm64 images, and its ARM64 image ships a genuine
 // aarch64 CUDA binary. A real kernel execution is the device-usability proof;
 // the same container then reports capacity for the device namespace it proved.
-const NVIDIA_CONTAINER_GPU_CAPACITY_MARKER = "NEMOCLAW_GPU_MEMORY_MIB=";
 const NVIDIA_CONTAINER_GPU_DEVICE_MARKER = "NEMOCLAW_GPU_DEVICE=";
 
 // The proof may pull the image on first use. Keep the historical environment
@@ -51,28 +50,6 @@ function resolveRuntimeProvider(): RuntimeProviderBundle {
   ).resolveConfiguredRuntimeProvider();
 }
 
-export function parseContainerGpuProofCapacity(
-  output: string,
-): ContainerGpuProofResult["verifiedCapacity"] | null {
-  const firstMarker = output.indexOf(NVIDIA_CONTAINER_GPU_CAPACITY_MARKER);
-  if (firstMarker < 0 || firstMarker !== output.lastIndexOf(NVIDIA_CONTAINER_GPU_CAPACITY_MARKER)) {
-    return null;
-  }
-  const value = output.slice(firstMarker + NVIDIA_CONTAINER_GPU_CAPACITY_MARKER.length).trim();
-  const match = /^([1-9][0-9]*)\s*,\s*([0-9]+)$/u.exec(value);
-  if (!match) return null;
-  const totalMemoryMB = Number(match[1]);
-  const availableMemoryMB = Number(match[2]);
-  if (
-    !Number.isSafeInteger(totalMemoryMB) ||
-    !Number.isSafeInteger(availableMemoryMB) ||
-    availableMemoryMB > totalMemoryMB
-  ) {
-    return null;
-  }
-  return { totalMemoryMB, availableMemoryMB };
-}
-
 export function parseContainerGpuProofDevices(
   output: string,
 ): ContainerGpuProofResult["verifiedDevices"] | null {
@@ -83,10 +60,14 @@ export function parseContainerGpuProofDevices(
   if (rows.length === 0) return null;
   if (rows.length > 16) return null;
   const indices = new Set<number>();
+  const uuids = new Set<string>();
   const devices = rows.map((row) => {
-    const indexSeparator = row.indexOf(",");
-    const indexRaw = row.slice(0, indexSeparator).trim();
-    const deviceRow = row.slice(indexSeparator + 1);
+    const uuidSeparator = row.indexOf(",");
+    const uuid = row.slice(0, uuidSeparator).trim();
+    const indexedDeviceRow = row.slice(uuidSeparator + 1);
+    const indexSeparator = indexedDeviceRow.indexOf(",");
+    const indexRaw = indexedDeviceRow.slice(0, indexSeparator).trim();
+    const deviceRow = indexedDeviceRow.slice(indexSeparator + 1);
     const freeSeparator = deviceRow.lastIndexOf(",");
     const beforeFree = deviceRow.slice(0, freeSeparator);
     const totalSeparator = beforeFree.lastIndexOf(",");
@@ -95,13 +76,17 @@ export function parseContainerGpuProofDevices(
     const availableMemoryMB = Number(deviceRow.slice(freeSeparator + 1).trim());
     const index = /^\d+$/u.test(indexRaw) ? Number(indexRaw) : -1;
     const duplicateIndex = indices.has(index);
+    const duplicateUuid = uuids.has(uuid);
     indices.add(index);
-    return { name, totalMemoryMB, availableMemoryMB, index, duplicateIndex };
+    uuids.add(uuid);
+    return { name, totalMemoryMB, availableMemoryMB, uuid, index, duplicateIndex, duplicateUuid };
   });
   if (
     devices.some(
-      ({ name, totalMemoryMB, availableMemoryMB, index, duplicateIndex }) =>
+      ({ name, totalMemoryMB, availableMemoryMB, uuid, index, duplicateIndex, duplicateUuid }) =>
         !name ||
+        !/^GPU-[0-9a-f-]+$/iu.test(uuid) ||
+        duplicateUuid ||
         !Number.isSafeInteger(index) ||
         index < 0 ||
         duplicateIndex ||
@@ -181,16 +166,14 @@ function runRuntimeProviderGpuProof(
     const diagnosticSource = result.stderr || result.stdout;
     const workloadPassed = result.status === 0 && !timedOut && result.error === undefined;
     const verifiedDevices = workloadPassed ? parseContainerGpuProofDevices(result.stdout) : null;
-    const verifiedCapacity = workloadPassed
-      ? verifiedDevices
-        ? {
-            totalMemoryMB: verifiedDevices.reduce((sum, device) => sum + device.totalMemoryMB, 0),
-            availableMemoryMB: verifiedDevices.reduce(
-              (sum, device) => sum + device.availableMemoryMB,
-              0,
-            ),
-          }
-        : parseContainerGpuProofCapacity(result.stdout)
+    const verifiedCapacity = verifiedDevices
+      ? {
+          totalMemoryMB: verifiedDevices.reduce((sum, device) => sum + device.totalMemoryMB, 0),
+          availableMemoryMB: verifiedDevices.reduce(
+            (sum, device) => sum + device.availableMemoryMB,
+            0,
+          ),
+        }
       : null;
     const cleanup = cleanupContainer(
       resource,
