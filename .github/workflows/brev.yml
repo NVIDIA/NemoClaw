@@ -93,7 +93,7 @@ jobs:
               brev delete "${INSTANCE_NAME}" || true
               absent=0
               for _ in $(seq 1 40); do
-                rows="$(brev ls --json 2>/dev/null | jq -c 'if type == "array" then . elif type == "object" and (.workspaces | type) == "array" then .workspaces elif type == "object" and .workspaces == null then [] else error("unexpected Brev inventory") end' 2>/dev/null || true)"
+                rows="$(brev ls --json 2>/dev/null | jq -c 'if type == "array" then . elif type == "object" and (.workspaces | type) == "array" then .workspaces elif type == "object" and has("workspaces") and .workspaces == null then [] else error("unexpected Brev inventory") end | if all(.[]; type == "object" and ((.name // .workspaceName // .instanceName) | type == "string" and length > 0)) then . else error("incomplete Brev inventory row") end' 2>/dev/null || true)"
                 if test -n "${rows}" && ! jq -e --arg name "${INSTANCE_NAME}" 'any(.[]; ((.name // .workspaceName // .instanceName // "") | tostring) == $name)' <<<"${rows}" >/dev/null; then
                   absent=$((absent + 1))
                   if test "${absent}" -ge 2; then
