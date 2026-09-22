@@ -8,7 +8,7 @@ use crate::config::{
 };
 use serde_json::{Value, json};
 
-pub(crate) fn constrain(defs: &mut serde_json::Map<String, Value>) {
+pub(crate) fn constrain(defs: &mut serde_json::Map<String, Value>, normalized: bool) {
     let service = defs["ServiceDefinition"]["oneOf"]
         .as_array_mut()
         .expect("tagged service variants")
@@ -77,7 +77,7 @@ pub(crate) fn constrain(defs: &mut serde_json::Map<String, Value>) {
         ("batchTokens", &c::BATCH_TOKENS),
         ("startupTimeoutSeconds", &c::STARTUP_TIMEOUT),
     ] {
-        integer(serving, field, rule);
+        integer(serving, field, rule, normalized);
     }
     property(
         serving,
@@ -103,7 +103,7 @@ pub(crate) fn constrain(defs: &mut serde_json::Map<String, Value>) {
         ("freeGateGiB", &c::FREE_GATE),
         ("consecutiveSamples", &c::CONSECUTIVE_SAMPLES),
     ] {
-        integer(memory, field, rule);
+        integer(memory, field, rule, normalized);
     }
     property(
         memory,
@@ -164,7 +164,7 @@ pub(crate) fn constrain(defs: &mut serde_json::Map<String, Value>) {
         "Omitted or zero selects 8 GiB, except gpuMemoryUtilization keeps zero and lets vLLM allocate its cache."
     );
     defs["Memory"]["allOf"] = json!([
-        {"if":{"required":["gpuMemoryUtilization"]},"then":{"properties":{"kvCacheGiB":{"const":0},"gpuMemoryGiB":{"const":0}}},"else":{"properties":{"kvCacheGiB":{"anyOf":[{"const":0},{"minimum":c::KV_CACHE.min,"maximum":c::KV_CACHE.max}]}}}}
+        {"if":{"required":["gpuMemoryUtilization"]},"then":{"properties":{"kvCacheGiB":{"const":0},"gpuMemoryGiB":{"const":0}}},"else":{"properties":{"kvCacheGiB":{"anyOf": if normalized { json!([{"minimum":c::KV_CACHE.min,"maximum":c::KV_CACHE.max}]) } else { json!([{"const":0},{"minimum":c::KV_CACHE.min,"maximum":c::KV_CACHE.max}]) }}}}}
     ]);
     recipe(defs);
 }

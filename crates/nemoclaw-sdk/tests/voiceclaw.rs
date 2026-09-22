@@ -174,3 +174,17 @@ fn voiceclaw_schema_rejects_untrusted_integration_metadata() {
     assert_eq!(service.serving.port, 18790);
     assert_eq!(service.serving.startup_timeout_seconds, 180);
 }
+
+#[test]
+fn voiceclaw_readiness_is_an_apply_time_provider_observation() {
+    let document = Document::parse(input().to_string().as_bytes()).unwrap();
+    let graph = compile(&document, &generations(), "0.1.0").unwrap();
+    let readiness = &graph["data"]["nemoclaw_service_readiness"]["managed_service_voice-server"];
+    assert_eq!(
+        readiness["container_id"],
+        "${docker_container.managed_service_voice-server.id}"
+    );
+    assert_eq!(readiness["read_trigger"], "${timestamp() != \"\"}");
+    assert_eq!(readiness["wait_timeout_seconds"], 180);
+    nemoclaw_sdk::services::validate_readiness_spec(readiness["spec"].as_str().unwrap()).unwrap();
+}

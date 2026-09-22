@@ -1,13 +1,14 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::config::{ConfigError, Credential, ImagePullPolicy};
+use crate::config::{ConfigError, Credential};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[schemars(rename = "VoiceclawService")]
 #[serde(deny_unknown_fields)]
-/// Managed VoiceClaw runtime backed by one immutable local Docker image.
+/// Experimental VoiceClaw installer backed by one immutable local Docker image.
+/// Credential projection and revocable agent access are not yet implemented.
 pub struct Service {
     /// Immutable local Docker image ID. VoiceClaw does not pull or build images.
     #[schemars(regex(pattern = r"^sha256:[a-f0-9]{64}$"))]
@@ -15,7 +16,7 @@ pub struct Service {
     /// Must be Never for the preloaded PoC image.
     #[serde(rename = "imagePullPolicy")]
     pub image_pull_policy: PullPolicy,
-    /// Speech provider and protected caller credential reference.
+    /// Speech provider and caller credential reference reserved for future projection.
     pub speech: Speech,
     /// VoiceClaw listener and bounded startup settings.
     #[serde(default)]
@@ -30,7 +31,7 @@ pub struct Service {
 pub struct Speech {
     /// Supported speech provider.
     pub provider: SpeechProvider,
-    /// Host credential reference projected through protected runtime storage.
+    /// Host credential reference. Projection into runtime storage is not yet implemented.
     pub credential: Credential,
 }
 
@@ -56,7 +57,7 @@ pub struct Serving {
     #[serde(default = "default_port")]
     #[schemars(range(min = 1024, max = 65535))]
     pub port: i64,
-    /// Seconds allowed for authenticated readiness.
+    /// Seconds allowed for content-free service readiness.
     #[serde(default = "default_startup_timeout")]
     #[schemars(range(min = 1, max = 3600))]
     pub startup_timeout_seconds: i64,
@@ -81,29 +82,7 @@ impl Default for Serving {
 
 impl Service {
     pub(crate) fn validate(&self) -> Result<(), ConfigError> {
-        let local = regex::Regex::new(crate::config::constraints::LOCAL_IMAGE_ID)
-            .expect("constant local image expression")
-            .is_match(&self.image);
-        super::super::super::contract::validate_image(
-            &self.image,
-            Some(ImagePullPolicy::Never),
-            true,
-        )?;
-        crate::config::validation::require(
-            local,
-            "VoiceClaw requires a preloaded local Docker image ID and imagePullPolicy Never",
-        )?;
-        crate::config::validation::require(
-            regex::Regex::new(crate::config::constraints::ENV)
-                .expect("constant environment reference expression")
-                .is_match(&self.speech.credential.env),
-            "credential references require an uppercase environment variable name",
-        )?;
-        crate::config::validation::require(
-            (1024..=65535).contains(&self.serving.port)
-                && (1..=3600).contains(&self.serving.startup_timeout_seconds),
-            "VoiceClaw requires one unprivileged port and a startup timeout from 1 through 3600 seconds",
-        )
+        crate::config::schema::validate_service("voiceclaw", self)
     }
 
     pub(crate) fn architecture() -> Result<&'static str, ConfigError> {

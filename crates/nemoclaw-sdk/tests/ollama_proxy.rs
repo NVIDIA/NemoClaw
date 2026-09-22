@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 use nemoclaw_sdk::{
     compile::{Generations, compile},
-    config::{Document, schema::input_schema},
+    config::{Document, Gateway, schema::input_schema},
 };
 use serde_json::{Value, json};
 fn input() -> Value {
@@ -33,7 +33,7 @@ fn explicit_proxy_engine_works_with_an_external_gateway() {
             .unwrap()
             .is_valid(&value)
     );
-    assert!(document.spec.gateway.engine.is_empty());
+    assert!(matches!(document.spec.gateway, Gateway::External(_)));
     assert_eq!(
         Document::parse(document.yaml().unwrap().as_bytes()).unwrap(),
         document
@@ -65,6 +65,54 @@ fn explicit_proxy_engine_works_with_an_external_gateway() {
     assert_eq!(
         credential["storage"]["Engine"],
         "unix:///tmp/proxy-engine.sock"
+    );
+}
+
+#[test]
+fn proxy_readiness_is_fresh_and_orders_only_its_selected_consumer() {
+    let mut value = input();
+    value["spec"]["inferenceProviders"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({
+            "name":"other", "provider":"openai", "endpoint":"http://127.0.0.1:11436/v1"
+        }));
+    let mut second = value["spec"]["sandboxes"][0].clone();
+    second["name"] = json!("other");
+    second["agent"]["inference"]["routes"][0]["providerRef"] = json!("other");
+    value["spec"]["sandboxes"]
+        .as_array_mut()
+        .unwrap()
+        .push(second);
+    let document = Document::parse(value.to_string().as_bytes()).unwrap();
+    let generations: Generations = ["workspace", "provider", "sandbox", "ollama_proxy"]
+        .map(|key| (key.into(), "a".repeat(32)))
+        .into();
+    let graph = compile(&document, &generations, "0.1.0").unwrap();
+    let readiness = &graph["data"]["nemoclaw_service_readiness"]["ollama_proxy_ollama-auth"];
+    assert_eq!(
+        readiness["container_id"],
+        "${docker_container.ollama_proxy_ollama-auth.id}"
+    );
+    assert_eq!(readiness["read_trigger"], "${timestamp() != \"\"}");
+    assert_eq!(readiness["wait_timeout_seconds"], 30);
+    let spec: Value = serde_json::from_str(readiness["spec"].as_str().unwrap()).unwrap();
+    assert_eq!(spec["kind"], "ollama_proxy");
+    assert!(
+        graph["resource"]["nemoclaw_provider"]["inference_local"]["depends_on"]
+            .as_array()
+            .unwrap()
+            .contains(&json!(
+                "data.nemoclaw_service_readiness.ollama_proxy_ollama-auth"
+            ))
+    );
+    assert!(
+        !graph["resource"]["nemoclaw_provider"]["inference_other"]["depends_on"]
+            .as_array()
+            .unwrap()
+            .contains(&json!(
+                "data.nemoclaw_service_readiness.ollama_proxy_ollama-auth"
+            ))
     );
 }
 
@@ -202,7 +250,9 @@ fn external_ollama_compiles_only_proxy_and_external_model_observation() {
         resources["nemoclaw_provider"]["inference_local"]["depends_on"],
         json!([
             "nemoclaw_provider_profile.inference_local",
-            "docker_container.ollama_proxy_ollama-auth"
+            "docker_container.ollama_proxy_ollama-auth",
+            "data.nemoclaw_gateway_capabilities.apply",
+            "data.nemoclaw_service_readiness.ollama_proxy_ollama-auth"
         ])
     );
     assert!(

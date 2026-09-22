@@ -5,7 +5,7 @@ mod create;
 mod update;
 
 use super::*;
-use crate::backend::{Backend, Mutation};
+use crate::backend::{Backend, Mutation, OpenShellLifecycle, openshell_lifecycle};
 use async_trait::async_trait;
 use std::{collections::HashMap, time::Duration};
 
@@ -40,7 +40,7 @@ impl OpenShell {
             Some(inference_profile(
                 value(want, "name"),
                 value(want, "endpoint"),
-                kind,
+                kind.parse().map_err(|_| ObservationError::Query)?,
                 !source.is_empty() || !value(want, "credential_env").is_empty(),
             )?)
         } else {
@@ -236,6 +236,9 @@ impl Backend for OpenShell {
         desired: &Row,
         prior: Option<&Row>,
     ) -> Result<(), crate::Error> {
+        if kind == "pi_configuration" {
+            return self.plan_pi(desired).await;
+        }
         // Bound resources were refreshed by OpenTofu. New resources still need
         // an ownership check: their names may already exist in the gateway.
         if prior.is_none()
@@ -258,6 +261,9 @@ impl Backend for OpenShell {
         prior: &Row,
         removing: bool,
     ) -> Result<Option<Row>, ObservationError> {
+        if kind == "pi_configuration" {
+            return self.read_pi(prior, removing).await;
+        }
         let observed = self
             .observe(
                 kind,
@@ -303,6 +309,9 @@ impl Backend for OpenShell {
         Ok(observed)
     }
     async fn ensure(&self, kind: &str, desired: &Row) -> Mutation {
+        if kind == "pi_configuration" {
+            return self.ensure_pi(desired).await;
+        }
         let fields: &[&str] = match kind {
             "workspace" => &["name", "owner", "generation"],
             "provider_profile" => &["name", "owner", "generation", "workspace"],
@@ -334,7 +343,14 @@ impl Backend for OpenShell {
         prior: &Row,
         destroying: bool,
     ) -> Result<(), ObservationError> {
-        if !destroying || !matches!(kind, "sandbox" | "provider" | "provider_profile") {
+        if kind == "pi_configuration" {
+            return self.remove_pi(prior, destroying).await;
+        }
+        if !matches!(
+            openshell_lifecycle(kind),
+            Some(OpenShellLifecycle::Reconstructible)
+        ) && !(destroying && openshell_lifecycle(kind) == Some(OpenShellLifecycle::Stateful))
+        {
             return Err(ObservationError::Query);
         }
         tokio::time::timeout(Duration::from_secs(300), self.delete_bound(kind, prior))

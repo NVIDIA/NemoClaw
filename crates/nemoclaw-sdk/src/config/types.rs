@@ -99,35 +99,42 @@ pub struct TLS {
     pub key: Credential,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(tag = "management", rename_all = "lowercase")]
+/// Install a local gateway or connect to an existing gateway.
+pub enum Gateway {
+    /// A gateway installed and managed by this deployment.
+    /// Managed Podman targets local rootless Linux; rootful, remote, and other platforms are unqualified.
+    #[schemars(title = "Managed gateway")]
+    Managed(ManagedGateway),
+    /// An existing gateway managed outside this deployment.
+    #[schemars(title = "External gateway")]
+    External(ExternalGateway),
+}
+
+impl Default for Gateway {
+    fn default() -> Self {
+        Self::External(ExternalGateway::default())
+    }
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[schemars(!default)]
 #[serde(default, deny_unknown_fields)]
 /// Managed Podman targets local rootless Linux; rootful, remote, and other platforms are unqualified.
-/// Choose a managed local Docker or Podman gateway or connect to an external gateway. Credentials and TLS require HTTPS.
-pub struct Gateway {
-    #[serde(rename = "management")]
-    /// Whether the SDK manages the gateway or connects to an existing one.
-    pub management: String,
+/// Installation settings for a managed local gateway.
+pub struct ManagedGateway {
     #[serde(rename = "endpoint")]
     #[schemars(default)]
-    /// Gateway HTTP(S) origin, without a path. Required for an external gateway; managed gateways use unprivileged loopback HTTP ports.
-    #[schemars(extend("x-nemoclaw-required" = "When external"))]
+    /// Local gateway HTTP origin with an unprivileged loopback port.
     pub endpoint: String,
-    #[serde(rename = "credential", skip_serializing_if = "Option::is_none")]
-    #[schemars(default, with = "Credential")]
-    /// Optional bearer credential reference for an external HTTPS gateway.
-    pub credential: Option<Credential>,
-    #[serde(rename = "tls", skip_serializing_if = "Option::is_none")]
-    #[schemars(default, with = "TLS")]
-    /// Optional mutual TLS references for an external HTTPS gateway.
-    pub tls: Option<TLS>,
     #[serde(rename = "engine", skip_serializing_if = "String::is_empty")]
     #[schemars(default)]
-    /// Managed gateway Unix engine socket; Podman requires its API service socket. Omit or leave empty for an external gateway.
+    /// Managed gateway Unix engine socket; Podman requires its API service socket.
     pub engine: String,
     #[serde(rename = "image", skip_serializing_if = "String::is_empty")]
     #[schemars(default)]
-    /// Managed gateway image pinned by the SDK. Omit or leave empty for an external gateway.
+    /// Managed gateway image pinned by the SDK.
     pub image: String,
     #[serde(
         rename = "imagePullPolicy",
@@ -139,13 +146,29 @@ pub struct Gateway {
     pub image_pull_policy: Option<super::ImagePullPolicy>,
     #[serde(rename = "networkCIDR", skip_serializing_if = "String::is_empty")]
     #[schemars(default)]
-    /// Canonical private IPv4 /24 for a managed gateway. Omit or leave empty for an external gateway.
+    /// Canonical private IPv4 /24 for a managed gateway.
     pub network_cidr: String,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[schemars(!default)]
 #[serde(default, deny_unknown_fields)]
+/// Connection settings for an existing gateway. Credentials and TLS require HTTPS.
+pub struct ExternalGateway {
+    /// Gateway HTTP(S) origin, without a path.
+    pub endpoint: String,
+    #[serde(rename = "credential", skip_serializing_if = "Option::is_none")]
+    #[schemars(default, with = "Credential")]
+    /// Optional bearer credential reference for an external HTTPS gateway.
+    pub credential: Option<Credential>,
+    #[serde(rename = "tls", skip_serializing_if = "Option::is_none")]
+    #[schemars(default, with = "TLS")]
+    /// Optional mutual TLS references for an external HTTPS gateway.
+    pub tls: Option<TLS>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 /// Choose an endpoint for external inference or serviceRef for a managed service.
 pub struct InferenceProvider {
     #[serde(rename = "name")]
@@ -153,12 +176,12 @@ pub struct InferenceProvider {
     pub name: String,
     #[serde(rename = "provider")]
     /// OpenShell provider implementation. Must match the selected API family.
-    pub provider: String,
+    pub provider: super::InferenceProviderKind,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(default, with = "super::InferenceApi")]
     /// Request API. Omission selects anthropic-messages for Claude, openai-responses for Codex, and openai-completions for other non-Pi harnesses. Pi requires omission and selects its API through native model metadata.
     pub api: Option<super::InferenceApi>,
-    #[serde(rename = "endpoint", skip_serializing_if = "String::is_empty")]
+    #[serde(default, rename = "endpoint", skip_serializing_if = "String::is_empty")]
     #[schemars(default)]
     /// Inference HTTP(S) URL owned outside the deployment. Required without serviceRef and excluded with serviceRef.
     #[schemars(extend("x-nemoclaw-required" = "Without serviceRef"))]
@@ -228,7 +251,7 @@ pub struct Sandbox {
     #[serde(rename = "network")]
     #[schemars(default)]
     /// Sandbox network policy; omission selects isolated egress with grants for declared inference.
-    pub network: Network,
+    pub network: super::Network,
     #[serde(rename = "agent")]
     /// The configured agent hosted by this sandbox in one Fabric runtime. Deploy additional agents in separate sandboxes.
     pub agent: Agent,
@@ -250,30 +273,10 @@ pub struct Image {
 #[serde(default, deny_unknown_fields)]
 /// Sandbox runtime selected through OpenShell.
 pub struct Runtime {
-    #[serde(rename = "provider")]
+    #[serde(rename = "provider", deserialize_with = "super::kinds::runtime_driver")]
     #[schemars(default)]
     /// Docker or Podman driver. A managed service with Podman requires explicit service placement.
-    pub provider: String,
-}
-
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[schemars(!default)]
-#[serde(default, deny_unknown_fields)]
-/// Sandbox policy selection and optional agent HTTP proxy.
-pub struct Network {
-    #[serde(rename = "tier")]
-    #[schemars(default)]
-    /// Isolated policy preset. Omit when declaring policy.explicit; omission without policy selects isolated.
-    #[serde(skip_serializing_if = "String::is_empty")]
-    pub tier: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[schemars(default, with = "super::ExplicitPolicySelection")]
-    /// Complete authored OpenShell policy, replacing the isolated preset.
-    pub policy: Option<super::ExplicitPolicySelection>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[schemars(default, with = "super::Proxy")]
-    /// HTTP proxy address used by the agent process. Does not create a proxy or change gateway networking.
-    pub proxy: Option<super::Proxy>,
+    pub provider: super::ComputeDriver,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -374,13 +377,12 @@ pub struct Overrides {
     pub pi_model: Option<serde_json::Map<String, serde_json::Value>>,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[schemars(!default)]
-#[serde(default, deny_unknown_fields)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 /// One harness runtime configuration. Every sandbox runs its own instance for its configured agent.
 pub struct Harness {
     /// Fabric harness implementation for the sandbox agent.
-    pub kind: String,
+    pub kind: super::HarnessKind,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(default, with = "super::AgentObservability")]
     /// Harness-native tracing shared by the sandbox.

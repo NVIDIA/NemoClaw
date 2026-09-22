@@ -17,7 +17,7 @@ async fn owning_api_reconciles_lost_create_reply_and_checks_conditional_updates(
         include_str!("../../nemoclaw-sdk/tests/fixtures/config/local.yaml").as_bytes(),
     )
     .unwrap();
-    document.spec.gateway.endpoint = fixture.endpoint.clone();
+    *document.spec.gateway.endpoint_mut() = fixture.endpoint.clone();
     struct Keys;
     impl nemoclaw_sdk::openshell::Secrets for Keys {
         fn resolve(&self, _: &str) -> Result<String, nemoclaw_sdk::ObservationError> {
@@ -72,10 +72,27 @@ async fn owning_api_reconciles_lost_create_reply_and_checks_conditional_updates(
     let error = client.read("provider", &provider, false).await.unwrap_err();
     assert!(!error.to_string().contains("secret"));
     fixture.state.lock().unwrap().fail_read = None;
-    fixture.state.lock().unwrap().lose_delete = true;
-    assert!(client.remove("provider", &provider, true).await.is_err());
+    for key in ["id", "owner", "generation"] {
+        let mut substituted = provider.clone();
+        substituted.insert(key.into(), "foreign".into());
+        let effects = fixture.state.lock().unwrap().effects;
+        assert!(
+            client
+                .remove("provider", &substituted, false)
+                .await
+                .is_err()
+        );
+        assert_eq!(fixture.state.lock().unwrap().effects, effects);
+    }
+    fixture.state.lock().unwrap().fail_read = Some(("provider", tonic::Code::Unavailable));
     let effects = fixture.state.lock().unwrap().effects;
-    assert!(client.remove("provider", &provider, true).await.is_ok());
+    assert!(client.remove("provider", &provider, false).await.is_err());
+    assert_eq!(fixture.state.lock().unwrap().effects, effects);
+    fixture.state.lock().unwrap().fail_read = None;
+    fixture.state.lock().unwrap().lose_delete = true;
+    assert!(client.remove("provider", &provider, false).await.is_err());
+    let effects = fixture.state.lock().unwrap().effects;
+    assert!(client.remove("provider", &provider, false).await.is_ok());
     assert_eq!(fixture.state.lock().unwrap().effects, effects);
     assert!(
         client
@@ -92,7 +109,7 @@ async fn sandbox_launch_policy_and_provider_identity_survive_read_failures() {
         include_str!("../../nemoclaw-sdk/tests/fixtures/config/local.yaml").as_bytes(),
     )
     .unwrap();
-    document.spec.gateway.endpoint = fixture.endpoint.clone();
+    *document.spec.gateway.endpoint_mut() = fixture.endpoint.clone();
     let client = OpenShell::connect(&document.spec.gateway, Arc::new(EnvironmentSecrets)).unwrap();
     let generations: Generations = ["workspace", "provider", "sandbox"]
         .into_iter()
@@ -191,7 +208,7 @@ async fn sandbox_exec_deadline_bounds_a_stream_that_never_finishes() {
         include_str!("../../nemoclaw-sdk/tests/fixtures/config/local.yaml").as_bytes(),
     )
     .unwrap();
-    document.spec.gateway.endpoint = fixture.endpoint.clone();
+    *document.spec.gateway.endpoint_mut() = fixture.endpoint.clone();
     let client = OpenShell::connect(&document.spec.gateway, Arc::new(EnvironmentSecrets)).unwrap();
     let generations = ["workspace", "provider", "sandbox"]
         .into_iter()
@@ -227,11 +244,11 @@ async fn sandbox_exec_deadline_bounds_a_stream_that_never_finishes() {
 async fn incomplete_desired_ownership_is_rejected_before_any_create() {
     for missing in ["owner", "generation", "name"] {
         let fixture = Fixture::start().await;
-        let gateway = nemoclaw_sdk::config::Gateway {
-            management: "external".into(),
-            endpoint: fixture.endpoint.clone(),
-            ..Default::default()
-        };
+        let gateway =
+            nemoclaw_sdk::config::Gateway::External(nemoclaw_sdk::config::ExternalGateway {
+                endpoint: fixture.endpoint.clone(),
+                ..Default::default()
+            });
         let client = OpenShell::connect(&gateway, Arc::new(EnvironmentSecrets)).unwrap();
         let mut desired: nemoclaw_sdk::backend::Row = [
             ("name".into(), "workspace".into()),
@@ -257,7 +274,7 @@ async fn failed_readback_retains_each_created_identity_until_explicit_recovery()
             include_str!("../../nemoclaw-sdk/tests/fixtures/config/local.yaml").as_bytes(),
         )
         .unwrap();
-        document.spec.gateway.endpoint = fixture.endpoint.clone();
+        *document.spec.gateway.endpoint_mut() = fixture.endpoint.clone();
         let client =
             OpenShell::connect(&document.spec.gateway, Arc::new(EnvironmentSecrets)).unwrap();
         let generations = ["workspace", "provider", "sandbox"]
@@ -307,7 +324,7 @@ async fn explicit_policy_and_proxy_reach_the_gateway_and_detect_drift() {
     let mut document =
         Document::parse(include_bytes!("../../../examples/explicit-policy.yaml").as_slice())
             .unwrap();
-    document.spec.gateway.endpoint = fixture.endpoint.clone();
+    *document.spec.gateway.endpoint_mut() = fixture.endpoint.clone();
     let client = OpenShell::connect(&document.spec.gateway, Arc::new(EnvironmentSecrets)).unwrap();
     let generations: Generations = ["workspace", "provider", "sandbox"]
         .map(|k| (k.into(), format!("{k}-generation")))
@@ -400,6 +417,8 @@ async fn explicit_policy_and_proxy_reach_the_gateway_and_detect_drift() {
         .get_mut(&key)
         .unwrap()
         .spec = Some(spec);
+    assert!(client.remove("sandbox", sandbox, false).await.is_err());
+    assert!(fixture.state.lock().unwrap().sandboxes.contains_key(&key));
     assert!(client.remove("sandbox", sandbox, true).await.is_ok());
 }
 
@@ -408,7 +427,7 @@ async fn agent_policy_refresh_verifies_native_policy_without_mutation() {
     let fixture = Fixture::start().await;
     let mut document =
         Document::parse(include_str!("../../../examples/fabric-openclaw.yaml").as_bytes()).unwrap();
-    document.spec.gateway.endpoint = fixture.endpoint.clone();
+    *document.spec.gateway.endpoint_mut() = fixture.endpoint.clone();
     document.spec.sandboxes[0].agent.tools = Some(nemoclaw_sdk::config::AgentTools::ReadOnly {
         allow: [nemoclaw_sdk::config::AllowedTool::Read],
     });
@@ -533,7 +552,7 @@ async fn terminal_startup_reports_phase_and_exit_without_echoing_backend_text() 
     let fixture = Fixture::start().await;
     let mut document =
         Document::parse(include_str!("../../../examples/fabric-openclaw.yaml").as_bytes()).unwrap();
-    document.spec.gateway.endpoint = fixture.endpoint.clone();
+    *document.spec.gateway.endpoint_mut() = fixture.endpoint.clone();
     let client = OpenShell::connect(&document.spec.gateway, Arc::new(EnvironmentSecrets)).unwrap();
     let generations: Generations = ["workspace", "provider", "sandbox"]
         .map(|key| (key.into(), format!("{key}-generation")))

@@ -1,12 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 use super::super::vllm::{
-    DedicatedHardware, MemoryArchitecture, ServiceContainer, ServiceHardware, ServicePlacement,
-    ServicePublication,
+    MemoryArchitecture, ServiceContainer, ServiceHardware, ServicePlacement, ServicePublication,
 };
-use crate::config::{
-    ConfigError, ImagePullPolicy, InferenceApi, InferenceProvider, constraints, validate_endpoint,
-};
+use crate::config::{ConfigError, ImagePullPolicy, InferenceApi, InferenceProvider};
+use crate::config::{HarnessKind, InferenceProviderKind};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -132,15 +130,39 @@ impl ManagedOllama {
 
     pub fn defaults(&mut self) {
         for (value, default) in [
-            (&mut self.serving.port, 18888),
-            (&mut self.serving.context_tokens, 32768),
-            (&mut self.serving.max_sequences, 1),
-            (&mut self.serving.startup_timeout_seconds, 1800),
-            (&mut self.memory.host_reserve_gib, 32),
-            (&mut self.memory.min_available_gib, 8),
-            (&mut self.memory.min_free_gib, 3),
-            (&mut self.memory.free_gate_gib, 12),
-            (&mut self.memory.consecutive_samples, 5),
+            (&mut self.serving.port, super::constraints::PORT.default),
+            (
+                &mut self.serving.context_tokens,
+                super::constraints::CONTEXT_TOKENS.default,
+            ),
+            (
+                &mut self.serving.max_sequences,
+                super::constraints::MAX_SEQUENCES.default,
+            ),
+            (
+                &mut self.serving.startup_timeout_seconds,
+                super::constraints::STARTUP_TIMEOUT.default,
+            ),
+            (
+                &mut self.memory.host_reserve_gib,
+                super::constraints::HOST_RESERVE.default,
+            ),
+            (
+                &mut self.memory.min_available_gib,
+                super::constraints::MIN_AVAILABLE.default,
+            ),
+            (
+                &mut self.memory.min_free_gib,
+                super::constraints::MIN_FREE.default,
+            ),
+            (
+                &mut self.memory.free_gate_gib,
+                super::constraints::FREE_GATE.default,
+            ),
+            (
+                &mut self.memory.consecutive_samples,
+                super::constraints::CONSECUTIVE_SAMPLES.default,
+            ),
         ] {
             if *value == 0 {
                 *value = default;
@@ -168,25 +190,6 @@ impl ManagedOllama {
             None => Err(ConfigError::new(
                 "Ollama requires an explicit hardware profile",
             )),
-        }
-    }
-
-    pub(crate) fn dedicated_hardware(&self) -> Option<DedicatedHardware> {
-        match self.hardware.as_ref()? {
-            ServiceHardware::Dedicated(hardware) => Some(hardware.clone()),
-            hardware @ ServiceHardware::Profile {
-                profile,
-                min_gpu_memory_bytes,
-                ..
-            } if profile.memory_architecture() == MemoryArchitecture::Dedicated => {
-                Some(DedicatedHardware {
-                    architecture: hardware.architecture().ok()?.into(),
-                    min_compute_capability: profile.compute_capability(),
-                    min_gpu_memory_bytes: min_gpu_memory_bytes.unwrap_or(4 * (1 << 30)),
-                    min_driver_major: 580,
-                })
-            }
-            _ => None,
         }
     }
 
@@ -250,44 +253,23 @@ impl OllamaProxy {
         &self,
         provider: &InferenceProvider,
         model: &str,
-        harness: &str,
+        harness: HarnessKind,
     ) -> Result<(), ConfigError> {
-        validate_endpoint(&self.endpoint, false)?;
-        let upstream = url::Url::parse(&self.upstream.endpoint)
-            .map_err(|_| ConfigError::new("invalid Ollama upstream"))?;
-        let endpoint = url::Url::parse(&self.endpoint)
-            .map_err(|_| ConfigError::new("invalid proxy endpoint"))?;
-        let loopback = match upstream.host() {
-            Some(url::Host::Ipv4(ip)) => ip.is_loopback(),
-            Some(url::Host::Ipv6(ip)) => ip.is_loopback(),
-            _ => false,
-        };
-        if provider.provider != "openai"
+        self.validate_definition()?;
+        if provider.provider != InferenceProviderKind::Openai
             || provider.credential.is_some()
             || !provider.endpoint.is_empty()
             || provider.service_ref.is_none()
             || provider
                 .api
                 .is_some_and(|api| api != InferenceApi::OpenaiCompletions)
-            || !matches!(harness, "openclaw" | "hermes" | "deepagents" | "pi")
-            || !loopback
-            || upstream.scheme() != "http"
-            || upstream.path() != "/v1"
-            || upstream.port().is_none()
-            || !matches!(endpoint.host(), Some(url::Host::Ipv4(_)))
-            || endpoint.scheme() != "http"
-            || endpoint.path() != "/v1"
-            || endpoint.port().is_none()
-            || self.endpoint == self.upstream.endpoint
-            || !regex::Regex::new(constraints::IMAGE)
-                .unwrap()
-                .is_match(&self.image)
-            || !regex::Regex::new("^[a-f0-9]{64}$")
-                .unwrap()
-                .is_match(&self.upstream.model.digest)
-            || !regex::Regex::new(super::MODEL_PATTERN)
-                .unwrap()
-                .is_match(&self.upstream.model.name)
+            || !matches!(
+                harness,
+                HarnessKind::OpenClaw
+                    | HarnessKind::Hermes
+                    | HarnessKind::DeepAgents
+                    | HarnessKind::Pi
+            )
             || self.upstream.model.name != model
         {
             return Err(ConfigError::new(

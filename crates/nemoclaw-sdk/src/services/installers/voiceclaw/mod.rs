@@ -12,7 +12,6 @@ use crate::{
     services::contract::{
         InstallPlan, Installer, MANAGED_SERVICE_KIND, MANAGED_SERVICE_STORAGE_KIND, RemovePlan,
     },
-    state::StateBinding,
 };
 use serde::Serialize;
 use std::{collections::BTreeMap, time::Duration};
@@ -81,9 +80,9 @@ fn targets(
         agent_credential_path: "/var/lib/voiceclaw/credentials/agent",
     };
     let process = Process {
-        engine: document.spec.gateway.engine.clone(),
+        engine: document.spec.gateway.managed()?.engine.clone(),
         image: service.image.clone(),
-        network_cidr: document.spec.gateway.network_cidr.clone(),
+        network_cidr: document.spec.gateway.managed()?.network_cidr.clone(),
         create_network: false,
         architecture: Service::architecture()?.into(),
         image_labels: BTreeMap::new(),
@@ -94,7 +93,7 @@ fn targets(
         entrypoint: vec!["/usr/local/bin/voiceclaw-runtime".into()],
         command: vec!["serve".into()],
         mount_target: DATA_PATH.into(),
-        bind_address: document.spec.gateway.bridge()?,
+        bind_address: document.spec.gateway.managed()?.bridge()?,
         port: service.serving.port as u16,
         shared_memory_bytes: 64 << 20,
         host_ipc: false,
@@ -103,12 +102,12 @@ fn targets(
     };
     let spec = Spec {
         layout: 0,
-        compute_driver: "docker".into(),
+        compute_driver: crate::config::ComputeDriver::Docker,
         kind: MANAGED_SERVICE_KIND.into(),
         name: format!("{}-voiceclaw-{name}", document.workspace()),
         owner: document.metadata.uid.clone(),
         generation: generation.clone(),
-        gateway: document.spec.gateway.runtime_settings(),
+        gateway: document.spec.gateway.managed()?.runtime_settings(),
         process: Some(process),
     };
     let storage = Storage {
@@ -155,6 +154,87 @@ async fn ready(endpoint: &str) -> Result<bool, Error> {
     }
 }
 
+pub(crate) fn configure_readiness(
+    graph: &mut serde_json::Value,
+    targets: &[Target],
+    document: &Document,
+) -> Result<(), Error> {
+    for target in targets
+        .iter()
+        .filter(|target| target.kind == MANAGED_SERVICE_KIND)
+    {
+        let name = target
+            .address
+            .split_once('.')
+            .ok_or(Error::State("invalid service address"))?
+            .1;
+        let Some(crate::services::ServiceDefinition::Voiceclaw(service)) =
+            document.spec.services.get(name)
+        else {
+            continue;
+        };
+        let spec: Spec = serde_json::from_str(&target.values["spec"])
+            .map_err(|_| Error::State("invalid VoiceClaw specification"))?;
+        validate_readiness(&spec)?;
+        let container = crate::docker_compute::address(&target.address);
+        let logical = container.split_once('.').unwrap().1;
+        let encoded = serde_json::json!({"kind":"voiceclaw", "spec":spec}).to_string();
+        graph["data"]["nemoclaw_service_readiness"][logical] = serde_json::json!({
+            "spec":encoded.replace("${", "$${").replace("%{", "%%{"),
+            "container_id":format!("${{{container}.id}}"),
+            "read_trigger":"${timestamp() != \"\"}",
+            "wait_timeout_seconds":service.serving.startup_timeout_seconds,
+        });
+    }
+    Ok(())
+}
+
+pub(crate) fn validate_readiness(spec: &Spec) -> Result<(), Error> {
+    spec.validate()?;
+    let process = spec
+        .process
+        .as_ref()
+        .ok_or(Error::State("VoiceClaw process is unavailable"))?;
+    if spec.kind != MANAGED_SERVICE_KIND
+        || process.entrypoint != ["/usr/local/bin/voiceclaw-runtime"]
+        || process.command != ["serve"]
+    {
+        return Err(Error::State("invalid VoiceClaw readiness specification"));
+    }
+    Ok(())
+}
+
+pub(crate) async fn wait_ready(
+    engine: &crate::docker::Engine,
+    spec: &Spec,
+    container_id: &str,
+    timeout: Duration,
+) -> Result<(), Error> {
+    let process = spec
+        .process
+        .as_ref()
+        .ok_or(Error::State("VoiceClaw process is unavailable"))?;
+    let endpoint = format!("http://{}:{}/readyz", process.bind_address, process.port);
+    loop {
+        let observed = engine
+            .observe_service(spec, container_id)
+            .await?
+            .ok_or(Error::State("VoiceClaw runtime is unobservable"))?;
+        if !observed.running {
+            return Err(Error::State(
+                "VoiceClaw stopped during readiness; inspect private logs and explicitly reapply",
+            ));
+        }
+        if ready(&endpoint).await? {
+            return Ok(());
+        }
+        if timeout.is_zero() {
+            return Err(Error::State("VoiceClaw is not ready"));
+        }
+        tokio::time::sleep(Duration::from_secs(1)).await;
+    }
+}
+
 impl Installer for Service {
     fn install(
         &self,
@@ -176,57 +256,6 @@ impl Installer for Service {
                 ],
             )]),
         })
-    }
-
-    async fn check_running(
-        &self,
-        document: &Document,
-        name: &str,
-        generations: &Generations,
-        connections: &crate::docker::Connections,
-        bindings: &BTreeMap<String, StateBinding>,
-        cancel: &crate::CancellationToken,
-    ) -> Result<(), Error> {
-        let (targets, spec) = targets(document, name, self, generations)?;
-        let target = targets
-            .iter()
-            .find(|target| target.kind == MANAGED_SERVICE_KIND)
-            .ok_or(Error::State("VoiceClaw install plan is incomplete"))?;
-        let binding = bindings
-            .get(&crate::docker_compute::address(&target.address))
-            .ok_or(Error::State("VoiceClaw has no established identity"))?;
-        let engine = crate::managed::runtime_engine(connections, &target.kind, &target.values)?;
-        let process = spec
-            .process
-            .as_ref()
-            .ok_or(Error::State("VoiceClaw process is unavailable"))?;
-        let endpoint = format!("http://{}:{}/readyz", process.bind_address, process.port);
-        let check = async {
-            loop {
-                let observed = engine
-                    .observe_service(&spec, &binding.id)
-                    .await?
-                    .ok_or(Error::State("VoiceClaw runtime is unobservable"))?;
-                if !observed.running {
-                    return Err(Error::State(
-                        "VoiceClaw stopped during readiness; inspect private logs and explicitly reapply",
-                    ));
-                }
-                if ready(&endpoint).await? {
-                    return Ok(());
-                }
-                tokio::time::sleep(Duration::from_secs(1)).await;
-            }
-        };
-        tokio::select! {
-            () = cancel.cancelled() => Err(Error::Cancelled),
-            result = tokio::time::timeout(
-                Duration::from_secs(self.serving.startup_timeout_seconds as u64),
-                check,
-            ) => result.map_err(|_| Error::State(
-                "VoiceClaw authenticated readiness timed out; service identity is retained",
-            ))?,
-        }
     }
 
     fn remove(

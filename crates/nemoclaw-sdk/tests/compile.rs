@@ -5,7 +5,7 @@ use nemoclaw_sdk::{compile::compile, config::Document};
 use std::collections::BTreeMap;
 
 #[test]
-fn gateway_capabilities_gate_deployment_but_do_not_query_during_bootstrap() {
+fn gateway_capabilities_gate_deployment_and_follow_bootstrap_reconciliation() {
     use nemoclaw_sdk::compile::compile_runtime;
     let document = Document::parse(include_str!("fixtures/config/spark.yaml").as_bytes()).unwrap();
     let generations = [
@@ -31,11 +31,10 @@ fn gateway_capabilities_gate_deployment_but_do_not_query_during_bootstrap() {
         }
     }
     let bootstrap = compile_runtime(&document, &generations, "0.1.0").unwrap();
-    assert!(
-        bootstrap["data"]
-            .get("nemoclaw_gateway_capabilities")
-            .is_none(),
-        "bootstrap must not require an already running gateway"
+    assert_eq!(
+        bootstrap["data"]["nemoclaw_gateway_capabilities"]["current"]["depends_on"],
+        serde_json::json!(["docker_container.managed_gateway_runtime"]),
+        "bootstrap must reconcile its gateway before observing readiness"
     );
 }
 
@@ -59,7 +58,12 @@ fn image_pull_policy_reaches_the_engine_without_changing_runtime_identity() {
     let mut document =
         Document::parse(include_str!("fixtures/config/spark.yaml").as_bytes()).unwrap();
     let before = compile_runtime(&document, &generations, "0.1.0").unwrap();
-    document.spec.gateway.image_pull_policy = Some(ImagePullPolicy::IfNotPresent);
+    document
+        .spec
+        .gateway
+        .as_managed_mut()
+        .unwrap()
+        .image_pull_policy = Some(ImagePullPolicy::IfNotPresent);
     let nemoclaw_sdk::services::ServiceDefinition::Vllm(service) =
         document.spec.services.values_mut().next().unwrap()
     else {
@@ -130,11 +134,14 @@ fn compiled_resources_preserve_ownership_connections_and_dependency_order() {
     use serde_json::json;
     let mut document =
         Document::parse(include_str!("fixtures/config/local.yaml").as_bytes()).unwrap();
-    document.spec.gateway.endpoint = "https://gateway.example.test".into();
-    document.spec.gateway.credential = Some(Credential {
+    *document.spec.gateway.endpoint_mut() = "https://gateway.example.test".into();
+    let nemoclaw_sdk::config::Gateway::External(gateway) = &mut document.spec.gateway else {
+        panic!("expected external gateway");
+    };
+    gateway.credential = Some(Credential {
         env: "GATEWAY_TOKEN".into(),
     });
-    document.spec.gateway.tls = Some(TLS {
+    gateway.tls = Some(TLS {
         ca: Credential {
             env: "GATEWAY_CA".into(),
         },
@@ -180,7 +187,11 @@ fn compiled_resources_preserve_ownership_connections_and_dependency_order() {
     ] {
         assert_eq!(resource["owner"], document.metadata.uid);
         assert_eq!(resource["generation"], generations[generation]);
-        assert_eq!(resource["lifecycle"]["prevent_destroy"], true);
+        if generation == "provider" {
+            assert!(resource["lifecycle"].get("prevent_destroy").is_none());
+        } else {
+            assert_eq!(resource["lifecycle"]["prevent_destroy"], true);
+        }
     }
     assert_eq!(provider["credential_env"], "MODEL_TOKEN");
     assert_eq!(provider["endpoint"], "https://models.example.test/v1");

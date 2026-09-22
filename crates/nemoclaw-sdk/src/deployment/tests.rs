@@ -1,48 +1,63 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
+use crate::config::{ComputeDriver, Gateway};
 
 use super::*;
 
 #[test]
 fn gateway_observations_are_read_only_in_plans_and_discardable_during_teardown() {
-    let address = "data.nemoclaw_gateway_capabilities.current";
-    for action in ["read", "no-op"] {
-        let plan: Plan = serde_json::from_value(json!({"resource_changes":[{"mode":"data", "address":address, "change":{"actions":[action]}}]})).unwrap();
+    for address in [
+        compile::GATEWAY_CAPABILITIES_ADDRESS,
+        compile::GATEWAY_APPLY_CAPABILITIES_ADDRESS,
+    ] {
+        for action in ["read", "no-op"] {
+            let plan: Plan = serde_json::from_value(json!({"resource_changes":[{"mode":"data", "address":address, "change":{"actions":[action]}}]})).unwrap();
+            assert!(
+                check_plan(&plan, &BTreeMap::new(), &BTreeMap::new())
+                    .unwrap()
+                    .is_empty()
+            );
+            assert!(
+                runtime::check_runtime_plan(
+                    &plan,
+                    &BTreeMap::new(),
+                    &BTreeMap::new(),
+                    &BTreeSet::new()
+                )
+                .unwrap()
+                .is_empty()
+            );
+        }
+        let plan: Plan = serde_json::from_value(json!({"resource_changes":[{"mode":"data", "address":address, "change":{"actions":["delete"]}}]})).unwrap();
         assert!(
-            check_plan(&plan, &BTreeMap::new(), &BTreeMap::new())
+            check_destroy_plan(&plan, &BTreeMap::new(), &BTreeMap::new(), &BTreeSet::new())
                 .unwrap()
                 .is_empty()
         );
-        assert!(
-            runtime::check_runtime_plan(
-                &plan,
-                &BTreeMap::new(),
-                &BTreeMap::new(),
-                &BTreeSet::new()
-            )
-            .is_err()
-        );
+        for (mode, address, action) in [
+            ("managed", address, "read"),
+            ("data", "data.foreign.current", "read"),
+            ("data", address, "create"),
+            ("data", address, "delete"),
+        ] {
+            let value = json!({"mode":mode, "address":address, "change":{"actions":[action]}});
+            let plan: Plan = serde_json::from_value(json!({"resource_changes":[value]})).unwrap();
+            assert!(check_plan(&plan, &BTreeMap::new(), &BTreeMap::new()).is_err());
+            assert!(
+                runtime::check_runtime_plan(
+                    &plan,
+                    &BTreeMap::new(),
+                    &BTreeMap::new(),
+                    &BTreeSet::new()
+                )
+                .is_err()
+            );
+        }
+        let change = json!({"mode":"data", "address":address, "change":{"actions":["read"]}});
+        let duplicate: Plan =
+            serde_json::from_value(json!({"resource_changes":[change, change]})).unwrap();
+        assert!(check_plan(&duplicate, &BTreeMap::new(), &BTreeMap::new()).is_err());
     }
-    let plan: Plan = serde_json::from_value(json!({"resource_changes":[{"mode":"data", "address":address, "change":{"actions":["delete"]}}]})).unwrap();
-    assert!(
-        check_destroy_plan(&plan, &BTreeMap::new(), &BTreeMap::new(), &BTreeSet::new())
-            .unwrap()
-            .is_empty()
-    );
-    for (mode, address, action) in [
-        ("managed", address, "read"),
-        ("data", "data.foreign.current", "read"),
-        ("data", address, "create"),
-        ("data", address, "delete"),
-    ] {
-        let value = json!({"mode":mode, "address":address, "change":{"actions":[action]}});
-        let plan: Plan = serde_json::from_value(json!({"resource_changes":[value]})).unwrap();
-        assert!(check_plan(&plan, &BTreeMap::new(), &BTreeMap::new()).is_err());
-    }
-    let change = json!({"mode":"data", "address":address, "change":{"actions":["read"]}});
-    let duplicate: Plan =
-        serde_json::from_value(json!({"resource_changes":[change, change]})).unwrap();
-    assert!(check_plan(&duplicate, &BTreeMap::new(), &BTreeMap::new()).is_err());
 }
 #[test]
 fn ordinary_plan_cannot_delete_replace_or_recreate_a_bound_resource() {
@@ -65,6 +80,84 @@ fn ordinary_plan_cannot_delete_replace_or_recreate_a_bound_resource() {
         assert!(check_plan(&plan, &allowed, &bound).is_err());
     }
 }
+#[test]
+fn reconstructible_resources_support_removal_replacement_and_confirmed_absence() {
+    for kind in ["provider", "provider_profile", "pi_configuration"] {
+        let address = format!("nemoclaw_{kind}.example");
+        let expected = [(address.clone(), Row::new())].into();
+        let bindings = [(
+            address.clone(),
+            StateBinding {
+                id: "physical".into(),
+                ..Default::default()
+            },
+        )]
+        .into();
+        for actions in [
+            json!(["update"]),
+            json!(["delete", "create"]),
+            json!(["create", "delete"]),
+        ] {
+            let plan: Plan = serde_json::from_value(json!({"resource_changes":[{
+                "address":address,"change":{"actions":actions,"before":{"id":"physical"}}
+            }]}))
+            .unwrap();
+            assert!(
+                check_plan(&plan, &expected, &bindings).is_ok(),
+                "{kind}: {actions}"
+            );
+        }
+        let removal: Plan = serde_json::from_value(json!({"resource_changes":[{
+            "address":address,"change":{"actions":["delete"],"before":{"id":"physical"}}
+        }]}))
+        .unwrap();
+        assert!(check_plan(&removal, &BTreeMap::new(), &bindings).is_ok());
+        let mut recreation: Plan = serde_json::from_value(json!({
+            "resource_changes":[{"address":address,"change":{"actions":["create"],"after":{"name":"desired"}}}],
+            "resource_drift":[{"address":address,"change":{"actions":["delete"],"before":{"id":"physical"}}}]
+        })).unwrap();
+        assert!(check_plan(&recreation, &expected, &bindings).is_ok());
+        let removed_and_absent: Plan = serde_json::from_value(json!({
+            "resource_changes":[{"address":address,"change":{"actions":["no-op"],"before":null,"after":null}}],
+            "resource_drift":[{"address":address,"change":{"actions":["delete"],"before":{"id":"physical"}}}]
+        })).unwrap();
+        assert!(check_plan(&removed_and_absent, &BTreeMap::new(), &bindings).is_ok());
+        recreation.resource_drift[0].change.after = json!({"id":"physical"});
+        assert!(check_plan(&recreation, &expected, &bindings).is_err());
+        recreation.resource_drift[0].change.after = Value::Null;
+        recreation.resource_drift[0].change.before["id"] = json!("foreign");
+        assert!(check_plan(&recreation, &expected, &bindings).is_err());
+        recreation.resource_drift.clear();
+        assert!(check_plan(&recreation, &expected, &bindings).is_err());
+    }
+}
+
+#[test]
+fn reconstructible_resource_plans_cannot_forget_or_change_recorded_identity() {
+    let address = "nemoclaw_provider.example";
+    let expected = [(address.into(), Row::new())].into();
+    let bindings = [(
+        address.into(),
+        StateBinding {
+            id: "physical".into(),
+            ..Default::default()
+        },
+    )]
+    .into();
+    for (actions, id) in [
+        (json!(["delete"]), "foreign"),
+        (json!(["forget"]), "physical"),
+    ] {
+        let plan: Plan = serde_json::from_value(json!({"resource_changes":[{
+            "address":address,"change":{"actions":actions,"before":{"id":id}}
+        }]}))
+        .unwrap();
+        assert!(check_plan(&plan, &expected, &bindings).is_err());
+    }
+    let omitted: Plan = serde_json::from_value(json!({"resource_changes":[]})).unwrap();
+    assert!(check_plan(&omitted, &BTreeMap::new(), &bindings).is_err());
+}
+
 #[test]
 fn teardown_must_account_for_every_binding_and_retain_the_workspace() {
     let allowed = [("nemoclaw_workspace.deployment".into(), Row::new())].into();
@@ -100,6 +193,127 @@ fn credential_references_cannot_override_opentofu_control_variables() {
     assert!(command_environment(&document, &Values, Path::new("state")).is_err());
 }
 
+#[cfg(unix)]
+#[tokio::test]
+async fn schema_commands_do_not_require_inference_credentials() {
+    use std::os::unix::fs::PermissionsExt;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    #[derive(Default)]
+    struct Unavailable(AtomicUsize);
+    impl Secrets for Unavailable {
+        fn resolve(&self, _: &str) -> Result<String, crate::ObservationError> {
+            self.0.fetch_add(1, Ordering::SeqCst);
+            Err(crate::ObservationError::Authentication)
+        }
+    }
+    let bundle_directory = tempfile::tempdir().unwrap();
+    let bundle = Bundle {
+        directory: bundle_directory.path().into(),
+        manifest: crate::bundle::Manifest {
+            version: "0.1.0".into(),
+            rust: "fixture".into(),
+            opentofu: crate::compile::OPENTOFU_VERSION.into(),
+            files: BTreeMap::new(),
+        },
+    };
+    fs::create_dir_all(bundle.tofu().parent().unwrap()).unwrap();
+    fs::write(
+        bundle.tofu(),
+        b"#!/bin/sh\n[ \"$TF_IN_AUTOMATION\" = 1 ] && [ \"$TF_INPUT\" = 0 ] && [ \"$CHECKPOINT_DISABLE\" = 1 ] && [ \"$TF_CLI_CONFIG_FILE\" = \"$PWD/providers.tfrc\" ] || exit 1\nprintf '{}\\n'\n",
+    )
+    .unwrap();
+    fs::set_permissions(bundle.tofu(), fs::Permissions::from_mode(0o700)).unwrap();
+    let state_directory = tempfile::tempdir().unwrap();
+    // macOS temporary paths may traverse /var -> /private/var; the shell's PWD
+    // uses the physical directory when checking the fixture's environment.
+    let state_path = state_directory.path().canonicalize().unwrap();
+    let store = Store::open(&state_path).unwrap();
+    let secrets = Arc::new(Unavailable::default());
+    let deployment =
+        Deployment::new(&state_path, bundle_directory.path()).with_secrets(secrets.clone());
+    let mut document =
+        Document::parse(include_str!("../../tests/fixtures/config/local.yaml").as_bytes()).unwrap();
+    document.spec.inference_providers[0].credential = Some(Credential {
+        env: "TEST_INFERENCE_CREDENTIAL".into(),
+    });
+    let cancel = CancellationToken::new();
+    for args in [
+        vec!["init", "-input=false"],
+        vec!["show", "-json", "apply.plan"],
+    ] {
+        assert_eq!(
+            deployment
+                .tofu(&bundle, &store, &document, &args, &cancel)
+                .await
+                .unwrap(),
+            b"{}\n"
+        );
+    }
+    assert_eq!(secrets.0.load(Ordering::SeqCst), 0);
+    for operation in ["plan", "apply"] {
+        assert!(
+            deployment
+                .tofu(&bundle, &store, &document, &[operation], &cancel)
+                .await
+                .is_err()
+        );
+    }
+    assert_eq!(secrets.0.load(Ordering::SeqCst), 2);
+}
+
+#[test]
+fn gateway_observation_resolves_only_gateway_credentials() {
+    struct GatewayValues;
+    impl Secrets for GatewayValues {
+        fn resolve(&self, name: &str) -> Result<String, crate::ObservationError> {
+            match name {
+                "GATEWAY_TOKEN" | "GATEWAY_CA" | "GATEWAY_CERT" | "GATEWAY_KEY" => {
+                    Ok(format!("test-{name}"))
+                }
+                _ => Err(crate::ObservationError::Authentication),
+            }
+        }
+    }
+    let mut document =
+        Document::parse(include_str!("../../tests/fixtures/config/local.yaml").as_bytes()).unwrap();
+    document.spec.gateway = serde_json::from_value(json!({
+        "management": "external",
+        "endpoint": "https://gateway.example.com",
+        "credential": {"env": "GATEWAY_TOKEN"},
+        "tls": {
+            "ca": {"env": "GATEWAY_CA"},
+            "certificate": {"env": "GATEWAY_CERT"},
+            "key": {"env": "GATEWAY_KEY"}
+        }
+    }))
+    .unwrap();
+    document.spec.inference_providers[0].credential = Some(Credential {
+        env: "INFERENCE_TOKEN".into(),
+    });
+    document.spec.sandboxes[0].integrations = serde_json::from_value(json!({
+        "search": {"kind": "webSearch", "provider": "brave", "credential": {"env": "SEARCH_KEY"}}
+    }))
+    .unwrap();
+    document.spec.sandboxes[0].agent.integration_refs = vec!["search".into()];
+    let environment = gateway_environment(&document, &GatewayValues, Path::new("state")).unwrap();
+    for name in ["GATEWAY_TOKEN", "GATEWAY_CA", "GATEWAY_CERT", "GATEWAY_KEY"] {
+        assert_eq!(environment[name], format!("test-{name}"));
+    }
+    assert!(!environment.contains_key("INFERENCE_TOKEN"));
+    assert!(!environment.contains_key("SEARCH_KEY"));
+    assert!(command_environment(&document, &GatewayValues, Path::new("state")).is_err());
+    if let Gateway::External(gateway) = &mut document.spec.gateway {
+        gateway.credential = Some(Credential {
+            env: "TF_CLI_CONFIG_FILE".into(),
+        });
+    }
+    assert!(matches!(
+        gateway_environment(&document, &GatewayValues, Path::new("state")),
+        Err(Error::Conflict(_))
+    ));
+}
+
 #[test]
 fn runtime_replacement_requires_retained_storage_and_preserves_the_old_binding() {
     let address = "nemoclaw_inference_service.runtime";
@@ -109,6 +323,7 @@ fn runtime_replacement_requires_retained_storage_and_preserves_the_old_binding()
         StateBinding {
             id: "physical".into(),
             spec: "old".into(),
+            ..Default::default()
         },
     )]
     .into();
@@ -143,7 +358,7 @@ async fn managed_gateway_plan_apply_noop_destroy_and_recovery_use_real_opentofu(
         |name| PathBuf::from(std::env::var_os(name).expect("explicit managed qualification path"));
     let mut document =
         Document::parse(fs::File::open(path("NEMOCLAW_TEST_GATEWAY_DOCUMENT")).unwrap()).unwrap();
-    assert_eq!(document.spec.gateway.management, "managed");
+    assert!(matches!(document.spec.gateway, Gateway::Managed(_)));
     assert!(document.spec.inference_providers[0].service_ref.is_none());
     assert!(document.spec.services.is_empty());
     let deployment = Deployment::new(
@@ -157,7 +372,9 @@ async fn managed_gateway_plan_apply_noop_destroy_and_recovery_use_real_opentofu(
         .unwrap()
         .unwrap_or(Record::new(document.clone()).unwrap());
     assert_eq!(record.document.metadata.uid, document.metadata.uid);
-    let engine = crate::docker::Engine::connect(&document.spec.gateway.engine).unwrap();
+    let engine =
+        crate::docker::Engine::connect(&document.spec.gateway.as_managed().unwrap().engine)
+            .unwrap();
     let name = format!("{}-gateway", document.workspace());
     let container_before = engine.container(&name).await.unwrap().map(|c| c.id);
     let volume_before = engine
@@ -188,9 +405,21 @@ async fn managed_gateway_plan_apply_noop_destroy_and_recovery_use_real_opentofu(
         .await
         .unwrap();
     let stage = Store::open(&store.directory.join("runtime")).unwrap();
-    let first = stage.bindings().unwrap();
+    let first = stage.bindings(&bundle.tofu(), &cancel).await.unwrap();
+    let state: Value =
+        serde_json::from_slice(&fs::read(stage.directory.join("terraform.tfstate")).unwrap())
+            .unwrap();
+    let readiness = state["resources"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|resource| {
+            resource["mode"] == "data" && resource["type"] == "nemoclaw_gateway_capabilities"
+        })
+        .expect("runtime apply must record provider-owned readiness");
+    assert_eq!(readiness["instances"][0]["attributes"]["compatible"], true);
     drop(stage);
-    let docker = document.spec.sandboxes[0].runtime.provider == "docker";
+    let docker = document.spec.sandboxes[0].runtime.provider == ComputeDriver::Docker;
     let compute = if docker {
         "docker_container.managed_gateway_runtime"
     } else {
@@ -203,7 +432,7 @@ async fn managed_gateway_plan_apply_noop_destroy_and_recovery_use_real_opentofu(
         .unwrap();
     assert!(changes.is_empty() && !deferred);
     let stage = Store::open(&store.directory.join("runtime")).unwrap();
-    for (address, binding) in stage.bindings().unwrap() {
+    for (address, binding) in stage.bindings(&bundle.tofu(), &cancel).await.unwrap() {
         assert_eq!(binding.id, first[&address].id);
     }
     drop(stage);
@@ -226,7 +455,8 @@ async fn managed_gateway_plan_apply_noop_destroy_and_recovery_use_real_opentofu(
             assert_eq!(
                 Store::open(&store.directory.join("runtime"))
                     .unwrap()
-                    .bindings()
+                    .bindings(&bundle.tofu(), &cancel)
+                    .await
                     .unwrap()["nemoclaw_gateway_storage.runtime"]
                     .id,
                 first["nemoclaw_gateway_storage.runtime"].id
@@ -236,7 +466,7 @@ async fn managed_gateway_plan_apply_noop_destroy_and_recovery_use_real_opentofu(
         let port = listener.local_addr().unwrap().port();
         drop(listener);
         let old = engine.container(&name).await.unwrap().unwrap().id;
-        document.spec.gateway.endpoint = format!("http://127.0.0.1:{port}");
+        *document.spec.gateway.endpoint_mut() = format!("http://127.0.0.1:{port}");
         deployment
             .runtime_stage(&bundle, &store, &document, &mut record, true, &cancel)
             .await
@@ -244,7 +474,7 @@ async fn managed_gateway_plan_apply_noop_destroy_and_recovery_use_real_opentofu(
         assert_ne!(engine.container(&name).await.unwrap().unwrap().id, old);
         let stage = Store::open(&store.directory.join("runtime")).unwrap();
         assert_eq!(
-            stage.bindings().unwrap()["nemoclaw_gateway_storage.runtime"].id,
+            stage.bindings(&bundle.tofu(), &cancel).await.unwrap()["nemoclaw_gateway_storage.runtime"].id,
             first["nemoclaw_gateway_storage.runtime"].id
         );
         let state_path = stage.directory.join("terraform.tfstate");
@@ -305,7 +535,7 @@ async fn managed_gateway_plan_apply_noop_destroy_and_recovery_use_real_opentofu(
         .await
         .unwrap();
     let stage = Store::open(&store.directory.join("runtime")).unwrap();
-    let recovered = stage.bindings().unwrap();
+    let recovered = stage.bindings(&bundle.tofu(), &cancel).await.unwrap();
     assert_eq!(
         recovered["nemoclaw_gateway_storage.runtime"].id,
         first["nemoclaw_gateway_storage.runtime"].id
@@ -340,6 +570,7 @@ fn ollama_runtime_plan_allows_native_compute_and_cache_recovery() {
         StateBinding {
             id: "engine/volume/created".into(),
             spec: String::new(),
+            ..Default::default()
         },
     );
     assert!(check_plan(&plan, &expected, &bindings).is_ok());
@@ -448,7 +679,9 @@ fn runtime_plans_accept_only_declared_local_image_observations_and_teardown_dele
             valid
         );
     }
-    let foreign = crate::services::capacity::observation_address(&document.spec.gateway.engine);
+    let foreign = crate::services::capacity::observation_address(
+        &document.spec.gateway.as_managed().unwrap().engine,
+    );
     for (address, valid) in [(address.as_str(), true), (foreign.as_str(), false)] {
         let plan: Plan = serde_json::from_value(json!({"resource_changes":[{"mode":"data", "address":address, "change":{"actions":["delete"]}}]})).unwrap();
         assert_eq!(
@@ -467,6 +700,7 @@ fn disposable_docker_compute_reconciles_while_durable_storage_does_not_recreate(
         StateBinding {
             id: "old-container".into(),
             spec: String::new(),
+            ..Default::default()
         },
     )]
     .into();
@@ -486,9 +720,188 @@ fn disposable_docker_compute_reconciles_while_durable_storage_does_not_recreate(
         StateBinding {
             id: "daemon/data/created".into(),
             spec: String::new(),
+            ..Default::default()
         },
     )]
     .into();
     let plan: Plan = serde_json::from_value(json!({"resource_changes":[{"address":storage,"change":{"actions":["create"],"before":null}}]})).unwrap();
     assert!(check_plan(&plan, &allowed, &bound).is_err());
+}
+
+#[tokio::test]
+async fn changing_gateway_management_at_the_same_endpoint_preserves_saved_state() {
+    let bundle_directory = tempfile::tempdir().unwrap();
+    let mut manifest = crate::bundle::Manifest {
+        version: "0.1.0".into(),
+        rust: "1.98.1".into(),
+        opentofu: crate::compile::OPENTOFU_VERSION.into(),
+        files: Default::default(),
+    };
+    // Valid bundle hashes let the request reach the state guard. These bytes
+    // cannot execute, so a regression cannot start an actual deployment.
+    for name in crate::bundle::required_files(&manifest.version).unwrap() {
+        let path = bundle_directory.path().join(&name);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(&path, b"non-executable fixture").unwrap();
+        manifest
+            .files
+            .insert(name, crate::bundle::hash_file(&path).unwrap());
+    }
+    fs::write(
+        bundle_directory.path().join("manifest.json"),
+        serde_json::to_vec(&manifest).unwrap(),
+    )
+    .unwrap();
+    let external =
+        Document::parse(include_str!("../../tests/fixtures/config/local.yaml").as_bytes()).unwrap();
+    let mut managed = external.clone();
+    managed.spec.gateway = Gateway::Managed(crate::config::ManagedGateway {
+        endpoint: external.spec.gateway.endpoint().into(),
+        ..Default::default()
+    });
+    managed.defaults();
+    managed.validate().unwrap();
+    for (original, changed) in [(&external, &managed), (&managed, &external)] {
+        let state_directory = tempfile::tempdir().unwrap();
+        let store = Store::open(state_directory.path()).unwrap();
+        store.save(&Record::new(original.clone()).unwrap()).unwrap();
+        drop(store);
+        let intent = state_directory.path().join("intent.json");
+        let before = fs::read(&intent).unwrap();
+        let deployment = Deployment::new(state_directory.path(), bundle_directory.path());
+        for apply in [false, true] {
+            let error = deployment
+                .run(changed, &CancellationToken::new(), apply)
+                .await
+                .unwrap_err();
+            assert!(matches!(
+                error,
+                Error::Conflict("state is bound to a different deployment UID or gateway")
+            ));
+            assert_eq!(fs::read(&intent).unwrap(), before);
+        }
+    }
+}
+
+#[test]
+fn replacement_cleanup_is_bound_to_the_recorded_old_compute_object() {
+    let address = "docker_container.runtime";
+    let allowed = BTreeMap::from([(address.into(), Row::new())]);
+    let bindings = BTreeMap::from([(
+        address.into(),
+        StateBinding {
+            id: "current".into(),
+            deposed: BTreeMap::from([("deadbeef".into(), "old".into())]),
+            ..Default::default()
+        },
+    )]);
+    let current =
+        json!({"address":address,"change":{"actions":["no-op"],"before":{"id":"current"}}});
+    let old = json!({"address":address,"deposed":"deadbeef","change":{"actions":["delete"],"before":{"id":"old"}}});
+    let plan =
+        |resources| serde_json::from_value::<Plan>(json!({"resource_changes":resources})).unwrap();
+    let apply = plan(json!([current, old]));
+    assert_eq!(check_plan(&apply, &allowed, &bindings).unwrap().len(), 1);
+    assert_eq!(
+        runtime::check_runtime_plan(&apply, &allowed, &bindings, &BTreeSet::new())
+            .unwrap()
+            .len(),
+        1
+    );
+    assert!(export::settled(&bindings).is_err());
+    for (field, value) in [
+        ("deposed", json!("unknown")),
+        ("address", json!("docker_volume.cache")),
+    ] {
+        let mut invalid = old.clone();
+        invalid[field] = value;
+        assert!(check_plan(&plan(json!([current, invalid])), &allowed, &bindings).is_err());
+    }
+    for change in [
+        json!({"actions":["delete"],"before":{"id":"current"}}),
+        json!({"actions":["update"],"before":{"id":"old"}}),
+    ] {
+        let mut invalid = old.clone();
+        invalid["change"] = change;
+        assert!(check_plan(&plan(json!([current, invalid])), &allowed, &bindings).is_err());
+    }
+    assert!(check_plan(&plan(json!([current, old, old])), &allowed, &bindings).is_err());
+    let mut delete = current.clone();
+    delete["change"]["actions"] = json!(["delete"]);
+    assert_eq!(
+        check_destroy_plan(
+            &plan(json!([delete, old])),
+            &allowed,
+            &bindings,
+            &BTreeSet::new()
+        )
+        .unwrap()
+        .len(),
+        2
+    );
+    let mut only_old = bindings.clone();
+    only_old.get_mut(address).unwrap().id.clear();
+    assert_eq!(
+        check_destroy_plan(&plan(json!([old])), &allowed, &only_old, &BTreeSet::new())
+            .unwrap()
+            .len(),
+        1
+    );
+    // Refresh may confirm the old disposable object is already absent.
+    let absent = json!({"address":address,"deposed":"deadbeef","change":{"actions":["no-op"],"before":null,"after":null}});
+    assert!(
+        check_plan(&plan(json!([current, absent])), &allowed, &bindings)
+            .unwrap()
+            .is_empty()
+    );
+    assert!(
+        check_destroy_plan(
+            &plan(json!([absent])),
+            &allowed,
+            &only_old,
+            &BTreeSet::new()
+        )
+        .unwrap()
+        .is_empty()
+    );
+    let mut invalid = absent.clone();
+    invalid["change"]["after"] = json!({"id":"unrecorded"});
+    assert!(check_plan(&plan(json!([current, invalid])), &allowed, &bindings).is_err());
+    assert!(check_plan(&plan(json!([current])), &allowed, &bindings).is_ok());
+    for durable in [
+        "docker_volume.cache",
+        "nemoclaw_inference_storage.credentials",
+    ] {
+        let bound = BTreeMap::from([(durable.into(), bindings[address].clone())]);
+        let mut forbidden = old.clone();
+        forbidden["address"] = json!(durable);
+        assert!(
+            check_destroy_plan(
+                &plan(json!([forbidden])),
+                &BTreeMap::from([(durable.into(), Row::new())]),
+                &bound,
+                &BTreeSet::from([durable.into()])
+            )
+            .is_err()
+        );
+    }
+}
+
+#[test]
+fn managed_service_readiness_plans_require_the_declared_container() {
+    let allowed = [("docker_container.managed_service_voice".into(), Row::new())].into();
+    for (name, action, accepted) in [
+        ("voice", "read", true),
+        ("foreign", "read", false),
+        ("voice", "create", false),
+    ] {
+        let plan: Plan = serde_json::from_value(json!({"resource_changes":[{
+            "mode":"data", "address":format!("data.nemoclaw_service_readiness.managed_service_{name}"),
+            "change":{"actions":[action]}
+        }, {"address":"docker_container.managed_service_voice", "change":{"actions":["no-op"]}}]})).unwrap();
+        assert_eq!(
+            check_plan(&plan, &allowed, &BTreeMap::new()).is_ok(),
+            accepted
+        );
+    }
 }

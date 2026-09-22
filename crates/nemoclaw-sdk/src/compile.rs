@@ -1,5 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
+use crate::config::{HarnessKind, InferenceProviderKind};
 
 use crate::{
     backend::Row,
@@ -82,7 +83,7 @@ fn targets_with_plans(
         let settings = document.sandbox_runtime_settings(sandbox)?;
         // OpenClaw's hosted runtime identity remains the sandbox name; its native agent
         // identity is carried separately in the runtime settings.
-        let agent_name = if harness.kind == "openclaw" {
+        let agent_name = if harness.kind == HarnessKind::OpenClaw {
             &sandbox.name
         } else {
             &sandbox.agent.name
@@ -113,7 +114,7 @@ fn targets_with_plans(
             let profile = crate::openshell::inference_profile(
                 &provider.key,
                 &connection.endpoint,
-                &provider.definition.provider,
+                provider.definition.provider,
                 false,
             )
             .map_err(|_| ConfigError::new("invalid native inference policy"))?;
@@ -137,6 +138,36 @@ fn targets_with_plans(
         if let Some(proxy) = &sandbox.network.proxy {
             values.insert("proxy_host".into(), proxy.host.clone());
             values.insert("proxy_port".into(), proxy.port.to_string());
+        }
+        if harness.kind == HarnessKind::Pi {
+            result.push(Target {
+                kind: "pi_configuration".into(),
+                address: format!("nemoclaw_pi_configuration.{}", sandbox.name),
+                values: [
+                    ("workspace".into(), workspace.clone()),
+                    ("name".into(), sandbox.name.clone()),
+                    ("owner".into(), document.metadata.uid.clone()),
+                    (
+                        "generation".into(),
+                        generation(generations, "sandbox")?.into(),
+                    ),
+                    (
+                        "sandbox_id".into(),
+                        format!("${{nemoclaw_sandbox.{}.id}}", sandbox.name),
+                    ),
+                    (
+                        "model_json".into(),
+                        serde_json::to_string(
+                            &document
+                                .sandbox_inference(sandbox)?
+                                .default_route()?
+                                .overrides,
+                        )
+                        .expect("typed Pi model settings"),
+                    ),
+                ]
+                .into(),
+            });
         }
         result.push(Target {
             kind: "sandbox".into(),
@@ -233,10 +264,9 @@ fn inference_targets(
         ),
         (
             "provider_type".into(),
-            if provider.provider == "anthropic" {
-                "anthropic".into()
-            } else {
-                String::new()
+            match provider.provider {
+                InferenceProviderKind::Anthropic => "anthropic".into(),
+                InferenceProviderKind::Openai => String::new(),
             },
         ),
     ]
@@ -278,10 +308,32 @@ pub fn compile(
     let raw = targets_with_plans(document, generations, &service_plans)?;
     crate::docker_compute::configure(&mut graph, &raw)
         .map_err(|_| ConfigError::new("invalid Docker compute graph"))?;
+    crate::services::configure_service_readiness(&mut graph, &raw, document)
+        .map_err(|_| ConfigError::new("invalid service readiness graph"))?;
     Ok(graph)
 }
 
 pub(crate) const GATEWAY_CAPABILITIES_ADDRESS: &str = "data.nemoclaw_gateway_capabilities.current";
+pub(crate) const GATEWAY_APPLY_CAPABILITIES_ADDRESS: &str =
+    "data.nemoclaw_gateway_capabilities.apply";
+
+pub(crate) fn is_gateway_observation(address: &str) -> bool {
+    [
+        GATEWAY_CAPABILITIES_ADDRESS,
+        GATEWAY_APPLY_CAPABILITIES_ADDRESS,
+    ]
+    .contains(&address)
+}
+
+// Both graphs report the provider's observation through OpenTofu conditions.
+pub(super) fn gateway_error_message(reference: &str) -> String {
+    let message = "Gateway version or compute driver does not satisfy the configuration. Required version: %s; observed version: %s. Required drivers: %s; observed entries: %d; names: %s. Retain state, correct gateway compatibility, and reapply the same configuration.";
+    format!(
+        "${{format({}, {}, {reference}.gateway_version, jsonencode({reference}.required_compute_drivers), {reference}.compute_driver_count, jsonencode({reference}.compute_drivers))}}",
+        serde_json::to_string(message).expect("literal diagnostic"),
+        serde_json::to_string(crate::artifact_pins::OPENSHELL_VERSION).expect("pinned version"),
+    )
+}
 
 pub(super) fn compile_with_plans(
     document: &Document,
@@ -292,20 +344,20 @@ pub(super) fn compile_with_plans(
     let targets = targets_with_plans(document, generations, service_plans)?;
     let providers = document.selected_providers()?;
     let gateway = &document.spec.gateway;
-    let mut provider = json!({"endpoint":gateway.endpoint});
-    if let Some(c) = &gateway.credential {
+    let mut provider = json!({"endpoint":gateway.endpoint()});
+    if let Some(c) = gateway.credential() {
         provider["credential_env"] = json!(c.env);
     }
-    if let Some(tls) = &gateway.tls {
+    if let Some(tls) = gateway.tls() {
         provider["tls_ca_env"] = json!(tls.ca.env);
         provider["tls_certificate_env"] = json!(tls.certificate.env);
         provider["tls_key_env"] = json!(tls.key.env);
     }
     let mut resources = json!({});
-    let provider_dependencies: Vec<_> = targets
+    let provider_dependencies: BTreeMap<_, _> = targets
         .iter()
         .filter(|target| target.kind == "provider")
-        .map(|target| target.address.clone())
+        .map(|target| (target.values["name"].clone(), target.address.clone()))
         .collect();
     for target in targets {
         let mut attributes = serde_json::to_value(&target.values).expect("string map");
@@ -316,6 +368,10 @@ pub(super) fn compile_with_plans(
             attributes["credential_source"] =
                 json!(value.replace("${", "$${").replace("%{", "%%{"));
         }
+        if target.kind == "pi_configuration" {
+            let model = attributes["model_json"].as_str().expect("Pi model JSON");
+            attributes["model_json"] = json!(model.replace("${", "$${").replace("%{", "%%{"));
+        }
         if target.kind == "sandbox" {
             // JSON configuration strings are still OpenTofu templates. Preserve
             // literal policy paths and matchers across that interpretation layer.
@@ -324,7 +380,17 @@ pub(super) fn compile_with_plans(
                     attributes[field] = json!(value.replace("${", "$${").replace("%{", "%%{"));
                 }
             }
-            attributes["depends_on"] = json!(provider_dependencies);
+            let sandbox = document.sandbox(&target.values["name"])?;
+            let mut dependencies: Vec<_> = document
+                .sandbox_inference_providers(sandbox)?
+                .into_iter()
+                .map(|provider| provider_dependencies[&provider.key].clone())
+                .collect();
+            if let Some(search) = document.sandbox_runtime_settings(sandbox)?.web_search {
+                let name = crate::config::search_provider_name(&search.credential.env);
+                dependencies.push(provider_dependencies[&name].clone());
+            }
+            attributes["depends_on"] = json!(dependencies);
         }
         if let Some(dependencies) = service_plans.dependencies(&target.address) {
             attributes["depends_on"] = json!(dependencies);
@@ -354,10 +420,23 @@ pub(super) fn compile_with_plans(
         {
             attributes["depends_on"] = json!(["nemoclaw_provider_profile.web_search"]);
         }
-        attributes["lifecycle"] = json!({"prevent_destroy":true, "precondition":[{
+        attributes
+            .as_object_mut()
+            .expect("resource attributes")
+            .entry("depends_on")
+            .or_insert_with(|| json!([]))
+            .as_array_mut()
+            .expect("resource dependencies")
+            .push(json!(GATEWAY_APPLY_CAPABILITIES_ADDRESS));
+        attributes["lifecycle"] = json!({"precondition":[{
             "condition":format!("${{{GATEWAY_CAPABILITIES_ADDRESS}.compatible}}"),
-            "error_message":"Gateway version or compute driver does not satisfy the configuration."
+            "error_message":gateway_error_message(GATEWAY_CAPABILITIES_ADDRESS)
         }]});
+        if crate::backend::openshell_lifecycle(&target.kind)
+            != Some(crate::backend::OpenShellLifecycle::Reconstructible)
+        {
+            attributes["lifecycle"]["prevent_destroy"] = json!(true);
+        }
         let (kind, name) = target
             .address
             .split_once('.')
@@ -374,10 +453,41 @@ pub(super) fn compile_with_plans(
         .iter()
         .map(|sandbox| &sandbox.runtime.provider)
         .collect();
+    // timestamp() is unknown while planning. Its nonempty test becomes a
+    // stable true at apply, forcing a fresh read without perpetual state drift.
+    let apply_readiness = json!({
+        "required_compute_drivers":drivers,
+        "read_trigger":"${timestamp() != \"\"}",
+        "lifecycle":{"postcondition":[{
+            "condition":"${self.compatible}",
+            "error_message":gateway_error_message("self")
+        }]}
+    });
+    let sandbox_readiness: BTreeMap<_, _> = document.spec.sandboxes.iter().map(|sandbox| {
+        let reference = format!("nemoclaw_sandbox.{}", sandbox.name);
+        let binding = if document.sandbox_harness(sandbox)?.kind == HarnessKind::Pi {
+            format!("${{merge({reference}, {{pi_model_config = nemoclaw_pi_configuration.{}.model_json}})}}", sandbox.name)
+        } else {
+            format!("${{{reference}}}")
+        };
+        Ok((sandbox.name.clone(), json!({
+            "sandbox":binding,
+            // uuid() is unknown in a saved plan and records a unique observation
+            // token, so failed applies cannot report stale health as a new result.
+            "read_trigger":"${uuid()}",
+            "lifecycle":{"postcondition":[{
+                "condition":"${self.ready}",
+                "error_message":"${self.error_message != null ? self.error_message : \"Fabric readiness could not be established; resources retained\"}"
+            }]}
+        })))
+    }).collect::<Result<_, ConfigError>>()?;
     Ok(json!({
         "terraform":{"required_version":format!("= {OPENTOFU_VERSION}"),"required_providers":{"nemoclaw":{"source":PROVIDER_ADDRESS,"version":format!("= {version}")}}},
         "provider":{"nemoclaw":provider}, "resource":resources,
-        "data":{"nemoclaw_gateway_capabilities":{"current":{"required_compute_drivers":drivers}}}
+        "data":{"nemoclaw_sandbox_readiness":sandbox_readiness, "nemoclaw_gateway_capabilities":{
+            "current":{"required_compute_drivers":drivers},
+            "apply":apply_readiness
+        }}
     }))
 }
 

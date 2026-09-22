@@ -17,16 +17,16 @@ Empty or zero selects a default only where stated.
 
 ## Validation Beyond the Schema
 
-- Document::parse remains authoritative. It rejects YAML aliases, anchors, merge keys, unsupported tags, duplicate keys, multiple documents, and input larger than 1 MiB.
-- The parser checks endpoint transport and address policy, managed gateway port bounds, canonical private IPv4 /24 networks, local engine socket syntax, one compute driver per managed gateway, and publication address/port/network agreement.
+- Document::parse rejects YAML aliases, anchors, merge keys, unsupported tags, duplicate keys, multiple documents, and input larger than 1 MiB. It applies the compiled input schema before defaulting; Document::validate applies the normalized schema and semantic checks, including for directly constructed Rust values.
+- The parser checks endpoint transport and address policy, managed gateway port bounds, canonical private IPv4 /24 networks, local engine socket syntax, and publication address/port/network agreement.
 - Explicit sandbox policies are also checked by the pinned OpenShell policy parser and validator, including protocol-specific rule semantics, process identities, filesystem paths, and destination address restrictions.
 - Explicit filesystem grants must permit reads of the selected harness runtime directories; parent and read-write grants count. This parser check does not inspect images, resolve symlinks, or establish runtime permissions.
-- The parser checks uniquely named model choices with an explicit default for multiple choices, multiple choices for OpenClaw and Pi, and the OpenClaw disclosure mode; omitted disclosure means progressive.
+- The schema requires an explicit default for multiple model choices. Rust checks unique route names, that the default names a route, and that the resolved harness supports the selected model count, tuning, and tools; omitted disclosure means progressive.
 - The parser resolves integrationRefs only from enclosing deployment or sandbox definitions, rejects name shadowing and incompatible agent grants, and permits at most one attached Brave search definition per sandbox. Agent-inline definitions attach directly; unused enclosing definitions grant no access.
-- The parser requires exactly one sandbox harness or harnessRef, resolves visible harnesses without shadowing, and rejects agent-level harness selection. Each sandbox requires one agent and hosts one Fabric runtime using the sandbox-selected implementation. Shared definitions reuse configuration across sandboxes.
+- The schema requires exactly one sandbox harness or harnessRef and rejects agent-level harness selection. Rust resolves visible harnesses without shadowing. Each sandbox requires one agent and hosts one Fabric runtime using the sandbox-selected implementation. Shared definitions reuse configuration across sandboxes.
 - The parser permits non-default reasoningEffort values only on the initial default choice. Managed inference services may constrain routes to their declared served model.
-- The parser resolves inferenceRef from enclosing inferences, preserves declaration scope for nested provider references, and rejects missing names, shadowing, and inline/reference ambiguity.
-- The parser resolves providerRef from enclosing inferenceProviders, rejects shadowing, conflicting selected names, more than 32 selected providers, incompatible managed-service combinations, and compares route models and authentication with the selected provider. With multiple named definitions, provider/agent compatibility is a parser check. Unselected definitions create no resources. Snapshot identity must match the service model.
+- Rust resolves inferenceRef from enclosing inferences, preserves declaration scope for nested provider references, and rejects missing names and shadowing. The schema rejects inline/reference ambiguity.
+- The parser resolves providerRef from enclosing inferenceProviders, rejects shadowing, conflicting selected names, more than 32 selected providers, incompatible managed-service combinations, and compares route models and authentication with the selected provider. Provider/agent compatibility is checked after reference resolution for both inline and shared definitions. Unselected definitions create no resources. Snapshot identity must match the service model.
 - The parser checks memory threshold ordering and GPU/KV budget relationships; recipe path safety, byte-length limits, environment-map conflicts, snapshot file uniqueness, directory conflicts, and total-size overflow.
 - Schema validation does not observe hardware, image labels, model weights, credentials, ownership, connectivity, or inference readiness. Those checks run during the relevant SDK operation.
 
@@ -360,8 +360,7 @@ Paths:
 
 ## Gateway
 
-Managed Podman targets local rootless Linux; rootful, remote, and other platforms are unqualified.
-Choose a managed local Docker or Podman gateway or connect to an external gateway. Credentials and TLS require HTTPS.
+Install a local gateway or connect to an existing gateway.
 
 Guide: [Configuration and credentials](../usage.md#configuration-and-credentials).
 
@@ -369,15 +368,33 @@ Paths:
 
 - `spec.gateway`
 
+Accepted input: object.
+
+### Alternative 1
+
+A gateway installed and managed by this deployment.
+Managed Podman targets local rootless Linux; rootful, remote, and other platforms are unqualified.
+
+
+| Field | Input type | Required | Default | Description and constraints |
+|---|---|---|---|---|
+| `endpoint` | string | No | `"http://127.0.0.1:17681"` | Local gateway HTTP origin with an unprivileged loopback port. Constraints: `""` or pattern `^http://127\.0\.0\.1:[0-9]+/?$`. Omitted or empty selects the default. |
+| `engine` | string | No | `"unix:///var/run/docker.sock"` | Managed gateway Unix engine socket; Podman requires its API service socket. Constraints: `""` or pattern `^unix:///`. Omitted or empty selects the default. |
+| `image` | string | No | `"ghcr.io/nvidia/openshell/gateway@sha256:ec2b0efea84fff198e888e97c85befb9c908acde92e8256f9b527877ed182d66"` | Managed gateway image pinned by the SDK. Constraints: `""` or `"ghcr.io/nvidia/openshell/gateway@sha256:ec2b0efea84fff198e888e97c85befb9c908acde92e8256f9b527877ed182d66"`. Omitted or empty selects the default. |
+| `imagePullPolicy` | [ImagePullPolicy](#imagepullpolicy) | No | — | Image acquisition before container creation. Docker accepts IfNotPresent (the default) or Never; Podman also accepts Always before creation or restart. |
+| `management` | string | Yes | — | Whether this deployment manages the gateway. Constraints: `"managed"`. |
+| `networkCIDR` | string | No | — | Canonical private IPv4 /24 for a managed gateway. Constraints: `""` or pattern `/24$`. Omitted or empty selects 172.30.N.0/24, where N is the first byte of SHA-256(metadata.uid). |
+
+### Alternative 2
+
+An existing gateway managed outside this deployment.
+
+
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
 | `credential` | [Credential](#credential) | No | — | Optional bearer credential reference for an external HTTPS gateway. |
-| `endpoint` | string | When external | — | Gateway HTTP(S) origin, without a path. Required for an external gateway; managed gateways use unprivileged loopback HTTP ports. Managed only: omitted or empty selects http://127.0.0.1:17681. |
-| `engine` | string | No | — | Managed gateway Unix engine socket; Podman requires its API service socket. Omit or leave empty for an external gateway. Managed only: omitted or empty selects unix:///var/run/docker.sock. |
-| `image` | string | No | — | Managed gateway image pinned by the SDK. Omit or leave empty for an external gateway. Managed only: omitted or empty selects ghcr.io/nvidia/openshell/gateway@sha256:ec2b0efea84fff198e888e97c85befb9c908acde92e8256f9b527877ed182d66. |
-| `imagePullPolicy` | [ImagePullPolicy](#imagepullpolicy) | No | — | Image acquisition before container creation. Docker accepts IfNotPresent (the default) or Never; Podman also accepts Always before creation or restart. |
-| `management` | string | Yes | — | Whether the SDK manages the gateway or connects to an existing one. Constraints: `"managed"` or `"external"`. |
-| `networkCIDR` | string | No | — | Canonical private IPv4 /24 for a managed gateway. Omit or leave empty for an external gateway. Managed only: omitted or empty selects 172.30.N.0/24, where N is the first byte of SHA-256(metadata.uid). |
+| `endpoint` | string | Yes | — | Gateway HTTP(S) origin, without a path. Constraints: pattern `^https?://`. |
+| `management` | string | Yes | — | Whether this deployment manages the gateway. Constraints: `"external"`. |
 | `tls` | [TLS](#tls) | No | — | Optional mutual TLS references for an external HTTPS gateway. |
 
 ## HardwareProfile
@@ -894,7 +911,7 @@ Paths:
 | `access` | string | No | — | full or read-only preset; mutually exclusive with rules. Constraints: `"full"` or `"read-only"`. |
 | `allow_encoded_slash` | boolean | No | — | Allow encoded slash path segments when required by the upstream API. |
 | `allowed_ips` | array of string | No | — | Resolved IP addresses or CIDRs allowed by OpenShell destination validation. |
-| `deny_rules` | array of [PolicyMatcher](#policymatcher) | No | — | Application-protocol deny rules, evaluated before allow rules. |
+| `deny_rules` | array of [PolicyMatcher](#policymatcher) | No | — | Application-protocol deny rules, evaluated before allow rules. Constraints: minimum items 1. |
 | `enforcement` | string | No | — | enforce or audit; omission follows OpenShell defaults. Constraints: `"enforce"` or `"audit"`. |
 | `host` | string | No | — | Destination hostname or DNS glob; may be omitted with allowed_ips. |
 | `json_rpc` | [PolicyJsonRpc](#policyjsonrpc) | No | — | JSON-RPC inspection limits. |
@@ -904,7 +921,7 @@ Paths:
 | `ports` | array of integer | No | — | Nonempty unique TCP ports; mutually exclusive with port. Constraints: minimum items 1; items: minimum 1; maximum 65535. |
 | `protocol` | string | No | — | rest, websocket, json-rpc, or mcp; omit for TCP. Constraints: `"rest"` or `"websocket"` or `"json-rpc"` or `"mcp"`. |
 | `request_body_credential_rewrite` | boolean | No | — | Enable OpenShell placeholder rewriting in supported REST request bodies. |
-| `rules` | array of [PolicyAllowRule](#policyallowrule) | No | — | Application-protocol allow rules. |
+| `rules` | array of [PolicyAllowRule](#policyallowrule) | No | — | Application-protocol allow rules. Constraints: minimum items 1. |
 | `tls` | string | No | — | terminate, passthrough, or skip, subject to protocol validation. Constraints: `"terminate"` or `"passthrough"` or `"skip"`. |
 | `websocket_credential_rewrite` | boolean | No | — | Enable OpenShell placeholder rewriting after an allowed REST WebSocket upgrade. |
 
@@ -1294,7 +1311,7 @@ Managed vLLM runtime and immutable model snapshot.
 
 ### Alternative 4
 
-Managed VoiceClaw runtime selected by one agent integration.
+Experimental VoiceClaw installer; credential projection and revocable agent access are not yet implemented.
 
 
 | Field | Input type | Required | Default | Description and constraints |
@@ -1303,7 +1320,7 @@ Managed VoiceClaw runtime selected by one agent integration.
 | `imagePullPolicy` | [PullPolicy](#pullpolicy) | Yes | — | Must be Never for the preloaded PoC image. Constraints: `"Never"`. |
 | `kind` | string | Yes | — | Supported installer selected by this service definition. Constraints: `"voiceclaw"`. |
 | `serving` | [VoiceclawServing](#voiceclawserving) | No | — | VoiceClaw listener and bounded startup settings. |
-| `speech` | [VoiceclawSpeech](#voiceclawspeech) | Yes | — | Speech provider and protected caller credential reference. |
+| `speech` | [VoiceclawSpeech](#voiceclawspeech) | Yes | — | Speech provider and caller credential reference reserved for future projection. |
 
 ## ServiceHardware
 
@@ -1512,7 +1529,7 @@ Paths:
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
 | `port` | integer | No | — | Single HTTP and streaming service port. Constraints: minimum 1024; maximum 65535. |
-| `startupTimeoutSeconds` | integer | No | — | Seconds allowed for authenticated readiness. Constraints: minimum 1; maximum 3600. |
+| `startupTimeoutSeconds` | integer | No | — | Seconds allowed for content-free service readiness. Constraints: minimum 1; maximum 3600. |
 
 ## VoiceclawSpeech
 
@@ -1526,5 +1543,5 @@ Paths:
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
-| `credential` | [Credential](#credential) | Yes | — | Host credential reference projected through protected runtime storage. |
+| `credential` | [Credential](#credential) | Yes | — | Host credential reference. Projection into runtime storage is not yet implemented. |
 | `provider` | [SpeechProvider](#speechprovider) | Yes | — | Supported speech provider. |

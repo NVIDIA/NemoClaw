@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 use super::ConfigError;
+use crate::config::HarnessKind;
 use serde::{Deserialize, Serialize};
 
 /// Execution timeout shared by the sandbox; native heartbeat settings are OpenClaw-only.
@@ -22,25 +23,7 @@ pub struct AgentExecution {
     pub heartbeat_every: Option<String>,
 }
 impl AgentExecution {
-    pub(crate) fn validate(&self, harness: &str) -> Result<(), ConfigError> {
-        if (harness != "openclaw" && self.heartbeat_every.is_some())
-            || (self.timeout_seconds.is_none() && self.heartbeat_every.is_none())
-            || self
-                .timeout_seconds
-                .is_some_and(|n| !(1..=1_000_000_000).contains(&n))
-            || self.heartbeat_every.as_ref().is_some_and(|value| {
-                value.len() > 256
-                    || value.len() < 2
-                    || !value.as_bytes()[..value.len() - 1]
-                        .iter()
-                        .all(u8::is_ascii_digit)
-                    || !matches!(value.as_bytes().last(), Some(b's' | b'm' | b'h'))
-            })
-        {
-            return Err(ConfigError::new(
-                "execution requires a positive timeout; heartbeat requires OpenClaw and a duration ending in s, m, or h",
-            ));
-        }
-        Ok(())
+    pub(crate) fn validate(&self, harness: HarnessKind) -> Result<(), ConfigError> {
+        super::schema::validate_harness_field("execution", self, harness)
     }
 }

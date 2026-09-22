@@ -32,20 +32,20 @@ impl OpenShell {
     /// Configure a lazy channel without network mutation or automatic RPC retry.
     /// Secret references are resolved locally; raw credentials never enter rows.
     pub fn connect(gateway: &Gateway, secrets: Arc<dyn Secrets>) -> Result<Self, ObservationError> {
-        crate::config::validate_endpoint(&gateway.endpoint, true)
+        crate::config::validate_endpoint(gateway.endpoint(), true)
             .map_err(|_| ObservationError::Query)?;
-        if gateway.endpoint.starts_with("http:")
-            && (gateway.credential.is_some() || gateway.tls.is_some())
+        if gateway.endpoint().starts_with("http:")
+            && (gateway.credential().is_some() || gateway.tls().is_some())
         {
             return Err(ObservationError::Authentication);
         }
-        let mut endpoint = Channel::from_shared(gateway.endpoint.clone())
+        let mut endpoint = Channel::from_shared(gateway.endpoint().to_owned())
             .map_err(|_| ObservationError::Transport)?
             .connect_timeout(Duration::from_secs(10))
             .timeout(Duration::from_secs(90));
-        if gateway.endpoint.starts_with("https:") {
+        if gateway.endpoint().starts_with("https:") {
             let mut tls = ClientTlsConfig::new().with_native_roots();
-            if let Some(references) = &gateway.tls {
+            if let Some(references) = gateway.tls() {
                 let file = |name: &str| -> Result<Vec<u8>, ObservationError> {
                     std::fs::read(secrets.resolve(name)?)
                         .map_err(|_| ObservationError::Authentication)
@@ -62,8 +62,7 @@ impl OpenShell {
                 .map_err(|_| ObservationError::Authentication)?;
         }
         let bearer = gateway
-            .credential
-            .as_ref()
+            .credential()
             .map(|credential| {
                 let token = secrets.resolve(&credential.env)?;
                 let mut value = MetadataValue::try_from(format!("Bearer {token}"))

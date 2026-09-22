@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 //! vLLM installer launch behavior; model and hardware qualification belongs to recipes.
+use crate::config::ComputeDriver;
 mod config;
 mod constraints;
 mod hardware_profile;
@@ -57,10 +58,9 @@ use crate::{
     compile::{Generations, Target},
     config::{ConfigError, Document},
     managed::{Process, Spec, Storage},
-    services::contract::{InstallPlan, Installer, RemovePlan, validate_image},
-    state::StateBinding,
+    services::contract::{InstallPlan, Installer, RemovePlan},
 };
-use std::{collections::BTreeMap, time::Duration};
+use std::collections::BTreeMap;
 use url::Url;
 
 pub(crate) const SERVICE_KIND: &str = "inference_service";
@@ -92,16 +92,7 @@ fn private(ip: std::net::IpAddr) -> bool {
 impl Service {
     pub fn validate(&self) -> Result<(), ConfigError> {
         use crate::config::validation::require;
-        validate_image(
-            &self.image,
-            self.image_pull_policy,
-            self.placement.is_none(),
-        )?;
-        crate::config::ImagePullPolicy::validate_service(self.image_pull_policy)?;
-        require(
-            self.placement.is_some() == self.publication.is_some(),
-            "service placement and publication must be declared together",
-        )?;
+        crate::config::schema::validate_service("vllm", self)?;
         if let (Some(placement), Some(publication)) = (&self.placement, &self.publication) {
             require(
                 placement.engine.starts_with("ssh://"),
@@ -173,26 +164,22 @@ fn targets(
             "bearer-v1".into(),
         );
     }
-    let network_cidr = service
-        .placement
-        .as_ref()
-        .map_or(document.spec.gateway.network_cidr.clone(), |placement| {
-            placement.network_cidr.clone()
-        });
+    let (engine, network_cidr) = match &service.placement {
+        Some(placement) => (&placement.engine, &placement.network_cidr),
+        None => {
+            let gateway = document.spec.gateway.managed()?;
+            (&gateway.engine, &gateway.network_cidr)
+        }
+    };
     let bind_address = service.publication.as_ref().map_or_else(
-        || document.spec.gateway.bridge(),
+        || document.spec.gateway.managed()?.bridge(),
         |publication| Ok(publication.bind_address.clone()),
     )?;
     let architecture = service.architecture()?.to_owned();
     let process = Process {
-        engine: service
-            .placement
-            .as_ref()
-            .map_or(document.spec.gateway.engine.clone(), |placement| {
-                placement.engine.clone()
-            }),
+        engine: engine.clone(),
         image: service.image.clone(),
-        network_cidr,
+        network_cidr: network_cidr.clone(),
         create_network: service.placement.is_some(),
         architecture,
         image_labels,
@@ -221,7 +208,7 @@ fn targets(
     };
     let spec = Spec {
         layout: 0,
-        compute_driver: "docker".into(),
+        compute_driver: ComputeDriver::Docker,
         kind: SERVICE_KIND.into(),
         name: format!("{}-inference-{name}", document.workspace()),
         owner: document.metadata.uid.clone(),
@@ -229,7 +216,7 @@ fn targets(
         gateway: if service.placement.is_some() {
             Default::default()
         } else {
-            document.spec.gateway.runtime_settings()
+            document.spec.gateway.managed()?.runtime_settings()
         },
         process: Some(process),
     };
@@ -281,72 +268,13 @@ impl Installer for Service {
         if self.authentication.is_some() {
             service_dependencies.push(address(STORAGE_KIND, &format!("{name}_auth")));
         }
-        if document.spec.gateway.management == "managed" && self.placement.is_none() {
+        if document.spec.gateway.as_managed().is_some() && self.placement.is_none() {
             service_dependencies.insert(0, "nemoclaw_managed_gateway.runtime".into());
         }
         Ok(InstallPlan {
             targets,
             dependencies: BTreeMap::from([(service, service_dependencies)]),
         })
-    }
-
-    async fn check_running(
-        &self,
-        document: &Document,
-        name: &str,
-        generations: &Generations,
-        connections: &crate::docker::Connections,
-        bindings: &BTreeMap<String, StateBinding>,
-        cancel: &crate::CancellationToken,
-    ) -> Result<(), Error> {
-        let plan = self.install(document, name, generations)?;
-        let target = plan
-            .targets
-            .iter()
-            .find(|target| target.kind == SERVICE_KIND)
-            .ok_or(Error::State("vLLM install plan is incomplete"))?;
-        let spec: Spec = serde_json::from_str(&target.values["spec"])
-            .map_err(|_| Error::State("invalid vLLM runtime specification"))?;
-        let binding = bindings
-            .get(&crate::docker_compute::address(&target.address))
-            .ok_or(Error::State("vLLM has no established identity"))?;
-        let engine = crate::managed::runtime_engine(connections, &target.kind, &target.values)?;
-        let check = async {
-            loop {
-                let observed = engine
-                    .observe_service(&spec, &binding.id)
-                    .await?
-                    .ok_or(Error::State("vLLM runtime is unobservable"))?;
-                if !observed.running {
-                    return Err(Error::State(
-                        "vLLM stopped during its readiness check; inspect logs and explicitly reapply",
-                    ));
-                }
-                let status = engine.runtime_status(&observed).await?;
-                if status.phase == "ready" {
-                    if self.authentication.is_some() {
-                        crate::services::authentication::read_service_key(
-                            &engine,
-                            &observed.container_id,
-                        )
-                        .await?;
-                    }
-                    return Ok(());
-                }
-                if status.phase == "stopped" {
-                    return Err(Error::State(
-                        "vLLM protection stopped the service; explicit reapply is required",
-                    ));
-                }
-                tokio::time::sleep(Duration::from_secs(5)).await;
-            }
-        };
-        tokio::select! {
-            () = cancel.cancelled() => Err(Error::Cancelled),
-            result = tokio::time::timeout(Duration::from_secs(9 * 3600), check) => {
-                result.map_err(|_| Error::State("vLLM readiness check timed out"))?
-            }
-        }
     }
 
     fn remove(

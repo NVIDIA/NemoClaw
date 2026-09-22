@@ -11,7 +11,10 @@ pub(crate) mod capacity;
 mod contract;
 pub use capacity::{ServiceCapacity, observe_service_capacity, validate_capacity_specs};
 pub mod installers;
+mod readiness;
 mod registry;
+pub(crate) use readiness::configure_service_readiness;
+pub use readiness::{validate_readiness_spec, wait_service_ready};
 #[cfg(target_os = "linux")]
 mod runtime;
 mod validation;
@@ -28,9 +31,9 @@ pub use registry::{
     resource_behavior, resource_schemas,
 };
 pub(crate) use registry::{
-    check_running, constrain_schema, credential_source_json, defaults, generation_kinds,
-    has_runtime, install_plans, provider_authenticated, remove_plans, required_storage_address,
-    resolve, resource_label, validate, validate_provider, validate_route,
+    constrain_schema, credential_source_json, defaults, generation_kinds, has_runtime,
+    install_plans, provider_authenticated, remove_plans, required_storage_address, resolve,
+    resource_label, validate, validate_provider, validate_route,
 };
 
 /// Run the package implementation encoded in `NEMOCLAW_RUNTIME_SPEC`.

@@ -4,31 +4,6 @@
 use super::*;
 
 #[test]
-fn gateway_capability_data_never_becomes_a_durable_resource_binding() {
-    let directory = tempfile::tempdir().unwrap();
-    let data = serde_json::json!({"mode":"data", "type":"nemoclaw_gateway_capabilities", "name":"current", "instances":[{"attributes":{"gateway_version":"observed", "compatible":true, "compute_drivers":["docker"], "required_compute_drivers":["docker"]}}]});
-    let managed = serde_json::json!({"mode":"managed", "type":"nemoclaw_workspace", "name":"deployment", "instances":[{"attributes":{"id":"physical"}}]});
-    let write = |resources| {
-        std::fs::write(
-            directory.path().join("terraform.tfstate"),
-            serde_json::json!({"resources":resources}).to_string(),
-        )
-        .unwrap()
-    };
-    write(serde_json::json!([data, managed]));
-    let observed = bindings(directory.path()).unwrap();
-    assert_eq!(observed.len(), 1);
-    assert_eq!(observed["nemoclaw_workspace.deployment"].id, "physical");
-    write(serde_json::json!([data, data, managed]));
-    assert!(bindings(directory.path()).is_err());
-    for field in ["name", "type", "module"] {
-        let mut invalid = data.clone();
-        invalid[field] = serde_json::json!("foreign");
-        write(serde_json::json!([invalid, managed]));
-        assert!(bindings(directory.path()).is_err(), "{field}");
-    }
-}
-#[test]
 fn lock_excludes_other_operations_and_atomic_intent_survives_reopen() {
     let dir = tempfile::tempdir().unwrap();
     let store = Store::open(dir.path()).unwrap();
@@ -58,58 +33,6 @@ fn corrupt_intent_is_not_an_empty_deployment() {
         "{broken"
     );
 }
-#[test]
-fn duplicate_unbound_and_multiple_instances_are_rejected() {
-    let dir = tempfile::tempdir().unwrap();
-    let store = Store::open(dir.path()).unwrap();
-    let resource = serde_json::json!({"type":"nemoclaw_workspace","name":"deployment","instances":[{"attributes":{"id":"physical"}}]});
-    for resources in [
-        serde_json::json!([resource, resource]),
-        serde_json::json!([{"type":"nemoclaw_workspace","name":"deployment","instances":[]}]),
-        serde_json::json!([{"type":"nemoclaw_workspace","name":"deployment","instances":[{"attributes":{"id":""}}]}]),
-    ] {
-        std::fs::write(
-            dir.path().join("terraform.tfstate"),
-            serde_json::json!({"resources":resources}).to_string(),
-        )
-        .unwrap();
-        assert!(store.bindings().is_err());
-    }
-    std::fs::write(
-        dir.path().join("terraform.tfstate"),
-        serde_json::json!({"resources":[resource]}).to_string(),
-    )
-    .unwrap();
-    assert_eq!(
-        store.bindings().unwrap()["nemoclaw_workspace.deployment"].id,
-        "physical"
-    );
-}
-
-#[test]
-fn module_indexed_and_deposed_state_cannot_alias_a_root_binding() {
-    let dir = tempfile::tempdir().unwrap();
-    let ordinary = serde_json::json!({"type":"nemoclaw_workspace","name":"deployment","mode":"managed","instances":[{"attributes":{"id":"physical"}}]});
-    for failure in ["module", "data", "index", "deposed"] {
-        let mut resource = ordinary.clone();
-        match failure {
-            "module" => resource["module"] = serde_json::json!("module.foreign"),
-            "data" => resource["mode"] = serde_json::json!("data"),
-            "index" => resource["instances"][0]["index_key"] = serde_json::json!(0),
-            _ => resource["instances"][0]["deposed"] = serde_json::json!("deadbeef"),
-        }
-        std::fs::write(
-            dir.path().join("terraform.tfstate"),
-            serde_json::json!({"resources":[resource]}).to_string(),
-        )
-        .unwrap();
-        assert!(
-            bindings(dir.path()).is_err(),
-            "{failure} must not become a root binding"
-        );
-    }
-}
-
 #[test]
 fn legacy_intent_is_rejected_without_rewriting_recovery_state() {
     let dir = tempfile::tempdir().unwrap();
@@ -149,57 +72,248 @@ fn removed_ownership_annotations_preserve_intent_and_resource_bindings_for_recov
     assert_eq!(std::fs::read(state).unwrap(), binding);
 }
 
+fn object(address: &str, id: &str) -> serde_json::Value {
+    serde_json::json!({"address":address, "mode":"managed", "values":{"id":id}})
+}
+fn state(resources: serde_json::Value) -> serde_json::Value {
+    serde_json::json!({"format_version":"1.0", "values":{"root_module":{"resources":resources}}})
+}
+fn read(value: &serde_json::Value) -> Result<BTreeMap<String, StateBinding>, Error> {
+    parse_bindings(&serde_json::to_vec(value).unwrap())
+}
 #[test]
-fn capacity_data_is_discarded_without_accepting_foreign_or_duplicate_state_instances() {
-    let directory = tempfile::tempdir().unwrap();
-    let name = crate::services::capacity::observation_name("ssh://gpu-box");
-    let data = serde_json::json!({"mode":"data", "type":"nemoclaw_service_capacity", "name":name, "instances":[{"attributes":{"engine":"ssh://gpu-box", "compatible":true}}]});
-    let managed = serde_json::json!({"mode":"managed", "type":"nemoclaw_workspace", "name":"deployment", "instances":[{"attributes":{"id":"physical"}}]});
-    let write = |resources| {
-        std::fs::write(
-            directory.path().join("terraform.tfstate"),
-            serde_json::json!({"resources":resources}).to_string(),
-        )
-        .unwrap()
-    };
-    write(serde_json::json!([data, managed]));
-    assert_eq!(bindings(directory.path()).unwrap().len(), 1);
-    write(serde_json::json!([data, data, managed]));
-    assert!(bindings(directory.path()).is_err());
-    for field in ["name", "type", "module", "engine", "index", "deposed"] {
-        let mut invalid = data.clone();
-        match field {
-            "engine" => {
-                invalid["instances"][0]["attributes"]["engine"] = serde_json::json!("ssh://other")
-            }
-            "index" => invalid["instances"][0]["index_key"] = serde_json::json!(0),
-            "deposed" => invalid["instances"][0]["deposed"] = serde_json::json!("prior"),
-            _ => invalid[field] = serde_json::json!("foreign"),
-        }
-        write(serde_json::json!([invalid, managed]));
-        assert!(bindings(directory.path()).is_err(), "{field}");
+fn documented_state_json_preserves_full_instance_addresses() {
+    let mut value = state(serde_json::json!([
+        object("docker_container.agent[\"one\"]", "first"),
+        object("docker_container.agent[\"two\"]", "second")
+    ]));
+    value["values"]["root_module"]["child_modules"] = serde_json::json!([
+        {"address":"module.workload", "resources":[object("module.workload.docker_container.agent", "nested")]}
+    ]);
+    let observed = read(&value).unwrap();
+    assert_eq!(observed.len(), 3);
+    assert_eq!(observed["docker_container.agent[\"one\"]"].id, "first");
+    assert_eq!(
+        observed["module.workload.docker_container.agent"].id,
+        "nested"
+    );
+    assert!(!observed.contains_key("docker_container.agent"));
+}
+#[test]
+fn data_observations_do_not_become_managed_bindings() {
+    let data = serde_json::json!({"address":"data.example.observed", "mode":"data", "values":{"id":"observation"}});
+    let value = state(serde_json::json!([
+        object("nemoclaw_workspace.deployment", "owned"),
+        data,
+        {"address":crate::compile::GATEWAY_CAPABILITIES_ADDRESS, "mode":"data", "values":{"compatible":true}},
+        {"address":crate::compile::GATEWAY_APPLY_CAPABILITIES_ADDRESS, "mode":"data", "values":{"compatible":true}}
+    ]));
+    let observed = read(&value).unwrap();
+    assert_eq!(observed.len(), 1);
+    assert_eq!(observed["nemoclaw_workspace.deployment"].id, "owned");
+}
+#[test]
+fn malformed_duplicate_and_unsupported_state_is_not_empty() {
+    let owned = object("nemoclaw_workspace.deployment", "owned");
+    for value in [
+        serde_json::json!({}),
+        serde_json::json!({"format_version":"2.0"}),
+        state(serde_json::json!([owned, owned])),
+        state(serde_json::json!([object(
+            "nemoclaw_workspace.deployment",
+            ""
+        )])),
+        state(serde_json::json!([{"address":"x.y", "mode":"unknown", "values":{"id":"x"}}])),
+        state(serde_json::json!([{"address":"x.y", "mode":"managed", "values":null}])),
+        state(
+            serde_json::json!([{"address":"x.y", "mode":"managed", "values":{"id":"x"}, "deposed_key":""}]),
+        ),
+    ] {
+        assert!(read(&value).is_err(), "{value}");
     }
+    assert!(
+        read(&serde_json::json!({"format_version":"1.0"}))
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[tokio::test]
+#[ignore = "requires NEMOCLAW_TEST_BUNDLE; local OpenTofu builtin resources only"]
+async fn native_state_json_preserves_module_and_instance_identity_without_refresh() {
+    let bundle = crate::bundle::Bundle::open(&std::path::PathBuf::from(
+        std::env::var_os("NEMOCLAW_TEST_BUNDLE").expect("explicit verified bundle"),
+    ))
+    .unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path();
+    fs::create_dir(root.join("child")).unwrap();
+    fs::write(root.join("providers.tfrc"), "").unwrap();
+    fs::write(
+        root.join("main.tf.json"),
+        serde_json::json!({
+            "module":{"child":{"source":"./child"}},
+            "resource":{"terraform_data":{"root":{"input":"retained"}}}
+        })
+        .to_string(),
+    )
+    .unwrap();
+    fs::write(root.join("child/main.tf.json"), serde_json::json!({
+        "resource":{"terraform_data":{"replica":{"for_each":{"a":"first","b":"second"},"input":"${each.value}"}}}
+    }).to_string()).unwrap();
+    let cancel = crate::CancellationToken::new();
+    for args in [
+        vec!["init", "-input=false"],
+        vec!["apply", "-auto-approve", "-input=false"],
+    ] {
+        crate::process::run(
+            root,
+            &bundle.tofu(),
+            &args,
+            &schema_environment(root),
+            &cancel,
+        )
+        .await
+        .unwrap();
+    }
+    let path = root.join("terraform.tfstate");
+    let before = fs::read(&path).unwrap();
+    let observed = bindings(root, &bundle.tofu(), &cancel).await.unwrap();
+    assert_eq!(observed.len(), 3);
+    assert!(observed.contains_key("terraform_data.root"));
+    assert_ne!(
+        observed["module.child.terraform_data.replica[\"a\"]"].id,
+        observed["module.child.terraform_data.replica[\"b\"]"].id
+    );
+    assert_eq!(
+        fs::read(&path).unwrap(),
+        before,
+        "inspection must not rewrite state"
+    );
+    fs::write(&path, b"broken").unwrap();
+    assert!(bindings(root, &bundle.tofu(), &cancel).await.is_err());
+    assert_eq!(fs::read(path).unwrap(), b"broken");
 }
 
 #[test]
-fn docker_state_keeps_native_ids_and_discards_local_image_observations() {
-    let directory = tempfile::tempdir().unwrap();
-    let state = serde_json::json!({"resources":[
-        {"type":"docker_container","name":"inference_service_model","instances":[{"attributes":{"id":"container-id","name":"managed-model","labels":[]}}]},
-        {"type":"docker_network","name":"network_owned","instances":[{"attributes":{"id":"network-id"}}]},
-        {"type":"docker_image","name":"image_owned","instances":[{"attributes":{"id":"image-id"}}]},
-        {"mode":"data","type":"docker_image","name":"image_local","instances":[{"attributes":{"id":"local-image-id","name":"model@sha256:abc"}}]}
-    ]});
-    std::fs::write(
-        directory.path().join("terraform.tfstate"),
-        state.to_string(),
+fn replacement_cleanup_keeps_current_and_deposed_objects_distinct() {
+    let address = "docker_container.runtime";
+    let current = object(address, "current");
+    let mut old = object(address, "old");
+    old["deposed_key"] = serde_json::json!("deadbeef");
+    let observed = read(&state(serde_json::json!([old, current]))).unwrap();
+    assert_eq!(observed[address].id, "current");
+    assert_eq!(observed[address].deposed["deadbeef"], "old");
+    // The second instance is a recorded cleanup task, not a duplicate address.
+    assert!(read(&state(serde_json::json!([old]))).is_ok());
+    assert!(read(&state(serde_json::json!([old, old]))).is_err());
+    let mut duplicate = old.clone();
+    duplicate["values"]["id"] = serde_json::json!("current");
+    assert!(read(&state(serde_json::json!([current, duplicate]))).is_err());
+}
+
+#[test]
+fn runtime_reconciliation_does_not_clear_unfinished_openshell_recovery() {
+    let document = crate::config::Document::parse(
+        include_bytes!("../../tests/fixtures/config/local.yaml").as_slice(),
     )
     .unwrap();
-    let bindings = super::bindings(directory.path()).unwrap();
-    assert_eq!(bindings.len(), 3);
+    let mut record = Record::new(document).unwrap();
+    record.begin_runtime_apply();
+    assert!(record.pending && record.runtime_pending);
+    record.finish_runtime_apply();
+    assert!(!record.pending && !record.runtime_pending);
+    record.pending = true;
+    record.begin_runtime_apply();
+    assert!(!record.runtime_pending);
+    record.finish_runtime_apply();
+    assert!(record.pending && !record.runtime_pending);
+}
+
+#[test]
+fn pending_creation_guards_only_unresolved_targets_and_survives_runtime_recovery() {
+    let document =
+        Document::parse(include_bytes!("../../tests/fixtures/config/local.yaml").as_slice())
+            .unwrap();
+    let mut record = Record::new(document.clone()).unwrap();
+    let targets = crate::compile::targets(&document, &record.generations).unwrap();
+    let pending = targets
+        .iter()
+        .find(|target| target.kind == "sandbox")
+        .unwrap();
+    record.pending = true;
+    record.pending_creations = Some([(pending.address.clone(), pending.values.clone())].into());
+    let mut revised = document.clone();
+    let mut unrelated = revised.spec.inference_providers[0].clone();
+    unrelated.name = "unrelated".into();
+    revised.spec.inference_providers.push(unrelated);
+    assert!(record.validate_pending_intent(&revised).is_ok());
+    revised.spec.sandboxes[0].image.ref_ =
+        format!("example.invalid/changed@sha256:{}", "b".repeat(64));
+    revised.validate().unwrap();
+    assert!(matches!(
+        record.validate_pending_intent(&revised),
+        Err(Error::Conflict(_))
+    ));
+    revised.spec.sandboxes[0].name = "replacement".into();
+    revised.validate().unwrap();
+    assert!(matches!(
+        record.validate_pending_intent(&revised),
+        Err(Error::Conflict(_))
+    ));
+    record.begin_runtime_apply();
+    record.finish_runtime_apply();
+    assert!(record.pending && !record.runtime_pending);
     assert_eq!(
-        bindings["docker_container.inference_service_model"].id,
-        "container-id"
+        record.pending_creations.as_ref().unwrap()[&pending.address],
+        pending.values
     );
-    assert!(bindings.values().all(|binding| binding.spec.is_empty()));
+    let directory = tempfile::tempdir().unwrap();
+    let store = Store::open(directory.path()).unwrap();
+    store.save(&record).unwrap();
+    assert_eq!(store.load().unwrap().unwrap(), record);
+}
+
+#[test]
+fn subsequent_apply_preserves_all_unresolved_creations_until_success() {
+    let document =
+        Document::parse(include_bytes!("../../tests/fixtures/config/local.yaml").as_slice())
+            .unwrap();
+    let mut record = Record::new(document.clone()).unwrap();
+    let targets = crate::compile::targets(&document, &record.generations).unwrap();
+    let first = &targets[0];
+    let second = &targets[1];
+    record.begin_apply([(first.address.clone(), first.values.clone())].into());
+    record.begin_apply([(second.address.clone(), second.values.clone())].into());
+    assert_eq!(record.pending_creations.as_ref().unwrap().len(), 2);
+    record.begin_apply(BTreeMap::new());
+    assert!(record.pending && !record.runtime_pending);
+    assert_eq!(record.pending_creations.as_ref().unwrap().len(), 2);
+    record.finish_apply();
+    assert!(!record.pending && record.pending_creations.is_none());
+    record.begin_apply(BTreeMap::new());
+    assert!(record.pending && record.runtime_pending);
+    assert!(record.validate_pending_intent(&document).is_ok());
+}
+
+#[test]
+fn legacy_pending_operations_keep_the_full_intent_guard_until_success() {
+    let document =
+        Document::parse(include_bytes!("../../tests/fixtures/config/local.yaml").as_slice())
+            .unwrap();
+    let mut record = Record::new(document.clone()).unwrap();
+    record.pending = true;
+    let mut revised = document.clone();
+    revised.spec.sandboxes[0].image.ref_ =
+        format!("example.invalid/changed@sha256:{}", "b".repeat(64));
+    revised.validate().unwrap();
+    assert!(record.validate_pending_intent(&revised).is_err());
+    let target = crate::compile::targets(&document, &record.generations)
+        .unwrap()
+        .remove(0);
+    record.begin_apply([(target.address, target.values)].into());
+    assert!(record.pending_creations.is_none());
+    assert!(record.validate_pending_intent(&revised).is_err());
+    record.finish_apply();
+    assert!(record.validate_pending_intent(&revised).is_ok());
 }

@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-
 //! Dispatch for service definitions and installer-owned resource backends.
+use crate::config::{ComputeDriver, HarnessKind};
 
 use super::{
     ManagedOllama, OllamaProxy,
@@ -13,7 +13,6 @@ use crate::{
     backend::{Backend, Row},
     compile::{Generations, Target},
     config::{ConfigError, Document, Gateway, InferenceProvider},
-    state::StateBinding,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -41,7 +40,7 @@ pub enum ServiceDefinition {
     OllamaProxy(OllamaProxy),
     /// Managed vLLM runtime and immutable model snapshot.
     Vllm(Box<installers::vllm::Service>),
-    /// Managed VoiceClaw runtime selected by one agent integration.
+    /// Experimental VoiceClaw installer; credential projection and revocable agent access are not yet implemented.
     Voiceclaw(Box<installers::voiceclaw::Service>),
 }
 
@@ -127,10 +126,20 @@ pub(crate) fn resource_label(kind: &str) -> Option<&'static str> {
     }
 }
 
-pub(crate) fn constrain_schema(defs: &mut serde_json::Map<String, serde_json::Value>) {
-    installers::ollama::constrain_schema(defs);
-    installers::vllm::schema::constrain(defs);
+pub(crate) fn constrain_schema(
+    defs: &mut serde_json::Map<String, serde_json::Value>,
+    normalized: bool,
+) {
+    installers::ollama::constrain_schema(defs, normalized);
+    installers::vllm::schema::constrain(defs, normalized);
     for service in defs["ServiceDefinition"]["oneOf"].as_array_mut().unwrap() {
+        crate::config::schema::validation::property(
+            service,
+            "image",
+            serde_json::json!({
+                "x-nemoclaw-error": "service image must be pinned by a SHA-256 digest"
+            }),
+        );
         crate::config::schema::validation::property(
             service,
             "imagePullPolicy",
@@ -149,7 +158,8 @@ pub(crate) fn constrain_schema(defs: &mut serde_json::Map<String, serde_json::Va
                 "required": ["image"]
             },
             "then": {
-                "properties": {"imagePullPolicy": {"const": "Never"}},
+                "properties": {"imagePullPolicy": {"const": "Never", "x-nemoclaw-error": "local Docker image ID requires imagePullPolicy Never on a local engine"}},
+                "x-nemoclaw-error": "local Docker image ID requires imagePullPolicy Never on a local engine",
                 "required": ["imagePullPolicy"],
                 "not": {"required": ["placement"]}
             }
@@ -168,9 +178,11 @@ pub(crate) fn constrain_schema(defs: &mut serde_json::Map<String, serde_json::Va
 
 fn active_service_names(document: &Document) -> Result<BTreeSet<String>, ConfigError> {
     let mut active: BTreeSet<_> = document
-        .selected_inference_providers()?
-        .into_iter()
-        .filter_map(|provider| provider.service_ref.clone())
+        .spec
+        .services
+        .iter()
+        .filter(|(_, service)| !matches!(service, ServiceDefinition::Voiceclaw(_)))
+        .map(|(name, _)| name.clone())
         .collect();
     active.extend(document.active_voiceclaw_services()?);
     Ok(active)
@@ -182,8 +194,8 @@ trait InferenceCapability {
     fn validate_route(
         &self,
         provider: &InferenceProvider,
-        sandbox_runtime: &str,
-        harness: &str,
+        sandbox_runtime: ComputeDriver,
+        harness: HarnessKind,
         model: &str,
     ) -> Result<(), ConfigError>;
 
@@ -221,14 +233,14 @@ impl ServiceDefinition {
 
     fn validate_installation(&self, document: &Document) -> Result<(), ConfigError> {
         let gateway = &document.spec.gateway;
-        let local_docker = gateway.management == "managed"
-            && gateway.engine.starts_with("unix:///")
-            && crate::docker::Engine::validate_endpoint(&gateway.engine).is_ok()
-            && document
-                .spec
-                .sandboxes
-                .iter()
-                .all(|sandbox| sandbox.runtime.provider == "docker");
+        let local_docker = gateway.as_managed().is_some_and(|gateway| {
+            gateway.engine.starts_with("unix:///")
+                && crate::docker::Engine::validate_endpoint(&gateway.engine).is_ok()
+        }) && document
+            .spec
+            .sandboxes
+            .iter()
+            .all(|sandbox| sandbox.runtime.provider == ComputeDriver::Docker);
         let (placement, package) = match self {
             Self::Ollama(service) => (service.placement.as_ref(), "Ollama"),
             Self::Vllm(service) => (service.placement.as_ref(), "vLLM"),
@@ -259,9 +271,9 @@ impl ServiceDefinition {
     fn allocation(&self, gateway: &Gateway) -> Result<Option<NetworkAllocation>, ConfigError> {
         if let Self::Voiceclaw(service) = self {
             return Ok(Some(NetworkAllocation {
-                engine: gateway.engine.clone(),
-                network_cidr: gateway.network_cidr.clone(),
-                bind_address: gateway.bridge()?,
+                engine: gateway.managed()?.engine.clone(),
+                network_cidr: gateway.managed()?.network_cidr.clone(),
+                bind_address: gateway.managed()?.bridge()?,
                 port: service.serving.port,
             }));
         }
@@ -279,18 +291,18 @@ impl ServiceDefinition {
             Self::OllamaProxy(_) => return Ok(None),
             Self::Voiceclaw(_) => unreachable!("VoiceClaw allocation returned above"),
         };
+        let (engine, network_cidr) = match placement {
+            Some(placement) => (&placement.engine, &placement.network_cidr),
+            None => {
+                let gateway = gateway.managed()?;
+                (&gateway.engine, &gateway.network_cidr)
+            }
+        };
         Ok(Some(NetworkAllocation {
-            engine: placement
-                .as_ref()
-                .map_or(gateway.engine.clone(), |placement| placement.engine.clone()),
-            network_cidr: placement
-                .as_ref()
-                .map_or(gateway.network_cidr.as_str(), |placement| {
-                    placement.network_cidr.as_str()
-                })
-                .into(),
+            engine: engine.clone(),
+            network_cidr: network_cidr.clone(),
             bind_address: publication.as_ref().map_or_else(
-                || gateway.bridge(),
+                || gateway.managed()?.bridge(),
                 |publication| Ok(publication.bind_address.clone()),
             )?,
             port,
@@ -310,39 +322,6 @@ impl Installer for ServiceDefinition {
             Self::OllamaProxy(service) => service.install(document, name, generations),
             Self::Vllm(service) => service.install(document, name, generations),
             Self::Voiceclaw(service) => service.install(document, name, generations),
-        }
-    }
-
-    async fn check_running(
-        &self,
-        document: &Document,
-        name: &str,
-        generations: &Generations,
-        connections: &crate::docker::Connections,
-        bindings: &BTreeMap<String, StateBinding>,
-        cancel: &crate::CancellationToken,
-    ) -> Result<(), crate::Error> {
-        match self {
-            Self::Ollama(service) => {
-                service
-                    .check_running(document, name, generations, connections, bindings, cancel)
-                    .await
-            }
-            Self::OllamaProxy(service) => {
-                service
-                    .check_running(document, name, generations, connections, bindings, cancel)
-                    .await
-            }
-            Self::Vllm(service) => {
-                service
-                    .check_running(document, name, generations, connections, bindings, cancel)
-                    .await
-            }
-            Self::Voiceclaw(service) => {
-                service
-                    .check_running(document, name, generations, connections, bindings, cancel)
-                    .await
-            }
         }
     }
 
@@ -369,7 +348,7 @@ impl InferenceCapability for ServiceDefinition {
                     Some(publication) => publication.endpoint.clone(),
                     None => format!(
                         "http://{}:{}/v1",
-                        document.spec.gateway.bridge()?,
+                        document.spec.gateway.managed()?.bridge()?,
                         service.serving.port
                     ),
                 },
@@ -388,7 +367,7 @@ impl InferenceCapability for ServiceDefinition {
                     Some(publication) => publication.endpoint.clone(),
                     None => format!(
                         "http://{}:{}/v1",
-                        document.spec.gateway.bridge()?,
+                        document.spec.gateway.managed()?.bridge()?,
                         service.serving.port
                     ),
                 },
@@ -407,8 +386,8 @@ impl InferenceCapability for ServiceDefinition {
     fn validate_route(
         &self,
         provider: &InferenceProvider,
-        sandbox_runtime: &str,
-        harness: &str,
+        sandbox_runtime: ComputeDriver,
+        harness: HarnessKind,
         model: &str,
     ) -> Result<(), ConfigError> {
         match self {
@@ -419,7 +398,7 @@ impl InferenceCapability for ServiceDefinition {
             ),
             ServiceDefinition::OllamaProxy(service) => service.validate(provider, model, harness),
             ServiceDefinition::Vllm(service) => crate::config::validation::require(
-                sandbox_runtime == "docker" || service.placement.is_some(),
+                sandbox_runtime == ComputeDriver::Docker || service.placement.is_some(),
                 "vLLM service requires compatible sandbox placement",
             ),
             ServiceDefinition::Voiceclaw(_) => Err(ConfigError::new(
@@ -555,9 +534,8 @@ pub(crate) fn has_runtime(document: &Document) -> bool {
 }
 
 pub(crate) fn validate(document: &Document) -> Result<(), ConfigError> {
-    use crate::config::validation::{SLUG, require};
-    for (name, definition) in &document.spec.services {
-        require(SLUG.is_match(name), "service names must be lowercase slugs")?;
+    use crate::config::validation::require;
+    for definition in document.spec.services.values() {
         definition.validate_definition()?;
         definition.validate_installation(document)?;
     }
@@ -565,7 +543,7 @@ pub(crate) fn validate(document: &Document) -> Result<(), ConfigError> {
     let gateway = &document.spec.gateway;
     let mut publications = BTreeSet::new();
     let mut networks = BTreeMap::new();
-    if gateway.management == "managed" {
+    if let Gateway::Managed(gateway) = gateway {
         networks.insert(gateway.engine.clone(), gateway.network_cidr.clone());
     }
     for definition in document.spec.services.values() {
@@ -598,22 +576,14 @@ pub(crate) fn validate_provider(
         definition.inference().is_some(),
         "serviceRef must name an inference-capable service",
     )?;
-    require(
-        provider.endpoint.is_empty() && provider.credential.is_none(),
-        "serviceRef excludes endpoint and external credentials",
-    )?;
-    require(
-        provider.provider == "openai",
-        "managed services require the OpenAI provider implementation",
-    )?;
     Ok(true)
 }
 
 pub(crate) fn validate_route(
     document: &Document,
     provider: &InferenceProvider,
-    sandbox_runtime: &str,
-    harness: &str,
+    sandbox_runtime: ComputeDriver,
+    harness: HarnessKind,
     model: &str,
 ) -> Result<(), ConfigError> {
     use crate::config::validation::require;
@@ -701,25 +671,6 @@ pub(crate) fn required_storage_address(
             (candidate == process || crate::docker_compute::address(&candidate) == process)
                 .then_some(storage)
         }))
-}
-
-pub(crate) async fn check_running(
-    document: &Document,
-    generations: &Generations,
-    stage: InstallStage,
-    connections: &crate::docker::Connections,
-    bindings: &BTreeMap<String, StateBinding>,
-    cancel: &crate::CancellationToken,
-) -> Result<(), crate::Error> {
-    let active = active_service_names(document)?;
-    for (name, definition) in &document.spec.services {
-        if active.contains(name.as_str()) && definition.stage() == stage {
-            definition
-                .check_running(document, name, generations, connections, bindings, cancel)
-                .await?;
-        }
-    }
-    Ok(())
 }
 
 /// Resolves a provider resource row to its package-owned backend.

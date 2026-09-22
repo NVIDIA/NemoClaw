@@ -1,5 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
+use nemoclaw_sdk::config::InferenceProviderKind;
 
 use nemoclaw_e2e::openshell::Fixture;
 use nemoclaw_sdk::{CancellationToken, Deployment, config::Document};
@@ -34,8 +35,8 @@ async fn harness_preserves_conversations_and_rejects_runtime_drift(harness: &str
         include_str!("../../nemoclaw-sdk/tests/fixtures/config/local.yaml").as_bytes(),
     )
     .unwrap();
-    document.spec.gateway.endpoint = fixture.endpoint.clone();
-    document.spec.sandboxes[0].harness.as_mut().unwrap().kind = harness.into();
+    *document.spec.gateway.endpoint_mut() = fixture.endpoint.clone();
+    document.spec.sandboxes[0].harness.as_mut().unwrap().kind = harness.parse().unwrap();
     if harness == "pi" {
         let pi = Document::parse(
             include_str!("../../nemoclaw-sdk/tests/fixtures/config/fabric-pi.yaml").as_bytes(),
@@ -57,7 +58,7 @@ async fn harness_preserves_conversations_and_rejects_runtime_drift(harness: &str
             .clone();
     }
     if harness == "claude" {
-        document.spec.inference_providers[0].provider = "anthropic".into();
+        document.spec.inference_providers[0].provider = InferenceProviderKind::Anthropic;
     }
     let deployment = Deployment::new(directory.path(), &bundle);
     let cancel = CancellationToken::new();
@@ -79,6 +80,21 @@ async fn harness_preserves_conversations_and_rejects_runtime_drift(harness: &str
     let state = fs::read(directory.path().join("terraform.tfstate")).unwrap();
     let effects = fixture.state.lock().unwrap().effects;
     assert_eq!(effects, 4);
+    let writes = || {
+        fixture
+            .state
+            .lock()
+            .unwrap()
+            .exec_calls
+            .iter()
+            .filter(|command| {
+                command
+                    .get(2)
+                    .is_some_and(|arg| arg == "configure" || arg == "prepare")
+            })
+            .count()
+    };
+    let initial_writes = writes();
     assert!(
         deployment
             .apply(&document, &cancel)
@@ -89,6 +105,11 @@ async fn harness_preserves_conversations_and_rejects_runtime_drift(harness: &str
     );
     assert_eq!(deployment.export(&cancel).await.unwrap(), document);
     assert_eq!(fixture.state.lock().unwrap().effects, effects);
+    assert_eq!(
+        writes(),
+        initial_writes,
+        "unchanged apply must not rewrite runtime configuration"
+    );
     nemoclaw_e2e::assert_same_deployment_state(
         &fs::read(directory.path().join("terraform.tfstate")).unwrap(),
         &state,
@@ -114,10 +135,58 @@ async fn harness_preserves_conversations_and_rejects_runtime_drift(harness: &str
             .routes[0]
             .overrides
             .model = "another-custom-model".into();
+        changed_model.spec.sandboxes[0]
+            .agent
+            .inference
+            .as_mut()
+            .unwrap()
+            .routes[0]
+            .overrides
+            .pi_model
+            .as_mut()
+            .unwrap()
+            .insert(
+                "annotation".into(),
+                serde_json::json!("${runtime.value} %{native}"),
+            );
         let planned = deployment.plan(&changed_model, &cancel).await.unwrap();
         assert!(planned.changes.iter().any(|change| change.resource
-            == format!("fabric_runtime.{}", document.spec.sandboxes[0].name)));
+            == format!(
+                "nemoclaw_pi_configuration.{}",
+                document.spec.sandboxes[0].name
+            )));
+        assert_eq!(writes(), initial_writes, "plan must not configure Pi");
+        let before = fs::read(directory.path().join("terraform.tfstate")).unwrap();
+        let state = fixture.state.clone();
+        let guarded = Deployment::new(directory.path(), &bundle).with_progress(
+            std::sync::Arc::new(move |event| {
+                if event == nemoclaw_sdk::Progress::Applying {
+                    state.lock().unwrap().driver = Some("podman".into());
+                }
+            }),
+        );
+        let error = guarded.apply(&changed_model, &cancel).await.unwrap_err();
+        assert!(
+            matches!(&error, nemoclaw_sdk::Error::Execution { operation, .. } if operation == "apply"),
+            "{error}"
+        );
+        assert_eq!(
+            writes(),
+            initial_writes,
+            "incompatible gateway must block Pi writes"
+        );
+        nemoclaw_e2e::assert_same_managed_resources(
+            &fs::read(directory.path().join("terraform.tfstate")).unwrap(),
+            &before,
+        );
+        fixture.state.lock().unwrap().driver = None;
+
         let applied = deployment.apply(&changed_model, &cancel).await.unwrap();
+        assert_eq!(
+            writes(),
+            initial_writes + 1,
+            "apply configures Pi exactly once"
+        );
         assert!(applied.changes.iter().all(|change| {
             !change
                 .actions
@@ -133,8 +202,9 @@ async fn harness_preserves_conversations_and_rejects_runtime_drift(harness: &str
             .unwrap();
         let model: serde_json::Value = serde_json::from_str(&configured[5]).unwrap();
         assert_eq!(model["model"], "another-custom-model");
+        assert_eq!(model["piModel"]["annotation"], "${runtime.value} %{native}");
         assert!(
-            calls
+            !calls
                 .iter()
                 .any(|command| command.get(2).is_some_and(|arg| arg == "prepare"))
         );
@@ -144,12 +214,11 @@ async fn harness_preserves_conversations_and_rejects_runtime_drift(harness: &str
     let state = fs::read(directory.path().join("terraform.tfstate")).unwrap();
     let mut changed = document.clone();
     changed.spec.sandboxes[0].harness.as_mut().unwrap().kind = if harness == "deepagents" {
-        "hermes"
+        nemoclaw_sdk::config::HarnessKind::Hermes
     } else {
-        "deepagents"
-    }
-    .into();
-    changed.spec.inference_providers[0].provider = "openai".into();
+        nemoclaw_sdk::config::HarnessKind::DeepAgents
+    };
+    changed.spec.inference_providers[0].provider = InferenceProviderKind::Openai;
     assert!(
         deployment.apply(&changed, &cancel).await.is_err(),
         "{harness} replacement must be refused"
@@ -187,7 +256,7 @@ async fn missing_runtime_declaration_stops_planning_without_recreation() {
         include_str!("../../nemoclaw-sdk/tests/fixtures/config/local.yaml").as_bytes(),
     )
     .unwrap();
-    document.spec.gateway.endpoint = fixture.endpoint.clone();
+    *document.spec.gateway.endpoint_mut() = fixture.endpoint.clone();
     let deployment = Deployment::new(directory.path(), &bundle);
     let cancel = CancellationToken::new();
     deployment.apply(&document, &cancel).await.unwrap();

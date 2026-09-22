@@ -65,6 +65,7 @@ impl Ui {
         let resource = match kind {
             Some("nemoclaw_workspace") => "workspace",
             Some("nemoclaw_sandbox") => "sandbox",
+            Some("nemoclaw_sandbox_readiness") => "sandbox readiness",
             Some("nemoclaw_provider") => "provider",
             Some("nemoclaw_provider_profile") => "provider profile",
             Some("nemoclaw_managed_gateway") => "gateway",
@@ -142,6 +143,30 @@ impl Ui {
 mod tests {
     use super::*;
     use std::sync::Mutex;
+
+    #[test]
+    fn sandbox_observation_waits_remain_visible_without_forwarding_health_details() {
+        let received = Arc::new(Mutex::new(Vec::new()));
+        let events = received.clone();
+        let mut ui = Ui::new(Arc::new(move |event| events.lock().unwrap().push(event)));
+        ui.feed(b"{\"type\":\"version\",\"ui\":\"1.0\"}\n");
+        let line = serde_json::json!({
+            "type":"apply_progress", "@message":"private-health-detail",
+            "hook":{"resource":{"resource_type":"nemoclaw_sandbox_readiness", "addr":"data.nemoclaw_sandbox_readiness.private-name"},
+                "action":"read", "elapsed_seconds":30}
+        }).to_string() + "\n";
+        ui.feed(line.as_bytes());
+        ui.finish().unwrap();
+        assert_eq!(
+            *received.lock().unwrap(),
+            [Progress::Resource {
+                resource: "sandbox readiness",
+                action: "read",
+                status: "waiting",
+                elapsed: Duration::from_secs(30)
+            }]
+        );
+    }
 
     #[test]
     fn resource_timings_use_timestamps_and_keep_concurrent_addresses_separate() {

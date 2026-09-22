@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 use super::{AgentTools, ConfigError, Credential, Document, Sandbox};
+use crate::config::HarnessKind;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -174,25 +175,7 @@ impl Document {
 }
 
 fn validate_definitions(definitions: &BTreeMap<String, Integration>) -> Result<(), ConfigError> {
-    for (name, definition) in definitions {
-        if !super::validation::SLUG.is_match(name) {
-            return Err(ConfigError::new(
-                "integration names must be lowercase names",
-            ));
-        }
-        match definition {
-            Integration::WebSearch(search) => {
-                super::validation::credential(&Some(search.credential.clone()))?;
-            }
-            Integration::Voiceclaw(voiceclaw) => {
-                super::validation::require(
-                    super::validation::SLUG.is_match(&voiceclaw.service_ref),
-                    "VoiceClaw serviceRef must be a lowercase service name",
-                )?;
-            }
-        }
-    }
-    Ok(())
+    super::schema::validate_property("Spec", "integrations", &definitions)
 }
 
 impl Document {
@@ -319,12 +302,12 @@ pub enum SearchProvider {
 impl RuntimeWebSearch {
     pub(crate) fn validate<'a>(
         &self,
-        harness: &str,
+        harness: HarnessKind,
         agents: impl Iterator<Item = (&'a str, Option<&'a AgentTools>)>,
     ) -> Result<(), ConfigError> {
         let agents: std::collections::BTreeMap<_, _> = agents.collect();
         let mut names = std::collections::BTreeSet::new();
-        if !matches!(harness, "openclaw" | "deepagents")
+        if !matches!(harness, HarnessKind::OpenClaw | HarnessKind::DeepAgents)
             || self.agent_refs.is_empty()
             || self.agent_refs.iter().any(|name| {
                 !names.insert(name)
