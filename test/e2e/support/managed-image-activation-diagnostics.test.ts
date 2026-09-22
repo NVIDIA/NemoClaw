@@ -143,7 +143,7 @@ exit 91
 
     try {
       const result = fixture.run(
-        "/bin/sh",
+        "/bin/bash",
         [
           "-lc",
           `PATH=${JSON.stringify(fixture.binDir)}:$PATH
