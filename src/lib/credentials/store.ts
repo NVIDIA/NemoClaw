@@ -14,7 +14,11 @@ import path from "node:path";
 import readline from "node:readline";
 
 import { isErrnoException } from "../core/errno";
-import { pendingStdinEofError, takePendingStdinEof } from "../core/pending-stdin-eof";
+import {
+  cancelPromptWithPendingEof,
+  pendingStdinEofError,
+  takePendingStdinEof,
+} from "../core/pending-stdin-eof";
 import { GATEWAY_PORT } from "../core/ports";
 import { createPromptActivityCleanup } from "../core/prompt-activity";
 import { listMessagingCredentialMetadata } from "../messaging/channels";
@@ -536,7 +540,7 @@ export function promptSecret(question: string, maskCap?: number): Promise<string
   const pending = takePendingStdinEof();
   if (pending === false) return readSecretAnswer(question, maskCap);
   return pending.then((ended) => {
-    if (ended) throw pendingStdinEofError();
+    if (ended) cancelPromptWithPendingEof(question);
     return readSecretAnswer(question, maskCap);
   });
 }
@@ -726,7 +730,7 @@ export function prompt(
   const pending = takePendingStdinEof();
   if (pending === false) return askQuestion(question, opts);
   return pending.then((ended) => {
-    if (ended) throw pendingStdinEofError();
+    if (ended) cancelPromptWithPendingEof(question);
     return askQuestion(question, opts);
   });
 }

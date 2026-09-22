@@ -3,7 +3,11 @@
 
 import readline from "node:readline";
 
-import { pendingStdinEofError, takePendingStdinEof } from "../core/pending-stdin-eof";
+import {
+  cancelPromptWithPendingEof,
+  pendingStdinEofError,
+  takePendingStdinEof,
+} from "../core/pending-stdin-eof";
 import { markPromptActive } from "../core/prompt-activity";
 
 export interface MessagingChannelSelectorEntry {
@@ -298,7 +302,7 @@ function promptMessagingSelectorLine(question: string): Promise<string> {
   const pending = takePendingStdinEof();
   if (pending === false) return readMessagingSelectorLine(question);
   return pending.then((ended) => {
-    if (ended) throw pendingStdinEofError();
+    if (ended) cancelPromptWithPendingEof(question);
     return readMessagingSelectorLine(question);
   });
 }

@@ -25,7 +25,11 @@ export { isPolicyObservationError } from "../adapters/openshell/policy-state";
 import type { OpenShellRuntimeSelection } from "../adapters/openshell/runtime-selection";
 import { loadAgent, requireAgentPolicyAdditionsPath } from "../agent/defs";
 import { CLI_NAME } from "../cli/branding";
-import { pendingStdinEofError, takePendingStdinEof } from "../core/pending-stdin-eof";
+import {
+  cancelPromptWithPendingEof,
+  pendingStdinEofError,
+  takePendingStdinEof,
+} from "../core/pending-stdin-eof";
 import {
   getMessagingPolicyKeyAliases,
   getMessagingPolicyPresetValidationWarnings,
@@ -2143,7 +2147,7 @@ function askPreset(question: string): Promise<string> {
   const pending = takePendingStdinEof();
   if (pending === false) return readPresetAnswer(question);
   return pending.then((ended) => {
-    if (ended) throw pendingStdinEofError();
+    if (ended) cancelPromptWithPendingEof(question);
     return readPresetAnswer(question);
   });
 }

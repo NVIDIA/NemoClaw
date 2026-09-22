@@ -28,8 +28,9 @@ interface PendingStdinInput extends NodeJS.ReadableStream {
  *
  * Reading stdin for one queued-read window before the prompt takes over
  * surfaces the pending EOF as a normal stream `end`. Anything that is real
- * input instead (type-ahead) is pushed back so the prompt still answers with
- * it. Only a TTY needs this: a pipe or `< /dev/null` reports its EOF through
+ * input instead (type-ahead, or piped answers that close the pipe behind
+ * them) ends the window immediately and is pushed back, so the prompt still
+ * answers with it and observes any EOF that follows exactly as before. Only a TTY needs this: a pipe or `< /dev/null` reports its EOF through
  * the same stream end whenever the prompt gets around to reading, so those
  * callers are left completely untouched.
  *
@@ -50,6 +51,10 @@ export function takePendingStdinEof(
 
     function onData(chunk: string | Uint8Array): void {
       chunks.push(chunk);
+      // Input beats a queued EOF: an answer that is already typed (or piped)
+      // must still answer the question, and the EOF behind it is then the
+      // prompt's own to observe.
+      finish(false);
     }
 
     function finish(ended: boolean): void {
@@ -88,4 +93,18 @@ export function takePendingStdinEof(
 /** The rejection every prompt uses for a stdin EOF that arrived before an answer. */
 export function pendingStdinEofError(): Error {
   return Object.assign(new Error("Prompt closed before input"), { code: "EOF" });
+}
+
+/**
+ * Reject a prompt whose cancellation was already queued, after echoing the
+ * question. Callers that reach EOF while the question is on screen leave it
+ * there, so echoing keeps the transcript identical either way: operators and
+ * the CLI contract tests both see the question that was cancelled.
+ */
+export function cancelPromptWithPendingEof(
+  question: string,
+  output: NodeJS.WritableStream = process.stderr,
+): never {
+  output.write(question);
+  throw pendingStdinEofError();
 }
