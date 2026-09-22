@@ -183,6 +183,71 @@ describe("platform readiness qualification (#7410)", () => {
     }
   });
 
+  it("uses the standard OS release fallback when the primary file is absent (#11026)", () => {
+    const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-os-release-"));
+    const primaryPath = path.join(fixtureRoot, "etc", "os-release");
+    const fallbackPath = path.join(fixtureRoot, "usr", "lib", "os-release");
+    try {
+      fs.mkdirSync(path.dirname(fallbackPath), { recursive: true });
+      fs.writeFileSync(fallbackPath, 'ID=ubuntu\nVERSION_ID="24.04"\n');
+
+      expect(
+        collectPlatformIdentity({
+          osReleasePath: primaryPath,
+          osReleaseFallbackPath: fallbackPath,
+        }),
+      ).toMatchObject({ osId: "ubuntu", osVersionId: "24.04" });
+    } finally {
+      fs.rmSync(fixtureRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("accepts only the standard relative OS release symlink (#11026)", () => {
+    const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-os-release-"));
+    const primaryPath = path.join(fixtureRoot, "etc", "os-release");
+    const fallbackPath = path.join(fixtureRoot, "usr", "lib", "os-release");
+    const outsidePath = path.join(fixtureRoot, "outside");
+    try {
+      fs.mkdirSync(path.dirname(primaryPath), { recursive: true });
+      fs.mkdirSync(path.dirname(fallbackPath), { recursive: true });
+      fs.writeFileSync(fallbackPath, 'ID=ubuntu\nVERSION_ID="24.04"\n');
+      fs.writeFileSync(outsidePath, 'ID=ubuntu\nVERSION_ID="24.04"\n');
+      fs.symlinkSync("../usr/lib/os-release", primaryPath);
+
+      expect(
+        collectPlatformIdentity({
+          osReleasePath: primaryPath,
+          osReleaseFallbackPath: fallbackPath,
+        }),
+      ).toMatchObject({ osId: "ubuntu", osVersionId: "24.04" });
+
+      fs.unlinkSync(primaryPath);
+      fs.symlinkSync("../outside", primaryPath);
+      const rejected = collectPlatformIdentity({
+        osReleasePath: primaryPath,
+        osReleaseFallbackPath: fallbackPath,
+      });
+      expect(rejected.osId).toBeUndefined();
+      expect(rejected.osVersionId).toBeUndefined();
+    } finally {
+      fs.rmSync(fixtureRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects oversized descriptor-backed OS release evidence (#11026)", () => {
+    const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-os-release-"));
+    const osReleasePath = path.join(fixtureRoot, "os-release");
+    try {
+      fs.writeFileSync(osReleasePath, `ID=ubuntu\nVERSION_ID="24.04"\n${"#".repeat(4096)}`);
+      const identity = collectPlatformIdentity({ osReleasePath });
+
+      expect(identity.osId).toBeUndefined();
+      expect(identity.osVersionId).toBeUndefined();
+    } finally {
+      fs.rmSync(fixtureRoot, { recursive: true, force: true });
+    }
+  });
+
   it("rejects NUL-bearing OS release evidence as malformed (#11026)", () => {
     const missing = (): never => {
       const error = new Error("missing fixture") as NodeJS.ErrnoException;

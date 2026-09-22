@@ -11,7 +11,10 @@ import type { BuildIdentity } from "../../core/version.js";
 import { getBuildIdentity } from "../../core/version.js";
 import { assessHost } from "../../onboard/preflight.js";
 import { createHostReadinessReport } from "../../readiness/host.js";
-import { collectPlatformIdentity } from "../../readiness/platform-qualification.js";
+import {
+  collectPlatformIdentity,
+  readBoundedLocalOsRelease,
+} from "../../readiness/platform-qualification.js";
 import type { SystemReadinessReport } from "../../readiness/types.js";
 import { managedVllmStateDir } from "../vllm-api-key.js";
 import { buildLocalManagedVllmDockerEnv, buildVllmSshTransportEnv } from "../vllm-docker-env.js";
@@ -610,37 +613,6 @@ function readBoundedLocalFile(filePath: string, maxBytes = MAX_LOCAL_FILE_BYTES)
     return contents.toString("utf8", 0, bytesRead);
   } finally {
     fs.closeSync(descriptor);
-  }
-}
-
-function readBoundedLocalOsRelease(
-  primaryPath: string,
-  fallbackPath: string,
-  maxBytes: number,
-): string | undefined {
-  let candidatePath = primaryPath;
-  try {
-    const metadata = fs.lstatSync(primaryPath);
-    if (metadata.isSymbolicLink()) {
-      const target = fs.readlinkSync(primaryPath);
-      if (
-        path.isAbsolute(target) ||
-        path.resolve(path.dirname(primaryPath), target) !== path.resolve(fallbackPath)
-      ) {
-        return undefined;
-      }
-      candidatePath = fallbackPath;
-    } else if (!metadata.isFile()) {
-      return undefined;
-    }
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "ENOENT") return undefined;
-    candidatePath = fallbackPath;
-  }
-  try {
-    return readBoundedLocalFile(candidatePath, maxBytes);
-  } catch {
-    return undefined;
   }
 }
 

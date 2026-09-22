@@ -206,6 +206,27 @@ describe("host readiness projection (#7408)", () => {
     expect(findingIds(result)).not.toContain("host.os.release_unqualified");
   });
 
+  it("treats oversized OS release evidence as inconclusive (#11026)", () => {
+    const platformIdentity = collectPlatformIdentity({
+      osReleasePath: "/fixtures/os-release",
+      readFile: (filePath) =>
+        filePath === "/fixtures/os-release"
+          ? `ID=ubuntu\nVERSION_ID="24.04"\n${"#".repeat(4096)}`
+          : "",
+      readdir: () => [],
+      openFile: () => {
+        throw Object.assign(new Error("missing fixture"), { code: "ENOENT" });
+      },
+    });
+    const result = report({}, { platformIdentity });
+
+    expect(platformIdentity.osId).toBeUndefined();
+    expect(platformIdentity.osVersionId).toBeUndefined();
+    expect(result.findings).toContainEqual(
+      expect.objectContaining({ id: "host.os.release_inconclusive", severity: "warning" }),
+    );
+  });
+
   it.each([
     [
       { dockerInstalled: false, dockerReachable: false },

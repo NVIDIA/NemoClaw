@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
+import path from "node:path";
 import type { ContainerGpuProofStatus } from "../container-gpu-proof.js";
 import {
   classifyNvidiaFirmwareProducts,
@@ -94,6 +95,8 @@ export interface CollectPlatformIdentityOptions extends N1xIdentityOptions {
   memInfoPath?: string;
   stationReleasePath?: string;
   osReleasePath?: string;
+  /** Alternate OS release path used only when the default descriptor-backed primary is absent. */
+  osReleaseFallbackPath?: string;
   /** Test seam for an already bounded OS release read. */
   readBoundedOsRelease?: (filePath: string, maxBytes: number) => string | undefined;
   isWsl?: boolean;
@@ -113,7 +116,10 @@ const OS_RELEASE_MAX_BYTES = 4096;
 function readBoundedRegularFile(filePath: string, maxBytes: number): string | undefined {
   let fileDescriptor: number | undefined;
   try {
-    fileDescriptor = fs.openSync(filePath, fs.constants.O_RDONLY);
+    const flags =
+      fs.constants.O_RDONLY |
+      (typeof fs.constants.O_NOFOLLOW === "number" ? fs.constants.O_NOFOLLOW : 0);
+    fileDescriptor = fs.openSync(filePath, flags);
     const metadata = fs.fstatSync(fileDescriptor);
     if (!metadata.isFile() || metadata.size > maxBytes) return undefined;
     const contents = Buffer.alloc(maxBytes + 1);
@@ -126,6 +132,34 @@ function readBoundedRegularFile(filePath: string, maxBytes: number): string | un
   } finally {
     if (fileDescriptor !== undefined) fs.closeSync(fileDescriptor);
   }
+}
+
+/** Read OS release identity from the standard primary or fallback without following other links. */
+export function readBoundedLocalOsRelease(
+  primaryPath: string,
+  fallbackPath: string,
+  maxBytes: number,
+): string | undefined {
+  let candidatePath = primaryPath;
+  try {
+    const metadata = fs.lstatSync(primaryPath);
+    if (metadata.isSymbolicLink()) {
+      const target = fs.readlinkSync(primaryPath);
+      if (
+        path.isAbsolute(target) ||
+        path.resolve(path.dirname(primaryPath), target) !== path.resolve(fallbackPath)
+      ) {
+        return undefined;
+      }
+      candidatePath = fallbackPath;
+    } else if (!metadata.isFile()) {
+      return undefined;
+    }
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") return undefined;
+    candidatePath = fallbackPath;
+  }
+  return readBoundedRegularFile(candidatePath, maxBytes);
 }
 
 /** Keep dependency-injected fixture reads subject to the same accepted-size contract. */
@@ -361,11 +395,14 @@ export function collectPlatformIdentity(
     : collectN1xWslProduct(options);
   const wslIdentity = options.isWsl ? { n1xWslProduct } : {};
   const osReleasePath = options.osReleasePath ?? "/etc/os-release";
+  const osReleaseFallbackPath =
+    options.osReleaseFallbackPath ??
+    (options.osReleasePath === undefined ? "/usr/lib/os-release" : osReleasePath);
   const osRelease = options.readBoundedOsRelease
     ? options.readBoundedOsRelease(osReleasePath, OS_RELEASE_MAX_BYTES)
     : options.readFile
       ? readInjectedOsRelease(options.readFile, osReleasePath, OS_RELEASE_MAX_BYTES)
-      : readBoundedRegularFile(osReleasePath, OS_RELEASE_MAX_BYTES);
+      : readBoundedLocalOsRelease(osReleasePath, osReleaseFallbackPath, OS_RELEASE_MAX_BYTES);
   const { osId, osVersionId, osPrettyName } = osRelease ? parseOsRelease(osRelease) : {};
   const osIdentity = {
     ...(osId === undefined ? {} : { osId }),
