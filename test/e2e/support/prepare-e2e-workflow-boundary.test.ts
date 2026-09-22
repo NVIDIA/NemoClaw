@@ -192,4 +192,17 @@ describe("prepare-e2e workflow boundary", () => {
       ]),
     );
   });
+
+  it("rejects inverted authentication order for messaging-providers", () => {
+    const workflow = readWorkflow() as Workflow;
+    const jobName = "messaging-providers";
+    const steps = workflow.jobs[jobName].steps!;
+    const prepareIndex = steps.findIndex((step) => step.uses === PREPARE_E2E_ACTION);
+    const authIndex = steps.findIndex((step) => step.name === "Authenticate to Docker Hub");
+    [steps[prepareIndex], steps[authIndex]] = [steps[authIndex], steps[prepareIndex]];
+
+    expect(validatePrepareE2eInvocations(workflow)).toContain(
+      `${jobName} must authenticate to Docker Hub before prepare-e2e`,
+    );
+  });
 });
