@@ -13,6 +13,7 @@
 // config rotate-token: Credential rotation via stdin or env var.
 
 import type { AgentConfigTarget } from "./agent-config";
+import type { OpenShellRuntimeSelection } from "../adapters/openshell/client";
 
 export type { AgentConfigTarget } from "./agent-config";
 
@@ -22,6 +23,7 @@ const {
 }: typeof import("./agent-config") = require("./agent-config");
 const {
   stripAnsi,
+  buildSelectedOpenShellSubprocessEnv,
 }: typeof import("../adapters/openshell/client") = require("../adapters/openshell/client");
 const { createHash } = require("node:crypto");
 const fs = require("fs");
@@ -412,14 +414,33 @@ function isSandboxNotReadyExecDetail(detail: string): boolean {
  * Read the agent's config from a running sandbox.
  * Resolves the correct config path based on the agent type.
  */
-function readSandboxConfig(sandboxName: string, target: AgentConfigTarget): ConfigObject {
+function readSandboxConfig(
+  sandboxName: string,
+  target: AgentConfigTarget,
+  gateway?: string | OpenShellRuntimeSelection,
+): ConfigObject {
   const binary = getOpenshellBinary();
   let raw: string;
   try {
     const result = captureOpenshellCommand(
       binary,
-      ["sandbox", "exec", "--name", sandboxName, "--", "cat", target.configPath],
+      [
+        ...(gateway ? ["-g", typeof gateway === "string" ? gateway : gateway.gatewayName] : []),
+        "sandbox",
+        "exec",
+        "--name",
+        sandboxName,
+        "--",
+        "cat",
+        target.configPath,
+      ],
       {
+        ...(!gateway || typeof gateway === "string"
+          ? {}
+          : {
+              env: buildSelectedOpenShellSubprocessEnv(gateway),
+              replaceEnv: true,
+            }),
         ignoreError: true,
         includeStreams: true,
         maxBuffer: CONFIG_CAPTURE_MAX_BUFFER,
@@ -566,11 +587,16 @@ function writeSandboxConfig(
   }
 }
 
-function runOpenClawNativeConfigCommand(sandboxName: string, args: string[]): void {
+function runOpenClawNativeConfigCommand(
+  sandboxName: string,
+  args: string[],
+  gateway?: string | OpenShellRuntimeSelection,
+): void {
   validateName(sandboxName, "sandbox name");
   const result = captureOpenshellCommand(
     getOpenshellBinary(),
     [
+      ...(gateway ? ["-g", typeof gateway === "string" ? gateway : gateway.gatewayName] : []),
       "sandbox",
       "exec",
       "--name",
@@ -583,6 +609,12 @@ function runOpenClawNativeConfigCommand(sandboxName: string, args: string[]): vo
       ...args,
     ],
     {
+      ...(!gateway || typeof gateway === "string"
+        ? {}
+        : {
+            env: buildSelectedOpenShellSubprocessEnv(gateway),
+            replaceEnv: true,
+          }),
       ignoreError: true,
       includeStreams: true,
       maxBuffer: CONFIG_CAPTURE_MAX_BUFFER,
@@ -598,8 +630,9 @@ function buildOpenClawNativeConfigSetInvocation(
   sandboxName: string,
   dotpath: string,
   value: ConfigValue,
-): { args: string[]; input: string } {
-  return buildOpenClawNativeConfigBatchInvocation(sandboxName, [{ dotpath, value }]);
+  gateway?: string | OpenShellRuntimeSelection,
+) {
+  return buildOpenClawNativeConfigBatchInvocation(sandboxName, [{ dotpath, value }], gateway);
 }
 
 export interface OpenClawConfigUpdate {
@@ -610,9 +643,17 @@ export interface OpenClawConfigUpdate {
 function buildOpenClawNativeConfigBatchInvocation(
   sandboxName: string,
   updates: readonly OpenClawConfigUpdate[],
-): { args: string[]; input: string } {
+  gateway?: string | OpenShellRuntimeSelection,
+) {
   return {
+    ...(!gateway || typeof gateway === "string"
+      ? {}
+      : {
+          env: buildSelectedOpenShellSubprocessEnv(gateway),
+          replaceEnv: true,
+        }),
     args: [
+      ...(gateway ? ["-g", typeof gateway === "string" ? gateway : gateway.gatewayName] : []),
       "sandbox",
       "exec",
       "--name",
@@ -629,14 +670,21 @@ function buildOpenClawNativeConfigBatchInvocation(
   };
 }
 
-function setOpenClawConfigValue(sandboxName: string, dotpath: string, value: ConfigValue): void {
+function setOpenClawConfigValue(
+  sandboxName: string,
+  dotpath: string,
+  value: ConfigValue,
+  gateway?: string | OpenShellRuntimeSelection,
+): void {
   validateName(sandboxName, "sandbox name");
   const validation = validateConfigDotpath(dotpath);
   if (!validation.ok) {
     throw new Error(`Invalid OpenClaw config key '${dotpath}': ${validation.reason}.`);
   }
-  const invocation = buildOpenClawNativeConfigSetInvocation(sandboxName, dotpath, value);
+  const invocation = buildOpenClawNativeConfigSetInvocation(sandboxName, dotpath, value, gateway);
   const result = runOpenshellCommand(getOpenshellBinary(), invocation.args, {
+    env: invocation.env,
+    replaceEnv: invocation.replaceEnv,
     ignoreError: true,
     input: invocation.input,
     maxBuffer: CONFIG_CAPTURE_MAX_BUFFER,
@@ -653,6 +701,7 @@ function setOpenClawConfigValue(sandboxName: string, dotpath: string, value: Con
 function setOpenClawConfigValues(
   sandboxName: string,
   updates: readonly OpenClawConfigUpdate[],
+  gateway?: string | OpenShellRuntimeSelection,
 ): void {
   validateName(sandboxName, "sandbox name");
   if (updates.length === 0) {
@@ -664,8 +713,10 @@ function setOpenClawConfigValues(
       throw new Error(`Invalid OpenClaw config key '${dotpath}': ${validation.reason}.`);
     }
   }
-  const invocation = buildOpenClawNativeConfigBatchInvocation(sandboxName, updates);
+  const invocation = buildOpenClawNativeConfigBatchInvocation(sandboxName, updates, gateway);
   const result = runOpenshellCommand(getOpenshellBinary(), invocation.args, {
+    env: invocation.env,
+    replaceEnv: invocation.replaceEnv,
     ignoreError: true,
     input: invocation.input,
     maxBuffer: CONFIG_CAPTURE_MAX_BUFFER,
@@ -679,12 +730,16 @@ function setOpenClawConfigValues(
   throw new Error(`Native OpenClaw config command failed: ${detail}`);
 }
 
-function unsetOpenClawConfigValue(sandboxName: string, dotpath: string): void {
+function unsetOpenClawConfigValue(
+  sandboxName: string,
+  dotpath: string,
+  gateway?: string | OpenShellRuntimeSelection,
+): void {
   const validation = validateConfigDotpath(dotpath);
   if (!validation.ok) {
     throw new Error(`Invalid OpenClaw config key '${dotpath}': ${validation.reason}.`);
   }
-  runOpenClawNativeConfigCommand(sandboxName, ["unset", dotpath]);
+  runOpenClawNativeConfigCommand(sandboxName, ["unset", dotpath], gateway);
 }
 
 // Absolute path to the Hermes dashboard config seeder inside the sandbox image

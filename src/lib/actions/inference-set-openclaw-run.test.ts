@@ -114,19 +114,23 @@ describe("runInferenceSet OpenClaw routing", () => {
       },
     });
     expect(deps.calls.setOpenClawConfigValues).toHaveBeenCalledOnce();
-    expect(deps.calls.setOpenClawConfigValues).toHaveBeenCalledWith("alpha", [
-      {
-        dotpath: "agents.defaults.model.primary",
-        value: "inference/nvidia/nemotron-3-super-120b-a12b",
-      },
-      { dotpath: "models.mode", value: "merge" },
-      {
-        dotpath: "models.providers.inference",
-        value: expect.objectContaining({
-          models: [expect.objectContaining({ id: "nvidia/nemotron-3-super-120b-a12b" })],
-        }),
-      },
-    ]);
+    expect(deps.calls.setOpenClawConfigValues).toHaveBeenCalledWith(
+      "alpha",
+      [
+        {
+          dotpath: "agents.defaults.model.primary",
+          value: "inference/nvidia/nemotron-3-super-120b-a12b",
+        },
+        { dotpath: "models.mode", value: "merge" },
+        {
+          dotpath: "models.providers.inference",
+          value: expect.objectContaining({
+            models: [expect.objectContaining({ id: "nvidia/nemotron-3-super-120b-a12b" })],
+          }),
+        },
+      ],
+      "nemoclaw",
+    );
     expect(deps.calls.writeSandboxConfig).not.toHaveBeenCalled();
     // The dashboard re-seed is Hermes-only; OpenClaw has no isolated dashboard config. (#6893)
     expect(deps.calls.seedHermesDashboardConfig).not.toHaveBeenCalled();
@@ -163,7 +167,7 @@ describe("runInferenceSet OpenClaw routing", () => {
       inSandboxConfigSynced: true,
     });
     expect(deps.calls.restartSandboxGateway).toHaveBeenCalledOnce();
-    expect(deps.calls.restartSandboxGateway).toHaveBeenCalledWith("alpha");
+    expect(deps.calls.restartSandboxGateway).toHaveBeenCalledWith("alpha", "nemoclaw");
     expect(deps.calls.settleOpenClawPairing).toHaveBeenCalledWith({
       sandboxName: "alpha",
       gatewayName: "nemoclaw",

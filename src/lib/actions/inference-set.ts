@@ -182,7 +182,7 @@ export interface InferenceSetDeps extends InferenceGatewayRestartDeps {
     mutator: (session: onboardSession.Session) => onboardSession.Session | void,
   ) => onboardSession.Session;
   resolveAgentConfig: (sandboxName: string) => AgentConfigTarget;
-  readSandboxConfig: (sandboxName: string, target: AgentConfigTarget) => ConfigObject;
+  readSandboxConfig: typeof readSandboxConfig;
   writeSandboxConfig: (
     sandboxName: string,
     target: AgentConfigTarget,
@@ -703,6 +703,7 @@ function writeOpenClawInferenceConfigNatively(
   config: ConfigObject,
   route: SandboxInferenceConfig,
   writeValues: InferenceSetDeps["setOpenClawConfigValues"],
+  gatewayName: string,
 ): void {
   const agents = config.agents;
   const models = config.models;
@@ -730,7 +731,7 @@ function writeOpenClawInferenceConfigNatively(
     { dotpath: "models.mode", value: "merge" },
     { dotpath: `models.providers.${route.providerKey}`, value: providerConfig },
   );
-  writeValues(sandboxName, updates);
+  writeValues(sandboxName, updates, gatewayName);
 }
 
 function failOpenClawInferenceConfigSync(
@@ -946,9 +947,10 @@ export function readInSandboxConfigOrFail(
   deps: Pick<InferenceSetDeps, "readSandboxConfig">,
   sandboxName: string,
   target: AgentConfigTarget,
+  gatewayName?: string,
 ): ConfigObject {
   try {
-    return deps.readSandboxConfig(sandboxName, target);
+    return deps.readSandboxConfig(sandboxName, target, gatewayName);
   } catch (error) {
     if (error instanceof SandboxConfigError) {
       const lines = [...error.lines];
@@ -1193,7 +1195,12 @@ async function runInferenceSetWithoutHostLock(
   // leaving a half-applied switch across the three config layers (#6997).
   // Route finalization has no side effect when metadata is reused; explicit
   // custom routes were capability-checked before finalization above.
-  const config = readInSandboxConfigOrFail(deps, sandboxName, target);
+  const config = readInSandboxConfigOrFail(
+    deps,
+    sandboxName,
+    target,
+    agentName === "openclaw" ? preparedRoute.gatewayName : undefined,
+  );
   const preMutationInferenceApi =
     explicitPreferredInferenceApi ??
     resolveRuntimeInferenceApi({
@@ -1555,6 +1562,7 @@ async function runInferenceSetWithoutHostLock(
           config,
           patched.route,
           deps.setOpenClawConfigValues,
+          preparedRoute.gatewayName,
         );
         inSandboxConfigSynced = true;
       } else {

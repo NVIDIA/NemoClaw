@@ -508,6 +508,7 @@ describe("Hermes MCP reload finality", () => {
 
 describe("OpenClaw MCP adapter registration", () => {
   beforeEach(() => {
+    vi.stubEnv("OPENSHELL_GATEWAY", "other-gateway");
     mocks.executeSandboxCommand.mockReset();
     mocks.getSandbox.mockReset().mockReturnValue(sandbox);
     resetOpenClawConfigMocks();
@@ -574,17 +575,21 @@ describe("OpenClaw MCP adapter registration", () => {
     expect(mocks.executeSandboxCommand.mock.calls[0]?.[1]).toContain(
       "openshell:resolve:env:v12_GITHUB_TOKEN",
     );
-    expect(mocks.setOpenClawConfigValues).toHaveBeenCalledWith("alpha", [
-      { dotpath: "tools.alsoAllow", value: ["bundle-mcp"] },
-      {
-        dotpath: "mcp.servers.github",
-        value: {
-          transport: "streamable-http",
-          url: entry.url,
-          headers: { Authorization: "Bearer openshell:resolve:env:v12_GITHUB_TOKEN" },
+    expect(mocks.setOpenClawConfigValues).toHaveBeenCalledWith(
+      "alpha",
+      [
+        { dotpath: "tools.alsoAllow", value: ["bundle-mcp"] },
+        {
+          dotpath: "mcp.servers.github",
+          value: {
+            transport: "streamable-http",
+            url: entry.url,
+            headers: { Authorization: "Bearer openshell:resolve:env:v12_GITHUB_TOKEN" },
+          },
         },
-      },
-    ]);
+      ],
+      runtimeSelection,
+    );
   });
 
   it("removes the native entry through OpenClaw's config command", async () => {
@@ -611,7 +616,16 @@ describe("OpenClaw MCP adapter registration", () => {
     expect(await unregisterAgentAdapter("alpha", "openclaw-config", entry, runtimeSelection)).toBe(
       "removed",
     );
-    expect(mocks.unsetOpenClawConfigValue).toHaveBeenCalledWith("alpha", "mcp.servers.github");
+    expect(mocks.readSandboxConfig).toHaveBeenCalledWith(
+      "alpha",
+      expect.any(Object),
+      runtimeSelection,
+    );
+    expect(mocks.unsetOpenClawConfigValue).toHaveBeenCalledWith(
+      "alpha",
+      "mcp.servers.github",
+      runtimeSelection,
+    );
   });
 
   it("preserves a changed OpenClaw entry unless removal is explicitly forced", () => {
@@ -631,7 +645,11 @@ describe("OpenClaw MCP adapter registration", () => {
     expect(mocks.unsetOpenClawConfigValue).not.toHaveBeenCalled();
 
     unregisterOpenClawAdapter("alpha", entry, runtimeSelection, { force: true });
-    expect(mocks.unsetOpenClawConfigValue).toHaveBeenCalledWith("alpha", "mcp.servers.github");
+    expect(mocks.unsetOpenClawConfigValue).toHaveBeenCalledWith(
+      "alpha",
+      "mcp.servers.github",
+      runtimeSelection,
+    );
   });
 
   it("adds a non-restrictive tool-policy extension when no tools block exists", async () => {
@@ -645,17 +663,26 @@ describe("OpenClaw MCP adapter registration", () => {
 
     await registerOpenClawAdapter("alpha", entry, runtimeSelection, {}, false, "v12");
 
-    expect(mocks.setOpenClawConfigValues).toHaveBeenCalledWith("alpha", [
-      { dotpath: "tools.alsoAllow", value: ["bundle-mcp"] },
-      {
-        dotpath: "mcp.servers.github",
-        value: {
-          transport: "streamable-http",
-          url: entry.url,
-          headers: { Authorization: "Bearer openshell:resolve:env:v12_GITHUB_TOKEN" },
+    expect(mocks.readSandboxConfig).toHaveBeenCalledWith(
+      "alpha",
+      expect.any(Object),
+      runtimeSelection,
+    );
+    expect(mocks.setOpenClawConfigValues).toHaveBeenCalledWith(
+      "alpha",
+      [
+        { dotpath: "tools.alsoAllow", value: ["bundle-mcp"] },
+        {
+          dotpath: "mcp.servers.github",
+          value: {
+            transport: "streamable-http",
+            url: entry.url,
+            headers: { Authorization: "Bearer openshell:resolve:env:v12_GITHUB_TOKEN" },
+          },
         },
-      },
-    ]);
+      ],
+      runtimeSelection,
+    );
     expect(mocks.waitForManagedGatewaySupervisor).not.toHaveBeenCalled();
   });
 

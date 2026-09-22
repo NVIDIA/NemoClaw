@@ -118,7 +118,7 @@ export async function registerOpenClawAdapter(
     if (target.agentName !== "openclaw" || target.configPath !== openClawConfigPath(root)) {
       throw new Error("OpenClaw MCP config target does not match the registered agent source");
     }
-    const current = readSandboxConfig(sandboxName, target);
+    const current = readSandboxConfig(sandboxName, target, runtimeSelection);
     if (
       current.mcp !== undefined &&
       (!current.mcp || typeof current.mcp !== "object" || Array.isArray(current.mcp))
@@ -162,10 +162,14 @@ export async function registerOpenClawAdapter(
         OPENCLAW_NATIVE_MCP_PLUGIN_ID,
       ]),
     ];
-    setOpenClawConfigValues(sandboxName, [
-      { dotpath: "tools.alsoAllow", value: alsoAllow },
-      { dotpath: `mcp.servers.${entry.server}`, value: serverConfig },
-    ]);
+    setOpenClawConfigValues(
+      sandboxName,
+      [
+        { dotpath: "tools.alsoAllow", value: alsoAllow },
+        { dotpath: `mcp.servers.${entry.server}`, value: serverConfig },
+      ],
+      runtimeSelection,
+    );
   } catch (error) {
     const output = redactBridgeSecretsForDisplay(
       error instanceof Error ? error.message : String(error),
@@ -220,7 +224,7 @@ export function unregisterOpenClawAdapter(
     if (target.agentName !== "openclaw" || target.configPath !== openClawConfigPath(root)) {
       throw new Error("OpenClaw MCP config target does not match the registered agent source");
     }
-    const current = readSandboxConfig(sandboxName, target);
+    const current = readSandboxConfig(sandboxName, target, runtimeSelection);
     const mcp = current.mcp;
     const servers =
       mcp && typeof mcp === "object" && !Array.isArray(mcp)
@@ -249,7 +253,7 @@ export function unregisterOpenClawAdapter(
         `Refusing to remove modified OpenClaw MCP server '${entry.server}'. Use --force to remove it.`,
       );
     }
-    unsetOpenClawConfigValue(sandboxName, `mcp.servers.${entry.server}`);
+    unsetOpenClawConfigValue(sandboxName, `mcp.servers.${entry.server}`, runtimeSelection);
   } catch (error) {
     if (options.bestEffort) return;
     const output = redactBridgeSecretsForDisplay(

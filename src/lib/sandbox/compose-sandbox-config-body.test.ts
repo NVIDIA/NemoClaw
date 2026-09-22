@@ -1,7 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import type { OpenShellRuntimeSelection } from "../adapters/openshell/runtime-selection";
 import YAML from "yaml";
 
 const {
@@ -14,11 +15,13 @@ const {
   buildOpenClawNativeConfigBatchInvocation: (
     sandboxName: string,
     updates: Array<{ dotpath: string; value: unknown }>,
-  ) => { args: string[]; input: string };
+    gateway?: string | OpenShellRuntimeSelection,
+  ) => { args: string[]; input: string; env?: Record<string, string>; replaceEnv?: boolean };
   buildOpenClawNativeConfigSetInvocation: (
     sandboxName: string,
     dotpath: string,
     value: Record<string, unknown>,
+    gateway?: string | OpenShellRuntimeSelection,
   ) => { args: string[]; input: string };
   composeSandboxConfigBody: (
     config: Record<string, unknown>,
@@ -139,6 +142,49 @@ describe("composeSandboxConfigBody", () => {
         value: { apiKey: "sandbox-only-secret", models: [{ id: "model-a" }] },
       },
     ]);
+  });
+
+  it("pins native writes to the supplied gateway instead of the ambient selection (#11764)", () => {
+    vi.stubEnv("OPENSHELL_GATEWAY", "other-gateway");
+    const invocation = buildOpenClawNativeConfigSetInvocation(
+      "alpha",
+      "models",
+      {},
+      "nemoclaw-9090",
+    );
+    expect(invocation.args.slice(0, 6)).toEqual([
+      "-g",
+      "nemoclaw-9090",
+      "sandbox",
+      "exec",
+      "--name",
+      "alpha",
+    ]);
+  });
+
+  it("preserves authoritative workspace and TLS selection for native MCP writes (#11764)", () => {
+    vi.stubEnv("OPENSHELL_GATEWAY", "other-gateway");
+    vi.stubEnv("OPENSHELL_GATEWAY_ENDPOINT", "https://other.invalid");
+    vi.stubEnv("OPENSHELL_WORKSPACE", "other-workspace");
+    vi.stubEnv("OPENSHELL_LOCAL_TLS_DIR", "/other/tls");
+    const invocation = buildOpenClawNativeConfigBatchInvocation(
+      "alpha",
+      [{ dotpath: "tools.alsoAllow", value: ["bundle-mcp"] }],
+      {
+        gatewayName: "nemoclaw-9090",
+        workspace: "recorded-workspace",
+        localTlsDir: "/recorded/tls",
+      },
+    );
+    expect(invocation.args.slice(0, 2)).toEqual(["-g", "nemoclaw-9090"]);
+    expect(invocation.replaceEnv).toBe(true);
+    expect(invocation.env).toMatchObject({
+      OPENSHELL_GATEWAY: "nemoclaw-9090",
+      OPENSHELL_WORKSPACE: "recorded-workspace",
+      OPENSHELL_LOCAL_TLS_DIR: "/recorded/tls",
+    });
+    expect(invocation.env).not.toHaveProperty("OPENSHELL_GATEWAY_ENDPOINT");
+    expect(process.env.OPENSHELL_GATEWAY).toBe("other-gateway");
   });
 
   it("does not prepend the header when the Hermes target writes JSON", () => {

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { CLI_NAME } from "../cli/branding";
+import { OPENSHELL_DEFAULT_WORKSPACE } from "../adapters/openshell/sandbox-ssh-host";
 import type { OperationalAuditEntry } from "../state/audit/operational";
 import { InferenceSetError } from "./inference-set-error";
 import {
@@ -110,7 +111,10 @@ export function settleInferenceSetOpenClawPairing(
 export interface InferenceGatewayRestartDeps {
   appendAuditEntry: (entry: OperationalAuditEntry) => void;
   log: (message: string) => void;
-  restartSandboxGateway: (sandboxName: string) => Promise<GatewayRestartResult>;
+  restartSandboxGateway: (
+    sandboxName: string,
+    gatewayName?: string,
+  ) => Promise<GatewayRestartResult>;
   settleOpenClawPairing: (
     target: InferenceSetOpenClawPairingTarget,
   ) => InferenceSetOpenClawPairingResult;
@@ -161,9 +165,24 @@ export interface InferenceMutation<T extends InferenceResultForGateway> {
 
 export async function defaultInferenceGatewayRestart(
   sandboxName: string,
+  gatewayName?: string,
 ): Promise<GatewayRestartResult> {
   const recovery: typeof import("./sandbox/process-recovery") = require("./sandbox/process-recovery");
-  return recovery.restartSandboxGateway(sandboxName, { quiet: true });
+  return recovery.restartSandboxGateway(sandboxName, {
+    quiet: true,
+    ...(gatewayName
+      ? {
+          runtimeSelection: {
+            gatewayName,
+            // Preserve the workspace and TLS context used by the named inference route mutation.
+            workspace: process.env.OPENSHELL_WORKSPACE || OPENSHELL_DEFAULT_WORKSPACE,
+            ...(process.env.OPENSHELL_LOCAL_TLS_DIR
+              ? { localTlsDir: process.env.OPENSHELL_LOCAL_TLS_DIR }
+              : {}),
+          },
+        }
+      : {}),
+  });
 }
 
 function appendPostCommitInferenceAudit(
@@ -255,7 +274,12 @@ export async function completeInferencePostCommit<T extends InferenceResultForGa
     );
     let restartFailure: string | null = null;
     try {
-      const restart = await deps.restartSandboxGateway(result.sandboxName);
+      const restart = await deps.restartSandboxGateway(
+        result.sandboxName,
+        mutation.openClawPairing.state === "required"
+          ? mutation.openClawPairing.target.gatewayName
+          : undefined,
+      );
       if (!restart.ok) restartFailure = restart.failureLayer;
     } catch {
       restartFailure = "restart exception";
