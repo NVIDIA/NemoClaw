@@ -3225,9 +3225,11 @@ openshell sandbox delete -g '<owning-gateway>' '<destination>'
 After OpenShell deletes the destination, rerun the original `snapshot restore --to` command.
 
 <AgentOnly variant="openclaw">
-After NemoClaw creates the destination, it waits for the managed OpenClaw supervisor to pass a bounded readiness check before it applies snapshot state.
-If the check fails, the command leaves the destination registered without restored snapshot state and exits nonzero.
-Correct the reported supervisor failure, then run `$$nemoclaw <destination> destroy` or rerun the restore with `--force`.
+After NemoClaw creates the destination, it stops the sandbox and holds its OpenClaw gateway down while it restores state and runs `openclaw doctor --fix`.
+It then releases the maintenance window for one native OpenClaw start.
+If restoration or doctor fails, NemoClaw attempts to stop the destination and reports whether that stop was verified.
+After correcting the reported failure, retry with a new clone name.
+The incomplete clone remains registered; inspect it before deletion or replacement with `--force`.
 </AgentOnly>
 When `dst` already exists, `snapshot restore --to <dst>` refuses by default to avoid silently mutating the destination's filesystem.
 To overwrite an existing destination, pass `--force`: the command deletes `dst`, then recreates it from the source's image and restores the snapshot into the fresh copy.

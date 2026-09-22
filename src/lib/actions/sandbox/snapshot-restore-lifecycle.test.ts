@@ -633,50 +633,82 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
     ]);
   });
 
-  it("proves the clone supervisor is ready before restoring snapshot state (#7818)", async () => {
-    const events: string[] = [];
-    f.getSandboxMock.mockImplementation((name) =>
-      name === "alpha"
-        ? {
-            name: "alpha",
-            agent: "openclaw",
-            imageTag: "nemoclaw-alpha:test",
-            openshellDriver: "docker",
-            provider: "nvidia-nim",
-            model: "nvidia/model-a",
-          }
-        : null,
-    );
-    f.getLatestBackupMock.mockReturnValue({ ...f.latestBackupFixture });
-    f.captureOpenshellMock.mockImplementation((args) =>
-      f.openshellResponses(args, {
-        "sandbox exec": { status: 0, output: f.dcodeProbeOutput("no-runtime") },
-        "sandbox list": { status: 0, output: "alpha Ready\nbeta Ready\n" },
-      }),
-    );
-    f.streamSandboxCreateMock.mockResolvedValue({
-      status: 0,
-      output: "Sandbox reported Ready before create stream exited; continuing.",
-      sawProgress: true,
-      forcedReady: true,
-    });
-    f.restoreSandboxStateMock.mockImplementation(() => {
-      events.push("snapshot-restored");
-      return {
-        success: true,
-        restoredDirs: ["workspace"],
-        restoredFiles: [],
-        failedDirs: [],
-        failedFiles: [],
-      };
-    });
-    const { runSandboxSnapshot } = await import("./snapshot");
+  it.each([
+    {
+      outcome: "success",
+      success: true,
+      exitCode: 0,
+      finishCalls: 1,
+      finalEvent: "finish-openclaw-native-start",
+    },
+    {
+      outcome: "failure",
+      success: false,
+      exitCode: 1,
+      finishCalls: 0,
+      finalEvent: "abort-openclaw-backup-quiesce",
+    },
+  ])(
+    "protects clone restore with a maintenance window on $outcome",
+    async ({ success, exitCode, finishCalls, finalEvent }) => {
+      f.getSandboxMock.mockImplementation((name) =>
+        name === "alpha"
+          ? {
+              name: "alpha",
+              agent: "openclaw",
+              imageTag: "nemoclaw-alpha:test",
+              openshellDriver: "docker",
+              provider: "nvidia-nim",
+              model: "nvidia/model-a",
+            }
+          : null,
+      );
+      f.getLatestBackupMock.mockReturnValue({ ...f.latestBackupFixture });
+      f.captureOpenshellMock.mockImplementation((args) =>
+        f.openshellResponses(args, {
+          "sandbox exec": { status: 0, output: f.dcodeProbeOutput("no-runtime") },
+          "sandbox list": { status: 0, output: "alpha Ready\nbeta Ready\n" },
+        }),
+      );
+      f.streamSandboxCreateMock.mockImplementation(async () => {
+        f.lifecycleMock.events.push("create-clone");
+        return {
+          status: 0,
+          output: "Sandbox reported Ready before create stream exited; continuing.",
+          sawProgress: true,
+          forcedReady: true,
+        };
+      });
+      f.restoreSandboxStateMock.mockImplementation(() => {
+        f.lifecycleMock.events.push("snapshot-restored");
+        return {
+          success,
+          restoredDirs: success ? ["workspace"] : [],
+          restoredFiles: [],
+          failedDirs: success ? [] : ["workspace"],
+          failedFiles: [],
+        };
+      });
+      const { runSandboxSnapshot } = await import("./snapshot");
 
-    await runSandboxSnapshot("alpha", { kind: "restore", to: "beta" });
+      const restore = runSandboxSnapshot("alpha", { kind: "restore", to: "beta" });
+      await expect(
+        restore.then(
+          () => ({ exitCode: 0 }),
+          (error: unknown) => error,
+        ),
+      ).resolves.toMatchObject({ exitCode });
 
-    expect(f.waitForRestoredSandboxGatewaySupervisorMock).not.toHaveBeenCalled();
-    expect(events).toEqual(["snapshot-restored"]);
-  });
+      expect(f.waitForRestoredSandboxGatewaySupervisorMock).not.toHaveBeenCalled();
+      expect(f.lifecycleMock.events).toEqual([
+        "create-clone",
+        "begin-openclaw-backup-quiesce",
+        "snapshot-restored",
+        finalEvent,
+      ]);
+      expect(f.finishOpenClawPostRestoreDoctorMock).toHaveBeenCalledTimes(finishCalls);
+    },
+  );
 
   it("restores snapshot state without a NemoClaw supervisor gate", async () => {
     f.getSandboxMock.mockImplementation((name) =>

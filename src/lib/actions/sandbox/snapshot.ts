@@ -1404,6 +1404,9 @@ async function runSnapshotRestoreUnlocked(
   }
   await withMcpLifecycleLock(targetSandbox, async () => {
     let openClawRestoreWindow: OpenClawPostRestoreDoctorWindow | null = null;
+    const retryRestore = isCrossSandboxRestore
+      ? "retry with a new clone name. The incomplete clone still exists; inspect it before deletion or replacement."
+      : "retry the same snapshot restore command.";
     const abortOpenClawRestoreWindow = async (): Promise<void> => {
       if (!openClawRestoreWindow) return;
       const aborted = await abortOpenClawPostRestoreDoctor(openClawRestoreWindow);
@@ -1420,12 +1423,12 @@ async function runSnapshotRestoreUnlocked(
       }
       console.error(`  OpenClaw sandbox '${targetSandbox}' remains stopped after restore failure.`);
       console.error(
-        `  Run '${CLI_NAME} ${targetSandbox} start', verify that it is ready, then retry the same snapshot restore command.`,
+        `  Run '${CLI_NAME} ${targetSandbox} start', verify that it is ready, then ${retryRestore}`,
       );
     };
     try {
       const currentTarget = registry.getSandbox(targetSandbox);
-      if (!isCrossSandboxRestore && (currentTarget?.agent ?? "openclaw") === "openclaw") {
+      if ((currentTarget?.agent ?? "openclaw") === "openclaw") {
         const runtimeSelection = currentTarget
           ? getMcpProviderInspectionRuntimeSelection(currentTarget)
           : undefined;
@@ -1438,7 +1441,7 @@ async function runSnapshotRestoreUnlocked(
             `  Sandbox '${targetSandbox}' may remain stopped after the failed maintenance transition.`,
           );
           console.error(
-            `  Run '${CLI_NAME} ${targetSandbox} stop', then '${CLI_NAME} ${targetSandbox} start', verify that it is ready, and retry the same snapshot restore command.`,
+            `  Run '${CLI_NAME} ${targetSandbox} stop', then '${CLI_NAME} ${targetSandbox} start', verify that it is ready, and ${retryRestore}`,
           );
           snapshotExit(1);
         }

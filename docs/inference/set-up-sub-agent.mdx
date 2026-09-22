@@ -232,22 +232,21 @@ For the Omni example:
 Use the same provider ID that appears in `models.providers`, such as `nvidia-omni`.
 Create `auth-profiles.json` in `$NEMOCLAW_SUBAGENT_TMP` from `vlm-demo/vlm-subagent/auth-profiles.template.json`.
 Replace `YOUR_NVIDIA_API_KEY_HERE` with the provider key.
-The private directory and restrictive umask keep the credential readable only by your host account until
-you install it in the sandbox. The installation creates the destination with mode `0600` before an atomic
-rename, so there is no interval where another sandbox user can read the key.
+The private directory and restrictive umask limit access to the host copy until you install it in the sandbox.
+Installation runs as the sandbox user and creates a random temporary file with mode `0600` before replacing the destination.
+Other processes running as the sandbox user can read the credential; file permissions do not isolate sub-agents from each other.
 
 ```bash
-docker exec --user root "$SANDBOX_CTR" \
-  install -d -m 700 -o sandbox -g sandbox /sandbox/.openclaw/agents/vision-operator/agent
-docker exec --user root -i "$SANDBOX_CTR" sh -ceu '
+docker exec --user sandbox "$SANDBOX_CTR" \
+  install -d -m 700 /sandbox/.openclaw/agents/vision-operator/agent
+docker exec --user sandbox -i "$SANDBOX_CTR" sh -ceu '
 target=$1
-temporary="${target}.nemoclaw.$$"
-trap '\''rm -f -- "$temporary"'\'' 0
 umask 077
+temporary=$(mktemp "${target}.nemoclaw.XXXXXX")
+trap '\''rm -f -- "$temporary"'\'' 0
 cat > "$temporary"
-chown sandbox:sandbox "$temporary"
 chmod 600 "$temporary"
-mv -f -- "$temporary" "$target"
+mv -fT -- "$temporary" "$target"
 trap - 0
 ' sh /sandbox/.openclaw/agents/vision-operator/agent/auth-profiles.json \
   < "$NEMOCLAW_SUBAGENT_TMP/auth-profiles.json"

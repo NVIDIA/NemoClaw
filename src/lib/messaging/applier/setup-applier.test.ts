@@ -1098,7 +1098,7 @@ describe("MessagingSetupApplier", () => {
     expect(nativePatch).not.toHaveProperty("preserved");
   });
 
-  it("runs post-install hook implementations and writes their build-file outputs", async () => {
+  it("applies WeChat post-install config natively without reading or replacing the native file", async () => {
     const plan = await buildOnboardPlan(
       {
         WECHAT_BOT_TOKEN: "wechat-token",
@@ -1132,8 +1132,16 @@ describe("MessagingSetupApplier", () => {
       }),
     };
 
+    const originalConfig = files["/sandbox/.openclaw/openclaw.json"];
+    const nativePatches: MessagingSerializableObject[] = [];
     const result = await MessagingSetupApplier.applyAgentConfigAtOpenShell(plan, {
       runOpenshell: (args, options) => {
+        expect(args).not.toContain("/sandbox/.openclaw/openclaw.json");
+        if (args.includes("patch")) {
+          expect(args.slice(-4)).toEqual(["openclaw", "config", "patch", "--stdin"]);
+          nativePatches.push(JSON.parse(options?.input ?? "{}"));
+          return { status: 0 };
+        }
         const command = String(args[7] ?? "");
         const target =
           options?.input !== undefined && command.includes("chmod")
@@ -1174,17 +1182,17 @@ describe("MessagingSetupApplier", () => {
       baseUrl: "https://ilinkai.wechat.com",
       userId: "wechat-user",
     });
-    const openclawConfig = JSON.parse(files["/sandbox/.openclaw/openclaw.json"] ?? "{}");
-    expect(openclawConfig.plugins.entries.acpx.enabled).toBe(false);
-    expect(openclawConfig.plugins.entries["openclaw-weixin"].enabled).toBe(true);
-    expect(openclawConfig.channels["openclaw-weixin"].enabled).toBe(true);
-    expect(openclawConfig.plugins.allow).toBeUndefined();
-    expect(openclawConfig.plugins.installs).toBeUndefined();
-    expect(openclawConfig.plugins.load?.paths ?? []).not.toContain(
-      "/sandbox/.openclaw/extensions/openclaw-weixin",
-    );
-    expect(openclawConfig.channels["openclaw-weixin"].accounts["wechat-account"]).toEqual({
-      enabled: true,
+    expect(files["/sandbox/.openclaw/openclaw.json"]).toBe(originalConfig);
+    expect(nativePatches).toHaveLength(2);
+    expect(nativePatches[1]).toEqual({
+      plugins: { entries: { "openclaw-weixin": { enabled: true } } },
+      channels: {
+        "openclaw-weixin": {
+          enabled: true,
+          channelConfigUpdatedAt: "2026-01-01T00:00:00.000Z",
+          accounts: { "wechat-account": { enabled: true } },
+        },
+      },
     });
     expect(result.appliedTargets).toEqual([
       "/sandbox/.openclaw/openclaw.json",
@@ -1312,6 +1320,18 @@ describe("MessagingSetupApplier", () => {
   );
 
   it.each([
+    {
+      value: { path: "openclaw.json", content: { channels: {} } },
+      error: "must provide an object merge",
+    },
+    {
+      value: { path: "openclaw.json", merge: ["invalid"] },
+      error: "must provide an object merge",
+    },
+    {
+      value: { path: "openclaw.json", merge: { channels: { telegram: null } } },
+      error: "cannot set null",
+    },
     {
       value: { path: "openclaw-weixin/accounts/../../openclaw.json", content: {} },
       error: "must not traverse directories",

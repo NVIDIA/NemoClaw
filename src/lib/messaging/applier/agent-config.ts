@@ -215,6 +215,15 @@ function applyOpenClawConfigPatch(
   }
   if (Object.keys(patch).length === 0) return false;
 
+  writeOpenClawConfigPatch(sandboxName, patch, runOpenshell);
+  return true;
+}
+
+function writeOpenClawConfigPatch(
+  sandboxName: string,
+  patch: Record<string, MessagingSerializableValue>,
+  runOpenshell: MessagingOpenShellRunner,
+): void {
   const result = runOpenshell(
     [
       "sandbox",
@@ -238,7 +247,6 @@ function applyOpenClawConfigPatch(
   if (result.error || result.signal || (result.status ?? 0) !== 0) {
     throw new Error(`Failed to apply native OpenClaw messaging config: ${compactOutput(result)}`);
   }
-  return true;
 }
 
 function minimalRemovalPaths(paths: readonly string[]): string[] {
@@ -768,6 +776,16 @@ function applyHookBuildFileOutputs(
     if (output.kind !== "build-file") continue;
     const file = readHookBuildFile(output.value);
     const target = resolveHookBuildFileTarget(file.path, plan.agent);
+    if (plan.agent === "openclaw" && target === OPENCLAW_CONFIG_TARGET) {
+      if (!isObjectRecord(file.merge) || file.content !== undefined) {
+        throw new Error("OpenClaw config hooks must provide an object merge, not file contents.");
+      }
+      validateSafeMergeValue(file.merge);
+      assertOpenClawPatchValue(target, file.merge);
+      writeOpenClawConfigPatch(plan.sandboxName, file.merge, runOpenshell);
+      appliedTargets.push(target);
+      continue;
+    }
     const contents =
       file.merge !== undefined
         ? applyStructuredMerge(
