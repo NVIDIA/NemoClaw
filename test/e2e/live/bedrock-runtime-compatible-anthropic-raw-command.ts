@@ -154,6 +154,9 @@ export async function runRawCommand(
     spawnError = error;
   });
   if (options.stdin !== undefined) {
+    child.stdin?.on("error", () => {
+      // The child may reject or close bounded input before the parent finishes writing it.
+    });
     child.stdin?.end(options.stdin);
   }
 

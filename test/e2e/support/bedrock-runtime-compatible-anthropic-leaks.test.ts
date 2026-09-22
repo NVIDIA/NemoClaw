@@ -15,6 +15,7 @@ import {
   BEDROCK_LEAK_PROBE_SOURCE,
   type BedrockLeakProbeInput,
   type ForbiddenLeakPattern,
+  createBedrockForbiddenLeakPatterns,
   createBedrockLeakProbeInput,
   parseBedrockLeakProbeResult,
 } from "../live/bedrock-runtime-compatible-anthropic-leaks.ts";
@@ -178,7 +179,41 @@ describe("Bedrock Runtime bounded leak probe", () => {
       status: "error",
       itemsScanned: 0,
       matches: [],
-      errors: ["required-file-boundary-empty"],
+      errors: ["required-file-boundary-empty", "required-file-missing"],
+    });
+  });
+
+  it("fails closed when one requested config is missing beside a readable config (#12191)", () => {
+    const fixture = createProbeFixture();
+    const input = {
+      ...fixture.input,
+      configFiles: [fixture.configFile, path.join(fixture.root, "missing-config.json")],
+    };
+
+    const result = runProbe(input);
+    const parsed = parseBedrockLeakProbeResult(result.stdout, PATTERNS);
+
+    expect(result.status).toBe(2);
+    expect(parsed.categories.configFiles).toMatchObject({
+      status: "error",
+      itemsScanned: 1,
+      errors: ["required-file-missing"],
+    });
+  });
+
+  it("fails closed when an observed process member cannot be read (#12191)", () => {
+    const fixture = createProbeFixture();
+    fs.rmSync(fixture.environFile);
+    fs.mkdirSync(fixture.environFile);
+
+    const result = runProbe(fixture.input);
+    const parsed = parseBedrockLeakProbeResult(result.stdout, PATTERNS);
+
+    expect(result.status).toBe(2);
+    expect(parsed.categories.processEnvironment).toMatchObject({
+      status: "error",
+      itemsScanned: 0,
+      errors: ["process-read-failed", "required-process-boundary-empty"],
     });
   });
 
@@ -238,6 +273,58 @@ describe("Bedrock Runtime bounded leak probe", () => {
     );
   });
 
+  it("rejects forged fingerprint checksums and bounds total scan work (#12191)", () => {
+    const fixture = createProbeFixture();
+    const forgedInput = JSON.parse(JSON.stringify(fixture.input)) as {
+      patterns: Array<{ byteSum: number }>;
+    };
+    forgedInput.patterns[0]!.byteSum = -1;
+
+    const rejected = runProbe(JSON.stringify(forgedInput));
+    expect(rejected.status).toBe(2);
+    expect(parseBedrockLeakProbeResult(rejected.stdout, PATTERNS).status).toBe("error");
+
+    const scanPatterns = Array.from({ length: 16 }, (_, index) => ({
+      name: `scan secret ${index}`,
+      value: `bounded-secret-${index}`,
+    }));
+    fs.writeFileSync(fixture.configFile, Buffer.alloc(600_000, 65));
+    const boundedInput = createBedrockLeakProbeInput(scanPatterns, {
+      credentialFiles: [fixture.credentialFile],
+      configFiles: [fixture.configFile],
+      procRoot: fixture.input.procRoot,
+    });
+    const bounded = runProbe(boundedInput);
+    const parsed = parseBedrockLeakProbeResult(bounded.stdout, scanPatterns);
+
+    expect(bounded.status).toBe(2);
+    expect(parsed.categories.configFiles.errors).toContain("scan-work-limit-exceeded");
+  });
+
+  it("keeps the exact live forbidden-value labels compatible with the probe schema (#12191)", () => {
+    const fixture = createProbeFixture();
+    const patterns = createBedrockForbiddenLeakPatterns({
+      adapterToken: "representative-adapter-token",
+      bedrockHostname: "bedrock-runtime.us-east-1.amazonaws.com",
+      compatibleKey: "representative-compatible-key",
+    });
+
+    expect(() =>
+      createBedrockLeakProbeInput(patterns, {
+        credentialFiles: [fixture.credentialFile],
+        configFiles: [fixture.configFile],
+        procRoot: fixture.input.procRoot,
+      }),
+    ).not.toThrow();
+    expect(patterns.map(({ name }) => name)).toEqual([
+      "fake user key",
+      "adapter token",
+      "aws bearer env name",
+      "adapter token env name",
+      "raw bedrock hostname",
+    ]);
+  });
+
   it("rejects malformed input and forged multi-record output (#12191)", () => {
     const malformed = runProbe(`{"version":1}\n${SECRET}`);
     const oversized = runProbe("x".repeat(32_769));
@@ -285,5 +372,31 @@ describe("Bedrock Runtime bounded leak probe", () => {
     expect(published).not.toContain(SECRET);
     expect(published).not.toContain(fixture.input.patterns[0]?.sha256);
     expect(published).toContain('"test secret"');
+  });
+
+  it("preserves the child result when the child closes stdin early (#12191)", async () => {
+    const fixture = createProbeFixture();
+    const artifactRoot = path.join(fixture.root, "early-stdin-artifacts");
+    const artifacts = new ArtifactSink(artifactRoot);
+    await artifacts.ensureRoot();
+
+    const result = await runRawCommand(
+      process.execPath,
+      ["-e", "process.stdin.destroy(); process.exit(0);"],
+      {
+        artifactName: "early-stdin-close",
+        artifacts,
+        progress: progressProbe(),
+        stdin: "x".repeat(8 * 1024 * 1024),
+      },
+    );
+
+    expect(result.exitCode).toBe(0);
+    await expect(
+      fsPromises.readFile(
+        path.join(artifactRoot, "raw-shell/early-stdin-close.result.json"),
+        "utf8",
+      ),
+    ).resolves.toContain('"exitCode": 0');
   });
 });

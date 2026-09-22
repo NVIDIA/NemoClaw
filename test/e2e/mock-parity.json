@@ -393,6 +393,7 @@
     {
       "live": "test/e2e/live/bedrock-runtime-compatible-anthropic.test.ts",
       "liveSources": [
+        "test/e2e/live/bedrock-runtime-compatible-anthropic-leak-probe.py",
         "test/e2e/live/bedrock-runtime-compatible-anthropic-leaks.ts",
         "test/e2e/live/bedrock-runtime-compatible-anthropic-raw-command.ts"
       ],

@@ -11,9 +11,11 @@ import {
 
 const live = "test/e2e/live/example.test.ts";
 const liveHelper = "test/e2e/live/example-helper.ts";
+const pythonLiveHelper = "test/e2e/live/example-helper.py";
 const fast = "test/e2e/support/example.test.ts";
 const TAGGED_NEW_SOURCE = "// @module-tag e2e/credential-free\n";
-const exists = (file: string) => file === live || file === liveHelper || file === fast;
+const exists = (file: string) =>
+  file === live || file === liveHelper || file === pythonLiveHelper || file === fast;
 
 function manifest(entries: MockParityManifest["entries"]): MockParityManifest {
   return { version: 1, entries };
@@ -163,6 +165,16 @@ describe("changed live E2E mock parity", () => {
         fileExists: exists,
       }),
     ).toEqual([]);
+  });
+
+  it("requires mapped fast coverage when a declared Python live helper changes", () => {
+    expect(
+      validateMockParity({
+        manifest: manifest([{ live, liveSources: [pythonLiveHelper], fast: [fast] }]),
+        changedFiles: [pythonLiveHelper],
+        fileExists: exists,
+      }),
+    ).toEqual([`${pythonLiveHelper}: change at least one fast PR test mapped from ${live}`]);
   });
 
   it("rejects a changed live E2E helper without an owning manifest entry", () => {

@@ -30,7 +30,7 @@ import { parseOpenClawAgentText } from "../fixtures/openclaw-agent-output.ts";
 import type { TestProgress, TestProgressCapability } from "../fixtures/progress.ts";
 import {
   BEDROCK_LEAK_PROBE_SOURCE,
-  type ForbiddenLeakPattern,
+  createBedrockForbiddenLeakPatterns,
   createBedrockLeakProbeInput,
   parseBedrockLeakProbeResult,
 } from "./bedrock-runtime-compatible-anthropic-leaks.ts";
@@ -785,13 +785,11 @@ async function assertNoBedrockLeaks(options: {
   progress: Pick<TestProgress, "activity" | "event" | "onOutput"> & TestProgressCapability;
 }): Promise<void> {
   const adapterToken = readAdapterToken(options.home);
-  const patterns: ForbiddenLeakPattern[] = [
-    { name: "fake user key", value: COMPATIBLE_KEY },
-    { name: "adapter token", value: adapterToken },
-    { name: "AWS bearer env name", value: "AWS_BEARER_TOKEN_BEDROCK" },
-    { name: "adapter token env name", value: "NEMOCLAW_BEDROCK_RUNTIME_ADAPTER_TOKEN" },
-    { name: "raw Bedrock hostname", value: BEDROCK_HOSTNAME },
-  ];
+  const patterns = createBedrockForbiddenLeakPatterns({
+    compatibleKey: COMPATIBLE_KEY,
+    adapterToken,
+    bedrockHostname: BEDROCK_HOSTNAME,
+  });
   const agentRoot = options.agent === "hermes" ? "/sandbox/.hermes" : "/sandbox/.openclaw";
   const credentialFile =
     options.agent === "hermes" ? `${agentRoot}/.env` : `${agentRoot}/openclaw.json`;
@@ -799,11 +797,10 @@ async function assertNoBedrockLeaks(options: {
     options.agent === "hermes" ? `${agentRoot}/config.yaml` : `${agentRoot}/openclaw.json`;
   const input = createBedrockLeakProbeInput(patterns, {
     credentialFiles: [credentialFile],
-    configFiles: [
-      configFile,
-      "/etc/nemoclaw/gateway-management.json",
-      "/etc/nemoclaw/hermes.config-hash",
-    ],
+    configFiles:
+      options.agent === "hermes"
+        ? [configFile, "/etc/nemoclaw/gateway-management.json", "/etc/nemoclaw/hermes.config-hash"]
+        : [configFile, "/etc/nemoclaw/gateway-management.json"],
   });
   const probe = await runRawCommand(
     "openshell",

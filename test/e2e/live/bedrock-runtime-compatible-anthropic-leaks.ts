@@ -17,10 +17,17 @@ export interface ForbiddenLeakPattern {
   readonly value: string;
 }
 
+interface BedrockForbiddenLeakValues {
+  readonly adapterToken: string;
+  readonly bedrockHostname: string;
+  readonly compatibleKey: string;
+}
+
 export interface BedrockLeakFingerprint {
   readonly name: string;
   readonly byteLength: number;
   readonly sha256: string;
+  readonly byteSum: number;
 }
 
 export interface BedrockLeakProbeInput {
@@ -57,6 +64,18 @@ interface BedrockLeakProbeInputOptions {
   readonly credentialFiles: readonly string[];
   readonly configFiles: readonly string[];
   readonly procRoot?: string;
+}
+
+export function createBedrockForbiddenLeakPatterns(
+  values: BedrockForbiddenLeakValues,
+): readonly ForbiddenLeakPattern[] {
+  return [
+    { name: "fake user key", value: values.compatibleKey },
+    { name: "adapter token", value: values.adapterToken },
+    { name: "aws bearer env name", value: "AWS_BEARER_TOKEN_BEDROCK" },
+    { name: "adapter token env name", value: "NEMOCLAW_BEDROCK_RUNTIME_ADAPTER_TOKEN" },
+    { name: "raw bedrock hostname", value: values.bedrockHostname },
+  ];
 }
 
 function validatePatterns(patterns: readonly ForbiddenLeakPattern[]): void {
@@ -96,11 +115,15 @@ export function createBedrockLeakProbeInput(
   validatePaths("process root", [procRoot]);
   const input: BedrockLeakProbeInput = {
     version: PROBE_VERSION,
-    patterns: patterns.map((pattern) => ({
-      name: pattern.name,
-      byteLength: Buffer.byteLength(pattern.value, "utf8"),
-      sha256: createHash("sha256").update(pattern.value).digest("hex"),
-    })),
+    patterns: patterns.map((pattern) => {
+      const value = Buffer.from(pattern.value, "utf8");
+      return {
+        name: pattern.name,
+        byteLength: value.length,
+        sha256: createHash("sha256").update(value).digest("hex"),
+        byteSum: value.reduce((sum, byte) => sum + byte, 0),
+      };
+    }),
     credentialFiles: [...options.credentialFiles],
     configFiles: [...options.configFiles],
     procRoot,

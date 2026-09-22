@@ -17,6 +17,7 @@ MAX_FILE_CATEGORY_BYTES = 2097152
 MAX_PROCESS_ITEMS = 512
 MAX_PROCESS_ITEM_BYTES = 262144
 MAX_PROCESS_CATEGORY_BYTES = 4194304
+MAX_SCAN_WINDOWS = 8000000
 CATEGORIES = ("credentialFiles", "configFiles", "processEnvironment", "processArguments")
 
 
@@ -72,11 +73,13 @@ def read_input():
             "name",
             "byteLength",
             "sha256",
+            "byteSum",
         }:
             emit_input_error("invalid-patterns")
         name = pattern.get("name")
         width = pattern.get("byteLength")
         expected = pattern.get("sha256")
+        byte_sum = pattern.get("byteSum")
         if not isinstance(name, str) or not re.fullmatch(r"[a-z][a-z0-9 -]{0,63}", name):
             emit_input_error("invalid-patterns")
         if name in names or not isinstance(width, int) or isinstance(width, bool):
@@ -84,6 +87,10 @@ def read_input():
         if width < 8 or width > MAX_PATTERN_BYTES:
             emit_input_error("invalid-patterns")
         if not isinstance(expected, str) or not re.fullmatch(r"[a-f0-9]{64}", expected):
+            emit_input_error("invalid-patterns")
+        if not isinstance(byte_sum, int) or isinstance(byte_sum, bool):
+            emit_input_error("invalid-patterns")
+        if byte_sum < 0 or byte_sum > 255 * width:
             emit_input_error("invalid-patterns")
         names.add(name)
     for field in ("credentialFiles", "configFiles"):
@@ -101,17 +108,33 @@ def read_input():
     return value, patterns
 
 
-def matches(data, patterns):
+class ScanWorkLimitExceeded(Exception):
+    pass
+
+
+def matches(data, patterns, scan_budget):
+    work = sum(max(0, len(data) - pattern["byteLength"] + 1) for pattern in patterns)
+    if work > scan_budget["remaining"]:
+        raise ScanWorkLimitExceeded
+    scan_budget["remaining"] -= work
     found = set()
     for pattern in patterns:
         width = pattern["byteLength"]
         expected = pattern["sha256"]
         if width > len(data):
             continue
+        expected_sum = pattern["byteSum"]
+        window_sum = sum(data[:width])
         for offset in range(len(data) - width + 1):
-            if hashlib.sha256(data[offset : offset + width]).hexdigest() == expected:
+            if (
+                window_sum == expected_sum
+                and hashlib.sha256(data[offset : offset + width]).hexdigest() == expected
+            ):
                 found.add(pattern["name"])
                 break
+            next_offset = offset + width
+            if next_offset < len(data):
+                window_sum += data[next_offset] - data[offset]
     return sorted(found)
 
 
@@ -128,7 +151,7 @@ def category_result(items, total_bytes, found, errors):
     }
 
 
-def scan_files(paths, patterns):
+def scan_files(paths, patterns, scan_budget):
     found = []
     errors = []
     items = 0
@@ -137,6 +160,7 @@ def scan_files(paths, patterns):
         path = pathlib.Path(raw_path)
         try:
             if not path.exists():
+                errors.append("required-file-missing")
                 continue
             if path.is_symlink() or not path.is_file():
                 errors.append("unsafe-file-boundary")
@@ -144,6 +168,7 @@ def scan_files(paths, patterns):
             with path.open("rb") as handle:
                 data = handle.read(MAX_FILE_BYTES + 1)
         except FileNotFoundError:
+            errors.append("required-file-missing")
             continue
         except Exception:
             errors.append("file-read-failed")
@@ -156,13 +181,16 @@ def scan_files(paths, patterns):
             continue
         items += 1
         total_bytes += len(data)
-        found.extend(matches(data, patterns))
+        try:
+            found.extend(matches(data, patterns, scan_budget))
+        except ScanWorkLimitExceeded:
+            errors.append("scan-work-limit-exceeded")
     if items == 0:
         errors.append("required-file-boundary-empty")
     return category_result(items, total_bytes, found, errors)
 
 
-def scan_processes(proc_root, member, patterns):
+def scan_processes(proc_root, member, patterns, scan_budget):
     found = []
     errors = []
     items = 0
@@ -183,9 +211,13 @@ def scan_processes(proc_root, member, patterns):
         try:
             with path.open("rb") as handle:
                 data = handle.read(MAX_PROCESS_ITEM_BYTES + 1)
-        except (FileNotFoundError, PermissionError, ProcessLookupError):
+        except (FileNotFoundError, ProcessLookupError):
+            continue
+        except PermissionError:
+            errors.append("process-read-denied")
             continue
         except Exception:
+            errors.append("process-read-failed")
             continue
         if len(data) > MAX_PROCESS_ITEM_BYTES:
             errors.append("process-item-limit-exceeded")
@@ -195,18 +227,24 @@ def scan_processes(proc_root, member, patterns):
             continue
         items += 1
         total_bytes += len(data)
-        found.extend(matches(data, patterns))
+        try:
+            found.extend(matches(data, patterns, scan_budget))
+        except ScanWorkLimitExceeded:
+            errors.append("scan-work-limit-exceeded")
     if items == 0:
         errors.append("required-process-boundary-empty")
     return category_result(items, total_bytes, found, errors)
 
 
 payload, patterns = read_input()
+scan_budget = {"remaining": MAX_SCAN_WINDOWS}
 categories = {
-    "credentialFiles": scan_files(payload["credentialFiles"], patterns),
-    "configFiles": scan_files(payload["configFiles"], patterns),
-    "processEnvironment": scan_processes(payload["procRoot"], "environ", patterns),
-    "processArguments": scan_processes(payload["procRoot"], "cmdline", patterns),
+    "credentialFiles": scan_files(payload["credentialFiles"], patterns, scan_budget),
+    "configFiles": scan_files(payload["configFiles"], patterns, scan_budget),
+    "processEnvironment": scan_processes(
+        payload["procRoot"], "environ", patterns, scan_budget
+    ),
+    "processArguments": scan_processes(payload["procRoot"], "cmdline", patterns, scan_budget),
 }
 statuses = {category["status"] for category in categories.values()}
 status = "error" if "error" in statuses else ("leak" if "leak" in statuses else "clean")
