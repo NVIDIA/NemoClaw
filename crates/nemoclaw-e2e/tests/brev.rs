@@ -172,6 +172,26 @@ fn confirmed_openclaw_reply(response: &[u8]) -> bool {
         })
 }
 
+fn confirmed_policy_denial(response: &[u8]) -> bool {
+    let Ok(response) = std::str::from_utf8(response) else {
+        return false;
+    };
+    response
+        .lines()
+        .any(|line| line == "policy-denied-403" || line.starts_with("policy-denied-dns:"))
+}
+
+#[test]
+fn policy_denial_requires_a_dns_block_or_proxy_rejection() {
+    assert!(confirmed_policy_denial(b"policy-denied-403\n"));
+    assert!(confirmed_policy_denial(
+        b"policy-denied-dns:[Errno -3] Temporary failure in name resolution\n"
+    ));
+    assert!(!confirmed_policy_denial(b"timed out\n"));
+    assert!(!confirmed_policy_denial(b"connection refused\n"));
+    assert!(!confirmed_policy_denial(b""));
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires a fresh owned bare Brev AMD64 VM, hosted inference credential, explicit config, unused state path, and verified bundle; destroys workloads and retains deployment storage"]
 async fn bare_brev_hosted_openclaw_lifecycle() {
@@ -297,15 +317,16 @@ async fn bare_brev_hosted_openclaw_lifecycle() {
         [
             "/opt/fabric/bin/python",
             "-c",
-            "import urllib.error,urllib.request\ntry: urllib.request.urlopen('https://example.com',timeout=15)\nexcept urllib.error.URLError as error:\n assert '403' in str(error), str(error)\n print('policy-denied-403')\nelse: raise AssertionError('undeclared egress was allowed')",
+            "import socket,urllib.error,urllib.request\ntry: socket.getaddrinfo('example.com',443,type=socket.SOCK_STREAM)\nexcept socket.gaierror as error:\n print(f'policy-denied-dns:{error}')\nelse:\n try: urllib.request.urlopen('https://example.com',timeout=15)\n except urllib.error.URLError as error:\n  if '403' not in str(error):\n   print(f'unexpected-url-error:{error}')\n   raise\n  print('policy-denied-403')\n else: raise AssertionError('undeclared egress was allowed')",
         ]
         .map(String::from)
         .to_vec(),
     )
     .await;
-    assert_eq!(
-        String::from_utf8(denial).unwrap().trim(),
-        "policy-denied-403"
+    assert!(
+        confirmed_policy_denial(&denial),
+        "undeclared egress did not produce a policy denial: {}",
+        String::from_utf8_lossy(&denial)
     );
 
     let unchanged = deployment.apply(&document, &cancel).await.unwrap();
