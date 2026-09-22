@@ -19,6 +19,7 @@ import { expect, test } from "../fixtures/e2e-test.ts";
 import { requireHostedInferenceConfig } from "../fixtures/hosted-inference.ts";
 import { assertStockManagedImageReceipt } from "../fixtures/managed-image-receipt.ts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
+import { createPublicInstallWorkspace } from "../fixtures/public-install-workspace.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-cloud-onboard";
@@ -140,9 +141,7 @@ test(
       `https://raw.githubusercontent.com/NVIDIA/NemoClaw/${ref}/install.sh`;
     // Native SDK lifecycle operations require trusted ancestors for gateway state.
     // Keep the disposable HOME outside the world-writable system temporary root.
-    const installCwd = fs.mkdtempSync(
-      path.join(os.userInfo().homedir, ".nemoclaw-public-install-"),
-    );
+    const installCwd = createPublicInstallWorkspace(cleanupRegistry);
     const testHome = path.join(installCwd, "home");
     const legacyDir = path.join(testHome, ".nemoclaw");
     const legacyFile = path.join(legacyDir, "credentials.json");
@@ -153,9 +152,6 @@ test(
     delete hostedEnvWithoutCredentials[hosted.credentialEnv];
     fs.mkdirSync(testHome, { recursive: true, mode: 0o700 });
     const corporateCa = createCorporateCaFixture("explicit", "nemoclaw-cloud-corporate-ca-");
-    cleanupRegistry.trackDisposable("remove public installer workspace", () =>
-      fs.rmSync(installCwd, { recursive: true, force: true }),
-    );
     cleanupRegistry.trackDisposable("remove corporate CA fixture", () =>
       cleanupCorporateCaFixture(corporateCa),
     );
