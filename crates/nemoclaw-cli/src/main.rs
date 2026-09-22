@@ -16,17 +16,24 @@ use clap::Parser;
 use nemoclaw_sdk::CancellationToken;
 use std::{io::IsTerminal, process::ExitCode};
 
-async fn interrupt() {
+fn interrupt() -> std::io::Result<impl std::future::Future<Output = ()>> {
     #[cfg(unix)]
     {
-        if let Ok(mut termination) =
-            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
-        {
-            tokio::select! {_=tokio::signal::ctrl_c()=>{},_=termination.recv()=>{}}
-            return;
-        }
+        use tokio::signal::unix::{SignalKind, signal};
+        // Install both handlers before dispatch can print a prompt. Registration
+        // inside the spawned task leaves a window for default signal handling.
+        let mut interruption = signal(SignalKind::interrupt())?;
+        let mut termination = signal(SignalKind::terminate())?;
+        Ok(async move {
+            tokio::select! {_=interruption.recv()=>{},_=termination.recv()=>{}}
+        })
     }
-    let _ = tokio::signal::ctrl_c().await;
+    #[cfg(not(unix))]
+    {
+        Ok(async {
+            let _ = tokio::signal::ctrl_c().await;
+        })
+    }
 }
 #[tokio::main]
 async fn main() -> ExitCode {
@@ -41,8 +48,15 @@ async fn main() -> ExitCode {
     let output_format = cli.command.output_format();
     let cancel = CancellationToken::new();
     let signal = cancel.clone();
+    let interruption = match interrupt() {
+        Ok(interruption) => interruption,
+        Err(error) => {
+            eprintln!("cannot listen for interruption: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
     let signals = tokio::spawn(async move {
-        interrupt().await;
+        interruption.await;
         signal.cancel();
     });
     let output_path = match &cli.command {
