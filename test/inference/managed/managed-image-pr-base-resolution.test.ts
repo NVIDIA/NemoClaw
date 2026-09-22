@@ -121,6 +121,7 @@ it.each([
     candidatePath: "README.md",
     expectedLocal: false,
     failPublishedPull: false,
+    rejectCopyParsing: false,
     title: "reuses a published DCode base built from the same runtime contract inputs",
   },
   {
@@ -128,6 +129,7 @@ it.each([
     candidatePath: "agents/langchain-deepagents-code/validate-runtime-contract.py",
     expectedLocal: true,
     failPublishedPull: false,
+    rejectCopyParsing: false,
     title: "builds the DCode base locally when its published source predates the runtime contract",
   },
   {
@@ -135,6 +137,7 @@ it.each([
     candidatePath: "scripts/security/patches/libssh2-1.11.1-cve-2026.patch",
     expectedLocal: true,
     failPublishedPull: false,
+    rejectCopyParsing: false,
     title: "builds the DCode base locally when a copied security input changed",
   },
   {
@@ -143,6 +146,7 @@ it.each([
     candidatePath: "scripts/lib/dockerfile-copy-sources.mts",
     expectedLocal: true,
     failPublishedPull: false,
+    rejectCopyParsing: false,
     title: "builds the DCode base locally when its COPY parser changed",
   },
   {
@@ -150,6 +154,7 @@ it.each([
     candidatePath: ":security-contract",
     expectedLocal: true,
     failPublishedPull: false,
+    rejectCopyParsing: false,
     title: "treats a leading-colon COPY source as a literal Git path",
   },
   {
@@ -157,9 +162,20 @@ it.each([
     candidatePath: "README.md",
     expectedLocal: true,
     failPublishedPull: true,
+    rejectCopyParsing: false,
     title: "builds the DCode base locally when the published base cannot be verified",
   },
-])("$title", ({ candidateContents, candidatePath, expectedLocal, failPublishedPull }) => {
+  {
+    candidateContents: "candidate documentation\n",
+    candidatePath: "README.md",
+    expectedLocal: true,
+    failPublishedPull: false,
+    rejectCopyParsing: true,
+    title: "builds the DCode base locally when direct COPY parsing rejects the Dockerfile",
+  },
+])("$title", (testCase) => {
+  const { candidateContents, candidatePath, expectedLocal, failPublishedPull, rejectCopyParsing } =
+    testCase;
   const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-pr-base-"));
   const fakeBin = path.join(temporaryRoot, "bin");
   const output = path.join(temporaryRoot, "output");
@@ -187,13 +203,14 @@ it.each([
   const copyParser = "scripts/lib/dockerfile-copy-sources.mts";
   const fixtureResolver = path.join(temporaryRoot, "scripts/checks/resolve-managed-pr-base.sh");
   const securityPatch = "scripts/security/patches/libssh2-1.11.1-cve-2026.patch";
+  const unsupportedCopy = rejectCopyParsing ? 'COPY ["README.md", "/tmp/README.md"]\n' : "";
   fs.mkdirSync(agentRoot, { recursive: true });
   fs.mkdirSync(path.dirname(fixtureResolver), { recursive: true });
   fs.mkdirSync(path.join(temporaryRoot, path.dirname(copyParser)), { recursive: true });
   fs.mkdirSync(path.join(temporaryRoot, path.dirname(securityPatch)), { recursive: true });
   fs.writeFileSync(
     path.join(agentRoot, "Dockerfile.base"),
-    `FROM scratch\nCOPY --chmod=0444 ${securityPatch} /tmp/libssh2.patch\nCOPY agents/langchain-deepagents-code/requirements.lock /tmp/requirements.lock\nCOPY agents/langchain-deepagents-code/validate-runtime-contract.py /tmp/validate-runtime-contract.py\nCOPY ${adversarialInput} /tmp/security-contract\n`,
+    `FROM scratch\nCOPY --chmod=0444 ${securityPatch} /tmp/libssh2.patch\nCOPY agents/langchain-deepagents-code/requirements.lock /tmp/requirements.lock\nCOPY agents/langchain-deepagents-code/validate-runtime-contract.py /tmp/validate-runtime-contract.py\nCOPY ${adversarialInput} /tmp/security-contract\n${unsupportedCopy}`,
   );
   fs.writeFileSync(path.join(agentRoot, "requirements.lock"), "deepagents==0.7.5\n");
   fs.writeFileSync(path.join(agentRoot, "validate-runtime-contract.py"), "print('ok')\n");
@@ -316,8 +333,9 @@ exit 90
     expect(summaryContents.includes(`Reason: published base ${baseRepository}@${digest}`)).toBe(
       expectedLocal,
     );
-    expect(summaryContents.includes(publishedSourceSha)).toBe(expectedLocal && !failPublishedPull);
-    expect(summaryContents.includes(candidatePath)).toBe(expectedLocal && !failPublishedPull);
+    const expectedDetailedReason = expectedLocal && !failPublishedPull && !rejectCopyParsing;
+    expect(summaryContents.includes(publishedSourceSha)).toBe(expectedDetailedReason);
+    expect(summaryContents.includes(candidatePath)).toBe(expectedDetailedReason);
   } finally {
     fs.rmSync(temporaryRoot, { recursive: true, force: true });
   }
