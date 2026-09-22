@@ -138,7 +138,8 @@ it.each([
     title: "builds the DCode base locally when a copied security input changed",
   },
   {
-    candidateContents: "export const fixture = false;\n",
+    candidateContents:
+      'import fs from "node:fs";\nfs.writeFileSync(process.env.PARSER_SIDE_EFFECT, "executed");\nexport const fixture = false;\n',
     candidatePath: "scripts/lib/dockerfile-copy-sources.mts",
     expectedLocal: true,
     failPublishedPull: false,
@@ -162,6 +163,7 @@ it.each([
   const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-pr-base-"));
   const fakeBin = path.join(temporaryRoot, "bin");
   const output = path.join(temporaryRoot, "output");
+  const parserSideEffect = path.join(temporaryRoot, "parser-side-effect");
   const summary = path.join(temporaryRoot, "summary");
   const dockerLog = path.join(temporaryRoot, "docker.log");
   const exactRaw = '{"schemaVersion":2,"config":{"digest":"sha256:base"}}';
@@ -183,8 +185,10 @@ it.each([
   const agentRoot = path.join(temporaryRoot, "agents/langchain-deepagents-code");
   const adversarialInput = ":security-contract";
   const copyParser = "scripts/lib/dockerfile-copy-sources.mts";
+  const fixtureResolver = path.join(temporaryRoot, "scripts/checks/resolve-managed-pr-base.sh");
   const securityPatch = "scripts/security/patches/libssh2-1.11.1-cve-2026.patch";
   fs.mkdirSync(agentRoot, { recursive: true });
+  fs.mkdirSync(path.dirname(fixtureResolver), { recursive: true });
   fs.mkdirSync(path.join(temporaryRoot, path.dirname(copyParser)), { recursive: true });
   fs.mkdirSync(path.join(temporaryRoot, path.dirname(securityPatch)), { recursive: true });
   fs.writeFileSync(
@@ -194,7 +198,9 @@ it.each([
   fs.writeFileSync(path.join(agentRoot, "requirements.lock"), "deepagents==0.7.5\n");
   fs.writeFileSync(path.join(agentRoot, "validate-runtime-contract.py"), "print('ok')\n");
   fs.writeFileSync(path.join(temporaryRoot, adversarialInput), "adversarial contract v1\n");
-  fs.writeFileSync(path.join(temporaryRoot, copyParser), "export const fixture = true;\n");
+  fs.copyFileSync(resolver, fixtureResolver);
+  fs.chmodSync(fixtureResolver, 0o755);
+  fs.copyFileSync(path.join(repoRoot, copyParser), path.join(temporaryRoot, copyParser));
   fs.writeFileSync(path.join(temporaryRoot, securityPatch), "security patch v1\n");
   fs.writeFileSync(path.join(temporaryRoot, ".dockerignore"), ".git\n");
   runGit(
@@ -285,13 +291,14 @@ exit 90
     GITHUB_STEP_SUMMARY: summary,
     LOCAL_BASE_REFERENCE: "nemoclaw-managed-pr/langchain-deepagents-code-base:test",
     PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
+    PARSER_SIDE_EFFECT: parserSideEffect,
     PLATFORM: "linux/amd64",
     PUBLISHED_SOURCE_SHA: publishedSourceSha,
     RUNNER_TEMP: temporaryRoot,
   };
 
   try {
-    const result = spawnSync(resolver, [], {
+    const result = spawnSync(fixtureResolver, [], {
       cwd: temporaryRoot,
       encoding: "utf8",
       env: environment,
@@ -302,6 +309,7 @@ exit 90
     const dockerCommands = fs.readFileSync(dockerLog, "utf8");
     expect(dockerCommands.includes("buildx build")).toBe(expectedLocal);
     expect(dockerCommands).not.toContain("validate-dcode-runtime-contract.py");
+    expect(fs.existsSync(parserSideEffect)).toBe(false);
     const summaryContents = fs.readFileSync(summary, "utf8");
     expect(summaryContents.includes("Reason: published base ")).toBe(expectedLocal);
     expect(summaryContents.includes(candidateSha)).toBe(expectedLocal);

@@ -97,11 +97,21 @@ build_local_base() {
     "$DISPLAY_NAME" "$BASE_DOCKERFILE" "$CANDIDATE_SHA" "$reason" \
     >>"$GITHUB_STEP_SUMMARY"
 }
+DCODE_COPY_PARSER_INPUT="scripts/lib/dockerfile-copy-sources.mts"
+dcode_changed_inputs() {
+  local source_revision="$1" candidate_revision="$2" input
+  local literal_inputs=()
+  shift 2
+  for input in "$@"; do
+    literal_inputs+=(":(literal)${input}")
+  done
+  git diff --name-only "$source_revision" "$candidate_revision" -- \
+    "${literal_inputs[@]}"
+}
 read_dcode_base_inputs() {
-  local dockerfile="$1" parser parser_input parsed_inputs source
-  parser_input="scripts/lib/dockerfile-copy-sources.mts"
+  local dockerfile="$1" parser parsed_inputs source
   parser="${BASH_SOURCE[0]%/*}/../lib/dockerfile-copy-sources.mts"
-  DCODE_BASE_INPUTS=("$dockerfile" .dockerignore "$parser_input")
+  DCODE_BASE_INPUTS=("$dockerfile" .dockerignore "$DCODE_COPY_PARSER_INPUT")
   parsed_inputs="$(
     node --experimental-strip-types --input-type=module -e '
       import { pathToFileURL } from "node:url";
@@ -120,8 +130,8 @@ read_dcode_base_inputs() {
 }
 published_dcode_base_matches_candidate_contract() {
   [ "$AGENT" = "langchain-deepagents-code" ] || return 0
-  local reference="$1" image_json source_revision changed_inputs input
-  local literal_inputs=()
+  local reference="$1" image_json source_revision changed_inputs
+  local bootstrap_inputs=("$BASE_DOCKERFILE" .dockerignore "$DCODE_COPY_PARSER_INPUT")
   docker pull --platform "$PLATFORM" "$reference" >/dev/null || return 1
   image_json="$(docker image inspect "$reference")" || return 1
   source_revision="$(
@@ -137,13 +147,18 @@ published_dcode_base_matches_candidate_contract() {
   if ! git cat-file -e "${source_revision}^{commit}" 2>/dev/null; then
     git fetch --no-tags --depth=1 origin "$source_revision" || return 1
   fi
-  read_dcode_base_inputs "$BASE_DOCKERFILE" || return 1
-  for input in "${DCODE_BASE_INPUTS[@]}"; do
-    literal_inputs+=(":(literal)${input}")
-  done
   changed_inputs="$(
-    git diff --name-only "$source_revision" "$CANDIDATE_SHA" -- \
-      "${literal_inputs[@]}"
+    dcode_changed_inputs "$source_revision" "$CANDIDATE_SHA" \
+      "${bootstrap_inputs[@]}"
+  )" || return 1
+  if [ -n "$changed_inputs" ]; then
+    PUBLISHED_DCODE_CHANGED_INPUTS="${changed_inputs//$'\n'/, }"
+    return 1
+  fi
+  read_dcode_base_inputs "$BASE_DOCKERFILE" || return 1
+  changed_inputs="$(
+    dcode_changed_inputs "$source_revision" "$CANDIDATE_SHA" \
+      "${DCODE_BASE_INPUTS[@]}"
   )" || return 1
   PUBLISHED_DCODE_CHANGED_INPUTS="${changed_inputs//$'\n'/, }"
   [ -z "$changed_inputs" ]
