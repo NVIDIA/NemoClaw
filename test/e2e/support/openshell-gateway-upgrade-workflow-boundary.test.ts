@@ -22,6 +22,8 @@ import {
   captureGatewayUpgradeProbeEvidence,
   currentGatewayUpgradeInstallerArgs,
   currentNemoclawUpgradeRef,
+  gatewayCredentialNonExposureScript,
+  gatewayUpgradeRecoverySucceeded,
   GATEWAY_UPGRADE_INSTALL_TIMEOUT_MS,
   isolateGatewayUpgradeFixtureEnv,
   legacyGatewayUpgradeBaseImageOverrideEnabled,
@@ -163,6 +165,49 @@ describe("OpenShell gateway upgrade boundary", () => {
       ["get", ["sandbox", "get", "-g", "nemoclaw", sandboxName]],
       ["list", ["sandbox", "list", "-g", "nemoclaw", "-o", "json"]],
     ]);
+  });
+
+  it.each([
+    { expected: true, forwardValid: true, recoveryExitCode: 0, stateExitCodes: [0, 0] },
+    { expected: false, forwardValid: true, recoveryExitCode: 1, stateExitCodes: [0, 0] },
+    { expected: false, forwardValid: false, recoveryExitCode: 0, stateExitCodes: [0, 0] },
+    { expected: false, forwardValid: true, recoveryExitCode: 0, stateExitCodes: [0, 1] },
+  ])(
+    "reports recovery success as $expected for command $recoveryExitCode, listener $forwardValid, and sandbox states $stateExitCodes",
+    ({ expected, forwardValid, recoveryExitCode, stateExitCodes }) => {
+      expect(
+        gatewayUpgradeRecoverySucceeded(
+          { exitCode: recoveryExitCode },
+          { valid: forwardValid },
+          stateExitCodes.map((exitCode) => ({ exitCode })),
+        ),
+      ).toBe(expected);
+    },
+  );
+
+  it("fails credential custody when managed-file inspection errors", () => {
+    const temporaryDirectory = fs.mkdtempSync(
+      path.join(os.tmpdir(), "nemoclaw-gateway-credential-inspection-"),
+    );
+    const missingPath = path.join(temporaryDirectory, "missing-openclaw.json");
+    try {
+      const result = spawnSync(
+        "bash",
+        ["-c", gatewayCredentialNonExposureScript("credential-not-in-environment", [missingPath])],
+        {
+          encoding: "utf8",
+          env: { PATH: process.env.PATH },
+        },
+      );
+
+      expect({ status: result.status, stderr: result.stderr }).toEqual({
+        status: 2,
+        stderr: expect.stringContaining("managed OpenClaw credential inspection failed"),
+      });
+      expect(result.stderr).toContain(missingPath);
+    } finally {
+      fs.rmSync(temporaryDirectory, { force: true, recursive: true });
+    }
   });
 
   it("freshens only the retryable old fixture install", () => {

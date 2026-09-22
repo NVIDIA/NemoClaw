@@ -667,7 +667,17 @@ For a non-interactive install, set `NEMOCLAW_CONFIRM_LEGACY_MANAGED_RECREATE` to
 The confirmation permits those legacy entries to recover onto the current managed image, but it does not override recorded custom-image evidence.
 After confirmed recovery, the installer skips generic onboarding unless DGX Station reconciliation remains necessary.
 Required DGX Station reconciliation still passes host admission before onboarding.
-For any registered-sandbox upgrade that you prepare manually, use the current prepared NemoClaw CLI to require strict backup and retire all applicable registered legacy forwards before you retire the old gateway.
+For any registered-sandbox upgrade that you prepare manually, use the current release CLI.
+If the installer has not already reported that it prepared the current CLI, start the supported automatic flow first:
+
+```bash
+curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_ACCEPT_EXPERIMENTAL_OPENSHELL_UPGRADE=1 bash
+```
+
+That flow prepares the current CLI before it replaces OpenShell.
+If it completes, do not run the manual steps below.
+Continue manually only when the automatic flow stops after preparing the CLI or a support workflow directs you to this recovery path.
+Use the prepared current CLI to require strict backup and retire all applicable registered legacy forwards before you retire the old gateway.
 Strict backup can report a confirmed stranded registry sandbox without creating a backup for it because both the selected gateway and the container provider prove that no sandbox runtime remains.
 That record requires the cleanup or recreation action printed by `$$nemoclaw backup-all`, but it does not block a prepared upgrade after the strict command succeeds:
 
@@ -682,7 +692,8 @@ NEMOCLAW_GATEWAY_PORT="$selected_port" NEMOCLAW_REQUIRE_ALL_SANDBOX_BACKUPS=1 $$
 For a non-default gateway, replace `8080` with its port and set `gateway_name` to `nemoclaw-<selected-port>`.
 If an older OpenShell release rejects the named destroy command for the default `nemoclaw` gateway, run `openshell gateway destroy` instead.
 Do not substitute `openshell gateway remove`: removal can unregister a gateway without stopping its process.
-Set `NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1` only after both commands succeed and the backup command reports a complete result.
+Set `NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1` only after the command pipeline exits successfully.
+Confirm that the strict backup summary reports `0 failed, 0 skipped` and that the `Legacy dashboard forwards:` summary appears before gateway destruction.
 A confirmed stranded record has no backup to reuse; complete the reported cleanup or recreation action during recovery.
 If backup, forward retirement, or gateway retirement fails, resolve the failure while the completed backups remain intact.
 This environment variable asserts that strict backup, legacy-forward retirement, and gateway retirement are complete, so the installer skips that repeated preparation phase before it checks whether OpenShell is installed or whether its version is in range.
@@ -3126,13 +3137,18 @@ $$nemoclaw upgrade-sandboxes [--check] [--auto] [--yes|-y]
 
 | Flag | Description |
 | --- | --- |
-| `--check` | Inspect sandbox state without rebuilding. Exits nonzero when it reports stale state, an unknown version, a backup recovery condition, or a sandbox missing from its recorded gateway. Inspect each diagnostic before you select a remediation. |
-| `--auto` | Rebuild every stale sandbox without prompting. Used by the installer to upgrade in place. |
-| `--yes`, `-y` | Skip the confirmation prompt for the rebuild plan. |
+| `--check` | Inspect sandbox state without rebuilding. Exits nonzero when it reports stale state, an unknown version, a backup recovery condition, a sandbox missing from its recorded gateway, or a Ready sandbox that retains intentional-stop state. Inspect each diagnostic before you select a remediation. |
+| `--auto` | Rebuild eligible stale sandboxes and reconcile retained intentional-stop state without prompting. Used by the installer to upgrade in place. |
+| `--yes`, `-y` | Skip confirmation prompts for rebuilds and stopped-state reconciliation. |
 
 Before it inspects a gateway or starts a rebuild, the command validates every registered sandbox name against the NemoClaw sandbox name format. Route-only reservations are not sandboxes and are excluded from this validation. If the command finds incompatible names, it lists each name before any gateway inspection or rebuild. With `--check`, the command then returns without changing state. In a mutating mode, it exits with a nonzero status. NemoClaw does not truncate or rename a registered sandbox identity. Follow [Update Sandboxes](../manage-sandboxes/operate-sandboxes/update-sandboxes) to transfer state to a compatible replacement before you rerun the command.
 
 Each rebuild reuses the same workspace backup-and-restore flow as `$$nemoclaw <name> rebuild`, so workspace files survive the upgrade. If the registry or required managed-image catalog evidence is unavailable, NemoClaw fails closed instead of selecting an unpinned image. Restore registry access, then rerun the command so NemoClaw can validate the exact image digest. During installer recovery, a registered sandbox that is not Ready can also be rebuilt from its validated latest backup. That recovery requires a NemoClaw-managed image fingerprint or the installer's explicit confirmation for a listed pre-fingerprint OpenClaw or Hermes entry. The legacy confirmation never overrides recorded custom-image evidence. OpenClaw's native plugin and package state is restored with the rest of its declared state; NemoClaw does not require separate plugin ownership metadata.
+
+When installer recovery rebuilds an intentionally stopped sandbox, NemoClaw returns the replacement to `Stopped`.
+The command exits nonzero if OpenShell cannot confirm that phase or a required post-stop reconciliation fails.
+Rerun `$$nemoclaw upgrade-sandboxes --auto` to reconcile the stopped state without rebuilding a current replacement again.
+The retry is complete when the command exits zero and reports that the sandbox was reconciled to stopped state; `$$nemoclaw upgrade-sandboxes --check` should then omit that sandbox from the reconciliation plan.
 
 ### `$$nemoclaw backup-all`
 

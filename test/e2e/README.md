@@ -224,7 +224,7 @@ The historical fixtures retain these version boundaries:
 
 | Fixture | Required boundary |
 | --- | --- |
-| `openshell-gateway-upgrade` | Retain the reviewed v0.0.89 x86-64 and v0.0.123 ARM64 fixtures with pinned installer commits and digests and reviewed OpenClaw archives. Prove that each historical dashboard forward is reachable before upgrade and replaced by an equivalent current-owned forward, while the same sandbox becomes Ready, preserves its workspace marker, and completes one authenticated post-upgrade agent turn. |
+| `openshell-gateway-upgrade` | Retain the reviewed v0.0.89 and v0.0.123 x86-64 fixtures with pinned installer commits, digests, and OpenClaw archives. Prove credential custody and authenticated agent turns before and after upgrade. Require the survivor to preserve workspace state. Create each fixture-declared stopped sandbox, preserve its workspace state, and restore its stopped phase after a lifecycle check. |
 | `rebuild-openclaw` | Retain the reviewed old-base build in the target. Build and create the old sandbox before testing the candidate rebuild path. |
 
 These targets may restore the shared artifact for the candidate CLI.
