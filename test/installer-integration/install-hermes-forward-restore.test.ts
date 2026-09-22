@@ -141,11 +141,30 @@ function expectRecovery(h: ReturnType<typeof fixture>): void {
   expect(fs.existsSync(h.openshellLog)).toBe(false);
 }
 
+function seedInactiveLegacyWatcher(h: ReturnType<typeof fixture>): void {
+  const completed = spawnSync(process.execPath, ["-e", "process.exit(0)"], {
+    encoding: "utf8",
+    env: h.env,
+  });
+  expect(completed.status, completed.stderr).toBe(0);
+  expect(Number.isSafeInteger(completed.pid)).toBe(true);
+  expect(processExists(completed.pid)).toBe(false);
+  const runtimeState = path.join(h.state, "state");
+  fs.mkdirSync(runtimeState, { recursive: true });
+  fs.writeFileSync(
+    path.join(runtimeState, "hermes-created-by-onboard-8647.forward.pid"),
+    `${String(completed.pid)}\n`,
+  );
+}
+
 describe("Hermes installer forward restore", () => {
-  it("always invokes identity-bound recovery before accepting healthy transport", () => {
+  it("keeps the forward verified by fresh onboarding without a second recovery (#10691)", () => {
     const h = fixture();
     try {
-      expectRecovery(h);
+      const result = restore(h.env);
+      expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+      expect(fs.existsSync(h.cliLog)).toBe(false);
+      expect(fs.existsSync(h.openshellLog)).toBe(false);
     } finally {
       fs.rmSync(h.root, { recursive: true, force: true });
     }
@@ -200,6 +219,8 @@ describe("Hermes installer forward restore", () => {
     const recoveryFailure = fixture();
     const healthFailure = fixture();
     try {
+      seedInactiveLegacyWatcher(recoveryFailure);
+      seedInactiveLegacyWatcher(healthFailure);
       expect(restore({ ...recoveryFailure.env, CLI_STATUS: "1" }).status).toBe(1);
       const unhealthy = restore({ ...healthFailure.env, CURL_STATUS: "1" });
       expect(unhealthy.status).toBe(1);

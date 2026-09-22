@@ -25,6 +25,7 @@ FROM ${BASE_IMAGE}
 
 # The supplied base may end as a non-root runtime user. Reset the build user
 # explicitly before installing the root-owned managed-startup handoff.
+# hadolint ignore=DL3066
 USER root
 
 ARG NEMOCLAW_CORPORATE_CA_B64
@@ -194,7 +195,8 @@ RUN chmod 444 /opt/nemoclaw-deepagents-code/generate-config.ts /opt/nemoclaw-dee
     && test "$(find /opt/nemoclaw-deepagents-profile-plugin -type f -print | LC_ALL=C sort)" = "$(printf '%s\n' '/opt/nemoclaw-deepagents-profile-plugin/pyproject.toml' '/opt/nemoclaw-deepagents-profile-plugin/src/nemoclaw_deepagents_profile/__init__.py')" \
     && printf '%s  %s\n' '97eaed5781f9c7df4478c96263b0742fb545b322846fe0c73c39a3bfba4553a9' '/opt/nemoclaw-deepagents-profile-plugin/src/nemoclaw_deepagents_profile/__init__.py' '7be3f7972d7cd78d3ddaf66e2ff8b07a5e6af3611034b956cf0475ba78f5a576' '/opt/nemoclaw-deepagents-profile-plugin/pyproject.toml' | sha256sum -c - \
     && /opt/venv/bin/pip3 install --no-index --no-cache-dir --no-deps --no-build-isolation /opt/nemoclaw-deepagents-profile-plugin \
-    && /opt/venv/bin/python3 -I -c 'import nemoclaw_deepagents_profile; print("NEMOCLAW_DCODE_PROFILE_" + "IMPORT_GATE", flush=True); import deepagents; import deepagents_code' \
+    && /opt/venv/bin/python3 -I -c 'import nemoclaw_deepagents_profile; print("NEMOCLAW_DCODE_PROFILE_" + "IMPORT_GATE", flush=True)' \
+    && /opt/venv/bin/python3 -I /usr/local/lib/nemoclaw/validate-dcode-runtime-contract.py \
     && /opt/venv/bin/pip3 check \
     && rm -rf /opt/nemoclaw-deepagents-profile-plugin \
     && python3 /opt/nemoclaw-deepagents-code/patch-managed-quickjs.py \
@@ -280,6 +282,7 @@ RUN install -d -m 0755 /usr/local/share/nemoclaw \
     && env -i /usr/local/bin/dcode.real --version \
     && env -i /usr/local/bin/deepagents-code --version
 
+# hadolint ignore=DL3064
 ENV HOME=/sandbox \
     VIRTUAL_ENV=/opt/venv \
     PATH="/usr/local/bin:/opt/venv/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin" \
@@ -313,6 +316,7 @@ ENV HOME=/sandbox \
 
 WORKDIR /sandbox
 RUN test "$(id -u sandbox):$(id -g sandbox):$(pwd)" = "999:999:/sandbox"
+# hadolint ignore=DL3066
 USER sandbox
 
 RUN mkdir -p /sandbox/.nemoclaw/blueprints/0.1.0 \
@@ -320,6 +324,7 @@ RUN mkdir -p /sandbox/.nemoclaw/blueprints/0.1.0 \
     && node /opt/nemoclaw-deepagents-code/generate-config.ts \
     && chmod 660 /sandbox/.deepagents/config.toml
 
+# hadolint ignore=DL3066
 USER root
 RUN chown root:sandbox /sandbox \
     && chmod 1775 /sandbox \
