@@ -286,6 +286,31 @@ describe("runSandboxGpuCreateFlow proof authorization", () => {
 });
 
 describe("runSandboxGpuCreateFlow native failure and readiness", () => {
+  it("rejects APF policy authority before lifecycle submission or mutable-name cleanup (#12119)", async () => {
+    const input = createVerifiedNoGpuInput();
+    const startupCommand = [...input.createRequest!.startupCommand];
+    input.requirePolicylessCreate = true;
+    input.createRequest = {
+      ...input.createRequest!,
+      policyPath: "/tmp/caller-policy.yaml",
+      startupCommand,
+    };
+    const deps = createDeps();
+    deps.createSandbox = vi.fn();
+
+    await expect(runSandboxGpuCreateFlow(input, deps)).rejects.toThrow(
+      "APF interceptor sandbox creation must not supply a caller policy",
+    );
+
+    expect(deps.createSandbox).not.toHaveBeenCalled();
+    expect(input.createRequest.startupCommand).toEqual(startupCommand);
+    expect(
+      vi
+        .mocked(deps.runOpenshell)
+        .mock.calls.filter(([args]) => (args as string[]).includes("delete")),
+    ).toHaveLength(0);
+  });
+
   it("settles an ambiguous create submission before post-create effects", async () => {
     let nonce = "";
     const input = createVerifiedNoGpuInput();
