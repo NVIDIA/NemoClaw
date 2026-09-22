@@ -42,11 +42,9 @@ pub enum ServiceDefinition {
     Vllm(Box<installers::vllm::Service>),
 }
 
-/// OpenTofu schema behavior owned by a service installer resource.
+/// Retention and process roles of a service installer resource.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct ResourceBehavior {
-    pub computed_digest: bool,
-    pub observed_running: bool,
     pub retained_storage: bool,
     pub runtime_process: bool,
 }
@@ -94,11 +92,6 @@ pub fn resource_schemas() -> Vec<ResourceSchema> {
 
 pub fn resource_behavior(kind: &str) -> ResourceBehavior {
     ResourceBehavior {
-        computed_digest: false,
-        observed_running: matches!(
-            kind,
-            installers::ollama::SERVICE_KIND | installers::vllm::SERVICE_KIND
-        ),
         retained_storage: matches!(
             kind,
             installers::ollama::STORAGE_KIND | installers::vllm::STORAGE_KIND

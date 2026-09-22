@@ -32,7 +32,7 @@ fn unknown_id_reuses_state_and_only_immutable_fields_require_replacement() {
 
 #[test]
 fn stopped_managed_process_reapplies_install_without_promising_readiness_or_replacement() {
-    for kind in ["managed_gateway", "inference_service", "ollama_service"] {
+    for kind in ["managed_gateway", "pi_configuration"] {
         let definition = Definition::new(kind, &["spec", "running"], &["running"]);
         for running in ["true", "false"] {
             let prior = BTreeMap::from([
@@ -80,5 +80,21 @@ fn provider_authentication_mode_requires_replacement_but_reference_rotation_upda
             replaces,
             "{before:?} -> {after:?}"
         );
+    }
+}
+
+#[test]
+fn removed_service_kinds_do_not_override_configured_running_values() {
+    for kind in ["inference_service", "ollama_service"] {
+        let definition = Definition::new(kind, &["running"], &["running"]);
+        let prior = BTreeMap::from([
+            ("id".into(), Value::Value("existing".into())),
+            ("running".into(), Value::Value("false".into())),
+        ]);
+        let mut proposed = prior.clone();
+        proposed.insert("running".into(), Value::Value("true".into()));
+        let (planned, replacements) = plan_update(&definition, &prior, proposed.clone());
+        assert_eq!(planned, proposed);
+        assert!(replacements.is_empty());
     }
 }
