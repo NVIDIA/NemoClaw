@@ -58,14 +58,29 @@ impl Deployment {
             BTreeMap::new()
         };
         validate_teardown_state(&record, &bindings, &runtime_bindings)?;
+        let root_graph = compile::compile_teardown(
+            &record.document,
+            &record.generations,
+            &bundle.manifest.version,
+            &bindings.keys().cloned().collect(),
+            false,
+        )?;
+        let runtime_graph = runtime
+            .as_ref()
+            .map(|_| {
+                compile::compile_teardown(
+                    &record.document,
+                    &record.generations,
+                    &bundle.manifest.version,
+                    &runtime_bindings.keys().cloned().collect(),
+                    true,
+                )
+            })
+            .transpose()?;
         let mut result = OperationResult::planned(Vec::new());
-        result
-            .retained
-            .extend(retained_bindings(&record, &bindings, false)?);
-        if runtime.is_some() {
-            result
-                .retained
-                .extend(retained_bindings(&record, &runtime_bindings, true)?);
+        result.retained.extend(root_graph.retained.iter().cloned());
+        if let Some(graph) = &runtime_graph {
+            result.retained.extend(graph.retained.iter().cloned());
         }
         if record.destroyed() {
             if !preview {
@@ -77,14 +92,14 @@ impl Deployment {
         let mut stages = Vec::new();
         if !record.root_destroyed() {
             let (changes, planned) = self
-                .plan_teardown_stage(&bundle, &store, &record, false, cancel)
+                .plan_teardown_stage(&bundle, &store, &record, false, &root_graph, cancel)
                 .await?;
             result.changes.extend(changes);
             stages.push((&store, false, planned));
         }
-        if let Some(stage) = &runtime {
+        if let Some((stage, graph)) = runtime.as_ref().zip(runtime_graph.as_ref()) {
             let (changes, planned) = self
-                .plan_teardown_stage(&bundle, stage, &record, true, cancel)
+                .plan_teardown_stage(&bundle, stage, &record, true, graph, cancel)
                 .await?;
             result.changes.extend(changes);
             stages.push((stage, true, planned));
@@ -124,6 +139,7 @@ impl Deployment {
         store: &Store,
         record: &Record,
         runtime: bool,
+        compiled: &compile::CompiledTeardown,
         cancel: &CancellationToken,
     ) -> Result<(Vec<Change>, bool), Error> {
         let bindings = self
@@ -145,15 +161,7 @@ impl Deployment {
             return Ok((Vec::new(), false));
         }
         let expected = teardown_expected(record, &bindings, runtime)?;
-        let retained = retained_addresses(record, &bindings, runtime)?;
-        let graph = compile::compile_teardown(
-            &record.document,
-            &record.generations,
-            &bundle.manifest.version,
-            &bindings.keys().cloned().collect(),
-            runtime,
-        )?;
-        self.prepare(bundle, store, &graph)?;
+        self.prepare(bundle, store, &compiled.graph)?;
         self.tofu(
             bundle,
             store,
@@ -172,30 +180,10 @@ impl Deployment {
             )
             .await?;
         Ok((
-            check_destroy_plan(&plan, &expected, &bindings, &retained)?,
+            check_destroy_plan(&plan, &expected, &bindings, &compiled.retained)?,
             true,
         ))
     }
-}
-
-fn retained_addresses(
-    record: &Record,
-    bindings: &BTreeMap<String, StateBinding>,
-    runtime: bool,
-) -> Result<BTreeSet<String>, Error> {
-    let mut retained: BTreeSet<_> =
-        crate::services::remove_plans(&record.document, &record.generations)?
-            .into_iter()
-            .flat_map(|plan| plan.retained)
-            .filter(|address| bindings.contains_key(address))
-            .collect();
-    retained.insert(if runtime {
-        GATEWAY_STORAGE.into()
-    } else {
-        "nemoclaw_workspace.deployment".into()
-    });
-    retained.retain(|address| bindings.contains_key(address));
-    Ok(retained)
 }
 
 fn teardown_expected(
@@ -321,17 +309,6 @@ fn runtime_bindings_safe(
     }
     teardown_expected(record, bindings, true)?;
     Ok(true)
-}
-
-fn retained_bindings(
-    record: &Record,
-    bindings: &BTreeMap<String, StateBinding>,
-    runtime: bool,
-) -> Result<Vec<String>, Error> {
-    Ok(retained_addresses(record, bindings, runtime)?
-        .into_iter()
-        .filter(|address| bindings.contains_key(address))
-        .collect())
 }
 
 #[cfg(test)]
@@ -545,8 +522,6 @@ mod tests {
                 })
                 .collect();
         teardown_expected(&record, &bindings, true).unwrap();
-        let retained = retained_addresses(&record, &bindings, true).unwrap();
-        assert_eq!(retained.len(), 5);
         let storage_kind = service_storage(&record)
             .split_once('.')
             .unwrap()
@@ -557,7 +532,7 @@ mod tests {
             .unwrap()
             .0
             .to_owned();
-        let graph = compile::compile_teardown(
+        let compiled = compile::compile_teardown(
             &record.document,
             &record.generations,
             "0.1.0",
@@ -565,6 +540,9 @@ mod tests {
             true,
         )
         .unwrap();
+        let graph = compiled.graph;
+        let retained = compiled.retained;
+        assert_eq!(retained.len(), 5);
         assert_eq!(
             graph["resource"][&storage_kind].as_object().unwrap().len(),
             2
@@ -611,7 +589,7 @@ mod tests {
         let retained_storage = service_storage(&record);
         assert!(bindings[&process].spec.is_empty());
         assert!(!expected[&process]["spec"].is_empty());
-        let graph = compile::compile_teardown(
+        let compiled = compile::compile_teardown(
             &record.document,
             &record.generations,
             "0.1.0",
@@ -619,6 +597,7 @@ mod tests {
             true,
         )
         .unwrap();
+        let graph = compiled.graph;
         assert!(graph.get("data").is_none());
         assert_eq!(graph["provider"]["nemoclaw"]["destroy"], true);
         assert_eq!(graph["resource"].as_object().unwrap().len(), 3);

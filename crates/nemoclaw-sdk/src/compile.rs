@@ -523,4 +523,4 @@ pub(crate) use runtime::runtime_graph;
 
 #[path = "compile_teardown.rs"]
 mod teardown;
-pub use teardown::compile_teardown;
+pub use teardown::{CompiledTeardown, compile_teardown};

@@ -202,7 +202,26 @@ async fn lifecycle(harness: &str, authenticated: bool, kind: &str, partial_destr
         // Recovery uses current bindings and a fresh teardown plan even when
         // the failed operation's plan artifact is no longer available.
         fs::remove_file(root.join("deployment/runtime/apply.plan")).unwrap();
-        run(root, &bundle, "destroy", "", true).await;
+        let result: Value =
+            serde_json::from_slice(&run(root, &bundle, "destroy", "", true).await).unwrap();
+        let graph = read(root, "deployment/runtime/main.tf.json");
+        let mut retained: Vec<String> = graph["resource"]
+            .as_object()
+            .unwrap()
+            .iter()
+            .flat_map(|(kind, instances)| {
+                instances
+                    .as_object()
+                    .unwrap()
+                    .keys()
+                    .map(move |name| format!("{kind}.{name}"))
+            })
+            .collect();
+        retained.sort();
+        assert_eq!(result["retained"], json!(retained));
+        let repeated: Value =
+            serde_json::from_slice(&run(root, &bundle, "destroy", "", true).await).unwrap();
+        assert_eq!(repeated["retained"], result["retained"]);
         let destroyed = read(root, "engine.json");
         assert_eq!(destroyed["volume"], partial["volume"]);
         assert!(destroyed["network"].is_null());

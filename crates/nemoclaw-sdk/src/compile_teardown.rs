@@ -4,6 +4,12 @@
 use super::*;
 use std::collections::BTreeSet;
 
+/// Teardown configuration and the established resources it keeps tracked.
+pub struct CompiledTeardown {
+    pub graph: Value,
+    pub retained: BTreeSet<String>,
+}
+
 /// Compile removal of workloads while keeping established storage tracked.
 ///
 /// `established` contains resource addresses from the selected stage's saved
@@ -16,7 +22,7 @@ pub fn compile_teardown(
     version: &str,
     established: &BTreeSet<String>,
     runtime: bool,
-) -> Result<Value, crate::Error> {
+) -> Result<CompiledTeardown, crate::Error> {
     let mut graph = if runtime {
         compile_runtime(document, generations, version)?
     } else {
@@ -31,7 +37,15 @@ pub fn compile_teardown(
     } else {
         "nemoclaw_workspace.deployment".into()
     });
-    retained.retain(|address| established.contains(address));
+    retained.retain(|address| {
+        established.contains(address)
+            && address.split_once('.').is_some_and(|(kind, name)| {
+                graph["resource"]
+                    .get(kind)
+                    .and_then(|instances| instances.get(name))
+                    .is_some()
+            })
+    });
 
     // Reuse the compiler's literal escaping and provider aliases. Teardown has
     // no workload readiness prerequisites and must not create absent storage.
@@ -63,7 +77,7 @@ pub fn compile_teardown(
             .expect("compiled instances")
             .is_empty()
     });
-    Ok(graph)
+    Ok(CompiledTeardown { graph, retained })
 }
 
 #[cfg(test)]
@@ -127,8 +141,10 @@ mod tests {
             BTreeSet::from(["nemoclaw_gateway_storage.runtime".into()]),
             retained.clone(),
         ] {
-            let graph =
+            let compiled =
                 compile_teardown(&document, &generations, "0.1.0", &established, true).unwrap();
+            assert_eq!(compiled.retained, established);
+            let graph = compiled.graph;
             assert_eq!(
                 addresses(&graph),
                 established,
@@ -163,6 +179,34 @@ mod tests {
     }
 
     #[test]
+    fn reported_retention_matches_the_selected_stage_graph() {
+        let (document, generations) = fixture();
+        let established: BTreeSet<_> =
+            addresses(&compile(&document, &generations, "0.1.0").unwrap())
+                .union(&addresses(
+                    &compile_runtime(&document, &generations, "0.1.0").unwrap(),
+                ))
+                .cloned()
+                .collect();
+        for runtime in [false, true] {
+            let compiled =
+                compile_teardown(&document, &generations, "0.1.0", &established, runtime).unwrap();
+            assert_eq!(compiled.retained, addresses(&compiled.graph));
+            assert_eq!(compiled.retained.len(), if runtime { 3 } else { 1 });
+            let repeated = compile_teardown(
+                &document,
+                &generations,
+                "0.1.0",
+                &compiled.retained,
+                runtime,
+            )
+            .unwrap();
+            assert_eq!(repeated.retained, compiled.retained);
+            assert_eq!(repeated.graph, compiled.graph);
+        }
+    }
+
+    #[test]
     fn teardown_retains_workspace_only_when_established() {
         let (document, generations) = fixture();
         for established in [
@@ -172,13 +216,15 @@ mod tests {
                 "nemoclaw_sandbox.assistant".into(),
             ]),
         ] {
-            let graph =
+            let compiled =
                 compile_teardown(&document, &generations, "0.1.0", &established, false).unwrap();
+            let graph = compiled.graph;
             let expected = established
                 .into_iter()
                 .filter(|address| address == "nemoclaw_workspace.deployment")
                 .collect();
             assert_eq!(addresses(&graph), expected);
+            assert_eq!(compiled.retained, expected);
             assert!(graph.get("data").is_none());
         }
     }
