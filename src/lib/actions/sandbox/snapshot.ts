@@ -607,23 +607,13 @@ async function autoCreateSandboxFromSource(
     if (readyCheckIdentityError) throw readyCheckIdentityError;
     requireCreatedSandboxId();
   } catch {
-    if (!createResult.ambiguous) releaseCloneHostLocalReservation();
-    failUnregisteredSnapshotClone(
-      dstName,
-      sourceGatewayName,
-      createResult.ambiguous ? createAttemptNonce : undefined,
-    );
+    failUnregisteredSnapshotClone(dstName, sourceGatewayName, createAttemptNonce);
   }
   let lifecycleRegistration: ReturnType<typeof cloneLifecycle.capture>;
   try {
     lifecycleRegistration = cloneLifecycle.capture();
   } catch {
-    if (!createResult.ambiguous) releaseCloneHostLocalReservation();
-    failUnregisteredSnapshotClone(
-      dstName,
-      sourceGatewayName,
-      createResult.ambiguous ? createAttemptNonce : undefined,
-    );
+    failUnregisteredSnapshotClone(dstName, sourceGatewayName, createAttemptNonce);
   }
 
   // DNS proxy is only meaningful for the kubernetes driver (matches onboard.ts).
@@ -643,8 +633,7 @@ async function autoCreateSandboxFromSource(
   try {
     finalLifecycleRegistration = cloneLifecycle.revalidate(lifecycleRegistration);
   } catch {
-    releaseCloneHostLocalReservation();
-    failUnregisteredSnapshotClone(dstName, sourceGatewayName);
+    failUnregisteredSnapshotClone(dstName, sourceGatewayName, createAttemptNonce);
   }
   const cloneSourceEntry = srcEntry as SandboxEntry;
   try {

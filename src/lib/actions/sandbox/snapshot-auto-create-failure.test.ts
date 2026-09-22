@@ -188,6 +188,23 @@ function sourceEntry(receipt?: string): Record<string, unknown> {
   };
 }
 
+function hostLocalRouteSourceEntry(): Record<string, unknown> {
+  const receipt = serializedLlamaCppHostLocalInferenceReceipt();
+  return {
+    ...sourceEntry(),
+    openshellDriver: "docker",
+    provider: "llama-cpp-local",
+    model: "llama-cpp-model",
+    endpointUrl: "https://inference.local/v1",
+    endpointSource: "inference-set",
+    credentialEnv: "NEMOCLAW_LLAMACPP_LOCAL_TOKEN",
+    preferredInferenceApi: "openai-completions",
+    gatewayPort: 8080,
+    hostLocalInferenceReceipt: receipt,
+    hostLocalInferenceProvenance: createSandboxHostLocalInferenceProvenance("alpha", receipt),
+  };
+}
+
 vi.mock("../../adapters/docker", () => ({
   dockerCapture: vi.fn(() => ""),
   dockerForceRm: vi.fn(),
@@ -416,7 +433,11 @@ describe("snapshot restore auto-create failures", () => {
     expect(restoreSandboxStateMock).toHaveBeenCalledOnce();
   });
 
-  it("blocks registration when the nonce-owned clone identity changes", async () => {
+  it.each([
+    ["capture", 2],
+    ["revalidation", 3],
+  ])("retains route authority when clone identity changes during %s", async (_phase, changeAt) => {
+    harness.entries.set("alpha", hostLocalRouteSourceEntry());
     vi.spyOn(console, "error").mockImplementation(() => {});
     vi.spyOn(console, "log").mockImplementation(() => {});
     let selectorReads = 0;
@@ -430,7 +451,7 @@ describe("snapshot restore auto-create failures", () => {
             status: 0,
             output: JSON.stringify([
               {
-                id: selectorReads === 1 ? "beta-runtime-id" : "beta-replacement-id",
+                id: selectorReads < changeAt ? "beta-runtime-id" : "beta-replacement-id",
                 name: "beta",
                 labels: {
                   [selector.slice(0, separatorIndex)]: selector.slice(separatorIndex + 1),
@@ -460,9 +481,56 @@ describe("snapshot restore auto-create failures", () => {
 
     await expect(
       runSandboxSnapshot("alpha", { kind: "restore", to: "beta" }),
-    ).rejects.toMatchObject({ exitCode: 1 });
+    ).rejects.toMatchObject({
+      exitCode: 1,
+      lines: expect.arrayContaining([
+        expect.stringMatching(/^  Create-attempt label: ai\.nvidia\.nemoclaw\.create-attempt=/u),
+      ]),
+    });
 
     expect(streamSandboxCreateMock).toHaveBeenCalledOnce();
+    expect(getSandboxMock("beta")).toMatchObject({
+      pendingRouteReservation: true,
+      reservationSessionId: expect.stringMatching(/^[0-9a-f]{62}$/u),
+    });
+    expect(registerSandboxMock).not.toHaveBeenCalled();
+    expect(restoreSandboxStateMock).not.toHaveBeenCalled();
+  });
+
+  it("retains route authority when a successful create has no exact identity", async () => {
+    harness.entries.set("alpha", hostLocalRouteSourceEntry());
+    captureOpenshellMock.mockImplementation((args: string[]) => ({
+      status: 0,
+      output:
+        args[0] === "policy"
+          ? "version: 1\nnetwork_policies: {}\n"
+          : args.includes("--selector")
+            ? "[]"
+            : "alpha Ready\nbeta Ready\n",
+    }));
+    streamSandboxCreateMock.mockResolvedValue({
+      status: 0,
+      output: "created",
+      sawProgress: true,
+      forcedReady: true,
+    });
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    const { runSandboxSnapshot } = await import("./snapshot");
+
+    await expect(
+      runSandboxSnapshot("alpha", { kind: "restore", to: "beta" }),
+    ).rejects.toMatchObject({
+      exitCode: 1,
+      lines: expect.arrayContaining([
+        expect.stringMatching(/^  Create-attempt label: ai\.nvidia\.nemoclaw\.create-attempt=/u),
+      ]),
+    });
+
+    expect(getSandboxMock("beta")).toMatchObject({
+      pendingRouteReservation: true,
+      reservationSessionId: expect.stringMatching(/^[0-9a-f]{62}$/u),
+    });
     expect(registerSandboxMock).not.toHaveBeenCalled();
     expect(restoreSandboxStateMock).not.toHaveBeenCalled();
   });
