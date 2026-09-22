@@ -1465,7 +1465,7 @@ RUN set -eu; \
     if grep -REq --include='*.js' 'DEFAULT_PREAUTH_HANDSHAKE_TIMEOUT_MS = (1e4|15e3)' "$OC_DIST"; then echo "ERROR: Patch 5 left a short handshake-timeout constant" >&2; exit 1; fi; \
     if ! grep -REq --include='*.js' 'DEFAULT_PREAUTH_HANDSHAKE_TIMEOUT_MS = 6e4' "$OC_DIST"; then echo "ERROR: Patch 5 did not find patched 6e4 constant" >&2; exit 1; fi
 
-# Preserve OpenClaw chat.send lineage and suppress empty or premature finals.
+# Patch OpenClaw chat.send gateway behavior: preserve lineage and suppress empty finals.
 # Remove when upstream openclaw/openclaw#70164 and #50298 are fixed,
 # or when NemoClaw no longer ships an affected OpenClaw version.
 # hadolint ignore=DL3059
