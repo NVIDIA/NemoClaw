@@ -136,18 +136,18 @@ describe("OpenClaw device self-approval patch upgrades (#4462)", () => {
         "\tconst exitAfterDevicesApproveOutput = () => {",
         "\t\tlet remaining = 2;",
         "\t\tlet exited = false;",
-        "\t\tconst exit = () => {",
+        "\t\tconst exit = (code) => {",
         "\t\t\tif (exited) return;",
         "\t\t\texited = true;",
-        "\t\t\tdefaultRuntime.exit(0);",
+        "\t\t\tdefaultRuntime.exit(code);",
         "\t\t};",
-        "\t\tconst timeout = setTimeout(exit, 1000);",
+        "\t\tconst timeout = setTimeout(() => exit(1), 1000); // nemoclaw: report uncertain approval output as failure (#12064)",
         "\t\ttimeout.unref?.();",
         "\t\tconst done = () => {",
         "\t\t\tremaining -= 1;",
         "\t\t\tif (remaining === 0) {",
         "\t\t\t\tclearTimeout(timeout);",
-        "\t\t\t\texit();",
+        "\t\t\t\texit(0);",
         "\t\t\t}",
         "\t\t};",
         "\t\tfor (const stream of [process.stdout, process.stderr]) {",
@@ -195,18 +195,18 @@ describe("OpenClaw device self-approval patch upgrades (#4462)", () => {
         [
           "\t\tlet remaining = 2;",
           "\t\tlet exited = false;",
-          "\t\tconst exit = () => {",
+          "\t\tconst exit = (code) => {",
           "\t\t\tif (exited) return;",
           "\t\t\texited = true;",
-          "\t\t\tdefaultRuntime.exit(0);",
+          "\t\t\tdefaultRuntime.exit(code);",
           "\t\t};",
-          "\t\tconst timeout = setTimeout(exit, 1000);",
+          "\t\tconst timeout = setTimeout(() => exit(1), 1000); // nemoclaw: report uncertain approval output as failure (#12064)",
           "\t\ttimeout.unref?.();",
           "\t\tconst done = () => {",
           "\t\t\tremaining -= 1;",
           "\t\t\tif (remaining === 0) {",
           "\t\t\t\tclearTimeout(timeout);",
-          "\t\t\t\texit();",
+          "\t\t\t\texit(0);",
           "\t\t\t}",
           "\t\t};",
         ].join("\n"),
@@ -235,12 +235,12 @@ describe("OpenClaw device self-approval patch upgrades (#4462)", () => {
       expect(runPatch(dist).status).toBe(0);
       const file = path.join(dist, "devices-cli.runtime-fixture.js");
       const source = fs.readFileSync(file, "utf8");
-      expect(source).toContain("const timeout = setTimeout(exit, 1000);");
+      expect(source).toContain("const timeout = setTimeout(() => exit(1), 1000);");
       fs.writeFileSync(
         file,
         source.replace(
-          "const timeout = setTimeout(exit, 1000);",
-          "const timeout = setTimeout(exit, 2000);",
+          "const timeout = setTimeout(() => exit(1), 1000);",
+          "const timeout = setTimeout(() => exit(1), 2000);",
         ),
       );
 
