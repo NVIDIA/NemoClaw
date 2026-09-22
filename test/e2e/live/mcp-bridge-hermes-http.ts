@@ -2,7 +2,32 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { shellQuote } from "../../../src/lib/core/shell-quote";
+import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
+import type { HostCliClient } from "../fixtures/clients/host.ts";
+import { type SandboxClient, trustedSandboxShellScript } from "../fixtures/clients/sandbox.ts";
 import { redactString } from "../fixtures/redaction.ts";
+
+/** Capture supervisor evidence even when sandbox exec is unavailable; never replace the failure. */
+export async function captureHermesMcpRestartFailure(
+  host: Pick<HostCliClient, "command" | "openshellCommandPath">,
+  result: { exitCode: number | null; timedOut: boolean },
+  options: { agent: string; sandboxName: string; redactionValues: string[] },
+): Promise<void> {
+  if (options.agent !== "hermes" || (result.exitCode === 0 && !result.timedOut)) return;
+  await host
+    .command(
+      host.openshellCommandPath,
+      ["logs", options.sandboxName, "-n", "200", "--source", "all", "--since", "2m"],
+      {
+        artifactName: "hermes-mcp-restart-failure-supervisor-logs",
+        env: buildAvailabilityProbeEnv(),
+        redactionValues: options.redactionValues,
+        captureLimitBytes: 32_768,
+        timeoutMs: 30_000,
+      },
+    )
+    .catch(() => undefined);
+}
 
 export const HERMES_MCP_HTTP_STATUS_MARKER = "NEMOCLAW_HERMES_MCP_HTTP_STATUS=";
 export const HERMES_MCP_RESULT_TOKEN_MARKER = "NEMOCLAW_HERMES_MCP_RESULT_TOKEN=";
@@ -130,4 +155,27 @@ export function assertHermesMcpHttpResponse(
   if (result.stdout !== "") {
     throw new Error("Hermes real MCP tool call success path emitted response contents");
   }
+}
+
+export async function readHermesGatewayIdentity(
+  sandbox: SandboxClient,
+  sandboxName: string,
+  artifactName: string,
+) {
+  return sandbox.execShell(
+    sandboxName,
+    trustedSandboxShellScript(
+      [
+        "set -eu",
+        "/usr/bin/python3 -I -S - <<'PY'",
+        "import json, pathlib",
+        "record = json.loads(pathlib.Path('/sandbox/.hermes/runtime/gateway.pid').read_text())",
+        "pid = record if isinstance(record, int) else record['pid']",
+        "fields = pathlib.Path(f'/proc/{pid}/stat').read_text().rsplit(')', 1)[1].split()",
+        "print(json.dumps({'pid': pid, 'start_time': int(fields[19])}, sort_keys=True))",
+        "PY",
+      ].join("\n"),
+    ),
+    { artifactName, env: buildAvailabilityProbeEnv(), timeoutMs: 60_000 },
+  );
 }

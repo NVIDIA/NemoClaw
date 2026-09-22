@@ -175,6 +175,19 @@ The managed-image scope does not claim trusted-private DNS-rebinding coverage: h
 `/etc/hosts` fixtures do not control the OpenShell supervisor's egress resolver. Full MCP bridge E2E
 coverage retains that assertion for environments with supervisor-authoritative DNS.
 
+Full MCP bridge E2E also owns the supervisor's corporate-CA TLS consumer check:
+onboarding receives the fixture CA through `NEMOCLAW_CORPORATE_CA_BUNDLE`, and the
+trusted-private probe must discover authenticated tools from the HTTPS fixture
+signed by that CA through supervisor egress. Cloud onboarding separately verifies
+installed bundle contents and permissions; file presence alone is not TLS-consumer
+evidence. The managed-startup unit tests own activation ordering and identity checks.
+
+If the Hermes replacement-credential restart fails, MCP E2E captures host-side
+OpenShell supervisor logs before asserting the original failure. This remains
+available when sandbox exec is rejected in `Error` state. Capture is limited to
+200 lines from the last two minutes, 32 KiB, and 30 seconds, with fixture credentials
+redacted. Diagnostic acquisition does not retry the mutation or replace its result.
+
 The same workflow publishes each Pi pull-request candidate by immutable digest after validating the
 local image, removes registry credentials, validates the anonymously pullable digest, and uploads a
 `managed-candidate-contract-*` artifact bound to the pull-request head. Pi remains outside the

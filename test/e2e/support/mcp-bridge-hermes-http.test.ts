@@ -6,11 +6,12 @@ import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   assertHermesMcpHttpResponse,
   buildHermesMcpChatProbeScript,
+  captureHermesMcpRestartFailure,
   HERMES_MCP_FAILURE_PREVIEW_CHARS,
   HERMES_MCP_HTTP_STATUS_MARKER,
   HERMES_MCP_RESULT_TOKEN_MARKER,
@@ -30,6 +31,41 @@ function httpResult(status: number, body = "", result = "") {
 }
 
 describe("Hermes MCP HTTP failure diagnostics", () => {
+  it("captures bounded supervisor logs after restart failure without requiring sandbox exec", async () => {
+    const command = vi.fn().mockResolvedValue({ exitCode: 0 });
+    const host = { command, openshellCommandPath: "/reviewed/openshell" };
+    await captureHermesMcpRestartFailure(
+      host,
+      { exitCode: 1, timedOut: false },
+      {
+        agent: "hermes",
+        sandboxName: "owned-hermes",
+        redactionValues: ["fixture-secret"],
+      },
+    );
+    expect(command).toHaveBeenCalledExactlyOnceWith(
+      "/reviewed/openshell",
+      ["logs", "owned-hermes", "-n", "200", "--source", "all", "--since", "2m"],
+      expect.objectContaining({
+        captureLimitBytes: 32_768,
+        timeoutMs: 30_000,
+        redactionValues: ["fixture-secret"],
+      }),
+    );
+  });
+
+  it("skips successful restarts and tolerates diagnostic failure without retrying", async () => {
+    const command = vi.fn().mockRejectedValue(new Error("log acquisition unavailable"));
+    const host = { command, openshellCommandPath: "/reviewed/openshell" };
+    const options = { agent: "hermes", sandboxName: "owned-hermes", redactionValues: [] };
+    await captureHermesMcpRestartFailure(host, { exitCode: 0, timedOut: false }, options);
+    expect(command).not.toHaveBeenCalled();
+    await expect(
+      captureHermesMcpRestartFailure(host, { exitCode: null, timedOut: true }, options),
+    ).resolves.toBeUndefined();
+    expect(command).toHaveBeenCalledTimes(1);
+  });
+
   it("sends one authenticated request without retrying and redacts its API key from failure output (#8697)", () => {
     const token = "fixture-result-token";
     const script = buildHermesMcpChatProbeScript('{"messages":[]}', token);
