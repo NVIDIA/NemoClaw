@@ -73,7 +73,8 @@ test("native OpenClaw advertises the actual model context and opens a fresh chat
   assert(source.includes('thinkingDefault: "off"'));
   assert(source.includes('contextInjection: "never"'));
   assert(source.includes('heartbeat: { every: "0m" }'));
-  assert(source.includes('lastTouchedVersion: "2026.7.1"'));
+  assert(source.includes("terminal: { enabled: false }"));
+  assert(source.includes('lastTouchedVersion: "2026.9.1"'));
   assert(source.includes("lastTouchedAt: new Date().toISOString()"));
   assert(
     source.includes('store: join(configDirectory, "agents", "main", "sessions", "sessions.json")'),

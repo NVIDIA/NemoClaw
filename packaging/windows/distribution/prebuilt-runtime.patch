@@ -1809,7 +1809,7 @@ index 2ea5fc0f10106bb61f552b0c6836c76190689c1f..5fb2f54999a8bb2b3f0a9a66beb8eec2
 +  void runNativeTerminalTurnEntry();
 +}
 diff --git a/packaging/windows/runtime/run-installed-native-turn.mts b/packaging/windows/runtime/run-installed-native-turn.mts
-index bb9d090a83f2f27896bbf2ebaa9427721ebf30b0..30eed72e4229658f69d41ecbbc6d3bdb3dde30f1 100644
+index bb9d090..e1ef83a 100644
 --- a/packaging/windows/runtime/run-installed-native-turn.mts
 +++ b/packaging/windows/runtime/run-installed-native-turn.mts
 @@ -3,0 +4,4 @@
@@ -1817,6 +1817,12 @@ index bb9d090a83f2f27896bbf2ebaa9427721ebf30b0..30eed72e4229658f69d41ecbbc6d3bdb
 +declare const NEMOCLAW_BUNDLED_RUNTIME: boolean | undefined;
 +import { nativeWorkerAssets } from "./native-assets.mts";
 +import { withNativeRuntimeSession, type NativeRuntimeSession } from "./native-runtime.mts";
+@@ -370 +374 @@ const version = await run(["--version"], 30000);
+-const normalizedVersion = /\b2026\.7\.1\b/u.test(version.stdout) ? "2026.7.1" : version.stdout.trim();
++const normalizedVersion = /\b2026\.9\.1\b/u.test(version.stdout) ? "2026.9.1" : version.stdout.trim();
+@@ -381 +385 @@ await new Promise((resolve) => mock.close(resolve));
+-process.exit(version.exitCode === 0 && normalizedVersion === "2026.7.1" && chat.exitCode === 0 && exactReply ? 0 : 1);
++process.exit(version.exitCode === 0 && normalizedVersion === "2026.9.1" && chat.exitCode === 0 && exactReply ? 0 : 1);
 @@ -385 +389 @@ process.exit(version.exitCode === 0 && normalizedVersion === "2026.7.1" && chat.
 -async function main() {
 +async function main(runtimeLease: NativeRuntimeSession) {
@@ -1858,6 +1864,9 @@ index bb9d090a83f2f27896bbf2ebaa9427721ebf30b0..30eed72e4229658f69d41ecbbc6d3bdb
 +      runtimeLease.failure,
 +    ]);
 +    runtimeLease.assertHeld();
+@@ -574 +583 @@ async function main() {
+-      result.version === "2026.7.1" &&
++      result.version === "2026.9.1" &&
 @@ -668,2 +677,11 @@ async function main() {
 -if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
 -  main().catch((error) => {

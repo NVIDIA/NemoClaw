@@ -327,7 +327,7 @@ def verify_openclaw_input(root: Path, rows: list[dict]):
         or not isinstance(receipt.get("closureAdmitted"), bool)
         or receipt.get("controlUiRoot") != "dist/control-ui"
         or receipt.get("package", {}).get("name") != "openclaw"
-        or receipt.get("package", {}).get("version") != "2026.7.1"
+        or receipt.get("package", {}).get("version") != "2026.9.1"
         or receipt.get("compiler", {}).get("mainSha256")
         != hash_file(root / "openclaw-app.cjs")[1]
         or receipt.get("compiler", {}).get("bridgeSha256")

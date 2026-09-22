@@ -9,14 +9,17 @@ const position = process.argv.indexOf("--source-root");
 if (position < 0 || !process.argv[position + 1])
   throw new Error("The pinned materialized source root is required.");
 const source = path.resolve(process.argv[position + 1]);
-const relative = "dist/openai-transport-stream-D1R-kt0Q.js";
+const relative = "dist/provider-stream-shared-BmB0vX9b.js";
 const original = fs.readFileSync(path.join(source, relative), "utf8");
 const patched = defaultWindowsOpenAiReasoningOff(relative, original);
 assert.notEqual(patched, original);
-assert.match(patched, /return options\?\.reasoningEffort \?\? options\?\.reasoning \?\? "none";/u);
+assert.match(
+  patched,
+  /const raw = options\.reasoningEffort \?\? options\.reasoning \?\? params\.thinkingLevel \?\? "none";/u,
+);
 assert.doesNotMatch(
   patched,
-  /return options\?\.reasoningEffort \?\? options\?\.reasoning \?\? "high";/u,
+  /const raw = options\.reasoningEffort \?\? options\.reasoning \?\? params\.thinkingLevel \?\? "high";/u,
 );
 assert.equal(defaultWindowsOpenAiReasoningOff("dist/unrelated.js", original), original);
 assert.throws(
@@ -24,15 +27,17 @@ assert.throws(
   /reasoning transport changed/u,
 );
 
-const body = /function resolveOpenAICompletionsReasoningEffort\(options\) \{([\s\S]*?)\n\}/u.exec(
-  patched,
-);
+const body = /function isOpenAICompatibleThinkingEnabled\(params\) \{([\s\S]*?)\n\}/u.exec(patched);
 assert.ok(body);
 const resolve = new Function(
-  `return function resolveOpenAICompletionsReasoningEffort(options) {${body[1]}\n}`,
-)() as (options?: { reasoningEffort?: string; reasoning?: string }) => string;
-assert.equal(resolve(), "none");
-assert.equal(resolve({}), "none");
-assert.equal(resolve({ reasoning: "high" }), "high");
-assert.equal(resolve({ reasoningEffort: "medium" }), "medium");
+  `return function isOpenAICompatibleThinkingEnabled(params) {${body[1]}\n}`,
+)() as (params: {
+  options?: { reasoningEffort?: string; reasoning?: string };
+  thinkingLevel?: string;
+}) => boolean;
+assert.equal(resolve({}), false);
+assert.equal(resolve({ options: {} }), false);
+assert.equal(resolve({ thinkingLevel: "high" }), true);
+assert.equal(resolve({ options: { reasoning: "off" } }), false);
+assert.equal(resolve({ options: { reasoningEffort: "medium" } }), true);
 console.log("PASS omitted reasoning stays off while explicit levels are preserved.");

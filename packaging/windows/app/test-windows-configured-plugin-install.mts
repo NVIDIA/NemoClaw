@@ -7,7 +7,7 @@ import { createRequire } from "node:module";
 import { guardWindowsConfiguredPluginInstall } from "./openclaw-app-resources.mts";
 
 const source = path.resolve(process.argv[process.argv.indexOf("--source-root") + 1] ?? "");
-const relative = "dist/missing-configured-plugin-install-jsvFew4a.js";
+const relative = "dist/missing-configured-plugin-install-BGaKdUtR.js";
 const original = fs.readFileSync(path.join(source, relative), "utf8");
 const patched = guardWindowsConfiguredPluginInstall(relative, original);
 const syntax = createRequire(import.meta.url)(
@@ -23,9 +23,15 @@ function body(text: string) {
   );
   const functions = tree.statements
     .filter(syntax.isFunctionDeclaration)
-    .filter((node) => node.name?.text === "repairMissingPluginInstalls");
-  assert.equal(functions.length, 1);
-  return functions[0].getText(tree);
+    .filter((node) =>
+      ["repairMissingPluginInstalls", "repairMissingPluginInstallsWithLease"].includes(
+        node.name?.text ?? "",
+      ),
+    );
+  assert.equal(functions.length, 2);
+  return (
+    functions.map((node) => node.getText(tree)).join("\n") + "\nreturn repairMissingPluginInstalls;"
+  );
 }
 async function control(text: string, platform: string, mode: "new" | "recorded" | "healthy") {
   const calls: string[] = [];
@@ -33,7 +39,24 @@ async function control(text: string, platform: string, mode: "new" | "recorded" 
     mode === "new" ? {} : { discord: { source: "path", healthy: mode === "healthy" } };
   const bindings = {
     process: { platform, env: {} },
-    VERSION: "2026.7.1",
+    VERSION: "2026.9.1",
+    withPluginLifecycleLease: async (_options: unknown, callback: () => Promise<unknown>) =>
+      await callback(),
+    resolveConfiguredPluginInstallContext: async () => ({
+      knownIds: new Set(mode === "healthy" ? ["discord"] : []),
+      configuredChannelOwnerPluginIds: new Map(),
+      bundledPluginsById: new Map(),
+      configuredPluginIdsWithStaleDescriptors: new Set(),
+      stalePathInstallPluginIds: new Set(),
+      records,
+      persistedRecords: records,
+      updateChannel: "stable",
+      installedPluginIdsWithRepairablePackageDiagnostics: new Set(),
+      installedPluginIdsWithStaleVersionBoundRuntimePackages: new Set(),
+      installedPluginIdsWithRepairablePackages: new Set(),
+      officialReplacementPluginIds: new Set(),
+    }),
+    normalizePluginsConfig: (value: unknown) => value ?? {},
     loadManifestMetadataSnapshot: () => ({
       plugins: mode === "healthy" ? [{ id: "discord", origin: "config" }] : [],
     }),
@@ -48,9 +71,10 @@ async function control(text: string, platform: string, mode: "new" | "recorded" 
     collectOfficialReplacementInstallCandidates: () => new Map(),
     isLegacyPackageUpdateDoctorPass: () => false,
     shouldDeferConfiguredPluginInstallRepair: () => false,
-    isInstalledRecordMissingOnDisk: (record: { healthy?: boolean }) => !record.healthy,
+    isPayloadMissing: (_env: unknown, installPath: unknown) =>
+      mode !== "healthy" && installPath !== "healthy",
     forceNpmInstallRecordRepair: (record: unknown) => record,
-    resolveCompatibilityHostVersion: () => "2026.7.1",
+    resolveCompatibilityHostVersion: () => "2026.9.1",
     updateNpmInstalledPlugins: async () => {
       calls.push("package-manager-repair");
       return {
@@ -83,9 +107,7 @@ async function control(text: string, platform: string, mode: "new" | "recorded" 
   };
   // Execute the actual source function with install APIs replaced by observation
   // boundaries. No package manager, filesystem writer or network client runs.
-  const invoke = new Function(...Object.keys(bindings), `return (${body(text)});`)(
-    ...Object.values(bindings),
-  );
+  const invoke = new Function(...Object.keys(bindings), body(text))(...Object.values(bindings));
   try {
     return { calls, result: await invoke(params), error: null };
   } catch (error) {

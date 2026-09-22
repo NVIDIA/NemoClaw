@@ -381,7 +381,7 @@ writeFileSync(join(configDirectory, "openclaw.json"), JSON.stringify({
   agents: { defaults: { model: { primary: "mock/mock-chat" }, timeoutSeconds: 180, skipBootstrap: true, thinkingDefault: "off" }, list: [{ id: "main", default: true }] },
 }), "utf8");
 const version = await run(["--version"], 30000);
-const normalizedVersion = /\b2026\.7\.1\b/u.test(version.stdout) ? "2026.7.1" : version.stdout.trim();
+const normalizedVersion = /\b2026\.9\.1\b/u.test(version.stdout) ? "2026.9.1" : version.stdout.trim();
 const chat = await run(["agent", "--local", "--agent", "main", "--message", "Reply exactly: CHAT_OK", "--thinking", "off", "--timeout", "180", "--json"]);
 let exactReply = false;
 try {
@@ -392,7 +392,7 @@ try {
 const result = { executionMode: "embedded-worker", version: normalizedVersion, versionExitCode: version.exitCode, versionError: version.stderr.slice(-2000), chatExitCode: chat.exitCode, chatError: chat.stderr.slice(-2000), exactReply, reply: exactReply ? "CHAT_OK" : null };
 writeFileSync(resultPath, JSON.stringify(result), "utf8");
 await new Promise((resolve) => mock.close(resolve));
-process.exit(version.exitCode === 0 && normalizedVersion === "2026.7.1" && chat.exitCode === 0 && exactReply ? 0 : 1);
+process.exit(version.exitCode === 0 && normalizedVersion === "2026.9.1" && chat.exitCode === 0 && exactReply ? 0 : 1);
 `;
 }
 
@@ -613,7 +613,7 @@ async function main(runtimeLease: NativeRuntimeSession) {
     result = JSON.parse(fs.readFileSync(resultPath, "utf8"));
     const turnPassed =
       result.executionMode === "embedded-worker" &&
-      result.version === "2026.7.1" &&
+      result.version === "2026.9.1" &&
       result.versionExitCode === 0 &&
       result.chatExitCode === 0 &&
       result.exactReply === true &&

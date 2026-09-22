@@ -14,6 +14,7 @@ import {
   PREBUILT_CHOICE_PLUGINS,
   prebuiltPluginRegistrationSource,
   applyWindowsReasoningLabel,
+  publishedWorkerSources,
 } from "./openclaw-app-resources.mts";
 
 const require = createRequire(import.meta.url);
@@ -59,6 +60,7 @@ const materializationBytes = fs.readFileSync(
 const materialization = JSON.parse(materializationBytes.toString("utf8")) as {
   classification: string;
   source: { sha256: string };
+  dependencyLock: { sha256: string };
   additionalPackages: {
     package: string;
     version: string;
@@ -70,12 +72,12 @@ const materialization = JSON.parse(materializationBytes.toString("utf8")) as {
 if (
   materialization.classification !== "verified-application-build-inputs" ||
   materialization.source.sha256 !==
-    "67ad539d9915efb63d5f294beeb9290b7172d23c92d8052110a9c8355f783458" ||
+    "1bfcac877d53f1e41b69d15c24e081895b2f07d6ff2ffdfe0bf8a7336ab00e59" ||
   !Object.values(PREBUILT_CHOICE_PLUGINS).every((expected) =>
     materialization.additionalPackages?.some(
       (item) =>
         item.package === expected.package &&
-        item.version === "2026.7.1" &&
+        item.version === "2026.9.1" &&
         item.sha256 === expected.sha256,
     ),
   )
@@ -85,7 +87,7 @@ const metadata = JSON.parse(fs.readFileSync(path.join(source, "package.json"), "
   name: string;
   version: string;
 };
-if (metadata.name !== "openclaw" || metadata.version !== "2026.7.1")
+if (metadata.name !== "openclaw" || metadata.version !== "2026.9.1")
   throw new Error("The exact selected OpenClaw package is required.");
 if (fs.existsSync(output)) throw new Error("Compilation output must be fresh.");
 fs.mkdirSync(output, { recursive: true });
@@ -256,31 +258,31 @@ try {
     portable ? process.platform : "win32",
   );
   const reasoningControl = applyWindowsReasoningLabel(app);
-  const workerResult = await compiler.build({
-    entryPoints: [path.join(source, "dist/audit/audit-event-writer.worker.js")],
-    outfile: path.join(app, "dist/audit/audit-event-writer.worker.js"),
-    bundle: true,
-    platform: "node",
-    format: "cjs",
-    target: "node22.23",
-    external,
-    metafile: true,
-    define: { "import.meta.url": "__workerUrl" },
-    banner: { js: 'const __workerUrl=require("node:url").pathToFileURL(__filename).href;' },
-  });
-  fs.writeFileSync(
-    path.join(app, "dist/audit/package.json"),
-    JSON.stringify({ type: "commonjs" }) + "\n",
-    { flag: "wx" },
-  );
+  const workerMetafiles: Record<string, unknown> = {};
+  for (const workerSource of publishedWorkerSources(source)) {
+    const relative = path.relative(source, workerSource);
+    const workerOutput = path.join(app, relative);
+    fs.mkdirSync(path.dirname(workerOutput), { recursive: true });
+    const workerResult = await compiler.build({
+      entryPoints: [workerSource],
+      outfile: workerOutput,
+      bundle: true,
+      platform: "node",
+      format: "esm",
+      target: "node22.23",
+      external,
+      metafile: true,
+    });
+    workerMetafiles[relative.split(path.sep).join("/")] = workerResult.metafile;
+  }
   fs.writeFileSync(
     path.join(diagnostics, "plugin-registry.json"),
     JSON.stringify(pluginPlan.entries, null, 2) + "\n",
     { flag: "wx" },
   );
   fs.writeFileSync(
-    path.join(diagnostics, "audit-worker-metafile.json"),
-    JSON.stringify(workerResult.metafile, null, 2) + "\n",
+    path.join(diagnostics, "worker-metafiles.json"),
+    JSON.stringify(workerMetafiles, null, 2) + "\n",
     { flag: "wx" },
   );
   fs.writeFileSync(
@@ -292,7 +294,7 @@ try {
         sourceVersion: metadata.version,
         materializationReceiptSha256: sha256(materializationBytes),
         sourcePackageSha256: sha256(fs.readFileSync(path.join(source, "package.json"))),
-        sourceLockSha256: sha256(fs.readFileSync(path.join(source, "npm-shrinkwrap.json"))),
+        dependencyLockSha256: materialization.dependencyLock.sha256,
         entrySourceSha256: sha256(fs.readFileSync(entry)),
         adapterSha256: sha256(adapter),
         compilerVersion: compiler.version,
@@ -337,8 +339,8 @@ try {
     package: {
       name: metadata.name,
       version: metadata.version,
-      sourceArchiveSha256: "67ad539d9915efb63d5f294beeb9290b7172d23c92d8052110a9c8355f783458",
-      shrinkwrapSha256: sha256(fs.readFileSync(path.join(source, "npm-shrinkwrap.json"))),
+      sourceArchiveSha256: "1bfcac877d53f1e41b69d15c24e081895b2f07d6ff2ffdfe0bf8a7336ab00e59",
+      dependencyLockSha256: materialization.dependencyLock.sha256,
     },
     compiler: {
       receiptSha256: sha256(fs.readFileSync(path.join(output, "build-receipt.json"))),

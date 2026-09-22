@@ -49,7 +49,6 @@ const options: NativeOptions =
 const selected = nativeOpenClawOptions(options);
 const config = {
   ...selected,
-  plugins: { ...selected.plugins, load: { paths: [path.join(app, "plugins", choice)] } },
   update: { checkOnStart: false, auto: { enabled: false } },
   agents: { list: [{ id: "main", default: true }], defaults: { skipBootstrap: true } },
 };
@@ -194,10 +193,10 @@ try {
   assert.equal(report.plugin?.id, choice);
   assert.equal(report.plugin?.status, "loaded");
   assert.equal(report.plugin?.imported, true);
-  assert.equal(report.install?.source, "path");
+  assert.equal(report.install?.source, "npm");
   assert.equal(report.install?.installPath, path.join(app, "plugins", choice));
-  assert.equal(report.install?.sourcePath, report.install.installPath);
-  assert.equal(report.install?.version, "2026.7.1");
+  assert.equal(report.install?.sourcePath, undefined);
+  assert.equal(report.install?.version, "2026.9.1");
   assert.deepEqual(report.diagnostics, []);
   result.runtimeInspection = {
     status: report.plugin.status,
@@ -216,6 +215,7 @@ try {
       bind: "loopback",
       port,
       auth: { mode: "none" },
+      terminal: { enabled: false },
       controlUi: { root: path.join(app, "dist/control-ui"), allowedOrigins: [origin] },
     },
     logging: { file: path.join(output, "gateway.jsonl") },

@@ -139,7 +139,7 @@ class RuntimeAssembly(unittest.TestCase):
             "module.exports = {};\n"
         )
         (self.source / "package.json").write_text(
-            '{"name":"openclaw","version":"2026.7.1"}\n'
+            '{"name":"openclaw","version":"2026.9.1"}\n'
         )
         (self.source / "dist/control-ui").mkdir(parents=True)
         (self.source / "dist/control-ui/index.html").write_text(
@@ -162,7 +162,7 @@ class RuntimeAssembly(unittest.TestCase):
                     "classification": "compiled-openclaw-resource-closure",
                     "closureAdmitted": True,
                     "controlUiRoot": "dist/control-ui",
-                    "package": {"name": "openclaw", "version": "2026.7.1"},
+                    "package": {"name": "openclaw", "version": "2026.9.1"},
                     "compiler": {
                         "mainSha256": hashlib.sha256(
                             self.entry.read_bytes()

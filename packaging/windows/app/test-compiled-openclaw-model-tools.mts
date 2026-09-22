@@ -7,6 +7,7 @@ import { randomBytes } from "node:crypto";
 import fs from "node:fs";
 import http from "node:http";
 import path from "node:path";
+import { DatabaseSync } from "node:sqlite";
 function argument(name: string) {
   const offset = process.argv.indexOf(name);
   assert(offset >= 0 && process.argv[offset + 1]);
@@ -33,8 +34,16 @@ const codeCommand =
 const calls = [
   { name: "write", args: { path: file, content: nonce }, expect: "" },
   { name: "read", args: { path: file }, expect: nonce },
-  { name: "exec", args: { command: shellCommand, timeout: 10 }, expect: "SHELL_" + nonce },
-  { name: "exec", args: { command: codeCommand, timeout: 10 }, expect: "CODE_" + nonce + ":42" },
+  {
+    name: "exec",
+    args: { command: shellCommand, timeoutSeconds: 10 },
+    expect: "SHELL_" + nonce,
+  },
+  {
+    name: "exec",
+    args: { command: codeCommand, timeoutSeconds: 10 },
+    expect: "CODE_" + nonce + ":42",
+  },
 ];
 const observations: {
   path: string;
@@ -231,12 +240,26 @@ try {
   assert.deepEqual([...new Set(observations.map((request) => request.reasoningEffort))], ["none"]);
   const reply = JSON.parse(stdout);
   assert.equal(reply.payloads?.[0]?.text, marker);
-  const transcript = fs
-    .readFileSync(path.join(state, "agents", "main", "sessions", nonce + ".jsonl"), "utf8")
-    .split("\n")
-    .filter(Boolean)
-    .map((line) => JSON.parse(line).message)
-    .filter(Boolean);
+  const database = new DatabaseSync(
+    path.join(state, "agents", "main", "agent", "openclaw-agent.sqlite"),
+    { readOnly: true },
+  );
+  let transcript: {
+    role?: string;
+    toolName?: string;
+    isError?: boolean;
+    details?: Record<string, unknown>;
+    content?: unknown;
+  }[];
+  try {
+    transcript = database
+      .prepare("select event_json from transcript_events where session_id = ? order by seq")
+      .all(nonce)
+      .map((row) => JSON.parse(String((row as { event_json: string }).event_json)).message)
+      .filter(Boolean);
+  } finally {
+    database.close();
+  }
   const results = transcript.filter((message) => message.role === "toolResult");
   assert.equal(results.length, calls.length);
   for (const [index, result] of results.entries()) {

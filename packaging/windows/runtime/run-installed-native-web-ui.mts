@@ -375,14 +375,10 @@ if (configured) {
   const services = await response.json();
   Object.assign(process.env, services.environment);
   serviceConfiguration = services.openclaw;
-  const prebuiltPlugins = ["brave", "discord", "slack", "tavily"].filter(id => serviceConfiguration.plugins?.entries?.[id]?.enabled === true);
-  if (prebuiltPlugins.length) {
-    serviceConfiguration.plugins.load = { paths: prebuiltPlugins.map(id => join(required("OPENCLAW_COMPILED_ASSET_ROOT"), "plugins", id)) };
-  }
 }
 writeFileSync(join(configDirectory, "openclaw.json"), JSON.stringify({
   ...serviceConfiguration,
-  meta: { lastTouchedVersion: "2026.7.1", lastTouchedAt: new Date().toISOString() },
+  meta: { lastTouchedVersion: "2026.9.1", lastTouchedAt: new Date().toISOString() },
   update: { checkOnStart: false, auto: { enabled: false } },
   session: {
     ...serviceConfiguration.session,
@@ -392,6 +388,7 @@ writeFileSync(join(configDirectory, "openclaw.json"), JSON.stringify({
     mode: "local",
     bind: "loopback",
     auth: { mode: "none" },
+    terminal: { enabled: false },
     controlUi: { root: join(process.env.OPENCLAW_COMPILED_ASSET_ROOT, "dist", "control-ui"), allowedOrigins: ["http://127.0.0.1:" + uiPort, "http://localhost:" + uiPort] },
   },
   models: { mode: "merge", providers: { nemoclawNative: {

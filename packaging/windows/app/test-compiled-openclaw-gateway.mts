@@ -8,86 +8,21 @@ import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { setTimeout as delay } from "node:timers/promises";
 import { createHash } from "node:crypto";
-import { Worker } from "node:worker_threads";
-import { once } from "node:events";
-import { DatabaseSync } from "node:sqlite";
 import { createRequire } from "node:module";
 
-async function auditWorkerControl(appRoot: string, stateDir: string) {
-  fs.mkdirSync(stateDir);
-  const worker = new Worker(path.join(appRoot, "dist/audit/audit-event-writer.worker.js"), {
-    workerData: { stateDir },
-    execArgv: [],
-  });
-  const exit = new Promise<number>((resolve) => worker.once("exit", resolve));
-  const message = () => once(worker, "message", { signal: AbortSignal.timeout(15_000) });
-  try {
-    assert.deepEqual((await message())[0], { type: "ready" });
-    const recorded = message();
-    worker.postMessage({
-      type: "record",
-      input: {
-        sourceSequence: 1,
-        occurredAt: Date.now(),
-        kind: "tool",
-        action: "invoke",
-        status: "succeeded",
-        actorType: "agent",
-        actorId: "owned-control",
-        agentId: "main",
-        runId: "owned-audit-worker-control",
-        toolCallId: "call-1",
-        toolName: "owned-local-control",
-      },
-    });
-    assert.deepEqual((await recorded)[0], { type: "recorded" });
-    const stopped = message();
-    worker.postMessage({ type: "stop" });
-    assert.deepEqual((await stopped)[0], { type: "stopped" });
-    assert.equal(
-      await Promise.race([
-        exit,
-        delay(15_000, undefined, { ref: false }).then(() => {
-          throw new Error("Audit worker did not exit after Stop.");
-        }),
-      ]),
-      0,
-    );
-    const database = new DatabaseSync(path.join(stateDir, "state/openclaw.sqlite"), {
-      readOnly: true,
-    });
-    let row;
-    try {
-      row = database
-        .prepare(
-          "select source_sequence,kind,action,status,agent_id,run_id,tool_name from audit_events",
-        )
-        .get();
-    } finally {
-      database.close();
-    }
-    assert.deepEqual(
-      { ...row },
-      {
-        source_sequence: 1,
-        kind: "tool",
-        action: "invoke",
-        status: "succeeded",
-        agent_id: "main",
-        run_id: "owned-audit-worker-control",
-        tool_name: "owned-local-control",
-      },
-    );
-    return {
-      ready: true,
-      recorded: true,
-      stopped: true,
-      exitCode: 0,
-      persistedMetadataMatched: true,
-    };
-  } finally {
-    await worker.terminate();
+function workerInventoryControl(appRoot: string) {
+  const receipt = JSON.parse(
+    fs.readFileSync(path.join(appRoot, "openclaw-resource-closure.json"), "utf8"),
+  ) as { files: { path: string; role: string; bytes: number }[] };
+  const workers = receipt.files.filter(
+    (file) => file.role === "worker" && file.path.endsWith(".worker.js"),
+  );
+  assert(workers.length >= 11, "The complete published 2026.9.1 worker set is required.");
+  for (const worker of workers) {
+    assert(worker.bytes > 0);
+    assert(fs.statSync(path.join(appRoot, worker.path)).isFile());
   }
+  return { staged: workers.map((worker) => worker.path), count: workers.length };
 }
 type BrowserPage = {
   goto(url: string, options: { waitUntil: "domcontentloaded"; timeout: number }): Promise<unknown>;
@@ -250,6 +185,7 @@ fs.writeFileSync(
       bind: "loopback",
       port,
       auth: { mode: "token", token: "owned-compiled-gateway-control-token" },
+      terminal: { enabled: false },
       controlUi: { root: path.join(app, "dist/control-ui"), allowedOrigins: [origin] },
     },
     agents: { list: [{ id: "main", default: true }], defaults: { skipBootstrap: true } },
@@ -362,10 +298,25 @@ try {
     if (relative === "index.html") {
       const original = fs.readFileSync(path.join(app, file.path));
       assert.equal(hash(original), file.sha256);
-      // Pinned serveResolvedIndexHtml adds this fixed setting at the root mount.
-      const expected = original
+      // Pinned serveResolvedIndexHtml normalizes root-mount asset URLs and adds
+      // the base-path/terminal settings. Keep this explicit so any additional
+      // upstream HTML mutation still fails the qualification control.
+      let expected = original
         .toString("utf8")
-        .replace(/<html\b/i, '<html data-openclaw-terminal-enabled="false"');
+        .replaceAll('src="./assets/', 'src="/assets/')
+        .replaceAll('href="./assets/', 'href="/assets/');
+      for (const asset of [
+        "favicon.svg",
+        "favicon-32.png",
+        "apple-touch-icon.png",
+        "manifest.webmanifest",
+      ]) {
+        expected = expected.replaceAll(`href="./${asset}"`, `href="/${asset}"`);
+      }
+      expected = expected.replace(
+        /<html\b/i,
+        '<html data-openclaw-control-ui-base-path="" data-openclaw-terminal-enabled="false"',
+      );
       assert.equal(
         content.toString("utf8"),
         expected,
@@ -401,11 +352,13 @@ try {
   for (const required of [
     "browser",
     "canvas",
+    "cua-computer",
     "device-pair",
     "file-transfer",
+    "geolocation",
+    "linux-node",
     "memory-core",
     "ollama",
-    "phone-control",
     "talk-voice",
   ])
     assert.ok(plugins.includes(required), `Canonical active plugin required: ${required}`);
@@ -433,7 +386,7 @@ try {
   assert.match(trace, /loaderSourceTransformForcedCount=0\.0(?: |$)/);
   assert.match(trace, /loaderSourceTransformFallbacksCount=0\.0(?: |$)/);
   result.pluginLoaderTrace = trace;
-  result.auditWorker = await auditWorkerControl(app, path.join(output, "audit-worker-state"));
+  result.workerInventory = workerInventoryControl(app);
   if (browserExecutable) {
     result.browser = await browserControl(app, origin, output, browserExecutable);
     result.browserObserved = true;

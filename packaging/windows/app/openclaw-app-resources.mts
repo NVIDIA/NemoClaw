@@ -88,62 +88,78 @@ function exportNames(syntax: Syntax, file: string, text: string) {
   return names;
 }
 export function normalizeWindowsNativePluginRequire(relative: string, text: string) {
-  if (relative !== "dist/plugin-module-loader-cache-uqaaAPup.js") return text;
-  if (sha256(text) !== "af5dc41aba74bb7eab264d1544d16a86906401bfe1c24a0ad53ae25bb8f1d2ac")
+  if (relative !== "dist/plugin-module-loader-cache-C4l9L2gm.js") return text;
+  if (sha256(text) !== "751ad756b114a22d88c4cb64ba077c3d8ff9c20f646c5be54bf7eff98a36fa27")
     throw new Error("The reviewed native plugin loader changed.");
-  const original = "return withNativeRequireAliases(aliasMap, () => nodeRequire(modulePath));";
-  if (text.split(original).length !== 2) throw new Error("The native plugin require seam changed.");
-  // Windows callers use file URLs for ESM/Jiti. Native require needs the
-  // corresponding filesystem path; ordinary specifiers and all guards stay intact.
-  return text.replace(
-    original,
-    'return withNativeRequireAliases(aliasMap, () => nodeRequire(process.platform === "win32" && typeof modulePath === "string" && modulePath.startsWith("file:") ? fileURLToPath(modulePath) : modulePath));',
-  );
+  // OpenClaw 2026.9.1 admits Windows native loading itself and normalizes file
+  // URLs in both its native and source-transform paths. Pin those upstream
+  // controls so the retired local patch cannot silently become necessary again.
+  for (const marker of [
+    "allowWindows: true",
+    'target.startsWith("file:") ? fileURLToPath(target) : target',
+    "jitiLoader(toSourceTransformImportPath(target))",
+  ])
+    if (!text.includes(marker)) throw new Error("The native plugin require seam changed.");
+  return text;
 }
 export function guardWindowsInstallerUpdate(relative: string, text: string) {
-  if (relative !== "dist/update-B0wRhzt_.js") return text;
-  if (sha256(text) !== "d9ab62237a9405a6ce9057d6193f42a6c833c6738be0771e992b8d3e39f734aa")
+  if (relative !== "dist/update-CnF_qlQo.js") return text;
+  if (sha256(text) !== "762216576724b5190d0716917f2d66a59763adb7a32b6d01c24005014c04bd9d")
     throw new Error("The reviewed gateway update handler changed.");
   const validation =
     'if (!assertValidParams(params, validateUpdateRunParams, "update.run", respond)) return;';
   if (text.split(validation).length !== 2)
     throw new Error("The gateway update admission seam changed.");
   const refusal =
-    'if (process.platform === "win32") { respond(false, void 0, __nemoUpdateErrorShape(__nemoUpdateErrorCodes.UNAVAILABLE, "This Windows application is managed by the NemoClaw installer. Use the NemoClaw installer to update or repair it.")); return; }';
-  return (
-    'import { Gn as __nemoUpdateErrorShape, Wn as __nemoUpdateErrorCodes } from "./schema-BuOFpc7K.js";\n' +
-    text.replace(validation, validation + "\n" + refusal)
-  );
+    'if (process.platform === "win32") { respond(false, void 0, { code: "UNAVAILABLE", message: "This Windows application is managed by the NemoClaw installer. Use the NemoClaw installer to update or repair it." }); return; }';
+  return text.replace(validation, validation + "\n" + refusal);
 }
 
 export function defaultWindowsOpenAiReasoningOff(relative: string, text: string) {
-  if (relative !== "dist/openai-transport-stream-D1R-kt0Q.js") return text;
-  if (sha256(text) !== "bb1d7f1e503e0da9a993f42ca2206b5a36a3c2a377b310f42bdaef00d16a9f8a")
+  if (relative !== "dist/provider-stream-shared-BmB0vX9b.js") return text;
+  if (sha256(text) !== "9d03b7f0a8e162ac3a505a5951de981935be16cb8b36c9f85b76ef5732ca3abb")
     throw new Error("The reviewed OpenAI-compatible reasoning transport changed.");
-  const original = 'return options?.reasoningEffort ?? options?.reasoning ?? "high";';
+  const original =
+    'const raw = options.reasoningEffort ?? options.reasoning ?? params.thinkingLevel ?? "high";';
   if (text.split(original).length !== 2)
     throw new Error("The OpenAI-compatible reasoning default seam changed.");
   // OpenClaw intentionally omits an explicit option for its Off selection. Its
   // generic transport otherwise changes that omission back to High. Preserve
   // explicit user levels, but make the omitted/default state genuinely Off.
-  return text.replace(original, 'return options?.reasoningEffort ?? options?.reasoning ?? "none";');
+  return text.replace(
+    original,
+    'const raw = options.reasoningEffort ?? options.reasoning ?? params.thinkingLevel ?? "none";',
+  );
+}
+export function bundleWindowsOllamaStreamRuntime(relative: string, text: string) {
+  if (relative !== "dist/stream-api-BC8FZL1o.js") return text;
+  if (sha256(text) !== "dcbf131daaff03bf51dae0322b1bdfa7e15f8ae3da5b9f06c52dbaed7143c6de")
+    throw new Error("The reviewed Ollama stream adapter changed.");
+  const original =
+    'const ollamaStreamRuntime = await createLazyRuntimeModule(() => import("./stream.runtime.js"))();';
+  if (text.split(original).length !== 2)
+    throw new Error("The Ollama stream runtime admission seam changed.");
+  // The Windows application is one compiled CommonJS code unit. Bundle the
+  // exact published runtime synchronously so its otherwise top-level await
+  // does not make the optional Ollama extension unrepresentable in that unit.
+  return text.replace(original, 'const ollamaStreamRuntime = require("./stream.runtime.js");');
 }
 export const PREBUILT_CHOICE_PLUGINS = {
   brave: {
     package: "@openclaw/brave-plugin",
-    sha256: "f5198ea18ea0adebc376c669b8e5e1100781f07ec2d9e24e86c90cb82acb039c",
+    sha256: "f679af12fa00947d994e6a8454aded205b5bf2454dce0674bff88f741dfb9af8",
   },
   discord: {
     package: "@openclaw/discord",
-    sha256: "28f1511de04906def70f7ff6950cd2d26f52be0ec93c5efce8f5c07cb46bc521",
+    sha256: "4437fb157829af52cdfe2acc19cc03378db5052f8e521862ee702293e01c28ac",
   },
   slack: {
     package: "@openclaw/slack",
-    sha256: "d6ae8745867d812560e917707e633c8b66b36f7270124a8cca9602c6dc98ef46",
+    sha256: "34d729873e80c4ba023ca475f174fa504eca3746202c31fc290d72d00abd36f5",
   },
   tavily: {
     package: "@openclaw/tavily-plugin",
-    sha256: "c8d7c2fb40b0c6a3f8ad99e927c1851ef501bef89ce049e88ab79083ff6dcb09",
+    sha256: "4a0cb203aa6e785b6f2c1f3044fc01ceecbc2865b1c0a37565f8f067aa922205",
   },
 } as const;
 function choiceRoots(source: string) {
@@ -160,8 +176,8 @@ function packagedModulePath(source: string, file: string): string | undefined {
     : undefined;
 }
 export function guardWindowsConfiguredPluginInstall(relative: string, text: string) {
-  if (relative !== "dist/missing-configured-plugin-install-jsvFew4a.js") return text;
-  if (sha256(text) !== "637689bddd8bcc278ef7a0af5535b933aa36bdc02510583e1ece61d1b0713354")
+  if (relative !== "dist/missing-configured-plugin-install-BGaKdUtR.js") return text;
+  if (sha256(text) !== "076a48b8c16e51d298db509c91c9867aed72fab0c7a760b7ccaef94683b6752b")
     throw new Error("The reviewed configured-plugin repair source changed.");
   const refusal =
     'if (process.platform === "win32") throw new Error("A configured plugin is missing or incomplete in this installer-managed Windows application. Repair or update NemoClaw with its installer; runtime plugin downloads are disabled.");';
@@ -182,11 +198,11 @@ export function guardWindowsConfiguredPluginInstall(relative: string, text: stri
     );
 }
 export function prebuiltPluginRegistrationSource(source: string) {
-  const records = "dist/installed-plugin-index-records-NrU3hnwq.js";
-  const reader = "dist/installed-plugin-index-record-reader-CrcykudU.js";
+  const records = "dist/installed-plugin-index-records-ByWgcWST.js";
+  const reader = "dist/installed-plugin-index-record-reader-CGCFpTaD.js";
   for (const [file, expected] of [
-    [records, "5500445dcd66876952758eec91019a3c4dcc4a852498f956022828f0f867d21f"],
-    [reader, "2e0f0a33799137ed64dede1f05bf6b19fdba8a4d1f69e3f0f3906ce916d0497a"],
+    [records, "574793371ada63288edd23b7deca11a2e68092632ff4a10950f78c9e7dbd6555"],
+    [reader, "86ad21ab77705c710873ce9c10b207f15a2a88c902c5543f15ae2fc9f64f04ee"],
   ])
     if (sha256(fs.readFileSync(path.join(source, file))) !== expected)
       throw new Error("The reviewed plugin record API changed.");
@@ -199,7 +215,7 @@ export function prebuiltPluginRegistrationSource(source: string) {
   const selected = ids.map(id=>{
     const directory = path.join(__nemoAssetDir,"plugins",id);
     const metadata = JSON.parse(fs.readFileSync(path.join(directory,"package.json"),"utf8"));
-    if(metadata.name!==packages[id]||metadata.version!=="2026.7.1") throw new Error("The prebuilt plugin is missing or differs from this application; repair NemoClaw with its installer.");
+    if(metadata.name!==packages[id]||metadata.version!=="2026.9.1") throw new Error("The prebuilt plugin is missing or differs from this application; repair NemoClaw with its installer.");
     const entries=metadata.openclaw?.runtimeExtensions??metadata.openclaw?.extensions;
     if(!Array.isArray(entries)||!entries.length)throw new Error("The prebuilt plugin runtime is incomplete; repair NemoClaw with its installer.");
     for(const entry of entries) {
@@ -207,7 +223,10 @@ export function prebuiltPluginRegistrationSource(source: string) {
       const info=fs.lstatSync(path.join(directory,entry));
       if(!info.isFile()||info.isSymbolicLink())throw new Error("The prebuilt plugin runtime entry is unavailable; repair NemoClaw with its installer.");
     }
-    return {pluginId:id,source:"path",sourcePath:directory,installPath:directory,version:metadata.version};
+    // These are exact, reviewed npm artifacts embedded by the installer. Record
+    // their canonical npm identity (without a sourcePath) so OpenClaw applies
+    // the same official-plugin trust policy as an online npm installation.
+    return {pluginId:id,source:"npm",spec:metadata.name,resolvedName:metadata.name,resolvedSpec:metadata.name+"@"+metadata.version,installPath:directory,version:metadata.version};
   });
   // Called before runCli or runtime loader initialization. These canonical APIs
   // update only the guest state's SQLite record/index and their metadata caches.
@@ -278,9 +297,12 @@ Object.defineProperty(globalThis,Symbol.for("nemoclaw.compiled-openclaw.plugins.
           sourceRelative,
           guardWindowsInstallerUpdate(
             sourceRelative,
-            defaultWindowsOpenAiReasoningOff(
+            bundleWindowsOllamaStreamRuntime(
               sourceRelative,
-              normalizeWindowsNativePluginRequire(sourceRelative, original),
+              defaultWindowsOpenAiReasoningOff(
+                sourceRelative,
+                normalizeWindowsNativePluginRequire(sourceRelative, original),
+              ),
             ),
           ),
         );
@@ -330,10 +352,14 @@ export function publishPluginFacades(app: string, entries: Entry[]) {
   }
 }
 
+export function publishedWorkerSources(source: string) {
+  return filesBelow(path.join(source, "dist")).filter((file) => file.endsWith(".worker.js"));
+}
+
 export function applyWindowsReasoningLabel(app: string) {
   const root = path.join(app, "dist", "control-ui", "assets");
   const marker = "thinkingLevel:`Chat thinking level`";
-  const reviewedSha256 = "d9dc5b2572a0183c65617f5931debf6d2af85f7818b2e19005b3d76e01350824";
+  const reviewedSha256 = "cca27152479bb3c89bfa6643d13be059218bb3cd95311d7fe25a9a35ea0184fc";
   const candidates = filesBelow(root).filter((file) => {
     if (!file.endsWith(".js")) return false;
     const source = fs.readFileSync(file, "utf8");
@@ -420,7 +446,7 @@ export function stagePublishedResources(source: string, app: string, platform = 
     if (!found) throw new Error(`Missing pinned runtime sidecar: ${name}`);
     return found;
   });
-  for (const name of ["@snazzah/davey", "libopus-wasm", "@discordjs/voice"]) {
+  for (const name of ["libopus-wasm", "@discordjs/voice"]) {
     const found = resolvePackage(
       source,
       path.join(path.dirname(source), "plugins", "discord"),
@@ -463,13 +489,14 @@ export function stagePublishedResources(source: string, app: string, platform = 
       if (path.relative(folder, file).split(path.sep).includes("node_modules")) continue;
       copyExact(file, path.join(app, destination, path.relative(folder, file)));
     }
-    for (const [name] of Object.entries({
-      ...metadata.dependencies,
-      ...metadata.optionalDependencies,
-    })) {
+    for (const [name] of Object.entries(metadata.dependencies ?? {})) {
       const dependency = resolvePackage(source, folder, name);
       if (!dependency) throw new Error(`Missing pinned transitive sidecar: ${name}`);
       pending.push(dependency);
+    }
+    for (const [name] of Object.entries(metadata.optionalDependencies ?? {})) {
+      const dependency = resolvePackage(source, folder, name);
+      if (dependency) pending.push(dependency);
     }
   }
   for (const plugin of choiceRoots(source)) {
@@ -478,14 +505,20 @@ export function stagePublishedResources(source: string, app: string, platform = 
     if (
       metadata.name !==
         PREBUILT_CHOICE_PLUGINS[plugin.id as keyof typeof PREBUILT_CHOICE_PLUGINS].package ||
-      metadata.version !== "2026.7.1"
+      metadata.version !== "2026.9.1"
     )
       throw new Error("The reviewed complete choice plugin is required.");
-    const locked = JSON.parse(
-      fs.readFileSync(path.join(plugin.root, "npm-shrinkwrap.json"), "utf8"),
-    ) as { packages: Record<string, { os?: string[]; cpu?: string[] }> };
-    const dependencies = Object.entries(locked.packages)
-      .filter(([name]) => name.startsWith("node_modules/"))
+    const dependencyRoot = path.join(plugin.root, "node_modules");
+    const dependencies = (fs.existsSync(dependencyRoot) ? filesBelow(dependencyRoot) : [])
+      .filter((file) => path.basename(file) === "package.json")
+      .map((file) => {
+        const name = portablePath(path.relative(plugin.root, path.dirname(file)));
+        const dependency = JSON.parse(fs.readFileSync(file, "utf8")) as {
+          os?: string[];
+          cpu?: string[];
+        };
+        return [name, dependency] as const;
+      })
       .sort(([left], [right]) => right.length - left.length);
     for (const file of filesBelow(plugin.root)) {
       const relative = portablePath(path.relative(plugin.root, file));
@@ -527,7 +560,7 @@ export function resourceInventory(app: string, facadePaths: string[]): ResourceF
       const relative = portablePath(path.relative(app, file));
       let role: Role = "metadata";
       if (relative.startsWith("dist/control-ui/")) role = "control-ui";
-      else if (relative.startsWith("dist/audit/")) role = "worker";
+      else if (relative.endsWith(".worker.js")) role = "worker";
       else if (facades.has(relative)) role = "plugin-facade";
       else if (/\.(?:node|dll|exe)$/i.test(file)) role = "native-sidecar";
       else if (/(?:LICENSE|NOTICE|COPYING)/i.test(path.basename(file))) role = "license";

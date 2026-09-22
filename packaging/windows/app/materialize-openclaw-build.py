@@ -112,9 +112,30 @@ def main():
     source = fetch(lock["openclaw"], args.cache, deadline)
     package = args.output / "openclaw"
     source_inventory = extract(source["archive"], package)
-    shrinkwrap = json.loads((package / "npm-shrinkwrap.json").read_text())
-    require(shrinkwrap["name"] == "openclaw" and shrinkwrap["version"] == "2026.7.1" and shrinkwrap["lockfileVersion"] == 3, "Unexpected source shrinkwrap.")
-    packages = shrinkwrap["packages"]
+    dependency_lock_path = (args.lock.parent / lock["dependencyLock"]["path"]).resolve()
+    dependency_lock_bytes = dependency_lock_path.read_bytes()
+    require(
+        hashlib.sha256(dependency_lock_bytes).hexdigest() == lock["dependencyLock"]["sha256"],
+        "OpenClaw dependency lock mismatch.",
+    )
+    dependency_lock = json.loads(dependency_lock_bytes)
+    require(
+        dependency_lock["name"] == "nemoclaw-openclaw-runtime"
+        and dependency_lock["lockfileVersion"] == 3
+        and dependency_lock["packages"][""]["dependencies"] == {"openclaw": "2026.9.1"},
+        "Unexpected OpenClaw dependency lock.",
+    )
+    packages = {}
+    for name, item in dependency_lock["packages"].items():
+        if not name or name == "node_modules/openclaw":
+            continue
+        # The reviewed lock installs the published package below a tiny owner
+        # project. Re-root dependencies nested directly below that package into
+        # the materialized package while preserving all deeper npm placement.
+        prefix = "node_modules/openclaw/"
+        target_name = name[len(prefix):] if name.startswith(prefix) else name
+        require(target_name not in packages, "Conflicting re-rooted dependency path.")
+        packages[target_name] = item
     requested = {item["resolved"]: {"url": item["resolved"], "integrity": item["integrity"]} for name, item in packages.items() if name}
     with concurrent.futures.ThreadPoolExecutor(max_workers=8) as workers:
         archives = list(workers.map(lambda item: fetch(item, args.cache, deadline), requested.values()))
@@ -142,7 +163,7 @@ def main():
         archive = fetch(item, args.cache, deadline)
         inventory = extract(archive["archive"], args.output.joinpath(*target))
         additional.append({**archive, "package": item["package"], "version": item["version"], "target": item["target"], **inventory})
-    receipt = {"schemaVersion": 1, "classification": "verified-application-build-inputs", "portableProof": args.portable_proof, "source": source, "sourceInventory": source_inventory, "dependencyArchives": archives, "dependencies": dependencies, "compiler": compiler, "additionalPackages": additional, "lifecycleScriptsExecuted": False, "runtimeReady": False, "lockSha256": hashlib.sha256(args.lock.read_bytes()).hexdigest()}
+    receipt = {"schemaVersion": 1, "classification": "verified-application-build-inputs", "portableProof": args.portable_proof, "source": source, "sourceInventory": source_inventory, "dependencyLock": {"path": str(dependency_lock_path), "sha256": hashlib.sha256(dependency_lock_bytes).hexdigest()}, "dependencyArchives": archives, "dependencies": dependencies, "compiler": compiler, "additionalPackages": additional, "lifecycleScriptsExecuted": False, "runtimeReady": False, "lockSha256": hashlib.sha256(args.lock.read_bytes()).hexdigest()}
     (args.output / "materialization-receipt.json").write_text(json.dumps(receipt, indent=2) + "\n")
     print(json.dumps({"packages": len(dependencies), "sourceRoot": str(package), "toolRoot": str(args.output / "tools"), "runtimeReady": False}))
 

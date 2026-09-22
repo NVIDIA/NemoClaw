@@ -21,7 +21,7 @@ Use a uniquely named WPR instance, leaving unrelated sessions untouched. Probe `
 
 Node 22 supports `--cpu-prof` and trace categories `v8`, `node.environment`, `node.module_timer`, `node.fs.sync`, `node.fs.async`, `node.fs_dir.sync`, `node.fs_dir.async`. Pass these only to a labeled diagnostic invocation with a fresh output directory. A host launcher profile does not automatically profile the contained Node process, and forced exit can prevent a CPU profile from being finalized. Record those boundaries.
 
-Pinned OpenClaw 2026.7.1 already supports `OPENCLAW_GATEWAY_STARTUP_TRACE=1`. Its own stderr spans cover entry import, configuration snapshot/auth, plugin bootstrap and lookup, runtime state/imports, post-bind plugin work and ready; per-plugin metrics come from the official loader. Enable that switch in the diagnostic workload, with no OpenClaw source patch. Durations may overlap; do not add them into a fictitious exclusive total.
+Pinned OpenClaw 2026.9.1 already supports `OPENCLAW_GATEWAY_STARTUP_TRACE=1`. Its own stderr spans cover entry import, configuration snapshot/auth, plugin bootstrap and lookup, runtime state/imports, post-bind plugin work and ready; per-plugin metrics come from the official loader. Enable that switch in the diagnostic workload, with no OpenClaw source patch. Durations may overlap; do not add them into a fictitious exclusive total.
 
 Use the three evidence layers together: Node module timers/fs events and CPU stacks for resolution/parse/evaluation; official OpenClaw spans for bootstrap/plugin boundaries; ETW process/file events for scanner activity and host relay directory scans/flushes. Scanner correlation alone does not prove causation. Do not add antivirus exclusions.
 
