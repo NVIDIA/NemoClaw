@@ -8,9 +8,13 @@
 Choose the source repository before declaring the immutable publication inputs or writing a branch.
 Do not default to a fork merely because it is the usual contributor location.
 
-Read the canonical base copies of the pull-request workflows and any applicable manual-E2E contract.
-Use the trusted diff and those canonical rules to determine whether every required CI and E2E path
-supports a fork head. In particular:
+Read the canonical base copies of the pull-request workflows. Treat manual PR E2E applicability and
+selector choice as immutable publication inputs owned by the recorded implementation handoff or an
+explicit authorized task. Do not infer that manual E2E is required from advisory recommendations or
+from the publication skill itself. When neither owned input requires manual PR E2E, it is not a
+publication requirement. For required manual PR E2E, read its canonical contract. Use the trusted
+diff, the owned applicability input, and those canonical rules to determine whether every required CI
+and E2E path supports a fork head. In particular:
 
 - a candidate whose required reviewed OpenShell SDK package job rejects a non-canonical head must use
   a branch in `NVIDIA/NemoClaw`;
