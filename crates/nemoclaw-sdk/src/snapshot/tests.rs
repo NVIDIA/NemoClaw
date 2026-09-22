@@ -400,6 +400,7 @@ async fn manifest_saves_each_verified_file_before_other_downloads_finish() {
             resume_attempts: 1,
         };
         let (release, wait) = tokio::sync::oneshot::channel();
+        let (requested, request_received) = tokio::sync::oneshot::channel();
         let task = tokio::spawn(async move {
             let (mut stream, _) = listener.accept().await.unwrap();
             let mut request = Vec::new();
@@ -407,6 +408,7 @@ async fn manifest_saves_each_verified_file_before_other_downloads_finish() {
                 request.push(stream.read_u8().await.unwrap());
             }
             assert!(String::from_utf8(request).unwrap().contains("/second.bin "));
+            requested.send(()).unwrap();
             if wait.await.is_err() {
                 return;
             }
@@ -441,6 +443,10 @@ async fn manifest_saves_each_verified_file_before_other_downloads_finish() {
             })
             .await
             .unwrap();
+            tokio::time::timeout(Duration::from_secs(5), request_received)
+                .await
+                .unwrap()
+                .unwrap();
             if cancel_download {
                 cancel.cancel();
             } else {
