@@ -96,6 +96,15 @@ async function returnStartedSandboxToStopped(
   const failureMessage = `Backup cleanup failed for '${sandboxName}': ${failureDetail}.`;
   try {
     if (await returnSandboxContainerToStopped(startedForBackup)) {
+      if (!registry.recordSandboxStopIntent(sandboxName, true, registry.updateSandbox)) {
+        const error = new Error(
+          `Backup cleanup failed for '${sandboxName}': the container returned to the stopped state, but NemoClaw could not retain that lifecycle intent.`,
+        );
+        console.error(
+          `  ${RD}✗${R} ${sandboxName}: backup cleanup failed (could not retain its stopped-state intent)`,
+        );
+        return error;
+      }
       console.log(`  ${D}Returned '${sandboxName}' to its stopped state.${R}`);
       return null;
     }
