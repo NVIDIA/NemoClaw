@@ -26,3 +26,9 @@ path = "src/main.rs"
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+vt100 = "0.16.2"
+
+[target.'cfg(unix)'.dev-dependencies]
+rustix = { workspace = true, features = ["termios"] }
