@@ -1472,6 +1472,17 @@ fail_provider_unavailable() {
   fail_launch_session "launch did not record the required structured session turns"
 }
 
+# OpenClaw can persist a structurally complete assistant record before the
+# provider supplies any content. Treat only that exact, bounded diagnostic as
+# a provider-response transient. The fresh-session retry below is safe because
+# cleanup removes the baseline and PTY monitor before emitting the marker.
+is_retryable_empty_message_evidence() {
+  awk '
+    NR == 1 && /^\{"reason":"message_content_empty","sessionId":"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"\}$/ { matched = 1 }
+    END { exit !(NR == 1 && matched == 1) }
+  ' "$evidence_error"
+}
+
 session_evidence() {
   local mode="$1"
   local expected_turns=""
@@ -1517,6 +1528,7 @@ wait_for_turn_count() {
     fi
     if [[ "$evidence_status" != 1 ]]; then
       case "$evidence_status" in
+        2) is_retryable_empty_message_evidence && fail_provider_unavailable ;;
         3) fail_provider_unavailable ;;
       esac
       fail_launch_session \
@@ -1671,6 +1683,7 @@ if session_evidence qualify 2 >/dev/null 2>"$evidence_error"; then
 else
   evidence_status=$?
   case "$evidence_status" in
+    2) is_retryable_empty_message_evidence && fail_provider_unavailable ;;
     3) fail_provider_unavailable ;;
   esac
   fail_launch_session "launch final structured session evidence did not qualify (status $evidence_status)"
