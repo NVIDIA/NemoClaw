@@ -545,7 +545,11 @@ export function registerSandbox(
         ? data
         : reversibleRemoval.claimInitialDefaultInRegistry(data, entry.name),
     );
-    return structuredClone(registered);
+    const persisted = load().sandboxes[entry.name];
+    if (!persisted) {
+      throw new Error(`Cannot read sandbox '${entry.name}' after registration`);
+    }
+    return structuredClone(persisted);
   });
 }
 
@@ -867,6 +871,28 @@ export function finalizePendingSandboxRegistration(name: string): boolean {
     }
     data.sandboxes[name] = { ...current, pendingRouteReservation: undefined };
     save(reversibleRemoval.claimInitialDefaultInRegistry(data, name));
+    return true;
+  });
+}
+
+/** Publish a pending registration only while its complete staged row remains current. */
+export function finalizePendingSandboxRegistrationIfCurrent(expected: SandboxEntry): boolean {
+  const expectedSnapshot = JSON.parse(JSON.stringify(expected)) as SandboxEntry;
+  if (
+    expectedSnapshot.pendingRouteReservation !== true ||
+    expectedSnapshot.pendingCreateIdentity !== undefined
+  ) {
+    return false;
+  }
+  return withLock(() => {
+    const data = load();
+    const current = data.sandboxes[expectedSnapshot.name];
+    if (!current || !isDeepStrictEqual(current, expectedSnapshot)) return false;
+    data.sandboxes[expectedSnapshot.name] = {
+      ...current,
+      pendingRouteReservation: undefined,
+    };
+    save(reversibleRemoval.claimInitialDefaultInRegistry(data, expectedSnapshot.name));
     return true;
   });
 }
