@@ -18,12 +18,16 @@ function launchOptions(host: unknown) {
   };
 }
 
-it.each(["500", "503"] as const)(
-  "retries a transient HTTP %s provider failure in a fresh launch session (#10978)",
+it.each(["500", "503", "message_content_empty"] as const)(
+  "retries transient provider failure %s in a fresh launch session (#10978)",
   async (status) => {
     const platform = vi.spyOn(process, "platform", "get").mockReturnValue("linux");
     vi.useFakeTimers();
     const calls: Array<{ artifactName?: string; env?: NodeJS.ProcessEnv }> = [];
+    const diagnostic =
+      status === "message_content_empty"
+        ? '{"reason":"message_content_empty","sessionId":"ed80ef8e-a026-424f-8ca4-669f6060e046"}'
+        : `litellm.ServiceUnavailableError: HTTP ${status}; NVIDIA upstream unavailable`;
     const host = {
       command: async (
         _command: string,
@@ -35,7 +39,7 @@ it.each(["500", "503"] as const)(
           ? {
               exitCode: 1,
               signal: null,
-              stderr: `launch did not record the required structured session turns\nlitellm.ServiceUnavailableError: HTTP ${status}; NVIDIA upstream unavailable\n${OPENCLAW_PROVIDER_UNAVAILABLE_MARKER}:${options?.env?.NEMOCLAW_LAUNCH_RUN_ID}\n`,
+              stderr: `launch did not record the required structured session turns\n${diagnostic}\n${OPENCLAW_PROVIDER_UNAVAILABLE_MARKER}:${options?.env?.NEMOCLAW_LAUNCH_RUN_ID}\n`,
               stdout: "",
             }
           : { exitCode: 0, signal: null, stderr: "", stdout: "" };
@@ -63,45 +67,6 @@ it.each(["500", "503"] as const)(
     }
   },
 );
-
-it("retries an exact empty assistant provider response in a fresh launch session", async () => {
-  const platform = vi.spyOn(process, "platform", "get").mockReturnValue("linux");
-  vi.useFakeTimers();
-  const calls: Array<{ artifactName?: string; env?: NodeJS.ProcessEnv }> = [];
-  const host = {
-    command: async (
-      _command: string,
-      _args: string[],
-      options?: { artifactName?: string; env?: NodeJS.ProcessEnv },
-    ) => {
-      calls.push({ artifactName: options?.artifactName, env: options?.env });
-      return calls.length === 1
-        ? {
-            exitCode: 1,
-            signal: null,
-            stderr: `launch did not record the required structured session turns\n{"reason":"message_content_empty","sessionId":"ed80ef8e-a026-424f-8ca4-669f6060e046"}\n\n${OPENCLAW_PROVIDER_UNAVAILABLE_MARKER}:${options?.env?.NEMOCLAW_LAUNCH_RUN_ID}\n`,
-            stdout: "",
-          }
-        : { exitCode: 0, signal: null, stderr: "", stdout: "" };
-    },
-    openshellCommandPath: "/usr/bin/openshell",
-  };
-
-  try {
-    const launch = runOpenClawLaunchSession(launchOptions(host));
-    await vi.advanceTimersByTimeAsync(1_000);
-    const result = await launch;
-    expect(result.exitCode).toBe(0);
-    expect(calls.map((call) => call.artifactName)).toEqual([
-      "provider-turn",
-      "provider-turn-provider-retry-02",
-    ]);
-    expect(new Set(calls.map((call) => call.env?.NEMOCLAW_LAUNCH_RUN_ID)).size).toBe(2);
-  } finally {
-    vi.useRealTimers();
-    platform.mockRestore();
-  }
-});
 
 it("classifies exhausted transient launch attempts as provider unavailable (#10978)", async () => {
   const platform = vi.spyOn(process, "platform", "get").mockReturnValue("linux");

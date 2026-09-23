@@ -6,38 +6,37 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
+import { extractShellFunctionFromSource } from "../../../helpers/shell-source";
 
-const START_SCRIPT = path.join(
-  import.meta.dirname,
-  "..",
-  "../../..",
-  "scripts",
-  "nemoclaw-start.sh",
-);
+const START_SCRIPT = path.resolve(import.meta.dirname, "../../../../scripts/nemoclaw-start.sh");
 const START_SOURCE = fs.readFileSync(START_SCRIPT, "utf-8");
+const credentialProbe =
+  'bash -c \'printf "%s\\n" "${NVIDIA_INFERENCE_API_KEY-unset}" "${NVIDIA_API_KEY-unset}"\'';
+const managedEnv = {
+  NVIDIA_INFERENCE_API_KEY: "primary-secret",
+  NVIDIA_API_KEY: "legacy-secret",
+  NEMOCLAW_INFERENCE_BASE_URL: "https://inference.local/v1",
+};
+const homes: string[] = [];
+afterEach(() => {
+  for (const home of homes.splice(0)) fs.rmSync(home, { recursive: true, force: true });
+});
 const WRAPPER = [
   "set -euo pipefail",
-  `eval "$(sed -n '/^write_auth_profile() {$/,/^}$/p' "$1")"`,
-  `eval "$(sed -n '/^clear_managed_inference_credentials() {$/,/^}$/p' "$1")"`,
+  extractShellFunctionFromSource(START_SOURCE, "write_auth_profile"),
+  extractShellFunctionFromSource(START_SOURCE, "clear_managed_inference_credentials"),
   "write_auth_profile",
   "clear_managed_inference_credentials",
-  'bash -c \'printf "NVIDIA_INFERENCE_API_KEY=%s\\\\nNVIDIA_API_KEY=%s\\\\n" "${NVIDIA_INFERENCE_API_KEY-unset}" "${NVIDIA_API_KEY-unset}"\'',
+  credentialProbe,
 ].join("\n");
-
-type AuthFixture = {
-  home: string;
-  authPath: string;
-  status: number;
-  stdout: string;
-  stderr: string;
-};
 
 function runWriteAuthProfile(
   env: Record<string, string>,
   prepare: (authPath: string) => void = () => undefined,
-): AuthFixture {
+) {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-auth-test-"));
+  homes.push(home);
   const authPath = path.join(home, ".openclaw", "agents", "main", "agent", "auth-profiles.json");
   prepare(authPath);
   const result = spawnSync("bash", ["-s", "--", START_SCRIPT], {
@@ -45,13 +44,7 @@ function runWriteAuthProfile(
     env: { PATH: process.env.PATH, HOME: home, ...env },
     encoding: "utf-8",
   });
-  return {
-    home,
-    authPath,
-    status: result.status ?? -1,
-    stdout: result.stdout ?? "",
-    stderr: result.stderr ?? "",
-  };
+  return { authPath, ...result };
 }
 
 function seedAuthProfile(profile: Record<string, unknown>): (authPath: string) => void {
@@ -85,7 +78,7 @@ function startupCredentialBoundaryBlock(kind: "non-root" | "root"): string {
 function runStartupCredentialBoundary(kind: "non-root" | "root") {
   const wrapper = [
     "set -euo pipefail",
-    `eval "$(sed -n '/^clear_managed_inference_credentials() {$/,/^}$/p' "$1")"`,
+    extractShellFunctionFromSource(START_SOURCE, "clear_managed_inference_credentials"),
     "NEMOCLAW_CMD=(probe)",
     "STEP_DOWN_PREFIX_SANDBOX=(env)",
     "apply_messaging_runtime_env_aliases() { :; }",
@@ -94,17 +87,12 @@ function runStartupCredentialBoundary(kind: "non-root" | "root") {
     "setup_auth_profile_as_sandbox() { :; }",
     "install_messaging_runtime_preloads() { :; }",
     "verify_messaging_runtime_secret_scans() { :; }",
-    'run_oneshot_command() { bash -c \'printf "NVIDIA_INFERENCE_API_KEY=%s\\\\nNVIDIA_API_KEY=%s\\\\n" "${NVIDIA_INFERENCE_API_KEY-unset}" "${NVIDIA_API_KEY-unset}"\'; }',
+    `run_oneshot_command() { ${credentialProbe}; }`,
     startupCredentialBoundaryBlock(kind),
   ].join("\n");
   return spawnSync("bash", ["-s", "--", START_SCRIPT], {
     input: wrapper,
-    env: {
-      PATH: process.env.PATH,
-      NVIDIA_INFERENCE_API_KEY: "primary-secret",
-      NVIDIA_API_KEY: "legacy-secret",
-      NEMOCLAW_INFERENCE_BASE_URL: "https://inference.local/v1",
-    },
+    env: { PATH: process.env.PATH, ...managedEnv },
     encoding: "utf-8",
   });
 }
@@ -116,214 +104,97 @@ const legacyManagedProfile = {
   profileId: "inference:manual",
 };
 
-describe("write_auth_profile (#1332)", () => {
-  it("writes profile under the route identifier from NEMOCLAW_INFERENCE_PROVIDER_ID", () => {
+describe("OpenClaw auth-profile boundary", () => {
+  it.each([
+    ["default", undefined, "inference"],
+    ["configured", "openai", "openai"],
+    ["literal", "$(echo pwned)", "$(echo pwned)"],
+  ] as const)("writes a private direct profile for the %s route", (_label, route, provider) => {
     const fixture = runWriteAuthProfile({
       NVIDIA_INFERENCE_API_KEY: "secret",
-      NEMOCLAW_INFERENCE_PROVIDER_ID: "openai",
+      ...(route === undefined ? {} : { NEMOCLAW_INFERENCE_PROVIDER_ID: route }),
     });
-    try {
-      expect(fixture.status, fixture.stderr).toBe(0);
-      expect(JSON.parse(fs.readFileSync(fixture.authPath, "utf-8"))).toEqual({
-        "openai:manual": {
-          type: "api_key",
-          provider: "openai",
-          keyRef: { source: "env", id: "NVIDIA_INFERENCE_API_KEY" },
-          profileId: "openai:manual",
-        },
-      });
-    } finally {
-      fs.rmSync(fixture.home, { recursive: true, force: true });
-    }
-  });
-
-  it("falls back to 'inference' when neither route identifier is set", () => {
-    const fixture = runWriteAuthProfile({ NVIDIA_INFERENCE_API_KEY: "secret" });
-    try {
-      expect(fixture.status, fixture.stderr).toBe(0);
-      const profile = JSON.parse(fs.readFileSync(fixture.authPath, "utf-8"));
-      expect(profile).toHaveProperty("inference:manual");
-      expect(profile["inference:manual"].provider).toBe("inference");
-      expect(profile).not.toHaveProperty("nvidia:manual");
-    } finally {
-      fs.rmSync(fixture.home, { recursive: true, force: true });
-    }
-  });
-
-  it("does not use 'nvidia' as the default provider key", () => {
-    const fixture = runWriteAuthProfile({ NVIDIA_INFERENCE_API_KEY: "secret" });
-    try {
-      expect(fixture.status).toBe(0);
-      const profile = JSON.parse(fs.readFileSync(fixture.authPath, "utf-8"));
-      expect(Object.keys(profile).every((key) => !/^nvidia:/.test(key))).toBe(true);
-    } finally {
-      fs.rmSync(fixture.home, { recursive: true, force: true });
-    }
-  });
-
-  it("treats provider_key as a literal (no shell command substitution)", () => {
-    const fixture = runWriteAuthProfile({
-      NVIDIA_INFERENCE_API_KEY: "secret",
-      NEMOCLAW_INFERENCE_PROVIDER_ID: "$(echo pwned)",
-    });
-    try {
-      expect(fixture.status, fixture.stderr).toBe(0);
-      const profile = JSON.parse(fs.readFileSync(fixture.authPath, "utf-8"));
-      expect(profile).toHaveProperty("$(echo pwned):manual");
-      expect(profile["$(echo pwned):manual"].provider).toBe("$(echo pwned)");
-      expect(profile).not.toHaveProperty("pwned:manual");
-    } finally {
-      fs.rmSync(fixture.home, { recursive: true, force: true });
-    }
-  });
-
-  it("is a no-op when NVIDIA_INFERENCE_API_KEY is unset", () => {
-    const fixture = runWriteAuthProfile({});
-    try {
-      expect(fixture.status).toBe(0);
-      expect(fs.existsSync(fixture.authPath)).toBe(false);
-    } finally {
-      fs.rmSync(fixture.home, { recursive: true, force: true });
-    }
-  });
-
-  it("writes the auth profile with 0600 permissions", () => {
-    const fixture = runWriteAuthProfile({
-      NVIDIA_INFERENCE_API_KEY: "secret",
-      NEMOCLAW_INFERENCE_PROVIDER_ID: "openai",
-    });
-    try {
-      expect(fixture.status).toBe(0);
-      expect(fs.statSync(fixture.authPath).mode & 0o777).toBe(0o600);
-    } finally {
-      fs.rmSync(fixture.home, { recursive: true, force: true });
-    }
-  });
-
-  it("does not create an auth profile for the inference.local route", () => {
-    const fixture = runWriteAuthProfile({
-      NVIDIA_INFERENCE_API_KEY: "secret",
-      NEMOCLAW_INFERENCE_BASE_URL: "https://inference.local/v1",
-      NEMOCLAW_INFERENCE_PROVIDER_ID: "inference",
-    });
-    try {
-      expect(fixture.status, fixture.stderr).toBe(0);
-      expect(fs.existsSync(fixture.authPath)).toBe(false);
-    } finally {
-      fs.rmSync(fixture.home, { recursive: true, force: true });
-    }
-  });
-
-  it("removes a stale NemoClaw-generated profile from a proxy-routed sandbox", () => {
-    const fixture = runWriteAuthProfile(
-      { NEMOCLAW_INFERENCE_BASE_URL: "https://inference.local/v1" },
-      seedAuthProfile({ "inference:manual": legacyManagedProfile }),
-    );
-    try {
-      expect(fixture.status, fixture.stderr).toBe(0);
-      expect(fs.existsSync(fixture.authPath)).toBe(false);
-    } finally {
-      fs.rmSync(fixture.home, { recursive: true, force: true });
-    }
-  });
-
-  it("preserves user-managed profiles while removing the stale managed entry", () => {
-    const customProfile = {
-      type: "api_key",
-      provider: "custom",
-      keyRef: { source: "env", id: "NVIDIA_INFERENCE_API_KEY" },
-      profileId: "custom:manual",
-    };
-    const fixture = runWriteAuthProfile(
-      { NEMOCLAW_INFERENCE_BASE_URL: "https://inference.local/v1" },
-      seedAuthProfile({
-        "inference:manual": legacyManagedProfile,
-        "custom:manual": customProfile,
-      }),
-    );
-    try {
-      expect(fixture.status, fixture.stderr).toBe(0);
-      expect(JSON.parse(fs.readFileSync(fixture.authPath, "utf-8"))).toEqual({
-        "custom:manual": customProfile,
-      });
-      expect(fs.statSync(fixture.authPath).mode & 0o777).toBe(0o600);
-    } finally {
-      fs.rmSync(fixture.home, { recursive: true, force: true });
-    }
-  });
-
-  it("preserves a near-match user-managed profile for the managed provider", () => {
-    const userManagedProfile = { ...legacyManagedProfile, label: "user-managed" };
-    const original = JSON.stringify({ "inference:manual": userManagedProfile });
-    const fixture = runWriteAuthProfile(
-      { NEMOCLAW_INFERENCE_BASE_URL: "https://inference.local/v1" },
-      (authPath) => {
-        fs.mkdirSync(path.dirname(authPath), { recursive: true });
-        fs.writeFileSync(authPath, original);
+    expect(fixture.status, fixture.stderr).toBe(0);
+    expect(JSON.parse(fs.readFileSync(fixture.authPath, "utf-8"))).toEqual({
+      [`${provider}:manual`]: {
+        ...legacyManagedProfile,
+        provider,
+        profileId: `${provider}:manual`,
       },
-    );
-    try {
-      expect(fixture.status, fixture.stderr).toBe(0);
-      expect(fs.readFileSync(fixture.authPath, "utf-8")).toBe(original);
-    } finally {
-      fs.rmSync(fixture.home, { recursive: true, force: true });
-    }
-  });
-
-  it("clears both managed credential aliases before a child process starts", () => {
-    const fixture = runWriteAuthProfile({
-      NVIDIA_INFERENCE_API_KEY: "primary-secret",
-      NVIDIA_API_KEY: "legacy-secret",
-      NEMOCLAW_INFERENCE_BASE_URL: "https://inference.local/v1",
     });
-    try {
-      expect(fixture.status, fixture.stderr).toBe(0);
-      expect(fixture.stdout).toContain("NVIDIA_INFERENCE_API_KEY=unset");
-      expect(fixture.stdout).toContain("NVIDIA_API_KEY=unset");
-      expect(fixture.stdout).not.toContain("primary-secret");
-      expect(fixture.stdout).not.toContain("legacy-secret");
-    } finally {
-      fs.rmSync(fixture.home, { recursive: true, force: true });
-    }
+    expect(fs.statSync(fixture.authPath).mode & 0o777).toBe(0o600);
   });
 
-  it.each(["non-root", "root"] as const)(
-    "clears both managed credential aliases in the %s startup ordering before one-shot execution",
-    (kind) => {
-      const result = runStartupCredentialBoundary(kind);
+  it("leaves direct auth state absent when no credential is supplied", () => {
+    const fixture = runWriteAuthProfile({});
+    expect(fixture.status, fixture.stderr).toBe(0);
+    expect(fs.existsSync(fixture.authPath)).toBe(false);
+  });
 
-      expect(result.status, result.stderr).toBe(0);
-      expect(result.stdout).toContain("NVIDIA_INFERENCE_API_KEY=unset");
-      expect(result.stdout).toContain("NVIDIA_API_KEY=unset");
-      expect(result.stdout).not.toContain("primary-secret");
-      expect(result.stdout).not.toContain("legacy-secret");
+  it.each(["fresh", "legacy"] as const)(
+    "leaves no managed profile or inherited credentials in %s state",
+    (state) => {
+      const fixture = runWriteAuthProfile(
+        state === "fresh"
+          ? managedEnv
+          : { NEMOCLAW_INFERENCE_BASE_URL: managedEnv.NEMOCLAW_INFERENCE_BASE_URL },
+        state === "legacy"
+          ? seedAuthProfile({ "inference:manual": legacyManagedProfile })
+          : undefined,
+      );
+      expect(fixture.status, fixture.stderr).toBe(0);
+      expect(fs.existsSync(fixture.authPath)).toBe(false);
+      expect(fixture.stdout.trim()).toBe("unset\nunset");
     },
   );
 
-  it("rejects a symlinked auth-profile parent without changing its target", () => {
+  it("preserves other profiles when removing the managed entry", () => {
+    const customProfile = {
+      ...legacyManagedProfile,
+      provider: "custom",
+      profileId: "custom:manual",
+    };
+    const fixture = runWriteAuthProfile(
+      managedEnv,
+      seedAuthProfile({ "inference:manual": legacyManagedProfile, "custom:manual": customProfile }),
+    );
+    expect(fixture.status, fixture.stderr).toBe(0);
+    expect(JSON.parse(fs.readFileSync(fixture.authPath, "utf-8"))).toEqual({
+      "custom:manual": customProfile,
+    });
+    expect(fs.statSync(fixture.authPath).mode & 0o777).toBe(0o600);
+  });
+
+  it("preserves a near-match profile byte for byte", () => {
+    const profiles = { "inference:manual": { ...legacyManagedProfile, label: "user-managed" } };
+    const fixture = runWriteAuthProfile(managedEnv, seedAuthProfile(profiles));
+    expect(fixture.status, fixture.stderr).toBe(0);
+    expect(fs.readFileSync(fixture.authPath, "utf-8")).toBe(JSON.stringify(profiles));
+  });
+
+  it.each(["non-root", "root"] as const)(
+    "clears credential aliases before the %s startup launches a command",
+    (kind) => {
+      const result = runStartupCredentialBoundary(kind);
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout.trim()).toBe("unset\nunset");
+    },
+  );
+
+  it("rejects a symlinked parent without changing its target", () => {
     const externalContents = JSON.stringify({ "inference:manual": legacyManagedProfile });
     let externalProfile = "";
-    const fixture = runWriteAuthProfile(
-      { NEMOCLAW_INFERENCE_BASE_URL: "https://inference.local/v1" },
-      (authPath) => {
-        const openclawDir = path.resolve(authPath, "../../../../");
-        const externalAgents = path.join(
-          path.resolve(authPath, "../../../../../"),
-          "external-agents",
-        );
-        externalProfile = path.join(externalAgents, "main", "agent", "auth-profiles.json");
-        fs.mkdirSync(path.dirname(externalProfile), { recursive: true });
-        fs.writeFileSync(externalProfile, externalContents);
-        fs.mkdirSync(openclawDir, { recursive: true });
-        fs.symlinkSync(externalAgents, path.join(openclawDir, "agents"));
-      },
-    );
-    try {
-      expect(fixture.status).not.toBe(0);
-      expect(fixture.stderr).toContain("[SECURITY] Refusing auth-profile cleanup");
-      expect(fs.readFileSync(externalProfile, "utf-8")).toBe(externalContents);
-    } finally {
-      fs.rmSync(fixture.home, { recursive: true, force: true });
-    }
+    const fixture = runWriteAuthProfile(managedEnv, (authPath) => {
+      const openclawDir = path.resolve(authPath, "../../../../");
+      const externalAgents = path.join(path.dirname(openclawDir), "external-agents");
+      externalProfile = path.join(externalAgents, "main", "agent", "auth-profiles.json");
+      fs.mkdirSync(path.dirname(externalProfile), { recursive: true });
+      fs.writeFileSync(externalProfile, externalContents);
+      fs.mkdirSync(openclawDir, { recursive: true });
+      fs.symlinkSync(externalAgents, path.join(openclawDir, "agents"));
+    });
+    expect(fixture.status).not.toBe(0);
+    expect(fixture.stderr).toContain("[SECURITY] Refusing auth-profile cleanup");
+    expect(fs.readFileSync(externalProfile, "utf-8")).toBe(externalContents);
   });
 });

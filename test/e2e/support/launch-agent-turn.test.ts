@@ -346,7 +346,12 @@ const exitWithStatus = process.exit.bind(process);
   if (mode === "invalid-order") {
     append("assistant", "response before input");
     append("user", firstInput);
-  } else if (mode === "provider-empty-message" || mode === "provider-cleanup-failure" || mode === "provider-exit-after-recording") {
+  } else if (mode === "provider-empty-message") {
+    append("user", firstInput);
+    fs.appendFileSync(sessionFile, JSON.stringify({
+      type: "message", message: { role: "assistant", content: [] },
+    }) + "\n");
+  } else if (mode === "provider-cleanup-failure" || mode === "provider-exit-after-recording") {
     append("user", firstInput);
     appendProviderError();
     new Map([["provider-exit-after-recording", () => exitWithStatus(23)]]).get(mode)?.();
@@ -1075,6 +1080,7 @@ it.runIf(process.platform === "linux").concurrent(
     expect(ttyObserved).toBe(true);
     expect(baselineRemoved).toBe(true);
     expect(result.status).toBe(1);
+    expect(result.stderr).toContain('"reason":"message_content_empty"');
     expect(result.stderr).toContain("nemoclaw.e2e.launch-failure=provider-unavailable");
   },
   testTimeout(30_000),
