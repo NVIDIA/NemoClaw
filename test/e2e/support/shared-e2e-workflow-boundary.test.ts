@@ -16,6 +16,7 @@ import {
   validateE2eWorkflowBoundary,
   validateNativePodmanStagingAction,
 } from "../../../tools/e2e/workflow-boundary.mts";
+import { validateE2eOperationsWorkflowBoundary } from "../../../tools/e2e/operations-workflow-boundary.mts";
 import { readWorkflow } from "../../helpers/e2e-workflow-contract";
 import { testTimeoutOptions } from "../../helpers/timeouts";
 
@@ -46,14 +47,17 @@ type Workflow = {
   >;
 };
 
-function validateMutatedWorkflow(mutator: (workflow: Workflow) => void): string[] {
+function validateMutatedWorkflow(
+  mutator: (workflow: Workflow) => void,
+  validator = validateE2eWorkflowBoundary,
+): string[] {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-shared-e2e-workflow-"));
   const workflowPath = path.join(directory, "workflow.yaml");
   const workflow = readWorkflow() as Workflow;
   try {
     mutator(workflow);
     fs.writeFileSync(workflowPath, YAML.stringify(workflow));
-    return validateE2eWorkflowBoundary(workflowPath);
+    return validator(workflowPath);
   } finally {
     fs.rmSync(directory, { force: true, recursive: true });
   }
@@ -588,5 +592,69 @@ describe("manual PR authentication execution control", () => {
       )!["continue-on-error"] = value;
     });
     expect(errors).toContain("Manual PR authentication must not tolerate authorization failure");
+  });
+});
+
+describe("trusted prefix execution controls", () => {
+  const names = [
+    "Build trusted larger-runner routing",
+    "Authenticate manual PR dispatch",
+    "Record trusted E2E dispatch receipt",
+    "Upload trusted E2E dispatch receipt",
+    "Authorize Launchable E2E maintainer dispatch",
+    "Check out trusted E2E planner",
+    "Set up Node for trusted E2E planning",
+    "Install reviewed npm for trusted E2E planning",
+    "Install trusted E2E planner dependencies",
+    "Generate E2E target matrix",
+    "Stage immutable native Podman E2E toolchains",
+  ];
+  const overrides = [
+    { field: "if" as const, value: false },
+    { field: "if" as const, value: "${{ always() }}" },
+    { field: "continue-on-error" as const, value: true },
+    { field: "continue-on-error" as const, value: false },
+    { field: "continue-on-error" as const, value: "${{ always() }}" },
+  ];
+  it.each(names.flatMap((name) => overrides.map((override) => ({ name, ...override }))))(
+    "rejects $name $field=$value",
+    ({ name, field, value }) => {
+      const errors = validateMutatedWorkflow((workflow) => {
+        workflow.jobs["generate-matrix"]!.steps!.find((step) => step.name === name)![field] = value;
+      });
+      expect(errors).toContain(
+        `trusted pre-candidate step ${name} must preserve its reviewed execution condition and failure propagation`,
+      );
+    },
+  );
+  it.each([
+    "Authenticate manual PR dispatch",
+    "Record trusted E2E dispatch receipt",
+    "Upload trusted E2E dispatch receipt",
+    "Authorize Launchable E2E maintainer dispatch",
+  ])("rejects missing reviewed condition for %s", (name) => {
+    const errors = validateMutatedWorkflow((workflow) => {
+      delete workflow.jobs["generate-matrix"]!.steps!.find((step) => step.name === name)!.if;
+    });
+    expect(errors).toContain(
+      `trusted pre-candidate step ${name} must preserve its reviewed execution condition and failure propagation`,
+    );
+  });
+});
+
+describe("shared environment contract consumers", () => {
+  it.each([
+    { name: "full boundary", validate: validateE2eWorkflowBoundary },
+    { name: "operations boundary", validate: validateE2eOperationsWorkflowBoundary },
+  ])("$name rejects rebound shared workflow and authorization bindings", ({ validate }) => {
+    const errors = validateMutatedWorkflow((workflow) => {
+      (workflow.env as Record<string, unknown>).NEMOCLAW_E2E_EXPECTED_SHA = "unapproved-binding";
+      const auth = workflow.jobs["generate-matrix"]!.steps!.find(
+        (step) => step.name === "Authenticate manual PR dispatch",
+      )!;
+      (auth.env as Record<string, unknown>).CHECKOUT_SHA = "unapproved-binding";
+    }, validate);
+    expect(errors).toContain("E2E workflow must bind NEMOCLAW_E2E_EXPECTED_SHA");
+    expect(errors).toContain("Manual PR authentication must bind CHECKOUT_SHA");
   });
 });

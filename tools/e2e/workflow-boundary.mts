@@ -8,6 +8,11 @@ import { fileURLToPath } from "node:url";
 import { isDeepStrictEqual } from "node:util";
 import YAML from "yaml";
 import {
+  PRE_CANDIDATE_WORKFLOW_ENV,
+  PRE_CANDIDATE_STEP_ENV,
+  PRE_CANDIDATE_STEP_CONDITIONS,
+} from "./pre-candidate-workflow-contract.mts";
+import {
   CREDENTIAL_FREE_TEST_TAG,
   discoverCredentialFreeTests,
   SHARED_E2E_JOB_ID,
@@ -2129,7 +2134,7 @@ function validateStagingBrevLaunchableJob(errors: string[], jobs: WorkflowRecord
     "Authorize Launchable E2E maintainer dispatch",
   );
   const expectedAuthorizationSelector =
-    "${{ github.event_name == 'workflow_dispatch' && inputs.checkout_sha == '' && ((inputs.jobs == 'staging-brev-launchable' && inputs.targets == '') || (inputs.jobs == 'staging-brev-launchable-identity' && inputs.targets == '') || (inputs.include_staging_brev_launchable && inputs.jobs == '' && inputs.targets == '')) }}";
+    PRE_CANDIDATE_STEP_CONDITIONS["Authorize Launchable E2E maintainer dispatch"];
   if (authorization?.if !== expectedAuthorizationSelector) {
     errors.push("Launchable E2E maintainer authorization must cover exact and full dispatches");
   }
@@ -2137,11 +2142,9 @@ function validateStagingBrevLaunchableJob(errors: string[], jobs: WorkflowRecord
     errors.push("Launchable E2E maintainer authorization must use bash");
   }
   const authorizationEnv = asRecord(authorization?.env);
-  for (const [key, expected] of [
-    ["ACTOR", "${{ github.actor }}"],
-    ["GITHUB_TOKEN", "${{ github.token }}"],
-    ["TRIGGERING_ACTOR", "${{ github.triggering_actor }}"],
-  ] as const) {
+  for (const [key, expected] of Object.entries(
+    PRE_CANDIDATE_STEP_ENV["Authorize Launchable E2E maintainer dispatch"],
+  )) {
     if (authorizationEnv[key] !== expected) {
       errors.push(`Launchable E2E maintainer authorization must bind ${key}`);
     }
@@ -2544,7 +2547,9 @@ function validateTrustedE2eDispatchReceipt(
   generateSteps: readonly WorkflowStep[],
 ): void {
   const dispatchReceipt = requireStep(errors, generateSteps, "Record trusted E2E dispatch receipt");
-  if (dispatchReceipt?.if !== "${{ github.event_name == 'workflow_dispatch' }}") {
+  if (
+    dispatchReceipt?.if !== PRE_CANDIDATE_STEP_CONDITIONS["Record trusted E2E dispatch receipt"]
+  ) {
     errors.push("trusted E2E dispatch receipt must run for workflow dispatches only");
   }
   const dispatchReceiptEnv = asRecord(dispatchReceipt?.env);
@@ -2583,7 +2588,7 @@ function validateTrustedE2eDispatchReceipt(
   }
 
   const dispatchUpload = requireStep(errors, generateSteps, "Upload trusted E2E dispatch receipt");
-  if (dispatchUpload?.if !== "${{ github.event_name == 'workflow_dispatch' }}") {
+  if (dispatchUpload?.if !== PRE_CANDIDATE_STEP_CONDITIONS["Upload trusted E2E dispatch receipt"]) {
     errors.push("trusted E2E dispatch receipt upload must run for workflow dispatches only");
   }
   if (dispatchUpload?.uses !== UPLOAD_E2E_ARTIFACTS_ACTION) {
@@ -2636,81 +2641,6 @@ const PRE_CANDIDATE_RUN_SHA256: Readonly<Record<string, string>> = {
   "Authorize Launchable E2E maintainer dispatch":
     "bbf442a006b47016eda56133eb400a48c6931c55364c1220b84327b5ffd6f171",
   "Generate E2E target matrix": "e2678fa3599f04cbe2b09d8be035e3b551359aab8ea8064e4f457da5a35dde3e",
-};
-
-// Reviewed environment identities prevent inherited shell or action initialization overrides.
-const PRE_CANDIDATE_WORKFLOW_ENV = {
-  NEMOCLAW_E2E_EXPECTED_SHA: "${{ inputs.checkout_sha }}",
-  NEMOCLAW_E2E_CORRELATION_ID: "${{ inputs.correlation_id }}",
-  NEMOCLAW_E2E_SHARD: "default",
-  NEMOCLAW_GATEWAY_RUNTIMES: "${{ inputs.gateway_runtimes || inputs.gateway_runtime || 'docker' }}",
-};
-const PRE_CANDIDATE_STEP_ENV: Readonly<Record<string, Readonly<Record<string, string>>>> = {
-  "Build trusted larger-runner routing": {
-    CHECKOUT_SHA: "${{ inputs.checkout_sha }}",
-    LARGER_RUNNER_LABEL: "${{ vars.E2E_LARGER_RUNNER_LABEL }}",
-    REF: "${{ github.ref }}",
-    REPOSITORY: "${{ github.repository }}",
-  },
-  "Authenticate manual PR dispatch": {
-    ALLOW_JETSON_DISPATCH: "${{ inputs.allow_jetson_dispatch && 'true' || 'false' }}",
-    BASE_SHA: "${{ inputs.base_sha }}",
-    CHECKOUT_REPOSITORY: "${{ inputs.checkout_repository }}",
-    CHECKOUT_SHA: "${{ inputs.checkout_sha }}",
-    EXPECTED_WORKFLOW_SHA: "${{ inputs.workflow_sha }}",
-    GITHUB_TOKEN: "${{ github.token }}",
-    INCLUDE_LAUNCHABLE: "${{ inputs.include_staging_brev_launchable && 'true' || 'false' }}",
-    JOBS: "${{ inputs.jobs }}",
-    PR_NUMBER: "${{ inputs.pr_number }}",
-    TARGETS: "${{ inputs.targets }}",
-    WORKFLOW_EVENT: "${{ github.event_name }}",
-    WORKFLOW_REF: "${{ github.ref }}",
-    WORKFLOW_SHA: "${{ github.workflow_sha }}",
-  },
-  "Record trusted E2E dispatch receipt": {
-    ACTOR: "${{ github.actor }}",
-    ALLOW_JETSON_DISPATCH: "${{ inputs.allow_jetson_dispatch && 'true' || 'false' }}",
-    ALLOW_JETSON_RUNNER_QUEUE: "false",
-    BASE_SHA: "${{ inputs.checkout_sha != '' && inputs.base_sha || github.sha }}",
-    CANDIDATE_REPOSITORY: "${{ inputs.checkout_repository || github.repository }}",
-    CANDIDATE_SHA: "${{ inputs.checkout_sha || github.sha }}",
-    DISPATCH_JOBS: "${{ inputs.jobs }}",
-    DISPATCH_RECEIPT_DIR: "${{ runner.temp }}/nemoclaw-e2e-dispatch",
-    DISPATCH_TARGETS: "${{ inputs.targets }}",
-    EVENT_NAME: "${{ github.event_name }}",
-    INCLUDE_STAGING_BREV_LAUNCHABLE:
-      "${{ inputs.include_staging_brev_launchable && 'true' || 'false' }}",
-    PR_NUMBER: "${{ inputs.checkout_sha != '' && inputs.pr_number || '' }}",
-    REPOSITORY: "${{ github.repository }}",
-    RUN_ATTEMPT: "${{ github.run_attempt }}",
-    RUN_ID: "${{ github.run_id }}",
-    TRIGGERING_ACTOR: "${{ github.triggering_actor }}",
-    WORKFLOW_SHA: "${{ github.workflow_sha }}",
-  },
-  "Upload trusted E2E dispatch receipt": {},
-  "Authorize Launchable E2E maintainer dispatch": {
-    ACTOR: "${{ github.actor }}",
-    GITHUB_TOKEN: "${{ github.token }}",
-    TRIGGERING_ACTOR: "${{ github.triggering_actor }}",
-  },
-  "Check out trusted E2E planner": {},
-  "Set up Node for trusted E2E planning": {},
-  "Install reviewed npm for trusted E2E planning": {},
-  "Install trusted E2E planner dependencies": {},
-  "Generate E2E target matrix": {
-    INFERENCE_MODE: "${{ inputs.inference_mode || 'mock' }}",
-    NEMOCLAW_GATEWAY_RUNTIMES:
-      "${{ inputs.gateway_runtimes || inputs.gateway_runtime || 'docker' }}",
-    JOBS: "${{ inputs.jobs }}",
-    TARGETS: "${{ inputs.targets }}",
-    EVENT_NAME: "${{ github.event_name }}",
-    BEFORE_SHA: "${{ github.event.before }}",
-    CANDIDATE_SHA: "${{ github.sha }}",
-    NEMOCLAW_E2E_CREDENTIALS_ALLOWED:
-      "${{ (inputs.checkout_sha == '' || steps.candidate_authorization.outputs.nvidia_owned == 'true') && 'true' || 'false' }}",
-    NEMOCLAW_E2E_BRAVE_API_KEY_AVAILABLE: "${{ secrets.BRAVE_API_KEY != '' && 'true' || 'false' }}",
-  },
-  "Stage immutable native Podman E2E toolchains": {},
 };
 
 function requirePreCandidateEnvironment(
@@ -2774,6 +2704,14 @@ function validatePreCandidateActions(
       step.env,
       PRE_CANDIDATE_STEP_ENV[name] ?? {},
     );
+    if (
+      step.if !== PRE_CANDIDATE_STEP_CONDITIONS[name] ||
+      step["continue-on-error"] !== undefined
+    ) {
+      errors.push(
+        `trusted pre-candidate step ${name} must preserve its reviewed execution condition and failure propagation`,
+      );
+    }
     const expectedRunSha256 = PRE_CANDIDATE_RUN_SHA256[name];
     if (
       expectedRunSha256 !== undefined &&
