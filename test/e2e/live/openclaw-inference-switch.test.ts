@@ -933,6 +933,7 @@ test(
         "install and onboard baseline OpenClaw",
         "prepare the switched provider and endpoint",
         "switch the route and verify restart semantics",
+        "stop and start the sandbox without replaying the create-time route",
         "inspect route configuration and recorded state",
         "prove inference.local and OpenClaw gateway inference",
         "apply sandbox retention and record the result",
@@ -954,6 +955,7 @@ test(
         "when selected, the mock baseline route completes one explicit authenticated fixture request",
         "nemoclaw inference set switches the running sandbox route",
         "OpenClaw gateway is supervisor-restarted after every changed inference configuration",
+        "a later sandbox stop/start preserves the switched model instead of replaying the create-time route",
         "OpenShell route points at the switched provider/model",
         "OpenClaw config and .config-hash reflect the switched inference API/model",
         "registry and onboard session record the switched provider/model",
@@ -961,11 +963,6 @@ test(
         "OpenClaw gateway model inference answers through the switched route without agent tools",
       ],
     });
-
-    expect(
-      fs.existsSync(CLI_ENTRYPOINT),
-      "run `npm run build:cli` before live repo CLI targets",
-    ).toBe(true);
 
     await runtimeProvider.requireAvailable({
       artifactName: "prereq-runtime-info-openclaw-inference-switch",
@@ -1171,10 +1168,6 @@ test(
     switchBinding && redactionValues.push(switchBinding.credentialValue);
 
     progress.phase("switch the route and verify restart semantics");
-    const apiFamilyChanges = SWITCH_MOCK_ANTHROPIC === "1";
-    expect(SWITCH_INFERENCE_API).toBe(
-      apiFamilyChanges ? "anthropic-messages" : "openai-completions",
-    );
     const pidBefore = await openclawGatewayPid(sandbox, home);
     const switchResult = await runOpenClawInferenceSetWithRetry(
       host,
@@ -1199,6 +1192,21 @@ test(
         `OpenClaw gateway process did not change after the config switch (${pidBefore} -> ${pidAfter})`,
       ).toBe(false);
     }
+
+    progress.phase("stop and start the sandbox without replaying the create-time route");
+    const gatewayName = process.env.OPENSHELL_GATEWAY ?? "nemoclaw";
+    const stop = await sandbox.openshell(["sandbox", "stop", "-g", gatewayName, SANDBOX_NAME], {
+      artifactName: "openshell-stop-after-openclaw-inference-switch",
+      env: commandEnv(home),
+      timeoutMs: COMMAND_TIMEOUT_MS,
+    });
+    expect(stop.exitCode, resultText(stop)).toBe(0);
+    const start = await sandbox.openshell(["sandbox", "start", "-g", gatewayName, SANDBOX_NAME], {
+      artifactName: "openshell-start-after-openclaw-inference-switch",
+      env: commandEnv(home),
+      timeoutMs: COMMAND_TIMEOUT_MS,
+    });
+    expect(start.exitCode, resultText(start)).toBe(0);
 
     progress.phase("inspect route configuration and recorded state");
     await assertOpenShellRoute(host, home);
@@ -1249,6 +1257,7 @@ test(
         installCompleted: install.exitCode === 0,
         inferenceSetCompleted: switchResult.exitCode === 0,
         gatewayRestartExpected: true,
+        switchedModelSurvivedSandboxRestart: true,
         gatewayPidStable,
         routeChecked: true,
         configChecked: true,

@@ -1122,6 +1122,116 @@ PYOVERRIDE
 # values still win. No-op when already in sync.
 # Ref: https://github.com/NVIDIA/NemoClaw/issues/3175
 
+# OpenShell persists sandbox-create environment values across stop/start. Record
+# successful consumption of NEMOCLAW_ROUTED_MODEL so that create-time metadata
+# cannot overwrite a later `inference set`. The receipt is read and written as
+# the config owner; root never opens an agent-controlled path.
+routed_model_receipt() {
+  local operation="$1"
+  local config_dir="/sandbox/.openclaw"
+
+  run_openclaw_config_as_owner /usr/bin/python3 -I - "$config_dir" "$operation" <<'PYROUTEDMODELRECEIPT'
+import os
+import secrets
+import stat
+import sys
+
+config_dir, operation = sys.argv[1:]
+marker_name = ".nemoclaw-routed-model-applied"
+expected = b"nemoclaw-routed-model-applied-v1\n"
+directory_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC | getattr(os, "O_NOFOLLOW", 0)
+file_flags = os.O_RDONLY | os.O_CLOEXEC | getattr(os, "O_NOFOLLOW", 0)
+
+directory_fd = os.open(config_dir, directory_flags)
+try:
+    directory = os.fstat(directory_fd)
+    if directory.st_uid != os.geteuid() or directory.st_gid != os.getegid():
+        raise OSError("config directory owner does not match the runtime user")
+    config_fd = os.open("openclaw.json", file_flags, dir_fd=directory_fd)
+    try:
+        config = os.fstat(config_fd)
+        current_config = os.stat("openclaw.json", dir_fd=directory_fd, follow_symlinks=False)
+        if (
+            not stat.S_ISREG(config.st_mode)
+            or (config.st_dev, config.st_ino) != (current_config.st_dev, current_config.st_ino)
+            or config.st_uid != os.geteuid()
+            or config.st_gid != os.getegid()
+            or config.st_nlink != 1
+        ):
+            raise OSError("OpenClaw config is not a trusted regular file")
+        receipt_mode = stat.S_IMODE(config.st_mode)
+    finally:
+        os.close(config_fd)
+
+    if operation == "check":
+        try:
+            marker_fd = os.open(marker_name, file_flags, dir_fd=directory_fd)
+        except FileNotFoundError:
+            raise SystemExit(1)
+        try:
+            opened = os.fstat(marker_fd)
+            current = os.stat(marker_name, dir_fd=directory_fd, follow_symlinks=False)
+            content = bytearray()
+            while len(content) <= len(expected):
+                chunk = os.read(marker_fd, len(expected) + 1 - len(content))
+                if not chunk:
+                    break
+                content.extend(chunk)
+            if (
+                not stat.S_ISREG(opened.st_mode)
+                or (opened.st_dev, opened.st_ino) != (current.st_dev, current.st_ino)
+                or opened.st_uid != os.geteuid()
+                or opened.st_gid != os.getegid()
+                or stat.S_IMODE(opened.st_mode) != receipt_mode
+                or opened.st_nlink != 1
+                or bytes(content) != expected
+            ):
+                raise OSError("routed-model receipt is not a trusted regular file")
+        finally:
+            os.close(marker_fd)
+    elif operation == "write":
+        temp_name = f".{marker_name}.{secrets.token_hex(12)}.tmp"
+        temp_fd = os.open(
+            temp_name,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_CLOEXEC | getattr(os, "O_NOFOLLOW", 0),
+            0o600,
+            dir_fd=directory_fd,
+        )
+        try:
+            os.fchmod(temp_fd, receipt_mode)
+            offset = 0
+            while offset < len(expected):
+                offset += os.write(temp_fd, expected[offset:])
+            os.fsync(temp_fd)
+            os.link(
+                temp_name,
+                marker_name,
+                src_dir_fd=directory_fd,
+                dst_dir_fd=directory_fd,
+                follow_symlinks=False,
+            )
+            os.unlink(temp_name, dir_fd=directory_fd)
+            os.fsync(directory_fd)
+        except Exception:
+            try:
+                os.unlink(temp_name, dir_fd=directory_fd)
+            except OSError:
+                pass
+            raise
+        finally:
+            os.close(temp_fd)
+    else:
+        raise OSError("unsupported routed-model receipt operation")
+except SystemExit:
+    raise
+except Exception as error:
+    print(f"[SECURITY] Routed-model receipt {operation} failed: {error}", file=sys.stderr)
+    raise SystemExit(2)
+finally:
+    os.close(directory_fd)
+PYROUTEDMODELRECEIPT
+}
+
 reconcile_agent_model_with_provider() {
   # apply_model_override already won; reconciling against the gateway would
   # overwrite the user's explicit choice with an inference/-prefixed variant.
@@ -1142,16 +1252,27 @@ reconcile_agent_model_with_provider() {
     return 0
   fi
 
-  local gateway_model="${NEMOCLAW_ROUTED_MODEL:-}"
-  local model_source="route"
-  if [ -n "$gateway_model" ]; then
+  local gateway_model=""
+  local model_source="gateway"
+  local routed_model_pending=0
+  local routed_model_receipt_status=0
+  if [ -n "${NEMOCLAW_ROUTED_MODEL:-}" ]; then
+    routed_model_receipt check || routed_model_receipt_status=$?
+    if [ "$routed_model_receipt_status" -eq 1 ]; then
+      gateway_model="$NEMOCLAW_ROUTED_MODEL"
+      model_source="route"
+      routed_model_pending=1
+    elif [ "$routed_model_receipt_status" -ne 0 ]; then
+      return "$routed_model_receipt_status"
+    fi
+  fi
+  if [ "$routed_model_pending" -eq 1 ]; then
     if [ "${#gateway_model}" -gt 512 ] \
       || ! printf '%s' "$gateway_model" | grep -qE '^[A-Za-z0-9._:/-]+$'; then
       printf '[SECURITY] Routed model rejected an unsafe model identifier\n' >&2
       return 1
     fi
   elif command -v openshell >/dev/null 2>&1; then
-    model_source="gateway"
     gateway_model="$(
       /usr/bin/python3 -I - <<'PYPROBE'
 import re
@@ -1279,6 +1400,9 @@ PYRECONCILE_READ
   )"
 
   if [ -z "$provider_model_ref" ]; then
+    if [ "$routed_model_pending" -eq 1 ]; then
+      routed_model_receipt write || return $?
+    fi
     return 0
   fi
 
@@ -1334,6 +1458,9 @@ PYRECONCILE_WRITE
   fi
 
   normalize_mutable_config_perms || _write_rc=$?
+  if [ "$_write_rc" -eq 0 ] && [ "$routed_model_pending" -eq 1 ]; then
+    routed_model_receipt write || _write_rc=$?
+  fi
   [ "$_write_rc" -eq 0 ] || return "$_write_rc"
 }
 

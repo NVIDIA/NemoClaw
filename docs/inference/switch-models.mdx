@@ -49,8 +49,9 @@ At runtime, NemoClaw replaces `contextWindow` only when it resolves a value for 
 During custom-image startup, NemoClaw reconciles a stale model ID with the host-selected route only when the sandbox user can write `/sandbox/.openclaw/openclaw.json`.
 That reconciliation removes both inherited limits when the model ID changes.
 If the configuration is not writable, NemoClaw reports that reconciliation was skipped and preserves the existing configuration.
-OpenClaw then uses the selected model's catalog values or defaults.
-To keep explicit limits for the new model, recreate the sandbox after you set `NEMOCLAW_CONTEXT_WINDOW` and `NEMOCLAW_MAX_TOKENS` to values supported by that model.
+That preserved configuration can still contain the image's inherited model ID and limits.
+Make the configuration writable by the sandbox user in the custom image, then recreate the sandbox.
+To keep explicit limits for the new model, set `NEMOCLAW_CONTEXT_WINDOW` and `NEMOCLAW_MAX_TOKENS` to values supported by that model before you recreate the sandbox.
 Refer to [Configure Model Limits](configure-model-limits) for the environment variable requirements.
 
 </AgentOnly>
