@@ -215,7 +215,7 @@ function agentTurnCommand(agent: ShippedManagedImageAgent, sessionId: string): s
   }
 }
 
-async function approveOpenClawAdminScope(
+export async function approveOpenClawAdminScope(
   host: HostCliClient,
   sandbox: SandboxClient,
   sandboxName: string,
@@ -242,13 +242,87 @@ async function approveOpenClawAdminScope(
         timeoutMs: 4 * 60_000,
       })
     : null;
-  expect(
+  const approvalSucceeded =
     requestId !== null &&
-      preApprovalAdminProbeEvidence(trigger).outcome === "approval-required" &&
-      approval !== null &&
-      approval.exitCode === 0 &&
-      resultText(approval).includes(OPENCLAW_ADMIN_APPROVAL_MARKER),
-    `OpenClaw explicit admin approval did not settle\n${resultText(trigger)}\n${approval ? resultText(approval) : "request ID unavailable"}`,
+    preApprovalAdminProbeEvidence(trigger).outcome === "approval-required" &&
+    approval !== null &&
+    approval.exitCode === 0 &&
+    resultText(approval).includes(OPENCLAW_ADMIN_APPROVAL_MARKER);
+  const cronName = `managed-activation-admin-${Date.now()}`;
+  const cronAdd = approvalSucceeded
+    ? await sandbox.exec(
+        sandboxName,
+        [
+          "openclaw",
+          "cron",
+          "add",
+          "--name",
+          cronName,
+          "--every",
+          "2h",
+          "--agent",
+          "main",
+          "--session",
+          "isolated",
+          "--message",
+          "hello",
+        ],
+        {
+          artifactName: "openclaw-admin-scope-cron-add",
+          env,
+          redactionValues: [API_KEY],
+          timeoutMs: AGENT_TIMEOUT_MS,
+        },
+      )
+    : null;
+  let cronId: string | null = null;
+  if (cronAdd?.exitCode === 0) {
+    try {
+      const value: unknown = JSON.parse(cronAdd.stdout.trim());
+      if (value !== null && typeof value === "object" && !Array.isArray(value)) {
+        const record = value as Record<string, unknown>;
+        if (record.name === cronName && typeof record.id === "string" && record.id.trim() !== "") {
+          cronId = record.id;
+        }
+      }
+    } catch {
+      cronId = null;
+    }
+  }
+  const cronRun = cronId
+    ? await sandbox.exec(sandboxName, ["openclaw", "cron", "run", cronId], {
+        artifactName: "openclaw-admin-scope-cron-run",
+        env,
+        redactionValues: [API_KEY],
+        timeoutMs: AGENT_TIMEOUT_MS,
+      })
+    : null;
+  let cronRunSucceeded = false;
+  if (cronRun?.exitCode === 0) {
+    try {
+      const value: unknown = JSON.parse(cronRun.stdout.trim());
+      if (value !== null && typeof value === "object" && !Array.isArray(value)) {
+        const record = value as Record<string, unknown>;
+        cronRunSucceeded =
+          record.ok === true &&
+          (record.ran === true ||
+            (record.enqueued === true &&
+              typeof record.runId === "string" &&
+              record.runId.trim() !== ""));
+      }
+    } catch {
+      cronRunSucceeded = false;
+    }
+  }
+  expect(
+    approvalSucceeded && cronAdd?.exitCode === 0 && cronId !== null && cronRunSucceeded,
+    [
+      "OpenClaw explicit admin approval did not authorize the cron consumer",
+      resultText(trigger),
+      approval ? resultText(approval) : "request ID unavailable",
+      cronAdd ? resultText(cronAdd) : "cron add unavailable",
+      cronRun ? resultText(cronRun) : "cron run unavailable",
+    ].join("\n"),
   ).toBe(true);
 }
 

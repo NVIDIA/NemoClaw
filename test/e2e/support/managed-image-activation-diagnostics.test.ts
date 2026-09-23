@@ -10,6 +10,7 @@ import { describe, expect, it, vi } from "vitest";
 import { createHostProcessWorkspace } from "../../helpers/host-process-harness.ts";
 import { ArtifactSink } from "../fixtures/artifacts.ts";
 import {
+  approveOpenClawAdminScope,
   captureManagedImageOnboardPairingDiagnostics,
   collectOnboardFailureDockerDiagnostics,
   managedActivationPostRestartAgentTurnScript,
@@ -188,6 +189,65 @@ describe("managed image activation failure diagnostics", () => {
     expect(input).toContain('openclaw devices approve "$canonical_request_id"');
     expect(input).toContain("NEMOCLAW_MANAGED_ADMIN_APPROVAL_OK");
     expect(input).not.toContain(result.stderr);
+  });
+
+  it("proves the approved admin scope with a successful cron consumer", async () => {
+    const requestId = "4edc8df0-20d0-4308-b0e8-850843ae0cf4";
+    const now = 1_790_145_221_718;
+    const nowSpy = vi.spyOn(Date, "now").mockReturnValue(now);
+    const sandboxExec = vi
+      .fn()
+      .mockResolvedValueOnce({
+        exitCode: 1,
+        stderr: `scope upgrade pending approval (requestId: ${requestId})`,
+        stdout: "",
+        timedOut: false,
+      })
+      .mockResolvedValueOnce({
+        exitCode: 0,
+        stderr: "",
+        stdout: JSON.stringify({
+          id: "managed-admin-proof-job",
+          name: `managed-activation-admin-${now}`,
+        }),
+        timedOut: false,
+      })
+      .mockResolvedValueOnce({
+        exitCode: 0,
+        stderr: "",
+        stdout: JSON.stringify({ ok: true, ran: true }),
+        timedOut: false,
+      });
+    const hostCommand = vi.fn(async () => ({
+      exitCode: 0,
+      stderr: "",
+      stdout: "NEMOCLAW_MANAGED_ADMIN_APPROVAL_OK\n",
+      timedOut: false,
+    }));
+
+    try {
+      await approveOpenClawAdminScope(
+        { command: hostCommand, commandPath: "/fixture/nemoclaw" } as never,
+        { exec: sandboxExec } as never,
+        "fixture-sandbox",
+        {},
+      );
+
+      expect(hostCommand).toHaveBeenCalledOnce();
+      expect(sandboxExec.mock.calls.map((call) => call[1].slice(0, 3))).toEqual([
+        ["openclaw", "agent", "--agent"],
+        ["openclaw", "cron", "add"],
+        ["openclaw", "cron", "run"],
+      ]);
+      expect(sandboxExec.mock.calls[2][1]).toEqual([
+        "openclaw",
+        "cron",
+        "run",
+        "managed-admin-proof-job",
+      ]);
+    } finally {
+      nowSpy.mockRestore();
+    }
   });
 
   it("retains a fixed diagnostic without approval output secrets when approval fails", () => {
