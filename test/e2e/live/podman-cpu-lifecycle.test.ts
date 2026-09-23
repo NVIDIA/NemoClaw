@@ -33,6 +33,10 @@ import type { SandboxEntry } from "../../../src/lib/state/registry";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
+import {
+  PORTABLE_HERMES_FINALIZATION_PHASES,
+  runPortableHermesFinalization,
+} from "../fixtures/portable-hermes-finalization.ts";
 import { OPENSHELL_V0116_QUALIFICATION } from "../fixtures/openshell-v0116-qualification.ts";
 import {
   consumeNativeRuntimeCandidateEvidence,
@@ -104,7 +108,7 @@ function engines(): {
   };
 }
 
-test(
+test.runIf(process.env.E2E_TARGET_ID !== "portable-hermes-finalization")(
   "activates pinned OpenShell sandboxes and preserves registered-agent Podman CPU identity",
   {
     meta: { e2ePhases: E2E_PHASES },
@@ -518,5 +522,31 @@ exit 1
         shellProbe,
       });
     }
+  },
+);
+
+test.runIf(process.env.E2E_TARGET_ID === "portable-hermes-finalization")(
+  "portable-hermes-finalization: receipt-qualified readiness completes onboarding and doctor",
+  {
+    meta: { e2ePhases: PORTABLE_HERMES_FINALIZATION_PHASES },
+    timeout: 70 * 60_000,
+  },
+  async ({ artifacts, progress, shellProbe }) => {
+    await runPortableHermesFinalization({
+      artifacts,
+      phases: {
+        proveEnvironment: () => progress.phase("prove x86-64 NVIDIA GPU and rootless Podman"),
+        startGateway: () => progress.phase("start the receipt-owned OpenShell gateway"),
+        activateHermes: () =>
+          progress.phase("activate the managed Hermes gateway from the candidate image"),
+        publishAuthority: () => progress.phase("publish receipt and registry authority"),
+        finalizeOnboarding: () =>
+          progress.phase("complete onboarding finalization through native readiness"),
+        confirmDoctor: () => progress.phase("confirm doctor reports the same healthy readiness"),
+        recordEvidence: () => progress.phase("record Portable Hermes readiness evidence"),
+      },
+      progress,
+      shellProbe,
+    });
   },
 );

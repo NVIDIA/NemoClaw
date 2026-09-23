@@ -14,6 +14,7 @@ import {
   discoverCredentialFreeTests,
 } from "../../../tools/e2e/credential-free-tests.mts";
 import { E2E_AGENT_RUNTIMES } from "../../../tools/e2e/execution-coverage.mts";
+import { supportsE2eGatewayRuntime } from "../../../tools/e2e/gateway-runtime.mts";
 import {
   catalogueTarget,
   catalogueTargetsForChangedFiles,
@@ -74,19 +75,22 @@ function expectExplicitCatalogueCoverage(): void {
 describe("E2E workflow plan", () => {
   it("defaults to every release-required target and tagged credential-free test", () => {
     const plan = buildE2eWorkflowPlan();
+    const releaseRequiredTargets = E2E_TARGET_CATALOGUE.filter((target) => target.releaseRequired);
     expect(plan).toEqual(buildE2eWorkflowPlan({}, { gatewayRuntimes: ["docker"] }));
     expect(plan.matrix).toEqual(buildLiveTargetMatrix());
     expect(plan.testMatrix).toEqual(
       credentialFreeTestMatrix(discoverCredentialFreeTests(), ["docker"]),
     );
-    expect(Object.values(plan.catalogueMatrices).flat()).toHaveLength(E2E_TARGET_CATALOGUE.length);
+    expect(Object.values(plan.catalogueMatrices).flat()).toHaveLength(
+      releaseRequiredTargets.length,
+    );
     expect(
       plan.coverageMatrix.reduce<Record<string, number>>((counts, row) => {
         counts[row.source] = (counts[row.source] ?? 0) + 1;
         return counts;
       }, {}),
     ).toEqual({
-      catalogue: E2E_TARGET_CATALOGUE.length,
+      catalogue: releaseRequiredTargets.length,
       "typed-registry": 3,
       "shared-e2e": 1,
       "retained-workflow": 14,
@@ -612,6 +616,35 @@ describe("E2E workflow plan", () => {
     expect(selectedWorkflowJobs(plan)).toEqual(["catalogue-standard"]);
   });
 
+  it("runs Portable Hermes finalization only when explicitly selected with Podman", () => {
+    const target = catalogueTarget("portable-hermes-finalization");
+    expect(target).toMatchObject({
+      gatewayRuntimes: ["podman"],
+      releaseRequired: false,
+      runner: "linux-amd64-gpu-rtxpro6000-latest-1",
+    });
+
+    const defaultPlan = buildE2eWorkflowPlan({}, { gatewayRuntimes: ["podman"] });
+    expect(
+      Object.values(defaultPlan.catalogueMatrices)
+        .flat()
+        .map((row) => row.id),
+    ).not.toContain(target.id);
+
+    const explicitPlan = buildE2eWorkflowPlan(
+      { targets: target.id },
+      { gatewayRuntimes: ["podman"] },
+    );
+    expect(explicitPlan.catalogueMatrices.standard).toEqual([
+      expect.objectContaining({
+        id: target.id,
+        runtime_provider: "podman",
+        runner: target.runner,
+      }),
+    ]);
+    expect(selectedWorkflowJobs(explicitPlan)).toEqual(["catalogue-standard"]);
+  });
+
   it("selects the complete GPU reply target when its Hermes helper changes", () => {
     const plan = buildE2eWorkflowPlan(
       {},
@@ -861,7 +894,11 @@ describe("E2E workflow plan", () => {
       { changedFiles: [".github/workflows/e2e-standard-profile.yaml"] },
     );
 
-    expect(Object.values(plan.catalogueMatrices).flat()).toHaveLength(E2E_TARGET_CATALOGUE.length);
+    expect(Object.values(plan.catalogueMatrices).flat()).toHaveLength(
+      E2E_TARGET_CATALOGUE.filter((target) =>
+        supportsE2eGatewayRuntime(target.gatewayRuntimes, "docker"),
+      ).length,
+    );
     expect(plan.selectedJobs).toEqual(["jetson-nvmap-gpu"]);
     expect(plan.matrix).toEqual([]);
     expect(plan.testMatrix).toEqual([]);

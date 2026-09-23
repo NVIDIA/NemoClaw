@@ -36,7 +36,8 @@ import {
 export const ARTIFACT_DIR = process.env.E2E_ARTIFACT_DIR ?? "";
 export const GATEWAY_NAME = "nemoclaw-18080";
 export const OPENSHELL_VERSION = OPENSHELL_V0116_QUALIFICATION.version;
-export const SOCKET_PATH = process.env.E2E_PODMAN_SOCKET ?? "";
+export const SOCKET_PATH =
+  process.env.E2E_PODMAN_SOCKET ?? process.env.OPENSHELL_PODMAN_SOCKET ?? "";
 
 const FULL_CONTAINER_ID = /^[0-9a-f]{64}$/u;
 const MAX_GATEWAY_DIAGNOSTIC_CHARS = 32 * 1024;

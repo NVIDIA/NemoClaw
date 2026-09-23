@@ -853,7 +853,10 @@ export function buildE2eWorkflowPlan(
       gatewayRuntimes,
       matrix: buildLiveTargetMatrix([], gatewayRuntimes),
       testMatrix,
-      catalogueMatrices: catalogueMatrices(E2E_TARGET_CATALOGUE, gatewayRuntimes),
+      catalogueMatrices: catalogueMatrices(
+        E2E_TARGET_CATALOGUE.filter((target) => target.releaseRequired),
+        gatewayRuntimes,
+      ),
       selectedJobs,
       runtimeProvidersByJob: runtimeProvidersByJob(
         inventory,
