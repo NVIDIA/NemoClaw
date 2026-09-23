@@ -711,6 +711,7 @@ export function createProductionGatewayReadinessDependencies(
     const providerMatches =
       !providerRuntime ||
       (serviceEnv?.OPENSHELL_DRIVERS === providerRuntime.openShellDriver &&
+        serviceEnv.OPENSHELL_PODMAN_SOCKET === (providerRuntime.socketPath ?? undefined) &&
         serviceEnv.OPENSHELL_BIND_ADDRESS === providerRuntime.bindAddress &&
         serviceEnv.OPENSHELL_SERVER_PORT === String(gatewayPort) &&
         serviceEnv.OPENSHELL_GRPC_ENDPOINT ===

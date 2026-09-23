@@ -830,13 +830,17 @@ describe("managed gateway port readiness (#7411)", () => {
   }, 30_000);
 
   it.runIf(process.platform === "linux").for([
-    ["marker", "podman", "none", "present", "present"],
-    ["service", "podman", "none", "present", "present"],
-    ["service", "docker", "owner-mismatch", "unknown", "absent"],
+    ["marker", "podman", "selected", "none", "present", "present"],
+    ["service", "podman", "selected", "none", "present", "present"],
+    ["service", "docker", "selected", "owner-mismatch", "unknown", "absent"],
+    ["service", "podman", "other", "owner-mismatch", "unknown", "absent"],
   ] as const)(
-    "projects a real %s-owned %s listener through Podman readiness (#10984)",
+    "projects a real %s-owned %s listener with %s socket through Podman readiness (#10984)",
     { timeout: 30_000 },
-    async ([ownership, driver, conflict, versionState, portState], { onTestFinished }) => {
+    async (
+      [ownership, driver, socketDirectory, conflict, versionState, portState],
+      { onTestFinished },
+    ) => {
       const actualChildProcess =
         await vi.importActual<typeof import("node:child_process")>("node:child_process");
       subprocess.spawnSync.mockImplementation(actualChildProcess.spawnSync);
@@ -883,6 +887,7 @@ esac
             : {}),
           env: {
             OPENSHELL_DRIVERS: driver,
+            OPENSHELL_PODMAN_SOCKET: `/nonexistent/run/${socketDirectory}/podman.sock`,
             OPENSHELL_BIND_ADDRESS: "0.0.0.0",
             OPENSHELL_SERVER_PORT: String(gatewayPort),
             OPENSHELL_GRPC_ENDPOINT: `https://169.254.2.2:${String(gatewayPort)}`,
@@ -924,7 +929,7 @@ esac
         NEMOCLAW_OPENSHELL_BIN: openshell,
         NEMOCLAW_OPENSHELL_GATEWAY_BIN: process.execPath,
         NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR: stateDir,
-        OPENSHELL_PODMAN_SOCKET: "/nonexistent/run/podman/podman.sock",
+        OPENSHELL_PODMAN_SOCKET: "/nonexistent/run/selected/podman.sock",
       };
       const gateway = createCurrentPodmanRuntimeProviderBundle(environment).gateway;
       const deps = createProductionGatewayReadinessDependencies({
