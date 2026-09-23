@@ -249,10 +249,14 @@ def finished_application(
         "native-runtime.cjs",
         "openclaw-invoke.cjs",
         "openclaw-sqlite-realpath-preload.cjs",
+        "openclaw-migrate.cjs",
+        "openclaw-migration-config.json",
         "native-inference-manifest.json",
     }
     if not required.issubset(files):
         raise ValueError("The finished application is missing a static worker.")
+    if read_json(workers / "openclaw-migration-config.json") != {}:
+        raise ValueError("The host migration requires an empty sealed configuration.")
     executable = executable_build / "NemoClaw.Runtime.exe"
     arm64_executable(executable)
     if (
@@ -288,6 +292,11 @@ def finished_application(
         (executable, "app/NemoClaw.Runtime.exe"),
         (workers / "native-runtime.cjs", "workers/native-runtime.cjs"),
         (workers / "openclaw-invoke.cjs", "workers/openclaw-invoke.cjs"),
+        (workers / "openclaw-migrate.cjs", "workers/openclaw-migrate.cjs"),
+        (
+            workers / "openclaw-migration-config.json",
+            "workers/openclaw-migration-config.json",
+        ),
         (
             workers / "openclaw-sqlite-realpath-preload.cjs",
             "workers/openclaw-sqlite-realpath-preload.cjs",

@@ -121,6 +121,9 @@ class PackageComposition(unittest.TestCase):
             ).is_file()
         )
         catalog = json.loads((self.output / "agent-support.json").read_text())
+        for name in ("openclaw-migrate.cjs", "openclaw-migration-config.json"):
+            installed = self.output / "runtimes" / identity["runtimeId"] / "workers" / name
+            self.assertEqual(installed.read_bytes(), (self.fixture.workers / name).read_bytes())
         self.assertEqual(
             [row["id"] for row in catalog["agents"] if row["selectable"]], ["openclaw"]
         )

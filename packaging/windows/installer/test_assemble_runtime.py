@@ -69,9 +69,13 @@ class RuntimeAssembly(unittest.TestCase):
             "native-runtime.cjs",
             "openclaw-invoke.cjs",
             "openclaw-sqlite-realpath-preload.cjs",
+            "openclaw-migrate.cjs",
+            "openclaw-migration-config.json",
             "native-inference-manifest.json",
         ):
-            (self.workers / name).write_text("fixture\n")
+            (self.workers / name).write_text(
+                "{}\n" if name == "openclaw-migration-config.json" else "fixture\n"
+            )
             data = (self.workers / name).read_bytes()
             compiled.append(
                 {
@@ -238,6 +242,28 @@ class RuntimeAssembly(unittest.TestCase):
     def test_missing_selected_agent_fails_before_output(self):
         with self.assertRaises(FileNotFoundError):
             self.assemble({"pi": self.root / "absent"})
+        self.assertFalse(self.output.exists())
+
+    def test_missing_migration_helper_prevents_assembly(self):
+        record = json.loads((self.workers / "build.json").read_text())
+        record["files"] = [
+            row for row in record["files"] if row["file"] != "openclaw-migrate.cjs"
+        ]
+        (self.workers / "build.json").write_text(json.dumps(record))
+        with self.assertRaisesRegex(ValueError, "missing a static worker"):
+            self.assemble()
+        self.assertFalse(self.output.exists())
+
+    def test_migration_configuration_cannot_enable_plugins(self):
+        config = self.workers / "openclaw-migration-config.json"
+        config.write_text('{"plugins":{"enabled":true}}')
+        record = json.loads((self.workers / "build.json").read_text())
+        for row in record["files"]:
+            if row["file"] == config.name:
+                row["bytes"], row["sha256"] = assembler.hash_file(config)
+        (self.workers / "build.json").write_text(json.dumps(record))
+        with self.assertRaisesRegex(ValueError, "empty sealed configuration"):
+            self.assemble()
         self.assertFalse(self.output.exists())
 
     def test_changed_executable_cannot_enter_the_sealed_application(self):
