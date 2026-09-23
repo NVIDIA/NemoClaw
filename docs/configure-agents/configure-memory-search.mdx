@@ -12,15 +12,16 @@ content:
 ---
 
 Configure OpenClaw memory search to use an embedding model from a host Ollama container.
-This setup lets another local server, such as managed vLLM, continue to serve the chat model.
+The embedding provider is separate from your chat-model provider.
 
 ## Prepare the Embedding Server
 
-Before you continue, ensure that a separate host Ollama container is reachable on port `11435` and has the `qwen3-embedding:0.6b` model available.
+Before you continue, ensure that a separate host Ollama container is reachable on port `8000` and has the `qwen3-embedding:0.6b` model available.
 This procedure does not start the container or pull the model.
-Port `11435` must be unused before you start that container; do not replace an existing NemoClaw chat proxy.
+Port `8000` must be unused before you start that container; do not replace an existing vLLM, NIM, or other inference service.
+Keep the managed Ollama daemon and authenticated proxy on their existing ports, normally `11434` and `11435`.
 
-The sandbox reaches the container through `http://host.openshell.internal:11435`.
+The sandbox reaches the container through `http://host.openshell.internal:8000`.
 Bind its published port to the Docker bridge or another reviewed interface reachable from the sandbox.
 Allow access only from that local container network; Ollama endpoints are commonly unauthenticated.
 Do not change the managed Ollama daemon's loopback binding to follow this example.
@@ -32,7 +33,7 @@ Apply the preset, then verify the Ollama API from the sandbox.
 
 ```bash
 nemoclaw my-assistant policy add local-inference --yes
-nemoclaw my-assistant exec -- curl -fsS http://host.openshell.internal:11435/api/tags
+nemoclaw my-assistant exec -- curl -fsS http://host.openshell.internal:8000/api/tags
 ```
 
 Continue only when the returned JSON `models` array contains an entry whose `name` is `qwen3-embedding:0.6b`.
@@ -49,7 +50,7 @@ Existing per-agent overrides take precedence; update them if they disable search
 ```bash
 nemoclaw my-assistant config set \
   --key models.providers.ollama-mem \
-  --value '{"api":"ollama","baseUrl":"http://host.openshell.internal:11435","apiKey":"ollama-local","models":[{"id":"qwen3-embedding:0.6b","name":"Qwen3 Embedding 0.6B"}]}' \
+  --value '{"api":"ollama","baseUrl":"http://host.openshell.internal:8000","apiKey":"ollama-local","models":[{"id":"qwen3-embedding:0.6b","name":"Qwen3 Embedding 0.6B"}]}' \
   --config-accept-new-path
 
 nemoclaw my-assistant exec -- openclaw plugins enable ollama
