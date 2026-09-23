@@ -31,6 +31,7 @@ export async function probeLlamaCppSandboxReachability(
   return probeHostServiceSandboxReachability({
     ...opts,
     port: opts.port ?? LLAMA_CPP_PORT,
+    treatNonBridgeTcpFailureAsConclusive: true,
   });
 }
 
@@ -44,6 +45,14 @@ export function formatLlamaCppSandboxUnreachableMessage(
       `  ✗ Sandbox containers cannot reach the ${SERVICE_LABEL} at ${HOST_INTERNAL_NAME}:${port}.`,
       `    Host-side 127.0.0.1:${port} passed. The sandbox route uses ${sandboxHost}.`,
       `    Bind or publish the llama.cpp listener so ${sandboxHost}:${port} is reachable from the sandbox.`,
+      `    Then rerun \`${cliName()} onboard\`.`,
+    ].join("\n");
+  }
+  if (result.usesHostGatewayRoute === true) {
+    return [
+      `  ✗ Sandbox containers cannot reach the ${SERVICE_LABEL} at ${HOST_INTERNAL_NAME}:${port}.`,
+      `    Host-side 127.0.0.1:${port} passed. The sandbox route uses the runtime host-gateway mapping.`,
+      "    Bind or publish the llama.cpp listener on an address that containers can reach through that mapping.",
       `    Then rerun \`${cliName()} onboard\`.`,
     ].join("\n");
   }

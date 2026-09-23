@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../../adapters/docker/run", () => ({
   dockerRun: vi.fn(),
@@ -9,10 +9,15 @@ vi.mock("../../adapters/docker/run", () => ({
 }));
 
 import { PORTABLE_HOST_GATEWAY_IP } from "../experimental/portable-profile";
+import { prepareNativePodmanGatewayHostRuntime } from "../runtime-provider/podman-runtime-surfaces";
 import {
   formatLlamaCppSandboxUnreachableMessage,
   probeLlamaCppSandboxReachability,
 } from "./sandbox-reachability";
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
 
 describe("probeLlamaCppSandboxReachability", () => {
   it("delegates a TCP probe on port 8081 (#11626)", async () => {
@@ -26,6 +31,72 @@ describe("probeLlamaCppSandboxReachability", () => {
     });
     expect(result.reason).toBe("tcp_failed");
     expect(result.port).toBe(8081);
+  });
+
+  it("reports a portable route TCP failure as conclusive (#11626)", async () => {
+    vi.stubEnv("NEMOCLAW_EXPERIMENTAL_PROFILE", "portable");
+    const credential = "secret-portable-credential";
+    const result = await probeLlamaCppSandboxReachability({
+      inspectNetworkImpl: () => ({ subnet: "10.87.0.0/24" }),
+      runImpl: () => ({ status: 1, stderr: `nc: connect failed: ${credential}` }),
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      reason: "tcp_failed",
+      sandboxHostAddress: PORTABLE_HOST_GATEWAY_IP,
+      usesHostGatewayRoute: false,
+    });
+    expect(result.detail).not.toContain(credential);
+  });
+
+  it("reports a native Podman route TCP failure as conclusive (#11626)", async () => {
+    const gatewayRuntime = prepareNativePodmanGatewayHostRuntime({
+      environment: {},
+      platform: "linux",
+      socketPath: "/run/user/1000/podman/podman.sock",
+    });
+    const result = await probeLlamaCppSandboxReachability({
+      gatewayRuntime,
+      platform: "linux",
+      inspectNetworkImpl: () => ({ subnet: "10.88.0.0/16", gatewayIp: "10.88.0.1" }),
+      runImpl: () => ({ status: 1, stderr: "nc: connect failed" }),
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      reason: "tcp_failed",
+      sandboxHostAddress: PORTABLE_HOST_GATEWAY_IP,
+      usesHostGatewayRoute: false,
+      runtimeProviderId: "podman",
+    });
+  });
+
+  it("reports a runtime host-gateway TCP failure as conclusive (#11626)", async () => {
+    const gatewayRuntime = {
+      ...prepareNativePodmanGatewayHostRuntime({
+        environment: {},
+        platform: "linux",
+        socketPath: "/run/user/1000/podman/podman.sock",
+      }),
+      providerId: "docker",
+      sandboxHostAddress: null,
+    };
+    const result = await probeLlamaCppSandboxReachability({
+      gatewayRuntime,
+      platform: "linux",
+      inspectNetworkImpl: () => ({ subnet: "192.168.65.0/24", gatewayIp: "192.168.65.1" }),
+      usesHostGatewayRouteImpl: () => true,
+      runImpl: () => ({ status: 1, stderr: "nc: connect failed" }),
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      reason: "tcp_failed",
+      sandboxHostAddress: null,
+      usesHostGatewayRoute: true,
+      runtimeProviderId: "docker",
+    });
   });
 });
 
@@ -89,6 +160,24 @@ describe("formatLlamaCppSandboxUnreachableMessage", () => {
     });
     expect(message).toContain(`${PORTABLE_HOST_GATEWAY_IP}:8081`);
     expect(message).not.toContain("docker run");
+    expect(message).not.toContain("-p 127.0.0.1:8081:8081");
+  });
+
+  it("uses runtime host-gateway guidance without a UFW command (#11626)", () => {
+    const message = formatLlamaCppSandboxUnreachableMessage({
+      ok: false,
+      reason: "tcp_failed",
+      networkName: "openshell",
+      subnet: "192.168.65.0/24",
+      gatewayIp: "192.168.65.1",
+      sandboxHostAddress: null,
+      usesHostGatewayRoute: true,
+      runtimeProviderId: "docker",
+    });
+
+    expect(message).toContain("runtime host-gateway mapping");
+    expect(message).not.toContain("ufw");
+    expect(message).not.toContain("Docker bridge IP");
     expect(message).not.toContain("-p 127.0.0.1:8081:8081");
   });
 });

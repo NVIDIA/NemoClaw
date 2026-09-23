@@ -53,6 +53,7 @@ export interface HostServiceReachabilityResult {
   gatewayIp?: string;
   /** Effective address the probe maps onto `host.openshell.internal`. */
   sandboxHostAddress?: string | null;
+  usesHostGatewayRoute?: boolean;
   runtimeProviderId?: string;
   detail?: string;
 }
@@ -72,6 +73,8 @@ export interface HostServiceReachabilityOptions {
   runImpl?: (args: readonly string[], timeoutMs: number) => ProbeRunResult;
   inspectNetworkImpl?: (networkName: string) => { subnet?: string; gatewayIp?: string } | undefined;
   usesHostGatewayRouteImpl?: () => boolean;
+  /** Treat an nc exit 1 as conclusive on explicit-address and host-gateway routes. */
+  treatNonBridgeTcpFailureAsConclusive?: boolean;
   platform?: NodeJS.Platform;
   gatewayRuntime?: RuntimeProviderGatewayHostRuntime;
 }
@@ -147,6 +150,7 @@ export async function probeHostServiceSandboxReachability(
       : (network.gatewayIp as string);
   const runtimeMeta = {
     sandboxHostAddress: providerHostAddress,
+    usesHostGatewayRoute: isHostGateway,
     runtimeProviderId: managedGatewayRuntime.providerId,
   };
 
@@ -188,9 +192,14 @@ export async function probeHostServiceSandboxReachability(
     .filter((s): s is string => Boolean(s))
     .join(" | ");
 
-  // Non-nc failures, DNS failures, and host-gateway routes do not prove that
-  // a native Docker bridge UFW rule blocked the connection.
-  if (result.status !== 1 || isNameResolutionFailure(detail) || usesNonBridgeRoute) {
+  // Existing callers treat non-bridge failures as inconclusive because they
+  // diagnose native Docker bridge firewalls. A caller that requires the tested
+  // route itself to connect can classify nc exit 1 as a TCP failure.
+  if (
+    result.status !== 1 ||
+    isNameResolutionFailure(detail) ||
+    (usesNonBridgeRoute && opts.treatNonBridgeTcpFailureAsConclusive !== true)
+  ) {
     return {
       ok: false,
       reason: "probe_unavailable",
