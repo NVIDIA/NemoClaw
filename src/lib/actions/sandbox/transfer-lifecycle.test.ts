@@ -13,6 +13,7 @@ const { run, probe, gateway, ensure } = vi.hoisted(() => ({
   ensure: vi.fn(),
 }));
 vi.mock("./gateway-state", () => ({
+  assertHermesPortableCommandUnavailable: vi.fn(),
   ensureLiveSandboxOrExit: ensure,
   getKnownSandboxTargetGatewayName: gateway,
 }));
