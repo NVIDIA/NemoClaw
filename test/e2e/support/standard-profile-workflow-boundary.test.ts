@@ -83,6 +83,43 @@ describe("standard E2E execution profile", () => {
     );
   });
 
+  it("rejects Tavily secrets outside their guarded execution profile (#12138)", () => {
+    const workflow = readWorkflow() as {
+      jobs: Record<string, { secrets: Record<string, string> }>;
+    };
+    workflow.jobs["catalogue-nvidia-inference"]!.secrets.TAVILY_API_KEY =
+      "${{ secrets.TAVILY_API_KEY }}";
+    workflow.jobs["catalogue-tavily-nvidia-inference"]!.secrets.TAVILY_API_KEY =
+      "${{ secrets.TAVILY_API_KEY }}";
+    expect(validateStandardProfileWorkflowBoundary(workflow)).toEqual(
+      expect.arrayContaining([
+        "catalogue-nvidia-inference must receive only its profile secrets",
+        "catalogue-tavily-nvidia-inference must receive only its profile secrets",
+      ]),
+    );
+  });
+
+  it("rejects unguarded Tavily delivery to the target process (#12138)", () => {
+    const profile = YAML.parse(
+      fs.readFileSync(path.join(REPO_ROOT, ".github/workflows/e2e-standard-profile.yaml"), "utf8"),
+    ) as {
+      jobs: { run: { steps: Array<{ name?: string; env?: Record<string, string> }> } };
+    };
+    profile.jobs.run.steps.find(
+      (step) => step.name === "Run catalogue E2E target",
+    )!.env!.TAVILY_API_KEY = "${{ secrets.TAVILY_API_KEY }}";
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-tavily-secret-boundary-"));
+    const profilePath = path.join(directory, "profile.yaml");
+    try {
+      fs.writeFileSync(profilePath, YAML.stringify(profile));
+      expect(validateStandardProfileWorkflowBoundary(readWorkflow(), profilePath)).toContain(
+        "standard E2E profile must run the planned catalogue target with guarded secrets",
+      );
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
   it("rejects catalogue callers that bypass E2E credential authorization (#9047)", () => {
     const workflow = readWorkflow() as {
       jobs: Record<string, { with: Record<string, string> }>;

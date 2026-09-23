@@ -79,14 +79,16 @@ describe("E2E workflow plan", () => {
     expect(plan.testMatrix).toEqual(
       credentialFreeTestMatrix(discoverCredentialFreeTests(), ["docker"]),
     );
-    expect(Object.values(plan.catalogueMatrices).flat()).toHaveLength(E2E_TARGET_CATALOGUE.length);
+    expect(Object.values(plan.catalogueMatrices).flat()).toHaveLength(
+      E2E_TARGET_CATALOGUE.filter((target) => target.releaseRequired).length,
+    );
     expect(
       plan.coverageMatrix.reduce<Record<string, number>>((counts, row) => {
         counts[row.source] = (counts[row.source] ?? 0) + 1;
         return counts;
       }, {}),
     ).toEqual({
-      catalogue: E2E_TARGET_CATALOGUE.length,
+      catalogue: E2E_TARGET_CATALOGUE.filter((target) => target.releaseRequired).length,
       "typed-registry": 3,
       "shared-e2e": 1,
       "retained-workflow": 14,
@@ -177,6 +179,52 @@ describe("E2E workflow plan", () => {
     expect(() => buildE2eWorkflowPlan({ targets: "ubuntu-repo-cloud-hermes" })).toThrow(
       "Unknown target 'ubuntu-repo-cloud-hermes'",
     );
+  });
+
+  it.each(["openclaw", "hermes"])(
+    "selects the %s Tavily exporter only through an explicit Docker target (#12138)",
+    (agent) => {
+      const id = `tavily-export-${agent}`;
+      const plan = buildE2eWorkflowPlan({ jobs: id });
+      expect(plan.catalogueMatrices["tavily-nvidia-inference"]).toEqual([
+        expect.objectContaining({ id, agent_runtime: agent, runtime_provider: "docker" }),
+      ]);
+      expect(selectedWorkflowJobs(plan)).toEqual(["catalogue-tavily-nvidia-inference"]);
+      expect(buildE2eWorkflowPlan().catalogueMatrices["tavily-nvidia-inference"]).toEqual([]);
+      expect(
+        buildE2eWorkflowPlan({}, { changedFiles: ["test/e2e/live/brave-search.test.ts"] })
+          .catalogueMatrices["tavily-nvidia-inference"],
+      ).toEqual([]);
+      expect(releaseRequiredWorkflowJobs()).not.toContain("catalogue-tavily-nvidia-inference");
+      expect(() => buildE2eWorkflowPlan({ jobs: id }, { gatewayRuntimes: ["podman"] })).toThrow(
+        "does not support requested gateway runtimes",
+      );
+      expect(catalogueTarget(id)).toMatchObject({
+        releaseRequired: false,
+        requiredOptionalCredentials: ["TAVILY_API_KEY"],
+        selector: `^${agent}.Tavily.export.+$`,
+      });
+    },
+  );
+
+  it("keeps Tavily credential availability separate from Brave (#12138)", () => {
+    const selected = buildE2eWorkflowPlan({ jobs: "tavily-export-openclaw,tavily-export-hermes" });
+    expect(
+      withoutUnavailableOptionalCredentialTargets(selected, new Set(["BRAVE_API_KEY"]))
+        .catalogueMatrices["tavily-nvidia-inference"],
+    ).toEqual([]);
+    expect(
+      withoutUnavailableOptionalCredentialTargets(selected, new Set(["TAVILY_API_KEY"]))
+        .catalogueMatrices["tavily-nvidia-inference"],
+    ).toHaveLength(2);
+  });
+
+  it("keeps the Brave job from selecting the Tavily cases in its shared test file (#12138)", () => {
+    const brave = catalogueTarget("brave-search");
+    const selector = new RegExp(brave.selector!);
+    expect(selector.test("Brave search exports stable configuration")).toBe(true);
+    expect(selector.test("openclaw Tavily export preserves source intent")).toBe(false);
+    expect(selector.test("hermes Tavily export preserves source intent")).toBe(false);
   });
 
   it("includes staging only when the execution plan selects it (#9167)", () => {
@@ -595,6 +643,7 @@ describe("E2E workflow plan", () => {
       "nvidia-inference": false,
       "github-read": false,
       "brave-nvidia-inference": false,
+      "tavily-nvidia-inference": false,
     });
   });
 
@@ -861,7 +910,9 @@ describe("E2E workflow plan", () => {
       { changedFiles: [".github/workflows/e2e-standard-profile.yaml"] },
     );
 
-    expect(Object.values(plan.catalogueMatrices).flat()).toHaveLength(E2E_TARGET_CATALOGUE.length);
+    expect(Object.values(plan.catalogueMatrices).flat()).toHaveLength(
+      E2E_TARGET_CATALOGUE.filter((target) => target.releaseRequired).length,
+    );
     expect(plan.selectedJobs).toEqual(["jetson-nvmap-gpu"]);
     expect(plan.matrix).toEqual([]);
     expect(plan.testMatrix).toEqual([]);
@@ -981,6 +1032,7 @@ describe("E2E workflow plan", () => {
           "nvidia-inference": [],
           "github-read": [],
           "brave-nvidia-inference": [],
+          "tavily-nvidia-inference": [],
         },
         coverageMatrix: [],
         selectedJobs: ["jetson-nvmap-gpu"],

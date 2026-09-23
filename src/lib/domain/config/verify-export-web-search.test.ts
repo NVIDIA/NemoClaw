@@ -3,6 +3,7 @@
 
 import { describe, expect, it } from "vitest";
 import { exportWebSearchBinding } from "./export-evidence";
+import { webSearchProviderProfileId } from "../../messaging/applier/web-search-provider-profile";
 import {
   canonicalPolicy,
   entry,
@@ -22,6 +23,31 @@ function verifiedSource(result: ReturnType<typeof verify>) {
 }
 
 describe("Tavily export source verification", () => {
+  it.each([
+    ["openclaw", "brave", "brave", "BRAVE_API_KEY"],
+    ["openclaw", "tavily", "tavily", "TAVILY_API_KEY"],
+    ["hermes", "tavily", "tavily-hermes-v1", "TAVILY_API_KEY"],
+  ] as const)(
+    "preserves the onboard %s %s profile binding during export (#12138)",
+    (agent, provider, profileId, credentialEnv) => {
+      const onboardProfile = webSearchProviderProfileId(provider, agent);
+      expect(onboardProfile).toBe(profileId);
+      expect(
+        exportWebSearchBinding({
+          name: "alpha",
+          agent,
+          webSearchEnabled: true,
+          webSearchProvider: provider,
+        }),
+      ).toEqual({
+        provider,
+        name: `alpha-${provider}-search`,
+        profileId: onboardProfile,
+        credentialEnv,
+      });
+    },
+  );
+
   it.each(["openclaw", "hermes"] as const)(
     "exports verified Tavily intent and policy for %s (#12138)",
     (agent) => {

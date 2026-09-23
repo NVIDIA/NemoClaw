@@ -115,19 +115,25 @@ describe("automatic config export validation phase", () => {
     );
   });
 
-  it.each(["brave", "tavily"] as const)(
-    "retains the observed %s provider, credential reference and agent grant in evidence (#12138)",
-    async (provider) => {
+  it.each([
+    ["openclaw", "brave"],
+    ["openclaw", "tavily"],
+    ["hermes", "tavily"],
+  ] as const)(
+    "retains the observed %s %s provider, credential reference and agent grant in evidence (#12138)",
+    async (agent, provider) => {
       const key = provider === "brave" ? "BRAVE_API_KEY" : "TAVILY_API_KEY";
-      const exported = searchDocument(provider);
+      const exported = searchDocument(provider, agent);
+      const providerDependencies = dependencies({
+        agent,
+        features: { webSearch: true },
+        searchProvider: provider,
+        credentialRefs: ["NVIDIA_INFERENCE_API_KEY", key],
+      });
+      providerDependencies.parseConfig = parseConfigExport;
       const setup = fixture({
         host: successfulHost(JSON.stringify(exported)),
-        dependencies: dependencies({
-          parsedDocument: exported,
-          features: { webSearch: true },
-          searchProvider: provider,
-          credentialRefs: ["NVIDIA_INFERENCE_API_KEY", key],
-        }),
+        dependencies: providerDependencies,
       });
       const evidence = await setup.phase.from(target("required"), instance());
       expect(evidence.passed).toBe(true);
@@ -142,14 +148,15 @@ describe("automatic config export validation phase", () => {
 
   it("refuses otherwise valid Brave output for a Tavily source (#12138)", async () => {
     const exported = searchDocument("brave");
+    const providerDependencies = dependencies({
+      features: { webSearch: true },
+      searchProvider: "tavily",
+      credentialRefs: ["NVIDIA_INFERENCE_API_KEY", "TAVILY_API_KEY"],
+    });
+    providerDependencies.parseConfig = parseConfigExport;
     const setup = fixture({
       host: successfulHost(JSON.stringify(exported)),
-      dependencies: dependencies({
-        parsedDocument: exported,
-        features: { webSearch: true },
-        searchProvider: "tavily",
-        credentialRefs: ["NVIDIA_INFERENCE_API_KEY", "TAVILY_API_KEY"],
-      }),
+      dependencies: providerDependencies,
     });
     await captureFailure(setup.phase.from(target("required"), instance()));
     expect(setup.writes.at(-1)?.passed).toBe(false);
@@ -157,6 +164,47 @@ describe("automatic config export validation phase", () => {
       setup.writes.at(-1)?.verifications.find((check) => check.id === "webSearch")?.passed,
     ).toBe(false);
   });
+
+  it.each([
+    {
+      field: "credential",
+      change: {
+        integrations: {
+          "tavily-search": {
+            kind: "webSearch",
+            provider: "tavily",
+            credential: { env: "OTHER_KEY" },
+          },
+        },
+      },
+    },
+    {
+      field: "agent",
+      change: { agent: { ...searchDocument("tavily").spec.sandboxes[0]!.agent, name: "other" } },
+    },
+  ])(
+    "rejects the Tavily $field mismatch read from the exported bytes (#12138)",
+    async ({ change }) => {
+      const exported = searchDocument("tavily");
+      const sandbox = exported.spec.sandboxes[0]!;
+      Object.assign(sandbox, change);
+      const providerDependencies = dependencies({
+        features: { webSearch: true },
+        searchProvider: "tavily",
+        credentialRefs: ["NVIDIA_INFERENCE_API_KEY", "TAVILY_API_KEY"],
+      });
+      providerDependencies.parseConfig = parseConfigExport;
+      const setup = fixture({
+        host: successfulHost(JSON.stringify(exported)),
+        dependencies: providerDependencies,
+      });
+      await captureFailure(setup.phase.from(target("required"), instance()));
+      const evidence = setup.writes.at(-1)!;
+      expect(evidence.passed).toBe(false);
+      expect(evidence.verifications.find((check) => check.id === "webSearch")?.passed).toBe(false);
+      expect(evidence).not.toHaveProperty("export");
+    },
+  );
 
   it("refuses undeclared search credentials before running the exporter (#12138)", async () => {
     const test = fixture({ dependencies: dependencies({ searchProvider: "tavily" }) });

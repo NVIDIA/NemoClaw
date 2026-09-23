@@ -31,7 +31,7 @@ import type { SandboxConfiguration } from "../sandbox/configuration";
 import type { SandboxEntry } from "../../state/registry/types";
 import type { ObservedOllamaProxy } from "../../inference/ollama/proxy-observation";
 import { webSearchEnvFor } from "../../inference/web-search";
-import { HERMES_TAVILY_PROVIDER_PROFILE_ID } from "../../messaging/applier/web-search-provider-profile";
+import { webSearchProviderProfileId } from "../../messaging/applier/web-search-provider-profile";
 
 const { Type } = require("typebox") as typeof TypeBoxModule;
 
@@ -106,10 +106,7 @@ export function exportWebSearchBinding(
   return {
     provider,
     name: `${entry.name}-${provider}-search`,
-    profileId:
-      provider === "tavily" && entry.agent === "hermes"
-        ? HERMES_TAVILY_PROVIDER_PROFILE_ID
-        : provider,
+    profileId: webSearchProviderProfileId(provider, entry.agent),
     credentialEnv: webSearchEnvFor(provider),
   } as const;
 }

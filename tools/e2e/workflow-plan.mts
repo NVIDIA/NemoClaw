@@ -98,6 +98,7 @@ const CATALOGUE_JOB_BY_PROFILE: Record<E2eExecutionProfile, string> = {
   "nvidia-inference": "catalogue-nvidia-inference",
   "github-read": "catalogue-github-read",
   "brave-nvidia-inference": "catalogue-brave-nvidia-inference",
+  "tavily-nvidia-inference": "catalogue-tavily-nvidia-inference",
 };
 const REGISTRY_OWNING_PATHS = [
   "nemoclaw-blueprint/",
@@ -442,6 +443,7 @@ function emptyCatalogueMatrices(): Record<E2eExecutionProfile, E2eCatalogueMatri
     "nvidia-inference": [],
     "github-read": [],
     "brave-nvidia-inference": [],
+    "tavily-nvidia-inference": [],
   };
 }
 
@@ -811,7 +813,9 @@ export function buildE2eWorkflowPlan(
       ...riskJobIds,
     ]);
     const selectedCatalogueTargets = E2E_TARGET_CATALOGUE.filter(
-      (target) => selectedCatalogueIds.has(target.id) || selectedCatalogueIds.has(target.targetId),
+      (target) =>
+        target.releaseRequired &&
+        (selectedCatalogueIds.has(target.id) || selectedCatalogueIds.has(target.targetId)),
     );
     const riskTargetIds = riskPlan.requiredTargets.map((target) => target.id);
     const registryMatrix = [
@@ -853,7 +857,10 @@ export function buildE2eWorkflowPlan(
       gatewayRuntimes,
       matrix: buildLiveTargetMatrix([], gatewayRuntimes),
       testMatrix,
-      catalogueMatrices: catalogueMatrices(E2E_TARGET_CATALOGUE, gatewayRuntimes),
+      catalogueMatrices: catalogueMatrices(
+        E2E_TARGET_CATALOGUE.filter((target) => target.releaseRequired),
+        gatewayRuntimes,
+      ),
       selectedJobs,
       runtimeProvidersByJob: runtimeProvidersByJob(
         inventory,
@@ -1179,6 +1186,7 @@ export function writeE2eWorkflowPlanCiOutput(
       `catalogue_nvidia_inference_matrix=${JSON.stringify(plan.catalogueMatrices["nvidia-inference"])}`,
       `catalogue_github_read_matrix=${JSON.stringify(plan.catalogueMatrices["github-read"])}`,
       `catalogue_brave_nvidia_inference_matrix=${JSON.stringify(plan.catalogueMatrices["brave-nvidia-inference"])}`,
+      `catalogue_tavily_nvidia_inference_matrix=${JSON.stringify(plan.catalogueMatrices["tavily-nvidia-inference"])}`,
       `gateway_runtimes=${JSON.stringify(plan.gatewayRuntimes)}`,
       `runtime_providers_by_job=${JSON.stringify(plan.runtimeProvidersByJob)}`,
       `selected_jobs=${JSON.stringify(plan.selectedJobs)}`,

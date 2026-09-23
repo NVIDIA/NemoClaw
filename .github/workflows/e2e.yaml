@@ -378,6 +378,7 @@ jobs:
       catalogue_nvidia_inference_matrix: ${{ steps.matrix.outputs.catalogue_nvidia_inference_matrix }}
       catalogue_github_read_matrix: ${{ steps.matrix.outputs.catalogue_github_read_matrix }}
       catalogue_brave_nvidia_inference_matrix: ${{ steps.matrix.outputs.catalogue_brave_nvidia_inference_matrix }}
+      catalogue_tavily_nvidia_inference_matrix: ${{ steps.matrix.outputs.catalogue_tavily_nvidia_inference_matrix }}
       gateway_runtimes: ${{ steps.matrix.outputs.gateway_runtimes }}
       runtime_providers_by_job: ${{ steps.matrix.outputs.runtime_providers_by_job }}
       runner_routing: ${{ steps.runner_routing.outputs.runner_routing }}
@@ -668,6 +669,7 @@ jobs:
           CANDIDATE_SHA: ${{ github.sha }}
           NEMOCLAW_E2E_CREDENTIALS_ALLOWED: ${{ (inputs.checkout_sha == '' || steps.candidate_authorization.outputs.nvidia_owned == 'true') && 'true' || 'false' }}
           NEMOCLAW_E2E_BRAVE_API_KEY_AVAILABLE: ${{ secrets.BRAVE_API_KEY != '' && 'true' || 'false' }}
+          NEMOCLAW_E2E_TAVILY_API_KEY_AVAILABLE: ${{ secrets.TAVILY_API_KEY != '' && 'true' || 'false' }}
         run: |
           set -euo pipefail
           if [[ "${JOBS:-}" == "native-runtime-qualification-producer" && -z "${TARGETS:-}" ]]; then
@@ -679,6 +681,7 @@ jobs:
               echo 'catalogue_nvidia_inference_matrix=[]'
               echo 'catalogue_github_read_matrix=[]'
               echo 'catalogue_brave_nvidia_inference_matrix=[]'
+              echo 'catalogue_tavily_nvidia_inference_matrix=[]'
               echo 'gateway_runtimes=["docker"]'
               echo 'runtime_providers_by_job={"native-runtime-qualification-producer":["docker"]}'
               echo 'selected_jobs=["native-runtime-qualification-producer"]'
@@ -3299,6 +3302,56 @@ jobs:
       BRAVE_API_KEY: ${{ github.repository == 'NVIDIA/NemoClaw' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) && (inputs.checkout_sha == '' || needs.generate-matrix.outputs.e2e_credentials_allowed == 'true') && secrets.BRAVE_API_KEY || '' }}
       NVIDIA_INFERENCE_API_KEY: ${{ github.repository == 'NVIDIA/NemoClaw' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) && (inputs.checkout_sha == '' || needs.generate-matrix.outputs.e2e_credentials_allowed == 'true') && secrets.NVIDIA_INFERENCE_API_KEY || '' }}
 
+  catalogue-tavily-nvidia-inference:
+    name: ${{ matrix.display_name }} (${{ matrix.runtime_provider }})
+    needs: [base-image-publication, generate-matrix, package-openshell-sdk]
+    if: ${{ needs.generate-matrix.outputs.catalogue_tavily_nvidia_inference_matrix != '[]' }}
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        include: ${{ fromJSON(needs.generate-matrix.outputs.catalogue_tavily_nvidia_inference_matrix) }}
+    uses: ./.github/workflows/e2e-standard-profile.yaml
+    with:
+      candidate_repository: ${{ inputs.checkout_repository || github.repository }}
+      candidate_sha: ${{ inputs.checkout_sha || github.sha }}
+      runtime_provider: ${{ matrix.runtime_provider }}
+      execution_id: ${{ matrix.execution_id }}
+      coverage_variant: ${{ matrix.coverage_variant }}
+      risk_signal_expected_sha: ${{ github.event_name == 'workflow_dispatch' && inputs.checkout_sha != '' && inputs.checkout_sha || '' }}
+      risk_signal_correlation_id: ${{ github.event_name == 'workflow_dispatch' && inputs.checkout_sha != '' && inputs.correlation_id || '' }}
+      cli_artifact_provenance: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
+      openshell_sdk_artifact_name: ${{ needs.package-openshell-sdk.outputs.artifact_name }}
+      managed_image_revision: ${{ needs.base-image-publication.outputs.managed_image_revision }}
+      managed_image_receipt: ${{ needs.base-image-publication.outputs.managed_image_receipt }}
+      managed_image_catalog: ${{ needs.base-image-publication.outputs.managed_image_catalog }}
+      workload_source: ${{ needs.generate-matrix.outputs.workload_source }}
+      credential_boundary: Tavily and NVIDIA inference API keys
+      target_id: ${{ matrix.target_id }}
+      catalogue_id: ${{ matrix.id }}
+      runner: ${{ matrix.runner_key != '' && fromJSON(needs.generate-matrix.outputs.runner_routing)[matrix.runner_key] || matrix.runner }}
+      checkout_sha: ${{ inputs.checkout_sha }}
+      workflow_sha: ${{ inputs.workflow_sha }}
+      test_file: ${{ matrix.test_file }}
+      timeout_minutes: ${{ matrix.timeout_minutes }}
+      install_mode: ${{ matrix.install_mode }}
+      install_non_interactive: ${{ matrix.install_non_interactive }}
+      restore_cli: ${{ matrix.restore_cli }}
+      cloudflared: ${{ matrix.cloudflared }}
+      host_packages: ${{ matrix.host_packages }}
+      host_preparation: ${{ matrix.host_preparation }}
+      runner_comparison: ${{ matrix.runner_comparison }}
+      compatible_api_key: ${{ matrix.compatible_api_key }}
+      github_token: false
+      shard: ${{ matrix.shard }}
+      artifact_layout: ${{ matrix.artifact_layout }}
+      trusted_main: ${{ github.repository == 'NVIDIA/NemoClaw' && (github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main') && (inputs.checkout_sha == '' || needs.generate-matrix.outputs.e2e_credentials_allowed == 'true') }}
+    secrets:
+      DOCKERHUB_USERNAME: ${{ github.repository == 'NVIDIA/NemoClaw' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) && (inputs.checkout_sha == '' || needs.generate-matrix.outputs.e2e_credentials_allowed == 'true') && secrets.DOCKERHUB_USERNAME || '' }}
+      DOCKERHUB_TOKEN: ${{ github.repository == 'NVIDIA/NemoClaw' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) && (inputs.checkout_sha == '' || needs.generate-matrix.outputs.e2e_credentials_allowed == 'true') && secrets.DOCKERHUB_TOKEN || '' }}
+      TAVILY_API_KEY: ${{ github.repository == 'NVIDIA/NemoClaw' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) && (inputs.checkout_sha == '' || needs.generate-matrix.outputs.e2e_credentials_allowed == 'true') && secrets.TAVILY_API_KEY || '' }}
+      NVIDIA_INFERENCE_API_KEY: ${{ github.repository == 'NVIDIA/NemoClaw' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) && (inputs.checkout_sha == '' || needs.generate-matrix.outputs.e2e_credentials_allowed == 'true') && secrets.NVIDIA_INFERENCE_API_KEY || '' }}
+
   openshell-gateway-auth-contract:
     needs: generate-matrix
     if: ${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'openshell-gateway-auth-contract') }}
@@ -5822,6 +5875,7 @@ jobs:
         catalogue-nvidia-inference,
         catalogue-github-read,
         catalogue-brave-nvidia-inference,
+        catalogue-tavily-nvidia-inference,
         openshell-gateway-auth-contract,
         external-gateway-health,
         mcp-bridge,

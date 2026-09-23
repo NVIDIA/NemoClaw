@@ -549,6 +549,33 @@ Confirm that the target executes: an unavailable optional Brave credential can r
 Trusted `main` controls the 45-minute job limit.
 Changes to `brave-search-helpers.ts` select the target through its catalogue ownership metadata.
 
+The Docker-only `tavily-export-openclaw` and `tavily-export-hermes` targets own the
+Tavily source-to-exporter boundary for #12138. Select either target explicitly with
+`jobs=<target-id>`; neither is selected by the default release plan or changed-file
+selection. Each target needs `TAVILY_API_KEY` and `NVIDIA_INFERENCE_API_KEY`. The
+dedicated Tavily execution profile passes these only through the existing trusted
+workflow credential guard. Untrusted calls receive no provider credentials.
+
+The Tavily cases in `brave-search.test.ts` install the selected local source with `install.sh`, onboard
+a uniquely named sandbox with Tavily and hosted compatible inference, then call the
+existing required config-export validation phase. That phase observes the real
+registry and policy, invokes the built CLI, and retains the validated raw YAML,
+producer revision, hash, selected search provider, credential reference and
+primary-agent grant in `config-export-evidence.v1.json`. It checks source-registry
+immutability and secret absence before retaining export bytes. The test registers
+destruction of only its owned sandbox before installation; failed installation
+retains that cleanup obligation.
+
+The distinct live proof is real onboarding/profile observation through the exporter
+and retained artifact. Deterministic mapping, disabled search, drift refusal and
+credential opacity remain owned by the exporter unit tests and `e2e-support`.
+The shared phase owns the smallest live assertion: a required export must match its
+observed source and pass artifact security validation. No equivalent assertions are
+copied into a second exporter harness. Onboarding, catalog and provider-reader
+failures remain failures; the scenario does not edit source state to bypass them.
+This covers staged output with `image: null`, not a v1 deployment or parser gate.
+Live qualification has not been run for these targets.
+
 ### Catalogue Execution Evidence
 
 Every catalogue execution writes `evidence-manifest.json` in its target artifact directory.

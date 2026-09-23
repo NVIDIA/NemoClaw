@@ -100,6 +100,7 @@ export function target(
 function manifest(
   features?: Record<string, unknown>,
   credentialRefs = ["NVIDIA_INFERENCE_API_KEY"],
+  agent: "openclaw" | "hermes" = "openclaw",
 ): NemoClawInstanceManifest {
   return {
     apiVersion: "nemoclaw.io/v1",
@@ -108,7 +109,7 @@ function manifest(
     spec: {
       setup: { install: {}, runtime: {}, platform: {} },
       onboarding: {
-        agent: "openclaw",
+        agent,
         provider: "nvidia",
         modelRoute: "inference-local",
         policyTier: "personal",
@@ -236,6 +237,7 @@ export function searchDocument(
 
 export function dependencies(
   options: {
+    agent?: "openclaw" | "hermes";
     credentialRefs?: string[];
     features?: Record<string, unknown>;
     parsedDocument?: ConfigExportDocument;
@@ -267,14 +269,14 @@ export function dependencies(
     },
     loadManifest: (filePath) => ({
       filePath,
-      document: manifest(options.features, options.credentialRefs),
+      document: manifest(options.features, options.credentialRefs, options.agent),
     }),
     loadRegistry: () => ({
       defaultSandbox: "sandbox",
       sandboxes: {
         sandbox: {
           name: "sandbox",
-          agent: "openclaw",
+          agent: options.agent ?? "openclaw",
           openshellDriver: "docker",
           gatewayName: "nemoclaw",
           provider: "compatible-endpoint",

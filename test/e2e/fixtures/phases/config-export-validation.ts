@@ -43,6 +43,9 @@ import type { NemoClawInstance } from "./onboarding.ts";
 const { Type } = require("typebox") as typeof TypeBoxModule;
 const { Check } = require("typebox/value") as typeof TypeBoxValueModule;
 
+type ConfigExportTarget = Pick<TargetDefinition, "id" | "manifestPath" | "configExport">;
+type ConfigExportSource = Pick<NemoClawInstance, "sandboxName" | "expectedFailure">;
+
 export const CONFIG_EXPORT_EVIDENCE_CONTRACT = "nemoclaw.config-export-evidence/v1" as const;
 const EVIDENCE_FILE = "config-export-evidence.v1.json";
 const CONFIG_EXPORT_CAPTURE_LIMIT_BYTES = 64 * 1024;
@@ -642,8 +645,8 @@ function semanticsFromDocument(document: ConfigExportDocument): ConfigExportSema
 }
 
 async function expectedSemantics(
-  target: TargetDefinition,
-  instance: NemoClawInstance,
+  target: ConfigExportTarget,
+  instance: ConfigExportSource,
   host: HostCliClient,
   secrets: SecretStore,
   dependencies: ConfigExportValidationDependencies,
@@ -893,8 +896,8 @@ export class ConfigExportValidationPhaseFixture {
   }
 
   async from(
-    target: TargetDefinition,
-    instance: NemoClawInstance,
+    target: ConfigExportTarget,
+    instance: ConfigExportSource,
   ): Promise<ConfigExportEvidenceEnvelope> {
     const startedAt = this.dependencies.now();
     const producer = this.dependencies.producer();
