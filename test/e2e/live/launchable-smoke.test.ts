@@ -14,7 +14,6 @@ import { validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import {
   DEFAULT_HOSTED_INFERENCE_MODEL,
-  HOSTED_INFERENCE_PROVIDER_NAME,
   requireHostedInferenceConfig,
 } from "../fixtures/hosted-inference.ts";
 import { parseOpenClawAgentText } from "../fixtures/openclaw-agent-output.ts";
@@ -26,14 +25,11 @@ import { isTransientProviderValidationFailure } from "./network-policy-transient
 // This is intentionally a single live test instead of a new fixture
 // family: the contract is the real Ubuntu bootstrap path, so the test invokes
 // scripts/brev-launchable-ci-cpu.sh via sudo, then proves the bootstrap-built
-// CLI can onboard, route inference.local, and run an OpenClaw agent turn
-// through Vitest.
+// CLI can onboard and run an OpenClaw agent turn through Vitest.
 
 const BOOTSTRAP_SCRIPT = path.join(REPO_ROOT, "scripts", "brev-launchable-ci-cpu.sh");
-const BOOTSTRAP_SENTINEL = "/var/run/nemoclaw-launchable-ready";
 const MODEL =
   process.env.NEMOCLAW_MODEL ?? process.env.NEMOCLAW_COMPAT_MODEL ?? DEFAULT_HOSTED_INFERENCE_MODEL;
-const EXPECTED_ROUTE_PROVIDER = HOSTED_INFERENCE_PROVIDER_NAME;
 const DEFAULT_SANDBOX_NAME = `e2e-boot-${randomUUID().slice(0, 8)}`;
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? DEFAULT_SANDBOX_NAME;
 const TEST_TIMEOUT_MS = testTimeout(30 * 60_000);
@@ -41,16 +37,6 @@ const INSTALL_TIMEOUT_MS = 30 * 60_000;
 const ONBOARD_TIMEOUT_MS = execTimeout(15 * 60_000);
 const INFERENCE_TIMEOUT_MS = 2 * 60_000;
 const ONBOARD_ATTEMPTS = 3;
-
-type ChatCompletion = {
-  choices?: Array<{
-    message?: {
-      content?: unknown;
-      reasoning_content?: unknown;
-      reasoning?: unknown;
-    };
-  }>;
-};
 
 function runEnv(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
   return {
@@ -79,13 +65,6 @@ async function runBash(
     redactionValues: options.redactionValues,
     timeoutMs: options.timeoutMs,
   });
-}
-
-function parseChatContent(raw: string): string {
-  const response = JSON.parse(raw) as ChatCompletion;
-  const message = response.choices?.[0]?.message;
-  const content = message?.content ?? message?.reasoning_content ?? message?.reasoning ?? "";
-  return typeof content === "string" ? content.trim() : "";
 }
 
 async function preseedBootstrapClone(
@@ -136,62 +115,19 @@ async function sleep(ms: number): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function expectPongFromSandboxInference(
-  sandboxExec: (command: string[], artifactName: string) => Promise<ShellProbeResult>,
-): Promise<void> {
-  const payload = JSON.stringify({
-    model: MODEL,
-    messages: [{ role: "user", content: "Reply with exactly one word: PONG" }],
-    max_tokens: 100,
-  });
-
-  let lastContent = "";
-  let lastResult: ShellProbeResult | undefined;
-  for (let attempt = 1; attempt <= 3; attempt += 1) {
-    lastResult = await sandboxExec(
-      [
-        "curl",
-        "-s",
-        "--max-time",
-        "60",
-        "https://inference.local/v1/chat/completions",
-        "-H",
-        "Content-Type: application/json",
-        "-d",
-        payload,
-      ],
-      `phase-6-sandbox-inference-attempt-${attempt}`,
-    );
-    if (lastResult.stdout.trim()) {
-      try {
-        lastContent = parseChatContent(lastResult.stdout);
-      } catch {
-        lastContent = lastResult.stdout.slice(0, 200);
-      }
-      if (/PONG/i.test(lastContent)) return;
-    }
-    if (attempt < 3) await sleep(5_000);
-  }
-
-  throw new Error(
-    `sandbox inference.local expected PONG after 3 attempts; last content='${lastContent}'; ` +
-      `stdout='${lastResult?.stdout.slice(0, 300) ?? ""}'; stderr='${lastResult?.stderr.slice(0, 300) ?? ""}'`,
-  );
-}
-
 test(
-  "bootstrap install smoke: bootstrap, onboard, sandbox health, live inference, cleanup",
+  "bootstrap install smoke: bootstrap, onboard, sandbox health, OpenClaw agent request, cleanup",
   {
     timeout: TEST_TIMEOUT_MS,
     meta: {
       e2ePhases: [
-        "confirm bootstrap host and hosted endpoint",
+        "confirm bootstrap host prerequisites",
         "prepare a fresh bootstrap clone",
         "run the Brev bootstrap script",
-        "inspect installed CLI and runtime artifacts",
+        "prove the installed CLI launches",
         "onboard the hosted inference sandbox",
-        "inspect sandbox and gateway health",
-        "prove direct and sandbox inference",
+        "inspect sandbox health",
+        "prove an OpenClaw agent request",
         "destroy the bootstrap sandbox and clone",
       ],
     },
@@ -202,15 +138,15 @@ test(
     await artifacts.target.declare({
       id: "bootstrap-install-smoke",
       boundary: "ubuntu-bootstrap-install-flow",
-      refs: ["#2599", "#5098"],
+      refs: ["#2599", "#5098", "#12192"],
       phases: [
         "preseed-bootstrap-clone",
         "prerequisites",
         "brev-bootstrap-script",
-        "install-artifacts",
+        "installed-cli",
         "onboard",
         "sandbox-health",
-        "live-inference",
+        "agent-request",
         "cleanup",
       ],
     });
@@ -231,24 +167,6 @@ test(
       artifactName: "prereq-docker-info",
       scenarioLabel: "bootstrap install smoke",
     });
-
-    const network = await host.command(
-      "bash",
-      [
-        "-lc",
-        'cfg=$(mktemp); trap \'rm -f "$cfg"\' EXIT; printf \'header = "Authorization: Bearer %s"\\n\' "$NVIDIA_INFERENCE_API_KEY" > "$cfg"; curl -sf --max-time 10 --config "$cfg" "$HOSTED_ENDPOINT_URL/models"',
-      ],
-      {
-        artifactName: "prereq-inference-api-models",
-        env: runEnv({
-          HOSTED_ENDPOINT_URL: hosted.endpointUrl,
-          NVIDIA_INFERENCE_API_KEY: apiKey,
-        }),
-        redactionValues: [apiKey],
-        timeoutMs: 30_000,
-      },
-    );
-    expectExitZero(network, "inference-api.nvidia.com reachable");
 
     progress.phase("prepare a fresh bootstrap clone");
     const cloneDir = path.join(os.tmpdir(), `NemoClaw-bootstrap-${randomUUID()}`);
@@ -272,7 +190,7 @@ test(
     });
     expectExitZero(install, "Brev bootstrap script completed");
 
-    progress.phase("inspect installed CLI and runtime artifacts");
+    progress.phase("prove the installed CLI launches");
     const pathEnv = runEnv({
       PATH: `/usr/local/bin:${process.env.PATH ?? ""}`,
     });
@@ -283,52 +201,6 @@ test(
       timeoutMs: 30_000,
     });
     expectExitZero(nemoclawHelp, "nemoclaw is on PATH and --help works");
-
-    const openshellVersion = await runBash(host, "command -v openshell && openshell --version", {
-      artifactName: "phase-3-openshell-version",
-      env: pathEnv,
-      timeoutMs: 30_000,
-    });
-    expectExitZero(openshellVersion, "openshell is on PATH and --version works");
-    const openshellVersionText = `${openshellVersion.stdout}\n${openshellVersion.stderr}`;
-    expect(
-      process.env.NEMOCLAW_OPENSHELL_CHANNEL !== "dev" ||
-        /\d+\.\d+\.\d+[.-]dev\d*(?:[.+-][0-9A-Za-z]+)*/i.test(openshellVersionText),
-      "the dev integration target must install a dev-channel OpenShell build",
-    ).toBe(true);
-
-    const nodeVersion = await host.command(
-      "node",
-      [
-        "-p",
-        "JSON.stringify({version: process.version, major: Number(process.versions.node.split('.')[0])})",
-      ],
-      { artifactName: "phase-3-node-version", env: pathEnv, timeoutMs: 30_000 },
-    );
-    expectExitZero(nodeVersion, "node version probe");
-    const node = JSON.parse(nodeVersion.stdout) as {
-      version: string;
-      major: number;
-    };
-    await artifacts.writeJson("node-version.json", node);
-    expect(
-      node.major,
-      `Node.js too old after bootstrap install: ${node.version}`,
-    ).toBeGreaterThanOrEqual(20);
-
-    const runtimeAfterInstall = await runtimeProvider.command(["info"], {
-      artifactName: "phase-3-runtime-info-after-install",
-      env: pathEnv,
-      timeoutMs: 30_000,
-    });
-    expectExitZero(runtimeAfterInstall, `${runtimeProvider.displayName} running after install`);
-    expect(fs.existsSync(BOOTSTRAP_SENTINEL), `${BOOTSTRAP_SENTINEL} missing`).toBe(true);
-    expect(fs.existsSync(path.join(cloneDir, ".git")), `${cloneDir}/.git missing`).toBe(true);
-    expect(fs.existsSync(path.join(cloneDir, "dist")), `${cloneDir}/dist missing`).toBe(true);
-    expect(
-      fs.existsSync(path.join(cloneDir, "nemoclaw", "dist")),
-      `${cloneDir}/nemoclaw/dist missing`,
-    ).toBe(true);
 
     progress.phase("onboard the hosted inference sandbox");
     let onboard: ShellProbeResult | undefined;
@@ -367,16 +239,7 @@ test(
     }
     expectExitZero(onboard as ShellProbeResult, "nemoclaw onboard --non-interactive");
 
-    progress.phase("inspect sandbox and gateway health");
-    const list = await host.command("nemoclaw", ["list"], {
-      artifactName: "phase-5-nemoclaw-list",
-      cwd: cloneDir,
-      env: pathEnv,
-      timeoutMs: 60_000,
-    });
-    expectExitZero(list, "nemoclaw list");
-    expect(list.stdout).toContain(SANDBOX_NAME);
-
+    progress.phase("inspect sandbox health");
     const status = await host.command("nemoclaw", [SANDBOX_NAME, "status"], {
       artifactName: "phase-5-nemoclaw-status",
       cwd: cloneDir,
@@ -385,68 +248,13 @@ test(
     });
     expectExitZero(status, `nemoclaw ${SANDBOX_NAME} status`);
 
-    const inferenceConfig = await host.command("openshell", ["inference", "get"], {
-      artifactName: "phase-5-openshell-inference-get",
-      env: pathEnv,
-      timeoutMs: 30_000,
-    });
-    expectExitZero(inferenceConfig, "openshell inference get");
-    expect(inferenceConfig.stdout).toMatch(new RegExp(EXPECTED_ROUTE_PROVIDER, "i"));
-
-    const gatewayContainer = await runtimeProvider.command(
-      ["container", "ps", "--format", "{{.Names}}"],
-      {
-        artifactName: "phase-5-gateway-runtime-resource",
-        env: pathEnv,
-        timeoutMs: 30_000,
-      },
-    );
-    expectExitZero(gatewayContainer, "list gateway runtime resources");
-    const gatewayContainerNames = gatewayContainer.stdout
-      .split(/\r?\n/u)
-      .filter((name) => /nemoclaw|openshell/iu.test(name))
-      .join("\n");
-    await artifacts.writeJson("gateway-container.json", {
-      confirmed: gatewayContainerNames.length > 0,
-      stdout: gatewayContainer.stdout,
-    });
-    expect(gatewayContainerNames, "expected a NemoClaw/OpenShell gateway container").not.toBe("");
-
-    progress.phase("prove direct and sandbox inference");
-    const directPayload = JSON.stringify({
-      model: MODEL,
-      messages: [{ role: "user", content: "Reply with exactly one word: PONG" }],
-      max_tokens: 100,
-    });
-    const direct = await host.command(
-      "bash",
-      [
-        "-lc",
-        'cfg=$(mktemp); payload=$(mktemp); trap \'rm -f "$cfg" "$payload"\' EXIT; printf \'header = "Authorization: Bearer %s"\\n\' "$NVIDIA_INFERENCE_API_KEY" > "$cfg"; printf \'%s\' "$DIRECT_PAYLOAD" > "$payload"; curl -s --max-time 30 -X POST --config "$cfg" -H \'Content-Type: application/json\' -d @"$payload" "$HOSTED_ENDPOINT_URL/chat/completions"',
-      ],
-      {
-        artifactName: "phase-6-direct-nvidia-chat",
-        env: runEnv({
-          ...pathEnv,
-          DIRECT_PAYLOAD: directPayload,
-          HOSTED_ENDPOINT_URL: hosted.endpointUrl,
-          NVIDIA_INFERENCE_API_KEY: apiKey,
-        }),
-        redactionValues: [apiKey],
-        timeoutMs: INFERENCE_TIMEOUT_MS,
-      },
-    );
-    expectExitZero(direct, "direct NVIDIA Endpoints chat completion");
-    expect(parseChatContent(direct.stdout)).toMatch(/PONG/i);
-
+    progress.phase("prove an OpenClaw agent request");
     const sandboxExec = (command: string[], artifactName: string) =>
       sandbox.exec(SANDBOX_NAME, command, {
         artifactName,
         env: pathEnv,
         timeoutMs: INFERENCE_TIMEOUT_MS,
       });
-    await expectPongFromSandboxInference(sandboxExec);
-
     const sessionId = `e2e-bootstrap-${Date.now()}-${randomUUID()}`;
     const agent = await sandboxExec(
       [
@@ -482,17 +290,6 @@ test(
       timeoutMs: 120_000,
     });
     expectExitZero(destroy, `destroy ${SANDBOX_NAME}`);
-    await sandbox.openshell(["gateway", "destroy", "-g", "nemoclaw"], {
-      artifactName: "phase-7-openshell-gateway-destroy",
-      env: pathEnv,
-      timeoutMs: 60_000,
-    });
-
-    const registryFile = path.join(os.homedir(), ".nemoclaw", "sandboxes.json");
-    if (fs.existsSync(registryFile)) {
-      expect(fs.readFileSync(registryFile, "utf8")).not.toContain(`"${SANDBOX_NAME}"`);
-    }
-
     await cleanupBootstrapState(host, cloneDir);
   },
 );

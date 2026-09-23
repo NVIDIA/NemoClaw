@@ -330,7 +330,8 @@ sudo env -u NODE_AUTH_TOKEN -u NPM_TOKEN -u NPM_CONFIG__AUTH_TOKEN \
 rm -rf "$reviewed_npm_tmp"
 trap - EXIT
 [[ "$(npm --version)" == "12.0.2" ]] || fail "Reviewed npm 12.0.2 installation failed"
-npm install --ignore-scripts 2>&1 | tail -3
+bash "$NEMOCLAW_CLONE_DIR/scripts/run-npm-install-with-diagnostics.sh" \
+  root "$NEMOCLAW_CLONE_DIR"
 info "Root deps installed"
 
 # --ignore-scripts above skips the `prepare` lifecycle which normally
@@ -342,7 +343,8 @@ info "CLI built"
 
 info "Building TypeScript plugin..."
 cd "$NEMOCLAW_CLONE_DIR/nemoclaw"
-npm install --ignore-scripts 2>&1 | tail -3
+bash "$NEMOCLAW_CLONE_DIR/scripts/run-npm-install-with-diagnostics.sh" \
+  plugin "$NEMOCLAW_CLONE_DIR/nemoclaw"
 npm run build 2>&1 | tail -3
 cd "$NEMOCLAW_CLONE_DIR"
 info "Plugin built"

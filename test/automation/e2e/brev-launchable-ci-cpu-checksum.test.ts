@@ -9,6 +9,12 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 const SCRIPT = path.join(import.meta.dirname, "../../..", "scripts", "brev-launchable-ci-cpu.sh");
+const NPM_INSTALL_HELPER = path.join(
+  import.meta.dirname,
+  "../../..",
+  "scripts",
+  "run-npm-install-with-diagnostics.sh",
+);
 const REVIEWED_RUNTIME = JSON.parse(
   fs.readFileSync(
     path.join(import.meta.dirname, "../../..", "ci", "reviewed-npm-audit.json"),
@@ -33,6 +39,8 @@ type FakeSystemOptions = {
     | "traversal";
   checksum: "match" | "mismatch" | "unpinned";
   nodeSourceChecksumTool?: boolean;
+  npmFailure?: "plugin" | "root";
+  npmFailureOutput?: "missing" | "present";
   reviewedNpmFailure?: boolean;
   openshellVersion?: string;
 };
@@ -60,6 +68,7 @@ function makeFakeSystem(options: FakeSystemOptions): {
   launchLog: string;
   sudoLog: string;
   npmTmpLog: string;
+  npmInstallLog: string;
   tarLog: string;
 } {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-brev-checksum-"));
@@ -70,6 +79,7 @@ function makeFakeSystem(options: FakeSystemOptions): {
   const dockerLog = path.join(root, "docker.log");
   const sudoLog = path.join(root, "sudo.log");
   const npmTmpLog = path.join(root, "npm-tmp.log");
+  const npmInstallLog = path.join(root, "npm-install.log");
   const tarLog = path.join(root, "tar.log");
   fs.mkdirSync(fakeBin);
 
@@ -133,6 +143,31 @@ exit 0
     path.join(fakeBin, "npm"),
     `#!/usr/bin/env bash
 if [ "\${1:-}" = "--version" ]; then printf '${REVIEWED_NPM_VERSION}\\n'; exit 0; fi
+printf 'cwd=%s args=%s node_auth=%s npm_token=%s github_token=%s inference_key=%s umask=%s\\n' \\
+  "$PWD" "$*" "\${NODE_AUTH_TOKEN:-unset}" "\${NPM_TOKEN:-unset}" \\
+  "\${GITHUB_TOKEN:-unset}" "\${NVIDIA_INFERENCE_API_KEY:-unset}" "$(umask)" \\
+  >> ${JSON.stringify(npmInstallLog)}
+stage=""
+if [ "$PWD" = ${JSON.stringify(cloneDir)} ]; then stage="root"; fi
+if [ "$PWD" = ${JSON.stringify(path.join(cloneDir, "nemoclaw"))} ]; then stage="plugin"; fi
+if [ "\${1:-}" = "install" ] && [ "$stage" = ${JSON.stringify(options.npmFailure ?? "")} ]; then
+  secret="fixture-secret-token"
+  if [ ${JSON.stringify(options.npmFailureOutput ?? "present")} = "present" ]; then
+    for index in {1..300}; do
+      printf 'verbose diagnostic line %03d xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\\n' "$index"
+    done
+    printf 'npm error Authorization: Bearer %s\\n' "$secret"
+    printf 'npm error registry=https://fixture:%s@registry.example.test/package\\n' "$secret"
+    printf 'npm error token prefix ghp_1234567890abcdef\\n'
+    printf 'npm error jwt eyJfixture1.payload.fixturepayload12345\\n'
+    printf 'npm error opaque abcdefghijklmnopqrstuvwxyz0123456789ABCD\\n'
+    printf '%s%s\\n%s\\n%s%s\\n' \\
+      '-----BEGIN PRIVATE' ' KEY-----' "$secret" '-----END PRIVATE' ' KEY-----'
+    printf '_authToken=%s\\npassword=%s\\n' "$secret" "$secret"
+  fi
+  if [ "$stage" = "root" ]; then exit 41; fi
+  exit 42
+fi
 printf 'npm stub %s\\n' "$*"
 exit 0
 `,
@@ -142,7 +177,8 @@ exit 0
     `#!/usr/bin/env bash
 if [ "\${1:-}" = "clone" ]; then
   dest="\${@: -1}"
-  mkdir -p "$dest/.git" "$dest/nemoclaw" "$dest/bin"
+  mkdir -p "$dest/.git" "$dest/nemoclaw" "$dest/bin" "$dest/scripts"
+  cp ${JSON.stringify(NPM_INSTALL_HELPER)} "$dest/scripts/run-npm-install-with-diagnostics.sh"
   printf '#!/usr/bin/env node\\n' > "$dest/bin/nemoclaw.js"
   exit 0
 fi
@@ -268,6 +304,7 @@ exec /usr/bin/sha256sum "$@"
     launchLog,
     sudoLog,
     npmTmpLog,
+    npmInstallLog,
     tarLog,
   };
 }
@@ -283,7 +320,14 @@ function runLaunchable(options: FakeSystemOptions) {
       OPENSHELL_VERSION: options.openshellVersion ?? "v0.0.116",
       PATH:
         options.nodeSourceChecksumTool === false ? fake.fakeBin : `${fake.fakeBin}:/usr/bin:/bin`,
+      COMPATIBLE_API_KEY: "host-compatible-key",
+      GH_TOKEN: "host-gh-token",
+      GITHUB_TOKEN: "host-github-token",
+      NODE_AUTH_TOKEN: "host-node-auth-token",
+      NPM_TOKEN: "host-npm-token",
+      NVIDIA_INFERENCE_API_KEY: "host-inference-key",
       SUDO_USER: "tester",
+      TMPDIR: path.dirname(fake.cloneDir),
     },
     timeout: 20_000,
   });
@@ -327,10 +371,100 @@ describe("brev-launchable-ci-cpu.sh OpenShell checksum gate", { timeout: 30_000 
     expect(source).toContain(
       "bash .github/actions/setup-reviewed-npm/verify-and-install-npm.sh ci/reviewed-npm-audit.json",
     );
-    expect(source).toContain("npm install --ignore-scripts 2>&1 | tail -3");
+    expect(source).toContain(
+      'bash "$NEMOCLAW_CLONE_DIR/scripts/run-npm-install-with-diagnostics.sh" \\\n  root "$NEMOCLAW_CLONE_DIR"',
+    );
+    expect(source).toContain(
+      'bash "$NEMOCLAW_CLONE_DIR/scripts/run-npm-install-with-diagnostics.sh" \\\n  plugin "$NEMOCLAW_CLONE_DIR/nemoclaw"',
+    );
+    expect(source).not.toContain("npm install --ignore-scripts 2>&1 | tail -3");
     expect(source).not.toContain("${RUNNER_TEMP}/openshell-sdk");
     expect(source).toContain(`[[ "$(npm --version)" == "${REVIEWED_NPM_VERSION}" ]]`);
     expect(source).not.toContain("deb.nodesource.com");
+  });
+
+  it.each([
+    ["root", 41],
+    ["plugin", 42],
+  ] as const)(
+    "preserves a bounded, redacted npm failure for the %s dependency stage",
+    (npmFailure, expectedStatus) => {
+      const { fake, result } = runLaunchable({ checksum: "match", npmFailure });
+      try {
+        const out = combinedLaunchableOutput(result, fake.launchLog);
+        const marker = `npm install failed during ${npmFailure} dependency installation (exit ${expectedStatus}).`;
+        expect(result.status, out).toBe(expectedStatus);
+        expect(out).toContain(marker);
+        expect(out).toContain("verbose diagnostic line 300");
+        expect(out).toContain("<REDACTED>");
+        expect(out).toContain("<REDACTED_URL>");
+        expect(out).not.toContain("fixture-secret-token");
+        expect(out).not.toContain("ghp_1234567890abcdef");
+        expect(out).not.toContain("eyJfixture1.payload.fixturepayload12345");
+        expect(out).not.toContain("abcdefghijklmnopqrstuvwxyz0123456789ABCD");
+        expect(out).not.toContain(["BEGIN", "PRIVATE", "KEY"].join(" "));
+        expect(Buffer.byteLength(out.slice(out.lastIndexOf(marker)), "utf8")).toBeLessThanOrEqual(
+          8_192,
+        );
+        expect(
+          fs
+            .readdirSync(path.dirname(fake.cloneDir))
+            .filter((entry) => entry.startsWith("nemoclaw-npm-install.")),
+        ).toEqual([]);
+        const helperSource = fs.readFileSync(NPM_INSTALL_HELPER, "utf8");
+        expect(helperSource).toContain("npm_config_logs_max=0");
+        expect(helperSource).toContain('| tail -c "$MAX_CAPTURE_BYTES" >"$command_log"');
+
+        const npmCalls = fs.readFileSync(fake.npmInstallLog, "utf8").trim().split("\n");
+        const failedStageDirectory =
+          npmFailure === "root" ? fake.cloneDir : path.join(fake.cloneDir, "nemoclaw");
+        expect(
+          npmCalls.filter(
+            (call) =>
+              call.includes(`cwd=${failedStageDirectory}`) &&
+              call.includes("args=install --ignore-scripts"),
+          ),
+        ).toHaveLength(1);
+        expect(
+          npmCalls
+            .filter((call) => call.includes("args=install --ignore-scripts"))
+            .every((call) =>
+              /node_auth=unset npm_token=unset github_token=unset inference_key=unset umask=0077/u.test(
+                call,
+              ),
+            ),
+        ).toBe(true);
+        const blockedBuild =
+          npmFailure === "root" ? "args=run build:cli" : "args=run build node_auth=";
+        expect(npmCalls.some((call) => call.includes(blockedBuild))).toBe(false);
+      } finally {
+        fake.cleanup();
+      }
+    },
+  );
+
+  it("reports an npm failure when npm does not emit diagnostic output", () => {
+    const { fake, result } = runLaunchable({
+      checksum: "match",
+      npmFailure: "root",
+      npmFailureOutput: "missing",
+    });
+    try {
+      const out = combinedLaunchableOutput(result, fake.launchLog);
+      expect(result.status, out).toBe(41);
+      expect(out).toContain("root dependency installation (exit 41)");
+      expect(out).toContain("npm command output unavailable");
+      expect(
+        fs
+          .readdirSync(path.dirname(fake.cloneDir))
+          .filter((entry) => entry.startsWith("nemoclaw-npm-install.")),
+      ).toEqual([]);
+      expect(
+        fs.readFileSync(fake.npmInstallLog, "utf8").match(/args=install --ignore-scripts/gu),
+      ).toHaveLength(1);
+    } finally {
+      fake.cleanup();
+    }
   });
 
   it("rejects malformed OPENSHELL_VERSION before downloads or privileged setup", () => {
@@ -420,6 +554,22 @@ describe("brev-launchable-ci-cpu.sh OpenShell checksum gate", { timeout: 30_000 
         "--version",
       ]);
       expect(out).toContain("CI-Ready CPU launchable setup complete");
+      const npmCalls = fs.readFileSync(fake.npmInstallLog, "utf8").trim().split("\n");
+      expect(npmCalls.map((call) => call.match(/args=(.*) node_auth=/u)?.[1])).toEqual([
+        "install --ignore-scripts",
+        "run build:cli",
+        "install --ignore-scripts",
+        "run build",
+      ]);
+      expect(
+        npmCalls
+          .filter((call) => call.includes("args=install --ignore-scripts"))
+          .every((call) =>
+            /node_auth=unset npm_token=unset github_token=unset inference_key=unset umask=0077/u.test(
+              call,
+            ),
+          ),
+      ).toBe(true);
     } finally {
       fake.cleanup();
     }
