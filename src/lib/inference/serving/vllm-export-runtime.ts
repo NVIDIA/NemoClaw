@@ -198,6 +198,7 @@ function containerFormat(
         `{{$found := false}}{{range .HostConfig.Ulimits}}{{if and (eq .Name ${JSON.stringify(name)}) ${equalJson(".Hard", value)} ${equalJson(".Soft", value)}}}{{$found = true}}{{end}}{{end}}{{if not $found}}{{$ulimits = false}}{{end}}`,
     )
     .join("");
+  const securityOptions = '(index .HostConfig "SecurityOpt")';
   const ulimits = '(index .HostConfig "Ulimits")';
   const cacheRoot = path.join(homeDirectory, ".cache/huggingface");
   const cacheTarget = runtime.modelCache.target;
@@ -216,7 +217,7 @@ function containerFormat(
     `(not .HostConfig.Privileged)`,
     emptyArray('(index .HostConfig "Devices")'),
     emptyArray('(index .HostConfig "CapAdd")'),
-    emptyArray('(index .HostConfig "SecurityOpt")'),
+    `(or ${emptyArray(securityOptions)} ${equalJson(securityOptions, ["label=disable"])})`,
     `(or ${equalJson(ulimits, null)} (and (eq (len ${ulimits}) 2) $ulimits))`,
     `(or ${equalJson('(index .HostConfig "Tmpfs")', null)} ${equalJson('(index .HostConfig "Tmpfs")', {})})`,
     equalJson(".HostConfig.Memory", 0),
