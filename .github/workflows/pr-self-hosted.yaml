@@ -100,7 +100,10 @@ jobs:
               | any(
                   .filename == ".github/workflows/pr-self-hosted.yaml"
                   or .filename == "src/lib/container-gpu-proof.ts"
+                  or .filename == "src/lib/inference/nim.ts"
+                  or .filename == "src/lib/onboard/fatal-runtime-preflight.ts"
                   or .filename == "src/lib/onboard/runtime-provider/nvidia-container-proof.ts"
+                  or .filename == "src/lib/onboard/sandbox-gpu-mode.ts"
                   or .filename == "tools/e2e/wsl-arm64-multi-gpu-qualification.mts"
                   or .filename == "test/e2e/support/pr-self-hosted-llama-selector.test.ts"
                 )
@@ -277,6 +280,16 @@ jobs:
           path: trusted-wsl-ci
           persist-credentials: false
           sparse-checkout: |
+            .github/actions/ci-install-dependencies.sh
+            ci/reviewed-npm-audit.json
+            scripts/audit-reviewed-npm-graph.mts
+            scripts/checks/prepare-ci-npm-install.mts
+            scripts/lib/npm-audit-receipt.mts
+            scripts/lib/openclaw-npm-remediation.mts
+            scripts/lib/repository-input-path.mts
+            scripts/lib/reviewed-npm-archive.mts
+            scripts/lib/reviewed-npm-audit.mts
+            scripts/lib/reviewed-npm-cache.mts
             tools/wsl/ci-helper.ps1
           sparse-checkout-cone-mode: false
 
@@ -300,12 +313,16 @@ jobs:
         shell: powershell
         run: |
           . "$env:TRUSTED_WSL_HELPER"
-          $null = Set-WslWorkflowPaths `
+          $paths = Set-WslWorkflowPaths `
             -Workspace "$env:GITHUB_WORKSPACE\source" `
             -WorkdirPrefix '/home/nemoclaw-ci/nemoclaw-wsl-vitest' `
             -RunId $env:GITHUB_RUN_ID `
             -RunAttempt $env:GITHUB_RUN_ATTEMPT `
             -EnvironmentFile $env:GITHUB_ENV
+          $trustedCheckout = ConvertTo-WslPath -WindowsPath "$env:GITHUB_WORKSPACE\trusted-wsl-ci"
+          $trustedWorkdir = "$($paths.Workdir)-trusted"
+          "WSL_TRUSTED_CHECKOUT_DIR=$trustedCheckout" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "WSL_TRUSTED_WORKDIR=$trustedWorkdir" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Require configured Ubuntu WSL and Docker Desktop GPU integration
         shell: powershell
@@ -338,6 +355,16 @@ jobs:
             -Workdir $env:WSL_WORKDIR `
             -Owner $env:WSL_TEST_USER
 
+      - name: Copy trusted dependency installer into WSL ext4 workspace
+        shell: powershell
+        run: |
+          . "$env:TRUSTED_WSL_HELPER"
+          Sync-WslCheckout `
+            -Distro $env:WSL_DISTRO `
+            -Checkout $env:WSL_TRUSTED_CHECKOUT_DIR `
+            -Workdir $env:WSL_TRUSTED_WORKDIR `
+            -Owner $env:WSL_TEST_USER
+
       - name: Install dependencies and build in WSL
         shell: powershell
         env:
@@ -345,13 +372,14 @@ jobs:
         run: |
           . "$env:TRUSTED_WSL_HELPER"
           $workdir = ConvertTo-BashLiteral -Value $env:WSL_WORKDIR
+          $trustedWorkdir = ConvertTo-BashLiteral -Value $env:WSL_TRUSTED_WORKDIR
           $nodeAuthToken = ConvertTo-BashLiteral -Value ([string]$env:NODE_AUTH_TOKEN)
           $script = @"
           set -euo pipefail
           cd $workdir
           export NPM_CONFIG_CACHE="`$HOME/.npm"
           export NODE_AUTH_TOKEN=$nodeAuthToken
-          bash .github/actions/ci-install-dependencies.sh
+          bash $trustedWorkdir/.github/actions/ci-install-dependencies.sh
           unset NODE_AUTH_TOKEN
           npm run build:cli
           "@
@@ -388,6 +416,27 @@ jobs:
           path: ${{ github.workspace }}\source\e2e-artifacts\live\wsl-arm64-multi-gpu
           if-no-files-found: error
           retention-days: 14
+
+      - name: Remove WSL ARM64 qualification workspaces
+        if: always()
+        shell: powershell
+        run: |
+          . "$env:TRUSTED_WSL_HELPER"
+          if (-not $env:WSL_WORKDIR -or -not $env:WSL_TRUSTED_WORKDIR) {
+            Write-Host 'WSL workspaces were not created; cleanup is not required.'
+            exit 0
+          }
+          $expectedWorkdir = "/home/nemoclaw-ci/nemoclaw-wsl-vitest/$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT"
+          if ($env:WSL_WORKDIR -ne $expectedWorkdir -or $env:WSL_TRUSTED_WORKDIR -ne "$expectedWorkdir-trusted") {
+            throw 'Refusing to clean an unexpected WSL workspace path.'
+          }
+          $workdir = ConvertTo-BashLiteral -Value $env:WSL_WORKDIR
+          $trustedWorkdir = ConvertTo-BashLiteral -Value $env:WSL_TRUSTED_WORKDIR
+          $script = @"
+          set -euo pipefail
+          rm -rf -- $workdir $trustedWorkdir
+          "@
+          Invoke-WslScript -Distro $env:WSL_DISTRO -User $env:WSL_TEST_USER -Script $script
 
   build-sandbox-images:
     runs-on: linux-amd64-cpu4

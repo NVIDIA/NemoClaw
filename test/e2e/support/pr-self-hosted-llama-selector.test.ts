@@ -46,9 +46,14 @@ const REQUIRED_RUNTIME_AUTHORITY_PATHS = [
   "src/lib/onboard/runtime-provider/current.ts",
   "src/lib/onboard/setup-nim-flow.ts",
 ] as const;
+const WSL_ARM64_GENERIC_RUNTIME_OWNER_PATHS = [
+  "src/lib/inference/nim.ts",
+  "src/lib/onboard/fatal-runtime-preflight.ts",
+] as const;
 const ARM64_PROOF_AUTHORITY_PATHS = [
   "src/lib/container-gpu-proof.ts",
   "src/lib/onboard/runtime-provider/nvidia-container-proof.ts",
+  "src/lib/onboard/sandbox-gpu-mode.ts",
 ] as const;
 const WSL_ARM64_QUALIFICATION_PATHS = [
   WORKFLOW_PATH,
@@ -194,7 +199,13 @@ describe.concurrent("generic NVIDIA GPU PR selection", () => {
     "selects the generic NVIDIA GPU E2E job when %s can change installer readiness",
     async (changedFile, { expect }) => {
       const result = await selectGenericGpuLane([changedFile]);
-      expect(result).toBe(expectedSelection(true, changedFile === WORKFLOW_PATH));
+      expect(result).toBe(
+        expectedSelection(
+          true,
+          changedFile === WORKFLOW_PATH ||
+            WSL_ARM64_GENERIC_RUNTIME_OWNER_PATHS.some((path) => path === changedFile),
+        ),
+      );
     },
   );
 
@@ -202,7 +213,12 @@ describe.concurrent("generic NVIDIA GPU PR selection", () => {
     "independently requires the generic GPU E2E when runtime authority owner %s changes",
     async (changedFile, { expect }) => {
       const result = await selectGenericGpuLane([changedFile]);
-      expect(result).toBe(expectedSelection(true, false));
+      expect(result).toBe(
+        expectedSelection(
+          true,
+          WSL_ARM64_GENERIC_RUNTIME_OWNER_PATHS.some((path) => path === changedFile),
+        ),
+      );
     },
   );
 
@@ -355,6 +371,21 @@ describe.concurrent("generic NVIDIA GPU PR selection", () => {
     expect(job?.steps?.find((step) => step.name === "Check out exact PR head")).toMatchObject({
       with: { "persist-credentials": false, ref: "${{ github.sha }}" },
     });
+    const trustedCheckout = job?.steps?.find(
+      (step) => step.name === "Check out trusted WSL helper from PR base",
+    );
+    expect(trustedCheckout).toMatchObject({
+      with: {
+        "persist-credentials": false,
+        ref: "${{ needs.select-llama-cpp-generic-gpu.outputs.base_sha }}",
+      },
+    });
+    expect(trustedCheckout?.with?.["sparse-checkout"]).toContain(
+      ".github/actions/ci-install-dependencies.sh",
+    );
+    expect(trustedCheckout?.with?.["sparse-checkout"]).toContain(
+      "scripts/checks/prepare-ci-npm-install.mts",
+    );
     expect(
       job?.steps?.find((step) => step.name === "Verify physical Windows ARM64 runner")?.run,
     ).toContain("OSArchitecture");
@@ -366,6 +397,13 @@ describe.concurrent("generic NVIDIA GPU PR selection", () => {
     expect(
       job?.steps?.find((step) => step.name === "Run WSL ARM64 multi-GPU live qualification")?.run,
     ).toContain("tools/e2e/wsl-arm64-multi-gpu-qualification.mts");
+    const install = job?.steps?.find(
+      (step) => step.name === "Install dependencies and build in WSL",
+    );
+    expect(install?.env?.NODE_AUTH_TOKEN).toBe("${{ github.token }}");
+    expect(install?.run).toContain("$trustedWorkdir/.github/actions/ci-install-dependencies.sh");
+    expect(install?.run).toContain("unset NODE_AUTH_TOKEN");
+    expect(install?.run).not.toContain("bash .github/actions/ci-install-dependencies.sh");
     expect(
       job?.steps?.find(
         (step) => step.name === "Upload WSL ARM64 multi-GPU qualification artifacts",
@@ -374,6 +412,17 @@ describe.concurrent("generic NVIDIA GPU PR selection", () => {
       if: "always()",
       uses: "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a",
       with: { "if-no-files-found": "error", "retention-days": 14 },
+    });
+    const uploadIndex = job?.steps?.findIndex(
+      (step) => step.name === "Upload WSL ARM64 multi-GPU qualification artifacts",
+    );
+    const cleanupIndex = job?.steps?.findIndex(
+      (step) => step.name === "Remove WSL ARM64 qualification workspaces",
+    );
+    expect(cleanupIndex).toBeGreaterThan(uploadIndex ?? -1);
+    expect(job?.steps?.[cleanupIndex ?? -1]).toMatchObject({
+      if: "always()",
+      run: expect.stringContaining("rm -rf -- $workdir $trustedWorkdir"),
     });
   });
 });

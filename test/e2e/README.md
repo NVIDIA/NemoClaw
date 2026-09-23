@@ -30,8 +30,10 @@ before those targets run; local runners must provide it themselves.
   This workflow does not publish or satisfy `Release qualification`.
 - `.github/workflows/portable-profile-e2e.yaml` publishes experimental portable-profile evidence.
 - `.github/workflows/podman-cpu-proof.yaml` publishes PR-only experimental runtime evidence.
-- `.github/workflows/pr-self-hosted.yaml` selects a credential-free physical WSL ARM64
-  multi-GPU qualification when either provider-owned ARM64 GPU-proof authority changes.
+- `.github/workflows/pr-self-hosted.yaml` selects a physical WSL ARM64 multi-GPU
+  qualification when provider-owned ARM64 GPU-proof authority changes. The job exposes
+  `github.token` only to the base-reviewed dependency installer. It unsets the token before
+  it builds or runs code from the PR.
   The copied-PR selector binds the branch to the exact open PR head and requires the
   repository variable `WSL_ARM64_MULTI_GPU_RUNNER_LABEL` to name a reviewed Windows
   ARM64 runner with Ubuntu WSL2, Docker Desktop GPU integration, `/dev/dxg`, and at

@@ -73,8 +73,12 @@ export function parseContainerGpuProofDevices(
     const beforeFree = deviceRow.slice(0, freeSeparator);
     const totalSeparator = beforeFree.lastIndexOf(",");
     const name = beforeFree.slice(0, totalSeparator).trim();
-    const totalMemoryMB = Number(beforeFree.slice(totalSeparator + 1).trim());
-    const availableMemoryMB = Number(deviceRow.slice(freeSeparator + 1).trim());
+    const totalMemoryRaw = beforeFree.slice(totalSeparator + 1).trim();
+    const availableMemoryRaw = deviceRow.slice(freeSeparator + 1).trim();
+    const totalMemoryMB = /^\d+$/u.test(totalMemoryRaw) ? Number(totalMemoryRaw) : Number.NaN;
+    const availableMemoryMB = /^\d+$/u.test(availableMemoryRaw)
+      ? Number(availableMemoryRaw)
+      : Number.NaN;
     const index = /^\d+$/u.test(indexRaw) ? Number(indexRaw) : -1;
     const duplicateIndex = indices.has(index);
     const duplicateUuid = uuids.has(uuid);

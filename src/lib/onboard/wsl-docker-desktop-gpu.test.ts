@@ -826,6 +826,10 @@ describe("createArm64ContainerGpuProver (#4565)", () => {
       `NEMOCLAW_GPU_DEVICE=${GPU_UUID_0}, 0, NVIDIA GB300, 10, 1\nNEMOCLAW_GPU_DEVICE=${GPU_UUID_0}, 1, NVIDIA RTX, 10, 1\n`,
     ],
     ["malformed capacity", `NEMOCLAW_GPU_DEVICE=${GPU_UUID_0}, 0, NVIDIA GB300, nope, 1\n`],
+    ["empty total memory", `NEMOCLAW_GPU_DEVICE=${GPU_UUID_0}, 0, NVIDIA GB300, , 1\n`],
+    ["empty free memory", `NEMOCLAW_GPU_DEVICE=${GPU_UUID_0}, 0, NVIDIA GB300, 10, \n`],
+    ["hexadecimal total memory", `NEMOCLAW_GPU_DEVICE=${GPU_UUID_0}, 0, NVIDIA GB300, 0xa, 1\n`],
+    ["scientific free memory", `NEMOCLAW_GPU_DEVICE=${GPU_UUID_0}, 0, NVIDIA GB300, 1000, 1e3\n`],
     ["free memory above total", `NEMOCLAW_GPU_DEVICE=${GPU_UUID_0}, 0, NVIDIA GB300, 10, 11\n`],
   ])("rejects per-device proof evidence with %s", (_scenario, output) => {
     expect(parseContainerGpuProofDevices(output)).toBeNull();
