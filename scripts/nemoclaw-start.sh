@@ -79,7 +79,7 @@ unset -f nemoclaw_normalize_entrypoint_env_wrapper
 # Direct inference routes retain their credentials.
 clear_managed_inference_credentials() {
   case "${NEMOCLAW_INFERENCE_BASE_URL:-}" in
-    https://inference.local | https://inference.local/*)
+    https://inference.local | https://inference.local/* | https://inference.local:443 | https://inference.local:443/*)
       unset NVIDIA_INFERENCE_API_KEY NVIDIA_API_KEY
       ;;
   esac
@@ -2430,7 +2430,7 @@ write_auth_profile() {
   local provider_key="${NEMOCLAW_INFERENCE_PROVIDER_ID:-${NEMOCLAW_PROVIDER_KEY:-inference}}"
 
   case "${NEMOCLAW_INFERENCE_BASE_URL:-}" in
-    https://inference.local | https://inference.local/*)
+    https://inference.local | https://inference.local/* | https://inference.local:443 | https://inference.local:443/*)
       # Remove only the exact entries this function historically generated.
       # Preserve user-managed direct-provider profiles if they share the file.
       python3 - "$provider_key" <<'PYAUTH'

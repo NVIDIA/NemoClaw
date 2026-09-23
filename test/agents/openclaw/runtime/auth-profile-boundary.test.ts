@@ -83,6 +83,10 @@ function runStartupCredentialBoundary(
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-auth-startup-"));
   homes.push(home);
   const script = path.join(home, "run.sh");
+  const command = path.join(home, "command.sh");
+  fs.writeFileSync(command, `#!/usr/bin/env bash\necho command\n${credentialProbe}\n`, {
+    mode: 0o700,
+  });
   const bootstrap = START_SOURCE.slice(
     START_SOURCE.indexOf("# managed-entrypoint-env-wrapper end"),
     START_SOURCE.indexOf("# Reject an invalid explicit dashboard port"),
@@ -94,8 +98,10 @@ function runStartupCredentialBoundary(
       "_step_down_extract_function",
       "run_step_down_as_sandbox",
       "setup_auth_profile_as_sandbox",
+      "run_oneshot_command",
     ].map((name) => extractShellFunctionFromSource(START_SOURCE, name)),
-    "NEMOCLAW_CMD=(probe)",
+    'NEMOCLAW_CMD=("$AUTH_TEST_COMMAND")',
+    '_RUNTIME_SHELL_ENV_FILE="$HOME/no-runtime-env"',
     "STEP_DOWN_PREFIX_SANDBOX=(env)",
     "apply_messaging_runtime_env_aliases() { :; }",
     "openclaw_config_dir_owner() { echo sandbox; }",
@@ -103,7 +109,7 @@ function runStartupCredentialBoundary(
     "harden_auth_profiles() { :; }",
     "install_messaging_runtime_preloads() { :; }",
     "verify_messaging_runtime_secret_scans() { :; }",
-    `run_oneshot_command() { echo command; ${credentialProbe}; }`,
+    "normalize_mutable_config_perms() { :; }",
     bootstrap,
     credentialProbe,
     startupCredentialBoundaryBlock(kind),
@@ -113,6 +119,7 @@ function runStartupCredentialBoundary(
     env: {
       PATH: process.env.PATH,
       HOME: home,
+      AUTH_TEST_COMMAND: command,
       ...managedEnv,
       ...(route === "direct" ? { NEMOCLAW_INFERENCE_BASE_URL: "https://direct.example/v1" } : {}),
     },
@@ -154,13 +161,16 @@ describe("OpenClaw auth-profile boundary", () => {
     expect(fs.existsSync(fixture.authPath)).toBe(false);
   });
 
-  it.each(["fresh", "legacy"] as const)(
-    "leaves no managed profile or inherited credentials in %s state",
-    (state) => {
+  it.each([
+    ["fresh", "https://inference.local/v1"],
+    ["legacy", "https://inference.local/v1"],
+    ["fresh", "https://inference.local:443/v1"],
+    ["legacy", "https://inference.local:443"],
+  ] as const)(
+    "leaves no managed profile or inherited credentials in %s state at %s",
+    (state, baseUrl) => {
       const fixture = runWriteAuthProfile(
-        state === "fresh"
-          ? managedEnv
-          : { NEMOCLAW_INFERENCE_BASE_URL: managedEnv.NEMOCLAW_INFERENCE_BASE_URL },
+        { ...(state === "fresh" ? managedEnv : {}), NEMOCLAW_INFERENCE_BASE_URL: baseUrl },
         state === "legacy"
           ? seedAuthProfile({ "inference:manual": legacyManagedProfile })
           : undefined,
