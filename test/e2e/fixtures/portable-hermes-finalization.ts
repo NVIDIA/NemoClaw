@@ -443,8 +443,20 @@ export async function runPortableHermesFinalization(
 
     writeRegistry(home, entry);
     phases.finalizeOnboarding();
-    await handleFinalizationState(options);
-    await handlePostVerifyState(options);
+    const finalization = await handleFinalizationState(options);
+    assert.deepEqual(finalization.stateResult, {
+      type: "transition",
+      next: "post_verify",
+      transitionKind: "advance",
+      updates: undefined,
+      metadata: { state: "finalizing" },
+    });
+    const postVerify = await handlePostVerifyState(options);
+    assert.deepEqual(postVerify.stateResult, {
+      type: "complete",
+      updates: {},
+      metadata: { state: "post_verify" },
+    });
 
     phases.confirmDoctor();
     await runCommand(
