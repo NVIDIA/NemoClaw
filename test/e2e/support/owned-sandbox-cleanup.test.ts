@@ -16,9 +16,15 @@ vi.mock("../../../src/lib/state/registry.ts", () => ({
 function fixture() {
   const calls: string[] = [];
   const host = {
-    command: vi.fn(async () => {
-      throw new Error("cleanup must not start a gateway");
-    }),
+    command: vi.fn(
+      async (
+        _command: string,
+        _argv: string[],
+        _options: ShellProbeRunOptions,
+      ): Promise<ShellProbeResult> => {
+        throw new Error("cleanup must not start a gateway");
+      },
+    ),
     cleanupSandbox: vi.fn(async (_name: string, options: ShellProbeRunOptions = {}) => {
       calls.push(`cli:${options.artifactName}`);
     }),
@@ -83,6 +89,75 @@ describe("owned-sandbox cleanup", () => {
     expect((await f.cleanup.runAll()).failures).toEqual([]);
     expect(f.calls).toEqual(["gateway info", "sandbox delete", "gateway info", "sandbox delete"]);
     expect(f.host.cleanupSandbox).not.toHaveBeenCalled();
+  });
+
+  it("recovers only a registered missing gateway with the selected provider context", async () => {
+    vi.stubEnv("NEMOCLAW_GATEWAY_RUNTIME", "podman");
+    vi.stubEnv("OPENSHELL_PODMAN_SOCKET", "/run/user/1000/podman/podman.sock");
+    const f = fixture();
+    state.registered = true;
+    f.host.command.mockImplementation(async (command, argv, options) => {
+      expect(command).toBe(process.execPath);
+      expect(argv[1]).toContain("startGatewayForRecovery");
+      expect(options.env).toMatchObject({
+        NEMOCLAW_GATEWAY_RUNTIME: "podman",
+        OPENSHELL_PODMAN_SOCKET: "/run/user/1000/podman/podman.sock",
+      });
+      f.calls.push("recover gateway");
+      f.gateway.response = f.presentGateway;
+      return {
+        exitCode: 0,
+        stdout: "",
+        stderr: "",
+        signal: null,
+        timedOut: false,
+        command: [],
+        artifacts: { stdout: "", stderr: "", result: "" },
+      };
+    });
+    try {
+      await f.prepare();
+      expect(f.calls).toEqual([
+        "gateway info",
+        "recover gateway",
+        "gateway info",
+        "sandbox delete",
+        "cli:precleanup-destroy-sandbox",
+      ]);
+      expect((await f.cleanup.runAll()).failures).toEqual([]);
+      expect(f.host.command).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it("fails closed when recovery does not restore the registered gateway", async () => {
+    const f = fixture();
+    state.registered = true;
+    f.host.command.mockResolvedValue({ exitCode: 0 } as ShellProbeResult);
+    await expect(f.prepare()).rejects.toThrow("is still absent");
+    expect(f.host.cleanupSandbox).not.toHaveBeenCalled();
+    expect(f.calls).toEqual(["gateway info", "gateway info"]);
+  });
+
+  it("recovers a registration acquired after preparation when its gateway disappears", async () => {
+    const f = fixture();
+    await f.prepare();
+    state.registered = true;
+    f.host.command.mockImplementation(async () => {
+      f.calls.push("recover gateway");
+      f.gateway.response = f.presentGateway;
+      return { exitCode: 0 } as ShellProbeResult;
+    });
+    expect((await f.cleanup.runAll()).failures).toEqual([]);
+    expect(f.calls).toEqual([
+      "gateway info",
+      "gateway info",
+      "recover gateway",
+      "gateway info",
+      "sandbox delete",
+      "cli:cleanup-destroy-sandbox",
+    ]);
   });
 
   it("deletes administrator state before registered CLI reconciliation in both phases", async () => {

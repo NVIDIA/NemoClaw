@@ -7,6 +7,7 @@ import type { CleanupRegistry } from "./cleanup.ts";
 import { cleanupAcquiredResource } from "./cleanup-resources.ts";
 import type { HostCliClient } from "./clients/host.ts";
 import type { SandboxClient } from "./clients/sandbox.ts";
+import { initializeGatewayForCleanup } from "./gateway-runtime-start.ts";
 
 function buildOwnedSandboxCleanupEnv(): NodeJS.ProcessEnv {
   return {
@@ -19,8 +20,8 @@ function buildOwnedSandboxCleanupEnv(): NodeJS.ProcessEnv {
 
 /** Prepare a sandbox name exclusively owned by this isolated qualification job. */
 export async function prepareOwnedSandboxForOnboard(
-  host: Pick<HostCliClient, "cleanupSandbox">,
-  sandbox: Pick<SandboxClient, "cleanupSandboxBeforeOnboard">,
+  host: Pick<HostCliClient, "cleanupSandbox" | "command">,
+  sandbox: Pick<SandboxClient, "hasGatewayForInitialCleanup" | "cleanupSandbox">,
   cleanup: CleanupRegistry,
   sandboxName: string,
 ): Promise<void> {
@@ -36,19 +37,26 @@ export async function prepareOwnedSandboxForOnboard(
   cleanup.trackDisposable(`destroy sandbox ${sandboxName}`, () =>
     cleanupRegisteredSandbox("cleanup-destroy-sandbox"),
   );
-  // An orphan can exist without a NemoClaw registry entry. Keep administrator
-  // deletion first in LIFO cleanup, but never start a gateway just to clean up.
+  const cleanupOwnedSandbox = async (artifactName: string) => {
+    const options = { artifactName, env: openshellCleanupEnv, timeoutMs: 15 * 60_000 };
+    const gatewayName = openshellCleanupEnv.OPENSHELL_GATEWAY!;
+    const gatewayPresent = await sandbox.hasGatewayForInitialCleanup(gatewayName, options);
+    if (!gatewayPresent && getSandbox(sandboxName) !== null) {
+      // A retained registration needs its selected provider's recovery owner before
+      // CLI reconciliation. Fresh jobs must not acquire a gateway just for cleanup.
+      await initializeGatewayForCleanup(host, gatewayName, options);
+      if (!(await sandbox.hasGatewayForInitialCleanup(gatewayName, options))) {
+        throw new Error(`Recovered cleanup gateway ${gatewayName} is still absent`);
+      }
+      await sandbox.cleanupSandbox(sandboxName, options);
+    } else if (gatewayPresent) {
+      await sandbox.cleanupSandbox(sandboxName, options);
+    }
+  };
+  // Orphans still receive administrator deletion before CLI reconciliation (LIFO).
   cleanup.trackDisposable(`delete owned OpenShell sandbox ${sandboxName}`, () =>
-    sandbox.cleanupSandboxBeforeOnboard(sandboxName, {
-      artifactName: "cleanup-delete-openshell-sandbox",
-      env: openshellCleanupEnv,
-      timeoutMs: 15 * 60_000,
-    }),
+    cleanupOwnedSandbox("cleanup-delete-openshell-sandbox"),
   );
-  await sandbox.cleanupSandboxBeforeOnboard(sandboxName, {
-    artifactName: "precleanup-delete-openshell-sandbox",
-    env: openshellCleanupEnv,
-    timeoutMs: 15 * 60_000,
-  });
+  await cleanupOwnedSandbox("precleanup-delete-openshell-sandbox");
   await cleanupRegisteredSandbox("precleanup-destroy-sandbox");
 }
