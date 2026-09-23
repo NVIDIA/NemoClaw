@@ -3,7 +3,9 @@
 
 import { setTimeout as sleep } from "node:timers/promises";
 
+import { GATEWAY_HOST_RUNTIME_ENV_KEYS } from "../../../src/lib/onboard/runtime-provider/configured-runtime.ts";
 import type { ArtifactSink } from "./artifacts.ts";
+import { createHermesAcpDiagnostics } from "./hermes-acp-diagnostics.ts";
 import type { SandboxClient } from "./clients/sandbox.ts";
 import { type ChildProcessProgress, spawnObservedChild } from "./observed-child-process.ts";
 import type { ShellProbeResult } from "./shell-probe.ts";
@@ -44,6 +46,7 @@ export interface HermesAcpLiveOptions {
 export function hermesAcpLiveHostEnv(source: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   const result: NodeJS.ProcessEnv = {};
   for (const name of [
+    ...GATEWAY_HOST_RUNTIME_ENV_KEYS,
     "HOME",
     "USER",
     "LOGNAME",
@@ -266,7 +269,7 @@ async function writeHermesAcpLiveReceipt(
   });
 }
 
-/** Drive the real packaged adapter while retaining only fixed boolean and exit evidence. */
+/** Drive the real packaged adapter while retaining fixed protocol evidence and bounded, redacted startup stderr diagnostics. */
 export async function runHermesAcpLiveScenario(options: HermesAcpLiveOptions): Promise<boolean> {
   const now = options.now ?? Date.now;
   const scenarioTimeoutMs =
@@ -323,6 +326,7 @@ export async function runHermesAcpLiveScenario(options: HermesAcpLiveOptions): P
   let protocolValid = true;
   const promptEvidence = createHermesAcpPromptEvidenceTracker();
   let stderrObserved = false;
+  const diagnostics = createHermesAcpDiagnostics(options.artifacts);
   let childClosed = false;
   const inbox: JsonObject[] = [];
   const waiters = new Set<() => void>();
@@ -342,6 +346,13 @@ export async function runHermesAcpLiveScenario(options: HermesAcpLiveOptions): P
       if (typeof message !== "object" || message === null || Array.isArray(message)) {
         protocolValid = false;
       } else {
+        if (
+          isAcpResponse(message, 1) &&
+          typeof message.result === "object" &&
+          message.result !== null
+        ) {
+          diagnostics.stop();
+        }
         promptEvidence.observe(message as JsonObject);
         inbox.push(message as JsonObject);
       }
@@ -367,8 +378,9 @@ export async function runHermesAcpLiveScenario(options: HermesAcpLiveOptions): P
       buffered = lines.pop() ?? "";
       for (const line of lines) consumeLine(line);
     },
-    onStderr: () => {
+    onStderr: (chunk) => {
       stderrObserved = true;
+      diagnostics.append(chunk);
     },
   });
   child.once("close", () => {
@@ -503,6 +515,7 @@ export async function runHermesAcpLiveScenario(options: HermesAcpLiveOptions): P
         sessionCreated,
       }));
 
+  await diagnostics.write(`hermes-acp-${options.scenario}.stderr.txt`);
   await writeHermesAcpLiveReceipt(options, {
     adapterProcessAbsent,
     deadlineExpired: options.deadlineAtMs !== undefined && now() >= options.deadlineAtMs,

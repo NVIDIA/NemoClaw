@@ -7,6 +7,8 @@ import path from "node:path";
 
 import { describe, expect, it, onTestFinished, vi } from "vitest";
 
+import { resolveNemoClawGatewayRuntime } from "../../../src/lib/onboard/runtime-provider/configured-runtime.ts";
+
 import { ArtifactSink } from "../fixtures/artifacts.ts";
 import { SandboxClient } from "../fixtures/clients/sandbox.ts";
 import { startTestProgress } from "../fixtures/progress.ts";
@@ -101,24 +103,40 @@ describe("Hermes ACP live evidence boundary", () => {
   });
 
   it.each([
-    ["installed", "initialize", 0],
-    ["checkout", "client-disconnect", 1],
+    ["installed", "initialize", 0, {}],
+    ["checkout", "client-disconnect", 1, {}],
+    ["checkout", "exchange", 0, { stderrObserved: true }],
   ] as const)(
     "%s adapter initializes and completes %s",
-    async (installation, scenario, exitCode) => {
+    async (installation, scenario, exitCode, scenarioEvidence) => {
       const artifactDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-acp-launch-"));
       const adapterEntrypoint = path.join(artifactDir, "nemoclaw-acp");
+      const environmentReceipt = path.join(artifactDir, "child-env.json");
+      const runtimeEnv: NodeJS.ProcessEnv = {
+        NEMOCLAW_GATEWAY_RUNTIME: "podman",
+        OPENSHELL_PODMAN_SOCKET: "/run/user/1000/podman/podman.sock",
+        CONTAINERS_CONF: "/tmp/containers.conf",
+        CONTAINERS_STORAGE_CONF: "/tmp/storage.conf",
+        XDG_RUNTIME_DIR: "/run/user/1000",
+        DBUS_SESSION_BUS_ADDRESS: "unix:path=/run/user/1000/bus",
+      };
       fs.writeFileSync(
         adapterEntrypoint,
         `#!${process.execPath}
 const readline = require("node:readline");
+require("node:fs").writeFileSync(${JSON.stringify(environmentReceipt)}, JSON.stringify(process.env));
 process.stdout.on("error", () => {
   process.exitCode = 1;
   process.stdin.destroy();
 });
 readline.createInterface({ input: process.stdin }).on("line", line => {
   const request = JSON.parse(line);
-  process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: request.id, result: {} }) + "\\n");
+  if (request.method === "session/new") process.stderr.write("later agent stderr\\n");
+  if (request.method === "session/prompt") process.stdout.write(JSON.stringify({
+    jsonrpc: "2.0", method: "session/update", params: { sessionId: "session-a", update: { text: "PONG" } }
+  }) + "\\n");
+  const result = request.method === "session/new" ? { sessionId: "session-a" } : {};
+  process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: request.id, result }) + "\\n");
 });
 `,
         { mode: 0o700 },
@@ -142,16 +160,29 @@ readline.createInterface({ input: process.stdin }).on("line", line => {
         runHermesAcpLiveScenario({
           adapterEntrypoint: installation === "checkout" ? adapterEntrypoint : undefined,
           artifacts: new ArtifactSink(artifactDir),
-          env: { PATH: installation === "installed" ? artifactDir : "" },
+          env: {
+            ...runtimeEnv,
+            PATH: installation === "installed" ? artifactDir : "",
+            NVIDIA_INFERENCE_API_KEY: "provider-secret",
+            OPENSHELL_TOKEN: "openshell-secret",
+            SSH_AUTH_SOCK: "/tmp/private-agent.sock",
+          },
           progress,
           sandbox,
           sandboxName: "e2e-hermes",
           scenario,
         }),
       ).resolves.toBe(true);
+      const childEnv = JSON.parse(fs.readFileSync(environmentReceipt, "utf8"));
+      expect(childEnv).toMatchObject(runtimeEnv);
+      expect(resolveNemoClawGatewayRuntime(childEnv)).toBe("podman");
+      expect(childEnv).not.toHaveProperty("NVIDIA_INFERENCE_API_KEY");
+      expect(childEnv).not.toHaveProperty("OPENSHELL_TOKEN");
+      expect(childEnv).not.toHaveProperty("SSH_AUTH_SOCK");
       expect(
         JSON.parse(fs.readFileSync(path.join(artifactDir, `hermes-acp-${scenario}.json`), "utf8")),
       ).toMatchObject({
+        ...scenarioEvidence,
         passed: true,
         initialized: true,
         exitCode,
@@ -159,9 +190,74 @@ readline.createInterface({ input: process.stdin }).on("line", line => {
         remoteProcessAbsent: true,
         timedOut: false,
       });
+      expect(
+        fs.readFileSync(path.join(artifactDir, `hermes-acp-${scenario}.stderr.txt`), "utf8"),
+      ).not.toContain("later agent stderr");
     },
     2_000,
   );
+
+  it("retains redacted child stderr without persisting ACP stdout", async () => {
+    const artifactDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-acp-diagnostics-"));
+    const adapterEntrypoint = path.join(artifactDir, "adapter.cjs");
+    fs.writeFileSync(
+      adapterEntrypoint,
+      `
+process.stdin.resume();
+process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: 99, result: "private ACP payload" }) + "\\n");
+process.stderr.write("gateway recovery failed: explicit-");
+setTimeout(() => {
+  process.stderr.write("secret Authorization: Bearer bearer-secret\\nhttps://host.invalid/?token=query-secret\\n");
+  process.stderr.write("x".repeat(5000) + "oversized-secret\\n");
+  process.stderr.write("incomplete-secret");
+  process.exitCode = 1;
+  process.stdin.destroy();
+}, 20);
+`,
+    );
+    const progress = startTestProgress(
+      "ACP diagnostics",
+      ["launch adapter", "verify diagnostics"],
+      {
+        logLine: () => undefined,
+      },
+    );
+    onTestFinished(() => {
+      progress.stop();
+      fs.rmSync(artifactDir, { force: true, recursive: true });
+    });
+    await expect(
+      runHermesAcpLiveScenario({
+        adapterEntrypoint,
+        artifacts: new ArtifactSink(artifactDir, ["explicit-secret"]),
+        env: {},
+        progress,
+        sandbox: new SandboxClient({
+          run: vi.fn().mockResolvedValue({ exitCode: 1, stdout: "", stderr: "" }),
+        }),
+        sandboxName: "e2e-hermes",
+        scenario: "initialize",
+      }),
+    ).resolves.toBe(false);
+    const diagnostics = fs.readFileSync(
+      path.join(artifactDir, "hermes-acp-initialize.stderr.txt"),
+      "utf8",
+    );
+    expect(diagnostics).toContain("gateway recovery failed:");
+    expect(diagnostics).toContain("diagnostics discarded");
+    expect(diagnostics).not.toMatch(
+      /explicit-secret|bearer-secret|query-secret|oversized-secret|incomplete-secret|private ACP payload/u,
+    );
+    expect(
+      JSON.parse(fs.readFileSync(path.join(artifactDir, "hermes-acp-initialize.json"), "utf8")),
+    ).toMatchObject({
+      passed: false,
+      stderrObserved: true,
+      rawAcpPayloadRetained: false,
+      adapterProcessAbsent: true,
+      remoteProcessAbsent: true,
+    });
+  });
 
   it("records a failed scenario when the adapter executable is missing", async () => {
     const artifactDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-acp-missing-"));
@@ -215,6 +311,36 @@ readline.createInterface({ input: process.stdin }).on("line", line => {
       PATH: "/usr/bin",
       OPENSHELL_GATEWAY: "nemoclaw",
     });
+  });
+
+  it("preserves the selected Podman runtime and rootless service context for ACP recovery", () => {
+    const runtimeEnv = {
+      NEMOCLAW_GATEWAY_RUNTIME: "podman",
+      OPENSHELL_PODMAN_SOCKET: "/run/user/1000/podman/podman.sock",
+      CONTAINERS_CONF: "/tmp/podman/containers.conf",
+      CONTAINERS_STORAGE_CONF: "/tmp/podman/storage.conf",
+      XDG_RUNTIME_DIR: "/run/user/1000",
+      DBUS_SESSION_BUS_ADDRESS: "unix:path=/run/user/1000/bus",
+    };
+    const adapterEnv = hermesAcpLiveHostEnv({
+      ...runtimeEnv,
+      NVIDIA_INFERENCE_API_KEY: "secret",
+      OPENAI_API_KEY: "secret",
+      OPENSHELL_TOKEN: "secret",
+      SSH_AUTH_SOCK: "/tmp/agent.sock",
+      UNRELATED_HOST_SETTING: "excluded",
+    });
+
+    expect(resolveNemoClawGatewayRuntime(adapterEnv)).toBe("podman");
+    expect(adapterEnv).toEqual(runtimeEnv);
+  });
+
+  it("keeps Docker selection explicit or default without adding Podman settings", () => {
+    expect(hermesAcpLiveHostEnv({})).toEqual({});
+    expect(resolveNemoClawGatewayRuntime(hermesAcpLiveHostEnv({}))).toBe("docker");
+    const adapterEnv = hermesAcpLiveHostEnv({ NEMOCLAW_GATEWAY_RUNTIME: "docker" });
+    expect(adapterEnv).toEqual({ NEMOCLAW_GATEWAY_RUNTIME: "docker" });
+    expect(resolveNemoClawGatewayRuntime(adapterEnv)).toBe("docker");
   });
 
   it("recognizes only the requested JSON-RPC response", () => {

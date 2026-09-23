@@ -230,6 +230,71 @@ describe("Hermes config export live evidence", () => {
     expect(mocks.asExportedConfig).not.toHaveBeenCalled();
   });
 
+  it.each(["http", "https"])("accepts the exact Podman %s export refusal", async (scheme) => {
+    mocks.load.mockReturnValue({
+      sandboxes: {
+        hermes: {
+          openshellDriver: "podman",
+          credentialEnv: "NVIDIA_API_KEY",
+          endpointUrl: `${scheme}://host.openshell.internal:35271/v1`,
+          gatewayName: "nemoclaw",
+          workload: { kind: "managed-image", reference: IMAGE_REF },
+        },
+      },
+    });
+    const diagnostics = [
+      "Config export failed (unsupported).",
+      "V1alpha1 export currently supports the Docker runtime; Podman compatibility is deferred.",
+      ...(scheme === "http"
+        ? ["V1alpha1 requires HTTPS when an inference provider declares a credential."]
+        : []),
+    ].join("\n");
+    mocks.command.mockResolvedValue({ exitCode: 2, stdout: "", stderr: diagnostics });
+    await expect(runEnabledFixture()).resolves.toEqual({ checked: true, passed: true });
+    expect(mocks.save).not.toHaveBeenCalled();
+    expect(mocks.asExportedConfig).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    {
+      label: "unrelated failure",
+      exitCode: 2,
+      extra: "\nunrelated failure",
+      writeOutput: (_args: string[]) => undefined,
+    },
+    { label: "wrong exit", exitCode: 1, extra: "", writeOutput: (_args: string[]) => undefined },
+    {
+      label: "published file",
+      exitCode: 2,
+      extra: "",
+      writeOutput: (args: string[]) =>
+        fs.writeFileSync(args.at(args.indexOf("--output") + 1)!, "{}"),
+    },
+  ])("rejects Podman refusal with $label", async ({ exitCode, extra, writeOutput }) => {
+    mocks.load.mockReturnValue({
+      sandboxes: {
+        hermes: {
+          openshellDriver: "podman",
+          credentialEnv: "NVIDIA_API_KEY",
+          endpointUrl: "https://integrate.api.nvidia.com/v1",
+          gatewayName: "nemoclaw",
+          workload: { kind: "managed-image", reference: IMAGE_REF },
+        },
+      },
+    });
+    mocks.command.mockImplementation(async (_command: string, args: string[]) => {
+      writeOutput(args);
+      return {
+        exitCode,
+        stdout: "",
+        stderr:
+          "Config export failed (unsupported).\nV1alpha1 export currently supports the Docker runtime; Podman compatibility is deferred." +
+          extra,
+      };
+    });
+    await expect(runEnabledFixture()).resolves.toEqual({ checked: true, passed: false });
+  });
+
   it("rejects a credential-bearing HTTP refusal when one alias publishes output", async () => {
     mocks.load.mockReturnValue({
       sandboxes: {
