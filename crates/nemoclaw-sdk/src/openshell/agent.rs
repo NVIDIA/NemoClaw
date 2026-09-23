@@ -3,7 +3,7 @@
 use crate::config::HarnessKind;
 
 use crate::backend::Row;
-use openshell_core::proto;
+use openshell_sdk::raw::proto;
 
 /// Readable directories required by the packaged Fabric runtime and adapters.
 /// Keep these aligned with image/fabric/Dockerfile and the launch command below.

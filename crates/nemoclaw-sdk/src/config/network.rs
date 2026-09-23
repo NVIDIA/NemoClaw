@@ -8,8 +8,9 @@ use crate::config::HarnessKind;
 // 2026-09-19: removed the main-branch Landlock spelling translation and the
 // redundant external-proxy ownership annotation.
 // 2026-09-21: made policy selection exclusive in Rust while preserving the input shape.
+// 2026-09-23: obtain protocol types through the pinned OpenShell SDK's raw API.
 use super::ConfigError;
-use openshell_core::proto;
+use openshell_sdk::raw::proto;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 

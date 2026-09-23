@@ -123,7 +123,7 @@ fn targets_with_plans(
             }
             policy.network_policies.insert(
                 profile.id.clone(),
-                openshell_core::proto::NetworkPolicyRule {
+                openshell_sdk::raw::proto::NetworkPolicyRule {
                     name: profile.id,
                     endpoints: profile.endpoints,
                     binaries: profile.binaries,

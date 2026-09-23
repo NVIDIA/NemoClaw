@@ -3,8 +3,9 @@
 // Collector grant adapted from NVIDIA/NemoClaw at 97745a7ad9649f851704493e4b670b3674f875aa,
 // nemoclaw-blueprint/policies/presets/openclaw-diagnostics-otel-local.yaml (Apache-2.0).
 // 2026-09-15: derive a reserved, exact trace endpoint grant from desired telemetry.
+// 2026-09-23: obtain protocol types through the pinned OpenShell SDK's raw API.
 use super::{ConfigError, ExplicitPolicy, Sandbox, SearchProvider};
-use openshell_core::proto;
+use openshell_sdk::raw::proto;
 use serde_json::json;
 
 impl Sandbox {

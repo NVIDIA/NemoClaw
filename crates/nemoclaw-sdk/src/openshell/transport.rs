@@ -3,10 +3,10 @@
 
 use super::*;
 use crate::config::Gateway;
+use openshell_sdk::{EdgeAuthInterceptor, OpenShellClient, raw::AuthedGrpcClient};
 use std::{sync::Arc, time::Duration};
 use tonic::{
     Request,
-    metadata::MetadataValue,
     transport::{Certificate, Channel, ClientTlsConfig, Identity},
 };
 
@@ -24,8 +24,7 @@ impl Secrets for EnvironmentSecrets {
 }
 #[derive(Clone)]
 pub struct OpenShell {
-    channel: Channel,
-    bearer: Option<MetadataValue<tonic::metadata::Ascii>>,
+    client: Arc<OpenShellClient>,
     pub(super) secrets: Arc<dyn Secrets>,
 }
 impl OpenShell {
@@ -61,32 +60,26 @@ impl OpenShell {
                 .tls_config(tls)
                 .map_err(|_| ObservationError::Authentication)?;
         }
-        let bearer = gateway
+        let token = gateway
             .credential()
-            .map(|credential| {
-                let token = secrets.resolve(&credential.env)?;
-                let mut value = MetadataValue::try_from(format!("Bearer {token}"))
-                    .map_err(|_| ObservationError::Authentication)?;
-                value.set_sensitive(true);
-                Ok::<_, ObservationError>(value)
-            })
+            .map(|credential| secrets.resolve(&credential.env))
             .transpose()?;
+        // ClientConfig cannot express mTLS, lazy connection, or call bounds at
+        // the pinned revision. from_parts preserves those channel guarantees.
+        let client =
+            OpenShellClient::from_parts(endpoint.connect_lazy(), authentication(token.as_deref())?);
         Ok(Self {
-            channel: endpoint.connect_lazy(),
-            bearer,
+            client: Arc::new(client),
             secrets,
         })
     }
-    pub(super) fn grpc(&self) -> proto::open_shell_client::OpenShellClient<Channel> {
-        proto::open_shell_client::OpenShellClient::new(self.channel.clone())
+    pub(super) fn grpc(&self) -> AuthedGrpcClient {
+        // The curated SDK omits fields needed for ownership and drift checks.
+        // Its raw client preserves those fields and never retries mutations.
+        self.client.raw_grpc()
     }
     pub(super) fn request<T>(&self, value: T) -> Request<T> {
         let mut request = Request::new(value);
-        if let Some(token) = &self.bearer {
-            request
-                .metadata_mut()
-                .insert("authorization", token.clone());
-        }
         request.set_timeout(Duration::from_secs(30));
         request
     }
@@ -166,5 +159,53 @@ impl OpenShell {
             row.insert("workspace".into(), workspace.into());
             row
         }))
+    }
+}
+
+fn authentication(token: Option<&str>) -> Result<EdgeAuthInterceptor, ObservationError> {
+    let interceptor =
+        EdgeAuthInterceptor::new(token, None).map_err(|_| ObservationError::Authentication)?;
+    // Upstream bearer construction does not mark metadata sensitive. Keep
+    // credentials out of diagnostics before handing the slot to the SDK.
+    if let Some(slot) = interceptor.bearer_slot()
+        && let Some(value) = slot
+            .write()
+            .map_err(|_| ObservationError::Authentication)?
+            .as_mut()
+    {
+        value.set_sensitive(true);
+    }
+    Ok(interceptor)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tonic::service::Interceptor;
+
+    #[test]
+    fn sdk_authentication_preserves_sensitive_bearer_metadata_and_deadlines() {
+        let mut interceptor = authentication(Some("secret-sentinel")).unwrap();
+        let mut request = Request::new(());
+        request.set_timeout(Duration::from_secs(30));
+        let request = interceptor.call(request).unwrap();
+        let bearer = request.metadata().get("authorization").unwrap();
+        assert_eq!(bearer, "Bearer secret-sentinel");
+        assert!(bearer.is_sensitive());
+        assert!(!format!("{request:?}").contains("secret-sentinel"));
+        assert!(request.metadata().contains_key("grpc-timeout"));
+        assert!(
+            authentication(None)
+                .unwrap()
+                .call(Request::new(()))
+                .unwrap()
+                .metadata()
+                .get("authorization")
+                .is_none()
+        );
+        assert!(matches!(
+            authentication(Some("invalid\nsecret-sentinel")),
+            Err(ObservationError::Authentication)
+        ));
     }
 }

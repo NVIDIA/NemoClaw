@@ -30,6 +30,7 @@ regex.workspace = true
 url.workspace = true
 ipnet.workspace = true
 openshell-core.workspace = true
+openshell-sdk.workspace = true
 openshell-policy.workspace = true
 tonic.workspace = true
 tokio = { workspace = true, features = ["process", "io-util", "fs"] }

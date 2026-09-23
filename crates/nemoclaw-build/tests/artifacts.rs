@@ -134,6 +134,24 @@ fn runtime_build_inputs_are_selected_by_the_artifact_manifest() {
 }
 
 #[test]
+fn retained_sources_include_the_patched_sdk_and_its_license() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let inputs = nemoclaw_build::source_inputs(&root).unwrap();
+    let archive = nemoclaw_build::supervisor_source_files(&root).unwrap();
+    for suffix in ["Cargo.toml", "src/lib.rs", "LICENSE", "NOTICE.md"] {
+        let name = format!("crates/vendor/openshell-sdk/{suffix}");
+        assert!(
+            inputs.iter().any(|(path, _)| path == &name),
+            "build identity must include {name}"
+        );
+        assert!(
+            archive.iter().any(|(path, _)| path == &name),
+            "retained builds must include {name}"
+        );
+    }
+}
+
+#[test]
 fn runtime_manifest_errors_distinguish_json_identity_paths_and_downloads() {
     use nemoclaw_build::{RuntimeArtifact, RuntimeArtifactError};
     use std::error::Error as _;

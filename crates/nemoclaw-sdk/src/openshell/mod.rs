@@ -20,7 +20,7 @@ mod transport;
 use crate::{ObservationError, backend::Row};
 pub use agent::{command, environment, policy, policy_matches};
 pub use gateway::GatewayCapabilities;
-use openshell_core::proto;
+use openshell_sdk::raw::proto;
 pub use transport::{EnvironmentSecrets, OpenShell, Secrets};
 
 pub const OWNER: &str = "nemoclaw.nvidia.com/uid";
