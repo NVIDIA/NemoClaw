@@ -8,7 +8,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 
 import { describe, expect, it } from "vitest";
-import { ADMIN_REQUEST_SELECTOR_PY } from "../live/issue-4462-admin-approval-helper.ts";
+import { ADMIN_REQUEST_SELECTOR_PY } from "../fixtures/admin-request-selector.ts";
 
 const SNAPSHOT_SCRIPT = path.join(
   import.meta.dirname,

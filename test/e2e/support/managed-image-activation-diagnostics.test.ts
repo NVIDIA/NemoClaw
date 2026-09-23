@@ -7,6 +7,8 @@ import os from "node:os";
 import path, { join } from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
+
+import { adminApprovalConnectScript } from "../fixtures/admin-approval-connect.ts";
 import { createHostProcessWorkspace } from "../../helpers/host-process-harness.ts";
 import { ArtifactSink } from "../fixtures/artifacts.ts";
 import {
@@ -24,7 +26,6 @@ import {
   waitForManagedActivationSandboxAbsence,
 } from "../live/managed-image-activation-e2e-helpers.ts";
 import { pendingAdminRequestId } from "../fixtures/issue-4462-admin-approval-evidence.ts";
-import { adminApprovalConnectScript } from "../live/issue-4462-admin-approval-helper.ts";
 
 const MANAGED_ADMIN_PUBLIC_KEY_BYTES = Buffer.from(
   Array.from({ length: 32 }, (_value, index) => index),

@@ -8,11 +8,9 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
-import {
-  ADMIN_REQUEST_SELECTOR_PY,
-  adminApprovalConnectScript,
-  preApprovalAdminProbeEvidence,
-} from "../e2e/live/issue-4462-admin-approval-helper.ts";
+import { adminApprovalConnectScript } from "../e2e/fixtures/admin-approval-connect.ts";
+import { ADMIN_REQUEST_SELECTOR_PY } from "../e2e/fixtures/admin-request-selector.ts";
+import { preApprovalAdminProbeEvidence } from "../e2e/fixtures/issue-4462-admin-approval-evidence.ts";
 
 const EXPECTED_REQUEST_ID = "12345678-1234-4123-8123-123456789abc";
 const EXPECTED_PUBLIC_KEY_BYTES = Buffer.from(Array.from({ length: 32 }, (_value, index) => index));

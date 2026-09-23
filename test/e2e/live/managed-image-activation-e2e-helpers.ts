@@ -17,6 +17,7 @@ import {
 } from "../../../src/lib/onboard/managed-image/contract.ts";
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
+import { adminApprovalConnectScript } from "../fixtures/admin-approval-connect.ts";
 import type { CleanupRegistry } from "../fixtures/cleanup.ts";
 import {
   assertExitZero,
@@ -43,7 +44,6 @@ import {
   pendingAdminRequestId,
   preApprovalAdminProbeEvidence,
 } from "../fixtures/issue-4462-admin-approval-evidence.ts";
-import { adminApprovalConnectScript } from "./issue-4462-admin-approval-helper.ts";
 
 const API_KEY = "nemoclaw-managed-activation-e2e-key";
 const MODEL = "nemoclaw-managed-activation-model";
