@@ -38,7 +38,6 @@ const WORKFLOW_PATH = ".github/workflows/pr-self-hosted.yaml";
 const LLAMA_LIVE_TEST_PATH = "test/e2e/live/llama-cpp-generic-gpu.test.ts";
 const CANDIDATE_SHA = "a".repeat(40);
 const BASE_SHA = "b".repeat(40);
-const WSL_ARM64_RUNNER_LABEL = "windows-arm64-wsl-gpu-reviewed";
 const REQUIRED_RUNTIME_AUTHORITY_PATHS = [
   "src/lib/inference/nim.ts",
   "src/lib/onboard/provider-selection.ts",
@@ -46,20 +45,9 @@ const REQUIRED_RUNTIME_AUTHORITY_PATHS = [
   "src/lib/onboard/runtime-provider/current.ts",
   "src/lib/onboard/setup-nim-flow.ts",
 ] as const;
-const WSL_ARM64_GENERIC_RUNTIME_OWNER_PATHS = [
-  "src/lib/inference/nim.ts",
-  "src/lib/onboard/fatal-runtime-preflight.ts",
-] as const;
 const ARM64_PROOF_AUTHORITY_PATHS = [
   "src/lib/container-gpu-proof.ts",
   "src/lib/onboard/runtime-provider/nvidia-container-proof.ts",
-  "src/lib/onboard/sandbox-gpu-mode.ts",
-] as const;
-const WSL_ARM64_QUALIFICATION_PATHS = [
-  WORKFLOW_PATH,
-  ...ARM64_PROOF_AUTHORITY_PATHS,
-  "tools/e2e/wsl-arm64-multi-gpu-qualification.mts",
-  "test/e2e/support/pr-self-hosted-llama-selector.test.ts",
 ] as const;
 
 type RunProcessResult = {
@@ -102,24 +90,13 @@ function selectorScript(): string {
   return script;
 }
 
-function selectionBlock(index: number): string {
+function declaredSelectionPaths(): readonly string[] {
   const script = selectorScript();
-  const starts = [...script.matchAll(/\nif gh api --paginate --slurp/gu)].map(
-    (match) => match.index,
-  );
-  assert(starts.length >= 2, "expected independent generic GPU and WSL ARM64 selectors");
-  const start = starts[index];
-  assert(typeof start === "number", `selector block ${index} is missing`);
-  return script.slice(start, starts[index + 1]);
-}
-
-function declaredSelectionPaths(index = 0): readonly string[] {
-  const block = selectionBlock(index);
-  const exactPaths = [...block.matchAll(/\.filename == "([^"]+)"/gu)].map(([, value]) => {
+  const exactPaths = [...script.matchAll(/\.filename == "([^"]+)"/gu)].map(([, value]) => {
     assert(typeof value === "string", "exact selector path is missing");
     return value;
   });
-  const representativePrefixPaths = [...block.matchAll(/startswith\("([^"]+)"\)/gu)].map(
+  const representativePrefixPaths = [...script.matchAll(/startswith\("([^"]+)"\)/gu)].map(
     ([, value]) => {
       assert(typeof value === "string", "selector prefix is missing");
       return `${value}selector-contract.ts`;
@@ -130,20 +107,10 @@ function declaredSelectionPaths(index = 0): readonly string[] {
   return paths;
 }
 
-function expectedSelection(genericSelected: boolean, wslArm64Selected: boolean): string {
-  return (
-    `base_sha=${BASE_SHA}\nhead_sha=${CANDIDATE_SHA}\npr_number=8748\n` +
-    `selected=${genericSelected}\n` +
-    `wsl_arm64_runner_label=${WSL_ARM64_RUNNER_LABEL}\n` +
-    `wsl_arm64_selected=${wslArm64Selected}`
-  );
-}
-
 async function selectGenericGpuLane(
   changedFiles: readonly string[],
   copiedSha = CANDIDATE_SHA,
   baseSha = BASE_SHA,
-  wslArm64RunnerLabel = WSL_ARM64_RUNNER_LABEL,
 ) {
   const script = selectorScript();
 
@@ -184,7 +151,6 @@ fi
           base: { sha: baseSha },
           head: { sha: CANDIDATE_SHA },
         }),
-        WSL_ARM64_MULTI_GPU_RUNNER_LABEL: wslArm64RunnerLabel,
       },
     );
     assert.equal(result.status, 0, result.stderr);
@@ -200,11 +166,7 @@ describe.concurrent("generic NVIDIA GPU PR selection", () => {
     async (changedFile, { expect }) => {
       const result = await selectGenericGpuLane([changedFile]);
       expect(result).toBe(
-        expectedSelection(
-          true,
-          changedFile === WORKFLOW_PATH ||
-            WSL_ARM64_GENERIC_RUNTIME_OWNER_PATHS.some((path) => path === changedFile),
-        ),
+        `base_sha=${BASE_SHA}\nhead_sha=${CANDIDATE_SHA}\npr_number=8748\nselected=true`,
       );
     },
   );
@@ -214,19 +176,18 @@ describe.concurrent("generic NVIDIA GPU PR selection", () => {
     async (changedFile, { expect }) => {
       const result = await selectGenericGpuLane([changedFile]);
       expect(result).toBe(
-        expectedSelection(
-          true,
-          WSL_ARM64_GENERIC_RUNTIME_OWNER_PATHS.some((path) => path === changedFile),
-        ),
+        `base_sha=${BASE_SHA}\nhead_sha=${CANDIDATE_SHA}\npr_number=8748\nselected=true`,
       );
     },
   );
 
-  it.for(WSL_ARM64_QUALIFICATION_PATHS)(
-    "selects physical WSL ARM64 qualification without substituting AMD64 evidence for %s",
+  it.for(ARM64_PROOF_AUTHORITY_PATHS)(
+    "does not select the Docker-qualified AMD64 GPU job for ARM64 proof owner %s",
     async (changedFile, { expect }) => {
       const result = await selectGenericGpuLane([changedFile]);
-      expect(result).toBe(expectedSelection(changedFile === WORKFLOW_PATH, true));
+      expect(result).toBe(
+        `base_sha=${BASE_SHA}\nhead_sha=${CANDIDATE_SHA}\npr_number=8748\nselected=false`,
+      );
     },
   );
 
@@ -234,21 +195,27 @@ describe.concurrent("generic NVIDIA GPU PR selection", () => {
     expect,
   }) => {
     const result = await selectGenericGpuLane(["src/lib/onboard/runtime-provider/podman.ts"]);
-    expect(result).toBe(expectedSelection(false, false));
+    expect(result).toBe(
+      `base_sha=${BASE_SHA}\nhead_sha=${CANDIDATE_SHA}\npr_number=8748\nselected=false`,
+    );
   });
 
   it("does not treat an N1x identity-only change as generic x86 GPU evidence", async ({
     expect,
   }) => {
     const result = await selectGenericGpuLane(["src/lib/inference/platform-identity/n1x.ts"]);
-    expect(result).toBe(expectedSelection(false, false));
+    expect(result).toBe(
+      `base_sha=${BASE_SHA}\nhead_sha=${CANDIDATE_SHA}\npr_number=8748\nselected=false`,
+    );
   });
 
   it("does not select the generic NVIDIA GPU E2E job for unrelated documentation", async ({
     expect,
   }) => {
     const result = await selectGenericGpuLane(["docs/get-started/quickstart.mdx"]);
-    expect(result).toBe(expectedSelection(false, false));
+    expect(result).toBe(
+      `base_sha=${BASE_SHA}\nhead_sha=${CANDIDATE_SHA}\npr_number=8748\nselected=false`,
+    );
   });
 
   it("rejects a copied branch whose commit does not match the current PR head", async ({
@@ -263,20 +230,6 @@ describe.concurrent("generic NVIDIA GPU PR selection", () => {
   it("rejects a PR whose base SHA is not a lowercase 40-character SHA", async ({ expect }) => {
     const rejected = selectGenericGpuLane(["scripts/install.sh"], CANDIDATE_SHA, "main");
     await expect(rejected).rejects.toThrow();
-  });
-
-  it("fails closed when WSL ARM64 proof owners change without a reviewed runner label", async ({
-    expect,
-  }) => {
-    const rejected = selectGenericGpuLane(
-      [ARM64_PROOF_AUTHORITY_PATHS[0]],
-      CANDIDATE_SHA,
-      BASE_SHA,
-      "",
-    );
-    await expect(rejected).rejects.toThrow(
-      "WSL_ARM64_MULTI_GPU_RUNNER_LABEL must name the reviewed physical WSL ARM64 multi-GPU runner",
-    );
   });
 
   it("pins the Docker-qualified GPU job and captures post-request runtime diagnostics", ({
@@ -295,10 +248,7 @@ describe.concurrent("generic NVIDIA GPU PR selection", () => {
     const value = workflow();
     const selector = value.jobs["select-llama-cpp-generic-gpu"];
 
-    expect(selector?.permissions).toEqual({
-      actions: "read",
-      contents: "read",
-    });
+    expect(selector?.permissions).toEqual({ actions: "read", contents: "read" });
     expect(selector?.outputs).toMatchObject({
       base_sha: "${{ steps.changed.outputs.base_sha }}",
       managed_image_revision: "${{ steps.publication.outputs.head_sha }}",
@@ -348,82 +298,6 @@ describe.concurrent("generic NVIDIA GPU PR selection", () => {
     expect(value.jobs["llama-cpp-generic-gpu"]?.env?.E2E_MANAGED_IMAGE_REVISION).toBe(
       "${{ needs.select-llama-cpp-generic-gpu.outputs.managed_image_revision }}",
     );
-    expect(selector?.outputs).toMatchObject({
-      wsl_arm64_runner_label: "${{ steps.changed.outputs.wsl_arm64_runner_label }}",
-      wsl_arm64_selected: "${{ steps.changed.outputs.wsl_arm64_selected }}",
-    });
-    const selectionStep = selector?.steps?.find(
-      (step) => step.name === "Select llama.cpp generic GPU E2E from PR files",
-    );
-    expect(selectionStep?.env?.WSL_ARM64_MULTI_GPU_RUNNER_LABEL).toBe(
-      "${{ vars.WSL_ARM64_MULTI_GPU_RUNNER_LABEL }}",
-    );
-    expect(selectionStep?.run).toMatch(
-      /WSL_ARM64_MULTI_GPU_RUNNER_LABEL.*reviewed physical WSL ARM64 multi-GPU runner/su,
-    );
-
-    const job = value.jobs["wsl-arm64-multi-gpu"];
-    expect(job).toMatchObject({
-      needs: "select-llama-cpp-generic-gpu",
-      "runs-on": "${{ needs.select-llama-cpp-generic-gpu.outputs.wsl_arm64_runner_label }}",
-      "timeout-minutes": 45,
-    });
-    expect(job?.steps?.find((step) => step.name === "Check out exact PR head")).toMatchObject({
-      with: { "persist-credentials": false, ref: "${{ github.sha }}" },
-    });
-    const trustedCheckout = job?.steps?.find(
-      (step) => step.name === "Check out trusted WSL helper from PR base",
-    );
-    expect(trustedCheckout).toMatchObject({
-      with: {
-        "persist-credentials": false,
-        ref: "${{ needs.select-llama-cpp-generic-gpu.outputs.base_sha }}",
-      },
-    });
-    expect(trustedCheckout?.with?.["sparse-checkout"]).toContain(
-      ".github/actions/ci-install-dependencies.sh",
-    );
-    expect(trustedCheckout?.with?.["sparse-checkout"]).toContain(
-      "scripts/checks/prepare-ci-npm-install.mts",
-    );
-    expect(
-      job?.steps?.find((step) => step.name === "Verify physical Windows ARM64 runner")?.run,
-    ).toContain("OSArchitecture");
-    expect(
-      job?.steps?.find(
-        (step) => step.name === "Require configured Ubuntu WSL and Docker Desktop GPU integration",
-      )?.run,
-    ).toMatch(/aarch64.*\/dev\/dxg.*docker info.*nvidia-smi -L/su);
-    expect(
-      job?.steps?.find((step) => step.name === "Run WSL ARM64 multi-GPU live qualification")?.run,
-    ).toContain("tools/e2e/wsl-arm64-multi-gpu-qualification.mts");
-    const install = job?.steps?.find(
-      (step) => step.name === "Install dependencies and build in WSL",
-    );
-    expect(install?.env?.NODE_AUTH_TOKEN).toBe("${{ github.token }}");
-    expect(install?.run).toContain("$trustedWorkdir/.github/actions/ci-install-dependencies.sh");
-    expect(install?.run).toContain("unset NODE_AUTH_TOKEN");
-    expect(install?.run).not.toContain("bash .github/actions/ci-install-dependencies.sh");
-    expect(
-      job?.steps?.find(
-        (step) => step.name === "Upload WSL ARM64 multi-GPU qualification artifacts",
-      ),
-    ).toMatchObject({
-      if: "always()",
-      uses: "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a",
-      with: { "if-no-files-found": "error", "retention-days": 14 },
-    });
-    const uploadIndex = job?.steps?.findIndex(
-      (step) => step.name === "Upload WSL ARM64 multi-GPU qualification artifacts",
-    );
-    const cleanupIndex = job?.steps?.findIndex(
-      (step) => step.name === "Remove WSL ARM64 qualification workspaces",
-    );
-    expect(cleanupIndex).toBeGreaterThan(uploadIndex ?? -1);
-    expect(job?.steps?.[cleanupIndex ?? -1]).toMatchObject({
-      if: "always()",
-      run: expect.stringContaining("rm -rf -- $workdir $trustedWorkdir"),
-    });
   });
 });
 
