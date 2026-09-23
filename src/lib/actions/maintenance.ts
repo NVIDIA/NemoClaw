@@ -37,6 +37,7 @@ import {
   isSandboxContainerDefinitivelyAbsent,
   returnSandboxContainerToStopped,
   startedSandboxBackupTransactionDeadline,
+  startedSandboxBackupWorkDeadline,
   type StartedForBackup,
   startStoppedSandboxContainerForBackup,
 } from "./sandbox/stopped-sandbox-backup";
@@ -330,10 +331,19 @@ export async function backupAllUnderPortableHostFence(
               },
             ));
         return retainPreUpgradePolicy
-          ? retainStrictPreUpgradeRecoveryState(sb, backupResult, {
-              gatewayName: resolveSandboxGatewayName(sb),
-              workspace: "default",
-            })
+          ? retainStrictPreUpgradeRecoveryState(
+              sb,
+              backupResult,
+              {
+                gatewayName: resolveSandboxGatewayName(sb),
+                workspace: "default",
+              },
+              // Retention runs while a started container is still up, so it
+              // may consume only the backup share of the transaction.
+              transactionDeadlineMs === null
+                ? undefined
+                : startedSandboxBackupWorkDeadline(transactionDeadlineMs),
+            )
           : backupResult;
       },
     );

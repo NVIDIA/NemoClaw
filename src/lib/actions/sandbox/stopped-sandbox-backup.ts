@@ -334,6 +334,12 @@ export function startedSandboxBackupTransactionDeadline(now: () => number = Date
   return now() + STARTED_BACKUP_TRANSACTION_TIMEOUT_MS;
 }
 
+/** The part of a shared transaction deadline that backup work may consume,
+ * leaving the stopped-state cleanup reserve for cleanup alone. */
+export function startedSandboxBackupWorkDeadline(transactionDeadlineMs: number): number {
+  return transactionDeadlineMs - STARTED_BACKUP_STOP_RESERVE_MS;
+}
+
 function unreachableBackupResult(error: string): sandboxState.BackupResult {
   return {
     success: false,
@@ -358,7 +364,7 @@ export async function backupStartedSandboxState(
   const deps: BackupRetryDeps = { ...defaultBackupRetryDeps, ...depsOverride };
   const transactionDeadlineMs =
     deps.deadlineMs ?? startedSandboxBackupTransactionDeadline(deps.now);
-  const backupDeadlineMs = transactionDeadlineMs - STARTED_BACKUP_STOP_RESERVE_MS;
+  const backupDeadlineMs = startedSandboxBackupWorkDeadline(transactionDeadlineMs);
   const readinessDeadlineMs = backupDeadlineMs - STARTED_BACKUP_FINAL_BACKUP_RESERVE_MS;
 
   while (deps.now() < readinessDeadlineMs) {

@@ -99,6 +99,8 @@ vi.mock("./sandbox/stopped-sandbox-backup", () => ({
   returnSandboxContainerToStopped: mocks.returnSandboxContainerToStopped,
   isSandboxContainerDefinitivelyAbsent: mocks.isSandboxContainerDefinitivelyAbsent,
   startedSandboxBackupTransactionDeadline: () => 330_000,
+  startedSandboxBackupWorkDeadline: (transactionDeadlineMs: number) =>
+    transactionDeadlineMs - 30_000,
 }));
 vi.mock("./sandbox/snapshot/strict-pre-upgrade-recovery", () => ({
   retainStrictPreUpgradeRecoveryState: mocks.retainStrictPreUpgradeRecoveryState,
@@ -733,6 +735,7 @@ describe("backupAll", () => {
       sandbox,
       expect.objectContaining({ manifest }),
       { gatewayName: "nemoclaw", workspace: "default" },
+      undefined,
     );
   });
 
@@ -842,8 +845,14 @@ describe("backupAll", () => {
       requireAll: true,
     });
 
-    // Retention outran the shared deadline, and cleanup still ran on the
-    // reserve that deadline cannot consume.
+    // Retention is bounded by the backup share of the transaction, and
+    // cleanup still ran on the reserve that share cannot consume.
+    expect(mocks.retainStrictPreUpgradeRecoveryState).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      { gatewayName: "nemoclaw", workspace: "default" },
+      300_000,
+    );
     expect(stopClock).toEqual([400_000]);
     expect(mocks.returnSandboxContainerToStopped).toHaveBeenCalledWith(startedForBackup, {
       deadlineMs: 330_000,

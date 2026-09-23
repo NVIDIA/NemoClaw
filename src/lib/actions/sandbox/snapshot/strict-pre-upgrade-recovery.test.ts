@@ -153,6 +153,93 @@ describe("strict pre-upgrade recovery retention", () => {
     expect(mocks.captureRecordedSandboxBasePolicy).not.toHaveBeenCalled();
   });
 
+  it("skips the policy capture and discards the snapshot once the deadline expires (#11936)", async () => {
+    const result = {
+      success: true,
+      backedUpDirs: ["workspace"],
+      failedDirs: [],
+      backedUpFiles: [],
+      failedFiles: [],
+      manifest: { backupPath: "/backups/alpha/timestamp" },
+    };
+
+    await expect(
+      retainStrictPreUpgradeRecoveryState(
+        sandbox as never,
+        result as never,
+        runtimeSelection,
+        10_000,
+        () => 10_000,
+      ),
+    ).resolves.toMatchObject({
+      success: false,
+      error:
+        "Strict pre-upgrade recovery retention skipped the policy capture: backup deadline expired",
+    });
+    expect(mocks.captureRecordedSandboxBasePolicy).not.toHaveBeenCalled();
+    expect(mocks.observeMcpStateForRebuild).not.toHaveBeenCalled();
+    expect(mocks.removeSandboxStateBackup).toHaveBeenCalledWith(
+      "alpha",
+      "/backups/alpha/timestamp",
+    );
+  });
+
+  it("does not start the MCP observation when the policy capture reaches the deadline (#11936)", async () => {
+    let now = 9_000;
+    mocks.captureRecordedSandboxBasePolicy.mockImplementation(async () => {
+      now = 10_000;
+      return "version: 1\n";
+    });
+    const result = {
+      success: true,
+      backedUpDirs: ["workspace"],
+      failedDirs: [],
+      backedUpFiles: [],
+      failedFiles: [],
+      manifest: { backupPath: "/backups/alpha/timestamp" },
+    };
+
+    await expect(
+      retainStrictPreUpgradeRecoveryState(
+        sandbox as never,
+        result as never,
+        runtimeSelection,
+        10_000,
+        () => now,
+      ),
+    ).resolves.toMatchObject({
+      success: false,
+      error:
+        "Strict pre-upgrade recovery retention skipped the MCP observation: backup deadline expired",
+    });
+    expect(mocks.captureRecordedSandboxBasePolicy).toHaveBeenCalledOnce();
+    expect(mocks.observeMcpStateForRebuild).not.toHaveBeenCalled();
+    expect(mocks.writeRebuildPolicyHandoff).not.toHaveBeenCalled();
+  });
+
+  it("completes both observations while the deadline leaves time", async () => {
+    const result = {
+      success: true,
+      backedUpDirs: ["workspace"],
+      failedDirs: [],
+      backedUpFiles: [],
+      failedFiles: [],
+      manifest: { backupPath: "/backups/alpha/timestamp" },
+    };
+
+    await expect(
+      retainStrictPreUpgradeRecoveryState(
+        sandbox as never,
+        result as never,
+        runtimeSelection,
+        10_000,
+        () => 1_000,
+      ),
+    ).resolves.toMatchObject({ success: true });
+    expect(mocks.observeMcpStateForRebuild).toHaveBeenCalledWith(sandbox, runtimeSelection, true);
+    expect(mocks.removeSandboxStateBackup).not.toHaveBeenCalled();
+  });
+
   it("does not publish either handoff when MCP observation fails", async () => {
     mocks.observeMcpStateForRebuild.mockRejectedValue(new Error("MCP observation unavailable"));
     const result = {
