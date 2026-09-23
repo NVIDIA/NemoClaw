@@ -142,7 +142,7 @@ describe("Hermes portable sandbox create flow", () => {
     expect(deps.verifyDirectSandboxGpu).toHaveBeenCalledOnce();
   });
 
-  it("keeps schema-5 create failure diagnostics out of ambient gateway logs (#9203)", async () => {
+  it("classifies a spawned Hermes create failure as ambiguous without retry (#9203)", async () => {
     const input = createInput();
     input.gpuRoutePlan = "native-only";
     input.hermesPortableLifecycle = true;
@@ -158,13 +158,13 @@ describe("Hermes portable sandbox create flow", () => {
       sawProgress: false,
     });
 
-    await expect(runSandboxGpuCreateFlow(input, deps)).rejects.toThrow("exit 7");
-
-    expect(exit).toHaveBeenCalledWith(7);
-    expect(mocks.printSandboxCreateFailureDiagnostics).not.toHaveBeenCalled();
-    expect(console.error).toHaveBeenCalledWith(
-      expect.stringContaining("did not complete receipt-owned creation"),
+    await expect(runSandboxGpuCreateFlow(input, deps)).rejects.toThrow(
+      "did not confirm whether sandbox 'alpha' was created",
     );
+
+    expect(exit).not.toHaveBeenCalled();
+    expect(mocks.streamSandboxCreate).toHaveBeenCalledOnce();
+    expect(mocks.printSandboxCreateFailureDiagnostics).not.toHaveBeenCalled();
   });
 
   it("preserves receipt authority instead of suggesting name-only cleanup (#9203)", async () => {

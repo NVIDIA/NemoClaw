@@ -1876,6 +1876,15 @@ export async function restartSandboxGateway(
         getSessionAgent: getRecoverySessionAgent,
         getSandbox: readRecoverySandbox,
         resolveSandboxDashboardPort,
+        buildOpenClawReadinessProbeCommand: (name) => {
+          // OpenClaw 2026.3.11+ exposes { ready: boolean } here:
+          // https://github.com/openclaw/openclaw/blob/v2026.3.11/src/gateway/server-http.ts
+          const url = new URL(resolveSandboxHealthProbeUrl(name));
+          url.pathname = "/readyz";
+          url.search = "";
+          url.hash = "";
+          return `curl --noproxy '*' --silent --show-error --fail --write-out '\\n%{http_code}' --max-time 3 ${shellQuote(url.href)}`;
+        },
         executeSandboxExecCommand: (name, command, timeout) =>
           executeSandboxExecCommand(
             name,

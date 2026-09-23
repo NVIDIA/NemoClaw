@@ -141,9 +141,14 @@ describe("E2E workflow plan", () => {
       "ubuntu-repo-cloud-openclaw",
     ]);
     expect(plan.testMatrix).toEqual([]);
-    expect(catalogueIds).toHaveLength(46);
+    expect(catalogueIds).toHaveLength(45);
     expect(catalogueIds).not.toEqual(
-      expect.arrayContaining(["bootstrap-install-smoke", "rebuild-hermes", "rebuild-openclaw"]),
+      expect.arrayContaining([
+        "bootstrap-install-smoke",
+        "gpu-e2e",
+        "rebuild-hermes",
+        "rebuild-openclaw",
+      ]),
     );
     expect(catalogueIds.some((id) => id.startsWith("openshell-gateway-upgrade-"))).toBe(false);
     expect(selectedWorkflowJobs(plan)).toEqual([
@@ -790,6 +795,9 @@ describe("E2E workflow plan", () => {
 
   it.each([
     "nemoclaw-blueprint/router/pool-config.yaml",
+    "src/lib/actions/sandbox/destroy-preflight.ts",
+    "src/lib/onboard/model-router-process.ts",
+    "src/lib/onboard/model-router.ts",
     "test/e2e/live/model-router-provider-routed-inference-helpers.ts",
   ])("selects the Model Router target when %s changes", (changedFile) => {
     expect(catalogueTargetsForChangedFiles([changedFile]).map((target) => target.id)).toContain(
