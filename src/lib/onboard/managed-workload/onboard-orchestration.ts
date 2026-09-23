@@ -256,8 +256,10 @@ export async function prepareSandboxWorkloadForPortableLifecycle(
   if (workload.source.kind === "portable-image") {
     throw new Error("Portable image workload activation is not enabled.");
   }
-  if (workload.source.kind === "external-image") {
-    throw new Error("Hermes portable onboarding cannot use a user-supplied Docker image.");
+  if (portableLifecycle && workload.source.kind === "external-image") {
+    throw new Error(
+      "Portable OpenClaw onboarding cannot use a user-supplied Docker image because that path requires Docker lifecycle operations.",
+    );
   }
   assertPortableManagedBootstrapNotSelected(
     portableLifecycle,

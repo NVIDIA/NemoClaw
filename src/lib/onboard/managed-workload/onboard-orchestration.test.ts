@@ -387,6 +387,50 @@ describe("managed workload onboard orchestration", () => {
     await expectUnsupportedHermesPortableSources(runtime, prepared, expectedDockerfilePath);
   });
 
+  it("allows an external image for ordinary Docker onboarding (#11932)", async () => {
+    const workload = {
+      source: {
+        kind: "external-image",
+        reference: `registry.example.test/openclaw@sha256:${"a".repeat(64)}`,
+      },
+      release: null,
+      fallbackDiagnostic: null,
+    } as never;
+    const ensurePreparedProfile = vi.fn(() => null);
+    const runtime = {
+      runtimeProvider: null,
+      ensurePreparedWorkload: vi.fn(async () => workload),
+      ensurePreparedProfile,
+    } as never;
+
+    await expect(prepareSandboxWorkloadForPortableLifecycle(runtime, false)).resolves.toBe(
+      workload,
+    );
+    expect(ensurePreparedProfile).toHaveBeenCalledExactlyOnceWith(workload);
+  });
+
+  it("rejects an external image for Portable onboarding (#11932)", async () => {
+    const workload = {
+      source: {
+        kind: "external-image",
+        reference: `registry.example.test/openclaw@sha256:${"a".repeat(64)}`,
+      },
+      release: null,
+      fallbackDiagnostic: null,
+    } as never;
+    const ensurePreparedProfile = vi.fn();
+    const runtime = {
+      runtimeProvider: null,
+      ensurePreparedWorkload: vi.fn(async () => workload),
+      ensurePreparedProfile,
+    } as never;
+
+    await expect(prepareSandboxWorkloadForPortableLifecycle(runtime, true)).rejects.toThrow(
+      "Portable OpenClaw onboarding cannot use a user-supplied Docker image because that path requires Docker lifecycle operations.",
+    );
+    expect(ensurePreparedProfile).not.toHaveBeenCalled();
+  });
+
   it("keeps a portable image contract inert before lifecycle activation (#11079)", async () => {
     const workload = {
       source: { kind: "portable-image" },
