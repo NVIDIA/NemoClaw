@@ -9,7 +9,7 @@ export const officialPluginInspections = Object.fromEntries(
     (manifest.agentPackages ?? []).flatMap((pkg) => {
       if (!pkg.spec.startsWith("npm:@openclaw/")) return [];
       const spec = pkg.spec.replace("npm:", "").replace("{{openclaw.version}}", "2026.9.1");
-      const id = spec.slice("@openclaw/".length).split("@")[0];
+      const id = manifest.runtime?.openclaw?.channelName;
       return [
         [
           id,
