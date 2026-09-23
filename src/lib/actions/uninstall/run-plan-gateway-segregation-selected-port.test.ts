@@ -421,6 +421,7 @@ describe("uninstall selected gateway-port segregation (#3053)", () => {
     childRun: false,
     destroyUserData: false,
     dockerInventory: null as RunResult | null,
+    dockerAvailable: true,
     expectedDockerCalls: [] as string[][],
     expectedNativeCalls: [] as string[][],
     probeResults: {} as Record<string, RunResult>,
@@ -435,6 +436,7 @@ describe("uninstall selected gateway-port segregation (#3053)", () => {
       writePreGatewaySession(stateRoot, port, "interrupted"),
     stateKept: false,
   };
+  const blockedPreGatewayBase = { ...interruptedPreGatewayBase, expectedExit: 1, stateKept: true };
   const inventoryArgs = [
     "ps",
     "-a",
@@ -449,6 +451,11 @@ describe("uninstall selected gateway-port segregation (#3053)", () => {
     destroyUserData: true,
     prepareState: writeRetainedUninstallState,
     expectedDockerCalls: [["docker", ...inventoryArgs]],
+  };
+  const retainedFailure = (message: string) => (errors: string) => {
+    expect(errors).toContain(message);
+    expect(errors).toContain("Keep NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR unset");
+    expect(errors).not.toContain("set to its original resolved directory");
   };
   const siblingContainer = "b".repeat(64);
   const siblingInspect = [
@@ -509,13 +516,25 @@ describe("uninstall selected gateway-port segregation (#3053)", () => {
       dockerInventory: ok("existing-container\n"),
       expectedExit: 1,
       stateKept: true,
+      assertErrors: retainedFailure("container ownership could not be confirmed"),
       scenario: "preserves retained uninstall data while a sandbox container remains",
+    },
+    {
+      ...retainedUninstallBase,
+      dockerInventory: ok(),
+      dockerAvailable: false,
+      expectedExit: 1,
+      stateKept: true,
+      assertErrors: retainedFailure("Docker inventory could not be read"),
+      expectedDockerCalls: [],
+      scenario: "preserves retained data when Docker is unavailable",
     },
     {
       ...retainedUninstallBase,
       dockerInventory: { status: 1, stdout: "", stderr: "inventory unavailable" },
       expectedExit: 1,
       stateKept: true,
+      assertErrors: retainedFailure("Docker inventory could not be read"),
       scenario: "preserves retained uninstall data when container inventory fails",
     },
     {
@@ -535,114 +554,89 @@ describe("uninstall selected gateway-port segregation (#3053)", () => {
       scenario: "removes interrupted pre-gateway state during an all-ports child run",
     },
     {
-      ...interruptedPreGatewayBase,
-      expectedExit: 1,
+      ...blockedPreGatewayBase,
       portAvailability: [false],
       scenario: "preserves interrupted pre-gateway state when its port is occupied",
-      stateKept: true,
     },
     {
-      ...interruptedPreGatewayBase,
-      expectedExit: 1,
+      ...blockedPreGatewayBase,
       portAvailability: [true, true, false],
       scenario: "preserves interrupted pre-gateway state when its port becomes occupied",
-      stateKept: true,
     },
     {
-      ...interruptedPreGatewayBase,
-      expectedExit: 1,
+      ...blockedPreGatewayBase,
       prepareState: (stateRoot: string, port: number) => {
         writePreGatewaySession(stateRoot, port, "interrupted");
         writeOnboardLock(stateRoot);
       },
       scenario: "preserves interrupted pre-gateway state when an onboarding lock is present",
-      stateKept: true,
     },
     {
-      ...interruptedPreGatewayBase,
-      expectedExit: 1,
+      ...blockedPreGatewayBase,
       prepareState: (_stateRoot: string, _port: number) => undefined,
       scenario: "preserves a selected state directory without an interrupted session",
-      stateKept: true,
     },
     {
-      ...interruptedPreGatewayBase,
-      expectedExit: 1,
+      ...blockedPreGatewayBase,
       prepareState: (stateRoot: string, port: number) =>
         writePreGatewaySession(stateRoot, port, "malformed"),
       scenario: "preserves a selected state directory with malformed session state",
-      stateKept: true,
     },
     {
-      ...interruptedPreGatewayBase,
-      expectedExit: 1,
+      ...blockedPreGatewayBase,
       prepareState: (stateRoot: string, port: number) =>
         writePreGatewaySession(stateRoot, port, "sparse"),
       scenario: "preserves state when required raw session fields are absent",
-      stateKept: true,
     },
     {
-      ...interruptedPreGatewayBase,
-      expectedExit: 1,
+      ...blockedPreGatewayBase,
       prepareState: (stateRoot: string, port: number) =>
         writePreGatewaySession(stateRoot, port, "future"),
       scenario: "preserves a selected state directory with a future session schema",
-      stateKept: true,
     },
     {
-      ...interruptedPreGatewayBase,
-      expectedExit: 1,
+      ...blockedPreGatewayBase,
       prepareState: (stateRoot: string, port: number) =>
         writePreGatewaySession(stateRoot, port, "complete"),
       scenario: "preserves a selected state directory from a completed onboard",
-      stateKept: true,
     },
     {
-      ...interruptedPreGatewayBase,
+      ...blockedPreGatewayBase,
       destroyUserData: true,
-      expectedExit: 1,
       prepareState: (stateRoot: string, port: number) => {
         writePreGatewaySession(stateRoot, port, "interrupted");
         writeSelectedSandboxRegistry(stateRoot, port);
       },
       scenario: "preserves interrupted state after a sandbox is registered",
-      stateKept: true,
     },
     {
-      ...interruptedPreGatewayBase,
+      ...blockedPreGatewayBase,
       assertErrors: (errors: string) =>
         expect(errors).toContain(
           "The local gateway state changed during uninstall; preserving it for retry.",
         ),
-      expectedExit: 1,
       gatewayStateCreated: true,
       onPortCheck: (firstAfterAdmission: boolean, tmpHome: string, port: number) =>
         firstAfterAdmission ? writeScopedGatewayState(tmpHome, port) : undefined,
       scenario: "preserves interrupted state when gateway state appears during revalidation",
-      stateKept: true,
     },
     {
-      ...interruptedPreGatewayBase,
-      expectedExit: 1,
+      ...blockedPreGatewayBase,
       gatewayStateCreated: true,
       onLog: (message: string, tmpHome: string, port: number) =>
         message.includes("Stopping services") ? writeScopedGatewayState(tmpHome, port) : undefined,
       scenario: "preserves interrupted state when gateway state appears after admission",
-      stateKept: true,
     },
     {
-      ...interruptedPreGatewayBase,
-      expectedExit: 1,
+      ...blockedPreGatewayBase,
       onLog: (message: string, _tmpHome: string, port: number) =>
         message.includes("Stopping services")
           ? ["nemoclaw", `nemoclaw-${String(port)}`]
           : undefined,
       scenario: "preserves interrupted state when its registration appears after admission",
-      stateKept: true,
     },
     {
-      ...interruptedPreGatewayBase,
-      expectedExit: 1,
+      ...blockedPreGatewayBase,
       onLog: (message: string, tmpHome: string, port: number) =>
         message.includes("Stopping services")
           ? writeSelectedSandboxRegistry(
@@ -651,7 +645,6 @@ describe("uninstall selected gateway-port segregation (#3053)", () => {
             )
           : undefined,
       scenario: "preserves interrupted state when a sandbox is registered after admission",
-      stateKept: true,
     },
     {
       ...interruptedPreGatewayBase,
@@ -668,6 +661,7 @@ describe("uninstall selected gateway-port segregation (#3053)", () => {
       childRun,
       destroyUserData,
       dockerInventory,
+      dockerAvailable,
       expectedDockerCalls,
       expectedNativeCalls,
       probeResults,
@@ -726,7 +720,7 @@ describe("uninstall selected gateway-port segregation (#3053)", () => {
             commandExists: (command) =>
               command === "openshell" ||
               command === "pgrep" ||
-              (command === "docker" && dockerInventory !== null),
+              (command === "docker" && dockerAvailable && dockerInventory !== null),
             env: {
               HOME: tmpHome,
               NEMOCLAW_GATEWAY_PORT: String(port),

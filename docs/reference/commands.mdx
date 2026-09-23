@@ -3782,6 +3782,7 @@ This recovery requires the default state directory for that port, with `NEMOCLAW
 The selected gateway registration, runtime directory, processes, listener and sandbox containers must be absent.
 A same-name container is preserved as a sibling only when its Docker identity matches another published registry row and that sibling gateway currently confirms the same sandbox identity.
 Missing or failed inventory, unknown ownership, or conflicting identity preserves the data and makes uninstall exit nonzero.
+The diagnostic identifies unreadable Docker inventory, a remaining selected container, or unproven same-name container ownership and gives its retry action. Keep `NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR` unset for this retained-data recovery.
 Restore access to Docker and the affected sibling gateway, resolve the reported conflict, then retry the same command.
 
 When `NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR` is unset, a non-default port can also remove NemoClaw state after onboarding fails during preflight, before it creates a gateway or sandbox.

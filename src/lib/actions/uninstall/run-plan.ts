@@ -66,6 +66,7 @@ import { type GatewayOwner, isExternallySupervised } from "../../onboard/gateway
 import {
   gatewayLifecycleStateContainsOnlyOwnedLocks,
   retainedDockerSandboxIsAbsent,
+  RetainedSandboxInventoryError,
   type GatewayCleanupRuntime,
   type GatewayTeardownAuthorityResolver,
   isInterruptedPreGatewaySession,
@@ -3234,13 +3235,13 @@ async function interruptedPreGatewayStateIsStable(
     teardownAuthority.mode === "nemoclaw-managed" &&
     !runtime.env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR?.trim() &&
     pathEntryExists(paths.nemoclawStateDir, runtime) &&
+    onboardLockIsStable &&
+    !pathEntryExists(paths.selectedGatewayLocalStateDir, runtime) &&
+    (await selectedGatewayRegistrationIsAbsent(options, runtime)) &&
     ((hasInterruptedPreGatewaySession(paths, options, runtime, teardownAuthority) &&
       selectedGatewayRegistryIsEmpty(paths, runtime)) ||
       (options.destroyUserData === true &&
-        preservedUninstallDataHasNoContainers(paths, runtime, onboardLock))) &&
-    onboardLockIsStable &&
-    !pathEntryExists(paths.selectedGatewayLocalStateDir, runtime) &&
-    (await selectedGatewayRegistrationIsAbsent(options, runtime))
+        preservedUninstallDataHasNoContainers(paths, runtime, onboardLock)))
   );
 }
 
@@ -3270,10 +3271,10 @@ function preservedUninstallDataHasNoContainers(
       if (
         entry.openshellDriver !== "docker" ||
         entry.pendingRouteReservation !== undefined ||
-        entry.pendingCreateIdentity !== undefined ||
-        !runtime.commandExists("docker")
+        entry.pendingCreateIdentity !== undefined
       )
         return false;
+      if (!runtime.commandExists("docker")) throw new RetainedSandboxInventoryError("inventory");
       return retainedDockerSandboxIsAbsent(
         runtime.env.HOME || os.homedir(),
         GATEWAY_PORT,
@@ -3281,9 +3282,13 @@ function preservedUninstallDataHasNoContainers(
         entry,
         (args) => runtime.runDocker(args, { env: runtime.env, timeout: 5_000 }),
         (args) => runtime.run("openshell", args, { env: runtime.env, timeout: 10_000 }),
+        (reason) => {
+          throw new RetainedSandboxInventoryError(reason);
+        },
       );
     });
-  } catch {
+  } catch (error) {
+    if (error instanceof RetainedSandboxInventoryError) throw error;
     return false;
   }
 }
@@ -3635,6 +3640,10 @@ async function prepareOpenShellCleanup(
       "Removed the unused configured gateway state reservation; no gateway resources were created.",
     );
     return retainStateLifecycleLock("reservation-removed");
+  } catch (error) {
+    if (!(error instanceof RetainedSandboxInventoryError)) throw error;
+    runtime.warn(error.message);
+    return retainStateLifecycleLock("blocked");
   } finally {
     if (!cleanupLocksTransferred && interruptedOnboardLock) {
       releaseOnboardStateLock(interruptedOnboardLock);

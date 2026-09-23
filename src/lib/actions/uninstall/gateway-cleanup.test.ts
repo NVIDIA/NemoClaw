@@ -90,11 +90,17 @@ const siblingLabels = {
 };
 
 const nativeSiblingArgs = ["sandbox", "get", "-g", "nemoclaw", "alpha", "-o", "json"];
-const liveSibling = { liveId: "sibling-native", liveStatus: 0, nativeCalls: [] as [string[]][] };
+const liveSibling = {
+  liveId: "sibling-native",
+  liveStatus: 0,
+  nativeCalls: [] as [string[]][],
+  failure: "identity" as string | undefined,
+};
 it.each([
   {
     ...liveSibling,
     name: "known sibling identity",
+    failure: undefined,
     labels: siblingLabels,
     absent: true,
     nativeCalls: [[nativeSiblingArgs]],
@@ -108,6 +114,7 @@ it.each([
   {
     ...liveSibling,
     name: "selected sandbox identity",
+    failure: "selected-container",
     labels: { ...siblingLabels, "openshell.ai/sandbox-id": "selected-native" },
     absent: false,
   },
@@ -141,9 +148,10 @@ it.each([
   },
 ])(
   "classifies retained-data inventory with $name",
-  ({ labels, absent, liveId, liveStatus, nativeCalls }) => {
+  ({ labels, absent, liveId, liveStatus, nativeCalls, failure }) => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-retained-inventory-"));
     const id = "b".repeat(64);
+    const failures: string[] = [];
     const root = path.join(home, ".nemoclaw");
     fs.mkdirSync(root, { mode: 0o700 });
     fs.writeFileSync(
@@ -188,6 +196,7 @@ it.each([
           },
           capture,
           native,
+          (reason) => failures.push(reason),
         ),
       ).toBe(absent);
       expect(capture).toHaveBeenCalledWith([
@@ -200,6 +209,7 @@ it.each([
         "{{.ID}}",
       ]);
       expect(native.mock.calls).toEqual(nativeCalls);
+      expect(failures).toEqual(failure ? [failure] : []);
       expect(fs.existsSync(path.join(root, "sandboxes.json"))).toBe(true);
     } finally {
       fs.rmSync(home, { recursive: true, force: true });

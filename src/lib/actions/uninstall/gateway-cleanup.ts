@@ -157,6 +157,25 @@ export function gatewayLifecycleStateContainsOnlyOwnedLocks(
   }
 }
 
+export type RetainedSandboxInventoryFailure = "inventory" | "selected-container" | "identity";
+
+export class RetainedSandboxInventoryError extends Error {
+  constructor(reason: RetainedSandboxInventoryFailure) {
+    const actions = {
+      inventory:
+        "Docker inventory could not be read. Restore Docker access, verify docker info succeeds, and retry.",
+      "selected-container":
+        "A selected sandbox container remains. Inspect it and complete its gateway-scoped cleanup before retrying.",
+      identity:
+        "Same-name container ownership could not be confirmed. Restore access to the owning gateway and resolve the identity conflict before retrying.",
+    };
+    super(
+      `Retained uninstall data was preserved: ${actions[reason]} Keep NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR unset for this retained-data recovery.`,
+    );
+    this.name = "RetainedSandboxInventoryError";
+  }
+}
+
 /** Establish absence without mistaking a known sibling's immutable identity for this sandbox. */
 export function retainedDockerSandboxIsAbsent(
   home: string,
@@ -165,7 +184,12 @@ export function retainedDockerSandboxIsAbsent(
   selected: GatewayRegistryEntry,
   capture: (args: string[]) => RunResult,
   captureOpenShell: (args: string[]) => RunResult,
+  onFailure?: (reason: RetainedSandboxInventoryFailure) => void,
 ): boolean {
+  const refuse = (reason: RetainedSandboxInventoryFailure = "identity"): false => {
+    onFailure?.(reason);
+    return false;
+  };
   const listed = capture([
     "ps",
     "-a",
@@ -175,7 +199,7 @@ export function retainedDockerSandboxIsAbsent(
     "--format",
     "{{.ID}}",
   ]);
-  if (listed.status !== 0 || listed.error || listed.signal) return false;
+  if (listed.status !== 0 || listed.error || listed.signal) return refuse("inventory");
   const ids = listed.stdout
     .split(/\r?\n/u)
     .map((id) => id.trim())
@@ -183,7 +207,7 @@ export function retainedDockerSandboxIsAbsent(
   if (ids.length === 0) return true;
   const selectedIdentity = selected.lifecycleLiveIdentityFingerprint;
   if (typeof selectedIdentity !== "string" || !/^[a-f0-9]{64}$/u.test(selectedIdentity))
-    return false;
+    return refuse();
   const siblingIdentities = new Map<string, { port: number; gateway: string }>();
   for (const { root } of listGatewayStateRoots(home)) {
     const entry = readGatewayRegistryFile(home, path.join(root, "sandboxes.json"))?.sandboxes[
@@ -208,11 +232,11 @@ export function retainedDockerSandboxIsAbsent(
       continue;
     if (typeof entry.gatewayName !== "string" || !entry.gatewayName) continue;
     const previous = siblingIdentities.get(identity);
-    if (previous !== undefined && previous.port !== port) return false;
+    if (previous !== undefined && previous.port !== port) return refuse();
     siblingIdentities.set(identity, { port, gateway: entry.gatewayName });
   }
   return ids.every((id) => {
-    if (!/^[a-f0-9]{64}$/u.test(id)) return false;
+    if (!/^[a-f0-9]{64}$/u.test(id)) return refuse();
     const result = capture([
       "inspect",
       "--type",
@@ -221,12 +245,12 @@ export function retainedDockerSandboxIsAbsent(
       "[{{json .Id}},{{json .Config.Labels}}]",
       id,
     ]);
-    if (result.status !== 0 || result.error || result.signal) return false;
+    if (result.status !== 0 || result.error || result.signal) return refuse("inventory");
     let value: unknown;
     try {
       value = JSON.parse(result.stdout);
     } catch {
-      return false;
+      return refuse();
     }
     if (
       !Array.isArray(value) ||
@@ -236,21 +260,22 @@ export function retainedDockerSandboxIsAbsent(
       typeof value[1] !== "object" ||
       Array.isArray(value[1])
     )
-      return false;
+      return refuse();
     const labels = value[1] as Record<string, unknown>;
     if (
       labels["openshell.ai/managed-by"] !== "openshell" ||
       labels["openshell.ai/sandbox-name"] !== sandboxName ||
       typeof labels["openshell.ai/sandbox-id"] !== "string"
     )
-      return false;
+      return refuse();
     const namespace = labels["openshell.ai/sandbox-namespace"];
     if (typeof namespace !== "string" || !/^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/u.test(namespace))
-      return false;
+      return refuse();
     const identity = fingerprintOpenShellSandboxId(labels["openshell.ai/sandbox-id"]);
-    if (identity === null || identity === selectedIdentity) return false;
+    if (identity === null) return refuse();
+    if (identity === selectedIdentity) return refuse("selected-container");
     const sibling = siblingIdentities.get(identity);
-    if (!sibling) return false;
+    if (!sibling) return refuse();
     const live = captureOpenShell([
       "sandbox",
       "get",
@@ -260,19 +285,21 @@ export function retainedDockerSandboxIsAbsent(
       "-o",
       "json",
     ]);
-    if (live.status !== 0 || live.error || live.signal) return false;
+    if (live.status !== 0 || live.error || live.signal) return refuse();
     let liveSandbox: unknown;
     try {
       liveSandbox = JSON.parse(live.stdout);
     } catch {
-      return false;
+      return refuse();
     }
-    if (!liveSandbox || typeof liveSandbox !== "object" || Array.isArray(liveSandbox)) return false;
+    if (!liveSandbox || typeof liveSandbox !== "object" || Array.isArray(liveSandbox))
+      return refuse();
     const observed = liveSandbox as Record<string, unknown>;
     return (
-      observed.name === sandboxName &&
-      typeof observed.id === "string" &&
-      fingerprintOpenShellSandboxId(observed.id) === identity
+      (observed.name === sandboxName &&
+        typeof observed.id === "string" &&
+        fingerprintOpenShellSandboxId(observed.id) === identity) ||
+      refuse()
     );
   });
 }
