@@ -204,8 +204,11 @@ export async function registerOpenClawAdapter(
 }
 
 /** Make a verified config mutation visible to the long-lived OpenClaw gateway. */
-export async function reloadOpenClawGatewayAfterMcpMutation(sandboxName: string): Promise<void> {
-  const result = await restartSandboxGateway(sandboxName, { quiet: true });
+export async function reloadOpenClawGatewayAfterMcpMutation(
+  sandboxName: string,
+  runtimeSelection: McpProviderInspectionRuntimeSelection,
+): Promise<void> {
+  const result = await restartSandboxGateway(sandboxName, { quiet: true, runtimeSelection });
   if (result.ok) return;
   throw new McpBridgeError(
     `OpenClaw gateway did not activate the native MCP configuration (${result.failureLayer}: ${result.detail}).`,

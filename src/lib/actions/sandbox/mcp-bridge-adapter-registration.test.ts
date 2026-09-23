@@ -517,7 +517,14 @@ describe("OpenClaw MCP adapter registration", () => {
     mocks.unsetOpenClawConfigValue.mockReset();
   });
 
-  it("restarts the gateway only for native OpenClaw MCP mutations", async () => {
+  it("restarts the recorded gateway despite conflicting ambient selection only for OpenClaw", async () => {
+    const runtimeSelection = {
+      gatewayName: "recorded-gateway",
+      workspace: "recorded-workspace",
+      localTlsDir: "/recorded/tls",
+    };
+    vi.stubEnv("OPENSHELL_WORKSPACE", "other-workspace");
+    vi.stubEnv("OPENSHELL_LOCAL_TLS_DIR", "/other/tls");
     mocks.restartSandboxGateway.mockReturnValue({
       ok: true,
       restarted: true,
@@ -525,11 +532,16 @@ describe("OpenClaw MCP adapter registration", () => {
       forwardRecovered: true,
     });
 
-    await reloadOpenClawGatewayAfterMcpMutation("alpha", ["openclaw-config"]);
-    await reloadOpenClawGatewayAfterMcpMutation("alpha", ["hermes-config", "deepagents-config"]);
+    await reloadOpenClawGatewayAfterMcpMutation("alpha", ["openclaw-config"], runtimeSelection);
+    await reloadOpenClawGatewayAfterMcpMutation(
+      "alpha",
+      ["hermes-config", "deepagents-config"],
+      runtimeSelection,
+    );
 
     expect(mocks.restartSandboxGateway).toHaveBeenCalledExactlyOnceWith("alpha", {
       quiet: true,
+      runtimeSelection,
     });
   });
 
@@ -541,7 +553,7 @@ describe("OpenClaw MCP adapter registration", () => {
     });
 
     await expect(
-      reloadOpenClawGatewayAfterMcpMutation("alpha", ["openclaw-config"]),
+      reloadOpenClawGatewayAfterMcpMutation("alpha", ["openclaw-config"], runtimeSelection),
     ).rejects.toThrow(
       "OpenClaw gateway did not activate the native MCP configuration (health timeout: gateway process restarted but health did not pass before timeout).",
     );
