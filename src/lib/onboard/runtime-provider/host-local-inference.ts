@@ -284,7 +284,9 @@ export interface HostLocalLlamaCppLifecycleInput {
   readonly authorityStore: PersistedEngineAuthorityStore;
   readonly apiKeyRootHostPath: string;
   readonly bindingSha256: string;
-  readonly bindings: LlamaCppHostLocalRuntimeBindings & { readonly hostPort: number };
+  readonly bindings: LlamaCppHostLocalRuntimeBindings & {
+    readonly hostPort: number;
+  };
   readonly cacheRootHostPath: string;
   readonly contract: LlamaCppHostLocalLaunchContract;
   readonly engine: ContainerEngine;
@@ -317,6 +319,45 @@ export interface HostLocalInferenceOperationInput {
   readonly env: NodeJS.ProcessEnv;
   /** Accepted request scope when constructing a managed local-inference operation. */
   readonly acceleration?: HostLocalOllamaAccelerationAuthority;
+  /** Shared absolute deadline for every provider observation in this operation. */
+  readonly deadlineMs?: number;
+}
+
+function remainingHostLocalInferenceBudget(deadlineMs: number): number {
+  const remainingMs = Math.floor(deadlineMs - Date.now());
+  if (remainingMs <= 0) {
+    throw new Error("host-local inference authority deadline expired");
+  }
+  return remainingMs;
+}
+
+/** Cap every provider command to the remaining shared lifecycle budget. */
+export function deadlineBoundHostLocalInferenceEngine<T extends ContainerEngine>(
+  engine: T,
+  deadlineMs?: number,
+): T {
+  if (deadlineMs === undefined) return engine;
+  const timeout = (requestedMs?: number): number => {
+    const remainingMs = remainingHostLocalInferenceBudget(deadlineMs);
+    return requestedMs === undefined ? remainingMs : Math.min(requestedMs, remainingMs);
+  };
+  return Object.freeze({
+    ...engine,
+    capture: (args: readonly string[], timeoutMs?: number, input?: Buffer) =>
+      engine.capture(args, timeout(timeoutMs), input),
+    ...(engine.captureWithEnvironment === undefined
+      ? {}
+      : {
+          captureWithEnvironment: (
+            args: readonly string[],
+            environment: Readonly<Record<string, string>>,
+            timeoutMs?: number,
+            input?: Buffer,
+          ) => engine.captureWithEnvironment!(args, environment, timeout(timeoutMs), input),
+        }),
+    captureHost: (args: readonly string[], timeoutMs?: number) =>
+      engine.captureHost(args, timeout(timeoutMs)),
+  }) as T;
 }
 
 /**
@@ -514,7 +555,9 @@ function normalizeEndpoint(
     networkId: exactText(endpoint.networkId, SHA256, "endpoint network identity"),
     networkGatewayIp: exactIpv4(endpoint.networkGatewayIp, "endpoint network gateway"),
     ...("networkListenerIp" in endpoint
-      ? { networkListenerIp: exactIpv4(endpoint.networkListenerIp, "endpoint network listener") }
+      ? {
+          networkListenerIp: exactIpv4(endpoint.networkListenerIp, "endpoint network listener"),
+        }
       : {}),
     networkAuthoritySha256: exactText(
       endpoint.networkAuthoritySha256,
@@ -629,7 +672,10 @@ function normalizeRuntime(
     | { readonly vendor: "nvidia"; readonly count: 1 };
   if (service === "llama-cpp") {
     if (gpu.count !== 1) fail("llama.cpp GPU authority must identify exactly one GPU");
-    normalizedGpu = Object.freeze({ vendor: "nvidia" as const, count: 1 as const });
+    normalizedGpu = Object.freeze({
+      vendor: "nvidia" as const,
+      count: 1 as const,
+    });
   } else {
     if (!Array.isArray(gpu.devices) || gpu.devices.length === 0) {
       fail("GPU authority must identify NVIDIA devices");
@@ -678,7 +724,9 @@ function normalizeRuntime(
         }),
     ...(model ? { model } : {}),
     ...(service === "ollama"
-      ? { modelDigest: exactText(runtime.modelDigest, SHA256_DIGEST, "Ollama model digest") }
+      ? {
+          modelDigest: exactText(runtime.modelDigest, SHA256_DIGEST, "Ollama model digest"),
+        }
       : {}),
     gpu: normalizedGpu,
   });

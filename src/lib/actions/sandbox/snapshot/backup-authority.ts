@@ -186,7 +186,10 @@ export function captureOpenClawStateFile(
   try {
     const timeoutMs = captureTimeoutMs(request.deadlineMs, OPENCLAW_CONFIG_CAPTURE_TIMEOUT_MS);
     if (timeoutMs === null) {
-      return { outcome: "failed", error: "privileged config capture deadline expired" };
+      return {
+        outcome: "failed",
+        error: "privileged config capture deadline expired",
+      };
     }
     return withPrivilegedSandboxExecutionLease(
       sandboxName,
@@ -438,7 +441,10 @@ export function captureHermesStateFile(
   try {
     const timeoutMs = captureTimeoutMs(request.deadlineMs, HERMES_CAPTURE_TIMEOUT_MS);
     if (timeoutMs === null) {
-      return { outcome: "failed", error: "privileged Hermes state capture deadline expired" };
+      return {
+        outcome: "failed",
+        error: "privileged Hermes state capture deadline expired",
+      };
     }
     return withPrivilegedSandboxExecutionLease(sandboxName, "Hermes state snapshot capture", () => {
       const result = dockerSpawnSync(
@@ -496,7 +502,10 @@ export function captureHermesStateDirectories(
   try {
     const timeoutMs = captureTimeoutMs(request.deadlineMs, HERMES_CAPTURE_TIMEOUT_MS);
     if (timeoutMs === null) {
-      return { outcome: "failed", error: "privileged Hermes directory capture deadline expired" };
+      return {
+        outcome: "failed",
+        error: "privileged Hermes directory capture deadline expired",
+      };
     }
     return withPrivilegedSandboxExecutionLease(
       sandboxName,
@@ -647,14 +656,19 @@ function captureManagedAuthority(
 function captureHostLocalInferenceAuthority(
   entry: SandboxEntry,
   dependencies: SnapshotBackupAuthorityDependencies,
+  deadlineMs?: number,
 ): Pick<
   sandboxState.BackupOptions,
   "hostLocalInferenceReceipt" | "hostLocalInferenceProvenance" | "validateBeforePublish"
 > | null {
   const receipt = entry.hostLocalInferenceReceipt;
   if (typeof receipt !== "string") return null;
+  requireAuthorityBudget(deadlineMs);
   const provider = dependencies.requireProvider(entry);
-  const prepared = dependencies.prepareHostLocalInference(provider, entry);
+  const prepared =
+    deadlineMs === undefined
+      ? dependencies.prepareHostLocalInference(provider, entry)
+      : dependencies.prepareHostLocalInference(provider, entry, { deadlineMs });
   if (!prepared) {
     if (entry.hostLocalInferenceProvenance) {
       throw new Error("explicit host-local inference lifecycle authority cannot be reconstructed");
@@ -667,6 +681,7 @@ function captureHostLocalInferenceAuthority(
       ? { hostLocalInferenceProvenance: entry.hostLocalInferenceProvenance }
       : {}),
     validateBeforePublish: () => {
+      requireAuthorityBudget(deadlineMs);
       const current = dependencies.getSandbox(entry.name);
       if (!current) throw new Error(`sandbox '${entry.name}' is no longer registered`);
       if (current.hostLocalInferenceReceipt !== receipt) {
@@ -683,7 +698,11 @@ function captureHostLocalInferenceAuthority(
       if (currentProvider.identity.id !== provider.identity.id) {
         throw new Error(`sandbox '${entry.name}' runtime provider changed during backup`);
       }
-      dependencies.confirmHostLocalInference(currentProvider, current, prepared);
+      if (deadlineMs === undefined) {
+        dependencies.confirmHostLocalInference(currentProvider, current, prepared);
+      } else {
+        dependencies.confirmHostLocalInference(currentProvider, current, prepared, { deadlineMs });
+      }
     },
   };
 }
@@ -694,7 +713,7 @@ function captureSnapshotAuthority(
   deadlineMs?: number,
 ): SnapshotBackupAuthority | null {
   const managed = captureManagedAuthority(entry, dependencies, deadlineMs);
-  const hostLocal = captureHostLocalInferenceAuthority(entry, dependencies);
+  const hostLocal = captureHostLocalInferenceAuthority(entry, dependencies, deadlineMs);
   if (!managed && !hostLocal) return null;
   return {
     ...(managed?.runtimeSnapshot === undefined ? {} : { runtimeSnapshot: managed.runtimeSnapshot }),

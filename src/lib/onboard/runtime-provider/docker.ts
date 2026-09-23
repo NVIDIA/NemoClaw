@@ -395,7 +395,8 @@ export function createDockerRuntimeProviderBundle(
       providerId,
       supported: true,
       services: ["llama-cpp"],
-      createOperation: ({ env }) => createDockerLlamaCppHostLocalOperation(env),
+      createOperation: ({ env, deadlineMs }) =>
+        createDockerLlamaCppHostLocalOperation(env, undefined, undefined, undefined, deadlineMs),
     },
     lifecycle: {
       providerId,
@@ -436,10 +437,26 @@ export function createDockerRuntimeProviderBundle(
       supported: true,
       identities: [
         { operation: "host-doctor", engineId: "docker", displayName: "Docker" },
-        { operation: "gateway-inspection", engineId: "docker", displayName: "Docker" },
-        { operation: "host-local-inference", engineId: "docker", displayName: "Docker" },
-        { operation: "sandbox-lifecycle", engineId: "docker", displayName: "Docker" },
-        { operation: "workload-cleanup", engineId: "docker", displayName: "Docker" },
+        {
+          operation: "gateway-inspection",
+          engineId: "docker",
+          displayName: "Docker",
+        },
+        {
+          operation: "host-local-inference",
+          engineId: "docker",
+          displayName: "Docker",
+        },
+        {
+          operation: "sandbox-lifecycle",
+          engineId: "docker",
+          displayName: "Docker",
+        },
+        {
+          operation: "workload-cleanup",
+          engineId: "docker",
+          displayName: "Docker",
+        },
       ],
       capture: (operation, args, timeoutMs) =>
         captureDockerContainerEngineOperation(
@@ -573,8 +590,16 @@ export function createKubernetesRuntimeProviderBundle(
       supported: true,
       identities: [
         { operation: "host-doctor", engineId: "docker", displayName: "Docker" },
-        { operation: "gateway-inspection", engineId: "docker", displayName: "Docker" },
-        { operation: "workload-cleanup", engineId: "docker", displayName: "Docker" },
+        {
+          operation: "gateway-inspection",
+          engineId: "docker",
+          displayName: "Docker",
+        },
+        {
+          operation: "workload-cleanup",
+          engineId: "docker",
+          displayName: "Docker",
+        },
       ],
       capture: (operation, args, timeoutMs) =>
         captureDockerContainerEngineOperation(

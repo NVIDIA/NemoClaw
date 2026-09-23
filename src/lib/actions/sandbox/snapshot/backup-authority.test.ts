@@ -442,7 +442,10 @@ describe("managed snapshot backup authority", () => {
     ).toEqual({ outcome: "backed_up" });
     expect(privilegedCaptureMocks.dockerSpawnSync).toHaveBeenLastCalledWith(
       expect.any(Array),
-      expect.objectContaining({ stdio: ["ignore", 42, "pipe"], timeout: 2_345 }),
+      expect.objectContaining({
+        stdio: ["ignore", 42, "pipe"],
+        timeout: 2_345,
+      }),
     );
     expect(privilegedCaptureMocks.privilegedSandboxExecArgv).toHaveBeenLastCalledWith(
       "alpha",
@@ -763,6 +766,99 @@ describe("managed snapshot backup authority", () => {
       expect(confirmHostLocalInference).toHaveBeenCalledWith(expect.anything(), entry, prepared);
     },
   );
+
+  it("does not start host-local authority capture after the shared deadline", () => {
+    vi.spyOn(Date, "now").mockReturnValue(10_000);
+    const entry = hostLocalSandbox("openclaw");
+    const requireProvider = vi.fn(() => provider());
+    const prepareHostLocalInference = vi.fn();
+    const backup = vi.fn();
+
+    const result = backupSandboxStateWithManagedAuthority(
+      entry.name,
+      { deadlineMs: 10_000 },
+      {
+        getSandbox: () => entry,
+        requireProvider,
+        captureRuntime: vi.fn() as never,
+        prepareHostLocalInference: prepareHostLocalInference as never,
+        backup,
+      },
+    );
+
+    expect(result).toMatchObject({
+      success: false,
+      error: expect.stringContaining("provider snapshot authority deadline expired"),
+    });
+    expect(requireProvider).not.toHaveBeenCalled();
+    expect(prepareHostLocalInference).not.toHaveBeenCalled();
+    expect(backup).not.toHaveBeenCalled();
+  });
+
+  it("bounds host-local preparation and confirmation by the shared deadline", () => {
+    vi.spyOn(Date, "now").mockReturnValue(9_000);
+    const entry = hostLocalSandbox("openclaw");
+    const prepared = {
+      providerId: "mxc",
+      sandboxName: entry.name,
+      serializedReceipt: entry.hostLocalInferenceReceipt,
+    };
+    const prepareHostLocalInference = vi.fn(() => prepared);
+    const confirmHostLocalInference = vi.fn();
+    const backup = vi.fn((_name: string, options: BackupOptions = {}) => successfulBackup(options));
+
+    const result = backupSandboxStateWithManagedAuthority(
+      entry.name,
+      { deadlineMs: 10_000 },
+      {
+        getSandbox: () => entry,
+        requireProvider: () => provider(),
+        captureRuntime: vi.fn() as never,
+        prepareHostLocalInference: prepareHostLocalInference as never,
+        confirmHostLocalInference: confirmHostLocalInference as never,
+        backup,
+      },
+    );
+
+    expect(result.success).toBe(true);
+    expect(prepareHostLocalInference).toHaveBeenCalledWith(expect.anything(), entry, {
+      deadlineMs: 10_000,
+    });
+    expect(confirmHostLocalInference).toHaveBeenCalledWith(expect.anything(), entry, prepared, {
+      deadlineMs: 10_000,
+    });
+  });
+
+  it("does not start host-local confirmation after the shared deadline", () => {
+    vi.spyOn(Date, "now").mockReturnValueOnce(9_000).mockReturnValue(10_000);
+    const entry = hostLocalSandbox("openclaw");
+    const prepared = {
+      providerId: "mxc",
+      sandboxName: entry.name,
+      serializedReceipt: entry.hostLocalInferenceReceipt,
+    };
+    const confirmHostLocalInference = vi.fn();
+    const backup = vi.fn((_name: string, options: BackupOptions = {}) => successfulBackup(options));
+
+    const result = backupSandboxStateWithManagedAuthority(
+      entry.name,
+      { deadlineMs: 10_000 },
+      {
+        getSandbox: () => entry,
+        requireProvider: () => provider(),
+        captureRuntime: vi.fn() as never,
+        prepareHostLocalInference: vi.fn(() => prepared) as never,
+        confirmHostLocalInference: confirmHostLocalInference as never,
+        backup,
+      },
+    );
+
+    expect(result).toMatchObject({
+      success: false,
+      error: expect.stringContaining("provider snapshot authority deadline expired"),
+    });
+    expect(confirmHostLocalInference).not.toHaveBeenCalled();
+  });
 
   it.each([
     ["agent", { agent: "hermes" }],

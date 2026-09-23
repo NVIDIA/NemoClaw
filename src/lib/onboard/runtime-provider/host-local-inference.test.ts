@@ -1,9 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+
+import type { ContainerEngine } from "../../adapters/container-engine";
 
 import {
+  deadlineBoundHostLocalInferenceEngine,
   type HostLocalInferenceReceipt,
   normalizeHostLocalInferenceReceipt,
   normalizeHostLocalOllamaModelRef,
@@ -140,7 +143,10 @@ describe("host-local inference receipt contract", () => {
     const { acceleration: _acceleration, ...missingAcceleration } = runtime;
 
     expect(() =>
-      normalizeHostLocalInferenceReceipt({ ...base, runtime: missingAcceleration }),
+      normalizeHostLocalInferenceReceipt({
+        ...base,
+        runtime: missingAcceleration,
+      }),
     ).toThrow("host runtime authority schema is unsupported");
     expect(() =>
       normalizeHostLocalInferenceReceipt({
@@ -162,7 +168,10 @@ describe("host-local inference receipt contract", () => {
     const { modelDigest: _modelDigest, ...missingModelDigest } = runtime;
 
     expect(() =>
-      normalizeHostLocalInferenceReceipt({ ...base, runtime: missingModelDigest }),
+      normalizeHostLocalInferenceReceipt({
+        ...base,
+        runtime: missingModelDigest,
+      }),
     ).toThrow("host runtime authority schema is unsupported");
     expect(() =>
       normalizeHostLocalInferenceReceipt({
@@ -251,7 +260,10 @@ describe("host-local inference receipt contract", () => {
     expect(() =>
       normalizeHostLocalInferenceReceipt({
         ...base,
-        engineAuthority: { ...ENGINE_AUTHORITY, operation: "sandbox-lifecycle" },
+        engineAuthority: {
+          ...ENGINE_AUTHORITY,
+          operation: "sandbox-lifecycle",
+        },
       }),
     ).toThrow("wrong operation scope");
     expect(() =>
@@ -397,5 +409,37 @@ describe("host-local inference receipt contract", () => {
       "receipt schema is unsupported",
     );
     expect(() => parseHostLocalInferenceReceipt(JSON.stringify(base))).toThrow("not canonical");
+  });
+});
+
+describe("host-local inference operation deadline", () => {
+  it("caps every provider observation to the remaining shared budget", () => {
+    const capture = vi.fn((_args: readonly string[], _timeoutMs?: number, _input?: Buffer) => ({
+      status: 0,
+      stdout: "",
+      stderr: "",
+    }));
+    const engine = {
+      operation: "host-local-inference",
+      engineId: "mxc",
+      displayName: "MXC",
+      authorityId: "mxc:deadline-test",
+      capture,
+      captureHost: capture,
+    } satisfies ContainerEngine;
+    const now = vi.spyOn(Date, "now").mockReturnValue(9_000);
+    try {
+      const bounded = deadlineBoundHostLocalInferenceEngine(engine, 10_000);
+      bounded.capture(["inspect"], 5_000);
+      expect(capture).toHaveBeenCalledWith(["inspect"], 1_000, undefined);
+
+      now.mockReturnValue(10_000);
+      expect(() => bounded.capture(["inspect"])).toThrow(
+        "host-local inference authority deadline expired",
+      );
+      expect(capture).toHaveBeenCalledOnce();
+    } finally {
+      now.mockRestore();
+    }
   });
 });
