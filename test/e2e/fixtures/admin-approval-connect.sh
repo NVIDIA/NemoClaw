@@ -80,11 +80,9 @@ if ! openclaw cron add --name "$cron_name" --every 2h --agent main --session iso
   emit_admin_diagnostic "$cron_output"
   exit 28
 fi
-# OpenClaw 2026.6.10 and 2026.7.1 classify cron.add and cron.run at the same
-# operator.admin gateway-method boundary (gateway/methods/core-descriptors.ts).
-# The exact-request approval above therefore grants the scope both use.
-# The cron.run response below proves that the approved scope applies to
-# both methods.
+# The exact-request approval above must make operator.admin usable by the
+# current managed OpenClaw runtime. A successful cron.run for the returned
+# job proves the approved scope is usable after cron.add.
 if ! python3 - "$cron_output" "$cron_name" "$cron_id_file" <<'PY_CRON_ID'; then
 import json, sys
 from pathlib import Path
