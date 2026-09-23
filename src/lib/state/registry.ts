@@ -541,7 +541,11 @@ export function registerSandbox(
         ? data
         : reversibleRemoval.claimInitialDefaultInRegistry(data, entry.name),
     );
-    return structuredClone(registered);
+    const persisted = load().sandboxes[entry.name];
+    if (!persisted) {
+      throw new Error(`Cannot read sandbox '${entry.name}' after registration`);
+    }
+    return structuredClone(persisted);
   });
 }
 

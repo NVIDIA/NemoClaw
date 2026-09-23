@@ -7,6 +7,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { serializedHostLocalInferenceReceipt } from "../../../test/helpers/host-local-inference-receipt";
 import type { InferenceSelection } from "../inference/selection";
+import { createSandboxHostLocalInferenceProvenance } from "./registry/host-local-inference";
 import type { SandboxInferenceRouteReservationDisposition } from "./registry/route-reservation";
 import type { PendingSandboxCreateIdentity, SandboxEntry } from "./registry/types";
 function ownedReservation(disposition: SandboxInferenceRouteReservationDisposition) {
@@ -843,6 +844,65 @@ describe("sandbox inference route reservation", () => {
 
       expect(registry.finalizePendingSandboxRegistrationIfCurrent(staged)).toBe(true);
       expect(registry.getSandbox("alpha")?.pendingRouteReservation).toBeUndefined();
+    } finally {
+      await fs.rm(home, { recursive: true, force: true });
+    }
+  });
+
+  it("returns the persisted staged row for exact finalization", async () => {
+    const home = await fs.mkdtemp(path.join(os.tmpdir(), "nemoclaw-route-reservation-"));
+    vi.stubEnv("HOME", home);
+    vi.resetModules();
+    try {
+      const registry = await import("./registry");
+      const receipt = serializedHostLocalInferenceReceipt("docker");
+      const provenance = createSandboxHostLocalInferenceProvenance("alpha", receipt);
+      const route = {
+        provider: "ollama-local",
+        model: "model-a",
+        endpointUrl: "http://127.0.0.1:11434/v1",
+        endpointSource: null,
+        credentialEnv: null,
+        preferredInferenceApi: "openai-completions",
+        gatewayName: "nemoclaw",
+        gatewayPort: 8080,
+        openshellDriver: "docker",
+        reservationSessionId: "session-owner",
+        hostLocalInferenceReceipt: receipt,
+        hostLocalInferenceProvenance: provenance,
+      } as const;
+      registry.reserveSandboxInferenceRoute("alpha", route);
+
+      const staged = registry.registerSandbox(
+        {
+          name: "alpha",
+          ...route,
+          agent: "hermes",
+          workload: {
+            schemaVersion: 1,
+            kind: "legacy-dockerfile",
+            reference: null,
+            shared: false,
+          },
+          hermesToolGateways: ["filesystem"],
+          hermesDashboardEnabled: true,
+          hermesDashboardPort: 18789,
+          dashboardPort: 0,
+        },
+        undefined,
+        { pending: true, reservationSessionId: "session-owner" },
+      );
+
+      expect(staged).toEqual(registry.getSandbox("alpha"));
+      expect(staged).toMatchObject({
+        dashboardPort: null,
+        hostLocalInferenceReceipt: receipt,
+        hostLocalInferenceProvenance: provenance,
+        workload: { kind: "legacy-dockerfile" },
+        hermesToolGateways: ["filesystem"],
+        hermesDashboardEnabled: true,
+      });
+      expect(registry.finalizePendingSandboxRegistrationIfCurrent(staged)).toBe(true);
     } finally {
       await fs.rm(home, { recursive: true, force: true });
     }
