@@ -4,10 +4,10 @@
 import { dockerRmi } from "../../adapters/docker/image";
 import { printOpenShellStateRpcIssue } from "../../adapters/openshell/gateway-drift";
 import {
-  replaceOpenShellRuntimeSelectionEnv,
   snapshotOpenShellEnv,
   type OpenShellRuntimeSelection,
 } from "../../adapters/openshell/runtime-selection";
+import { replaceGatewayHostRuntimeSelectionEnv as replaceOpenShellRuntimeSelectionEnv } from "../../onboard/runtime-provider/configured-runtime";
 import { loadAgent } from "../../agent/defs";
 import {
   bindLocalAgentBaseImageHandoffToResolution,

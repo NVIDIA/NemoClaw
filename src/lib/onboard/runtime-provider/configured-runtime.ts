@@ -1,6 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import {
+  replaceOpenShellRuntimeSelectionEnv,
+  type OpenShellRuntimeSelection,
+} from "../../adapters/openshell/runtime-selection";
+
 export const NEMOCLAW_GATEWAY_RUNTIME_ENV = "NEMOCLAW_GATEWAY_RUNTIME";
 
 export type NemoClawGatewayRuntime = "docker" | "podman";
@@ -44,4 +49,14 @@ export function gatewayHostRuntimeEnvironment(source: NodeJS.ProcessEnv): Record
       source[name] === undefined ? [] : [[name, source[name]]],
     ),
   );
+}
+
+/** Pin client authority without discarding the host runtime used by lifecycle operations. */
+export function replaceGatewayHostRuntimeSelectionEnv(
+  environment: NodeJS.ProcessEnv,
+  selection: OpenShellRuntimeSelection,
+): void {
+  const hostRuntime = gatewayHostRuntimeEnvironment(environment);
+  replaceOpenShellRuntimeSelectionEnv(environment, selection);
+  Object.assign(environment, hostRuntime);
 }

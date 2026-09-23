@@ -12,12 +12,12 @@ import {
   resolveSandboxGatewayName,
 } from "./onboard/gateway-binding";
 import type { GatewayRecoveryOutput } from "./onboard/gateway-recovery";
+import { replaceGatewayHostRuntimeSelectionEnv } from "./onboard/runtime-provider/configured-runtime";
 import { sanitizeReadinessText } from "./readiness/sanitize";
 
 export { resolveGatewayName, resolveSandboxGatewayName };
 
-export const replaceOpenShellRuntimeSelectionEnv =
-  openshellRuntime.replaceOpenShellRuntimeSelectionEnv;
+export const replaceOpenShellRuntimeSelectionEnv = replaceGatewayHostRuntimeSelectionEnv;
 export const snapshotOpenShellEnv = openshellRuntime.snapshotOpenShellEnv;
 
 type StartGatewayForRecoveryOptions = {

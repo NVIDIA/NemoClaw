@@ -225,6 +225,8 @@ describe("authoritative rebuild OpenShell runtime selection", () => {
   it("replaces hostile ambient selectors for inner onboard and restores them (#10514)", () => {
     const env: NodeJS.ProcessEnv = {
       PATH: "/usr/bin",
+      NEMOCLAW_GATEWAY_RUNTIME: "podman",
+      OPENSHELL_PODMAN_SOCKET: "/custom/run/podman.sock",
       OPENSHELL_GATEWAY: "hostile-gateway",
       OPENSHELL_GATEWAY_AUTH_TOKEN: "hostile-token",
       OPENSHELL_GATEWAY_ENDPOINT: "https://hostile.invalid",
@@ -251,6 +253,8 @@ describe("authoritative rebuild OpenShell runtime selection", () => {
 
     expect(env).toMatchObject({
       PATH: "/usr/bin",
+      NEMOCLAW_GATEWAY_RUNTIME: "podman",
+      OPENSHELL_PODMAN_SOCKET: "/custom/run/podman.sock",
       OPENSHELL_GATEWAY: "nemoclaw-8081",
       OPENSHELL_LOCAL_TLS_DIR: "/authority/tls",
       OPENSHELL_WORKSPACE: "default",

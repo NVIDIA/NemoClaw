@@ -2,10 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import {
-  replaceOpenShellRuntimeSelectionEnv,
   snapshotOpenShellEnv,
   type OpenShellRuntimeSelection,
 } from "../adapters/openshell/runtime-selection";
+import { replaceGatewayHostRuntimeSelectionEnv as replaceOpenShellRuntimeSelectionEnv } from "./runtime-provider/configured-runtime";
 import {
   createOpenShellForwardPortObserver,
   type OpenShellForwardPortObserver,
