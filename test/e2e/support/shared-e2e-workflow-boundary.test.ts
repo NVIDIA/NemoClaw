@@ -216,6 +216,75 @@ describe("shared E2E workflow boundary", () => {
     );
   });
 
+  it.each(["Check out trusted E2E planner", "Set up Node for trusted E2E planning"])(
+    "rejects an alternate SHA for %s",
+    (name) => {
+      const errors = validateMutatedWorkflow((workflow) => {
+        const step = workflow.jobs["generate-matrix"].steps!.find((step) => step.name === name)!;
+        step.uses = step.uses!.split("@")[0] + "@" + "a".repeat(40);
+      });
+      expect(errors).toContain(
+        "native Podman staging must run with only approved actions before candidate checkout",
+      );
+    },
+  );
+
+  it.each(["Stage immutable native Podman E2E toolchains", "Check out E2E candidate"])(
+    "rejects arbitrary shell execution before %s",
+    (boundary) => {
+      const errors = validateMutatedWorkflow((workflow) => {
+        const steps = workflow.jobs["generate-matrix"].steps!;
+        steps.splice(
+          steps.findIndex((step) => step.name === boundary),
+          0,
+          { name: "Unexpected shell", run: "printf unreviewed" },
+        );
+      });
+      expect(errors).toContain(
+        "native Podman staging must run with only approved actions before candidate checkout",
+      );
+    },
+  );
+
+  it.each([
+    ["Check out trusted E2E planner", { run: "printf unreviewed" }],
+    ["Install trusted E2E planner dependencies", { uses: "actions/checkout@" + "a".repeat(40) }],
+    [
+      "Install trusted E2E planner dependencies",
+      { run: "npm ci --ignore-scripts --no-audit --no-fund" },
+    ],
+  ] as const)("rejects spoofed or duplicate trusted step %s", (name, fields) => {
+    const errors = validateMutatedWorkflow((workflow) => {
+      const steps = workflow.jobs["generate-matrix"].steps!;
+      steps.splice(
+        steps.findIndex((step) => step.name === "Check out E2E candidate"),
+        0,
+        { name, ...fields },
+      );
+    });
+    expect(errors).toContain(
+      "native Podman staging must run with only approved actions before candidate checkout",
+    );
+  });
+
+  it.each([
+    ["Check out trusted E2E planner", { run: "printf unreviewed" }],
+    [
+      "Install trusted E2E planner dependencies",
+      { uses: "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1" },
+    ],
+  ] as const)("rejects replacing trusted step type for %s", (name, fields) => {
+    const errors = validateMutatedWorkflow((workflow) => {
+      const step = workflow.jobs["generate-matrix"].steps!.find((step) => step.name === name)!;
+      delete step.uses;
+      delete step.run;
+      Object.assign(step, fields);
+    });
+    expect(errors).toContain(
+      "native Podman staging must run with only approved actions before candidate checkout",
+    );
+  });
+
   it.each(stagingMutations)("rejects native Podman staging %s mutations", (_name, mutate) => {
     const errors = validateMutatedWorkflow((workflow) => {
       const steps = workflow.jobs["generate-matrix"].steps!;

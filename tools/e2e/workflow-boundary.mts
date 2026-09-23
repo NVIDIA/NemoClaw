@@ -2655,10 +2655,13 @@ function validatePreCandidateActions(
   steps: WorkflowRecord[],
   candidateCheckout: WorkflowRecord | undefined,
 ): void {
-  const approved = new Map<string, RegExp | string>([
+  const approved = new Map<string, string>([
     ["Upload trusted E2E dispatch receipt", UPLOAD_E2E_ARTIFACTS_ACTION],
-    ["Check out trusted E2E planner", /^actions\/checkout@[a-f0-9]{40}$/u],
-    ["Set up Node for trusted E2E planning", /^actions\/setup-node@[a-f0-9]{40}$/u],
+    ["Check out trusted E2E planner", "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1"],
+    [
+      "Set up Node for trusted E2E planning",
+      "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020",
+    ],
     [
       "Install reviewed npm for trusted E2E planning",
       E2E_ACTION_PROVENANCE.reviewedNpmSetup.reference,
@@ -2668,15 +2671,23 @@ function validatePreCandidateActions(
       E2E_ACTION_PROVENANCE.stageNativePodmanToolchains.reference,
     ],
   ]);
+  // These shell steps retain their content checks in the dispatch, routing, and planner validators.
+  const approvedRunSteps = new Set([
+    "Build trusted larger-runner routing",
+    "Authenticate manual PR dispatch",
+    "Record trusted E2E dispatch receipt",
+    "Authorize Launchable E2E maintainer dispatch",
+    "Install trusted E2E planner dependencies",
+    "Generate E2E target matrix",
+  ]);
   const seen = new Set<string>();
   for (const step of steps.slice(0, candidateCheckout ? steps.indexOf(candidateCheckout) : 0)) {
-    if (step.uses === undefined) continue;
     const name = stringValue(step.name);
     const expected = approved.get(name);
     const referenceMatches =
-      expected instanceof RegExp
-        ? expected.test(stringValue(step.uses))
-        : expected !== undefined && step.uses === expected;
+      step.uses === undefined
+        ? approvedRunSteps.has(name) && typeof step.run === "string"
+        : expected !== undefined && step.uses === expected && step.run === undefined;
     if (seen.has(name) || !referenceMatches) {
       errors.push(
         "native Podman staging must run with only approved actions before candidate checkout",
