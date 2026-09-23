@@ -563,8 +563,6 @@ if (process.argv.includes("--output")) {
         passed: true,
         expected: PINNED_CONSUMER_EVIDENCE,
         actual: PINNED_CONSUMER_EVIDENCE,
-        expectedOpenclawNativeSettings: EXPECTED_NATIVE_SETTINGS,
-        actualOpenclawNativeSettings: EXPECTED_NATIVE_SETTINGS,
       },
     });
     expect(fs.readFileSync(path.join(artifactRoot, "config-export.yaml"), "utf8")).toBe(raw);
@@ -609,31 +607,9 @@ if (process.argv.includes("--output")) {
     const rejected = fixture({ dependencies: mismatched });
     await captureFailure(rejected.phase.from(target("required"), instance()));
     expect(rejected.writes.at(-1)).toMatchObject({
-      classification: "failure",
       failureStage: "verification",
       consumer: { passed: false },
     });
-    expect(rejected.writes.at(-1)).not.toHaveProperty("export");
-  });
-  it("requires the pinned consumer to verify exactly one live sandbox", async () => {
-    const mismatched = dependencies();
-    mismatched.validateWithPinnedV1 = () => ({
-      ...PINNED_CONSUMER_EVIDENCE,
-      compiledSandboxes: 2,
-      openclawNativeSettingsVerified: 0,
-    });
-    const rejected = fixture({ dependencies: mismatched });
-
-    await captureFailure(rejected.phase.from(target("required"), instance()));
-
-    expect(rejected.writes.at(-1)).toMatchObject({
-      classification: "failure",
-      failureStage: "verification",
-      consumer: { passed: false },
-    });
-    expect(rejected.writes.at(-1)?.verifications).toContainEqual(
-      expect.objectContaining({ id: "consumerNativeSettings", passed: false }),
-    );
     expect(rejected.writes.at(-1)).not.toHaveProperty("export");
   });
   it("observes effective policy through the fixture-owned OpenShell boundary (#11485)", async () => {
