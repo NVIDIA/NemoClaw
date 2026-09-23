@@ -275,8 +275,9 @@ With `--json` and file output, the version 1 result includes `sourceSandbox`, `o
 Export validates retained corporate certificate authority (CA) state but omits the CA bundle and digest from YAML.
 Configure destination CA trust separately during onboarding; export does not change the source sandbox's trust.
 
-The v0 command projects verified source state into the v1alpha1 YAML shape.
-The v1 Rust parser remains authoritative for accepting that document; the v0 command does not carry a copy of the v1 schema or semantic validator.
+The v0 command projects verified source state into the pre-release v1alpha1 YAML shape.
+Managed OpenClaw and Hermes exports use `image: null` until v1 supplies the value.
+The unreleased v1 parser is not an acceptance gate for this staged output.
 
 If staging cleanup fails, the diagnostic identifies the temporary file and its original directory by device and inode when that evidence is available.
 The directory can have moved from the requested output location.
@@ -661,7 +662,17 @@ For a non-interactive install, set `NEMOCLAW_CONFIRM_LEGACY_MANAGED_RECREATE` to
 The confirmation permits those legacy entries to recover onto the current managed image, but it does not override recorded custom-image evidence.
 After confirmed recovery, the installer skips generic onboarding unless DGX Station reconciliation remains necessary.
 Required DGX Station reconciliation still passes host admission before onboarding.
-For any registered-sandbox upgrade that you prepare manually, use the current prepared NemoClaw CLI to require strict backup and retire all applicable registered legacy forwards before you retire the old gateway.
+For any registered-sandbox upgrade that you prepare manually, use the current release CLI.
+If the installer has not already reported that it prepared the current CLI, start the supported automatic flow first:
+
+```bash
+curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_ACCEPT_EXPERIMENTAL_OPENSHELL_UPGRADE=1 bash
+```
+
+That flow prepares the current CLI before it replaces OpenShell.
+If it completes, do not run the manual steps below.
+Continue manually only when the automatic flow stops after preparing the CLI or a support workflow directs you to this recovery path.
+Use the prepared current CLI to require strict backup and retire all applicable registered legacy forwards before you retire the old gateway.
 Strict backup can report a confirmed stranded registry sandbox without creating a backup for it because both the selected gateway and the container provider prove that no sandbox runtime remains.
 That record requires the cleanup or recreation action printed by `$$nemoclaw backup-all`, but it does not block a prepared upgrade after the strict command succeeds:
 
@@ -676,7 +687,8 @@ NEMOCLAW_GATEWAY_PORT="$selected_port" NEMOCLAW_REQUIRE_ALL_SANDBOX_BACKUPS=1 $$
 For a non-default gateway, replace `8080` with its port and set `gateway_name` to `nemoclaw-<selected-port>`.
 If an older OpenShell release rejects the named destroy command for the default `nemoclaw` gateway, run `openshell gateway destroy` instead.
 Do not substitute `openshell gateway remove`: removal can unregister a gateway without stopping its process.
-Set `NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1` only after both commands succeed and the backup command reports a complete result.
+Set `NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1` only after the command pipeline exits successfully.
+Confirm that the strict backup summary reports `0 failed, 0 skipped` and that the `Legacy dashboard forwards:` summary appears before gateway destruction.
 A confirmed stranded record has no backup to reuse; complete the reported cleanup or recreation action during recovery.
 If backup, forward retirement, or gateway retirement fails, resolve the failure while the completed backups remain intact.
 This environment variable asserts that strict backup, legacy-forward retirement, and gateway retirement are complete, so the installer skips that repeated preparation phase before it checks whether OpenShell is installed or whether its version is in range.
@@ -1016,6 +1028,7 @@ When GPU passthrough is enabled and a gateway already exists without it, onboard
 List sandboxes in the registry for the gateway port that `NEMOCLAW_GATEWAY_PORT` selects and any sandbox entries recovered from that live gateway, with their model, provider, and policy presets.
 The command reads that port's registry and live gateway; it does not scan registries for other gateway ports.
 Pass `--json` for machine-readable output that includes a `schemaVersion`, the default sandbox, recovery metadata, and the sandbox inventory.
+NemoClaw redacts recognized credential values, including credentials in URLs, from text and JSON inventory fields before it writes them.
 When the latest resumable onboarding session owns the matching inference-route reservation but has not created a sandbox, text output shows it under `Incomplete onboarding` with the recorded step and resume command.
 JSON output reports the same state in `incompleteOnboarding`; it remains separate from `sandboxes` and never affects the default sandbox.
 When present, `incompleteOnboarding` contains `name`, `status` (`failed` or `in_progress`), `step` (a string or `null`), `interrupted` (a boolean), and `resumable: true`; otherwise it is `null`.
@@ -3120,13 +3133,18 @@ $$nemoclaw upgrade-sandboxes [--check] [--auto] [--yes|-y]
 
 | Flag | Description |
 | --- | --- |
-| `--check` | Inspect sandbox state without rebuilding. Exits nonzero when it reports stale state, an unknown version, a backup recovery condition, or a sandbox missing from its recorded gateway. Inspect each diagnostic before you select a remediation. |
-| `--auto` | Rebuild every stale sandbox without prompting. Used by the installer to upgrade in place. |
-| `--yes`, `-y` | Skip the confirmation prompt for the rebuild plan. |
+| `--check` | Inspect sandbox state without rebuilding. Exits nonzero when it reports stale state, an unknown version, a backup recovery condition, a sandbox missing from its recorded gateway, or a Ready sandbox that retains intentional-stop state. Inspect each diagnostic before you select a remediation. |
+| `--auto` | Rebuild eligible stale sandboxes and reconcile retained intentional-stop state without prompting. Used by the installer to upgrade in place. |
+| `--yes`, `-y` | Skip confirmation prompts for rebuilds and stopped-state reconciliation. |
 
 Before it inspects a gateway or starts a rebuild, the command validates every registered sandbox name against the NemoClaw sandbox name format. Route-only reservations are not sandboxes and are excluded from this validation. If the command finds incompatible names, it lists each name before any gateway inspection or rebuild. With `--check`, the command then returns without changing state. In a mutating mode, it exits with a nonzero status. NemoClaw does not truncate or rename a registered sandbox identity. Follow [Update Sandboxes](../manage-sandboxes/operate-sandboxes/update-sandboxes) to transfer state to a compatible replacement before you rerun the command.
 
 Each rebuild reuses the same workspace backup-and-restore flow as `$$nemoclaw <name> rebuild`, so workspace files survive the upgrade. If the registry or required managed-image catalog evidence is unavailable, NemoClaw fails closed instead of selecting an unpinned image. Restore registry access, then rerun the command so NemoClaw can validate the exact image digest. During installer recovery, a registered sandbox that is not Ready can also be rebuilt from its validated latest backup. That recovery requires a NemoClaw-managed image fingerprint or the installer's explicit confirmation for a listed pre-fingerprint OpenClaw or Hermes entry. The legacy confirmation never overrides recorded custom-image evidence. OpenClaw's native plugin and package state is restored with the rest of its declared state; NemoClaw does not require separate plugin ownership metadata.
+
+When installer recovery rebuilds an intentionally stopped sandbox, NemoClaw returns the replacement to `Stopped`.
+The command exits nonzero if OpenShell cannot confirm that phase or a required post-stop reconciliation fails.
+Rerun `$$nemoclaw upgrade-sandboxes --auto` to reconcile the stopped state without rebuilding a current replacement again.
+The retry is complete when the command exits zero and reports that the sandbox was reconciled to stopped state; `$$nemoclaw upgrade-sandboxes --check` should then omit that sandbox from the reconciliation plan.
 
 ### `$$nemoclaw backup-all`
 
@@ -3380,6 +3398,8 @@ For gateway-based messaging agents, it also reports messaging overlap warnings w
 </AgentOnly>
 Use `$$nemoclaw <name> status` when you need one sandbox's live health and recovery guidance.
 Pass `--json` for machine-readable output with registered sandboxes, service state, inference routes, and health details.
+Each sandbox row's `configuredInference` object contains that sandbox's recorded `provider` and `model`.
+For schema-version-1 compatibility, the row-level `provider` and `model` fields keep their existing effective-route behavior; use `configuredInference` when you need the recorded route.
 When the latest resumable onboarding session owns the matching inference-route reservation, it appears under `Incomplete onboarding` in text and as `incompleteOnboarding` in JSON.
 When present, `incompleteOnboarding` contains `name`, `status` (`failed` or `in_progress`), `step` (a string or `null`), `interrupted` (a boolean), and `resumable: true`; otherwise it is `null`.
 It is not counted as a registered sandbox and does not trigger sandbox or gateway health probes.
@@ -3387,7 +3407,10 @@ Each JSON sandbox row reports `agent` as a string, never `null`.
 The row reports `openclaw` when the registry records no agent for the sandbox.
 This command reads the registry without gateway recovery, so it never reports `unknown`.
 For each listed sandbox, the text output includes the configured inference provider and model plus the number of active SSH sessions when the session probe is available.
-That route line is labeled `Inference (configured):` to distinguish it from the live inference result from `$$nemoclaw <name> status`.
+That route line is labeled `Inference (configured):`.
+An unavailable recorded provider or model appears as `unknown`.
+For the default sandbox, an `Inference (live):` line also appears when the shared gateway route differs from the recorded route.
+Use `$$nemoclaw <name> status` for the sandbox's full live health and recovery details.
 Host-service PID lookup honors `NEMOCLAW_SANDBOX_NAME`, then `NEMOCLAW_SANDBOX`, then `SANDBOX_NAME`, then the registry default.
 
 ```bash
@@ -4055,7 +4078,7 @@ The following variables let you tune onboarding without editing the Dockerfile o
 | --- | --- | --- |
 | `NEMOCLAW_PROVIDER` | provider key (e.g. `build`, `openrouter`, `openai`, `anthropic`, `anthropicCompatible`, `gemini`, `ollama`, `custom`, `vllm`, `nim-local`, `routed`, `hermes-provider`, `llama-cpp`, `install-llama-cpp`, `install-vllm`, `install-ollama`, `install-windows-ollama`, `start-windows-ollama`) | Selects the inference provider during onboarding. The wizard skips the provider menu in both interactive and non-interactive runs when this is set. On a qualified N1x host, `install-vllm` supplies Deferred preview intent, while another provider supplies standard-onboarding intent and retains its existing requirements. Local NVIDIA NIM remains unavailable on N1x. `llama-cpp` selects attachment of an authenticated, operator-managed llama.cpp server on loopback port `8081`. Set `NEMOCLAW_LLAMACPP_LOCAL_TOKEN`; set `NEMOCLAW_MODEL` to the served alias when the server exposes multiple models. `install-llama-cpp` selects the compatible experimental managed path on DGX Spark, generic NVIDIA GPU, or Windows WSL N1x hosts and rejects `NEMOCLAW_MODEL`; use `NEMOCLAW_LLAMACPP_RECIPE` for an explicit declarative selection. A qualifying Windows WSL N1x host automatically selects this provider and its Qwen 3.6 recipe when no provider is requested or recorded. If an operator-managed server does not provide consistent native llama.cpp evidence, select `custom`. Aliases: `cloud` → `build`, `open-router` / `openrouterai` → `openrouter`, `nim` → `nim-local`, `hermes` / `nous` / `nous-portal` → `hermes-provider`, `anthropiccompatible` → `anthropicCompatible`. Invalid values fail fast with the list of accepted keys. |
 | `NEMOCLAW_LLAMACPP_RECIPE` | repository-owned managed-inference recipe ID | Selects the managed llama.cpp recipe when `NEMOCLAW_PROVIDER=install-llama-cpp`, including a compatible lower-priority profile. When unset, NemoClaw selects the unique highest-priority compatible automatic profile. An unknown recipe, an ambiguous selection, or a stale or incompatible readiness report fails before image, model, or runtime effects. |
-| `NEMOCLAW_MODEL` | model ID | Selects an explicit model for a non-interactive onboarding run. NemoClaw preserves it across a detected provider switch, even when it matches the recorded provider's default. When this variable is unset during such a switch, NemoClaw ignores the `NEMOCLAW_PROVIDER_MODEL` compatibility fallback and uses normal provider model selection. |
+| `NEMOCLAW_MODEL` | model ID | Selects an explicit model for a non-interactive onboarding run. For NVIDIA Endpoints, NemoClaw ignores a retired configured model and uses the agent default. Otherwise, NemoClaw preserves the explicit model across a detected provider switch, even when it matches the recorded provider's default. When this variable is unset during such a switch, NemoClaw ignores the `NEMOCLAW_PROVIDER_MODEL` compatibility fallback and uses normal provider model selection. |
 | `NEMOCLAW_TOOL_DISCLOSURE` | `progressive` or `direct` | Selects progressive tool discovery or direct exposure. Defaults to `progressive`; `--tool-disclosure` takes precedence when both are set. |
 | `NEMOCLAW_ENDPOINT_URL` | URL | Custom endpoint URL. Used together with `NEMOCLAW_PROVIDER=custom` for OpenAI-compatible endpoints or `NEMOCLAW_PROVIDER=anthropicCompatible` for Anthropic-compatible endpoints. Onboarding rejects a URL that contains userinfo, query, or fragment components. It also rejects a URL that contains control characters, percent-encoded control characters, spaces within the URL, shell metacharacters, or other characters outside the URL-safe ASCII set, and a value that is not an absolute HTTP or HTTPS URL. NemoClaw trims ASCII spaces at the start and end of the URL before validation. |
 | `NEMOCLAW_COMPATIBLE_AUTH_MODE` | `none` or unset | Explicitly selects no authentication during non-interactive onboarding for an OpenAI-compatible HTTP endpoint on `localhost`, `127.0.0.1`, or `[::1]` and the port selected by `NEMOCLAW_VLLM_PORT` (`8000` by default) or port `11434`. Port `11435` requires `NEMOCLAW_OLLAMA_PROXY_PORT` to use a different free port. |

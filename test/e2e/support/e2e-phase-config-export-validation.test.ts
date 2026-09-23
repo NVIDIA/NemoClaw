@@ -147,6 +147,7 @@ function document(
       sandboxes: [
         {
           name: "sandbox",
+          image: null,
           runtime: { provider: "docker" },
           network: { policy: { explicit: POLICY } },
           harness: {

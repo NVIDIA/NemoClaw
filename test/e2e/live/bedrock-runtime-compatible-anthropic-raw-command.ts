@@ -7,10 +7,6 @@ import { REPO_ROOT } from "../fixtures/paths.ts";
 import type { TestProgress, TestProgressCapability } from "../fixtures/progress.ts";
 import { redactString } from "../fixtures/redaction.ts";
 import { resolveLiveE2eWorkloadSourceEnv } from "../fixtures/shell-probe.ts";
-import {
-  projectRawOutputForArtifact,
-  type RawArtifactOutputMode,
-} from "./bedrock-runtime-compatible-anthropic-artifacts.ts";
 
 const MAX_RAW_COMMAND_OUTPUT_BYTES = 10 * 1024 * 1024;
 const RAW_COMMAND_OUTPUT_LIMIT_MARKER = "[bedrock raw-command output exceeded safe capture limit]";
@@ -53,9 +49,9 @@ export interface RawRunResult {
 export interface RawRunOptions {
   readonly artifactName: string;
   readonly artifacts: ArtifactSink;
-  readonly artifactOutputMode?: RawArtifactOutputMode;
   readonly cwd?: string;
   readonly env?: NodeJS.ProcessEnv;
+  readonly stdin?: string;
   readonly progress: Pick<TestProgress, "activity" | "event" | "onOutput"> & TestProgressCapability;
   readonly redactionValues?: readonly string[];
   readonly timeoutMs?: number;
@@ -97,7 +93,7 @@ export async function runRawCommand(
         cwd: options.cwd ?? REPO_ROOT,
         detached: true,
         env: resolveLiveE2eWorkloadSourceEnv({ ...(options.env ?? {}) }),
-        stdio: ["ignore", "pipe", "pipe"],
+        stdio: [options.stdin === undefined ? "ignore" : "pipe", "pipe", "pipe"],
       },
     });
   } catch (error) {
@@ -152,6 +148,12 @@ export async function runRawCommand(
   child.on("error", (error) => {
     spawnError = error;
   });
+  if (options.stdin !== undefined) {
+    child.stdin?.on("error", () => {
+      // The child may reject or close bounded input before the parent finishes writing it.
+    });
+    child.stdin?.end(options.stdin);
+  }
 
   const { exitCode, signal } = await new Promise<{
     exitCode: number | null;
@@ -178,13 +180,8 @@ export async function runRawCommand(
     : capturedOutput(stderrCapture);
   const redactedStdout = redactString(stdout, redactionValues);
   const redactedStderr = redactString(stderr, redactionValues);
-  const artifactOutputMode = options.artifactOutputMode ?? "content";
-  const artifactStdout = captureLimitExceeded
-    ? RAW_COMMAND_OUTPUT_LIMIT_MARKER
-    : projectRawOutputForArtifact(redactedStdout, "stdout", artifactOutputMode);
-  const artifactStderr = captureLimitExceeded
-    ? RAW_COMMAND_OUTPUT_LIMIT_MARKER
-    : projectRawOutputForArtifact(redactedStderr, "stderr", artifactOutputMode);
+  const artifactStdout = captureLimitExceeded ? RAW_COMMAND_OUTPUT_LIMIT_MARKER : redactedStdout;
+  const artifactStderr = captureLimitExceeded ? RAW_COMMAND_OUTPUT_LIMIT_MARKER : redactedStderr;
   await options.artifacts.writeText(`raw-shell/${options.artifactName}.stdout.txt`, artifactStdout);
   await options.artifacts.writeText(`raw-shell/${options.artifactName}.stderr.txt`, artifactStderr);
   await options.artifacts.writeJson(`raw-shell/${options.artifactName}.result.json`, {

@@ -53,7 +53,7 @@ interface HermesConfigExportPublishedEvidence {
   readonly credentialValuesOmitted: boolean;
   readonly identityDriftPreventedPublication: boolean;
   readonly identityDriftReported: boolean;
-  readonly immutableManagedImageMatches: boolean;
+  readonly managedImageIsNull: boolean;
   readonly interfacesMatch: boolean;
   readonly dashboardRuntimeMatches: boolean;
   readonly inferenceEndpointMatches: boolean;
@@ -110,7 +110,7 @@ export function passesHermesConfigExportLiveEvidence(
     evidence.credentialValuesOmitted &&
     evidence.identityDriftPreventedPublication &&
     evidence.identityDriftReported &&
-    evidence.immutableManagedImageMatches &&
+    evidence.managedImageIsNull &&
     evidence.interfacesMatch &&
     evidence.dashboardRuntimeMatches &&
     evidence.inferenceEndpointMatches &&
@@ -296,7 +296,7 @@ export async function verifyHermesConfigExportLive(
       credentialValuesOmitted: !containsCredential,
       identityDriftPreventedPublication: false,
       identityDriftReported: false,
-      immutableManagedImageMatches: false,
+      managedImageIsNull: false,
       interfacesMatch: false,
       dashboardRuntimeMatches: false,
       inferenceEndpointMatches: false,
@@ -395,7 +395,7 @@ export async function verifyHermesConfigExportLive(
     identityDriftReported:
       nemoclawDriftDiagnostics.includes("drifted") &&
       nemohermesDriftDiagnostics.includes("drifted"),
-    immutableManagedImageMatches: !("image" in sandbox),
+    managedImageIsNull: sandbox.image === null,
     interfacesMatch: isDeepStrictEqual(sandbox.harness.interfaces, expectedHermesInterfaces(input)),
     dashboardRuntimeMatches: await dashboardRuntimeMatches(input),
     inferenceEndpointMatches: hostedProvider?.endpoint === entry.endpointUrl,
