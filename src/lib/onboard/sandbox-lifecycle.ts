@@ -94,6 +94,14 @@ export function releaseAbandonedRouteReservation(
   return registry.removeSandboxRouteReservationIfCurrent(entry);
 }
 
+/** Keep skipped-inference and sandbox-reuse callers on the same locked transfer path. */
+export function reserveRecoveredSandboxInferenceRoute<
+  Route extends Parameters<typeof registry.reserveSandboxInferenceRoute>[1],
+>(reserve: (name: string, route: Route) => boolean, sandboxName: string, route: Route): boolean {
+  releaseAbandonedRouteReservation(sandboxName, route);
+  return reserve(sandboxName, route);
+}
+
 export interface SandboxLifecycleDeps {
   runCaptureOpenshell(args: string[], opts?: Record<string, unknown>): string | null;
   getGatewayName(): string;

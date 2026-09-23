@@ -86,6 +86,114 @@ describe("abandoned inference route reservation (#11051)", () => {
     }
   });
 
+  it("transfers a published reservation when resume skips inference setup", async () => {
+    await isolatedOnboardHome();
+    await onboardingSessionUnderLock("resume-current", "onboard --resume");
+    const sessionStore = await import("../state/onboard-session");
+    const registry = await import("../state/registry");
+    const { handleProviderInferenceState } = await import("./machine/handlers/provider-inference");
+    const { baseOptions, baseSelection, createDeps } =
+      await import("./machine/handlers/provider-inference.test-support");
+    const session = sessionStore.loadSession()!;
+    Object.assign(session, baseSelection, { sandboxName: SANDBOX });
+    session.steps.provider_selection.status = "complete";
+    session.steps.inference.status = "complete";
+    sessionStore.saveSession(session);
+    const route = {
+      provider: baseSelection.provider,
+      model: baseSelection.model,
+      endpointUrl: baseSelection.endpointUrl,
+      credentialEnv: baseSelection.credentialEnv,
+      preferredInferenceApi: baseSelection.preferredInferenceApi,
+      endpointSource: null,
+      gatewayName: GATEWAY,
+    };
+    registry.registerSandbox({ name: SANDBOX, ...route, gatewayPort: 18789, agent: "openclaw" });
+    registry.reserveSandboxInferenceRoute(SANDBOX, { ...route, reservationSessionId: "abandoned" });
+    const { deps, calls } = createDeps({
+      isInferenceRouteReady: () => true,
+      reserveSandboxInferenceRoute: registry.reserveSandboxInferenceRoute,
+      recordStepComplete: async () => session,
+      recordStateSkipped: async () => session,
+    });
+    await handleProviderInferenceState({
+      ...baseOptions(deps, session),
+      gatewayName: GATEWAY,
+      resume: true,
+      sandboxName: SANDBOX,
+      requestedSandboxName: SANDBOX,
+    });
+    expect(calls.setupInference).not.toHaveBeenCalled();
+    expect(registry.getSandbox(SANDBOX)).toMatchObject({
+      reservationSessionId: session.sessionId,
+      pendingRouteReservation: true,
+      agent: "openclaw",
+    });
+    expect(registry.finalizeSandboxRouteReservation(SANDBOX, session.sessionId)).toBe(true);
+    expect(registry.getSandbox(SANDBOX)?.pendingRouteReservation).toBeUndefined();
+  }, 15_000);
+
+  it("transfers and publishes an abandoned route after Ready sandbox reuse", async () => {
+    await isolatedOnboardHome();
+    await onboardingSessionUnderLock("reuse-current", "onboard --resume");
+    const sessionStore = await import("../state/onboard-session");
+    const registry = await import("../state/registry");
+    const { handleSandboxState } = await import("./machine/handlers/sandbox");
+    const { baseOptions, createDeps } = await import("./machine/handlers/sandbox-test-fixtures");
+    const session = sessionStore.loadSession()!;
+    session.sandboxName = SANDBOX;
+    session.steps.sandbox.status = "complete";
+    session.machine.state = "agent_setup";
+    const { recordCheckpointSandboxIdentity } = await import("./checkpoint-record");
+    recordCheckpointSandboxIdentity(session, SANDBOX, "openclaw");
+    sessionStore.saveSession(session);
+    const route = {
+      provider: "provider",
+      model: "model",
+      endpointUrl: null,
+      endpointSource: null,
+      credentialEnv: null,
+      preferredInferenceApi: "openai-completions",
+      gatewayName: GATEWAY,
+    };
+    registry.registerSandbox({
+      name: SANDBOX,
+      ...route,
+      gatewayPort: 18789,
+      agent: "openclaw",
+      toolDisclosure: "progressive",
+    });
+    registry.reserveSandboxInferenceRoute(SANDBOX, { ...route, reservationSessionId: "abandoned" });
+    const createdAt = registry.getSandbox(SANDBOX)!.createdAt;
+    const { deps, calls } = createDeps(
+      {
+        getSandboxReuseState: () => "ready",
+        getSandboxAgentRegistryFields: () => ({ agent: "openclaw" }),
+        getSandboxRegistryEntry: registry.getSandbox,
+        updateSandboxRegistry: registry.updateSandbox,
+        reserveSandboxInferenceRoute: registry.reserveSandboxInferenceRoute,
+        finalizeSandboxRouteReservation: registry.finalizeSandboxRouteReservation,
+      },
+      session,
+    );
+    await handleSandboxState({
+      ...baseOptions(deps, session),
+      agent: { name: "openclaw" },
+      ...route,
+      resume: true,
+      sandboxName: SANDBOX,
+    });
+    expect(calls.createSandbox).not.toHaveBeenCalled();
+    expect(registry.getSandbox(SANDBOX)).toMatchObject({
+      createdAt,
+      reservationSessionId: session.sessionId,
+      gatewayPort: 18789,
+      agent: "openclaw",
+      toolDisclosure: "progressive",
+    });
+    expect(registry.getSandbox(SANDBOX)?.pendingRouteReservation).toBeUndefined();
+  }, 15_000);
+
   it("refuses a later onboarding session while the abandoned reservation stands", async () => {
     await isolatedOnboardHome();
     await seedAbandonedReservation("session-from-an-abandoned-run");
