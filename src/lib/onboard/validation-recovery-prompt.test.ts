@@ -43,6 +43,16 @@ function expectHelpBeforeSelectionReturn(log: MockInstance<typeof console.log>) 
   ).toBeLessThan(messages.indexOf("  Returning to provider selection."));
 }
 
+function overrideProperty(target: object, key: PropertyKey, value: unknown): () => void {
+  const descriptor = Object.getOwnPropertyDescriptor(target, key);
+  Object.defineProperty(target, key, { configurable: true, value });
+  return descriptor
+    ? () => Object.defineProperty(target, key, descriptor)
+    : () => {
+        Reflect.deleteProperty(target, key);
+      };
+}
+
 describe("validation recovery credential prompt", () => {
   afterEach(() => {
     vi.restoreAllMocks();
@@ -155,6 +165,44 @@ describe("validation recovery credential prompt", () => {
     await expect(
       helpers.promptValidationRecovery("OpenAI", CREDENTIAL_RECOVERY, "OPENAI_API_KEY"),
     ).rejects.toBe(exitError);
+
+    expect(exit).toHaveBeenCalledWith(1);
+    expect(prompt).not.toHaveBeenCalled();
+    expect(process.env.OPENAI_API_KEY).toBe("sk-bad");
+    expect(error).toHaveBeenCalledWith(
+      "  Secure credential recovery requires interactive terminal input and error output.",
+    );
+  });
+
+  it("uses the default terminal capability check before credential recovery (#12079)", async () => {
+    vi.stubEnv("OPENAI_API_KEY", "sk-bad");
+    const restoreStdinIsTty = overrideProperty(process.stdin, "isTTY", true);
+    const restoreStderrIsTty = overrideProperty(process.stderr, "isTTY", false);
+
+    const prompt = vi.fn();
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const exitError = new Error("process exit");
+    const exit = vi.spyOn(process, "exit").mockImplementation(((_code?: number) => {
+      throw exitError;
+    }) as never);
+    const helpers = createValidationRecoveryPromptHelpers({
+      isNonInteractive: () => false,
+      prompt,
+      validateNvidiaApiKeyValue: () => null,
+      getTransportRecoveryMessage: () => "  Transport failed.",
+      exitOnboardFromPrompt(): never {
+        throw new Error("unexpected interactive exit");
+      },
+    });
+
+    try {
+      await expect(
+        helpers.promptValidationRecovery("OpenAI", CREDENTIAL_RECOVERY, "OPENAI_API_KEY"),
+      ).rejects.toBe(exitError);
+    } finally {
+      restoreStdinIsTty();
+      restoreStderrIsTty();
+    }
 
     expect(exit).toHaveBeenCalledWith(1);
     expect(prompt).not.toHaveBeenCalled();
