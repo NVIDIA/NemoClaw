@@ -2,11 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { createHash } from "node:crypto";
-import {
-  LLAMA_CPP_DGX_SPARK_AGENT_QUALIFICATION_PATH,
-  LLAMA_CPP_DGX_SPARK_QUALIFICATION_ACTIVATION_PATH,
-} from "../../scripts/checks/llama-cpp-dgx-spark-qualification-paths.mts";
 import * as importedProtectedManagedImageContract from "../../scripts/checks/protected-managed-image-contract.ts";
+import { HERMES_ACP_E2E_OWNING_PATHS } from "../e2e/hermes-acp-owning-paths.mts";
 
 // The root TypeScript package is exposed as CJS under the exact
 // `node --import tsx` workflow execution mode, but as an ESM namespace under
@@ -21,12 +18,10 @@ const protectedManagedImageContract = (
 const { PROTECTED_MANAGED_IMAGE_ACTIVATION_PATH, PROTECTED_MANAGED_IMAGE_MULTIARCH_JOB_ID } =
   protectedManagedImageContract;
 
-export const RISK_PLAN_VERSION = 20 as const;
+export const RISK_PLAN_VERSION = 25 as const;
 
-export const PR_E2E_TYPED_TARGET_IDS = [
-  "ubuntu-repo-cloud-langchain-deepagents-code",
-  "ubuntu-repo-docker-post-reboot-recovery",
-] as const;
+export const PR_E2E_TYPED_TARGET_IDS = ["ubuntu-repo-cloud-langchain-deepagents-code"] as const;
+const SANDBOX_LIFECYCLE_TARGET_ID = "sandbox-survival";
 
 const PR_E2E_TYPED_TARGET_ID_SET = new Set<string>(PR_E2E_TYPED_TARGET_IDS);
 const PR_E2E_PLANNING_OMITTED_JOB_IDS = new Set(["jetson-nvmap-gpu"]);
@@ -42,12 +37,11 @@ const JOURNALED_RECREATE_RESUME_RUNTIME_FILES = new Set([
   "src/lib/onboard/machine/handlers/sandbox-resume.ts",
   "src/lib/onboard/machine/handlers/sandbox.ts",
 ]);
-const POST_REBOOT_DELIVERY_RUNTIME_FILES = new Set([
+const SANDBOX_LIFECYCLE_RUNTIME_FILES = new Set([
   "src/lib/actions/sandbox/status-snapshot.ts",
-  "src/lib/onboard/docker-driver-sandbox-recovery.ts",
+  "src/lib/onboard/docker-driver-container-observation.ts",
   "src/lib/onboard/docker-startup-command-agent.ts",
   "src/lib/onboard/sandbox-create-step.ts",
-  "tools/e2e/onboard-timeout-contract.mts",
 ]);
 export const GATEWAY_TOPOLOGY_FILES = [
   "src/lib/core/gateway-address.ts",
@@ -68,13 +62,44 @@ export const GATEWAY_TOPOLOGY_FILES = [
   "src/lib/onboard/runtime-provider/contract.ts",
   "src/lib/onboard/runtime-provider/podman-host-local-inference.ts",
 ] as const;
+// Keep explicit owners where shared gateway and forwarding code has no dedicated module.
+const BREV_LAUNCHABLE_FILES = new Set([
+  "test/e2e/live/launch-agent-turn.ts",
+  "tools/e2e/brev-launchable-e2e.sh",
+  "src/lib/onboard/gateway-binding.ts",
+  "src/lib/onboard/gateway-management.ts",
+  "src/lib/onboard/gateway-ownership.ts",
+  "src/lib/onboard/gateway-teardown-authority.ts",
+  "src/lib/onboard/gateway-host-runtime.ts",
+  "src/lib/onboard/agent-dashboard-forward.ts",
+  "src/lib/onboard/dashboard-forward-control.ts",
+  "src/lib/onboard/dashboard.ts",
+  "src/lib/adapters/openshell/command-execution.ts",
+  "src/lib/adapters/openshell/forward-cli.ts",
+  "src/lib/adapters/openshell/forward-runtime.ts",
+  "src/lib/adapters/openshell/forward.ts",
+  "src/lib/actions/sandbox/forward-recovery.ts",
+  "src/lib/actions/sandbox/process-recovery.ts",
+  "src/lib/actions/sandbox/status/process-recovery.ts",
+  "src/lib/actions/sandbox/connect.ts",
+  "src/lib/actions/sandbox/terminal-connect-probe.ts",
+  "src/lib/actions/sandbox/launch-readiness.ts",
+]);
+// Module and scenario ownership includes new helpers without expanding to unrelated agents.
+const BREV_LAUNCHABLE_MODULE_PREFIXES = [
+  "src/lib/onboard/gateway-binding/",
+  "src/lib/actions/sandbox/launch-readiness/",
+] as const;
+const BREV_LAUNCHABLE_SCENARIO_FILE =
+  /^test\/e2e\/(?:fixtures|live)\/full-e2e(?:[./-].*)?\.[cm]?[jt]s$/;
 const GATEWAY_TOPOLOGY_FILE_SET = new Set<string>(GATEWAY_TOPOLOGY_FILES);
 const MANAGED_STARTUP_E2E_JOB_IDS = [
-  "device-auth-health",
   "issue-4462-scope-upgrade-approval",
   "openclaw-inference-switch",
 ] as const;
 const HERMES_CLI_ADAPTER_E2E_JOB_IDS = ["channels-stop-start", "mcp-bridge"] as const;
+const HERMES_ACP_E2E_JOB_IDS = ["hermes-e2e", "rebuild-hermes"] as const;
+const HERMES_ACP_RUNTIME_FILES = new Set<string>(HERMES_ACP_E2E_OWNING_PATHS);
 const HERMES_CLI_ADAPTER_RUNTIME_FILES = new Set([
   "agents/hermes/hermes-cli-adapter-v1.json",
   "agents/hermes/hermes-wrapper.py",
@@ -93,7 +118,6 @@ const HERMES_MANAGED_POLICY_E2E_JOB_IDS = [
   "dashboard-remote-bind",
   "hermes-e2e",
   "hermes-inference-switch",
-  "hermes-shields-config",
   "security-posture",
 ] as const;
 const HERMES_MANAGED_POLICY_FILES = new Set([
@@ -132,7 +156,6 @@ const MESSAGING_RUNTIME_FILES = new Set([
   "src/lib/onboard/gateway-provider-metadata.ts",
   "src/lib/onboard/messaging-policy-presets.ts",
   "src/lib/onboard/messaging-prep.ts",
-  "src/lib/onboard/policy-preset-persistence.ts",
   "src/lib/onboard/policy-preset-reconciliation.ts",
   "src/lib/onboard/policy-selection.ts",
   "src/lib/onboard/providers.ts",
@@ -144,12 +167,6 @@ const MESSAGING_RUNTIME_PREFIXES = [
   "src/lib/actions/sandbox/policy-channel",
   "src/lib/messaging/",
 ] as const;
-const SHARED_SHIELDS_E2E_JOB_IDS = ["hermes-shields-config", "shields-config"] as const;
-const SHARED_SHIELDS_RUNTIME_FILES = new Set([
-  "scripts/runtime-state-mutation-control.py",
-  "scripts/runtime-state-mutation-startup-gate.py",
-  "src/lib/onboard/runtime-provider/docker-state-mutation.ts",
-]);
 const HERMES_STARTUP_RUNTIME_FILES = new Set([
   "agents/hermes/runtime-config-guard.py",
   "agents/hermes/start.sh",
@@ -175,7 +192,6 @@ const MANAGED_IMAGE_PROTECTED_RUNTIME_INPUT_PREFIXES = [
   "src/lib/onboard/workload/",
   "test/e2e/live/managed-image-protected-runtime.",
 ] as const;
-const LLAMA_CPP_DGX_SPARK_QUALIFICATION_JOB_ID = "llama-cpp-dgx-spark-qualification" as const;
 // The activation-only phase is complete. Any input that can change bytes or
 // startup policy in a shipped managed image must requalify the exact all-agent
 // amd64/arm64 cohort; the positive and adjacent-path cases in
@@ -186,6 +202,7 @@ const MANAGED_IMAGE_MULTIARCH_INPUTS = new Set([
   ".github/workflows/managed-images.yaml",
   "Dockerfile",
   "ci/npm-audit-exceptions.json",
+  "src/lib/extra-agents-validation.ts",
   "src/lib/core/json-types.ts",
   "src/lib/core/ports.ts",
   "src/lib/onboard/managed-bootstrap/envelope.ts",
@@ -222,7 +239,6 @@ export type RiskFamilyId =
   | "e2e-control-plane"
   | "managed-image-multiarch"
   | typeof MANAGED_IMAGE_PROTECTED_RUNTIME_JOB_ID
-  | typeof LLAMA_CPP_DGX_SPARK_QUALIFICATION_JOB_ID
   | "sandbox-boundary"
   | "focused-e2e";
 
@@ -276,7 +292,7 @@ const MUTATION_FILE = /(?:upgrade|rebuild|snapshot|backup|restore)/;
 const INSTALL_SCRIPT = /^(?:install\.sh|scripts\/(?:install|setup|dev-setup)[^/]*\.(?:sh|js|ts))$/;
 const INFERENCE_POLICY_FILE = /(?:^|[/.-])(?:inference|network-policy)(?:[/.-]|$)/;
 const CREDENTIAL_SECURITY_FILE =
-  /(?:^|[/.-])(?:credential|credentials|secret|secrets|redact|redaction|ssrf|shields|security)(?:[/.-]|$)/i;
+  /(?:^|[/.-])(?:credential|credentials|secret|secrets|redact|redaction|ssrf|security)(?:[/.-]|$)/i;
 const E2E_CONTROL_PLANE_FILES = new Set([
   ".github/workflows/e2e.yaml",
   ".github/workflows/pr.yaml",
@@ -288,14 +304,14 @@ const E2E_CONTROL_PLANE_FILES = new Set([
   "tools/advisors/risk-plan.mts",
   "vitest.config.ts",
 ]);
-// These checked-in paths and directories are the source boundary for private-network,
-// policy, and shields enforcement but are not all covered by the token heuristics above.
+// These checked-in paths and directories are the source boundary for private-network
+// and policy enforcement but are not all covered by the token heuristics above.
 // Keep the explicit floor until a machine-readable security-owner catalog replaces it.
 const PRIVATE_NETWORK_BOUNDARY_FILES = new Set([
   "nemoclaw-blueprint/private-networks.yaml",
   "nemoclaw/src/blueprint/private-networks.ts",
 ]);
-const POLICY_SECURITY_FILE = /^src\/lib\/(?:policy|shields)\//;
+const POLICY_SECURITY_FILE = /^src\/lib\/policy\//;
 // Ordinary tests do not raise the runtime floor. These files either define a live
 // platform contract or produce the evidence consumed by the trusted PR gate.
 const RISK_RELEVANT_TEST_FILES = new Set([
@@ -336,7 +352,7 @@ export function focusedPrE2eTargetsForChangedFiles(
     ),
   );
   const postRebootMatchedFiles = stableUnique(
-    changedFiles.filter((file) => POST_REBOOT_DELIVERY_RUNTIME_FILES.has(file)),
+    changedFiles.filter((file) => SANDBOX_LIFECYCLE_RUNTIME_FILES.has(file)),
   );
   return [
     ...(deepAgentsMatchedFiles.length > 0
@@ -350,7 +366,7 @@ export function focusedPrE2eTargetsForChangedFiles(
     ...(postRebootMatchedFiles.length > 0
       ? [
           {
-            id: PR_E2E_TYPED_TARGET_IDS[1],
+            id: SANDBOX_LIFECYCLE_TARGET_ID,
             matchedFiles: postRebootMatchedFiles,
           },
         ]
@@ -361,6 +377,15 @@ export function focusedPrE2eTargetsForChangedFiles(
 export function focusedPrE2eJobsForChangedFiles(
   changedFiles: readonly string[],
 ): TrustedFocusedE2eJob[] {
+  const brevLaunchableFiles = stableUnique(
+    changedFiles.filter(
+      (file) =>
+        BREV_LAUNCHABLE_FILES.has(file) ||
+        (BREV_LAUNCHABLE_MODULE_PREFIXES.some((prefix) => file.startsWith(prefix)) &&
+          isRuntimeRelevant(file)) ||
+        BREV_LAUNCHABLE_SCENARIO_FILE.test(file),
+    ),
+  );
   const journaledRecreateResumeFiles = stableUnique(
     changedFiles.filter((file) => JOURNALED_RECREATE_RESUME_RUNTIME_FILES.has(file)),
   );
@@ -377,6 +402,9 @@ export function focusedPrE2eJobsForChangedFiles(
     changedFiles.filter(
       (file) => HERMES_CLI_ADAPTER_RUNTIME_FILES.has(file) && isRuntimeRelevant(file),
     ),
+  );
+  const hermesAcpRuntimeFiles = stableUnique(
+    changedFiles.filter((file) => HERMES_ACP_RUNTIME_FILES.has(file) && isRuntimeRelevant(file)),
   );
   const hermesCronRestoreFiles = stableUnique(
     changedFiles.filter(
@@ -408,24 +436,8 @@ export function focusedPrE2eJobsForChangedFiles(
       (file) => OPENCLAW_STARTUP_RUNTIME_FILES.has(file) && isRuntimeRelevant(file),
     ),
   );
-  const sharedShieldsRuntimeFiles = stableUnique(
-    changedFiles.filter(
-      (file) =>
-        (file.startsWith("src/lib/shields/") || SHARED_SHIELDS_RUNTIME_FILES.has(file)) &&
-        isRuntimeRelevant(file),
-    ),
-  );
-  const hermesShieldsRuntimeFiles = stableUnique(
-    changedFiles.filter(
-      (file) => HERMES_STARTUP_RUNTIME_FILES.has(file) && isRuntimeRelevant(file),
-    ),
-  );
-  const openClawShieldsRuntimeFiles = stableUnique(
-    changedFiles.filter(
-      (file) => OPENCLAW_STARTUP_RUNTIME_FILES.has(file) && isRuntimeRelevant(file),
-    ),
-  );
   return [
+    { id: "staging-brev-launchable", matchedFiles: brevLaunchableFiles },
     ...(journaledRecreateResumeFiles.length > 0
       ? [
           {
@@ -441,6 +453,10 @@ export function focusedPrE2eJobsForChangedFiles(
     ...HERMES_CLI_ADAPTER_E2E_JOB_IDS.map((id) => ({
       id,
       matchedFiles: hermesCliAdapterFiles,
+    })),
+    ...HERMES_ACP_E2E_JOB_IDS.map((id) => ({
+      id,
+      matchedFiles: hermesAcpRuntimeFiles,
     })),
     ...HERMES_CRON_RESTORE_E2E_JOB_IDS.map((id) => ({
       id,
@@ -462,18 +478,6 @@ export function focusedPrE2eJobsForChangedFiles(
       id,
       matchedFiles: openClawMessagingRuntimeFiles,
     })),
-    ...SHARED_SHIELDS_E2E_JOB_IDS.map((id) => ({
-      id,
-      matchedFiles: sharedShieldsRuntimeFiles,
-    })),
-    {
-      id: "hermes-shields-config",
-      matchedFiles: hermesShieldsRuntimeFiles,
-    },
-    {
-      id: "shields-config",
-      matchedFiles: openClawShieldsRuntimeFiles,
-    },
   ].filter((selection) => selection.matchedFiles.length > 0);
 }
 
@@ -616,7 +620,7 @@ export const RISK_RULES: readonly RiskRule[] = [
     summary:
       "Credential and security-boundary changes must preserve secrecy, sanitization, and fail-closed policy behavior.",
     tier: 3,
-    requiredJobs: ["cloud-inference", "security-posture"],
+    requiredJobs: ["full-e2e", "security-posture"],
     invariants: [
       "plaintext credentials do not cross logs, snapshots, artifacts, or sandbox boundaries",
       "invalid or missing security state fails closed",
@@ -634,7 +638,7 @@ export const RISK_RULES: readonly RiskRule[] = [
     summary:
       "E2E selection, execution, and evidence changes must preserve trusted dispatch and fail-closed result classification.",
     tier: 3,
-    requiredJobs: ["cloud-onboard", "cloud-inference", "security-posture"],
+    requiredJobs: ["cloud-onboard", "full-e2e", "security-posture"],
     invariants: [
       "the controller selects only trusted jobs and binds results to the intended PR commit",
       "single-shard and matrix jobs both emit complete evidence through the canonical reporter",
@@ -692,24 +696,6 @@ export const RISK_RULES: readonly RiskRule[] = [
     matches: (file) =>
       MANAGED_IMAGE_PROTECTED_RUNTIME_INPUTS.has(file) ||
       MANAGED_IMAGE_PROTECTED_RUNTIME_INPUT_PREFIXES.some((prefix) => file.startsWith(prefix)),
-  },
-  {
-    id: LLAMA_CPP_DGX_SPARK_QUALIFICATION_JOB_ID,
-    summary:
-      "Protected DGX Spark qualification must build and prove the exact NemoClaw-built llama.cpp ARM64 image candidate from declarative serving YAML.",
-    tier: 3,
-    requiredJobs: [LLAMA_CPP_DGX_SPARK_QUALIFICATION_JOB_ID],
-    invariants: [
-      "trusted main workflow code compiles candidate YAML and builds the exact PR head without executing candidate workflow code",
-      "one physical NVIDIA DGX Spark proves the exact model digest, image digest, server health, authenticated completion, and full GPU offload",
-      "the isolated registry, server container, network, credential file, and listener are removed before passing evidence is uploaded",
-    ],
-    // The trusted workflow and validators land while dormant. A later YAML-only
-    // activation candidate selects this protected lane after the Spark runner,
-    // approval environment, and verified local model path are provisioned.
-    matches: (file) =>
-      file === LLAMA_CPP_DGX_SPARK_QUALIFICATION_ACTIVATION_PATH ||
-      file === LLAMA_CPP_DGX_SPARK_AGENT_QUALIFICATION_PATH,
   },
   {
     id: "sandbox-boundary",

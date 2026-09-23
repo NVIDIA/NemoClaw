@@ -6,8 +6,8 @@
 // `workspace/USER.md`) while the sandbox is still live, BEFORE
 // `openshell sandbox delete`. Otherwise the per-sandbox PVC survives the
 // delete and re-onboarding with the same name resurrects the old workspace
-// files (USER.md, SOUL.md, ...). Same bug class as #3114 (stale shields
-// state surviving destroy -> re-onboard).
+// files (USER.md, SOUL.md, ...). Same bug class as #3114: stale host state
+// survives destroy and appears after re-onboarding.
 
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
@@ -30,7 +30,7 @@ function buildDeps(overrides: Partial<Record<string, unknown>> = {}) {
     getSandbox: vi.fn(() => ({ agent: "openclaw" }) as never),
     loadAgent: vi.fn(() => ({
       configPaths: { dir: "/sandbox/.openclaw" },
-      stateDirs: ["agents", "extensions", "workspace", "skills", "hooks", "identity"],
+      stateDirs: ["agents", "extensions", "workspace", "skills", "hooks", "identity", "state"],
       stateDirPrefixes: ["workspace-"],
       stateFiles: [],
     })),
@@ -67,6 +67,7 @@ describe("wipeSandboxState (#5449)", () => {
     // `workspace/` which holds USER.md / SOUL.md.
     expect(script).toContain("/sandbox/.openclaw");
     expect(script).toContain("workspace");
+    expect(script).toContain("'state'");
     expect(script).toMatch(/rm\s+-rf/);
   });
 
@@ -448,7 +449,7 @@ describe("wipeSandboxState (#5449)", () => {
     {
       agent: "langchain-deepagents-code",
       configDir: "/sandbox/.deepagents",
-      stateDirs: [".state", "skills", "agent/skills"],
+      stateDirs: [".state", "agent/skills"],
       stateDirPrefixes: [],
       stateFiles: [{ path: "config.toml" }],
       label: "langchain-deepagents-code",

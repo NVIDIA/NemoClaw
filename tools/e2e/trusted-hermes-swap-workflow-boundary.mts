@@ -228,6 +228,11 @@ const JOB_CONDITIONS = {
   "mcp-bridge": `\${{ ${TRUSTED_HERMES_SWAP_IF} && matrix.agent == 'hermes' }}`,
 } as const;
 
+const JOB_NEEDS = {
+  "hermes-e2e": ["base-image-publication", "generate-matrix", "package-openshell-sdk"],
+  "mcp-bridge": ["base-image-publication", "generate-matrix", "package-openshell-sdk"],
+} as const;
+
 function asRecord(value: unknown): WorkflowRecord {
   return value && typeof value === "object" && !Array.isArray(value)
     ? (value as WorkflowRecord)
@@ -258,7 +263,7 @@ export function validateTrustedHermesSwapWorkflow(workflowValue: unknown): strin
       continue;
     }
 
-    if (!isDeepStrictEqual(job.needs, ["base-image-publication", "generate-matrix"])) {
+    if (!isDeepStrictEqual(job.needs, JOB_NEEDS[jobName as keyof typeof JOB_NEEDS])) {
       errors.push(`${jobName} trusted Hermes swap job must depend on controller validation`);
     }
     if (provisionSteps.length !== 1) {

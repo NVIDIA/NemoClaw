@@ -7,7 +7,6 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { SandboxEntry } from "../state/registry";
-import * as agentForwardStop from "./agent-forward-stop";
 import type { ReleaseGatewayPortResult } from "./gateway-port-release";
 import type { GatewayStopDeps } from "./gateway-stop";
 import * as gatewayStop from "./gateway-stop";
@@ -130,6 +129,22 @@ describe("releaseGatewayPortForStop", () => {
     );
   });
 
+  it("does not treat a restored automatic port as authority for a no-name stop (#10824)", () => {
+    const release = gatewayRelease(releaseResult({ port: 8990, stopped: [99] }));
+
+    const outcome = gatewayStop.releaseGatewayPortForStop(undefined, {
+      env: {
+        NEMOCLAW_GATEWAY_PORT: "8990",
+        _NEMOCLAW_AUTOMATIC_GATEWAY_PORT: "1",
+      },
+      listSandboxes: sandboxList([]),
+      releaseManagedGatewayPort: release,
+    });
+
+    expect(outcome).toBe("not-scoped");
+    expect(release).not.toHaveBeenCalled();
+  });
+
   it("does not release when NEMOCLAW_GATEWAY_PORT is set but not a usable port (#8952)", () => {
     const release = gatewayRelease(releaseResult({ port: 8814, stopped: [99] }));
 
@@ -223,7 +238,7 @@ describe("stopAll gateway-stop wiring", () => {
     vi.restoreAllMocks();
   });
 
-  it("orders supervised-agent full stop as sandbox guard, forwards, then gateway release", () => {
+  it("orders supervised-agent full stop as sandbox guard then gateway release", () => {
     const pidDir = mkdtempSync(join(tmpdir(), "nemoclaw-gateway-stop-wiring-"));
     vi.stubEnv("PATH", "");
     const order: string[] = [];
@@ -240,11 +255,6 @@ describe("stopAll gateway-stop wiring", () => {
       .mockImplementation(() => {
         order.push("gateway-release");
         return "attempted";
-      });
-    const stopAgentForwards = vi
-      .spyOn(agentForwardStop, "stopAgentForwardPortsForStop")
-      .mockImplementation(() => {
-        order.push("host-forwards");
       });
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 
@@ -263,15 +273,11 @@ describe("stopAll gateway-stop wiring", () => {
       info: expect.any(Function),
       warn: expect.any(Function),
     });
-    expect(stopAgentForwards).toHaveBeenCalledWith("alpha", {
-      info: expect.any(Function),
-      warn: expect.any(Function),
-    });
     expect(releaseForStop).toHaveBeenCalledWith("alpha", {
       info: expect.any(Function),
       warn: expect.any(Function),
     });
-    expect(order).toEqual(["sandbox-guard", "host-forwards", "gateway-release"]);
+    expect(order).toEqual(["sandbox-guard", "gateway-release"]);
     const output = logSpy.mock.calls.map((call) => String(call[0] ?? "")).join("\n");
     expect(output).toContain("Hermes Agent gateway is managed by the sandbox");
     expect(output).toContain("All services stopped");
@@ -283,9 +289,6 @@ describe("stopAll gateway-stop wiring", () => {
     const releaseForStop = vi
       .spyOn(gatewayStop, "releaseGatewayPortForStop")
       .mockImplementation(() => "attempted");
-    const stopAgentForwards = vi
-      .spyOn(agentForwardStop, "stopAgentForwardPortsForStop")
-      .mockImplementation(() => {});
     vi.spyOn(sandboxGatewayStop, "stopSandboxChannels").mockImplementation(() => {});
 
     try {
@@ -295,7 +298,6 @@ describe("stopAll gateway-stop wiring", () => {
     }
 
     expect(releaseForStop).not.toHaveBeenCalled();
-    expect(stopAgentForwards).not.toHaveBeenCalled();
   });
 
   it("releases an explicit gateway port on full stop even without a sandbox name (#8952)", () => {
@@ -304,9 +306,6 @@ describe("stopAll gateway-stop wiring", () => {
     const releaseForStop = vi
       .spyOn(gatewayStop, "releaseGatewayPortForStop")
       .mockImplementation(() => "attempted");
-    const stopAgentForwards = vi
-      .spyOn(agentForwardStop, "stopAgentForwardPortsForStop")
-      .mockImplementation(() => {});
     vi.spyOn(sandboxGatewayStop, "stopSandboxChannels").mockImplementation(() => {});
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 
@@ -320,7 +319,6 @@ describe("stopAll gateway-stop wiring", () => {
       rmSync(pidDir, { recursive: true, force: true });
     }
 
-    expect(stopAgentForwards).not.toHaveBeenCalled();
     expect(releaseForStop).toHaveBeenCalledWith(undefined, {
       info: expect.any(Function),
       warn: expect.any(Function),
@@ -334,7 +332,6 @@ describe("stopAll gateway-stop wiring", () => {
     const pidDir = mkdtempSync(join(tmpdir(), "nemoclaw-unscoped-gateway-stop-"));
     vi.stubEnv("PATH", "");
     vi.spyOn(gatewayStop, "releaseGatewayPortForStop").mockImplementation(() => "not-scoped");
-    vi.spyOn(agentForwardStop, "stopAgentForwardPortsForStop").mockImplementation(() => {});
     vi.spyOn(sandboxGatewayStop, "stopSandboxChannels").mockImplementation(() => {});
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 
@@ -359,7 +356,6 @@ describe("stopAll gateway-stop wiring", () => {
     vi.stubEnv("PATH", "");
     vi.stubEnv("NEMOCLAW_GATEWAY_PORT", "8814");
     vi.spyOn(gatewayStop, "releaseGatewayPortForStop").mockImplementation(() => "unconfirmed");
-    vi.spyOn(agentForwardStop, "stopAgentForwardPortsForStop").mockImplementation(() => {});
     vi.spyOn(sandboxGatewayStop, "stopSandboxChannels").mockImplementation(() => {});
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 

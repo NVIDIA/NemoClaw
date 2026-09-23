@@ -5,6 +5,60 @@ import { describe, expect, it } from "vitest";
 import { runGate, successfulRequiredChecks } from "./check-gates-test-fixtures.ts";
 
 describe("maintainer merge-gate final PR snapshot", () => {
+  it.each([
+    {
+      name: "accepts a mergeable PR on a stable older base with a clean merge state",
+      fixture: { currentBaseSha: "d".repeat(40), mergeStateStatus: "CLEAN" },
+      expected: {
+        pass: true,
+        details: "No merge conflicts; PR branch is behind its base branch",
+        mergeable: "MERGEABLE",
+        mergeStateStatus: "CLEAN",
+      },
+    },
+    {
+      name: "accepts a mergeable PR when GitHub reports a behind merge state",
+      fixture: { currentBaseSha: "d".repeat(40), mergeStateStatus: "BEHIND" },
+      expected: {
+        pass: true,
+        details: "No merge conflicts; PR branch is behind its base branch",
+        mergeable: "MERGEABLE",
+        mergeStateStatus: "BEHIND",
+      },
+    },
+    {
+      name: "rejects a PR when GitHub reports a merge conflict",
+      fixture: {
+        currentBaseSha: "d".repeat(40),
+        mergeable: "CONFLICTING",
+        mergeStateStatus: "DIRTY",
+      },
+      expected: { pass: false, mergeable: "CONFLICTING", mergeStateStatus: "DIRTY" },
+    },
+    {
+      name: "rejects a PR when the base branch changes during gate evaluation",
+      fixture: {
+        currentBaseSha: "d".repeat(40),
+        finalCurrentBaseSha: "e".repeat(40),
+      },
+      expected: {
+        pass: false,
+        details: "The base SHA changed during gate evaluation. Rerun the gate checker.",
+      },
+    },
+  ])("$name", ({ fixture, expected }) => {
+    const output = JSON.parse(
+      runGate({
+        body: "Signed-off-by: Example User <user@example.com>",
+        verified: true,
+        ...fixture,
+      }).stdout,
+    );
+
+    expect(output.gates.conflicts).toMatchObject(expected);
+    expect(output.allPass).toBe(expected.pass);
+  });
+
   it("rejects a required check that becomes pending in the final PR observation", () => {
     const output = JSON.parse(
       runGate({

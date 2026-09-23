@@ -4,7 +4,7 @@
 import { dockerContainerInspectFormat } from "../../adapters/docker/inspect";
 import { dockerCapture } from "../../adapters/docker/run";
 import { resolveSandboxContainerOwner } from "../../domain/sandbox/container-owner";
-import { findLabeledSandboxContainers } from "../../onboard/docker-driver-sandbox-recovery";
+import { findLabeledSandboxContainers } from "../../onboard/docker-driver-container-observation";
 import * as registry from "../../state/registry";
 
 export type DockerHealthState = "healthy" | "unhealthy" | "starting" | "none" | "unknown";
@@ -40,7 +40,10 @@ interface ResolveDeps {
 const defaultDeps: ResolveDeps = {
   getSandbox: (name) => registry.getSandbox(name),
   listSandboxNames: () =>
-    registry.listSandboxes().sandboxes.filter(registry.isPublishedSandboxRegistration).map((entry) => entry.name),
+    registry
+      .listSandboxes()
+      .sandboxes.filter(registry.isPublishedSandboxRegistration)
+      .map((entry) => entry.name),
   dockerPsNames: () => dockerCapture(["ps", "--format", "{{.Names}}"], { ignoreError: true }),
   findLabeledSandboxContainers: (sandboxName) => findLabeledSandboxContainers(sandboxName),
   dockerInspectHealth: (containerName) =>

@@ -19,6 +19,7 @@ function isValidPort(value: number | undefined): value is number {
  * Returns null when unset, empty, or not a usable port integer.
  */
 export function resolveExplicitGatewayPortEnv(env: NodeJS.ProcessEnv = process.env): number | null {
+  if (env._NEMOCLAW_AUTOMATIC_GATEWAY_PORT === "1") return null;
   const raw = env.NEMOCLAW_GATEWAY_PORT;
   if (raw === undefined) return null;
   const trimmed = String(raw).trim();

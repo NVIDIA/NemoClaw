@@ -9,7 +9,6 @@ import type { HostCliClient } from "../fixtures/clients/host.ts";
 import type { SandboxClient } from "../fixtures/clients/sandbox.ts";
 import { expect } from "../fixtures/e2e-test.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
-import { REPO_ROOT } from "../fixtures/paths.ts";
 import {
   type FakeDockerApi,
   runDiscordGatewayClient,
@@ -183,67 +182,6 @@ export async function startFakeSlackApi(
   });
 }
 
-export async function applyFakePolicy(options: {
-  host: HostCliClient;
-  sandboxName: string;
-  api: FakeDockerApi;
-  protocol: "rest" | "websocket";
-  rewrite: "request-body-credential-rewrite" | "websocket-credential-rewrite";
-  providerName: string;
-  env: NodeJS.ProcessEnv;
-  redactions: string[];
-  artifactName: string;
-}): Promise<void> {
-  const policyHost = "host.openshell.internal";
-  const methods = options.protocol === "rest" ? ["GET", "POST"] : ["GET", "WEBSOCKET_TEXT"];
-  const args = [
-    "policy",
-    "update",
-    options.sandboxName,
-    "--add-endpoint",
-    `${policyHost}:${options.api.port}:read-write:${options.protocol}:enforce:${options.rewrite},allowed-ip=10.0.0.0/8,allowed-ip=172.16.0.0/12,allowed-ip=192.168.0.0/16`,
-  ];
-  for (const method of methods)
-    args.push("--add-allow", `${policyHost}:${options.api.port}:${method}:/**`);
-  args.push("--binary", "/usr/local/bin/node", "--binary", "/usr/bin/node", "--wait");
-  const result = await options.host.command("openshell", args, {
-    artifactName: options.artifactName,
-    env: options.env,
-    redactionValues: options.redactions,
-    timeoutMs: 120_000,
-  });
-  expectExitZero(result, options.artifactName);
-
-  const binding = await options.host.command(
-    "bash",
-    [
-      "-lc",
-      String.raw`set -eu
-policy_file="$(mktemp)"
-trap 'rm -f "$policy_file"' EXIT
-"$1" policy get --base "$2" >"$policy_file"
-node --import tsx "$7" "$policy_file" "$3" "$4" "$5" "$6"
-"$1" policy set --policy "$policy_file" --wait "$2"`,
-      `bind-fake-${options.protocol}-policy`,
-      options.host.openshellCommandPath,
-      options.sandboxName,
-      options.providerName,
-      policyHost,
-      String(options.api.port),
-      options.protocol,
-      path.join(REPO_ROOT, "test/e2e/fixtures/hermes-discord-policy-binding.ts"),
-    ],
-    {
-      artifactName: `${options.artifactName}-credential-binding`,
-      cwd: REPO_ROOT,
-      env: options.env,
-      redactionValues: options.redactions,
-      timeoutMs: 120_000,
-    },
-  );
-  expectExitZero(binding, `${options.artifactName} credential binding`);
-}
-
 export async function assertOpenClawStateRoot(
   sandbox: SandboxClient,
   sandboxName: string,
@@ -276,49 +214,65 @@ export async function assertOpenClawStateRoot(
 }
 
 // Source-of-truth boundary: the live pairing probe imports the conversation
-// runtime from the active `openclaw` binary installed in the sandbox. Connect
-// shells may shadow that binary with a shell function, so the locator asks bash
-// for `type -P openclaw` and intentionally ignores functions/aliases. The invalid
-// state is an active OpenClaw package without `dist/plugin-sdk/conversation-runtime.js`;
+// runtime from the canonical OpenClaw package installed in the managed image.
+// OpenShell command execution does not guarantee that non-login Node probes can
+// discover the CLI through PATH, while the image contract always exposes the
+// active package at `/usr/local/lib/node_modules/openclaw`. The invalid state is
+// that managed package missing or lacking `dist/plugin-sdk/conversation-runtime.js`;
 // this pairing migration fails closed for that installer/package drift instead of
-// searching secondary global installs. Support tests cover shell-function shadows
-// and the no-runtime path. Remove this locator once OpenClaw exposes a stable
-// CLI/import for issuing pairing challenges from E2E probes.
+// searching secondary global installs. OpenClaw 2026.9.1 moved challenge issuance
+// to `dist/plugin-sdk/channel-pairing.js`, so the loader adapts that public split
+// export to the legacy helper shape used by these probes. Support tests cover both
+// layouts, managed-root validation, and the no-runtime path. Remove this locator once
+// OpenClaw exposes a stable CLI for issuing pairing challenges from E2E probes.
 export const LOAD_CONVERSATION_RUNTIME_SOURCE = String.raw`
 import fs from "node:fs";
 import path from "node:path";
-import { execFileSync } from "node:child_process";
 import { pathToFileURL } from "node:url";
 
-function findOpenClawPackageRootFromBinary() {
-  let binary = "";
-  try { binary = execFileSync("bash", ["-c", "type -P openclaw || command -v openclaw"], { encoding: "utf8" }).trim(); } catch { return null; }
-  if (!binary) return null;
-  let current = "";
-  try { current = fs.realpathSync(binary); } catch { return null; }
-  try { if (fs.statSync(current).isFile()) current = path.dirname(current); } catch { return null; }
-  for (let depth = 0; depth < 8; depth += 1) {
-    const manifest = path.join(current, "package.json");
-    if (fs.existsSync(manifest)) {
-      try {
-        const pkg = JSON.parse(fs.readFileSync(manifest, "utf8"));
-        if (pkg?.name === "openclaw") return current;
-      } catch {}
-    }
-    const parent = path.dirname(current);
-    if (parent === current) break;
-    current = parent;
-  }
-  return null;
+function managedOpenClawPackageRoot() {
+  return process.env.NEMOCLAW_E2E_OPENCLAW_PACKAGE_ROOT || "/usr/local/lib/node_modules/openclaw";
 }
 
 async function loadConversationRuntime() {
-  const candidates = [];
-  const binaryRoot = findOpenClawPackageRootFromBinary();
-  if (binaryRoot) candidates.push(binaryRoot);
+  const candidates = [managedOpenClawPackageRoot()];
   for (const root of [...new Set(candidates)]) {
+    try {
+      const pkg = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"));
+      if (pkg?.name !== "openclaw") continue;
+    } catch {
+      continue;
+    }
     const runtime = path.join(root, "dist/plugin-sdk/conversation-runtime.js");
-    if (fs.existsSync(runtime)) return import(pathToFileURL(runtime).href);
+    if (!fs.existsSync(runtime)) continue;
+    const conversation = await import(pathToFileURL(runtime).href);
+    const channelPairingPath = path.join(root, "dist/plugin-sdk/channel-pairing.js");
+    const directIssuer =
+      typeof conversation.issuePairingChallenge === "function"
+        ? conversation.issuePairingChallenge
+        : null;
+    const channelPairing =
+      directIssuer || !fs.existsSync(channelPairingPath)
+        ? null
+        : await import(pathToFileURL(channelPairingPath).href);
+    const createSplitIssuer =
+      typeof channelPairing?.createChannelPairingChallengeIssuer === "function"
+        ? channelPairing.createChannelPairingChallengeIssuer
+        : null;
+    const splitIssuer = createSplitIssuer
+      ? async (params) => {
+          const { channel, accountId, upsertPairingRequest, ...challenge } = params;
+          const issueChallenge = createSplitIssuer({ channel, accountId, upsertPairingRequest });
+          return issueChallenge(challenge);
+        }
+      : null;
+    return directIssuer
+      ? conversation
+      : splitIssuer
+        ? { ...conversation, issuePairingChallenge: splitIssuer }
+        : Promise.reject(
+            new Error("OpenClaw pairing challenge runtime not found under active package: " + root),
+          );
   }
   throw new Error("OpenClaw conversation runtime not found; checked: " + candidates.join(", "));
 }
@@ -606,11 +560,7 @@ export async function issuePairingRequest(options: {
   const script = options.channel === "slack" ? SLACK_PAIRING_SCRIPT : DISCORD_PAIRING_SCRIPT;
   const args =
     options.channel === "slack"
-      ? [
-          options.fakeSlackPort ?? "",
-          options.fakeSlackWebSocketPort ?? "",
-          PAIRING_USER.slack,
-        ]
+      ? [options.fakeSlackPort ?? "", options.fakeSlackWebSocketPort ?? "", PAIRING_USER.slack]
       : [PAIRING_USER.discord, DISCORD_DM_CHANNEL];
   return sandboxShWithArgs(options.sandbox, options.sandboxName, script, args, {
     artifactName: `${options.channel}-issue-pairing-request`,
@@ -619,12 +569,47 @@ export async function issuePairingRequest(options: {
   });
 }
 
+const PAIRING_STATE_PROBE_SOURCE = String.raw`
+import json
+import sqlite3
+import sys
+
+query = sys.argv[1]
+parameters = json.loads(sys.argv[2])
+database = sqlite3.connect(
+    "file:/sandbox/.openclaw/state/openclaw.sqlite?mode=ro",
+    uri=True,
+    timeout=5,
+)
+try:
+    database.execute("PRAGMA query_only = ON")
+    database.execute("PRAGMA trusted_schema = OFF")
+    row = database.execute(query, parameters).fetchone()
+finally:
+    database.close()
+sys.exit(row is None)
+`;
+
+function buildPairingStateCommand(
+  mode: "pending" | "allowed",
+  channel: PairingChannel,
+  code: string,
+  user: string,
+): string {
+  const query =
+    mode === "pending"
+      ? "SELECT 1 FROM channel_pairing_requests WHERE channel_key = ? AND code = ? AND request_id = ?"
+      : "SELECT 1 FROM channel_pairing_allow_entries WHERE channel_key = ? AND entry = ?";
+  const parameters = mode === "pending" ? [channel, code, user] : [channel, user];
+  return `python3 -c ${shellQuote(PAIRING_STATE_PROBE_SOURCE)} ${shellQuote(query)} ${shellQuote(JSON.stringify(parameters))}`;
+}
+
 export function buildPairingPendingCommand(
   channel: PairingChannel,
   code: string,
   user: string,
 ): string {
-  return `test -f /sandbox/.openclaw/credentials/${channel}-pairing.json && grep -F ${shellQuote(code)} /sandbox/.openclaw/credentials/${channel}-pairing.json && grep -F ${shellQuote(user)} /sandbox/.openclaw/credentials/${channel}-pairing.json`;
+  return buildPairingStateCommand("pending", channel, code, user);
 }
 
 export function buildPairingApproveCommand(channel: PairingChannel, code: string): string {
@@ -632,7 +617,7 @@ export function buildPairingApproveCommand(channel: PairingChannel, code: string
 }
 
 export function buildPairingAllowFromCommand(channel: PairingChannel, user: string): string {
-  return `test -f /sandbox/.openclaw/credentials/${channel}-default-allowFrom.json && grep -F ${shellQuote(user)} /sandbox/.openclaw/credentials/${channel}-default-allowFrom.json`;
+  return buildPairingStateCommand("allowed", channel, "", user);
 }
 
 export async function approveAndAssertPairing(options: {
@@ -647,9 +632,12 @@ export async function approveAndAssertPairing(options: {
     options.sandbox,
     options.sandboxName,
     buildPairingPendingCommand(options.channel, options.code, user),
-    { artifactName: `${options.channel}-pending-file`, redactionValues: options.redactions },
+    {
+      artifactName: `${options.channel}-pending-sqlite-state`,
+      redactionValues: options.redactions,
+    },
   );
-  expectExitZero(pending, `${options.channel} pending file`);
+  expectExitZero(pending, `${options.channel} pending SQLite state`);
 
   const list = await sandboxSh(
     options.sandbox,
@@ -694,9 +682,12 @@ export async function approveAndAssertPairing(options: {
     options.sandbox,
     options.sandboxName,
     buildPairingAllowFromCommand(options.channel, user),
-    { artifactName: `${options.channel}-allow-from`, redactionValues: options.redactions },
+    {
+      artifactName: `${options.channel}-allow-from-sqlite-state`,
+      redactionValues: options.redactions,
+    },
   );
-  expectExitZero(allow, `${options.channel} allowFrom file`);
+  expectExitZero(allow, `${options.channel} allowFrom SQLite state`);
 
   const repeat = await sandboxSh(
     options.sandbox,

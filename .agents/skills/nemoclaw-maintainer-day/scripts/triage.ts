@@ -9,7 +9,7 @@
  * scoring weights, filters exclusions from the state file, and outputs
  * a ranked JSON queue.
  *
- * Usage: node --experimental-strip-types --no-warnings .agents/skills/nemoclaw-maintainer-day/scripts/triage.ts [--limit N] [--approved-only]
+ * Usage: node --no-warnings .agents/skills/nemoclaw-maintainer-day/scripts/triage.ts [--limit N] [--approved-only]
  */
 
 import { existsSync, readFileSync } from "node:fs";

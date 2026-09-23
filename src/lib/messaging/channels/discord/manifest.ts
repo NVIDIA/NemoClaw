@@ -18,6 +18,8 @@ export const discordManifest = {
       kind: "secret",
       required: true,
       envKey: "DISCORD_BOT_TOKEN",
+      formatPattern: "^(?!<your-discord-bot-token>$)\\S+$",
+      formatHint: "Replace the documentation placeholder with your real Discord bot token.",
       prompt: {
         label: "Discord Bot Token",
         help: "Discord Developer Portal → Applications → Bot → Reset/Copy Token.",
@@ -82,11 +84,23 @@ export const discordManifest = {
       validationWarningLines: [
         "For Discord preset validation, do not use curl as the success signal:",
         "curl is not in the preset binary allowlist, so curl probes can fail even",
-        "when the policy is working. Use Node HTTPS against",
-        "https://discord.com/api/v10/gateway or validate the configured",
-        'messaging bridge/gateway path. DNS-only checks such as dns.resolve("gateway.discord.gg")',
+        "when the policy is working. Validate the configured messaging bridge/gateway path.",
+        'DNS-only checks such as dns.resolve("gateway.discord.gg")',
         "can also be inconclusive behind a proxy.",
+        "The agent-specific gateway probe prints an HTTP status when it reaches Discord.",
+        "Any HTTP response confirms reachability. A transport error or OpenShell policy",
+        "denial means validation failed.",
       ],
+      validationWarningLinesByAgent: {
+        openclaw: [
+          "OpenClaw validation uses its Node runtime:",
+          `node -e "require('node:https').get('https://discord.com/api/v10/gateway',r=>console.log(r.statusCode)).on('error',e=>{console.error(e.message);process.exitCode=1})"`,
+        ],
+        hermes: [
+          "Hermes validation uses its virtual-environment Python runtime:",
+          `nemohermes <name> exec -- /opt/hermes/.venv/bin/python -c "import urllib.error, urllib.request; u='https://discord.com/api/v10/gateway';\ntry: print(urllib.request.urlopen(u, timeout=20).status)\nexcept urllib.error.HTTPError as error: print(error.code)"`,
+        ],
+      },
     },
   ],
   render: [
@@ -200,11 +214,11 @@ export const discordManifest = {
       spec: "npm:@openclaw/discord@{{openclaw.version}}",
       pin: true,
       integrityByVersion: {
-        "2026.7.1":
-          "sha512-tZfdC1YA8oVLvc2BK1w0F6rUljS5ugCOp2uWe0vPsbG1fbzVVIO4V32RoqZznGHe5u2R9u4n1aV5Z/qa1m2oFg==",
+        "2026.9.1":
+          "sha512-qNmN2a8A9dET4igPp0RML171sEn8PDMyNCYNp/DqcJ4tn3XTHpacSOTkqBmv5yXTycJRC9rfFP8FT/SdW0Rldg==",
       },
       tarballUrlByVersion: {
-        "2026.7.1": "https://registry.npmjs.org/@openclaw/discord/-/discord-2026.7.1.tgz",
+        "2026.9.1": "https://registry.npmjs.org/@openclaw/discord/-/discord-2026.9.1.tgz",
       },
       required: true,
     },

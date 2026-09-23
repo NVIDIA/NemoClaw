@@ -73,7 +73,8 @@ const provider = createInMemoryRuntimeProviderBundle({
   hostLocalInference: { services: ["vllm"], createOperation: () => operation },
 });
 
-vi.mock("../../adapters/openshell/runtime", () => ({
+vi.mock("../../adapters/openshell/runtime", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../adapters/openshell/runtime")>()),
   captureOpenshell: vi.fn((args: string[]) => ({
     status: 0,
     output: args[0] === "policy" ? "version: 1\nnetwork_policies: {}\n" : "alpha Ready\n",
@@ -96,16 +97,8 @@ vi.mock("../../runtime-recovery", () => ({
   parseLiveSandboxNames: vi.fn(() => new Set(["alpha"])),
 }));
 
-vi.mock("../../shields", () => ({
-  isShieldsDown: vi.fn(() => true),
-  recoverCompletedAutoRestoreBeforeCommand: vi.fn(),
+vi.mock("../../sandbox/mutable-config-perms", () => ({
   repairMutableConfigPerms: vi.fn(() => ({ applied: true, verified: true, errors: [] })),
-}));
-
-vi.mock("../../shields/timer-bound-lock", () => ({
-  withTimerBoundShieldsMutationLock: vi.fn(
-    (_name: string, _operation: string, callback: () => unknown) => callback(),
-  ),
 }));
 
 vi.mock("../../state/mcp-lifecycle-lock", () => ({
@@ -181,13 +174,13 @@ function sandbox(receipt: string): SandboxEntry {
   };
 }
 
-function successfulRestore(
+async function successfulRestore(
   _name: string,
   _path: string,
   options: SnapshotRestoreOptions = {},
-): RestoreResult {
+): Promise<RestoreResult> {
   harness.events.push("restore-start");
-  options.validateBeforeMutation?.();
+  await options.validateBeforeMutation?.();
   harness.events.push("restore-complete");
   return {
     success: true,

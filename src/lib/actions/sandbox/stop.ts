@@ -13,30 +13,47 @@ import {
   CURRENT_RUNTIME_PROVIDER_BUNDLES,
   type RuntimeProviderBundleRegistry,
 } from "../../onboard/runtime-provider/access";
+import {
+  classifyRegisteredPortableAgentLifecycle,
+  qualifyLegacyHermesPortableLifecycleProfile,
+  stopPortableAgentSandboxLifecycle,
+} from "../../onboard/experimental/portable-agent-lifecycle";
 import { parseLiveSandboxEntries } from "../../runtime-recovery";
 import * as registry from "../../state/registry";
 import { stopSandboxChannels } from "../../tunnel/sandbox-gateway-stop";
 import { teardownSandboxDashboardForward } from "./forward-recovery";
 import {
   captureSandboxOwnershipPhases,
+  hermesPortableLifecycleLockOptions,
   resolvePersistedSandboxOwnershipGateway,
-  withSandboxLifecycleLockSync,
+  withSandboxLifecycleLock,
 } from "./gateway-state";
 import {
   resolveSandboxLifecycleProvider,
   type SandboxLifecycleResult,
 } from "./runtime/lifecycle-runtime";
+import {
+  mutateStandardSandboxLifecycle,
+  type StandardSandboxLifecycleDeps,
+} from "./runtime/standard-lifecycle";
 
-function teardownDashboardForwardBestEffort(
+async function teardownDashboardForwardBestEffort(
   sandboxName: string,
   teardown: typeof teardownSandboxDashboardForward,
   warn: (message: string) => void,
-): void {
+): Promise<boolean> {
   try {
-    teardown(sandboxName);
+    if ((await teardown(sandboxName)) === false) {
+      warn(
+        `  Warning: a ForwardTcp port for '${sandboxName}' did not release. Retry '${CLI_NAME} ${sandboxName} stop'.`,
+      );
+      return false;
+    }
+    return true;
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
     warn(`  Warning: could not release the dashboard port-forward: ${detail}`);
+    return false;
   }
 }
 
@@ -113,13 +130,17 @@ export function discoverActiveOllamaSandboxNames(
         }`,
       };
     }
-    const phases = new Map(
-      parseEntries(result.output).map((entry) => [entry.name, entry.phase]),
-    );
+    const phases = new Map(parseEntries(result.output).map((entry) => [entry.name, entry.phase]));
     const activeSandboxes: string[] = [];
     for (const peerName of peerNames) {
       const phase = phases.get(peerName);
-      if (phase === undefined || phase === "Error" || phase === "Failed" || phase === "Evicted") {
+      if (
+        phase === undefined ||
+        phase === "Stopped" ||
+        phase === "Error" ||
+        phase === "Failed" ||
+        phase === "Evicted"
+      ) {
         continue;
       }
       if (phase === null || phase === "Unknown") {
@@ -144,19 +165,20 @@ function releaseStoppedSandboxOllamaModel(
   if (!isLocalOllamaRouteOwner(sandbox)) return { ok: true };
 
   try {
-    const proxy = require("../../inference/ollama/proxy") as typeof import("../../inference/ollama/proxy");
+    const proxy =
+      require("../../inference/ollama/proxy") as typeof import("../../inference/ollama/proxy");
     const withOwnershipLock =
       deps.withOllamaModelOwnershipLock ?? proxy.withOllamaModelOwnershipLock;
-    const loadPersistedOllamaHost =
-      deps.loadPersistedOllamaHost ?? proxy.loadPersistedOllamaHost;
+    const loadPersistedOllamaHost = deps.loadPersistedOllamaHost ?? proxy.loadPersistedOllamaHost;
     return withOwnershipLock(() => {
       const selectedHost = loadPersistedOllamaHost();
       if (!isLocalOllamaRouteOwner(sandbox, selectedHost)) return { ok: true };
       const { sandboxes } = (deps.listSandboxes ?? registry.listSandboxes)();
       const matchingPeers = matchingOllamaModelPeers(sandbox, sandboxes, selectedHost);
-      const discovery = (
-        deps.discoverActiveOllamaSandboxNames ?? discoverActiveOllamaSandboxNames
-      )(matchingPeers, deps.environment ?? process.env);
+      const discovery = (deps.discoverActiveOllamaSandboxNames ?? discoverActiveOllamaSandboxNames)(
+        matchingPeers,
+        deps.environment ?? process.env,
+      );
       if (!discovery.ok) {
         return {
           ok: false,
@@ -231,9 +253,10 @@ function releaseStoppedSandboxOllamaModel(
 
 export type { SandboxLifecycleResult } from "./runtime/lifecycle-runtime";
 
-export interface SandboxStopDeps {
+export interface SandboxStopDeps extends StandardSandboxLifecycleDeps {
   environment?: NodeJS.ProcessEnv;
   getSandbox?: typeof registry.getSandbox;
+  updateSandbox?: typeof registry.updateSandbox;
   runtimeProviders?: RuntimeProviderBundleRegistry;
   stopSandboxChannels?: typeof stopSandboxChannels;
   teardownSandboxDashboardForward?: typeof teardownSandboxDashboardForward;
@@ -246,7 +269,9 @@ export interface SandboxStopDeps {
   decideOllamaModelOwnership?: typeof decideOllamaModelOwnership;
   loadPersistedOllamaHost?: () => OllamaHostRoute | null;
   withOllamaModelOwnershipLock?: typeof import("../../inference/ollama/proxy").withOllamaModelOwnershipLock;
-  withLifecycleLockSync?: typeof withSandboxLifecycleLockSync;
+  qualifyLegacyPortableProfile?: typeof qualifyLegacyHermesPortableLifecycleProfile;
+  stopPortableSandbox?: typeof stopPortableAgentSandboxLifecycle;
+  withLifecycleLock?: typeof withSandboxLifecycleLock;
   log?: (message: string) => void;
   warn?: (message: string) => void;
 }
@@ -255,19 +280,21 @@ export interface SandboxStopDeps {
  * Stop the selected provider workload while preserving registry, workspace,
  * credentials, and shared gateway state.
  */
-export function stopSandbox(
+export async function stopSandbox(
   sandboxName: string,
   deps: SandboxStopDeps = {},
-): SandboxLifecycleResult {
-  return (deps.withLifecycleLockSync ?? withSandboxLifecycleLockSync)(sandboxName, () =>
-    stopSandboxWithinLifecycleFence(sandboxName, deps),
+): Promise<SandboxLifecycleResult> {
+  return await (deps.withLifecycleLock ?? withSandboxLifecycleLock)(
+    sandboxName,
+    () => stopSandboxWithinLifecycleFence(sandboxName, deps),
+    hermesPortableLifecycleLockOptions(sandboxName, deps.environment ?? process.env),
   );
 }
 
-function stopSandboxWithinLifecycleFence(
+async function stopSandboxWithinLifecycleFence(
   sandboxName: string,
   deps: SandboxStopDeps,
-): SandboxLifecycleResult {
+): Promise<SandboxLifecycleResult> {
   const log = deps.log ?? console.log;
   const warn = deps.warn ?? console.warn;
   const sandbox = (deps.getSandbox ?? registry.getSandbox)(sandboxName);
@@ -280,7 +307,9 @@ function stopSandboxWithinLifecycleFence(
   if (!resolved.ok) return resolved.result;
 
   const input = {
+    readRegistry: deps.getSandbox ?? registry.getSandbox,
     environment: deps.environment ?? process.env,
+    gatewayName: resolvePersistedSandboxOwnershipGateway(resolved.sandbox),
     log,
     sandbox: resolved.sandbox,
     sandboxName,
@@ -289,34 +318,109 @@ function stopSandboxWithinLifecycleFence(
   if (preflight) return preflight;
 
   let channelsStopped = false;
-  const outcome = resolved.lifecycle.stop(input, {
-    beforeStop() {
-      if (channelsStopped) return;
-      channelsStopped = true;
-      try {
-        (deps.stopSandboxChannels ?? stopSandboxChannels)(sandboxName, {
-          channelStopTransport: resolved.lifecycle.channelStopTransport,
-          info: (message) => log(`  ${message}`),
-          warn: (message) => warn(`  ${message}`),
-        });
-      } catch (error) {
-        const detail = error instanceof Error ? error.message : String(error);
-        warn(`  Warning: could not stop in-sandbox channels gracefully: ${detail}`);
+  const beforeStop = () => {
+    if (channelsStopped) return;
+    channelsStopped = true;
+    try {
+      (deps.stopSandboxChannels ?? stopSandboxChannels)(sandboxName, {
+        channelStopTransport: resolved.control.channelStopTransport,
+        info: (message) => log(`  ${message}`),
+        warn: (message) => warn(`  ${message}`),
+      });
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      warn(`  Warning: could not stop in-sandbox channels gracefully: ${detail}`);
+    }
+  };
+  let outcome: {
+    readonly exitCode: number;
+    readonly message?: string;
+    readonly state?: "already-stopped" | "stopped";
+    readonly hermesPortableVerified?: true;
+  };
+  try {
+    const portableAuthority = classifyRegisteredPortableAgentLifecycle(
+      sandboxName,
+      resolved.bundle.identity.id,
+      resolved.sandbox,
+      {
+        env: input.environment,
+        readRegistry: (name) => input.readRegistry?.(name) ?? null,
+        ...(deps.qualifyLegacyPortableProfile
+          ? { qualifyLegacyHermes: deps.qualifyLegacyPortableProfile }
+          : {}),
+      },
+    );
+    const portableAuthorityRecorded = portableAuthority.kind === "portable";
+    const portable = portableAuthorityRecorded
+      ? await (deps.stopPortableSandbox ?? stopPortableAgentSandboxLifecycle)(
+          sandboxName,
+          {
+            agent: resolved.sandbox.agent,
+            gatewayName: resolved.sandbox.gatewayName ?? "nemoclaw",
+            lifecycleGeneration: resolved.sandbox.lifecycleGeneration,
+            openshellDriver: resolved.sandbox.openshellDriver,
+            provider: resolved.sandbox.provider,
+          },
+          beforeStop,
+          {
+            env: input.environment,
+            log,
+            readRegistry: (name) => input.readRegistry?.(name) ?? null,
+          },
+        )
+      : ({ kind: "not-installed" } as const);
+    if (portable.kind === "already-stopped" || portable.kind === "stopped") {
+      const registryHermes = resolved.sandbox.agent === "hermes";
+      const portableHermes = portable.portableAgent === "hermes";
+      if (registryHermes !== portableHermes) {
+        throw new Error("Portable stop authority disagrees with the registered sandbox agent");
       }
-    },
-  });
+      outcome = {
+        exitCode: 0,
+        state: portable.kind === "already-stopped" ? "already-stopped" : "stopped",
+        ...(portableHermes ? { hermesPortableVerified: true as const } : {}),
+      };
+    } else {
+      beforeStop();
+      outcome = await mutateStandardSandboxLifecycle("stop", input, deps);
+    }
+  } catch (error) {
+    return { exitCode: 1, message: error instanceof Error ? error.message : String(error) };
+  }
   if (outcome.exitCode !== 0) return outcome;
   const hermesPortableVerified =
     "hermesPortableVerified" in outcome && outcome.hermesPortableVerified === true;
-  const ollamaRelease = releaseStoppedSandboxOllamaModel(resolved.sandbox, deps, log);
-  if (!hermesPortableVerified) {
-    teardownDashboardForwardBestEffort(
+  const stopIntentRecorded =
+    hermesPortableVerified ||
+    registry.recordSandboxStopIntent(
       sandboxName,
-      deps.teardownSandboxDashboardForward ?? teardownSandboxDashboardForward,
-      warn,
+      true,
+      deps.updateSandbox ?? registry.updateSandbox,
     );
+  const ollamaRelease = releaseStoppedSandboxOllamaModel(resolved.sandbox, deps, log);
+  const dashboardForwardReleased = await teardownDashboardForwardBestEffort(
+    sandboxName,
+    deps.teardownSandboxDashboardForward ?? teardownSandboxDashboardForward,
+    warn,
+  );
+  if (!stopIntentRecorded) {
+    return {
+      exitCode: 1,
+      message:
+        `Sandbox '${sandboxName}' stopped, but NemoClaw could not record the intentional stop. ` +
+        `Retry '${CLI_NAME} ${sandboxName} stop'.`,
+    };
   }
   if (!ollamaRelease.ok) return { exitCode: 1, message: ollamaRelease.message };
+  if (!dashboardForwardReleased) {
+    return {
+      exitCode: 1,
+      message:
+        `Sandbox '${sandboxName}' stopped, but release of its host forward ports could not be ` +
+        `proved. Recoverable registry state was preserved. Retry '${CLI_NAME} ${sandboxName} stop'.`,
+    };
+  }
   if (hermesPortableVerified) {
     log(
       outcome.state === "already-stopped"

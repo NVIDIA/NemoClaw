@@ -85,15 +85,8 @@ function readPreparedPolicy(prepared: {
 
 describe("initial sandbox policy real preset merge", () => {
   const managedImagePolicyPathsByAgent = {
-    openclaw: [
-      ["nemoclaw-blueprint", "policies", "openclaw-sandbox.yaml"],
-      ["nemoclaw-blueprint", "policies", "openclaw-sandbox-permissive.yaml"],
-      ["agents", "openclaw", "policy-permissive.yaml"],
-    ],
-    hermes: [
-      ["agents", "hermes", "policy-additions.yaml"],
-      ["agents", "hermes", "policy-permissive.yaml"],
-    ],
+    openclaw: [["nemoclaw-blueprint", "policies", "openclaw-sandbox.yaml"]],
+    hermes: [["agents", "hermes", "policy-additions.yaml"]],
     "langchain-deepagents-code": [["agents", "langchain-deepagents-code", "policy-additions.yaml"]],
   } as const satisfies Record<
     (typeof SHIPPED_MANAGED_IMAGE_AGENTS)[number],
@@ -106,89 +99,59 @@ describe("initial sandbox policy real preset merge", () => {
   const shippingPolicyCases = managedImagePolicyCases.filter(
     ({ agent }) => agent !== "langchain-deepagents-code",
   );
-  const managedStartupReadOnlyPaths = [
-    { path: MANAGED_STARTUP_MERGED_CA_FILE, issue: "#9360", purpose: "CA bundle" },
-    {
-      path: MANAGED_STARTUP_RUNTIME_ENV_FILE,
-      issue: "#9357",
-      purpose: "runtime environment",
-    },
+  const managedStartupExchangePaths = [
+    MANAGED_STARTUP_MERGED_CA_FILE,
+    MANAGED_STARTUP_RUNTIME_ENV_FILE,
+    MANAGED_STARTUP_COMPLETION_FILE,
   ] as const;
   const protectedManagedStartupPaths = [
-    MANAGED_STARTUP_COMPLETION_FILE,
     "/run/nemoclaw/openclaw-config-guard",
     MANAGED_STARTUP_SHARED_ROLLBACK_RECEIPT_DIRECTORY,
     MANAGED_STARTUP_SHARED_TRANSACTION_DIRECTORY,
     MANAGED_STARTUP_SHARED_COMMIT_RECEIPT_DIRECTORY,
   ] as const;
-  const hermesRuntimeStateMutationControl = {
-    receipts: "/var/lib/nemoclaw/runtime-state-mutation",
-    startupHandoff: "/run/nemoclaw/runtime-state-mutation-startup",
-  } as const;
-
   it("covers the complete shipped managed startup trust policy matrix", () => {
     const policyIdentities = managedImagePolicyCases.map(
       ({ path: policyPath, agent }) => `${agent}:${policyPath.join("/")}`,
     );
 
     expect(Object.keys(managedImagePolicyPathsByAgent)).toEqual([...SHIPPED_MANAGED_IMAGE_AGENTS]);
-    expect(policyIdentities).toHaveLength(6);
+    expect(policyIdentities).toHaveLength(3);
     expect(new Set(policyIdentities).size).toBe(policyIdentities.length);
-    expect(managedStartupReadOnlyPaths.map(({ path: trustedPath }) => trustedPath)).toEqual([
-      MANAGED_STARTUP_MERGED_CA_FILE,
-      MANAGED_STARTUP_RUNTIME_ENV_FILE,
+    expect(managedStartupExchangePaths.map((exchangePath) => path.dirname(exchangePath))).toEqual([
+      "/tmp",
+      "/tmp",
+      "/tmp",
     ]);
   });
 
-  it.each(
-    managedImagePolicyCases.flatMap((policyCase) =>
-      managedStartupReadOnlyPaths.map((trustedPath) => ({ policyCase, trustedPath })),
-    ),
-  )(
-    "grants $policyCase.agent policy $policyCase.path exact read-only access to the managed startup $trustedPath.purpose ($trustedPath.issue)",
-    ({ policyCase, trustedPath }) => {
+  it("lets the Hermes supervisor read the root-issued expected-exit lease", () => {
+    const prepared = prepareInitialSandboxCreatePolicy(
+      repoPath("agents", "hermes", "policy-additions.yaml"),
+      [],
+      { agentName: "hermes" },
+    );
+    const policy = readPreparedPolicy(prepared);
+
+    expect(policy.filesystem_policy?.read_only).toContain(
+      "/run/nemoclaw/managed-gateway-expected-exit",
+    );
+    expect(policy.filesystem_policy?.read_write).not.toContain(
+      "/run/nemoclaw/managed-gateway-expected-exit",
+    );
+  });
+
+  it.each(managedImagePolicyCases)(
+    "uses the existing sticky temporary exchange for $agent managed startup handoff (#11905)",
+    (policyCase) => {
       const prepared = prepareInitialSandboxCreatePolicy(repoPath(...policyCase.path), [], {
         agentName: policyCase.agent,
       });
       const policy = readPreparedPolicy(prepared);
-      const readOnly = policy.filesystem_policy?.read_only ?? [];
-      const readWrite = policy.filesystem_policy?.read_write ?? [];
-      const normalizedReadOnly = readOnly.map(normalizeFilesystemPolicyPath);
-      const normalizedReadWrite = readWrite.map(normalizeFilesystemPolicyPath);
-      const trustedPathAncestors = filesystemPolicyAncestors(trustedPath.path);
 
-      expect(readOnly, policyCase.path.join("/")).toContain(trustedPath.path);
-      expect(normalizedReadWrite, policyCase.path.join("/")).not.toContain(trustedPath.path);
-      expect(
-        normalizedReadOnly.filter((candidate) => trustedPathAncestors.includes(candidate)),
-        policyCase.path.join("/"),
-      ).toEqual([]);
-      expect(
-        normalizedReadWrite.filter((candidate) => trustedPathAncestors.includes(candidate)),
-        policyCase.path.join("/"),
-      ).toEqual([]);
+      expect(policy.filesystem_policy?.read_write, policyCase.path.join("/")).toContain("/tmp");
     },
   );
-
-  it.each([
-    ["agents/hermes/policy-additions.yaml", "restricted"],
-    ["agents/hermes/policy-permissive.yaml", "permissive"],
-  ])("grants the exact Hermes state-mutation control channels in the %s policy", (policyPath) => {
-    const effective = readPreparedPolicy(
-      prepareInitialSandboxCreatePolicy(repoPath(...policyPath.split("/")), [], {
-        agentName: "hermes",
-      }),
-    );
-    const readOnly = effective.filesystem_policy?.read_only ?? [];
-    const readWrite = effective.filesystem_policy?.read_write ?? [];
-
-    expect(readOnly).toContain(hermesRuntimeStateMutationControl.receipts);
-    expect(readWrite).not.toContain(hermesRuntimeStateMutationControl.receipts);
-    expect(readWrite).toContain(hermesRuntimeStateMutationControl.startupHandoff);
-    expect(readOnly).not.toContain(hermesRuntimeStateMutationControl.startupHandoff);
-    expect([...readOnly, ...readWrite]).not.toContain("/var/lib/nemoclaw");
-    expect([...readOnly, ...readWrite]).not.toContain("/run/nemoclaw");
-  });
 
   it.each(
     managedImagePolicyCases.flatMap((policyCase) =>
@@ -262,7 +225,7 @@ describe("initial sandbox policy real preset merge", () => {
 
     const managedInference = effective.network_policies?.managed_inference;
 
-    expect(effective.filesystem_policy?.read_only).toContain(MANAGED_STARTUP_MERGED_CA_FILE);
+    expect(effective.filesystem_policy?.read_write).toContain("/tmp");
     expect(managedInference).toEqual({
       name: "managed_inference",
       endpoints: [
@@ -310,8 +273,13 @@ describe("initial sandbox policy real preset merge", () => {
 
     const discordBinaries =
       policy.network_policies?.discord?.binaries?.map((binary) => binary.path) ?? [];
-    expect(discordBinaries).toContain("/usr/bin/python3*");
-    expect(discordBinaries).toContain("/opt/hermes/.venv/bin/python");
+    expect(discordBinaries).toEqual([
+      "/opt/hermes/.venv/bin/python3",
+      "/opt/hermes/.venv/bin/python",
+      "/usr/bin/python3",
+      "/usr/bin/python3.13",
+    ]);
+    expect(discordBinaries).not.toContain("/usr/bin/python3*");
     expect(discordBinaries).not.toContain("/usr/bin/node");
 
     const boundProviders =
@@ -418,36 +386,13 @@ describe("initial sandbox policy real preset merge", () => {
     },
   );
 
-  it.each([
-    "nemoclaw-blueprint/policies/openclaw-sandbox-permissive.yaml",
-    "agents/openclaw/policy-permissive.yaml",
-  ])("preserves baseline writable paths in effective OpenClaw permissive policy %s", (policy) => {
-    const baseline = readPreparedPolicy(
-      prepareInitialSandboxCreatePolicy(
-        repoPath("nemoclaw-blueprint", "policies", "openclaw-sandbox.yaml"),
-        [],
-        { agentName: "openclaw" },
-      ),
-    );
-    const baselineReadWrite = baseline.filesystem_policy?.read_write ?? [];
-    expect(baselineReadWrite).toContain("/home/linuxbrew");
-
-    const policyPath = repoPath(...policy.split("/"));
-    const effective = readPreparedPolicy(
-      prepareInitialSandboxCreatePolicy(policyPath, [], { agentName: "openclaw" }),
-    );
-    expect(effective.filesystem_policy?.read_write, policyPath).toEqual(
-      expect.arrayContaining(baselineReadWrite),
-    );
-  });
-
   it.each(
     [
       {
-        path: repoPath("nemoclaw-blueprint", "policies", "openclaw-sandbox-permissive.yaml"),
+        path: repoPath("nemoclaw-blueprint", "policies", "openclaw-sandbox.yaml"),
         agent: "openclaw",
       },
-      { path: repoPath("agents", "hermes", "policy-permissive.yaml"), agent: "hermes" },
+      { path: repoPath("agents", "hermes", "policy-additions.yaml"), agent: "hermes" },
     ].flatMap((policyCase) =>
       ["slack.com", "api.slack.com", "hooks.slack.com"].map((host) => ({ policyCase, host })),
     ),
@@ -672,9 +617,13 @@ describe("initial sandbox policy real preset merge", () => {
       },
     );
     const effective = readPreparedPolicy(prepared);
+    const observability = effective.network_policies?.["observability-otlp-local"];
+    const endpoint = observability?.endpoints?.find(
+      (candidate) => candidate.host === "host.openshell.internal" && candidate.port === 4318,
+    );
 
     expect(prepared.appliedPresets).toContain("observability-otlp-local");
-    expect(effective.network_policies?.["observability-otlp-local"]).toBeDefined();
+    expect(endpoint).not.toHaveProperty("allowed_ips");
   });
 
   it.each([
@@ -684,23 +633,8 @@ describe("initial sandbox policy real preset merge", () => {
       agent: "openclaw",
     },
     {
-      label: "permissive OpenClaw blueprint policy",
-      path: ["nemoclaw-blueprint", "policies", "openclaw-sandbox-permissive.yaml"],
-      agent: "openclaw",
-    },
-    {
-      label: "permissive OpenClaw agent policy",
-      path: ["agents", "openclaw", "policy-permissive.yaml"],
-      agent: "openclaw",
-    },
-    {
       label: "Hermes policy additions",
       path: ["agents", "hermes", "policy-additions.yaml"],
-      agent: "hermes",
-    },
-    {
-      label: "permissive Hermes policy",
-      path: ["agents", "hermes", "policy-permissive.yaml"],
       agent: "hermes",
     },
   ] as const)(

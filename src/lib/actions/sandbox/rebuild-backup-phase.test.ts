@@ -8,7 +8,11 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
+  abortOpenClawPostRestoreDoctor: vi.fn(),
+  beginOpenClawBackupQuiesce: vi.fn(),
   captureRecordedSandboxBasePolicy: vi.fn(),
+  finishOpenClawPostRestoreDoctor: vi.fn(),
+  retireOpenClawPostRestoreDoctorForDelete: vi.fn(),
   recordRebuildRecoveryBackup: vi.fn(),
   secureTempFile: vi.fn(),
 }));
@@ -25,19 +29,33 @@ vi.mock("./rebuild-recreate-journal", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./rebuild-recreate-journal")>()),
   recordRebuildRecoveryBackup: mocks.recordRebuildRecoveryBackup,
 }));
+vi.mock("./runtime/openclaw-lifecycle", () => ({
+  abortOpenClawPostRestoreDoctor: mocks.abortOpenClawPostRestoreDoctor,
+  beginOpenClawBackupQuiesce: mocks.beginOpenClawBackupQuiesce,
+  finishOpenClawPostRestoreDoctor: mocks.finishOpenClawPostRestoreDoctor,
+  retireOpenClawPostRestoreDoctorForDelete: mocks.retireOpenClawPostRestoreDoctorForDelete,
+}));
 
 import {
   type RebuildBackupPhaseInput,
+  retireRebuildSourceOpenClawWindowForDelete,
   runRebuildBackupPhase,
 } from "./rebuild-backup-phase";
 
 const temporaryDirectories: string[] = [];
 
 beforeEach(() => {
+  mocks.abortOpenClawPostRestoreDoctor.mockReset().mockResolvedValue({ ok: true });
+  mocks.beginOpenClawBackupQuiesce.mockReset().mockResolvedValue({
+    ok: true,
+    window: { sandboxName: "alpha", kind: "backup" },
+  });
   mocks.captureRecordedSandboxBasePolicy
     .mockReset()
     .mockReturnValue("version: 1\nnetwork_policies: {}\n");
   mocks.recordRebuildRecoveryBackup.mockReset();
+  mocks.finishOpenClawPostRestoreDoctor.mockReset().mockResolvedValue({ ok: true });
+  mocks.retireOpenClawPostRestoreDoctorForDelete.mockReset().mockResolvedValue({ ok: true });
   mocks.secureTempFile.mockReset().mockImplementation(() => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-rebuild-policy-default-"));
     temporaryDirectories.push(directory);
@@ -66,11 +84,22 @@ describe("rebuild policy handoff", () => {
     bail: (message): never => {
       throw new Error(message);
     },
-    relockShieldsIfNeeded: vi.fn(() => true),
     ...overrides,
   });
 
-  it("captures the current OpenShell base policy in a private transaction file", () => {
+  it("retires the retained source window before the delete edge", async () => {
+    const window = { sandboxName: "alpha" };
+
+    await expect(retireRebuildSourceOpenClawWindowForDelete(window)).resolves.toEqual({
+      ok: true,
+    });
+
+    expect(mocks.retireOpenClawPostRestoreDoctorForDelete).toHaveBeenCalledExactlyOnceWith(window);
+    expect(mocks.abortOpenClawPostRestoreDoctor).not.toHaveBeenCalled();
+    expect(mocks.finishOpenClawPostRestoreDoctor).not.toHaveBeenCalled();
+  });
+
+  it("captures the current OpenShell base policy in a private transaction file", async () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-rebuild-policy-test-"));
     temporaryDirectories.push(directory);
     const policyPath = path.join(directory, "policy.yaml");
@@ -78,9 +107,9 @@ describe("rebuild policy handoff", () => {
     mocks.captureRecordedSandboxBasePolicy.mockReturnValue(
       "version: 1\nnetwork_policies:\n  host_changed: {}\n",
     );
-    const result = runRebuildBackupPhase(
+    const result = await runRebuildBackupPhase(
       input(),
-      vi.fn(() => null),
+      vi.fn(async () => null),
     );
 
     expect(result?.policySourcePath).toBe(policyPath);
@@ -90,10 +119,19 @@ describe("rebuild policy handoff", () => {
     expect(mocks.captureRecordedSandboxBasePolicy).toHaveBeenCalledWith(
       "alpha",
       "capture the live policy before sandbox replacement",
+      undefined,
     );
+    expect(mocks.beginOpenClawBackupQuiesce).toHaveBeenCalledExactlyOnceWith("alpha", undefined);
+    expect(result?.sourceOpenClawDoctorWindow).toEqual({
+      sandboxName: "alpha",
+      kind: "backup",
+    });
+    expect(mocks.finishOpenClawPostRestoreDoctor).not.toHaveBeenCalledWith({
+      sandboxName: "alpha",
+    });
   });
 
-  it("rejects a literal credential before creating a rebuild policy handoff", () => {
+  it("rejects a literal credential before creating a rebuild policy handoff", async () => {
     const credential = "opaque-url-credential";
     mocks.captureRecordedSandboxBasePolicy.mockReturnValue(
       [
@@ -105,25 +143,25 @@ describe("rebuild policy handoff", () => {
         "",
       ].join("\n"),
     );
-    const backup = vi.fn(() => null);
+    const backup = vi.fn(async () => null);
 
-    expect(() => runRebuildBackupPhase(input(), backup)).toThrow(
+    await expect(runRebuildBackupPhase(input(), backup)).rejects.toThrow(
       "Cannot prepare a rebuild policy handoff for sandbox 'alpha' because its live OpenShell policy contains a literal credential value. Replace literal credentials with supported OpenShell credential bindings or resolver placeholders, then retry the rebuild.",
     );
     expect(backup).not.toHaveBeenCalled();
     expect(mocks.secureTempFile).not.toHaveBeenCalled();
   });
 
-  it("never reconstructs a missing live policy from NemoClaw state", () => {
-    expect(() =>
+  it("never reconstructs a missing live policy from NemoClaw state", async () => {
+    await expect(
       runRebuildBackupPhase(
         input({ staleRecovery: true }),
-        vi.fn(() => null),
+        vi.fn(async () => null),
       ),
-    ).toThrow(/will not reconstruct policy from NemoClaw state/);
+    ).rejects.toThrow(/will not reconstruct policy from NemoClaw state/);
   });
 
-  it("binds an unsafe legacy handoff to a supported recovery transaction", () => {
+  it("binds an unsafe legacy handoff to a supported recovery transaction", async () => {
     const backupPath = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-unsafe-recovery-"));
     temporaryDirectories.push(backupPath);
     const legacyCredentialPolicy = [
@@ -155,12 +193,12 @@ describe("rebuild policy handoff", () => {
 
     let refusal: Error | null = null;
     try {
-      runRebuildBackupPhase(
+      await runRebuildBackupPhase(
         input({
           staleRecovery: true,
           preparedRecoveryManifest,
         }),
-        vi.fn(),
+        vi.fn(async () => null),
       );
     } catch (error) {
       refusal = error as Error;
@@ -199,106 +237,5 @@ describe("rebuild policy handoff", () => {
       gatewayPort: 8080,
       backupManifest: preparedRecoveryManifest,
     });
-  });
-});
-
-describe("rebuild backup safety", () => {
-  const completeMarkedManifest = {
-    agentType: "openclaw",
-    dir: "/sandbox/.openclaw",
-    backupPath: "/tmp/custom-openclaw-backup",
-    reconcileOpenClawImagePluginProvenance: true,
-    openclawImagePluginInstalls: [],
-  } as Record<string, unknown>;
-
-  function customOpenClawInput(overrides: Record<string, unknown> = {}): RebuildBackupPhaseInput {
-    return {
-      sandboxName: "custom-openclaw",
-      gatewayName: "nemoclaw",
-      gatewayPort: 8080,
-      sandboxEntry: {
-        name: "custom-openclaw",
-        agent: "openclaw",
-        fromDockerfile: "/tmp/Dockerfile.custom",
-      },
-      staleRecovery: false,
-      preparedRecoveryManifest: null,
-      messagingPlan: null,
-      webSearchConfig: null,
-      log: vi.fn(),
-      bail: (message): never => {
-        throw new Error(message);
-      },
-      relockShieldsIfNeeded: vi.fn(() => true),
-      ...overrides,
-    } as RebuildBackupPhaseInput;
-  }
-
-  it("blocks a live custom image with missing plugin provenance before backup", () => {
-    const backup = vi.fn();
-    const input = customOpenClawInput();
-    vi.spyOn(console, "error").mockImplementation(() => undefined);
-
-    expect(() => runRebuildBackupPhase(input, backup)).toThrow(
-      "Custom-image OpenClaw plugin provenance is unavailable.",
-    );
-    expect(backup).not.toHaveBeenCalled();
-    expect(input.relockShieldsIfNeeded).toHaveBeenCalledWith(true);
-  });
-
-  it("uses a marked prepared manifest while still capturing live OpenShell policy", () => {
-    const backup = vi.fn();
-    const backupPath = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-custom-recovery-"));
-    temporaryDirectories.push(backupPath);
-    const preparedManifest = { ...completeMarkedManifest, backupPath } as never;
-    const result = runRebuildBackupPhase(
-      customOpenClawInput({ preparedRecoveryManifest: preparedManifest }),
-      backup,
-    );
-
-    expect(result?.backupManifest).toEqual(preparedManifest);
-    expect(result?.policySourcePath).toMatch(/rebuild-policy-handoff\.[a-f0-9]{64}\.yaml$/u);
-    expect(backup).not.toHaveBeenCalled();
-  });
-
-  it("blocks an unmarked legacy prepared manifest before replacement", () => {
-    const backup = vi.fn();
-    const input = customOpenClawInput({
-      preparedRecoveryManifest: {
-        agentType: "openclaw",
-        dir: "/sandbox/.openclaw",
-        backupPath: "/tmp/legacy-custom-openclaw-backup",
-        openclawImagePluginInstalls: [],
-      },
-    });
-    vi.spyOn(console, "error").mockImplementation(() => undefined);
-
-    expect(() => runRebuildBackupPhase(input, backup)).toThrow(
-      "Custom-image OpenClaw plugin provenance is unavailable.",
-    );
-    expect(backup).not.toHaveBeenCalled();
-  });
-
-  it("revalidates a newly generated backup manifest before replacement", () => {
-    const backup = vi.fn(() => ({
-      agentType: "openclaw",
-      dir: "/sandbox/.openclaw",
-      backupPath: "/tmp/incomplete-custom-openclaw-backup",
-      reconcileOpenClawImagePluginProvenance: true,
-    }));
-    const input = customOpenClawInput({
-      sandboxEntry: {
-        name: "custom-openclaw",
-        agent: "openclaw",
-        fromDockerfile: "/tmp/Dockerfile.custom",
-        openclawImagePluginInstalls: [],
-      },
-    });
-    vi.spyOn(console, "error").mockImplementation(() => undefined);
-
-    expect(() => runRebuildBackupPhase(input, backup as never)).toThrow(
-      "Custom-image OpenClaw plugin provenance is unavailable.",
-    );
-    expect(backup).toHaveBeenCalledOnce();
   });
 });

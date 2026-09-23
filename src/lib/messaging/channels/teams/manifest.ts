@@ -118,7 +118,7 @@ export const teamsManifest = {
         value: {
           enabled: true,
           appId: "{{teamsConfig.appId}}",
-          // No appPassword here: OpenShell 0.0.106 injects
+          // No appPassword here: OpenShell 0.0.116 injects
           // MSTEAMS_APP_PASSWORD as a revision-scoped placeholder and rejects
           // the canonical form once the policy binds the credential. The
           // OpenClaw Teams token resolver falls back to
@@ -208,7 +208,7 @@ export const teamsManifest = {
         {
           envKey: "MSTEAMS_APP_PASSWORD",
           targetEnvKey: "TEAMS_CLIENT_SECRET",
-          match: "^openshell:resolve:env:v[0-9]+_MSTEAMS_APP_PASSWORD$",
+          match: "^openshell:resolve:env:(?:v[0-9]{1,20}|s[a-f0-9]{64})_MSTEAMS_APP_PASSWORD$",
           value: "openshell:resolve:env:MSTEAMS_APP_PASSWORD",
         },
       ],
@@ -222,11 +222,11 @@ export const teamsManifest = {
       spec: "npm:@openclaw/msteams@{{openclaw.version}}",
       pin: true,
       integrityByVersion: {
-        "2026.7.1":
-          "sha512-gG/Yk6HZAguHwrmKjsqdONbFz5WNy126PEAXQWNW/TulO1kIifQ6tktM16BQPNLnkmWqLbj+TrrO55Cjas1aFg==",
+        "2026.9.1":
+          "sha512-seRGr9/X6Vk9xU5elLVpDwq8R+TO0QFvUmxPEitqkngqDnMoXW0LEEXkriG6jgue74w2YLcNnAv/Rjf0a9jong==",
       },
       tarballUrlByVersion: {
-        "2026.7.1": "https://registry.npmjs.org/@openclaw/msteams/-/msteams-2026.7.1.tgz",
+        "2026.9.1": "https://registry.npmjs.org/@openclaw/msteams/-/msteams-2026.9.1.tgz",
       },
       required: true,
     },
@@ -300,4 +300,5 @@ export const teamsManifest = {
       ],
     },
   ],
+  state: {},
 } as const satisfies ChannelManifest;

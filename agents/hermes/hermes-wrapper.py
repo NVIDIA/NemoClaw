@@ -77,9 +77,10 @@
 # Only a small set of top-level commands are intercepted. Managed dashboard
 # launches receive the local API bearer token through process environment after
 # a descriptor-safe read, so the isolated dashboard home does not need a second
-# credential-bearing dotenv file. Other subcommands pass through unchanged.
+# credential-bearing dotenv file.
 
 import ast
+import hashlib
 import json
 import os
 import re
@@ -101,6 +102,9 @@ _DASHBOARD_API_SERVER_ENV_PATH = "NEMOCLAW_HERMES_DASHBOARD_API_SERVER_ENV"
 _API_SERVER_KEY_RE = re.compile(r"^[0-9a-f]{64}$")
 _CLI_ADAPTER_DEV_FILENAME = "hermes-cli-adapter-v1.json"
 _HERMES_MAIN_DEV_FILENAME = "hermes-main.py"
+_MANAGED_HERMES_HOME = "/sandbox/.hermes"
+_MANAGED_HERMES_ENV = "/sandbox/.hermes/.env"
+_MANAGED_HOME = "/sandbox"
 # Trusted absolute paths for the python3 interpreter, ordered most-preferred
 # first. The resolver returns the first executable match (first-wins); the
 # same priority is mirrored by `agents/hermes/start.sh:resolve_trusted_python3`
@@ -129,6 +133,12 @@ def _resolve_guard() -> str:
     if os.path.isfile(_INSTALLED_GUARD):
         return _INSTALLED_GUARD
     return os.path.join(_self_dir(), _GUARD_DEV_FILENAME)
+
+
+def _resolve_gateway_env_path(guard_path: str) -> str:
+    if os.path.abspath(guard_path) == _INSTALLED_GUARD:
+        return _MANAGED_HERMES_ENV
+    return os.path.join(_self_dir(), ".env")
 
 
 def _resolve_cli_adapter() -> str:
@@ -335,7 +345,93 @@ def _run_gateway_guard(guard_path: str) -> int:
             file=sys.stderr,
         )
         return 127
-    return subprocess.call([python3, "-I", guard_path, "runtime-env"])
+    logical_env = dict(os.environ)
+    payload = json.dumps(
+        logical_env, ensure_ascii=True, separators=(",", ":")
+    ).encode("ascii")
+    return subprocess.run(
+        [python3, "-I", guard_path, "runtime-env-json"],
+        input=payload,
+        check=False,
+    ).returncode
+
+
+def _gateway_env_fingerprint(path: str) -> tuple[tuple[int, ...], str]:
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    fd = os.open(path, flags)
+    try:
+        before = os.fstat(fd)
+        chunks: list[bytes] = []
+        total = 0
+        while True:
+            chunk = os.read(fd, min(1024 * 1024, 4 * 1024 * 1024 + 1 - total))
+            if not chunk:
+                break
+            total += len(chunk)
+            if total > 4 * 1024 * 1024:
+                raise ValueError("Hermes env file exceeds the fingerprint limit")
+            chunks.append(chunk)
+        after = os.fstat(fd)
+        identity = (
+            before.st_dev,
+            before.st_ino,
+            before.st_mode,
+            before.st_uid,
+            before.st_gid,
+            before.st_nlink,
+            before.st_size,
+            before.st_mtime_ns,
+            before.st_ctime_ns,
+        )
+        after_identity = (
+            after.st_dev,
+            after.st_ino,
+            after.st_mode,
+            after.st_uid,
+            after.st_gid,
+            after.st_nlink,
+            after.st_size,
+            after.st_mtime_ns,
+            after.st_ctime_ns,
+        )
+        if identity != after_identity:
+            raise ValueError("Hermes env file changed while fingerprinting")
+        return identity, hashlib.sha256(b"".join(chunks)).hexdigest()
+    finally:
+        os.close(fd)
+
+
+def _run_gateway_env_file_guard(guard_path: str) -> int:
+    python3 = _resolve_trusted_python3()
+    if python3 is None:
+        print(
+            "[SECURITY] Refusing hermes gateway: no python3 at a trusted absolute path to run the secret-boundary guard",
+            file=sys.stderr,
+        )
+        return 127
+    env_path = _resolve_gateway_env_path(guard_path)
+    try:
+        before = _gateway_env_fingerprint(env_path)
+        rc = subprocess.run(
+            [python3, "-I", guard_path, "env-file", env_path],
+            check=False,
+        ).returncode
+        if rc != 0:
+            print("SECRET_BOUNDARY_REFUSED", file=sys.stderr)
+            return rc
+        after = _gateway_env_fingerprint(env_path)
+    except (OSError, ValueError) as exc:
+        print(f"[SECURITY] Refusing hermes gateway: env-file validation failed: {exc}", file=sys.stderr)
+        print("SECRET_BOUNDARY_REFUSED", file=sys.stderr)
+        return 1
+    if before != after:
+        print(
+            "[SECURITY] Refusing hermes gateway: env file changed during secret-boundary validation",
+            file=sys.stderr,
+        )
+        print("SECRET_BOUNDARY_REFUSED", file=sys.stderr)
+        return 1
+    return 0
 
 
 _SUPPORTED_CLI_ADAPTER_VERSION = 1
@@ -416,7 +512,6 @@ def _load_cli_adapter(path: str) -> dict:
     translations = adapter.get("translations")
     if not isinstance(translations, dict) or set(translations) != {
         "provider_model_composition",
-        "resumed_oneshot",
     }:
         raise _CliAdapterError("Hermes CLI adapter has invalid translation metadata")
     return adapter
@@ -620,55 +715,6 @@ def _provider_model_composition(parsed: dict) -> tuple[dict, dict, str] | None:
     return provider, model, _merged_model(provider["value"], model["value"])
 
 
-def _translate_resumed_oneshot(
-    parsed: dict,
-    composition: tuple[dict, dict, str] | None,
-) -> list[str] | None:
-    oneshots = _occurrences(parsed, "oneshot")
-    resumes = _occurrences(parsed, "resume")
-    continues = _occurrences(parsed, "continue")
-    if (
-        len(oneshots) != 1
-        or len(resumes) + len(continues) != 1
-        or parsed["command"] is not None
-        or parsed["terminated"]
-        or parsed["unknown_option"]
-    ):
-        return None
-    if _occurrences(parsed, "usage_file"):
-        raise _UnsupportedResumedOneshotUsageFile
-
-    translated: list[str] = []
-    profiles = _occurrences(parsed, "profile")
-    if profiles:
-        translated.extend([profiles[0]["canonical"], profiles[0]["value"]])
-    translated.extend(["chat", "--query", oneshots[0]["value"], "--quiet"])
-
-    session = resumes[0] if resumes else continues[0]
-    translated.append(session["canonical"])
-    if session["value"] is not None:
-        translated.append(session["value"])
-
-    provider_occurrence = composition[0] if composition else None
-    model_occurrence = composition[1] if composition else None
-    merged_model = composition[2] if composition else None
-    excluded = {"continue", "oneshot", "profile", "resume", "usage_file"}
-    for occurrence in parsed["occurrences"]:
-        if occurrence["id"] in excluded or occurrence is provider_occurrence:
-            continue
-        if occurrence is model_occurrence:
-            translated.extend([occurrence["canonical"], merged_model])
-        elif occurrence["value"] is None:
-            translated.append(occurrence["name"])
-        else:
-            translated.extend([occurrence["canonical"], occurrence["value"]])
-    return translated
-
-
-class _UnsupportedResumedOneshotUsageFile(Exception):
-    """Signal a valid resumed one-shot form whose usage report would be lost."""
-
-
 class _AmbiguousProviderModelSession(Exception):
     """Signal provider/model flags after an unquoted multi-word session name."""
 
@@ -696,9 +742,6 @@ def _adapt_cli_argv(argv: list[str], adapter: dict) -> tuple[str, list[str]]:
     if parsed is None:
         return "passthrough", argv
     composition = _provider_model_composition(parsed)
-    translated = _translate_resumed_oneshot(parsed, composition)
-    if translated is not None:
-        return "translated", translated
     if composition is not None:
         return "translated", _apply_provider_model_composition(parsed, composition)
     return "passthrough", argv
@@ -743,6 +786,7 @@ def _report_cli_adapter_error(exc: _CliAdapterError) -> int:
 
 
 def main(argv: list[str]) -> int:
+    os.environ["HERMES_SKIP_CHMOD"] = "1"
     real_hermes = _resolve_real_hermes()
     guard_path = _resolve_guard()
     if argv[:1] == ["dashboard"] and not _load_dashboard_api_server_key():
@@ -750,28 +794,26 @@ def main(argv: list[str]) -> int:
     if argv[:2] == ["config", "show"]:
         return _run_config_show(real_hermes, guard_path, argv)
     if argv[:1] == ["gateway"]:
+        if os.geteuid() == 0:
+            print(
+                "[SECURITY] Refusing hermes gateway as root; managed startup must drop to the gateway identity",
+                file=sys.stderr,
+            )
+            return 1
+        os.environ["HERMES_HOME"] = _MANAGED_HERMES_HOME
+        os.environ["HOME"] = _MANAGED_HOME
+        rc = _run_gateway_env_file_guard(guard_path)
+        if rc != 0:
+            return rc
         rc = _run_gateway_guard(guard_path)
         if rc != 0:
+            print("SECRET_BOUNDARY_REFUSED", file=sys.stderr)
             return rc
     try:
         adapter = _load_cli_adapter(_resolve_cli_adapter())
         adapter_result, exec_argv = _adapt_cli_argv(argv, adapter)
         if adapter_result == "translated":
             _require_upstream_cli_version(real_hermes, adapter["upstream_cli_version"])
-    except _UnsupportedResumedOneshotUsageFile:
-        try:
-            _require_upstream_cli_version(real_hermes, adapter["upstream_cli_version"])
-        except _CliAdapterError as exc:
-            return _report_cli_adapter_error(exc)
-        print(
-            "[COMPATIBILITY] Refusing resumed one-shot with --usage-file: "
-            "Hermes 0.19 writes usage reports only on its native one-shot path, "
-            "while NemoClaw routes this form through chat --query to append to "
-            "the selected or most recent session. Run the resumed turn without "
-            "--usage-file.",
-            file=sys.stderr,
-        )
-        return 2
     except _AmbiguousProviderModelSession:
         try:
             _require_upstream_cli_version(real_hermes, adapter["upstream_cli_version"])

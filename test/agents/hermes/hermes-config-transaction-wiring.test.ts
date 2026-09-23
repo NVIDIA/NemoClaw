@@ -6,7 +6,11 @@ import { createHash } from "node:crypto";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
-const SOURCE_REQUIRE_HOOK = path.join(import.meta.dirname, "../../helpers", "onboard-script-mocks.cjs");
+const SOURCE_REQUIRE_HOOK = path.join(
+  import.meta.dirname,
+  "../../helpers",
+  "onboard-script-mocks.cjs",
+);
 
 describe("Hermes host config transaction wiring", () => {
   it("passes the exact read digest and serialized update to the sealed write transaction", () => {
@@ -39,7 +43,7 @@ installMock(source("agent", "defs.js"), {
       dir: "/sandbox/.hermes",
       configFile: "config.yaml",
       format: "yaml",
-      shieldsFiles: [".env"],
+      envFile: ".env",
     },
   }),
 });

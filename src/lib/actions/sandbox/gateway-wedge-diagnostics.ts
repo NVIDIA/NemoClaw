@@ -10,18 +10,24 @@
 // restart." to /tmp/gateway.log.
 // Source boundary: that park-alive behavior lives in OpenClaw's gateway run
 // loop, outside NemoClaw; NemoClaw can only detect it and hand recovery back
-// to its supervisor. The sandbox-side prevention (gateway.reload.mode=hot pin
+// to its supervisor. The sandbox-side prevention (gateway.reload.mode=off pin
 // and the serving watchdog) ships separately in the #4710 sandbox PR.
 // Removal condition: when sandbox images pin an OpenClaw release whose failed
 // in-process restart exits non-zero (so the PID-wait supervisor respawns it),
 // this detection can be narrowed and the recovery settle window shortened or
 // defaulted off.
 
+import type { OpenShellGatewayTarget } from "../../adapters/openshell/sandbox-observer";
+import { cliOpenShellSandboxLogs } from "../../adapters/openshell/sandbox-logs-cli";
+import type { OpenShellSandboxLogs } from "../../adapters/openshell/sandbox-logs";
 import { shellQuote } from "../../runner";
 import { redactFull } from "../../security/redact";
 import type { SandboxCommandResult } from "./process-recovery";
 
-export type SandboxExec = (sandboxName: string, command: string) => SandboxCommandResult | null;
+export type SandboxExec = (
+  sandboxName: string,
+  command: string,
+) => Promise<SandboxCommandResult | null>;
 
 const WEDGE_LOG_SIGNATURE =
   "config change requires gateway restart|gateway startup failed|Process will stay alive";
@@ -43,6 +49,34 @@ export function sanitizeWedgeLogLine(line: string): string {
   return sanitized.replace(/\r/g, "").trim();
 }
 
+/** Read a bounded, sanitized tail from OpenShell's retained sandbox log buffer. */
+export async function collectRedactedOpenShellSandboxLogs(
+  sandboxName: string,
+  target: OpenShellGatewayTarget,
+  logs: OpenShellSandboxLogs = cliOpenShellSandboxLogs,
+): Promise<string[]> {
+  try {
+    const result = await logs.read({
+      target,
+      sandboxName,
+      source: "openshell",
+      lines: "120",
+      since: null,
+      timeoutMs: 15_000,
+    });
+    if (
+      result.outcome.kind !== "completed" ||
+      result.outcome.exitCode !== 0 ||
+      !result.content.trim()
+    ) {
+      return [];
+    }
+    return result.content.split("\n").map(sanitizeWedgeLogLine).filter(Boolean).slice(-60);
+  } catch {
+    return [];
+  }
+}
+
 /**
  * Collect the #4710 wedge signature from the sandbox gateway log: the
  * sequence a self-initiated in-process gateway restart leaves behind when it
@@ -50,9 +84,17 @@ export function sanitizeWedgeLogLine(line: string): string {
  * Returns up to the last five matching lines (sanitized), or [] when none
  * match or the log cannot be read.
  */
-export function collectGatewayWedgeDiagnostics(sandboxName: string, exec: SandboxExec): string[] {
+export async function collectGatewayWedgeDiagnostics(
+  sandboxName: string,
+  exec: SandboxExec,
+): Promise<string[]> {
   const command = `grep -E ${shellQuote(WEDGE_LOG_SIGNATURE)} /tmp/gateway.log 2>/dev/null | tail -5`;
-  const result = exec(sandboxName, command);
+  let result: SandboxCommandResult | null;
+  try {
+    result = await exec(sandboxName, command);
+  } catch {
+    return [];
+  }
   if (!result || result.status !== 0) {
     return [];
   }
@@ -64,8 +106,11 @@ export function collectGatewayWedgeDiagnostics(sandboxName: string, exec: Sandbo
  * sees why the gateway is unreachable despite a live process. Returns true
  * when signature lines were found and printed.
  */
-export function printGatewayWedgeDiagnostics(sandboxName: string, exec: SandboxExec): boolean {
-  const wedgeLines = collectGatewayWedgeDiagnostics(sandboxName, exec);
+export async function printGatewayWedgeDiagnostics(
+  sandboxName: string,
+  exec: SandboxExec,
+): Promise<boolean> {
+  const wedgeLines = await collectGatewayWedgeDiagnostics(sandboxName, exec);
   if (wedgeLines.length === 0) {
     return false;
   }

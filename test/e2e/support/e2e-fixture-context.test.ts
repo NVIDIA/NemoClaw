@@ -14,6 +14,7 @@ import { test as e2eTest } from "../fixtures/e2e-test.ts";
 import { startTestProgress, type TestProgress } from "../fixtures/progress.ts";
 import { SecretStore } from "../fixtures/secrets.ts";
 import {
+  normalizeLiveE2EAgentName,
   resolveLiveE2eWorkloadSourceEnv,
   ShellProbe,
   type TrustedShellCommand,
@@ -58,6 +59,24 @@ async function expectProcessToExit(pid: number, timeoutMs = 2_000): Promise<void
 }
 
 describe("E2E fixture primitives", () => {
+  it.each(["hermes", "langchain-deepagents-code", "nemocua", "openclaw", "pi"] as const)(
+    "normalizes the supported local Dockerfile agent selector %s",
+    (agentName) => {
+      expect(normalizeLiveE2EAgentName(agentName)).toBe(agentName);
+    },
+  );
+
+  it("rejects unknown local Dockerfile agent selectors before manifest lookup", () => {
+    const canary = "ambient-secret-value";
+    expect(() => normalizeLiveE2EAgentName(canary)).toThrow(/Unsupported E2E agent selector/);
+    try {
+      normalizeLiveE2EAgentName(canary);
+    } catch (error) {
+      expect(error).toBeInstanceOf(Error);
+      expect((error as Error).message).not.toContain(canary);
+    }
+  });
+
   it("forces the trusted local BuildKit handoff for candidate Dockerfiles under Vitest", () => {
     const environment = resolveLiveE2eWorkloadSourceEnv({
       E2E_TARGET_ID: "ubuntu-repo-cloud-openclaw",
@@ -72,9 +91,22 @@ describe("E2E fixture primitives", () => {
     expect(resolveSandboxPrebuildEnabled(environment, true)).toBe(true);
   });
 
+  it("leaves an explicitly empty historical workload source unchanged", () => {
+    const historical = {
+      E2E_TARGET_ID: "openshell-gateway-upgrade",
+      E2E_WORKLOAD_SOURCE: "",
+      NEMOCLAW_SANDBOX_PREBUILD: "0",
+      VITEST: "true",
+    };
+
+    expect(resolveLiveE2eWorkloadSourceEnv(historical)).toBe(historical);
+    expect(historical).not.toHaveProperty("NEMOCLAW_FROM_DOCKERFILE");
+    expect(resolveSandboxPrebuildEnabled(historical, true)).toBe(false);
+  });
+
   it("forces local BuildKit when the candidate Dockerfile is already selected", () => {
     const environment = resolveLiveE2eWorkloadSourceEnv({
-      E2E_TARGET_ID: "ubuntu-repo-cloud-hermes",
+      E2E_TARGET_ID: "hermes-e2e",
       E2E_WORKLOAD_SOURCE: "local-dockerfile",
       NEMOCLAW_FROM_DOCKERFILE: "/workspace/agents/hermes/Dockerfile",
       NEMOCLAW_SANDBOX_PREBUILD: "false",
@@ -112,7 +144,7 @@ describe("E2E fixture primitives", () => {
     }
   });
 
-  it("live target artifacts match the workflow upload allowlist paths", async () => {
+  it("writes retained live target artifacts beneath one target root", async () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-e2e-live-artifacts-"));
     const previousArtifactDir = process.env.E2E_ARTIFACT_DIR;
     const targetId = "ubuntu-repo-cloud-openclaw";
@@ -125,6 +157,7 @@ describe("E2E fixture primitives", () => {
       "environment.result.json",
       "onboarding.result.json",
       "state-validation.result.json",
+      "config-export-evidence.v1.json",
       "cloud-onboard-trace-timing-summary.json",
     ];
     const shellEvidenceFiles = [
@@ -162,10 +195,16 @@ describe("E2E fixture primitives", () => {
 
       expect(shellResult.exitCode).toBe(0);
 
-      expect(allowlistedFiles.every((file) =>
-          Object.is(fs.existsSync(path.join(artifactParent, targetId, file)), true))).toBe(true);
-      expect(shellEvidenceFiles.every((file) =>
-          Object.is(fs.existsSync(path.join(artifactParent, targetId, file)), true))).toBe(true);
+      expect(
+        allowlistedFiles.every((file) =>
+          Object.is(fs.existsSync(path.join(artifactParent, targetId, file)), true),
+        ),
+      ).toBe(true);
+      expect(
+        shellEvidenceFiles.every((file) =>
+          Object.is(fs.existsSync(path.join(artifactParent, targetId, file)), true),
+        ),
+      ).toBe(true);
       expect(fs.existsSync(path.join(artifactParent, targetId, targetId, "run-plan.json"))).toBe(
         false,
       );
@@ -320,7 +359,7 @@ describe("E2E fixture primitives", () => {
     ).toThrow(/argument cannot contain NUL bytes/);
   });
 
-  it("shell probe enforces options.redactionValues even when the injected redactor ignores extra values", async () => {
+  it("redacts ShellProbe output and retained logs when the secret is registered on both surfaces", async () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-e2e-shell-probe-enforce-"));
     try {
       const artifacts = new ArtifactSink(tmp);
@@ -356,6 +395,14 @@ describe("E2E fixture primitives", () => {
       expect(result.stderr).toContain("[REDACTED]");
       expect(result.stdout).not.toContain(secret);
       expect(result.stderr).not.toContain(secret);
+      artifacts.addRedactionValues([secret]);
+      await artifacts.writeText(
+        "retained-install.log",
+        `${result.stdout}\n${result.stderr}\n${secret}`,
+      );
+      const retained = fs.readFileSync(artifacts.pathFor("retained-install.log"), "utf8");
+      expect(retained).toContain("[REDACTED]");
+      expect(retained).not.toContain(secret);
       const written = fs.readFileSync(
         artifacts.pathFor("shell/options-redaction-enforced.result.json"),
         "utf8",

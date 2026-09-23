@@ -5,9 +5,11 @@ import type {
   CompiledServingCatalog,
   HostLocalInferenceServingRecipe,
   ManagedInferenceServingPreset,
+  ServingProfileProvenance,
   ServingDefinitionKind,
   ServingRecipe,
 } from "../../inference/serving/types";
+import { servingProfileProvenance } from "../../inference/serving/profile-provenance";
 
 export const LOCAL_MODEL_PROFILE_GATE = "local-model-profile-v1" as const;
 export const LOCAL_MODEL_PROFILE_ENABLED_ENV = "NEMOCLAW_ENABLE_LOCAL_MODEL_PROFILE" as const;
@@ -22,6 +24,7 @@ export type LocalModelProfilePlan = {
   readonly recipeDigest: string;
   readonly preset: ManagedInferenceServingPreset;
   readonly recipe: HostLocalInferenceServingRecipe;
+  readonly servingProfileProvenance: ServingProfileProvenance;
 };
 
 function requestedRuntime(env: NodeJS.ProcessEnv): LocalModelProfileRuntime | null {
@@ -114,7 +117,13 @@ export function resolveLocalModelProfilePlan(
     recipeDigest: definitionDigest(catalog, "ServingRecipe", recipe.metadata.id),
   };
   if (isHostLocalVllmRecipe(recipe)) {
-    return { runtime, ...digests, preset, recipe };
+    return {
+      runtime,
+      ...digests,
+      preset,
+      recipe,
+      servingProfileProvenance: servingProfileProvenance(catalog, preset.metadata.id),
+    };
   }
   throw new Error(`The ${runtime} local model profile selects an incompatible serving recipe.`);
 }

@@ -137,17 +137,20 @@ printf 'agent=%s\n' "$(resolve_onboarded_agent)"`,
     }
   });
 
-  it("normalizes a leading-zero gateway port before selecting its state root", () => {
+  it("rejects a leading-zero gateway port before selecting its state root", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-installer-normalized-port-"));
     try {
       const result = runInstallerFunctions(
         home,
         `NEMOCLAW_GATEWAY_PORT=09123
-printf 'state=%s\n' "$(nemoclaw_state_dir)"`,
+nemoclaw_state_dir`,
       );
 
-      expect(result.status, result.output).toBe(0);
-      expect(result.output).toContain(`state=${home}/.nemoclaw/gateways/9123`);
+      expect(result.status, result.output).not.toBe(0);
+      expect(result.output).toContain(
+        "NEMOCLAW_GATEWAY_PORT must be an integer between 1024 and 65535",
+      );
+      expect(result.output).not.toContain(`${home}/.nemoclaw/gateways/9123`);
       expect(result.output).not.toContain("gateways/09123");
     } finally {
       fs.rmSync(home, { recursive: true, force: true });
@@ -190,29 +193,26 @@ nemoclaw_state_dir`,
     }
   });
 
-  it.each([
-    "08000",
-    "08081",
-    "11434",
-    "11438",
-    "18790",
-  ])("rejects conflicting gateway port %s before writing selected state", (gatewayPort) => {
-    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-installer-port-conflict-"));
-    try {
-      const result = runInstallerFunctions(
-        home,
-        `NEMOCLAW_HTTPS_PIN_RUNTIME_ADAPTER_PORT=11500
+  it.each(["08000", "08081", "11434", "11438", "18790"])(
+    "rejects conflicting gateway port %s before writing selected state",
+    (gatewayPort) => {
+      const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-installer-port-conflict-"));
+      try {
+        const result = runInstallerFunctions(
+          home,
+          `NEMOCLAW_HTTPS_PIN_RUNTIME_ADAPTER_PORT=11500
 NEMOCLAW_GATEWAY_PORT=${gatewayPort}
 save_usage_notice_acceptance_shell "test-version"`,
-      );
+        );
 
-      expect(result.status, result.output).not.toBe(0);
-      expect(result.output).toContain("NEMOCLAW_GATEWAY_PORT");
-      expect(fs.existsSync(path.join(home, ".nemoclaw", "gateways", gatewayPort))).toBe(false);
-    } finally {
-      fs.rmSync(home, { recursive: true, force: true });
-    }
-  });
+        expect(result.status, result.output).not.toBe(0);
+        expect(result.output).toContain("NEMOCLAW_GATEWAY_PORT");
+        expect(fs.existsSync(path.join(home, ".nemoclaw", "gateways", gatewayPort))).toBe(false);
+      } finally {
+        fs.rmSync(home, { recursive: true, force: true });
+      }
+    },
+  );
 
   it.each([
     "NEMOCLAW_DASHBOARD_PORT",
@@ -240,29 +240,30 @@ save_usage_notice_acceptance_shell "test-version"`,
     }
   });
 
-  it.each(
-    stateSymlinkCases,
-  )("rejects a symlinked $label state ancestor before writing usage acceptance", ({ setup }) => {
-    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-installer-state-symlink-"));
-    try {
-      const root = path.join(home, ".nemoclaw");
-      const controlled = path.join(home, "controlled");
-      fs.mkdirSync(controlled);
-      setup(root, controlled);
+  it.each(stateSymlinkCases)(
+    "rejects a symlinked $label state ancestor before writing usage acceptance",
+    ({ setup }) => {
+      const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-installer-state-symlink-"));
+      try {
+        const root = path.join(home, ".nemoclaw");
+        const controlled = path.join(home, "controlled");
+        fs.mkdirSync(controlled);
+        setup(root, controlled);
 
-      const result = runInstallerFunctions(
-        home,
-        'save_usage_notice_acceptance_shell "test-version"',
-      );
+        const result = runInstallerFunctions(
+          home,
+          'save_usage_notice_acceptance_shell "test-version"',
+        );
 
-      expect(result.status, result.output).not.toBe(0);
-      expect(result.output).toContain("Refusing symbolic link in NemoClaw state path");
-      expect(fs.existsSync(path.join(controlled, "usage-notice.json"))).toBe(false);
-      expect(fs.existsSync(path.join(controlled, "9123", "usage-notice.json"))).toBe(false);
-    } finally {
-      fs.rmSync(home, { recursive: true, force: true });
-    }
-  });
+        expect(result.status, result.output).not.toBe(0);
+        expect(result.output).toContain("Refusing symbolic link in NemoClaw state path");
+        expect(fs.existsSync(path.join(controlled, "usage-notice.json"))).toBe(false);
+        expect(fs.existsSync(path.join(controlled, "9123", "usage-notice.json"))).toBe(false);
+      } finally {
+        fs.rmSync(home, { recursive: true, force: true });
+      }
+    },
+  );
 
   it("runs the one-time partition before a normal selected-port CLI command", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-legacy-port-"));

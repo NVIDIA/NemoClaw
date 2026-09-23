@@ -6,7 +6,10 @@ import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
 
 import { type OpenRegularFile, openRegularFileNoFollow } from "../../adapters/fs/regular-file";
+import { getAgentSandboxBaseImageEnvVar } from "../../agent/base-image-env";
 import { getBuildIdentity } from "../../core/version";
+import { CORPORATE_CA_EXPLICIT_ENV } from "../corporate-ca-policy";
+import { CorporateCaValidationError } from "../corporate-ca-types";
 import {
   ManagedImageCatalogUnavailableError,
   normalizeManagedImageRelease,
@@ -54,6 +57,8 @@ export interface PrepareSandboxWorkloadSourceInput {
   readonly catalogRevision?: string | null;
   /** Contract from the repository-accepted candidate qualification receipt. */
   readonly acceptedCandidateContract?: ManagedImageContractV1 | null;
+  /** Effective environment captured by the lifecycle authority. */
+  readonly environment?: NodeJS.ProcessEnv;
 }
 
 export function liveE2eManagedImageRevision(environment: NodeJS.ProcessEnv): string | null {
@@ -158,13 +163,9 @@ export function liveE2eManagedImageCatalog(
     );
   }
   if (inlineCatalog) {
-    const revision = environment.NEMOCLAW_E2E_EXPECTED_SHA?.trim() ?? "";
-    if (!/^[0-9a-f]{40}$/u.test(revision)) {
-      throw new SandboxWorkloadPreparationError(
-        "the live E2E managed-image catalog requires an exact candidate revision",
-      );
-    }
-    return { catalog: parseInlineManagedImageCatalog(inlineCatalog), revision };
+    const catalog = parseInlineManagedImageCatalog(inlineCatalog);
+    const { revision } = requireCompleteManagedImageCatalog(catalog, null, null, null);
+    return { catalog, revision };
   }
   if (!catalogPath) return null;
   try {
@@ -241,9 +242,28 @@ export class SandboxWorkloadPreparationError extends Error {
   }
 }
 
+export function rejectManagedWorkloadBaseImageOverride(
+  agentName: string,
+  environment: NodeJS.ProcessEnv = process.env,
+): void {
+  const overrideEnvVar = getAgentSandboxBaseImageEnvVar(agentName);
+  if (!environment[overrideEnvVar]?.trim()) return;
+  throw new SandboxWorkloadPreparationError(
+    `'${overrideEnvVar}' is set, but the managed image workload for '${agentName}' installs an exact, pre-verified digest and does not consult this override. Use a legacy Dockerfile workload when it is supported; otherwise unset '${overrideEnvVar}' to use the managed image.`,
+  );
+}
+
 function diagnostic(error: unknown): string {
   if (error instanceof Error) return error.message;
   return "managed image catalog resolution failed";
+}
+
+function rejectedCorporateCa(error: unknown): CorporateCaValidationError | null {
+  if (error instanceof CorporateCaValidationError) return error;
+  if (error instanceof Error && error.cause instanceof CorporateCaValidationError) {
+    return error.cause;
+  }
+  return null;
 }
 
 function unavailableResult(
@@ -292,11 +312,7 @@ function requireCompleteManagedImageCatalog(
       );
     }
     try {
-      const contract = parseManagedImageContractV1(
-        candidate,
-        agent,
-        cohortPlatform ?? undefined,
-      );
+      const contract = parseManagedImageContractV1(candidate, agent, cohortPlatform ?? undefined);
       cohortPlatform ??= contract.platform;
       if (
         expectedRevision === null &&
@@ -432,7 +448,15 @@ export async function prepareSandboxWorkloadSource(
       fallbackDiagnostic: null,
     };
   }
-
+  // Past this point onboarding is committed to a managed-image workload, which
+  // installs an exact, pre-verified digest and never reads a base-image
+  // override. Silently ignoring an operator-supplied override would accept it
+  // without ever resolving it to a trusted digest (#11138). The check runs
+  // before catalog resolution so a catalog outage cannot turn the rejection
+  // into a legacy Dockerfile build that consumes the override instead.
+  // Every managed workload rejects an override before catalog resolution.
+  // Legacy Dockerfile selection returns above and retains its base-image preflight.
+  rejectManagedWorkloadBaseImageOverride(input.agentName, input.environment);
   if (input.catalog && input.catalogPath) {
     throw new SandboxWorkloadPreparationError(
       "managed image catalog has conflicting content authorities",
@@ -485,13 +509,24 @@ export async function prepareSandboxWorkloadSource(
         ? readExactManagedImageCatalog(input.catalogPath)
         : await (
             dependencies.resolveCatalog ??
-            ((options) => resolveManagedImageCatalogFromGhcr(options))
+            ((options) =>
+              resolveManagedImageCatalogFromGhcr({
+                ...options,
+                ...(input.environment === undefined ? {} : { environment: input.environment }),
+              }))
           )({
             release,
             platform,
             ...(input.catalogRevision ? { revision: input.catalogRevision } : {}),
           });
   } catch (error) {
+    const corporateCaError = rejectedCorporateCa(error);
+    if (corporateCaError) {
+      throw new SandboxWorkloadPreparationError(
+        `${CORPORATE_CA_EXPLICIT_ENV} was rejected: ${corporateCaError.reason}`,
+        { cause: error },
+      );
+    }
     if (!(error instanceof ManagedImageCatalogUnavailableError)) {
       throw new SandboxWorkloadPreparationError(
         `managed image catalog '${release}' failed validation`,

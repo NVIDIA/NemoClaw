@@ -93,16 +93,22 @@ export type ResolveSandboxCreateIntentInput = {
 export type MaterializeSandboxCreatePlanInput = {
   intent: SandboxCreateIntent;
   fromRef: string;
+  /** Preserve raw command materialization for the Portable consumer deferred to #12119. */
+  portableLifecycle?: boolean;
   managedStateMounts?: readonly ManagedStateVolumeMount[];
   /** Opaque provider-owned OpenShell driver-config key for the managed state mount. */
   managedStateMountDriverId?: string | null;
   policylessCreate?: boolean;
   /** Keep provider mutations and attachments behind the exact post-create identity gate. */
   deferSandboxEffectsUntilIdentityVerification?: boolean;
+  /** A verified create resume must rebuild its plan without replaying provider mutations. */
+  skipProviderEffects?: boolean;
   messagingTokenDefs: MessagingTokenDef[];
   /** Non-secret config captured in the messaging plan that owns exact policy endpoints. */
   messagingConfig?: MessagingChannelConfig | null;
-  runProviderPreDeleteCleanup(revalidateSandboxIdentity?: (operation: string) => void): void;
+  runProviderPreDeleteCleanup(
+    revalidateSandboxIdentity?: (operation: string) => void,
+  ): Promise<void>;
   upsertMessagingProviders(
     tokenDefs: MessagingTokenDef[],
     options: {
@@ -110,7 +116,7 @@ export type MaterializeSandboxCreatePlanInput = {
       allowedSandboxes: readonly [string];
       revalidateSandboxIdentity?(operation: string): void;
     },
-  ): string[];
+  ): string[] | Promise<string[]>;
   getHermesToolGatewayProviderName(sandboxName: string): string;
   discloseInitialSandboxPolicy?(policy: InitialSandboxPolicy): void;
   prepareInitialSandboxCreatePolicy?: PrepareInitialSandboxCreatePolicy;

@@ -84,54 +84,57 @@ describe("handleSandboxState tool disclosure", () => {
   it.each([
     ["progressive", "direct"],
     ["direct", "progressive"],
-  ] as const)("passes resumed %s-to-%s tool-disclosure drift into the downstream create intent", async (recordedMode, requestedMode) => {
-    const session = createSession({ sandboxName: "saved", toolDisclosure: requestedMode });
-    session.steps.sandbox.status = "complete";
-    const { deps, calls } = createDeps({
-      getSandboxReuseState: () => "ready",
-      updateSession: vi.fn(
-        (mutator: (value: Session) => Session | void) => mutator(session) ?? session,
-      ),
-      getSandboxRegistryEntry: (name) =>
-        registeredEntry(name, {
-          nemoclawVersion: "0.1.0",
-          toolDisclosure: recordedMode,
-        }),
-    });
+  ] as const)(
+    "passes resumed %s-to-%s tool-disclosure drift into the downstream create intent",
+    async (recordedMode, requestedMode) => {
+      const session = createSession({ sandboxName: "saved", toolDisclosure: requestedMode });
+      session.steps.sandbox.status = "complete";
+      const { deps, calls } = createDeps({
+        getSandboxReuseState: () => "ready",
+        updateSession: vi.fn(
+          (mutator: (value: Session) => Session | void) => mutator(session) ?? session,
+        ),
+        getSandboxRegistryEntry: (name) =>
+          registeredEntry(name, {
+            nemoclawVersion: "0.1.0",
+            toolDisclosure: recordedMode,
+          }),
+      });
 
-    await handleSandboxState({
-      ...baseOptions(deps, session),
-      resume: true,
-      endpointSource: "inference-set",
-      sandboxName: "saved",
-    });
+      await handleSandboxState({
+        ...baseOptions(deps, session),
+        resume: true,
+        endpointSource: "inference-set",
+        sandboxName: "saved",
+      });
 
-    expect(calls.removeSandbox).not.toHaveBeenCalled();
-    const createSandboxCall = calls.createSandbox.mock.calls[0] as unknown[];
-    expect(createSandboxCall[14]).toEqual({
-      sessionId: session.sessionId,
-      selection: {
-        provider: "provider",
-        model: "model",
-        endpointUrl: null,
-        endpointSource: null,
-        credentialEnv: null,
-        preferredInferenceApi: "openai-completions",
-        compatibleEndpointReasoning: null,
-        compatibleEndpointReasoningEffort: null,
-        nimContainer: null,
-      },
-    });
-    expect(createSandboxCall[15]).toMatchObject({
-      resolved: expect.any(Object),
-      recreate: true,
-      toolDisclosure: requestedMode,
-      observabilityEnabled: false,
-      endpointSource: "inference-set",
-      extraProviders: [],
-      reuseRegisteredCredentials: true,
-    });
-  });
+      expect(calls.removeSandbox).not.toHaveBeenCalled();
+      const createSandboxCall = calls.createSandbox.mock.calls[0] as unknown[];
+      expect(createSandboxCall[14]).toEqual({
+        sessionId: session.sessionId,
+        selection: {
+          provider: "provider",
+          model: "model",
+          endpointUrl: null,
+          endpointSource: null,
+          credentialEnv: null,
+          preferredInferenceApi: "openai-completions",
+          compatibleEndpointReasoning: null,
+          compatibleEndpointReasoningEffort: null,
+          nimContainer: null,
+        },
+      });
+      expect(createSandboxCall[15]).toMatchObject({
+        resolved: expect.any(Object),
+        recreate: true,
+        toolDisclosure: requestedMode,
+        observabilityEnabled: false,
+        endpointSource: "inference-set",
+        extraProviders: [],
+        reuseRegisteredCredentials: true,
+      });
+    },
+  );
 
   it("recreates a legacy custom image so its tool-disclosure contract is validated", async () => {
     const session = createSession({ sandboxName: "saved", toolDisclosure: "progressive" });

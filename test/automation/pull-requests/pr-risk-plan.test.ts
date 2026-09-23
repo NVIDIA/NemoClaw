@@ -48,7 +48,6 @@ const HERMES_MANAGED_POLICY_JOBS = [
   "dashboard-remote-bind",
   "hermes-e2e",
   "hermes-inference-switch",
-  "hermes-shields-config",
   "security-posture",
 ];
 const HERMES_CLI_ADAPTER_REQUIRED_JOBS = [
@@ -60,7 +59,6 @@ const HERMES_MANAGED_POLICY_REQUIRED_JOBS = [
   "bedrock-runtime-compatible-anthropic",
   "channels-stop-start",
   "dashboard-remote-bind",
-  "hermes-shields-config",
 ];
 const HERMES_WRAPPER_FOCUSED_JOBS = [
   "bedrock-runtime-compatible-anthropic",
@@ -68,7 +66,6 @@ const HERMES_WRAPPER_FOCUSED_JOBS = [
   "dashboard-remote-bind",
   "hermes-e2e",
   "hermes-inference-switch",
-  "hermes-shields-config",
   "mcp-bridge",
   "security-posture",
 ];
@@ -99,7 +96,6 @@ const HERMES_START_FOCUSED_JOBS = [
   "hermes-discord",
   "hermes-e2e",
   "hermes-inference-switch",
-  "hermes-shields-config",
   "messaging-providers",
   "security-posture",
 ];
@@ -109,7 +105,6 @@ const HERMES_START_REQUIRED_JOBS = [
   "channels-stop-start",
   "dashboard-remote-bind",
   "hermes-discord",
-  "hermes-shields-config",
   "messaging-providers",
 ];
 const HERMES_MANAGED_POLICY_FILES = [
@@ -135,7 +130,7 @@ describe("deterministic PR risk plan", () => {
     },
   );
 
-  it.each(["cloud-inference", "security-posture", "network-policy", "jetson-nvmap-gpu"])(
+  it.each(["security-posture", "network-policy", "jetson-nvmap-gpu"])(
     "classifies %s as manual-only when the controller rejects the job",
     (jobId) => {
       expect(isPrE2eManualControllerJob(jobId)).toBe(false);
@@ -147,7 +142,7 @@ describe("deterministic PR risk plan", () => {
     const second = plan("src/lib/onboard.ts", "src/lib/state/registry.ts");
 
     expect(first).toEqual(second);
-    expect(first.version).toBe(20);
+    expect(first.version).toBe(25);
     expect(first.headSha).toBe(HEAD_SHA);
     expect(first.planHash).toMatch(/^[a-f0-9]{64}$/u);
     expect(first.changedFiles).toEqual(["src/lib/onboard.ts", "src/lib/state/registry.ts"]);
@@ -210,8 +205,8 @@ describe("deterministic PR risk plan", () => {
 
     expect(result.families.map((family) => family.id)).toEqual(["e2e-control-plane"]);
     expect(riskPlanRequiredJobIds(result)).toEqual([
-      "cloud-inference",
       "cloud-onboard",
+      "full-e2e",
       "security-posture",
     ]);
   });
@@ -263,19 +258,11 @@ describe("deterministic PR risk plan", () => {
       expect.objectContaining({
         id: "focused-e2e",
         matchedFiles: changedFiles,
-        requiredJobs: [
-          "device-auth-health",
-          "issue-4462-scope-upgrade-approval",
-          "openclaw-inference-switch",
-        ],
+        requiredJobs: ["issue-4462-scope-upgrade-approval", "openclaw-inference-switch"],
       }),
     );
     expect(riskPlanRequiredJobIds(result)).toEqual(
-      expect.arrayContaining([
-        "device-auth-health",
-        "issue-4462-scope-upgrade-approval",
-        "openclaw-inference-switch",
-      ]),
+      expect.arrayContaining(["issue-4462-scope-upgrade-approval", "openclaw-inference-switch"]),
     );
     expect(riskPlanRequiredJobIds(adjacentOnboardChange)).toEqual([
       "onboard-repair",
@@ -426,41 +413,24 @@ describe("deterministic PR risk plan", () => {
 
     expect(focusedFamily?.matchedFiles).toEqual([changedFile]);
     expect(focusedFamily?.requiredJobs).toEqual(
-      expect.arrayContaining([...OPENCLAW_MESSAGING_RUNTIME_E2E_JOBS, "shields-config"]),
+      expect.arrayContaining(OPENCLAW_MESSAGING_RUNTIME_E2E_JOBS),
     );
     expect(riskPlanRequiredJobIds(result)).toEqual(
-      expect.arrayContaining([...OPENCLAW_MESSAGING_RUNTIME_E2E_JOBS, "shields-config"]),
+      expect.arrayContaining(OPENCLAW_MESSAGING_RUNTIME_E2E_JOBS),
     );
   });
 
-  it.each([
-    "scripts/runtime-state-mutation-control.py",
-    "src/lib/onboard/runtime-provider/docker-state-mutation.ts",
-    "src/lib/shields/relock-reconfirm.ts",
-  ])("selects both Shields runtime proofs for %s (#10155)", (changedFile) => {
-    const result = plan(changedFile);
-    const focusedFamily = result.families.find((family) => family.id === "focused-e2e");
-
-    expect(focusedFamily?.matchedFiles).toContain(changedFile);
-    expect(focusedFamily?.requiredJobs).toEqual(
-      expect.arrayContaining(["hermes-shields-config", "shields-config"]),
-    );
-    expect(riskPlanRequiredJobIds(result)).toEqual(
-      expect.arrayContaining(["hermes-shields-config", "shields-config"]),
-    );
-  });
-
-  it("selects Hermes Shields and messaging proofs for the shared Hermes runtime guard (#10155)", () => {
+  it("selects Hermes messaging proofs for the shared Hermes runtime guard (#10153)", () => {
     const changedFile = "agents/hermes/runtime-config-guard.py";
     const result = plan(changedFile);
     const focusedFamily = result.families.find((family) => family.id === "focused-e2e");
 
     expect(focusedFamily?.matchedFiles).toEqual([changedFile]);
     expect(focusedFamily?.requiredJobs).toEqual(
-      expect.arrayContaining([...HERMES_MESSAGING_RUNTIME_E2E_JOBS, "hermes-shields-config"]),
+      expect.arrayContaining(HERMES_MESSAGING_RUNTIME_E2E_JOBS),
     );
     expect(riskPlanRequiredJobIds(result)).toEqual(
-      expect.arrayContaining([...HERMES_MESSAGING_RUNTIME_E2E_JOBS, "hermes-shields-config"]),
+      expect.arrayContaining(HERMES_MESSAGING_RUNTIME_E2E_JOBS),
     );
   });
 
@@ -475,16 +445,39 @@ describe("deterministic PR risk plan", () => {
     expect(result.requiredJobs).toEqual([]);
   });
 
-  it("maps trusted prebuild helper changes to the EXDEV job (#10517)", () => {
-    const changedFile = "test/e2e/live/openclaw-plugin-runtime-exdev-trusted-prebuild.ts";
+  it("maps shared canonical OpenShell components to every live consumer (#11547)", () => {
+    const changedFile = "test/helpers/openshell-components.ts";
 
     expect(focusedE2eJobsForChangedFiles([changedFile])).toEqual([
-      {
-        id: "openclaw-plugin-runtime-exdev",
-        matchedFiles: [changedFile],
-      },
+      { id: "mcp-bridge", matchedFiles: [changedFile] },
     ]);
   });
+
+  it("maps the exact-main driver wrapper to its stable live consumer (#11547)", () => {
+    const changedFile = "test/e2e/live/openshell-driver-config-test-wrapper.ts";
+
+    expect(focusedE2eJobsForChangedFiles([changedFile])).toEqual([
+      { id: "mcp-bridge", matchedFiles: [changedFile] },
+    ]);
+  });
+
+  it.each([
+    "src/lib/acp/main.ts",
+    "src/lib/acp/command.ts",
+    "src/lib/adapters/openshell/hermes-acp-ssh-cli.ts",
+    "src/lib/adapters/openshell/hermes-acp-ssh.ts",
+  ])(
+    "maps Hermes ACP adapter changes to its lifecycle and rebuild jobs for %s (#10947)",
+    (changedFile) => {
+      expect(focusedE2eJobsForChangedFiles([changedFile])).toEqual([
+        { id: "hermes-e2e", matchedFiles: [changedFile] },
+      ]);
+      expect(catalogueTargetsForChangedFiles([changedFile]).map(({ id }) => id)).toContain(
+        "rebuild-hermes",
+      );
+      expect(riskPlanRequiredJobIds(plan(changedFile))).toEqual(["hermes-e2e", "rebuild-hermes"]);
+    },
+  );
 
   it("maps a shared gateway live test to every catalogue fixture (#7921)", () => {
     const changedFiles = ["test/e2e/live/openshell-gateway-upgrade.test.ts"];
@@ -508,8 +501,8 @@ describe("deterministic PR risk plan", () => {
 
     expect(focusedE2eJobs).toEqual([]);
     expect(riskPlanRequiredJobIds(result)).toEqual([
-      "cloud-inference",
       "cloud-onboard",
+      "full-e2e",
       "security-posture",
     ]);
     expect(result.families.map((family) => family.id)).toEqual(["e2e-control-plane"]);
@@ -533,8 +526,8 @@ describe("deterministic PR risk plan", () => {
       },
     ]);
     expect(riskPlanRequiredJobIds(result)).toEqual([
-      "cloud-inference",
       "cloud-onboard",
+      "full-e2e",
       "security-posture",
       "token-rotation",
     ]);
@@ -547,8 +540,8 @@ describe("deterministic PR risk plan", () => {
     const result = plan(".github/workflows/e2e.yaml");
 
     expect(riskPlanRequiredJobIds(result)).toEqual([
-      "cloud-inference",
       "cloud-onboard",
+      "full-e2e",
       "security-posture",
     ]);
     expect(result.families.map((family) => family.id)).toEqual([
@@ -598,10 +591,11 @@ describe("deterministic PR risk plan", () => {
     "scripts/checks/build-protected-managed-images.sh",
     "src/lib/actions/sandbox/mcp-bridge-adapter-openclaw.ts",
     "src/lib/actions/sandbox/openshell-child-visible-credentials.v0.0.106.json",
+    "src/lib/extra-agents-validation.ts",
     "src/lib/core/json-types.ts",
     "src/lib/core/ports.ts",
     "src/lib/messaging/runtime.ts",
-    "src/lib/onboard/managed-bootstrap/envelope.ts",
+    "src/lib/onboard/managed-startup/transport.ts",
     "src/lib/onboard/managed-startup/image-runtime.ts",
     "src/lib/security/credential-hash.ts",
     "src/lib/state/paths.ts",
@@ -628,7 +622,7 @@ describe("deterministic PR risk plan", () => {
     const result = plan(activation);
     const activatedImplementation = plan(
       "scripts/checks/run-managed-image-openshell-e2e.ts",
-      "src/lib/onboard/managed-bootstrap/docker.ts",
+      "src/lib/onboard/sandbox-create-launch.ts",
       "src/lib/onboard/managed-workload/onboard-orchestration.ts",
       "test/e2e/live/managed-image-protected-runtime.test.ts",
     );
@@ -662,37 +656,12 @@ describe("deterministic PR risk plan", () => {
     ).toBe(false);
   });
 
-  it("keeps protected llama.cpp DGX Spark qualification activation-only until trusted (#8260)", () => {
-    const activation = "ci/llama-cpp-dgx-spark-qualification-v1.yaml";
-    const agentQualification =
-      "managed-inference/qualifications/llama-cpp.openclaw.spark-single.v1.yaml";
-    const result = plan(activation);
-    const dormantImplementation = plan(
-      "scripts/checks/run-llama-cpp-dgx-spark-qualification.mts",
-      "test/e2e/live/llama-cpp-dgx-spark-qualification.test.ts",
+  it("does not recommend the removed DGX Spark workflow job", () => {
+    const result = plan(
+      "ci/llama-cpp-dgx-spark-qualification-v1.yaml",
+      "managed-inference/qualifications/llama-cpp.openclaw.spark-single.v1.yaml",
     );
-
-    expect(result.families).toContainEqual(
-      expect.objectContaining({
-        id: "llama-cpp-dgx-spark-qualification",
-        matchedFiles: [activation],
-        requiredJobs: ["llama-cpp-dgx-spark-qualification"],
-      }),
-    );
-    expect(riskPlanRequiredJobIds(result)).toEqual(["llama-cpp-dgx-spark-qualification"]);
-    expect(riskPlanRequiredJobIds(plan(agentQualification))).toContain(
-      "llama-cpp-dgx-spark-qualification",
-    );
-    expect(
-      riskPlanRequiredJobIds(
-        plan("managed-inference/qualifications/llama-cpp.other.spark-single.v1.yaml"),
-      ),
-    ).not.toContain("llama-cpp-dgx-spark-qualification");
-    expect(
-      dormantImplementation.families.some(
-        (family) => family.id === "llama-cpp-dgx-spark-qualification",
-      ),
-    ).toBe(false);
+    expect(riskPlanRequiredJobIds(result)).not.toContain("llama-cpp-dgx-spark-qualification");
   });
 
   it("loads protected multiarch identifiers through the workflow node loader (#7744)", () => {
@@ -783,10 +752,7 @@ describe("deterministic PR risk plan", () => {
       "test/e2e/e2e-cloud-experimental/checks/08-deepagents-code-secret-boundary.sh",
     );
 
-    expect(PR_E2E_TYPED_TARGET_IDS).toEqual([
-      "ubuntu-repo-cloud-langchain-deepagents-code",
-      "ubuntu-repo-docker-post-reboot-recovery",
-    ]);
+    expect(PR_E2E_TYPED_TARGET_IDS).toEqual(["ubuntu-repo-cloud-langchain-deepagents-code"]);
     expect(riskPlanRequiredTargetIds(result)).toEqual([PR_E2E_TYPED_TARGET_IDS[0]]);
     expect(result.requiredTargets).toEqual([
       expect.objectContaining({
@@ -867,17 +833,17 @@ describe("deterministic PR risk plan", () => {
 
   it.each([
     "src/lib/actions/sandbox/status-snapshot.ts",
-    "src/lib/onboard/docker-driver-sandbox-recovery.ts",
+    "src/lib/onboard/docker-driver-container-observation.ts",
     "src/lib/onboard/docker-startup-command-agent.ts",
     "src/lib/onboard/sandbox-create-step.ts",
-  ])("selects post-reboot recovery for Docker delivery changes in %s (#7824)", (changedFile) => {
+  ])("selects sandbox survival for Docker delivery changes in %s (#7824)", (changedFile) => {
     const result = plan(changedFile);
     const adjacentStatusFile = plan("src/lib/actions/sandbox/status-text.ts");
 
-    expect(riskPlanRequiredTargetIds(result)).toEqual([PR_E2E_TYPED_TARGET_IDS[1]]);
+    expect(riskPlanRequiredTargetIds(result)).toEqual(["sandbox-survival"]);
     expect(result.requiredTargets).toEqual([
       expect.objectContaining({
-        id: PR_E2E_TYPED_TARGET_IDS[1],
+        id: "sandbox-survival",
         families: ["focused-e2e"],
         matchedFiles: [changedFile],
       }),
@@ -886,18 +852,11 @@ describe("deterministic PR risk plan", () => {
     expect(result.planHash).not.toBe(adjacentStatusFile.planHash);
   });
 
-  it("selects post-reboot recovery when its shared timeout contract changes (#9622)", () => {
+  it("does not select a retired recovery target for timeout-contract changes", () => {
     const changedFile = "tools/e2e/onboard-timeout-contract.mts";
     const result = plan(changedFile);
 
-    expect(riskPlanRequiredTargetIds(result)).toEqual(["ubuntu-repo-docker-post-reboot-recovery"]);
-    expect(result.requiredTargets).toEqual([
-      expect.objectContaining({
-        id: "ubuntu-repo-docker-post-reboot-recovery",
-        families: ["focused-e2e"],
-        matchedFiles: [changedFile],
-      }),
-    ]);
+    expect(riskPlanRequiredTargetIds(result)).toEqual([]);
   });
 
   it("does not infer security or inference risk from unrelated path substrings", () => {
@@ -966,7 +925,7 @@ describe("deterministic PR risk plan", () => {
     {
       file: "src/lib/credentials/provider-list.ts",
       family: "credentials-security",
-      jobs: ["cloud-inference", "security-posture"],
+      jobs: ["full-e2e", "security-posture"],
     },
   ])("maps $family changes to a reviewed E2E floor", ({ file, family, jobs }) => {
     const result = plan(file);
@@ -997,22 +956,12 @@ describe("deterministic PR risk plan", () => {
     {
       file: "nemoclaw-blueprint/private-networks.yaml",
       families: ["inference-policy", "credentials-security"],
-      jobs: ["inference-routing", "network-policy", "cloud-inference", "security-posture"],
+      jobs: ["inference-routing", "network-policy", "full-e2e", "security-posture"],
     },
     {
       file: "nemoclaw/src/blueprint/private-networks.ts",
       families: ["inference-policy", "credentials-security"],
-      jobs: ["inference-routing", "network-policy", "cloud-inference", "security-posture"],
-    },
-    {
-      file: "src/lib/shields/mcp-policy-transition.ts",
-      families: ["credentials-security"],
-      jobs: ["cloud-inference", "security-posture"],
-    },
-    {
-      file: "src/lib/shields/verify-lock.ts",
-      families: ["credentials-security"],
-      jobs: ["cloud-inference", "security-posture"],
+      jobs: ["inference-routing", "network-policy", "full-e2e", "security-posture"],
     },
   ])("keeps the $file security boundary in the deterministic floor", ({ file, families, jobs }) => {
     const result = plan(file);
@@ -1038,9 +987,9 @@ describe("deterministic PR risk plan", () => {
     "tools/e2e/workflow-plan.mts",
     "tools/e2e/workflow-boundary.mts",
     "tools/e2e/job-map.txt",
-    "test/e2e/registry/runtime-support.ts",
+    "test/e2e/registry/execution.ts",
     "test/e2e/risk-signal-reporter.ts",
-    "test/e2e/lib/security-posture-assertions.sh",
+    "test/e2e/fixtures/security-posture.ts",
     "test/e2e/lib/redact-text.py",
     "test/e2e/lib/fake-slack-api.cjs",
     "test/e2e/fixtures/runtime-input.txt",
@@ -1053,7 +1002,7 @@ describe("deterministic PR risk plan", () => {
 
     expect(result.families.map((family) => family.id)).toContain("e2e-control-plane");
     expect(riskPlanRequiredJobIds(result)).toEqual(
-      expect.arrayContaining(["cloud-onboard", "cloud-inference", "security-posture"]),
+      expect.arrayContaining(["cloud-onboard", "full-e2e", "security-posture"]),
     );
   });
 
@@ -1095,14 +1044,13 @@ describe("deterministic PR risk plan", () => {
     );
 
     expect(riskPlanRequiredJobIds(result)).toEqual([
-      "cloud-inference",
       "cloud-onboard",
+      "full-e2e",
       "managed-image-multiarch-startup",
       "managed-image-protected-runtime",
       "security-posture",
       "channels-add-remove",
       "channels-stop-start",
-      "full-e2e",
       "hermes-discord",
       "hermes-e2e",
       "inference-routing",
@@ -1133,5 +1081,86 @@ describe("deterministic PR risk plan", () => {
     const configuredJobs = new Set(RISK_RULES.flatMap((rule) => rule.requiredJobs));
 
     expect([...configuredJobs].filter((job) => !allowedJobs.has(job))).toEqual([]);
+  });
+});
+
+describe("Brev Launchable recommendations", () => {
+  it.each([
+    ["image-declared gateway", "test/e2e/fixtures/full-e2e-gateway.ts"],
+    ["platform gateway ownership", "src/lib/onboard/gateway-management.ts"],
+    ["gateway naming", "src/lib/onboard/gateway-binding/identity.ts"],
+    ["new gateway helper", "src/lib/onboard/gateway-binding/endpoint-authority.ts"],
+    ["nested gateway helper", "src/lib/onboard/gateway-binding/runtime/endpoint.ts"],
+    ["launch health", "src/lib/actions/sandbox/launch-readiness/health.ts"],
+    [
+      "OpenClaw pairing",
+      "src/lib/actions/sandbox/launch-readiness/openclaw-pairing-qualification.ts",
+    ],
+    ["new launch helper", "src/lib/actions/sandbox/launch-readiness/session/observe.ts"],
+    ["scenario inference", "test/e2e/live/full-e2e-inference-probe.ts"],
+    ["scenario workload evidence", "test/e2e/live/full-e2e-workload-evidence.ts"],
+    ["new scenario helper", "test/e2e/live/full-e2e/recovery/observe.ts"],
+    ["new scenario fixture", "test/e2e/fixtures/full-e2e-image-receipt.ts"],
+    ["listener identity", "src/lib/adapters/openshell/forward-cli.ts"],
+    ["forward command boundary", "src/lib/adapters/openshell/command-execution.ts"],
+    ["forward authority", "src/lib/adapters/openshell/forward-runtime.ts"],
+    ["forward recovery", "src/lib/actions/sandbox/forward-recovery.ts"],
+    ["process recovery", "src/lib/actions/sandbox/process-recovery.ts"],
+    ["probe and connect", "src/lib/actions/sandbox/connect.ts"],
+    ["dashboard startup", "src/lib/onboard/agent-dashboard-forward.ts"],
+    ["preinstalled scenario", "test/e2e/live/full-e2e.test.ts"],
+    ["Launchable deployment", "tools/e2e/brev-launchable-e2e.sh"],
+  ])("recommends full Brev coverage for %s changes", (_behavior, file) => {
+    const result = buildRiskPlan({ headSha: HEAD_SHA, changedFiles: [file] });
+    expect(result.requiredJobs).toContainEqual(
+      expect.objectContaining({
+        id: "staging-brev-launchable",
+        matchedFiles: [file],
+        families: ["focused-e2e"],
+      }),
+    );
+    expect(riskPlanRequiredJobIds(result)).not.toContain("staging-brev-launchable-identity");
+  });
+
+  it.each([
+    "docs/manage-sandboxes/recover-rebuild-sandboxes.mdx",
+    "src/lib/actions/sandbox/forward-recovery-declared-ports.test.ts",
+    "test/e2e/support/full-e2e-gateway.test.ts",
+    "test/e2e-runtime/brev-launchable-e2e.test.ts",
+    "src/lib/actions/sandbox/probe/hermes-portable-forward-adapter-recovery.ts",
+    "src/lib/onboard/hermes-dashboard.ts",
+    "src/lib/onboard/ssh-forward-hint.ts",
+    "src/lib/onboard/gateway-binding/identity.test.ts",
+    "src/lib/onboard/gateway-binding/__tests__/identity.ts",
+    "src/lib/onboard/gateway-binding/README.md",
+    "src/lib/actions/sandbox/launch-readiness/health.spec.ts",
+    "src/lib/actions/sandbox/launch-readiness/tests/observe.ts",
+    "src/lib/actions/sandbox/launch-readiness/notes.txt",
+    "src/lib/onboard/gateway-binding-hermes/identity.ts",
+    "src/lib/actions/sandbox/launch-readiness-hermes/health.ts",
+    "test/e2e/live/full-e2e-notes.md",
+    "test/e2e/live/full-e2e/README.txt",
+    "test/e2e/support/full-e2e-inference-probe.test.ts",
+    "test/e2e/live/full-e2eish.ts",
+  ])("does not recommend Brev for an adjacent change in %s", (file) => {
+    const result = buildRiskPlan({ headSha: HEAD_SHA, changedFiles: [file] });
+    expect(riskPlanRequiredJobIds(result)).not.toContain("staging-brev-launchable");
+  });
+
+  it("combines both regression surfaces without dropping lifecycle coverage", () => {
+    const changedFiles = [
+      "src/lib/actions/sandbox/forward-recovery.ts",
+      "test/e2e/fixtures/full-e2e-gateway.ts",
+    ];
+    const result = buildRiskPlan({
+      headSha: HEAD_SHA,
+      changedFiles: [...changedFiles, changedFiles[0]],
+    });
+    expect(result.requiredJobs.filter(({ id }) => id === "staging-brev-launchable")).toEqual([
+      expect.objectContaining({ matchedFiles: changedFiles }),
+    ]);
+    expect(riskPlanRequiredJobIds(result)).toEqual(
+      expect.arrayContaining(["onboard-resume", "onboard-repair"]),
+    );
   });
 });

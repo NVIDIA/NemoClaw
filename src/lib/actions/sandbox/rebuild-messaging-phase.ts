@@ -1,7 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { runOpenshell } from "../../adapters/openshell/runtime";
+import {
+  buildSelectedOpenShellSubprocessEnv,
+  type OpenShellRuntimeSelection,
+  runOpenshell,
+} from "../../adapters/openshell/runtime";
 import { RD as _RD, G, R } from "../../cli/terminal-style";
 import { MessagingSetupApplier } from "../../messaging/applier/setup-applier";
 import type {
@@ -45,22 +49,32 @@ export async function stageRebuildMessagingPlanOrBail(
   }
 }
 
-const runMessagingOpenshell: MessagingOpenShellRunner = (args, options = {}) =>
-  runOpenshell([...args], {
-    env: options.env as NodeJS.ProcessEnv | undefined,
-    ignoreError: options.ignoreError,
-    input: options.input,
-    stdio: options.stdio as never,
-  });
+function createRunMessagingOpenshell(
+  runtimeSelection?: OpenShellRuntimeSelection,
+): MessagingOpenShellRunner {
+  return (args, options = {}) =>
+    runOpenshell([...args], {
+      env: runtimeSelection
+        ? buildSelectedOpenShellSubprocessEnv(
+            runtimeSelection,
+            options.env ? { ...options.env } : undefined,
+          )
+        : (options.env as NodeJS.ProcessEnv | undefined),
+      replaceEnv: runtimeSelection ? true : undefined,
+      ignoreError: options.ignoreError,
+      input: options.input,
+      stdio: options.stdio as never,
+    });
+}
 
 export function finalizePendingMessagingRemovalsAfterRestore(
   plan: SandboxMessagingPlan | null,
   log: (message: string) => void,
+  runtimeSelection?: OpenShellRuntimeSelection,
 ): SandboxMessagingPlan | null {
   if (!plan) return null;
-  const pendingRemovals = plan.channels.filter(
-    (channel) => channel.pendingRemoval === true,
-  );
+  const runMessagingOpenshell = createRunMessagingOpenshell(runtimeSelection);
+  const pendingRemovals = plan.channels.filter((channel) => channel.pendingRemoval === true);
   for (const channel of pendingRemovals) {
     const result = MessagingSetupApplier.removeDisabledChannelAgentConfigAtOpenShell(
       plan,
@@ -92,18 +106,20 @@ function hookOutputsFromBuildSteps(
   return { outputs };
 }
 
-/** Reapply OpenClaw messaging files that doctor may have rewritten. */
-export async function reapplyMessagingManifestAfterOpenClawDoctor(
+/** Restore manifest-derived OpenClaw files before the final doctor/start boundary. */
+export async function reapplyMessagingManifestBeforeOpenClawStart(
   sandboxName: string,
   plan: SandboxMessagingPlan | null,
   log: (message: string) => void,
+  runtimeSelection?: OpenShellRuntimeSelection,
 ): Promise<void> {
   if (!plan || plan.agent !== "openclaw") {
     log("Messaging manifest reapply skipped: no OpenClaw messaging plan");
     return;
   }
 
-  log("Reapplying messaging manifest render and post-agent-install hooks after doctor");
+  log("Reapplying messaging manifest render and post-agent-install hooks before gateway start");
+  const runMessagingOpenshell = createRunMessagingOpenshell(runtimeSelection);
   const result = await MessagingSetupApplier.applyAgentConfigAtOpenShell(plan, {
     runOpenshell: runMessagingOpenshell,
     runHook: (request) => hookOutputsFromBuildSteps(plan, request),

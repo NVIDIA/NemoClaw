@@ -75,6 +75,7 @@ function receipt(
       operator_drain_active: false,
       preserved_drain: false,
       profiles: 1,
+      rearmed_oneshots: 1,
       script_jobs: 1,
     },
     recover: {
@@ -84,6 +85,7 @@ function receipt(
       operator_drain_active: false,
       preserved_drain: false,
       profiles: 1,
+      rearmed_oneshots: 1,
       script_jobs: 1,
     },
   };
@@ -136,6 +138,7 @@ function preparationReceipt(
     version: 1,
     action: "prepare-recover",
     drain_acquired: disposition === "gate-prepared",
+    gateway_recovery_requested: true,
     disposition,
     ...overrides,
   })}`;
@@ -268,21 +271,21 @@ describe("Hermes cron rebuild restore contract", () => {
     );
   });
 
-  it("keeps dispatch drained when state restore is incomplete", () => {
+  it("keeps dispatch drained when state restore is incomplete", async () => {
     processMocks.executePrivilegedSandboxCommand.mockReturnValue({
       status: 0,
       stdout: receipt("begin"),
       stderr: "",
     });
 
-    expect(() =>
+    await expect(() =>
       runHermesCronRestoreTransaction("alpha", () => ({ restoreSucceeded: false })),
-    ).toThrow("state restore was incomplete");
+    ).rejects.toThrow("state restore was incomplete");
     expect(processMocks.executePrivilegedSandboxCommand).toHaveBeenCalledOnce();
     expect(processMocks.executePrivilegedSandboxCommand.mock.calls[0]?.[1]).toContain("begin");
   });
 
-  it("keeps dispatch held after restore validation until gateway replacement (#8472)", () => {
+  it("keeps dispatch held after restore validation until gateway replacement (#8472)", async () => {
     const events: string[] = [];
     processMocks.executePrivilegedSandboxCommand.mockImplementation(
       (_sandboxName: string, argv: string[]) => {
@@ -292,7 +295,7 @@ describe("Hermes cron rebuild restore contract", () => {
       },
     );
 
-    const transaction = runHermesCronRestoreTransaction(
+    const transaction = await runHermesCronRestoreTransaction(
       "alpha",
       () => {
         events.push("restore");
@@ -438,6 +441,31 @@ describe("Hermes cron rebuild restore contract", () => {
     ).toThrow("receipt failed validation");
   });
 
+  it.each([
+    ["missing", undefined],
+    ["negative", -1],
+    ["fractional", 0.5],
+  ])("rejects a %s rearmed one-shot count", (_label, rearmedOneshots) => {
+    const overrides =
+      rearmedOneshots === undefined
+        ? { rearmed_oneshots: undefined }
+        : { rearmed_oneshots: rearmedOneshots };
+    const stdout = receipt("complete", 77, 903, "restore-token", overrides);
+    processMocks.executePrivilegedSandboxCommand.mockReturnValue({
+      status: 0,
+      stdout,
+      stderr: "",
+    });
+
+    expect(() =>
+      completeHermesCronRestoreAfterGatewayReplacement(
+        "alpha",
+        { pid: 41, start_time: 902, drain_token: "restore-token" },
+        { pid: 77, start_time: 903, drain_token: "restore-token" },
+      ),
+    ).toThrow("receipt failed validation");
+  });
+
   it("observes the replacement identity without releasing the held gate (#8472)", () => {
     processMocks.executePrivilegedSandboxCommand.mockReturnValue({
       status: 0,
@@ -492,16 +520,24 @@ describe("Hermes cron rebuild restore contract", () => {
     );
   });
 
-  it.each(["gate-prepared", "not-required"] as const)(
-    "returns the %s pre-repair disposition",
-    (disposition) => {
+  it.each([
+    ["gate-prepared", true],
+    ["not-required", false],
+  ] as const)(
+    "returns the %s pre-repair disposition with gateway recovery requested=%s",
+    (disposition, gatewayRecoveryRequested) => {
       processMocks.executePrivilegedSandboxCommand.mockReturnValue({
         status: 0,
-        stdout: preparationReceipt(disposition),
+        stdout: preparationReceipt(disposition, {
+          gateway_recovery_requested: gatewayRecoveryRequested,
+        }),
         stderr: "",
       });
 
-      expect(prepareHermesCronRestoreRecovery("alpha")).toBe(disposition);
+      expect(prepareHermesCronRestoreRecovery("alpha")).toEqual({
+        disposition,
+        gatewayRecoveryRequested,
+      });
       expect(processMocks.executePrivilegedSandboxCommand).toHaveBeenCalledWith(
         "alpha",
         [
@@ -519,6 +555,21 @@ describe("Hermes cron rebuild restore contract", () => {
     processMocks.executePrivilegedSandboxCommand.mockReturnValue({
       status: 0,
       stdout: preparationReceipt("gate-prepared", { drain_acquired: false }),
+      stderr: "",
+    });
+
+    expect(() => prepareHermesCronRestoreRecovery("alpha")).toThrow(
+      "prepare-recover receipt failed validation",
+    );
+  });
+
+  it.each([
+    ["missing", undefined],
+    ["nonboolean", "false"],
+  ])("rejects a %s gateway recovery request signal", (_description, value) => {
+    processMocks.executePrivilegedSandboxCommand.mockReturnValue({
+      status: 0,
+      stdout: preparationReceipt("not-required", { gateway_recovery_requested: value }),
       stderr: "",
     });
 
@@ -548,6 +599,47 @@ describe("Hermes cron rebuild restore contract", () => {
     );
   });
 
+  it("reconciles one empty prepare-recover transport failure through its idempotent receipt", () => {
+    processMocks.executePrivilegedSandboxCommand
+      .mockReturnValueOnce({ status: 1, stdout: "", stderr: "" })
+      .mockReturnValueOnce({
+        status: 0,
+        stdout: preparationReceipt("gate-prepared", { gateway_recovery_requested: false }),
+        stderr: "",
+      });
+
+    expect(prepareHermesCronRestoreRecovery("alpha")).toEqual({
+      disposition: "gate-prepared",
+      gatewayRecoveryRequested: false,
+    });
+    expect(processMocks.executePrivilegedSandboxCommand).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not hide a repeated empty prepare-recover transport failure", () => {
+    processMocks.executePrivilegedSandboxCommand.mockReturnValue({
+      status: 1,
+      stdout: "",
+      stderr: "",
+    });
+
+    expect(() => prepareHermesCronRestoreRecovery("alpha")).toThrow(
+      "Hermes cron prepare-recover failed",
+    );
+    expect(processMocks.executePrivilegedSandboxCommand).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([
+    ["another nonzero status", { status: 2, stdout: "", stderr: "" }],
+    ["partial stdout", { status: 1, stdout: "partial receipt", stderr: "" }],
+  ])("does not reconcile %s as an ambiguous prepare-recover result", (_description, result) => {
+    processMocks.executePrivilegedSandboxCommand.mockReturnValue(result);
+
+    expect(() => prepareHermesCronRestoreRecovery("alpha")).toThrow(
+      "Hermes cron prepare-recover failed",
+    );
+    expect(processMocks.executePrivilegedSandboxCommand).toHaveBeenCalledTimes(1);
+  });
+
   it("composes the recovery transport budget from every controller phase (#7806)", () => {
     processMocks.executePrivilegedSandboxCommand.mockImplementation(
       (_sandboxName: string, argv: string[]) => {
@@ -575,6 +667,16 @@ describe("Hermes cron rebuild restore contract", () => {
     });
 
     expect(recoverHermesCronRestore("alpha")).toBe("not-required");
+  });
+
+  it("rejects a rearmed one-shot count when no recovery gate exists", () => {
+    processMocks.executePrivilegedSandboxCommand.mockReturnValue({
+      status: 0,
+      stdout: notRequiredRecoveryReceipt({ rearmed_oneshots: 0 }),
+      stderr: "",
+    });
+
+    expect(() => recoverHermesCronRestore("alpha")).toThrow("receipt failed validation");
   });
 
   it("accepts not-required while preserving an independent operator drain", () => {

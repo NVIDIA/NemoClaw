@@ -27,9 +27,7 @@ export function hostLocalVllmModelArguments(recipe: HostLocalInferenceServingRec
   });
 }
 
-export function hostLocalVllmGpuMemoryUtilization(
-  recipe: HostLocalInferenceServingRecipe,
-): number {
+export function hostLocalVllmGpuMemoryUtilization(recipe: HostLocalInferenceServingRecipe): number {
   const matches = recipe.spec.serve.arguments.filter(
     (argument) => argument.name === "--gpu-memory-utilization",
   );

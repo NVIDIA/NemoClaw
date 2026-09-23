@@ -2,147 +2,181 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
+import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
+import { createServer } from "node:net";
 import os from "node:os";
 import path from "node:path";
 
-import { beforeEach, describe, it, vi } from "vitest";
+import { describe, it } from "vitest";
+import { decodeManagedStartupProfile } from "../../src/lib/onboard/managed-startup/profile";
+import { mapManagedStartupProfileToAgentEnvironment } from "../../src/lib/onboard/managed-startup/agent-environment";
 import { writeOkOpenshell } from "../helpers/onboard-openshell-fixture";
-import { type CommandEntry, onboardScriptMocksPath } from "../helpers/onboard-split-context";
+import { onboardScriptMocksPath } from "../helpers/onboard-split-context";
 import { encodeMessagingPlan, makeMessagingPlan } from "../helpers/messaging-plan-fixtures";
 
-beforeEach(() => {
-  vi.stubEnv("NEMOCLAW_TEST_MANAGED_IMAGE_CATALOG", "1");
-  vi.stubEnv("NEMOCLAW_SANDBOX_PREBUILD", "1");
-});
+function runNodeScript(
+  scriptPath: string,
+  options: { cwd: string; env: NodeJS.ProcessEnv; timeout: number },
+): Promise<{ status: number | null; stdout: string; stderr: string }> {
+  return new Promise((resolve) => {
+    execFile(
+      process.execPath,
+      [scriptPath],
+      { ...options, encoding: "utf8" },
+      (error, stdout, stderr) => {
+        resolve({
+          status: error ? (typeof error.code === "number" ? error.code : null) : 0,
+          stdout,
+          stderr,
+        });
+      },
+    );
+  });
+}
 
 describe("fresh create identity", () => {
-  it.each([
-    {
-      title: "binds ordinary providers at create time before managed registration (#9833)",
-      apfInterceptorRequested: false,
-      provider: "nvidia-prod",
-      model: "gpt-5.4",
-      agent: null,
-      expectedOutcome: "managed-provider" as const,
-    },
-    {
-      title: "rejects provider-backed APF creation before sandbox or provider effects (#9833)",
-      apfInterceptorRequested: true,
-      provider: "nvidia-prod",
-      model: "gpt-5.4",
-      agent: null,
-      expectedOutcome: "provider-refusal" as const,
-    },
-    {
-      title: "rejects a nondefault agent before credential reads or sandbox inspection (#9833)",
-      apfInterceptorRequested: true,
-      provider: null,
-      model: null,
-      agent: { name: "hermes" },
-      expectedOutcome: "unsupported-agent-refusal" as const,
-    },
-    {
-      title:
-        "rejects pre-resolved nondefault agent intent before credential reads or sandbox inspection (#9833)",
-      apfInterceptorRequested: true,
-      provider: null,
-      model: null,
-      agent: null,
-      expectedOutcome: "resolved-agent-refusal" as const,
-    },
-    {
-      title:
-        "registers providerless APF only after identity, policy, and checkpoint verification (#9833)",
-      apfInterceptorRequested: true,
-      provider: null,
-      model: null,
-      agent: null,
-      expectedOutcome: "providerless-apf" as const,
-    },
-    {
-      title: "rejects mismatched selector and get identities before later effects (#10463)",
-      apfInterceptorRequested: true,
-      provider: null,
-      model: null,
-      agent: null,
-      expectedOutcome: "identity-mismatch-refusal" as const,
-    },
-    {
-      title: "retains recovery state when the create runner fails after verification (#9833)",
-      apfInterceptorRequested: true,
-      provider: null,
-      model: null,
-      agent: null,
-      expectedOutcome: "post-create-runner-refusal" as const,
-    },
-    {
-      title: "retains recovery state when registry publication fails after create (#9833)",
-      apfInterceptorRequested: true,
-      provider: null,
-      model: null,
-      agent: null,
-      expectedOutcome: "post-create-registration-refusal" as const,
-    },
-    {
-      title: "blocks every reentry when registry-failure recovery has no durable journal (#9833)",
-      apfInterceptorRequested: true,
-      provider: null,
-      model: null,
-      agent: null,
-      expectedOutcome: "post-create-registration-recovery-readback-failure" as const,
-    },
-    {
-      title: "retries registry-failure recovery from the process-exit owner (#9833)",
-      apfInterceptorRequested: true,
-      provider: null,
-      model: null,
-      agent: null,
-      expectedOutcome: "post-create-registration-recovery-retry" as const,
-    },
-    {
-      title: "accepts an external policy change after registration (#9833)",
-      apfInterceptorRequested: true,
-      provider: null,
-      model: null,
-      agent: null,
-      expectedOutcome: "post-create-policy-change" as const,
-    },
-    {
-      title: "rejects staged messaging intent before any onboarding side effect (#9833)",
-      apfInterceptorRequested: true,
-      provider: null,
-      model: null,
-      agent: null,
-      expectedOutcome: "staged-messaging-refusal" as const,
-    },
-    {
-      title: "makes a tier-cancelled created sandbox recovery-only (#9833)",
-      apfInterceptorRequested: false,
-      provider: "nvidia-prod",
-      model: "gpt-5.4",
-      agent: null,
-      expectedOutcome: "cancel-after-create-tier" as const,
-    },
-    {
-      title: "makes a tier-preset-cancelled created sandbox recovery-only (#9833)",
-      apfInterceptorRequested: false,
-      provider: "nvidia-prod",
-      model: "gpt-5.4",
-      agent: null,
-      expectedOutcome: "cancel-after-create-tier-presets" as const,
-    },
-    {
-      title: "makes a custom-preset-cancelled created sandbox recovery-only (#9833)",
-      apfInterceptorRequested: false,
-      provider: "nvidia-prod",
-      model: "gpt-5.4",
-      agent: null,
-      expectedOutcome: "cancel-after-create-custom-presets" as const,
-    },
-  ])(
+  it.concurrent.each(
+    [
+      {
+        title: "binds ordinary providers at create time before managed registration (#9833)",
+        apfInterceptorRequested: false,
+        provider: "nvidia-prod",
+        model: "gpt-5.4",
+        agent: null,
+        expectedOutcome: "managed-provider" as const,
+      },
+      {
+        title:
+          "rejects provider-backed external-component creation before sandbox or provider effects (#9833)",
+        apfInterceptorRequested: true,
+        provider: "nvidia-prod",
+        model: "gpt-5.4",
+        agent: null,
+        expectedOutcome: "provider-refusal" as const,
+      },
+      {
+        title:
+          "rejects an unsupported agent before credential reads or sandbox inspection (#11548)",
+        apfInterceptorRequested: true,
+        provider: null,
+        model: null,
+        agent: { name: "pi" },
+        expectedOutcome: "unsupported-agent-refusal" as const,
+      },
+      {
+        title:
+          "rejects conflicting resolved agent identity before credential reads or sandbox inspection (#11548)",
+        apfInterceptorRequested: true,
+        provider: null,
+        model: null,
+        agent: null,
+        expectedOutcome: "resolved-agent-refusal" as const,
+      },
+      {
+        title:
+          "registers providerless external-component onboarding only after identity, policy, and checkpoint verification (#9833)",
+        apfInterceptorRequested: true,
+        provider: null,
+        model: null,
+        agent: null,
+        expectedOutcome: "providerless-apf" as const,
+      },
+      {
+        title: "rejects mismatched selector and get identities before later effects (#10463)",
+        apfInterceptorRequested: true,
+        provider: null,
+        model: null,
+        agent: null,
+        expectedOutcome: "identity-mismatch-refusal" as const,
+      },
+      {
+        title: "retains recovery state when the create runner fails after verification (#9833)",
+        apfInterceptorRequested: true,
+        provider: null,
+        model: null,
+        agent: null,
+        expectedOutcome: "post-create-runner-refusal" as const,
+      },
+      {
+        title: "retains recovery state when registry publication fails after create (#9833)",
+        apfInterceptorRequested: true,
+        provider: null,
+        model: null,
+        agent: null,
+        expectedOutcome: "post-create-registration-refusal" as const,
+      },
+      {
+        title: "blocks every reentry when registry-failure recovery has no durable journal (#9833)",
+        apfInterceptorRequested: true,
+        provider: null,
+        model: null,
+        agent: null,
+        expectedOutcome: "post-create-registration-recovery-readback-failure" as const,
+      },
+      {
+        title: "retries registry-failure recovery from the process-exit owner (#9833)",
+        apfInterceptorRequested: true,
+        provider: null,
+        model: null,
+        agent: null,
+        expectedOutcome: "post-create-registration-recovery-retry" as const,
+      },
+      {
+        title: "accepts an external policy change after registration (#9833)",
+        apfInterceptorRequested: true,
+        provider: null,
+        model: null,
+        agent: null,
+        expectedOutcome: "post-create-policy-change" as const,
+      },
+      {
+        title: "rejects staged messaging intent before any onboarding side effect (#9833)",
+        apfInterceptorRequested: true,
+        provider: null,
+        model: null,
+        agent: null,
+        expectedOutcome: "staged-messaging-refusal" as const,
+      },
+      {
+        title: "makes a tier-cancelled created sandbox recovery-only (#9833)",
+        apfInterceptorRequested: false,
+        provider: "nvidia-prod",
+        model: "gpt-5.4",
+        agent: null,
+        expectedOutcome: "cancel-after-create-tier" as const,
+      },
+      {
+        title: "makes a tier-preset-cancelled created sandbox recovery-only (#9833)",
+        apfInterceptorRequested: false,
+        provider: "nvidia-prod",
+        model: "gpt-5.4",
+        agent: null,
+        expectedOutcome: "cancel-after-create-tier-presets" as const,
+      },
+      {
+        title: "makes a custom-preset-cancelled created sandbox recovery-only (#9833)",
+        apfInterceptorRequested: false,
+        provider: "nvidia-prod",
+        model: "gpt-5.4",
+        agent: null,
+        expectedOutcome: "cancel-after-create-custom-presets" as const,
+      },
+    ].flatMap(
+      (testCase): (Omit<typeof testCase, "agent"> & { agent: { name: string } | null })[] =>
+        testCase.agent || testCase.expectedOutcome.startsWith("cancel-after-create-")
+          ? [testCase]
+          : [
+              testCase,
+              {
+                ...testCase,
+                title: testCase.title.replace(/ \(#\d+\)$/, " for Hermes (#11548)"),
+                agent: { name: "hermes" },
+              },
+            ],
+    ),
+  )(
     "$title",
     {
       timeout: 45000,
@@ -150,6 +184,14 @@ describe("fresh create identity", () => {
     async ({ agent, apfInterceptorRequested, expectedOutcome, model, provider }) => {
       const repoRoot = path.join(import.meta.dirname, "../..");
       const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-create-ready-"));
+      const portReservation = createServer();
+      await new Promise<void>((resolve, reject) => {
+        portReservation.once("error", reject);
+        portReservation.listen(0, "127.0.0.1", resolve);
+      });
+      const gatewayPort = (portReservation.address() as { port: number }).port;
+      await new Promise<void>((resolve) => portReservation.close(() => resolve()));
+      const gatewayName = `nemoclaw-${gatewayPort}`;
       const fakeBin = path.join(tmpDir, "bin");
       const scriptPath = path.join(tmpDir, "create-sandbox-ready-check.js");
       const payloadPath = path.join(tmpDir, "payload.json");
@@ -176,13 +218,61 @@ describe("fresh create identity", () => {
       const dockerExecPath = JSON.stringify(
         path.join(repoRoot, "src", "lib", "adapters", "docker", "exec.ts"),
       );
+      const sandboxCommandCliPath = JSON.stringify(
+        path.join(repoRoot, "src", "lib", "adapters", "openshell", "sandbox-command-cli.ts"),
+      );
+      const managedWorkloadOnboardPath = JSON.stringify(
+        path.join(
+          repoRoot,
+          "src",
+          "lib",
+          "onboard",
+          "managed-workload",
+          "onboard-orchestration.ts",
+        ),
+      );
+      const doctorHostCommandPath = JSON.stringify(
+        path.join(repoRoot, "src", "lib", "actions", "sandbox", "doctor-host-command.ts"),
+      );
       fs.mkdirSync(fakeBin, { recursive: true });
       writeOkOpenshell(fakeBin);
 
       const script = String.raw`
+	const doctorHostCommand = require(${doctorHostCommandPath});
+	const managedVolumes = new Map();
+	doctorHostCommand.captureHostCommand = (command, args) => {
+	  if (command !== "docker" || args[0] !== "volume") {
+	    return { status: 1, stdout: "", stderr: "unexpected container-engine fixture command" };
+	  }
+	  const action = args[1];
+	  const volumeName = args[args.length - 1];
+	  if (action === "inspect") {
+	    const labels = managedVolumes.get(volumeName);
+	    return labels
+	      ? { status: 0, stdout: JSON.stringify({ Name: volumeName, Labels: labels }), stderr: "" }
+	      : { status: 1, stdout: "", stderr: "Error: No such volume: " + volumeName };
+	  }
+	  if (action === "create") {
+	    const labels = {};
+	    for (let index = 2; index < args.length - 1; index += 1) {
+	      if (args[index] !== "--label") continue;
+	      const [name, ...value] = String(args[index + 1]).split("=");
+	      labels[name] = value.join("=");
+	      index += 1;
+	    }
+	    managedVolumes.set(volumeName, labels);
+	    return { status: 0, stdout: volumeName, stderr: "" };
+	  }
+	  if (action === "rm") {
+	    managedVolumes.delete(volumeName);
+	    return { status: 0, stdout: volumeName, stderr: "" };
+	  }
+	  return { status: 1, stdout: "", stderr: "unexpected volume fixture command" };
+	};
 	const runner = require(${runnerPath});
 	const fixtureMocks = require(${onboardScriptMocksPath});
 	fixtureMocks.mockStandaloneGatewayTeardownAuthority();
+	fixtureMocks.mockManagedStateVolumeOnboardLifecycle();
 const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
 let _deleted = false;
 const registry = require(${registryPath});
@@ -206,7 +296,7 @@ const lifecycleObservationCommands = [];
 const createdSandbox = fixtureMocks.createCreatedSandboxFixture({
   sandboxName: "my-assistant",
   sandboxId: "sbx-fresh-create",
-  gatewayName: "nemoclaw-18080",
+  gatewayName: ${JSON.stringify(gatewayName)},
 });
 const mismatchedSandboxId = createdSandbox.state.sandboxId + "-mismatch";
 let sandboxListCalls = 0;
@@ -217,7 +307,10 @@ let identityMismatchGetCalls = 0;
 let routeReservationCalls = 0;
 const keepAlive = setInterval(() => {}, 1000);
 const apfInterceptorRequested = ${JSON.stringify(apfInterceptorRequested)};
-const agent = ${JSON.stringify(agent)};
+const requestedAgent = ${JSON.stringify(agent)};
+const agent = requestedAgent?.name === "hermes"
+  ? require(${JSON.stringify(path.join(repoRoot, "src/lib/agent/defs.ts"))}).loadAgent("hermes")
+  : requestedAgent;
 const model = ${JSON.stringify(model)};
 const provider = ${JSON.stringify(provider)};
 const selectedChannels = ${JSON.stringify(expectedOutcome === "provider-refusal" ? ["telegram"] : null)};
@@ -244,6 +337,9 @@ let recoveryJournalReadbackFailuresRemaining = ${JSON.stringify(
             ? 1
             : 0,
       )};
+if (recoveryReentry === "fresh-same-registry-only") {
+  recoveryJournalReadbackFailuresRemaining = 0;
+}
 const postCreatePolicyChange = ${JSON.stringify(expectedOutcome === "post-create-policy-change")};
 let cancelPrompt = false;
 const originalGetCredential = credentials.getCredential;
@@ -263,6 +359,8 @@ runner.run = (command, opts = {}) => {
   commands.push({ command: cmd, env: opts.env || null });
   const profileResult = require(${onboardScriptMocksPath}).mockEndpointlessProviderProfileRun(command, "nemoclaw-mcp-v1", false);
   if (profileResult !== null) return profileResult;
+  const providerResult = require(${onboardScriptMocksPath}).mockNvidiaProviderGetRun(command, ${JSON.stringify(gatewayName)});
+  if (providerResult !== null) return providerResult;
   if (cmd.includes("sandbox delete") && createdSandbox.state.lifecycleState === "created") {
     createdSandbox.delete();
   }
@@ -271,7 +369,7 @@ runner.run = (command, opts = {}) => {
 };
 	runner.runCapture = (command) => {
 	  const cmd = _n(command);
-	  if (cmd.includes("gateway info")) return "Gateway endpoint: http://127.0.0.1:18080";
+	  if (cmd.includes("gateway info")) return ${JSON.stringify(`Gateway endpoint: http://127.0.0.1:${gatewayPort}`)};
 	  if (cmd.includes("policy get") && cmd.includes("--output json")) {
 	    if (postCreatePolicyChange && registeredSandbox) {
 	      throw new Error("final onboarding policy check failed");
@@ -305,12 +403,63 @@ runner.run = (command, opts = {}) => {
     const mockedCapture = require(${onboardScriptMocksPath}).mockOnboardRunCapture(command);
     if (mockedCapture !== null) return mockedCapture;
   }
-  if (_n(command).includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
+  if (_n(command).includes("forward list")) return "SANDBOX BIND PORT PID STATUS";
   return "";
 };
+const sandboxCommandCli = require(${sandboxCommandCliPath});
+const createCommandExecutor = sandboxCommandCli.createCliOpenShellSandboxCommandExecutor;
+sandboxCommandCli.createCliOpenShellSandboxCommandExecutor = (deps) => {
+  const executor = createCommandExecutor(deps);
+  return {
+    ...executor,
+    runBuffered: async (request) => {
+      const gatewayArgs = request.target.kind === "named" ? ["-g", request.target.gatewayName] : [];
+      const stdout = runner.runCapture([
+        "openshell", "sandbox", "exec", "--name", request.sandboxName,
+        ...gatewayArgs, "--", ...request.command,
+      ]);
+      return { outcome: { kind: "completed", exitCode: 0 }, stdout: String(stdout || ""), stderr: "" };
+    },
+  };
+};
+const managedWorkloadOnboard = require(${managedWorkloadOnboardPath});
+const createManagedStateVolumeLifecycle =
+  managedWorkloadOnboard.createManagedStateVolumeOnboardLifecycle;
+const managedLifecycleVolumes = new Map();
+managedWorkloadOnboard.createManagedStateVolumeOnboardLifecycle = (input, deps = {}) =>
+  createManagedStateVolumeLifecycle(input, {
+    ...deps,
+    runContainerEngine: (args) => {
+      const name = String(args.at(-1));
+      if (args[0] === "inspect") {
+        const volume = managedLifecycleVolumes.get(name);
+        return volume
+          ? { status: 0, stdout: JSON.stringify(volume), stderr: "" }
+          : { status: 1, stdout: "", stderr: "no such volume" };
+      }
+      if (args[0] === "create") {
+        const labels = {};
+        for (let index = 1; index < args.length - 1; index += 1) {
+          if (args[index] !== "--label") continue;
+          const label = String(args[index + 1]);
+          const separator = label.indexOf("=");
+          labels[label.slice(0, separator)] = label.slice(separator + 1);
+          index += 1;
+        }
+        managedLifecycleVolumes.set(name, { Name: name, Labels: labels });
+        return { status: 0, stdout: name, stderr: "" };
+      }
+      if (args[0] === "rm") {
+        managedLifecycleVolumes.delete(name);
+        return { status: 0, stdout: name, stderr: "" };
+      }
+      return { status: 1, stdout: "", stderr: "unexpected volume command" };
+    },
+  });
 	const retainedRegistryEntry = recoveryReentry && fs.existsSync(${JSON.stringify(payloadPath)})
-	  ? JSON.parse(fs.readFileSync(${JSON.stringify(payloadPath)}, "utf8")).currentRegistryEntry
+	  ? JSON.parse(fs.readFileSync(${JSON.stringify(payloadPath)}, "utf8")).recoveryRegistryEntry
 	  : null;
+	let verifiedRecoveryRegistryEntry = null;
 	const registryMutationCalls = [];
   let checkpointReadCalls = 0;
 	if (!recoveryReentry) {
@@ -325,8 +474,8 @@ runner.run = (command, opts = {}) => {
 	    sandboxes: {
 	      "my-assistant": {
 	        name: "my-assistant",
-	        gatewayName: "nemoclaw-18080",
-	        gatewayPort: 18080,
+	        gatewayName: ${JSON.stringify(gatewayName)},
+	        gatewayPort: ${String(gatewayPort)},
 	        provider,
 	        model,
 	        endpointUrl: null,
@@ -341,8 +490,8 @@ runner.run = (command, opts = {}) => {
 	  recreateJournal.openOnboardRecreateJournal({
 	    target: {
 	      sandboxName: "my-assistant",
-	      gatewayName: "nemoclaw-18080",
-	      gatewayPort: 18080,
+	      gatewayName: ${JSON.stringify(gatewayName)},
+	      gatewayPort: ${String(gatewayPort)},
 	    },
 	    agentName: agent?.name ?? "openclaw",
 	    note: () => {},
@@ -354,8 +503,8 @@ runner.run = (command, opts = {}) => {
 	      model,
 	      preferredInferenceApi: null,
 	      sandboxGpuConfig: null,
-	      gatewayName: "nemoclaw-18080",
-	      gatewayPort: 18080,
+	      gatewayName: ${JSON.stringify(gatewayName)},
+	      gatewayPort: ${String(gatewayPort)},
 	      toolDisclosure: "progressive",
 	      dcodeAutoApprovalMode: null,
 	      observabilityEnabled: false,
@@ -365,8 +514,8 @@ runner.run = (command, opts = {}) => {
 	const durableGetSandbox = registry.getSandbox.bind(registry);
 	const createFixture = fixtureMocks.installVerifiedSandboxCreateFixture(registry, {
 	  sandboxName: "my-assistant",
-	  gatewayName: "nemoclaw-18080",
-	  gatewayPort: 18080,
+	  gatewayName: ${JSON.stringify(gatewayName)},
+	  gatewayPort: ${String(gatewayPort)},
 	  provider,
 	  model,
 	  sessionId: "session-owner",
@@ -383,6 +532,13 @@ runner.run = (command, opts = {}) => {
 	  setDefault: (name) => { registryMutationCalls.push({ operation: "set-default", name }); },
 	  removeSandbox: (name) => { registryMutationCalls.push({ operation: "remove", name }); },
 	});
+	const recordPendingSandboxCreateIdentity =
+	  registry.recordPendingSandboxCreateIdentity.bind(registry);
+	registry.recordPendingSandboxCreateIdentity = (...args) => {
+	  const entry = recordPendingSandboxCreateIdentity(...args);
+	  verifiedRecoveryRegistryEntry = structuredClone(entry);
+	  return entry;
+	};
 if (postCreateRunnerRefusal) {
   const requireCurrentCheckpoint = registry.requireCurrentPendingSandboxCreateIdentity;
   registry.requireCurrentPendingSandboxCreateIdentity = (...args) => {
@@ -471,7 +627,7 @@ if (cancelAfterCreate && !recoveryReentry) {
   if (!session) throw new Error("missing seeded onboarding session");
   session.mode = "interactive";
   session.sandboxName = "my-assistant";
-  session.metadata = { gatewayName: "nemoclaw-18080", fromDockerfile: null };
+  session.metadata = { gatewayName: ${JSON.stringify(gatewayName)}, fromDockerfile: null };
   onboardModule.onboardSession.saveSession(session);
   onboardModule.registerIncompleteOnboardExitHandlerForSession(
     onboardModule.onboardSession,
@@ -504,6 +660,7 @@ const writePayload = (sandboxName, creationError, exitCode = 0) => {
     registryMutationCalls,
     currentRegistryEntry: cancelAfterCreate ? registry.getSandbox("my-assistant") : null,
     recoveryRegistryEntry: registry.getSandbox("my-assistant"),
+    verifiedRecoveryRegistryEntry,
     savedSession:
       cancelAfterCreate ||
       postCreateRunnerRefusal ||
@@ -525,7 +682,7 @@ if (${JSON.stringify(
 }
 
 (async () => {
-  process.env.OPENSHELL_GATEWAY = "nemoclaw-18080";
+  process.env.OPENSHELL_GATEWAY = ${JSON.stringify(gatewayName)};
 	  if (recoveryReentry) {
 	    if (recoveryReentry === "fresh-different-no-journal") {
 	      try {
@@ -561,17 +718,35 @@ if (${JSON.stringify(
 	        onboardModule.onboardSession.createSession({
 	          mode: resolved.nonInteractive ? "non-interactive" : "interactive",
 	          sandboxName: resolved.requestedSandboxName,
-	          metadata: { gatewayName: "nemoclaw-18080", fromDockerfile: null },
+	          metadata: { gatewayName: ${JSON.stringify(gatewayName)}, fromDockerfile: null },
 	        }),
 	      );
 	      writePayload("replacement-sb", null, 0);
 	      clearInterval(keepAlive);
 	      return;
 	    }
+	    if (recoveryReentry === "fresh-same-registry-only") {
+	      if (!retainedRegistryEntry?.pendingCreateIdentity) {
+	        throw new Error("missing verified create checkpoint for registry-only recovery");
+	      }
+	      registry.save({
+	        defaultSandbox: null,
+	        sandboxes: { "my-assistant": retainedRegistryEntry },
+	      });
+	      onboardModule.onboardSession.saveSession(
+	        onboardModule.onboardSession.createSession({
+	          sessionId: "replacement-session",
+	          sandboxName: "my-assistant",
+	        }),
+	      );
+	    }
 	    try {
 	      await onboardModule.onboard({
+	        acceptThirdPartySoftware: true,
 	        resume: recoveryReentry === "explicit",
-	        fresh: recoveryReentry === "fresh-same",
+	        fresh:
+	          recoveryReentry === "fresh-same" ||
+	          recoveryReentry === "fresh-same-registry-only",
 	        recreateSandbox: recoveryReentry === "recreate",
 	        sandboxName: "my-assistant",
 	        deferProcessExit: true,
@@ -588,7 +763,7 @@ if (${JSON.stringify(
 	    return;
 	  }
 	  const createArgs = fixtureMocks.sandboxCreateArgsWithVerifiedReservation(
-	    [null, model, provider, null, null, null, selectedChannels, null, agent, null, null, null, []],
+	    [null, model, provider, null, "my-assistant", null, selectedChannels, null, agent, null, null, null, []],
 	    createFixture,
 	  );
 	  createArgs[15] = {
@@ -605,7 +780,7 @@ if (${JSON.stringify(
 	    ...(${JSON.stringify(expectedOutcome === "resolved-agent-refusal")}
 	      ? {
 	          resolved: {
-	            policy: { options: { agentName: "hermes" } },
+	            policy: { options: { agentName: agent?.name === "hermes" ? "openclaw" : "hermes" } },
 	          },
 	        }
 	      : {}),
@@ -644,15 +819,18 @@ if (${JSON.stringify(
   console.error(error);
   process.exit(1);
 });
-`;
+`.replaceAll("18080", String(gatewayPort));
       fs.writeFileSync(scriptPath, script);
 
       const childEnv = {
         ...process.env,
         HOME: tmpDir,
         PATH: `${fakeBin}:${process.env.PATH || ""}`,
+        NEMOCLAW_TEST_MANAGED_IMAGE_CATALOG: "1",
+        NEMOCLAW_TEST_FORWARD_SERVICE_FIXTURE: "1",
+        NEMOCLAW_SANDBOX_PREBUILD: "1",
         NEMOCLAW_NON_INTERACTIVE: expectedOutcome.startsWith("cancel-after-create-") ? "" : "1",
-        NEMOCLAW_GATEWAY_PORT: "18080",
+        NEMOCLAW_GATEWAY_PORT: String(gatewayPort),
         OPENSHELL_DRIVERS: "docker",
         NEMOCLAW_MESSAGING_PLAN_B64:
           expectedOutcome === "staged-messaging-refusal"
@@ -661,9 +839,8 @@ if (${JSON.stringify(
               )
             : "",
       };
-      const result = spawnSync(process.execPath, [scriptPath], {
+      const result = await runNodeScript(scriptPath, {
         cwd: repoRoot,
-        encoding: "utf-8",
         env: childEnv,
         timeout: 30000,
       });
@@ -684,8 +861,8 @@ if (${JSON.stringify(
       );
       const identityFingerprint = createHash("sha256").update(payload.sandboxId).digest("hex");
       const assertRecoveryTuple = (record: Record<string, unknown>) => {
-        assert.equal(record.gatewayName, "nemoclaw-18080");
-        assert.equal(record.gatewayPort, 18080);
+        assert.equal(record.gatewayName, gatewayName);
+        assert.equal(record.gatewayPort, gatewayPort);
         assert.equal(record.sandboxIdentityFingerprint, identityFingerprint);
         assert.equal(record.lifecycleGeneration, payload.recoveryRegistryEntry.lifecycleGeneration);
       };
@@ -741,6 +918,21 @@ if (${JSON.stringify(
         assert.equal(payload.stdoutDestroyCalls, 0);
         assert.equal(payload.stderrDestroyCalls, 0);
         assert.equal(payload.registeredSandbox.workload.kind, "managed-image");
+        assert.equal(payload.registeredSandbox.agent ?? "openclaw", agent?.name ?? "openclaw");
+        assert.match(
+          payload.registeredSandbox.workload.reference,
+          new RegExp("/" + (agent?.name ?? "openclaw") + "-sandbox@sha256:"),
+        );
+        const profile = decodeManagedStartupProfile(
+          payload.registeredSandbox.workload.encodedProfile,
+        );
+        const startup = mapManagedStartupProfileToAgentEnvironment(profile);
+        assert.equal(profile.agent, agent?.name ?? "openclaw");
+        assert.ok(
+          startup.actions.some(
+            (action) => action.kind === "generate-agent-config" && action.agent === profile.agent,
+          ),
+        );
         assert.match(payload.registeredSandbox.lifecycleGeneration, /^[0-9a-f-]{36}$/u);
         assert.equal(
           payload.registeredSandbox.lifecycleLiveIdentityFingerprint,
@@ -751,7 +943,7 @@ if (${JSON.stringify(
           /--label ai\.nvidia\.nemoclaw\.create-attempt=[0-9a-f]{62}/u,
         );
         const ownerScopedObservations = payload.lifecycleObservationCommands.filter(
-          (command: string) => command.includes("-g nemoclaw-18080"),
+          (command: string) => command.includes(`-g ${gatewayName}`),
         );
         assert.ok(
           ownerScopedObservations.length >= 6,
@@ -760,21 +952,46 @@ if (${JSON.stringify(
         assert.ok(
           ownerScopedObservations.every(
             (command: string) =>
-              command.includes("sandbox get -g nemoclaw-18080 my-assistant") ||
-              command.includes("sandbox list -g nemoclaw-18080"),
+              command.includes(`sandbox get -g ${gatewayName} my-assistant`) ||
+              command.includes(`sandbox list -g ${gatewayName}`),
           ),
           `fresh identity observations must remain scoped to the owning gateway: ${JSON.stringify(ownerScopedObservations)}`,
         );
+        return { profile, startup };
+      };
+      const assertProviderlessInference = () => {
+        const { profile, startup } = assertSuccessfulCreation();
+        assert.equal(profile.inference, null);
+        for (const key of [
+          "NEMOCLAW_MODEL",
+          "NEMOCLAW_INFERENCE_BASE_URL",
+          "NEMOCLAW_INFERENCE_PROVIDER_ID",
+          "NEMOCLAW_UPSTREAM_PROVIDER",
+          "NEMOCLAW_INFERENCE_API",
+        ]) {
+          assert.equal(startup.configurationEnvironment[key], "");
+        }
+        assert.equal(
+          startup.configurationEnvironment.NEMOCLAW_PRIMARY_MODEL_REF,
+          profile.agent === "openclaw" ? "" : undefined,
+        );
       };
       const assertManagedProviderCreation = () => {
-        assertSuccessfulCreation();
+        const { profile, startup } = assertSuccessfulCreation();
+        assert.ok(profile.inference);
+        assert.equal(
+          startup.configurationEnvironment.NEMOCLAW_INFERENCE_BASE_URL,
+          "https://inference.local/v1",
+        );
+        assert.equal(startup.configurationEnvironment.NEMOCLAW_INFERENCE_PROVIDER_ID, "inference");
+        assert.ok(startup.configurationEnvironment.NEMOCLAW_MODEL);
         assert.equal("policyAuthority" in payload.registeredSandbox, false);
         assert.equal("policyCreationReceipt" in payload.registeredSandbox, false);
         assert.match(payload.createCommand, /--policy \S+/u);
         assert.match(payload.createCommand, /--provider nvidia-prod/u);
       };
       const assertProviderlessApfCreation = () => {
-        assertSuccessfulCreation();
+        assertProviderlessInference();
         for (const field of [
           "appliedPolicies",
           "policies",
@@ -871,7 +1088,7 @@ if (${JSON.stringify(
         assert.equal(record.reason, "retained_after_sandbox_creation_failure");
         assertRecoveryTuple(record);
       };
-      const assertPostCreateRegistrationRecoveryReadbackFailure = () => {
+      const assertPostCreateRegistrationRecoveryReadbackFailure = async () => {
         assert.equal(payload.sandboxName, null);
         assert.equal(payload.sandboxCreated, true);
         assert.equal(payload.deleted, false);
@@ -897,9 +1114,8 @@ if (${JSON.stringify(
           },
         ] as const;
         for (const { message, mode } of reentryCases) {
-          const reentry = spawnSync(process.execPath, [scriptPath], {
+          const reentry = await runNodeScript(scriptPath, {
             cwd: repoRoot,
-            encoding: "utf-8",
             env: {
               ...childEnv,
               NEMOCLAW_RECOVERY_REENTRY: mode,
@@ -917,6 +1133,36 @@ if (${JSON.stringify(
           assert.equal(reentryPayload.savedSession.sandboxName, "my-assistant");
           assert.deepEqual(reentryPayload.retainedRecoveryRecords, []);
         }
+
+        // Refusal reentries replace the payload. Give only the registry-only
+        // child the verified checkpoint captured at its persistence boundary.
+        fs.writeFileSync(
+          payloadPath,
+          JSON.stringify({
+            ...payload,
+            recoveryRegistryEntry: payload.verifiedRecoveryRegistryEntry,
+          }),
+        );
+        const registryOnlyReentry = await runNodeScript(scriptPath, {
+          cwd: repoRoot,
+          env: {
+            ...childEnv,
+            NEMOCLAW_RECOVERY_REENTRY: "fresh-same-registry-only",
+          },
+          timeout: 30000,
+        });
+        assert.equal(registryOnlyReentry.status, 0, registryOnlyReentry.stderr);
+        const registryOnlyPayload = JSON.parse(fs.readFileSync(payloadPath, "utf8"));
+        assert.equal(registryOnlyPayload.exitCode, 1);
+        assert.match(registryOnlyReentry.stderr, /cannot use retained sandbox 'my-assistant'/u);
+        assert.match(registryOnlyReentry.stderr, /destroy command.*same-name fresh onboarding/u);
+        assert.deepEqual(registryOnlyPayload.commandNames, []);
+        assert.equal(registryOnlyPayload.credentialReadCalls, 0);
+        assert.equal(registryOnlyPayload.routeReservationCalls, 0);
+        assert.deepEqual(registryOnlyPayload.registryMutationCalls, []);
+        assert.equal(registryOnlyPayload.savedSession.sessionId, "replacement-session");
+        assert.equal(registryOnlyPayload.retainedRecoveryRecords.length, 1);
+        assertRecoveryTuple(registryOnlyPayload.retainedRecoveryRecords[0]);
       };
       const assertPostCreateRegistrationRecoveryRetry = () => {
         assert.equal(payload.sandboxName, null);
@@ -937,12 +1183,12 @@ if (${JSON.stringify(
         );
       };
       const assertPostCreatePolicyChange = () => {
-        assertSuccessfulCreation();
+        assertProviderlessInference();
         assert.equal(payload.savedSession.status, "in_progress");
         assert.notEqual(payload.savedSession.status, "recovery_required");
         assert.deepEqual(payload.retainedRecoveryRecords, []);
       };
-      const assertCancellationRecovery = () => {
+      const assertCancellationRecovery = async () => {
         assert.equal(payload.exitCode, 1);
         assert.equal(payload.sandboxName, "my-assistant");
         assert.equal(payload.deleted, false);
@@ -978,9 +1224,8 @@ if (${JSON.stringify(
         assert.match(result.stderr, /clear the matching recovery record/u);
         assertCreateAttemptLabelReported();
 
-        const differentName = spawnSync(process.execPath, [scriptPath], {
+        const differentName = await runNodeScript(scriptPath, {
           cwd: repoRoot,
-          encoding: "utf-8",
           env: {
             ...childEnv,
             NEMOCLAW_RECOVERY_REENTRY: "fresh-different",
@@ -1031,9 +1276,8 @@ if (${JSON.stringify(
           },
         ] as const;
         for (const { messages, mode: reentryMode } of reentryCases) {
-          const reentry = spawnSync(process.execPath, [scriptPath], {
+          const reentry = await runNodeScript(scriptPath, {
             cwd: repoRoot,
-            encoding: "utf-8",
             env: {
               ...childEnv,
               NEMOCLAW_RECOVERY_REENTRY: reentryMode,
@@ -1071,7 +1315,7 @@ if (${JSON.stringify(
         "cancel-after-create-tier-presets": assertCancellationRecovery,
         "cancel-after-create-custom-presets": assertCancellationRecovery,
       };
-      assertions[expectedOutcome]();
+      await assertions[expectedOutcome]();
     },
   );
 });

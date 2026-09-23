@@ -8,16 +8,22 @@ import path from "node:path";
 import { INSTALLER_PAYLOAD, TEST_SYSTEM_PATH, writeExecutable } from "./installer-sourced-env";
 
 /** Fake node that reports v22.19.0. */
-export function writeNodeStub(fakeBin: string): void {
+export function writeNodeStub(fakeBin: string, options: { evaluateInline?: boolean } = {}): void {
   writeExecutable(
     path.join(fakeBin, "node"),
     `#!/usr/bin/env bash
 if [ "$1" = "--version" ] || [ "$1" = "-v" ]; then echo "v22.19.0"; exit 0; fi
+if [ "$1" = "-" ]; then
+  exec ${JSON.stringify(process.execPath)} "$@"
+fi
+case "\${1:-}:\${2:-}" in
+  *scripts/lib/openshell-sdk-install.mts:prepare|*scripts/lib/openshell-sdk-install.mts:check) exit 0 ;;
+esac
 if [ -n "\${1:-}" ] && [ -f "$1" ]; then
   exec ${JSON.stringify(process.execPath)} "$@"
 fi
 if [ "$1" = "-e" ]; then
-  exec ${JSON.stringify(process.execPath)} "$@"
+  ${options.evaluateInline === false ? "exit 0" : `exec ${JSON.stringify(process.execPath)} "$@"`}
 fi
 exit 99`,
   );
@@ -42,11 +48,9 @@ export function writeFailedOnboardSession(home: string): void {
 export function writeInstallerReadinessModuleStubs(readinessDir: string): void {
   const onboardDir = path.join(path.dirname(readinessDir), "onboard");
   const experimentalDir = path.join(onboardDir, "experimental");
-  const runtimeProviderDir = path.join(onboardDir, "runtime-provider");
   fs.mkdirSync(readinessDir, { recursive: true });
   fs.mkdirSync(onboardDir, { recursive: true });
   fs.mkdirSync(experimentalDir, { recursive: true });
-  fs.mkdirSync(runtimeProviderDir, { recursive: true });
   fs.writeFileSync(
     `${readinessDir}/host.js`,
     `exports.createHostReadinessReport = (_options, collection) => ({ host: collection.assess() });\n`,
@@ -86,6 +90,8 @@ export function writeInstallerReadinessModuleStubs(readinessDir: string): void {
     waivedFindingIds: [],
   };
 };
+exports.hasExplicitDeferredN1xOnboardingIntent = (env) =>
+  env.NEMOCLAW_PROVIDER === "install-vllm" || env.NEMOCLAW_NO_EXPRESS === "1";
 `,
   );
   fs.writeFileSync(
@@ -102,13 +108,8 @@ export function writeInstallerReadinessModuleStubs(readinessDir: string): void {
     `exports.isPortableExperimentalProfile = (env = process.env) => env.NEMOCLAW_EXPERIMENTAL_PROFILE === "portable";\n`,
   );
   fs.writeFileSync(
-    `${runtimeProviderDir}/selection.js`,
-    `exports.resolveConfiguredRuntimeProvider = () => ({
-  gateway: {
-    supported: true,
-    prepareHostRuntime: () => ({ sandboxHostAddress: null }),
-  },
-});\n`,
+    `${onboardDir}/docker-driver-gateway-env.js`,
+    `exports.configuredRuntimeProviderOwnsHostReadiness = () => false;\n`,
   );
 }
 

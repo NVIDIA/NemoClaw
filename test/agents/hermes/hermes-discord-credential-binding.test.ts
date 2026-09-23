@@ -15,7 +15,7 @@ const SANDBOX_NAME = "hermes-discord";
 const PROVIDER_NAME = `${SANDBOX_NAME}-discord-bridge`;
 const PROVIDER_TYPE = "discord-hermes-static-v1";
 
-function prepareDiscord(
+async function prepareDiscord(
   token: string | null,
   providerMatchesGatewayCredential: () => boolean = () => false,
   disabled = false,
@@ -41,8 +41,8 @@ function prepareDiscord(
 }
 
 describe("Hermes Discord credential endpoint binding", () => {
-  it("creates the Discord provider from an endpointless profile", () => {
-    const result = prepareDiscord("test-discord-token");
+  it("creates the Discord provider from an endpointless profile", async () => {
+    const result = await prepareDiscord("test-discord-token");
 
     expect(result.messagingTokenDefs).toEqual([
       {
@@ -69,9 +69,9 @@ describe("Hermes Discord credential endpoint binding", () => {
   it.each([
     { state: "active", disabled: false },
     { state: "stopped", disabled: true },
-  ])("does not reuse an untyped provider for a $state channel", ({ disabled }) => {
+  ])("does not reuse an untyped provider for a $state channel", async ({ disabled }) => {
     const providerMatches = vi.fn(() => false);
-    const result = prepareDiscord(null, providerMatches, disabled);
+    const result = await prepareDiscord(null, providerMatches, disabled);
 
     expect(result.reusableMessagingProviders).toEqual([]);
     expect(result.reusableMessagingChannels).toEqual([]);
@@ -80,9 +80,9 @@ describe("Hermes Discord credential endpoint binding", () => {
 
   it.each([null, "test-discord-token"])(
     "retains the exact Discord provider for a stopped channel with source token %s (#9773)",
-    (token) => {
+    async (token) => {
       const providerMatches = vi.fn(() => true);
-      const result = prepareDiscord(token, providerMatches, true);
+      const result = await prepareDiscord(token, providerMatches, true);
 
       expect(result.messagingTokenDefs).toEqual([]);
       expect(result.reusableMessagingProviders).toEqual([PROVIDER_NAME]);

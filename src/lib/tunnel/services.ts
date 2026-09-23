@@ -24,8 +24,8 @@ import {
   unloadOllamaModels as unloadDefaultOllamaModels,
   type OllamaUnloadResult,
 } from "../inference/ollama/proxy";
+import type { RuntimeProviderChannelStopTransport } from "../onboard/runtime-provider/access";
 import { buildSubprocessEnv } from "../subprocess-env";
-import * as agentForwardStop from "./agent-forward-stop";
 import { registerTunnelOrigin } from "./allowed-origins";
 import * as gatewayStop from "./gateway-stop";
 import * as sandboxGatewayStop from "./sandbox-gateway-stop";
@@ -52,6 +52,8 @@ export interface ServiceOptions {
   unloadOllamaModels?: () => OllamaUnloadResult | void;
   /** Whether this scoped stop owns Ollama models that require cleanup. Defaults to true. */
   cleanupOllamaModels?: boolean;
+  /** Provider-owned transport for stopping the sandbox's native gateway. */
+  channelStopTransport?: RuntimeProviderChannelStopTransport;
   /** Clears pending Ollama cleanup recovery after this sandbox's models unload. */
   clearPendingOllamaModelCleanup?: (sandboxName: string) => void;
   /** Cloudflare named tunnel token. Falls back to CLOUDFLARE_TUNNEL_TOKEN. */
@@ -522,7 +524,11 @@ export function stopAll(opts: ServiceOptions = {}): OllamaUnloadResult | void {
   if (pidDir) ensurePidDir(pidDir);
 
   if (sandboxName) {
-    sandboxGatewayStop.stopSandboxChannels(sandboxName, { info, warn });
+    sandboxGatewayStop.stopSandboxChannels(sandboxName, {
+      ...(opts.channelStopTransport ? { channelStopTransport: opts.channelStopTransport } : {}),
+      info,
+      warn,
+    });
   } else if (rawSandboxName) {
     warn(`Invalid sandbox name: ${JSON.stringify(rawSandboxName)} — skipping in-sandbox stop.`);
   } else {
@@ -584,7 +590,6 @@ export function stopAll(opts: ServiceOptions = {}): OllamaUnloadResult | void {
   let gatewayOutcome: gatewayStop.GatewayStopOutcome | undefined;
   if (opts.releaseGatewayPort) {
     if (sandboxName) {
-      agentForwardStop.stopAgentForwardPortsForStop(sandboxName, { info, warn });
       gatewayOutcome = gatewayStop.releaseGatewayPortForStop(sandboxName, { info, warn });
     } else if (!rawSandboxName) {
       // #8952: no registry name — release only when NEMOCLAW_GATEWAY_PORT is
@@ -714,7 +719,7 @@ export async function startAll(opts: ServiceOptions = {}): Promise<void> {
     const sandboxName = resolveTunnelOriginSandboxName(opts);
     if (sandboxName) {
       try {
-        registerTunnelOrigin(sandboxName, tunnelUrl, { info, warn });
+        await registerTunnelOrigin(sandboxName, tunnelUrl, { info, warn });
       } catch (err) {
         warn(`Could not register tunnel origin (${err instanceof Error ? err.message : err}).`);
       }

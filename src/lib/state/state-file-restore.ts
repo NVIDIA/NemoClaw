@@ -8,7 +8,6 @@ import path from "node:path";
 import type { StateFileRestoreOwnership } from "../agent/defs.js";
 import { shellQuote } from "../runner.js";
 import { buildOpenClawConfigRestoreInputFromSandbox } from "./openclaw-config-restore-input.js";
-import type { OpenClawImagePluginInstall } from "./openclaw-plugin-restore.js";
 import { buildKeyAllowlistMergeRestoreCommand } from "./state-file-key-merge.js";
 
 export interface StateFileRestoreSpec {
@@ -145,8 +144,7 @@ export function restoreStateFile(
   ownership: StateFileRestoreOwnership | undefined,
   allowCustomImageWholeStateFileRestore: boolean,
   log: (message: string) => void,
-  freshImagePluginInstalls?: readonly OpenClawImagePluginInstall[],
-  previousImagePluginInstalls?: readonly OpenClawImagePluginInstall[],
+  env?: NodeJS.ProcessEnv,
 ): boolean {
   const localPath = path.join(backupPath, spec.path);
   if (!existsSync(localPath)) return true;
@@ -161,9 +159,8 @@ export function restoreStateFile(
     const result = buildOpenClawConfigRestoreInputFromSandbox({
       backupContents,
       dir,
-      freshImagePluginInstalls,
+      env,
       log,
-      previousImagePluginInstalls,
       specPath: spec.path,
       sshArgs,
     });
@@ -185,6 +182,7 @@ export function restoreStateFile(
   if (input === null) return false;
 
   const result = spawnSync("ssh", [...sshArgs, command], {
+    ...(env ? { env } : {}),
     input,
     stdio: ["pipe", "pipe", "pipe"],
     timeout: 120000,

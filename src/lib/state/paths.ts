@@ -27,3 +27,8 @@ export function resolveNemoclawStateDir(homeDir?: string): string {
   }
   return path.join(resolveNemoclawHomeDir(homeDir), "state");
 }
+
+/** Return the validated gateway port that selects this process's NemoClaw state root. */
+export function resolveNemoclawStateGatewayPort(): number {
+  return GATEWAY_PORT;
+}

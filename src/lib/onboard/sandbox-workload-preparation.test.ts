@@ -7,6 +7,7 @@ import path from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
 import { createInMemoryRuntimeProviderBundle } from "../../../test/helpers/runtime-provider-bundle";
+import { LEAF_PEM, tmpDir, writeCa } from "./__test-helpers__/corporate-ca-fixtures";
 import {
   ManagedImageCatalogError,
   ManagedImageCatalogUnavailableError,
@@ -193,7 +194,7 @@ describe("sandbox workload preparation", () => {
         liveE2eManagedImageCatalog({
           GITHUB_ACTIONS: "true",
           NEMOCLAW_RUN_LIVE_E2E: "1",
-          NEMOCLAW_E2E_EXPECTED_SHA: REVISION,
+          NEMOCLAW_E2E_EXPECTED_SHA: "b".repeat(40),
           NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG_JSON: JSON.stringify(CATALOG),
         }),
       ).toEqual({ catalog: CATALOG, revision: REVISION });
@@ -282,7 +283,9 @@ describe("sandbox workload preparation", () => {
       expect(
         readLiveE2eManagedImageCatalogContracts({ path: catalogPath, revision: REVISION }),
       ).toEqual(
-        new Map(SHIPPED_MANAGED_IMAGE_AGENTS.map((agent, index) => [agent, contract(agent, index)])),
+        new Map(
+          SHIPPED_MANAGED_IMAGE_AGENTS.map((agent, index) => [agent, contract(agent, index)]),
+        ),
       );
       expect(() =>
         readLiveE2eManagedImageCatalogContracts({ path: symlinkPath, revision: REVISION }),
@@ -487,6 +490,98 @@ describe("sandbox workload preparation", () => {
     });
   });
 
+  it("fails closed without disclosing a base-image override that the managed workload cannot honor (#11138)", async () => {
+    const resolveCatalog = vi.fn(async () => CATALOG);
+    const credentialBearingOverride =
+      "https://registry-user:registry-password@registry.example.test/sandbox-base:latest";
+    let rejection: Error | null = null;
+    try {
+      await prepareSandboxWorkloadSource(
+        {
+          ...input("openclaw"),
+          environment: { NEMOCLAW_SANDBOX_BASE_IMAGE_REF: credentialBearingOverride },
+        },
+        { resolveCatalog },
+      );
+    } catch (error) {
+      rejection = error as Error;
+    }
+
+    expect(rejection?.message).toContain("'NEMOCLAW_SANDBOX_BASE_IMAGE_REF' is set");
+    expect(rejection?.message).not.toContain(credentialBearingOverride);
+    expect(rejection?.message).not.toContain("registry-password");
+    // The rejection precedes catalog resolution, so a catalog outage cannot
+    // turn it into a legacy Dockerfile build that consumes the override.
+    expect(resolveCatalog).not.toHaveBeenCalled();
+  });
+
+  it("fails closed on the agent-specific override env var, not just the openclaw default (#11138)", async () => {
+    const resolveCatalog = vi.fn(async () => CATALOG);
+    await expect(
+      prepareSandboxWorkloadSource(
+        {
+          ...input("hermes"),
+          environment: { NEMOCLAW_HERMES_SANDBOX_BASE_IMAGE_REF: "evil:tag" },
+        },
+        { resolveCatalog },
+      ),
+    ).rejects.toThrow(/NEMOCLAW_HERMES_SANDBOX_BASE_IMAGE_REF/);
+  });
+
+  it("still onboards the managed image when no base-image override is set (#11138)", async () => {
+    const resolveCatalog = vi.fn(async () => CATALOG);
+    const prepared = await prepareSandboxWorkloadSource(
+      { ...input("openclaw"), environment: {} },
+      { resolveCatalog },
+    );
+
+    expect(prepared.source.kind).toBe("managed-image");
+    expect(resolveCatalog).toHaveBeenCalledOnce();
+  });
+
+  it("rejects the override even when the managed catalog is unavailable (#11138)", async () => {
+    // The prefer-managed fallback would otherwise select the legacy Dockerfile
+    // path, which consumes the override, so a catalog outage must not turn a
+    // fail-closed onboard into an override-honoring build.
+    const resolveCatalog = vi.fn(async () => {
+      throw new ManagedImageCatalogUnavailableError("registry offline");
+    });
+
+    await expect(
+      prepareSandboxWorkloadSource(
+        {
+          ...input("openclaw"),
+          policy: "prefer-managed",
+          environment: { NEMOCLAW_SANDBOX_BASE_IMAGE_REF: "evil:tag" },
+        },
+        { resolveCatalog },
+      ),
+    ).rejects.toThrow(/NEMOCLAW_SANDBOX_BASE_IMAGE_REF/);
+    expect(resolveCatalog).not.toHaveBeenCalled();
+  });
+
+  it("still honors a base-image override on the legacy custom-Dockerfile path (#11138)", async () => {
+    const resolveCatalog = vi.fn(async () => CATALOG);
+    const prepared = await prepareSandboxWorkloadSource(
+      {
+        ...input("openclaw"),
+        customDockerfilePath: "/workspace/CustomDockerfile",
+        environment: {
+          NEMOCLAW_SANDBOX_BASE_IMAGE_REF:
+            "ghcr.io/nvidia/nemoclaw/sandbox-base:local-only-no-push",
+        },
+      },
+      { resolveCatalog },
+    );
+
+    expect(resolveCatalog).not.toHaveBeenCalled();
+    expect(prepared.source).toEqual({
+      kind: "legacy-dockerfile",
+      dockerfilePath: "/workspace/CustomDockerfile",
+      reason: "custom-dockerfile",
+    });
+  });
+
   it("does not fetch for a runtime that has not registered managed-image capabilities (#7744)", async () => {
     const resolveCatalog = vi.fn(async () => CATALOG);
     const prepared = await prepareSandboxWorkloadSource(
@@ -643,6 +738,51 @@ describe("sandbox workload preparation", () => {
     ).rejects.toThrow("managed image catalog 'v0.0.97' failed validation");
   });
 
+  it("names an invalid explicit corporate CA before registry access (#12059)", async () => {
+    const bundlePath = writeCa(tmpDir(), LEAF_PEM);
+    let rejection: Error | null = null;
+
+    try {
+      await prepareSandboxWorkloadSource({
+        ...input("openclaw"),
+        environment: { NEMOCLAW_CORPORATE_CA_BUNDLE: bundlePath },
+      });
+    } catch (error) {
+      rejection = error as Error;
+    }
+
+    expect(rejection).toMatchObject({
+      name: "SandboxWorkloadPreparationError",
+      message: expect.stringMatching(
+        /NEMOCLAW_CORPORATE_CA_BUNDLE was rejected:.*not a CA \(basicConstraints CA:TRUE required\)/u,
+      ),
+    });
+    expect(rejection?.message).not.toContain("BEGIN CERTIFICATE");
+    expect(rejection?.message).not.toContain(LEAF_PEM);
+  });
+
+  it("omits an operator-controlled corporate CA path from the rejection (#12059)", async () => {
+    const sentinel = "registry-password-secret";
+    const bundlePath = path.join(tmpDir(), `${sentinel}\n\u001b[31m.pem`);
+    let rejection: Error | null = null;
+
+    try {
+      await prepareSandboxWorkloadSource({
+        ...input("openclaw"),
+        environment: { NEMOCLAW_CORPORATE_CA_BUNDLE: bundlePath },
+      });
+    } catch (error) {
+      rejection = error as Error;
+    }
+
+    expect(rejection?.message).toBe(
+      "Sandbox workload preparation failed: NEMOCLAW_CORPORATE_CA_BUNDLE was rejected: corporate CA bundle not found or unreadable",
+    );
+    expect(rejection?.message).not.toContain(bundlePath);
+    expect(rejection?.message).not.toContain(sentinel);
+    expect(rejection?.message).not.toMatch(/[\u0000-\u001f\u007f]/u);
+  });
+
   it("rejects an invalid release before preferred-policy catalog fallback (#7744)", async () => {
     const resolveCatalog = vi.fn(async () => CATALOG);
 
@@ -775,6 +915,25 @@ describe("sandbox workload preparation", () => {
       kind: "managed-image",
       reference: piContract.reference,
     });
+  });
+
+  it("fails closed for a candidate agent's base-image override too, not just shipped agents (#11138)", async () => {
+    const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-candidate-override-"));
+    const catalogPath = path.join(fixtureRoot, "catalog.json");
+    const piContract = contract("pi", 3);
+    fs.writeFileSync(catalogPath, JSON.stringify({ pi: piContract }), { mode: 0o600 });
+
+    await expect(
+      prepareSandboxWorkloadSource(
+        {
+          ...input("pi"),
+          acceptedCandidateContract: piContract,
+          catalogPath,
+          environment: { NEMOCLAW_PI_SANDBOX_BASE_IMAGE_REF: "evil:tag" },
+        },
+        { resolveCatalog: async () => CATALOG },
+      ),
+    ).rejects.toThrow(/NEMOCLAW_PI_SANDBOX_BASE_IMAGE_REF/);
   });
 
   it("refuses a candidate catalog that differs from the accepted receipt (#7927)", async () => {

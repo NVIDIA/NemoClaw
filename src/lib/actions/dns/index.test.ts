@@ -221,7 +221,9 @@ describe("runFixCoreDns", () => {
   });
 
   it("labels a Podman default from its version banner without reading docker info", () => {
-    const { calls, runDocker } = patchingRunDocker("Server Version: 5.6.2\nOperating System: fedora");
+    const { calls, runDocker } = patchingRunDocker(
+      "Server Version: 5.6.2\nOperating System: fedora",
+    );
     const result = runFixCoreDns(
       { gatewayName: "nemoclaw" },
       {

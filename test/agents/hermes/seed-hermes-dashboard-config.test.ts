@@ -36,7 +36,6 @@ const PY_YAML_AVAILABLE =
 const GENERATED_HEX_TOKEN = Array.from({ length: 64 }, (_value, index) =>
   (index % 16).toString(16),
 ).join("");
-const TAVILY_API_KEY_PLACEHOLDER = "openshell:resolve:env:TAVILY_API_KEY";
 
 const POLICY_SETTINGS: HermesBuildSettings = {
   model: "nvidia-routed",
@@ -527,7 +526,7 @@ raise SystemExit(0 if not ok and dashboard_fd is None else 2)
     },
   );
 
-  it("mirrors only dashboard-needed gateway .env keys for Hermes 0.16 chat setup", () => {
+  it("re-seeds dashboard dotenv without a stale Tavily reference", () => {
     const src = writeYaml("gw.yaml", GATEWAY_CONFIG);
     const dst = path.join(tmpDir, "dash.yaml");
     const envSrc = path.join(tmpDir, "gw.env");
@@ -538,7 +537,6 @@ raise SystemExit(0 if not ok and dashboard_fd is None else 2)
         "API_SERVER_HOST=127.0.0.1",
         "API_SERVER_PORT=18642",
         `API_SERVER_KEY=${GENERATED_HEX_TOKEN}`,
-        `TAVILY_API_KEY=${TAVILY_API_KEY_PLACEHOLDER}`,
         "FIRECRAWL_GATEWAY_URL=http://host.openshell.internal:11436/firecrawl",
         "NEMOCLAW_HERMES_TOOL_GATEWAY_BROKER=1",
         "MODAL_GATEWAY_URL=http://host.openshell.internal:11436/modal",
@@ -548,6 +546,7 @@ raise SystemExit(0 if not ok and dashboard_fd is None else 2)
         "",
       ].join("\n"),
     );
+    fs.writeFileSync(envDst, "TAVILY_API_KEY=openshell:resolve:env:v17_TAVILY_API_KEY\n");
 
     const res = runSeed(src, dst, envSrc, envDst);
     expect(res.status).toBe(0);
@@ -556,7 +555,6 @@ raise SystemExit(0 if not ok and dashboard_fd is None else 2)
       [
         "API_SERVER_HOST=127.0.0.1",
         "API_SERVER_PORT=18642",
-        `TAVILY_API_KEY=${TAVILY_API_KEY_PLACEHOLDER}`,
         "FIRECRAWL_GATEWAY_URL=http://host.openshell.internal:11436/firecrawl",
         "NEMOCLAW_HERMES_TOOL_GATEWAY_BROKER=1",
         "MODAL_GATEWAY_URL=http://host.openshell.internal:11436/modal",
@@ -564,6 +562,29 @@ raise SystemExit(0 if not ok and dashboard_fd is None else 2)
       ].join("\n"),
     );
     expect(fs.statSync(envDst).mode & 0o777).toBe(0o600);
+  });
+
+  it("refuses to seed dashboard dotenv when the gateway env assigns TAVILY_API_KEY", () => {
+    const src = writeYaml("gw.yaml", GATEWAY_CONFIG);
+    const dst = path.join(tmpDir, "dash.yaml");
+    const envSrc = path.join(tmpDir, "gw.env");
+    const envDst = path.join(tmpDir, "dash.env");
+    fs.writeFileSync(
+      envSrc,
+      ["API_SERVER_HOST=127.0.0.1", "TAVILY_API_KEY=openshell:resolve:env:TAVILY_API_KEY", ""].join(
+        "\n",
+      ),
+    );
+    fs.writeFileSync(envDst, "API_SERVER_HOST=127.0.0.1\n");
+    const before = fs.readFileSync(envDst, "utf-8");
+
+    const res = runSeed(src, dst, envSrc, envDst);
+
+    expect(res.status).toBe(1);
+    expect(res.stderr).toContain("[SECURITY]");
+    expect(res.stderr).toContain("canonical OpenShell resolver placeholder");
+    expect(fs.readFileSync(envDst, "utf-8")).toBe(before);
+    expect(fs.existsSync(dst)).toBe(false);
   });
 
   it("keeps API_SERVER_KEY out of the dashboard .env mirror", () => {
@@ -749,15 +770,6 @@ raise SystemExit(0 if not ok and dashboard_fd is None else 2)
     ["missing approvals", { approvals: undefined }],
     ["wrong browser boolean", { browser: { restrict_evaluate: "true" } }],
     ["incomplete session policy", { session_reset: { mode: "both" } }],
-    [
-      "unexpected session policy field",
-      {
-        session_reset: {
-          ...EXPECTED_DASHBOARD_POLICY.session_reset,
-          dashboard_only: true,
-        },
-      },
-    ],
     ["wrong display boolean", { display: { show_reasoning: "false", show_commentary: false } }],
     ["wrong update mode", { updates: { pre_update_backup: 0, refresh_cua_driver: false } }],
   ])("fails closed on %s", (_label, override) => {
@@ -776,6 +788,33 @@ raise SystemExit(0 if not ok and dashboard_fd is None else 2)
     expect(res.stderr).toContain("[SECURITY]");
     expect(res.stderr).toContain("gateway policy is invalid");
     expect(fs.readFileSync(dst, "utf-8")).toBe(before);
+  });
+
+  it("allows operator siblings beside managed policy leaves without mirroring them", () => {
+    const src = writeYaml("gw.yaml", {
+      ...GATEWAY_CONFIG,
+      approvals: { ...EXPECTED_DASHBOARD_POLICY.approvals, timeout: 184 },
+      session_reset: {
+        ...EXPECTED_DASHBOARD_POLICY.session_reset,
+        operator_note: "preserve across rebuild",
+      },
+    });
+    const dst = writeYaml("dash.yaml", {
+      approvals: { dashboard_note: "keep" },
+      session_reset: { dashboard_scope: "keep" },
+    });
+
+    const res = runSeed(src, dst);
+
+    expect(res.status, res.stderr).toBe(0);
+    const dash = readYaml(dst);
+    expect(dash.approvals).toEqual({ mode: "manual", dashboard_note: "keep" });
+    expect(dash.session_reset).toEqual({
+      ...EXPECTED_DASHBOARD_POLICY.session_reset,
+      dashboard_scope: "keep",
+    });
+    expect(dash.approvals).not.toHaveProperty("timeout");
+    expect(dash.session_reset).not.toHaveProperty("operator_note");
   });
 
   it("is idempotent across repeated launches", () => {

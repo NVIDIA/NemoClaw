@@ -24,7 +24,8 @@
  */
 
 import { parseLiveSandboxEntries } from "../runtime-recovery";
-import { hasZeroDockerExitStatus } from "./docker-command-result";
+import type { OpenShellSandboxBufferedCommandExecutor } from "../adapters/openshell/sandbox-command";
+import { selectedOpenShellGateway } from "../adapters/openshell/sandbox-observer";
 import { DOCKER_GPU_PATCH_TIMEOUT_MS } from "./docker-gpu-patch-constants";
 import { envInt } from "./env";
 
@@ -57,26 +58,21 @@ export const DOCKER_GPU_SUPERVISOR_RECONNECT_ERROR_DEBOUNCE_ENV =
 
 const TERMINAL_SANDBOX_FAILURE_PHASES = new Set(["Error", "Failed", "CrashLoopBackOff"]);
 
-type DockerRunResult = {
-  status?: number | null;
-  stdout?: string | Buffer | null;
-  stderr?: string | Buffer | null;
-};
-
-type RunOpenshellFn = (args: string[], opts?: Record<string, unknown>) => DockerRunResult;
 type RunCaptureOpenshellFn = (args: string[], opts?: Record<string, unknown>) => string;
 
 export type DockerGpuSupervisorReconnectDeps = {
-  runOpenshell?: RunOpenshellFn;
+  commandExecutor: OpenShellSandboxBufferedCommandExecutor;
   runCaptureOpenshell?: RunCaptureOpenshellFn;
   sleep?: (seconds: number) => void;
   errorPhaseDebouncePolls?: number;
 };
 
 type DockerFinalHandoffDeps = Required<
-  Pick<DockerGpuSupervisorReconnectDeps, "runCaptureOpenshell" | "runOpenshell">
+  Pick<DockerGpuSupervisorReconnectDeps, "runCaptureOpenshell">
 > &
+  Required<Pick<DockerGpuSupervisorReconnectDeps, "commandExecutor">> &
   Pick<DockerGpuSupervisorReconnectDeps, "sleep"> & {
+    now?: () => Date;
     /**
      * Prove that the transaction-owned replacement is the sole labeled
      * container and is still running. The callback must fail closed and keep
@@ -117,19 +113,23 @@ function exactReplacementIsRunning(
  * sole running labeled container. Deleting is terminal after that start.
  * Error remains transient only while the exact replacement stays running.
  */
-export function waitForOpenShellFinalHandoff(
+export async function waitForOpenShellFinalHandoff(
   sandboxName: string,
-  timeoutSecs: number,
+  deadlineMs: number,
   deps: DockerFinalHandoffDeps,
-): DockerFinalHandoffAcknowledgement {
+): Promise<DockerFinalHandoffAcknowledgement> {
   const sleep = deps.sleep ?? defaultSleep;
-  const boundedTimeoutSecs = Math.max(1, Math.round(timeoutSecs));
-  const deadline = Date.now() + boundedTimeoutSecs * 1000;
-  const maxAttempts = Math.max(1, Math.ceil(boundedTimeoutSecs / 2) + 1);
+  const now = deps.now ?? (() => new Date());
+  const startedAtMs = now().getTime();
+  const boundedDeadlineMs = Number.isFinite(deadlineMs) ? Math.round(deadlineMs) : startedAtMs;
+  const maxAttempts = Math.max(
+    1,
+    Math.ceil(Math.max(0, boundedDeadlineMs - startedAtMs) / 2000) + 1,
+  );
   let lastSandboxPhase: string | null = null;
 
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
-    const remainingBeforeListMs = deadline - Date.now();
+    const remainingBeforeListMs = boundedDeadlineMs - now().getTime();
     if (remainingBeforeListMs <= 0) break;
     let listOutput = "";
     try {
@@ -149,7 +149,7 @@ export function waitForOpenShellFinalHandoff(
       return { acknowledged: false, lastSandboxPhase };
     }
 
-    const remainingBeforeRuntimeProofMs = deadline - Date.now();
+    const remainingBeforeRuntimeProofMs = boundedDeadlineMs - now().getTime();
     if (
       currentPhase === "Error" &&
       !exactReplacementIsRunning(deps.replacementIsExactAndRunning, remainingBeforeRuntimeProofMs)
@@ -158,31 +158,39 @@ export function waitForOpenShellFinalHandoff(
     }
 
     if (currentPhase === "Ready") {
-      const remainingBeforeExecMs = deadline - Date.now();
+      const remainingBeforeExecMs = boundedDeadlineMs - now().getTime();
       if (remainingBeforeExecMs <= 0) break;
-      const execResult = deps.runOpenshell(["sandbox", "exec", "-n", sandboxName, "--", "true"], {
-        ignoreError: true,
-        ...PROCESS_TREE_BOUNDED_OPENSHELL_OPTIONS,
-        suppressOutput: true,
-        timeout: Math.min(DOCKER_GPU_PATCH_TIMEOUT_MS, remainingBeforeExecMs),
+      const execResult = await deps.commandExecutor.runBuffered({
+        sandboxName,
+        target: selectedOpenShellGateway(),
+        command: ["true"],
+        timeoutMilliseconds: Math.min(DOCKER_GPU_PATCH_TIMEOUT_MS, remainingBeforeExecMs),
+        timeoutKillSignal: "SIGKILL",
       });
-      const remainingAfterExecMs = deadline - Date.now();
+      const remainingAfterExecMs = boundedDeadlineMs - now().getTime();
       const replacementIsRunning = exactReplacementIsRunning(
         deps.replacementIsExactAndRunning,
         remainingAfterExecMs,
       );
-      if (hasZeroDockerExitStatus(execResult) && replacementIsRunning) {
+      if (
+        execResult.outcome.kind === "completed" &&
+        execResult.outcome.exitCode === 0 &&
+        replacementIsRunning
+      ) {
         return { acknowledged: true, lastSandboxPhase };
       }
       if (!replacementIsRunning) return { acknowledged: false, lastSandboxPhase };
     } else if (
       currentPhase !== "Error" &&
-      !exactReplacementIsRunning(deps.replacementIsExactAndRunning, deadline - Date.now())
+      !exactReplacementIsRunning(
+        deps.replacementIsExactAndRunning,
+        boundedDeadlineMs - now().getTime(),
+      )
     ) {
       return { acknowledged: false, lastSandboxPhase };
     }
 
-    const remainingBeforeSleepMs = deadline - Date.now();
+    const remainingBeforeSleepMs = boundedDeadlineMs - now().getTime();
     if (attempt < maxAttempts && remainingBeforeSleepMs > 0) {
       sleep(Math.min(2, remainingBeforeSleepMs / 1000));
     }
@@ -216,12 +224,11 @@ function sandboxListShowsErrorPhase(
   }
 }
 
-export function waitForOpenShellSupervisorReconnect(
+export async function waitForOpenShellSupervisorReconnect(
   sandboxName: string,
   timeoutSecs: number,
   deps: DockerGpuSupervisorReconnectDeps,
-): boolean {
-  if (!deps.runOpenshell) return false;
+): Promise<boolean> {
   const sleep = deps.sleep ?? defaultSleep;
   const deadline = Date.now() + Math.max(1, timeoutSecs) * 1000;
   const errorPhaseDebouncePolls =
@@ -232,13 +239,14 @@ export function waitForOpenShellSupervisorReconnect(
         Math.max(1, Math.round(deps.errorPhaseDebouncePolls));
   let consecutiveErrorPolls = 0;
   while (Date.now() <= deadline) {
-    const result = deps.runOpenshell(["sandbox", "exec", "-n", sandboxName, "--", "true"], {
-      ignoreError: true,
-      ...PROCESS_TREE_BOUNDED_OPENSHELL_OPTIONS,
-      suppressOutput: true,
-      timeout: DOCKER_GPU_PATCH_TIMEOUT_MS,
+    const result = await deps.commandExecutor.runBuffered({
+      sandboxName,
+      target: selectedOpenShellGateway(),
+      command: ["true"],
+      timeoutMilliseconds: DOCKER_GPU_PATCH_TIMEOUT_MS,
+      timeoutKillSignal: "SIGKILL",
     });
-    if (hasZeroDockerExitStatus(result)) return true;
+    if (result.outcome.kind === "completed" && result.outcome.exitCode === 0) return true;
     if (
       deps.runCaptureOpenshell &&
       sandboxListShowsErrorPhase(sandboxName, deps.runCaptureOpenshell)

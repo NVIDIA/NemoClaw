@@ -65,7 +65,7 @@ function slackBotAlias() {
   return {
     channelId: "slack",
     envKey: "SLACK_BOT_TOKEN",
-    match: "^openshell:resolve:env:(v[0-9]+_)?SLACK_BOT_TOKEN$",
+    match: "^openshell:resolve:env:((?:v[0-9]{1,20}|s[a-f0-9]{64})_)?SLACK_BOT_TOKEN$",
     value: "xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN",
     message:
       "[channels] Normalized SLACK_BOT_TOKEN runtime placeholder to the Bolt-compatible alias",
@@ -77,7 +77,7 @@ function crossKeyCredentialAlias(channelId: string, envKey: string, targetEnvKey
     channelId,
     envKey,
     targetEnvKey,
-    match: `^openshell:resolve:env:v[0-9]+_${envKey}$`,
+    match: `^openshell:resolve:env:(?:v[0-9]{1,20}|s[a-f0-9]{64})_${envKey}$`,
     value: `openshell:resolve:env:${envKey}`,
   };
 }
@@ -280,8 +280,8 @@ function runHermesDockerfileRuntimePlanGuard(runtimePlan: unknown) {
     "# Apply messaging agent-install hooks",
   )
     .replace(
-      "node --experimental-strip-types /src/lib/messaging/applier/build/messaging-build-applier.mts --agent hermes --phase runtime-setup",
-      `node --experimental-strip-types ${shellQuote(applierPath)}`,
+      "node /src/lib/messaging/applier/build/messaging-build-applier.mts --agent hermes --phase runtime-setup",
+      `node ${shellQuote(applierPath)}`,
     )
     .replaceAll("/usr/local/share/nemoclaw/messaging-runtime-plan.json", runtimePlanPath)
     // Unit fixtures run as the invoking user, not Docker root; keep the
@@ -414,7 +414,7 @@ describe("agents/hermes/start.sh runtime API server key", () => {
         `PPID_FILE=${shellQuote(ppidFile)}`,
         `ARGS_FILE=${shellQuote(argsFile)}`,
         "export PPID_FILE ARGS_FILE",
-        "EXPECTED_PARENT=$BASHPID",
+        "EXPECTED_PARENT=$$",
         "ensure_hermes_runtime_api_server_key strict",
         'ACTUAL_PARENT="$(cat "$PPID_FILE")"',
         'printf "expected=%s actual=%s\\n" "$EXPECTED_PARENT" "$ACTUAL_PARENT"',
@@ -452,11 +452,21 @@ describe("agents/hermes/start.sh runtime API server key", () => {
     expect(run.result.stderr).not.toContain(run.apiServerKey ?? "missing-key");
   });
 
-  it("refuses to mint an API key into a shields-up env", () => {
+  it("refreshes only the compatibility hash when minting an API key in non-root mode", () => {
+    const run = runHermesRuntimeApiServerKeyMint({ mode: "compat" });
+
+    expect(run.result.status, run.result.stderr).toBe(0);
+    expect(run.apiServerKey).toMatch(/^[0-9a-f]{64}$/);
+    expect(run.strictHashValid).toBe(false);
+    expect(run.compatHashValid).toBe(true);
+    expect(run.result.stderr).not.toContain(run.apiServerKey ?? "missing-key");
+  });
+
+  it("refuses to mint an API key into a read-only env file", () => {
     const run = runHermesRuntimeApiServerKeyMint({ fakeRoot: true, locked: true });
 
     expect(run.result.status).not.toBe(0);
-    expect(run.result.stderr).toContain("cannot update .env while shields are up");
+    expect(run.result.stderr).toContain("cannot update the read-only .env file");
     expect(run.apiServerKey).toBeNull();
     expect(run.envFileMode).toBe("444");
     expect(run.strictHashValid).toBe(true);
@@ -793,7 +803,7 @@ describe("agents/hermes/start.sh runtime API server key", () => {
     expect(run.strictHashValid).toBe(true);
   });
 
-  it("refuses to replace a sealed canonical placeholder without a rebuild or sandbox recreation (#8893)", () => {
+  it("refuses to replace a read-only canonical placeholder without sandbox recreation (#8893)", () => {
     const originalEnv = "DISCORD_BOT_TOKEN=openshell:resolve:env:DISCORD_BOT_TOKEN\n";
     const run = runHermesRuntimeProviderPlaceholderRefresh({
       envFile: originalEnv,
@@ -814,7 +824,7 @@ describe("agents/hermes/start.sh runtime API server key", () => {
 
     expect(run.result.status).toBe(1);
     expect(run.result.stderr).toContain(
-      "cannot update provider placeholders while shields are up; rebuild or recreate the sandbox",
+      "cannot update read-only provider placeholders; rebuild or recreate the sandbox",
     );
     expect(run.envFileContent).toBe(originalEnv);
     expect(run.strictHashValid).toBe(true);
@@ -844,7 +854,7 @@ describe("agents/hermes/start.sh runtime API server key", () => {
             {
               channelId: "slack",
               envKey: "SLACK_BOT_TOKEN",
-              match: "^openshell:resolve:env:(v[0-9]+_)?SLACK_BOT_TOKEN$",
+              match: "^openshell:resolve:env:((?:v[0-9]{1,20}|s[a-f0-9]{64})_)?SLACK_BOT_TOKEN$",
               value: "xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN",
               message:
                 "[channels] Normalized SLACK_BOT_TOKEN runtime placeholder to the Bolt-compatible alias",
@@ -852,7 +862,7 @@ describe("agents/hermes/start.sh runtime API server key", () => {
             {
               channelId: "slack",
               envKey: "SLACK_APP_TOKEN",
-              match: "^openshell:resolve:env:(v[0-9]+_)?SLACK_APP_TOKEN$",
+              match: "^openshell:resolve:env:((?:v[0-9]{1,20}|s[a-f0-9]{64})_)?SLACK_APP_TOKEN$",
               value: "xapp-OPENSHELL-RESOLVE-ENV-SLACK_APP_TOKEN",
               message:
                 "[channels] Normalized SLACK_APP_TOKEN runtime placeholder to the Bolt-compatible alias",

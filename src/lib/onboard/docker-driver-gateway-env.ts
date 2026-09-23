@@ -21,9 +21,13 @@ import { DEFAULT_GATEWAY_PORT, GATEWAY_PORT } from "../core/ports";
 import { isSupportedGatewayDockerHost } from "../domain/docker-host";
 import {
   DOCKER_DRIVER_GATEWAY_JWT_TTL_SECS,
+  NEMOCLAW_EXTERNAL_COMPONENT_GATEWAY_IDENTITY_ENV,
   NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE_ENV,
   prepareDockerDriverGatewayConfigEnv,
+  readExternalComponentGatewayPreparation,
+  type ExternalComponentGatewayConfiguration,
 } from "./docker-driver-gateway-config";
+import type { ExternalComponentGatewayPreparation } from "./external-component/activation";
 import { buildDockerDriverGatewayLocalTlsEnv } from "./docker-driver-gateway-local-tls";
 import {
   getOpenShellGatewayManagedServiceLogCommand,
@@ -32,6 +36,7 @@ import {
   OpenShellGatewayServiceEnvironmentError,
   type PackageManagedDockerDriverGatewayOptions,
   startPackageManagedDockerDriverGateway,
+  startOpenShellGatewayUserService,
   stopOpenShellGatewayUserService,
 } from "./docker-driver-gateway-service";
 import {
@@ -39,7 +44,10 @@ import {
   PORTABLE_HOST_GATEWAY_IP,
   resolveDockerDriverNetworkName,
 } from "./docker-driver-platform";
-import type { RuntimeProviderGatewayHostRuntime } from "./runtime-provider/contract";
+import type {
+  RuntimeProviderGatewayHostRuntime,
+  RuntimeProviderGatewaySurface,
+} from "./runtime-provider/contract";
 import { resolveConfiguredRuntimeProvider } from "./runtime-provider/selection";
 
 export { getGatewayHttpsEndpoint, startPackageManagedDockerDriverGateway };
@@ -70,6 +78,7 @@ export const DOCKER_DRIVER_GATEWAY_RUNTIME_ENV_KEYS = [
   "OPENSHELL_VM_DRIVER_STATE_DIR",
   "OPENSHELL_DRIVER_DIR",
   "NEMOCLAW_DOCKER_ENABLE_BIND_MOUNTS",
+  NEMOCLAW_EXTERNAL_COMPONENT_GATEWAY_IDENTITY_ENV,
   NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE_ENV,
   "NETAVARK_FW",
 ] as const;
@@ -85,6 +94,27 @@ export interface BuildDockerDriverGatewayEnvOptions {
   getDockerSupervisorImage: () => string;
   resolveSandboxBin: () => string | null;
   enableBindMounts?: boolean;
+}
+
+export function configureDockerDriverGatewayExternalComponent(
+  gatewayEnv: Record<string, string>,
+  externalComponent: ExternalComponentGatewayConfiguration | null,
+): ExternalComponentGatewayPreparation | void {
+  const configPath = gatewayEnv.OPENSHELL_GATEWAY_CONFIG;
+  if (!configPath) {
+    throw new Error("OpenShell Docker-driver gateway requires OPENSHELL_GATEWAY_CONFIG");
+  }
+  prepareDockerDriverGatewayConfigEnv(
+    gatewayEnv,
+    path.dirname(configPath),
+    gatewayEnv.OPENSHELL_DOCKER_SUPERVISOR_BIN,
+    {
+      externalComponent,
+    },
+  );
+  if (externalComponent && "interceptor" in externalComponent) {
+    return readExternalComponentGatewayPreparation(gatewayEnv, externalComponent);
+  }
 }
 
 function preparePortableGatewayHostRuntime(
@@ -177,13 +207,29 @@ function preparePortableGatewayHostRuntime(
   };
 }
 
-export function prepareConfiguredGatewayHostRuntime(
-  options: {
-    architecture?: NodeJS.Architecture;
-    environment?: NodeJS.ProcessEnv;
-    platform?: NodeJS.Platform;
-    socketPath?: string;
-  } = {},
+export interface PrepareConfiguredGatewayHostRuntimeOptions {
+  architecture?: NodeJS.Architecture;
+  environment?: NodeJS.ProcessEnv;
+  platform?: NodeJS.Platform;
+  socketPath?: string;
+}
+
+type SupportedRuntimeProviderGateway = Extract<RuntimeProviderGatewaySurface, { supported: true }>;
+
+function requireConfiguredRuntimeProviderGateway(
+  platform: NodeJS.Platform,
+  architecture: NodeJS.Architecture,
+  environment: NodeJS.ProcessEnv,
+): SupportedRuntimeProviderGateway {
+  const gateway = resolveConfiguredRuntimeProvider(platform, architecture, environment).gateway;
+  if (!gateway.supported) {
+    throw new Error("The selected runtime provider does not support a host-managed gateway.");
+  }
+  return gateway;
+}
+
+export function observeConfiguredGatewayHostRuntime(
+  options: PrepareConfiguredGatewayHostRuntimeOptions = {},
 ): RuntimeProviderGatewayHostRuntime {
   const environment = options.environment ?? process.env;
   const platform = options.platform ?? process.platform;
@@ -191,15 +237,42 @@ export function prepareConfiguredGatewayHostRuntime(
   if (isPortableExperimentalProfile(environment)) {
     return preparePortableGatewayHostRuntime(options.socketPath, platform);
   }
-  const provider = resolveConfiguredRuntimeProvider(platform, architecture, environment);
-  if (!provider.gateway.supported) {
-    throw new Error("The selected runtime provider does not support a host-managed gateway.");
-  }
-  return provider.gateway.prepareHostRuntime({
+  return requireConfiguredRuntimeProviderGateway(
+    platform,
+    architecture,
+    environment,
+  ).observeHostRuntime({
     environment,
     platform,
     socketPath: options.socketPath,
   });
+}
+
+export function configuredRuntimeProviderOwnsHostReadiness(
+  options: PrepareConfiguredGatewayHostRuntimeOptions = {},
+): boolean {
+  return configuredRuntimeProviderReadinessAuthority(options)?.ownsHostReadiness === true;
+}
+
+/** Qualification-backed provider identity used by provider-neutral readiness. */
+export function configuredRuntimeProviderReadinessAuthority(
+  options: PrepareConfiguredGatewayHostRuntimeOptions = {},
+): { providerId: string; ownsHostReadiness: boolean } | null {
+  const environment = options.environment ?? process.env;
+  if (isPortableExperimentalProfile(environment)) return null;
+  const platform = options.platform ?? process.platform;
+  const provider = resolveConfiguredRuntimeProvider(
+    platform,
+    options.architecture ?? process.arch,
+    environment,
+  );
+  if (!provider.gateway.supported) {
+    throw new Error("The selected runtime provider does not support a host-managed gateway.");
+  }
+  return {
+    providerId: provider.identity.id,
+    ownsHostReadiness: provider.gateway.ownsHostReadiness,
+  };
 }
 
 export type PackageManagedDockerDriverGatewayWithEnvOverrideOptions = Omit<
@@ -213,7 +286,7 @@ export type PackageManagedDockerDriverGatewayWithEnvOverrideOptions = Omit<
 
 export function getGatewayPortCheckOptions(env: NodeJS.ProcessEnv = process.env): { host: string } {
   return {
-    host: prepareConfiguredGatewayHostRuntime({ environment: env }).portCheckHost,
+    host: observeConfiguredGatewayHostRuntime({ environment: env }).portCheckHost,
   };
 }
 
@@ -222,7 +295,7 @@ export function getGatewayStartNetworkEnv(
   env: NodeJS.ProcessEnv = process.env,
   platform: NodeJS.Platform = process.platform,
 ): Record<string, string> {
-  const runtime = prepareConfiguredGatewayHostRuntime({ environment: env, platform });
+  const runtime = observeConfiguredGatewayHostRuntime({ environment: env, platform });
   return {
     OPENSHELL_BIND_ADDRESS: runtime.bindAddress,
     OPENSHELL_SERVER_PORT: String(gatewayPort),
@@ -235,9 +308,11 @@ export function assertDockerDriverGatewayBindAddressSafe(
   gatewayEnv: Record<string, string>,
   environment: NodeJS.ProcessEnv = process.env,
   platform: NodeJS.Platform = process.platform,
+  gatewayRuntime?: RuntimeProviderGatewayHostRuntime,
 ): void {
   if (gatewayEnv.OPENSHELL_BIND_ADDRESS !== WILDCARD_GATEWAY_BIND_ADDRESS) return;
-  const selectedRuntime = prepareConfiguredGatewayHostRuntime({ environment, platform });
+  const selectedRuntime =
+    gatewayRuntime ?? observeConfiguredGatewayHostRuntime({ environment, platform });
   if (
     selectedRuntime.sandboxHostAddress !== null &&
     gatewayEnv.OPENSHELL_GRPC_ENDPOINT ===
@@ -332,8 +407,10 @@ function assertGatewayJwtFile(key: string, filePath: string): void {
 export function assertDockerDriverGatewayAuthConfigSafe(
   gatewayEnv: Record<string, string>,
   environment: NodeJS.ProcessEnv = process.env,
+  platform: NodeJS.Platform = process.platform,
+  gatewayRuntime?: RuntimeProviderGatewayHostRuntime,
 ): void {
-  assertDockerDriverGatewayBindAddressSafe(gatewayEnv, environment);
+  assertDockerDriverGatewayBindAddressSafe(gatewayEnv, environment, platform, gatewayRuntime);
   const configPath = gatewayEnv.OPENSHELL_GATEWAY_CONFIG?.trim();
   if (!configPath) {
     throw new Error("OpenShell Docker-driver gateway requires OPENSHELL_GATEWAY_CONFIG");
@@ -382,7 +459,7 @@ export function buildDockerDriverGatewayEnv({
   const portable = isPortableExperimentalProfile();
   const runtime =
     gatewayHostRuntime ??
-    prepareConfiguredGatewayHostRuntime({
+    observeConfiguredGatewayHostRuntime({
       architecture,
       platform,
       socketPath: podmanSocketPath,
@@ -544,6 +621,19 @@ export function writeDockerGatewayDebEnvOverrideOrThrow(
   }
 }
 
+export function preparePackageManagedDockerDriverGatewayServiceEnv(
+  gatewayEnv: Record<string, string>,
+  opts: { env?: NodeJS.ProcessEnv; home?: string } = {},
+): void {
+  const env = opts.env ?? process.env;
+  assertDockerDriverGatewayAuthConfigSafe(gatewayEnv, env);
+  const serviceGatewayEnv = { ...gatewayEnv };
+  delete serviceGatewayEnv.DOCKER_HOST;
+  const dockerHost = normalizePackageServiceDockerHost(env.DOCKER_HOST);
+  if (dockerHost) serviceGatewayEnv.DOCKER_HOST = dockerHost;
+  writeDockerGatewayDebEnvOverrideFile(() => serviceGatewayEnv, opts);
+}
+
 export function startPackageManagedDockerDriverGatewayWithEnvOverride(
   optionsWithEnv: PackageManagedDockerDriverGatewayWithEnvOverrideOptions,
 ): Promise<boolean> {
@@ -553,20 +643,22 @@ export function startPackageManagedDockerDriverGatewayWithEnvOverride(
   if (gatewayPort !== DEFAULT_GATEWAY_PORT) return Promise.resolve(false);
   assertDockerDriverGatewayAuthConfigSafe(gatewayEnv, env);
   const effectiveHome = home ?? optionsWithEnv.env?.HOME ?? os.homedir();
+  const startService = options.startOpenShellGatewayUserService ?? startOpenShellGatewayUserService;
   return startPackageManagedDockerDriverGateway({
     ...options,
     hasOpenShellGatewayUserService:
       options.hasOpenShellGatewayUserService ??
-      (() => hasOpenShellGatewayUserService({ env, home: effectiveHome })),
+      (() =>
+        hasOpenShellGatewayUserService({
+          env,
+          home: effectiveHome,
+          ...(options.output ? { warn: options.output.warn } : {}),
+        })),
     managedServiceLogCommand:
       options.managedServiceLogCommand ?? getOpenShellGatewayManagedServiceLogCommand(),
     prepareOpenShellGatewayUserServiceEnv: () => {
       try {
-        const serviceGatewayEnv = { ...gatewayEnv };
-        delete serviceGatewayEnv.DOCKER_HOST;
-        const dockerHost = normalizePackageServiceDockerHost(env.DOCKER_HOST);
-        if (dockerHost) serviceGatewayEnv.DOCKER_HOST = dockerHost;
-        writeDockerGatewayDebEnvOverrideFile(() => serviceGatewayEnv, {
+        preparePackageManagedDockerDriverGatewayServiceEnv(gatewayEnv, {
           env,
           home: effectiveHome,
         });
@@ -574,6 +666,13 @@ export function startPackageManagedDockerDriverGatewayWithEnvOverride(
         throw new OpenShellGatewayServiceEnvironmentError(error);
       }
     },
+    startOpenShellGatewayUserService: (serviceOptions) =>
+      startService({
+        ...serviceOptions,
+        env,
+        home: effectiveHome,
+        ...(options.output ? { warn: options.output.warn } : {}),
+      }),
     stopOpenShellGatewayUserService:
       options.stopOpenShellGatewayUserService ??
       (() => stopOpenShellGatewayUserService({ env, home: effectiveHome })),

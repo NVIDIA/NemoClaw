@@ -86,7 +86,7 @@ $$nemoclaw my-assistant policy add \
   --dry-run
 ```
 
-The option is invalid for a built-in preset because maintained presets own their reviewed destinations. NemoClaw rejects unused, unrelated, wildcard, suffix, CIDR, URL-shaped, duplicate, or malformed `--trusted-private-host` declarations. It also rejects loopback, link-local, metadata, unspecified, multicast, documentation, translation, benchmarking, and other reserved ranges.
+The option is invalid for a built-in preset because maintained presets own their reviewed destinations. NemoClaw validates every custom-preset endpoint, even when you provide no private-host declaration. It rejects untrusted private, loopback, link-local, metadata, unspecified, multicast, documentation, translation, benchmarking, and other reserved destinations. It also rejects unused, unrelated, wildcard, suffix, CIDR, URL-shaped, duplicate, or malformed `--trusted-private-host` declarations.
 
 As an alternative, set `NEMOCLAW_TRUSTED_PRIVATE_HOSTS` to a comma-separated list of exact hosts for the current command. NemoClaw combines the environment list with any `--trusted-private-host` options. It normalizes and deduplicates environment entries and ignores entries unrelated to the custom preset batch.
 
