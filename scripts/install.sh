@@ -7061,7 +7061,7 @@ ensure_station_express_pair() {
         # An implicit peer miss keeps the existing single-Station workload.
         # Recheck its ownership before continuing without host preparation.
         station_migratable_legacy_single_head_running \
-          || error "The existing single-Station workload changed during peer discovery; refusing fallback."
+          || error "The nemoclaw-vllm container no longer matches the legacy image ($STATION_ULTRA_LEGACY_VLLM_IMAGE) and ownership contract after peer discovery. Inspect it with 'docker inspect nemoclaw-vllm'; restore the original single-Station workload before retrying, or stop this upgrade if the change was intentional."
       fi
       if [ "${_STATION_EXPRESS_MODEL_WAS_EXPLICIT:-0}" = "0" ]; then
         NEMOCLAW_VLLM_MODEL="$STATION_ULTRA_VLLM_MODEL"
