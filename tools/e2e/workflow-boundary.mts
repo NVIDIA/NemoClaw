@@ -2874,16 +2874,22 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
     errors.push("generate-matrix checkout step must set persist-credentials=false");
   }
   const stagingSteps = generateSteps.filter(
-    (step) => step.name === "Stage immutable native Podman E2E toolchains",
+    (step) =>
+      step.name === "Stage immutable native Podman E2E toolchains" ||
+      (typeof step.uses === "string" &&
+        step.uses.split("@")[0] ===
+          E2E_ACTION_PROVENANCE.stageNativePodmanToolchains.reference.split("@")[0]),
   );
   const staging = stagingSteps[0];
   if (
     stagingSteps.length !== 1 ||
+    staging?.name !== "Stage immutable native Podman E2E toolchains" ||
     staging?.uses !== E2E_ACTION_PROVENANCE.stageNativePodmanToolchains.reference
   ) {
     errors.push("native Podman staging must use exactly one reviewed action reference");
   }
   if (
+    generateMatrix["continue-on-error"] !== undefined ||
     staging?.if !== undefined ||
     staging?.["continue-on-error"] !== undefined ||
     asRecord(staging?.with).enabled !==

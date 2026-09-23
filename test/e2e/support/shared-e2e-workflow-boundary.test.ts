@@ -30,6 +30,7 @@ type Workflow = {
     {
       env?: Record<string, unknown>;
       needs?: string[];
+      "continue-on-error"?: unknown;
       steps?: Array<{
         name?: string;
         uses?: string;
@@ -63,6 +64,22 @@ function moveStagingAfter(steps: WorkflowSteps, index: number, boundary: string)
 }
 
 const stagingMutations: Array<[string, (steps: WorkflowSteps, index: number) => void]> = [
+  [
+    "renamed",
+    (steps, index) => {
+      steps[index]!.name = "Different name";
+    },
+  ],
+  ["duplicate-renamed", (steps, index) => steps.push({ ...steps[index]!, name: "Second staging" })],
+  [
+    "duplicate-unreviewed-renamed",
+    (steps, index) =>
+      steps.push({
+        ...steps[index]!,
+        name: "Second staging",
+        uses: steps[index]!.uses!.split("@")[0] + "@" + "0".repeat(40),
+      }),
+  ],
   [
     "missing",
     (steps, index) => {
@@ -119,6 +136,18 @@ const actionMutations: Array<[string, (source: string) => string]> = [
 ];
 
 describe("shared E2E workflow boundary", () => {
+  it.each([true, false, "${{ always() }}"])(
+    "rejects generate-matrix continue-on-error=%s",
+    (value) => {
+      const errors = validateMutatedWorkflow((workflow) => {
+        workflow.jobs["generate-matrix"]["continue-on-error"] = value;
+      });
+      expect(errors).toContain(
+        "native Podman staging must preserve runtime selection, token, and fail-closed execution",
+      );
+    },
+  );
+
   it.each(stagingMutations)("rejects native Podman staging %s mutations", (_name, mutate) => {
     const errors = validateMutatedWorkflow((workflow) => {
       const steps = workflow.jobs["generate-matrix"].steps!;
