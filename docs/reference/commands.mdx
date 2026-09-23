@@ -269,7 +269,7 @@ $$nemoclaw config export my-assistant --output -
 | `--force` | Replace an existing regular file. The command refuses symbolic links and other file types. |
 | `--json` | Return a machine-readable result when writing a file. It cannot be combined with `--output -`. |
 
-The export contains credential environment-variable references, not credential values. File output uses mode `0600`. Without `--force`, an existing destination is preserved and the command fails. With `--force`, publication checks that the existing destination is a regular file before ordinary atomic replacement.
+Exports never contain credential values. They include credential environment-variable references only when the target configuration requires one. File output uses mode `0600`. Without `--force`, an existing destination is preserved and the command fails. With `--force`, publication checks that the existing destination is a regular file before ordinary atomic replacement.
 With `--json` and file output, the version 1 result includes `sourceSandbox`, `outputPath`, `documentDigest`, and `specDigest`.
 
 Export validates retained corporate certificate authority (CA) state but omits the CA bundle and digest from YAML.
