@@ -207,7 +207,7 @@ describe("managed image activation failure diagnostics", () => {
       stdout: "",
       timedOut: false,
     });
-    const hostCommand = vi.fn(async () => ({
+    const hostCommand = vi.fn(async (_command: string, _args: string[]) => ({
       exitCode: 0,
       stderr: "",
       stdout: "ISSUE_5324_ADMIN_APPROVAL_OK\n",
