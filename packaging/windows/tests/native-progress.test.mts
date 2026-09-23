@@ -44,6 +44,8 @@ test("coalesces real count updates and immediately advances fixed phases", async
     });
     fixture.writer.progress("gateway");
     assert.deepEqual(fixture.records[2], { kind: "progress", stage: "gateway" });
+    fixture.writer.progress("migration");
+    assert.deepEqual(fixture.records[3], { kind: "progress", stage: "migration" });
   } finally {
     fixture.close();
   }

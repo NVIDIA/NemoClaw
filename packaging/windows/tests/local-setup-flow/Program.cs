@@ -20,6 +20,13 @@ internal static class Program
             if (!Environment.UserInteractive || Process.GetCurrentProcess().SessionId == 0)
                 throw new InvalidOperationException("Run these WPF controls in an interactive desktop session.");
             _ = new Application();
+            using (var record = JsonDocument.Parse("{\"kind\":\"progress\",\"stage\":\"migration\"}"))
+            {
+                var progress = NativeSessionProgress.Parse(record.RootElement);
+                if (progress.Explain().Title != "Upgrading chat history" || !progress.ShouldPresent(false, false))
+                    throw new InvalidOperationException("Chat migration progress was not presented.");
+                passed.Add("chat migration progress explains the retained history archive");
+            }
             var eligibility = NativeExpressSetup.CheckPreliminaryEligibilityAsync(download: true).GetAwaiter().GetResult();
             if (eligibility.IsDevice)
             {

@@ -38,6 +38,7 @@ import { startNativeInferenceBroker } from "./native-inference-broker.mts";
 import { startNativeBrokerRelay } from "./native-broker-relay.mts";
 import { startFileTcpRelay } from "./native-ui-relay.mts";
 import { acquireNativeStateSession } from "./native-state.mts";
+import { migrateNativeOpenClawSessions } from "./native-openclaw-migration.mts";
 import {
   withNativeRuntimeSession,
   usingNativeRuntimeSession,
@@ -1271,6 +1272,19 @@ async function mainInternal(runtimeLease: NativeRuntimeSession) {
         ],
       ]));
     try {
+      if (stateSession)
+        await migrateNativeOpenClawSessions({
+          home: stateSession.stateRoot,
+          node: installedNode,
+          runtimeRoot: runtimeLease.runtimeRoot,
+          entry: installedOpenClawEntry,
+          signal: webSession?.signal ?? runtimeLease.signal,
+          assertHeld: () => {
+            stateSession.assertHeld();
+            runtimeLease.assertHeld();
+          },
+          onProgress: () => webSession?.progress("migration"),
+        });
       diagnostics.stage("broker");
       const services = configuredIdentity
         ? await readNativeServiceEnvironment(

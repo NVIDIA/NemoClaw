@@ -349,6 +349,13 @@ export async function buildNativeWorkers(
     plugins,
   });
   const python = path.join(output, "python-build-inputs");
+  await build({
+    ...common,
+    format: "cjs",
+    entryPoints: [path.join(runtimeSource, "native-openclaw-migration-worker.mts")],
+    outfile: path.join(output, "openclaw-migrate.cjs"),
+  });
+  fs.writeFileSync(path.join(output, "openclaw-migration-config.json"), "{}\n", { flag: "wx" });
   fs.mkdirSync(python);
   for (const [name, content] of assets)
     fs.writeFileSync(path.join(name.endsWith(".py") ? python : output, name), content, {

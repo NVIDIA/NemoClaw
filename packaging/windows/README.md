@@ -98,6 +98,16 @@ sessions before deleting state, settings, and scoped keys. Web agents use the
 Windows default browser and a native session-control window with explicit Stop.
 Closing that control waits for sandbox, gateway, broker, and state cleanup.
 
+OpenClaw upgrades legacy chat history before starting the sandbox. With the private
+state and sealed runtime leases held, a host process runs the packaged upstream
+`doctor --session-sqlite` dry-run and import commands. The process uses an empty
+sealed configuration and a minimal environment; it does not load user plugin
+configuration or inherit provider credentials. Redirected or hard-linked state,
+external transcript paths, and state-owned dotenv overrides stop migration.
+Upstream retains original history in its recovery archive and validates the
+import before retiring legacy files. Migration errors stop chat startup without
+changing sandbox permissions. This host maintenance step is not sandboxed.
+
 The selected agent carries through configuration and launch, and the installed
 launcher remembers the last configured agent. The same native window edits
 settings later. Agent launch is an explicit completion action. Pi and NemoCUA

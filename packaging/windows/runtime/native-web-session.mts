@@ -10,6 +10,7 @@ import type { NativeFailurePresentation } from "./native-session-diagnostics.mts
 export type NativeProgressStage =
   | "inference"
   | "runtime"
+  | "migration"
   | "gateway"
   | "sandbox"
   | "bootstrap"
@@ -25,6 +26,7 @@ export type NativeProgressCounts = {
 const PROGRESS_STAGES: readonly NativeProgressStage[] = [
   "inference",
   "runtime",
+  "migration",
   "gateway",
   "sandbox",
   "bootstrap",

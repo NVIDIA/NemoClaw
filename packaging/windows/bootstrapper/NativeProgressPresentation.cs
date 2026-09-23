@@ -41,7 +41,7 @@ internal sealed record NativeSessionProgress(string Stage, NativeProgressMeasure
         if (record.ValueKind != JsonValueKind.Object || record.GetProperty("kind").GetString() != "progress")
             throw new InvalidDataException("The session progress message is invalid.");
         var stage = record.GetProperty("stage").GetString();
-        if (stage is not ("inference" or "runtime" or "gateway" or "sandbox" or "bootstrap" or "dashboard" or "browser" or "running" or "cleanup"))
+        if (stage is not ("inference" or "runtime" or "migration" or "gateway" or "sandbox" or "bootstrap" or "dashboard" or "browser" or "running" or "cleanup"))
             throw new InvalidDataException("The session progress stage is invalid.");
         var hasCompleted = record.TryGetProperty("completed", out var completed);
         var hasTotal = record.TryGetProperty("total", out var total);
@@ -66,6 +66,7 @@ internal sealed record NativeSessionProgress(string Stage, NativeProgressMeasure
     {
         "inference" => ("Preparing inference", "Checking your selected model connection. An on-device model may need time to download or load."),
         "runtime" => ("Preparing the agent", "Preparing the installed runtime for this private session. Large runtimes can take several minutes."),
+        "migration" => ("Upgrading chat history", "Moving existing conversations to the new format. Original history files are kept in a recovery archive."),
         "gateway" => ("Starting session services", "Starting the local services that manage the private agent session."),
         "sandbox" => ("Starting the private session", "Windows is creating the protected environment and starting the selected agent."),
         "bootstrap" => ("Connecting the agent", "Connecting the private session to its approved model and optional services."),
