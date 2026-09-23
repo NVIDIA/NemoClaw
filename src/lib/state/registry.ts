@@ -92,6 +92,10 @@ export {
   withLock,
 } from "./registry/lock";
 export { load, REGISTRY_FILE, save } from "./registry/persistence";
+export {
+  getSandboxAcrossGatewayRoots,
+  recordSandboxStopIntentAcrossGatewayRoots,
+} from "./registry/cross-port";
 export type {
   SandboxEntry,
   SandboxGpuProofResult,
