@@ -1175,6 +1175,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     installNonInteractive: true,
     restoreCli: true,
     exposeCliBin: true,
+    prAdvisorSelectable: true,
     runner: "ubuntu-24.04",
     shard: "linux-amd64",
     owningPaths: [
@@ -1210,9 +1211,11 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     installNonInteractive: true,
     restoreCli: true,
     exposeCliBin: true,
+    prAdvisorSelectable: true,
     runner: "ubuntu-24.04-arm",
     shard: "linux-arm64",
     owningPaths: [
+      ...PI_IMAGE_SOURCE_OWNING_PATHS,
       "ci/pi-agent-qualification-v1-linux-arm64.json",
       "src/lib/agent/candidate-authority.ts",
       "src/lib/agent/candidate.ts",
