@@ -11,6 +11,85 @@ use nemoclaw_sdk::{
 use std::sync::Arc;
 
 #[tokio::test]
+async fn sandbox_teardown_requires_owned_identity_but_not_its_previous_configuration() {
+    let fixture = Fixture::start().await;
+    let mut document = Document::parse(
+        include_str!("../../nemoclaw-sdk/tests/fixtures/config/local.yaml").as_bytes(),
+    )
+    .unwrap();
+    *document.spec.gateway.endpoint_mut() = fixture.endpoint.clone();
+    let client = OpenShell::connect(&document.spec.gateway, Arc::new(EnvironmentSecrets)).unwrap();
+    let generations = ["workspace", "provider", "sandbox"]
+        .map(|key| (key.into(), format!("{key}-generation")))
+        .into();
+    let mut binding = None;
+    for target in targets(&document, &generations).unwrap() {
+        let result = client.ensure(&target.kind, &target.values).await;
+        assert!(result.error().is_none());
+        if target.kind == "sandbox" {
+            binding = result.into_parts().0;
+        }
+    }
+    let binding = binding.unwrap();
+    let key = format!("{}/{}", binding["workspace"], binding["name"]);
+    let original = fixture.state.lock().unwrap().sandboxes[&key].clone();
+    for field in ["id", "owner", "generation"] {
+        let mut changed = original.clone();
+        let metadata = changed.metadata.as_mut().unwrap();
+        match field {
+            "id" => metadata.id = "replacement".into(),
+            "owner" => metadata
+                .labels
+                .remove(nemoclaw_sdk::openshell::OWNER)
+                .map(|_| ())
+                .unwrap(),
+            _ => metadata
+                .labels
+                .remove(nemoclaw_sdk::openshell::GENERATION)
+                .map(|_| ())
+                .unwrap(),
+        }
+        fixture
+            .state
+            .lock()
+            .unwrap()
+            .sandboxes
+            .insert(key.clone(), changed);
+        assert!(client.remove("sandbox", &binding, true).await.is_err());
+        assert_eq!(fixture.state.lock().unwrap().delete_calls, 0);
+    }
+    fixture
+        .state
+        .lock()
+        .unwrap()
+        .sandboxes
+        .insert(key.clone(), original.clone());
+    fixture.state.lock().unwrap().fail_read = Some(("sandbox", tonic::Code::Unauthenticated));
+    assert!(client.remove("sandbox", &binding, true).await.is_err());
+    assert_eq!(fixture.state.lock().unwrap().delete_calls, 0);
+    {
+        let mut state = fixture.state.lock().unwrap();
+        state.fail_read = None;
+        state.sandboxes.get_mut(&key).unwrap().spec = None;
+    }
+    client.remove("sandbox", &binding, true).await.unwrap();
+    assert!(!fixture.state.lock().unwrap().sandboxes.contains_key(&key));
+    assert_eq!(fixture.state.lock().unwrap().delete_calls, 1);
+    client.remove("sandbox", &binding, true).await.unwrap();
+    assert_eq!(fixture.state.lock().unwrap().delete_calls, 1);
+    {
+        let mut state = fixture.state.lock().unwrap();
+        state.sandboxes.insert(key, original);
+        state.lose_delete = true;
+    }
+    let error = client.remove("sandbox", &binding, true).await.unwrap_err();
+    assert!(!error.to_string().contains("secret-sentinel"));
+    assert_eq!(fixture.state.lock().unwrap().delete_calls, 2);
+    client.remove("sandbox", &binding, true).await.unwrap();
+    assert_eq!(fixture.state.lock().unwrap().delete_calls, 2);
+}
+
+#[tokio::test]
 async fn owning_api_reconciles_lost_create_reply_and_checks_conditional_updates() {
     let fixture = Fixture::start().await;
     let mut document = Document::parse(

@@ -3,7 +3,7 @@
 
 use super::*;
 use crate::config::Gateway;
-use openshell_sdk::{EdgeAuthInterceptor, OpenShellClient, raw::AuthedGrpcClient};
+use openshell_sdk::{EdgeAuthInterceptor, OpenShellClient};
 use std::{sync::Arc, time::Duration};
 use tonic::{
     Request,
@@ -24,7 +24,7 @@ impl Secrets for EnvironmentSecrets {
 }
 #[derive(Clone)]
 pub struct OpenShell {
-    client: Arc<OpenShellClient>,
+    pub(super) client: Arc<OpenShellClient>,
     pub(super) secrets: Arc<dyn Secrets>,
 }
 impl OpenShell {
@@ -73,11 +73,6 @@ impl OpenShell {
             secrets,
         })
     }
-    pub(super) fn grpc(&self) -> AuthedGrpcClient {
-        // The curated SDK omits fields needed for ownership and drift checks.
-        // Its raw client preserves those fields and never retries mutations.
-        self.client.raw_grpc()
-    }
     pub(super) fn request<T>(&self, value: T) -> Request<T> {
         let mut request = Request::new(value);
         request.set_timeout(Duration::from_secs(30));
@@ -85,7 +80,8 @@ impl OpenShell {
     }
     async fn workspace(&self, name: &str, removing: bool) -> Result<Option<Row>, ObservationError> {
         let response = authoritative(
-            self.grpc()
+            self.client
+                .raw_grpc()
                 .get_workspace(self.request(proto::GetWorkspaceRequest { name: name.into() }))
                 .await,
         )?;
@@ -112,7 +108,8 @@ impl OpenShell {
             "provider_profile" => self.observe_profile(workspace, name).await?,
             "provider" => {
                 let response = authoritative(
-                    self.grpc()
+                    self.client
+                        .raw_grpc()
                         .get_provider(self.request(proto::GetProviderRequest {
                             name: name.into(),
                             workspace_scope: Some(proto::workspace_selector(workspace)),
@@ -125,7 +122,8 @@ impl OpenShell {
             }
             "sandbox" => {
                 let Some(response) = authoritative(
-                    self.grpc()
+                    self.client
+                        .raw_grpc()
                         .get_sandbox(self.request(proto::GetSandboxRequest {
                             name: name.into(),
                             workspace_scope: Some(proto::workspace_selector(workspace)),
@@ -138,7 +136,8 @@ impl OpenShell {
                 let (row, ready) = sandbox_row(response, name, removing)?;
                 if ready {
                     let status = self
-                        .grpc()
+                        .client
+                        .raw_grpc()
                         .get_sandbox_policy_status(self.request(
                             proto::GetSandboxPolicyStatusRequest {
                                 name: name.into(),

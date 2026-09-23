@@ -557,6 +557,9 @@ fn delete_sandbox(
         .remove(&format!("{}/{}", workspace(&q.workspace_scope)?, q.name))
         .ok_or_else(|| Status::not_found("absent"))?;
     state.effects += 1;
+    if std::mem::take(&mut state.lose_delete) {
+        return Err(Status::unavailable("secret-sentinel: deletion reply lost"));
+    }
     Ok(p::DeleteSandboxResponse {
         outcome: p::DeletionOutcome::Completed.into(),
         sandbox_id: sandbox.metadata.unwrap().id,

@@ -97,7 +97,8 @@ fn response_text(bytes: &[u8]) -> Result<String, Error> {
 impl OpenShell {
     async fn bound_sandbox(&self, binding: &Row) -> Result<proto::Sandbox, Error> {
         let sandbox = self
-            .grpc()
+            .client
+            .raw_grpc()
             .get_sandbox(self.request(proto::GetSandboxRequest {
                 name: value(binding, "name").into(),
                 workspace_scope: Some(proto::workspace_selector(value(binding, "workspace"))),
@@ -156,7 +157,8 @@ impl OpenShell {
         });
         request.set_timeout(Duration::from_secs(u64::from(seconds)));
         let mut stream = self
-            .grpc()
+            .client
+            .raw_grpc()
             .exec_sandbox(request)
             .await
             .map_err(|error| remote_error(&error))?

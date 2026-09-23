@@ -70,7 +70,8 @@ impl OpenShell {
     /// A failed or incomplete observation is never an absent gateway.
     pub async fn gateway_capabilities(&self) -> Result<GatewayCapabilities, ObservationError> {
         let response = tokio::time::timeout(Duration::from_secs(30), async {
-            self.grpc()
+            self.client
+                .raw_grpc()
                 .get_gateway_info(self.request(proto::GetGatewayInfoRequest {}))
                 .await
         })

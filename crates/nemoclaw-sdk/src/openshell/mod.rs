@@ -45,6 +45,18 @@ fn remote_error(status: &tonic::Status) -> ObservationError {
         _ => ObservationError::Query,
     }
 }
+fn sdk_error(error: openshell_sdk::SdkError) -> ObservationError {
+    if let Some(status) = error.grpc_status() {
+        return remote_error(status);
+    }
+    match error {
+        openshell_sdk::SdkError::Connect { .. } => ObservationError::Transport,
+        openshell_sdk::SdkError::Auth { .. } | openshell_sdk::SdkError::Tls { .. } => {
+            ObservationError::Authentication
+        }
+        _ => ObservationError::Incomplete,
+    }
+}
 fn authoritative<T>(
     result: Result<tonic::Response<T>, tonic::Status>,
 ) -> Result<Option<T>, ObservationError> {

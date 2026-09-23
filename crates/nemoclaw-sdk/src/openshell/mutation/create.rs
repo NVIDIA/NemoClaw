@@ -4,26 +4,11 @@
 use super::*;
 
 impl OpenShell {
-    pub(super) async fn create_resource(
-        &self,
-        kind: &str,
-        want: &Row,
-    ) -> Result<Row, ObservationError> {
-        let id = match kind {
-            "workspace" => self.create_workspace(want).await?,
-            "provider" => self.create_provider(want).await?,
-            "provider_profile" => self.create_profile(want).await?,
-            "sandbox" => self.create_sandbox(want).await?,
-            _ => return Err(ObservationError::Query),
-        };
-        let mut row = want.clone();
-        row.insert("id".into(), id);
-        Ok(row)
-    }
-    async fn create_workspace(&self, want: &Row) -> Result<String, ObservationError> {
+    pub(super) async fn create_workspace(&self, want: &Row) -> Result<String, ObservationError> {
         let name = value(want, "name");
         let response = self
-            .grpc()
+            .client
+            .raw_grpc()
             .create_workspace(self.request(proto::CreateWorkspaceRequest {
                 name: name.into(),
                 labels: labels(want),
@@ -36,11 +21,12 @@ impl OpenShell {
         verify_identity(want, &row)?;
         Ok(row["id"].clone())
     }
-    async fn create_provider(&self, want: &Row) -> Result<String, ObservationError> {
+    pub(super) async fn create_provider(&self, want: &Row) -> Result<String, ObservationError> {
         let name = value(want, "name");
         let workspace = value(want, "workspace");
         let response = self
-            .grpc()
+            .client
+            .raw_grpc()
             .create_provider(self.request(proto::CreateProviderRequest {
                 provider: Some(self.provider(want).await?),
                 workspace_scope: Some(proto::workspace_selector(workspace)),
@@ -53,7 +39,7 @@ impl OpenShell {
         verify_identity(want, &row)?;
         Ok(row["id"].clone())
     }
-    async fn create_sandbox(&self, want: &Row) -> Result<String, ObservationError> {
+    pub(super) async fn create_sandbox(&self, want: &Row) -> Result<String, ObservationError> {
         let name = value(want, "name");
         let workspace = value(want, "workspace");
         if !value(want, "agent_runtime")
@@ -68,7 +54,8 @@ impl OpenShell {
             labels.insert(AGENT_RUNTIME.into(), value(want, "agent_runtime").into());
         }
         let response = self
-            .grpc()
+            .client
+            .raw_grpc()
             .create_sandbox(self.request(proto::CreateSandboxRequest {
                 name: name.into(),
                 workspace_scope: Some(proto::workspace_selector(workspace)),

@@ -118,13 +118,7 @@ impl OpenShell {
             ..Default::default()
         })
     }
-    async fn reconcile(&self, kind: &str, want: &Row) -> Mutation {
-        match self.reconcile_inner(kind, want).await {
-            Ok(mutation) => mutation,
-            Err(error) => Mutation::failed(error),
-        }
-    }
-    async fn reconcile_inner(&self, kind: &str, want: &Row) -> Result<Mutation, ObservationError> {
+    async fn reconcile(&self, kind: &str, want: &Row) -> Result<Mutation, ObservationError> {
         let name = value(want, "name");
         let workspace = value(want, "workspace");
         if kind != "workspace" {
@@ -144,21 +138,24 @@ impl OpenShell {
         }
         let established = match live {
             Some(row) => {
-                self.update_resource(kind, want, &row).await?;
+                if kind == "provider" {
+                    self.update_provider(want, &row).await?;
+                }
                 row
             }
-            None => self.create_resource(kind, want).await?,
+            None => {
+                let id = match kind {
+                    "workspace" => self.create_workspace(want).await?,
+                    "provider" => self.create_provider(want).await?,
+                    "provider_profile" => self.create_profile(want).await?,
+                    "sandbox" => self.create_sandbox(want).await?,
+                    _ => return Err(ObservationError::Query),
+                };
+                let mut row = want.clone();
+                row.insert("id".into(), id);
+                row
+            }
         };
-        self.readback(kind, want, established).await
-    }
-    async fn readback(
-        &self,
-        kind: &str,
-        want: &Row,
-        established: Row,
-    ) -> Result<Mutation, ObservationError> {
-        let name = value(want, "name");
-        let workspace = value(want, "workspace");
         match self.observe(kind, workspace, name, false).await {
             Ok(Some(row)) => {
                 // The mutation response establishes the physical binding even when
@@ -185,6 +182,39 @@ impl OpenShell {
         if value(want, "id").is_empty() {
             return Err(ObservationError::BindingMismatch);
         }
+        if kind == "sandbox" {
+            let client = self.client.workspace(workspace);
+            let sandbox = match client.get_sandbox(name).await {
+                Ok(sandbox) => sandbox,
+                Err(openshell_sdk::SdkError::NotFound { .. }) => return Ok(()),
+                Err(error) => return Err(sdk_error(error)),
+            };
+            if sandbox.id != want["id"]
+                || sandbox.name != name
+                || sandbox.workspace != workspace
+                || [("owner", OWNER), ("generation", GENERATION)]
+                    .iter()
+                    .any(|(field, label)| {
+                        value(want, field).is_empty()
+                            || sandbox.labels.get(*label).map(String::as_str)
+                                != Some(value(want, field))
+                    })
+            {
+                return Err(ObservationError::BindingMismatch);
+            }
+            // The channel allows 90 seconds for the gateway's graceful stop.
+            // No refresher is configured, so SDK mutations are never retried.
+            match client.delete_sandbox(name, Default::default()).await {
+                Ok(_) | Err(openshell_sdk::SdkError::NotFound { .. }) => {}
+                Err(error) => return Err(sdk_error(error)),
+            }
+            // Require confirmed absence. A same-name replacement must not be
+            // mistaken for successful cleanup of the retained binding.
+            return client
+                .wait_deleted(name, Duration::from_secs(300), None)
+                .await
+                .map_err(sdk_error);
+        }
         let Some(row) = self.observe(kind, workspace, name, true).await? else {
             return Ok(());
         };
@@ -192,20 +222,9 @@ impl OpenShell {
         // Upstream deletion is name-addressed without an ID/version condition.
         // Verify immediately before sending; never retry an ambiguous mutation.
         let result = match kind {
-            "sandbox" => {
-                let mut request = self.request(proto::DeleteSandboxRequest {
-                    allow_missing: false,
-                    name: name.into(),
-                    workspace_scope: Some(proto::workspace_selector(workspace)),
-                    ..Default::default()
-                });
-                // Podman's default graceful stop is 45 seconds. Allow cleanup
-                // after that stop without retrying an ambiguous deletion.
-                request.set_timeout(std::time::Duration::from_secs(90));
-                self.grpc().delete_sandbox(request).await.map(|_| ())
-            }
             "provider_profile" => self
-                .grpc()
+                .client
+                .raw_grpc()
                 .delete_provider_profile(self.request(proto::DeleteProviderProfileRequest {
                     allow_missing: false,
                     id: name.into(),
@@ -215,7 +234,8 @@ impl OpenShell {
                 .await
                 .map(|_| ()),
             "provider" => self
-                .grpc()
+                .client
+                .raw_grpc()
                 .delete_provider(self.request(proto::DeleteProviderRequest {
                     allow_missing: false,
                     name: name.into(),
@@ -347,7 +367,9 @@ impl Backend for OpenShell {
         if kind == "sandbox" && (row_policy(desired).is_err() || row_proxy(desired).is_err()) {
             return Mutation::failed(ObservationError::Query);
         }
-        self.reconcile(kind, desired).await
+        self.reconcile(kind, desired)
+            .await
+            .unwrap_or_else(Mutation::failed)
     }
     async fn remove(
         &self,
