@@ -193,6 +193,8 @@ describe("launch readiness observation timing", () => {
         return lease(identity);
       });
       const currentDeps = publicationDeps(assertPublicationCurrent, publishLease);
+      const recordObservationFailure = vi.fn();
+      currentDeps.recordObservationFailure = recordObservationFailure;
       const decision = await inspectLaunchReadiness(SANDBOX, currentDeps);
 
       await expect(
@@ -201,6 +203,9 @@ describe("launch readiness observation timing", () => {
 
       expect(publishLease).toHaveBeenCalledTimes(expectedPublicationAttempts);
       expect(committed).toBe(false);
+      expect(recordObservationFailure).toHaveBeenCalledWith(
+        failureCall <= 2 ? "publication-observation" : "publication-store",
+      );
     },
   );
 

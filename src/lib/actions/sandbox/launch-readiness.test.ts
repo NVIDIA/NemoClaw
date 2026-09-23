@@ -1370,12 +1370,17 @@ describe("launch readiness validation", () => {
     });
 
     const pairingObservationUnavailable = deps();
+    pairingObservationUnavailable.recordObservationFailure = vi.fn();
     pairingObservationUnavailable.observeOpenClawPairingQualification = () => {
       throw new Error("pairing observation unavailable");
     };
     expect(await publishLaunchReadiness(publication, pairingObservationUnavailable)).toEqual({
       kind: "evidence-failed",
     });
+    expect(pairingObservationUnavailable.recordObservationFailure).toHaveBeenNthCalledWith(
+      1,
+      "pairing-qualification",
+    );
 
     const hashUnavailable = deps();
     hashUnavailable.capture = (args) => ({

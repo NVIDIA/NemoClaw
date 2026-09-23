@@ -4,6 +4,7 @@
 import path from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
+import { getGatewayHttpsEndpoint } from "../../core/gateway-address";
 
 import {
   buildDockerDriverGatewayRuntimeMarker,
@@ -33,9 +34,10 @@ function input() {
     gatewayName: GATEWAY_NAME,
     gatewayPort: GATEWAY_PORT,
     expectedEndpoint: `https://169.254.2.2:${String(GATEWAY_PORT)}`,
+    expectedClientEndpoint: getGatewayHttpsEndpoint(GATEWAY_PORT),
     managedGatewayEndpoints: [
-      `https://169.254.2.2:${String(GATEWAY_PORT)}`,
-      `https://169.254.2.2:${String(GATEWAY_PORT)}`,
+      getGatewayHttpsEndpoint(GATEWAY_PORT),
+      getGatewayHttpsEndpoint(GATEWAY_PORT),
     ],
     portAvailable: false,
     installedOpenShellVersion: "0.0.116",

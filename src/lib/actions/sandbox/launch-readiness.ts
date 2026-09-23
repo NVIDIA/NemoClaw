@@ -415,11 +415,12 @@ function projectMessagingState(entry: SandboxEntry): unknown {
   };
 }
 
-function projectAgent(agent: AgentDefinition): unknown {
+function projectAgent(agent: AgentDefinition, deps: LaunchReadinessDeps): unknown {
   let manifestSha256: string;
   try {
     manifestSha256 = exactContentDigest(fs.readFileSync(agent.manifestPath, "utf8"));
   } catch {
+    recordLaunchReadinessObservationFailure(deps, "agent-definition");
     throw new LaunchReadinessEvidenceError();
   }
   return {
@@ -840,6 +841,7 @@ async function captureLaunchIdentity(
     // receipt binds the sandbox's recorded version, including supported stale
     // versions that the normal launch warning permits.
     if (!openclawVersion || !normalizedString(agent.expected_version) || !stateDirectory) {
+      recordLaunchReadinessObservationFailure(deps, "pairing-qualification");
       throw new OpenClawPairingQualificationError();
     }
     try {
@@ -850,6 +852,7 @@ async function captureLaunchIdentity(
         stateDirectory,
       );
     } catch {
+      recordLaunchReadinessObservationFailure(deps, "pairing-qualification");
       throw new OpenClawPairingQualificationError();
     }
   }
@@ -857,7 +860,7 @@ async function captureLaunchIdentity(
   return {
     identity: {
       registry: launchReadinessDigest(projection),
-      agent: launchReadinessDigest(projectAgent(agent)),
+      agent: launchReadinessDigest(projectAgent(agent, deps)),
       liveInference: launchReadinessDigest({
         selection: inferenceSelection,
         live: liveInference
@@ -1387,7 +1390,10 @@ export async function publishLaunchReadiness(
   deps: LaunchReadinessDeps = {},
 ): Promise<LaunchReadinessPublicationResult> {
   const { sandboxName, gatewayName, gatewayPort, epochId } = publication;
-  if (!gatewayName || !gatewayPort || !epochId) return { kind: "evidence-failed" };
+  if (!gatewayName || !gatewayPort || !epochId) {
+    recordLaunchReadinessObservationFailure(deps, "publication-authority");
+    return { kind: "evidence-failed" };
+  }
   const withSandboxLock = deps.withSandboxLock ?? withSandboxMutationLock;
   const withGatewayLock = deps.withGatewayLock ?? withGatewayRouteMutationLock;
   try {
@@ -1421,6 +1427,7 @@ export async function publishLaunchReadiness(
             } as const;
           }
           const validation = publicationValidationCategory(error);
+          if (!validation) recordLaunchReadinessObservationFailure(deps, "publication-observation");
           return validation
             ? ({ kind: "validation-failed", ...validation } as const)
             : ({ kind: "evidence-failed" } as const);
@@ -1441,6 +1448,7 @@ export async function publishLaunchReadiness(
             deps.assertPublicationCurrent,
           );
         } catch {
+          recordLaunchReadinessObservationFailure(deps, "publication-store");
           publicationFailed = true;
         } finally {
           recordPerformanceStage("publication-store", publicationStartedAt);
@@ -1450,6 +1458,7 @@ export async function publishLaunchReadiness(
       });
     });
   } catch {
+    recordLaunchReadinessObservationFailure(deps, "publication-lock");
     return { kind: "evidence-failed" };
   }
 }

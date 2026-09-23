@@ -206,7 +206,10 @@ export function observeNativePodmanGatewayReadiness(
         ? "compatible"
         : "drift";
   return Object.freeze({
-    endpointBinding: classifyEndpointBinding(input.managedGatewayEndpoints, input.expectedEndpoint),
+    endpointBinding: classifyEndpointBinding(
+      input.managedGatewayEndpoints,
+      input.expectedClientEndpoint,
+    ),
     listenerScan: Object.freeze({
       pids: Object.freeze(pids),
       unverifiedPids: Object.freeze(unverifiedPids),
