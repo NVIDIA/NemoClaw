@@ -44,14 +44,19 @@ $$nemoclaw <sandbox-name> start
 ```
 
 This path preserves the sandbox workspace and leaves lifecycle ownership with OpenShell. `start`
-and `recover` reconcile a sandbox that OpenShell still reports as `Stopped`; neither command
-directly restarts or unpauses the underlying provider container. Before destructive replacement,
-run `$$nemoclaw <sandbox-name> status`. If the owning gateway reports the registered sandbox
-missing, NemoClaw leaves any provider container untouched. Preserve any separate snapshot, use
-`$$nemoclaw <sandbox-name> destroy --yes` to retire the stale registered sandbox when the command
-can prove the OpenShell resource absent, then onboard a clean replacement. Restore the snapshot
-afterward if one is available; rebuild cannot recover a workspace or live OpenShell policy that no
-longer exists.
+and `recover` resolve a sandbox from the local registry that owns it, even when another local
+OpenShell gateway is active. They reconcile a sandbox that OpenShell still reports as `Stopped`,
+including when its provider container is already running. Neither command directly restarts or
+unpauses the provider container. If the container is paused, follow the printed provider guidance
+instead.
+
+Before destructive replacement, run `$$nemoclaw <sandbox-name> status`. If the owning gateway
+reports the registered sandbox missing, NemoClaw leaves any provider container and registry entry
+untouched. Retry after the gateway reconnects. If the sandbox was intentionally deleted, preserve
+any separate snapshot and use `$$nemoclaw <sandbox-name> destroy --yes` to retire the stale entry
+when the command can prove the OpenShell resource absent. Then onboard a clean replacement and
+restore the snapshot if one is available. Rebuild cannot recover a workspace or live OpenShell
+policy that no longer exists.
 
 <AgentOnly variant="openclaw,hermes">
   The `start` command repairs the agent runtime and host-side port forwards.
@@ -92,7 +97,7 @@ $$nemoclaw <sandbox-name> gateway restart
 ```
 
 The restart command invokes OpenClaw's native lifecycle command through the selected OpenShell sandbox.
-NemoClaw then verifies gateway health and checks or recovers host-side dashboard, messaging, and agent forwards.
+NemoClaw requires `/readyz` to return HTTP `200` with JSON `{"ready":true}` before it checks or recovers host-side dashboard, messaging, and agent forwards.
 Refer to [`$$nemoclaw <name> recover`](../../reference/commands#$$nemoclaw-name-recover) and [`$$nemoclaw <name> gateway restart`](../../reference/commands#$$nemoclaw-name-gateway-restart) for details.
 
 </AgentOnly>
@@ -250,6 +255,10 @@ If replacement onboarding returns a nonzero status, rebuild stops before post-cr
 It does not report a successful rebuild.
 
 If the sandbox is stopped (for example, an out-of-band runtime failure left it in `Phase: Error`), rebuild asks OpenShell to start that exact sandbox for the duration of the pre-recreate state backup and asks OpenShell to return it to `Stopped` afterward, the same lifecycle path `$$nemoclaw backup-all` uses. If OpenShell cannot start the sandbox, or the retried backup still fails, rebuild aborts without recreating the sandbox; it reports an incomplete-snapshot notice only when a partial snapshot was retained. If the backup succeeds but OpenShell cannot return the sandbox to `Stopped`, rebuild also aborts and reports the failed transition.
+
+If OpenShell still reports the sandbox in `Phase: Error` but its Docker-driver container is missing,
+rebuild cannot back up its live workspace and stops before replacement. Use the clean replacement
+flow described above, then restore a separately created snapshot if one is available.
 
 <AgentOnly variant="hermes">
 

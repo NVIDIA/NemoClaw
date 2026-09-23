@@ -16,13 +16,18 @@ function captureConsoleLog(): { lines: () => string; restore: () => void } {
 async function printGuidance({
   phase,
   dockerRuntime,
+  openshellDriver = "docker",
+  dockerRuntimeDown = false,
 }: {
   phase: string;
+  openshellDriver?: string | null;
+  dockerRuntimeDown?: boolean;
   dockerRuntime: {
     health: "none";
     paused: boolean;
     running: boolean;
     containerName: string | null;
+    containerAbsenceConfirmed?: boolean;
   } | null;
 }): Promise<void> {
   await printSandboxGatewayLookupStatus({
@@ -30,12 +35,19 @@ async function printGuidance({
     registered: true,
     lookup: { state: "present", output: `Sandbox:\n  Name: beta\n  Phase: ${phase}` },
     phase,
-    dockerRuntime,
+    openshellDriver,
+    dockerRuntime: dockerRuntime
+      ? {
+          ...dockerRuntime,
+          containerAbsenceConfirmed: dockerRuntime.containerAbsenceConfirmed === true,
+        }
+      : null,
+    dockerRuntimeDown,
     effectivePreflight: {
       failure: null,
-      failureLayer: null,
-      suppressInferenceProbe: false,
-      exitCode: 0,
+      failureLayer: dockerRuntimeDown ? "docker_unreachable" : null,
+      suppressInferenceProbe: dockerRuntimeDown,
+      exitCode: dockerRuntimeDown ? 1 : 0,
     },
   });
 }
@@ -61,13 +73,12 @@ describe("printNonReadySandboxPhaseGuidance (#7222)", () => {
     // The recovery hint now leads with `start`, which recovers without data loss.
     expect(text).toContain("nemoclaw beta start");
     expect(text).toContain("workspace state preserved");
-    // `rebuild --yes` is only mentioned as the recreate alternative, and must no
-    // longer be the promised recovery command (its pre-rebuild backup aborts on a
-    // stopped container — the reported bug).
+    // `rebuild --yes` is only mentioned as the fallback recreate alternative,
+    // not as the promised recovery command.
     expect(text).not.toContain("Run `nemoclaw beta rebuild --yes` to recreate");
     expect(text).not.toContain("workspace state will be preserved");
-    // The `rebuild --yes` mention explains why `start` must come first.
-    expect(text).toContain("cannot snapshot a stopped container");
+    expect(text).toContain("use it only if start does not recover the sandbox");
+    expect(text).not.toContain("stopped container");
   });
 
   it("reports an owned stopped container without crash guidance (#8695)", async () => {
@@ -116,7 +127,9 @@ describe("printNonReadySandboxPhaseGuidance (#7222)", () => {
       registered: true,
       lookup: { state: "missing", output: "sandbox beta not found" },
       phase: "Stopped",
+      openshellDriver: "docker",
       dockerRuntime: null,
+      dockerRuntimeDown: false,
       effectivePreflight: {
         failure: null,
         failureLayer: null,
@@ -143,7 +156,9 @@ describe("printNonReadySandboxPhaseGuidance (#7222)", () => {
         registered: true,
         lookup: { state: "gateway_schema_mismatch", output: "gateway schema mismatch" },
         phase: "Stopped",
+        openshellDriver: "docker",
         dockerRuntime: null,
+        dockerRuntimeDown: false,
         effectivePreflight: {
           failure: null,
           failureLayer: null,
@@ -173,7 +188,9 @@ describe("printNonReadySandboxPhaseGuidance (#7222)", () => {
             "  Sandbox 'beta' is running, but NemoClaw could not clear its stale intentional-stop record.",
         },
         phase: "Running",
+        openshellDriver: "docker",
         dockerRuntime: null,
+        dockerRuntimeDown: false,
         effectivePreflight: {
           failure: null,
           failureLayer: null,
@@ -212,24 +229,112 @@ describe("printNonReadySandboxPhaseGuidance (#7222)", () => {
     expect(text).not.toContain("beta start");
   });
 
-  it.each([
-    { phase: "Failed", containerName: "openshell-beta-abc" },
-    { phase: "Error", containerName: null },
-  ])(
-    "keeps rebuild guidance for $phase when start cannot recover the container",
-    async ({ phase, containerName }) => {
-      const cap = captureConsoleLog();
-      await printGuidance({
-        phase,
-        dockerRuntime: { health: "none", paused: false, running: true, containerName },
-      });
-      const text = cap.lines();
-      cap.restore();
+  it("steers a Docker-driver sandbox without its container to clean replacement", async () => {
+    const cap = captureConsoleLog();
+    await printGuidance({
+      phase: "Error",
+      dockerRuntime: {
+        health: "none",
+        paused: false,
+        running: false,
+        containerName: null,
+        containerAbsenceConfirmed: true,
+      },
+    });
+    const text = cap.lines();
+    cap.restore();
 
-      expect(text).toContain("nemoclaw beta rebuild --yes");
-      expect(text).not.toContain("nemoclaw beta start");
-    },
-  );
+    expect(text).toContain("cannot back up its live workspace for rebuild");
+    expect(text).toContain("nemoclaw beta destroy --yes");
+    expect(text).toContain("nemoclaw onboard");
+    expect(text).toContain("separately created snapshot");
+    expect(text).not.toContain("nemoclaw beta rebuild --yes");
+    expect(text).not.toContain("nemoclaw beta start");
+  });
+
+  it("reports a Docker outage instead of treating an uninspectable container as missing", async () => {
+    const cap = captureConsoleLog();
+    await expect(
+      printGuidance({ phase: "Error", dockerRuntime: null, dockerRuntimeDown: true }),
+    ).rejects.toMatchObject({ exitCode: 1 });
+    const text = cap.lines();
+    cap.restore();
+
+    expect(text).toContain("Docker daemon is not reachable");
+    expect(text).toContain("do not rebuild, destroy, or re-onboard");
+    expect(text).not.toContain("nemoclaw beta destroy --yes");
+    expect(text).not.toContain("nemoclaw onboard");
+  });
+
+  it("keeps recovery guidance when Docker driver metadata is missing", async () => {
+    const cap = captureConsoleLog();
+    await printGuidance({ phase: "Error", openshellDriver: null, dockerRuntime: null });
+    const text = cap.lines();
+    cap.restore();
+
+    expect(text).toContain("nemoclaw beta start");
+    expect(text).not.toContain("nemoclaw beta destroy --yes");
+    expect(text).not.toContain("nemoclaw onboard");
+  });
+
+  it("keeps recovery guidance when Docker container observation is inconclusive", async () => {
+    const cap = captureConsoleLog();
+    await printGuidance({
+      phase: "Error",
+      dockerRuntime: {
+        health: "none",
+        paused: false,
+        running: false,
+        containerName: null,
+        containerAbsenceConfirmed: false,
+      },
+    });
+    const text = cap.lines();
+    cap.restore();
+
+    expect(text).toContain("nemoclaw beta start");
+    expect(text).not.toContain("nemoclaw beta destroy --yes");
+    expect(text).not.toContain("nemoclaw onboard");
+  });
+
+  it("steers a VM sandbox without a Docker container to OpenShell start", async () => {
+    const cap = captureConsoleLog();
+    await printGuidance({ phase: "Error", openshellDriver: "vm", dockerRuntime: null });
+    const text = cap.lines();
+    cap.restore();
+
+    expect(text).toContain("nemoclaw beta start");
+    expect(text).not.toContain("nemoclaw beta destroy --yes");
+  });
+
+  it("steers a native provider without a Docker container to OpenShell start", async () => {
+    const cap = captureConsoleLog();
+    await printGuidance({ phase: "Error", openshellDriver: "mxc", dockerRuntime: null });
+    const text = cap.lines();
+    cap.restore();
+
+    expect(text).toContain("nemoclaw beta start");
+    expect(text).toContain("restart the sandbox through OpenShell");
+    expect(text).not.toContain("Run `nemoclaw beta rebuild --yes` to recreate");
+  });
+
+  it("keeps rebuild guidance for a terminal phase other than Error", async () => {
+    const cap = captureConsoleLog();
+    await printGuidance({
+      phase: "Failed",
+      dockerRuntime: {
+        health: "none",
+        paused: false,
+        running: true,
+        containerName: "openshell-beta-abc",
+      },
+    });
+    const text = cap.lines();
+    cap.restore();
+
+    expect(text).toContain("nemoclaw beta rebuild --yes");
+    expect(text).not.toContain("nemoclaw beta start");
+  });
 
   it("prints no guidance for a Ready sandbox", async () => {
     const cap = captureConsoleLog();
