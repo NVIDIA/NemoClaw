@@ -124,8 +124,10 @@ function document(
     model?: string;
     observability?: boolean;
     credentialReference?: string;
+    gatewayEndpoint?: string;
   } = {},
 ): ConfigExportDocument {
+  const gatewayEndpoint = overrides.gatewayEndpoint ?? "http://127.0.0.1:8080";
   return {
     apiVersion: "nemoclaw.nvidia.com/v1alpha1",
     kind: "NemoClawConfig",
@@ -134,7 +136,7 @@ function document(
       uid: "123e4567-e89b-42d3-a456-426614174000",
     },
     spec: {
-      gateway: { management: "managed", endpoint: "http://127.0.0.1:8080" },
+      gateway: { management: "managed", endpoint: gatewayEndpoint },
       inferenceProviders: [
         {
           name: "hosted-compatible-endpoint",
@@ -354,6 +356,7 @@ function fixture(
         return "evidence.json";
       }),
       writeText: vi.fn(async () => "config-export.yaml"),
+      redact: (text: string) => text,
     } as unknown as ArtifactSink);
   const cleanup = new CleanupRegistry();
   const host = options.host ?? successfulHost(JSON.stringify(document()));
@@ -509,9 +512,16 @@ if (process.argv.includes("--output")) {
       }
     },
   );
-
-  it("publishes the exact validated bytes and digest after cleanup passes (#11485)", async () => {
-    const raw = `${JSON.stringify(document())}\n`;
+  it("publishes the redacted validated bytes and matching digest after cleanup passes (#11485)", async () => {
+    const raw = `${JSON.stringify(
+      document({ gatewayEndpoint: "http://127.0.0.1:8080/nvapi-secret-shaped-value" }),
+    )}\n`;
+    const publishedRaw = raw.replace("nvapi-secret-shaped-value", "<REDACTED>");
+    const publishedExport = {
+      bytes: publishedRaw,
+      byteLength: Buffer.byteLength(publishedRaw, "utf8"),
+      sha256: sha256(publishedRaw),
+    };
     const artifactRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-config-export-evidence-"));
     artifactDirectories.push(artifactRoot);
     const independentDependencies = dependencies();
@@ -525,22 +535,19 @@ if (process.argv.includes("--output")) {
     const persistedEvidence = JSON.parse(
       fs.readFileSync(path.join(artifactRoot, "config-export-evidence.v1.json"), "utf8"),
     ) as ConfigExportEvidenceEnvelope;
-
     expect(evidence).toMatchObject({
       contract: CONFIG_EXPORT_EVIDENCE_CONTRACT,
       classification: "success",
       passed: true,
       command: { exitCode: 0, signal: null, timedOut: false, outputPublished: true },
       cleanup: { registeredBeforeExport: true, succeeded: true },
-      export: { bytes: raw, byteLength: Buffer.byteLength(raw, "utf8"), sha256: sha256(raw) },
+      export: publishedExport,
       security: { knownSecretsAbsent: true, internalTransportsAbsent: true },
     });
-    expect(fs.readFileSync(path.join(artifactRoot, "config-export.yaml"), "utf8")).toBe(raw);
-    expect(persistedEvidence.export).toEqual({
-      bytes: raw,
-      byteLength: Buffer.byteLength(raw, "utf8"),
-      sha256: sha256(raw),
-    });
+    expect(fs.readFileSync(path.join(artifactRoot, "config-export.yaml"), "utf8")).toBe(
+      publishedRaw,
+    );
+    expect(persistedEvidence.export).toEqual(publishedExport);
     expect(persistedEvidence.verifications.map((entry) => entry.id)).toEqual(
       expect.arrayContaining([
         "sandboxName",
@@ -569,12 +576,9 @@ if (process.argv.includes("--output")) {
     expect(createdDirectories.every((directory) => !fs.existsSync(directory))).toBe(true);
     expect((await test.cleanup.runAll()).failures).toEqual([]);
   });
-
   it("observes effective policy through the fixture-owned OpenShell boundary (#11485)", async () => {
     const test = fixture();
-
     const evidence = await test.phase.from(target("required"), instance());
-
     expect(test.host.command).toHaveBeenCalledWith(
       "openshell",
       ["policy", "get", "-g", "nemoclaw", "--full", "sandbox"],
@@ -589,7 +593,6 @@ if (process.argv.includes("--output")) {
     );
     expect(evidence).toMatchObject({ classification: "success", passed: true });
   });
-
   it("fails before export when the effective policy cannot be observed (#11485)", async () => {
     const host = successfulHost(JSON.stringify(document()));
     host.command.mockResolvedValueOnce({
@@ -600,9 +603,7 @@ if (process.argv.includes("--output")) {
       stderr: "policy unavailable",
     });
     const test = fixture({ host });
-
     await captureFailure(test.phase.from(target("required"), instance()));
-
     expect(test.writes.at(-1)).toMatchObject({
       classification: "failure",
       failureStage: "observation",
@@ -611,7 +612,6 @@ if (process.argv.includes("--output")) {
     expect(test.writes.at(-1)).not.toHaveProperty("export");
     expect(host.nemoclaw).not.toHaveBeenCalled();
   });
-
   it("rejects truncated policy output even when its tail contains a complete policy (#11485)", async () => {
     const policySuffix = `\n---\n${JSON.stringify(POLICY)}`;
     const retainedTail =

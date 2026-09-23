@@ -1047,6 +1047,7 @@ export class ConfigExportValidationPhaseFixture {
     }
 
     const passed = classification === "success" || classification === "expected-refusal";
+    const publishedRaw = passed && cleanupSucceeded && raw ? this.artifacts.redact(raw) : undefined;
     const evidence: ConfigExportEvidenceEnvelope = {
       contract: CONFIG_EXPORT_EVIDENCE_CONTRACT,
       scenarioId: target.id,
@@ -1062,12 +1063,12 @@ export class ConfigExportValidationPhaseFixture {
       ...(observed ? { observed } : {}),
       verifications,
       ...(command ? { command } : {}),
-      ...(passed && cleanupSucceeded && raw
+      ...(publishedRaw
         ? {
             export: {
-              bytes: raw,
-              byteLength: Buffer.byteLength(raw, "utf8"),
-              sha256: sha256(raw),
+              bytes: publishedRaw,
+              byteLength: Buffer.byteLength(publishedRaw, "utf8"),
+              sha256: sha256(publishedRaw),
             },
           }
         : {}),

@@ -16,14 +16,16 @@ import {
   namedOpenShellGateway,
   cliOpenShellSandboxPolicyReader,
 } from "../../../src/lib/adapters/openshell/sandbox-policy-cli.ts";
-import { asExportedConfig } from "../../support/config-export-document.ts";
 import { load, save } from "../../../src/lib/state/registry/persistence.ts";
 import type { ArtifactSink } from "./artifacts.ts";
 import type { HostCliClient } from "./clients/host.ts";
 import { trustedSandboxShellScript, type SandboxClient } from "./clients/sandbox.ts";
 import type { CleanupRegistry } from "./cleanup.ts";
 import { CLI_ENTRYPOINT, REPO_ROOT } from "./paths.ts";
-import { inspectConfigExportArtifactSafety } from "./phases/config-export-validation.ts";
+import {
+  inspectConfigExportArtifactSafety,
+  parseConfigExport,
+} from "./phases/config-export-validation.ts";
 
 interface HermesConfigExportLiveInput {
   readonly artifacts: ArtifactSink;
@@ -302,13 +304,11 @@ export async function verifyHermesConfigExportLive(
     return { checked: true, passed: false };
   }
 
-  const nemoclawDecoded = YAML.parse(nemoclawRaw);
-  const nemohermesDecoded = YAML.parse(nemohermesRaw);
-  const nemoclawDocument = asExportedConfig(nemoclawDecoded);
-  const nemohermesDocument = asExportedConfig(nemohermesDecoded);
+  const nemoclawDocument = parseConfigExport(nemoclawRaw);
+  const nemohermesDocument = parseConfigExport(nemohermesRaw);
   const exportsSafe = [
-    inspectConfigExportArtifactSafety(nemoclawRaw, input.redactionValues, nemoclawDecoded),
-    inspectConfigExportArtifactSafety(nemohermesRaw, input.redactionValues, nemohermesDecoded),
+    inspectConfigExportArtifactSafety(nemoclawRaw, input.redactionValues, nemoclawDocument),
+    inspectConfigExportArtifactSafety(nemohermesRaw, input.redactionValues, nemohermesDocument),
   ].every(({ internalTransportsAbsent, knownSecretsAbsent }) => {
     return internalTransportsAbsent && knownSecretsAbsent;
   });
