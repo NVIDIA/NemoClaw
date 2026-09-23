@@ -736,7 +736,7 @@ test(
         "sandbox appears in list/status and has policy/inference configuration",
         "native OpenClaw install, invoke, update, self-update, restart, discovery, and removal are not intercepted",
         "direct hosted inference and sandbox inference.local both respond",
-        "sandbox state contains neither auth-profiles.json nor secret-shaped credential values",
+        "fresh managed sandbox state contains neither auth-profiles.json nor secret-shaped credential values",
         ...(process.platform === "linux"
           ? [
               "each of two PTY launches records two ordered structured turns and restores the mutable config permission contract",

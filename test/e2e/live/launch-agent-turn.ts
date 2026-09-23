@@ -1475,8 +1475,11 @@ fail_provider_unavailable() {
 # Retry only a structured provider failure, including when OpenShell normalizes
 # its exit status. Empty content alone does not establish a provider failure.
 has_structured_evidence_reason() {
-  awk -v reason="$1" '
-    NR == 1 && /^\{"reason":"[a-z_]+","sessionId":"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"\}$/ && index($0, "\"reason\":\"" reason "\"") { matched = 1 }
+  awk -F '"' -v reason="$1" '
+    NR == 1 && /^\{"reason":"[a-z_]+","sessionId":"[0-9a-f]+-[0-9a-f]+-[0-9a-f]+-[0-9a-f]+-[0-9a-f]+"\}$/ && $4 == reason {
+      split($8, groups, "-")
+      matched = length(groups[1]) == 8 && length(groups[2]) == 4 && length(groups[3]) == 4 && length(groups[4]) == 4 && length(groups[5]) == 12
+    }
     END { exit !(NR == 1 && matched == 1) }
   ' "$evidence_error"
 }
