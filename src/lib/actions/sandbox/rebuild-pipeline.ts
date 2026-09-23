@@ -46,6 +46,7 @@ import {
   serializeHermesOperatorConfigSnapshot,
 } from "./rebuild-durable-config";
 import {
+  delegateRebuildToOwningRegistry,
   disposeRebuildAgentBaseImagePreflight,
   removeStaleRebuildDockerOrphan,
   snapshotOpenShellEnv,
@@ -123,6 +124,16 @@ export async function rebuildSandbox(
   opts: RebuildSandboxExecutionOptions = {},
 ): Promise<void> {
   const homeDir = process.env.HOME || os.homedir();
+  const normalizedOptions = normalizeRebuildSandboxOptions(options);
+  if (
+    await delegateRebuildToOwningRegistry(
+      { sandboxName, options: normalizedOptions, executionOptions: opts },
+      homeDir,
+      registry.REGISTRY_FILE,
+    )
+  ) {
+    return;
+  }
   assertSandboxRebuildCommandAvailable(sandboxName);
   return withPortableOnboardRetirementBoundary(
     {
@@ -153,7 +164,7 @@ export async function rebuildSandbox(
         try {
           await rebuildSandboxUnlocked(
             sandboxName,
-            options,
+            normalizedOptions,
             opts,
             removedImmutabilityMigration.stateRecord !== null,
           );

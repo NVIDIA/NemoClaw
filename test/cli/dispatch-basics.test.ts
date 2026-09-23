@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { execSync, spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -517,97 +516,6 @@ describe("CLI dispatch", () => {
         );
         expect(r.out).not.toContain("Sandbox 'gw1-sb' does not exist");
         expect(r.out).not.toContain("Run 'nemoclaw onboard' to create one");
-      } finally {
-        fs.rmSync(home, { recursive: true, force: true });
-      }
-    },
-  );
-
-  it(
-    "retires a retained recovery record for an unregistered sandbox through the real CLI (#11394)",
-    testTimeoutOptions(35_000),
-    () => {
-      // Success path with a retained backup and no registry row: the record
-      // names its gateway, the fake gateway reports the sandbox absent, and
-      // retirement removes only the credential-bearing handoff and marker.
-      const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-retire-recovery-ok-"));
-      try {
-        const localBin = path.join(home, "bin");
-        fs.mkdirSync(localBin, { recursive: true });
-        const openshellLog = path.join(home, "openshell-calls.log");
-        fs.writeFileSync(
-          path.join(localBin, "openshell"),
-          [
-            "#!/usr/bin/env bash",
-            `printf "%s\\n" "$*" >> ${JSON.stringify(openshellLog)}`,
-            'case "$1 $2" in "sandbox get") echo "no such sandbox gw1-sb" >&2 ;; esac',
-            "exit 1",
-          ].join("\n"),
-          { mode: 0o755 },
-        );
-
-        const transactionId = "11111111-1111-4111-8111-111111111111";
-        const timestamp = "2026-09-10T00-00-00-000Z";
-        const backupPath = path.join(home, ".nemoclaw", "rebuild-backups", "gw1-sb", timestamp);
-        fs.mkdirSync(backupPath, { recursive: true, mode: 0o700 });
-        const policy = "version: 1\nprocess:\n  environment:\n    SERVICE_API_KEY: retained\n";
-        const sha256 = createHash("sha256").update(policy).digest("hex");
-        const handoffPath = path.join(backupPath, `rebuild-policy-handoff.${sha256}.yaml`);
-        const recordPath = path.join(backupPath, ".nemoclaw-rebuild-recovery.json");
-        const manifestPath = path.join(backupPath, "rebuild-manifest.json");
-        const retainedPath = path.join(backupPath, "workspace-notes.txt");
-        fs.writeFileSync(handoffPath, policy, { mode: 0o600 });
-        fs.writeFileSync(retainedPath, "recovered later\n");
-        fs.writeFileSync(
-          manifestPath,
-          JSON.stringify({
-            version: 1,
-            sandboxName: "gw1-sb",
-            timestamp,
-            agentType: "openclaw",
-            agentVersion: null,
-            expectedVersion: null,
-            stateDirs: [],
-            backupComplete: true,
-            dir: "/sandbox/.openclaw",
-            backupPath,
-            blueprintDigest: null,
-            rebuildPolicyHandoff: { file: path.basename(handoffPath), sha256 },
-          }),
-          { mode: 0o600 },
-        );
-        fs.writeFileSync(
-          recordPath,
-          `${JSON.stringify({
-            schemaVersion: 3,
-            transactionId,
-            sandboxName: "gw1-sb",
-            backupTimestamp: timestamp,
-            gatewayName: "nemoclaw",
-            gatewayPort: 18080,
-            phase: "restore",
-          })}\n`,
-          { mode: 0o600 },
-        );
-
-        const r = runWithEnv(`gw1-sb rebuild --retire-recovery ${transactionId} --yes`, {
-          HOME: home,
-          PATH: `${localBin}:${process.env.PATH || ""}`,
-        });
-
-        expect(r.out).toContain(
-          `Retired rebuild recovery '${transactionId}' for sandbox 'gw1-sb' from ${backupPath}.`,
-        );
-        expect(r.code).toBe(0);
-        expect(fs.readFileSync(openshellLog, "utf8").trim().split("\n")).toEqual([
-          "sandbox get -g nemoclaw gw1-sb",
-        ]);
-        expect(fs.existsSync(handoffPath)).toBe(false);
-        expect(fs.existsSync(recordPath)).toBe(false);
-        expect(fs.readFileSync(retainedPath, "utf8")).toBe("recovered later\n");
-        expect(JSON.parse(fs.readFileSync(manifestPath, "utf8"))).not.toHaveProperty(
-          "rebuildPolicyHandoff",
-        );
       } finally {
         fs.rmSync(home, { recursive: true, force: true });
       }

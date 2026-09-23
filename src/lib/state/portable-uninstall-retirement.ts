@@ -108,10 +108,15 @@ export const portableHostFencePath = (homeDir: string): string =>
 
 /** Require the current asynchronous operation to own the exact Portable host fence. */
 export function assertCurrentPortableHostFenceHeld(homeDir: string): void {
-  const owner = owners.getStore();
-  if (!owner?.active || owner.path !== portableHostFencePath(homeDir)) {
+  if (!isCurrentPortableHostFenceHeld(homeDir)) {
     throw new Error("Portable host authority mutation requires the current HOME fence");
   }
+}
+
+/** Report whether the current asynchronous operation owns the exact host fence. */
+export function isCurrentPortableHostFenceHeld(homeDir: string): boolean {
+  const owner = owners.getStore();
+  return owner?.active === true && owner.path === portableHostFencePath(homeDir);
 }
 
 /** Resolve the portable state root while admitting only the isolated Vitest override. */
