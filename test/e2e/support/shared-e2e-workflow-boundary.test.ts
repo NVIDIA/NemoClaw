@@ -42,6 +42,7 @@ type Workflow = {
         uses?: string;
         run?: string;
         shell?: unknown;
+        "working-directory"?: unknown;
         if?: unknown;
         "continue-on-error"?: unknown;
         with?: Record<string, unknown>;
@@ -736,4 +737,34 @@ it.each([
     select(workflow).defaults = { run: { shell: 'bash -c "exit 0" {0}' } };
   });
   expect(errors).toContain("trusted pre-candidate scripts must not inherit a custom default shell");
+});
+
+it.each([
+  "Build trusted larger-runner routing",
+  "Authenticate manual PR dispatch",
+  "Record trusted E2E dispatch receipt",
+  "Authorize Launchable E2E maintainer dispatch",
+  "Install trusted E2E planner dependencies",
+  "Generate E2E target matrix",
+])("rejects working directory override for %s", (name) => {
+  const errors = validateMutatedWorkflow((workflow) => {
+    workflow.jobs["generate-matrix"]!.steps!.find((step) => step.name === name)![
+      "working-directory"
+    ] = "/tmp/unapproved-planner";
+  });
+  expect(errors).toContain(
+    `trusted pre-candidate step ${name} must preserve its reviewed working directory`,
+  );
+});
+
+it.each([
+  { name: "workflow", select: (workflow: Workflow) => workflow },
+  { name: "planner job", select: (workflow: Workflow) => workflow.jobs["generate-matrix"]! },
+])("rejects inherited working directory override from $name", ({ select }) => {
+  const errors = validateMutatedWorkflow((workflow) => {
+    select(workflow).defaults = { run: { "working-directory": "/tmp/unapproved-planner" } };
+  });
+  expect(errors).toContain(
+    "trusted pre-candidate scripts must not inherit a custom working directory",
+  );
 });

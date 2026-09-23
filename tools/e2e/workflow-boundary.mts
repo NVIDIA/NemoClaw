@@ -2716,6 +2716,11 @@ function validatePreCandidateActions(
     if (step.run !== undefined && step.shell !== PRE_CANDIDATE_STEP_SHELLS[name]) {
       errors.push(`trusted pre-candidate step ${name} must preserve its reviewed shell`);
     }
+    if (step["working-directory"] !== undefined) {
+      errors.push(
+        `trusted pre-candidate step ${name} must preserve its reviewed working directory`,
+      );
+    }
     const expectedRunSha256 = PRE_CANDIDATE_RUN_SHA256[name];
     if (
       expectedRunSha256 !== undefined &&
@@ -3018,6 +3023,12 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
     errors.push("trusted pre-candidate scripts must not inherit a custom default shell");
   }
 
+  if (
+    asRecord(asRecord(workflow.defaults).run)["working-directory"] !== undefined ||
+    asRecord(asRecord(generateMatrix.defaults).run)["working-directory"] !== undefined
+  ) {
+    errors.push("trusted pre-candidate scripts must not inherit a custom working directory");
+  }
   requirePreCandidateEnvironment(errors, "generate-matrix job", generateMatrix.env, {});
   validatePreCandidateActions(errors, generateSteps, generateCheckout);
   validateLargerRunnerRouting(errors, jobs, generateMatrix, generateSteps, generateCheckout);
