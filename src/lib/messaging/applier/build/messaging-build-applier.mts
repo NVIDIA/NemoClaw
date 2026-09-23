@@ -2178,7 +2178,7 @@ function isMainModule(): boolean {
 
 function fatalMessagingBuildDiagnostic(error: unknown): string {
   if (error instanceof OfficialPluginProvenanceError) {
-    return `Official OpenClaw plugin '${error.pluginId}' ${error.condition}. Check the pinned package and reviewed npm cache, then rebuild.`;
+    return `Official OpenClaw plugin '${error.pluginId}' ${error.condition}. NemoClaw manages the package pins and build cache. Report this failure, the plugin name and your NemoClaw version to a maintainer.`;
   }
   if (error instanceof MessagingBuildCommandError) {
     return "Messaging build applier command failed.";

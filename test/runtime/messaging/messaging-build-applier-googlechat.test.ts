@@ -161,7 +161,9 @@ it.each(["slack", "discord", "teams", "whatsapp", "googlechat"])(
       expect(failedInspection.stderr).toContain(
         `Official OpenClaw plugin '${pluginId}' did not retain trusted exact registry provenance`,
       );
-      expect(failedInspection.stderr).toContain("reviewed npm cache, then rebuild");
+      expect(failedInspection.stderr).toContain(
+        "Report this failure, the plugin name and your NemoClaw version",
+      );
       expect(failedInspection.stdout + failedInspection.stderr).not.toContain(canary);
       expect(() =>
         applyMessagingBuildPhase(serializedPlan, "agent-install", {
