@@ -80,6 +80,19 @@ describe("OpenShell sandbox lifecycle CLI", () => {
     expect(options).toMatchObject({ initialPhase: "create" });
   });
 
+  it("renders snapshot-owned automatic provider selection semantically", async () => {
+    const streamCreate = vi.fn().mockResolvedValue({ status: 0, output: "created" });
+
+    await createCliOpenShellSandboxLifecycle({ capture: vi.fn(), streamCreate }).createSandbox({
+      ...createRequest,
+      providers: undefined,
+      autoProviders: true,
+    });
+
+    expect(streamCreate.mock.calls[0]![1]).toContain("--auto-providers");
+    expect(streamCreate.mock.calls[0]![1]).not.toContain("--provider");
+  });
+
   it("does not restore ambient credentials while pinning create runtime selection", async () => {
     vi.stubEnv("KUBECONFIG", "/host/kubeconfig");
     vi.stubEnv("SSH_AUTH_SOCK", "/host/ssh.sock");
@@ -129,6 +142,9 @@ describe("OpenShell sandbox lifecycle CLI", () => {
     ).resolves.toMatchObject({ status: 1, ambiguous: false });
     await expect(
       lifecycle.createSandbox({ ...createRequest, workingDirectory: "/tmp/bad\0directory" }),
+    ).resolves.toMatchObject({ status: 1, ambiguous: false });
+    await expect(
+      lifecycle.createSandbox({ ...createRequest, autoProviders: true }),
     ).resolves.toMatchObject({ status: 1, ambiguous: false });
     expect(streamCreate).not.toHaveBeenCalled();
   });

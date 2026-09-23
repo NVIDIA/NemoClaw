@@ -66,8 +66,8 @@
   "maxRootFiles": {
     "src/lib/onboard": 299,
     "src/lib/actions": 18,
-    "src/lib/actions/sandbox": 172,
-    "src/lib/state": 34,
+    "src/lib/actions/sandbox": 174,
+    "src/lib/state": 36,
     "src/lib/inference": 63,
     "scripts": 42
   }

@@ -741,7 +741,7 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
     expect(f.restoreSandboxStateMock).toHaveBeenCalled();
   });
 
-  it("removes a pending clone registration when finalization fails before snapshot restore", async () => {
+  it("preserves a changed destination row when clone finalization fails", async () => {
     const entries = new Map<string, f.SandboxRecord>([
       [
         "alpha",
@@ -756,9 +756,21 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
       ],
     ]);
     f.getSandboxMock.mockImplementation((name) => entries.get(name ?? "") ?? null);
-    f.registerSandboxMock.mockImplementation((entry) => entries.set(entry.name, entry));
-    f.removeSandboxMock.mockImplementation((name) => entries.delete(name));
-    f.finalizePendingSandboxRegistrationMock.mockReturnValue(false);
+    f.registerSandboxMock.mockImplementation((entry) => {
+      const registered = { ...entry, pendingRouteReservation: true };
+      entries.set(entry.name, registered);
+      return registered;
+    });
+    let replacement: f.SandboxRecord | null = null;
+    f.finalizePendingSandboxRegistrationIfCurrentMock.mockImplementation((expected) => {
+      const next = {
+        ...expected,
+        lifecycleGeneration: "replacement-generation",
+      };
+      replacement = next;
+      entries.set("beta", next);
+      return false;
+    });
     f.getLatestBackupMock.mockReturnValue({ ...f.latestBackupFixture });
     f.captureOpenshellMock.mockImplementation((args) =>
       f.openshellResponses(args, {
@@ -773,7 +785,7 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
     ).rejects.toMatchObject({
       exitCode: 1,
       lines: expect.arrayContaining([
-        "  Snapshot state was not restored and the clone was not registered.",
+        "Snapshot state was not restored. The current registry row was preserved.",
       ]),
     });
 
@@ -782,15 +794,14 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
       undefined,
       { pending: true },
     );
-    expect(f.finalizePendingSandboxRegistrationMock).toHaveBeenCalledWith("beta");
-    expect(f.removeSandboxMock).toHaveBeenCalledWith("beta");
+    expect(f.finalizePendingSandboxRegistrationIfCurrentMock).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "beta" }),
+    );
+    expect(f.removeSandboxMock).not.toHaveBeenCalled();
     expect(f.registerSandboxMock.mock.invocationCallOrder[0]).toBeLessThan(
-      f.finalizePendingSandboxRegistrationMock.mock.invocationCallOrder[0],
+      f.finalizePendingSandboxRegistrationIfCurrentMock.mock.invocationCallOrder[0],
     );
-    expect(f.finalizePendingSandboxRegistrationMock.mock.invocationCallOrder[0]).toBeLessThan(
-      f.removeSandboxMock.mock.invocationCallOrder[0],
-    );
-    expect(entries.has("beta")).toBe(false);
+    expect(entries.get("beta")).toEqual(replacement);
     expect(f.restoreSandboxStateMock).not.toHaveBeenCalled();
     expect(f.establishRestoredSandboxGatewayPairingMock).not.toHaveBeenCalled();
   });
@@ -828,10 +839,9 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
     ]);
     f.getSandboxMock.mockImplementation((name) => entries.get(name ?? "") ?? null);
     f.parseLiveSandboxNamesMock.mockReturnValue(new Set(["alpha", "beta"]));
-    f.finalizePendingSandboxRegistrationMock.mockImplementation((name) => {
-      const current = entries.get(name);
-      expect(current?.pendingRouteReservation).toBe(true);
-      entries.set(name, { ...current!, pendingRouteReservation: undefined });
+    f.finalizePendingSandboxRegistrationIfCurrentMock.mockImplementation((expected) => {
+      expect(expected.pendingRouteReservation).toBe(true);
+      entries.set(expected.name, { ...expected, pendingRouteReservation: undefined });
       return true;
     });
     f.getLatestBackupMock.mockReturnValue({ ...f.latestBackupFixture });
@@ -845,7 +855,9 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
 
     await runSandboxSnapshot("alpha", { kind: "restore", to: "beta" });
 
-    expect(f.finalizePendingSandboxRegistrationMock).toHaveBeenCalledWith("beta");
+    expect(f.finalizePendingSandboxRegistrationIfCurrentMock).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "beta" }),
+    );
     expect(f.streamSandboxCreateMock).not.toHaveBeenCalled();
     expect(f.restoreSandboxStateMock).toHaveBeenCalledWith("beta", "/tmp/backup-alpha");
     expect(entries.get("beta")?.pendingRouteReservation).toBeUndefined();
@@ -885,14 +897,6 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
     ]);
     f.getSandboxMock.mockImplementation((name) => entries.get(name ?? "") ?? null);
     f.parseLiveSandboxNamesMock.mockReturnValue(new Set(["alpha", "beta"]));
-    f.finalizePendingSandboxRegistrationMock.mockImplementation((name) => {
-      const current = entries.get(name);
-      expect(current).toMatchObject({
-        pendingRouteReservation: true,
-        reservationSessionId: "onboard-session",
-      });
-      return false;
-    });
     f.getLatestBackupMock.mockReturnValue({ ...f.latestBackupFixture });
     f.captureOpenshellMock.mockImplementation((args) =>
       f.openshellResponses(args, {
@@ -906,7 +910,7 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
       runSandboxSnapshot("alpha", { kind: "restore", to: "beta" }),
     ).rejects.toMatchObject({ exitCode: 1 });
 
-    expect(f.finalizePendingSandboxRegistrationMock).toHaveBeenCalledWith("beta");
+    expect(f.finalizePendingSandboxRegistrationIfCurrentMock).not.toHaveBeenCalled();
     expect(f.restoreSandboxStateMock).not.toHaveBeenCalled();
     expect(entries.get("beta")).toMatchObject({
       pendingRouteReservation: true,
@@ -956,13 +960,14 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
         entries.delete(name);
         return { status: "complete", removed: true };
       });
-      f.registerSandboxMock.mockImplementation((entry) =>
-        entries.set(entry.name, { ...entry, pendingRouteReservation: true }),
-      );
-      f.finalizePendingSandboxRegistrationMock.mockImplementation((name) => {
-        const current = entries.get(name);
-        expect(current?.pendingRouteReservation).toBe(true);
-        entries.set(name, { ...current!, pendingRouteReservation: undefined });
+      f.registerSandboxMock.mockImplementation((entry) => {
+        const registered = { ...entry, pendingRouteReservation: true };
+        entries.set(entry.name, registered);
+        return registered;
+      });
+      f.finalizePendingSandboxRegistrationIfCurrentMock.mockImplementation((expected) => {
+        expect(expected.pendingRouteReservation).toBe(true);
+        entries.set(expected.name, { ...expected, pendingRouteReservation: undefined });
         return true;
       });
       f.getLatestBackupMock.mockReturnValue({ ...f.latestBackupFixture });

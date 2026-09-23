@@ -44,9 +44,11 @@ $$nemoclaw <sandbox-name> start
 ```
 
 This path preserves the sandbox workspace and leaves lifecycle ownership with OpenShell. `start`
-and `recover` reconcile a sandbox that OpenShell still reports as `Stopped`, including when its
-provider container is already running. Neither command directly restarts or unpauses the provider
-container. If the container is paused, follow the printed provider guidance instead.
+and `recover` resolve a sandbox from the local registry that owns it, even when another local
+OpenShell gateway is active. They reconcile a sandbox that OpenShell still reports as `Stopped`,
+including when its provider container is already running. Neither command directly restarts or
+unpauses the provider container. If the container is paused, follow the printed provider guidance
+instead.
 
 Before destructive replacement, run `$$nemoclaw <sandbox-name> status`. If the owning gateway
 reports the registered sandbox missing, NemoClaw leaves any provider container and registry entry
@@ -95,7 +97,7 @@ $$nemoclaw <sandbox-name> gateway restart
 ```
 
 The restart command invokes OpenClaw's native lifecycle command through the selected OpenShell sandbox.
-NemoClaw then verifies gateway health and checks or recovers host-side dashboard, messaging, and agent forwards.
+NemoClaw requires `/readyz` to return HTTP `200` with JSON `{"ready":true}` before it checks or recovers host-side dashboard, messaging, and agent forwards.
 Refer to [`$$nemoclaw <name> recover`](../../reference/commands#$$nemoclaw-name-recover) and [`$$nemoclaw <name> gateway restart`](../../reference/commands#$$nemoclaw-name-gateway-restart) for details.
 
 </AgentOnly>
