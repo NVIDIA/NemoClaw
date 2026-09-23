@@ -32,20 +32,19 @@ function consumerEnvironment(values: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv 
   return { ...environment, ...values };
 }
 
+export interface PinnedV1OpenClawNativeSettings {
+  model: { contextWindow: number; maxTokens: number; reasoning: boolean };
+  reasoningEffort: string;
+  execution: { timeoutSeconds: number; heartbeatEvery: string | null };
+  dashboard: { enabled: boolean; port: number; bind: string };
+  toolDisclosure: string;
+}
+
 export interface PinnedV1ConsumerEvidence {
   revision: typeof V1ALPHA1_RUNTIME_DEFAULTS_REVISION;
   compiledSandboxes?: number;
   contextWindows?: number[];
-  openclawNativeSettings?: Record<
-    string,
-    {
-      model: { contextWindow: number; maxTokens: number; reasoning: boolean };
-      reasoningEffort: string;
-      execution: { timeoutSeconds: number; heartbeatEvery: string | null };
-      dashboard: { enabled: boolean; port: number; bind: string };
-      toolDisclosure: string;
-    }
-  >;
+  openclawNativeSettings?: Record<string, PinnedV1OpenClawNativeSettings>;
   openclawNativeSettingsVerified?: number;
   hermesNativeSettingsVerified?: number;
 }
@@ -110,26 +109,4 @@ export function validateConfigExportWithPinnedV1(raw: string): PinnedV1ConsumerE
   } finally {
     fs.rmSync(temporaryRoot, { force: true, recursive: true });
   }
-}
-
-/** Verify generated OpenClaw and Hermes settings with the pinned v1 consumer. */
-export function validateAgentExportsWithPinnedV1(raw: string): {
-  revision: typeof V1ALPHA1_RUNTIME_DEFAULTS_REVISION;
-  openclawNativeSettings: NonNullable<PinnedV1ConsumerEvidence["openclawNativeSettings"]>;
-  hermesInterfacesVerified: boolean;
-} {
-  const evidence = validateConfigExportWithPinnedV1(raw);
-  if (
-    evidence.compiledSandboxes !== 5 ||
-    evidence.openclawNativeSettingsVerified !== 2 ||
-    evidence.hermesNativeSettingsVerified !== 3 ||
-    Object.keys(evidence.openclawNativeSettings ?? {}).length !== 2
-  ) {
-    throw new Error("pinned v1 agent fixture did not generate every expected native setting");
-  }
-  return {
-    revision: evidence.revision,
-    openclawNativeSettings: evidence.openclawNativeSettings!,
-    hermesInterfacesVerified: true,
-  };
 }

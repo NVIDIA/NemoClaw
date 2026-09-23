@@ -5,7 +5,7 @@ import YAML from "yaml";
 import { describe, expect, it } from "vitest";
 import { exportSnapshots } from "../../actions/config/export-test-fixture";
 import { asExportedConfig } from "../../../../test/support/config-export-document";
-import { validateAgentExportsWithPinnedV1 } from "../../../../test/support/v1-config-consumer";
+import { validateConfigExportWithPinnedV1 } from "../../../../test/support/v1-config-consumer";
 import { testTimeoutOptions } from "../../../../test/helpers/timeouts";
 import {
   hermesImageRef,
@@ -102,8 +102,10 @@ describe("effective v1alpha1 export defaults (#12132)", () => {
           })),
         },
       };
-      expect(validateAgentExportsWithPinnedV1(YAML.stringify(combined))).toEqual({
+      expect(validateConfigExportWithPinnedV1(YAML.stringify(combined))).toEqual({
         revision: "88c6600c06b0937907290362eef86912052c4ad0",
+        compiledSandboxes: 5,
+        contextWindows: [131072, 131072],
         openclawNativeSettings: {
           "openclaw-defaults": {
             model: { contextWindow: 131072, maxTokens: 4096, reasoning: false },
@@ -120,7 +122,8 @@ describe("effective v1alpha1 export defaults (#12132)", () => {
             toolDisclosure: "progressive",
           },
         },
-        hermesInterfacesVerified: true,
+        openclawNativeSettingsVerified: 2,
+        hermesNativeSettingsVerified: 3,
       });
     },
   );

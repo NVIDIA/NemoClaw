@@ -16,9 +16,11 @@ import {
 } from "../../../../src/lib/config/v1alpha1-export.ts";
 import { unsafeEndpointUrlViolation } from "../../../../src/lib/core/endpoint-url-safety.ts";
 import { V1ALPHA1_RUNTIME_DEFAULTS_REVISION } from "../../../../src/lib/domain/config/v1alpha1-runtime-defaults.ts";
+import { decodeManagedStartupProfile } from "../../../../src/lib/onboard/managed-startup/profile.ts";
 import type { SandboxEntry } from "../../../../src/lib/state/registry/types.ts";
 import {
   type PinnedV1ConsumerEvidence,
+  type PinnedV1OpenClawNativeSettings,
   validateConfigExportWithPinnedV1,
 } from "../../../support/v1-config-consumer.ts";
 import {
@@ -370,7 +372,11 @@ export interface ConfigExportEvidenceEnvelope {
   observed?: ConfigExportSemantics;
   verifications: ConfigExportVerification[];
   command?: ConfigExportCommandOutcome;
-  consumer?: PinnedV1ConsumerEvidence & { passed: boolean };
+  consumer?: PinnedV1ConsumerEvidence & {
+    expectedOpenclawNativeSettings?: PinnedV1OpenClawNativeSettings;
+    actualOpenclawNativeSettings?: PinnedV1OpenClawNativeSettings;
+    passed: boolean;
+  };
   export?: {
     bytes: string;
     byteLength: number;
@@ -544,6 +550,43 @@ function exportedProviderName(provider: string | null | undefined): string | nul
     .replace(/[^a-z0-9-]+/gu, "-")
     .replace(/^[^a-z0-9]+|[^a-z0-9]+$/gu, "");
   return `hosted-${normalized || "provider"}`.slice(0, 40).replace(/[^a-z0-9]+$/gu, "");
+}
+
+function expectedOpenclawNativeSettings(
+  entry: ConfigExportRegistryEntry,
+): PinnedV1OpenClawNativeSettings | undefined {
+  if (entry.agent !== "openclaw" || entry.workload?.kind !== "managed-image") return undefined;
+  const profile = decodeManagedStartupProfile(entry.workload.encodedProfile);
+  const { agentConfig, dashboard, tuning } = profile;
+  if (
+    profile.agent !== "openclaw" ||
+    agentConfig.agent !== "openclaw" ||
+    dashboard.agent !== "openclaw" ||
+    tuning.contextWindow === null ||
+    tuning.maxTokens === null ||
+    tuning.reasoning === null ||
+    tuning.reasoningEffort === null
+  ) {
+    throw new Error("the live OpenClaw source profile is incomplete");
+  }
+  return {
+    model: {
+      contextWindow: tuning.contextWindow,
+      maxTokens: tuning.maxTokens,
+      reasoning: tuning.reasoning,
+    },
+    reasoningEffort: tuning.reasoningEffort,
+    execution: {
+      timeoutSeconds: agentConfig.agentTimeoutSeconds,
+      heartbeatEvery: agentConfig.heartbeatEvery,
+    },
+    dashboard: {
+      enabled: true,
+      port: dashboard.port,
+      bind: dashboard.bindAddress === "0.0.0.0" ? "lan" : "loopback",
+    },
+    toolDisclosure: profile.tools.disclosure,
+  };
 }
 
 function targetPolicyForV1Alpha1(value: unknown, agent: string | null | undefined): unknown {
@@ -989,6 +1032,7 @@ export class ConfigExportValidationPhaseFixture {
     let observedRefusalCategory: string | undefined;
     let command: ConfigExportCommandOutcome | undefined;
     let consumer: ConfigExportEvidenceEnvelope["consumer"];
+    let expectedConsumerSettings: PinnedV1OpenClawNativeSettings | undefined;
     let registryBeforeExport: ConfigExportRegistry["sandboxes"] | undefined;
 
     try {
@@ -1004,6 +1048,9 @@ export class ConfigExportValidationPhaseFixture {
         if (!registry.sandboxes[instance.sandboxName]) {
           throw new Error("the live sandbox disappeared before config export");
         }
+        expectedConsumerSettings = expectedOpenclawNativeSettings(
+          registry.sandboxes[instance.sandboxName],
+        );
         registryBeforeExport = structuredClone(registry.sandboxes);
       }
       failureStage = "transport";
@@ -1118,10 +1165,31 @@ export class ConfigExportValidationPhaseFixture {
         }
         consumer = {
           revision: V1ALPHA1_RUNTIME_DEFAULTS_REVISION,
+          ...(expectedConsumerSettings
+            ? { expectedOpenclawNativeSettings: expectedConsumerSettings }
+            : {}),
           passed: false,
         } as ConfigExportEvidenceEnvelope["consumer"];
         const consumerEvidence = this.dependencies.validateWithPinnedV1(raw);
-        consumer = { ...consumerEvidence, passed: true };
+        const actualConsumerSettings =
+          consumerEvidence.openclawNativeSettings?.[instance.sandboxName];
+        const consumerPassed =
+          consumerEvidence.revision === V1ALPHA1_RUNTIME_DEFAULTS_REVISION &&
+          (expectedConsumerSettings === undefined ||
+            isDeepStrictEqual(actualConsumerSettings, expectedConsumerSettings));
+        consumer = {
+          ...consumerEvidence,
+          ...(expectedConsumerSettings
+            ? {
+                expectedOpenclawNativeSettings: expectedConsumerSettings,
+                actualOpenclawNativeSettings: actualConsumerSettings,
+              }
+            : {}),
+          passed: consumerPassed,
+        };
+        if (!consumerPassed) {
+          throw new Error("pinned v1 native settings differ from the live source profile");
+        }
         classification = "success";
       }
     } catch (error) {
