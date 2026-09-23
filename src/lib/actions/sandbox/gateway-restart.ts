@@ -365,6 +365,26 @@ function failedAuxiliaryRecoveryDetail(results: RestartAuxiliaryRecoveryResult[]
   return `gateway health passed but ${failed.join(", ")} could not be re-established`;
 }
 
+function openClawRestartReady(result: GatewayRestartCommandResult | null): boolean | null {
+  if (result === null) return null;
+  const output = result.stdout.trimEnd();
+  const separator = output.lastIndexOf("\n");
+  if (result.status !== 0 || separator < 0 || output.slice(separator + 1).trim() !== "200") {
+    return false;
+  }
+  try {
+    const document: unknown = JSON.parse(output.slice(0, separator));
+    return (
+      document !== null &&
+      typeof document === "object" &&
+      "ready" in document &&
+      document.ready === true
+    );
+  } catch {
+    return false;
+  }
+}
+
 export async function restartSandboxGatewayWithDeps(
   sandboxName: string,
   {
@@ -481,7 +501,7 @@ export async function restartSandboxGatewayWithDeps(
                 deps.buildOpenClawReadinessProbeCommand(name),
                 10_000,
               );
-              return result === null ? null : result.status === 0 && result.stdout.trim() === "200";
+              return openClawRestartReady(result);
             },
           }
         : {}),

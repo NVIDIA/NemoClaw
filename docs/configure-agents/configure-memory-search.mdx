@@ -117,7 +117,9 @@ Use the same environment prefix for `memory status` and `memory search`.
 
 </Note>
 
-Search for a fact from an existing memory, using different wording to check semantic retrieval:
+Search for a fact from an existing memory, using different wording to check semantic retrieval.
+The command below applies to images that export `SQLITE_TMPDIR`.
+On older images, add the environment prefix from the preceding note.
 
 ```bash
 nemoclaw my-assistant exec -- openclaw memory search --agent main \

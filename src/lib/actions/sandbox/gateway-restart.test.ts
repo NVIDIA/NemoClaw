@@ -1,10 +1,16 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { execFile } from "node:child_process";
+import { createServer } from "node:http";
+import { promisify } from "node:util";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { GATEWAY_RESTART_MARKERS as MARKERS } from "../../agent/gateway-restart-markers";
 import { classifyGatewayRestartFailure } from "./gateway-restart";
 import { restartSandboxGateway, waitForRecoveredSandboxGateway } from "./process-recovery";
+import * as forwardRecovery from "./forward-recovery";
+
+const executeFile = promisify(execFile);
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -106,33 +112,63 @@ describe("restartSandboxGateway native lifecycle", () => {
     );
   });
 
-  it.each([200, 302, 401, 503])(
-    "requires OpenClaw readiness after restart (HTTP %s)",
-    async (status) => {
+  it.each([
+    { status: 200, body: '{"ready":true}', ready: true },
+    { status: 302, body: '{"ready":true}', ready: false },
+    { status: 401, body: '{"ready":true}', ready: false },
+    { status: 503, body: '{"ready":false}', ready: false },
+    { status: 200, body: '{"ready":false}', ready: false },
+    { status: 200, body: "<html>Control UI</html>", ready: false },
+    { status: 200, body: '{"ok":true}', ready: false },
+    { status: 200, body: '{"ready":"true"}', ready: false },
+  ])(
+    "requires the OpenClaw readiness contract (HTTP $status, $body)",
+    async ({ status, body, ready }) => {
       silenceConsole();
       vi.stubEnv("NEMOCLAW_GATEWAY_RECOVERY_SETTLE_SECONDS", "0");
-      const deps = baseDeps({
-        executeSandboxExecCommand: vi.fn(async (_name: string, command: string) => ({
-          status: 0,
-          stdout: command.includes("/readyz") ? String(status) : "",
-          stderr: "",
-        })),
-        waitForRecoveredSandboxGateway: (
-          name: string,
-          options: Parameters<typeof waitForRecoveredSandboxGateway>[1],
-        ) =>
-          waitForRecoveredSandboxGateway(name, {
-            ...options,
-            probeImpl: options?.probeImpl ?? (async () => true),
-            timeoutSeconds: 0,
-            sleepImpl: () => undefined,
-          }),
+      const server = createServer((request, response) => {
+        response.statusCode = request.url === "/readyz" ? status : 200;
+        response.end(request.url === "/readyz" ? body : '{"ok":true}');
       });
+      await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+      try {
+        const { port } = server.address() as { port: number };
+        vi.spyOn(forwardRecovery, "resolveSandboxHealthProbeUrl").mockReturnValue(
+          `http://127.0.0.1:${port}/health`,
+        );
+        const deps = baseDeps({
+          executeSandboxExecCommand: vi.fn(async (_name: string, command: string) =>
+            command.startsWith("curl ")
+              ? executeFile("/bin/bash", ["-c", command]).then(
+                  ({ stdout, stderr }) => ({ status: 0, stdout, stderr }),
+                  (error: { code?: number; stdout?: string; stderr?: string }) => ({
+                    status: error.code ?? 1,
+                    stdout: error.stdout ?? "",
+                    stderr: error.stderr ?? "",
+                  }),
+                )
+              : { status: 0, stdout: "", stderr: "" },
+          ),
+          waitForRecoveredSandboxGateway: (
+            name: string,
+            options: Parameters<typeof waitForRecoveredSandboxGateway>[1],
+          ) =>
+            waitForRecoveredSandboxGateway(name, {
+              ...options,
+              probeImpl: options?.probeImpl ?? (async () => true),
+              timeoutSeconds: 0,
+              sleepImpl: () => undefined,
+            }),
+        });
 
-      const result = await restartSandboxGateway("alpha", { quiet: true, deps });
-
-      expect(result.ok).toBe(status === 200);
-      expect(deps.ensureSandboxPortForward).toHaveBeenCalledTimes(status === 200 ? 1 : 0);
+        const result = await restartSandboxGateway("alpha", { quiet: true, deps });
+        expect(result.ok).toBe(ready);
+        expect(deps.ensureSandboxPortForward).toHaveBeenCalledTimes(ready ? 1 : 0);
+      } finally {
+        await new Promise<void>((resolve, reject) =>
+          server.close((error) => (error ? reject(error) : resolve())),
+        );
+      }
     },
   );
 

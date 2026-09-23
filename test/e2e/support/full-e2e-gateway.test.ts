@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { fullE2eGateway } from "../fixtures/full-e2e-gateway.ts";
+import { CleanupRegistry } from "../fixtures/cleanup.ts";
 
 const directories: string[] = [];
 const disposables: (() => Promise<void>)[] = [];
@@ -73,23 +74,32 @@ describe("full E2E gateway ownership", () => {
       targetId: "staging-brev-launchable",
       measuresColdOnboard: false,
       registered: false,
+      registeredAtCleanup: false,
     },
     {
       preinstalled: false,
       targetId: "staging-brev-launchable",
       measuresColdOnboard: false,
       registered: false,
+      registeredAtCleanup: false,
     },
-    { preinstalled: false, targetId: "full-e2e", measuresColdOnboard: true, registered: false },
+    {
+      preinstalled: false,
+      targetId: "full-e2e",
+      measuresColdOnboard: true,
+      registered: false,
+      registeredAtCleanup: true,
+    },
     {
       preinstalled: false,
       targetId: "security-posture",
       measuresColdOnboard: false,
       registered: true,
+      registeredAtCleanup: false,
     },
   ])(
     "respects cleanup and budget contracts for $targetId (preinstalled=$preinstalled) (#9851)",
-    async ({ preinstalled, targetId, measuresColdOnboard, registered }) => {
+    async ({ preinstalled, targetId, measuresColdOnboard, registered, registeredAtCleanup }) => {
       vi.resetModules();
       captured.test.mockClear();
       captured.getSandbox.mockReturnValue(registered ? { name: "e2e-full" } : null);
@@ -105,6 +115,7 @@ describe("full E2E gateway ownership", () => {
         openshellCommandPath: "openshell",
         isCommandAvailable: vi.fn(async () => true),
         cleanupGatewayRegistration: vi.fn(async () => undefined),
+        cleanupSandbox: vi.fn(async () => undefined),
         command: vi.fn(
           async (
             command: string,
@@ -117,13 +128,11 @@ describe("full E2E gateway ownership", () => {
         ),
       };
       const sandbox = { openshell: vi.fn(async () => result), cleanupSandbox: vi.fn() };
-      const cleanup = {
-        trackGateway: vi.fn(),
-        trackDisposable: vi.fn((_name: string, dispose: () => Promise<void>) => {
-          disposables.push(dispose);
-        }),
-        trackSandbox: vi.fn(),
-      };
+      const cleanup = new CleanupRegistry();
+      vi.spyOn(cleanup, "trackGateway");
+      disposables.push(async () => {
+        await cleanup.runAll();
+      });
       const lifecycle = { trackInstallerGatewayUserService: vi.fn() };
       const declare = vi.fn();
       await import("../live/full-e2e.test.ts");
@@ -169,6 +178,11 @@ describe("full E2E gateway ownership", () => {
           "cold onboarding stays within the checked-in full-E2E performance budgets",
         ),
       ).toBe(measuresColdOnboard);
+      captured.getSandbox.mockReturnValue(registeredAtCleanup ? { name: "e2e-full" } : null);
+      expect((await cleanup.runAll()).failures).toEqual([]);
+      expect(host.cleanupSandbox).toHaveBeenCalledTimes(
+        preinstalled || registeredAtCleanup ? 1 : 0,
+      );
     },
     20_000,
   );
