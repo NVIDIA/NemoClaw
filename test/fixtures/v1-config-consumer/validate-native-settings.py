@@ -16,23 +16,12 @@ def install_adapter_stubs():
     adapters = types.ModuleType("nemo_fabric_adapters")
     common = types.ModuleType("nemo_fabric_adapters.common")
     common.lifecycle = object()
-    fabric = types.ModuleType("fabric")
-    fabric.hermes_relay_enabled = lambda _inference: False
-    fabric.model_connection = lambda _inference: {
-        "model": "fixture-model",
-        "base_url": "https://inference.local/v1",
-    }
-    fabric.model_credential = lambda _inference: "fixture-credential"
-    interfaces = types.ModuleType("interfaces")
-    interfaces.token = lambda _root: "fixture-token"
     sys.modules.update(
         {
             "nemo_fabric_adapter_contract": contract,
             "nemo_fabric_adapter_contract.models": models,
             "nemo_fabric_adapters": adapters,
             "nemo_fabric_adapters.common": common,
-            "fabric": fabric,
-            "interfaces": interfaces,
         }
     )
 
