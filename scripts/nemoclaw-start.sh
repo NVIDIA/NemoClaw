@@ -74,6 +74,18 @@ unset NEMOCLAW_ENTRYPOINT_NORMALIZED_ARGC NEMOCLAW_ENTRYPOINT_NORMALIZED_ARGV \
 unset -f nemoclaw_normalize_entrypoint_env_wrapper
 # managed-entrypoint-env-wrapper end
 
+# OpenShell owns inference.local authentication. Clear its credential aliases
+# after entrypoint overrides are normalized, before setup can launch children.
+# Direct inference routes retain their credentials.
+clear_managed_inference_credentials() {
+  case "${NEMOCLAW_INFERENCE_BASE_URL:-}" in
+    https://inference.local | https://inference.local/*)
+      unset NVIDIA_INFERENCE_API_KEY NVIDIA_API_KEY
+      ;;
+  esac
+}
+clear_managed_inference_credentials
+
 # Reject an invalid explicit dashboard port before installing the tee/fd startup
 # capture below. Some CI Docker runners can drop very early fd4 output from
 # short-lived containers, and this validation is meant to be fail-fast and
@@ -2413,7 +2425,7 @@ prepare_gateway_token_for_current_command() {
 # Reconcile the legacy OpenClaw auth profile used by direct inference routes.
 # Managed OpenShell routes authenticate at the inference.local proxy, so the
 # sandbox must not retain even an environment-variable reference to the host
-# credential. Direct custom-image routes still need the profile for OpenClaw.
+# credential. Direct inference routes still need the profile for OpenClaw.
 write_auth_profile() {
   local provider_key="${NEMOCLAW_INFERENCE_PROVIDER_ID:-${NEMOCLAW_PROVIDER_KEY:-inference}}"
 
@@ -2580,17 +2592,6 @@ json.dump({
 }, open(path, 'w'))
 os.chmod(path, 0o600)
 PYAUTH
-}
-
-# Managed OpenShell routes authenticate at the host-owned proxy. Remove both
-# accepted input aliases from the parent entrypoint environment after profile
-# reconciliation succeeds, before any sandbox-user process can inherit them.
-clear_managed_inference_credentials() {
-  case "${NEMOCLAW_INFERENCE_BASE_URL:-}" in
-    https://inference.local | https://inference.local/*)
-      unset NVIDIA_INFERENCE_API_KEY NVIDIA_API_KEY
-      ;;
-  esac
 }
 
 harden_auth_profiles() {
@@ -5551,7 +5552,6 @@ if [ "$(id -u)" -ne 0 ]; then
   # env. This covers both one-shot commands and the gateway launch.
   apply_messaging_runtime_env_aliases
   write_auth_profile
-  clear_managed_inference_credentials
   harden_auth_profiles
 
   if [ ${#NEMOCLAW_CMD[@]} -gt 0 ]; then
@@ -5667,7 +5667,6 @@ verify_messaging_runtime_secret_scans
 # auth-profiles.json files under ~/.openclaw. See
 # setup_auth_profile_as_sandbox for the HOME-handling rationale.
 setup_auth_profile_as_sandbox
-clear_managed_inference_credentials
 
 # If a command was passed (e.g., "openclaw agent ..."), run it as sandbox user
 if [ ${#NEMOCLAW_CMD[@]} -gt 0 ]; then

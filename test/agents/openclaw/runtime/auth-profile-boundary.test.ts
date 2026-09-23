@@ -26,8 +26,8 @@ const WRAPPER = [
   "set -euo pipefail",
   extractShellFunctionFromSource(START_SOURCE, "write_auth_profile"),
   extractShellFunctionFromSource(START_SOURCE, "clear_managed_inference_credentials"),
-  "write_auth_profile",
   "clear_managed_inference_credentials",
+  "write_auth_profile",
   credentialProbe,
 ].join("\n");
 
@@ -75,24 +75,47 @@ function startupCredentialBoundaryBlock(kind: "non-root" | "root"): string {
   return START_SOURCE.slice(start, end);
 }
 
-function runStartupCredentialBoundary(kind: "non-root" | "root") {
+function runStartupCredentialBoundary(
+  kind: "non-root" | "root",
+  route = "managed",
+  failCleanup = false,
+) {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-auth-startup-"));
+  homes.push(home);
+  const script = path.join(home, "run.sh");
+  const bootstrap = START_SOURCE.slice(
+    START_SOURCE.indexOf("# managed-entrypoint-env-wrapper end"),
+    START_SOURCE.indexOf("# Reject an invalid explicit dashboard port"),
+  );
   const wrapper = [
-    "set -euo pipefail",
-    extractShellFunctionFromSource(START_SOURCE, "clear_managed_inference_credentials"),
+    START_SOURCE.match(/^set -[a-z]+ pipefail$/m)?.[0] ?? "",
+    ...[
+      "clear_managed_inference_credentials",
+      "_step_down_extract_function",
+      "run_step_down_as_sandbox",
+      "setup_auth_profile_as_sandbox",
+    ].map((name) => extractShellFunctionFromSource(START_SOURCE, name)),
     "NEMOCLAW_CMD=(probe)",
     "STEP_DOWN_PREFIX_SANDBOX=(env)",
     "apply_messaging_runtime_env_aliases() { :; }",
-    "write_auth_profile() { :; }",
+    "openclaw_config_dir_owner() { echo sandbox; }",
+    `write_auth_profile() { ${credentialProbe}; return ${failCleanup ? 41 : 0}; }`,
     "harden_auth_profiles() { :; }",
-    "setup_auth_profile_as_sandbox() { :; }",
     "install_messaging_runtime_preloads() { :; }",
     "verify_messaging_runtime_secret_scans() { :; }",
-    `run_oneshot_command() { ${credentialProbe}; }`,
+    `run_oneshot_command() { echo command; ${credentialProbe}; }`,
+    bootstrap,
+    credentialProbe,
     startupCredentialBoundaryBlock(kind),
   ].join("\n");
-  return spawnSync("bash", ["-s", "--", START_SCRIPT], {
-    input: wrapper,
-    env: { PATH: process.env.PATH, ...managedEnv },
+  fs.writeFileSync(script, wrapper);
+  return spawnSync("bash", [script], {
+    env: {
+      PATH: process.env.PATH,
+      HOME: home,
+      ...managedEnv,
+      ...(route === "direct" ? { NEMOCLAW_INFERENCE_BASE_URL: "https://direct.example/v1" } : {}),
+    },
     encoding: "utf-8",
   });
 }
@@ -172,12 +195,29 @@ describe("OpenClaw auth-profile boundary", () => {
     expect(fs.readFileSync(fixture.authPath, "utf-8")).toBe(JSON.stringify(profiles));
   });
 
-  it.each(["non-root", "root"] as const)(
-    "clears credential aliases before the %s startup launches a command",
-    (kind) => {
-      const result = runStartupCredentialBoundary(kind);
+  it.each([
+    ["non-root", "managed"],
+    ["root", "managed"],
+    ["non-root", "direct"],
+    ["root", "direct"],
+  ] as const)(
+    "passes only allowed credentials to setup and command children in %s startup for %s routes",
+    (kind, route) => {
+      const result = runStartupCredentialBoundary(kind, route);
+      const credentials = route === "managed" ? "unset\nunset" : "primary-secret\nlegacy-secret";
       expect(result.status, result.stderr).toBe(0);
-      expect(result.stdout.trim()).toBe("unset\nunset");
+      expect(result.stdout.trim()).toBe(
+        [credentials, credentials, "command", credentials].join("\n"),
+      );
+    },
+  );
+
+  it.each(["non-root", "root"] as const)(
+    "stops %s startup when auth-profile reconciliation fails",
+    (kind) => {
+      const result = runStartupCredentialBoundary(kind, "managed", true);
+      expect(result.status, result.stderr).toBe(41);
+      expect(result.stdout).not.toContain("command");
     },
   );
 
