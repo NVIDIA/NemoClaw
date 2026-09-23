@@ -7,6 +7,8 @@ import path from "node:path";
 
 import { describe, expect, it, onTestFinished, vi } from "vitest";
 
+import { resolveNemoClawGatewayRuntime } from "../../../src/lib/onboard/runtime-provider/configured-runtime.ts";
+
 import { ArtifactSink } from "../fixtures/artifacts.ts";
 import { SandboxClient } from "../fixtures/clients/sandbox.ts";
 import { startTestProgress } from "../fixtures/progress.ts";
@@ -215,6 +217,36 @@ readline.createInterface({ input: process.stdin }).on("line", line => {
       PATH: "/usr/bin",
       OPENSHELL_GATEWAY: "nemoclaw",
     });
+  });
+
+  it("preserves the selected Podman runtime and rootless service context for ACP recovery", () => {
+    const runtimeEnv = {
+      NEMOCLAW_GATEWAY_RUNTIME: "podman",
+      OPENSHELL_PODMAN_SOCKET: "/run/user/1000/podman/podman.sock",
+      CONTAINERS_CONF: "/tmp/podman/containers.conf",
+      CONTAINERS_STORAGE_CONF: "/tmp/podman/storage.conf",
+      XDG_RUNTIME_DIR: "/run/user/1000",
+      DBUS_SESSION_BUS_ADDRESS: "unix:path=/run/user/1000/bus",
+    };
+    const adapterEnv = hermesAcpLiveHostEnv({
+      ...runtimeEnv,
+      NVIDIA_INFERENCE_API_KEY: "secret",
+      OPENAI_API_KEY: "secret",
+      OPENSHELL_TOKEN: "secret",
+      SSH_AUTH_SOCK: "/tmp/agent.sock",
+      UNRELATED_HOST_SETTING: "excluded",
+    });
+
+    expect(resolveNemoClawGatewayRuntime(adapterEnv)).toBe("podman");
+    expect(adapterEnv).toEqual(runtimeEnv);
+  });
+
+  it("keeps Docker selection explicit or default without adding Podman settings", () => {
+    expect(hermesAcpLiveHostEnv({})).toEqual({});
+    expect(resolveNemoClawGatewayRuntime(hermesAcpLiveHostEnv({}))).toBe("docker");
+    const adapterEnv = hermesAcpLiveHostEnv({ NEMOCLAW_GATEWAY_RUNTIME: "docker" });
+    expect(adapterEnv).toEqual({ NEMOCLAW_GATEWAY_RUNTIME: "docker" });
+    expect(resolveNemoClawGatewayRuntime(adapterEnv)).toBe("docker");
   });
 
   it("recognizes only the requested JSON-RPC response", () => {
