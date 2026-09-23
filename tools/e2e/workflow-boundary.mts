@@ -2650,6 +2650,42 @@ function validateTrustedE2eDispatchReceipt(
   }
 }
 
+function validatePreCandidateActions(
+  errors: string[],
+  steps: WorkflowRecord[],
+  candidateCheckout: WorkflowRecord | undefined,
+): void {
+  const approved = new Map<string, RegExp | string>([
+    ["Upload trusted E2E dispatch receipt", UPLOAD_E2E_ARTIFACTS_ACTION],
+    ["Check out trusted E2E planner", /^actions\/checkout@[a-f0-9]{40}$/u],
+    ["Set up Node for trusted E2E planning", /^actions\/setup-node@[a-f0-9]{40}$/u],
+    [
+      "Install reviewed npm for trusted E2E planning",
+      E2E_ACTION_PROVENANCE.reviewedNpmSetup.reference,
+    ],
+    [
+      "Stage immutable native Podman E2E toolchains",
+      E2E_ACTION_PROVENANCE.stageNativePodmanToolchains.reference,
+    ],
+  ]);
+  const seen = new Set<string>();
+  for (const step of steps.slice(0, candidateCheckout ? steps.indexOf(candidateCheckout) : 0)) {
+    if (step.uses === undefined) continue;
+    const name = stringValue(step.name);
+    const expected = approved.get(name);
+    const referenceMatches =
+      expected instanceof RegExp
+        ? expected.test(stringValue(step.uses))
+        : expected !== undefined && step.uses === expected;
+    if (seen.has(name) || !referenceMatches) {
+      errors.push(
+        "native Podman staging must run with only approved actions before candidate checkout",
+      );
+    }
+    seen.add(name);
+  }
+}
+
 function validateTrustedE2ePlannerBoundary(
   errors: string[],
   generateSteps: WorkflowRecord[],
@@ -2903,6 +2939,7 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
     errors.push("native Podman staging must use exactly one reviewed action reference");
   }
   if (
+    generateMatrix.if !== undefined ||
     generateMatrix["continue-on-error"] !== undefined ||
     staging?.if !== undefined ||
     staging?.["continue-on-error"] !== undefined ||
@@ -2929,6 +2966,7 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
       break;
     }
   }
+  validatePreCandidateActions(errors, generateSteps, generateCheckout);
   validateLargerRunnerRouting(errors, jobs, generateMatrix, generateSteps, generateCheckout);
   const generate = requireStep(errors, generateSteps, "Generate E2E target matrix");
   validateTrustedE2ePlannerBoundary(errors, generateSteps, generate, generateCheckout);

@@ -29,6 +29,7 @@ type Workflow = {
     string,
     {
       env?: Record<string, unknown>;
+      if?: unknown;
       needs?: string[];
       "continue-on-error"?: unknown;
       steps?: Array<{
@@ -158,6 +159,62 @@ describe("shared E2E workflow boundary", () => {
       );
     },
   );
+
+  it.each([true, false, "${{ always() }}"])("rejects generate-matrix if=%s", (value) => {
+    const errors = validateMutatedWorkflow((workflow) => {
+      workflow.jobs["generate-matrix"].if = value;
+    });
+    expect(errors).toContain(
+      "native Podman staging must preserve runtime selection, token, and fail-closed execution",
+    );
+  });
+
+  it.each(["Stage immutable native Podman E2E toolchains", "Check out E2E candidate"])(
+    "rejects an unrelated action before %s",
+    (boundary) => {
+      const errors = validateMutatedWorkflow((workflow) => {
+        const steps = workflow.jobs["generate-matrix"].steps!;
+        steps.splice(
+          steps.findIndex((step) => step.name === boundary),
+          0,
+          {
+            name: "Unreviewed publisher",
+            uses: "unreviewed/example@" + "a".repeat(40),
+          },
+        );
+      });
+      expect(errors).toContain(
+        "native Podman staging must run with only approved actions before candidate checkout",
+      );
+    },
+  );
+
+  it("rejects a duplicate approved action before candidate checkout", () => {
+    const errors = validateMutatedWorkflow((workflow) => {
+      const steps = workflow.jobs["generate-matrix"].steps!;
+      const approved = steps.find((step) => step.name === "Check out trusted E2E planner")!;
+      steps.splice(
+        steps.findIndex((step) => step.name === "Check out E2E candidate"),
+        0,
+        { ...approved },
+      );
+    });
+    expect(errors).toContain(
+      "native Podman staging must run with only approved actions before candidate checkout",
+    );
+  });
+
+  it("rejects an unrelated action using an approved step name", () => {
+    const errors = validateMutatedWorkflow((workflow) => {
+      const step = workflow.jobs["generate-matrix"].steps!.find(
+        (step) => step.name === "Check out trusted E2E planner",
+      )!;
+      step.uses = "unreviewed/example@" + "a".repeat(40);
+    });
+    expect(errors).toContain(
+      "native Podman staging must run with only approved actions before candidate checkout",
+    );
+  });
 
   it.each(stagingMutations)("rejects native Podman staging %s mutations", (_name, mutate) => {
     const errors = validateMutatedWorkflow((workflow) => {
