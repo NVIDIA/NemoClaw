@@ -98,6 +98,18 @@ export const REGISTRY_FILE = path.join(
   nemoclawStateRoot(process.env.HOME || "/tmp", GATEWAY_PORT),
   "sandboxes.json",
 );
+
+/** Read the registry owned by an explicit process environment. */
+export function loadFromEnvironment(environment: NodeJS.ProcessEnv): SandboxRegistry {
+  const registryFile = path.join(
+    nemoclawStateRoot(environment.HOME || "/tmp", GATEWAY_PORT),
+    "sandboxes.json",
+  );
+  return normalizeRegistry(
+    readConfigFile<unknown>(registryFile, { sandboxes: {}, defaultSandbox: null }),
+  );
+}
+
 export function load(): SandboxRegistry {
   return normalizeRegistry(
     readConfigFile<unknown>(REGISTRY_FILE, { sandboxes: {}, defaultSandbox: null }),

@@ -143,16 +143,24 @@ export async function runPortableHermesFinalization(
   });
 
   phases.proveEnvironment();
-  await runCommand(shellProbe, "nvidia-smi", ["--query-gpu=name", "--format=csv,noheader"], {
-    artifactName: "phase-1-nvidia-gpu",
-    timeoutMs: 60_000,
-  });
-  await runCommand(
+  assert.equal(process.arch, "x64", "Portable Hermes finalization requires an x86-64 host");
+  const gpuName = await runCommand(
+    shellProbe,
+    "nvidia-smi",
+    ["--query-gpu=name", "--format=csv,noheader"],
+    {
+      artifactName: "phase-1-nvidia-gpu",
+      timeoutMs: 60_000,
+    },
+  );
+  assert.notEqual(gpuName, "", "Portable Hermes finalization requires an NVIDIA GPU");
+  const rootlessPodman = await runCommand(
     shellProbe,
     "podman",
     ["--url", `unix://${SOCKET_PATH}`, "info", "--format", "{{.Host.Security.Rootless}}"],
     { artifactName: "phase-1-rootless-podman", timeoutMs: 60_000 },
   );
+  assert.equal(rootlessPodman, "true", "Portable Hermes finalization requires rootless Podman");
 
   const uid = process.getuid?.() ?? -1;
   const root = fs.mkdtempSync(path.join(os.homedir(), ".nemoclaw-portable-finalization-"));

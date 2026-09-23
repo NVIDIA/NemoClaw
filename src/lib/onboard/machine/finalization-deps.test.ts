@@ -18,6 +18,7 @@ import {
 } from "../../actions/sandbox/auto-pair-warmup";
 import { withGatewayRouteMutationLock } from "../../inference/gateway-route-mutation-lock";
 import { withMcpLifecycleLock } from "../../state/mcp-lifecycle-lock";
+import { HermesPortableLifecycleAuthorityError } from "../experimental/portable-agent-lifecycle";
 import {
   finalizationHandlerDeps,
   finalizationHandlerRuntime,
@@ -781,13 +782,16 @@ describe("Hermes portable finalization readiness", () => {
       openshellDriver: "docker",
       provider: "ollama-local",
     };
-    const load = vi.fn(() => ({ sandboxes: { alpha: entry } }));
-    vi.spyOn(finalizationHandlerRuntime, "loadRegistryPersistence").mockReturnValue({
-      load,
-    } as never);
+    const load = vi.fn(() => ({ defaultSandbox: "alpha", sandboxes: { alpha: entry } }));
+    const loadRegistryPersistence = vi
+      .spyOn(finalizationHandlerRuntime, "loadRegistryPersistence")
+      .mockReturnValue({ load });
     const assertHermesPortableAgentLifecycleAuthority = vi.fn(assertReady);
+    const qualifyPortableAgentLifecycleAuthority = vi.fn(() => undefined as never);
     vi.spyOn(finalizationHandlerRuntime, "loadPortableAgentLifecycle").mockReturnValue({
       assertHermesPortableAgentLifecycleAuthority,
+      HermesPortableLifecycleAuthorityError,
+      qualifyPortableAgentLifecycleAuthority,
     });
     const portableLifecycleLockOptions = vi.fn(() => ({
       stateDir: "/portable/state",
@@ -803,7 +807,9 @@ describe("Hermes portable finalization readiness", () => {
       assertHermesPortableAgentLifecycleAuthority,
       entry,
       load,
+      loadRegistryPersistence,
       portableLifecycleLockOptions,
+      qualifyPortableAgentLifecycleAuthority,
       withMcpLifecycleLock,
     };
   }
@@ -819,6 +825,7 @@ describe("Hermes portable finalization readiness", () => {
     expect(harness.withMcpLifecycleLock).toHaveBeenCalledWith("alpha", expect.any(Function), {
       stateDir: "/portable/state",
     });
+    expect(harness.loadRegistryPersistence).toHaveBeenCalledExactlyOnceWith(environment);
     expect(harness.portableLifecycleLockOptions).toHaveBeenCalledWith(environment);
     expect(harness.assertHermesPortableAgentLifecycleAuthority).toHaveBeenCalledWith(
       "alpha",
@@ -833,6 +840,26 @@ describe("Hermes portable finalization readiness", () => {
     );
     const readinessDeps = harness.assertHermesPortableAgentLifecycleAuthority.mock.calls[0]?.[2];
     expect(readinessDeps?.readRegistry?.("alpha")).toEqual(harness.entry);
+  });
+
+  it("preserves a readable receipt and registry disagreement for diagnosis (#11892)", async () => {
+    const harness = installPortableReadinessHarness(async () => undefined);
+    harness.qualifyPortableAgentLifecycleAuthority.mockImplementation(() => {
+      throw new HermesPortableLifecycleAuthorityError(
+        "receipt-registry-disagreement",
+        "untrusted authority diagnostic",
+      );
+    });
+
+    await expect(
+      finalizationHandlerDeps.checkHermesPortableSandboxReadiness("alpha", {
+        HOME: "/home/kiosk",
+      }),
+    ).resolves.toEqual({
+      ready: false,
+      reason: "portable-hermes-registry-authority-unavailable",
+    });
+    expect(harness.assertHermesPortableAgentLifecycleAuthority).not.toHaveBeenCalled();
   });
 
   it("fails closed when portable Hermes readiness is unavailable (#11892)", async () => {
@@ -868,7 +895,7 @@ describe("Hermes portable finalization readiness", () => {
   it("classifies registry authority loss during native readiness without exposing it (#11892)", async () => {
     const harness = installPortableReadinessHarness(async () => undefined);
     harness.load
-      .mockReturnValueOnce({ sandboxes: { alpha: harness.entry } })
+      .mockReturnValueOnce({ defaultSandbox: "alpha", sandboxes: { alpha: harness.entry } })
       .mockImplementation(() => {
         throw new Error("untrusted registry diagnostic");
       });

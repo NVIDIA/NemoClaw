@@ -59,6 +59,33 @@ describe("sandbox registry normalization", () => {
     estimatedModelDownloadBytes: null,
   } as const;
 
+  it("reads an explicitly scoped home without using the process registry", async () => {
+    const { registry } = await loadRegistryDocument({
+      defaultSandbox: "process-owned",
+      sandboxes: { "process-owned": { name: "process-owned" } },
+    });
+    const explicitHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-registry-explicit-home-"));
+    temporaryHomes.push(explicitHome);
+    const explicitConfigDir = path.join(explicitHome, ".nemoclaw");
+    fs.mkdirSync(explicitConfigDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(explicitConfigDir, "sandboxes.json"),
+      JSON.stringify({
+        defaultSandbox: "environment-owned",
+        sandboxes: { "environment-owned": { name: "environment-owned" } },
+      }),
+      { mode: 0o600 },
+    );
+    const persistence = await import("./registry/persistence");
+
+    expect(persistence.loadFromEnvironment({ HOME: explicitHome })).toMatchObject({
+      defaultSandbox: "environment-owned",
+      sandboxes: { "environment-owned": { name: "environment-owned" } },
+    });
+    expect(registry.getSandbox("process-owned")).toMatchObject({ name: "process-owned" });
+    expect(registry.getSandbox("environment-owned")).toBeNull();
+  });
+
   it("drops a malformed sandboxes container at the file boundary", async () => {
     const { registry } = await loadRegistryDocument({
       defaultSandbox: 42,
