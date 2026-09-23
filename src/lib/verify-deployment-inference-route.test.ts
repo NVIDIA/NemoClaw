@@ -10,7 +10,7 @@ const DCODE_AGENT = "langchain-deepagents-code";
 
 function makeDeps(overrides: Record<string, unknown> = {}) {
   return {
-    executeSandboxCommand: (_name: string, _script: string) => ({
+    executeSandboxCommand: async (_name: string, _script: string) => ({
       status: 0,
       stdout: "200",
       stderr: "",
@@ -26,7 +26,7 @@ function makeDeps(overrides: Record<string, unknown> = {}) {
 /** Answer the models route with `code` and every other probe with HTTP 200. */
 function makeModelsRouteDeps(code: string, overrides: Record<string, unknown> = {}) {
   return makeDeps({
-    executeSandboxCommand: (_name: string, script: string) =>
+    executeSandboxCommand: async (_name: string, script: string) =>
       script.includes("inference.local")
         ? { status: 0, stdout: code, stderr: "" }
         : { status: 0, stdout: "200", stderr: "" },
@@ -96,7 +96,7 @@ describe("verifyDeployment inference route model-catalog validation", () => {
       "my-sandbox",
       buildChain(),
       makeModelsRouteDeps("200", {
-        executeSandboxCommand: (_name: string, script: string) =>
+        executeSandboxCommand: async (_name: string, script: string) =>
           script.includes("inference.local")
             ? { status: 1, stdout: "200", stderr: "curl: (6) could not resolve host" }
             : { status: 0, stdout: "200", stderr: "" },
@@ -111,7 +111,7 @@ describe("verifyDeployment inference route model-catalog validation", () => {
     const result = await verifyDeployment(
       "my-sandbox",
       buildChain(),
-      makeModelsRouteDeps("404", { probeInferenceInvocation: () => ({ ok: true }) }),
+      makeModelsRouteDeps("404", { probeInferenceInvocation: async () => ({ ok: true }) }),
       {
         ...NO_RETRY,
         inferenceRouteContext: { agentName: DCODE_AGENT, provider: "openrouter-api" },
@@ -126,7 +126,7 @@ describe("verifyDeployment inference route model-catalog validation", () => {
       "my-sandbox",
       buildChain(),
       makeModelsRouteDeps("404", {
-        probeInferenceInvocation: () => ({ ok: false, detail: "HTTP 401" }),
+        probeInferenceInvocation: async () => ({ ok: false, detail: "HTTP 401" }),
       }),
       {
         ...NO_RETRY,
@@ -151,7 +151,7 @@ describe("verifyDeployment inference route model-catalog validation", () => {
       "my-sandbox",
       buildChain(),
       makeModelsRouteDeps("404", {
-        probeInferenceInvocation: () => ({ ok: false, detail: "HTTP 401" }),
+        probeInferenceInvocation: async () => ({ ok: false, detail: "HTTP 401" }),
       }),
       {
         ...NO_RETRY,
@@ -187,7 +187,7 @@ describe("verifyDeployment inference route model-catalog validation", () => {
   it("gives a plain 404 the startup budget before failing it closed (#10543)", async () => {
     let modelsRouteCalls = 0;
     const deps = makeDeps({
-      executeSandboxCommand: (_name: string, script: string) => {
+      executeSandboxCommand: async (_name: string, script: string) => {
         const isModelsRoute = script.includes("inference.local");
         modelsRouteCalls += isModelsRoute ? 1 : 0;
         return isModelsRoute
@@ -210,7 +210,7 @@ describe("verifyDeployment inference route model-catalog validation", () => {
     const responses = ["404", "404", "200"];
     let modelsRouteCalls = 0;
     const deps = makeDeps({
-      executeSandboxCommand: (_name: string, script: string) => {
+      executeSandboxCommand: async (_name: string, script: string) => {
         const isModelsRoute = script.includes("inference.local");
         modelsRouteCalls += isModelsRoute ? 1 : 0;
         return isModelsRoute
@@ -231,14 +231,14 @@ describe("verifyDeployment inference route model-catalog validation", () => {
   it("spends no models-route retry budget on the expected Deep Agents Code 404 (#10543)", async () => {
     let modelsRouteCalls = 0;
     const deps = makeDeps({
-      executeSandboxCommand: (_name: string, script: string) => {
+      executeSandboxCommand: async (_name: string, script: string) => {
         const isModelsRoute = script.includes("inference.local");
         modelsRouteCalls += isModelsRoute ? 1 : 0;
         return isModelsRoute
           ? { status: 0, stdout: "404", stderr: "" }
           : { status: 0, stdout: "200", stderr: "" };
       },
-      probeInferenceInvocation: () => ({ ok: true }),
+      probeInferenceInvocation: async () => ({ ok: true }),
     });
 
     await verifyDeployment("my-sandbox", buildChain(), deps, {
@@ -253,7 +253,7 @@ describe("verifyDeployment inference route model-catalog validation", () => {
   it("runs the invocation probe once for the Deep Agents Code 404 exception (#10543)", async () => {
     let invocationCalls = 0;
     const deps = makeModelsRouteDeps("404", {
-      probeInferenceInvocation: () => {
+      probeInferenceInvocation: async () => {
         invocationCalls += 1;
         return { ok: false, detail: "HTTP 500" };
       },
@@ -268,8 +268,8 @@ describe("verifyDeployment inference route model-catalog validation", () => {
     expect(invocationCalls).toBe(1);
   });
 
-  it("fails closed when no provider and model were recorded for the sandbox (#10543)", () => {
-    const result = probeOnboardInferenceInvocation({
+  it("fails closed when no provider and model were recorded for the sandbox (#10543)", async () => {
+    const result = await probeOnboardInferenceInvocation({
       sandboxName: "my-sandbox",
       gatewayName: "my-gateway",
       agentName: DCODE_AGENT,
@@ -284,8 +284,8 @@ describe("verifyDeployment inference route model-catalog validation", () => {
     });
   });
 
-  it("fails closed when a model was recorded without its provider (#10543)", () => {
-    const result = probeOnboardInferenceInvocation({
+  it("fails closed when a model was recorded without its provider (#10543)", async () => {
+    const result = await probeOnboardInferenceInvocation({
       sandboxName: "my-sandbox",
       gatewayName: "my-gateway",
       agentName: DCODE_AGENT,

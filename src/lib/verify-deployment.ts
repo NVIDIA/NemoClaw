@@ -116,7 +116,7 @@ export interface VerifyDeploymentDeps {
    * evidence of a served request. Optional: when it is absent that 404 fails
    * closed, because nothing validated the selected model (#10543).
    */
-  probeInferenceInvocation?: () => { ok: boolean; detail?: string };
+  probeInferenceInvocation?: () => Promise<{ ok: boolean; detail?: string }>;
 
   /**
    * Probe the in-sandbox agent config to learn which channels the runtime
@@ -358,11 +358,11 @@ function buildInferenceRouteHint(inference: InferenceRouteProbe): string {
  * can invoke its selected model — so accept it only through a successful
  * bounded inference request, exactly as `status` does.
  */
-function resolveExpectedModelsRoute404(
+async function resolveExpectedModelsRoute404(
   probe: InferenceRouteProbe,
   deps: VerifyDeploymentDeps,
-): InferenceRouteProbe {
-  const invocation = deps.probeInferenceInvocation?.() ?? null;
+): Promise<InferenceRouteProbe> {
+  const invocation = (await deps.probeInferenceInvocation?.()) ?? null;
   if (invocation?.ok) {
     return {
       status: "ok",
@@ -405,7 +405,7 @@ async function verifyInferenceRoute(
     retryDelaysMs,
     sleep,
   });
-  return isExpected404(probe) ? resolveExpectedModelsRoute404(probe, deps) : probe;
+  return isExpected404(probe) ? await resolveExpectedModelsRoute404(probe, deps) : probe;
 }
 
 /**
@@ -881,15 +881,14 @@ export type InferenceInvocationContext = {
  * design — Deep Agents Code on OpenRouter (#9834) — is accepted only on the
  * evidence of a served request (#10543).
  */
-export function probeOnboardInferenceInvocation(context: InferenceInvocationContext): {
-  ok: boolean;
-  detail?: string;
-} {
+export async function probeOnboardInferenceInvocation(
+  context: InferenceInvocationContext,
+): Promise<{ ok: boolean; detail?: string }> {
   const { model, provider } = context;
   if (!model || !provider) {
     return { ok: false, detail: "no provider and model were recorded for this sandbox" };
   }
-  const result = runSandboxInferenceInvocationProbe({
+  const result = await runSandboxInferenceInvocationProbe({
     sandboxName: context.sandboxName,
     gatewayName: context.gatewayName,
     agentName: context.agentName ?? null,
