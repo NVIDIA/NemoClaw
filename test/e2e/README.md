@@ -423,6 +423,14 @@ sandbox,
 requires the bounded command to finish, and proves both the sandbox and gateway runtime are absent.
 Deterministic destroy tests own the exact 30-second retry schedule and delayed-list sequence.
 
+`deferred-onboarding-hermes` and `deferred-onboarding-langchain-deepagents-code` exercise the
+public installer and the installed `nemohermes` or `nemo-deepagents` command on Docker and Podman. The installer child receives
+none of the three accepted inference credential variables. The test verifies that installation does
+not create a sandbox, complete onboarding, or register a gateway, then supplies the public NVIDIA
+credential and completes onboarding in the same home. The `nvidia-api` profile owns that credential;
+the test uses it only for the continuation command. Installer-plan and installer integration tests
+own provider classification, invalid inputs, and the deterministic decision matrix.
+
 `tools/e2e/target-catalogue.mts` declares live E2E targets that share one execution shape.
 Each entry owns these target properties:
 

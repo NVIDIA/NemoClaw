@@ -10,18 +10,30 @@ import { isDeepStrictEqual } from "node:util";
 import YAML from "yaml";
 
 import { HERMES_INTERFACE_DEFAULTS } from "../../../src/lib/config/model.ts";
+import {
+  V1ALPHA1_RUNTIME_DEFAULTS,
+  V1ALPHA1_RUNTIME_DEFAULTS_REVISION,
+} from "../../../src/lib/domain/config/v1alpha1-runtime-defaults.ts";
 import { fingerprintOpenShellSandboxId } from "../../../src/lib/adapters/openshell/sandbox-identity.ts";
 import {
   namedOpenShellGateway,
   cliOpenShellSandboxPolicyReader,
 } from "../../../src/lib/adapters/openshell/sandbox-policy-cli.ts";
-import { asExportedConfig } from "../../support/config-export-document.ts";
 import { load, save } from "../../../src/lib/state/registry/persistence.ts";
 import type { ArtifactSink } from "./artifacts.ts";
 import type { HostCliClient } from "./clients/host.ts";
 import { trustedSandboxShellScript, type SandboxClient } from "./clients/sandbox.ts";
 import type { CleanupRegistry } from "./cleanup.ts";
 import { CLI_ENTRYPOINT, REPO_ROOT } from "./paths.ts";
+import {
+  expectedPinnedV1HermesNativeSettings,
+  type PinnedV1ConsumerEvidence,
+  validateConfigExportWithPinnedV1,
+} from "../../support/v1-config-consumer.ts";
+import {
+  inspectConfigExportArtifactSafety,
+  parseConfigExport,
+} from "./phases/config-export-validation.ts";
 
 interface HermesConfigExportLiveInput {
   readonly artifacts: ArtifactSink;
@@ -33,6 +45,7 @@ interface HermesConfigExportLiveInput {
   readonly host: HostCliClient;
   readonly redactionValues: readonly string[];
   readonly sandboxName: string;
+  readonly validateWithPinnedV1?: (raw: string) => PinnedV1ConsumerEvidence;
 }
 
 export interface HermesConfigExportLiveResult {
@@ -45,17 +58,24 @@ interface HermesConfigExportPublishedEvidence {
   readonly agent: string | undefined;
   readonly aliasesEquivalent: boolean;
   readonly checked: true;
+  readonly consumer: HermesPinnedV1ConsumerEvidence;
   readonly credentialReferenceMatches: boolean;
   readonly credentialValuesOmitted: boolean;
   readonly identityDriftPreventedPublication: boolean;
   readonly identityDriftReported: boolean;
-  readonly managedImageIsNull: boolean;
+  readonly managedImageIsOmitted: boolean;
   readonly interfacesMatch: boolean;
   readonly dashboardRuntimeMatches: boolean;
   readonly inferenceEndpointMatches: boolean;
   readonly launchersSucceeded: boolean;
   readonly policyMatches: boolean;
   readonly sandboxNameMatches: boolean;
+}
+
+interface HermesPinnedV1ConsumerEvidence {
+  readonly expected: PinnedV1ConsumerEvidence;
+  readonly actual: Partial<Record<"nemoclaw" | "nemohermes", PinnedV1ConsumerEvidence>>;
+  readonly passed: boolean;
 }
 
 interface HermesConfigExportExpectedRefusalEvidence {
@@ -99,11 +119,12 @@ export function passesHermesConfigExportLiveEvidence(
   return (
     evidence.agent === "hermes" &&
     evidence.aliasesEquivalent &&
+    evidence.consumer.passed &&
     evidence.credentialReferenceMatches &&
     evidence.credentialValuesOmitted &&
     evidence.identityDriftPreventedPublication &&
     evidence.identityDriftReported &&
-    evidence.managedImageIsNull &&
+    evidence.managedImageIsOmitted &&
     evidence.interfacesMatch &&
     evidence.dashboardRuntimeMatches &&
     evidence.inferenceEndpointMatches &&
@@ -113,6 +134,70 @@ export function passesHermesConfigExportLiveEvidence(
   );
 }
 
+function expectedHermesConsumerEvidence(
+  input: HermesConfigExportLiveInput,
+): PinnedV1ConsumerEvidence {
+  const nativeSettings = expectedPinnedV1HermesNativeSettings({
+    hermesApiPort: Number(input.env.NEMOCLAW_HERMES_API_PORT ?? HERMES_INTERFACE_DEFAULTS.apiPort),
+    hermesDashboardEnabled: input.dashboardEnabled === true,
+    hermesDashboardPort: Number(
+      input.env.NEMOCLAW_DASHBOARD_PORT ?? HERMES_INTERFACE_DEFAULTS.dashboardPort,
+    ),
+    hermesDashboardInternalPort: Number(
+      input.env.NEMOCLAW_HERMES_DASHBOARD_INTERNAL_PORT ??
+        HERMES_INTERFACE_DEFAULTS.dashboardInternalPort,
+    ),
+    hermesDashboardTui: hermesTuiEnabled(input.env),
+  });
+  return {
+    revision: V1ALPHA1_RUNTIME_DEFAULTS_REVISION,
+    compiledSandboxes: 1,
+    hermesNativeSettings: { [input.sandboxName]: nativeSettings },
+    openclawNativeSettingsVerified: 0,
+    hermesNativeSettingsVerified: 1,
+  };
+}
+
+function comparableHermesConsumerEvidence(
+  evidence: PinnedV1ConsumerEvidence,
+  sandboxName: string,
+): PinnedV1ConsumerEvidence {
+  const nativeSettings = evidence.hermesNativeSettings?.[sandboxName];
+  return {
+    revision: evidence.revision,
+    compiledSandboxes: evidence.compiledSandboxes,
+    hermesNativeSettings: nativeSettings ? { [sandboxName]: nativeSettings } : {},
+    openclawNativeSettingsVerified: evidence.openclawNativeSettingsVerified,
+    hermesNativeSettingsVerified: evidence.hermesNativeSettingsVerified,
+  };
+}
+
+function validateHermesConsumers(
+  input: HermesConfigExportLiveInput,
+  nemoclawRaw: string,
+  nemohermesRaw: string,
+): HermesPinnedV1ConsumerEvidence {
+  const expected = expectedHermesConsumerEvidence(input);
+  const actual: HermesPinnedV1ConsumerEvidence["actual"] = {};
+  const validate = input.validateWithPinnedV1 ?? validateConfigExportWithPinnedV1;
+  try {
+    actual.nemoclaw = comparableHermesConsumerEvidence(validate(nemoclawRaw), input.sandboxName);
+    actual.nemohermes = comparableHermesConsumerEvidence(
+      validate(nemohermesRaw),
+      input.sandboxName,
+    );
+  } catch {
+    return { expected, actual, passed: false };
+  }
+  return {
+    expected,
+    actual,
+    passed:
+      isDeepStrictEqual(actual.nemoclaw, expected) &&
+      isDeepStrictEqual(actual.nemohermes, expected),
+  };
+}
+
 function hermesTuiEnabled(env: NodeJS.ProcessEnv): boolean {
   return ["1", "true", "yes", "on"].includes(
     (env.NEMOCLAW_HERMES_DASHBOARD_TUI ?? "0").toLowerCase(),
@@ -120,20 +205,29 @@ function hermesTuiEnabled(env: NodeJS.ProcessEnv): boolean {
 }
 
 function expectedHermesInterfaces(input: HermesConfigExportLiveInput) {
+  const targetDefaults = V1ALPHA1_RUNTIME_DEFAULTS.hermes.interfaces;
   const port = Number(input.env.NEMOCLAW_DASHBOARD_PORT ?? HERMES_INTERFACE_DEFAULTS.dashboardPort);
   const internalPort = Number(
     input.env.NEMOCLAW_HERMES_DASHBOARD_INTERNAL_PORT ??
       HERMES_INTERFACE_DEFAULTS.dashboardInternalPort,
   );
   const apiPort = Number(input.env.NEMOCLAW_HERMES_API_PORT ?? HERMES_INTERFACE_DEFAULTS.apiPort);
-  const api = apiPort === HERMES_INTERFACE_DEFAULTS.apiPort ? undefined : { port: apiPort };
-  if (!input.dashboardEnabled) return api ? { api } : undefined;
+  const api = apiPort === targetDefaults.api.port ? undefined : { port: apiPort };
+  if (!input.dashboardEnabled) {
+    return {
+      ...(targetDefaults.dashboard.enabled ? { dashboard: { enabled: false as const } } : {}),
+      ...(api ? { api } : {}),
+    };
+  }
+  const tuiEnabled = hermesTuiEnabled(input.env);
   return {
     dashboard: {
       enabled: true,
-      ...(port === HERMES_INTERFACE_DEFAULTS.dashboardPort ? {} : { port }),
-      ...(internalPort === HERMES_INTERFACE_DEFAULTS.dashboardInternalPort ? {} : { internalPort }),
-      ...(hermesTuiEnabled(input.env) ? { tui: { enabled: true } } : {}),
+      ...(port === targetDefaults.dashboard.port ? {} : { port }),
+      ...(internalPort === targetDefaults.dashboard.internalPort ? {} : { internalPort }),
+      ...(tuiEnabled === targetDefaults.dashboard.tuiEnabled
+        ? {}
+        : { tui: { enabled: tuiEnabled } }),
     },
     ...(api ? { api } : {}),
   };
@@ -275,11 +369,16 @@ export async function verifyHermesConfigExportLive(
       agent: undefined,
       aliasesEquivalent: false,
       checked: true,
+      consumer: {
+        expected: expectedHermesConsumerEvidence(input),
+        actual: {},
+        passed: false,
+      },
       credentialReferenceMatches: false,
       credentialValuesOmitted: !containsCredential,
       identityDriftPreventedPublication: false,
       identityDriftReported: false,
-      managedImageIsNull: false,
+      managedImageIsOmitted: false,
       interfacesMatch: false,
       dashboardRuntimeMatches: false,
       inferenceEndpointMatches: false,
@@ -291,11 +390,18 @@ export async function verifyHermesConfigExportLive(
     return { checked: true, passed: false };
   }
 
-  const nemoclawDocument = asExportedConfig(YAML.parse(nemoclawRaw));
-  const nemohermesDocument = asExportedConfig(YAML.parse(nemohermesRaw));
+  const nemoclawDocument = parseConfigExport(nemoclawRaw);
+  const nemohermesDocument = parseConfigExport(nemohermesRaw);
+  const exportsSafe = [
+    inspectConfigExportArtifactSafety(nemoclawRaw, input.redactionValues, nemoclawDocument),
+    inspectConfigExportArtifactSafety(nemohermesRaw, input.redactionValues, nemohermesDocument),
+  ].every(({ internalTransportsAbsent, knownSecretsAbsent }) => {
+    return internalTransportsAbsent && knownSecretsAbsent;
+  });
   const sandbox = nemoclawDocument.spec.sandboxes[0]!;
   const hostedProvider = nemoclawDocument.spec.inferenceProviders[0];
   const expectedPolicy = policy.ok ? YAML.parse(policy.value.document) : null;
+  const consumer = validateHermesConsumers(input, nemoclawRaw, nemohermesRaw);
 
   const nemoclawMismatchPath = path.join(exportDirectory, "nemoclaw-mismatch.yaml");
   const nemohermesMismatchPath = path.join(exportDirectory, "nemohermes-mismatch.yaml");
@@ -344,7 +450,8 @@ export async function verifyHermesConfigExportLive(
     aliasesEquivalent: isDeepStrictEqual(nemohermesDocument.spec, nemoclawDocument.spec),
     agent: sandbox.harness.kind,
     checked: true,
-    credentialValuesOmitted: !containsCredential,
+    consumer,
+    credentialValuesOmitted: !containsCredential && exportsSafe,
     credentialReferenceMatches: hostedProvider?.credential?.env === entry.credentialEnv,
     identityDriftPreventedPublication:
       typeof nemoclawDriftExitCode === "number" &&
@@ -356,7 +463,7 @@ export async function verifyHermesConfigExportLive(
     identityDriftReported:
       nemoclawDriftDiagnostics.includes("drifted") &&
       nemohermesDriftDiagnostics.includes("drifted"),
-    managedImageIsNull: sandbox.image === null,
+    managedImageIsOmitted: !("image" in sandbox),
     interfacesMatch: isDeepStrictEqual(sandbox.harness.interfaces, expectedHermesInterfaces(input)),
     dashboardRuntimeMatches: await dashboardRuntimeMatches(input),
     inferenceEndpointMatches: hostedProvider?.endpoint === entry.endpointUrl,
@@ -369,6 +476,8 @@ export async function verifyHermesConfigExportLive(
       ),
     sandboxNameMatches: sandbox.name === input.sandboxName,
   };
+  const passed = passesHermesConfigExportLiveEvidence(evidence);
   await input.artifacts.writeJson("hermes-config-export-live-evidence.json", evidence);
-  return { checked: true, passed: passesHermesConfigExportLiveEvidence(evidence) };
+  if (passed) await input.artifacts.writeText("hermes-config-export.yaml", nemoclawRaw);
+  return { checked: true, passed };
 }

@@ -2751,6 +2751,13 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      - name: Set up pinned v1 compatibility toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1.17.0
+        with:
+          toolchain: 1.98.1
+          cache: false
+          rustflags: ""
+
       # Keep only the credential-bearing step anchored. Cleanup mappings stay
       # explicit because strict YAML decoders reject 100 or more aliases here.
       - &dockerhub-auth
@@ -2955,7 +2962,25 @@ jobs:
       - name: Require automatic config export evidence
         if: ${{ success() }}
         shell: bash
-        run: test -f "e2e-artifacts/live/${{ matrix.id }}/config-export-evidence.v1.json"
+        run: |
+          set -euo pipefail
+          evidence="e2e-artifacts/live/${{ matrix.id }}/config-export-evidence.v1.json"
+          yaml="e2e-artifacts/live/${{ matrix.id }}/config-export.yaml"
+          test -f "$evidence"
+          jq -e '.passed == true' "$evidence" >/dev/null
+          case "$(jq -er '.classification' "$evidence")" in
+            success)
+              test -f "$yaml"
+              jq -e '.consumer.passed == true' "$evidence" >/dev/null
+              jq -er '.consumer.revision | strings | select(test("^[0-9a-f]{40}$"))' "$evidence" >/dev/null
+              expected_sha="$(jq -er '.export.sha256 | strings | select(test("^[0-9a-f]{64}$"))' "$evidence")"
+              actual_sha="$(sha256sum -- "$yaml")"
+              actual_sha="${actual_sha%% *}"
+              test "$actual_sha" = "$expected_sha"
+              ;;
+            expected-refusal|no-usable-sandbox) ;;
+            *) exit 1 ;;
+          esac
 
       - name: Upload E2E artifacts
         if: always()
@@ -2971,6 +2996,7 @@ jobs:
             e2e-artifacts/live/${{ matrix.id }}/onboarding.result.json
             e2e-artifacts/live/${{ matrix.id }}/state-validation.result.json
             e2e-artifacts/live/${{ matrix.id }}/config-export-evidence.v1.json
+            e2e-artifacts/live/${{ matrix.id }}/config-export.yaml
             e2e-artifacts/live/${{ matrix.id }}/dcode-base-image.json
             e2e-artifacts/live/${{ matrix.id }}/cloud-onboard-trace-timing-summary.json
             e2e-artifacts/live/${{ matrix.id }}/onboard-progress-budget.json
@@ -5134,6 +5160,13 @@ jobs:
           ref: ${{ inputs.checkout_sha || github.sha }}
           fetch-depth: 0
           persist-credentials: false
+
+      - name: Set up pinned v1 compatibility toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1.17.0
+        with:
+          toolchain: 1.98.1
+          cache: false
+          rustflags: ""
 
       - *dockerhub-auth
 
