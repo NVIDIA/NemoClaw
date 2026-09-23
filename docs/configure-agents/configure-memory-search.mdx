@@ -29,6 +29,8 @@ Do not change the managed Ollama daemon's loopback binding to follow this exampl
 ## Permit the Bridge Route
 
 The `local-inference` policy preset permits the sandbox to reach the host bridge.
+If `NEMOCLAW_VLLM_PORT` differs from `8000`, the preset replaces its `8000` route with that port.
+In that case, [add a custom preset](../network-policy/configure-policies/create-custom-policy-presets) for `host.openshell.internal:8000` that permits the embedding server's required GET and POST routes before running the probe.
 Apply the preset, then verify the Ollama API from the sandbox.
 
 ```bash

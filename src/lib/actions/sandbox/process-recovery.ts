@@ -1860,6 +1860,13 @@ export async function restartSandboxGateway(
         getSessionAgent: agentRuntime.getSessionAgent,
         getSandbox: registry.getSandbox,
         resolveSandboxDashboardPort,
+        buildOpenClawReadinessProbeCommand: (name) => {
+          const url = new URL(resolveSandboxHealthProbeUrl(name));
+          url.pathname = "/readyz";
+          url.search = "";
+          url.hash = "";
+          return `curl --noproxy '*' --silent --show-error --fail --output /dev/null --write-out '%{http_code}' --max-time 3 ${shellQuote(url.href)}`;
+        },
         executeSandboxExecCommand: (name, command, timeout) =>
           executeSandboxExecCommand(
             name,

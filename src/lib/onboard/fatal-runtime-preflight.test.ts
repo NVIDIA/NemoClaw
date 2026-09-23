@@ -394,7 +394,6 @@ describe("report-backed runtime readiness (#7411)", () => {
       dockerCredsStore: "desktop",
       dockerCredsStorePath: "~/.docker/config.json",
     };
-
     expect(() =>
       assertOnboardHostReadiness(host, null, {
         explicitlyOptedOutGpuPassthrough: false,

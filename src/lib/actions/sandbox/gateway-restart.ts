@@ -87,6 +87,7 @@ export type GatewayRestartDeps = {
   getSessionAgent: typeof agentRuntime.getSessionAgent;
   getSandbox: SandboxAgentLookup;
   resolveSandboxDashboardPort: (sandboxName: string) => number;
+  buildOpenClawReadinessProbeCommand: (sandboxName: string) => string;
   executeSandboxExecCommand: SandboxExec;
   waitForSandboxControlPlaneReady: (sandboxName: string) => Promise<boolean>;
   waitForRecoveredSandboxGateway: (
@@ -96,6 +97,7 @@ export type GatewayRestartDeps = {
       timeoutSeconds?: number;
       initialManagedHealthPassed?: boolean;
       managedProbeImpl?: (sandboxName: string) => boolean | null;
+      probeImpl?: (sandboxName: string) => Promise<boolean | null>;
     },
   ) => Promise<boolean>;
   ensureSandboxPortForward: (sandboxName: string) => boolean | Promise<boolean>;
@@ -469,9 +471,23 @@ export async function restartSandboxGatewayWithDeps(
       quiet,
       initialManagedHealthPassed: false,
       managedProbeImpl: () => null,
+      ...(agentName === "openclaw"
+        ? {
+            probeImpl: async (name: string) => {
+              // Liveness stays green while OpenClaw refuses work during restart.
+              // Readiness checks the same admission fence as user requests.
+              const result = await deps.executeSandboxExecCommand(
+                name,
+                deps.buildOpenClawReadinessProbeCommand(name),
+                10_000,
+              );
+              return result === null ? null : result.status === 0 && result.stdout.trim() === "200";
+            },
+          }
+        : {}),
     }))
   ) {
-    const detail = "gateway process restarted but health did not pass before timeout";
+    const detail = `gateway process restarted but ${agentName === "openclaw" ? "readiness" : "health"} did not pass before timeout`;
     printGatewayRestartFailure(sandboxName, "health timeout", detail);
     await deps.printGatewayWedgeDiagnostics(sandboxName, deps.executeSandboxExecCommand);
     return { ok: false, failureLayer: "health timeout", detail };

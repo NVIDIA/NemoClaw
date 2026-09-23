@@ -4,9 +4,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { GATEWAY_RESTART_MARKERS as MARKERS } from "../../agent/gateway-restart-markers";
 import { classifyGatewayRestartFailure } from "./gateway-restart";
-import { restartSandboxGateway } from "./process-recovery";
+import { restartSandboxGateway, waitForRecoveredSandboxGateway } from "./process-recovery";
 
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => {
+  vi.restoreAllMocks();
+  vi.unstubAllEnvs();
+});
 
 describe("legacy recovery failure classification", () => {
   it.each([
@@ -103,6 +106,36 @@ describe("restartSandboxGateway native lifecycle", () => {
     );
   });
 
+  it.each([200, 302, 401, 503])(
+    "requires OpenClaw readiness after restart (HTTP %s)",
+    async (status) => {
+      silenceConsole();
+      vi.stubEnv("NEMOCLAW_GATEWAY_RECOVERY_SETTLE_SECONDS", "0");
+      const deps = baseDeps({
+        executeSandboxExecCommand: vi.fn(async (_name: string, command: string) => ({
+          status: 0,
+          stdout: command.includes("/readyz") ? String(status) : "",
+          stderr: "",
+        })),
+        waitForRecoveredSandboxGateway: (
+          name: string,
+          options: Parameters<typeof waitForRecoveredSandboxGateway>[1],
+        ) =>
+          waitForRecoveredSandboxGateway(name, {
+            ...options,
+            probeImpl: options?.probeImpl ?? (async () => true),
+            timeoutSeconds: 0,
+            sleepImpl: () => undefined,
+          }),
+      });
+
+      const result = await restartSandboxGateway("alpha", { quiet: true, deps });
+
+      expect(result.ok).toBe(status === 200);
+      expect(deps.ensureSandboxPortForward).toHaveBeenCalledTimes(status === 200 ? 1 : 0);
+    },
+  );
+
   it("requires health proof when Hermes restart closes the exec relay before status", async () => {
     silenceConsole();
     const deps = baseDeps({
@@ -198,6 +231,7 @@ describe("restartSandboxGateway native lifecycle", () => {
     expect(deps.waitForRecoveredSandboxGateway).toHaveBeenCalledWith("alpha", {
       initialManagedHealthPassed: false,
       managedProbeImpl: expect.any(Function),
+      probeImpl: expect.any(Function),
       quiet: true,
     });
     expect(deps.printGatewayWedgeDiagnostics).toHaveBeenCalled();
