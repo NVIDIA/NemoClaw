@@ -25,6 +25,8 @@ and acknowledged reload guarantees.
 from __future__ import annotations
 
 import argparse
+import contextlib
+import fcntl
 import http.client
 import importlib.util
 import ipaddress
@@ -55,6 +57,11 @@ ROOT_LIFECYCLE_MARKER = "/run/nemoclaw/hermes-root-lifecycle"
 GATEWAY_PUBLIC_PORT_PATH = "/run/nemoclaw/hermes-api-port"
 SERVICE_MANAGER_PATH = b"/usr/local/bin/nemoclaw-start"
 RELOAD_TIMEOUT_SECONDS = 300
+RECONCILE_STABILITY_SECONDS = 1
+RECONCILE_FINALITY_CAPABILITY_VERSION = 1
+MCP_TRANSACTION_LOCK_PATH = "/etc/nemoclaw/hermes-mcp-transaction.lock"
+MCP_TRANSACTION_LOCK_EXPECTED_UID = 0
+MCP_TRANSACTION_LOCK_EXPECTED_GID = 0
 SERVER_NAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_-]{0,63}$")
 MCP_DNS_LABEL_RE = re.compile(
     r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$"
@@ -613,16 +620,15 @@ def _validate_inspection_payload(payload: dict[str, object]) -> None:
             raise ValueError("Hermes MCP inspection expected config is not canonical")
 
 
-def inspect_managed_config(payload: dict[str, object]) -> dict[str, object]:
+def inspect_managed_config(
+    payload: dict[str, object], require_applied_hash: bool = False
+) -> dict[str, object]:
     _validate_inspection_payload(payload)
     privileged = os.geteuid() == 0
     guard = _load_guard()
-    hash_path = (
-        STRICT_HASH_PATH if privileged else os.path.join(HERMES_DIR, ".config-hash")
-    )
-    compatibility_hash_path = (
-        os.path.join(HERMES_DIR, ".config-hash") if privileged else None
-    )
+    compatibility_hash = os.path.join(HERMES_DIR, ".config-hash")
+    hash_path = STRICT_HASH_PATH if privileged or require_applied_hash else compatibility_hash
+    compatibility_hash_path = compatibility_hash if privileged or require_applied_hash else None
     # TOCTOU contract: this call reads config, env, and every hash anchor into
     # one authenticated snapshot. After comparing the returned config bytes to
     # the command's requested entry, `assert_mcp_integrity_snapshot_current` reopens every path and
@@ -655,6 +661,92 @@ def inspect_managed_config(payload: dict[str, object]) -> dict[str, object]:
         raise RuntimeError("Hermes MCP config does not match the requested native entry")
     guard.assert_mcp_integrity_snapshot_current(integrity)
     return {"ok": True, "state": "matched"}
+
+
+@contextlib.contextmanager
+def _mcp_transaction_lock():
+    """Serialize mutation and finality proof across independent exec relays."""
+    no_follow = getattr(os, "O_NOFOLLOW", 0)
+    if not no_follow:
+        raise RuntimeError("Hermes MCP transaction lock requires O_NOFOLLOW")
+    descriptor = os.open(
+        MCP_TRANSACTION_LOCK_PATH,
+        os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | no_follow,
+    )
+    try:
+        parent = os.lstat(os.path.dirname(MCP_TRANSACTION_LOCK_PATH))
+        before = os.fstat(descriptor)
+        if (
+            not stat.S_ISDIR(parent.st_mode)
+            or parent.st_uid != MCP_TRANSACTION_LOCK_EXPECTED_UID
+            or parent.st_gid != MCP_TRANSACTION_LOCK_EXPECTED_GID
+            or stat.S_IMODE(parent.st_mode) != 0o755
+            or not stat.S_ISREG(before.st_mode)
+            or before.st_nlink != 1
+            or before.st_uid != MCP_TRANSACTION_LOCK_EXPECTED_UID
+            or before.st_gid != MCP_TRANSACTION_LOCK_EXPECTED_GID
+            or stat.S_IMODE(before.st_mode) != 0o444
+        ):
+            raise RuntimeError("Hermes MCP transaction lock is unsafe")
+        fcntl.flock(descriptor, fcntl.LOCK_EX)
+        after = os.fstat(descriptor)
+        pathname = os.lstat(MCP_TRANSACTION_LOCK_PATH)
+        if (
+            (after.st_dev, after.st_ino) != (before.st_dev, before.st_ino)
+            or (pathname.st_dev, pathname.st_ino) != (after.st_dev, after.st_ino)
+        ):
+            raise RuntimeError("Hermes MCP transaction lock changed during acquisition")
+        yield
+    finally:
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_UN)
+        finally:
+            os.close(descriptor)
+
+
+def _reconcile_managed_config_locked(payload: dict[str, object]) -> dict[str, object]:
+    """Prove one committed or absent config without changing gateway state."""
+    _validate_inspection_payload(payload)
+    present = payload["present"]
+    absent = payload["absent"]
+    if not isinstance(present, dict) or not isinstance(absent, list):
+        raise ValueError("Hermes MCP reconciliation payload has invalid shape")
+    if (len(present) == 1) == (len(absent) == 1):
+        raise ValueError(
+            "Hermes MCP reconciliation requires one present or absent server"
+        )
+    if os.geteuid() != 0:
+        _assert_non_root_lifecycle_identity()
+    _configure_gateway_public_port()
+    before = _gateway_identity()
+    if before is None or not _gateway_has_managed_parent(before[0]):
+        raise RuntimeError(GATEWAY_NOT_READY_MESSAGE)
+
+    # Inspect on both sides of the stability interval after the managed health
+    # boundary has settled. Each inspection binds the config bytes to both the
+    # current compatibility hash and the applied strict hash.
+    healthy, phase = _gateway_health_phase()
+    if not healthy:
+        raise RuntimeError(f"Hermes gateway reconciliation stopped at {phase}")
+    inspect_managed_config(payload, require_applied_hash=True)
+    time.sleep(RECONCILE_STABILITY_SECONDS)
+    healthy, phase = _gateway_health_phase()
+    after = _gateway_identity()
+    if not healthy:
+        raise RuntimeError(f"Hermes gateway reconciliation stopped at {phase}")
+    inspect_managed_config(payload, require_applied_hash=True)
+    if after != before or after is None or not _gateway_has_managed_parent(after[0]):
+        raise RuntimeError("Hermes gateway identity changed during MCP reconciliation")
+    return {
+        "ok": True,
+        "state": "committed" if len(present) == 1 else "absent",
+    }
+
+
+def reconcile_managed_config(payload: dict[str, object]) -> dict[str, object]:
+    """Prove finality only after every earlier MCP transaction is terminal."""
+    with _mcp_transaction_lock():
+        return _reconcile_managed_config_locked(payload)
 
 
 def _mutate(
@@ -1496,7 +1588,14 @@ def probe() -> dict[str, object]:
     if os.geteuid() != 0:
         _assert_non_root_lifecycle_identity()
     _configure_gateway_public_port()
-    return {"ok": True}
+    with _mcp_transaction_lock():
+        pass
+    return {
+        "ok": True,
+        "capabilities": {
+            "reconcile_finality": RECONCILE_FINALITY_CAPABILITY_VERSION
+        },
+    }
 
 
 def execute(action: str, payload: dict[str, object]) -> dict[str, object]:
@@ -1504,12 +1603,15 @@ def execute(action: str, payload: dict[str, object]) -> dict[str, object]:
     if os.geteuid() != 0:
         _assert_non_root_lifecycle_identity()
     _configure_gateway_public_port()
-    return apply_transaction_and_reload(action, payload)
+    with _mcp_transaction_lock():
+        return apply_transaction_and_reload(action, payload)
 
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("action", choices=("add", "remove", "inspect", "probe"))
+    parser.add_argument(
+        "action", choices=("add", "remove", "inspect", "probe", "reconcile")
+    )
     parser.add_argument("--payload")
     args = parser.parse_args()
     payload: dict[str, object] | None = None
@@ -1518,11 +1620,17 @@ def main() -> int:
             if args.payload is not None:
                 raise ValueError("Hermes MCP lifecycle probe does not accept --payload")
             result = probe()
-        elif args.action == "inspect":
+        elif args.action in {"inspect", "reconcile"}:
             if args.payload is None:
-                raise ValueError("Hermes MCP inspection requires --payload")
+                raise ValueError(
+                    f"Hermes MCP {args.action} requires --payload"
+                )
             payload = _parse_payload(args.payload)
-            result = inspect_managed_config(payload)
+            result = (
+                reconcile_managed_config(payload)
+                if args.action == "reconcile"
+                else inspect_managed_config(payload)
+            )
         elif args.payload is None:
             raise ValueError("Hermes MCP mutation requires --payload")
         else:

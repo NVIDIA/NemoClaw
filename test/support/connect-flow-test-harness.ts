@@ -15,6 +15,7 @@ import type {
 import type { WslDetectionOptions } from "../../src/lib/platform";
 import type { ConfigObject } from "../../src/lib/security/credential-filter";
 import type { SandboxEntry } from "../../src/lib/state/registry";
+import { fingerprintOpenShellSandboxId } from "../../src/lib/adapters/openshell/sandbox-identity";
 
 type ConnectSandbox = (typeof import("../../src/lib/actions/sandbox/connect"))["connectSandbox"];
 type WaitForSandboxReadyOrExit =
@@ -536,7 +537,10 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
       };
     }
     if (argv[0] === "sandbox" && argv[1] === "get") {
-      return { status: 0, output: `Phase: ${options.sandboxGetPhase ?? "Ready"}\n` };
+      return {
+        status: 0,
+        output: `Phase: ${options.sandboxGetPhase ?? (options.registryEntry?.stopped === true ? "Stopped" : "Ready")}\n`,
+      };
     }
     if (argv[0] === "sandbox" && argv[1] === "list") {
       return {
@@ -578,6 +582,40 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
   const captureOpenshellSpy = vi
     .spyOn(runtime, "captureOpenshell")
     .mockImplementation(captureOpenshellImplementation);
+  const openShellSdk = requireDist("../../src/lib/adapters/openshell/sdk.js");
+  vi.spyOn(openShellSdk, "connectManagedOpenShellSdk").mockResolvedValue({
+    raw: {
+      startSandbox: async ({ name }: { name: string }) => {
+        const invokeCapture = runtime.captureOpenshell as (args: string[]) => {
+          status?: number | null;
+        };
+        const completion = invokeCapture([
+          "sandbox",
+          "start",
+          "-g",
+          options.registryEntry?.gatewayName ?? "nemoclaw",
+          name,
+        ]) as { status?: number | null };
+        if (completion.status !== 0) {
+          throw Object.assign(new Error("OpenShell start failed."), {
+            code: String(completion.status ?? "unknown"),
+          });
+        }
+        return { sandbox: { metadata: { id: "alpha-sandbox-id" } } };
+      },
+      stopSandbox: async () => ({ sandbox: { metadata: { id: "alpha-sandbox-id" } } }),
+    },
+    sandbox: {
+      get: async () => ({
+        id: "alpha-sandbox-id",
+        phase: String(
+          options.sandboxGetPhase ??
+            (options.registryEntry?.stopped === true ? "Stopped" : "Ready"),
+        ).toLowerCase(),
+      }),
+      waitReady: async () => ({ id: "alpha-sandbox-id", phase: "ready" }),
+    },
+  });
   const captureResolvedOpenshellSpy = vi
     .spyOn(runtime, "captureResolvedOpenshell")
     .mockImplementation(captureOpenshellImplementation);
@@ -677,7 +715,7 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
     lifecycleLiveIdentityFingerprint:
       portableDisposition.kind === "hermes"
         ? portableDisposition.liveIdentityFingerprint
-        : undefined,
+        : fingerprintOpenShellSandboxId("alpha-sandbox-id")!,
     gpuEnabled: false,
     ...(portableDisposition.kind === "hermes"
       ? {

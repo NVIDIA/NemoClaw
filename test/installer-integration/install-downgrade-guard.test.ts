@@ -228,6 +228,18 @@ describe("public installer downgrade guard", () => {
     expect(fs.existsSync(payloadMarker)).toBe(false);
   });
 
+  it("keeps the installed CLI when force-fresh would implicitly downgrade lkg", () => {
+    const { result, payloadMarker } = runInstall("0.0.118", "0.0.109", {
+      NEMOCLAW_FORCE_FRESH_INSTALL: "1",
+    });
+
+    expect(result.status).toBe(1);
+    expect(`${result.stdout}${result.stderr}`).toContain(
+      "Refusing to replace installed NemoClaw v0.0.118 with maintained lkg v0.0.109.",
+    );
+    expect(fs.existsSync(payloadMarker)).toBe(false);
+  });
+
   it.each([
     ["Hermes", "hermes"],
     ["Deep Agents", "langchain-deepagents-code"],

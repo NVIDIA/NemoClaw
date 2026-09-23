@@ -8,6 +8,8 @@ import { isDeepStrictEqual } from "node:util";
 import { type OpenRegularFile, openRegularFileNoFollow } from "../../adapters/fs/regular-file";
 import { getAgentSandboxBaseImageEnvVar } from "../../agent/base-image-env";
 import { getBuildIdentity } from "../../core/version";
+import { CORPORATE_CA_EXPLICIT_ENV } from "../corporate-ca-policy";
+import { CorporateCaValidationError } from "../corporate-ca-types";
 import {
   ManagedImageCatalogUnavailableError,
   normalizeManagedImageRelease,
@@ -256,6 +258,14 @@ function diagnostic(error: unknown): string {
   return "managed image catalog resolution failed";
 }
 
+function rejectedCorporateCa(error: unknown): CorporateCaValidationError | null {
+  if (error instanceof CorporateCaValidationError) return error;
+  if (error instanceof Error && error.cause instanceof CorporateCaValidationError) {
+    return error.cause;
+  }
+  return null;
+}
+
 function unavailableResult(
   input: PrepareSandboxWorkloadSourceInput,
   message: string,
@@ -499,13 +509,24 @@ export async function prepareSandboxWorkloadSource(
         ? readExactManagedImageCatalog(input.catalogPath)
         : await (
             dependencies.resolveCatalog ??
-            ((options) => resolveManagedImageCatalogFromGhcr(options))
+            ((options) =>
+              resolveManagedImageCatalogFromGhcr({
+                ...options,
+                ...(input.environment === undefined ? {} : { environment: input.environment }),
+              }))
           )({
             release,
             platform,
             ...(input.catalogRevision ? { revision: input.catalogRevision } : {}),
           });
   } catch (error) {
+    const corporateCaError = rejectedCorporateCa(error);
+    if (corporateCaError) {
+      throw new SandboxWorkloadPreparationError(
+        `${CORPORATE_CA_EXPLICIT_ENV} was rejected: ${corporateCaError.reason}`,
+        { cause: error },
+      );
+    }
     if (!(error instanceof ManagedImageCatalogUnavailableError)) {
       throw new SandboxWorkloadPreparationError(
         `managed image catalog '${release}' failed validation`,

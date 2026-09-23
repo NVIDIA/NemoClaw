@@ -88,7 +88,7 @@ describe("E2E workflow plan", () => {
     ).toEqual({
       catalogue: E2E_TARGET_CATALOGUE.length,
       "typed-registry": 3,
-      "shared-e2e": 2,
+      "shared-e2e": 1,
       "retained-workflow": 14,
       staging: 1,
     });
@@ -141,9 +141,14 @@ describe("E2E workflow plan", () => {
       "ubuntu-repo-cloud-openclaw",
     ]);
     expect(plan.testMatrix).toEqual([]);
-    expect(catalogueIds).toHaveLength(46);
+    expect(catalogueIds).toHaveLength(45);
     expect(catalogueIds).not.toEqual(
-      expect.arrayContaining(["bootstrap-install-smoke", "rebuild-hermes", "rebuild-openclaw"]),
+      expect.arrayContaining([
+        "bootstrap-install-smoke",
+        "gpu-e2e",
+        "rebuild-hermes",
+        "rebuild-openclaw",
+      ]),
     );
     expect(catalogueIds.some((id) => id.startsWith("openshell-gateway-upgrade-"))).toBe(false);
     expect(selectedWorkflowJobs(plan)).toEqual([
@@ -662,6 +667,19 @@ describe("E2E workflow plan", () => {
     expect(selectedWorkflowJobs(plan)).toEqual(["catalogue-standard", "jetson-nvmap-gpu"]);
   });
 
+  it.each([
+    "scripts/install.sh",
+    "src/lib/actions/global.ts",
+    "src/lib/actions/maintenance.ts",
+    "src/lib/actions/sandbox/forward-recovery.ts",
+    "src/lib/actions/upgrade-sandboxes.ts",
+  ])("selects both gateway-upgrade fixtures when %s changes", (changedFile) => {
+    expect(catalogueTargetsForChangedFiles([changedFile]).map((target) => target.id)).toEqual([
+      "openshell-gateway-upgrade-v0-0-89-x86-64",
+      "openshell-gateway-upgrade-v0-0-123-x86-64",
+    ]);
+  });
+
   it("selects sandbox operations when its gateway client changes", () => {
     const changedFile = "test/e2e/fixtures/clients/gateway.ts";
     const plan = buildE2eWorkflowPlan({}, { changedFiles: [changedFile] });
@@ -777,6 +795,9 @@ describe("E2E workflow plan", () => {
 
   it.each([
     "nemoclaw-blueprint/router/pool-config.yaml",
+    "src/lib/actions/sandbox/destroy-preflight.ts",
+    "src/lib/onboard/model-router-process.ts",
+    "src/lib/onboard/model-router.ts",
     "test/e2e/live/model-router-provider-routed-inference-helpers.ts",
   ])("selects the Model Router target when %s changes", (changedFile) => {
     expect(catalogueTargetsForChangedFiles([changedFile]).map((target) => target.id)).toContain(

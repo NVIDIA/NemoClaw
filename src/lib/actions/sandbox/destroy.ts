@@ -33,8 +33,10 @@ import {
   CURRENT_RUNTIME_PROVIDER_BUNDLES,
   normalizeRuntimeProviderIdentity,
   type RuntimeProviderBundleRegistry,
+  type RuntimeProviderChannelStopTransport,
   type RuntimeProviderWorkloadCleanupResult,
   requireRuntimeProviderDestructiveCleanupAuthority,
+  resolveRuntimeProviderBundle,
 } from "../../onboard/runtime-provider/access";
 import {
   emitProviderDetachResidualHint,
@@ -202,6 +204,7 @@ export type CleanupSandboxServicesDeps = {
   listSandboxes?: typeof registry.listSandboxes;
   stopAll?: (opts: {
     sandboxName: string;
+    channelStopTransport?: RuntimeProviderChannelStopTransport;
     cleanupOllamaModels?: boolean;
     unloadOllamaModels?: () => OllamaUnloadResult | void;
   }) => OllamaUnloadResult | void;
@@ -273,7 +276,13 @@ function reportFinalGatewayLeftRunning(
 
 export async function cleanupSandboxServices(
   sandboxName: string,
-  { stopHostServices = false }: { stopHostServices?: boolean } = {},
+  {
+    stopHostServices = false,
+    channelStopTransport,
+  }: {
+    stopHostServices?: boolean;
+    channelStopTransport?: RuntimeProviderChannelStopTransport;
+  } = {},
   deps: CleanupSandboxServicesDeps = {},
 ): Promise<void> {
   // Source boundary: this exported helper can be called independently of CLI
@@ -290,12 +299,14 @@ export async function cleanupSandboxServices(
     deps.stopAll ??
     ((opts: {
       sandboxName: string;
+      channelStopTransport?: RuntimeProviderChannelStopTransport;
       cleanupOllamaModels?: boolean;
       unloadOllamaModels?: () => OllamaUnloadResult | void;
     }) => {
       const services = require("../../tunnel/services") as {
         stopAll: (opts: {
           sandboxName: string;
+          channelStopTransport?: RuntimeProviderChannelStopTransport;
           cleanupOllamaModels?: boolean;
           unloadOllamaModels?: () => OllamaUnloadResult | void;
         }) => OllamaUnloadResult | void;
@@ -408,6 +419,7 @@ export async function cleanupSandboxServices(
         );
         return stopAll({
           sandboxName: validatedSandboxName,
+          ...(channelStopTransport ? { channelStopTransport } : {}),
           cleanupOllamaModels,
           unloadOllamaModels: () => unloadOllamaModels(),
         });
@@ -721,6 +733,14 @@ async function destroySandboxUnlocked(
     destroyGatewayName,
     registeredSandbox?.openshellDriver,
   );
+  const destroyRuntimeProvider = resolveRuntimeProviderBundle(
+    destroyRuntimeProviderId,
+    CURRENT_RUNTIME_PROVIDER_BUNDLES,
+  );
+  const destroyChannelStopTransport =
+    destroyRuntimeProvider?.lifecycle.supported === true
+      ? destroyRuntimeProvider.lifecycle.channelStopTransport
+      : undefined;
   let portableContainerAuthority: ReturnType<typeof preparePortableDemoSandboxDestroyAuthority>;
   try {
     portableContainerAuthority = preparePortableDemoSandboxDestroyAuthority(sandboxName, () => {
@@ -1083,6 +1103,9 @@ async function destroySandboxUnlocked(
       sandboxName,
       {
         stopHostServices: shouldStopHostServices,
+        ...(destroyChannelStopTransport
+          ? { channelStopTransport: destroyChannelStopTransport }
+          : {}),
       },
       {
         runOpenshell: cleanupRunOpenshell,

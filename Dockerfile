@@ -63,53 +63,7 @@ COPY tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/mcp-tool-discovery
 COPY tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/mcp-tool-discovery/mcp-tool-discovery.bundle /opt/mcp-tool-discovery-runtime/dist/mcp-tool-discovery.mjs
 
 FROM scratch AS managed-startup-runtime-builder
-COPY tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/managed-startup-image-runtime.bundle /out/managed-startup-image-runtime.cjs
-
-# Compile the target-platform bootstrap as a freestanding static ELF.
-# Its reviewed Bash body runs only after the native boundary scrubs process control.
-FROM node:24.18.1-trixie@sha256:dfa43abae25030f5456007944f725379d1f5be4bb723bd501ac39ac72ffa5474 AS managed-bootstrap-entrypoint-builder
-ARG TARGETARCH
-WORKDIR /opt/nemoclaw-managed-bootstrap-build
-COPY scripts/managed-bootstrap-entrypoint.c ./
-COPY scripts/managed-bootstrap-trampoline.sh ./
-# hadolint ignore=DL4006
-RUN set -eu; \
-    target_arch="${TARGETARCH:-$(dpkg --print-architecture)}"; \
-    case "$target_arch" in \
-        amd64) expected_machine='Advanced Micro Devices X86-64' ;; \
-        arm64) expected_machine='AArch64' ;; \
-        *) echo "ERROR: unsupported managed bootstrap target architecture: $target_arch" >&2; exit 1 ;; \
-    esac; \
-    install -d -o root -g root -m 0755 /out/usr/local/bin /out/usr/local/lib/nemoclaw; \
-    gcc \
-        -std=c11 -O2 -Wall -Wextra -Werror \
-        -DNEMOCLAW_MANAGED_BOOTSTRAP_FREESTANDING=1 \
-        -ffreestanding -fno-asynchronous-unwind-tables -fno-builtin -fno-ident \
-        -fno-pie -fno-stack-protector -fno-unwind-tables \
-        -no-pie -nostdlib -static \
-        -Wl,--build-id=none -Wl,-z,noexecstack \
-        managed-bootstrap-entrypoint.c -o /tmp/nemoclaw-managed-bootstrap; \
-    install -o root -g root -m 0755 \
-        /tmp/nemoclaw-managed-bootstrap /out/usr/local/bin/nemoclaw-managed-bootstrap; \
-    install -o root -g root -m 0444 \
-        managed-bootstrap-trampoline.sh \
-        /out/usr/local/lib/nemoclaw/managed-bootstrap-trampoline.sh; \
-    binary=/out/usr/local/bin/nemoclaw-managed-bootstrap; \
-    body=/out/usr/local/lib/nemoclaw/managed-bootstrap-trampoline.sh; \
-    test -f "$binary" && test ! -L "$binary"; \
-    test -f "$body" && test ! -L "$body"; \
-    test "$(stat -c '%u:%g:%a' "$binary")" = '0:0:755'; \
-    test "$(stat -c '%u:%g:%a' "$body")" = '0:0:444'; \
-    /bin/bash -n "$body"; \
-    test "$(readelf -hW "$binary" | sed -n 's/^[[:space:]]*Class:[[:space:]]*//p')" = 'ELF64'; \
-    test "$(readelf -hW "$binary" | sed -n 's/^[[:space:]]*Type:[[:space:]]*//p')" = 'EXEC (Executable file)'; \
-    test "$(readelf -hW "$binary" | sed -n 's/^[[:space:]]*Machine:[[:space:]]*//p')" = "$expected_machine"; \
-    program_headers="$(readelf -lW "$binary")"; \
-    case "$program_headers" in *INTERP*) echo 'ERROR: managed bootstrap ELF has an interpreter' >&2; exit 1 ;; esac; \
-    readelf -dW "$binary" | grep -Fq 'There is no dynamic section'; \
-    test -z "$(nm --undefined-only "$binary")"; \
-    strings "$binary" | grep -Fq '/usr/local/bin/nemoclaw-managed-bootstrap'; \
-    strings "$binary" | grep -Fq '/usr/local/lib/nemoclaw/managed-bootstrap-trampoline.sh'
+COPY tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/managed-startup-direct-image-runtime.bundle /out/managed-startup-image-runtime.cjs
 
 # Fetch immutable reviewed archives outside RUN instructions. The protected
 # GPU rebuild imports these checksum-addressed source records from the
@@ -704,6 +658,7 @@ FROM scratch AS openclaw-patch-payload
 COPY scripts/patch-openclaw-tool-catalog.mts /usr/local/lib/nemoclaw/patch-openclaw-tool-catalog.mts
 COPY scripts/lib/patch-openclaw-npm12-pack-json.mts /usr/local/lib/nemoclaw/npm12.mts
 COPY scripts/patch-openclaw-chat-send.mts /usr/local/lib/nemoclaw/patch-openclaw-chat-send.mts
+COPY scripts/lib/patch-openclaw-container-restart.mts /usr/local/lib/nemoclaw/patch-openclaw-container-restart.mts
 COPY scripts/patch-openclaw-mcp-npx.mts /usr/local/lib/nemoclaw/patch-openclaw-mcp-npx.mts
 COPY scripts/patch-openclaw-mcp-reliability.mts /usr/local/lib/nemoclaw/patch-openclaw-mcp-reliability.mts
 COPY scripts/patch-openclaw-mcp-tools-list-timeout.mts /usr/local/lib/nemoclaw/patch-openclaw-mcp-tools-list-timeout.mts
@@ -728,8 +683,6 @@ COPY scripts/lib/refresh-openclaw-wechat-placeholder.py /usr/local/lib/nemoclaw/
 COPY scripts/openclaw-config-guard.py /usr/local/lib/nemoclaw/openclaw-config-guard.py
 COPY scripts/nemoclaw-start.sh /usr/local/bin/nemoclaw-start
 COPY scripts/managed-startup-hold.sh /usr/local/bin/nemoclaw-managed-startup-hold
-COPY --from=managed-bootstrap-entrypoint-builder /out/usr/local/bin/nemoclaw-managed-bootstrap /usr/local/bin/nemoclaw-managed-bootstrap
-COPY --from=managed-bootstrap-entrypoint-builder /out/usr/local/lib/nemoclaw/managed-bootstrap-trampoline.sh /usr/local/lib/nemoclaw/managed-bootstrap-trampoline.sh
 COPY nemoclaw-blueprint/scripts/*.js /usr/local/lib/nemoclaw/preloads/
 COPY --from=runtime-preload-builder /opt/nemoclaw-root/dist/lib/messaging/channels/ /usr/local/lib/nemoclaw/preloads-compiled-channels/
 COPY scripts/codex-acp-wrapper.sh /usr/local/bin/nemoclaw-codex-acp
@@ -941,6 +894,7 @@ COPY --from=openclaw-patch-payload / /
 RUN chmod 755 /usr/local/lib/nemoclaw/patch-openclaw-tool-catalog.mts \
         /usr/local/lib/nemoclaw/npm12.mts \
         /usr/local/lib/nemoclaw/patch-openclaw-chat-send.mts \
+        /usr/local/lib/nemoclaw/patch-openclaw-container-restart.mts \
         /usr/local/lib/nemoclaw/patch-openclaw-mcp-npx.mts \
         /usr/local/lib/nemoclaw/patch-openclaw-mcp-reliability.mts \
         /usr/local/lib/nemoclaw/patch-openclaw-mcp-tools-list-timeout.mts \
@@ -1511,20 +1465,17 @@ RUN set -eu; \
     if grep -REq --include='*.js' 'DEFAULT_PREAUTH_HANDSHAKE_TIMEOUT_MS = (1e4|15e3)' "$OC_DIST"; then echo "ERROR: Patch 5 left a short handshake-timeout constant" >&2; exit 1; fi; \
     if ! grep -REq --include='*.js' 'DEFAULT_PREAUTH_HANDSHAKE_TIMEOUT_MS = 6e4' "$OC_DIST"; then echo "ERROR: Patch 5 did not find patched 6e4 constant" >&2; exit 1; fi
 
-# Patch OpenClaw chat.send gateway behavior for OpenClaw 2026.9.1.
-#
-# OpenClaw can accept rapid TUI/WebChat chat.send requests and then emit a
-# terminal chat event with state="final" but no assistant message for the later
-# submitted run. That makes clients treat the turn as complete even though no
-# visible reply was delivered. The shim also correlates real agent run IDs back
-# to the submitted chat.send run ID when OpenClaw starts an internal run with a
-# different ID, carries that submitted ID through queued follow-up turns, and
-# adds the submitted run ID as the transcript idempotency key.
-#
-# Removal criteria: drop when upstream OpenClaw fixes openclaw/openclaw#70164
-# and openclaw/openclaw#50298, or when NemoClaw no longer ships an affected OpenClaw.
+# Patch OpenClaw chat.send gateway behavior: preserve lineage and suppress empty finals.
+# Remove when upstream openclaw/openclaw#70164 and #50298 are fixed,
+# or when NemoClaw no longer ships an affected OpenClaw version.
 # hadolint ignore=DL3059
 RUN node /usr/local/lib/nemoclaw/patch-openclaw-chat-send.mts \
+    /usr/local/lib/node_modules/openclaw/dist
+
+# Native OpenClaw restart must reload updated ESM plugins in OpenShell sandboxes.
+# Remove this bridge when upstream container restart refreshes the module graph.
+# hadolint ignore=DL3059
+RUN node /usr/local/lib/nemoclaw/patch-openclaw-container-restart.mts \
     /usr/local/lib/node_modules/openclaw/dist
 
 # Keep OpenClaw 2026.9.1 scope-upgrade approvals inside the gateway's
@@ -1536,8 +1487,8 @@ RUN node /usr/local/lib/nemoclaw/patch-openclaw-chat-send.mts \
 # operator.pairing; the canonical pairing function repeats identity, role, and
 # bounded-scope validation after acquiring its state lock.
 #
-# Removal criteria: drop when upstream OpenClaw can approve the same bounded
-# self-upgrade through the gateway using only operator.pairing.
+# Removal criteria: drop when upstream OpenClaw supports pairing-only
+# self-upgrade and `devices approve` exits after Approved.
 # hadolint ignore=DL3059
 RUN node /usr/local/lib/nemoclaw/patch-openclaw-device-self-approval.mts \
     /usr/local/lib/node_modules/openclaw/dist \
@@ -2048,17 +1999,10 @@ RUN managed_runtime_assertion_failed() { \
     && { chown root:root /usr/local/lib/nemoclaw/managed-startup-image-runtime.cjs 2>/dev/null || managed_runtime_assertion_failed owner-root-root /usr/local/lib/nemoclaw/managed-startup-image-runtime.cjs; } \
     && { chmod 0444 /usr/local/lib/nemoclaw/managed-startup-image-runtime.cjs 2>/dev/null || managed_runtime_assertion_failed mode-0444 /usr/local/lib/nemoclaw/managed-startup-image-runtime.cjs; } \
     && { test "$(stat -c '%u:%g:%a' /usr/local/lib/nemoclaw/managed-startup-image-runtime.cjs 2>/dev/null)" = '0:0:444' || managed_runtime_assertion_failed metadata-0:0:444 /usr/local/lib/nemoclaw/managed-startup-image-runtime.cjs; } \
-    && test -f /usr/local/bin/nemoclaw-managed-bootstrap \
-    && test ! -L /usr/local/bin/nemoclaw-managed-bootstrap \
-    && test "$(stat -c '%u:%g:%a' /usr/local/bin/nemoclaw-managed-bootstrap)" = '0:0:755' \
-    && test -f /usr/local/lib/nemoclaw/managed-bootstrap-trampoline.sh \
-    && test ! -L /usr/local/lib/nemoclaw/managed-bootstrap-trampoline.sh \
-    && test "$(stat -c '%u:%g:%a' /usr/local/lib/nemoclaw/managed-bootstrap-trampoline.sh)" = '0:0:444' \
     && install -d -o root -g root -m 0755 /run/nemoclaw
 
 # Copy startup script and shared sandbox initialisation library.
 RUN chmod 755 /usr/local/bin/nemoclaw-start /usr/local/bin/nemoclaw-codex-acp \
-        /usr/local/bin/nemoclaw-managed-bootstrap \
         /usr/local/bin/nemoclaw-managed-startup-hold \
         /usr/local/lib/nemoclaw/sandbox-init.sh \
         /scripts/generate-openclaw-config.mts \
@@ -2482,10 +2426,6 @@ RUN check_metadata() { \
     && check_metadata /opt/nemoclaw/openclaw.plugin.json 'root:root:644' \
     && check_metadata /usr/local/lib/nemoclaw/patch-openclaw-tool-catalog.mts 'root:root:755' \
     && check_metadata /usr/local/lib/nemoclaw/npm12.mts 'root:root:755' \
-    && test ! -L /usr/local/bin/nemoclaw-managed-bootstrap \
-    && check_metadata /usr/local/bin/nemoclaw-managed-bootstrap 'root:root:755' \
-    && test ! -L /usr/local/lib/nemoclaw/managed-bootstrap-trampoline.sh \
-    && check_metadata /usr/local/lib/nemoclaw/managed-bootstrap-trampoline.sh 'root:root:444' \
     && check_metadata /usr/local/lib/nemoclaw/preloads/sandbox-safety-net.js 'root:root:644'
 
 # Health check: poll the gateway's /health endpoint so Docker (and Compose)

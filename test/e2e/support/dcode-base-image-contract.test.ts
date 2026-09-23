@@ -80,7 +80,7 @@ describe("Deep Agents Code E2E base contract", () => {
   });
 
   it("proves both imports from the selected platform digest in a locked-down container (#9386)", () => {
-    const runDocker = vi.fn(() => "nemoclaw-dcode-base-imports-ok");
+    const runDocker = vi.fn(() => "nemoclaw-dcode-runtime-contract-ok");
     const platformReference = `${IMAGE}@sha256:${"c".repeat(64)}`;
     validateDcodeBaseImageImports(platformReference, runDocker);
 
@@ -102,8 +102,7 @@ describe("Deep Agents Code E2E base contract", () => {
       "/opt/venv/bin/python3",
       platformReference,
       "-I",
-      "-c",
-      'import deepagents; import deepagents_code; print("nemoclaw-dcode-base-imports-ok")',
+      "/usr/local/lib/nemoclaw/validate-dcode-runtime-contract.py",
     ]);
   });
 
@@ -113,7 +112,7 @@ describe("Deep Agents Code E2E base contract", () => {
     const outputPath = join(directory, "github-output");
     const contractValue = contract();
     const platformReference = `${IMAGE}@sha256:${"c".repeat(64)}`;
-    const runDocker = vi.fn(() => "nemoclaw-dcode-base-imports-ok");
+    const runDocker = vi.fn(() => "nemoclaw-dcode-runtime-contract-ok");
     try {
       writeFileSync(contractPath, JSON.stringify(contractValue), "utf8");
 
@@ -142,7 +141,7 @@ describe("Deep Agents Code E2E base contract", () => {
 
   it("rejects missing or noisy import evidence (#9049)", () => {
     expect(() => validateDcodeBaseImageImports(`${IMAGE}@${DIGEST}`, () => "")).toThrow(
-      /did not prove both required imports/u,
+      /returned invalid evidence/u,
     );
   });
 });

@@ -198,32 +198,13 @@ The raw state layer still rejects a managed manifest unless both content authori
 Cross-provider clone and rebind, durable interrupted-restore recovery, and provider expansion remain separately reviewable units tracked by the [incremental runtime epic](https://github.com/NVIDIA/NemoClaw/issues/7744).
 If provider proof fails after filesystem restoration, NemoClaw reports that state changed and requires the operator to retry the same selected snapshot after the runtime stabilizes.
 
-## Podman managed-bootstrap authority
+## Standard managed-image startup and lifecycle authority
 
-The Podman candidate owns a separate `managed-bootstrap` command scope bound
-to one rootless engine authority. Before a bootstrap mutation, it
-discovers and stably inspects exactly one held OpenShell workload and acquires a
-durable lease over the watcher process and lifecycle owner. Ambiguous
-workloads, watcher ownership, PID reuse, endpoint drift, or a competing lease
-fail closed.
+OpenShell creates the standard Docker or native Podman sandbox from the selected exact managed-image digest. NemoClaw verifies the returned immutable sandbox identity, applies the bounded initial startup profile through the provider's exact-target privileged-exec boundary, commits or rolls back shared state inside that same sandbox, and releases the image-owned startup hold. It does not create or replace a second provider container.
 
-Preparation creates a private managed state volume and a stopped,
-final-labelled replacement while retaining the original. Its monotonic
-journal records the engine authority, watcher lease, immutable original and
-replacement identities, image and specification fingerprints, state volume,
-and rollback decision before each external effect. Pre-commit rollback removes
-only the proven stopped replacement and owned volume, restores the original, and leaves the watcher lease with the caller until a healthy owner is independently requalified.
+After onboarding, OpenShell owns ordinary standard sandbox start, stop, deletion, containment, and provider reconciliation. Public NemoClaw start and stop commands delegate through the typed OpenShell SDK, validate the returned immutable identity, and wait for the same sandbox to reach its requested phase. A healthy owning gateway that reports the registered sandbox missing remains authoritative: NemoClaw preserves its local registration and emits bounded recovery guidance without direct Docker or Podman lifecycle mutation.
 
-The image transaction accepts only that prepared authority. It stages one
-protected root-apply request, starts the replacement, and authenticates
-the image-owned completion for OpenClaw, Hermes, or LangChain Deep Agents Code.
-The watcher stays stopped and the journal remains authoritative throughout.
-The registered native Podman provider consumes this authority when
-`NEMOCLAW_GATEWAY_RUNTIME=podman` selects it for standard managed-image
-onboarding. Persisted post-commit recovery, provider-owned cleanup, state-root
-preparation, and the supported E2E matrix fail closed on ambiguous or changed
-authority. The portable experimental profile remains an independent lifecycle
-and does not consume this selection.
+The native Podman path uses the same OpenShell ownership model with Docker unavailable. The Portable experimental profile remains an independent, explicit Docker-over-Podman lifecycle with its existing receipts, locks, recovery, and qualification.
 
 ## Agent-specific differences
 

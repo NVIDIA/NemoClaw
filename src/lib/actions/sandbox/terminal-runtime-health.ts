@@ -3,7 +3,7 @@
 
 import { dockerSpawnSync } from "../../adapters/docker/exec";
 import { resolveSandboxContainerOwner } from "../../domain/sandbox/container-owner";
-import { findLabeledSandboxContainers } from "../../onboard/docker-driver-sandbox-recovery";
+import { findLabeledSandboxContainers } from "../../onboard/docker-driver-container-observation";
 import {
   registeredRuntimeProviderSupportsContainerEngineOperation,
   resolveRegisteredRuntimeProvider,

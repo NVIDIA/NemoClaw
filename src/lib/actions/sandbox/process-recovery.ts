@@ -1177,6 +1177,27 @@ export function beginUnregisteredOpenClawPostRestoreDoctor(
   );
 }
 
+export function beginUnregisteredOpenClawBackupQuiesce(
+  sandboxName: string,
+  runtimeSelection?: OpenShellRuntimeSelection,
+): Promise<OpenClawPostRestoreDoctorResult> {
+  return beginOpenClawPostRestoreDoctor(
+    sandboxName,
+    runtimeSelection,
+    OPENCLAW_UNREGISTERED_POST_RESTORE_DOCTOR_DEPS,
+    "backup",
+  );
+}
+
+export function promoteUnregisteredOpenClawBackupQuiesceToPostRestoreDoctor(
+  window: OpenClawPostRestoreDoctorWindow,
+): Promise<OpenClawPostRestoreDoctorResult> {
+  return promoteOpenClawBackupQuiesceToPostRestoreDoctor(
+    window,
+    OPENCLAW_UNREGISTERED_POST_RESTORE_DOCTOR_DEPS,
+  );
+}
+
 export function finishUnregisteredOpenClawPostRestoreDoctor(
   window: OpenClawPostRestoreDoctorWindow,
 ): Promise<Exclude<OpenClawPostRestoreDoctorResult, { ok: true }> | { ok: true }> {
@@ -1617,13 +1638,13 @@ export async function isSandboxGatewayRunningForStatus(
   return isSandboxGatewayHttpReachableForStatus(sandboxName, gatewayName, options);
 }
 
-const HERMES_GATEWAY_PROCESS_SETTLEMENT_DELAYS_MS = [2_000, 2_000] as const;
+const HERMES_GATEWAY_PROCESS_SETTLEMENT_DELAYS_MS = [2_000, 2_000, 2_000, 2_000, 2_000] as const;
 const NATIVE_GATEWAY_PROCESS_SETTLEMENT_DELAY_MS = 2_000;
 
 /** Require one positive Hermes gateway observation after startup within the bounded window. */
 export async function waitForStartedHermesGatewayProcess(
   sandboxName: string,
-  gatewayName: string,
+  gatewayName: string | undefined,
   options: {
     probe?: typeof isSandboxGatewayRunningForStatus;
     sleep?: (delayMs: number) => Promise<void>;
@@ -1839,6 +1860,15 @@ export async function restartSandboxGateway(
         getSessionAgent: agentRuntime.getSessionAgent,
         getSandbox: registry.getSandbox,
         resolveSandboxDashboardPort,
+        buildOpenClawReadinessProbeCommand: (name) => {
+          // OpenClaw 2026.3.11+ exposes { ready: boolean } here:
+          // https://github.com/openclaw/openclaw/blob/v2026.3.11/src/gateway/server-http.ts
+          const url = new URL(resolveSandboxHealthProbeUrl(name));
+          url.pathname = "/readyz";
+          url.search = "";
+          url.hash = "";
+          return `curl --noproxy '*' --silent --show-error --fail --write-out '\\n%{http_code}' --max-time 3 ${shellQuote(url.href)}`;
+        },
         executeSandboxExecCommand: (name, command, timeout) =>
           executeSandboxExecCommand(
             name,
