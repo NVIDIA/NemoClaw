@@ -3,6 +3,7 @@
 
 import { setTimeout as sleep } from "node:timers/promises";
 
+import { GATEWAY_HOST_RUNTIME_ENV_KEYS } from "../../../src/lib/onboard/runtime-provider/configured-runtime.ts";
 import type { ArtifactSink } from "./artifacts.ts";
 import { createHermesAcpDiagnostics } from "./hermes-acp-diagnostics.ts";
 import type { SandboxClient } from "./clients/sandbox.ts";
@@ -45,6 +46,7 @@ export interface HermesAcpLiveOptions {
 export function hermesAcpLiveHostEnv(source: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   const result: NodeJS.ProcessEnv = {};
   for (const name of [
+    ...GATEWAY_HOST_RUNTIME_ENV_KEYS,
     "HOME",
     "USER",
     "LOGNAME",
@@ -58,12 +60,6 @@ export function hermesAcpLiveHostEnv(source: NodeJS.ProcessEnv): NodeJS.ProcessE
     "NODE_EXTRA_CA_CERTS",
     "CURL_CA_BUNDLE",
     "XDG_CONFIG_HOME",
-    "XDG_RUNTIME_DIR",
-    "DBUS_SESSION_BUS_ADDRESS",
-    "CONTAINERS_CONF",
-    "CONTAINERS_STORAGE_CONF",
-    "NEMOCLAW_GATEWAY_RUNTIME",
-    "OPENSHELL_PODMAN_SOCKET",
     "NEMOCLAW_OPENSHELL_BIN",
     "OPENSHELL_GATEWAY",
     "OPENSHELL_WORKSPACE",

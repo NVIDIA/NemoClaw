@@ -111,10 +111,20 @@ describe("Hermes ACP live evidence boundary", () => {
     async (installation, scenario, exitCode, scenarioEvidence) => {
       const artifactDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-acp-launch-"));
       const adapterEntrypoint = path.join(artifactDir, "nemoclaw-acp");
+      const environmentReceipt = path.join(artifactDir, "child-env.json");
+      const runtimeEnv: NodeJS.ProcessEnv = {
+        NEMOCLAW_GATEWAY_RUNTIME: "podman",
+        OPENSHELL_PODMAN_SOCKET: "/run/user/1000/podman/podman.sock",
+        CONTAINERS_CONF: "/tmp/containers.conf",
+        CONTAINERS_STORAGE_CONF: "/tmp/storage.conf",
+        XDG_RUNTIME_DIR: "/run/user/1000",
+        DBUS_SESSION_BUS_ADDRESS: "unix:path=/run/user/1000/bus",
+      };
       fs.writeFileSync(
         adapterEntrypoint,
         `#!${process.execPath}
 const readline = require("node:readline");
+require("node:fs").writeFileSync(${JSON.stringify(environmentReceipt)}, JSON.stringify(process.env));
 process.stdout.on("error", () => {
   process.exitCode = 1;
   process.stdin.destroy();
@@ -150,13 +160,25 @@ readline.createInterface({ input: process.stdin }).on("line", line => {
         runHermesAcpLiveScenario({
           adapterEntrypoint: installation === "checkout" ? adapterEntrypoint : undefined,
           artifacts: new ArtifactSink(artifactDir),
-          env: { PATH: installation === "installed" ? artifactDir : "" },
+          env: {
+            ...runtimeEnv,
+            PATH: installation === "installed" ? artifactDir : "",
+            NVIDIA_INFERENCE_API_KEY: "provider-secret",
+            OPENSHELL_TOKEN: "openshell-secret",
+            SSH_AUTH_SOCK: "/tmp/private-agent.sock",
+          },
           progress,
           sandbox,
           sandboxName: "e2e-hermes",
           scenario,
         }),
       ).resolves.toBe(true);
+      const childEnv = JSON.parse(fs.readFileSync(environmentReceipt, "utf8"));
+      expect(childEnv).toMatchObject(runtimeEnv);
+      expect(resolveNemoClawGatewayRuntime(childEnv)).toBe("podman");
+      expect(childEnv).not.toHaveProperty("NVIDIA_INFERENCE_API_KEY");
+      expect(childEnv).not.toHaveProperty("OPENSHELL_TOKEN");
+      expect(childEnv).not.toHaveProperty("SSH_AUTH_SOCK");
       expect(
         JSON.parse(fs.readFileSync(path.join(artifactDir, `hermes-acp-${scenario}.json`), "utf8")),
       ).toMatchObject({
