@@ -50,7 +50,7 @@ Model-specific tools belong to versioned recipe artifacts with their upstream li
 See [runtime](runtime.md), [execution targets](execution-targets.md), and [recipes](recipes.md) for rationale.
 
 SDK errors and progress must not expose secrets.
-OpenShell transport must use pinned generated clients with telemetry disabled, mTLS, bearer credential references, bounded calls, and no automatic mutation retry.
+OpenShell transport must use the pinned Rust SDK, with its supported raw clients where the high-level API omits required operations or fields, telemetry disabled, mTLS, bearer credential references, bounded calls, and no automatic mutation retry.
 Verify certificate trust in both directions independently of plaintext protocol tests.
 
 ## Validation
