@@ -362,15 +362,13 @@ beforeEach(() => {
     attempted: false,
   });
 
-  vi.spyOn(commandTransport, "executeSandboxExecCommand").mockResolvedValue({
-    status: 0,
-    stdout: "",
-    stderr: "",
-  });
-  vi.spyOn(commandTransport, "executeSandboxExecCommand").mockResolvedValue(null);
+  vi.spyOn(commandTransport, "executeSandboxExecCommand").mockRejectedValue(
+    new Error("Bridge-provider lifecycle must not execute native sandbox commands"),
+  );
 });
 
 afterEach(() => {
+  const nativeCommandCalls = vi.mocked(commandTransport.executeSandboxExecCommand).mock.calls;
   vi.restoreAllMocks();
   stdinIsTty
     ? Object.defineProperty(process.stdin, "isTTY", stdinIsTty)
@@ -378,6 +376,7 @@ afterEach(() => {
   fs.rmSync(testHome, { recursive: true, force: true });
   for (const key of Object.keys(process.env)) delete process.env[key];
   Object.assign(process.env, originalProcessEnv);
+  expect(nativeCommandCalls).toEqual([]);
 });
 
 describe("channels add owns the bridge-provider lifecycle (#6120)", () => {
