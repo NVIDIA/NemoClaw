@@ -89,6 +89,26 @@ field as an unknown state.
 
 Use a Conventional Commit title: `<type>(<scope>): <description>`. Allowed types are `feat`, `fix`, `docs`, `chore`, `refactor`, `test`, `ci`, and `perf`. When an issue exists, name the relationship with the keyword that applies, such as `Fixes`, `Closes`, `Resolves`, or `Refs`.
 
+### Explain product impact
+
+Write the description for a product reader who wants to understand the purpose of the work.
+Start with the problem users face, what changes for them, and why it matters.
+For internal changes, identify the affected contributor or maintainer and explain how their work changes.
+
+- Before drafting, read any referenced PR or discussion and relevant linked issues.
+  Read parent epics when they explain the original problem, expected behavior, user impact, or intended outcome.
+  Ground benefits in these sources and the diff. Distinguish intended outcomes from verified results.
+- Describe previous and proposed behavior in plain language. Connect each material technical change to a concrete consequence for the affected reader.
+- Briefly define unfamiliar terms when needed. For example: “Transport means the route used to send a command into the sandbox.”
+- Use one everyday or product example when it makes the change easier to understand.
+- Explain how supporting fixes and testing help deliver the main outcome. Include current status only when relevant or required by the template.
+- Keep the description concise and conversational. Include implementation details when they explain the outcome or provide required review evidence.
+
+Example: “If a command ran but its response was lost, retrying through another route could run it twice.
+This change uses one standard route and reports uncertainty, so users know when to check the result before retrying.”
+
+Apply this guidance within the canonical template's sections; preserve its required evidence and section order.
+
 ### Trusted template
 
 Read the diff from the canonical comparison ref:
