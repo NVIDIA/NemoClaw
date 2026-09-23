@@ -8,8 +8,34 @@ pub type HarnessChoice = HarnessKind;
 pub type RuntimeChoice = ComputeDriver;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum InferenceChoice {
-    NvidiaHosted,
+/// Branded endpoint preset offered by guided authoring.
+///
+/// This is not a document-model provider kind. Each choice projects to the
+/// SDK's generic provider kind, API, endpoint, and credential reference.
+pub enum ProviderPreset {
+    NvidiaEndpoints,
+    OpenRouter,
+    OpenAi,
+    OpenAiCompatible,
+    Anthropic,
+    AnthropicCompatible,
+    Gemini,
+    HermesProvider,
+}
+
+impl ProviderPreset {
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::NvidiaEndpoints => "NVIDIA Endpoints",
+            Self::OpenRouter => "OpenRouter",
+            Self::OpenAi => "OpenAI",
+            Self::OpenAiCompatible => "Other OpenAI-compatible endpoint",
+            Self::Anthropic => "Anthropic",
+            Self::AnthropicCompatible => "Other Anthropic-compatible endpoint",
+            Self::Gemini => "Google Gemini",
+            Self::HermesProvider => "Hermes Provider (Nous)",
+        }
+    }
 }
 
 pub type ApiChoice = InferenceApi;
@@ -25,9 +51,10 @@ pub struct Answers {
     pub agent_name: String,
     pub harness: HarnessChoice,
     pub runtime: RuntimeChoice,
-    pub inference: InferenceChoice,
+    pub inference: ProviderPreset,
     pub api: ApiChoice,
     pub provider_name: String,
+    pub endpoint: String,
     pub model: String,
     pub credential_env: String,
 }
@@ -40,9 +67,10 @@ pub struct AnswerOverrides {
     pub agent_name: Option<String>,
     pub harness: Option<HarnessChoice>,
     pub runtime: Option<RuntimeChoice>,
-    pub inference: Option<InferenceChoice>,
+    pub inference: Option<ProviderPreset>,
     pub api: Option<ApiChoice>,
     pub provider_name: Option<String>,
+    pub endpoint: Option<String>,
     pub model: Option<String>,
     pub credential_env: Option<String>,
 }
@@ -56,9 +84,10 @@ impl Answers {
             agent_name: "primary".into(),
             harness: HarnessChoice::OpenClaw,
             runtime: RuntimeChoice::Docker,
-            inference: InferenceChoice::NvidiaHosted,
+            inference: ProviderPreset::NvidiaEndpoints,
             api: ApiChoice::OpenaiCompletions,
-            provider_name: "hosted-nvidia-prod".into(),
+            provider_name: "nvidia-prod".into(),
+            endpoint: "https://integrate.api.nvidia.com/v1".into(),
             model: NVIDIA_MODEL.into(),
             credential_env: "NVIDIA_INFERENCE_API_KEY".into(),
         }
@@ -74,8 +103,24 @@ impl Answers {
         self.inference = inputs.inference.unwrap_or(self.inference);
         self.api = inputs.api.unwrap_or(self.api);
         self.provider_name = inputs.provider_name.unwrap_or(self.provider_name);
+        self.endpoint = inputs.endpoint.unwrap_or(self.endpoint);
         self.model = inputs.model.unwrap_or(self.model);
         self.credential_env = inputs.credential_env.unwrap_or(self.credential_env);
+        self
+    }
+
+    /// Adopts one advertised scenario while preserving user-facing identity.
+    pub fn for_scenario(mut self, scenario: &crate::Scenario) -> Self {
+        self.harness = scenario.harness();
+        self.runtime = scenario.runtime();
+        self.inference = scenario.inference();
+        self.api = scenario.api();
+        self.provider_name = scenario.provider_name.into();
+        self.endpoint = scenario.endpoint.into();
+        self.credential_env = scenario.credential_env.into();
+        if let Some(model) = scenario.default_model() {
+            self.model = model.into();
+        }
         self
     }
 }

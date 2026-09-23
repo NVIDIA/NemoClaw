@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-use nemoclaw_authoring::{AnswerOverrides, Answers, Capabilities, Draft, InferenceChoice, Session};
+use nemoclaw_authoring::{AnswerOverrides, Answers, Capabilities, Draft, ProviderPreset, Session};
 use nemoclaw_sdk::config::{
     ComputeDriver, Document, HarnessKind, InferenceApi, InferenceProviderKind, NetworkPolicy,
 };
@@ -29,35 +29,15 @@ fn accepting_the_openclaw_suggestion_builds_its_hosted_inference_boundary() {
         .sandbox_inference(sandbox)
         .unwrap()
         .routes[0];
-    let NetworkPolicy::Explicit(policy) = &sandbox.network.policy else {
-        panic!("OpenClaw authoring must create an explicit sandbox policy");
-    };
-    let hosted = &policy.network_policies["hosted-inference"];
-
     assert_eq!(provider.provider, InferenceProviderKind::Openai);
     assert_eq!(provider.api, Some(InferenceApi::OpenaiCompletions));
     assert_eq!(provider.endpoint, "https://integrate.api.nvidia.com/v1");
     assert_eq!(route.overrides.model, NVIDIA_MODEL);
-    assert_eq!(
-        hosted.endpoints[0].host.as_deref(),
-        Some("integrate.api.nvidia.com")
-    );
-    assert_eq!(hosted.endpoints[0].port, Some(443));
-    assert_eq!(hosted.binaries[0].path, "/usr/bin/openclaw");
-    assert_eq!(
-        policy
-            .filesystem_policy
-            .as_ref()
-            .unwrap()
-            .read_write
-            .as_ref()
-            .unwrap(),
-        &["/sandbox"]
-    );
+    assert!(matches!(sandbox.network.policy, NetworkPolicy::Isolated));
 }
 
 #[test]
-fn choosing_hermes_builds_the_hermes_process_and_filesystem_boundary() {
+fn choosing_hermes_keeps_the_safe_isolated_network_default() {
     let capabilities = Capabilities::available();
     let answers = Answers {
         harness: HarnessKind::Hermes,
@@ -68,25 +48,7 @@ fn choosing_hermes_builds_the_hermes_process_and_filesystem_boundary() {
         .project(&capabilities, &answers)
         .unwrap();
     let sandbox = &authored.document().spec.sandboxes[0];
-    let NetworkPolicy::Explicit(policy) = &sandbox.network.policy else {
-        panic!("Hermes authoring must create an explicit sandbox policy");
-    };
-
-    assert_eq!(
-        policy.network_policies["hosted-inference"].binaries[0].path,
-        "/opt/fabric/bin/python"
-    );
-    assert!(
-        policy
-            .filesystem_policy
-            .as_ref()
-            .unwrap()
-            .read_only
-            .as_ref()
-            .unwrap()
-            .iter()
-            .any(|path| path == "/opt/hermes")
-    );
+    assert!(matches!(sandbox.network.policy, NetworkPolicy::Isolated));
 }
 
 #[test]
@@ -94,14 +56,12 @@ fn every_choice_the_guide_advertises_leads_to_a_document_that_can_be_reopened() 
     let capabilities = Capabilities::available();
 
     for scenario in capabilities.scenarios() {
-        for model in scenario.models() {
+        let suggested = Answers::onboarding_defaults().for_scenario(scenario);
+        let models = vec![scenario.default_model().unwrap_or(&suggested.model)];
+        for model in models {
             let answers = Answers {
-                harness: scenario.harness(),
-                runtime: scenario.runtime(),
-                inference: scenario.inference(),
-                api: scenario.api(),
-                model: (*model).into(),
-                ..Answers::onboarding_defaults()
+                model: model.into(),
+                ..suggested.clone()
             };
             let authored = Session::with_uid(UID)
                 .unwrap()
@@ -141,7 +101,7 @@ fn an_imported_document_with_extra_v1_configuration_stays_safe_from_guided_rewri
     assert!(
         diagnostics.items()[0]
             .message()
-            .contains("additional V1 configuration")
+            .contains("guided onboarding preset")
     );
 }
 
@@ -154,9 +114,10 @@ fn automation_can_override_every_suggestion_before_authoring_begins() {
         agent_name: Some("automated-agent".into()),
         harness: Some(HarnessKind::OpenClaw),
         runtime: Some(ComputeDriver::Docker),
-        inference: Some(InferenceChoice::NvidiaHosted),
+        inference: Some(ProviderPreset::NvidiaEndpoints),
         api: Some(InferenceApi::OpenaiResponses),
         provider_name: Some("automated-provider".into()),
+        endpoint: None,
         model: Some(NVIDIA_MODEL.into()),
         credential_env: Some("AUTOMATED_API_KEY".into()),
     });
@@ -200,21 +161,8 @@ fn direct_authoring_reports_the_first_unavailable_choice_in_the_journey() {
         "harness"
     );
 
-    let unsupported_runtime = Answers {
-        runtime: ComputeDriver::Podman,
-        ..Answers::onboarding_defaults()
-    };
-    assert_eq!(
-        session
-            .project(&capabilities, &unsupported_runtime)
-            .unwrap_err()
-            .items()[0]
-            .field(),
-        "runtime"
-    );
-
     let unsupported_api = Answers {
-        harness: HarnessKind::Hermes,
+        harness: HarnessKind::DeepAgents,
         api: InferenceApi::OpenaiResponses,
         ..Answers::onboarding_defaults()
     };

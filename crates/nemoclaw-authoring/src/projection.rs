@@ -4,11 +4,9 @@
 use crate::diagnostics::diagnostic;
 use crate::{Answers, AuthoredDocument, Capabilities, CompletionBoundary, Diagnostic, Diagnostics};
 use nemoclaw_sdk::config::{
-    API_VERSION, Agent, Credential, Document, ExplicitPolicy, Gateway, Harness, Inference,
-    InferenceProvider, ManagedGateway, Metadata, Network, NetworkPolicy, Overrides, PolicyBinary,
-    PolicyEndpoint, PolicyFilesystem, PolicyProcess, PolicyRule, Route, Runtime, Sandbox, Spec,
+    API_VERSION, Agent, ComputeDriver, Credential, Document, Gateway, Harness, Inference,
+    InferenceProvider, ManagedGateway, Metadata, Network, Overrides, Route, Runtime, Sandbox, Spec,
 };
-use std::collections::BTreeMap;
 
 /// Holds one deployment identity across projections and draft edits.
 #[derive(Clone, Debug)]
@@ -91,7 +89,10 @@ impl Session {
             answers.api,
         );
         match scenario {
-            Some(scenario) if !scenario.models.contains(&answers.model.as_str()) => {
+            Some(scenario)
+                if scenario.default_model != Some(answers.model.as_str())
+                    && !(scenario.custom_model && valid_model(&answers.model)) =>
+            {
                 items.push(Diagnostic {
                     field: "model",
                     message: "is not available for the selected harness, runtime, inference provider, and API"
@@ -110,6 +111,15 @@ impl Session {
             return Err(Diagnostics { items });
         }
         let scenario = scenario.expect("validated scenario capability");
+        let gateway = if answers.runtime == ComputeDriver::Podman {
+            Gateway::Managed(ManagedGateway {
+                endpoint: "http://127.0.0.1:17681".into(),
+                engine: "unix:///run/user/1000/podman/podman.sock".into(),
+                ..ManagedGateway::default()
+            })
+        } else {
+            Gateway::Managed(ManagedGateway::default())
+        };
         let source = Document {
             api_version: API_VERSION.into(),
             kind: "NemoClawConfig".into(),
@@ -118,12 +128,16 @@ impl Session {
                 uid: self.uid.clone(),
             },
             spec: Spec {
-                gateway: Gateway::Managed(ManagedGateway::default()),
+                gateway,
                 inference_providers: vec![InferenceProvider {
                     name: answers.provider_name.clone(),
                     provider: scenario.provider_kind,
-                    api: Some(scenario.provider_api),
-                    endpoint: scenario.endpoint.into(),
+                    api: scenario.provider_api,
+                    endpoint: if scenario.custom_endpoint {
+                        answers.endpoint.clone()
+                    } else {
+                        scenario.endpoint.into()
+                    },
                     credential: Some(Credential {
                         env: answers.credential_env.clone(),
                     }),
@@ -131,7 +145,7 @@ impl Session {
                 }],
                 sandboxes: vec![Sandbox {
                     harness: Some(Harness {
-                        kind: scenario.harness_kind,
+                        kind: scenario.harness,
                         observability: None,
                         execution: None,
                         interfaces: None,
@@ -140,7 +154,7 @@ impl Session {
                     runtime: Runtime {
                         provider: answers.runtime,
                     },
-                    network: preset_network(scenario),
+                    network: Network::default(),
                     agent: Agent {
                         name: answers.agent_name.clone(),
                         inference: Some(Inference {
@@ -174,68 +188,19 @@ impl Session {
     }
 }
 
-fn preset_network(scenario: &crate::Scenario) -> Network {
-    Network {
-        policy: NetworkPolicy::Explicit(ExplicitPolicy {
-            version: 1,
-            filesystem_policy: Some(PolicyFilesystem {
-                include_workdir: Some(true),
-                read_only: Some(
-                    [
-                        "/usr",
-                        "/opt/fabric",
-                        "/opt/nemoclaw",
-                        scenario.filesystem_read_only,
-                    ]
-                    .into_iter()
-                    .map(str::to_owned)
-                    .collect(),
-                ),
-                read_write: Some(vec!["/sandbox".into()]),
-            }),
-            landlock: None,
-            process: Some(PolicyProcess {
-                run_as_user: Some("1000".into()),
-                run_as_group: Some("1000".into()),
-            }),
-            network_policies: BTreeMap::from([(
-                "hosted-inference".into(),
-                PolicyRule {
-                    name: "hosted-inference".into(),
-                    endpoints: vec![PolicyEndpoint {
-                        host: Some("integrate.api.nvidia.com".into()),
-                        port: Some(443),
-                        ports: None,
-                        path: None,
-                        protocol: None,
-                        tls: None,
-                        enforcement: None,
-                        access: None,
-                        allowed_ips: None,
-                        rules: None,
-                        deny_rules: None,
-                        allow_encoded_slash: None,
-                        websocket_credential_rewrite: None,
-                        request_body_credential_rewrite: None,
-                        json_rpc: None,
-                        mcp: None,
-                    }],
-                    binaries: vec![PolicyBinary {
-                        path: scenario.network_binary.into(),
-                    }],
-                },
-            )]),
-        }),
-        proxy: None,
-    }
-}
-
 fn valid_slug(value: &str) -> bool {
     (1..=40).contains(&value.len())
         && value.as_bytes()[0].is_ascii_lowercase()
         && value
             .bytes()
             .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
+}
+
+fn valid_model(value: &str) -> bool {
+    (1..=256).contains(&value.len())
+        && value.bytes().all(|byte| {
+            byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b':' | b'/' | b'-')
+        })
 }
 
 fn valid_environment_name(value: &str) -> bool {

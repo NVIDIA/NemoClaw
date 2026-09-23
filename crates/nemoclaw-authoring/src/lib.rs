@@ -17,7 +17,7 @@ mod guided;
 mod projection;
 
 pub use answers::{
-    AnswerOverrides, Answers, ApiChoice, HarnessChoice, InferenceChoice, RuntimeChoice,
+    AnswerOverrides, Answers, ApiChoice, HarnessChoice, ProviderPreset, RuntimeChoice,
 };
 pub use capabilities::{Capabilities, Scenario};
 pub use diagnostics::{Diagnostic, Diagnostics};

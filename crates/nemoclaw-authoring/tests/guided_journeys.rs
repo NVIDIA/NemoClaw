@@ -3,7 +3,7 @@
 
 use nemoclaw_authoring::{
     Answers, ApiChoice, Capabilities, CompletionBoundary, Draft, EditableField, FieldValue,
-    IdentityEdits, InferenceChoice, InferenceEdits, Session,
+    IdentityEdits, ProviderPreset, Session,
 };
 use nemoclaw_sdk::config::{ComputeDriver, HarnessKind, InferenceApi};
 
@@ -47,6 +47,8 @@ fn a_new_author_can_accept_the_openclaw_defaults_and_review_safe_desired_state()
         [
             FieldValue::Harness(HarnessKind::OpenClaw),
             FieldValue::Harness(HarnessKind::Hermes),
+            FieldValue::Harness(HarnessKind::DeepAgents),
+            FieldValue::Harness(HarnessKind::Pi),
         ]
     );
     assert_eq!(
@@ -121,15 +123,21 @@ fn an_author_can_follow_the_available_choices_from_openclaw_to_hermes() {
 
     assert_eq!(
         choices_for(&draft, &capabilities, EditableField::Runtime),
-        [FieldValue::Runtime(ComputeDriver::Docker)]
+        [
+            FieldValue::Runtime(ComputeDriver::Docker),
+            FieldValue::Runtime(ComputeDriver::Podman),
+        ]
     );
-    assert_eq!(
-        choices_for(&draft, &capabilities, EditableField::Inference),
-        [FieldValue::Inference(InferenceChoice::NvidiaHosted)]
+    assert!(
+        choices_for(&draft, &capabilities, EditableField::Inference)
+            .contains(&FieldValue::Inference(ProviderPreset::HermesProvider))
     );
     assert_eq!(
         choices_for(&draft, &capabilities, EditableField::Api),
-        [FieldValue::Api(InferenceApi::OpenaiCompletions)]
+        [
+            FieldValue::Api(InferenceApi::OpenaiCompletions),
+            FieldValue::Api(InferenceApi::OpenaiResponses),
+        ]
     );
     choose(
         &mut draft,
@@ -141,7 +149,7 @@ fn an_author_can_follow_the_available_choices_from_openclaw_to_hermes() {
         &mut draft,
         &capabilities,
         EditableField::Inference,
-        FieldValue::Inference(InferenceChoice::NvidiaHosted),
+        FieldValue::Inference(ProviderPreset::NvidiaEndpoints),
     );
     choose(
         &mut draft,
@@ -222,18 +230,18 @@ fn an_author_can_reopen_generated_yaml_and_continue_where_they_left_off() {
 }
 
 #[test]
-fn a_rejected_edit_leaves_the_authors_draft_exactly_as_it_was() {
+fn a_rejected_identity_edit_leaves_the_authors_draft_exactly_as_it_was() {
     let capabilities = Capabilities::available();
     let mut draft = begin_onboarding(&capabilities);
     let before = draft.review().unwrap().yaml().to_owned();
 
     let diagnostics = draft
-        .edit_inference(
+        .edit_identity(
             &capabilities,
-            InferenceEdits {
-                provider_name: Some("replacement".into()),
-                model: Some("unsupported/model".into()),
-                credential_env: Some("not-an-env-name".into()),
+            IdentityEdits {
+                deployment_name: Some("not a slug".into()),
+                sandbox_name: None,
+                agent_name: None,
             },
         )
         .unwrap_err();
@@ -244,12 +252,12 @@ fn a_rejected_edit_leaves_the_authors_draft_exactly_as_it_was() {
             .iter()
             .map(|diagnostic| diagnostic.field())
             .collect::<Vec<_>>(),
-        ["credential-env", "model"]
+        ["deployment-name"]
     );
     assert_eq!(draft.review().unwrap().yaml(), before);
     assert_eq!(
         diagnostics.to_string(),
-        "credential-env: must be an uppercase environment variable name; model: is not available for the selected harness, runtime, inference provider, and API"
+        "deployment-name: must be a lowercase name of at most 40 characters"
     );
 }
 
@@ -281,48 +289,20 @@ fn an_author_can_rename_their_deployment_without_changing_its_identity_or_infere
 }
 
 #[test]
-fn an_author_can_edit_each_advanced_text_value_without_restarting_the_journey() {
+fn the_guide_hides_internal_names_and_credential_environment_variables() {
     let capabilities = Capabilities::available();
-    let mut draft = begin_onboarding(&capabilities);
+    let draft = begin_onboarding(&capabilities);
+    let fields = draft
+        .guided_fields(&capabilities)
+        .unwrap()
+        .into_iter()
+        .map(|field| field.id())
+        .collect::<Vec<_>>();
 
-    choose(
-        &mut draft,
-        &capabilities,
-        EditableField::DeploymentName,
-        FieldValue::Text("renamed-deployment".into()),
-    );
-    choose(
-        &mut draft,
-        &capabilities,
-        EditableField::SandboxName,
-        FieldValue::Text("renamed-sandbox".into()),
-    );
-    choose(
-        &mut draft,
-        &capabilities,
-        EditableField::AgentName,
-        FieldValue::Text("renamed-agent".into()),
-    );
-    choose(
-        &mut draft,
-        &capabilities,
-        EditableField::ProviderName,
-        FieldValue::Text("renamed-provider".into()),
-    );
-    choose(
-        &mut draft,
-        &capabilities,
-        EditableField::CredentialEnv,
-        FieldValue::Text("RENAMED_API_KEY".into()),
-    );
-
-    let answers = draft.guided_answers(&capabilities).unwrap();
-    assert_eq!(answers.deployment_name, "renamed-deployment");
-    assert_eq!(answers.sandbox_name, "renamed-sandbox");
-    assert_eq!(answers.agent_name, "renamed-agent");
-    assert_eq!(answers.provider_name, "renamed-provider");
-    assert_eq!(answers.credential_env, "RENAMED_API_KEY");
-    assert_eq!(draft.review().unwrap().uid(), UID);
+    assert!(!fields.contains(&EditableField::SandboxName));
+    assert!(!fields.contains(&EditableField::AgentName));
+    assert!(!fields.contains(&EditableField::ProviderName));
+    assert!(!fields.contains(&EditableField::CredentialEnv));
 }
 
 #[test]
@@ -353,7 +333,7 @@ fn the_guide_rejects_a_choice_that_is_not_available_at_that_point_in_the_journey
         &mut draft,
         &capabilities,
         EditableField::Harness,
-        FieldValue::Harness(HarnessKind::Hermes),
+        FieldValue::Harness(HarnessKind::DeepAgents),
     );
 
     let diagnostics = draft

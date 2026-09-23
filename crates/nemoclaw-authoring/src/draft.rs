@@ -2,11 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::diagnostics::diagnostic;
-use crate::{
-    Answers, ApiChoice, Capabilities, Diagnostics, HarnessChoice, InferenceChoice, RuntimeChoice,
-    Session,
-};
-use nemoclaw_sdk::config::{ComputeDriver, Document, HarnessKind, InferenceApi};
+use crate::{Answers, Capabilities, Diagnostics, Session};
+use nemoclaw_sdk::config::{Document, HarnessKind};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CompletionBoundary {
@@ -45,6 +42,7 @@ pub struct IdentityEdits {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct InferenceEdits {
     pub provider_name: Option<String>,
+    pub endpoint: Option<String>,
     pub model: Option<String>,
     pub credential_env: Option<String>,
 }
@@ -137,6 +135,9 @@ impl Draft {
         if let Some(value) = edits.provider_name {
             candidate.provider_name = value;
         }
+        if let Some(value) = edits.endpoint {
+            candidate.endpoint = value;
+        }
         if let Some(value) = edits.model {
             candidate.model = value;
         }
@@ -159,8 +160,12 @@ fn guided_answers(
     };
     let agent = &sandbox.agent;
     let harness = match document.sandbox_harness(sandbox).map(|value| value.kind) {
-        Ok(HarnessKind::OpenClaw) => HarnessChoice::OpenClaw,
-        Ok(HarnessKind::Hermes) => HarnessChoice::Hermes,
+        Ok(
+            kind @ (HarnessKind::OpenClaw
+            | HarnessKind::Hermes
+            | HarnessKind::DeepAgents
+            | HarnessKind::Pi),
+        ) => kind,
         _ => {
             return Err(diagnostic(
                 "document",
@@ -168,12 +173,6 @@ fn guided_answers(
             ));
         }
     };
-    if sandbox.runtime.provider != ComputeDriver::Docker {
-        return Err(diagnostic(
-            "document",
-            "guided editing requires the Docker runtime",
-        ));
-    }
     let provider = document
         .inference_provider()
         .map_err(|_| diagnostic("document", "guided editing requires one selected provider"))?;
@@ -192,45 +191,35 @@ fn guided_answers(
         .ok_or_else(|| diagnostic("document", "guided editing requires a credential reference"))?
         .env
         .clone();
-    let api = match provider
-        .api
-        .unwrap_or_else(|| InferenceApi::for_harness(harness))
-    {
-        InferenceApi::OpenaiCompletions => ApiChoice::OpenaiCompletions,
-        InferenceApi::OpenaiResponses => ApiChoice::OpenaiResponses,
-        InferenceApi::AnthropicMessages => {
-            return Err(diagnostic(
-                "document",
-                "guided editing requires a supported inference API",
-            ));
-        }
+    let Some(scenario) = capabilities.scenarios().iter().find(|scenario| {
+        scenario.harness == harness
+            && scenario.runtime == sandbox.runtime.provider
+            && scenario.provider_kind == provider.provider
+            && scenario.provider_api == provider.api
+            && scenario.provider_name == provider.name
+            && scenario.credential_env == credential_env
+            && (scenario.custom_endpoint || scenario.endpoint == provider.endpoint)
+            && (scenario.default_model == Some(route.overrides.model.as_str())
+                || scenario.custom_model)
+    }) else {
+        return Err(diagnostic(
+            "document",
+            "document does not match a guided onboarding preset",
+        ));
     };
     let answers = Answers {
         deployment_name: document.metadata.name.clone(),
         sandbox_name: sandbox.name.clone(),
         agent_name: agent.name.clone(),
         harness,
-        runtime: RuntimeChoice::Docker,
-        inference: InferenceChoice::NvidiaHosted,
-        api,
+        runtime: sandbox.runtime.provider,
+        inference: scenario.inference,
+        api: scenario.api,
         provider_name: provider.name.clone(),
+        endpoint: provider.endpoint.clone(),
         model: route.overrides.model.clone(),
         credential_env,
     };
-    capabilities
-        .scenario(
-            answers.harness,
-            answers.runtime,
-            answers.inference,
-            answers.api,
-        )
-        .filter(|scenario| scenario.models.contains(&answers.model.as_str()))
-        .ok_or_else(|| {
-            diagnostic(
-                "document",
-                "document does not match a guided onboarding preset",
-            )
-        })?;
     let projected = Session::with_uid(&document.metadata.uid)?.project(capabilities, &answers)?;
     if projected.document() != document {
         return Err(diagnostic(

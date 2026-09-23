@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::diagnostics::diagnostic;
-use crate::{Answers, Capabilities, Diagnostics, Draft, InferenceChoice, Scenario};
+use crate::{Answers, Capabilities, Diagnostics, Draft, ProviderPreset, Scenario};
 use nemoclaw_sdk::config::{ComputeDriver, HarnessKind, InferenceApi};
 
 /// A field offered by the guided onboarding frontend.
@@ -16,22 +16,20 @@ pub enum EditableField {
     SandboxName,
     AgentName,
     ProviderName,
+    Endpoint,
     Model,
     CredentialEnv,
 }
 
 impl EditableField {
-    pub const ALL: [Self; 10] = [
+    pub const GUIDED: [Self; 7] = [
         Self::Harness,
         Self::Runtime,
         Self::Inference,
         Self::Api,
         Self::DeploymentName,
-        Self::SandboxName,
-        Self::AgentName,
-        Self::ProviderName,
+        Self::Endpoint,
         Self::Model,
-        Self::CredentialEnv,
     ];
 
     pub const fn is_choice(self) -> bool {
@@ -51,6 +49,7 @@ impl EditableField {
             Self::SandboxName => "sandbox-name",
             Self::AgentName => "agent-name",
             Self::ProviderName => "provider-name",
+            Self::Endpoint => "endpoint",
             Self::Model => "model",
             Self::CredentialEnv => "credential-env",
         }
@@ -62,7 +61,7 @@ impl EditableField {
 pub enum FieldValue {
     Harness(HarnessKind),
     Runtime(ComputeDriver),
-    Inference(InferenceChoice),
+    Inference(ProviderPreset),
     Api(InferenceApi),
     Text(String),
     Model(String),
@@ -74,6 +73,7 @@ pub struct GuidedField {
     id: EditableField,
     value: FieldValue,
     choices: Vec<FieldValue>,
+    accepts_custom: bool,
 }
 
 impl GuidedField {
@@ -92,6 +92,11 @@ impl GuidedField {
     pub fn is_choice(&self) -> bool {
         self.id.is_choice()
     }
+
+    /// Whether a frontend may submit a value outside the suggested choices.
+    pub fn accepts_custom(&self) -> bool {
+        self.accepts_custom
+    }
 }
 
 impl Draft {
@@ -101,8 +106,19 @@ impl Draft {
         capabilities: &Capabilities,
     ) -> Result<Vec<GuidedField>, Diagnostics> {
         let answers = self.guided_answers(capabilities)?;
-        Ok(EditableField::ALL
+        Ok(EditableField::GUIDED
             .into_iter()
+            .filter(|field| {
+                *field != EditableField::Endpoint
+                    || capabilities
+                        .scenario(
+                            answers.harness,
+                            answers.runtime,
+                            answers.inference,
+                            answers.api,
+                        )
+                        .is_some_and(Scenario::accepts_custom_endpoint)
+            })
             .map(|field| field_state(capabilities, &answers, field))
             .collect())
     }
@@ -129,6 +145,18 @@ fn field_state(
         id: field,
         value: current_value(answers, field),
         choices: choices(capabilities, answers, field),
+        accepts_custom: capabilities
+            .scenario(
+                answers.harness,
+                answers.runtime,
+                answers.inference,
+                answers.api,
+            )
+            .is_some_and(|scenario| match field {
+                EditableField::Model => scenario.accepts_custom_model(),
+                EditableField::Endpoint => scenario.accepts_custom_endpoint(),
+                _ => false,
+            }),
     }
 }
 
@@ -142,6 +170,7 @@ fn current_value(answers: &Answers, field: EditableField) -> FieldValue {
         EditableField::SandboxName => FieldValue::Text(answers.sandbox_name.clone()),
         EditableField::AgentName => FieldValue::Text(answers.agent_name.clone()),
         EditableField::ProviderName => FieldValue::Text(answers.provider_name.clone()),
+        EditableField::Endpoint => FieldValue::Text(answers.endpoint.clone()),
         EditableField::Model => FieldValue::Model(answers.model.clone()),
         EditableField::CredentialEnv => FieldValue::Text(answers.credential_env.clone()),
     }
@@ -159,10 +188,9 @@ fn choices(
         EditableField::Inference => vec![FieldValue::Inference(scenario.inference())],
         EditableField::Api => vec![FieldValue::Api(scenario.api())],
         EditableField::Model => scenario
-            .models()
-            .iter()
-            .map(|model| FieldValue::Model((*model).into()))
-            .collect(),
+            .default_model()
+            .map(|model| vec![FieldValue::Model(model.into())])
+            .unwrap_or_default(),
         _ => Vec::new(),
     });
     let mut unique = Vec::new();
@@ -201,11 +229,24 @@ fn set_value(
     field: EditableField,
     value: FieldValue,
 ) -> Result<(), Diagnostics> {
+    if field == EditableField::Model
+        && let FieldValue::Model(model) = &value
+        && let Some(scenario) = capabilities.scenario(
+            answers.harness,
+            answers.runtime,
+            answers.inference,
+            answers.api,
+        )
+        && scenario.accepts_custom_model()
+    {
+        answers.model = model.clone();
+        return Ok(());
+    }
     if field.is_choice() {
         let scenarios = matching_scenarios(capabilities, answers, field);
         let selected = scenarios
             .into_iter()
-            .find(|scenario| match (&field, &value) {
+            .filter(|scenario| match (&field, &value) {
                 (EditableField::Harness, FieldValue::Harness(value)) => {
                     scenario.harness() == *value
                 }
@@ -217,22 +258,28 @@ fn set_value(
                 }
                 (EditableField::Api, FieldValue::Api(value)) => scenario.api() == *value,
                 (EditableField::Model, FieldValue::Model(value)) => {
-                    scenario.models().contains(&value.as_str())
+                    scenario.default_model() == Some(value.as_str())
                 }
                 _ => false,
-            });
+            })
+            .max_by_key(|scenario| compatibility_score(scenario, answers, field));
         let Some(scenario) = selected else {
             return Err(diagnostic(
                 field.diagnostic_name(),
                 "value is not available for the current guided choices",
             ));
         };
-        answers.harness = scenario.harness();
-        answers.runtime = scenario.runtime();
-        answers.inference = scenario.inference();
-        answers.api = scenario.api();
-        if !scenario.models().contains(&answers.model.as_str()) {
-            answers.model = scenario.models()[0].into();
+        let previous_model = answers.model.clone();
+        let previous_endpoint = answers.endpoint.clone();
+        let previous_inference = answers.inference;
+        *answers = answers.clone().for_scenario(scenario);
+        if scenario.default_model() == Some(previous_model.as_str())
+            || (scenario.accepts_custom_model() && !previous_model.is_empty())
+        {
+            answers.model = previous_model;
+        }
+        if scenario.accepts_custom_endpoint() && scenario.inference() == previous_inference {
+            answers.endpoint = previous_endpoint;
         }
         if let FieldValue::Model(model) = value {
             answers.model = model;
@@ -251,8 +298,30 @@ fn set_value(
         EditableField::SandboxName => answers.sandbox_name = value,
         EditableField::AgentName => answers.agent_name = value,
         EditableField::ProviderName => answers.provider_name = value,
+        EditableField::Endpoint => answers.endpoint = value,
         EditableField::CredentialEnv => answers.credential_env = value,
         _ => unreachable!("choice fields returned above"),
     }
     Ok(())
+}
+
+fn compatibility_score(scenario: &Scenario, answers: &Answers, changed: EditableField) -> u8 {
+    [
+        (
+            EditableField::Harness,
+            scenario.harness() == answers.harness,
+        ),
+        (
+            EditableField::Runtime,
+            scenario.runtime() == answers.runtime,
+        ),
+        (
+            EditableField::Inference,
+            scenario.inference() == answers.inference,
+        ),
+        (EditableField::Api, scenario.api() == answers.api),
+    ]
+    .into_iter()
+    .filter(|(field, matches)| *field != changed && *matches)
+    .count() as u8
 }
