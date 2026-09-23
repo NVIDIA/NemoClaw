@@ -6,6 +6,7 @@ import { EventEmitter } from "node:events";
 import { PassThrough, Readable, Writable } from "node:stream";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { HERMES_LIFECYCLE_DEFINITION } from "../../domain/lifecycle/hermes-definition";
 import {
   buildHermesAcpProbeSshArgs,
   buildHermesAcpSessionSshArgs,
@@ -27,7 +28,7 @@ function sshConfig(gatewayName = "nemoclaw"): string {
     "",
   ].join("\n");
 }
-const PROBE_OUTPUT = "0.20.6\n0.9.0\n";
+const PROBE_OUTPUT = `${HERMES_LIFECYCLE_DEFINITION.agentVersion}\n0.9.0\n`;
 
 type FakeChild = Omit<
   ChildProcessWithoutNullStreams,

@@ -33,9 +33,47 @@ const STREAMABLE_TRANSPORT_REPLACEMENT = [
   "\t\t\t}),",
 ].join("\n");
 
-const UNPATCHED_TARGET_PATTERNS = [STREAMABLE_TRANSPORT_PATTERN];
-const REQUIRED_PATTERNS = [...UNPATCHED_TARGET_PATTERNS];
-const PATCHED_REQUIRED_PATTERNS = [MARKER, STREAMABLE_TRANSPORT_REPLACEMENT];
+const CURRENT_STREAMABLE_TRANSPORT_PATTERN = [
+  '\tif (resolved.transportType === "streamable-http") return {',
+  "\t\ttransport: new OpenClawStreamableHTTPClientTransport(new URL(resolved.url), {",
+  '\t\t\trequestInit: resolved.auth === "oauth" || !headers ? void 0 : { headers },',
+  "\t\t\tfetch: httpFetch",
+].join("\n");
+
+const CURRENT_STREAMABLE_TRANSPORT_REPLACEMENT = [
+  '\tif (resolved.transportType === "streamable-http") return {',
+  "\t\ttransport: new OpenClawStreamableHTTPClientTransport(new URL(resolved.url), {",
+  '\t\t\trequestInit: resolved.auth === "oauth" || !headers ? void 0 : { headers },',
+  "\t\t\tfetch: nemoClawManagedTransportFetch(httpFetch, {",
+  "\t\t\t\tserverName,",
+  "\t\t\t\tserverUrl: resolved.url,",
+  "\t\t\t\tconnectionTimeoutMs: resolved.connectionTimeoutMs,",
+  "\t\t\t\trequestTimeoutMs: resolved.requestTimeoutMs,",
+  // The 2026.9.1 transport factory moved out of the session catalog module,
+  // so it cannot observe that module's narrower tools/list-only deadline.
+  // Leaving this unset preserves request behavior and suppresses only timeout
+  // recommendations that would otherwise claim the wrong effective budget.
+  "\t\t\t\tcatalogListTimeoutMs: void 0",
+  "\t\t\t})",
+].join("\n");
+
+interface PatchShape {
+  unpatched: readonly string[];
+  patched: readonly string[];
+  replacements: ReadonlyArray<readonly [string, string]>;
+}
+
+const LEGACY_SHAPE: PatchShape = {
+  unpatched: [STREAMABLE_TRANSPORT_PATTERN],
+  patched: [STREAMABLE_TRANSPORT_REPLACEMENT],
+  replacements: [[STREAMABLE_TRANSPORT_PATTERN, STREAMABLE_TRANSPORT_REPLACEMENT]],
+};
+
+const CURRENT_SHAPE: PatchShape = {
+  unpatched: [CURRENT_STREAMABLE_TRANSPORT_PATTERN],
+  patched: [CURRENT_STREAMABLE_TRANSPORT_REPLACEMENT],
+  replacements: [[CURRENT_STREAMABLE_TRANSPORT_PATTERN, CURRENT_STREAMABLE_TRANSPORT_REPLACEMENT]],
+};
 
 /**
  * Managed-transport failure diagnostics plus opt-in success timing for the
@@ -401,8 +439,13 @@ export function patchManagedTransportDiagnosticsText(
   source: string,
   filePath: string,
 ): PatchTextResult {
+  const currentLayout =
+    source.includes(CURRENT_STREAMABLE_TRANSPORT_PATTERN) ||
+    source.includes(CURRENT_STREAMABLE_TRANSPORT_REPLACEMENT) ||
+    source.includes("new OpenClawStreamableHTTPClientTransport");
+  const shape = currentLayout ? CURRENT_SHAPE : LEGACY_SHAPE;
   if (source.includes(MARKER)) {
-    for (const pattern of PATCHED_REQUIRED_PATTERNS) {
+    for (const pattern of [MARKER, ...shape.patched]) {
       const count = countOccurrences(source, pattern);
       if (count !== 1) {
         throw new Error(
@@ -410,7 +453,7 @@ export function patchManagedTransportDiagnosticsText(
         );
       }
     }
-    for (const pattern of UNPATCHED_TARGET_PATTERNS) {
+    for (const pattern of shape.unpatched) {
       if (source.includes(pattern)) {
         throw new Error(
           `${filePath}: managed transport diagnostics marker is present but an unpatched target remains`,
@@ -420,7 +463,7 @@ export function patchManagedTransportDiagnosticsText(
     return { patched: false, status: "already-patched", text: source };
   }
 
-  for (const pattern of REQUIRED_PATTERNS) {
+  for (const pattern of shape.unpatched) {
     const count = countOccurrences(source, pattern);
     if (count !== 1) {
       throw new Error(
@@ -437,9 +480,9 @@ export function patchManagedTransportDiagnosticsText(
   let text = `${source.slice(0, importMatch[0].length)}${INJECTED_DIAGNOSTIC_HELPER}${source.slice(
     importMatch[0].length,
   )}`;
-  text = text.replace(STREAMABLE_TRANSPORT_PATTERN, STREAMABLE_TRANSPORT_REPLACEMENT);
+  for (const [upstream, patched] of shape.replacements) text = text.replace(upstream, patched);
 
-  for (const pattern of PATCHED_REQUIRED_PATTERNS) {
+  for (const pattern of [MARKER, ...shape.patched]) {
     const count = countOccurrences(text, pattern);
     if (count !== 1) {
       throw new Error(
@@ -451,9 +494,17 @@ export function patchManagedTransportDiagnosticsText(
 }
 
 function resolveBundleMcpRuntimeFile(distDir: string): string {
-  const targets = listJsFiles(distDir).filter((file) =>
-    fs.readFileSync(file, "utf-8").includes(TARGET_SIGNATURE),
-  );
+  const targets = listJsFiles(distDir).filter((file) => {
+    const source = fs.readFileSync(file, "utf-8");
+    const legacyTarget =
+      source.includes(TARGET_SIGNATURE) &&
+      (source.includes(STREAMABLE_TRANSPORT_PATTERN) ||
+        source.includes(STREAMABLE_TRANSPORT_REPLACEMENT));
+    const currentTarget =
+      source.includes(CURRENT_STREAMABLE_TRANSPORT_PATTERN) ||
+      source.includes(CURRENT_STREAMABLE_TRANSPORT_REPLACEMENT);
+    return legacyTarget || currentTarget;
+  });
   if (targets.length !== 1) {
     throw new Error(
       `Expected exactly one OpenClaw bundle-mcp runtime in ${distDir}, found ${targets.length}`,

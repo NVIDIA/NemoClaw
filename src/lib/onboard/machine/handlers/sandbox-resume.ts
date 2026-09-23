@@ -34,6 +34,19 @@ export function hasHostMountConfigDrift(left: unknown, right: unknown): boolean 
   return !persistedSandboxHostMountsEqual(left, right);
 }
 
+/**
+ * A sandbox with no recorded channel configuration consumed none, so
+ * process-environment channel values are not drift.
+ */
+export function hasMessagingChannelConfigDrift<Config>(
+  effective: Config | null,
+  stored: Config | null,
+  configsEqual: (left: Config | null, right: Config | null) => boolean,
+): boolean {
+  if (stored === null) return false;
+  return !configsEqual(effective, stored);
+}
+
 interface InferenceRouteResumeInput {
   readonly agentName: string | null | undefined;
   readonly provider: string | null | undefined;

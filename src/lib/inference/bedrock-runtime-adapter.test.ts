@@ -354,7 +354,11 @@ describe("Bedrock Runtime OpenAI adapter", () => {
     const health = await fetch(`${baseUrl}/health`);
     expect(health.status).toBe(200);
     const body = (await health.json()) as any;
-    expect(body.ok).toBe(true);
+    expect(body).toMatchObject({
+      ok: true,
+      endpointUrl: "https://bedrock-runtime.us-east-1.amazonaws.com",
+      region: "us-east-1",
+    });
     expect(body.tokenHash).toMatch(/^[a-f0-9]{64}$/);
     expect(JSON.stringify(body)).not.toContain("local-token");
 

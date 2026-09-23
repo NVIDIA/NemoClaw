@@ -247,6 +247,7 @@ describe("PR review advisor specialist prompts", () => {
       "pr_review_follow_up_context",
     );
     expect(turn.requiredReadOneOfPaths).toEqual([followUpDiffPath]);
+    expect(turn.terminalSubmitRepairToolNames).toEqual([E2E_RECEIPT_TOOL]);
     expect(turn.prompt).toContain("Treat the trusted human review as the frozen review contract");
     expect(turn.prompt).toContain("Do not restart the original full review");
     expect(turn.prompt).toContain("the follow-up delta introduces it");

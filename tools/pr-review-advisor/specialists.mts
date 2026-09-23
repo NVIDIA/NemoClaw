@@ -104,7 +104,9 @@ export function buildSpecialistInvestigateTurn(
     requiredToolNames: [...(fullTurn.requiredToolNames ?? []), E2E_RECEIPT_TOOL],
     requiredReadOneOfPaths: [context.followUp?.diffPath ?? context.diffPath],
     terminalSubmitToolName: RECORD_ADVISOR_FINDINGS_TOOL,
+    terminalSubmitRepairToolNames: [E2E_RECEIPT_TOOL],
     terminalSubmitRepairPrompt:
+      `If E2E recommendations have not been recorded, call ${E2E_RECEIPT_TOOL} first, including an explicit reason when none are needed. ` +
       `Commit the complete blocker ledger now by calling ${RECORD_ADVISOR_FINDINGS_TOOL}. ` +
       "Do not emit more prose. If there are no P0/P1 blockers, submit an empty finding list and a concrete noFindingsReason.",
     prompt: `Review the ${specialist.label} area.

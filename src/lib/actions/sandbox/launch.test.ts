@@ -546,9 +546,9 @@ describe("launchSandbox", () => {
     expect(command).not.toEqual(["openclaw", "tui"]);
   });
 
-  // `connect` applies the managed light skin before opening its SSH session, so
-  // `launch` must too or a Hermes TUI on a light terminal keeps the dark skin.
-  it("applies the Hermes light terminal skin before starting the agent (#6006)", async () => {
+  // `connect` retires the managed light skin before opening its SSH session, so
+  // `launch` must run the same Hermes compatibility cleanup.
+  it("retires the Hermes light terminal skin before starting the agent (#6006)", async () => {
     const hermes = loadAgent("hermes");
     prepareSession("hermes", hermes);
 

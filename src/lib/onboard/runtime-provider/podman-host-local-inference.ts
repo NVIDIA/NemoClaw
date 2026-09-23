@@ -46,6 +46,10 @@ import {
 } from "./persisted-engine-authority";
 import { translatePodmanLocalInferenceArgs } from "./podman-inference-args";
 import {
+  assertInferencePublishPortsFree,
+  type InspectPublishedPort,
+} from "./podman-inference-publish-preflight";
+import {
   type PodmanInferenceAuthorityReceipt,
   type PodmanInferenceQualificationOptions,
   qualifyPodmanInferenceAuthority,
@@ -253,6 +257,8 @@ export interface PodmanHostLocalInferenceRuntimeOptions {
   readonly operationAcceleration?: HostLocalOllamaAccelerationAuthority;
   readonly onFailureEvidence: (evidence: PodmanInferenceFailureEvidence) => void;
   readonly redactSensitive: PodmanInferenceRedactor;
+  /** Test seam: inspect a host publish target before `podman run`. */
+  readonly inspectPublishedPort?: InspectPublishedPort;
 }
 
 export interface PodmanHostLocalInferenceOperationOptions {
@@ -273,6 +279,8 @@ export interface PodmanHostLocalInferenceOperationOptions {
   readonly routeAuthorityStore: HostLocalInferenceRouteAuthorityStore;
   readonly onFailureEvidence: (evidence: PodmanInferenceFailureEvidence) => void;
   readonly redactSensitive: PodmanInferenceRedactor;
+  /** Test seam: inspect a host publish target before `podman run`. */
+  readonly inspectPublishedPort?: InspectPublishedPort;
 }
 
 export type PodmanPreparedHostLocalInferenceOperationOptions = Omit<
@@ -3914,10 +3922,19 @@ export function createPodmanHostLocalInferenceRuntime(
 
     let created: ManagedContainer | null = null;
     let acknowledgedCleanupCandidate: ManagedContainer | null = null;
+    const publishPreflightOptions = options.inspectPublishedPort
+      ? { inspect: options.inspectPublishedPort }
+      : {};
     const receipt = withRollback(
       () => {
         phase = "start";
         assertSpecAuthority();
+        assertInferencePublishPortsFree(
+          spec.endpoint.port,
+          spec.endpoint.networkListenerIp ?? spec.endpoint.networkGatewayIp,
+          spec.service,
+          publishPreflightOptions,
+        );
         const translatedArgs = translatedRunArguments(spec, authority);
         const result =
           spec.environment.length === 0 && spec.ollamaContextLength === null
@@ -3934,6 +3951,14 @@ export function createPodmanHostLocalInferenceRuntime(
               })());
         const foundId = lookupContainerId(engine, spec.containerName);
         if (foundId === null) {
+          if (result.status !== 0 || result.error) {
+            assertInferencePublishPortsFree(
+              spec.endpoint.port,
+              spec.endpoint.networkListenerIp ?? spec.endpoint.networkGatewayIp,
+              spec.service,
+              publishPreflightOptions,
+            );
+          }
           throw new Error(
             `Podman host-local inference container start failed without an owned runtime: ${redactedCommandEvidence(sensitiveRedactor, result)}`,
           );
@@ -3944,6 +3969,14 @@ export function createPodmanHostLocalInferenceRuntime(
           spec,
           foundId,
         );
+        if (result.status !== 0 || result.error) {
+          assertInferencePublishPortsFree(
+            spec.endpoint.port,
+            spec.endpoint.networkListenerIp ?? spec.endpoint.networkGatewayIp,
+            spec.service,
+            publishPreflightOptions,
+          );
+        }
         if (result.status === 0 && !result.error) {
           const reportedId = exactContainerId(result.stdout.trim());
           if (reportedId !== foundId) {

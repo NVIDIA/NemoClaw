@@ -12,7 +12,7 @@ const mocks = vi.hoisted(() => ({
   save: vi.fn(),
   exec: vi.fn(),
   execShell: vi.fn(),
-  validateNemoClawConfig: vi.fn(),
+  asExportedConfig: vi.fn(),
   writeJson: vi.fn(),
 }));
 
@@ -26,8 +26,8 @@ vi.mock("../../../src/lib/adapters/openshell/sandbox-policy-cli.ts", () => ({
   cliOpenShellSandboxPolicyReader: { readSandboxPolicy: mocks.readSandboxPolicy },
 }));
 
-vi.mock("../../../src/lib/config/schema.ts", () => ({
-  validateNemoClawConfig: mocks.validateNemoClawConfig,
+vi.mock("../../support/config-export-document.ts", () => ({
+  asExportedConfig: mocks.asExportedConfig,
 }));
 
 import {
@@ -51,7 +51,7 @@ beforeEach(() => {
     },
   });
   mocks.readSandboxPolicy.mockReturnValue({ ok: false });
-  mocks.validateNemoClawConfig.mockReturnValue({
+  mocks.asExportedConfig.mockReturnValue({
     spec: {
       inferenceProviders: [
         {
@@ -61,18 +61,21 @@ beforeEach(() => {
       ],
       sandboxes: [
         {
-          agents: [{ type: "hermes" }],
+          agent: { name: "primary" },
+          harness: { kind: "hermes" },
+          image: null,
           name: "hermes",
           network: { policy: { explicit: null } },
-          runtime: { image: { ref: IMAGE_REF } },
+          runtime: { provider: "docker" },
         },
       ],
     },
   });
 });
 
-function passingEvidence(): HermesConfigExportLiveEvidence {
+function passingEvidence(): Extract<HermesConfigExportLiveEvidence, { outcome: "published" }> {
   return {
+    outcome: "published",
     agent: "hermes",
     aliasesEquivalent: true,
     checked: true,
@@ -80,7 +83,7 @@ function passingEvidence(): HermesConfigExportLiveEvidence {
     credentialValuesOmitted: true,
     identityDriftPreventedPublication: true,
     identityDriftReported: true,
-    immutableManagedImageMatches: true,
+    managedImageIsNull: true,
     interfacesMatch: true,
     dashboardRuntimeMatches: true,
     inferenceEndpointMatches: true,
@@ -138,7 +141,7 @@ describe("Hermes config export live evidence", () => {
     "credentialValuesOmitted",
     "identityDriftPreventedPublication",
     "identityDriftReported",
-    "immutableManagedImageMatches",
+    "managedImageIsNull",
     "interfacesMatch",
     "dashboardRuntimeMatches",
     "inferenceEndpointMatches",
@@ -155,6 +158,146 @@ describe("Hermes config export live evidence", () => {
     expect(passesHermesConfigExportLiveEvidence({ ...passingEvidence(), agent: "openclaw" })).toBe(
       false,
     );
+  });
+
+  it("accepts the exact credential-bearing HTTP refusal from both aliases", () => {
+    expect(
+      passesHermesConfigExportLiveEvidence({
+        outcome: "expected-refusal",
+        aliasesEquivalent: true,
+        checked: true,
+        credentialValuesOmitted: true,
+        outputFilesAbsent: true,
+        refusalCategory: "unsupported",
+        refusalDiagnosticMatches: true,
+      }),
+    ).toBe(true);
+  });
+
+  it.each([
+    "aliasesEquivalent",
+    "credentialValuesOmitted",
+    "outputFilesAbsent",
+    "refusalDiagnosticMatches",
+  ] as const)("rejects expected-refusal evidence when %s is false", (field) => {
+    expect(
+      passesHermesConfigExportLiveEvidence({
+        outcome: "expected-refusal",
+        aliasesEquivalent: true,
+        checked: true,
+        credentialValuesOmitted: true,
+        outputFilesAbsent: true,
+        refusalCategory: "unsupported",
+        refusalDiagnosticMatches: true,
+        [field]: false,
+      }),
+    ).toBe(false);
+  });
+
+  it("accepts the live mock route only when both aliases refuse the unsupported export", async () => {
+    mocks.load.mockReturnValue({
+      sandboxes: {
+        hermes: {
+          credentialEnv: "NVIDIA_API_KEY",
+          endpointUrl: "http://host.openshell.internal:35271/v1",
+          gatewayName: "nemoclaw",
+          workload: { kind: "managed-image", reference: IMAGE_REF },
+        },
+      },
+    });
+    const refusal = {
+      exitCode: 2,
+      stdout: "",
+      stderr:
+        "Config export failed (unsupported).\nV1alpha1 requires HTTPS when an inference provider declares a credential.\n",
+    };
+    mocks.command.mockResolvedValue(refusal);
+
+    await expect(runEnabledFixture(["secret-value"])).resolves.toEqual({
+      checked: true,
+      passed: true,
+    });
+    expect(mocks.writeJson).toHaveBeenCalledWith("hermes-config-export-live-evidence.json", {
+      outcome: "expected-refusal",
+      aliasesEquivalent: true,
+      checked: true,
+      credentialValuesOmitted: true,
+      outputFilesAbsent: true,
+      refusalCategory: "unsupported",
+      refusalDiagnosticMatches: true,
+    });
+    expect(mocks.save).not.toHaveBeenCalled();
+    expect(mocks.asExportedConfig).not.toHaveBeenCalled();
+  });
+
+  it("rejects a credential-bearing HTTP refusal when one alias publishes output", async () => {
+    mocks.load.mockReturnValue({
+      sandboxes: {
+        hermes: {
+          credentialEnv: "NVIDIA_API_KEY",
+          endpointUrl: "http://host.openshell.internal:35271/v1",
+          gatewayName: "nemoclaw",
+          workload: { kind: "managed-image", reference: IMAGE_REF },
+        },
+      },
+    });
+    mocks.command
+      .mockResolvedValueOnce({
+        exitCode: 2,
+        stdout: "",
+        stderr:
+          "Config export failed (unsupported).\nV1alpha1 requires HTTPS when an inference provider declares a credential.\n",
+      })
+      .mockImplementationOnce(async (_command: string, args: string[]) => {
+        fs.writeFileSync(args.at(args.indexOf("--output") + 1)!, "{}");
+        return { exitCode: 0, stderr: "", stdout: "" };
+      });
+
+    await expect(runEnabledFixture()).resolves.toEqual({ checked: true, passed: false });
+    expect(mocks.writeJson).toHaveBeenCalledWith(
+      "hermes-config-export-live-evidence.json",
+      expect.objectContaining({
+        outcome: "expected-refusal",
+        aliasesEquivalent: false,
+        outputFilesAbsent: false,
+      }),
+    );
+  });
+
+  it("rejects a credential-bearing HTTP refusal with extra diagnostic output", async () => {
+    mocks.load.mockReturnValue({
+      sandboxes: {
+        hermes: {
+          credentialEnv: "NVIDIA_API_KEY",
+          endpointUrl: "http://host.openshell.internal:35271/v1",
+          gatewayName: "nemoclaw",
+          workload: { kind: "managed-image", reference: IMAGE_REF },
+        },
+      },
+    });
+    const refusal =
+      "Config export failed (unsupported).\nV1alpha1 requires HTTPS when an inference provider declares a credential.";
+    mocks.command
+      .mockResolvedValueOnce({ exitCode: 2, stdout: "", stderr: `${refusal}\n` })
+      .mockResolvedValueOnce({
+        exitCode: 2,
+        stdout: "",
+        stderr: `${refusal}\nunexpected diagnostic: secret-value\n`,
+      });
+
+    await expect(runEnabledFixture(["secret-value"])).resolves.toEqual({
+      checked: true,
+      passed: false,
+    });
+    expect(mocks.writeJson).toHaveBeenCalledWith("hermes-config-export-live-evidence.json", {
+      outcome: "expected-refusal",
+      aliasesEquivalent: false,
+      checked: true,
+      credentialValuesOmitted: false,
+      outputFilesAbsent: true,
+      refusalCategory: null,
+      refusalDiagnosticMatches: false,
+    });
   });
 
   it("records failed evidence before parsing when a launcher fails", async () => {
@@ -177,7 +320,7 @@ describe("Hermes config export live evidence", () => {
       }),
     );
     expect(mocks.save).not.toHaveBeenCalled();
-    expect(mocks.validateNemoClawConfig).not.toHaveBeenCalled();
+    expect(mocks.asExportedConfig).not.toHaveBeenCalled();
   });
 
   it("rejects drift evidence when only one launcher reports identity drift (#11286)", async () => {
@@ -212,9 +355,9 @@ describe("Hermes interface runtime evidence", () => {
   ])(
     "checks API allocation $apiPort with the dashboard disabled (#11433)",
     async ({ apiPort, interfaces }) => {
-      const document = mocks.validateNemoClawConfig.getMockImplementation()!();
-      document.spec.sandboxes[0].agents[0].interfaces = interfaces;
-      mocks.validateNemoClawConfig.mockReturnValue(document);
+      const document = mocks.asExportedConfig.getMockImplementation()!();
+      document.spec.sandboxes[0].harness.interfaces = interfaces;
+      mocks.asExportedConfig.mockReturnValue(document);
       const writeExport = async (_command: string, args: string[]) => {
         fs.writeFileSync(args.at(args.indexOf("--output") + 1)!, "{}");
         return { exitCode: 0, stderr: "", stdout: "" };
@@ -240,12 +383,12 @@ describe("Hermes interface runtime evidence", () => {
   ])(
     "requires the expected dashboard process and internal listener %s %s (#11433)",
     async (processOutput, status, expected) => {
-      const document = mocks.validateNemoClawConfig.getMockImplementation()!();
-      document.spec.sandboxes[0].agents[0].interfaces = {
+      const document = mocks.asExportedConfig.getMockImplementation()!();
+      document.spec.sandboxes[0].harness.interfaces = {
         dashboard: { enabled: true, port: 19000, internalPort: 19120, tui: { enabled: true } },
         api: { port: 8643 },
       };
-      mocks.validateNemoClawConfig.mockReturnValue(document);
+      mocks.asExportedConfig.mockReturnValue(document);
       const writeExport = async (_command: string, args: string[]) => {
         fs.writeFileSync(args.at(args.indexOf("--output") + 1)!, "{}");
         return { exitCode: 0, stderr: "", stdout: "" };

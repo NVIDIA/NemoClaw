@@ -5,7 +5,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { VerifyDeploymentResult } from "../../verify-deployment";
 import {
@@ -25,6 +25,7 @@ import {
   OPENCLAW_ONBOARDING_PAIRING_SETTLEMENT_TIMEOUT_MS,
   OPENCLAW_ONBOARDING_PAIRING_TIMEOUT_MS,
   ordinaryOpenClawPairingIncompleteMessage,
+  restartNativeGatewayForInitialSetup,
   settleOrdinaryOpenClawPairing,
 } from "./finalization-deps";
 
@@ -693,6 +694,7 @@ describe("finalizationHandlerDeps.waitForSandboxControlPlaneReady", () => {
     vi.spyOn(finalizationHandlerRuntime, "loadProcessRecovery").mockReturnValue({
       checkAndRecoverSandboxProcesses: vi.fn(),
       waitForRecreatedSandboxOpenShellReady,
+      waitForStartedNativeGatewayProcess: vi.fn(async () => true),
     });
 
     await expect(
@@ -764,7 +766,64 @@ describe("finalizationHandlerDeps.readRegistryAgent", () => {
 });
 
 describe("finalization process-recovery refusal propagation", () => {
+  beforeEach(() => {
+    vi.spyOn(finalizationHandlerRuntime, "loadLaunchReadiness").mockReturnValue({
+      resolveOrdinaryOpenClawPairingTarget: () => null,
+    } as never);
+  });
   afterEach(() => vi.restoreAllMocks());
+
+  it("waits for the native gateway listener before final process recovery", async () => {
+    const order: string[] = [];
+    const waitForStartedNativeGatewayProcess = vi.fn(async () => {
+      order.push("native-startup");
+      return true;
+    });
+    vi.spyOn(finalizationHandlerRuntime, "loadLaunchReadiness").mockReturnValue({
+      resolveOrdinaryOpenClawPairingTarget: () => ({ gatewayName: "nemoclaw" }),
+    } as never);
+    const recover = vi.fn(async () => {
+      order.push("process-recovery");
+      return {
+        checked: true,
+        wasRunning: true,
+        recovered: false,
+        forwardRecovered: false,
+      };
+    });
+    vi.spyOn(finalizationHandlerRuntime, "loadProcessRecovery").mockReturnValue({
+      checkAndRecoverSandboxProcesses: recover,
+      waitForRecreatedSandboxOpenShellReady: vi.fn(async () => true),
+      waitForStartedNativeGatewayProcess,
+    });
+
+    await expect(
+      finalizationHandlerDeps.checkAndRecoverSandboxProcesses("alpha", { quiet: true }),
+    ).resolves.toBe(true);
+    expect(order).toEqual(["native-startup", "process-recovery"]);
+    expect(waitForStartedNativeGatewayProcess).toHaveBeenCalledExactlyOnceWith(
+      "alpha",
+      "openclaw",
+      "nemoclaw",
+    );
+  });
+
+  it("pauses before recovery when initial OpenClaw startup does not settle", async () => {
+    const recover = vi.fn();
+    vi.spyOn(finalizationHandlerRuntime, "loadLaunchReadiness").mockReturnValue({
+      resolveOrdinaryOpenClawPairingTarget: () => ({ gatewayName: "nemoclaw" }),
+    } as never);
+    vi.spyOn(finalizationHandlerRuntime, "loadProcessRecovery").mockReturnValue({
+      checkAndRecoverSandboxProcesses: recover,
+      waitForRecreatedSandboxOpenShellReady: vi.fn(async () => true),
+      waitForStartedNativeGatewayProcess: vi.fn(async () => false),
+    });
+
+    await expect(
+      finalizationHandlerDeps.checkAndRecoverSandboxProcesses("alpha", { quiet: true }),
+    ).resolves.toBe(false);
+    expect(recover).not.toHaveBeenCalled();
+  });
 
   it("passes the scope-validated portable environment to process recovery", async () => {
     const recover = vi.fn(async () => ({
@@ -776,6 +835,7 @@ describe("finalization process-recovery refusal propagation", () => {
     vi.spyOn(finalizationHandlerRuntime, "loadProcessRecovery").mockReturnValue({
       checkAndRecoverSandboxProcesses: recover,
       waitForRecreatedSandboxOpenShellReady: vi.fn(async () => true),
+      waitForStartedNativeGatewayProcess: vi.fn(async () => true),
     });
     const environment = { HOME: "/home/kiosk", PATH: "/usr/bin" };
     await expect(
@@ -792,29 +852,70 @@ describe("finalization process-recovery refusal propagation", () => {
   });
 
   it("pauses when process inspection cannot complete (#11758)", async () => {
+    const recover = vi.fn(async () => ({
+      checked: false,
+      wasRunning: null,
+      recovered: false,
+      forwardRecovered: false,
+    }));
     vi.spyOn(finalizationHandlerRuntime, "loadProcessRecovery").mockReturnValue({
-      checkAndRecoverSandboxProcesses: vi.fn(async () => ({
-        checked: false,
-        wasRunning: null,
-        recovered: false,
-        forwardRecovered: false,
-      })),
+      checkAndRecoverSandboxProcesses: recover,
       waitForRecreatedSandboxOpenShellReady: vi.fn(async () => true),
+      waitForStartedNativeGatewayProcess: vi.fn(async () => true),
     });
     await expect(
       finalizationHandlerDeps.checkAndRecoverSandboxProcesses("alpha", { quiet: true }),
     ).resolves.toBe(false);
+    expect(recover).toHaveBeenCalledTimes(2);
+  });
+
+  it("retries process inspection after replacement control-plane convergence", async () => {
+    const recover = vi
+      .fn()
+      .mockResolvedValueOnce({
+        checked: false,
+        wasRunning: null,
+        recovered: false,
+        forwardRecovered: false,
+      })
+      .mockResolvedValueOnce({
+        checked: true,
+        wasRunning: true,
+        recovered: false,
+        forwardRecovered: false,
+      });
+    const waitForReady = vi.fn(async () => true);
+    vi.spyOn(finalizationHandlerRuntime, "loadProcessRecovery").mockReturnValue({
+      checkAndRecoverSandboxProcesses: recover,
+      waitForRecreatedSandboxOpenShellReady: waitForReady,
+      waitForStartedNativeGatewayProcess: vi.fn(async () => true),
+    });
+
+    await expect(
+      finalizationHandlerDeps.checkAndRecoverSandboxProcesses("alpha", { quiet: true }),
+    ).resolves.toBe(true);
+    expect(waitForReady).toHaveBeenCalledExactlyOnceWith("alpha");
+    expect(recover).toHaveBeenCalledTimes(2);
   });
 
   it("pauses onboarding when the stopped gateway could not be recovered", async () => {
+    const recover = vi.fn(async () => ({
+      checked: true,
+      wasRunning: false,
+      recovered: false,
+      forwardRecovered: false,
+    }));
     vi.spyOn(finalizationHandlerRuntime, "loadProcessRecovery").mockReturnValue({
-      checkAndRecoverSandboxProcesses: vi.fn(async () => ({
-        checked: true,
-        wasRunning: false,
-        recovered: false,
-        forwardRecovered: false,
-      })),
+      checkAndRecoverSandboxProcesses: recover,
       waitForRecreatedSandboxOpenShellReady: vi.fn(async () => true),
+      waitForStartedNativeGatewayProcess: vi.fn(async () => true),
+    });
+    vi.spyOn(finalizationHandlerRuntime, "loadGatewayRestart").mockReturnValue({
+      restartSandboxGateway: vi.fn(async () => ({
+        ok: false as const,
+        failureLayer: "native agent command" as const,
+        detail: "restart failed",
+      })),
     });
     await expect(
       finalizationHandlerDeps.checkAndRecoverSandboxProcesses(
@@ -835,6 +936,7 @@ describe("finalization process-recovery refusal propagation", () => {
         runtime: "terminal" as const,
       })),
       waitForRecreatedSandboxOpenShellReady: vi.fn(async () => true),
+      waitForStartedNativeGatewayProcess: vi.fn(async () => true),
     });
     await expect(
       finalizationHandlerDeps.checkAndRecoverSandboxProcesses("alpha", { quiet: true }),
@@ -861,6 +963,7 @@ describe("finalization process-recovery refusal propagation", () => {
       vi.spyOn(finalizationHandlerRuntime, "loadProcessRecovery").mockReturnValue({
         checkAndRecoverSandboxProcesses: recover,
         waitForRecreatedSandboxOpenShellReady: vi.fn(async () => true),
+        waitForStartedNativeGatewayProcess: vi.fn(async () => true),
       });
       await expect(
         finalizationHandlerDeps.checkAndRecoverSandboxProcesses("alpha", { quiet: true }),
@@ -878,9 +981,31 @@ describe("finalization process-recovery refusal propagation", () => {
         forwardRecovered: false,
       })),
       waitForRecreatedSandboxOpenShellReady: vi.fn(async () => true),
+      waitForStartedNativeGatewayProcess: vi.fn(async () => true),
     });
     await expect(
       finalizationHandlerDeps.checkAndRecoverSandboxProcesses("alpha", { quiet: true }),
     ).resolves.toBe(true);
+  });
+});
+
+describe("initial native gateway startup", () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it("uses the native agent restart path without restoring supervisor authority", async () => {
+    const restartSandboxGateway = vi.fn(async () => ({
+      ok: true as const,
+      restarted: true as const,
+      healthPassed: true as const,
+      forwardRecovered: true,
+    }));
+    vi.spyOn(finalizationHandlerRuntime, "loadGatewayRestart").mockReturnValue({
+      restartSandboxGateway,
+    });
+
+    await expect(restartNativeGatewayForInitialSetup("alpha")).resolves.toMatchObject({
+      ok: true,
+    });
+    expect(restartSandboxGateway).toHaveBeenCalledExactlyOnceWith("alpha", { quiet: true });
   });
 });

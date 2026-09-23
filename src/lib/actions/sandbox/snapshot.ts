@@ -16,7 +16,8 @@ import {
 } from "../../adapters/openshell/runtime";
 import {
   createCliOpenShellSandboxLifecycleFromRunner,
-  createCliOpenShellSandboxObserverFromRunner,
+  createCliOpenShellSandboxLookupFromRunner,
+  waitForSandboxDeleteAbsence,
 } from "../../adapters/openshell/sandbox-lifecycle-cli";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "../../adapters/openshell/timeouts";
 import { CLI_NAME } from "../../cli/branding";
@@ -648,12 +649,12 @@ async function deleteSandboxForRestore(name: string): Promise<void> {
       snapshotExit(1);
     }
     if (deleteResult.kind !== "absent") {
-      const observed = await createCliOpenShellSandboxObserverFromRunner(
-        runOpenshell,
-      ).listSandboxes({
-        target: { kind: "named", gatewayName },
-      });
-      if (!observed.ok || observed.value.sandboxes.some((candidate) => candidate.name === name)) {
+      const convergence = await waitForSandboxDeleteAbsence(
+        name,
+        gatewayName,
+        createCliOpenShellSandboxLookupFromRunner(runOpenshell),
+      );
+      if (!convergence.confirmed) {
         console.error(
           `  OpenShell did not confirm that destination '${name}' is absent. Aborting restore.`,
         );

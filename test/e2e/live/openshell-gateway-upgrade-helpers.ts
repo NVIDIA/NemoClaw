@@ -3,12 +3,25 @@
 
 import { shellQuote } from "../fixtures/clients/command.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
-import { REVIEWED_GATEWAY_UPGRADE_FIXTURE } from "../../../tools/e2e/openshell-gateway-upgrade-fixture.mts";
 import { reviewedOldInstallerProfile } from "./openshell-gateway-upgrade-old-installer.ts";
 
 const NON_INTERACTIVE_INSTALLER_ARGS = ["--non-interactive", "--yes-i-accept-third-party-software"];
 const GATEWAY_VOLUME_PREFIX = "openshell-cluster-nemoclaw";
+const MANAGED_IMAGE_QUALIFICATION_ENV_KEYS = [
+  "E2E_MANAGED_IMAGE_REVISION",
+  "E2E_MANAGED_IMAGE_COHORT_RECEIPT",
+  "NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG",
+  "NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG_JSON",
+  "NEMOCLAW_E2E_MANAGED_IMAGE_REVISION",
+] as const;
 export const GATEWAY_UPGRADE_INSTALL_TIMEOUT_MS = 35 * 60_000;
+
+export async function captureGatewayUpgradeFailureDiagnostics(
+  exitCode: number | null,
+  capture: (() => Promise<void>) | undefined,
+): Promise<void> {
+  if (exitCode !== 0) await capture?.();
+}
 
 export interface LegacyGatewayUpgradeFixture {
   nemoclawRef: string;
@@ -28,33 +41,29 @@ export function validateLegacyGatewayUpgradeFixture(fixture: LegacyGatewayUpgrad
       `NEMOCLAW_OLD_NEMOCLAW_COMMIT must be a full lowercase commit SHA; got ${fixture.nemoclawCommit}`,
     );
   }
-  if (
-    !/^[0-9a-f]{64}$/.test(fixture.installerSha256) ||
-    fixture.installerSha256 !== REVIEWED_GATEWAY_UPGRADE_FIXTURE.installerSha256
-  ) {
+  if (!/^[0-9a-f]{64}$/.test(fixture.installerSha256)) {
     throw new Error(
       `NEMOCLAW_OLD_INSTALLER_SHA256 must match the reviewed descriptor's lowercase SHA-256 digest; got ${fixture.installerSha256}`,
     );
   }
   if (
     !/^\d{4}\.\d{1,2}\.\d{1,2}$/.test(fixture.openclawVersion) ||
-    !/^\d+\.\d+\.\d+$/.test(fixture.openShellVersion) ||
-    fixture.openShellVersion !== REVIEWED_GATEWAY_UPGRADE_FIXTURE.openShellVersion
+    !/^\d+\.\d+\.\d+$/.test(fixture.openShellVersion)
   ) {
     throw new Error(
       `NEMOCLAW_OLD_OPENCLAW_VERSION and NEMOCLAW_OLD_OPENSHELL_VERSION must match the reviewed descriptor; got ${fixture.openclawVersion}/${fixture.openShellVersion}`,
     );
   }
-  reviewedOldInstallerProfile(fixture);
+  const reviewedFixture = reviewedOldInstallerProfile(fixture);
   const sandboxBaseDigest = fixture.sandboxBaseImageRef.match(
     /^[^@\s]+@sha256:([0-9a-f]{64})$/,
   )?.[1];
   if (
-    !sandboxBaseDigest ||
-    fixture.sandboxBaseImageRef !== REVIEWED_GATEWAY_UPGRADE_FIXTURE.sandboxBaseImageRef
+    fixture.sandboxBaseImageRef !== reviewedFixture.sandboxBaseImageRef ||
+    (reviewedFixture.sandboxBaseImageRef !== "" && !sandboxBaseDigest)
   ) {
     throw new Error(
-      `NEMOCLAW_OLD_SANDBOX_BASE_IMAGE_REF must match the reviewed descriptor and use a digest pin; got ${fixture.sandboxBaseImageRef}`,
+      `NEMOCLAW_OLD_SANDBOX_BASE_IMAGE_REF must match the reviewed descriptor's workload path; got ${fixture.sandboxBaseImageRef}`,
     );
   }
 }
@@ -72,12 +81,54 @@ export async function captureGatewayUpgradeProbeEvidence(
   return results.every((result) => result.status === "fulfilled" && result.value.exitCode === 0);
 }
 
+/** Accept recovery only when the command, listener, and restored sandbox checks all succeed. */
+export function gatewayUpgradeRecoverySucceeded(
+  recovery: Pick<ShellProbeResult, "exitCode">,
+  forward: { readonly valid: boolean },
+  stateChecks: readonly Pick<ShellProbeResult, "exitCode">[],
+): boolean {
+  return (
+    recovery.exitCode === 0 && forward.valid && stateChecks.every((result) => result.exitCode === 0)
+  );
+}
+
+/** Accept credential non-exposure only when both inspections complete with no match. */
+export function gatewayCredentialNonExposureScript(
+  credential: string,
+  managedPaths: readonly string[] = [
+    "/sandbox/.openclaw/openclaw.json",
+    "/sandbox/.openclaw/agents",
+  ],
+): string {
+  const quotedCredential = shellQuote(credential);
+  const quotedManagedPaths = managedPaths.map(shellQuote).join(" ");
+  return `env | grep -qF -- ${quotedCredential}
+environment_status=$?
+case "$environment_status" in
+  1) ;;
+  0) printf '%s\\n' 'ERROR: gateway credential is exposed in the sandbox environment' >&2; exit 1 ;;
+  *) printf 'ERROR: sandbox environment credential inspection failed (grep exit %s)\\n' "$environment_status" >&2; exit "$environment_status" ;;
+esac
+grep -rqF -- ${quotedCredential} ${quotedManagedPaths}
+managed_files_status=$?
+case "$managed_files_status" in
+  1) ;;
+  0) printf '%s\\n' 'ERROR: gateway credential is exposed in managed OpenClaw files' >&2; exit 1 ;;
+  *) printf 'ERROR: managed OpenClaw credential inspection failed (grep exit %s)\\n' "$managed_files_status" >&2; exit "$managed_files_status" ;;
+esac`;
+}
+
 export function oldGatewayUpgradeInstallerArgs(installer: string): string[] {
   return [installer, ...NON_INTERACTIVE_INSTALLER_ARGS, "--fresh"];
 }
 
 export function currentGatewayUpgradeInstallerArgs(installer: string): string[] {
   return [installer, ...NON_INTERACTIVE_INSTALLER_ARGS];
+}
+
+/** Override the historical Dockerfile base only when the reviewed fixture pins one. */
+export function legacyGatewayUpgradeBaseImageOverrideEnabled(baseImageRef: string): boolean {
+  return baseImageRef.length > 0;
 }
 
 export function currentNemoclawUpgradeRef(env: NodeJS.ProcessEnv): string {
@@ -89,6 +140,16 @@ export function currentNemoclawUpgradeRef(env: NodeJS.ProcessEnv): string {
     if (candidate?.trim()) return candidate.trim();
   }
   return "HEAD";
+}
+
+/** Keep the upgrade fixture on its explicit Dockerfile source across managed-image CI lanes. */
+export function isolateGatewayUpgradeFixtureEnv(
+  environment: NodeJS.ProcessEnv,
+  workloadSource: "" | "local-dockerfile",
+): NodeJS.ProcessEnv {
+  const isolated: NodeJS.ProcessEnv = { ...environment, E2E_WORKLOAD_SOURCE: workloadSource };
+  for (const key of MANAGED_IMAGE_QUALIFICATION_ENV_KEYS) delete isolated[key];
+  return isolated;
 }
 
 export function legacyGatewayUpgradeHostFirewallOptions(): {

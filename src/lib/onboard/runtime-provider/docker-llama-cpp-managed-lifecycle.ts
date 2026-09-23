@@ -27,6 +27,7 @@ import {
   type DockerLlamaCppPrivateBridgeAuthority,
   type DockerLlamaCppPrivateBridgeController,
 } from "./docker-llama-cpp-private-bridge";
+import { DOCKER_LLAMA_CPP_READINESS_TIMEOUT_MAX_SECONDS } from "./docker-llama-cpp-readiness-timeout";
 import {
   type HostLocalCreateJournalExecutionLease,
   type HostLocalCreateJournalRecord,
@@ -190,7 +191,11 @@ function stableFileIdentitySha256(identity: StableFileIdentity): string {
 
 function readinessTimeoutSeconds(options: DockerLlamaCppManagedLifecycleOptions): number {
   const value = options.readinessTimeoutSeconds;
-  if (!Number.isSafeInteger(value) || value < 1 || value > 86_400) {
+  if (
+    !Number.isSafeInteger(value) ||
+    value < 1 ||
+    value > DOCKER_LLAMA_CPP_READINESS_TIMEOUT_MAX_SECONDS
+  ) {
     throw new Error("Docker llama.cpp readiness timeout must be 1-86400 seconds.");
   }
   return value;
@@ -1026,7 +1031,7 @@ function probePrivateBridge(
   options.journalStore.assertExecution(lease);
   bridge.start(authority);
   options.journalStore.assertExecution(lease);
-  const timeoutSeconds = Math.min(readinessTimeoutSeconds(options), 30);
+  const timeoutSeconds = readinessTimeoutSeconds(options);
   const curlArguments = (url: string): readonly string[] => [
     "--fail",
     "--silent",

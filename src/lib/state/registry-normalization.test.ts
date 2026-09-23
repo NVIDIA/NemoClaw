@@ -7,6 +7,8 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { CLI_NAME } from "../cli/branding";
+
 const originalHome = process.env.HOME;
 const temporaryHomes: string[] = [];
 
@@ -113,6 +115,47 @@ describe("sandbox registry normalization", () => {
     expect(persisted.sandboxes?.alpha).not.toHaveProperty("cuaRuntimeReadiness");
   });
 
+  it.each(["alpha", "beta"])(
+    "preserves legacy ownership across an unrelated update to %s until explicit retirement",
+    async (updatedSandbox) => {
+      const legacy = { bridges: { github: { providerId: "owned-provider" } } };
+      const { home, registry } = await loadRegistryDocument({
+        sandboxes: { alpha: { name: "alpha", mcp: legacy }, beta: { name: "beta" } },
+      });
+      const { readLegacyMcpRegistryProjection, removeLegacyMcpRegistryEntry } =
+        await import("./registry/legacy-mcp");
+
+      expect(registry.updateSandbox(updatedSandbox, { model: "replacement" })).toBe(true);
+      expect(readLegacyMcpRegistryProjection("alpha")).toEqual(legacy);
+      expect(registry.getSandbox("alpha")).not.toHaveProperty("mcp");
+      expect(registry.getSandbox(updatedSandbox)?.model).toBe("replacement");
+      const staleRuntimeSnapshot = registry.load();
+      removeLegacyMcpRegistryEntry("alpha", "github", legacy);
+      registry.save(staleRuntimeSnapshot);
+      registry.updateSandbox(updatedSandbox, { agentVersion: "new-version" });
+      expect(readLegacyMcpRegistryProjection("alpha")).toBeUndefined();
+      const persisted = JSON.parse(
+        fs.readFileSync(path.join(home, ".nemoclaw", "sandboxes.json"), "utf8"),
+      );
+      expect(persisted.sandboxes.alpha).not.toHaveProperty("mcp");
+      expect(persisted.sandboxes[updatedSandbox].agentVersion).toBe("new-version");
+    },
+  );
+
+  it("preserves only persisted legacy ownership, not a caller-supplied replacement", async () => {
+    const legacy = { bridges: { github: { providerId: "owned-provider" } } };
+    const { registry } = await loadRegistryDocument({
+      sandboxes: { alpha: { name: "alpha", mcp: legacy }, beta: { name: "beta" } },
+    });
+    const { readLegacyMcpRegistryProjection } = await import("./registry/legacy-mcp");
+    const updates = { model: "replacement", mcp: { bridges: {} } };
+    registry.updateSandbox("alpha", updates);
+    registry.updateSandbox("beta", updates);
+    expect(readLegacyMcpRegistryProjection("alpha")).toEqual(legacy);
+    expect(readLegacyMcpRegistryProjection("beta")).toBeUndefined();
+    expect(registry.getSandbox("alpha")).not.toHaveProperty("mcp");
+  });
+
   it("preserves a stale pointer for diagnostics but repairs it on registration", async () => {
     const registry = await loadRegistryWith({ mismatched: { name: "different" } }, "mismatched");
 
@@ -187,6 +230,268 @@ describe("sandbox registry normalization", () => {
     const stale = registry.getSandbox("changed")!;
     registry.updateSandbox("changed", { model: "replacement" });
     expect(compareAndSetLegacySandboxLifecycleGeneration(stale, "c".repeat(64))).toBe(false);
+  });
+
+  const generation = "22222222-2222-4222-8222-222222222222";
+  const fingerprint = "b".repeat(64);
+
+  async function prepareMessagingIdentityRecovery(
+    entry: Partial<import("./registry").SandboxEntry> = {},
+  ) {
+    vi.stubEnv("NEMOCLAW_GATEWAY_PORT", "8080");
+    const registry = await loadRegistryWith({
+      legacy: {
+        name: "legacy",
+        agent: "openclaw",
+        gatewayName: "nemoclaw",
+        gatewayPort: 8080,
+        ...entry,
+      },
+    });
+    const expected = registry.getSandbox("legacy")!;
+    const sessionStore = await import("./onboard-session");
+    const { deriveCheckpointFromSession } = await import("./onboard-checkpoint-migrate");
+    const { policyChannelDependencies } =
+      await import("../actions/sandbox/policy-channel-dependencies");
+    const { revalidateMessagingProviderAttachmentTarget } =
+      await import("../actions/sandbox/policy-channel");
+    const session = sessionStore.createSession({ sandboxName: "legacy", agent: "openclaw" });
+    session.status = "complete";
+    session.sandboxPromptProgress.sandboxName = true;
+    session.machine = { ...session.machine, state: "complete" };
+    session.checkpoint = {
+      ...deriveCheckpointFromSession(session),
+      gatewayAuthority: {
+        kind: "selected",
+        value: {
+          gatewayName: "nemoclaw",
+          gatewayPort: 8080,
+          mode: "nemoclaw-managed",
+          source: "standalone",
+          endpoint: null,
+          stateDir: null,
+          supervisor: null,
+          requiredCapabilities: [],
+        },
+      },
+      sandboxRecreate: {
+        version: 1,
+        id: "11111111-1111-4111-8111-111111111111",
+        revision: 6,
+        sandboxName: "legacy",
+        gatewayName: "nemoclaw",
+        gatewayPort: 8080,
+        sourceRegistryFingerprint: "a".repeat(64),
+        sourceLiveIdentityFingerprint: null,
+        sourceWorkload: null,
+        targetIntentFingerprint: "c".repeat(64),
+        targetGeneration: generation,
+        targetLiveIdentityFingerprint: fingerprint,
+        phase: "completed",
+        startedAt: session.startedAt,
+        updatedAt: session.updatedAt,
+      },
+    };
+    sessionStore.saveSession(session);
+    const before = sessionStore.loadSession();
+    expect(before?.checkpoint?.sandboxRecreate?.phase).toBe("completed");
+    const inspect = vi
+      .spyOn(policyChannelDependencies, "inspectMessagingProviderAttachmentTarget")
+      .mockReturnValue(fingerprint);
+    return {
+      registry,
+      expected,
+      sessionStore,
+      before,
+      inspect,
+      validate: () => revalidateMessagingProviderAttachmentTarget("legacy", "nemoclaw"),
+    };
+  }
+
+  it.each([
+    { field: "both fields", entry: {} },
+    { field: "fingerprint", entry: { lifecycleGeneration: generation } },
+    { field: "generation", entry: { lifecycleLiveIdentityFingerprint: fingerprint } },
+  ])("recovers missing $field from a completed lifecycle receipt", async ({ entry }) => {
+    const f = await prepareMessagingIdentityRecovery(entry);
+
+    expect(f.validate).not.toThrow();
+    expect(f.registry.getSandbox("legacy")).toEqual({
+      ...f.expected,
+      lifecycleGeneration: generation,
+      lifecycleLiveIdentityFingerprint: fingerprint,
+    });
+    expect(f.sessionStore.loadSession()).toEqual(f.before);
+    expect(f.sessionStore.isOnboardLockHeldByCurrentProcess()).toBe(false);
+  });
+
+  it.each([
+    {
+      label: "missing proof",
+      mutate: (session: import("./onboard-session").Session) => ({ ...session, checkpoint: null }),
+    },
+    {
+      label: "unfinished session",
+      mutate: (session: import("./onboard-session").Session) => ({
+        ...session,
+        status: "in_progress",
+      }),
+    },
+    {
+      label: "another sandbox",
+      mutate: (session: import("./onboard-session").Session) => ({
+        ...session,
+        sandboxName: "other",
+      }),
+    },
+    {
+      label: "another gateway",
+      mutate: (session: import("./onboard-session").Session) => ({
+        ...session,
+        metadata: { ...session.metadata, gatewayName: "nemoclaw-8081" },
+      }),
+    },
+    {
+      label: "another session",
+      mutate: (session: import("./onboard-session").Session) => ({
+        ...session,
+        checkpoint: { ...session.checkpoint!, sessionId: "other-session" },
+      }),
+    },
+    {
+      label: "unfinished transaction",
+      mutate: (session: import("./onboard-session").Session) => ({
+        ...session,
+        checkpoint: {
+          ...session.checkpoint!,
+          sandboxRecreate: { ...session.checkpoint!.sandboxRecreate!, phase: "created" as const },
+        },
+      }),
+    },
+  ])("preserves legacy state with $label", async ({ mutate }) => {
+    const f = await prepareMessagingIdentityRecovery();
+    f.sessionStore.saveSession(mutate(f.before!));
+
+    let validationError: unknown;
+    try {
+      f.validate();
+    } catch (error) {
+      validationError = error;
+    }
+    expect(validationError).toBeInstanceOf(Error);
+    expect((validationError as Error).message).toContain("incomplete lifecycle identity");
+    expect((validationError as Error).message).toContain(
+      `Run \`${CLI_NAME} legacy rebuild --yes\` to record its lifecycle identity, then rerun this command.`,
+    );
+    expect(f.registry.getSandbox("legacy")).toEqual(f.expected);
+    expect(f.inspect).not.toHaveBeenCalled();
+    expect(f.sessionStore.isOnboardLockHeldByCurrentProcess()).toBe(false);
+  });
+
+  it("omits the rebuild remedy when the recorded gateway differs from the target", async () => {
+    const f = await prepareMessagingIdentityRecovery({
+      gatewayName: "nemoclaw-8081",
+      gatewayPort: 8081,
+    });
+
+    expect(f.validate).toThrow(
+      /^Sandbox 'legacy' has incomplete lifecycle identity for messaging provider attachment\.$/u,
+    );
+    expect(f.registry.getSandbox("legacy")).toEqual(f.expected);
+    expect(f.inspect).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { lifecycleGeneration: "33333333-3333-4333-8333-333333333333" },
+    { lifecycleLiveIdentityFingerprint: "f".repeat(64) },
+    { pendingRouteReservation: true as const },
+  ])("does not overwrite conflicting registry identity %j", async (entry) => {
+    const f = await prepareMessagingIdentityRecovery(entry);
+
+    expect(f.validate).toThrow("incomplete lifecycle identity");
+    expect(f.registry.getSandbox("legacy")).toEqual(f.expected);
+  });
+
+  it.each([0, 1])(
+    "rejects a live identity change after %s successful observations",
+    async (successful) => {
+      const f = await prepareMessagingIdentityRecovery();
+      const observations = [fingerprint, "f".repeat(64)];
+      let index = 1 - successful;
+      f.inspect.mockImplementation(() => observations[index++] ?? "f".repeat(64));
+
+      expect(f.validate).toThrow("lifecycle identity changed");
+      expect(f.registry.getSandbox("legacy")).toEqual(f.expected);
+      expect(f.sessionStore.isOnboardLockHeldByCurrentProcess()).toBe(false);
+    },
+  );
+
+  it("preserves a registry change made while live identity is inspected", async () => {
+    const f = await prepareMessagingIdentityRecovery();
+    f.inspect.mockImplementationOnce(() => {
+      f.registry.updateSandbox("legacy", { model: "changed" });
+      return fingerprint;
+    });
+
+    expect(f.validate).toThrow("incomplete lifecycle identity");
+    expect(f.registry.getSandbox("legacy")).toEqual({ ...f.expected, model: "changed" });
+  });
+
+  it("rechecks the complete registry row after locked identity validation", async () => {
+    const f = await prepareMessagingIdentityRecovery();
+    f.inspect.mockReturnValueOnce(fingerprint).mockImplementationOnce(() => {
+      const document = f.registry.load();
+      document.sandboxes.legacy.model = "changed-without-lock";
+      f.registry.save(document);
+      return fingerprint;
+    });
+
+    expect(f.validate).toThrow("incomplete lifecycle identity");
+    expect(f.registry.getSandbox("legacy")).toEqual({
+      ...f.expected,
+      model: "changed-without-lock",
+    });
+  });
+
+  it("rejects receipt replacement during live identity validation", async () => {
+    const f = await prepareMessagingIdentityRecovery();
+    f.inspect.mockImplementationOnce(() => {
+      f.sessionStore.saveSession({ ...f.before!, sessionId: "replacement" });
+      return fingerprint;
+    });
+
+    expect(f.validate).toThrow("lifecycle identity changed");
+    expect(f.registry.getSandbox("legacy")).toEqual(f.expected);
+    expect(f.sessionStore.isOnboardLockHeldByCurrentProcess()).toBe(false);
+  });
+
+  it("refuses recovery while another onboarding writer owns the lock", async () => {
+    const f = await prepareMessagingIdentityRecovery();
+    vi.spyOn(f.sessionStore, "acquireOnboardLock").mockReturnValue({
+      acquired: false,
+      lockFile: "locked",
+      stale: false,
+    });
+
+    expect(f.validate).toThrow("another onboarding writer is active");
+    expect(f.registry.getSandbox("legacy")).toEqual(f.expected);
+    expect(f.inspect).not.toHaveBeenCalled();
+  });
+
+  it("preserves an onboarding lock already held by the caller", async () => {
+    const f = await prepareMessagingIdentityRecovery();
+    expect(f.sessionStore.acquireOnboardLock("test lifecycle recovery").acquired).toBe(true);
+    try {
+      expect(f.validate).not.toThrow();
+      expect(f.registry.getSandbox("legacy")).toEqual({
+        ...f.expected,
+        lifecycleGeneration: generation,
+        lifecycleLiveIdentityFingerprint: fingerprint,
+      });
+      expect(f.sessionStore.isOnboardLockHeldByCurrentProcess()).toBe(true);
+    } finally {
+      f.sessionStore.releaseOnboardLock();
+    }
   });
 
   it("round-trips immutable serving profile provenance while preserving legacy rows (#8246)", async () => {

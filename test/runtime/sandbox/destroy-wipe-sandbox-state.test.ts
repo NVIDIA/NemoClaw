@@ -30,7 +30,7 @@ function buildDeps(overrides: Partial<Record<string, unknown>> = {}) {
     getSandbox: vi.fn(() => ({ agent: "openclaw" }) as never),
     loadAgent: vi.fn(() => ({
       configPaths: { dir: "/sandbox/.openclaw" },
-      stateDirs: ["agents", "extensions", "workspace", "skills", "hooks", "identity"],
+      stateDirs: ["agents", "extensions", "workspace", "skills", "hooks", "identity", "state"],
       stateDirPrefixes: ["workspace-"],
       stateFiles: [],
     })),
@@ -67,6 +67,7 @@ describe("wipeSandboxState (#5449)", () => {
     // `workspace/` which holds USER.md / SOUL.md.
     expect(script).toContain("/sandbox/.openclaw");
     expect(script).toContain("workspace");
+    expect(script).toContain("'state'");
     expect(script).toMatch(/rm\s+-rf/);
   });
 

@@ -22,7 +22,7 @@ Use the error location to select the correct setting.
 | `NEMOCLAW_ONBOARD_VALIDATION_TIMEOUT_SECONDS` | Applicable OpenAI-compatible provider validation during onboarding, including DeepSeek V4 Pro streaming validation | Probe-specific; the standard WSL2 profile uses a `20`-second connection and `30`-second total floor, while extended NVIDIA validation uses `30` and `300` seconds on WSL2 or `10` and `300` seconds elsewhere |
 | `NEMOCLAW_LOCAL_INFERENCE_TIMEOUT` | Ollama, vLLM, NIM, and compatible-endpoint onboarding validation paths that read this setting | `180` seconds |
 | `NEMOCLAW_SANDBOX_READY_TIMEOUT` | Image build, gateway upload, and in-sandbox boot after creation | `180` seconds |
-| `NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS` | OpenShell command re-registration after policy application, plus gateway health and OpenShell readiness during managed or provider recovery | `30`, `90`, or `120` seconds, depending on the recovery phase |
+| `NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS` | OpenShell command re-registration after policy application, gateway startup after an intentional OpenClaw stop, and gateway health and OpenShell readiness during managed or provider recovery | `30`, `90`, or `120` seconds, depending on the recovery phase |
 
 The readiness timeout does not govern inference requests or provider validation.
 
@@ -114,6 +114,10 @@ Set `NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS` when OpenShell needs more than 120 
 <AgentOnly variant="openclaw">
 
 Managed OpenClaw gateway health uses 30 seconds by default.
+After an intentional stop, `$$nemoclaw <sandbox-name> start` uses the same default to wait for the native gateway before checking health and restoring host forwards.
+The startup budget includes probe execution and delays.
+If it expires, `start` exits nonzero without proceeding to those checks.
+Set `NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS` before `start` to override this budget.
 
 </AgentOnly>
 

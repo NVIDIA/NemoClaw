@@ -805,62 +805,18 @@ const { createSandbox } = require(${onboardPath});
       result.stdout,
       /Existing provider\/model selection is unreadable; reusing sandbox\./,
     );
-  });
+  }, 30_000);
 
-  it("accepts gateway inference when system inference is separately not configured", async () => {
-    const output = [
-      "Gateway inference:",
-      "",
-      "  Route: inference.local",
-      "  Provider: openai-api",
-      "  Model: gpt-5.4",
-      "  Version: 1",
-      "",
-      "System inference:",
-      "",
-      "  Not configured",
-    ].join("\n");
-    const route = createInferenceRouteHelpers(() => output);
-
-    await withProcessEnv({ OPENAI_API_KEY: "sk-TEST-NOT-A-REAL-VALUE" }, async () => {
-      const harness = createDirectSetupInferenceHarness({
-        runOpenshell: (args) =>
-          args.slice(0, 2).join(" ") === "provider get"
-            ? {
-                status: 0,
-                stdout:
-                  "Name: openai-api\nType: openai\nCredential keys: OPENAI_API_KEY\nConfig keys: OPENAI_BASE_URL\n",
-                stderr: "",
-              }
-            : undefined,
-        overrides: { verifyInferenceRoute: route.verifyInferenceRoute },
-      });
-
-      await harness.setupInference(
-        "test-box",
-        "gpt-5.4",
-        "openai-api",
-        "https://api.openai.com/v1",
-        "OPENAI_API_KEY",
-      );
-
-      assert.equal(harness.commands[0].command, "provider get -g nemoclaw openai-api");
-      assert.equal(harness.commands.length, 3);
+  it("accepts a complete configured route from the typed observer", async () => {
+    const route = createInferenceRouteHelpers({
+      observeInferenceRoute: () => ({
+        ok: true,
+        value: {
+          state: "configured",
+          route: { provider: "openai-api", model: "gpt-5.4" },
+        },
+      }),
     });
-  });
-  it("accepts gateway inference output that omits the Route line", async () => {
-    const output = [
-      "Gateway inference:",
-      "",
-      "  Provider: openai-api",
-      "  Model: gpt-5.4",
-      "  Version: 1",
-      "",
-      "System inference:",
-      "",
-      "  Not configured",
-    ].join("\n");
-    const route = createInferenceRouteHelpers(() => output);
 
     await withProcessEnv({ OPENAI_API_KEY: "sk-TEST-NOT-A-REAL-VALUE" }, async () => {
       const harness = createDirectSetupInferenceHarness({

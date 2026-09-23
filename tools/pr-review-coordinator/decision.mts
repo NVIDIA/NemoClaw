@@ -68,6 +68,11 @@ export type ReviewRevision = Readonly<{ headSha: string; baseSha: string }>;
 
 const FULL_SHA = /^[0-9a-f]{40}$/;
 
+export function parseCoordinatorSnapshot(value: unknown): CoordinatorSnapshot {
+  validateSnapshot(value);
+  return value;
+}
+
 /**
  * Pure, side-effect-free policy core for the repository-owned review coordinator.
  * It never writes a review or changes a branch. A later GitHub adapter may execute
@@ -185,7 +190,7 @@ function isReady(readiness: CoordinatorSnapshot["readiness"]): boolean {
   return (
     readiness.requiredChecks === "pass" &&
     readiness.mergeability === "mergeable" &&
-    readiness.commitsVerified &&
+    readiness.commitsVerified === true &&
     readiness.productScope === "accepted"
   );
 }
@@ -220,27 +225,58 @@ function quiet(
   });
 }
 
-function validateSnapshot(snapshot: CoordinatorSnapshot): void {
+function validateSnapshot(snapshot: unknown): asserts snapshot is CoordinatorSnapshot {
+  if (!isRecord(snapshot)) throw new Error("Coordinator snapshot must be a JSON object");
   if (snapshot.version !== 1) throw new Error("Unsupported coordinator snapshot version");
-  if (!Number.isInteger(snapshot.pullRequest.number) || snapshot.pullRequest.number < 1) {
+  const pullRequest = snapshot.pullRequest;
+  if (!isRecord(pullRequest)) throw new Error("pullRequest must be a JSON object");
+  if (!Number.isInteger(pullRequest.number) || Number(pullRequest.number) < 1) {
     throw new Error("pullRequest.number must be a positive integer");
   }
-  fullSha(snapshot.pullRequest.headSha, "pullRequest.headSha");
-  fullSha(snapshot.pullRequest.baseSha, "pullRequest.baseSha");
-  if (snapshot.advisor) {
-    if (snapshot.advisor.status !== "clear" && snapshot.advisor.status !== "blocked") {
+  if (
+    pullRequest.state !== "OPEN" &&
+    pullRequest.state !== "CLOSED" &&
+    pullRequest.state !== "MERGED"
+  ) {
+    throw new Error("pullRequest.state is invalid");
+  }
+  if (typeof pullRequest.draft !== "boolean") {
+    throw new Error("pullRequest.draft must be a boolean");
+  }
+  if (typeof pullRequest.author !== "string" || typeof pullRequest.reviewer !== "string") {
+    throw new Error("pullRequest author and reviewer must be strings");
+  }
+  fullSha(pullRequest.headSha, "pullRequest.headSha");
+  fullSha(pullRequest.baseSha, "pullRequest.baseSha");
+
+  const advisor = snapshot.advisor;
+  if (advisor !== null) {
+    if (!isRecord(advisor)) throw new Error("advisor must be a JSON object or null");
+    if (advisor.identity !== "exact-head") throw new Error("Advisor identity is invalid");
+    if (advisor.status !== "clear" && advisor.status !== "blocked") {
       throw new Error("Advisor status is invalid");
     }
-    fullSha(snapshot.advisor.headSha, "advisor.headSha");
-    fullSha(snapshot.advisor.baseSha, "advisor.baseSha");
-    if (snapshot.advisor.status === "clear" && snapshot.advisor.findings.length > 0) {
+    fullSha(advisor.headSha, "advisor.headSha");
+    fullSha(advisor.baseSha, "advisor.baseSha");
+    if (!Array.isArray(advisor.findings)) throw new Error("Advisor findings must be an array");
+    if (advisor.status === "clear" && advisor.findings.length > 0) {
       throw new Error("A clear Advisor result cannot contain findings");
     }
-    if (snapshot.advisor.status === "blocked" && snapshot.advisor.findings.length === 0) {
+    if (advisor.status === "blocked" && advisor.findings.length === 0) {
       throw new Error("A blocked Advisor result must contain findings");
     }
-    for (const finding of snapshot.advisor.findings) {
-      if (!finding.id || !finding.contractKey || !finding.summary || !finding.path) {
+    for (const finding of advisor.findings) {
+      if (
+        !isRecord(finding) ||
+        typeof finding.id !== "string" ||
+        !finding.id ||
+        typeof finding.contractKey !== "string" ||
+        !finding.contractKey ||
+        typeof finding.summary !== "string" ||
+        !finding.summary ||
+        typeof finding.path !== "string" ||
+        !finding.path
+      ) {
         throw new Error("Advisor findings require id, contractKey, summary, and path");
       }
       if (finding.severity !== "P0" && finding.severity !== "P1") {
@@ -257,10 +293,54 @@ function validateSnapshot(snapshot: CoordinatorSnapshot): void {
       }
     }
   }
-  for (const write of snapshot.history.writes) fullSha(write.headSha, "history.writes.headSha");
+
+  const readiness = snapshot.readiness;
+  if (!isRecord(readiness)) throw new Error("readiness must be a JSON object");
+  if (
+    readiness.requiredChecks !== "pass" &&
+    readiness.requiredChecks !== "pending" &&
+    readiness.requiredChecks !== "fail"
+  ) {
+    throw new Error("readiness.requiredChecks is invalid");
+  }
+  if (
+    readiness.mergeability !== "mergeable" &&
+    readiness.mergeability !== "conflicting" &&
+    readiness.mergeability !== "unknown"
+  ) {
+    throw new Error("readiness.mergeability is invalid");
+  }
+  if (typeof readiness.commitsVerified !== "boolean") {
+    throw new Error("readiness.commitsVerified must be a boolean");
+  }
+  if (readiness.productScope !== "accepted" && readiness.productScope !== "missing") {
+    throw new Error("readiness.productScope is invalid");
+  }
+
+  const history = snapshot.history;
+  if (!isRecord(history)) throw new Error("history must be a JSON object");
+  if (
+    !Array.isArray(history.frozenContractKeys) ||
+    history.frozenContractKeys.some((key) => typeof key !== "string")
+  ) {
+    throw new Error("history.frozenContractKeys must be an array of strings");
+  }
+  if (!Array.isArray(history.writes)) throw new Error("history.writes must be an array");
+  for (const write of history.writes) {
+    if (!isRecord(write)) throw new Error("history writes must be JSON objects");
+    fullSha(write.headSha, "history.writes.headSha");
+    if (write.kind !== "request-changes" && write.kind !== "approve") {
+      throw new Error("history write kind is invalid");
+    }
+  }
 }
 
-function fullSha(value: string, label: string): string {
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function fullSha(value: unknown, label: string): string {
+  if (typeof value !== "string") throw new Error(`${label} must be a full lowercase commit SHA`);
   if (!FULL_SHA.test(value)) throw new Error(`${label} must be a full lowercase commit SHA`);
   return value;
 }

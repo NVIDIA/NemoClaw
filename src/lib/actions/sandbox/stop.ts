@@ -13,6 +13,11 @@ import {
   CURRENT_RUNTIME_PROVIDER_BUNDLES,
   type RuntimeProviderBundleRegistry,
 } from "../../onboard/runtime-provider/access";
+import {
+  classifyRegisteredPortableAgentLifecycle,
+  qualifyLegacyHermesPortableLifecycleProfile,
+  stopPortableAgentSandboxLifecycle,
+} from "../../onboard/experimental/portable-agent-lifecycle";
 import { parseLiveSandboxEntries } from "../../runtime-recovery";
 import * as registry from "../../state/registry";
 import { stopSandboxChannels } from "../../tunnel/sandbox-gateway-stop";
@@ -27,6 +32,10 @@ import {
   resolveSandboxLifecycleProvider,
   type SandboxLifecycleResult,
 } from "./runtime/lifecycle-runtime";
+import {
+  mutateStandardSandboxLifecycle,
+  type StandardSandboxLifecycleDeps,
+} from "./runtime/standard-lifecycle";
 
 async function teardownDashboardForwardBestEffort(
   sandboxName: string,
@@ -244,7 +253,7 @@ function releaseStoppedSandboxOllamaModel(
 
 export type { SandboxLifecycleResult } from "./runtime/lifecycle-runtime";
 
-export interface SandboxStopDeps {
+export interface SandboxStopDeps extends StandardSandboxLifecycleDeps {
   environment?: NodeJS.ProcessEnv;
   getSandbox?: typeof registry.getSandbox;
   updateSandbox?: typeof registry.updateSandbox;
@@ -260,6 +269,8 @@ export interface SandboxStopDeps {
   decideOllamaModelOwnership?: typeof decideOllamaModelOwnership;
   loadPersistedOllamaHost?: () => OllamaHostRoute | null;
   withOllamaModelOwnershipLock?: typeof import("../../inference/ollama/proxy").withOllamaModelOwnershipLock;
+  qualifyLegacyPortableProfile?: typeof qualifyLegacyHermesPortableLifecycleProfile;
+  stopPortableSandbox?: typeof stopPortableAgentSandboxLifecycle;
   withLifecycleLock?: typeof withSandboxLifecycleLock;
   log?: (message: string) => void;
   warn?: (message: string) => void;
@@ -298,6 +309,7 @@ async function stopSandboxWithinLifecycleFence(
   const input = {
     readRegistry: deps.getSandbox ?? registry.getSandbox,
     environment: deps.environment ?? process.env,
+    gatewayName: resolvePersistedSandboxOwnershipGateway(resolved.sandbox),
     log,
     sandbox: resolved.sandbox,
     sandboxName,
@@ -306,22 +318,76 @@ async function stopSandboxWithinLifecycleFence(
   if (preflight) return preflight;
 
   let channelsStopped = false;
-  const outcome = await resolved.lifecycle.stop(input, {
-    beforeStop() {
-      if (channelsStopped) return;
-      channelsStopped = true;
-      try {
-        (deps.stopSandboxChannels ?? stopSandboxChannels)(sandboxName, {
-          channelStopTransport: resolved.lifecycle.channelStopTransport,
-          info: (message) => log(`  ${message}`),
-          warn: (message) => warn(`  ${message}`),
-        });
-      } catch (error) {
-        const detail = error instanceof Error ? error.message : String(error);
-        warn(`  Warning: could not stop in-sandbox channels gracefully: ${detail}`);
+  const beforeStop = () => {
+    if (channelsStopped) return;
+    channelsStopped = true;
+    try {
+      (deps.stopSandboxChannels ?? stopSandboxChannels)(sandboxName, {
+        channelStopTransport: resolved.control.channelStopTransport,
+        info: (message) => log(`  ${message}`),
+        warn: (message) => warn(`  ${message}`),
+      });
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      warn(`  Warning: could not stop in-sandbox channels gracefully: ${detail}`);
+    }
+  };
+  let outcome: {
+    readonly exitCode: number;
+    readonly message?: string;
+    readonly state?: "already-stopped" | "stopped";
+    readonly hermesPortableVerified?: true;
+  };
+  try {
+    const portableAuthority = classifyRegisteredPortableAgentLifecycle(
+      sandboxName,
+      resolved.bundle.identity.id,
+      resolved.sandbox,
+      {
+        env: input.environment,
+        readRegistry: (name) => input.readRegistry?.(name) ?? null,
+        ...(deps.qualifyLegacyPortableProfile
+          ? { qualifyLegacyHermes: deps.qualifyLegacyPortableProfile }
+          : {}),
+      },
+    );
+    const portableAuthorityRecorded = portableAuthority.kind === "portable";
+    const portable = portableAuthorityRecorded
+      ? await (deps.stopPortableSandbox ?? stopPortableAgentSandboxLifecycle)(
+          sandboxName,
+          {
+            agent: resolved.sandbox.agent,
+            gatewayName: resolved.sandbox.gatewayName ?? "nemoclaw",
+            lifecycleGeneration: resolved.sandbox.lifecycleGeneration,
+            openshellDriver: resolved.sandbox.openshellDriver,
+            provider: resolved.sandbox.provider,
+          },
+          beforeStop,
+          {
+            env: input.environment,
+            log,
+            readRegistry: (name) => input.readRegistry?.(name) ?? null,
+          },
+        )
+      : ({ kind: "not-installed" } as const);
+    if (portable.kind === "already-stopped" || portable.kind === "stopped") {
+      const registryHermes = resolved.sandbox.agent === "hermes";
+      const portableHermes = portable.portableAgent === "hermes";
+      if (registryHermes !== portableHermes) {
+        throw new Error("Portable stop authority disagrees with the registered sandbox agent");
       }
-    },
-  });
+      outcome = {
+        exitCode: 0,
+        state: portable.kind === "already-stopped" ? "already-stopped" : "stopped",
+        ...(portableHermes ? { hermesPortableVerified: true as const } : {}),
+      };
+    } else {
+      beforeStop();
+      outcome = await mutateStandardSandboxLifecycle("stop", input, deps);
+    }
+  } catch (error) {
+    return { exitCode: 1, message: error instanceof Error ? error.message : String(error) };
+  }
   if (outcome.exitCode !== 0) return outcome;
   const hermesPortableVerified =
     "hermesPortableVerified" in outcome && outcome.hermesPortableVerified === true;

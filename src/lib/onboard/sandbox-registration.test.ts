@@ -198,14 +198,6 @@ describe("buildCreatedSandboxRegistryEntry", () => {
         channels: [{ channelId: "telegram", configured: false, pendingRemoval: true }],
       },
     };
-    const openclawImagePluginInstalls = [
-      {
-        id: "weather",
-        installPath: "/sandbox/.openclaw/extensions/weather",
-        loadPaths: ["/opt/weather-plugin"],
-      },
-    ];
-
     const entry = buildCreatedSandboxRegistryEntry({
       sandboxName: "demo",
       inferenceSelection: {
@@ -222,7 +214,6 @@ describe("buildCreatedSandboxRegistryEntry", () => {
       agent: null,
       agentVersionKnown: true,
       imageTag: "nemoclaw-demo:123",
-      openclawImagePluginInstalls,
       observabilityEnabled: true,
       dcodeAutoApprovalMode: "thread-opt-in",
       webSearchEnabled: true,
@@ -250,7 +241,6 @@ describe("buildCreatedSandboxRegistryEntry", () => {
       credentialEnv: "COMPATIBLE_API_KEY",
       preferredInferenceApi: "openai-completions",
       imageTag: "nemoclaw-demo:123",
-      openclawImagePluginInstalls,
       toolDisclosure: "progressive",
       observabilityEnabled: true,
       dcodeAutoApprovalMode: "thread-opt-in",
@@ -275,11 +265,6 @@ describe("buildCreatedSandboxRegistryEntry", () => {
     expect(entry.agent).toBeNull();
     expect(entry.agentVersion).toBeTruthy();
     expect(entry.nemoclawVersion).toBeTruthy();
-    expect(entry.openclawImagePluginInstalls).not.toBe(openclawImagePluginInstalls);
-    expect(entry.openclawImagePluginInstalls?.[0]).not.toBe(openclawImagePluginInstalls[0]);
-    expect(entry.openclawImagePluginInstalls?.[0]?.loadPaths).not.toBe(
-      openclawImagePluginInstalls[0]?.loadPaths,
-    );
     expect(entry.messaging).toBe(plannedMessagingState);
     expect(entry.messaging?.plan.channels[0]).toMatchObject({
       channelId: "telegram",
@@ -695,7 +680,6 @@ describe("registerCreatedSandbox", () => {
         reference: null,
         shared: false,
       },
-      openclawImagePluginInstalls: [],
       plannedMessagingState: undefined,
       hermesToolGateways: [],
       hermesDashboardState: { enabled: false, config: null },
@@ -708,7 +692,6 @@ describe("registerCreatedSandbox", () => {
 
     expect(registerSandbox).toHaveBeenCalledWith(entry);
     expect(entry.name).toBe("demo");
-    expect(entry.openclawImagePluginInstalls).toEqual([]);
     expect(entry.workload).toEqual(input.workload);
     expect(entry.hostLocalInferenceReceipt).toBe(hostLocalInferenceReceipt);
     const clearedEntry = registerCreatedSandbox({

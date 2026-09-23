@@ -375,6 +375,8 @@ async function runCleanVariant(
       container,
       "--env",
       "HERMES_KANBAN_DISPATCH_IN_GATEWAY=1",
+      "--user",
+      "root",
       image,
       "/usr/local/bin/nemoclaw-start",
     ],

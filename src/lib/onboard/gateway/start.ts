@@ -12,6 +12,9 @@ type DynamicGatewayHelpers = ReturnType<
   typeof import("../gateway-binding").createDynamicGatewayRuntimeHelpers
 >;
 type GatewayReuseHelpers = ReturnType<typeof import("../gateway-reuse").createGatewayReuseHelpers>;
+type DockerDriverGatewayStart = ReturnType<
+  typeof import("./docker-driver-start").createDockerDriverGatewayStart
+>;
 
 export interface GatewayStartDeps {
   lifecycle: OpenShellGatewayLifecycle;
@@ -32,11 +35,16 @@ export interface GatewayStartDeps {
     runtimeSelection?: OpenShellRuntimeSelection;
     skipSandboxBridgeReachability?: boolean;
   }): Promise<void>;
+  verifyDockerDriverGatewaySandboxReachability: DockerDriverGatewayStart["verifyDockerDriverGatewaySandboxReachability"];
   step: typeof import("../prompt-helpers").step;
 }
 
 export interface GatewayStart {
   startGateway(gpu: OnboardGpu, options?: { gpuPassthrough?: boolean }): Promise<void>;
+  verifyReusableDockerDriverGatewaySandboxReachability(
+    gpu: OnboardGpu,
+    options: { gpuPassthrough: boolean },
+  ): Promise<void>;
   startGatewayWithOptions(
     gpu: OnboardGpu,
     options?: {
@@ -49,6 +57,33 @@ export interface GatewayStart {
 }
 
 export function createGatewayStart(deps: GatewayStartDeps): GatewayStart {
+  function skipSandboxBridgeReachability(gpu: OnboardGpu, gpuPassthrough: boolean): boolean {
+    const selectedGpuRoute = deps.dockerGpuRoute.initialDockerGpuRoute(
+      deps.dockerGpuRoute.resolveDockerGpuRoutePlan(
+        { sandboxGpuEnabled: gpuPassthrough, hostGpuPlatform: gpu?.platform },
+        {
+          dockerDriverGateway: true,
+          dockerDesktopWsl: deps.dockerGpuSandboxCreate.isDockerDesktopWslRuntime(),
+        },
+      ),
+    );
+    return deps.dockerGpuLocalInference.shouldSkipGpuBridgeProbe(
+      gpuPassthrough,
+      gpu?.platform,
+      selectedGpuRoute,
+    );
+  }
+
+  async function verifyReusableDockerDriverGatewaySandboxReachability(
+    gpu: OnboardGpu,
+    { gpuPassthrough }: { gpuPassthrough: boolean },
+  ): Promise<void> {
+    await deps.verifyDockerDriverGatewaySandboxReachability({
+      exitOnFailure: true,
+      skipSandboxBridgeReachability: skipSandboxBridgeReachability(gpu, gpuPassthrough),
+    });
+  }
+
   async function startGatewayWithOptions(
     gpu: OnboardGpu,
     {
@@ -66,24 +101,11 @@ export function createGatewayStart(deps: GatewayStartDeps): GatewayStart {
     deps.assertGatewayStartAllowed(exitOnFailure);
     (output?.step ?? deps.step)(2, 8, "Starting OpenShell gateway");
     if (deps.isLinuxDockerDriverGatewayEnabled()) {
-      const selectedGpuRoute = deps.dockerGpuRoute.initialDockerGpuRoute(
-        deps.dockerGpuRoute.resolveDockerGpuRoutePlan(
-          { sandboxGpuEnabled: gpuPassthrough, hostGpuPlatform: gpu?.platform },
-          {
-            dockerDriverGateway: true,
-            dockerDesktopWsl: deps.dockerGpuSandboxCreate.isDockerDesktopWslRuntime(),
-          },
-        ),
-      );
       return deps.startDockerDriverGateway({
         exitOnFailure,
         ...(output ? { output } : {}),
         ...(runtimeSelection ? { runtimeSelection } : {}),
-        skipSandboxBridgeReachability: deps.dockerGpuLocalInference.shouldSkipGpuBridgeProbe(
-          gpuPassthrough,
-          gpu?.platform,
-          selectedGpuRoute,
-        ),
+        skipSandboxBridgeReachability: skipSandboxBridgeReachability(gpu, gpuPassthrough),
       });
     }
 
@@ -127,5 +149,9 @@ export function createGatewayStart(deps: GatewayStartDeps): GatewayStart {
     return startGatewayWithOptions(gpu, { exitOnFailure: true, gpuPassthrough });
   }
 
-  return { startGateway, startGatewayWithOptions };
+  return {
+    startGateway,
+    startGatewayWithOptions,
+    verifyReusableDockerDriverGatewaySandboxReachability,
+  };
 }

@@ -55,7 +55,7 @@ test(
       boundary: "exact managed Hermes rebuild state restoration and native readiness",
       contracts: [
         "rebuild uses the published exact managed image without stale controller fixtures",
-        "Hermes memory state survives the rebuild",
+        "Hermes memory, native user plugin, and lazy package state survive the rebuild",
         "the native Hermes health endpoint is ready after restore",
       ],
     });
@@ -97,7 +97,19 @@ test(
     const write = await sandboxSh(
       sandbox,
       SANDBOX_NAME,
-      `umask 077; mkdir -p /sandbox/.hermes/memories; printf '%s\\n' '${marker}' > /sandbox/.hermes/memories/.rebuild-state-marker; sync`,
+      [
+        "set -eu",
+        `umask 077; mkdir -p /sandbox/.hermes/memories; printf '%s\\n' '${marker}' > /sandbox/.hermes/memories/.rebuild-state-marker; sync`,
+        "plugin=/sandbox/.hermes/plugins/e2e-native-plugin",
+        "package=/sandbox/.hermes/lazy-packages/e2e_native_package",
+        'mkdir -p "$plugin" "$package"',
+        "printf '%s\\n' 'name: e2e-native-plugin' 'version: 1.0.0' > \"$plugin/plugin.yaml\"",
+        "printf '%s\\n' 'E2E_NATIVE_PLUGIN = \"present\"' 'def register(ctx): pass' > \"$plugin/__init__.py\"",
+        "printf '%s\\n' 'E2E_NATIVE_PACKAGE = \"present\"' > \"$package/__init__.py\"",
+        "HERMES_HOME=/sandbox/.hermes hermes plugins list --plain --user >/tmp/e2e-native-plugins-before-rebuild",
+        "grep -Fq 'e2e-native-plugin' /tmp/e2e-native-plugins-before-rebuild",
+        "HERMES_LAZY_INSTALL_TARGET=/sandbox/.hermes/lazy-packages /opt/hermes/.venv/bin/python -I -c 'import hermes_bootstrap, e2e_native_package'",
+      ].join("\n"),
       { artifactName: "rebuild-hermes-write-marker", redactionValues: redactions },
     );
     assertExitZero(write, "write Hermes rebuild marker");
@@ -124,7 +136,15 @@ test(
     const read = await sandboxSh(
       sandbox,
       SANDBOX_NAME,
-      "cat /sandbox/.hermes/memories/.rebuild-state-marker",
+      [
+        "set -eu",
+        'marker="$(cat /sandbox/.hermes/memories/.rebuild-state-marker)"',
+        "HERMES_HOME=/sandbox/.hermes hermes plugins list --plain --user >/tmp/e2e-native-plugins-after-rebuild",
+        "grep -Fq 'e2e-native-plugin' /tmp/e2e-native-plugins-after-rebuild",
+        "/opt/hermes/.venv/bin/python -I /sandbox/.hermes/plugins/e2e-native-plugin/__init__.py",
+        "HERMES_LAZY_INSTALL_TARGET=/sandbox/.hermes/lazy-packages /opt/hermes/.venv/bin/python -I -c 'import hermes_bootstrap, e2e_native_package'",
+        'printf "%s\\n" "$marker"',
+      ].join("\n"),
       { artifactName: "rebuild-hermes-read-marker", redactionValues: redactions },
     );
     assertExitZero(read, "read restored Hermes marker");

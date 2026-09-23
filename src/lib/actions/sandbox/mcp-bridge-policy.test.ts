@@ -15,6 +15,7 @@ import {
   MCP_BRIDGE_POLICY_MAX_BODY_BYTES,
   removeGeneratedPolicy,
 } from "./mcp-bridge-policy";
+import { buildCredentialResolutionProbeCommand } from "./mcp-bridge-resolution-probe";
 import { buildMcpBridgeProviderName } from "./mcp-bridge-validation";
 
 const entry: McpSourceEntry = {
@@ -223,6 +224,58 @@ describe("generated MCP policy", () => {
       "/usr/bin/node",
     ]);
   });
+
+  it.each([
+    {
+      adapter: "openclaw-config" as const,
+      binaries: ["/usr/local/bin/openclaw", "/usr/local/bin/node", "/usr/bin/node"],
+      runtime: "nemoclaw-start node -e",
+    },
+    {
+      adapter: "hermes-config" as const,
+      binaries: ["/usr/local/bin/hermes", "/usr/bin/python3*", "/opt/hermes/.venv/bin/python*"],
+      runtime: "/opt/hermes/.venv/bin/python -I -c",
+    },
+    {
+      adapter: "deepagents-config" as const,
+      binaries: ["/usr/local/bin/dcode", "/opt/venv/bin/python3*"],
+      runtime: "/opt/venv/bin/python3 -I -c",
+    },
+  ])(
+    "keeps interactive curl off the $adapter credential-bound route and probes through that runtime (#12065)",
+    ({ adapter, binaries, runtime }) => {
+      const parsed = YAML.parse(
+        buildMcpBridgePolicyYaml(
+          "github",
+          "https://api.githubcopilot.com/mcp/",
+          adapter,
+          { addresses: ["8.8.8.8"] },
+          "alpha-mcp-github",
+        ),
+      ) as {
+        network_policies: Record<string, { binaries: Array<{ path: string }> }>;
+      };
+      const policyBinaries = parsed.network_policies.mcp_bridge_github.binaries.map(
+        ({ path }) => path,
+      );
+      const probe =
+        buildCredentialResolutionProbeCommand(
+          {
+            server: "github",
+            url: "https://api.githubcopilot.com/mcp/",
+            env: ["GITHUB_TOKEN"],
+          },
+          adapter,
+          "v11",
+        )?.command ?? "";
+
+      expect(policyBinaries).toEqual(binaries);
+      expect(policyBinaries).not.toContain("/usr/bin/curl");
+      expect(policyBinaries).not.toContain("/usr/local/bin/curl");
+      expect(probe).toContain(runtime);
+      expect(probe).not.toMatch(/(?:^|[\s'"=/])curl(?:[\s'"-]|$)/u);
+    },
+  );
 
   it.each(["openclaw-config", "hermes-config", "deepagents-config"] as const)(
     "renders an authorized private target for %s with a process-local capability",

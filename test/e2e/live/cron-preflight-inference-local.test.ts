@@ -121,34 +121,47 @@ test(
         timeoutMs: 60_000,
       },
     );
-    const pending = (
-      JSON.parse(devices.stdout) as {
-        pending?: Array<{ id?: string; requestId?: string; scopes?: string[] }>;
-      }
-    ).pending;
+    const deviceState = JSON.parse(devices.stdout) as {
+      pending?: Array<{ id?: string; requestId?: string; scopes?: string[] }>;
+      paired?: Array<{ scopes?: string[]; tokens?: Array<{ scopes?: string[] }> }>;
+    };
+    const pending = deviceState.pending;
     const request = pending?.find(({ scopes }) => scopes?.includes("operator.admin"));
     const requestId = String(request?.requestId ?? request?.id ?? "");
-    const approve = await sandbox.openshell(
-      [
-        "sandbox",
-        "exec",
-        "-n",
-        SANDBOX_NAME,
-        "--",
-        "openclaw",
-        "devices",
-        "approve",
-        requestId,
-        "--json",
-      ],
-      {
-        artifactName: "cron-preflight-native-devices-approve",
-        env,
-        redactionValues: redactions,
-        timeoutMs: 60_000,
-      },
+    const alreadyAuthorized = deviceState.paired?.some(
+      (device) =>
+        device.scopes?.includes("operator.admin") &&
+        device.tokens?.some((token) => token.scopes?.includes("operator.admin")),
     );
-    assertExitZero(approve, "native OpenClaw device scope approval");
+    const authorizationResult = requestId
+      ? await sandbox.openshell(
+          [
+            "sandbox",
+            "exec",
+            "-n",
+            SANDBOX_NAME,
+            "--",
+            "openclaw",
+            "devices",
+            "approve",
+            requestId,
+            "--json",
+          ],
+          {
+            artifactName: "cron-preflight-native-devices-approve",
+            env,
+            redactionValues: redactions,
+            timeoutMs: 60_000,
+          },
+        )
+      : alreadyAuthorized
+        ? devices
+        : {
+            ...devices,
+            exitCode: 1,
+            stderr: `${devices.stderr}\nNo pending or paired operator.admin authorization was found.`,
+          };
+    assertExitZero(authorizationResult, "native OpenClaw device scope authorization");
     const add = await sandbox.exec(
       SANDBOX_NAME,
       [

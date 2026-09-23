@@ -2,6 +2,31 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { OpenShellSandboxBufferedCommandExecutor } from "../adapters/openshell/sandbox-command";
+import type { SandboxGpuProofResult } from "../state/registry";
+
+export interface SandboxCreateRuntimePatch {
+  maybeApplyDuringCreate(): void | Promise<void>;
+  replacementRuntimeId?(): string | null;
+  createFailureMessage(): string | null;
+  exitOnPatchError(): void | Promise<void>;
+  rollbackManagedStartupAfterCreateFailure(): void | Promise<void>;
+  ensureApplied(): void | Promise<void>;
+  waitForSupervisorReconnectIfNeeded(): void | Promise<void>;
+  commitAfterReady(options?: {
+    readonly beforeFinalHandoff?: (replacementRuntimeId: string | null) => void;
+  }): void | Promise<void>;
+  allowsNotReadyLifecycleRevalidation?(): boolean;
+  selectedMode(): {
+    readonly kind: string;
+    readonly label: string;
+    readonly device: string;
+    readonly args: readonly string[];
+  } | null;
+  printReadinessFailureIfEnabled(): void;
+  verifyGpuOrExit(
+    verifyDirectSandboxGpu: (sandboxName: string) => SandboxGpuProofResult,
+  ): Promise<SandboxGpuProofResult>;
+}
 
 type DockerRunResult = {
   status?: number | null;

@@ -12,7 +12,7 @@ import { DEFAULT_MODEL_ROUTER_PORT, isRoutedInferenceProvider } from "../../onbo
 import {
   doesModelRouterProcessOwnPort,
   inspectModelRouterProcessForPort,
-  isRouterHealthy,
+  isRouterResponsive,
   stopModelRouterProcess,
 } from "../../onboard/model-router-process";
 import { listHostGatewayRegistryEntries } from "../../state/gateway-registry";
@@ -103,7 +103,7 @@ export type StopModelRouterForDestroyedSandboxDeps = {
   loadSession: () => Session | null;
   releaseOnboardLock: typeof releaseOnboardLock;
   inspectProcessForPort?: typeof inspectModelRouterProcessForPort;
-  isHealthy?: typeof isRouterHealthy;
+  isResponsive?: typeof isRouterResponsive;
   isRoutedProvider?: typeof isRoutedInferenceProvider;
   listHostRegistryEntries?: typeof listHostGatewayRegistryEntries;
   log?: (message: string) => void;
@@ -204,7 +204,7 @@ export async function stopModelRouterForDestroyedSandbox(
 
       const ownsPort = deps.ownsPort ?? doesModelRouterProcessOwnPort;
       const inspectProcessForPort = deps.inspectProcessForPort ?? inspectModelRouterProcessForPort;
-      const isHealthy = deps.isHealthy ?? isRouterHealthy;
+      const isResponsive = deps.isResponsive ?? isRouterResponsive;
       const recordedPid = sessionMatchesSandbox ? (session.routerPid ?? null) : null;
       const recordedCredentialHash = sessionMatchesSandbox
         ? (session.routerCredentialHash ?? null)
@@ -223,9 +223,9 @@ export async function stopModelRouterForDestroyedSandbox(
         }
         if (lookup.status === "found") {
           pid = lookup.pid;
-        } else if (await isHealthy(port, 1000)) {
+        } else if (await isResponsive(port, 1000)) {
           warn(
-            `No Model Router process could be confirmed for healthy port ${port}. ` +
+            `No Model Router process could be confirmed for responsive port ${port}. ` +
               "Keeping its session recovery identity; inspect the port listener before the next Model Router onboarding.",
           );
           return;
@@ -258,7 +258,7 @@ export async function stopModelRouterForDestroyedSandbox(
 
       // Clear when either field is set: a matching session with only a
       // credential hash still carries stale router identity after its sandbox
-      // is gone. A completed process scan plus an unhealthy port confirms that
+      // is gone. A completed process scan plus an unresponsive port confirms that
       // no router remains when no PID was found.
       if (sessionMatchesSandbox && (recordedPid !== null || recordedCredentialHash !== null)) {
         deps.compareAndSwapSession(

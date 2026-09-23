@@ -506,13 +506,26 @@ const fs = require("node:fs");
 const net = require("node:net");
 const path = require("node:path");
 
-const [mode, sessionRoot, baselinePath, expectedTurnsText, ptyMonitorRoot, runId] =
-  process.argv.slice(1);
+const [
+  mode,
+  sessionRoot,
+  baselinePath,
+  expectedTurnsText,
+  ptyMonitorRoot,
+  runId,
+  firstUserIdentifier = "",
+  secondUserIdentifier = "",
+] = process.argv.slice(1);
 const baselineTemporaryPath = baselinePath + ".tmp";
 const ptyMonitorSocketPath = path.join(ptyMonitorRoot, "pty-input-mode.sock");
+const expectedUserIdentifiers = [firstUserIdentifier, secondUserIdentifier];
+const expectedUserIdentifiersConfigured = expectedUserIdentifiers.every((value) =>
+  /^[0-9a-f]{16}$/.test(value),
+);
 const MAX_BASELINE_BYTES = 1024 * 1024;
 const MAX_PTY_RESPONSE_BYTES = 1024;
 const PTY_RESPONSE_TIMEOUT_MS = 3_000;
+const sqliteSessionPath = path.join(path.dirname(sessionRoot), "agent", "openclaw-agent.sqlite");
 
 function finish(exitCode, reason, detail = {}) {
   if (reason) process.stderr.write(JSON.stringify({ reason, ...detail }) + "\n");
@@ -574,6 +587,10 @@ function validPtyResponse(response) {
 
 function validateRunContext() {
   if (!/^[0-9a-f]{32}$/.test(runId || "")) finish(2, "run_id_invalid");
+  requireEvidence(
+    expectedUserIdentifiers.every((value) => value === "") || expectedUserIdentifiersConfigured,
+    "expected_user_identifiers_invalid",
+  );
   if (baselinePath !== "/tmp/nemoclaw-launch-session-" + runId + ".json") {
     finish(2, "baseline_path_invalid");
   }
@@ -666,6 +683,159 @@ function completeOffset(raw) {
 
 function digest(value) {
   return crypto.createHash("sha256").update(value).digest("hex");
+}
+
+function digestSqliteEvents(events) {
+  const hash = crypto.createHash("sha256");
+  for (const event of events) {
+    hash.update(String(event.seq));
+    hash.update("\0");
+    hash.update(String(Buffer.byteLength(event.eventJson)));
+    hash.update("\0");
+    hash.update(event.eventJson);
+    hash.update("\0");
+  }
+  return hash.digest("hex");
+}
+
+function requireEvidence(value, reason, detail = {}) {
+  value ? undefined : finish(2, reason, detail);
+}
+
+function validSqliteEventRow(row) {
+  return (
+    typeof row.sessionId === "string" &&
+    row.sessionId.length > 0 &&
+    Buffer.byteLength(row.sessionId) <= 512 &&
+    Number.isSafeInteger(row.seq) &&
+    row.seq >= 0 &&
+    typeof row.eventJson === "string" &&
+    Buffer.byteLength(row.eventJson) <= 16 * 1024 * 1024
+  );
+}
+
+function sqliteSessionStoreStats(missingReason) {
+  let stats;
+  try {
+    stats = fs.lstatSync(sqliteSessionPath, { bigint: true });
+  } catch (error) {
+    const missing = Boolean(error && error.code === "ENOENT");
+    missing ? missingReason && finish(2, missingReason) : finish(2, "sqlite_session_store_unavailable");
+    return null;
+  }
+  requireEvidence(
+    stats.isFile() &&
+      !stats.isSymbolicLink() &&
+      stats.uid === BigInt(process.getuid()) &&
+      (stats.mode & 0o777n) === 0o600n &&
+      stats.nlink === 1n,
+    "sqlite_session_store_invalid",
+  );
+  return stats;
+}
+
+function readSqliteTranscriptSnapshot(missingReason) {
+  const before = sqliteSessionStoreStats(missingReason);
+  return before ? readExistingSqliteTranscriptSnapshot(before) : null;
+}
+
+function readExistingSqliteTranscriptSnapshot(before) {
+  let database;
+  let rows;
+  try {
+    const { DatabaseSync } = require("node:sqlite");
+    database = new DatabaseSync(sqliteSessionPath, {
+      allowExtension: false,
+      open: true,
+      readOnly: true,
+      timeout: 2_000,
+    });
+    database.exec("PRAGMA query_only = ON; BEGIN");
+    const table = database
+      .prepare(
+        "SELECT name FROM sqlite_schema WHERE type = 'table' AND name = 'transcript_events'",
+      )
+      .get();
+    requireEvidence(table?.name === "transcript_events", "sqlite_session_store_invalid");
+    rows = database
+      .prepare(
+        "SELECT session_id AS sessionId, seq, event_json AS eventJson " +
+          "FROM transcript_events ORDER BY session_id, seq",
+      )
+      .all();
+    database.exec("COMMIT");
+  } catch {
+    finish(2, "sqlite_session_store_unreadable");
+  } finally {
+    try {
+      database?.close();
+    } catch {}
+  }
+  const after = sqliteSessionStoreStats("sqlite_session_store_removed");
+  requireEvidence(
+    before.dev === after.dev && before.ino === after.ino,
+    "sqlite_session_store_replaced",
+  );
+  const sessions = new Map();
+  for (const row of rows) {
+    requireEvidence(validSqliteEventRow(row), "sqlite_session_record_invalid");
+    const events = sessions.get(row.sessionId) ?? [];
+    events.push({ seq: row.seq, eventJson: row.eventJson });
+    sessions.set(row.sessionId, events);
+  }
+  return {
+    identity: { dev: before.dev.toString(), ino: before.ino.toString() },
+    sessions,
+  };
+}
+
+function sqliteBaseline(snapshot) {
+  return snapshot
+    ? {
+        ...snapshot.identity,
+        sessions: Array.from(snapshot.sessions, ([sessionId, events]) => ({
+          sessionId,
+          eventCount: events.length,
+          maximumSeq: events.at(-1).seq,
+          digest: digestSqliteEvents(events),
+        })),
+      }
+    : null;
+}
+
+function validUnsignedIdentity(value) {
+  return typeof value === "string" && (/^0$/.test(value) || /^[1-9]\d{0,24}$/.test(value));
+}
+
+function validSqliteBaselineShape(value) {
+  return (
+    value === null ||
+    (exactKeys(value, ["dev", "ino", "sessions"]) &&
+      validUnsignedIdentity(value.dev) &&
+      validUnsignedIdentity(value.ino) &&
+      Array.isArray(value.sessions))
+  );
+}
+
+function validateSqliteBaselineEntries(sqlite) {
+  const sessionIds = new Set();
+  for (const entry of sqlite.sessions) {
+    requireEvidence(
+      exactKeys(entry, ["sessionId", "eventCount", "maximumSeq", "digest"]) &&
+        typeof entry.sessionId === "string" &&
+        entry.sessionId.length > 0 &&
+        Buffer.byteLength(entry.sessionId) <= 512 &&
+        !sessionIds.has(entry.sessionId) &&
+        Number.isSafeInteger(entry.eventCount) &&
+        entry.eventCount >= 1 &&
+        Number.isSafeInteger(entry.maximumSeq) &&
+        entry.maximumSeq >= 0 &&
+        typeof entry.digest === "string" &&
+        /^[0-9a-f]{64}$/.test(entry.digest),
+      "baseline_invalid",
+    );
+    sessionIds.add(entry.sessionId);
+  }
 }
 
 function sessionFileNames() {
@@ -823,7 +993,7 @@ function recordBaseline() {
   writePrivateJsonAtomic(
     baselinePath,
     baselineTemporaryPath,
-    { schemaVersion: 1, sessions },
+    { schemaVersion: 2, sessions, sqlite: sqliteBaseline(readSqliteTranscriptSnapshot()) },
     MAX_BASELINE_BYTES,
     "baseline_write_failed",
   );
@@ -838,11 +1008,12 @@ function readBaseline() {
     "baseline_invalid",
   );
   if (
-    !exactKeys(value, ["schemaVersion", "sessions"]) ||
-    value.schemaVersion !== 1 ||
+    !exactKeys(value, ["schemaVersion", "sessions", "sqlite"]) ||
+    value.schemaVersion !== 2 ||
     !value.sessions ||
     typeof value.sessions !== "object" ||
-    Array.isArray(value.sessions)
+    Array.isArray(value.sessions) ||
+    !validSqliteBaselineShape(value.sqlite)
   ) {
     finish(2, "baseline_invalid");
   }
@@ -858,7 +1029,8 @@ function readBaseline() {
       finish(2, "baseline_invalid");
     }
   }
-  return value.sessions;
+  value.sqlite === null || validateSqliteBaselineEntries(value.sqlite);
+  return value;
 }
 
 function validateCleanupFile(filePath, maximumBytes, reason) {
@@ -974,6 +1146,19 @@ function hasStructuredContent(message) {
   return Array.isArray(message.content) && message.content.length > 0;
 }
 
+function structuredContentText(message) {
+  return [message.content]
+    .flat()
+    .flatMap((item) => {
+      return typeof item === "string"
+        ? [item]
+        : item && typeof item.text === "string"
+          ? [item.text]
+          : [];
+    })
+    .join("\n");
+}
+
 const providerUnavailableCodes = new Set(["500", "502", "503", "504", "529"]);
 const providerUnavailableError = /^(?:litellm\.)?(?:InternalServerError|ServiceUnavailableError)(?::|$)/;
 const providerNonRetryableError =
@@ -1024,6 +1209,7 @@ function appendedMessages(fileName, baseline) {
     if (role !== "user" && role !== "assistant") continue;
     messages.push({
       role,
+      contentText: structuredContentText(record.message),
       hasStructuredContent: hasStructuredContent(record.message),
       providerUnavailable: isStructuredProviderUnavailable(record.message),
     });
@@ -1031,13 +1217,75 @@ function appendedMessages(fileName, baseline) {
   return messages;
 }
 
-function qualifyTurns() {
-  const expectedTurns = Number(expectedTurnsText);
-  if (!Number.isSafeInteger(expectedTurns) || expectedTurns < 1) {
-    finish(2, "expected_turn_count_invalid");
-  }
+function structuredMessages(events, sessionId) {
+  return events.flatMap((event) => {
+    let record;
+    try {
+      record = JSON.parse(event.eventJson);
+    } catch {
+      finish(2, "malformed_session", { sessionId });
+    }
+    const message = record?.type === "message" ? record.message : null;
+    const role = message?.role;
+    return message && (role === "user" || role === "assistant")
+      ? [
+          {
+            role,
+            contentText: structuredContentText(message),
+            hasStructuredContent: hasStructuredContent(message),
+            providerUnavailable: isStructuredProviderUnavailable(message),
+          },
+        ]
+      : [];
+  });
+}
 
-  const baseline = readBaseline();
+function appendedSqliteSessions(baseline, jsonlBaseline) {
+  const snapshot = readSqliteTranscriptSnapshot(
+    baseline ? "sqlite_session_store_removed" : undefined,
+  );
+  requireEvidence(
+    baseline || !snapshot || Object.keys(jsonlBaseline).length === 0,
+    "sqlite_session_store_appeared",
+  );
+  const effectiveBaseline =
+    baseline ??
+    (snapshot
+      ? { ...snapshot.identity, sessions: [] }
+      : null);
+  return snapshot ? appendedExistingSqliteSessions(snapshot, effectiveBaseline) : null;
+}
+
+function appendedExistingSqliteSessions(snapshot, baseline) {
+  requireEvidence(
+    snapshot.identity.dev === baseline.dev && snapshot.identity.ino === baseline.ino,
+    "sqlite_session_store_replaced",
+  );
+  const priorBySession = new Map(
+    baseline.sessions.map((entry) => [entry.sessionId, entry]),
+  );
+  for (const prior of priorBySession.values()) {
+    const current = snapshot.sessions.get(prior.sessionId) ?? [];
+    const prefix = current.filter((event) => event.seq <= prior.maximumSeq);
+    requireEvidence(
+      prefix.length >= prior.eventCount && current.at(-1)?.seq >= prior.maximumSeq,
+      "session_truncated",
+      { sessionId: prior.sessionId },
+    );
+    requireEvidence(
+      prefix.length === prior.eventCount && digestSqliteEvents(prefix) === prior.digest,
+      "session_rewritten",
+      { sessionId: prior.sessionId },
+    );
+  }
+  return Array.from(snapshot.sessions, ([sessionId, events]) => {
+    const prior = priorBySession.get(sessionId);
+    const appended = prior ? events.filter((event) => event.seq > prior.maximumSeq) : events;
+    return { sessionId, messages: structuredMessages(appended, sessionId) };
+  }).filter((session) => session.messages.length > 0);
+}
+
+function appendedJsonlSessions(baseline) {
   const currentFiles = sessionFileNames();
   for (const fileName of Object.keys(baseline)) {
     if (!currentFiles.includes(fileName)) {
@@ -1051,6 +1299,10 @@ function qualifyTurns() {
       messages: appendedMessages(fileName, baseline),
     }))
     .filter((session) => session.messages.length > 0);
+  return changedSessions;
+}
+
+function qualifyStructuredTurns(changedSessions, expectedTurns) {
   if (changedSessions.length === 0) finish(1);
   if (changedSessions.length > 1) finish(2, "multiple_sessions_changed");
 
@@ -1065,6 +1317,15 @@ function qualifyTurns() {
     if (message.role !== expectedRoles[index]) {
       finish(2, "message_order_invalid", { sessionId });
     }
+    const expectedUserIdentifier =
+      message.role === "user" && expectedUserIdentifiersConfigured
+        ? expectedUserIdentifiers[Math.floor(index / 2)]
+        : null;
+    requireEvidence(
+      !expectedUserIdentifier || message.contentText.includes(expectedUserIdentifier),
+      "user_message_mismatch",
+      { sessionId },
+    );
     if (!message.hasStructuredContent && !message.providerUnavailable) {
       finish(2, "message_content_empty", { sessionId });
     }
@@ -1076,6 +1337,20 @@ function qualifyTurns() {
     });
   }
   finish(0);
+}
+
+function qualifyTurns() {
+  const expectedTurns = Number(expectedTurnsText);
+  if (!Number.isSafeInteger(expectedTurns) || expectedTurns < 1) {
+    finish(2, "expected_turn_count_invalid");
+  }
+
+  const baseline = readBaseline();
+  const sqliteSessions = appendedSqliteSessions(baseline.sqlite, baseline.sessions);
+  qualifyStructuredTurns(
+    sqliteSessions === null ? appendedJsonlSessions(baseline.sessions) : sqliteSessions,
+    expectedTurns,
+  );
 }
 
 try {
@@ -1213,7 +1488,7 @@ session_evidence() {
       command_timeout="$remaining"
     fi
   fi
-  timeout --kill-after=1s "$command_timeout"s \
+  NODE_NO_WARNINGS=1 timeout --kill-after=1s "$command_timeout"s \
     "${"$"}{openshell_environment[@]}" "$openshell_command" sandbox exec \
     --name "$NEMOCLAW_LAUNCH_SANDBOX" -- \
     node -e "$NEMOCLAW_LAUNCH_SESSION_EVIDENCE_SCRIPT" \
@@ -1222,7 +1497,9 @@ session_evidence() {
     "$baseline_path" \
     "$expected_turns" \
     "$pty_monitor_root" \
-    "$NEMOCLAW_LAUNCH_RUN_ID"
+    "$NEMOCLAW_LAUNCH_RUN_ID" \
+    "$NEMOCLAW_LAUNCH_FIRST_USER_IDENTIFIER" \
+    "$NEMOCLAW_LAUNCH_SECOND_USER_IDENTIFIER"
 }
 
 wait_for_turn_count() {
@@ -1372,13 +1649,13 @@ else
   printf '\003' >&3 2>/dev/null || true
   trap - PIPE
 fi
-exec 3>&-
 
 if wait "$session_pid"; then
   launch_status=0
 else
   launch_status=$?
 fi
+exec 3>&-
 session_pid=""
 
 if [[ "$launch_status" != 0 ]]; then
@@ -1419,11 +1696,20 @@ export interface OpenClawLaunchSessionOptions {
   beforeLaunchTurns?: () => Promise<void> | void;
 }
 
-function uniqueTurnInputs(): { first: string; second: string } {
+function uniqueTurnInputs(): {
+  first: string;
+  firstIdentifier: string;
+  second: string;
+  secondIdentifier: string;
+} {
   const fragment = randomUUID().replaceAll("-", "");
+  const firstIdentifier = fragment.slice(0, 16);
+  const secondIdentifier = fragment.slice(16);
   return {
-    first: `Reply briefly without using tools. Request identifier: ${fragment.slice(0, 16)}.`,
-    second: `Reply briefly again without using tools. Request identifier: ${fragment.slice(16)}.`,
+    first: `Reply briefly without using tools. Request identifier: ${firstIdentifier}.`,
+    firstIdentifier,
+    second: `Reply briefly again without using tools. Request identifier: ${secondIdentifier}.`,
+    secondIdentifier,
   };
 }
 
@@ -1452,11 +1738,13 @@ export async function runOpenClawLaunchSession(
         NEMOCLAW_LAUNCH_ENTRYPOINT: options.cliEntrypoint ?? "",
         NEMOCLAW_LAUNCH_EXIT_COMMAND: options.exitCommand ?? "",
         NEMOCLAW_LAUNCH_FIRST_INPUT: inputs.first,
+        NEMOCLAW_LAUNCH_FIRST_USER_IDENTIFIER: inputs.firstIdentifier,
         NEMOCLAW_LAUNCH_HOST_TMP_ROOT: resolve(options.env.TMPDIR || "/tmp"),
         NEMOCLAW_LAUNCH_RUN_ID: runId,
         NEMOCLAW_LAUNCH_SANDBOX: options.sandboxName,
         NEMOCLAW_LAUNCH_SESSION_BUDGET_SECONDS: "230",
         NEMOCLAW_LAUNCH_SECOND_INPUT: inputs.second,
+        NEMOCLAW_LAUNCH_SECOND_USER_IDENTIFIER: inputs.secondIdentifier,
         NEMOCLAW_LAUNCH_OPENSHELL_PRELOAD_SCRIPT: OPENCLAW_LAUNCH_OPENSHELL_PRELOAD_SCRIPT,
         NEMOCLAW_LAUNCH_PTY_MONITOR_STARTER_SCRIPT: OPENCLAW_PTY_MONITOR_STARTER_SCRIPT,
         NEMOCLAW_LAUNCH_RUNTIME_ENV_SCRIPT: OPENCLAW_LAUNCH_RUNTIME_ENV_SCRIPT,

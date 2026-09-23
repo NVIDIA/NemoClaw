@@ -32,6 +32,28 @@ The image build runs `pip3 check` and asserts all eight installed package versio
 The complete point-in-time audit now reports only two duplicate database records for `setuptools==82.0.1`; that record is outside the Critical/High remediation scope.
 This review does not claim the complete lock is vulnerability-free.
 
+## Managed QuickJS Wasmtime Configuration
+
+Deep Agents Code `0.1.55` selects `langchain-quickjs==0.3.5`, `quickjs-rs==0.2.5`,
+and `wasmtime==46.0.1`. The released `quickjs-rs` package creates a default
+Wasmtime engine. On Linux, Wasmtime's default copy-on-write linear-memory
+initialization creates `wasm-memory-image` with `memfd_create` flags
+`MFD_CLOEXEC | MFD_ALLOW_SEALING`. OpenShell blocks that syscall in the managed
+sandbox, so the first interactive model turn fails when Deep Agents initializes
+its JavaScript interpreter.
+
+The managed image patches the exact `quickjs-rs==0.2.5` engine constructor to
+set `Config.memory_init_cow = False`. This Wasmtime option uses ordinary memory
+initialization and does not require NemoClaw to weaken the OpenShell sandbox
+restriction. The image build rejects another `quickjs-rs` version or source
+shape and initializes the real QuickJS runtime after applying the patch. The
+live Deep Agents TUI check separately requires `memfd_create` to remain denied,
+initializes the real QuickJS runtime, and completes an interactive model turn.
+
+Remove this patch when a reviewed `quickjs-rs` or Deep Agents Code release
+provides an equivalent non-memfd Wasmtime configuration and the live check
+passes through that upstream path.
+
 ## Progressive MCP Tool Catalog Compatibility
 
 Deep Agents Code `0.1.55` with LangChain `1.3.14` can supply `search_tools` with a `ToolRuntime.tools` view that omits loaded MCP tools.

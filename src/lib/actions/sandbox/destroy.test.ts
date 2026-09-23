@@ -84,14 +84,15 @@ describe("cleanupSandboxServices Google Chat tunnel cleanup (#7317)", () => {
 
   it("removes the Google Chat PID directory after a successful tunnel stop", async () => {
     const rmSync = vi.fn();
+    const stopAll = vi.fn();
     const stopGooglechatWebhookTunnel = vi.fn(() => googlechatPidDir);
     const googlechatWebhookTunnelPidDir = vi.fn(() => googlechatPidDir);
 
     await cleanupSandboxServices(
       SANDBOX,
-      { stopHostServices: true },
+      { stopHostServices: true, channelStopTransport: "openshell" },
       {
-        stopAll: vi.fn(),
+        stopAll,
         getSandbox: vi.fn(() => null),
         rmSync,
         runOpenshell: vi.fn(() => ({ status: 0 })),
@@ -101,6 +102,9 @@ describe("cleanupSandboxServices Google Chat tunnel cleanup (#7317)", () => {
     );
 
     expect(rmSync).toHaveBeenCalledWith(googlechatPidDir, { recursive: true, force: true });
+    expect(stopAll).toHaveBeenCalledWith(
+      expect.objectContaining({ channelStopTransport: "openshell", sandboxName: SANDBOX }),
+    );
   });
 });
 

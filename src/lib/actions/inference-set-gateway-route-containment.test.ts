@@ -80,7 +80,7 @@ describe("runtime shared gateway route containment", () => {
     expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
   });
 
-  it("rejects a same-gateway conflict before OpenShell, config, or registry mutation (#6315)", async () => {
+  it("warns and re-points a same-gateway provider/model-only route (#11890)", async () => {
     const deps = createDeps({
       config: {},
       entries: [entry("alpha"), entry("stopped-peer")],
@@ -92,13 +92,31 @@ describe("runtime shared gateway route containment", () => {
         { provider: "nvidia-prod", model: "nvidia/model-b", sandboxName: "alpha" },
         deps,
       ),
-    ).rejects.toThrow("stopped-peer");
+    ).resolves.toMatchObject({ sandboxName: "alpha", model: "nvidia/model-b" });
 
-    expect(deps.calls.captureOpenshell).not.toHaveBeenCalled();
-    expect(deps.calls.readSandboxConfig).not.toHaveBeenCalled();
-    expect(deps.calls.writeSandboxConfig).not.toHaveBeenCalled();
-    expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
-    expect(deps.calls.updateSession).not.toHaveBeenCalled();
+    expect(deps.calls.captureOpenshell).toHaveBeenCalledWith(
+      [
+        "inference",
+        "set",
+        "-g",
+        "nemoclaw",
+        "--provider",
+        "nvidia-prod",
+        "--model",
+        "nvidia/model-b",
+      ],
+      expect.objectContaining({ ignoreError: true }),
+    );
+    const messages = deps.calls.log.mock.calls.map(([message]) => message);
+    const warningIndex = messages.findIndex((message) =>
+      message.includes("Changing inference for 'alpha' will re-point"),
+    );
+    const mutationIndex = messages.findIndex((message) =>
+      message.includes("Setting OpenShell inference route"),
+    );
+    expect(warningIndex).toBeGreaterThanOrEqual(0);
+    expect(messages[warningIndex]).toContain("'stopped-peer' (nvidia-prod / nvidia/model-a)");
+    expect(warningIndex).toBeLessThan(mutationIndex);
   });
 
   it("targets the selected sandbox gateway and allows a conflicting route elsewhere (#6315)", async () => {
@@ -614,7 +632,7 @@ describe("runtime shared gateway route containment", () => {
     expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
   });
 
-  it("serializes same-gateway mutations and rejects a conflicting write", async () => {
+  it("serializes same-gateway provider/model mutations and warns about route impact (#11890)", async () => {
     const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "nemoclaw-route-lock-"));
     try {
       const entries = [entry("route-lock-alpha"), entry("route-lock-beta")];
@@ -648,16 +666,21 @@ describe("runtime shared gateway route containment", () => {
         ),
       ]);
 
-      expect(results.map((result) => result.status).sort()).toEqual(["fulfilled", "rejected"]);
+      expect(results.map((result) => result.status)).toEqual(["fulfilled", "fulfilled"]);
       expect(
         deps.calls.captureOpenshell.mock.calls.filter(
           ([args]) => args[0] === "inference" && args[1] === "set",
         ),
-      ).toHaveLength(1);
+      ).toHaveLength(2);
       expect(entries).toEqual([
         expect.objectContaining({ provider: "nvidia-prod", model: "nvidia/model-a" }),
-        expect.objectContaining({ provider: "nvidia-prod", model: "nvidia/model-a" }),
+        expect.objectContaining({ provider: "anthropic-prod", model: "claude-new" }),
       ]);
+      expect(
+        deps.calls.log.mock.calls.some(([message]) =>
+          message.includes("will re-point the one shared inference route"),
+        ),
+      ).toBe(true);
       expect(deps.calls.withGatewayRouteMutationLock).toHaveBeenCalledTimes(2);
     } finally {
       await fs.rm(stateDir, { recursive: true, force: true });

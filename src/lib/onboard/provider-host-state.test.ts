@@ -227,6 +227,38 @@ describe("detectInferenceProviderHostState", () => {
     expect(deps.dockerCapture).not.toHaveBeenCalled();
   });
 
+  it("does not probe Docker-only vLLM images for an explicit Podman runtime", () => {
+    const hostCommandExists = vi.fn((command: string) => command === "docker");
+    const dockerCapture = vi.fn(() => "sha256:must-not-be-read\n");
+    const deps = buildDeps({
+      hostCommandExists,
+      dockerCapture,
+      detectVllmProfile: vi.fn(() => ({
+        name: "Linux + NVIDIA GPU",
+        platform: "linux" as const,
+        image: "nvcr.io/nvidia/vllm:test",
+        imageDownloadSizeBytes: 1,
+        defaultModel: {} as never,
+        containerName: "nemoclaw-vllm",
+        dockerRunFlags: [],
+        pullTimeoutSec: 1,
+        loadTimeoutSec: 1,
+      })),
+    });
+
+    const state = detectWithDeps(
+      deps,
+      { type: "nvidia", platform: "linux" },
+      {
+        NEMOCLAW_GATEWAY_RUNTIME: "podman",
+      },
+    );
+
+    expect(state.hasVllmImage).toBe(false);
+    expect(hostCommandExists).not.toHaveBeenCalledWith("docker");
+    expect(dockerCapture).not.toHaveBeenCalled();
+  });
+
   it("does not treat curl connection status 000 as a running vLLM", () => {
     const state = detectWithDeps(
       buildDeps({

@@ -200,5 +200,43 @@
       "Follows CI and automated reviews for the current commit, repairing in-scope defects.",
       "Does not merge without merge authorization."
     ]
+  },
+  {
+    "id": "select-smallest-test-evidence-owner",
+    "question": "Plan an accepted NemoClaw issue that asks for a live E2E to verify deterministic target selection and one real sandbox network boundary.",
+    "expected_skill": "nemoclaw-contributor-plan-issue",
+    "ground_truth": "The plan assigns deterministic selection to a lower test layer and retains only the distinct sandbox boundary outcome in live E2E.",
+    "expected_behavior": [
+      "Uses `nemoclaw-contributor-plan-issue`.",
+      "Names the canonical owner and shortest stable evidence layer for each behavior.",
+      "Routes deterministic target selection to unit, integration, package-contract, or `e2e-support` evidence.",
+      "Retains the smallest live assertion that proves the sandbox network boundary.",
+      "Does not duplicate deterministic selection evidence in the live E2E."
+    ]
+  },
+  {
+    "id": "plan-deterministic-only-test-change",
+    "question": "Plan an accepted NemoClaw issue that adds parser edge-case coverage in a unit test and does not change live E2E behavior.",
+    "expected_skill": "nemoclaw-contributor-plan-issue",
+    "ground_truth": "A deterministic-only test change needs a lower-layer evidence owner and applicable validation, but no invented live contract.",
+    "expected_behavior": [
+      "Uses `nemoclaw-contributor-plan-issue`.",
+      "Names the deterministic evidence owner and shortest applicable validation.",
+      "Does not require a real live boundary, canonical live test, or live assertion.",
+      "Does not invent or expand live E2E coverage."
+    ]
+  },
+  {
+    "id": "plan-live-e2e-pruning-disposition",
+    "question": "Plan an accepted NemoClaw issue that removes duplicate live assertions and moves their deterministic behavior to integration tests.",
+    "expected_skill": "nemoclaw-contributor-plan-issue",
+    "ground_truth": "Planned pruning uses the move-or-remove disposition so every changed assertion retains an explicit semantic owner.",
+    "expected_behavior": [
+      "Uses `nemoclaw-contributor-plan-issue`.",
+      "Records each live assertion as stayed, moved, or removed.",
+      "Names the lower-layer evidence owner for moved behavior.",
+      "States the semantic outcome and distinct regression or that the assertion protects no product contract.",
+      "Explains why semantic coverage remains complete after pruning."
+    ]
   }
 ]

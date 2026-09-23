@@ -609,9 +609,10 @@ export const observeRebuildSandbox = observeSandboxOnGateway;
 export function assertRebuildRecoverySource(
   transaction: CheckpointSandboxRecreateTransaction,
   target: SandboxRecreateTarget,
+  reservationSessionId: string,
   runtimeSelection?: OpenShellRuntimeSelection,
 ): void {
-  assertSandboxRecreateSourceProof(sandboxRecreateSourceProof(transaction), {
+  assertSandboxRecreateSourceProof(sandboxRecreateSourceProof(transaction, reservationSessionId), {
     ...target,
     registryEntry: registry.getSandbox(target.sandboxName),
     observation: observeRebuildSandbox(target, undefined, runtimeSelection),

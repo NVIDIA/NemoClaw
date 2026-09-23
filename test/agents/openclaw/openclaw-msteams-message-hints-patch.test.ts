@@ -86,9 +86,11 @@ function writeMSTeamsPackage(
 }
 
 function writeMSTeamsEntryFlow(root: string): { channelFile: string; indexFile: string } {
-  const channelFile = writeMSTeamsPackage(root);
-  const indexFile = path.join(path.dirname(channelFile), "index.js");
-  fs.writeFileSync(indexFile, 'module.exports = require("./channel-plugin-api.js");\n');
+  const oldChannelFile = writeMSTeamsPackage(root);
+  const channelFile = path.join(path.dirname(oldChannelFile), "channel-plugin-api.cjs");
+  fs.renameSync(oldChannelFile, channelFile);
+  const indexFile = path.join(path.dirname(channelFile), "index.cjs");
+  fs.writeFileSync(indexFile, 'module.exports = require("./channel-plugin-api.cjs");\n');
   return { channelFile, indexFile };
 }
 
@@ -182,7 +184,7 @@ describe("OpenClaw Microsoft Teams message hint patch", () => {
     }
   });
 
-  it("patches the exact dist/index.js to channel-plugin-api.js load flow", () => {
+  it("patches the reviewed dist/index.cjs to channel-plugin-api.cjs load flow", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-msteams-hints-entry-flow-"));
     const { indexFile } = writeMSTeamsEntryFlow(tmp);
     try {

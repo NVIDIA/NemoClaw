@@ -26,6 +26,7 @@ export interface AgentConfigPaths {
 
 interface AgentStateDirectoryBehavior {
   backup: boolean;
+  clearWhenAbsent: boolean;
 }
 
 export interface AgentStateDirectoryPath extends AgentStateDirectoryBehavior {

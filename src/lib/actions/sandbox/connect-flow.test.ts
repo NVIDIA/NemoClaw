@@ -899,6 +899,37 @@ describe("connectSandbox flow", () => {
     expect(harness.checkAndRecoverSpy).toHaveBeenCalled();
   });
 
+  it("observes OpenShell-managed Hermes through native health during probe-only connect", async () => {
+    const harness = createConnectHarness({
+      agentName: "hermes",
+      sessionAgent: { name: "hermes" },
+      registryEntry: {
+        openshellDriver: "docker",
+        gatewayName: "nemoclaw",
+      },
+      useRealProcessRecovery: true,
+    });
+
+    await expect(harness.connectSandbox("alpha", { probeOnly: true })).resolves.toBeUndefined();
+
+    const healthRequests = harness.sandboxRunBufferedSpy.mock.calls
+      .map(([request]) => request as OpenShellSandboxBufferedCommandRequest)
+      .filter((request) => request.command.join(" ").includes("/health"));
+    expect(healthRequests).toHaveLength(1);
+    expect(healthRequests[0]).toEqual(
+      expect.objectContaining({
+        sandboxName: "alpha",
+        target: { kind: "selected" },
+      }),
+    );
+    expect(healthRequests[0]?.command.join(" ")).not.toContain(
+      "/usr/local/bin/nemoclaw-gateway-control",
+    );
+    expect(harness.spawnSyncSpy.mock.calls.flat().map(String).join(" ")).not.toContain(
+      "/usr/local/bin/nemoclaw-gateway-control",
+    );
+  });
+
   it("keeps active Hermes probe on receipt-owned recovery with every Docker path poisoned (#9203)", async () => {
     const harness = createConnectHarness({
       agentName: "hermes",

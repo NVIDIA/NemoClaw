@@ -8,7 +8,7 @@ import path from "node:path";
 import { INSTALLER_PAYLOAD, TEST_SYSTEM_PATH, writeExecutable } from "./installer-sourced-env";
 
 /** Fake node that reports v22.19.0. */
-export function writeNodeStub(fakeBin: string): void {
+export function writeNodeStub(fakeBin: string, options: { evaluateInline?: boolean } = {}): void {
   writeExecutable(
     path.join(fakeBin, "node"),
     `#!/usr/bin/env bash
@@ -16,11 +16,14 @@ if [ "$1" = "--version" ] || [ "$1" = "-v" ]; then echo "v22.19.0"; exit 0; fi
 if [ "$1" = "-" ]; then
   exec ${JSON.stringify(process.execPath)} "$@"
 fi
+case "\${1:-}:\${2:-}" in
+  *scripts/lib/openshell-sdk-install.mts:prepare|*scripts/lib/openshell-sdk-install.mts:check) exit 0 ;;
+esac
 if [ -n "\${1:-}" ] && [ -f "$1" ]; then
   exec ${JSON.stringify(process.execPath)} "$@"
 fi
 if [ "$1" = "-e" ]; then
-  exec ${JSON.stringify(process.execPath)} "$@"
+  ${options.evaluateInline === false ? "exit 0" : `exec ${JSON.stringify(process.execPath)} "$@"`}
 fi
 exit 99`,
   );

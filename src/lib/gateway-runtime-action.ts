@@ -108,7 +108,10 @@ export async function recoverNamedGatewayRuntime(options: RecoverNamedGatewayRun
   }
 
   let after = before;
-  if (!exactTargetTransportRecovery) {
+  // A missing registration cannot be selected. Start the exact requested
+  // target first so the startup path can restore its registration, then
+  // select and verify it below.
+  if (!exactTargetTransportRecovery && before.state !== "missing_named") {
     const selection = await gatewayRuntimeDependencies.selectGateway({
       target: { kind: "named", gatewayName },
       ...lifecycleOptions,

@@ -59,6 +59,10 @@ host, Docker, GitHub authentication, contributor identity, and commit-signing pr
 changing them. Follow its remediation and rerun the doctor until it
 passes.
 
+Setup installs the required OpenShell SDK from the archive shipped with this checkout and verifies its lockfile checksum.
+SDK installation does not require GitHub credentials. The doctor also checks that the installed SDK can load.
+See the [SDK archive guidance](scripts/vendor/openshell-sdk/README.md) for direct dependency installation and SDK updates.
+
 Use `./scripts/dev-setup.sh --with-runtime` only when the change needs runtime validation. Use
 `./scripts/dev-setup.sh --expose-cli` only when you need a development `nemoclaw` command. Run
 `npm run agent` to launch the repository-pinned coding agent.
@@ -124,6 +128,17 @@ change has repository-wide impact or targeted validation cannot prove the outcom
 - `npm run check` runs the repository-wide pre-commit and coverage baseline.
 
 Most focused changes do not require both. Record only checks that actually ran and their results.
+
+### Reviewed SDK archives in PR CI
+
+`CI / Main Branch` packages the approved OpenShell SDK and any approved replacement without executing PR code.
+The package token exists only in that job's download step. PR jobs receive no package credentials.
+They select a retained archive by the base policy's package identities and verify its checksum against that policy and their lockfiles.
+Archives are retained for 90 days and can serve multiple PR commits.
+
+If the archive is missing, run `gh workflow run main.yaml --ref main` and wait for `package-openshell-sdk` to succeed.
+Then rerun PR CI. If the base package policy changed, update the PR against `main` before rerunning.
+A new SDK version must be approved in the base policy before a PR can install it.
 
 ## Submit the Pull Request
 

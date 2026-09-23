@@ -496,10 +496,16 @@ process.exit(Array.isArray(channels) && channels.some((c) => c?.channelId === "w
       "start-log-messaging-providers",
       redactionValues,
     );
+    const acceptedExtrasLine = startLog
+      .split(/\r?\n/u)
+      .find((line) =>
+        /^\[config\] NEMOCLAW_EXTRA_PLACEHOLDER_KEYS accepted \d+ entry\(ies\):/u.test(line),
+      );
     check(
-      /\[config\] NEMOCLAW_EXTRA_PLACEHOLDER_KEYS accepted \d+ entry\(ies\):/.test(startLog) &&
-        startLog.includes("TELEGRAM_BOT_TOKEN_AGENT_A") &&
-        !startLog.includes("GITHUB_TOKEN"),
+      Boolean(
+        acceptedExtrasLine?.includes("TELEGRAM_BOT_TOKEN_AGENT_A") &&
+        !acceptedExtrasLine.includes("GITHUB_TOKEN"),
+      ),
       "X5: accepted-extras breadcrumb proves extra keys reached in-container parser",
     );
 
@@ -1018,7 +1024,7 @@ req.setTimeout(30000, () => { req.destroy(); console.log("TIMEOUT"); });
     );
     check(
       installedSlackProof.proof === "openclaw-pipeline-runtime",
-      `M-S17c: OpenClaw 2026.7.1 Slack proof used the reviewed pipeline/runtime exports (${installedSlackProof.proof})`,
+      `M-S17c: OpenClaw 2026.9.1 Slack proof used the reviewed pipeline/runtime exports (${installedSlackProof.proof})`,
     );
     const slackRuntimeCapture = lastJsonLine(
       fakeSlackBot.captureFile,

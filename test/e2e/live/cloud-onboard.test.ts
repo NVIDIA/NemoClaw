@@ -27,7 +27,7 @@ const LIVE_TIMEOUT_MS = 60 * 60_000;
 const REASONING_PROPAGATION_PROBE = String.raw`
 const fs = require("node:fs");
 const expectedModel = process.argv[1];
-const runtimeEnvironmentPath = "/run/nemoclaw/managed-startup-runtime.env";
+const runtimeEnvironmentPath = "/tmp/nemoclaw-managed-startup-runtime.env";
 const runtimeEnvironmentStat = fs.lstatSync(runtimeEnvironmentPath);
 if (
   !runtimeEnvironmentStat.isFile() ||

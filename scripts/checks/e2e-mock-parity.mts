@@ -26,7 +26,7 @@ export type MockParityManifest = {
 };
 
 const LIVE_TEST = /^test\/e2e\/live\/.+\.test\.ts$/u;
-const LIVE_HELPER = /^test\/e2e\/live\/(?!.*\.test\.ts$).+\.ts$/u;
+const LIVE_HELPER = /^test\/e2e\/live\/(?!.*\.test\.ts$).+\.(?:py|ts)$/u;
 const FAST_TESTS = [
   /^src\/.+\.test\.ts$/u,
   /^nemoclaw\/src\/.+\.test\.ts$/u,
@@ -160,7 +160,9 @@ export function validateMockParity(options: {
     if (!fileExists(entry.live)) errors.push(`${entry.live}: live test does not exist`);
     for (const sourceFile of new Set(entry.liveSources ?? [])) {
       if (!isSafeRepoPath(sourceFile) || !LIVE_HELPER.test(sourceFile)) {
-        errors.push(`${entry.live}: ${sourceFile} is not a test/e2e/live/**/*.ts helper file`);
+        errors.push(
+          `${entry.live}: ${sourceFile} is not a test/e2e/live/**/*.py or *.ts helper file`,
+        );
         continue;
       }
       if (!fileExists(sourceFile)) {
@@ -244,6 +246,9 @@ export function filterMockParityRelevantChangedFiles(
 ): string[] {
   return files.filter((file) => {
     if (!LIVE_TEST.test(file) && !LIVE_HELPER.test(file) && !isFastPrTest(file)) return true;
+    // Python indentation is executable syntax, so the TypeScript token filter
+    // cannot safely classify any Python helper change as metadata-only.
+    if (LIVE_HELPER.test(file) && file.endsWith(".py")) return true;
     return isMockParityRelevantSourceChange(sourceAtBase(file), sourceAtHead(file));
   });
 }

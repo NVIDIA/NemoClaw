@@ -3,21 +3,21 @@
 
 import { isDeepStrictEqual } from "node:util";
 
-import { readConfigFile } from "../../state/config-io";
+import { findAmbiguousMcpCredentialTarget } from "../../domain/mcp-credential-target";
 import { withMcpLifecycleLock } from "../../state/mcp-lifecycle-lock";
 import * as registry from "../../state/registry";
 import * as policies from "../../policy";
-import { REGISTRY_FILE } from "../../state/registry/persistence";
+import {
+  readLegacyMcpRegistryProjection,
+  retireLegacyMcpRegistryProjection,
+} from "../../state/registry/legacy-mcp";
+import { readCommittedLegacyRegistryEntries, sameMcpRegistration } from "./mcp-bridge-source";
 import {
   registerAgentAdapter,
   reloadOpenClawGatewayAfterMcpMutation,
   unregisterAgentAdapter,
 } from "./mcp-bridge-adapters";
-import {
-  buildMcpBridgePolicyYaml,
-  buildMcpBridgePolicyName,
-  getPolicyPresence,
-} from "./mcp-bridge-policy";
+import { buildMcpBridgePolicyYaml, getPolicyPresence } from "./mcp-bridge-policy";
 import type { McpSourceEntry } from "./mcp-bridge-contracts";
 import { McpBridgeError } from "./mcp-bridge-contracts";
 import {
@@ -37,7 +37,7 @@ import {
   getBridgeAdapter,
   getSandboxAgent,
 } from "./mcp-bridge-state";
-import { normalizeMcpDenyTools, validateSandboxName } from "./mcp-bridge-validation";
+import { validateSandboxName } from "./mcp-bridge-validation";
 
 export type McpMigrationItem = {
   server: string;
@@ -60,123 +60,6 @@ export type McpMigrationPlan = {
   items: McpMigrationItem[];
   applied: boolean;
 };
-
-function sameRegistration(left: McpSourceEntry, right: McpSourceEntry): boolean {
-  return (
-    left.server === right.server && left.url === right.url && isDeepStrictEqual(left.env, right.env)
-  );
-}
-
-function isObjectRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function readCommittedLegacyRegistryEntries(
-  sandboxName: string,
-  currentAgent: string,
-  currentAdapter: McpSourceEntry["adapter"],
-): Record<string, McpSourceEntry> {
-  const document = readConfigFile<unknown>(REGISTRY_FILE, {});
-  if (!isObjectRecord(document) || !isObjectRecord(document.sandboxes)) return {};
-  const rawSandbox = document.sandboxes[sandboxName];
-  if (!isObjectRecord(rawSandbox) || !isObjectRecord(rawSandbox.mcp)) return {};
-  const rawState = rawSandbox.mcp;
-  if (rawState.destroyPreparedAt || rawState.destroyPendingAt) {
-    throw new McpBridgeError(
-      `Legacy MCP registry state for '${sandboxName}' contains an incomplete destroy transaction. No source was changed.`,
-      2,
-    );
-  }
-  if (!isObjectRecord(rawState.bridges)) return {};
-  const entries: Record<string, McpSourceEntry> = {};
-  for (const [server, raw] of Object.entries(rawState.bridges)) {
-    if (!/^[A-Za-z][A-Za-z0-9_-]{0,63}$/u.test(server) || !isObjectRecord(raw)) {
-      throw new McpBridgeError(
-        `Legacy MCP registry server '${server}' is not a valid committed registration. No source was changed.`,
-        2,
-      );
-    }
-    if (raw.addState !== undefined) {
-      throw new McpBridgeError(
-        `Legacy MCP registry server '${server}' contains an incomplete add transaction. No source was changed.`,
-        2,
-      );
-    }
-    const agent = typeof raw.agent === "string" && raw.agent ? raw.agent : "openclaw";
-    const recordedAdapter =
-      typeof raw.adapter === "string" && raw.adapter ? raw.adapter : currentAdapter;
-    const adapter = recordedAdapter === "mcporter" ? "openclaw-config" : recordedAdapter;
-    if (agent !== currentAgent || adapter !== currentAdapter) {
-      throw new McpBridgeError(
-        `Legacy MCP registry server '${server}' targets ${agent}/${String(adapter)} instead of the current ${currentAgent}/${String(currentAdapter)} runtime. No source was changed.`,
-        2,
-      );
-    }
-    if (
-      typeof raw.url !== "string" ||
-      raw.url.length > 4096 ||
-      !Array.isArray(raw.env) ||
-      raw.env.length !== 1 ||
-      typeof raw.env[0] !== "string" ||
-      !/^[A-Za-z_][A-Za-z0-9_]{0,127}$/u.test(raw.env[0])
-    ) {
-      throw new McpBridgeError(
-        `Legacy MCP registry server '${server}' is not a valid committed registration. No source was changed.`,
-        2,
-      );
-    }
-    let url: URL;
-    try {
-      url = new URL(raw.url);
-    } catch {
-      throw new McpBridgeError(
-        `Legacy MCP registry server '${server}' has an invalid URL. No source was changed.`,
-        2,
-      );
-    }
-    if (url.protocol !== "https:" || url.username || url.password) {
-      throw new McpBridgeError(
-        `Legacy MCP registry server '${server}' has an unsupported URL. No source was changed.`,
-        2,
-      );
-    }
-    const requestedDenyTools = raw.pendingDenyTools ?? raw.denyTools ?? [];
-    if (
-      !Array.isArray(requestedDenyTools) ||
-      requestedDenyTools.some((tool) => typeof tool !== "string")
-    ) {
-      throw new McpBridgeError(
-        `Legacy MCP registry server '${server}' has invalid denied-tool intent. No source was changed.`,
-        2,
-      );
-    }
-    const denyTools = normalizeMcpDenyTools(requestedDenyTools as string[]);
-    const allowedIps = Array.isArray(raw.allowedIps)
-      ? raw.allowedIps.filter((address): address is string => typeof address === "string")
-      : undefined;
-    entries[server] = {
-      server,
-      agent,
-      adapter,
-      url: url.toString(),
-      env: [raw.env[0]],
-      denyTools,
-      ...(allowedIps?.length ? { allowedIps } : {}),
-      ...(typeof raw.trustedPrivateHost === "string" && raw.trustedPrivateHost
-        ? { trustedPrivateHost: raw.trustedPrivateHost }
-        : {}),
-      ...(typeof raw.providerName === "string" && raw.providerName
-        ? { providerName: raw.providerName }
-        : {}),
-      ...(typeof raw.providerId === "string" && raw.providerId
-        ? { providerId: raw.providerId }
-        : {}),
-      policyName: buildMcpBridgePolicyName(server),
-      source: "legacy-registry",
-    };
-  }
-  return entries;
-}
 
 async function preflightMigrationOpenShellState(
   sandboxName: string,
@@ -236,10 +119,12 @@ export async function migrateMcpBridges(
     const observed = await inspectLegacyBridgeState(sandbox, runtimeSelection);
     const agent = getSandboxAgent(sandbox);
     const adapter = getBridgeAdapter(agent);
+    const legacyProjection = readLegacyMcpRegistryProjection(sandboxName);
     const committedRegistryEntries = readCommittedLegacyRegistryEntries(
       sandboxName,
       agent.name,
       adapter,
+      legacyProjection,
     );
     const rawRegistryEntries = await joinMcpEntriesToOpenShell(
       sandbox,
@@ -263,7 +148,7 @@ export async function migrateMcpBridges(
     }
     for (const [server, registryEntry] of Object.entries(rawRegistryEntries)) {
       const agentLegacy = observed.bridges[server];
-      if (agentLegacy && !sameRegistration(agentLegacy, registryEntry)) {
+      if (agentLegacy && !sameMcpRegistration(agentLegacy, registryEntry)) {
         throw new McpBridgeError(
           `Legacy agent and registry MCP definitions conflict for '${server}'. No source was changed.`,
           2,
@@ -274,9 +159,25 @@ export async function migrateMcpBridges(
     const entries = Object.values(legacyEntries).sort((left, right) =>
       left.server.localeCompare(right.server),
     );
+    const nativeEntries = await joinMcpEntriesToOpenShell(
+      sandbox,
+      observed.sources.native,
+      runtimeSelection,
+      "inspect native MCP migration conflict state",
+    );
+    const ambiguousTarget = findAmbiguousMcpCredentialTarget([
+      ...entries,
+      ...Object.values(nativeEntries),
+    ]);
+    if (ambiguousTarget) {
+      throw new McpBridgeError(
+        `MCP servers '${ambiguousTarget.entry.server}' and '${ambiguousTarget.conflict.server}' target the same URL with different credential bindings. OpenShell cannot safely choose between credentials for an indistinguishable endpoint. Remove one owned legacy registration with \`nemoclaw ${sandboxName} mcp remove <server>\`, then rerun migration. No source was changed.`,
+        2,
+      );
+    }
     const conflicts = entries.filter((entry) => {
       const native = observed.sources.native[entry.server];
-      return native && !sameRegistration(native, entry);
+      return native && !sameMcpRegistration(native, entry);
     });
     if (conflicts.length > 0) {
       throw new McpBridgeError(
@@ -345,7 +246,7 @@ export async function migrateMcpBridges(
         }
         native = (await inspectAgentMcpSources(rebuilt, rebuiltRuntimeSelection)).native;
         const missing = entries.filter(
-          (entry) => !native[entry.server] || !sameRegistration(native[entry.server], entry),
+          (entry) => !native[entry.server] || !sameMcpRegistration(native[entry.server], entry),
         );
         if (missing.length > 0) {
           throw new McpBridgeError(
@@ -371,7 +272,7 @@ export async function migrateMcpBridges(
         }
         throw error;
       }
-      registry.updateSandbox(sandboxName, {});
+      retireLegacyMcpRegistryProjection(sandboxName, legacyProjection);
       return { sandbox: sandboxName, items, applied: true };
     }
 
@@ -395,7 +296,7 @@ export async function migrateMcpBridges(
         const current = (await inspectAgentMcpSources(sandbox, runtimeSelection)).native[
           entry.server
         ];
-        if (!current || !sameRegistration(current, entry)) {
+        if (!current || !sameMcpRegistration(current, entry)) {
           throw new McpBridgeError(
             `Native MCP verification failed after migrating '${entry.server}'.`,
           );
@@ -408,9 +309,7 @@ export async function migrateMcpBridges(
           await removeLegacyAgentMcpEntry(sandbox, entry, runtimeSelection);
         }
       }
-      // Force a normal non-MCP registry serialization so legacy MCP fields are
-      // omitted immediately after the explicit migration succeeds.
-      registry.updateSandbox(sandboxName, {});
+      retireLegacyMcpRegistryProjection(sandboxName, legacyProjection);
       return { sandbox: sandboxName, items, applied: true };
     } catch (error) {
       if (!cleanupStarted) {

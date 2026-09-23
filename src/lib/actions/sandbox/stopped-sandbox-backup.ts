@@ -2,6 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { retryUntilAsync } from "../../core/retry";
+import {
+  createSdkOpenShellSandboxStateLifecycle,
+  type OpenShellSandboxStateLifecycle,
+} from "../../adapters/openshell/sandbox-lifecycle-sdk";
 import { resolveSandboxContainerOwner } from "../../domain/sandbox/container-owner";
 import type { RuntimeProviderCommandCapture } from "../../onboard/runtime-provider/contract";
 import { resolveRegisteredRuntimeProvider } from "../../onboard/runtime-provider/selection";
@@ -101,12 +105,11 @@ function inspectContainerStatus(
  * Backup support for registered container-backed sandboxes whose container is
  * stopped. `backup-all` skips sandboxes the gateway does not report Ready,
  * which under installer-strict mode (#6114) fails the whole run — but a
- * stopped container's state is backupable: the backup transport is SSH+tar
- * through the container's PID 1 and does not need the agent gateway, so
- * starting the provider-owned container is enough to capture it (#6500).
- * These helpers start such a container for the duration of the backup and
- * return it to its stopped state afterwards, so the strict gate can pass
- * without weakening what it protects.
+ * stopped sandbox's state is backupable: the backup transport is SSH+tar
+ * through the sandbox runtime and does not need the agent gateway. These
+ * helpers use OpenShell to start the exact registered sandbox for the duration
+ * of the backup and return it to Stopped afterwards (#6500), so the strict
+ * gate can pass without weakening what it protects.
  *
  * Only containers whose `.State.Status` is `exited` or `created` qualify.
  * A running-but-not-Ready container (crash loop, gateway drift, paused) is
@@ -116,11 +119,15 @@ function inspectContainerStatus(
 
 export interface StartedForBackup {
   containerName: string;
+  gatewayName: string;
+  mutationTimeoutMs: number;
   runtimeProviderId: string;
+  sandboxIdentityFingerprint: string;
+  sandboxName: string;
 }
 
 interface StartDeps {
-  getSandboxDriver: (name: string) => string | null | undefined;
+  getSandbox: typeof registry.getSandbox;
   listSandboxNames: () => string[];
   resolveLifecycleEngine: (driverName: string | null | undefined) => SandboxLifecycleEngine | null;
   listLabeledContainerNames: (
@@ -128,11 +135,11 @@ interface StartDeps {
     sandboxName: string,
   ) => string[] | null;
   inspectStatus: (engine: SandboxLifecycleEngine, containerName: string) => string | null;
-  start: (engine: SandboxLifecycleEngine, containerName: string) => boolean;
+  createOpenShellLifecycle: () => OpenShellSandboxStateLifecycle;
 }
 
 const defaultStartDeps: StartDeps = {
-  getSandboxDriver: readSandboxDriver,
+  getSandbox: registry.getSandbox,
   listSandboxNames: () =>
     registry
       .listSandboxes()
@@ -141,16 +148,18 @@ const defaultStartDeps: StartDeps = {
   resolveLifecycleEngine: resolveSandboxLifecycleEngine,
   listLabeledContainerNames,
   inspectStatus: inspectContainerStatus,
-  start: (engine, containerName) =>
-    captureSucceeded(engine.capture(["start", containerName], engine.mutationTimeoutMs)),
+  createOpenShellLifecycle: () => createSdkOpenShellSandboxStateLifecycle({ env: process.env }),
 };
 
-export function startStoppedSandboxContainerForBackup(
+export async function startStoppedSandboxContainerForBackup(
   sandboxName: string,
   depsOverride: Partial<StartDeps> = {},
-): StartedForBackup | null {
+): Promise<StartedForBackup | null> {
   const deps: StartDeps = { ...defaultStartDeps, ...depsOverride };
-  const engine = deps.resolveLifecycleEngine(deps.getSandboxDriver(sandboxName));
+  const sandbox = deps.getSandbox(sandboxName);
+  const sandboxIdentityFingerprint = sandbox?.lifecycleLiveIdentityFingerprint;
+  if (!sandboxIdentityFingerprint) return null;
+  const engine = deps.resolveLifecycleEngine(sandbox.openshellDriver);
   if (!engine) return null;
   const labeledContainerNames = deps.listLabeledContainerNames(engine, sandboxName);
   // Lifecycle mutation must fail closed on missing or ambiguous ownership.
@@ -168,8 +177,22 @@ export function startStoppedSandboxContainerForBackup(
   if (/-nemoclaw-gpu-backup-\d+$/.test(containerName)) return null;
   const status = deps.inspectStatus(engine, containerName);
   if (status !== "exited" && status !== "created") return null;
-  if (!deps.start(engine, containerName)) return null;
-  return { containerName, runtimeProviderId: engine.runtimeProviderId };
+  const gatewayName = sandbox.gatewayName ?? "nemoclaw";
+  const result = await deps.createOpenShellLifecycle().startSandbox({
+    sandboxName,
+    sandboxIdentityFingerprint,
+    target: { kind: "named", gatewayName },
+    timeoutMs: engine.mutationTimeoutMs,
+  });
+  if (result.kind === "failed") return null;
+  return {
+    containerName,
+    gatewayName,
+    mutationTimeoutMs: engine.mutationTimeoutMs,
+    runtimeProviderId: engine.runtimeProviderId,
+    sandboxIdentityFingerprint,
+    sandboxName,
+  };
 }
 
 interface ContainerAbsenceDeps {
@@ -210,28 +233,27 @@ export function isSandboxContainerDefinitivelyAbsent(
 }
 
 interface StopDeps {
-  resolveLifecycleEngine: (driverName: string | null | undefined) => SandboxLifecycleEngine | null;
-  stop: (engine: SandboxLifecycleEngine, containerName: string) => boolean;
-  inspectStatus: (engine: SandboxLifecycleEngine, containerName: string) => string | null;
+  createOpenShellLifecycle: () => OpenShellSandboxStateLifecycle;
 }
 
 const defaultStopDeps: StopDeps = {
-  resolveLifecycleEngine: resolveSandboxLifecycleEngine,
-  stop: (engine, containerName) =>
-    captureSucceeded(engine.capture(["stop", containerName], engine.mutationTimeoutMs)),
-  inspectStatus: inspectContainerStatus,
+  createOpenShellLifecycle: () => createSdkOpenShellSandboxStateLifecycle({ env: process.env }),
 };
 
-/** Return a container started by {@link startStoppedSandboxContainerForBackup}
- * to its stopped state. Returns false when the provider operation fails. */
-export function returnSandboxContainerToStopped(
+/** Return a sandbox started by {@link startStoppedSandboxContainerForBackup}
+ * to Stopped through OpenShell. Returns false when that operation fails. */
+export async function returnSandboxContainerToStopped(
   started: StartedForBackup,
   depsOverride: Partial<StopDeps> = {},
-): boolean {
+): Promise<boolean> {
   const deps: StopDeps = { ...defaultStopDeps, ...depsOverride };
-  const engine = deps.resolveLifecycleEngine(started.runtimeProviderId);
-  if (!engine || !deps.stop(engine, started.containerName)) return false;
-  return deps.inspectStatus(engine, started.containerName) === "exited";
+  const result = await deps.createOpenShellLifecycle().stopSandbox({
+    sandboxName: started.sandboxName,
+    sandboxIdentityFingerprint: started.sandboxIdentityFingerprint,
+    target: { kind: "named", gatewayName: started.gatewayName },
+    timeoutMs: started.mutationTimeoutMs,
+  });
+  return result.kind === "accepted";
 }
 
 interface BackupRetryDeps {
@@ -262,9 +284,9 @@ const defaultBackupRetryDeps: BackupRetryDeps = {
 };
 
 /**
- * Back up a sandbox whose container was just started. The container's SSH
- * endpoint can take up to the managed cold-start window after `docker start`, so retry
- * while — and only while — the result is a transport-level `unreachable`
+ * Back up a sandbox that OpenShell just started. Its SSH endpoint can take up
+ * to the managed cold-start window to become reachable, so retry while — and
+ * only while — the result is a transport-level `unreachable`
  * failure. Every other outcome (success, permission failure, precondition)
  * is returned as-is on first sight.
  */

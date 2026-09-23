@@ -135,7 +135,7 @@ exit 0
     expect(deps.readGatewayLog?.("alpha")).toBeNull();
   });
 
-  it("parses live gateway inference through the OpenShell override", () => {
+  it("parses live gateway inference through the OpenShell override", async () => {
     writeExecutable(
       openshell,
       `#!/usr/bin/env bash
@@ -152,7 +152,10 @@ exit 0
 
     const deps = buildStatusCommandDeps(tmp);
 
-    expect(deps.getLiveInference()).toEqual({ provider: "nvidia-prod", model: "nvidia/nemotron" });
+    await expect(deps.getLiveInference()).resolves.toEqual({
+      provider: "nvidia-prod",
+      model: "nvidia/nemotron",
+    });
     expect(fs.readFileSync(callsFile, "utf-8")).toContain("inference get");
   });
 });

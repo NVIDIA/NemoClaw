@@ -181,6 +181,9 @@ if [ "$1" = "--version" ]; then
   echo "v22.19.0"
   exit 0
 fi
+case "\${1:-}:\${2:-}" in
+  *scripts/lib/openshell-sdk-install.mts:prepare|*scripts/lib/openshell-sdk-install.mts:check) exit 0 ;;
+esac
 if [ -n "\${1:-}" ] && [ -f "$1" ]; then
   exec ${JSON.stringify(process.execPath)} "$@"
 fi
@@ -246,6 +249,9 @@ if [ "$1" = "--version" ]; then
   echo "v22.19.0"
   exit 0
 fi
+case "\${1:-}:\${2:-}" in
+  *scripts/lib/openshell-sdk-install.mts:prepare|*scripts/lib/openshell-sdk-install.mts:check) exit 0 ;;
+esac
 if [ "$1" = "-e" ]; then
   exit 0
 fi
@@ -477,7 +483,11 @@ exit 89
 
     expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
     const log = fs.readFileSync(npmLog, "utf-8");
-    expect(log.match(/^install --ignore-scripts$/gm)).toHaveLength(1);
+    expect(
+      log.match(
+        /^install --ignore-scripts --prefer-offline --include=optional --@nvidia:registry=https:\/\/npm\.pkg\.github\.com$/gm,
+      ),
+    ).toHaveLength(1);
     expect(log.match(/^ci --ignore-scripts$/gm)).toHaveLength(1);
     expect(fs.readFileSync(payloadLockPath)).toEqual(Buffer.from("payload lock sentinel\n"));
     expect(log).toMatch(/^link/m);
@@ -1040,22 +1050,7 @@ fi`,
     } = installerCheckout("nemoclaw-install-shim-");
     fs.mkdirSync(path.join(tmp, ".local"), { recursive: true });
 
-    writeExecutable(
-      path.join(fakeBin, "node"),
-      `#!/usr/bin/env bash
-if [ "$1" = "-v" ] || [ "$1" = "--version" ]; then
-  echo "v22.19.0"
-  exit 0
-fi
-if [ -n "\${1:-}" ] && [ -f "$1" ]; then
-  exec ${JSON.stringify(process.execPath)} "$@"
-fi
-if [ "$1" = "-e" ]; then
-  exit 0
-fi
-exit 99
-`,
-    );
+    writeNodeStub(fakeBin, { evaluateInline: false });
 
     writeExecutable(
       path.join(fakeBin, "git"),
@@ -1142,22 +1137,7 @@ exit 0
     fs.mkdirSync(nvmDir, { recursive: true });
     fs.writeFileSync(path.join(nvmDir, "nvm.sh"), "# stub nvm\n");
 
-    writeExecutable(
-      path.join(fakeBin, "node"),
-      `#!/usr/bin/env bash
-if [ "$1" = "-v" ] || [ "$1" = "--version" ]; then
-  echo "v22.19.0"
-  exit 0
-fi
-if [ -n "\${1:-}" ] && [ -f "$1" ]; then
-  exec ${JSON.stringify(process.execPath)} "$@"
-fi
-if [ "$1" = "-e" ]; then
-  exit 0
-fi
-exit 99
-`,
-    );
+    writeNodeStub(fakeBin, { evaluateInline: false });
 
     writeExecutable(
       path.join(fakeBin, "git"),
@@ -2312,16 +2292,7 @@ describe("curl-pipe installer release-tag resolution", () => {
     const prefix = checkout.prefixDir;
     const gitLog = path.join(tmp, "git.log");
 
-    writeExecutable(
-      path.join(fakeBin, "node"),
-      `#!/usr/bin/env bash
-if [ "$1" = "-v" ] || [ "$1" = "--version" ]; then echo "v22.19.0"; exit 0; fi
-if [ -n "\${1:-}" ] && [ -f "$1" ]; then
-  exec ${JSON.stringify(process.execPath)} "$@"
-fi
-if [ "$1" = "-e" ]; then exit 0; fi
-exit 99`,
-    );
+    writeNodeStub(fakeBin, { evaluateInline: false });
 
     writeInstallerLinkNpmStub(fakeBin, { createCli: true, cliVersion: "0.5.0-test" });
 

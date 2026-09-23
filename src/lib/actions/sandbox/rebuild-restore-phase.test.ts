@@ -5,10 +5,11 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { ConfigObject } from "../../security/credential-filter";
 import * as sandboxConfig from "../../sandbox/config";
+import * as restoreWindow from "./runtime/openclaw-lifecycle";
 import { serializeHermesOperatorConfigSnapshot } from "./rebuild-durable-config";
 import { runRebuildRestorePhase } from "./rebuild-restore-phase";
 import * as snapshotRestore from "./snapshot/restore-authority";
@@ -19,6 +20,27 @@ const backupManifest = {
 } as never;
 
 describe("rebuild filesystem restore", () => {
+  beforeEach(() => {
+    vi.spyOn(restoreWindow, "beginUnregisteredOpenClawBackupQuiesce").mockResolvedValue({
+      ok: true,
+      window: { sandboxName: "alpha", kind: "backup" },
+    });
+    vi.spyOn(
+      restoreWindow,
+      "promoteUnregisteredOpenClawBackupQuiesceToPostRestoreDoctor",
+    ).mockResolvedValue({
+      ok: true,
+      window: { sandboxName: "alpha" },
+    });
+    vi.spyOn(restoreWindow, "beginUnregisteredOpenClawPostRestoreDoctor").mockResolvedValue({
+      ok: true,
+      window: { sandboxName: "alpha" },
+    });
+    vi.spyOn(restoreWindow, "abortUnregisteredOpenClawPostRestoreDoctor").mockResolvedValue({
+      ok: true,
+    });
+  });
+
   afterEach(() => {
     vi.restoreAllMocks();
   });
@@ -49,7 +71,56 @@ describe("rebuild filesystem restore", () => {
       { targetAgentType: "openclaw" },
       { getSandbox: expect.any(Function) },
     );
-    expect(result).toEqual({ restoreSucceeded: true });
+    expect(result).toEqual({
+      restoreSucceeded: true,
+      openClawDoctorWindow: { sandboxName: "alpha" },
+    });
+    expect(restoreWindow.beginUnregisteredOpenClawBackupQuiesce).toHaveBeenCalledExactlyOnceWith(
+      "alpha",
+      undefined,
+    );
+    expect(
+      vi.mocked(restoreWindow.beginUnregisteredOpenClawBackupQuiesce).mock.invocationCallOrder[0],
+    ).toBeLessThan(restore.mock.invocationCallOrder[0]!);
+    expect(restore.mock.invocationCallOrder[0]).toBeLessThan(
+      vi.mocked(restoreWindow.promoteUnregisteredOpenClawBackupQuiesceToPostRestoreDoctor).mock
+        .invocationCallOrder[0]!,
+    );
+    expect(
+      restoreWindow.promoteUnregisteredOpenClawBackupQuiesceToPostRestoreDoctor,
+    ).toHaveBeenCalledExactlyOnceWith({ sandboxName: "alpha", kind: "backup" });
+  });
+
+  it("opens a fresh doctor window when restored legacy state replaces the backup marker", async () => {
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    vi.mocked(
+      restoreWindow.promoteUnregisteredOpenClawBackupQuiesceToPostRestoreDoctor,
+    ).mockResolvedValue({ ok: false, stage: "doctor", detail: "backup marker replaced" });
+    vi.spyOn(snapshotRestore, "restoreRecreatedSandboxStateWithManagedAuthority").mockResolvedValue(
+      {
+        success: true,
+        restoredDirs: ["workspace"],
+        restoredFiles: ["user.md"],
+        failedDirs: [],
+        failedFiles: [],
+      },
+    );
+
+    await expect(
+      runRebuildRestorePhase({
+        sandboxName: "alpha",
+        targetAgentType: "openclaw",
+        targetImageIsCustom: false,
+        backupManifest,
+        log: vi.fn(),
+      }),
+    ).resolves.toMatchObject({
+      restoreSucceeded: true,
+      openClawDoctorWindow: { sandboxName: "alpha" },
+    });
+    expect(
+      restoreWindow.beginUnregisteredOpenClawPostRestoreDoctor,
+    ).toHaveBeenCalledExactlyOnceWith("alpha", undefined);
   });
 
   it("allows whole-state file restore only for an explicit custom image", async () => {

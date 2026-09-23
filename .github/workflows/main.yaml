@@ -4,6 +4,7 @@
 name: CI / Main Branch
 
 on:
+  workflow_dispatch:
   push:
     branches: [main]
     paths-ignore:
@@ -21,6 +22,62 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  package-openshell-sdk:
+    if: github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main'
+    permissions:
+      contents: read
+      packages: read
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout trusted package verifier
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          sparse-checkout: |
+            .github/actions/setup-reviewed-npm
+            ci/reviewed-npm-audit.json
+            scripts/audit-reviewed-npm-graph.mts
+            scripts/checks/package-openshell-sdk-for-pr.mts
+            scripts/lib/openclaw-npm-remediation.mts
+            scripts/lib/reviewed-npm-archive.mts
+            scripts/lib/reviewed-npm-audit.mts
+            scripts/lib/npm-audit-receipt.mts
+            scripts/lib/repository-input-path.mts
+          sparse-checkout-cone-mode: false
+
+      - name: Setup Node.js for reviewed package download
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24.18.1"
+          registry-url: https://npm.pkg.github.com
+          scope: "@nvidia"
+
+      - name: Install reviewed npm
+        uses: ./.github/actions/setup-reviewed-npm
+
+      - name: Download and verify approved OpenShell SDK packages
+        id: package
+        env:
+          NEMOCLAW_OPEN_SHELL_SDK_OUTPUT_DIRECTORY: ${{ runner.temp }}/openshell-sdk
+          NEMOCLAW_OPEN_SHELL_SDK_INCLUDE_AVAILABLE_REPLACEMENT: "1"
+          NODE_AUTH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          artifact_path="$(node scripts/checks/package-openshell-sdk-for-pr.mts)"
+          [ -n "$artifact_path" ]
+          bundle="$(jq -cS '[.sourceRegistryPackage, .sourceRegistryPackageReplacement // empty]' ci/reviewed-npm-audit.json | sha256sum | cut -d ' ' -f 1)"
+          printf 'bundle_name=reviewed-openshell-sdk-%s\n' "$bundle" >> "$GITHUB_OUTPUT"
+
+      - name: Upload verified OpenShell SDK archive
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ steps.package.outputs.bundle_name }}
+          path: ${{ runner.temp }}/openshell-sdk/*.tgz
+          if-no-files-found: error
+          retention-days: 90
+
   static-checks:
     permissions:
       contents: read
@@ -316,6 +373,7 @@ jobs:
 
   checks:
     needs:
+      - package-openshell-sdk
       - static-checks
       - build-typecheck
       - installer-integration
@@ -332,6 +390,7 @@ jobs:
     steps:
       - name: Verify required main checks
         env:
+          SDK_PACKAGE_RESULT: ${{ needs['package-openshell-sdk'].result }}
           STATIC_RESULT: ${{ needs['static-checks'].result }}
           BUILD_TYPECHECK_RESULT: ${{ needs['build-typecheck'].result }}
           INSTALLER_INTEGRATION_RESULT: ${{ needs['installer-integration'].result }}
@@ -378,7 +437,7 @@ jobs:
             local job_id=""
             dependency_url="$RUN_URL"
             case "$name" in
-              static-checks|build-typecheck|installer-integration|reviewed-npm-audit|real-openclaw-dist-harness|cli-tests|plugin-tests|sandbox-image-contracts) ;;
+              package-openshell-sdk|static-checks|build-typecheck|installer-integration|reviewed-npm-audit|real-openclaw-dist-harness|cli-tests|plugin-tests|sandbox-image-contracts) ;;
               *) return ;;
             esac
             load_job_listing
@@ -413,6 +472,7 @@ jobs:
             fi
           }
 
+          require_success "package-openshell-sdk" "$SDK_PACKAGE_RESULT"
           require_success "static-checks" "$STATIC_RESULT"
           require_success "build-typecheck" "$BUILD_TYPECHECK_RESULT"
           require_success "installer-integration" "$INSTALLER_INTEGRATION_RESULT"

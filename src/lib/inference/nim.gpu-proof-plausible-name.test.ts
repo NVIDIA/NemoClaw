@@ -148,18 +148,63 @@ describe("detectGpu CUDA proof for a plausible, non-placeholder NVIDIA GPU name 
     },
   );
 
-  it("keeps an unqualified Windows product compute-constrained despite the GPU name (#10954)", () => {
+  it.each([
+    ["an OEM chassis model", false],
+    ["an inconclusive chassis probe", null],
+  ])(
+    "selects the largest installed Ollama model on a proven RTX Spark N1X GPU with %s",
+    (_label, n1xWslProduct) => {
+      onWsl2Arm64WithoutKernelInterface(() => {
+        const gpu = detectGpu({
+          proveArm64ContainerGpu: passingProver({
+            totalMemoryMB: 31_168,
+            availableMemoryMB: 30_345,
+          }),
+          runCaptureImpl: makeRunCapture(`${PLAUSIBLE_NAME}, 31168, 30345\n`),
+          isWsl: true,
+          n1xWslProduct,
+        });
+        expect(gpu).toMatchObject({
+          platform: "n1x",
+          totalMemoryMB: 31_168,
+          availableMemoryMB: 30_345,
+          n1xWslProduct,
+        });
+        expect(gpu).not.toHaveProperty("computeConstrained");
+        expect(selectDefaultOllamaModel(["qwen3.5:9b", "qwen3.6:35b"], gpu)).toBe("qwen3.6:35b");
+      });
+    },
+  );
+
+  it("selects the largest installed Ollama model when only the Windows chassis model identifies RTX Spark N1X", () => {
     onWsl2Arm64WithoutKernelInterface(() => {
       const gpu = detectGpu({
         proveArm64ContainerGpu: passingProver({
           totalMemoryMB: 63_936,
           availableMemoryMB: 60_000,
         }),
-        runCaptureImpl: makeRunCapture(`${PLAUSIBLE_NAME}, 63936, 60000\n`),
+        runCaptureImpl: makeRunCapture("NVIDIA RTX Spark N1X Laptop GPU, 63936, 60000\n"),
+        isWsl: true,
+        n1xWslProduct: true,
+      });
+      expect(gpu).toMatchObject({ platform: "linux", n1xWslProduct: true });
+      expect(gpu).not.toHaveProperty("computeConstrained");
+      expect(selectDefaultOllamaModel(["qwen3.5:9b", "qwen3.6:35b"], gpu)).toBe("qwen3.6:35b");
+    });
+  });
+
+  it("keeps a placeholder GPU name compute-constrained when the chassis model does not qualify", () => {
+    onWsl2Arm64WithoutKernelInterface(() => {
+      const gpu = detectGpu({
+        proveArm64ContainerGpu: passingProver({
+          totalMemoryMB: 63_936,
+          availableMemoryMB: 60_000,
+        }),
+        runCaptureImpl: makeRunCapture("NVIDIA JMJWOA-Generic-GPU, 63936, 60000\n"),
         isWsl: true,
         n1xWslProduct: false,
       });
-      expect(gpu).toMatchObject({ computeConstrained: true });
+      expect(gpu).toMatchObject({ platform: "linux", computeConstrained: true });
       expect(selectDefaultOllamaModel(["qwen3.5:9b", "qwen3.6:35b"], gpu)).toBe("qwen3.5:9b");
     });
   });

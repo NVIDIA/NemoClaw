@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import path from "node:path";
+import { isDeepStrictEqual } from "node:util";
+import { readLegacyMcpRegistryProjection } from "../../state/registry/legacy-mcp";
 
 import YAML from "yaml";
 
@@ -22,7 +24,130 @@ import {
 import { executeSandboxCommand } from "./process-recovery";
 import { quoteMcpBridgeShellArg } from "./mcp-bridge-runtime-command";
 import { redactBridgeFailureForDisplay } from "./mcp-bridge-output";
-import { buildMcpBridgeProviderName } from "./mcp-bridge-validation";
+import { buildMcpBridgeProviderName, normalizeMcpDenyTools } from "./mcp-bridge-validation";
+
+export function sameMcpRegistration(left: McpSourceEntry, right: McpSourceEntry): boolean {
+  return (
+    left.server === right.server && left.url === right.url && isDeepStrictEqual(left.env, right.env)
+  );
+}
+
+export function assertNoLegacyMcpSources(
+  sandboxName: string,
+  legacySources: Readonly<Record<string, McpSourceEntry>>,
+  operation: string,
+): void {
+  const legacyNames = Object.keys(legacySources).sort();
+  if (legacyNames.length === 0) return;
+  throw new McpBridgeError(
+    `Legacy MCP agent configuration requires explicit migration for '${legacyNames.join(", ")}'. Run \`nemoclaw ${sandboxName} mcp migrate\` to preview it before ${operation}.`,
+    2,
+  );
+}
+
+export function readCommittedLegacyRegistryEntries(
+  sandboxName: string,
+  currentAgent: string,
+  currentAdapter: McpSourceEntry["adapter"],
+  rawState = readLegacyMcpRegistryProjection(sandboxName),
+): Record<string, McpSourceEntry> {
+  if (!rawState) return {};
+  if (rawState.destroyPreparedAt || rawState.destroyPendingAt) {
+    throw new McpBridgeError(
+      `Legacy MCP registry state for '${sandboxName}' contains an incomplete destroy transaction. No source was changed.`,
+      2,
+    );
+  }
+  if (!isObjectRecord(rawState.bridges)) return {};
+  const entries: Record<string, McpSourceEntry> = {};
+  for (const [server, raw] of Object.entries(rawState.bridges)) {
+    if (!/^[A-Za-z][A-Za-z0-9_-]{0,63}$/u.test(server) || !isObjectRecord(raw)) {
+      throw new McpBridgeError(
+        `Legacy MCP registry server '${server}' is not a valid committed registration. No source was changed.`,
+        2,
+      );
+    }
+    if (raw.addState !== undefined) {
+      throw new McpBridgeError(
+        `Legacy MCP registry server '${server}' contains an incomplete add transaction. No source was changed.`,
+        2,
+      );
+    }
+    const agent = typeof raw.agent === "string" && raw.agent ? raw.agent : "openclaw";
+    const recordedAdapter =
+      typeof raw.adapter === "string" && raw.adapter ? raw.adapter : currentAdapter;
+    const adapter = recordedAdapter === "mcporter" ? "openclaw-config" : recordedAdapter;
+    if (agent !== currentAgent || adapter !== currentAdapter) {
+      throw new McpBridgeError(
+        `Legacy MCP registry server '${server}' targets ${agent}/${String(adapter)} instead of the current ${currentAgent}/${String(currentAdapter)} runtime. No source was changed.`,
+        2,
+      );
+    }
+    if (
+      typeof raw.url !== "string" ||
+      raw.url.length > 4096 ||
+      !Array.isArray(raw.env) ||
+      raw.env.length !== 1 ||
+      typeof raw.env[0] !== "string" ||
+      !/^[A-Za-z_][A-Za-z0-9_]{0,127}$/u.test(raw.env[0])
+    ) {
+      throw new McpBridgeError(
+        `Legacy MCP registry server '${server}' is not a valid committed registration. No source was changed.`,
+        2,
+      );
+    }
+    let url: URL;
+    try {
+      url = new URL(raw.url);
+    } catch {
+      throw new McpBridgeError(
+        `Legacy MCP registry server '${server}' has an invalid URL. No source was changed.`,
+        2,
+      );
+    }
+    if (url.protocol !== "https:" || url.username || url.password) {
+      throw new McpBridgeError(
+        `Legacy MCP registry server '${server}' has an unsupported URL. No source was changed.`,
+        2,
+      );
+    }
+    const requestedDenyTools = raw.pendingDenyTools ?? raw.denyTools ?? [];
+    if (
+      !Array.isArray(requestedDenyTools) ||
+      requestedDenyTools.some((tool) => typeof tool !== "string")
+    ) {
+      throw new McpBridgeError(
+        `Legacy MCP registry server '${server}' has invalid denied-tool intent. No source was changed.`,
+        2,
+      );
+    }
+    const denyTools = normalizeMcpDenyTools(requestedDenyTools as string[]);
+    const allowedIps = Array.isArray(raw.allowedIps)
+      ? raw.allowedIps.filter((address): address is string => typeof address === "string")
+      : undefined;
+    entries[server] = {
+      server,
+      agent,
+      adapter,
+      url: url.toString(),
+      env: [raw.env[0]],
+      denyTools,
+      ...(allowedIps?.length ? { allowedIps } : {}),
+      ...(typeof raw.trustedPrivateHost === "string" && raw.trustedPrivateHost
+        ? { trustedPrivateHost: raw.trustedPrivateHost }
+        : {}),
+      ...(typeof raw.providerName === "string" && raw.providerName
+        ? { providerName: raw.providerName }
+        : {}),
+      ...(typeof raw.providerId === "string" && raw.providerId
+        ? { providerId: raw.providerId }
+        : {}),
+      policyName: buildMcpBridgePolicyName(server),
+      source: "legacy-registry",
+    };
+  }
+  return entries;
+}
 
 export interface AgentMcpSourceSnapshot {
   native: Record<string, McpSourceEntry>;

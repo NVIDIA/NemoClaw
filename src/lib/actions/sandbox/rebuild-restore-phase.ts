@@ -9,6 +9,13 @@ import { readHermesOperatorConfigHandoff } from "../../state/sandbox";
 import type { RebuildBackupManifest } from "./rebuild-backup-phase";
 import type { RebuildLog } from "./rebuild-credential-preflight";
 import {
+  abortUnregisteredOpenClawPostRestoreDoctor,
+  beginUnregisteredOpenClawBackupQuiesce,
+  beginUnregisteredOpenClawPostRestoreDoctor,
+  promoteUnregisteredOpenClawBackupQuiesceToPostRestoreDoctor,
+  type OpenClawPostRestoreDoctorWindow,
+} from "./runtime/openclaw-lifecycle";
+import {
   applyHermesOperatorConfigSnapshot,
   type HermesOperatorConfigRestoreReport,
   parseHermesOperatorConfigSnapshot,
@@ -29,6 +36,7 @@ export interface RebuildRestorePhaseInput {
 export interface RebuildRestorePhaseResult {
   restoreSucceeded: boolean;
   hermesOperatorConfigRestore?: HermesOperatorConfigRestoreReport;
+  openClawDoctorWindow?: OpenClawPostRestoreDoctorWindow;
 }
 
 const EMPTY_HERMES_OPERATOR_CONFIG_RESTORE: HermesOperatorConfigRestoreReport = {
@@ -107,23 +115,49 @@ export async function runRebuildRestorePhase(
     log,
   } = input;
   let restoreSucceeded = true;
+  let openClawDoctorWindow: OpenClawPostRestoreDoctorWindow | undefined;
   let hermesOperatorConfigRestore: {
     success: boolean;
     report: HermesOperatorConfigRestoreReport;
   } | null = null;
+  if (targetAgentType === "openclaw") {
+    log("Entering verified OpenClaw pre-restore quiesce window");
+    const doctorWindow = await beginUnregisteredOpenClawBackupQuiesce(
+      sandboxName,
+      runtimeSelection,
+    );
+    log(`Pre-restore quiesce window: ${doctorWindow.ok ? "verified" : doctorWindow.stage}`);
+    if (!doctorWindow.ok) {
+      console.error(
+        `  ${YW}OpenClaw state restore could not enter its gateway-down maintenance window.${R}`,
+      );
+      return { restoreSucceeded: false };
+    }
+    openClawDoctorWindow = doctorWindow.window;
+  }
   if (backupManifest) {
     console.log("");
     console.log("  Restoring workspace state...");
-    const restore = await snapshotRestore.restoreRecreatedSandboxStateWithManagedAuthority(
-      sandboxName,
-      backupManifest,
-      {
-        targetAgentType,
-        ...(targetImageIsCustom ? { allowCustomImageWholeStateFileRestore: true } : {}),
-        ...(runtimeSelection ? { runtimeSelection } : {}),
-      },
-      { getSandbox: (name) => loadRegistry().sandboxes[name] ?? null },
-    );
+    let restore: Awaited<
+      ReturnType<typeof snapshotRestore.restoreRecreatedSandboxStateWithManagedAuthority>
+    >;
+    try {
+      restore = await snapshotRestore.restoreRecreatedSandboxStateWithManagedAuthority(
+        sandboxName,
+        backupManifest,
+        {
+          targetAgentType,
+          ...(targetImageIsCustom ? { allowCustomImageWholeStateFileRestore: true } : {}),
+          ...(runtimeSelection ? { runtimeSelection } : {}),
+        },
+        { getSandbox: (name) => loadRegistry().sandboxes[name] ?? null },
+      );
+    } catch (error) {
+      if (openClawDoctorWindow) {
+        await abortUnregisteredOpenClawPostRestoreDoctor(openClawDoctorWindow);
+      }
+      throw error;
+    }
     log(
       `Restore result: success=${restore.success}, restored=${restore.restoredDirs.join(",")}; files=${restore.restoredFiles.join(",")}, failed=${restore.failedDirs.join(",")}; failedFiles=${restore.failedFiles.join(",")}${restore.error ? `; error=${restore.error}` : ""}`,
     );
@@ -150,6 +184,10 @@ export async function runRebuildRestorePhase(
       if (seeded === "failed") restoreSucceeded = false;
     }
     if (!restore.success) {
+      if (openClawDoctorWindow) {
+        await abortUnregisteredOpenClawPostRestoreDoctor(openClawDoctorWindow);
+        openClawDoctorWindow = undefined;
+      }
       if (restore.error) console.error(`  Restore blocked: ${restore.error}`);
       console.error(`  ${YW}Partial restore:${R} ${restore.restoredDirs.join(", ") || "none"}`);
       console.error(`  Manual restore available from: ${backupManifest.backupPath}`);
@@ -159,6 +197,24 @@ export async function runRebuildRestorePhase(
       );
     }
   }
+  if (targetAgentType === "openclaw" && openClawDoctorWindow) {
+    const quiesceWindow = openClawDoctorWindow;
+    log("Promoting restored OpenClaw state into the post-upgrade doctor window");
+    const promoted =
+      await promoteUnregisteredOpenClawBackupQuiesceToPostRestoreDoctor(quiesceWindow);
+    const doctorWindow = promoted.ok
+      ? promoted
+      : await beginUnregisteredOpenClawPostRestoreDoctor(sandboxName, runtimeSelection);
+    log(`Post-restore doctor window: ${doctorWindow.ok ? "verified" : doctorWindow.stage}`);
+    if (!doctorWindow.ok) {
+      await abortUnregisteredOpenClawPostRestoreDoctor(quiesceWindow);
+      console.error(
+        `  ${YW}OpenClaw restored state could not enter its post-upgrade doctor window.${R}`,
+      );
+      return { restoreSucceeded: false };
+    }
+    openClawDoctorWindow = doctorWindow.window;
+  }
   if (targetAgentType === "hermes" && hermesOperatorConfigRestore === null) {
     hermesOperatorConfigRestore = {
       success: true,
@@ -167,6 +223,7 @@ export async function runRebuildRestorePhase(
   }
   return {
     restoreSucceeded,
+    ...(openClawDoctorWindow ? { openClawDoctorWindow } : {}),
     ...(hermesOperatorConfigRestore
       ? { hermesOperatorConfigRestore: hermesOperatorConfigRestore.report }
       : {}),

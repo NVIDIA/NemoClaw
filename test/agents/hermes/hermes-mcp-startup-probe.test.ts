@@ -88,7 +88,7 @@ const starting: ProbeResult = {
 };
 const ready: ProbeResult = {
   status: 0,
-  stdout: '{"ok":true}\n',
+  stdout: '{"capabilities":{"reconcile_finality":1},"ok":true}\n',
   stderr: "",
 };
 describe("Hermes managed MCP startup probe", () => {

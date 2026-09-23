@@ -3,13 +3,19 @@
 
 import * as onboardSession from "../state/onboard-session";
 import * as registry from "../state/registry";
-import { isSafeModelId } from "../validation";
+import {
+  isValidOpenShellInferenceRoute,
+  type OpenShellSynchronousInferenceRouteObserver,
+} from "../adapters/openshell/inference-route";
+import {
+  createSynchronousCliOpenShellInferenceRouteObserver,
+  type CaptureOpenShellInferenceRouteSynchronously,
+} from "../adapters/openshell/inference-route-cli";
 import { getPersistedSandboxTargetGatewayName } from "../actions/sandbox/gateway-target";
 import {
   type InferenceEndpointSource,
   normalizeInferenceEndpointSource,
 } from "../inference/selection";
-import { getLiveGatewayInference } from "../inference/live";
 import {
   persistedProviderNameToSelectionKey,
   type RemoteProviderConfigEntryLike,
@@ -84,9 +90,16 @@ export function providerNameToOptionKey(
 }
 
 export interface ProviderRecoveryDeps {
-  captureOpenshell: Parameters<typeof getLiveGatewayInference>[0];
+  inferenceRouteObserver: OpenShellSynchronousInferenceRouteObserver;
   selectedGatewayName: () => string;
   warn?(message: string): void;
+}
+
+export interface CliProviderRecoveryDeps extends Omit<
+  ProviderRecoveryDeps,
+  "inferenceRouteObserver"
+> {
+  captureOpenshell: CaptureOpenShellInferenceRouteSynchronously;
 }
 
 export interface ProviderSelectionRecoveryReaderBundle {
@@ -140,10 +153,6 @@ export interface RecordedInferenceRoute {
   source: "registry" | "session";
 }
 
-const MAX_LIVE_PROVIDER_LENGTH = 128;
-const MAX_LIVE_MODEL_LENGTH = 512;
-const SAFE_LIVE_PROVIDER = /^[A-Za-z0-9._:-]+$/;
-
 export type SandboxRecoveryAuthority = "missing" | "authorized" | "unauthorized";
 
 export function classifySandboxRecoveryAuthority(
@@ -194,17 +203,9 @@ export function validateLiveGatewayInference(
 ): { provider: string; model: string } | null {
   const provider = typeof value?.provider === "string" ? value.provider.trim() : "";
   const model = typeof value?.model === "string" ? value.model.trim() : "";
-  if (
-    !provider ||
-    provider.length > MAX_LIVE_PROVIDER_LENGTH ||
-    !SAFE_LIVE_PROVIDER.test(provider) ||
-    !model ||
-    model.length > MAX_LIVE_MODEL_LENGTH ||
-    !isSafeModelId(model)
-  ) {
-    return null;
-  }
-  return { provider, model };
+  if (!provider || !model) return null;
+  const route = { provider, model };
+  return isValidOpenShellInferenceRoute(route) ? route : null;
 }
 
 function completeRecordedInferenceRoute(
@@ -279,15 +280,18 @@ export function createProviderRecoveryHelpers(deps: ProviderRecoveryDeps): Provi
       const trustGateway = sandboxName === defaultSandbox || sandboxes.length === 0;
       if (!trustGateway) return null;
       const sandbox = sandboxes.find((entry) => entry.name === sandboxName);
-      const live = getLiveGatewayInference(deps.captureOpenshell, {
-        gatewayName: sandbox
-          ? getPersistedSandboxTargetGatewayName(sandbox)
-          : deps.selectedGatewayName(),
-      }).inference;
-      // `openshell inference get` is a display boundary, not a typed API.
-      // Accept it only when both routing fields are complete, bounded, and safe;
-      // partial or malformed output must not steer a rebuild.
-      return validateLiveGatewayInference(live);
+      const result = deps.inferenceRouteObserver.observeInferenceRoute({
+        target: {
+          kind: "named",
+          gatewayName: sandbox
+            ? getPersistedSandboxTargetGatewayName(sandbox)
+            : deps.selectedGatewayName(),
+        },
+      });
+      if (!result.ok || result.value.state === "unconfigured") return null;
+      // Recovery applies tighter bounds to the complete route returned by the
+      // typed observer; partial or malformed output must not steer a rebuild.
+      return validateLiveGatewayInference(result.value.route);
     } catch {
       return null;
     }
@@ -518,4 +522,15 @@ export function createProviderRecoveryHelpers(deps: ProviderRecoveryDeps): Provi
     readRecordedInferenceRoute,
     readRecordedProviderEndpoints,
   };
+}
+
+/** Keep provider recovery scoped to the named base gateway; unsupported scope is terminal. */
+export function createCliProviderRecoveryHelpers(
+  deps: CliProviderRecoveryDeps,
+): ProviderRecoveryHelpers {
+  const { captureOpenshell, ...recoveryDeps } = deps;
+  return createProviderRecoveryHelpers({
+    ...recoveryDeps,
+    inferenceRouteObserver: createSynchronousCliOpenShellInferenceRouteObserver(captureOpenshell),
+  });
 }

@@ -91,6 +91,10 @@ export interface DockerDriverGatewayStart {
     runtimeSelection?: OpenShellRuntimeSelection;
     skipSandboxBridgeReachability?: boolean;
   }): Promise<void>;
+  verifyDockerDriverGatewaySandboxReachability(options: {
+    exitOnFailure: boolean;
+    skipSandboxBridgeReachability: boolean;
+  }): Promise<void>;
 }
 
 export function resolveDockerDriverGatewayRuntimeMarkerEndpoint(
@@ -149,6 +153,21 @@ export async function resolveSelectedGatewayServiceStopCommand(
 export function createDockerDriverGatewayStart(
   deps: DockerDriverGatewayStartDeps,
 ): DockerDriverGatewayStart {
+  const verifyReachability =
+    deps.verifySandboxBridgeGatewayReachableOrExit ?? verifySandboxBridgeGatewayReachableOrExit;
+
+  async function verifyDockerDriverGatewaySandboxReachability({
+    exitOnFailure,
+    skipSandboxBridgeReachability,
+  }: {
+    exitOnFailure: boolean;
+    skipSandboxBridgeReachability: boolean;
+  }): Promise<void> {
+    await verifyReachability(exitOnFailure, {
+      port: deps.gatewayPort(),
+      skip: skipSandboxBridgeReachability,
+    });
+  }
   const stateOwnership = createDockerDriverGatewayStateOwnership({
     getDockerDriverGatewayStateDir: deps.getDockerDriverGatewayStateDir,
     isDockerDriverGatewayProcess: deps.isDockerDriverGatewayProcess,
@@ -194,8 +213,6 @@ export function createDockerDriverGatewayStart(
       observeGatewayReuse: (request: Parameters<typeof deps.observer.observeGatewayReuse>[0]) =>
         deps.observer.observeGatewayReuse({ ...request, runtimeSelection }),
     };
-    const verifyReachability =
-      deps.verifySandboxBridgeGatewayReachableOrExit ?? verifySandboxBridgeGatewayReachableOrExit;
     const stateDir = deps.gatewayBinding.resolveGatewayStateDirForPort({
       configured: process.env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR,
       home: os.homedir(),
@@ -446,5 +463,5 @@ export function createDockerDriverGatewayStart(
     }
   }
 
-  return { startDockerDriverGateway };
+  return { startDockerDriverGateway, verifyDockerDriverGatewaySandboxReachability };
 }

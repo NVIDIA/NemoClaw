@@ -205,7 +205,7 @@ export async function checkAgentVersion(
   // Slow path: SSH exec into sandbox
   const probed = await probeAgentVersion(sandboxName, probeGatewayName);
   if (probed && sb) {
-    // Cache for future fast-path lookups
+    // Registry persistence preserves any disk-only legacy ownership evidence.
     registry.updateSandbox(sandboxName, { agentVersion: probed });
   }
 

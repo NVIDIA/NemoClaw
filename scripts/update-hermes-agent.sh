@@ -249,6 +249,14 @@ apply_manifest_pin() {
   grep -q "^expected_version: \"${SEMVER}\"$" "$manifest"
 }
 
+require_reviewed_release_identity() {
+  local release_identity="${TAG}|${SEMVER}|${TARBALL_SHA256}|${NPM_INTEGRITY}"
+  if ! grep -Fq -- "'${release_identity}')" "$DOCKERFILE_BASE"; then
+    echo "ERROR: Hermes release ${TAG} / ${SEMVER} does not have a reviewed four-field identity in ${DOCKERFILE_BASE}" >&2
+    exit 1
+  fi
+}
+
 # ---------------------------------------------------------------------------
 # Resolve target tag (calver, with leading v)
 # ---------------------------------------------------------------------------
@@ -355,6 +363,10 @@ if ! [[ "$NPM_INTEGRITY" =~ ^sha512- ]]; then
   exit 1
 fi
 echo "npm dist.integrity: ${NPM_INTEGRITY}"
+
+# Refuse to mutate either pin source until the complete GitHub and registry
+# identity has a reviewed branch in the base-image release guard.
+require_reviewed_release_identity
 
 # ---------------------------------------------------------------------------
 # Rewrite agents/hermes/Dockerfile.base and agents/hermes/manifest.yaml

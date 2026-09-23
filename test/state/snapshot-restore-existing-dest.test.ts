@@ -70,6 +70,8 @@ interface MakeEnvOptions {
   destinationGatewayRunning?: boolean;
   /** Let the currently-active source gateway also report a same-named destination. */
   foreignActiveGatewayListsDestination?: boolean;
+  /** Number of exact post-delete lookups that still report the destination. */
+  deleteVisibilityDelay?: number;
 }
 
 /**
@@ -154,6 +156,7 @@ function makeExistingDestEnv(
   const osLog = path.join(home, "openshell.log");
   const activeGateway = path.join(home, "active-gateway");
   const deletedDestination = path.join(home, "destination-deleted");
+  const deleteLookupCount = path.join(home, "destination-delete-lookups");
   fs.writeFileSync(
     path.join(localBin, "openshell"),
     [
@@ -161,6 +164,7 @@ function makeExistingDestEnv(
       `printf '%s\\n' "$*" >> ${JSON.stringify(osLog)}`,
       `ACTIVE_GATEWAY=${JSON.stringify(activeGateway)}`,
       `DELETED_DESTINATION=${JSON.stringify(deletedDestination)}`,
+      `DELETE_LOOKUP_COUNT=${JSON.stringify(deleteLookupCount)}`,
       'if [ "$1 $2" = "policy get" ]; then',
       "  printf 'version: 1\\nnetwork_policies: {}\\n'",
       "  exit 0",
@@ -176,6 +180,18 @@ function makeExistingDestEnv(
       destinationGatewayName
         ? `  active="$(cat "$ACTIVE_GATEWAY" 2>/dev/null || printf '%s' nemoclaw)"; if [ "$active" = ${JSON.stringify(destinationGatewayName)} ]; then if [ -e "$DELETED_DESTINATION" ]; then printf "NAME STATUS\\n"; else printf "NAME STATUS\\ndst Ready\\n"; fi; else ${opts.foreignActiveGatewayListsDestination ? 'printf "NAME STATUS\\nsrc Ready\\ndst Ready\\n"' : 'printf "NAME STATUS\\nsrc Ready\\n"'}; fi`
         : '  if [ -e "$DELETED_DESTINATION" ]; then printf "NAME STATUS\nsrc Ready\n"; else printf "NAME STATUS\nsrc Ready\ndst Ready\n"; fi',
+      "  exit 0",
+      "fi",
+      'if [ "$1" = "sandbox" ] && [ "$2" = "get" ]; then',
+      '  if [ -e "$DELETED_DESTINATION" ]; then',
+      '    count="$(cat "$DELETE_LOOKUP_COUNT" 2>/dev/null || printf 0)"',
+      "    count=$((count + 1))",
+      '    printf "%s\\n" "$count" > "$DELETE_LOOKUP_COUNT"',
+      `    if [ "$count" -le ${opts.deleteVisibilityDelay ?? 0} ]; then printf "Name: dst\\nPhase: Deleting\\n"; exit 0; fi`,
+      '    echo "Error: sandbox dst not found" >&2',
+      "    exit 1",
+      "  fi",
+      '  printf "Name: dst\\nPhase: Ready\\n"',
       "  exit 0",
       "fi",
       'if [ "$1" = "status" ]; then',
@@ -282,6 +298,20 @@ describe("snapshot restore --to existing destination (#3756)", () => {
     expect(r.out).toMatch(/Deleting existing destination 'dst'/);
     const log = fs.existsSync(osLog) ? fs.readFileSync(osLog, "utf-8") : "";
     expect(log).toContain("sandbox delete -g nemoclaw dst");
+  });
+
+  it("waits for delayed destination absence without repeating delete (#11941)", () => {
+    const { env, osLog } = makeExistingDestEnv("nemoclaw-snap-restore-delete-wait-", {
+      deleteVisibilityDelay: 1,
+    });
+    const r = runCli(["src", "snapshot", "restore", "--to", "dst", "--force", "--yes"], env);
+
+    expect(r.code).toBe(1);
+    expect(r.out).not.toMatch(/did not confirm that destination 'dst' is absent/);
+    const lines = fs.readFileSync(osLog, "utf-8").trim().split("\n");
+    expect(lines.filter((line) => line === "sandbox delete -g nemoclaw dst")).toHaveLength(1);
+    expect(lines.filter((line) => line === "sandbox get -g nemoclaw dst")).toHaveLength(3);
+    expect(lines.some((line) => line.startsWith("sandbox create "))).toBe(true);
   });
 
   it("deletes a registered cross-gateway destination on its own gateway before recreating", () => {

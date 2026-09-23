@@ -7,35 +7,34 @@ import path from "node:path";
 
 import { describe, expect, it, type TestContext } from "vitest";
 import {
+  expectTrustedPrivateStatusResult,
+  statusHarnessConfig,
+  TRUSTED_PRIVATE_STATUS_HARNESS,
+} from "./mcp-bridge/status-resolution-test-fixture.js";
+import {
   createAbortAwareLimiter,
   createControlledHarnessProcess,
 } from "../../../../test/helpers/controlled-concurrency-harness";
 import { runOnboardProcessAsync } from "../../../../test/helpers/onboard-child-process-harness";
 
-const sourceRequireHook = path.resolve("test/helpers/onboard-script-mocks.cjs");
-const sourceNodeOptions = [process.env.NODE_OPTIONS, `--require=${sourceRequireHook}`]
-  .filter(Boolean)
-  .join(" ");
-const harnessConcurrency = 4;
-const harnessTimeoutMs = 60_000;
 let runHarnessProcess = runOnboardProcessAsync;
+const {
+  concurrency: harnessConcurrency,
+  sourceNodeOptions,
+  timeoutMs: harnessTimeoutMs,
+} = statusHarnessConfig;
+const limitHarness = createAbortAwareLimiter(harnessConcurrency);
 
 function describeConcurrentProbeSuite(name: string, factory: () => void): void {
   describe.concurrent(name, { timeout: harnessTimeoutMs }, factory);
 }
 
-const limitHarness = createAbortAwareLimiter(harnessConcurrency);
-
 function createTempHome(prefix: string, root = os.tmpdir()): string {
   return fs.mkdtempSync(path.join(root, prefix));
 }
 
-// Shared subprocess prelude: a healthy committed bridge whose provider
-// metadata is all-green, with the in-sandbox probe answering an identical
-// rejection for the placeholder and control requests — the exact "status lies
-// while the wire fails" shape from #6379. __PROBE_HTTP_STATUS__ is substituted
-// per test so both the 401 (auth-shaped) and 400 (validation-ambiguous)
-// warnings are exercised end-to-end.
+// Healthy committed bridge with identical placeholder/control rejections: the #6379 "status lies
+// while wire fails" shape. __PROBE_HTTP_STATUS__ covers auth-shaped and ambiguous failures.
 const harnessPreludeTemplate = String.raw`
 const fs = require("node:fs");
 const path = require("node:path");
@@ -406,6 +405,7 @@ describeConcurrentProbeSuite("MCP status wire-level credential-resolution probe"
   writeHarnessResult(JSON.stringify({
     attachmentInspections: providerAttachmentInspectionCount,
     attached: statuses.map((status) => status.provider.attached),
+    supported: statuses.map((status) => status.support.supported),
   }));
 `,
     );
@@ -413,6 +413,7 @@ describeConcurrentProbeSuite("MCP status wire-level credential-resolution probe"
     expect(JSON.parse(stdout)).toEqual({
       attachmentInspections: 1,
       attached: [true, true],
+      supported: [true, true],
     });
   });
 
@@ -531,12 +532,8 @@ describeConcurrentProbeSuite("MCP status wire-level credential-resolution probe"
       credentialObservationCount: number;
     }>;
 
-    expect(outcomes[0]?.probeCommand).toContain(
-      "authorization: Bearer openshell:resolve:env:v19_GITHUB_TOKEN",
-    );
-    expect(outcomes[0]?.probeCommand).not.toContain(
-      "authorization: Bearer openshell:resolve:env:GITHUB_TOKEN",
-    );
+    expect(outcomes[0]?.probeCommand).toContain("openshell:resolve:env:v19_GITHUB_TOKEN");
+    expect(outcomes[0]?.probeCommand).not.toContain("openshell:resolve:env:GITHUB_TOKEN");
     expect(outcomes[1]?.probeCommand).toBeNull();
     expect(outcomes[1]?.resolution.detail).toContain("identityless credential placeholder");
     expect(outcomes.map((outcome) => outcome.credentialObservationCount)).toEqual([1, 1]);
@@ -1121,6 +1118,15 @@ describeConcurrentProbeSuite("MCP status wire-level credential-resolution probe"
     });
   });
 
+  it("uses recorded trusted-private host for status probes (#11377)", async (context) => {
+    const home = createTempHome("nemoclaw-mcp-trusted-private-status-");
+    const { stdout } = await runHarness(context, home, TRUSTED_PRIVATE_STATUS_HARNESS, {
+      controlHttpStatus: 401,
+      probeHttpStatus: 200,
+    });
+    expectTrustedPrivateStatusResult(stdout);
+  });
+
   it("exits nonzero when a zero-exit runtime reports denied authentication (#10944)", async (context) => {
     const home = createTempHome("nemoclaw-mcp-tools-auth-failure-");
     const { stdout } = await runHarness(
@@ -1378,12 +1384,8 @@ describeConcurrentProbeSuite("MCP add post-add credential-resolution probe", () 
       exitCode: number;
     };
     expect(payload.probed).toBe(true);
-    expect(payload.probeCommand).toContain(
-      "authorization: Bearer openshell:resolve:env:v11_GITHUB_TOKEN",
-    );
-    expect(payload.probeCommand).not.toContain(
-      "authorization: Bearer openshell:resolve:env:GITHUB_TOKEN",
-    );
+    expect(payload.probeCommand).toContain("openshell:resolve:env:v11_GITHUB_TOKEN");
+    expect(payload.probeCommand).not.toContain("openshell:resolve:env:GITHUB_TOKEN");
     expect(payload.logLines.some((line) => line.includes("MCP server 'github' added"))).toBe(true);
     expect(
       payload.errorLines.some(

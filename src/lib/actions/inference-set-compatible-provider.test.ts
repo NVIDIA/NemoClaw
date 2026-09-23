@@ -131,7 +131,7 @@ async function runRejectedCompatibleSwitchScenario(options: {
 describe("runInferenceSet compatible providers", () => {
   afterEach(() => vi.unstubAllEnvs());
 
-  it("reuses durable endpoint metadata for same-provider model switches", async () => {
+  it("reuses durable endpoint metadata and restarts same-provider model switches", async () => {
     const config: ConfigObject = {
       agents: { defaults: { model: { primary: "inference/nvidia/model-a" } } },
       models: { providers: { inference: { api: "openai-completions", models: [] } } },
@@ -176,6 +176,8 @@ describe("runInferenceSet compatible providers", () => {
         preferredInferenceApi: "openai-completions",
       }),
     ]);
+    expect(deps.calls.restartSandboxGateway).toHaveBeenCalledOnce();
+    expect(deps.calls.restartSandboxGateway).toHaveBeenCalledWith("alpha");
   });
 
   it("rejects custom-compatible provider switches without trusted endpoint metadata", async () => {

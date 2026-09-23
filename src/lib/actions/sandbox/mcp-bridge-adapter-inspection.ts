@@ -56,8 +56,12 @@ export async function inspectAdapterRegistrationCommand(
   entry: McpSourceEntry,
   command: string,
   runtimeSelection: McpProviderInspectionRuntimeSelection,
+  timeoutMs?: number,
 ): Promise<AdapterRegistrationInspection> {
-  const result = await executeSandboxCommand(sandboxName, command, { runtimeSelection });
+  const result = await executeSandboxCommand(sandboxName, command, {
+    runtimeSelection,
+    ...(timeoutMs === undefined ? {} : { timeout: timeoutMs }),
+  });
   if (!result) return { state: "error", detail: "sandbox unreachable" };
   return parseAdapterRegistrationInspection(result, entry);
 }

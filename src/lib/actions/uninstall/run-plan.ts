@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { SpawnSyncOptions } from "node:child_process";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -129,6 +129,7 @@ import {
   isModelRouterPid,
   isOllamaAuthProxyPid,
   pidExists,
+  removeForceFreshReceiptVolumes,
 } from "./runtime-commands";
 import {
   buildUninstallPlan,
@@ -157,6 +158,7 @@ export interface UninstallRunOptions {
   assumeYes: boolean;
   deleteModels: boolean;
   destroyUserData?: boolean;
+  forceFreshReset?: boolean;
   gatewayName?: string;
   keepOpenShell: boolean;
 }
@@ -172,6 +174,7 @@ export interface UninstallRunDeps {
   fs?: FileSystemDeps;
   getTrustedActiveOpenShellGatewayUserServiceIdentity?: typeof getTrustedActiveOpenShellGatewayUserServiceIdentity;
   isPortFree?: (port: number) => boolean;
+  isManagedOpenShellBinary?: (target: string, userBin: string) => boolean;
   isTty?: boolean;
   kill?: (pid: number, signal?: NodeJS.Signals | number) => boolean;
   log?: (message: string) => void;
@@ -534,6 +537,7 @@ interface UninstallRuntime {
   existsSync: (target: string) => boolean;
   getTrustedActiveOpenShellGatewayUserServiceIdentity: typeof getTrustedActiveOpenShellGatewayUserServiceIdentity;
   isPortFree: ((port: number) => boolean) | undefined;
+  isManagedOpenShellBinary: (target: string, userBin: string) => boolean;
   isTty: boolean;
   kill: (pid: number, signal?: NodeJS.Signals | number) => boolean;
   log: (message: string) => void;
@@ -586,6 +590,8 @@ function buildRuntime(deps: UninstallRunDeps): UninstallRuntime {
       deps.getTrustedActiveOpenShellGatewayUserServiceIdentity ??
       getTrustedActiveOpenShellGatewayUserServiceIdentity,
     isPortFree: deps.isPortFree,
+    isManagedOpenShellBinary:
+      deps.isManagedOpenShellBinary ?? defaultManagedOpenShellBinaryOwnership,
     // Side-effect-free TTY check + EAGAIN-tolerant reader; the
     // process.stdin/non-blocking-fd hazard is documented in core/stdin.ts.
     isTty: deps.isTty ?? isStdinTty(),
@@ -852,6 +858,121 @@ function reportRetainedMacOsOpenShell(runtime: UninstallRuntime): void {
       ? `Kept Homebrew-managed OpenShell. To remove it, run: brew uninstall ${OPENSHELL_HOMEBREW_FORMULA}`
       : `Kept OpenShell executables because Homebrew did not confirm ${OPENSHELL_HOMEBREW_FORMULA}. Check the formula before removing OpenShell.`,
   );
+}
+
+const MANAGED_OPENSHELL_INSTALL_MANIFEST = ".nemoclaw-openshell-managed-v1";
+const MANAGED_OPENSHELL_BINARY_NAMES = new Set([
+  "openshell",
+  "openshell-gateway",
+  "openshell-sandbox",
+  "openshell-driver-vm",
+]);
+
+function managedOpenShellManifest(userBin: string): ReadonlyMap<string, string> | null {
+  let opened: OpenRegularFile | null = null;
+  try {
+    opened = openRegularFileNoFollow(path.join(userBin, MANAGED_OPENSHELL_INSTALL_MANIFEST));
+    const owner = process.getuid?.();
+    const stat = opened.stat();
+    if (owner === undefined || stat.uid !== owner || (stat.mode & 0o022) !== 0) return null;
+    const entries = new Map<string, string>();
+    for (const line of opened.readBytes(2_048).toString("utf8").trim().split(/\r?\n/u)) {
+      const match = /^([a-f0-9]{64})  (openshell(?:-gateway|-sandbox|-driver-vm)?)$/u.exec(line);
+      const digest = match?.[1];
+      const binary = match?.[2];
+      if (!digest || !binary || entries.has(binary)) return null;
+      entries.set(binary, digest);
+    }
+    return entries.size > 0 ? entries : null;
+  } catch {
+    return null;
+  } finally {
+    opened?.close();
+  }
+}
+
+function regularFileSha256(target: string): { digest: string; uid: number } | null {
+  let opened: OpenRegularFile | null = null;
+  try {
+    opened = openRegularFileNoFollow(target);
+    const stat = opened.stat();
+    return {
+      digest: createHash("sha256")
+        .update(opened.readBytes(256 * 1024 * 1024))
+        .digest("hex"),
+      uid: stat.uid,
+    };
+  } catch {
+    return null;
+  } finally {
+    opened?.close();
+  }
+}
+
+function defaultManagedOpenShellBinaryOwnership(target: string, userBin: string): boolean {
+  const binary = path.basename(target);
+  if (
+    path.dirname(path.resolve(target)) !== path.resolve(userBin) ||
+    !MANAGED_OPENSHELL_BINARY_NAMES.has(binary)
+  ) {
+    return false;
+  }
+  const expected = managedOpenShellManifest(userBin)?.get(binary);
+  const actual = regularFileSha256(target);
+  const owner = process.getuid?.();
+  return Boolean(
+    expected && actual && owner !== undefined && actual.uid === owner && actual.digest === expected,
+  );
+}
+
+export function preflightForceFreshUserLocalOpenShellOwnership(
+  deps: UninstallRunDeps = {},
+): boolean {
+  const runtime = buildRuntime(deps);
+  const userBin = path.resolve(
+    runtime.env.XDG_BIN_HOME || path.join(runtime.env.HOME || os.homedir(), ".local", "bin"),
+  );
+  let accepted = true;
+  for (const binary of MANAGED_OPENSHELL_BINARY_NAMES) {
+    const target = path.join(userBin, binary);
+    if (!runtime.existsSync(target) || runtime.isManagedOpenShellBinary(target, userBin)) continue;
+    runtime.error(
+      `Force-fresh ownership preflight rejected ${target}: its managed OpenShell install manifest is absent or does not match. No cleanup started.`,
+    );
+    accepted = false;
+  }
+  return accepted;
+}
+
+function removeForceFreshUserLocalOpenShell(
+  paths: UninstallPaths,
+  runtime: UninstallRuntime,
+): boolean {
+  const userBin = path.resolve(
+    runtime.env.XDG_BIN_HOME || path.join(runtime.env.HOME || os.homedir(), ".local", "bin"),
+  );
+  let removed = 0;
+  let retained = false;
+  try {
+    for (const target of paths.openshellInstallPaths) {
+      if (path.dirname(path.resolve(target)) !== userBin || !runtime.existsSync(target)) continue;
+      if (!runtime.isManagedOpenShellBinary(target, userBin)) {
+        retained = true;
+        runtime.warn(
+          `Leaving ${target} in place because its managed OpenShell install manifest is absent or does not match.`,
+        );
+        continue;
+      }
+      if (removePath(target, runtime)) removed += 1;
+    }
+    if (removed > 0 && !retained) {
+      removePath(path.join(userBin, MANAGED_OPENSHELL_INSTALL_MANIFEST), runtime);
+    }
+    return true;
+  } catch (error) {
+    runtime.error(`Could not remove managed user-local OpenShell binaries: ${formatError(error)}`);
+    return false;
+  }
 }
 
 async function deletePortableOpenShellSandbox(
@@ -2258,10 +2379,18 @@ function stopBedrockRuntimeAdapterForUninstall(
   throw new IncompleteBedrockRuntimeAdapterCleanupError();
 }
 
-function removeDockerContainers(runtime: UninstallRuntime, gatewayName?: string): void {
+function removeDockerContainers(
+  runtime: UninstallRuntime,
+  gatewayName?: string,
+  allowConventionRemoval = true,
+): boolean {
   const result = runtime.runDocker(["ps", "-a", "--format", "{{.ID}} {{.Image}} {{.Names}}"], {
     env: runtime.env,
   });
+  if (result.status !== 0) {
+    runtime.warn("Failed to inventory Docker containers");
+    return false;
+  }
   const ids = splitNonEmptyLines(result.stdout)
     .filter((line) => {
       const fields = dockerInventoryFields(line, 3);
@@ -2276,7 +2405,7 @@ function removeDockerContainers(runtime: UninstallRuntime, gatewayName?: string)
         // and managed inference), so that term only ever selected the separate
         // OpenClaw project's containers for `docker rm -f` (#8496).
         // Probe containers that run with `--rm` and no `--name`, such as
-        // `hermesBaseImageSupportsMcp`, take a random Docker name. Their
+        // `hermesBaseImageSupportsRuntime`, take a random Docker name. Their
         // NemoClaw image reference is the only way to reclaim one that an
         // interrupted run orphaned.
         return isOwnedDockerContainerName(name) || isOwnedDockerImageRepository(image);
@@ -2292,19 +2421,34 @@ function removeDockerContainers(runtime: UninstallRuntime, gatewayName?: string)
     .map((line) => line.split(/\s+/)[0]);
   if (ids.length === 0) {
     runtime.log(`No ${runtimeBranding(runtime).display}/OpenShell Docker containers found`);
-    return;
+    return true;
   }
+  if (!allowConventionRemoval) {
+    runtime.warn(
+      `Force-fresh cleanup preserved convention-matching Docker container ${ids[0]} because no trusted host state binds that container ID to this installation.`,
+    );
+    return false;
+  }
+  let removedAll = true;
   for (const id of [...new Set(ids)]) {
     if (runtime.runDocker(["rm", "-f", id], { env: runtime.env, stdio: "ignore" }).status === 0)
       runtime.log(`Removed Docker container ${id}`);
-    else runtime.warn(`Failed to remove Docker container ${id}`);
+    else {
+      runtime.warn(`Failed to remove Docker container ${id}`);
+      removedAll = false;
+    }
   }
+  return removedAll;
 }
 
-function removeDockerImages(runtime: UninstallRuntime): void {
+function removeDockerImages(runtime: UninstallRuntime): boolean {
   const result = runtime.runDocker(["images", "--format", "{{.ID}} {{.Repository}}:{{.Tag}}"], {
     env: runtime.env,
   });
+  if (result.status !== 0) {
+    runtime.warn("Failed to inventory Docker images");
+    return false;
+  }
   const ids = splitNonEmptyLines(result.stdout)
     // `openclaw` is deliberately absent: NemoClaw builds no image under that
     // name, so the term only ever selected the separate OpenClaw project's
@@ -2314,13 +2458,18 @@ function removeDockerImages(runtime: UninstallRuntime): void {
     .map((line) => line.split(/\s+/)[0]);
   if (ids.length === 0) {
     runtime.log(`No ${runtimeBranding(runtime).display}/OpenShell Docker images found`);
-    return;
+    return true;
   }
+  let removedAll = true;
   for (const id of [...new Set(ids)]) {
     if (runtime.runDocker(["rmi", "-f", id], { env: runtime.env, stdio: "ignore" }).status === 0)
       runtime.log(`Removed Docker image ${id}`);
-    else runtime.warn(`Failed to remove Docker image ${id}`);
+    else {
+      runtime.warn(`Failed to remove Docker image ${id}`);
+      removedAll = false;
+    }
   }
+  return removedAll;
 }
 
 function dockerInventoryFields(line: string, expectedFields: number): string[] {
@@ -2348,18 +2497,97 @@ function isOwnedDockerImageRepository(imageRef: string): boolean {
   );
 }
 
-function removeDockerVolume(name: string, runtime: UninstallRuntime): void {
-  if (
-    runtime.runDocker(["volume", "inspect", name], { env: runtime.env, stdio: "ignore" }).status !==
-    0
-  )
-    return;
+function dockerVolumeInspectionProvesAbsence(name: string, result: RunResult): boolean {
+  if (result.status !== 1 || result.error || result.signal) return false;
+  const escapedName = name.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+  const detail = `${result.stderr} ${result.stdout}`.trim();
+  return [
+    new RegExp(
+      `^(?:(?:Error response from daemon|Error):\\s*)?(?:No such volume|No such object):?\\s*${escapedName}$`,
+      "iu",
+    ),
+    new RegExp(
+      `^(?:Error response from daemon:\\s*)?get\\s+${escapedName}:\\s*no such volume$`,
+      "iu",
+    ),
+  ].some((pattern) => pattern.test(detail));
+}
+
+function removeDockerVolume(name: string, runtime: UninstallRuntime): boolean {
+  const inspection = runtime.runDocker(["volume", "inspect", name], {
+    env: runtime.env,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  if (inspection.status !== 0) {
+    if (dockerVolumeInspectionProvesAbsence(name, inspection)) return true;
+    runtime.warn(`Failed to inspect Docker volume ${name}`);
+    return false;
+  }
   if (
     runtime.runDocker(["volume", "rm", "-f", name], { env: runtime.env, stdio: "ignore" })
       .status === 0
   )
     runtime.log(`Removed Docker volume ${name}`);
-  else runtime.warn(`Failed to remove Docker volume ${name}`);
+  else {
+    runtime.warn(`Failed to remove Docker volume ${name}`);
+    return false;
+  }
+  return true;
+}
+
+function executeDockerResourceStep(
+  options: UninstallRunOptions,
+  runtime: UninstallRuntime,
+  scopedToSelectedGateway: boolean,
+  externallySupervised: boolean,
+  volumeNames: readonly string[],
+): boolean {
+  if (externallySupervised) {
+    runtime.log(
+      "Kept Docker containers, images, and volumes used by the externally supervised gateway.",
+    );
+    return true;
+  }
+  if (!dockerIsAvailable(runtime)) {
+    if (!options.forceFreshReset || !runtime.commandExists("docker")) return true;
+    runtime.error(
+      "Docker is installed but unavailable; force-fresh cleanup cannot prove that receipt volumes are absent.",
+    );
+    return false;
+  }
+  const removedContainers = removeDockerContainers(
+    runtime,
+    scopedToSelectedGateway ? options.gatewayName || resolveGatewayName(GATEWAY_PORT) : undefined,
+    !options.forceFreshReset,
+  );
+  if (options.forceFreshReset && !removedContainers) {
+    runtime.error("Force-fresh cleanup found a Docker container without verified ownership.");
+    return false;
+  }
+  let removedImages = true;
+  if (scopedToSelectedGateway) {
+    runtime.log("Sibling gateways remain; kept shared Docker images.");
+  } else if (options.forceFreshReset) {
+    runtime.log("Kept Docker images because repository naming is not force-fresh ownership proof.");
+  } else {
+    removedImages = removeDockerImages(runtime);
+  }
+  let removedVolumes = true;
+  for (const volumeName of volumeNames) {
+    if (!removeDockerVolume(volumeName, runtime)) removedVolumes = false;
+  }
+  if (!options.forceFreshReset) return true;
+  if (!removedContainers || !removedImages || !removedVolumes) {
+    runtime.error("Force-fresh cleanup could not remove every required Docker resource.");
+    return false;
+  }
+  if (scopedToSelectedGateway) {
+    runtime.error(
+      "Force-fresh cleanup preserved receipt volumes because another gateway environment remains.",
+    );
+    return false;
+  }
+  return removeForceFreshReceiptVolumes(runtime);
 }
 
 function parseOllamaModelInventory(output: string): string[] {
@@ -4098,25 +4326,18 @@ async function executePreparedPlan(
         otherGatewayPorts,
       );
     } else if (step.name === "Docker resources") {
-      if (externallySupervised) {
-        runtime.log(
-          "Kept Docker containers, images, and volumes used by the externally supervised gateway.",
-        );
-      } else if (dockerIsAvailable(runtime)) {
-        removeDockerContainers(
+      if (
+        !executeDockerResourceStep(
+          options,
           runtime,
-          scopedToSelectedGateway
-            ? options.gatewayName || resolveGatewayName(GATEWAY_PORT)
-            : undefined,
-        );
-        if (scopedToSelectedGateway) {
-          runtime.log("Sibling gateways remain; kept shared Docker images.");
-        } else {
-          removeDockerImages(runtime);
-        }
-        step.actions.forEach((action) => {
-          if (action.kind === "delete-docker-volume") removeDockerVolume(action.name, runtime);
-        });
+          scopedToSelectedGateway,
+          externallySupervised,
+          step.actions.flatMap((action) =>
+            action.kind === "delete-docker-volume" ? [action.name] : [],
+          ),
+        )
+      ) {
+        return { ok: false, scopedToSelectedGateway };
       }
     } else if (step.name === "Model stores") {
       if (
@@ -4136,9 +4357,12 @@ async function executePreparedPlan(
         for (const pattern of paths.runtimeTempGlobs) removeGlob(pattern, runtime);
         if (preserveSharedOpenShell) {
           runtime.log(binaryKeepMessage);
-        } else if (GATEWAY_PORT !== DEFAULT_GATEWAY_PORT) {
+        } else if (GATEWAY_PORT !== DEFAULT_GATEWAY_PORT && !options.forceFreshReset) {
           runtime.log("Keeping OpenShell binaries used by the default gateway service.");
         } else if (runtime.platform === "darwin") {
+          if (options.forceFreshReset && !removeForceFreshUserLocalOpenShell(paths, runtime)) {
+            return { ok: false, scopedToSelectedGateway };
+          }
           reportRetainedMacOsOpenShell(runtime);
         } else {
           paths.openshellInstallPaths.forEach((target) =>

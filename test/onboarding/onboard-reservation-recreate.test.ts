@@ -148,6 +148,7 @@ sandboxCommandCli.createCliOpenShellSandboxCommandExecutor = (deps) => {
     },
   };
 };
+fixtureMocks.mockManagedStateVolumeOnboardLifecycle();
 const managedWorkloadOnboard = require(${managedWorkloadOnboardPath});
 const createManagedStateVolumeLifecycle =
   managedWorkloadOnboard.createManagedStateVolumeOnboardLifecycle;
@@ -553,6 +554,7 @@ sandboxCommandCli.createCliOpenShellSandboxCommandExecutor = (deps) => {
     },
   };
 };
+fixtureMocks.mockManagedStateVolumeOnboardLifecycle();
 const managedWorkloadOnboard = require(${managedWorkloadOnboardPath});
 const createManagedStateVolumeLifecycle =
   managedWorkloadOnboard.createManagedStateVolumeOnboardLifecycle;
@@ -615,7 +617,10 @@ childProcess.spawn = (...args) => {
   };
   child.pid = 4248;
   createChild = child;
-  process.nextTick(() => child.stdout.emit("data", Buffer.from("Created sandbox: my-assistant\n")));
+  process.nextTick(() => {
+    child.stdout.emit("data", Buffer.from("Created sandbox: my-assistant\n"));
+    child.emit("close", 0);
+  });
   return child;
 };
 

@@ -92,6 +92,8 @@ jobs:
           fi
           {
             printf 'base_sha=%s\n' "$base_sha"
+            printf 'head_sha=%s\n' "$head_sha"
+            printf 'pr_number=%s\n' "$pr_number"
             printf 'selected=%s\n' "$selected"
           } >>"$GITHUB_OUTPUT"
 
@@ -121,17 +123,52 @@ jobs:
         name: Verify complete base and managed-image publication
         if: ${{ steps.changed.outputs.selected == 'true' }}
         env:
-          EXPECTED_SHA: ${{ steps.changed.outputs.base_sha }}
+          BASE_SHA: ${{ steps.changed.outputs.base_sha }}
+          CANDIDATE_REPOSITORY: ${{ github.repository }}
+          CANDIDATE_SHA: ${{ steps.changed.outputs.head_sha }}
           GITHUB_TOKEN: ${{ github.token }}
-          PUBLICATION_HISTORY_ALLOW_NON_HEAD: "1"
-          REQUIRE_MANAGED_IMAGE_PUBLICATION: "1"
-          SELECT_NEAREST_SUCCESSFUL_PUBLICATION: "1"
+          MANAGED_IMAGE_SHA: ${{ steps.changed.outputs.head_sha }}
+          PR_NUMBER: ${{ steps.changed.outputs.pr_number }}
         shell: bash
         run: |
           set -euo pipefail
-          export GITHUB_REF=refs/heads/main
-          export GITHUB_SHA="$EXPECTED_SHA"
-          node --no-warnings tools/e2e/base-image-publication.mts --wait-seconds 3000 --poll-seconds 30
+          catalog_path="${RUNNER_TEMP}/pr-managed-image-catalog.json"
+          error_path="${RUNNER_TEMP}/pr-managed-image-publication-error.txt"
+          deadline=$((SECONDS + 3000))
+          while true; do
+            rm -f -- "$catalog_path" "$error_path"
+            if selection="$(node --no-warnings \
+              tools/e2e/pr-managed-image-publication.mts \
+              "$catalog_path" 2>"$error_path")"; then
+              break
+            fi
+            if (( SECONDS >= deadline )); then
+              cat "$error_path" >&2
+              exit 1
+            fi
+            echo "::notice::Waiting for exact PR managed-image publication for ${CANDIDATE_SHA}"
+            sleep 30
+          done
+          case "$selection" in
+            candidate-catalog)
+              printf 'head_sha=%s\n' "$CANDIDATE_SHA" >>"$GITHUB_OUTPUT"
+              ;;
+            base-cohort)
+              export EXPECTED_SHA="$BASE_SHA"
+              export GITHUB_REF=refs/heads/main
+              export GITHUB_SHA="$EXPECTED_SHA"
+              export PUBLICATION_HISTORY_ALLOW_NON_HEAD=1
+              export REQUIRE_MANAGED_IMAGE_PUBLICATION=1
+              export SELECT_NEAREST_SUCCESSFUL_PUBLICATION=0
+              node --no-warnings tools/e2e/base-image-publication.mts \
+                --wait-seconds 3000 \
+                --poll-seconds 30
+              ;;
+            *)
+              echo "::error::PR managed-image selection is invalid" >&2
+              exit 1
+              ;;
+          esac
 
   llama-cpp-generic-gpu:
     name: llama.cpp on generic NVIDIA GPU

@@ -82,6 +82,23 @@ export interface TargetEnvironment {
   lifecycle?: string;
 }
 
+export const CONFIG_EXPORT_EXPECTATIONS = [
+  "required",
+  "expected-refusal",
+  "no-usable-sandbox",
+] as const;
+
+export type ConfigExportExpectation = (typeof CONFIG_EXPORT_EXPECTATIONS)[number];
+
+export const CONFIG_EXPORT_REFUSAL_CATEGORIES = ["unsupported"] as const;
+
+export type ConfigExportRefusalCategory = (typeof CONFIG_EXPORT_REFUSAL_CATEGORIES)[number];
+
+export type ConfigExportContract =
+  | { expectation: "required" }
+  | { expectation: "expected-refusal"; failureCategory: ConfigExportRefusalCategory }
+  | { expectation: "no-usable-sandbox" };
+
 export interface TargetDefinition {
   id: string;
   description: string;
@@ -89,6 +106,7 @@ export interface TargetDefinition {
   manifestPath: string;
   environment: TargetEnvironment;
   expectedStateId: string;
+  configExport: ConfigExportContract;
   suiteIds: string[];
   requiredSecrets: string[];
   gatewayRuntimes: E2eGatewayRuntimeSupport;

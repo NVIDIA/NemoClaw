@@ -94,8 +94,6 @@ function runRuntimeEnvValidation(envOverrides: Record<string, string | undefined
         '_HERMES_PYTHON="$(command -v python3)"',
         `_HERMES_BOUNDARY_VALIDATOR=${JSON.stringify(VALIDATOR)}`,
         'HERMES_SANDBOX_LAZY_INSTALL_TARGET="/sandbox/.hermes/lazy-packages"',
-        'HERMES_GATEWAY_LAZY_INSTALL_TARGET="/run/nemoclaw/hermes-gateway-lazy-packages"',
-        'HERMES_MANAGED_BUNDLED_PLUGINS="/opt/hermes/plugins"',
         extractShellFunction(source, "validate_hermes_runtime_env_secret_boundary"),
         "validate_hermes_runtime_env_secret_boundary",
       ].join("\n"),
@@ -151,45 +149,6 @@ function runRuntimeEnvJsonValidation(input: string | Buffer) {
     input,
     env: { HOME: os.tmpdir(), PATH: process.env.PATH ?? "" },
   });
-}
-
-function runRuntimeEnvValidationAsRoot(lazyTarget: string) {
-  return spawnSync(
-    "python3",
-    [
-      "-I",
-      "-c",
-      [
-        "import runpy, sys",
-        "module = runpy.run_path(sys.argv[1], run_name='nemoclaw_root_env_test')",
-        "module['os'].geteuid = lambda: 0",
-        "raise SystemExit(module['validate_runtime_env']({'HERMES_LAZY_INSTALL_TARGET': sys.argv[2], 'HERMES_HOME': '/sandbox/.hermes', 'HERMES_BUNDLED_PLUGINS': '/opt/hermes/plugins'}))",
-      ].join("; "),
-      VALIDATOR,
-      lazyTarget,
-    ],
-    { encoding: "utf-8", timeout: 5000 },
-  );
-}
-
-function runRuntimeEnvValidationAsGateway(lazyTarget: string) {
-  return spawnSync(
-    "python3",
-    [
-      "-I",
-      "-c",
-      [
-        "import runpy, sys, types",
-        "module = runpy.run_path(sys.argv[1], run_name='nemoclaw_gateway_env_test')",
-        "module['os'].geteuid = lambda: 4242",
-        "module['pwd'].getpwnam = lambda name: types.SimpleNamespace(pw_uid=4242) if name == 'gateway' else (_ for _ in ()).throw(KeyError(name))",
-        "raise SystemExit(module['validate_runtime_env']({'HERMES_LAZY_INSTALL_TARGET': sys.argv[2], 'HERMES_HOME': '/sandbox/.hermes', 'HERMES_BUNDLED_PLUGINS': '/opt/hermes/plugins'}))",
-      ].join("; "),
-      VALIDATOR,
-      lazyTarget,
-    ],
-    { encoding: "utf-8", timeout: 5000 },
-  );
 }
 
 function runManagedGatewayEnvValidation(
@@ -655,33 +614,13 @@ describe("Hermes durable lazy-install target", () => {
     expect(result.stderr).not.toContain(value);
   });
 
-  it("accepts the image-owned lazy target in the runtime environment (#8613)", () => {
+  it("accepts the native durable lazy target in the runtime environment (#11766)", () => {
     const result = runRuntimeEnvValidation({
       HERMES_LAZY_INSTALL_TARGET: "/sandbox/.hermes/lazy-packages",
     });
 
     expect(result.status, result.stderr).toBe(0);
     expect(result.stderr).toBe("");
-  });
-
-  it("requires the gateway-owned lazy target for root-separated validation", () => {
-    const gatewayTarget = "/run/nemoclaw/hermes-gateway-lazy-packages";
-    const accepted = runRuntimeEnvValidationAsRoot(gatewayTarget);
-    const refused = runRuntimeEnvValidationAsRoot("/sandbox/.hermes/lazy-packages");
-
-    expect(accepted.status, accepted.stderr).toBe(0);
-    expect(refused.status).toBe(1);
-    expect(refused.stderr).toContain("HERMES_LAZY_INSTALL_TARGET");
-  });
-
-  it("requires the gateway-owned lazy target for the gateway identity", () => {
-    const gatewayTarget = "/run/nemoclaw/hermes-gateway-lazy-packages";
-    const accepted = runRuntimeEnvValidationAsGateway(gatewayTarget);
-    const refused = runRuntimeEnvValidationAsGateway("/sandbox/.hermes/lazy-packages");
-
-    expect(accepted.status, accepted.stderr).toBe(0);
-    expect(refused.status).toBe(1);
-    expect(refused.stderr).toContain("HERMES_LAZY_INSTALL_TARGET");
   });
 
   it("derives launcher-owned sandbox paths for managed restart validation", () => {
@@ -720,40 +659,32 @@ describe("Hermes durable lazy-install target", () => {
     expect(result.stderr).not.toContain(value);
   });
 
-  it.each([
-    ["missing", undefined],
-    ["overridden", "/tmp/untrusted-packages"],
-    ["wrong identity", "/run/nemoclaw/hermes-gateway-lazy-packages"],
-  ])(
-    "rejects a %s lazy target that could mutate or import through the separated gateway (#8613)",
-    (_case, value) => {
-      const result = runDirectRuntimeEnvValidation({ HERMES_LAZY_INSTALL_TARGET: value });
+  it.each([["HERMES_HOME", "/sandbox/other-home"]])(
+    "rejects runtime path control %s",
+    (key, value) => {
+      const result = runDirectRuntimeEnvValidation({ [key]: value });
 
       expect(result.status).toBe(1);
-      expect(result.stderr).toContain("HERMES_LAZY_INSTALL_TARGET");
+      expect(result.stderr).toContain(key);
+      expect(result.stderr).not.toContain(value);
     },
   );
 
   it.each([
-    ["HERMES_HOME", "/sandbox/other-home"],
-    ["HERMES_BUNDLED_PLUGINS", "/sandbox/hostile-plugins"],
+    ["HERMES_LAZY_INSTALL_TARGET", "/sandbox/custom-lazy-packages"],
+    ["HERMES_BUNDLED_PLUGINS", "/sandbox/custom-plugins"],
     ["HERMES_ENABLE_PROJECT_PLUGINS", "1"],
-  ])("rejects runtime path control %s", (key, value) => {
+    ["UV_FIND_LINKS", "/sandbox/wheels"],
+    ["PIP_CONFIG_FILE", "/sandbox/pip.conf"],
+    ["PYTHONPATH", "/sandbox/python"],
+  ])("accepts native plugin and package control %s (#11766)", (key, value) => {
     const result = runDirectRuntimeEnvValidation({ [key]: value });
 
-    expect(result.status).toBe(1);
-    expect(result.stderr).toContain(key);
-    expect(result.stderr).not.toContain(value);
+    expect(result.status, result.stderr).toBe(0);
   });
 
   it.each([
-    ["HERMES_LAZY_INSTALL_TARGET", "/sandbox/.hermes/lazy-packages"],
     ["HERMES_HOME", "/sandbox/hostile-home"],
-    ["HERMES_BUNDLED_PLUGINS", "/opt/hermes/plugins"],
-    ["HERMES_ENABLE_PROJECT_PLUGINS", "enabled-by-sandbox"],
-    ["UV_FIND_LINKS", "/sandbox/hostile-wheels"],
-    ["PIP_CONFIG_FILE", "/sandbox/pip.conf"],
-    ["PYTHONPATH", "/sandbox/hostile-python"],
     ["LD_PRELOAD", "/sandbox/hostile.so"],
     ["PATH", "/sandbox/hostile-bin"],
   ])("rejects process control %s in the generated env file", (key, value) => {

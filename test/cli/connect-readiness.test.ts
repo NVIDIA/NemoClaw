@@ -46,6 +46,12 @@ describe("CLI connect readiness", () => {
         `marker_file=${JSON.stringify(markerFile)}`,
         `state_file=${JSON.stringify(stateFile)}`,
         'printf \'%s\\n\' "$*" >> "$marker_file"',
+        'if [ "$1" = "inference" ] && [ "$2" = "get" ] && [ "$3" = "-g" ] && [ "$4" = "nemoclaw" ]; then',
+        "  echo 'Gateway inference:'",
+        "  echo '  Provider: nvidia-prod'",
+        "  echo '  Model: test-model'",
+        "  exit 0",
+        "fi",
         'if [ "$1" = "policy" ] && [ "$2" = "get" ]; then',
         `  printf '%b' ${JSON.stringify(LAUNCH_READINESS_FIXTURE_POLICY)}`,
         "  exit 0",
@@ -101,6 +107,7 @@ describe("CLI connect readiness", () => {
     expect(r.out.includes("Waiting for sandbox 'alpha' to be ready")).toBeTruthy();
     expect(r.out.includes("Sandbox is ready. Connecting")).toBeTruthy();
     const calls = fs.readFileSync(markerFile, "utf8").trim().split("\n").filter(Boolean);
+    expect(calls).toContain("inference get -g nemoclaw");
     expect(calls).toContain("sandbox get -g nemoclaw alpha");
     expect(
       calls.filter((call) => call === "sandbox list -g nemoclaw").length,

@@ -18,6 +18,7 @@ const HOST_CREDENTIALS = [
 export interface OpenShellCommandOptions {
   capture?: boolean;
   env: NodeJS.ProcessEnv;
+  killSignal?: NodeJS.Signals;
   timeout?: number;
 }
 
@@ -217,6 +218,7 @@ export const defaultOpenShellTools: OpenShellTools = {
     const output = execFileSync(command, [...args], {
       encoding: "utf8",
       env: options.env,
+      killSignal: options.killSignal,
       stdio: options.capture ? ["ignore", "pipe", "inherit"] : "inherit",
       timeout: options.timeout,
     });
@@ -505,11 +507,13 @@ export function execOpenShellSandboxAsync(
 
 export function downloadOpenShellPath(
   env: NodeJS.ProcessEnv,
-  input: { destination: string; name: string; source: string },
+  input: { destination: string; name: string; source: string; timeoutMs?: number },
   tools: OpenShellTools = defaultOpenShellTools,
 ): void {
   tools.run("openshell", ["sandbox", "download", input.name, input.source, input.destination], {
     env: credentialFreeEnvironment(env),
+    killSignal: "SIGKILL",
+    timeout: input.timeoutMs,
   });
 }
 

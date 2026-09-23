@@ -97,10 +97,6 @@ describe("OpenShell migration executable contracts", () => {
       ["test/e2e/live/openclaw-skill-cli.test.ts", ["singleLineSandboxScript"]],
       ["test/e2e/live/phase6-messaging-helpers.ts", ["sandboxEncodedSh", "base64(script)"]],
       [
-        "test/e2e/live/openclaw-plugin-runtime-exdev.test.ts",
-        ["data:text/javascript;base64", "nemoclaw-exdev-guard.sh"],
-      ],
-      [
         "test/e2e/live/mcp-bridge.test.ts",
         ["mcpCallScriptB64", "nemoclaw-mcp-provider-rewrite-proof.cjs"],
       ],

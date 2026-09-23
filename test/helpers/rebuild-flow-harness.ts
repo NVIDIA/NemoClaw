@@ -65,6 +65,9 @@ export const portableAgentLifecycle = requireDist(
   "../../onboard/experimental/portable-agent-lifecycle.js",
 );
 export const processRecovery = requireDist("./process-recovery.js");
+export const openClawLifecycle = requireDist(
+  "./runtime/openclaw-lifecycle.js",
+) as typeof import("../../src/lib/actions/sandbox/runtime/openclaw-lifecycle");
 export const { rebuildOnboardDependencies } = requireDist("./rebuild-onboard-dependencies.js");
 export const rebuildCustomImagePreflight = requireDist("./rebuild-custom-image-preflight.js");
 export const rebuildFlowHelpers = requireDist("./rebuild-flow-helpers.js");

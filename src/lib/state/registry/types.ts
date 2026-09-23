@@ -7,7 +7,6 @@ import type { WebSearchProvider } from "../../inference/web-search";
 import type { DcodeAutoApprovalMode } from "../../onboard/dcode-auto-approval";
 import type { NativeArtifactWorkloadReceiptV1 } from "../../onboard/workload/native-artifact";
 import type { ToolDisclosure } from "../../tool-disclosure";
-import type { OpenClawImagePluginInstall } from "../openclaw-plugin-restore";
 import type { SandboxMessagingState } from "../registry-messaging";
 
 /** Bounded identity checkpoint for one incomplete sandbox create. */
@@ -20,6 +19,8 @@ export interface PendingSandboxCreateIdentity {
   readonly lifecycleGeneration: string;
   readonly sandboxIdentityFingerprint: string;
   readonly createAttemptNonce?: string;
+  /** Exact managed-startup hold identity reused by an interrupted create resume. */
+  readonly managedBootstrapIdentity?: string;
   readonly route: "none" | "native" | "compatibility";
   /** The exact final handoff crossed its durable commit fence. */
   readonly exactFinalHandoffCommitStarted?: true;
@@ -107,8 +108,6 @@ export interface SandboxEntry extends Partial<InferenceSelection> {
   webSearchProvider?: WebSearchProvider | null;
   agent?: string | null;
   agentVersion?: string | null;
-  /** Plugin install baseline captured before state is restored into a fresh OpenClaw image. */
-  openclawImagePluginInstalls?: OpenClawImagePluginInstall[];
   // NemoClaw build fingerprint (the NemoClaw CLI/build version) stamped only on
   // NemoClaw-managed images at create/rebuild time. `upgrade-sandboxes` compares
   // it against the running NemoClaw build so an image/build change with an
@@ -125,6 +124,8 @@ export interface SandboxEntry extends Partial<InferenceSelection> {
    * through per-sandbox image deletion.
    */
   workload?: SandboxWorkloadReceipt;
+  /** Image-owned startup handshake used by managed-image onboarding finalization. */
+  managedStartupProtocol?: "identity-bound" | "legacy-unbound";
   /** Canonical provider-neutral receipt for an out-of-sandbox inference runtime. */
   hostLocalInferenceReceipt?: string | null;
   /** Explicit hidden-lifecycle provenance; absence keeps llama.cpp on its legacy path. */
@@ -161,6 +162,8 @@ export interface SandboxEntry extends Partial<InferenceSelection> {
   gatewayPort?: number | null;
   /** Whether the sandbox was intentionally stopped via the stop command (#11025). */
   stopped?: boolean;
+  /** Explicit retained Portable lifecycle owner; absent for every standard sandbox. */
+  portableLifecycleProfile?: "openclaw" | "hermes";
 }
 
 export type SandboxWorkloadReceipt =

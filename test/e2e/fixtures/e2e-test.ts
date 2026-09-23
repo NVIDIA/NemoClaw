@@ -23,6 +23,7 @@ import {
 import { DockerPrerequisite, DockerProbe } from "./docker-probe.ts";
 import { createE2EInferenceAdapter, type E2EInferenceAdapter } from "./inference-adapter.ts";
 import {
+  ConfigExportValidationPhaseFixture,
   EnvironmentPhaseFixture,
   LifecyclePhaseFixture,
   OnboardingPhaseFixture,
@@ -66,6 +67,7 @@ export interface E2ETargetFixtures {
   lifecycle: LifecyclePhaseFixture;
   runtime: RuntimePhaseFixture;
   stateValidation: StateValidationPhaseFixture;
+  configExportValidation: ConfigExportValidationPhaseFixture;
   progress: TestProgress;
 }
 
@@ -299,6 +301,9 @@ export const test = base.extend<E2ETargetFixtures>({
   },
   stateValidation: async ({ artifacts, host, gateway, sandbox }, use) => {
     await use(new StateValidationPhaseFixture(host, gateway, sandbox, {}, artifacts));
+  },
+  configExportValidation: async ({ artifacts, cleanup, host, secrets }, use) => {
+    await use(new ConfigExportValidationPhaseFixture(host, secrets, cleanup, artifacts));
   },
 });
 
