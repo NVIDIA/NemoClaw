@@ -11,7 +11,10 @@ import type { BuildIdentity } from "../../core/version.js";
 import { getBuildIdentity } from "../../core/version.js";
 import { assessHost } from "../../onboard/preflight.js";
 import { createHostReadinessReport } from "../../readiness/host.js";
-import { collectPlatformIdentity } from "../../readiness/platform-qualification.js";
+import {
+  collectPlatformIdentity,
+  readBoundedLocalOsRelease,
+} from "../../readiness/platform-qualification.js";
 import type { SystemReadinessReport } from "../../readiness/types.js";
 import { managedVllmStateDir } from "../vllm-api-key.js";
 import { buildLocalManagedVllmDockerEnv, buildVllmSshTransportEnv } from "../vllm-docker-env.js";
@@ -138,6 +141,43 @@ fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_N
 try:
     data = os.read(fd, 1024 * 1024 + 1)
     if len(data) > 1024 * 1024:
+        raise SystemExit(2)
+    sys.stdout.buffer.write(data)
+finally:
+    os.close(fd)
+`;
+
+const READ_OS_RELEASE_SCRIPT = String.raw`
+import os
+import stat
+import sys
+
+primary = sys.argv[1]
+fallback = sys.argv[2]
+limit = int(sys.argv[3])
+candidate = primary
+try:
+    metadata = os.lstat(primary)
+    if stat.S_ISLNK(metadata.st_mode):
+        target = os.readlink(primary)
+        if os.path.isabs(target) or os.path.normpath(os.path.join(os.path.dirname(primary), target)) != fallback:
+            raise SystemExit(2)
+        candidate = fallback
+    elif not stat.S_ISREG(metadata.st_mode):
+        raise SystemExit(2)
+except FileNotFoundError:
+    candidate = fallback
+
+try:
+    fd = os.open(candidate, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0))
+except OSError:
+    raise SystemExit(2)
+try:
+    metadata = os.fstat(fd)
+    if not stat.S_ISREG(metadata.st_mode) or metadata.st_size > limit:
+        raise SystemExit(2)
+    data = os.read(fd, limit + 1)
+    if len(data) > limit:
         raise SystemExit(2)
     sys.stdout.buffer.write(data)
 finally:
@@ -555,21 +595,22 @@ function commandSucceeded(result: ManagedClusterCommandResult, requireOutput = f
   );
 }
 
-function readBoundedLocalFile(filePath: string): string {
+function readBoundedLocalFile(filePath: string, maxBytes = MAX_LOCAL_FILE_BYTES): string {
   const flags =
     fs.constants.O_RDONLY |
     (typeof fs.constants.O_NOFOLLOW === "number" ? fs.constants.O_NOFOLLOW : 0);
   const descriptor = fs.openSync(filePath, flags);
   try {
     const metadata = fs.fstatSync(descriptor);
-    if (!metadata.isFile() || metadata.size > MAX_LOCAL_FILE_BYTES) {
+    if (!metadata.isFile() || metadata.size > maxBytes) {
       throw new Error(`DGX Spark probe file ${filePath} is invalid`);
     }
-    const contents = fs.readFileSync(descriptor);
-    if (contents.length > MAX_LOCAL_FILE_BYTES) {
+    const contents = Buffer.alloc(maxBytes + 1);
+    const bytesRead = fs.readSync(descriptor, contents, 0, contents.length, 0);
+    if (bytesRead > maxBytes) {
       throw new Error(`DGX Spark probe file ${filePath} is too large`);
     }
-    return contents.toString("utf8");
+    return contents.toString("utf8", 0, bytesRead);
   } finally {
     fs.closeSync(descriptor);
   }
@@ -596,6 +637,7 @@ function createLocalTransport(spawn: ManagedClusterSpawnSync): ManagedClusterRea
       );
     },
     readFile: readBoundedLocalFile,
+    readOsRelease: readBoundedLocalOsRelease,
     readdir: readBoundedDirectory,
   };
 }
@@ -917,6 +959,27 @@ function openPinnedPeerTransport(
       }
       return result.stdout;
     },
+    readOsRelease(primaryPath, fallbackPath, maxBytes) {
+      if (
+        !path.posix.isAbsolute(primaryPath) ||
+        path.posix.normalize(primaryPath) !== primaryPath ||
+        !path.posix.isAbsolute(fallbackPath) ||
+        path.posix.normalize(fallbackPath) !== fallbackPath
+      ) {
+        throw new Error("Remote DGX Spark os-release path is invalid");
+      }
+      const result = execute([
+        "python3",
+        "-c",
+        READ_OS_RELEASE_SCRIPT,
+        primaryPath,
+        fallbackPath,
+        String(maxBytes),
+      ]);
+      if (!commandSucceeded(result)) return undefined;
+      if (Buffer.byteLength(result.stdout, "utf8") > maxBytes) return undefined;
+      return result.stdout || undefined;
+    },
     readdir(directoryPath) {
       if (
         !path.posix.isAbsolute(directoryPath) ||
@@ -1111,6 +1174,12 @@ function createCanonicalReadiness(
   const platformIdentity = collectPlatformIdentity({
     readFile: (filePath) => transport.readFile(filePath),
     readdir: (directory) => transport.readdir(directory),
+    ...(transport.readOsRelease
+      ? {
+          readBoundedOsRelease: (filePath: string, maxBytes: number) =>
+            transport.readOsRelease!(filePath, "/usr/lib/os-release", maxBytes),
+        }
+      : {}),
   });
   return createHostReadinessReport(
     {
