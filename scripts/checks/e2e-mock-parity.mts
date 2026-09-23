@@ -139,7 +139,9 @@ export function validateMockParity(options: {
       (!Array.isArray(entry.liveSources) ||
         entry.liveSources.some((file) => typeof file !== "string"))
     ) {
-      errors.push(`${entry.live}: liveSources must be an array of live E2E helper paths`);
+      errors.push(
+        `${entry.live}: liveSources must be an array of live E2E helper or shared fixture paths`,
+      );
       continue;
     }
     if (
@@ -173,7 +175,9 @@ export function validateMockParity(options: {
         continue;
       }
       if (!fileExists(sourceFile)) {
-        errors.push(`${entry.live}: live E2E helper does not exist: ${sourceFile}`);
+        errors.push(
+          `${entry.live}: live E2E helper or shared fixture does not exist: ${sourceFile}`,
+        );
       }
       const owners = sourceOwners.get(sourceFile) ?? [];
       owners.push(entry);
@@ -247,10 +251,11 @@ function argument(name: string): string | undefined {
   return index >= 0 ? process.argv[index + 1] : undefined;
 }
 
-function sourceAtRef(ref: string, file: string): string | null {
+function sourceAtRef(ref: string, file: string, repoRoot = REPO_ROOT): string | null {
   try {
     return execFileSync("git", ["show", `${ref}:${file}`], {
-      cwd: REPO_ROOT,
+      cwd: repoRoot,
+      stdio: ["ignore", "pipe", "pipe"],
       encoding: "utf8",
       maxBuffer: 10 * 1024 * 1024,
     });
@@ -280,21 +285,32 @@ export function filterMockParityRelevantChangedFiles(
   });
 }
 
-function changedFiles(base: string, head: string): string[] {
-  const files = execFileSync(
-    "git",
-    ["diff", "--name-only", "--diff-filter=ACMR", `${base}...${head}`],
-    {
-      cwd: REPO_ROOT,
-      encoding: "utf8",
-    },
-  )
-    .split(/\r?\n/u)
-    .filter(Boolean);
+export function collectMockParityChangedFiles(
+  base: string,
+  head: string,
+  repoRoot = REPO_ROOT,
+): string[] {
+  const names = (filter: string, options: readonly string[] = []): string[] =>
+    execFileSync(
+      "git",
+      ["diff", "--name-only", `--diff-filter=${filter}`, ...options, `${base}...${head}`],
+      {
+        cwd: repoRoot,
+        encoding: "utf8",
+      },
+    )
+      .split(/\r?\n/u)
+      .filter(Boolean);
+  // Preserve existing deletion handling for other source kinds; explicitly owned
+  // shared fixtures retain their base-manifest obligation after deletion.
+  const files = [
+    ...names("ACMR"),
+    ...names("D", ["--no-renames"]).filter((file) => SHARED_FIXTURE.test(file)),
+  ];
   return filterMockParityRelevantChangedFiles(
     files,
-    (file) => sourceAtRef(base, file),
-    (file) => sourceAtRef(head, file),
+    (file) => sourceAtRef(base, file, repoRoot),
+    (file) => sourceAtRef(head, file, repoRoot),
   );
 }
 
@@ -315,7 +331,7 @@ function main(): void {
   const errors = validateMockParity({
     manifest,
     baseManifest,
-    changedFiles: changedFiles(base, head),
+    changedFiles: collectMockParityChangedFiles(base, head),
   });
   if (errors.length > 0) {
     console.error(

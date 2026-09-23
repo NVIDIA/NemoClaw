@@ -10,7 +10,10 @@ import type { HostCliClient } from "./clients/host.ts";
 import type { SandboxClient } from "./clients/sandbox.ts";
 import { initializeGatewayForCleanup } from "./gateway-runtime-start.ts";
 
-function buildOwnedSandboxCleanupEnv(sandboxName: string): NodeJS.ProcessEnv {
+function buildOwnedSandboxCleanupEnv(
+  sandboxName: string,
+  orphanGatewayName?: string,
+): NodeJS.ProcessEnv {
   const registered = getSandbox(sandboxName);
   return {
     ...buildAvailabilityProbeEnv(),
@@ -18,7 +21,9 @@ function buildOwnedSandboxCleanupEnv(sandboxName: string): NodeJS.ProcessEnv {
     // ShellProbe otherwise forwards only PATH, which hides gateway metadata.
     OPENSHELL_GATEWAY: registered
       ? resolveSandboxGatewayName(registered)
-      : process.env.OPENSHELL_GATEWAY?.trim() || "nemoclaw",
+      : resolveSandboxGatewayName({
+          gatewayName: orphanGatewayName ?? (process.env.OPENSHELL_GATEWAY?.trim() || "nemoclaw"),
+        }),
   };
 }
 
@@ -28,12 +33,13 @@ export async function prepareOwnedSandboxForOnboard(
   sandbox: Pick<SandboxClient, "hasGatewayForInitialCleanup" | "cleanupSandbox">,
   cleanup: CleanupRegistry,
   sandboxName: string,
+  orphanGatewayName?: string,
 ): Promise<void> {
   const cleanupRegisteredSandbox = (artifactName: string) =>
     cleanupAcquiredResource(getSandbox(sandboxName) !== null, () =>
       host.cleanupSandbox(sandboxName, {
         artifactName,
-        env: buildOwnedSandboxCleanupEnv(sandboxName),
+        env: buildOwnedSandboxCleanupEnv(sandboxName, orphanGatewayName),
         timeoutMs: 15 * 60_000,
       }),
     );
@@ -41,7 +47,7 @@ export async function prepareOwnedSandboxForOnboard(
     cleanupRegisteredSandbox("cleanup-destroy-sandbox"),
   );
   const cleanupOwnedSandbox = async (artifactName: string) => {
-    const openshellCleanupEnv = buildOwnedSandboxCleanupEnv(sandboxName);
+    const openshellCleanupEnv = buildOwnedSandboxCleanupEnv(sandboxName, orphanGatewayName);
     const options = { artifactName, env: openshellCleanupEnv, timeoutMs: 15 * 60_000 };
     const gatewayName = openshellCleanupEnv.OPENSHELL_GATEWAY!;
     const gatewayPresent = await sandbox.hasGatewayForInitialCleanup(gatewayName, options);

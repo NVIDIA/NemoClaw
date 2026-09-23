@@ -22,13 +22,13 @@ const response = (patch: Partial<ShellProbeResult> = {}): ShellProbeResult => ({
   artifacts: { stdout: "", stderr: "", result: "" },
   ...patch,
 });
-function fixture(present = false) {
+function fixture(present = false, gatewayName = "nemoclaw") {
   const calls: string[] = [];
   const gateway = { present };
   const sandbox = new SandboxClient({ run: vi.fn() });
   const inspect = vi.fn(() =>
     gateway.present
-      ? response({ stdout: JSON.stringify({ gateway: "nemoclaw" }) })
+      ? response({ stdout: JSON.stringify({ gateway: gatewayName }) })
       : response({
           exitCode: 1,
           stderr:
@@ -44,7 +44,7 @@ function fixture(present = false) {
   const openshell = vi
     .spyOn(sandbox, "openshell")
     .mockImplementation(async (args = [], options) => {
-      expect(options?.env?.OPENSHELL_GATEWAY).toBe("nemoclaw");
+      expect(options?.env?.OPENSHELL_GATEWAY).toBe(gatewayName);
       calls.push(args.slice(0, 2).join(" "));
       return handlers[args[0]]!();
     });
@@ -66,7 +66,7 @@ function fixture(present = false) {
   const prepare = (selectedNames: readonly string[] = names) =>
     prepareOnboardSandboxes(host, sandbox, cleanup, selectedNames, "e2e-live-extra-provider", {
       artifactName: "precleanup-gateway-inspection",
-      env: { OPENSHELL_GATEWAY: "nemoclaw", NEMOCLAW_GATEWAY_RUNTIME: "podman" },
+      env: { OPENSHELL_GATEWAY: gatewayName, NEMOCLAW_GATEWAY_RUNTIME: "podman" },
     });
   return { calls, host, sandbox, openshell, inspect, removeProvider, cleanup, prepare };
 }
@@ -166,4 +166,13 @@ it("prepares the resume scenario's single owned sandbox", async () => {
     "provider delete",
   ]);
   expect(f.host.cleanupSandbox).toHaveBeenCalledOnce();
+});
+
+it("uses the caller's nondefault gateway for unregistered orphan cleanup in both phases", async () => {
+  const f = fixture(true, "nemoclaw-8888");
+  await f.prepare();
+  await f.cleanup.runAll();
+  expect(f.openshell.mock.calls.filter(([args]) => args?.[0] === "sandbox")).toHaveLength(4);
+  expect(f.host.command).not.toHaveBeenCalled();
+  expect(f.host.cleanupSandbox).not.toHaveBeenCalled();
 });

@@ -4,6 +4,9 @@
 import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
 import { isIP } from "node:net";
+import { mkdtemp, rm } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 
 import { isOperatorTrustablePrivateIp } from "../../../src/lib/security/trusted-private-endpoint.ts";
 import { assertExitZero } from "./clients/command.ts";
@@ -109,13 +112,29 @@ export async function startRoutedPrivateRelay(options: {
   const networkName = networkNames[0] as string;
   const relayName = `nemoclaw-private-relay-${process.pid}-${randomBytes(4).toString("hex")}`;
   const snapshot = async (phase: string): Promise<void> => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), "nemoclaw-relay-snapshot-")).catch(
+      () => null,
+    );
+    if (directory === null) return;
     try {
-      await runtime.command(
-        ["exec", relayName, "node", "-e", ROUTED_PRIVATE_RELAY_SNAPSHOT_SOURCE, SUMMARY_PATH],
-        { artifactName: `routed-private-relay-${phase}-diagnostics`, timeoutMs: 10_000 },
+      const summary = path.join(directory, "summary.json");
+      // cp supports stopped containers. Do not follow links or stream raw contents
+      // into artifacts; only the existing bounded schema reader may publish them.
+      const copied = await runtime.command(
+        ["container", "cp", `${relayName}:${SUMMARY_PATH}`, summary],
+        { artifactName: `routed-private-relay-${phase}-copy`, timeoutMs: 10_000 },
       );
+      if (copied.exitCode === 0) {
+        await options.host.command(
+          process.execPath,
+          ["-e", ROUTED_PRIVATE_RELAY_SNAPSHOT_SOURCE, summary],
+          { artifactName: `routed-private-relay-${phase}-diagnostics`, timeoutMs: 10_000 },
+        );
+      }
     } catch {
       // Best-effort evidence must never prevent resource removal or mask a test failure.
+    } finally {
+      await rm(directory, { recursive: true, force: true });
     }
   };
   const close = async (): Promise<void> => {

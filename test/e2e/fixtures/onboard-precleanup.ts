@@ -20,7 +20,7 @@ export async function prepareOnboardSandboxes(
   const gatewayName = options.env?.OPENSHELL_GATEWAY;
   if (!gatewayName?.trim()) throw new Error("Onboard cleanup requires a named gateway");
   for (const name of sandboxNames) {
-    await prepareOwnedSandboxForOnboard(host, sandbox, cleanup, name);
+    await prepareOwnedSandboxForOnboard(host, sandbox, cleanup, name, gatewayName);
   }
   if (!(await sandbox.hasGatewayForInitialCleanup(gatewayName, options))) return;
   await host.cleanupForward(18789, {

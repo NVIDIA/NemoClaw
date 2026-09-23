@@ -1,9 +1,13 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
+  collectMockParityChangedFiles,
   filterMockParityRelevantChangedFiles,
   isMockParityRelevantSourceChange,
   type MockParityManifest,
@@ -386,4 +390,79 @@ describe("changed live E2E mock parity", () => {
       }),
     ).toEqual([`${live}: liveOnlyReason must be a string`]);
   });
+});
+
+const removedFixture = "test/e2e/fixtures/removed.ts";
+it.each([
+  ["deletion", ["rm", removedFixture]],
+  ["rename within fixtures", ["mv", removedFixture, "test/e2e/fixtures/renamed.ts"]],
+  ["rename outside fixtures", ["mv", removedFixture, "renamed.ts"]],
+])("keeps owned fixture obligations after %s in real Git classification", (_label, operation) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "parity-deletion-"));
+  const shared = removedFixture;
+  const git = (...args: string[]) => execFileSync("git", args, { cwd: root, encoding: "utf8" });
+  try {
+    git("init", "--quiet");
+    fs.mkdirSync(path.dirname(path.join(root, shared)), { recursive: true });
+    fs.writeFileSync(path.join(root, shared), "export const value = 1;\n");
+    git("add", ".");
+    git(
+      "-c",
+      "user.name=Parity Test",
+      "-c",
+      "user.email=parity@example.invalid",
+      "-c",
+      "commit.gpgsign=false",
+      "commit",
+      "--quiet",
+      "-m",
+      "base",
+    );
+    const base = git("rev-parse", "HEAD").trim();
+    git(...operation);
+    git(
+      "-c",
+      "user.name=Parity Test",
+      "-c",
+      "user.email=parity@example.invalid",
+      "-c",
+      "commit.gpgsign=false",
+      "commit",
+      "--quiet",
+      "-m",
+      "remove",
+    );
+    const changedFiles = collectMockParityChangedFiles(base, "HEAD", root);
+    expect(changedFiles).toContain(shared);
+    const options = {
+      manifest: manifest([{ live, fast: [fast] }]),
+      baseManifest: manifest([{ live, liveSources: [shared], fast: [fast] }]),
+      changedFiles,
+      fileExists: exists,
+    };
+    expect(validateMockParity(options)).toEqual([
+      `${shared}: change at least one fast PR test mapped from ${live}`,
+    ]);
+    expect(validateMockParity({ ...options, changedFiles: [...changedFiles, fast] })).toEqual([]);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+it("describes both supported liveSources kinds in invalid-entry diagnostics", () => {
+  const shared = "test/e2e/fixtures/missing.ts";
+  expect(
+    validateMockParity({
+      manifest: manifest([{ live, fast: [fast], liveSources: [shared] }]),
+      changedFiles: [],
+      fileExists: exists,
+    }),
+  ).toEqual([`${live}: live E2E helper or shared fixture does not exist: ${shared}`]);
+  expect(
+    validateMockParity({
+      manifest: manifest([{ live, fast: [fast], liveSources: 1 as unknown as string[] }]),
+      changedFiles: [],
+      fileExists: exists,
+    }),
+  ).toEqual([`${live}: liveSources must be an array of live E2E helper or shared fixture paths`]);
 });

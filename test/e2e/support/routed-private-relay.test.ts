@@ -202,17 +202,26 @@ function runtimeFixture(
     .mockImplementation(async (args) => {
       const key = args.slice(0, 2).join(" ");
       const failure = {
-        ["exec " + args[1]]: options.snapshotThrows ? "diagnostic unavailable" : "",
+        "container cp": options.snapshotThrows ? "diagnostic unavailable" : "",
         "container inspect":
           options.inspectThrows && args.at(-1) !== "sandbox-id" ? "inspect failed" : "",
       }[key];
       await (failure ? Promise.reject(new Error(failure)) : Promise.resolve());
+      const copySummary = options.snapshotNonzero
+        ? () => undefined
+        : () =>
+            fs.writeFileSync(
+              args.at(-1)!,
+              JSON.stringify({ ...validSummary, token: "secret-not-for-artifacts" }),
+            );
+      const effects: Record<string, () => void> = { "container cp": copySummary };
+      effects[key]?.();
       const stdout = args.at(-1) === "sandbox-id" ? '{"owned-network":{}}' : "172.18.0.3";
       return {
         command: [],
         exitCode:
           (args[0] === "run" && options.startNonzero) ||
-          (args[0] === "exec" && options.snapshotNonzero) ||
+          (key === "container cp" && options.snapshotNonzero) ||
           (key === "container rm" && options.removalNonzero)
             ? 1
             : 0,
@@ -223,11 +232,21 @@ function runtimeFixture(
         artifacts: { stdout: "", stderr: "", result: "" },
       };
     });
+  const hostCommand = vi.fn(async (_command: string, args: string[]) => ({
+    command: [],
+    exitCode: 0,
+    signal: null,
+    timedOut: false,
+    stdout: execFileSync(process.execPath, args, { encoding: "utf8" }),
+    stderr: "",
+    artifacts: { stdout: "", stderr: "", result: "" },
+  }));
   return {
     command,
+    hostCommand,
     start: () =>
       startRoutedPrivateRelay({
-        host: {} as HostCliClient,
+        host: { command: hostCommand } as unknown as HostCliClient,
         sandboxName: "sandbox",
         upstreamHost: "127.0.0.1",
         upstreamPort: 1234,
@@ -242,12 +261,14 @@ describe("relay diagnostic cleanup ownership", () => {
       const relay = await f.start();
       await relay.close();
       const calls = f.command.mock.calls;
-      expect(calls.at(-2)?.[0][0]).toBe("exec");
+      expect(calls.at(-2)?.[0].slice(0, 2)).toEqual(["container", "cp"]);
       expect(calls.at(-1)?.[0].slice(0, 3)).toEqual(["container", "rm", "--force"]);
-      expect(calls.at(-1)?.[0][3]).toBe(calls.at(-2)?.[0][1]);
+      expect(calls.at(-2)?.[0][2]).toBe(
+        `${calls.at(-1)?.[0][3]}:/tmp/nemoclaw-private-relay-summary.json`,
+      );
     },
   );
-  it("retains an exited relay for its registered cleanup owner", async () => {
+  it("retains relay cleanup ownership when the diagnostic copy fails", async () => {
     const f = runtimeFixture({ snapshotNonzero: true });
     const relay = await f.start();
     const startArgs = f.command.mock.calls.find(([args]) => args[0] === "run")![0];
@@ -259,6 +280,46 @@ describe("relay diagnostic cleanup ownership", () => {
       "--force",
       startArgs[startArgs.indexOf("--name") + 1],
     ]);
+  });
+  it.each([0, 1])("sanitizes snapshot %s and removes its private temporary copy", async (index) => {
+    const f = runtimeFixture();
+    const relay = await f.start();
+    await relay.close();
+    expect(f.hostCommand).toHaveBeenCalledTimes(2);
+    const result = await f.hostCommand.mock.results[index]!.value;
+    expect(JSON.parse(result.stdout)).toEqual({ available: true, ...validSummary });
+    expect(result.stdout).not.toContain("secret-not-for-artifacts");
+    const copies = f.command.mock.calls.filter(([args]) => args[1] === "cp");
+    expect(copies).toHaveLength(2);
+    const args = copies[index]![0];
+    expect(args).not.toContain("-L");
+    expect(fs.existsSync(path.dirname(args.at(-1)!))).toBe(false);
+  });
+  it("preserves relay operation and removal when private temporary storage is unavailable", async () => {
+    const unavailable = path.join(path.dirname(summaryFile()), "absent");
+    vi.spyOn(os, "tmpdir").mockReturnValue(unavailable);
+    const f = runtimeFixture();
+    const relay = await f.start();
+    await relay.close();
+    expect(f.hostCommand).not.toHaveBeenCalled();
+    expect(f.command.mock.calls.filter(([args]) => args[1] === "cp")).toEqual([]);
+    expect(f.command.mock.calls.at(-1)?.[0].slice(0, 3)).toEqual(["container", "rm", "--force"]);
+  });
+  it("removes the private copy and relay when the host schema reader throws", async () => {
+    const f = runtimeFixture();
+    const relay = await f.start();
+    f.hostCommand.mockRejectedValueOnce(new Error("reader unavailable"));
+    await relay.close();
+    const copy = f.command.mock.calls.filter(([args]) => args[1] === "cp").at(-1)![0];
+    expect(fs.existsSync(path.dirname(copy.at(-1)!))).toBe(false);
+    expect(f.command.mock.calls.at(-1)?.[0].slice(0, 3)).toEqual(["container", "rm", "--force"]);
+  });
+  it("removes the private copy even when owned relay removal fails", async () => {
+    const f = runtimeFixture({ removalNonzero: true });
+    const relay = await f.start();
+    await expect(relay.close()).rejects.toThrow("remove owned routed-private relay");
+    const copy = f.command.mock.calls.filter(([args]) => args[1] === "cp").at(-1)![0];
+    expect(fs.existsSync(path.dirname(copy.at(-1)!))).toBe(false);
   });
   it("removes an owned relay after the runtime creates it but fails to start it", async () => {
     const f = runtimeFixture({ startNonzero: true, snapshotNonzero: true });

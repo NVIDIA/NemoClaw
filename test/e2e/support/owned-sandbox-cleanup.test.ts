@@ -67,7 +67,8 @@ function fixture() {
       return results[args[0]]!;
     });
   const cleanup = new CleanupRegistry();
-  const prepare = () => prepareOwnedSandboxForOnboard(host, sandbox, cleanup, "e2e-mcp-bridge");
+  const prepare = (orphanGatewayName?: string) =>
+    prepareOwnedSandboxForOnboard(host, sandbox, cleanup, "e2e-mcp-bridge", orphanGatewayName);
   return { calls, host, sandbox, openshell, gateway, presentGateway, cleanup, prepare };
 }
 
@@ -177,7 +178,7 @@ describe("owned-sandbox cleanup", () => {
       f.gateway.response = { stdout: JSON.stringify({ gateway: "nemoclaw-9443" }) };
       return { exitCode: 0 } as ShellProbeResult;
     });
-    await f.prepare();
+    await f.prepare("nemoclaw-8888");
     expect(f.host.cleanupSandbox).toHaveBeenCalledWith(
       "e2e-mcp-bridge",
       expect.objectContaining({
@@ -279,4 +280,12 @@ describe("owned-sandbox cleanup", () => {
     ]);
     expect(f.calls.at(-1)).toBe("cli:cleanup-destroy-sandbox");
   });
+});
+
+it("rejects an invalid explicit orphan gateway before cleanup mutation", async () => {
+  state.registered = false;
+  const f = fixture();
+  await expect(f.prepare("unrelated")).rejects.toThrow("Invalid persisted sandbox gateway binding");
+  expect(f.openshell).not.toHaveBeenCalled();
+  expect(f.host.command).not.toHaveBeenCalled();
 });
