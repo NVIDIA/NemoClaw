@@ -487,7 +487,7 @@ describe("connectSandbox probe-only observe mode", () => {
 
   it("starts a stopped sibling-root sandbox through its owning gateway", async () => {
     const harness = createConnectHarness({
-      registryEntry: { gatewayName: "nemoclaw-8245", gatewayPort: 8245 },
+      registryEntry: { gatewayName: "nemoclaw", gatewayPort: 8245 },
       sandboxGetPhase: "Stopped",
       listOutput: "alpha Ready",
     });

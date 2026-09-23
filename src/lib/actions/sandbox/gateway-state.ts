@@ -1016,7 +1016,7 @@ export async function startStoppedSandboxContainerForProbeRecovery(
     console.error(missing.message);
     return false;
   }
-  const gatewayName = sandbox.gatewayName ?? "nemoclaw";
+  const gatewayName = getPersistedSandboxTargetGatewayName(sandbox);
   const probe = (deps.capture ?? captureOpenshell)(
     ["sandbox", "get", "-g", gatewayName, sandboxName],
     { ignoreError: true, timeout: RECOVER_CONTAINER_START_TIMEOUT_MS },
