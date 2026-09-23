@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { resolveSandboxGatewayName } from "../../../src/lib/onboard/gateway-binding.ts";
+import { getSandbox } from "../../../src/lib/state/registry.ts";
 import { assertCleanupSucceededOrAbsent } from "./cleanup-resources.ts";
 import type { CleanupRegistry } from "./cleanup.ts";
 import type { HostCliClient } from "./clients/host.ts";
@@ -17,18 +19,32 @@ export async function prepareOnboardSandboxes(
   providerName: string,
   options: ShellProbeRunOptions,
 ): Promise<void> {
-  const gatewayName = options.env?.OPENSHELL_GATEWAY;
-  if (!gatewayName?.trim()) throw new Error("Onboard cleanup requires a named gateway");
+  const callerGateway = options.env?.OPENSHELL_GATEWAY;
+  if (!callerGateway?.trim()) throw new Error("Onboard cleanup requires a named gateway");
+  const retainedGateways = new Set(
+    sandboxNames.flatMap((name) => {
+      const registered = getSandbox(name);
+      return registered ? [resolveSandboxGatewayName(registered)] : [];
+    }),
+  );
+  if (retainedGateways.size > 1) throw new Error("Onboard cleanup has mixed retained gateways");
+  const gatewayName =
+    retainedGateways.values().next().value ??
+    resolveSandboxGatewayName({ gatewayName: callerGateway });
+  const selectedOptions = {
+    ...options,
+    env: { ...options.env, OPENSHELL_GATEWAY: gatewayName },
+  };
   for (const name of sandboxNames) {
     await prepareOwnedSandboxForOnboard(host, sandbox, cleanup, name, gatewayName);
   }
-  if (!(await sandbox.hasGatewayForInitialCleanup(gatewayName, options))) return;
+  if (!(await sandbox.hasGatewayForInitialCleanup(gatewayName, selectedOptions))) return;
   await host.cleanupForward(18789, {
-    ...options,
+    ...selectedOptions,
     artifactName: "precleanup-forward-stop-18789",
   });
   const remove = await sandbox.openshell(["provider", "delete", "-g", gatewayName, providerName], {
-    ...options,
+    ...selectedOptions,
     artifactName: "precleanup-live-extra-provider-delete",
   });
   assertCleanupSucceededOrAbsent(

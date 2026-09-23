@@ -232,12 +232,12 @@ function runtimeFixture(
         artifacts: { stdout: "", stderr: "", result: "" },
       };
     });
-  const hostCommand = vi.fn(async (_command: string, args: string[]) => ({
+  const hostCommand = vi.fn(async (command: string, args: string[]) => ({
     command: [],
     exitCode: 0,
     signal: null,
     timedOut: false,
-    stdout: execFileSync(process.execPath, args, { encoding: "utf8" }),
+    stdout: execFileSync(command, args, { encoding: "utf8" }),
     stderr: "",
     artifacts: { stdout: "", stderr: "", result: "" },
   }));

@@ -102,12 +102,14 @@ function isFastPrTest(file: string): boolean {
 export function validateMockParity(options: {
   manifest: MockParityManifest;
   baseManifest?: MockParityManifest;
+  changedFastTestRenames?: ReadonlyMap<string, string>;
   changedFiles: readonly string[];
   fileExists?: (file: string) => boolean;
 }): string[] {
   const {
     manifest,
     baseManifest,
+    changedFastTestRenames = new Map<string, string>(),
     changedFiles,
     fileExists = (file) => fs.existsSync(path.join(REPO_ROOT, file)),
   } = options;
@@ -193,13 +195,27 @@ export function validateMockParity(options: {
   }
 
   const changedFileSet = new Set(changedFiles);
-  const requireChangedFastTest = (entry: MockParityEntry, changedSource: string): void => {
+  const requireChangedFastTest = (
+    entry: MockParityEntry,
+    changedSource: string,
+    allowRename = false,
+  ): void => {
     const mappedFastTests = Array.isArray(entry.fast)
       ? entry.fast.filter((fastFile): fastFile is string => typeof fastFile === "string")
       : [];
     if (
       mappedFastTests.length > 0 &&
-      !mappedFastTests.some((fastFile) => changedFileSet.has(fastFile))
+      !mappedFastTests.some((fastFile) => {
+        if (changedFileSet.has(fastFile)) return true;
+        const replacement = allowRename ? changedFastTestRenames.get(fastFile) : undefined;
+        return (
+          replacement !== undefined &&
+          isFastPrTest(replacement) &&
+          fileExists(replacement) &&
+          changedFileSet.has(replacement) &&
+          entries.get(entry.live)?.fast?.includes(replacement)
+        );
+      })
     ) {
       errors.push(
         changedSource === entry.live
@@ -223,7 +239,7 @@ export function validateMockParity(options: {
   for (const entry of baseManifest?.entries ?? []) {
     for (const source of entry.liveSources ?? []) {
       if (SHARED_FIXTURE.test(source) && changedFileSet.has(source)) {
-        requireChangedFastTest(entry, source);
+        requireChangedFastTest(entry, source, true);
       }
     }
   }
@@ -314,6 +330,34 @@ export function collectMockParityChangedFiles(
   );
 }
 
+/** Only semantically changed fast tests with Git-proven rename lineage can replace base obligations. */
+export function collectChangedFastTestRenames(
+  base: string,
+  head: string,
+  repoRoot = REPO_ROOT,
+): Map<string, string> {
+  const fields = execFileSync(
+    "git",
+    ["diff", "--name-status", "-z", "--find-renames", "--diff-filter=R", `${base}...${head}`],
+    {
+      cwd: repoRoot,
+      encoding: "utf8",
+    },
+  ).split("\0");
+  const renames = new Map<string, string>();
+  for (let index = 0; index + 2 < fields.length; index += 3) {
+    const oldPath = fields[index + 1]!;
+    const newPath = fields[index + 2]!;
+    if (!isFastPrTest(oldPath) || !isFastPrTest(newPath)) continue;
+    const before = sourceAtRef(base, oldPath, repoRoot);
+    const after = sourceAtRef(head, newPath, repoRoot);
+    if (before !== null && after !== null && isMockParityRelevantSourceChange(before, after)) {
+      renames.set(oldPath, newPath);
+    }
+  }
+  return renames;
+}
+
 function main(): void {
   const base = argument("--base");
   const head = argument("--head") ?? "HEAD";
@@ -332,6 +376,7 @@ function main(): void {
     manifest,
     baseManifest,
     changedFiles: collectMockParityChangedFiles(base, head),
+    changedFastTestRenames: collectChangedFastTestRenames(base, head),
   });
   if (errors.length > 0) {
     console.error(

@@ -7,9 +7,13 @@ import { SandboxClient } from "../fixtures/clients/sandbox.ts";
 import { prepareOnboardSandboxes } from "../fixtures/onboard-precleanup.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 
-const state = vi.hoisted(() => ({ registered: new Set<string>() }));
+const state = vi.hoisted(() => ({
+  registered: new Set<string>(),
+  bindings: new Map<string, string>(),
+}));
 vi.mock("../../../src/lib/state/registry.ts", () => ({
-  getSandbox: (name: string) => (state.registered.has(name) ? { name } : null),
+  getSandbox: (name: string) =>
+    state.registered.has(name) ? { name, gatewayName: state.bindings.get(name) } : null,
 }));
 const names = ["e2e-repair", "e2e-repair-other"] as const;
 const response = (patch: Partial<ShellProbeResult> = {}): ShellProbeResult => ({
@@ -66,12 +70,25 @@ function fixture(present = false, gatewayName = "nemoclaw") {
   const prepare = (selectedNames: readonly string[] = names) =>
     prepareOnboardSandboxes(host, sandbox, cleanup, selectedNames, "e2e-live-extra-provider", {
       artifactName: "precleanup-gateway-inspection",
-      env: { OPENSHELL_GATEWAY: gatewayName, NEMOCLAW_GATEWAY_RUNTIME: "podman" },
+      env: {
+        OPENSHELL_GATEWAY: gatewayName,
+        NEMOCLAW_GATEWAY_RUNTIME: "podman",
+      },
     });
-  return { calls, host, sandbox, openshell, inspect, removeProvider, cleanup, prepare };
+  return {
+    calls,
+    host,
+    sandbox,
+    openshell,
+    inspect,
+    removeProvider,
+    cleanup,
+    prepare,
+  };
 }
 beforeEach(() => {
   state.registered.clear();
+  state.bindings.clear();
   vi.stubEnv("OPENSHELL_GATEWAY", "nemoclaw");
 });
 afterEach(() => vi.unstubAllEnvs());
@@ -176,3 +193,42 @@ it("uses the caller's nondefault gateway for unregistered orphan cleanup in both
   expect(f.host.command).not.toHaveBeenCalled();
   expect(f.host.cleanupSandbox).not.toHaveBeenCalled();
 });
+
+it("uses retained gateway authority for orphan and ancillary cleanup", async () => {
+  const f = fixture(true, "nemoclaw-8111");
+  state.registered.add(names[0]);
+  state.bindings.set(names[0], "nemoclaw-8111");
+  await prepareOnboardSandboxes(f.host, f.sandbox, f.cleanup, names, "e2e-live-extra-provider", {
+    env: {
+      OPENSHELL_GATEWAY: "nemoclaw-8222",
+      NEMOCLAW_GATEWAY_RUNTIME: "podman",
+    },
+  });
+  expect(f.host.cleanupForward).toHaveBeenCalledWith(
+    18789,
+    expect.objectContaining({
+      env: expect.objectContaining({
+        OPENSHELL_GATEWAY: "nemoclaw-8111",
+        NEMOCLAW_GATEWAY_RUNTIME: "podman",
+      }),
+    }),
+  );
+  expect(f.openshell).toHaveBeenLastCalledWith(
+    ["provider", "delete", "-g", "nemoclaw-8111", "e2e-live-extra-provider"],
+    expect.objectContaining({
+      env: expect.objectContaining({ OPENSHELL_GATEWAY: "nemoclaw-8111" }),
+    }),
+  );
+});
+
+it.each(["nemoclaw-8333", "../invalid"])(
+  "rejects inconsistent or invalid retained gateway %s before mutation",
+  async (second) => {
+    const f = fixture(true, "nemoclaw-8111");
+    names.forEach((name) => state.registered.add(name));
+    state.bindings.set(names[0], "nemoclaw-8111");
+    state.bindings.set(names[1], second);
+    await expect(f.prepare()).rejects.toThrow();
+    expect(f.calls).toEqual([]);
+  },
+);

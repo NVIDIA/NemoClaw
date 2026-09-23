@@ -8,6 +8,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   collectMockParityChangedFiles,
+  collectChangedFastTestRenames,
   filterMockParityRelevantChangedFiles,
   isMockParityRelevantSourceChange,
   type MockParityManifest,
@@ -465,4 +466,87 @@ it("describes both supported liveSources kinds in invalid-entry diagnostics", ()
       fileExists: exists,
     }),
   ).toEqual([`${live}: liveSources must be an array of live E2E helper or shared fixture paths`]);
+});
+
+const renameFixture = "test/e2e/fixtures/owned.ts";
+const replacementTest = "test/e2e/support/replacement.test.ts";
+const renameSource = Array.from({ length: 20 }, (_, i) => `export const case${i}=${i};\n`).join("");
+const replacementEntry = { live, liveSources: [renameFixture], fast: [replacementTest] };
+const missingChangedTest = `${renameFixture}: change at least one fast PR test mapped from ${live}`;
+it.each([
+  {
+    kind: "changed rename",
+    operation: ["mv", fast, replacementTest],
+    source: `${renameSource}export const regression = 21;\n`,
+    entries: [replacementEntry],
+    expected: [],
+  },
+  {
+    kind: "unchanged rename",
+    operation: ["mv", fast, replacementTest],
+    source: renameSource,
+    entries: [replacementEntry],
+    expected: [missingChangedTest],
+  },
+  {
+    kind: "unrelated deletion",
+    operation: ["rm", fast],
+    source: "export const unrelated = true;\n",
+    entries: [replacementEntry],
+    expected: [missingChangedTest],
+  },
+  {
+    kind: "wrong owner",
+    operation: ["mv", fast, replacementTest],
+    source: `${renameSource}export const regression = 21;\n`,
+    entries: [
+      { ...replacementEntry, fast: [fast] },
+      { live: "test/e2e/live/other.test.ts", fast: [replacementTest] },
+    ],
+    expected: [missingChangedTest],
+  },
+])("preserves base fast-test obligations for $kind", ({ operation, source, entries, expected }) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "parity-fast-rename-"));
+  const git = (...args: string[]) =>
+    execFileSync("git", args, { cwd: root, encoding: "utf8" }).trim();
+  const write = (file: string, contents: string) => {
+    fs.mkdirSync(path.dirname(path.join(root, file)), { recursive: true });
+    fs.writeFileSync(path.join(root, file), contents);
+  };
+  const commit = () => {
+    git("add", ".");
+    git(
+      "-c",
+      "user.name=Parity Test",
+      "-c",
+      "user.email=parity@example.invalid",
+      "-c",
+      "commit.gpgsign=false",
+      "commit",
+      "-qm",
+      "test",
+    );
+  };
+  try {
+    git("init", "-q");
+    write(renameFixture, "export const value = 1;\n");
+    write(fast, renameSource);
+    commit();
+    const base = git("rev-parse", "HEAD");
+    git(...operation);
+    write(replacementTest, source);
+    write(renameFixture, "export const value = 2;\n");
+    commit();
+    expect(
+      validateMockParity({
+        manifest: manifest(entries),
+        baseManifest: manifest([{ ...replacementEntry, fast: [fast] }]),
+        changedFiles: collectMockParityChangedFiles(base, "HEAD", root),
+        changedFastTestRenames: collectChangedFastTestRenames(base, "HEAD", root),
+        fileExists: () => true,
+      }),
+    ).toEqual(expected);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 });
