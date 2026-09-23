@@ -5553,8 +5553,10 @@ if [ "$(id -u)" -ne 0 ]; then
   # Apply manifest-declared runtime env aliases before any child inherits the
   # env. This covers both one-shot commands and the gateway launch.
   apply_messaging_runtime_env_aliases
-  write_auth_profile
-  harden_auth_profiles
+  if is_managed_inference_route; then
+    write_auth_profile
+    harden_auth_profiles
+  fi
 
   if [ ${#NEMOCLAW_CMD[@]} -gt 0 ]; then
     install_messaging_runtime_preloads
@@ -5593,6 +5595,10 @@ if [ "$(id -u)" -ne 0 ]; then
   fix_openclaw_ownership
   normalize_mutable_config_perms
   seed_default_workspace_templates /sandbox/.openclaw/workspace "" /sandbox/.openclaw/openclaw.json
+  if ! is_managed_inference_route; then
+    write_auth_profile
+  fi
+  harden_auth_profiles
 
   prepare_auto_pair_log
 

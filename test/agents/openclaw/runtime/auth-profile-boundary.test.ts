@@ -66,17 +66,17 @@ function startupSection(startMarker: string, endMarker: string, region: string):
   return START_SOURCE.slice(start, end);
 }
 
-function rootDoctorBlock(): string {
+function doctorBlock(kind: "non-root" | "root" = "root"): string {
   return startupSection(
-    "configure_messaging_channels\n",
+    kind === "root" ? "configure_messaging_channels\n" : "  apply_messaging_runtime_env_aliases\n",
     "refresh_openclaw_provider_placeholders\n",
-    "# ── Root path",
+    kind === "root" ? "# ── Root path" : "# ── Non-root fallback",
   );
 }
 
 function startupCredentialBoundaryBlock(kind: "non-root" | "root"): string {
   return kind === "root"
-    ? `${rootDoctorBlock()}\n${startupSection("# Write direct-route profiles after Doctor", "\nprepare_auto_pair_log", "# ── Root path")}`
+    ? `${doctorBlock()}\n${startupSection("# Write direct-route profiles after Doctor", "\nprepare_auto_pair_log", "# ── Root path")}`
     : startupSection(
         "  apply_messaging_runtime_env_aliases\n",
         "\n  configure_messaging_channels",
@@ -212,7 +212,14 @@ describe("OpenClaw auth-profile boundary", () => {
     expect(fs.readFileSync(fixture.authPath, "utf-8")).toBe(JSON.stringify(profiles));
   });
 
-  it.each(["managed", "direct"])("presents configured %s profiles to root Doctor", (route) => {
+  // This component fixture observes the profiles passed to Doctor. Native Doctor/agent
+  // compatibility belongs to full-e2e; rebuild-openclaw owns offline Doctor repairs.
+  it.each([
+    ["root", "managed"],
+    ["root", "direct"],
+    ["non-root", "managed"],
+    ["non-root", "direct"],
+  ] as const)("presents configured %s %s profiles to Doctor", (kind, route) => {
     const custom = legacyProfile("custom", "CUSTOM_API_KEY");
     const profiles = { "openai:manual": legacyProfile("openai"), "custom:manual": custom };
     const fixture = runBashAuthFixture(
@@ -226,10 +233,13 @@ describe("OpenClaw auth-profile boundary", () => {
         extractShellFunctionFromSource(START_SOURCE, "setup_auth_profile_as_sandbox"),
         // Keep fixture HOME instead of switching users; reconciliation remains real.
         "run_step_down_as_sandbox() { write_auth_profile; }",
+        "NEMOCLAW_CMD=()",
+        "apply_messaging_runtime_env_aliases() { :; }",
+        "harden_auth_profiles() { :; }",
         "configure_messaging_channels() { :; }",
         `run_requested_openclaw_post_upgrade_doctor() { ${credentialProbe} >&2; cat "$HOME/.openclaw/agents/main/agent/auth-profiles.json"; }`,
         "clear_managed_inference_credentials",
-        rootDoctorBlock(),
+        doctorBlock(kind),
       ].join("\n"),
     );
     expect(fixture.status, fixture.stderr).toBe(0);
@@ -242,18 +252,18 @@ describe("OpenClaw auth-profile boundary", () => {
   });
 
   it.each([
-    ["non-root", "managed"],
-    ["root", "managed"],
-    ["non-root", "direct"],
-    ["root", "direct"],
+    ["non-root", "managed", true],
+    ["root", "managed", true],
+    ["non-root", "direct", false],
+    ["root", "direct", true],
   ] as const)(
     "passes only allowed credentials to setup and command children in %s startup for %s routes",
-    (kind, route) => {
+    (kind, route, writesProfile) => {
       const result = runStartupCredentialBoundary(kind, route);
       const credentials = route === "managed" ? "unset\nunset" : "primary-secret\nlegacy-secret";
       expect(result.status, result.stderr).toBe(0);
       expect(result.stdout.trim()).toBe(
-        [credentials, credentials, "command", credentials].join("\n"),
+        [credentials, ...(writesProfile ? [credentials] : []), "command", credentials].join("\n"),
       );
     },
   );
