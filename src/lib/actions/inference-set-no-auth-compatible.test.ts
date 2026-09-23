@@ -10,10 +10,9 @@ import {
   createDeps,
 } from "./inference-set.test-support";
 
-// Port 11434 is one of the loopback ports NemoClaw publishes on the OpenShell
-// sandbox bridge, so it selects the same no-auth proxy route the reporter's
-// vLLM-port endpoint used, without depending on NEMOCLAW_VLLM_PORT.
-const NO_AUTH_ENDPOINT_URL = "http://127.0.0.1:11434/v1";
+// The protected no-auth proxy may forward to an explicitly configured
+// unprivileged loopback port that is not a bundled direct bridge route.
+const NO_AUTH_ENDPOINT_URL = "http://127.0.0.1:12500/v1";
 const NO_AUTH_CREDENTIAL_ENV = "NEMOCLAW_OLLAMA_PROXY_TOKEN";
 
 const CONFIG = {
@@ -152,6 +151,34 @@ describe("runInferenceSet on a loopback no-auth compatible endpoint", () => {
       "alpha",
       expect.objectContaining({ credentialEnv: NO_AUTH_CREDENTIAL_ENV }),
     ]);
+  });
+
+  it("keeps the qualified context window when the endpoint has no authoritative probe", async () => {
+    const config = {
+      agents: { defaults: { model: { primary: "inference/model-a" } } },
+      models: {
+        providers: {
+          inference: {
+            api: "openai-completions",
+            models: [{ id: "model-a", name: "inference/model-a", contextWindow: 16384 }],
+          },
+        },
+      },
+    };
+    const deps = createDeps({
+      config,
+      entry: noAuthEntry(),
+      session: noAuthSession(),
+      captureOpenshell: noAuthProviderCapture(),
+      contextWindow: null,
+    });
+
+    await runInferenceSet({ provider: "compatible-endpoint", model: "model-b" }, deps);
+
+    expect(config.models.providers.inference.models[0].contextWindow).toBe(16384);
+    expect(deps.calls.log.mock.calls.flat().join("\n")).toMatch(
+      /could not determine the context window/i,
+    );
   });
 
   it("refuses a foreign live binding before selecting the route with no endpoint options", async () => {

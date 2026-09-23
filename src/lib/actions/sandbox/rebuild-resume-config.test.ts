@@ -81,6 +81,30 @@ describe("getRebuildCredentialEnvFromRegistry", () => {
     );
   });
 
+  it("preserves the no-auth proxy credential only for a safe loopback route", () => {
+    expect(
+      getRebuildCredentialEnvFromRegistry(
+        "compatible-endpoint",
+        "NEMOCLAW_OLLAMA_PROXY_TOKEN",
+        "http://localhost:12500/v1",
+      ),
+    ).toBe("NEMOCLAW_OLLAMA_PROXY_TOKEN");
+    expect(
+      getRebuildCredentialEnvFromRegistry(
+        "compatible-endpoint",
+        "NEMOCLAW_OLLAMA_PROXY_TOKEN",
+        "https://inference.example.test/v1",
+      ),
+    ).toBe("COMPATIBLE_API_KEY");
+    expect(
+      getRebuildCredentialEnvFromRegistry(
+        "compatible-endpoint",
+        "NEMOCLAW_OLLAMA_PROXY_TOKEN",
+        "http://localhost:999/v1",
+      ),
+    ).toBe("COMPATIBLE_API_KEY");
+  });
+
   it("returns null for local and unset providers", () => {
     expect(getRebuildCredentialEnvFromRegistry("ollama-local")).toBeNull();
     expect(getRebuildCredentialEnvFromRegistry(null)).toBeNull();

@@ -3,7 +3,9 @@
 
 import { D, R } from "../../cli/terminal-style";
 import { unsafeEndpointUrlViolation } from "../../core/endpoint-url-safety";
+import { OLLAMA_LOCAL_CREDENTIAL_ENV } from "../../inference/ollama/contract";
 import type { InferenceSelection } from "../../inference/selection";
+import { isLoopbackNoAuthCompatibleEndpointUrl } from "../../onboard/inference-providers/compatible-endpoint-gateway-route";
 import type { RegistryInferenceRoute } from "../../onboard/rebuild-route-handoff";
 import { isRecoveredProviderCredentialReuseSelectionKey } from "../../onboard/recovered-provider-reuse";
 import {
@@ -78,8 +80,16 @@ function providerRecordedCredentialEnv(
 export function getRebuildCredentialEnvFromRegistry(
   provider: string | null | undefined,
   recordedCredentialEnv?: string | null,
+  recordedEndpointUrl?: string | null,
 ): string | null {
   if (!provider || isLocalInferenceProvider(provider)) return null;
+  if (
+    provider === "compatible-endpoint" &&
+    recordedCredentialEnv === OLLAMA_LOCAL_CREDENTIAL_ENV &&
+    isLoopbackNoAuthCompatibleEndpointUrl(provider, recordedEndpointUrl)
+  ) {
+    return OLLAMA_LOCAL_CREDENTIAL_ENV;
+  }
   const remoteConfig = canonicalRemoteProviderConfig(provider);
   if (remoteConfig?.credentialEnv) return remoteConfig.credentialEnv;
   return providerRecordedCredentialEnv(provider, recordedCredentialEnv);
@@ -226,6 +236,7 @@ export function assessRebuildInferencePreflight(options: {
     credentialEnv: getRebuildCredentialEnvFromRegistry(
       options.trustedSelection.provider,
       options.trustedSelection.credentialEnv,
+      options.registrySelection.endpointUrl,
     ),
     rebuildEndpoint,
     explicitTargetEndpoint,

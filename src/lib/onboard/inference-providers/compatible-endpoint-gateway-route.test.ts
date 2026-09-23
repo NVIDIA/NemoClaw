@@ -6,10 +6,33 @@ import { describe, expect, it, vi } from "vitest";
 import {
   COMPATIBLE_ENDPOINT_GATEWAY_PORTS,
   gatewayReachableCompatibleEndpointUrl,
+  isLoopbackNoAuthCompatibleEndpointUrl,
   reuseRegisteredProviderWithGatewayEndpoint,
 } from "./compatible-endpoint-gateway-route";
 
 describe("compatible endpoint gateway routing", () => {
+  it("recognizes protected no-auth proxy sources on unprivileged loopback ports", () => {
+    expect(
+      isLoopbackNoAuthCompatibleEndpointUrl("compatible-endpoint", "http://localhost:12500/v1"),
+    ).toBe(true);
+    expect(
+      isLoopbackNoAuthCompatibleEndpointUrl("compatible-endpoint", "http://127.0.0.1:19999/v1"),
+    ).toBe(true);
+    expect(
+      isLoopbackNoAuthCompatibleEndpointUrl("compatible-endpoint", "http://[::1]:12500/v1"),
+    ).toBe(true);
+  });
+
+  it.each([
+    ["remote host", "http://10.0.0.1:12500/v1"],
+    ["public host", "https://inference.example.test/v1"],
+    ["privileged port", "http://localhost:999/v1"],
+    ["userinfo", "http://user@localhost:12500/v1"],
+    ["query", "http://localhost:12500/v1?tenant=other"],
+  ])("rejects an unsafe no-auth proxy source: %s", (_label, endpointUrl) => {
+    expect(isLoopbackNoAuthCompatibleEndpointUrl("compatible-endpoint", endpointUrl)).toBe(false);
+  });
+
   it.each(["localhost", "127.0.0.1", "[::1]"])(
     "rewrites exact HTTP loopback hosts on bundled local-inference ports [case %#] (#5744)",
     (host) => {

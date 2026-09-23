@@ -123,8 +123,10 @@ const defaultContextWindowDeps: ContextWindowDeps = {
  *   same source onboard uses); null when the server is unreachable.
  * - llama-cpp-local: read authenticated native metadata for the served model;
  *   null when the server or its served context is unavailable.
- * - cloud providers: the onboard default. Accuracy is bounded by the missing
- *   per-model cloud context metadata (tracked as a separate issue).
+ * - custom compatible providers: null, because the configured endpoint owns
+ *   its context limit. The caller keeps the already-qualified value and warns.
+ * - canonical cloud providers: the onboard default. Accuracy is bounded by the
+ *   missing per-model cloud context metadata (tracked as a separate issue).
  */
 export function resolveContextWindowForModel(
   provider: string,
@@ -140,6 +142,9 @@ export function resolveContextWindowForModel(
   }
   if (provider === "llama-cpp-local") {
     return deps.probeLlamaCppContextWindow?.(model) ?? null;
+  }
+  if (provider === "compatible-endpoint" || provider === "compatible-anthropic-endpoint") {
+    return null;
   }
   return deps.defaultCloudContextWindow();
 }

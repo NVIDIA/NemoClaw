@@ -3,6 +3,7 @@
 
 import { VLLM_PORT } from "../../core/vllm-port";
 import { LLAMA_CPP_PORT } from "../../inference/llama-cpp/contract";
+import { isLoopbackHostname } from "../../private-networks";
 import type { RunOpenshell, UpsertProvider, UpsertProviderResult } from "./types";
 
 // Keep this list aligned with the materialized host.openshell.internal endpoints
@@ -18,6 +19,37 @@ export const COMPATIBLE_ENDPOINT_GATEWAY_PORTS = [11434, 11435, VLLM_PORT] as co
 
 const COMPATIBLE_ENDPOINT_GATEWAY_PORT_SET = new Set<number>(COMPATIBLE_ENDPOINT_GATEWAY_PORTS);
 const LOOPBACK_BRIDGE_PROVIDERS = new Set(["compatible-endpoint", "llama-cpp-local"]);
+
+/**
+ * Validate the source identity of a compatible endpoint onboarded through the
+ * protected no-auth proxy. The proxy may forward to any explicit unprivileged
+ * loopback port even though direct sandbox bridge routes use a fixed port set.
+ */
+export function isLoopbackNoAuthCompatibleEndpointUrl(
+  provider: string,
+  endpointUrl: string | null | undefined,
+): boolean {
+  if (provider !== "compatible-endpoint" || !endpointUrl) return false;
+  let parsed: URL;
+  try {
+    parsed = new URL(endpointUrl);
+  } catch {
+    return false;
+  }
+  const port = parsed.port ? Number(parsed.port) : null;
+  return (
+    parsed.protocol === "http:" &&
+    !parsed.username &&
+    !parsed.password &&
+    !parsed.search &&
+    !parsed.hash &&
+    isLoopbackHostname(parsed.hostname) &&
+    port !== null &&
+    Number.isInteger(port) &&
+    port >= 1024 &&
+    port <= 65535
+  );
+}
 
 // #5744: keep host-side validation on the user-entered loopback URL, but
 // register the sandbox route through OpenShell's host bridge. Remove this when

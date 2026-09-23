@@ -161,7 +161,11 @@ export function commitRebuildRoutePreflight(
         continue;
       }
       if (peerGatewayName !== input.gatewayName) continue;
-      const credentialEnv = getRebuildCredentialEnvFromRegistry(peer.provider, peer.credentialEnv);
+      const credentialEnv = getRebuildCredentialEnvFromRegistry(
+        peer.provider,
+        peer.credentialEnv,
+        peer.endpointUrl,
+      );
       if (!credentialEnv) continue;
       peer.credentialEnv = credentialEnv;
       migratedSandboxNames.push(peer.name);

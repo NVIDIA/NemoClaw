@@ -121,6 +121,13 @@ describe("resolveContextWindowForModel", () => {
     expect(deps.loadOllamaModel).not.toHaveBeenCalled();
     expect(deps.probeOllamaContextWindow).not.toHaveBeenCalled();
   });
+
+  it("keeps a custom compatible endpoint's qualified context window", () => {
+    const deps = makeDeps({ defaultCloudContextWindow: vi.fn(() => 131072) });
+
+    expect(resolveContextWindowForModel("compatible-endpoint", "custom/model", deps)).toBeNull();
+    expect(deps.defaultCloudContextWindow).not.toHaveBeenCalled();
+  });
 });
 
 describe("resolveContextWindowForModel default dependencies (#8974)", () => {

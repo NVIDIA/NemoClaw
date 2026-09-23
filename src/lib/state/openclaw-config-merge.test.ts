@@ -100,6 +100,34 @@ describe("mergeOpenClawRestoredConfig", () => {
     });
   });
 
+  it("keeps safe context and fresh multimodal capability during restore", () => {
+    const merged = mergeOpenClawRestoredConfig(
+      {
+        models: {
+          providers: {
+            inference: {
+              models: [{ id: "current", contextWindow: 131072, input: ["text"] }],
+            },
+          },
+        },
+      },
+      {
+        models: {
+          providers: {
+            inference: {
+              models: [{ id: "current", contextWindow: 16384, input: ["text", "image"] }],
+            },
+          },
+        },
+      },
+    ) as Record<string, any>;
+
+    expect(merged.models.providers.inference.models[0]).toMatchObject({
+      contextWindow: 16384,
+      input: ["text", "image"],
+    });
+  });
+
   it("re-owns primary model routing while retaining other native agent settings", () => {
     const merged = mergeOpenClawRestoredConfig(
       {

@@ -20,6 +20,13 @@ const exactGatewayProvider: GatewayProviderMetadata = {
   configKeys: ["OPENAI_BASE_URL"],
 };
 
+const noAuthGatewayProvider: GatewayProviderMetadata = {
+  name: "compatible-endpoint",
+  type: "openai",
+  credentialKeys: ["NEMOCLAW_OLLAMA_PROXY_TOKEN"],
+  configKeys: ["OPENAI_BASE_URL"],
+};
+
 function config(overrides: Partial<RebuildResumeConfig> = {}): RebuildResumeConfig {
   return {
     agent: null,
@@ -138,6 +145,31 @@ describe("checkRebuildGatewayCredentialReuseOrBail", () => {
         readGatewayProviderMetadata: async () => exactGatewayProvider,
         readRecordedProviderEndpoints: () => [],
       }),
+    ).resolves.toBe(true);
+  });
+
+  it("accepts the loopback no-auth proxy identity recorded by onboarding", async () => {
+    const noAuthConfig = config({
+      credentialEnv: "NEMOCLAW_OLLAMA_PROXY_TOKEN",
+      endpointUrl: "http://localhost:12500/v1",
+      registryInferenceRoute: {
+        ...config().registryInferenceRoute!,
+        endpointUrl: "http://localhost:12500/v1",
+      },
+    });
+
+    await expect(
+      checkRebuildGatewayCredentialReuseOrBail(
+        "alpha",
+        noAuthConfig,
+        false,
+        vi.fn(),
+        throwingBail,
+        {
+          readGatewayProviderMetadata: async () => noAuthGatewayProvider,
+          readRecordedProviderEndpoints: () => [],
+        },
+      ),
     ).resolves.toBe(true);
   });
 
