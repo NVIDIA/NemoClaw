@@ -160,7 +160,9 @@ describe("uninstall messaging for a preserved-but-orphaned sandbox registry (#65
             const key = [command, ...args].join(" ");
             return key === "openshell gateway list -o json"
               ? nextGatewayList()
-              : (responses.get(key) ??
+              : key === "openshell sandbox list"
+                ? ok("No sandboxes found.\n")
+                : (responses.get(key) ??
                   (command === "openshell"
                     ? notFound()
                     : args[0] === "-c"

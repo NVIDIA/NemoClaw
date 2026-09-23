@@ -25,7 +25,6 @@ import { DEFAULT_GATEWAY_PORT, GATEWAY_PORT } from "../../core/ports";
 import { isStdinTty, readLineFromStdin } from "../../core/stdin";
 import { sleepMs } from "../../core/wait";
 import {
-  OPENSHELL_SANDBOXES_DELETE_SKIP_MESSAGE,
   preservedRegistryUnrecoverableWarnings,
   providerDeleteSkipMessage,
   sandboxDeleteAbsentMessage,
@@ -125,6 +124,7 @@ import {
   stopOpenRouterRuntimeAdapter,
 } from "./openrouter-runtime-adapter-cleanup";
 import {
+  deleteAllSelectedGatewaySandboxes,
   deleteSelectedGatewaySandbox,
   isModelRouterPid,
   isOllamaAuthProxyPid,
@@ -1605,17 +1605,7 @@ async function removeOpenShellResources(
     runtime.log("Sibling gateways remain; kept shared OpenShell provider registrations.");
     return true;
   }
-  // #6520 sub-bug: a no-op delete must not print `Deleted … skipped`;
-  // wording lives in domain/uninstall/messaging.ts.
-  runOptional(
-    runtime,
-    "Deleted all OpenShell sandboxes",
-    "openshell",
-    ["sandbox", "delete", "--all"],
-    {
-      onSkip: OPENSHELL_SANDBOXES_DELETE_SKIP_MESSAGE,
-    },
-  );
+  if (!(await deleteAllSelectedGatewaySandboxes(runtime))) return false;
   const providerAdapter = createUninstallProviderAdapter(runtime.run, runtime.env);
   for (const providerName of NEMOCLAW_PROVIDERS) {
     const result = await providerAdapter.deleteProvider({

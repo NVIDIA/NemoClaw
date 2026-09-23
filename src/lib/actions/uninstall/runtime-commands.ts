@@ -9,6 +9,7 @@ import {
   type RunResult,
 } from "../../adapters/uninstall/commands";
 import {
+  OPENSHELL_SANDBOXES_DELETE_SKIP_MESSAGE,
   sandboxDeleteAbsentMessage,
   sandboxDeleteFailureMessage,
 } from "../../domain/uninstall/messaging";
@@ -35,6 +36,8 @@ const MANAGED_STARTUP_RECEIPT_VOLUME_PATTERN = new RegExp(
   `^${MANAGED_STARTUP_RECEIPT_VOLUME_PREFIX}-[0-9a-f]{32}$`,
   "u",
 );
+const BULK_DELETE_MAX_OBSERVATIONS = 5;
+const BULK_DELETE_REQUIRED_EMPTY_OBSERVATIONS = 2;
 
 function nonEmptyLines(output: string): string[] {
   return output
@@ -100,6 +103,38 @@ export async function deleteSelectedGatewaySandbox(
     if (attempt < 4) runtime.sleep?.(200);
   }
   runtime.warn(sandboxDeleteFailureMessage(sandboxName));
+  return false;
+}
+
+export async function deleteAllSelectedGatewaySandboxes(
+  runtime: UninstallRuntimeCommands,
+): Promise<boolean> {
+  const result = await createUninstallSandboxLifecycle(runtime.run, runtime.env).deleteAllSandboxes(
+    { target: { kind: "selected" } },
+  );
+  if (
+    result.kind === "failed" &&
+    result.error.kind === "command" &&
+    result.error.reason === "invalid_request"
+  ) {
+    runtime.warn("OpenShell rejected the selected-gateway sandbox cleanup request.");
+    return false;
+  }
+
+  const observer = createUninstallSandboxObserver(runtime.run, runtime.env);
+  let consecutiveEmptyObservations = 0;
+  for (let attempt = 0; attempt < BULK_DELETE_MAX_OBSERVATIONS; attempt += 1) {
+    const observed = await observer.listSandboxes({ target: { kind: "selected" } });
+    consecutiveEmptyObservations =
+      observed.ok && observed.value.sandboxes.length === 0 ? consecutiveEmptyObservations + 1 : 0;
+    if (consecutiveEmptyObservations >= BULK_DELETE_REQUIRED_EMPTY_OBSERVATIONS) {
+      if (result.kind === "accepted") runtime.log("Deleted all OpenShell sandboxes");
+      else runtime.warn(OPENSHELL_SANDBOXES_DELETE_SKIP_MESSAGE);
+      return true;
+    }
+    if (attempt < BULK_DELETE_MAX_OBSERVATIONS - 1) runtime.sleep?.(200);
+  }
+  runtime.warn("OpenShell sandbox cleanup was incomplete; preserving its state for retry.");
   return false;
 }
 
