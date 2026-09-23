@@ -77,12 +77,19 @@ unset -f nemoclaw_normalize_entrypoint_env_wrapper
 # OpenShell owns inference.local authentication. Clear its credential aliases
 # after entrypoint overrides are normalized, before setup can launch children.
 # Direct inference routes retain their credentials.
-clear_managed_inference_credentials() {
+is_managed_inference_route() {
   case "${NEMOCLAW_INFERENCE_BASE_URL:-}" in
     https://inference.local | https://inference.local/* | https://inference.local:443 | https://inference.local:443/*)
-      unset NVIDIA_INFERENCE_API_KEY NVIDIA_API_KEY
+      return 0
       ;;
   esac
+  return 1
+}
+
+clear_managed_inference_credentials() {
+  if is_managed_inference_route; then
+    unset NVIDIA_INFERENCE_API_KEY NVIDIA_API_KEY
+  fi
 }
 clear_managed_inference_credentials
 
@@ -2429,11 +2436,10 @@ prepare_gateway_token_for_current_command() {
 write_auth_profile() {
   local provider_key="${NEMOCLAW_INFERENCE_PROVIDER_ID:-${NEMOCLAW_PROVIDER_KEY:-inference}}"
 
-  case "${NEMOCLAW_INFERENCE_BASE_URL:-}" in
-    https://inference.local | https://inference.local/* | https://inference.local:443 | https://inference.local:443/*)
-      # Remove only the exact entries this function historically generated.
-      # Preserve user-managed direct-provider profiles if they share the file.
-      python3 - "$provider_key" <<'PYAUTH'
+  if is_managed_inference_route; then
+    # Remove only the exact entries this function historically generated.
+    # Preserve user-managed direct-provider profiles if they share the file.
+    python3 - "$provider_key" <<'PYAUTH'
 import json
 import os
 import secrets
@@ -2554,9 +2560,8 @@ try:
 finally:
     os.close(directory_fd)
 PYAUTH
-      return
-      ;;
-  esac
+    return
+  fi
 
   if [ -z "${NVIDIA_INFERENCE_API_KEY:-}" ] && [ -n "${NVIDIA_API_KEY:-}" ]; then
     export NVIDIA_INFERENCE_API_KEY="$NVIDIA_API_KEY"
@@ -4881,6 +4886,7 @@ setup_auth_profile_as_sandbox() {
   run_step_down_as_sandbox \
     "export HOME=/sandbox; write_auth_profile; harden_auth_profiles" \
     openclaw_config_dir_owner \
+    is_managed_inference_route \
     write_auth_profile \
     harden_auth_profiles
 }
@@ -5641,6 +5647,10 @@ apply_model_override
 reconcile_agent_model_with_provider
 apply_cors_override
 configure_messaging_channels
+# Remove the obsolete managed reference before Doctor can import it into SQLite.
+if is_managed_inference_route; then
+  setup_auth_profile_as_sandbox
+fi
 run_requested_openclaw_post_upgrade_doctor || exit 1
 refresh_openclaw_provider_placeholders
 ensure_mutable_openclaw_config_hash
@@ -5663,10 +5673,10 @@ apply_messaging_runtime_env_aliases
 install_messaging_runtime_preloads
 verify_messaging_runtime_secret_scans
 
-# Write auth profile as sandbox user and recursively re-tighten any
-# auth-profiles.json files under ~/.openclaw. See
-# setup_auth_profile_as_sandbox for the HOME-handling rationale.
-setup_auth_profile_as_sandbox
+# Write direct-route profiles after Doctor has migrated existing user profiles.
+if ! is_managed_inference_route; then
+  setup_auth_profile_as_sandbox
+fi
 
 # If a command was passed (e.g., "openclaw agent ..."), run it as sandbox user
 if [ ${#NEMOCLAW_CMD[@]} -gt 0 ]; then

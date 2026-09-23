@@ -3868,17 +3868,13 @@ describe("run_step_down_as_sandbox", () => {
 describe("setup_auth_profile_as_sandbox", () => {
   const src = fs.readFileSync(START_SCRIPT, "utf-8");
   const helper = [
+    extractShellFunctionFromSource(src, "is_managed_inference_route"),
     extractShellFunctionFromSource(src, "_step_down_extract_function"),
     extractShellFunctionFromSource(src, "run_step_down_as_sandbox"),
   ].join("\n");
   const setup = extractShellFunctionFromSource(src, "setup_auth_profile_as_sandbox");
   it("runs the auth-profile setup under HOME=/sandbox even when the parent env has HOME=/root", () => {
-    // setpriv preserves the parent shell's environment, so the root
-    // entrypoint's HOME=/root would otherwise leak into the step-down
-    // shell and `write_auth_profile`'s `~/.openclaw/...` expansion
-    // would target /root. Stub `write_auth_profile` to record the
-    // HOME the step-down shell actually observed and assert it was
-    // overridden to /sandbox.
+    // setpriv preserves HOME; profile setup must replace /root with /sandbox.
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-setup-auth-profile-"));
     const observedHome = path.join(tmpDir, "observed-home");
     const scriptPath = path.join(tmpDir, "run.sh");
@@ -4114,7 +4110,10 @@ describe("direct-root entrypoint composition under CAP_DAC_OVERRIDE drop", () =>
       extractShellFunctionFromSource(src, "_step_down_extract_function"),
       extractShellFunctionFromSource(src, "run_step_down_as_sandbox"),
     ].join("\n");
-    const setupAuth = extractShellFunctionFromSource(src, "setup_auth_profile_as_sandbox");
+    const setupAuth = [
+      extractShellFunctionFromSource(src, "is_managed_inference_route"),
+      extractShellFunctionFromSource(src, "setup_auth_profile_as_sandbox"),
+    ].join("\n");
     fs.writeFileSync(
       scriptPath,
       [
