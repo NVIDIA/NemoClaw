@@ -43,18 +43,20 @@ function fixture() {
       stderr: "No gateway configured.\n│ Register a gateway with: openshell gateway add <endpoint>",
     } as Partial<ShellProbeResult>,
   };
-  const openshell = vi.spyOn(sandbox, "openshell").mockImplementation(async (args, options) => {
-    calls.push(args.slice(0, 2).join(" "));
-    expect(options?.env?.OPENSHELL_GATEWAY).toBe(
-      process.env.OPENSHELL_GATEWAY?.trim() || "nemoclaw",
-    );
-    const results: Record<string, ShellProbeResult> = {
-      gateway: response(gateway.response),
-      sandbox: response(),
-    };
-    expect(results).toHaveProperty(args[0]);
-    return results[args[0]]!;
-  });
+  const openshell = vi
+    .spyOn(sandbox, "openshell")
+    .mockImplementation(async (args = [], options) => {
+      calls.push(args.slice(0, 2).join(" "));
+      expect(options?.env?.OPENSHELL_GATEWAY).toBe(
+        process.env.OPENSHELL_GATEWAY?.trim() || "nemoclaw",
+      );
+      const results: Record<string, ShellProbeResult> = {
+        gateway: response(gateway.response),
+        sandbox: response(),
+      };
+      expect(results).toHaveProperty(args[0]);
+      return results[args[0]]!;
+    });
   const cleanup = new CleanupRegistry();
   const prepare = () => prepareOwnedSandboxForOnboard(host, sandbox, cleanup, "e2e-mcp-bridge");
   return { calls, host, sandbox, openshell, gateway, presentGateway, cleanup, prepare };
