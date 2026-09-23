@@ -9,6 +9,7 @@ import {
   writePreGatewaySession,
   writeSelectedSandboxRegistry,
   writeRetainedUninstallState,
+  writeRetainedUninstallStateWithStaleLock,
 } from "../../../../test/support/uninstall-pre-gateway-session";
 import {
   withProvenManagedGatewayProcess,
@@ -434,7 +435,6 @@ describe("uninstall selected gateway-port segregation (#3053)", () => {
       writePreGatewaySession(stateRoot, port, "interrupted"),
     stateKept: false,
   };
-
   const inventoryArgs = [
     "ps",
     "-a",
@@ -450,7 +450,6 @@ describe("uninstall selected gateway-port segregation (#3053)", () => {
     prepareState: writeRetainedUninstallState,
     expectedDockerCalls: [["docker", ...inventoryArgs]],
   };
-
   const siblingContainer = "b".repeat(64);
   const siblingInspect = [
     "inspect",
@@ -465,7 +464,8 @@ describe("uninstall selected gateway-port segregation (#3053)", () => {
     {
       ...retainedUninstallBase,
       dockerInventory: ok(),
-      scenario: "purges retained user data after runtime cleanup",
+      prepareState: writeRetainedUninstallStateWithStaleLock,
+      scenario: "purges retained user data after reclaiming a stale sandbox lock",
     },
     {
       ...retainedUninstallBase,

@@ -7,6 +7,8 @@ import { fingerprintOpenShellSandboxId } from "../../src/lib/domain/sandbox/open
 
 import { bindGatewayAuthorityToCheckpoint } from "../../src/lib/onboard/gateway-authority-checkpoint";
 import { createSession } from "../../src/lib/state/onboard-session";
+import { createMcpLifecycleLockOwner } from "../../src/lib/state/mcp-lifecycle-lock-identity";
+import { getMcpLifecycleLockPath } from "../../src/lib/state/mcp-lifecycle-lock-storage";
 
 function writeCheckpointedPreGatewaySession(
   stateRoot: string,
@@ -134,4 +136,18 @@ export function writeRetainedUninstallState(
   fs.writeFileSync(path.join(stateRoot, "backups", "retained.txt"), "retained user data");
   if (withSibling)
     writeSelectedSandboxRegistry(path.resolve(stateRoot, "../.."), 8080, "sibling-native");
+}
+
+export function writeRetainedUninstallStateWithStaleLock(stateRoot: string, port: number): void {
+  writeRetainedUninstallState(stateRoot, port);
+  const lock = getMcpLifecycleLockPath("a4-test", path.join(stateRoot, "state"));
+  fs.mkdirSync(path.dirname(lock), { recursive: true, mode: 0o700 });
+  fs.writeFileSync(
+    lock,
+    JSON.stringify({
+      ...createMcpLifecycleLockOwner("a4-test", "abandoned-uninstall"),
+      pid: 2_147_483_647,
+    }),
+    { mode: 0o600 },
+  );
 }
