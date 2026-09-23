@@ -446,6 +446,16 @@ if [[ ( "$NEMOCLAW_FIXTURE_MODE" == "delayed-recording" || "$NEMOCLAW_FIXTURE_MO
   [[ "$NEMOCLAW_FIXTURE_MODE" != "provider-exit-after-recording" ]] || sleep 0.2
   exit "$status"
 fi
+if [[ "$NEMOCLAW_FIXTURE_MODE" == "provider-empty-message" && "$4" == "qualify" ]]; then
+  set +e
+  "$@"
+  status=$?
+  set -e
+  [[ "$status" == "0" ]] && exit 0
+  # Match OpenShell's sandbox-exec boundary, which reports any nonzero child
+  # status as a generic 1 while preserving the child's stderr diagnostic.
+  exit 1
+fi
 exec "$@"
 `,
     );

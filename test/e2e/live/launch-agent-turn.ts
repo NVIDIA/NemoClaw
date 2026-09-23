@@ -1526,11 +1526,13 @@ wait_for_turn_count() {
     else
       evidence_status=$?
     fi
+    # OpenShell normalizes a nonzero sandbox child status to 1. Classify the
+    # exact bounded diagnostic for both the direct and transport-level status.
+    case "$evidence_status" in
+      1|2) is_retryable_empty_message_evidence && fail_provider_unavailable ;;
+      3) fail_provider_unavailable ;;
+    esac
     if [[ "$evidence_status" != 1 ]]; then
-      case "$evidence_status" in
-        2) is_retryable_empty_message_evidence && fail_provider_unavailable ;;
-        3) fail_provider_unavailable ;;
-      esac
       fail_launch_session \
         "structured session evidence was invalid or unavailable (status $evidence_status)"
     fi
@@ -1683,7 +1685,7 @@ if session_evidence qualify 2 >/dev/null 2>"$evidence_error"; then
 else
   evidence_status=$?
   case "$evidence_status" in
-    2) is_retryable_empty_message_evidence && fail_provider_unavailable ;;
+    1|2) is_retryable_empty_message_evidence && fail_provider_unavailable ;;
     3) fail_provider_unavailable ;;
   esac
   fail_launch_session "launch final structured session evidence did not qualify (status $evidence_status)"
