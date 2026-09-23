@@ -739,6 +739,17 @@ describe("E2E workflow plan", () => {
   );
 
   it.each([
+    "scripts/nemoclaw-start.sh",
+    "src/lib/onboard/docker-startup-command-env.ts",
+    "src/lib/onboard/managed-workload/onboard-orchestration.ts",
+    "src/lib/onboard/sandbox-create-launch.ts",
+  ])("selects the Docker custom-image proof when %s changes", (changedFile) => {
+    expect(catalogueTargetsForChangedFiles([changedFile]).map((target) => target.id)).toContain(
+      "openclaw-inference-switch",
+    );
+  });
+
+  it.each([
     "src/lib/adapters/openshell/command-execution.ts",
     "src/lib/adapters/openshell/forward-cli.ts",
     "src/lib/adapters/openshell/forward-runtime.ts",

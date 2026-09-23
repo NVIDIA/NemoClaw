@@ -1147,7 +1147,13 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     installMode: "none",
     restoreCli: true,
     exposeCliBin: true,
-    owningPaths: ["test/e2e/live/openclaw-inference-switch-helpers.ts"],
+    owningPaths: [
+      "scripts/nemoclaw-start.sh",
+      "src/lib/onboard/docker-startup-command-env.ts",
+      "src/lib/onboard/managed-workload/onboard-orchestration.ts",
+      "src/lib/onboard/sandbox-create-launch.ts",
+      "test/e2e/live/openclaw-inference-switch-helpers.ts",
+    ],
     environment: {
       ...nonInteractive,
       NEMOCLAW_AGENT: "openclaw",
