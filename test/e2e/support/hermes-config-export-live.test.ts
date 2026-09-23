@@ -58,7 +58,6 @@ function exportedHermesDocument(
       sandboxes: [
         {
           name: "hermes",
-          image: null,
           runtime: { provider: "docker" },
           network: { policy: { explicit: {} } },
           harness: { kind: "hermes", interfaces },
@@ -109,7 +108,7 @@ function passingEvidence(): Extract<HermesConfigExportLiveEvidence, { outcome: "
     credentialValuesOmitted: true,
     identityDriftPreventedPublication: true,
     identityDriftReported: true,
-    managedImageIsNull: true,
+    managedImageIsOmitted: true,
     interfacesMatch: true,
     dashboardRuntimeMatches: true,
     inferenceEndpointMatches: true,
@@ -167,7 +166,7 @@ describe("Hermes config export live evidence", () => {
     "credentialValuesOmitted",
     "identityDriftPreventedPublication",
     "identityDriftReported",
-    "managedImageIsNull",
+    "managedImageIsOmitted",
     "interfacesMatch",
     "dashboardRuntimeMatches",
     "inferenceEndpointMatches",

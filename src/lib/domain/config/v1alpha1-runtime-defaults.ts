@@ -1,9 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+/** Target revision that owns the recorded omission behavior. */
+export const V1ALPHA1_RUNTIME_DEFAULTS_REVISION =
+  "88c6600c06b0937907290362eef86912052c4ad0" as const;
+
 /**
  * Effective v1 runtime values when the exporter omits a supported agent setting.
- * Recorded from v1 target revision 88c6600c06b0937907290362eef86912052c4ad0.
  * Keep these values separate from the v0 managed-startup profile defaults.
  */
 export const V1ALPHA1_RUNTIME_DEFAULTS = {

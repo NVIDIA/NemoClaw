@@ -161,7 +161,6 @@ const DeepAgentsExportSandboxSchema = Type.Object(
 const AgentExportSandboxSchema = Type.Object(
   {
     ...ExportSandboxFields,
-    image: Type.Null(),
     harness: Type.Object(
       {
         kind: Type.Union([Type.Literal("hermes"), Type.Literal("openclaw")]),

@@ -276,8 +276,7 @@ Export validates retained corporate certificate authority (CA) state but omits t
 Configure destination CA trust separately during onboarding; export does not change the source sandbox's trust.
 
 The v0 command projects verified source state into the pre-release v1alpha1 YAML shape.
-Managed OpenClaw and Hermes exports use `image: null` until v1 supplies the value.
-The unreleased v1 parser is not an acceptance gate for this staged output.
+Managed OpenClaw and Hermes exports omit `image` so v1 applies its managed image default.
 
 If staging cleanup fails, the diagnostic identifies the temporary file and its original directory by device and inode when that evidence is available.
 The directory can have moved from the requested output location.
