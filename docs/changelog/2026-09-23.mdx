@@ -23,9 +23,10 @@ It also strengthens host OS reporting and Windows WSL GPU verification.
   Related changes: [PR #11911](https://github.com/NVIDIA/NemoClaw/pull/11911) and [PR #12256](https://github.com/NVIDIA/NemoClaw/pull/12256).
   Refer to [Install OpenClaw Plugins](/user-guide/openclaw/manage-sandboxes/install-openclaw-plugins) and [Understand Gateway Lifecycle Control](/user-guide/openclaw/manage-sandboxes/configure-sandboxes/understand-gateway-lifecycle-control).
 - Sandbox status and recovery use the owning local gateway registry even when another gateway is active.
+  `connect --probe-only` starts a stopped sandbox through its recorded gateway, including a sibling registry root.
   Recovery guidance follows the recorded runtime provider, and rebuild delegates to the owning registry after confirmation.
   Resumed host-local inference onboarding reserves its retained authority before creating a runtime and reports actionable diagnostics when that reservation fails.
-  Related changes: [PR #11945](https://github.com/NVIDIA/NemoClaw/pull/11945) and [PR #12075](https://github.com/NVIDIA/NemoClaw/pull/12075).
+  Related changes: [PR #11945](https://github.com/NVIDIA/NemoClaw/pull/11945), [PR #12075](https://github.com/NVIDIA/NemoClaw/pull/12075), and [PR #12303](https://github.com/NVIDIA/NemoClaw/pull/12303).
   Refer to [Recover and Rebuild Sandboxes](/user-guide/openclaw/manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes).
 - Host readiness reports the Linux distribution and release, with warnings for unqualified or inconclusive OS evidence.
   Windows on Arm GPU verification checks every reported device and aggregate capacity without qualifying generic multi-GPU hosts for larger automatic Ollama model selection.
