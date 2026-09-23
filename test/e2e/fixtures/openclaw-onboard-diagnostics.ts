@@ -3,6 +3,7 @@
 
 import type { SandboxClient } from "./clients/sandbox.ts";
 import type { ShellProbeResult } from "./shell-probe.ts";
+import { captureOpenClawContainerFailure } from "./openclaw-container-diagnostics.ts";
 
 const LOG_PATHS = ["/tmp/nemoclaw-start.log", "/tmp/gateway.log", "/tmp/auto-pair.log"];
 
@@ -52,6 +53,7 @@ export async function captureOpenClawOnboardFailure(
     artifactPrefix: string;
     env: NodeJS.ProcessEnv;
     redactionValues: readonly string[];
+    runtime?: Parameters<typeof captureOpenClawContainerFailure>[0];
   },
 ): Promise<void> {
   if (install.exitCode === 0) return;
@@ -68,6 +70,17 @@ export async function captureOpenClawOnboardFailure(
     captureLimitBytes: 64 * 1024,
   };
   await Promise.allSettled([
+    ...(options.runtime
+      ? [
+          captureOpenClawContainerFailure(
+            options.runtime,
+            options.sandboxName,
+            options.artifactPrefix,
+            probeOptions,
+            buildOpenClawOnboardDiagnosticsCommand(),
+          ),
+        ]
+      : []),
     Promise.resolve().then(() =>
       sandbox.openshell(["sandbox", "get", options.sandboxName], {
         ...probeOptions,
