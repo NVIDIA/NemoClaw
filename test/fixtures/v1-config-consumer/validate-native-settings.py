@@ -74,6 +74,8 @@ def validate_openclaw(settings_by_sandbox):
 
 
 def validate_hermes(settings_by_sandbox):
+    fabric = importlib.import_module("fabric")
+    fabric.model_credential = lambda _inference: "fixture-credential"
     adapter = importlib.import_module("hermes_adapter")
     actual = {
         name: adapter.native_configuration(entry["settings"])["nemoclaw_interfaces"]
