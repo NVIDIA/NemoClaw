@@ -57,6 +57,10 @@ function resolveSandboxLifecycleEngine(
 
 const CONTAINER_ENGINE_PROBE_TIMEOUT_MS = 5_000;
 const CONTAINER_ENGINE_MUTATION_TIMEOUT_MS = 30_000;
+const STARTED_BACKUP_TRANSACTION_TIMEOUT_MS = 330_000;
+const STARTED_BACKUP_FINAL_BACKUP_RESERVE_MS = 120_000;
+const STARTED_BACKUP_STOP_RESERVE_MS = 30_000;
+const STARTED_BACKUP_RETRY_DELAY_MS = 2_000;
 const OPENSHELL_MANAGED_BY_LABEL = "openshell.ai/managed-by";
 const OPENSHELL_MANAGED_BY_VALUE = "openshell";
 const OPENSHELL_SANDBOX_NAME_LABEL = "openshell.ai/sandbox-name";
@@ -68,6 +72,7 @@ function captureSucceeded(result: RuntimeProviderCommandCapture): boolean {
 function listLabeledContainerNames(
   engine: SandboxLifecycleEngine,
   sandboxName: string,
+  timeoutMs: number = CONTAINER_ENGINE_PROBE_TIMEOUT_MS,
 ): string[] | null {
   const result = engine.capture(
     [
@@ -80,7 +85,7 @@ function listLabeledContainerNames(
       "--format",
       "{{.Names}}",
     ],
-    CONTAINER_ENGINE_PROBE_TIMEOUT_MS,
+    timeoutMs,
   );
   if (!captureSucceeded(result)) return null;
   return result.stdout
@@ -92,12 +97,21 @@ function listLabeledContainerNames(
 function inspectContainerStatus(
   engine: SandboxLifecycleEngine,
   containerName: string,
+  timeoutMs: number = CONTAINER_ENGINE_PROBE_TIMEOUT_MS,
 ): string | null {
   const result = engine.capture(
     ["inspect", "--format", "{{.State.Status}}", containerName],
-    CONTAINER_ENGINE_PROBE_TIMEOUT_MS,
+    timeoutMs,
   );
   return captureSucceeded(result) ? result.stdout.trim().toLowerCase() : null;
+}
+
+/** Remaining probe budget under the shared transaction deadline, or null when
+ * the deadline leaves no time and the probe must not start. */
+function remainingProbeTimeoutMs(deadlineMs: number | undefined, nowMs: number): number | null {
+  if (deadlineMs === undefined) return CONTAINER_ENGINE_PROBE_TIMEOUT_MS;
+  const remainingMs = Math.floor(deadlineMs - nowMs);
+  return remainingMs > 0 ? Math.min(CONTAINER_ENGINE_PROBE_TIMEOUT_MS, remainingMs) : null;
 }
 
 /**
@@ -132,8 +146,13 @@ interface StartDeps {
   listLabeledContainerNames: (
     engine: SandboxLifecycleEngine,
     sandboxName: string,
+    timeoutMs: number,
   ) => string[] | null;
-  inspectStatus: (engine: SandboxLifecycleEngine, containerName: string) => string | null;
+  inspectStatus: (
+    engine: SandboxLifecycleEngine,
+    containerName: string,
+    timeoutMs: number,
+  ) => string | null;
   createOpenShellLifecycle: () => OpenShellSandboxStateLifecycle;
   deadlineMs?: number;
   now: () => number;
@@ -163,7 +182,11 @@ export async function startStoppedSandboxContainerForBackup(
   if (!sandboxIdentityFingerprint) return null;
   const engine = deps.resolveLifecycleEngine(sandbox.openshellDriver);
   if (!engine) return null;
-  const labeledContainerNames = deps.listLabeledContainerNames(engine, sandboxName);
+  // Every provider probe runs inside the shared transaction deadline, so each
+  // one takes the smaller of its own budget and the time the deadline leaves.
+  const listTimeoutMs = remainingProbeTimeoutMs(deps.deadlineMs, deps.now());
+  if (listTimeoutMs === null) return null;
+  const labeledContainerNames = deps.listLabeledContainerNames(engine, sandboxName, listTimeoutMs);
   // Lifecycle mutation must fail closed on missing or ambiguous ownership.
   // Name matching alone is insufficient because starting a container executes
   // its entrypoint; label discovery establishes the OpenShell owner first.
@@ -177,10 +200,11 @@ export async function startStoppedSandboxContainerForBackup(
   // GPU recovery siblings must be renamed through the dedicated recovery flow
   // before they are startable as the sandbox's active container.
   if (/-nemoclaw-gpu-backup-\d+$/.test(containerName)) return null;
-  const status = deps.inspectStatus(engine, containerName);
+  const statusTimeoutMs = remainingProbeTimeoutMs(deps.deadlineMs, deps.now());
+  if (statusTimeoutMs === null) return null;
+  const status = deps.inspectStatus(engine, containerName, statusTimeoutMs);
   if (status !== "exited" && status !== "created") return null;
   const gatewayName = sandbox.gatewayName ?? "nemoclaw";
-  if (deps.deadlineMs !== undefined && deps.deadlineMs <= deps.now()) return null;
   const remainingMs =
     deps.deadlineMs === undefined
       ? engine.mutationTimeoutMs
@@ -233,7 +257,10 @@ export function isSandboxContainerDefinitivelyAbsent(
   sandboxName: string,
   depsOverride: Partial<ContainerAbsenceDeps> = {},
 ): boolean {
-  const deps: ContainerAbsenceDeps = { ...defaultContainerAbsenceDeps, ...depsOverride };
+  const deps: ContainerAbsenceDeps = {
+    ...defaultContainerAbsenceDeps,
+    ...depsOverride,
+  };
   const engine = deps.resolveLifecycleEngine(deps.getSandboxDriver(sandboxName));
   if (!engine) return false;
   const labeledContainerNames = deps.listLabeledContainerNames(engine, sandboxName);
@@ -252,23 +279,28 @@ const defaultStopDeps: StopDeps = {
 };
 
 /** Return a sandbox started by {@link startStoppedSandboxContainerForBackup}
- * to Stopped through OpenShell. Returns false when that operation fails. */
+ * to Stopped through OpenShell. Returns false when that operation fails.
+ *
+ * Cleanup owns a reserve that backup work cannot consume: leaving a sandbox
+ * running diverges from its recorded stopped state, so an exhausted shared
+ * deadline downgrades this identity-bound stop to its dedicated cleanup
+ * window instead of skipping it. Only the start side fails closed on expiry,
+ * because starting late adds a running container nothing asked for. */
 export async function returnSandboxContainerToStopped(
   started: StartedForBackup,
   depsOverride: Partial<StopDeps> = {},
 ): Promise<boolean> {
   const deps: StopDeps = { ...defaultStopDeps, ...depsOverride };
-  if (deps.deadlineMs !== undefined && deps.deadlineMs <= deps.now()) return false;
   const remainingMs =
     deps.deadlineMs === undefined
       ? started.mutationTimeoutMs
       : Math.floor(deps.deadlineMs - deps.now());
-  if (remainingMs <= 0) return false;
+  const cleanupWindowMs = Math.max(remainingMs, STARTED_BACKUP_STOP_RESERVE_MS);
   const result = await deps.createOpenShellLifecycle().stopSandbox({
     sandboxName: started.sandboxName,
     sandboxIdentityFingerprint: started.sandboxIdentityFingerprint,
     target: { kind: "named", gatewayName: started.gatewayName },
-    timeoutMs: Math.min(started.mutationTimeoutMs, remainingMs),
+    timeoutMs: Math.min(started.mutationTimeoutMs, cleanupWindowMs),
   });
   return result.kind === "accepted";
 }
@@ -281,11 +313,6 @@ interface BackupRetryDeps {
   delayMs: number;
   now: () => number;
 }
-
-const STARTED_BACKUP_TRANSACTION_TIMEOUT_MS = 330_000;
-const STARTED_BACKUP_FINAL_BACKUP_RESERVE_MS = 120_000;
-const STARTED_BACKUP_STOP_RESERVE_MS = 30_000;
-const STARTED_BACKUP_RETRY_DELAY_MS = 2_000;
 
 const defaultBackupRetryDeps: BackupRetryDeps = {
   backup: (name, deadlineMs) =>

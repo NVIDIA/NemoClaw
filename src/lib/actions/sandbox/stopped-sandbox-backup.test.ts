@@ -30,7 +30,11 @@ vi.mock("../../onboard/runtime-provider/selection", () => ({
       containerEngine: {
         supported: true,
         identities: [
-          { operation: "sandbox-lifecycle", engineId: normalized, displayName: normalized },
+          {
+            operation: "sandbox-lifecycle",
+            engineId: normalized,
+            displayName: normalized,
+          },
         ],
         capture: adapterMocks.providerCapture,
       },
@@ -138,6 +142,62 @@ describe("startStoppedSandboxContainerForBackup", () => {
 
     await expect(startStoppedSandboxContainerForBackup("my-sb", d)).resolves.toBeNull();
     expect(d.createOpenShellLifecycle().startSandbox).not.toHaveBeenCalled();
+  });
+
+  it("bounds each provider probe by the remaining transaction time", async () => {
+    const d = deps({
+      deadlineMs: 7_000,
+      now: () => 5_000,
+    });
+
+    await expect(startStoppedSandboxContainerForBackup("my-sb", d)).resolves.not.toBeNull();
+
+    expect(d.listLabeledContainerNames).toHaveBeenCalledWith(expect.anything(), "my-sb", 2_000);
+    expect(d.inspectStatus).toHaveBeenCalledWith(
+      expect.anything(),
+      "openshell-my-sb-abc123",
+      2_000,
+    );
+  });
+
+  it("gives each provider probe its own budget without a shared deadline", async () => {
+    const d = deps();
+
+    await expect(startStoppedSandboxContainerForBackup("my-sb", d)).resolves.not.toBeNull();
+
+    expect(d.listLabeledContainerNames).toHaveBeenCalledWith(expect.anything(), "my-sb", 5_000);
+    expect(d.inspectStatus).toHaveBeenCalledWith(
+      expect.anything(),
+      "openshell-my-sb-abc123",
+      5_000,
+    );
+  });
+
+  it("does not probe the provider after the shared deadline expires", async () => {
+    const d = deps({
+      deadlineMs: 5_000,
+      now: () => 5_000,
+    });
+
+    await expect(startStoppedSandboxContainerForBackup("my-sb", d)).resolves.toBeNull();
+    expect(d.listLabeledContainerNames).not.toHaveBeenCalled();
+    expect(d.inspectStatus).not.toHaveBeenCalled();
+  });
+
+  it("does not inspect container status after the listing consumes the deadline", async () => {
+    let now = 4_000;
+    const d = deps({
+      deadlineMs: 5_000,
+      listLabeledContainerNames: vi.fn(() => {
+        now = 5_000;
+        return ["openshell-my-sb-abc123"];
+      }),
+      now: () => now,
+    });
+
+    await expect(startStoppedSandboxContainerForBackup("my-sb", d)).resolves.toBeNull();
+    expect(d.listLabeledContainerNames).toHaveBeenCalledOnce();
+    expect(d.inspectStatus).not.toHaveBeenCalled();
   });
 
   it("uses the same OpenShell lifecycle path for a registered Podman provider", async () => {
@@ -262,7 +322,9 @@ describe("startStoppedSandboxContainerForBackup", () => {
   });
 
   it("refuses a labeled container whose name does not belong to the sandbox", async () => {
-    const d = deps({ listLabeledContainerNames: vi.fn().mockReturnValue(["openshell-other-x"]) });
+    const d = deps({
+      listLabeledContainerNames: vi.fn().mockReturnValue(["openshell-other-x"]),
+    });
     await expect(startStoppedSandboxContainerForBackup("my-sb", d)).resolves.toBeNull();
     expect(d.createOpenShellLifecycle).not.toHaveBeenCalled();
   });
@@ -324,7 +386,9 @@ describe("isSandboxContainerDefinitivelyAbsent (#6520)", () => {
   });
 
   it("reports present when a labeled container still exists", () => {
-    const d = deps({ listLabeledContainerNames: vi.fn().mockReturnValue(["openshell-my-sb-abc"]) });
+    const d = deps({
+      listLabeledContainerNames: vi.fn().mockReturnValue(["openshell-my-sb-abc"]),
+    });
     expect(isSandboxContainerDefinitivelyAbsent("my-sb", d)).toBe(false);
   });
 
@@ -335,7 +399,9 @@ describe("isSandboxContainerDefinitivelyAbsent (#6520)", () => {
   });
 
   it("fails closed when the labeled listing itself fails (a swallowed ps error is not absence)", () => {
-    const d = deps({ listLabeledContainerNames: vi.fn().mockReturnValue(null) });
+    const d = deps({
+      listLabeledContainerNames: vi.fn().mockReturnValue(null),
+    });
     expect(isSandboxContainerDefinitivelyAbsent("my-sb", d)).toBe(false);
   });
 
@@ -351,7 +417,11 @@ describe("isSandboxContainerDefinitivelyAbsent (#6520)", () => {
     vi.mocked(registry.getSandbox).mockReturnValue({
       openshellDriver: "docker",
     } as unknown as ReturnType<typeof registry.getSandbox>);
-    adapterMocks.providerCapture.mockReturnValue({ status: 1, stdout: "", stderr: "down" });
+    adapterMocks.providerCapture.mockReturnValue({
+      status: 1,
+      stdout: "",
+      stderr: "down",
+    });
     expect(isSandboxContainerDefinitivelyAbsent("my-sb")).toBe(false);
     expect(adapterMocks.providerCapture).toHaveBeenCalledWith(
       "sandbox-lifecycle",
@@ -364,7 +434,11 @@ describe("isSandboxContainerDefinitivelyAbsent (#6520)", () => {
     vi.mocked(registry.getSandbox).mockReturnValue({
       openshellDriver: "docker",
     } as unknown as ReturnType<typeof registry.getSandbox>);
-    adapterMocks.providerCapture.mockReturnValue({ status: 0, stdout: "\n", stderr: "" });
+    adapterMocks.providerCapture.mockReturnValue({
+      status: 0,
+      stdout: "\n",
+      stderr: "",
+    });
     expect(isSandboxContainerDefinitivelyAbsent("my-sb")).toBe(true);
   });
 
@@ -400,7 +474,10 @@ describe("returnSandboxContainerToStopped", () => {
     const stopSandbox = vi.fn().mockResolvedValue({ kind: "accepted" });
     await expect(
       returnSandboxContainerToStopped(started, {
-        createOpenShellLifecycle: () => ({ startSandbox: vi.fn(), stopSandbox }),
+        createOpenShellLifecycle: () => ({
+          startSandbox: vi.fn(),
+          stopSandbox,
+        }),
       }),
     ).resolves.toBe(true);
     expect(stopSandbox).toHaveBeenCalledWith({
@@ -426,7 +503,10 @@ describe("returnSandboxContainerToStopped", () => {
     });
     await expect(
       returnSandboxContainerToStopped(started, {
-        createOpenShellLifecycle: () => ({ startSandbox: vi.fn(), stopSandbox }),
+        createOpenShellLifecycle: () => ({
+          startSandbox: vi.fn(),
+          stopSandbox,
+        }),
       }),
     ).resolves.toBe(false);
   });
@@ -584,7 +664,10 @@ describe("backupStartedSandboxState", () => {
           sandboxName: "my-sb",
         },
         {
-          createOpenShellLifecycle: () => ({ startSandbox: vi.fn(), stopSandbox }),
+          createOpenShellLifecycle: () => ({
+            startSandbox: vi.fn(),
+            stopSandbox,
+          }),
           deadlineMs: transactionDeadlineMs,
           now: () => now,
         },
@@ -638,7 +721,10 @@ describe("backupStartedSandboxState", () => {
           sandboxName: "my-sb",
         },
         {
-          createOpenShellLifecycle: () => ({ startSandbox: vi.fn(), stopSandbox }),
+          createOpenShellLifecycle: () => ({
+            startSandbox: vi.fn(),
+            stopSandbox,
+          }),
           deadlineMs: transactionDeadlineMs,
           now: () => now,
         },
@@ -651,8 +737,8 @@ describe("backupStartedSandboxState", () => {
     );
   });
 
-  it("does not stop a sandbox after the shared deadline expires", async () => {
-    const stopSandbox = vi.fn();
+  it("still stops a sandbox on its cleanup reserve after the shared deadline expires", async () => {
+    const stopSandbox = vi.fn().mockResolvedValue({ kind: "accepted" });
     await expect(
       returnSandboxContainerToStopped(
         {
@@ -664,12 +750,21 @@ describe("backupStartedSandboxState", () => {
           sandboxName: "my-sb",
         },
         {
-          createOpenShellLifecycle: () => ({ startSandbox: vi.fn(), stopSandbox }),
+          createOpenShellLifecycle: () => ({
+            startSandbox: vi.fn(),
+            stopSandbox,
+          }),
           deadlineMs: 10_000,
-          now: () => 10_000,
+          now: () => 400_000,
         },
       ),
-    ).resolves.toBe(false);
-    expect(stopSandbox).not.toHaveBeenCalled();
+    ).resolves.toBe(true);
+    expect(stopSandbox).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sandboxName: "my-sb",
+        sandboxIdentityFingerprint: "a".repeat(64),
+        timeoutMs: 30_000,
+      }),
+    );
   });
 });

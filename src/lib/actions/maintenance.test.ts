@@ -178,7 +178,10 @@ describe("backupAll", () => {
   });
 
   it("returns before gateway preflight when no sandboxes are registered", async () => {
-    mocks.listSandboxes.mockReturnValue({ sandboxes: [], defaultSandbox: null });
+    mocks.listSandboxes.mockReturnValue({
+      sandboxes: [],
+      defaultSandbox: null,
+    });
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
 
     await backupAll();
@@ -530,7 +533,10 @@ describe("backupAll", () => {
     });
     mocks.startStoppedSandboxContainerForBackup.mockImplementation((name: string) =>
       name === "sb-stopped"
-        ? { containerName: "openshell-sb-stopped-abc", runtimeProviderId: "docker" }
+        ? {
+            containerName: "openshell-sb-stopped-abc",
+            runtimeProviderId: "docker",
+          }
         : null,
     );
     mocks.backupStartedSandboxState.mockResolvedValue({
@@ -597,7 +603,10 @@ describe("backupAll", () => {
     mocks.startStoppedSandboxContainerForBackup.mockImplementation((name: string) => {
       expect(lockActive).toBe(true);
       events.push(`start:${name}`);
-      return { containerName: "openshell-sb-stopped-abc", runtimeProviderId: "docker" };
+      return {
+        containerName: "openshell-sb-stopped-abc",
+        runtimeProviderId: "docker",
+      };
     });
     mocks.backupStartedSandboxState.mockImplementation(async (name: string) => {
       expect(lockActive).toBe(true);
@@ -714,7 +723,10 @@ describe("backupAll", () => {
     );
     vi.spyOn(console, "log").mockImplementation(() => undefined);
 
-    await backupAllUnderPortableHostFence({ purpose: "pre-upgrade", requireAll: true });
+    await backupAllUnderPortableHostFence({
+      purpose: "pre-upgrade",
+      requireAll: true,
+    });
 
     expect(events).toEqual(["lock:start:sb-good", "backup", "retain-recovery", "lock:end:sb-good"]);
     expect(mocks.retainStrictPreUpgradeRecoveryState).toHaveBeenCalledWith(
@@ -775,7 +787,10 @@ describe("backupAll", () => {
     vi.spyOn(console, "log").mockImplementation(() => undefined);
 
     await expect(
-      backupAllUnderPortableHostFence({ purpose: "pre-upgrade", requireAll: true }),
+      backupAllUnderPortableHostFence({
+        purpose: "pre-upgrade",
+        requireAll: true,
+      }),
     ).rejects.toThrow("recorded gateway is unavailable");
 
     expect(mocks.returnSandboxContainerToStopped).toHaveBeenCalledWith(
@@ -788,6 +803,56 @@ describe("backupAll", () => {
       },
     );
     expect(mocks.retainStrictPreUpgradeRecoveryState).toHaveBeenCalledOnce();
+  });
+
+  it("keeps the cleanup reserve exclusive when strict recovery retention consumes the backup deadline (#11936)", async () => {
+    mocks.listSandboxes.mockReturnValue({
+      sandboxes: [{ name: "sb-stopped" }],
+      defaultSandbox: "sb-stopped",
+    });
+    readySandboxNames = new Set();
+    const startedForBackup = {
+      containerName: "openshell-sb-stopped-abc",
+      runtimeProviderId: "docker",
+    };
+    mocks.startStoppedSandboxContainerForBackup.mockReturnValue(startedForBackup);
+    mocks.backupStartedSandboxState.mockResolvedValue({
+      success: true,
+      backedUpDirs: ["workspace"],
+      failedDirs: [],
+      backedUpFiles: [],
+      failedFiles: [],
+      manifest: { backupPath: "/backups/sb-stopped/timestamp" },
+    });
+    let now = 0;
+    vi.spyOn(Date, "now").mockImplementation(() => now);
+    mocks.retainStrictPreUpgradeRecoveryState.mockImplementation(async (_sandbox, result) => {
+      now = 400_000;
+      return result;
+    });
+    const stopClock: number[] = [];
+    mocks.returnSandboxContainerToStopped.mockImplementation(() => {
+      stopClock.push(Date.now());
+      return true;
+    });
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    await backupAllUnderPortableHostFence({
+      purpose: "pre-upgrade",
+      requireAll: true,
+    });
+
+    // Retention outran the shared deadline, and cleanup still ran on the
+    // reserve that deadline cannot consume.
+    expect(stopClock).toEqual([400_000]);
+    expect(mocks.returnSandboxContainerToStopped).toHaveBeenCalledWith(startedForBackup, {
+      deadlineMs: 330_000,
+    });
+    expect(mocks.recordSandboxStopIntent).toHaveBeenCalledWith(
+      "sb-stopped",
+      true,
+      expect.anything(),
+    );
   });
 
   it("returns the container to stopped and counts a failure when the started backup fails (#6500)", async () => {
@@ -1346,13 +1411,19 @@ describe("backupAll", () => {
 describe("shouldSkipUnreachableSandboxBackup", () => {
   it("is true only for exactly '1'", () => {
     expect(
-      shouldSkipUnreachableSandboxBackup({ NEMOCLAW_SKIP_UNREACHABLE_SANDBOX_BACKUP: "1" }),
+      shouldSkipUnreachableSandboxBackup({
+        NEMOCLAW_SKIP_UNREACHABLE_SANDBOX_BACKUP: "1",
+      }),
     ).toBe(true);
     expect(
-      shouldSkipUnreachableSandboxBackup({ NEMOCLAW_SKIP_UNREACHABLE_SANDBOX_BACKUP: "0" }),
+      shouldSkipUnreachableSandboxBackup({
+        NEMOCLAW_SKIP_UNREACHABLE_SANDBOX_BACKUP: "0",
+      }),
     ).toBe(false);
     expect(
-      shouldSkipUnreachableSandboxBackup({ NEMOCLAW_SKIP_UNREACHABLE_SANDBOX_BACKUP: "true" }),
+      shouldSkipUnreachableSandboxBackup({
+        NEMOCLAW_SKIP_UNREACHABLE_SANDBOX_BACKUP: "true",
+      }),
     ).toBe(false);
     expect(shouldSkipUnreachableSandboxBackup({})).toBe(false);
   });
