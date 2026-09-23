@@ -5,10 +5,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import {
-  captureNativePluginFailureReadiness,
-  fullE2eGateway,
-} from "../fixtures/full-e2e-gateway.ts";
+import { fullE2eGateway } from "../fixtures/full-e2e-gateway.ts";
+import { captureNativePluginFailureReadiness } from "../fixtures/native-plugin-failure-diagnostics.ts";
 
 const directories: string[] = [];
 const disposables: (() => Promise<void>)[] = [];
