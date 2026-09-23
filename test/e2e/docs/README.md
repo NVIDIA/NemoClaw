@@ -118,11 +118,12 @@ references must still be declared by the manifest.
 
 The typed live-target timeout contract budgets a two-minute config export
 ceiling for `required` and `expected-refusal`. A `required` target also budgets
-a one-minute effective-policy read. A `no-usable-sandbox` target adds neither
-ceiling because it does not invoke config export. The
+a one-minute effective-policy read and 10 minutes for the pinned v1 consumer.
+A `no-usable-sandbox` target adds none of those ceilings because it does not
+invoke config export. The
 `dcode-rebuild-invalid-credential` target has a 130-minute base budget for its
 lifecycle and ordered cloud checks. With required export, its default test
-timeout is 133 minutes and its job ceiling is 153 minutes.
+timeout is 143 minutes and its job ceiling is 163 minutes.
 `NEMOCLAW_TEST_TIMEOUT`, in milliseconds, can raise but cannot
 lower the derived test timeout. The derived job ceiling keeps at least 20
 minutes of headroom and rounds up to a whole minute.

@@ -373,6 +373,8 @@ export interface ConfigExportEvidenceEnvelope {
   verifications: ConfigExportVerification[];
   command?: ConfigExportCommandOutcome;
   consumer?: PinnedV1ConsumerEvidence & {
+    expected: PinnedV1ConsumerEvidence;
+    actual: PinnedV1ConsumerEvidence;
     expectedOpenclawNativeSettings?: PinnedV1OpenClawNativeSettings;
     actualOpenclawNativeSettings?: PinnedV1OpenClawNativeSettings;
     passed: boolean;
@@ -586,6 +588,44 @@ function expectedOpenclawNativeSettings(
       bind: dashboard.bindAddress === "0.0.0.0" ? "lan" : "loopback",
     },
     toolDisclosure: profile.tools.disclosure,
+  };
+}
+
+function expectedPinnedV1Evidence(entry: ConfigExportRegistryEntry): PinnedV1ConsumerEvidence {
+  const nativeSettings = expectedOpenclawNativeSettings(entry);
+  return {
+    revision: V1ALPHA1_RUNTIME_DEFAULTS_REVISION,
+    compiledSandboxes: 1,
+    ...(nativeSettings
+      ? {
+          contextWindows: [nativeSettings.model.contextWindow],
+          openclawNativeSettings: { [entry.name]: nativeSettings },
+        }
+      : {}),
+    openclawNativeSettingsVerified: entry.agent === "openclaw" ? 1 : 0,
+    hermesNativeSettingsVerified: entry.agent === "hermes" ? 1 : 0,
+  };
+}
+
+function comparablePinnedV1Evidence(
+  evidence: PinnedV1ConsumerEvidence,
+  expected: PinnedV1ConsumerEvidence,
+  sandboxName: string,
+): PinnedV1ConsumerEvidence {
+  const actualNativeSettings = evidence.openclawNativeSettings?.[sandboxName];
+  return {
+    revision: evidence.revision,
+    compiledSandboxes: evidence.compiledSandboxes,
+    ...(expected.contextWindows ? { contextWindows: evidence.contextWindows } : {}),
+    ...(expected.openclawNativeSettings
+      ? {
+          openclawNativeSettings: actualNativeSettings
+            ? { [sandboxName]: actualNativeSettings }
+            : {},
+        }
+      : {}),
+    openclawNativeSettingsVerified: evidence.openclawNativeSettingsVerified,
+    hermesNativeSettingsVerified: evidence.hermesNativeSettingsVerified,
   };
 }
 
@@ -1032,7 +1072,7 @@ export class ConfigExportValidationPhaseFixture {
     let observedRefusalCategory: string | undefined;
     let command: ConfigExportCommandOutcome | undefined;
     let consumer: ConfigExportEvidenceEnvelope["consumer"];
-    let expectedConsumerSettings: PinnedV1OpenClawNativeSettings | undefined;
+    let expectedConsumerEvidence: PinnedV1ConsumerEvidence | undefined;
     let registryBeforeExport: ConfigExportRegistry["sandboxes"] | undefined;
 
     try {
@@ -1045,12 +1085,11 @@ export class ConfigExportValidationPhaseFixture {
           this.dependencies,
         );
         const registry = this.dependencies.loadRegistry();
-        if (!registry.sandboxes[instance.sandboxName]) {
+        const sourceEntry = registry.sandboxes[instance.sandboxName];
+        if (!sourceEntry) {
           throw new Error("the live sandbox disappeared before config export");
         }
-        expectedConsumerSettings = expectedOpenclawNativeSettings(
-          registry.sandboxes[instance.sandboxName],
-        );
+        expectedConsumerEvidence = expectedPinnedV1Evidence(sourceEntry);
         registryBeforeExport = structuredClone(registry.sandboxes);
       }
       failureStage = "transport";
@@ -1163,22 +1202,37 @@ export class ConfigExportValidationPhaseFixture {
             `config export omitted or changed expected semantics: ${failed.map((entry) => entry.id).join(", ")}`,
           );
         }
+        if (!expectedConsumerEvidence) throw new Error("pinned v1 expectations were not captured");
+        const expectedConsumerSettings =
+          expectedConsumerEvidence.openclawNativeSettings?.[instance.sandboxName];
         consumer = {
           revision: V1ALPHA1_RUNTIME_DEFAULTS_REVISION,
+          expected: expectedConsumerEvidence,
+          actual: { revision: V1ALPHA1_RUNTIME_DEFAULTS_REVISION },
           ...(expectedConsumerSettings
             ? { expectedOpenclawNativeSettings: expectedConsumerSettings }
             : {}),
           passed: false,
-        } as ConfigExportEvidenceEnvelope["consumer"];
+        };
         const consumerEvidence = this.dependencies.validateWithPinnedV1(raw);
+        const actualConsumerEvidence = comparablePinnedV1Evidence(
+          consumerEvidence,
+          expectedConsumerEvidence,
+          instance.sandboxName,
+        );
         const actualConsumerSettings =
-          consumerEvidence.openclawNativeSettings?.[instance.sandboxName];
-        const consumerPassed =
-          consumerEvidence.revision === V1ALPHA1_RUNTIME_DEFAULTS_REVISION &&
-          (expectedConsumerSettings === undefined ||
-            isDeepStrictEqual(actualConsumerSettings, expectedConsumerSettings));
+          actualConsumerEvidence.openclawNativeSettings?.[instance.sandboxName];
+        const consumerPassed = isDeepStrictEqual(actualConsumerEvidence, expectedConsumerEvidence);
+        verifications.push({
+          id: "consumerNativeSettings",
+          passed: consumerPassed,
+          expected: expectedConsumerEvidence,
+          actual: actualConsumerEvidence,
+        });
         consumer = {
           ...consumerEvidence,
+          expected: expectedConsumerEvidence,
+          actual: actualConsumerEvidence,
           ...(expectedConsumerSettings
             ? {
                 expectedOpenclawNativeSettings: expectedConsumerSettings,
@@ -1188,7 +1242,7 @@ export class ConfigExportValidationPhaseFixture {
           passed: consumerPassed,
         };
         if (!consumerPassed) {
-          throw new Error("pinned v1 native settings differ from the live source profile");
+          throw new Error("pinned v1 consumer evidence differs from the live source profile");
         }
         classification = "success";
       }

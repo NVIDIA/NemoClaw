@@ -68,6 +68,12 @@ describe("onboard final-handoff timeout contract", () => {
     );
   });
 
+  it("contains every bounded pinned config consumer operation", () => {
+    expect(CONFIG_EXPORT_PINNED_V1_CONSUMER_TIMEOUT_MS).toBeGreaterThanOrEqual(
+      30_000 + 30_000 + 8 * MINUTE_MS + 30_000,
+    );
+  });
+
   it("reserves job headroom after the Deep Agents Code lifecycle and export refusal", () => {
     expect(dcodeExpectedRefusalTimeout.testTimeoutMs).toBe(
       DCODE_TYPED_TARGET_TEST_TIMEOUT_MS + CONFIG_EXPORT_COMMAND_TIMEOUT_MS,
