@@ -9,10 +9,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { directDockerfileCopySources } from "../../../scripts/lib/dockerfile-copy-sources.mts";
-import {
-  catalogueTarget,
-  catalogueTargetsForChangedFiles,
-} from "../../../tools/e2e/target-catalogue.mts";
+import { catalogueTargetsForChangedFiles } from "../../../tools/e2e/target-catalogue.mts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 
@@ -160,27 +157,22 @@ function failedProbe(): ShellProbeResult {
 }
 describe("Pi qualification event oracle", () => {
   it("keeps every Pi image source in the AMD64 lifecycle target ownership boundary (#7926)", () => {
-    const imageSources = new Set([
+    const imageSources = new Set<string>([
       ".dockerignore",
       ...["agents/pi/Dockerfile", "agents/pi/Dockerfile.base"].flatMap((dockerfile) =>
         directDockerfileCopySources(path.join(REPO_ROOT, dockerfile), dockerfile).map(
-          ({ source }) => {
-            const normalized = source.replace(/\/+$/u, "");
-            return normalized.startsWith("agents/pi/") ? "agents/pi" : normalized;
-          },
+          ({ source }) => source,
         ),
       ),
     ]);
-    const target = catalogueTarget("pi-agent-qualification-amd64");
     const uncovered = [...imageSources].filter(
       (source) =>
-        !target.owningPaths.some((owner) => {
-          const normalizedOwner = owner.replace(/\/$/u, "");
-          return source === normalizedOwner || source.startsWith(`${normalizedOwner}/`);
-        }),
+        !catalogueTargetsForChangedFiles([source]).some(
+          (target) => target.id === "pi-agent-qualification-amd64",
+        ),
     );
 
-    expect(uncovered, `${target.id} must own every Pi Docker COPY input`).toEqual([]);
+    expect(uncovered, "the AMD64 lifecycle target must own every Pi Docker COPY input").toEqual([]);
   });
 
   it("selects only AMD64 lifecycle qualification for a copied Pi image source (#7926)", () => {
@@ -190,14 +182,6 @@ describe("Pi qualification event oracle", () => {
 
     expect(targetIds).toContain("pi-agent-qualification-amd64");
     expect(targetIds).not.toContain("pi-agent-qualification-arm64");
-  });
-
-  it("selects AMD64 lifecycle qualification when the shared environment helper changes", () => {
-    const targetIds = catalogueTargetsForChangedFiles([
-      "test/e2e/support/pi-agent-qualification-env.ts",
-    ]).map((target) => target.id);
-
-    expect(targetIds).toEqual(["pi-agent-qualification-amd64"]);
   });
 
   it("accepts one successful read and an exact final response", () => {
