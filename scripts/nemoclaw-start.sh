@@ -78,12 +78,8 @@ unset -f nemoclaw_normalize_entrypoint_env_wrapper
 # after entrypoint overrides are normalized, before setup can launch children.
 # Direct inference routes retain their credentials.
 is_managed_inference_route() {
-  case "${NEMOCLAW_INFERENCE_BASE_URL:-}" in
-    https://inference.local | https://inference.local/* | https://inference.local:443 | https://inference.local:443/*)
-      return 0
-      ;;
-  esac
-  return 1
+  # Match URL scheme and host case without spawning a credential-bearing child.
+  [[ "${NEMOCLAW_INFERENCE_BASE_URL:-}" =~ ^[Hh][Tt][Tt][Pp][Ss]://[Ii][Nn][Ff][Ee][Rr][Ee][Nn][Cc][Ee]\.[Ll][Oo][Cc][Aa][Ll](:443)?(/.*)?$ ]]
 }
 
 clear_managed_inference_credentials() {

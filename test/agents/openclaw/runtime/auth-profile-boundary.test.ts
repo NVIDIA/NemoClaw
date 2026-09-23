@@ -16,7 +16,7 @@ const credentialProbe =
 const managedEnv = {
   NVIDIA_INFERENCE_API_KEY: "primary-secret",
   NVIDIA_API_KEY: "legacy-secret",
-  NEMOCLAW_INFERENCE_BASE_URL: "https://inference.local/v1",
+  NEMOCLAW_INFERENCE_BASE_URL: "hTtPs://InFeReNcE.LoCaL/v1",
 };
 const homes: string[] = [];
 afterEach(() => {
@@ -173,8 +173,8 @@ describe("OpenClaw auth-profile boundary", () => {
   it.each([
     ["fresh", "https://inference.local/v1"],
     ["legacy", "https://inference.local/v1"],
-    ["fresh", "https://inference.local:443/v1"],
-    ["legacy", "https://inference.local:443"],
+    ["fresh", "HTTPS://inference.local:443/v1"],
+    ["legacy", "https://INFERENCE.LOCAL:443"],
   ] as const)(
     "leaves no managed profile or inherited credentials in %s state at %s",
     (state, baseUrl) => {
