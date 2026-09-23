@@ -271,6 +271,10 @@ Rebuild restores the complete credential-sanitized native `openclaw.json` file f
 NemoClaw does not compare that file with a config hash, seal, last-good copy, recovery anchor, baseline, or selected-key registry.
 If the file cannot be restored safely, NemoClaw exits nonzero and does not report a successful rebuild.
 
+If rebuild keeps the source sandbox but cannot release it from backup maintenance, the warning names the retained sandbox and reports whether it verified that the sandbox stopped.
+If stopping is not verified, do not assume that the sandbox is stopped or ready to use.
+Preserve the retained sandbox and backup, and follow the recovery guidance printed with the warning.
+
 </AgentOnly>
 
 ### Resolve Rebuild Preflight Stops

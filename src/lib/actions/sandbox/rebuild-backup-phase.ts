@@ -84,7 +84,18 @@ export interface RebuildBackupPhaseResult {
 
 export async function releaseRebuildSourceOpenClawWindow(window: OpenClawPostRestoreDoctorWindow) {
   const finished = await finishOpenClawBackupQuiesce(window);
-  if (!finished.ok) await abortOpenClawPostRestoreDoctor(window);
+  if (!finished.ok) {
+    const aborted = await abortOpenClawPostRestoreDoctor(window);
+    const state = aborted.ok
+      ? "The retained sandbox was stopped."
+      : `Stopping or maintenance reconciliation was not fully verified (${aborted.detail}).`;
+    const gateway = window.runtimeSelection
+      ? `gateway '${window.runtimeSelection.gatewayName}'`
+      : "the recorded gateway";
+    console.error(
+      `  Warning: OpenClaw source maintenance cleanup did not return retained sandbox '${window.sandboxName}' healthy (${finished.stage}: ${finished.detail}). ${state} Preserve this sandbox and its backup. Inspect its status and logs on ${gateway} before attempting recovery. Do not delete it or start another replacement.`,
+    );
+  }
   return finished;
 }
 

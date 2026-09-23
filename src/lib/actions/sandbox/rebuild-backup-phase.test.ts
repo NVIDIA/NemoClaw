@@ -109,6 +109,30 @@ describe("rebuild policy handoff", () => {
     expect(mocks.abortOpenClawPostRestoreDoctor).not.toHaveBeenCalled();
   });
 
+  it.each([true, false])(
+    "identifies retained source and verified stop state on release failure (%s)",
+    async (stopped) => {
+      const warning = vi.spyOn(console, "error").mockImplementation(() => undefined);
+      const window = { sandboxName: "retained-alpha", kind: "backup" as const };
+      const failure = { ok: false, stage: "restart", detail: "gateway not healthy" };
+      mocks.finishOpenClawBackupQuiesce.mockResolvedValue(failure);
+      mocks.abortOpenClawPostRestoreDoctor.mockResolvedValue(
+        stopped ? { ok: true } : { ok: false, stage: "abort", detail: "stop not verified" },
+      );
+
+      await expect(releaseRebuildSourceOpenClawWindow(window)).resolves.toEqual(failure);
+
+      expect(mocks.abortOpenClawPostRestoreDoctor).toHaveBeenCalledExactlyOnceWith(window);
+      expect(mocks.retireOpenClawPostRestoreDoctorForDelete).not.toHaveBeenCalled();
+      const text = warning.mock.calls.flat().join(" ");
+      expect(text).toContain("retained-alpha");
+      expect(text).toContain("recorded gateway");
+      expect(text).toContain("Preserve this sandbox and its backup");
+      expect(text).toContain(stopped ? "was stopped" : "not fully verified");
+      expect(text.includes("was stopped")).toBe(stopped);
+    },
+  );
+
   it("captures the current OpenShell base policy in a private transaction file", async () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-rebuild-policy-test-"));
     temporaryDirectories.push(directory);
@@ -139,6 +163,27 @@ describe("rebuild policy handoff", () => {
     expect(mocks.finishOpenClawBackupQuiesce).not.toHaveBeenCalledWith({
       sandboxName: "alpha",
     });
+  });
+
+  it("reports the retained source when backup fails before the pipeline takes ownership", async () => {
+    const warning = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    mocks.finishOpenClawBackupQuiesce.mockResolvedValue({
+      ok: false,
+      stage: "restart",
+      detail: "gateway not healthy",
+    });
+    const backup = vi.fn(async () => {
+      throw new Error("backup transfer failed");
+    });
+
+    await expect(runRebuildBackupPhase(input(), backup)).rejects.toThrow("backup transfer failed");
+
+    expect(mocks.abortOpenClawPostRestoreDoctor).toHaveBeenCalledExactlyOnceWith({
+      sandboxName: "alpha",
+      kind: "backup",
+    });
+    expect(warning).toHaveBeenCalledWith(expect.stringContaining("retained sandbox 'alpha'"));
+    expect(warning).toHaveBeenCalledWith(expect.stringContaining("was stopped"));
   });
 
   it("rejects a literal credential before creating a rebuild policy handoff", async () => {

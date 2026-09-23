@@ -131,7 +131,7 @@ describe("sandbox config sync helpers", () => {
       target: { kind: "selected" },
       command: ["/bin/bash", "-s"],
       tty: false,
-      input: expect.stringContaining('"provider": "provider"'),
+      input: expect.stringContaining('"profile": "inference-local"'),
     });
   });
 
@@ -188,9 +188,9 @@ describe("sandbox config sync helpers", () => {
 
     runConfigSyncScript(script, homeDir, String(process.getuid?.()));
 
-    expect(JSON.parse(fs.readFileSync(path.join(nemoclawDir, "config.json"), "utf8"))).toEqual(
-      selection,
-    );
+    expect(JSON.parse(fs.readFileSync(path.join(nemoclawDir, "config.json"), "utf8"))).toEqual({
+      profile: selection.profile,
+    });
     expect(modeBits(nemoclawDir)).toBe(0o700);
     expect(modeBits(path.join(nemoclawDir, "config.json"))).toBe(0o600);
     expect(JSON.parse(fs.readFileSync(openclawConfig, "utf8"))).toEqual(existingConfig);
@@ -209,7 +209,7 @@ describe("sandbox config sync helpers", () => {
 
     expect(
       JSON.parse(fs.readFileSync(path.join(homeDir, ".nemoclaw", "config.json"), "utf8")),
-    ).toEqual(selection);
+    ).toEqual({ profile: selection.profile });
     expect(modeBits(path.join(openclawDir, "agents", "main", "sessions"))).toBe(0o700);
   });
 
@@ -255,7 +255,7 @@ describe("sandbox config sync helpers", () => {
 
     expect(
       JSON.parse(fs.readFileSync(path.join(homeDir, ".nemoclaw", "config.json"), "utf8")),
-    ).toEqual(anthropicSelection);
+    ).toEqual({ profile: anthropicSelection.profile });
   });
 
   itUnix("syncs selection without reading invalid native OpenClaw configuration", () => {
@@ -269,7 +269,7 @@ describe("sandbox config sync helpers", () => {
     runConfigSyncScript(script, homeDir, String(process.getuid?.()));
     expect(
       JSON.parse(fs.readFileSync(path.join(homeDir, ".nemoclaw", "config.json"), "utf8")),
-    ).toEqual(selection);
+    ).toEqual({ profile: selection.profile });
     expect(fs.readFileSync(configFile, "utf8")).toBe(config);
   });
 
@@ -312,7 +312,7 @@ describe("sandbox config sync helpers", () => {
       runConfigSyncScript(script, homeDir, "1234");
       expect(
         JSON.parse(fs.readFileSync(path.join(homeDir, ".nemoclaw", "config.json"), "utf8")),
-      ).toMatchObject({ ...selection, onboardedAt: expect.any(String) });
+      ).toEqual({ profile: selection.profile, onboardedAt: expect.any(String) });
     } finally {
       fs.rmSync(homeDir, { recursive: true, force: true });
     }

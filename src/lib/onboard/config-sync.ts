@@ -63,9 +63,15 @@ export async function runSandboxConfigSync(
 }
 
 export function buildSandboxConfigSyncScript(
-  selectionConfig: ProviderSelectionConfig & { agent?: string },
+  selectionConfig: ProviderSelectionConfig & { agent?: string; onboardedAt?: string },
   managedProfileApplied = false,
 ): string {
+  // OpenClaw owns routing in openclaw.json. Other agents still consume their
+  // selection snapshot for resume drift checks.
+  const metadata =
+    !selectionConfig.agent || selectionConfig.agent === "openclaw"
+      ? { profile: selectionConfig.profile, onboardedAt: selectionConfig.onboardedAt }
+      : selectionConfig;
   const writeSelection = `
 set -euo pipefail
 # OpenShell exec and the OpenClaw gateway can expose different HOME values.
@@ -79,7 +85,7 @@ if [ -n "$nemoclaw_dir_uid" ] && [ "$nemoclaw_dir_uid" = "$current_uid" ]; then
   chmod 700 "$nemoclaw_dir"
 fi
 cat > "$nemoclaw_config" <<'EOF_NEMOCLAW_CFG'
-${JSON.stringify(selectionConfig, null, 2)}
+${JSON.stringify(metadata, null, 2)}
 EOF_NEMOCLAW_CFG
 chmod 600 "$nemoclaw_config"
 `.trim();

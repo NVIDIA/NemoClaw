@@ -9,48 +9,24 @@
  * modify it.
  */
 
-import type { PluginCommandResult } from "../index.js";
-import {
-  describeOnboardEndpoint,
-  describeOnboardProvider,
-  loadOnboardConfig,
-} from "../onboard/config.js";
+import type { OpenClawConfig, PluginCommandResult } from "../index.js";
+import { loadOnboardConfig } from "../onboard/config.js";
+import { readNativeRoute } from "../onboard/native-route.js";
 
-export function slashConfigShow(): PluginCommandResult {
+export function slashConfigShow(nativeConfig: OpenClawConfig): PluginCommandResult {
   const config = loadOnboardConfig();
 
-  if (!config) {
-    return {
-      text: [
-        "**NemoClaw Config**",
-        "",
-        "No configuration found. Run `nemoclaw onboard` from the host to configure.",
-      ].join("\n"),
-    };
-  }
-
-  // Redact credential env var value — only show the variable name when it
-  // looks like a safe env-var identifier. Malformed persisted data must
-  // never be echoed verbatim (could leak a raw token).
-  const hasCredentialEnv =
-    typeof config.credentialEnv === "string" && config.credentialEnv.length > 0;
-  const isSafeEnvName = hasCredentialEnv && /^[A-Z_][A-Z0-9_]*$/.test(config.credentialEnv);
-  const authTokenText = !hasCredentialEnv
-    ? "(not configured)"
-    : isSafeEnvName
-      ? `$${config.credentialEnv} (set via env var)`
-      : "(configured)";
+  const route = readNativeRoute(nativeConfig);
 
   const lines = [
     "**NemoClaw Config**",
     "",
-    `Gateway:     ${describeOnboardEndpoint(config)}`,
-    `Auth token:  ${authTokenText}`,
-    `Inference:   ${describeOnboardProvider(config)}`,
-    config.ncpPartner ? `NCP Partner: ${config.ncpPartner}` : null,
-    `Model:       ${config.model}`,
-    `Profile:     ${config.profile}`,
-    `Onboarded:   ${config.onboardedAt}`,
+    `Gateway:     ${route.endpoint}`,
+    `Auth token:  ${route.credential}`,
+    `Inference:   ${route.provider}`,
+    `Model:       ${route.model}`,
+    `Profile:     ${config?.profile ?? "(not recorded)"}`,
+    `Onboarded:   ${config?.onboardedAt ?? "(not recorded)"}`,
     "",
     "Use `nemoclaw <sandbox> config get` for the full sandbox config.",
   ];

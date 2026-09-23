@@ -46,6 +46,11 @@ The runtime source of truth is `/sandbox/.openclaw/openclaw.json`.
 NemoClaw writes the initial managed inference route and OpenShell credential placeholders during onboarding.
 After first launch, OpenClaw owns this file and can add providers, tools, plugins, hooks, cron jobs, and gateway settings through its native interfaces.
 
+The NemoClaw plugin reads the current native inference configuration for the `/nemoclaw status` and `/nemoclaw onboard` views.
+It registers a provider only when the native primary model selects `inference` and that provider is configured.
+Other provider registrations remain owned by OpenClaw.
+Onboarding metadata does not override the native provider, model, endpoint, or credential reference.
+
 Restart and reconnect preserve the current native configuration.
 Rebuild restores the credential-sanitized configuration captured immediately before rebuild.
 Snapshot restore reapplies only the credential-sanitized configuration present when that snapshot was created.

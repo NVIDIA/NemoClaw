@@ -1087,12 +1087,7 @@ async function rebuildSandboxUnlocked(
       retainPolicyHandoffForRecovery = false;
     } finally {
       if (sourceOpenClawDoctorWindow) {
-        const finished = await releaseRebuildSourceOpenClawWindow(sourceOpenClawDoctorWindow);
-        if (!finished.ok) {
-          console.error(
-            `  Warning: OpenClaw source maintenance cleanup did not return the retained sandbox healthy (${finished.stage}: ${finished.detail}).`,
-          );
-        }
+        await releaseRebuildSourceOpenClawWindow(sourceOpenClawDoctorWindow);
         sourceOpenClawDoctorWindow = null;
       }
       const handoffManifest = rebuildPolicyHandoffManifest;
