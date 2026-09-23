@@ -141,9 +141,14 @@ describe("E2E workflow plan", () => {
       "ubuntu-repo-cloud-openclaw",
     ]);
     expect(plan.testMatrix).toEqual([]);
-    expect(catalogueIds).toHaveLength(46);
+    expect(catalogueIds).toHaveLength(45);
     expect(catalogueIds).not.toEqual(
-      expect.arrayContaining(["bootstrap-install-smoke", "rebuild-hermes", "rebuild-openclaw"]),
+      expect.arrayContaining([
+        "bootstrap-install-smoke",
+        "gpu-e2e",
+        "rebuild-hermes",
+        "rebuild-openclaw",
+      ]),
     );
     expect(catalogueIds.some((id) => id.startsWith("openshell-gateway-upgrade-"))).toBe(false);
     expect(selectedWorkflowJobs(plan)).toEqual([

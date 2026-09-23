@@ -769,7 +769,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
       NEMOCLAW_OLLAMA_PROXY_PORT: "11435",
     },
   }),
-  managedRuntimeTarget("gpu-e2e", {
+  dockerOnlyTarget("gpu-e2e", {
     displayName: "Inference: validates GPU Ollama plus Ollama and vLLM configuration export",
     agentRuntime: "openclaw",
     environmentOrInferenceEndpoint: "NVIDIA GPU runner; local Ollama and managed vLLM",
