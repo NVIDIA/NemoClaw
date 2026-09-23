@@ -18,16 +18,13 @@ function launchOptions(host: unknown) {
   };
 }
 
-it.each(["500", "503", "message_content_empty"] as const)(
+it.each(["500", "503"] as const)(
   "retries transient provider failure %s in a fresh launch session (#10978)",
   async (status) => {
     const platform = vi.spyOn(process, "platform", "get").mockReturnValue("linux");
     vi.useFakeTimers();
     const calls: Array<{ artifactName?: string; env?: NodeJS.ProcessEnv }> = [];
-    const diagnostic =
-      status === "message_content_empty"
-        ? '{"reason":"message_content_empty","sessionId":"ed80ef8e-a026-424f-8ca4-669f6060e046"}'
-        : `litellm.ServiceUnavailableError: HTTP ${status}; NVIDIA upstream unavailable`;
+    const diagnostic = `litellm.ServiceUnavailableError: HTTP ${status}; NVIDIA upstream unavailable`;
     const host = {
       command: async (
         _command: string,
@@ -102,6 +99,10 @@ it("classifies exhausted transient launch attempts as provider unavailable (#109
 });
 
 it.each([
+  [
+    "unexplained empty assistant content",
+    '{"reason":"message_content_empty","sessionId":"ed80ef8e-a026-424f-8ca4-669f6060e046"}',
+  ],
   [
     "marker from another launch run",
     `launch did not record the required structured session turns\n${OPENCLAW_PROVIDER_UNAVAILABLE_MARKER}:different-run-id\n`,

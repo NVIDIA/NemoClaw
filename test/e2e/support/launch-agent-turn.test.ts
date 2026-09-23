@@ -449,6 +449,8 @@ if [[ ( "$NEMOCLAW_FIXTURE_MODE" == "delayed-recording" || "$NEMOCLAW_FIXTURE_MO
   set -e
   [[ "$status" != "1" ]] || : > "$NEMOCLAW_FIXTURE_PENDING_QUALIFICATION_MARKER"
   [[ "$NEMOCLAW_FIXTURE_MODE" != "provider-exit-after-recording" ]] || sleep 0.2
+  # OpenShell preserves the diagnostic but normalizes nonzero child statuses.
+  [[ "$NEMOCLAW_FIXTURE_MODE" != "provider-exit-after-recording" || "$status" == "0" ]] || exit 1
   exit "$status"
 fi
 if [[ "$NEMOCLAW_FIXTURE_MODE" == "provider-empty-message" && "$4" == "qualify" ]]; then
@@ -499,9 +501,7 @@ exec "$@"
       NEMOCLAW_FIXTURE_PTY_SOCKET_RECEIPT: ptySocketReceiptPath,
       NEMOCLAW_FIXTURE_SESSION_FILE: join(
         sessionRoot,
-        mode === "provider-empty-message"
-          ? "ed80ef8e-a026-424f-8ca4-669f6060e046.jsonl"
-          : "session-a.jsonl",
+        "ed80ef8e-a026-424f-8ca4-669f6060e046.jsonl",
       ),
       NEMOCLAW_FIXTURE_TERMINAL_COPY: terminalCopy,
       NEMOCLAW_FIXTURE_RUN_ID: runId,
@@ -1071,7 +1071,7 @@ it.runIf(process.platform === "linux").concurrent(
 );
 
 it.runIf(process.platform === "linux").concurrent(
-  "marks provider unavailability when it leaves an empty structured turn (#9160, #10978)",
+  "fails an unexplained empty structured turn without a provider retry (#12254)",
   async ({ expect }) => {
     const { baselineRemoved, result, ttyObserved } = await runLaunchSessionFixture(
       "provider-empty-message",
@@ -1081,7 +1081,7 @@ it.runIf(process.platform === "linux").concurrent(
     expect(baselineRemoved).toBe(true);
     expect(result.status).toBe(1);
     expect(result.stderr).toContain('"reason":"message_content_empty"');
-    expect(result.stderr).toContain("nemoclaw.e2e.launch-failure=provider-unavailable");
+    expect(result.stderr).not.toContain("nemoclaw.e2e.launch-failure=provider-unavailable");
   },
   testTimeout(30_000),
 );
@@ -1097,7 +1097,7 @@ it.runIf(process.platform === "linux").each([
 ] as const)(
   "executes the real $1 HTTP $0 launch producer through $2 (#10978)",
   async (providerCode, providerError, secondMode) => {
-    const expectedError = secondMode === "valid" ? null : "provider unavailable after 2 attempts";
+    const expectedError = secondMode === "valid" ? null : "launch session failed";
     const secondTerminal = secondMode === "valid" ? "absent" : "provider";
     const calls: Array<{
       artifactName?: string;
@@ -1172,7 +1172,7 @@ it.runIf(process.platform === "linux").each([
       );
       expect(
         calls[1]?.stderr.includes(`${OPENCLAW_PROVIDER_UNAVAILABLE_MARKER}:${calls[1]?.runId}`),
-      ).toBe(expectedError !== null);
+      ).toBe(false);
     } finally {
       vi.useRealTimers();
     }

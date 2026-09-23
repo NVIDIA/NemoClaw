@@ -1472,13 +1472,11 @@ fail_provider_unavailable() {
   fail_launch_session "launch did not record the required structured session turns"
 }
 
-# OpenClaw can persist either a structurally complete provider error or an
-# assistant record without content. Treat only those exact, bounded diagnostics
-# as provider-response transients. The fresh-session retry below is safe because
-# cleanup removes the baseline and PTY monitor before emitting the marker.
-is_retryable_provider_evidence() {
-  awk '
-    NR == 1 && /^\{"reason":"(message_content_empty|provider_unavailable)","sessionId":"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"\}$/ { matched = 1 }
+# Retry only a structured provider failure, including when OpenShell normalizes
+# its exit status. Empty content alone does not establish a provider failure.
+has_structured_evidence_reason() {
+  awk -v reason="$1" '
+    NR == 1 && /^\{"reason":"[a-z_]+","sessionId":"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"\}$/ && index($0, "\"reason\":\"" reason "\"") { matched = 1 }
     END { exit !(NR == 1 && matched == 1) }
   ' "$evidence_error"
 }
@@ -1529,10 +1527,10 @@ wait_for_turn_count() {
     # OpenShell normalizes a nonzero sandbox child status to 1. Classify the
     # exact bounded diagnostic for both the direct and transport-level status.
     case "$evidence_status" in
-      1|2) is_retryable_provider_evidence && fail_provider_unavailable ;;
+      1|2) has_structured_evidence_reason provider_unavailable && fail_provider_unavailable ;;
       3) fail_provider_unavailable ;;
     esac
-    if [[ "$evidence_status" != 1 ]]; then
+    if [[ "$evidence_status" != 1 ]] || has_structured_evidence_reason message_content_empty; then
       fail_launch_session \
         "structured session evidence was invalid or unavailable (status $evidence_status)"
     fi
@@ -1685,7 +1683,7 @@ if session_evidence qualify 2 >/dev/null 2>"$evidence_error"; then
 else
   evidence_status=$?
   case "$evidence_status" in
-    1|2) is_retryable_provider_evidence && fail_provider_unavailable ;;
+    1|2) has_structured_evidence_reason provider_unavailable && fail_provider_unavailable ;;
     3) fail_provider_unavailable ;;
   esac
   fail_launch_session "launch final structured session evidence did not qualify (status $evidence_status)"
