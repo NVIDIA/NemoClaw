@@ -137,12 +137,15 @@ function runStartupCredentialBoundary(
   });
 }
 
-const legacyManagedProfile = {
-  type: "api_key",
-  provider: "inference",
-  keyRef: { source: "env", id: "NVIDIA_INFERENCE_API_KEY" },
-  profileId: "inference:manual",
-};
+function legacyProfile(provider = "inference", keyId = "NVIDIA_INFERENCE_API_KEY") {
+  return {
+    type: "api_key",
+    provider,
+    keyRef: { source: "env", id: keyId },
+    profileId: `${provider}:manual`,
+  };
+}
+const legacyManagedProfile = legacyProfile();
 
 describe("OpenClaw auth-profile boundary", () => {
   it.each([
@@ -156,11 +159,7 @@ describe("OpenClaw auth-profile boundary", () => {
     });
     expect(fixture.status, fixture.stderr).toBe(0);
     expect(JSON.parse(fs.readFileSync(fixture.authPath, "utf-8"))).toEqual({
-      [`${provider}:manual`]: {
-        ...legacyManagedProfile,
-        provider,
-        profileId: `${provider}:manual`,
-      },
+      [`${provider}:manual`]: legacyProfile(provider),
     });
     expect(fs.statSync(fixture.authPath).mode & 0o777).toBe(0o600);
   });
@@ -192,11 +191,7 @@ describe("OpenClaw auth-profile boundary", () => {
   );
 
   it("preserves other profiles when removing the managed entry", () => {
-    const customProfile = {
-      ...legacyManagedProfile,
-      provider: "custom",
-      profileId: "custom:manual",
-    };
+    const customProfile = legacyProfile("custom");
     const fixture = runBashAuthFixture(
       managedEnv,
       seedAuthProfile({ "inference:manual": legacyManagedProfile, "custom:manual": customProfile }),
@@ -215,17 +210,13 @@ describe("OpenClaw auth-profile boundary", () => {
     expect(fs.readFileSync(fixture.authPath, "utf-8")).toBe(JSON.stringify(profiles));
   });
 
-  it.each(["managed", "direct"])("presents the correct %s profiles to root Doctor", (route) => {
-    const custom = {
-      ...legacyManagedProfile,
-      provider: "custom",
-      profileId: "custom:manual",
-      keyRef: { source: "env", id: "CUSTOM_API_KEY" },
-    };
-    const profiles = { "inference:manual": legacyManagedProfile, "custom:manual": custom };
+  it.each(["managed", "direct"])("presents configured %s profiles to root Doctor", (route) => {
+    const custom = legacyProfile("custom", "CUSTOM_API_KEY");
+    const profiles = { "openai:manual": legacyProfile("openai"), "custom:manual": custom };
     const fixture = runBashAuthFixture(
       {
         ...managedEnv,
+        NEMOCLAW_INFERENCE_PROVIDER_ID: "openai",
         ...(route === "direct" ? { NEMOCLAW_INFERENCE_BASE_URL: "https://direct.example/v1" } : {}),
       },
       seedAuthProfile(profiles),
@@ -234,7 +225,7 @@ describe("OpenClaw auth-profile boundary", () => {
         // Keep fixture HOME instead of switching users; reconciliation remains real.
         "run_step_down_as_sandbox() { write_auth_profile; }",
         "configure_messaging_channels() { :; }",
-        'run_requested_openclaw_post_upgrade_doctor() { cat "$HOME/.openclaw/agents/main/agent/auth-profiles.json"; }',
+        `run_requested_openclaw_post_upgrade_doctor() { ${credentialProbe} >&2; cat "$HOME/.openclaw/agents/main/agent/auth-profiles.json"; }`,
         "clear_managed_inference_credentials",
         rootDoctorBlock(),
       ].join("\n"),
@@ -242,6 +233,9 @@ describe("OpenClaw auth-profile boundary", () => {
     expect(fixture.status, fixture.stderr).toBe(0);
     expect(JSON.parse(fixture.stdout)).toEqual(
       route === "managed" ? { "custom:manual": custom } : profiles,
+    );
+    expect(fixture.stderr.trim()).toBe(
+      route === "managed" ? "unset\nunset" : "primary-secret\nlegacy-secret",
     );
   });
 
