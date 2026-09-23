@@ -415,6 +415,15 @@ credential reference, and independently observed effective policy.
 The fixture compares the registry before and after export, and state validation confirms that the
 sandbox remains ready after the read-only command.
 
+The OpenClaw shard of the pinned Docker `mcp-bridge` target also owns Error-state recovery for
+OpenShell 0.0.116. After its healthy-source rebuild checks, it kills only the runtime bound to the
+test-created native sandbox ID, observes Error, and rebuilds without reintroducing the MCP host
+secret. A different container must preserve a workspace marker and complete the authenticated MCP
+tool call with the existing denial rule. The Podman and explicit-only development-runtime targets
+retain their existing bridge checks and record this additional Docker compatibility proof as not
+applicable. Capture validation, credential sanitization, source drift refusals and lifecycle-transition
+rules remain covered by source and component tests.
+
 The `sandbox-operations` target owns live final-gateway cleanup on the Docker-backed OpenShell
 boundary. It leaves one sandbox live after removing only its local registry entry, then requires a
 `destroy --cleanup-gateway` of the registered sandbox to preserve the gateway, report the live

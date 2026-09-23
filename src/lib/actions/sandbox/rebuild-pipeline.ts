@@ -48,6 +48,7 @@ import {
 } from "./rebuild-durable-config";
 import {
   disposeRebuildAgentBaseImagePreflight,
+  prepareRebuildStoppedOpenClawState,
   removeStaleRebuildDockerOrphan,
   snapshotOpenShellEnv,
 } from "./rebuild-flow-helpers";
@@ -237,7 +238,16 @@ async function rebuildSandboxUnlocked(
   let rebuildPolicyHandoffManifest: NonNullable<RebuildBackupManifest> | null = null;
   const preparedBackupRecovery = recoveryManifest !== null;
   const recoveryRecreate = staleRecovery || preparedBackupRecovery;
+  let stoppedSource: Awaited<ReturnType<typeof prepareRebuildStoppedOpenClawState>> = null;
   try {
+    stoppedSource = await prepareRebuildStoppedOpenClawState(
+      sandboxEntry,
+      liveState,
+      recoveryManifest !== null,
+      registry.getSandbox,
+    );
+    if (stoppedSource)
+      log("Captured the identified stopped OpenClaw source without starting its container.");
     let recoveryRegistrySnapshot = preparedBackupRecovery
       ? JSON.parse(JSON.stringify(registry.load()))
       : liveState.staleRegistrySnapshot;
@@ -332,6 +342,7 @@ async function rebuildSandboxUnlocked(
           recreateOptions.runtimeSelection,
           (recoveryManifest === null && activeRecoveryTransaction?.sandboxName !== sandboxName) ||
             canRecapturePreparedRecoveryMcp,
+          stoppedSource ?? undefined,
         ));
       const mcpEntries = observedMcp.entries;
       const mcpRuntimeSelectionRequired = mcpEntries.length > 0;
@@ -481,6 +492,7 @@ async function rebuildSandboxUnlocked(
       }
 
       const backup = await runRebuildBackupPhase({
+        ...(stoppedSource ? { capturedOpenClawState: stoppedSource } : {}),
         sandboxName,
         gatewayName: recreateOptions.targetGatewayName,
         gatewayPort: recreateOptions.targetGatewayPort,
@@ -803,6 +815,7 @@ async function rebuildSandboxUnlocked(
       let preservedMcpPolicyHandoff = false;
       const sourceWindowForDelete = sourceOpenClawDoctorWindow;
       const mcpPreparation = await runRebuildDestroyPhase({
+        ...(stoppedSource ? { capturedOpenClawState: stoppedSource } : {}),
         sandboxName,
         sandboxEntry,
         recheckMessagingConflicts,
@@ -882,6 +895,7 @@ async function rebuildSandboxUnlocked(
           );
         },
         validateAtDeleteEdge: async (runtimeSelection) => {
+          stoppedSource?.assertCurrent();
           if (
             !recreateOptions.rebuildProviderReconfigure &&
             shouldVerifyRebuildGatewayProvider(resumeConfig.provider)
@@ -1116,6 +1130,11 @@ async function rebuildSandboxUnlocked(
       }
     }
   } finally {
+    if (stoppedSource)
+      runBestEffortRebuildCleanup(
+        stoppedSource.dispose,
+        "  Warning: private stopped-state capture files could not be fully removed.",
+      );
     runBestEffortRebuildCleanup(
       dcodePreflight.cleanup,
       "  Warning: temporary DCode rebuild inputs could not be fully removed.",
