@@ -464,6 +464,47 @@ describe("credential provider registration", () => {
     },
   );
 
+  it.each([
+    {
+      condition: "a replacement invalidates the alias receipt",
+      staged: [["NVIDIA_API_KEY", "nvapi-legacy"]],
+      sent: "nvapi-replacement",
+      expected: [],
+    },
+    {
+      condition: "canonical and alias values differ",
+      staged: [
+        ["NVIDIA_INFERENCE_API_KEY", "nvapi-canonical"],
+        ["NVIDIA_API_KEY", "nvapi-stale-alias"],
+      ],
+      sent: "nvapi-canonical",
+      expected: ["NVIDIA_INFERENCE_API_KEY"],
+    },
+  ])(
+    "records the correct alias migration when $condition (#10373)",
+    async ({ staged, sent, expected }) => {
+      const session = { stagedCredentialProviders: [] } as unknown as Session;
+      const runOpenshell = vi.fn((args: string[]) =>
+        args[1] === "get"
+          ? providerMetadata("nvidia-prod", "nvidia", "NVIDIA_INFERENCE_API_KEY")
+          : { status: 0, stdout: "", stderr: "" },
+      );
+      const deps = registrationDeps(runOpenshell, session);
+      deps.stagedLegacyValues = new Map(staged.map(([key, value]) => [key!, value!]));
+      deps.migratedLegacyKeys.add("NVIDIA_API_KEY");
+
+      await createCredentialProviderRegistration(deps).upsertProvider(
+        "nvidia-prod",
+        "nvidia",
+        "NVIDIA_INFERENCE_API_KEY",
+        "https://integrate.api.nvidia.com/v1",
+        { NVIDIA_INFERENCE_API_KEY: sent },
+      );
+
+      expect(deps.migratedLegacyKeys).toEqual(new Set(expected));
+    },
+  );
+
   it("does not record migration when provider registration fails", async () => {
     const session = { stagedCredentialProviders: [] } as unknown as Session;
     const runOpenshell = vi.fn((args: string[]) => ({
