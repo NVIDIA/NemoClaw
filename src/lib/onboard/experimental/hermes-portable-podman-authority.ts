@@ -22,6 +22,7 @@ import type { CheckpointPortableRuntimeAuthority } from "../../state/onboard-che
 import { parsePortableRuntimeAuthority } from "../../state/onboard/portable-runtime-authority";
 import { qualifyPodmanEndpointHost } from "../runtime-provider/podman-preflight";
 import { buildHermesPortablePodmanEnvironment } from "./hermes-portable-container";
+import { PORTABLE_ARCHITECTURE } from "./portable-profile";
 
 export const HERMES_PORTABLE_PODMAN_VERSION = "5.7.0" as const;
 const HERMES_PORTABLE_PODMAN_NETWORK_BACKEND = "netavark";
@@ -122,7 +123,7 @@ function qualifyExactMatrix(
     receipt.rootless !== true ||
     receipt.cgroupVersion !== "v2" ||
     receipt.os !== "linux" ||
-    receipt.architecture !== "amd64" ||
+    receipt.architecture !== PORTABLE_ARCHITECTURE.container ||
     receipt.networkBackend !== HERMES_PORTABLE_PODMAN_NETWORK_BACKEND
   ) {
     fail("exact client, server, rootless, cgroup, platform, or network matrix disagrees");

@@ -1,12 +1,17 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
 import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
 
 import * as gatewayDrift from "../../adapters/openshell/gateway-drift";
 import * as openshellRuntime from "../../adapters/openshell/runtime";
+import * as gatewaySelection from "./gateway-select";
+import * as gatewayState from "./gateway-state";
 import * as gatewayRuntime from "../../gateway-runtime-action";
-import * as dockerDriverRecovery from "../../onboard/docker-driver-sandbox-recovery";
 import * as registry from "../../state/registry";
 import * as crossPortRegistry from "../../state/registry/cross-port";
 import * as registryPersistence from "../../state/registry/persistence";
@@ -15,6 +20,13 @@ import {
   checkRebuildGatewaySchemaPreflight,
   runRebuildGatewayIntentPreflight,
 } from "./rebuild-preflight-guards";
+import {
+  delegateRecoveryRetirementToOwningRegistry,
+  delegateRebuildToOwningRegistry,
+  findRebuildRecoveryStorageRoot,
+  rebuildOwningRegistryDependencies,
+} from "./rebuild/owning-registry";
+import { rebuildSandbox } from "./rebuild";
 
 const driftIssue: gatewayDrift.OpenShellStateRpcIssue = {
   kind: "image_drift",
@@ -53,22 +65,23 @@ function bail(message: string): never {
 
 describe("rebuild gateway drift preflight", () => {
   let captureOpenshellSpy: MockInstance;
-  let runOpenshellSpy: MockInstance;
   let recoverNamedGatewayRuntimeSpy: MockInstance;
   let getNamedGatewayLifecycleStateSpy: MockInstance;
-  let recoverDockerDriverSandboxSpy: MockInstance;
   let errorSpy: MockInstance;
 
   beforeEach(() => {
-    vi.spyOn(gatewayDrift, "detectOpenShellStateRpcPreflightIssue").mockReturnValue(null);
-    vi.spyOn(gatewayDrift, "detectOpenShellStateRpcResultIssue").mockReturnValue(null);
+    vi.spyOn(gatewaySelection, "selectSandboxOwningGateway").mockImplementation(async (name) => ({
+      outcome: "selected",
+      gatewayName: registry.getSandbox(name)?.gatewayName ?? "nemoclaw",
+    }));
+
+    vi.spyOn(gatewayDrift, "detectOpenShellStateRpcPreflightIssue").mockResolvedValue(null);
+    vi.spyOn(gatewayDrift, "detectOpenShellStateRpcResultIssue").mockResolvedValue(null);
     vi.spyOn(gatewayDrift, "printOpenShellStateRpcIssue").mockImplementation(() => undefined);
     captureOpenshellSpy = vi
       .spyOn(openshellRuntime, "captureOpenshell")
       .mockReturnValue({ status: 0, output: "alpha Ready" });
-    runOpenshellSpy = vi
-      .spyOn(openshellRuntime, "runOpenshell")
-      .mockReturnValue({ status: 0, output: "" } as never);
+    vi.spyOn(openshellRuntime, "runOpenshell").mockReturnValue({ status: 0, output: "" } as never);
     recoverNamedGatewayRuntimeSpy = vi
       .spyOn(gatewayRuntime, "recoverNamedGatewayRuntime")
       .mockResolvedValue({
@@ -84,9 +97,6 @@ describe("rebuild gateway drift preflight", () => {
         activeGateway: "nemoclaw",
         status: "",
       } as never);
-    recoverDockerDriverSandboxSpy = vi
-      .spyOn(dockerDriverRecovery, "recoverDockerDriverSandbox")
-      .mockReturnValue({ recovered: false, via: null });
     vi.spyOn(registry, "getSandbox").mockReturnValue(makeSandboxEntry() as never);
     vi.spyOn(crossPortRegistry, "findSandboxAcrossGatewayRoots").mockImplementation(
       (name: string) => {
@@ -107,8 +117,34 @@ describe("rebuild gateway drift preflight", () => {
     vi.restoreAllMocks();
   });
 
+  it("reports failed gateway observation without claiming a sibling is active", async () => {
+    captureOpenshellSpy.mockReturnValue({ status: 0, output: "beta Ready" });
+    vi.spyOn(gatewayState, "getReconciledSandboxGatewayState").mockResolvedValue({
+      state: "present",
+      output: "alpha Ready",
+    });
+    const observation = {
+      state: "observation_failed" as const,
+      activeGateway: null,
+      diagnostic: "Gateway observation could not be completed.",
+      recoveryBlocked: true,
+      unavailable: true,
+    };
+    getNamedGatewayLifecycleStateSpy.mockResolvedValue(observation);
+    const wrongGateway = vi.spyOn(gatewayState, "printWrongGatewayActiveGuidance");
+
+    await expect(
+      resolveRebuildLiveState("alpha", makeSandboxEntry(), vi.fn(), bail),
+    ).rejects.toThrow("(observation_failed)");
+    expect(errorSpy).toHaveBeenCalledWith(observation.diagnostic);
+    expect(errorSpy.mock.calls.flat().join("\n")).not.toContain(
+      "currently active OpenShell gateway",
+    );
+    expect(wrongGateway).not.toHaveBeenCalled();
+  });
+
   it("rejects gateway image drift before confirming rebuild intent", async () => {
-    vi.mocked(gatewayDrift.detectOpenShellStateRpcPreflightIssue).mockReturnValue(driftIssue);
+    vi.mocked(gatewayDrift.detectOpenShellStateRpcPreflightIssue).mockResolvedValue(driftIssue);
     const confirmIntent = vi.fn();
 
     await expect(
@@ -131,7 +167,7 @@ describe("rebuild gateway drift preflight", () => {
     expect(recoverNamedGatewayRuntimeSpy).not.toHaveBeenCalled();
   });
 
-  it("binds gateway schema preflight to the frozen runtime target (#10514)", () => {
+  it("binds gateway schema preflight to the frozen runtime target (#10514)", async () => {
     const runtimeSelection = {
       gatewayName: "nemoclaw",
       localTlsDir: "/authority/tls",
@@ -139,7 +175,7 @@ describe("rebuild gateway drift preflight", () => {
     };
 
     expect(
-      checkRebuildGatewaySchemaPreflight("alpha", makeSandboxEntry(), bail, runtimeSelection),
+      await checkRebuildGatewaySchemaPreflight("alpha", makeSandboxEntry(), bail, runtimeSelection),
     ).toBe(true);
     expect(gatewayDrift.detectOpenShellStateRpcPreflightIssue).toHaveBeenCalledWith({
       gatewayName: "nemoclaw",
@@ -147,12 +183,16 @@ describe("rebuild gateway drift preflight", () => {
     });
   });
 
-  it("prints the safe-abort diagnostic before bailing on gateway schema drift (#7794)", () => {
-    vi.mocked(gatewayDrift.detectOpenShellStateRpcPreflightIssue).mockReturnValue(driftIssue);
+  it("prints the safe-abort diagnostic before bailing on gateway schema drift (#7794)", async () => {
+    vi.mocked(gatewayDrift.detectOpenShellStateRpcPreflightIssue).mockResolvedValue(driftIssue);
     const nonThrowingBail = vi.fn();
 
     expect(
-      checkRebuildGatewaySchemaPreflight("alpha", makeSandboxEntry(), nonThrowingBail as never),
+      await checkRebuildGatewaySchemaPreflight(
+        "alpha",
+        makeSandboxEntry(),
+        nonThrowingBail as never,
+      ),
     ).toBe(false);
 
     const diagnostics = errorSpy.mock.calls.flat().join("\n");
@@ -196,10 +236,7 @@ describe("rebuild gateway drift preflight", () => {
         "Cannot rebuild an absent sandbox without its authoritative OpenShell policy",
       );
       expect(getNamedGatewayLifecycleStateSpy).not.toHaveBeenCalled();
-      expect(runOpenshellSpy).toHaveBeenCalledWith(
-        ["gateway", "select", recordedGateway],
-        expect.objectContaining({ ignoreError: true }),
-      );
+      expect(gatewaySelection.selectSandboxOwningGateway).toHaveBeenCalledWith("alpha");
       expect(captureOpenshellSpy).toHaveBeenNthCalledWith(
         1,
         ["sandbox", "list", "-g", recordedGateway],
@@ -210,7 +247,6 @@ describe("rebuild gateway drift preflight", () => {
         ["sandbox", "get", "-g", recordedGateway, "alpha"],
         expect.anything(),
       );
-      expect(recoverDockerDriverSandboxSpy).toHaveBeenCalledWith("alpha");
       expect(registryPersistence.load).not.toHaveBeenCalled();
       expect(errorSpy.mock.calls.flat().join("\n")).toContain(
         "absent from the live OpenShell gateway",
@@ -265,7 +301,6 @@ describe("rebuild gateway drift preflight", () => {
         expect.anything(),
       );
       expect(getNamedGatewayLifecycleStateSpy).not.toHaveBeenCalled();
-      expect(recoverDockerDriverSandboxSpy).toHaveBeenCalledWith("alpha");
       expect(registryPersistence.load).not.toHaveBeenCalled();
       expect(errorSpy.mock.calls.flat().join("\n")).toContain(
         "absent from the live OpenShell gateway",
@@ -325,8 +360,314 @@ describe("rebuild gateway drift preflight", () => {
       expect.objectContaining({ ignoreError: true }),
     );
     expect(getNamedGatewayLifecycleStateSpy).not.toHaveBeenCalled();
-    expect(recoverDockerDriverSandboxSpy).not.toHaveBeenCalled();
     expect(registryPersistence.load).not.toHaveBeenCalled();
     expect(errorSpy.mock.calls.flat().join("\n")).toContain("Failed to query running sandboxes");
+  });
+});
+
+describe("rebuild owning registry routing", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("delegates the complete rebuild transaction to a sibling registry root", async () => {
+    const entry = {
+      ...makeSandboxEntry("nemoclaw-9000", 9000),
+      credentialEnv: "NVIDIA_INFERENCE_API_KEY",
+    };
+    vi.spyOn(rebuildOwningRegistryDependencies, "findSandbox").mockReturnValue({
+      entry,
+      gatewayPort: 9000,
+      registryGatewayPort: 9000,
+      registryFile: "/home/test/.nemoclaw/gateways/9000/sandboxes.json",
+    });
+    const runWorker = vi
+      .spyOn(rebuildOwningRegistryDependencies, "runWorker")
+      .mockResolvedValue(undefined);
+    const recoveryManifest = { sandboxName: "alpha", backupPath: "/backup/alpha" } as never;
+    const input = {
+      sandboxName: "alpha",
+      options: { yes: true, verbose: true },
+      executionOptions: { throwOnError: true, recoveryManifest },
+    };
+
+    const readBaseRegistry = vi.spyOn(registry, "load");
+
+    await expect(
+      rebuildSandbox(input.sandboxName, input.options, input.executionOptions),
+    ).resolves.toBeUndefined();
+
+    expect(runWorker).toHaveBeenCalledWith({ operation: "rebuild", ...input }, 9000, {
+      credentialEnvNames: ["NVIDIA_INFERENCE_API_KEY"],
+    });
+    expect(readBaseRegistry).not.toHaveBeenCalled();
+  });
+
+  it("keeps the rebuild in-process when the selected root owns the sandbox", async () => {
+    const entry = makeSandboxEntry("nemoclaw", 8080);
+    vi.spyOn(rebuildOwningRegistryDependencies, "findSandbox").mockReturnValue({
+      entry,
+      gatewayPort: 8080,
+      registryGatewayPort: 8080,
+      registryFile: "/home/test/.nemoclaw/sandboxes.json",
+    });
+    const runWorker = vi.spyOn(rebuildOwningRegistryDependencies, "runWorker");
+
+    await expect(
+      delegateRebuildToOwningRegistry(
+        { sandboxName: "alpha", options: { yes: true }, executionOptions: {} },
+        "/home/test",
+        "/home/test/.nemoclaw/sandboxes.json",
+      ),
+    ).resolves.toBe(false);
+
+    expect(runWorker).not.toHaveBeenCalled();
+  });
+
+  it("keeps a legacy base-root row local even when it records a non-default runtime port", async () => {
+    const entry = makeSandboxEntry("nemoclaw-9000", 9000);
+    vi.spyOn(rebuildOwningRegistryDependencies, "findSandbox").mockReturnValue({
+      entry,
+      gatewayPort: 9000,
+      registryGatewayPort: 8080,
+      registryFile: "/home/test/.nemoclaw/sandboxes.json",
+    });
+    const runWorker = vi.spyOn(rebuildOwningRegistryDependencies, "runWorker");
+
+    await expect(
+      delegateRebuildToOwningRegistry(
+        { sandboxName: "alpha", options: { yes: true }, executionOptions: {} },
+        "/home/test",
+        "/home/test/.nemoclaw/sandboxes.json",
+      ),
+    ).resolves.toBe(false);
+
+    expect(runWorker).not.toHaveBeenCalled();
+  });
+
+  it("fails fast instead of deadlocking when a parent lifecycle command owns the host fence", async () => {
+    const entry = makeSandboxEntry("nemoclaw-9000", 9000);
+    vi.spyOn(rebuildOwningRegistryDependencies, "findSandbox").mockReturnValue({
+      entry,
+      gatewayPort: 9000,
+      registryGatewayPort: 9000,
+      registryFile: "/home/test/.nemoclaw/gateways/9000/sandboxes.json",
+    });
+    vi.spyOn(rebuildOwningRegistryDependencies, "isHostFenceHeld").mockReturnValue(true);
+    const runWorker = vi.spyOn(rebuildOwningRegistryDependencies, "runWorker");
+
+    await expect(
+      delegateRebuildToOwningRegistry(
+        { sandboxName: "alpha", options: { yes: true }, executionOptions: {} },
+        "/home/test",
+        "/home/test/.nemoclaw/sandboxes.json",
+      ),
+    ).rejects.toThrow("Run 'nemoclaw alpha rebuild' directly");
+
+    expect(runWorker).not.toHaveBeenCalled();
+  });
+
+  it("confirms a sibling-root rebuild in the parent before starting its detached worker", async () => {
+    const entry = makeSandboxEntry("nemoclaw-9000", 9000);
+    vi.spyOn(rebuildOwningRegistryDependencies, "findSandbox").mockReturnValue({
+      entry,
+      gatewayPort: 9000,
+      registryGatewayPort: 9000,
+      registryFile: "/home/test/.nemoclaw/gateways/9000/sandboxes.json",
+    });
+    vi.spyOn(rebuildOwningRegistryDependencies, "isHostFenceHeld").mockReturnValue(false);
+    const confirmInteractiveRebuild = vi
+      .spyOn(rebuildOwningRegistryDependencies, "confirmInteractiveRebuild")
+      .mockResolvedValue(true);
+    const runWorker = vi
+      .spyOn(rebuildOwningRegistryDependencies, "runWorker")
+      .mockResolvedValue(undefined);
+
+    await expect(
+      delegateRebuildToOwningRegistry(
+        { sandboxName: "alpha", options: {}, executionOptions: {} },
+        "/home/test",
+        "/home/test/.nemoclaw/sandboxes.json",
+      ),
+    ).resolves.toBe(true);
+
+    expect(confirmInteractiveRebuild).toHaveBeenCalledWith("alpha", undefined);
+    expect(runWorker).toHaveBeenCalledWith(
+      {
+        operation: "rebuild",
+        sandboxName: "alpha",
+        options: { yes: true },
+        executionOptions: {},
+      },
+      9000,
+      { credentialEnvNames: [] },
+    );
+  });
+
+  it("keeps a cancelled sibling-root rebuild non-mutating", async () => {
+    const entry = makeSandboxEntry("nemoclaw-9000", 9000);
+    vi.spyOn(rebuildOwningRegistryDependencies, "findSandbox").mockReturnValue({
+      entry,
+      gatewayPort: 9000,
+      registryGatewayPort: 9000,
+      registryFile: "/home/test/.nemoclaw/gateways/9000/sandboxes.json",
+    });
+    vi.spyOn(rebuildOwningRegistryDependencies, "isHostFenceHeld").mockReturnValue(false);
+    vi.spyOn(rebuildOwningRegistryDependencies, "confirmInteractiveRebuild").mockResolvedValue(
+      false,
+    );
+    const runWorker = vi.spyOn(rebuildOwningRegistryDependencies, "runWorker");
+
+    await expect(
+      delegateRebuildToOwningRegistry(
+        { sandboxName: "alpha", options: {}, executionOptions: {} },
+        "/home/test",
+        "/home/test/.nemoclaw/sandboxes.json",
+      ),
+    ).resolves.toBe(true);
+
+    expect(runWorker).not.toHaveBeenCalled();
+  });
+
+  it("rejects duplicate exact recovery records across gateway roots", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-recovery-roots-"));
+    const transactionId = "11111111-1111-4111-8111-111111111111";
+    const timestamp = "2026-09-17T00-00-00-000Z";
+    try {
+      const firstBackup = path.join(
+        home,
+        ".nemoclaw",
+        "gateways",
+        "9000",
+        "rebuild-backups",
+        "alpha",
+        timestamp,
+      );
+      const secondBackup = path.join(
+        home,
+        ".nemoclaw",
+        "gateways",
+        "9001",
+        "rebuild-backups",
+        "alpha",
+        timestamp,
+      );
+      fs.mkdirSync(firstBackup, { recursive: true });
+      fs.mkdirSync(secondBackup, { recursive: true });
+      fs.writeFileSync(
+        path.join(firstBackup, ".nemoclaw-rebuild-recovery.json"),
+        `${JSON.stringify({
+          schemaVersion: 3,
+          transactionId,
+          sandboxName: "alpha",
+          backupTimestamp: timestamp,
+          gatewayName: "nemoclaw-9000",
+          gatewayPort: 9000,
+          phase: "restore",
+        })}\n`,
+        { mode: 0o600 },
+      );
+      fs.writeFileSync(
+        path.join(secondBackup, ".nemoclaw-rebuild-recovery.json"),
+        `${JSON.stringify({
+          schemaVersion: 3,
+          transactionId,
+          sandboxName: "alpha",
+          backupTimestamp: timestamp,
+          gatewayName: "nemoclaw-9001",
+          gatewayPort: 9001,
+          phase: "restore",
+        })}\n`,
+        { mode: 0o600 },
+      );
+
+      expect(() =>
+        findRebuildRecoveryStorageRoot(
+          { sandboxName: "alpha", transactionId, confirmDataRecovered: true },
+          home,
+        ),
+      ).toThrow("More than one exact rebuild recovery record");
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    {
+      description: "gateway port differs from its state root",
+      gatewayName: "nemoclaw-9001",
+      gatewayPort: 9001,
+      expected: "gateway port 9001 does not match state root port 9000",
+    },
+    {
+      description: "gateway name differs from its state root",
+      gatewayName: "nemoclaw-9001",
+      gatewayPort: 9000,
+      expected: "gateway name 'nemoclaw-9001' does not match state root gateway 'nemoclaw-9000'",
+    },
+  ])(
+    "rejects a recovery marker whose $description before worker delegation",
+    async ({ gatewayName, gatewayPort, expected }) => {
+      const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-recovery-root-port-"));
+      const transactionId = "11111111-1111-4111-8111-111111111111";
+      const timestamp = "2026-09-17T00-00-00-000Z";
+      const backupPath = path.join(
+        home,
+        ".nemoclaw",
+        "gateways",
+        "9000",
+        "rebuild-backups",
+        "alpha",
+        timestamp,
+      );
+      const recoveryFile = path.join(backupPath, ".nemoclaw-rebuild-recovery.json");
+      vi.spyOn(rebuildOwningRegistryDependencies, "isHostFenceHeld").mockReturnValue(false);
+      const runWorker = vi.spyOn(rebuildOwningRegistryDependencies, "runWorker");
+      try {
+        fs.mkdirSync(backupPath, { recursive: true });
+        fs.writeFileSync(
+          recoveryFile,
+          `${JSON.stringify({
+            schemaVersion: 3,
+            transactionId,
+            sandboxName: "alpha",
+            backupTimestamp: timestamp,
+            gatewayName,
+            gatewayPort,
+            phase: "restore",
+          })}\n`,
+          { mode: 0o600 },
+        );
+
+        await expect(
+          delegateRecoveryRetirementToOwningRegistry(
+            { sandboxName: "alpha", transactionId, confirmDataRecovered: true },
+            home,
+            path.join(home, ".nemoclaw", "sandboxes.json"),
+          ),
+        ).rejects.toThrow(expected);
+        expect(runWorker).not.toHaveBeenCalled();
+        expect(fs.existsSync(recoveryFile)).toBe(true);
+      } finally {
+        fs.rmSync(home, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it("rejects traversal-shaped recovery names before reading gateway roots", () => {
+    const readDirectory = vi.spyOn(fs, "readdirSync");
+
+    expect(() =>
+      findRebuildRecoveryStorageRoot(
+        {
+          sandboxName: "../outside",
+          transactionId: "11111111-1111-4111-8111-111111111111",
+          confirmDataRecovered: true,
+        },
+        "/home/test",
+      ),
+    ).toThrow("Invalid sandbox name.");
+
+    expect(readDirectory).not.toHaveBeenCalled();
   });
 });

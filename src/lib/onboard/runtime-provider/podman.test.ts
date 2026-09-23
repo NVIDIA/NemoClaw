@@ -3,6 +3,9 @@
 
 import { describe, expect, it, vi } from "vitest";
 import { createPodmanHostLocalInferenceTestHarness } from "../../../../test/helpers/podman-host-local-inference-test-harness";
+import type { OpenShellSandboxObserver } from "../../adapters/openshell/sandbox-observer";
+import { fingerprintOpenShellSandboxId } from "../../adapters/openshell/sandbox-identity";
+import type { OpenShellSandboxStateLifecycle } from "../../adapters/openshell/sandbox-lifecycle-sdk";
 import { startSandbox } from "../../actions/sandbox/start";
 import { stopSandbox } from "../../actions/sandbox/stop";
 import { withCurrentPortableHostFence } from "../../state/portable-uninstall-retirement";
@@ -50,12 +53,6 @@ const REAL_SOCKET_AUTHORITY = {
   socketPath: "/run/user/1000/podman/podman.sock",
 } as const satisfies PodmanSocketAuthority;
 const PODMAN_EXECUTABLE_BYTES = Buffer.from("qualified-podman-binary", "utf8");
-const SUCCESSFUL_RECOVERY = {
-  checked: true,
-  wasRunning: true,
-  recovered: false,
-  forwardRecovered: false,
-} as const;
 const GPU_PROOF_RESOURCE = {
   name: "nemoclaw-gpu-proof-1234",
   ownership: { label: "com.nvidia.nemoclaw.gpu-proof", value: "true" },
@@ -101,7 +98,10 @@ function realOperationEngines(
     capture,
   } as const;
   return {
-    hostDoctor: createPodmanContainerEngine({ ...common, operation: "host-doctor" }),
+    hostDoctor: createPodmanContainerEngine({
+      ...common,
+      operation: "host-doctor",
+    }),
     hostLocalInference: createPodmanContainerEngine({
       ...common,
       operation: "host-local-inference",
@@ -233,7 +233,11 @@ function lifecycleEngine(sandboxName: string, authorityId = AUTHORITY_ID): Podma
         case "container":
           return (
             containerOperations[String(args[1])] ??
-            (() => ({ status: 125, stdout: "", stderr: "unexpected container operation" }))
+            (() => ({
+              status: 125,
+              stdout: "",
+              stderr: "unexpected container operation",
+            }))
           )();
         case "start":
           running = true;
@@ -242,7 +246,11 @@ function lifecycleEngine(sandboxName: string, authorityId = AUTHORITY_ID): Podma
           running = false;
           return { status: 0, stdout: CONTAINER_ID, stderr: "" };
         default:
-          return { status: 125, stdout: "", stderr: `unexpected operation ${operation}` };
+          return {
+            status: 125,
+            stdout: "",
+            stderr: `unexpected operation ${operation}`,
+          };
       }
     }),
     captureHost: vi.fn(),
@@ -259,10 +267,42 @@ function providerHarness(agent: (typeof AGENTS)[number]) {
   const providers = createRuntimeProviderBundleRegistry([["podman", bundle]]);
   const entry: SandboxEntry = {
     agent,
+    lifecycleLiveIdentityFingerprint: fingerprintOpenShellSandboxId(`id-${sandboxName}`)!,
     name: sandboxName,
     openshellDriver: "podman",
   };
-  return { entry, lifecycle, providers, sandboxName };
+  const startOpenShellSandbox = vi.fn<OpenShellSandboxStateLifecycle["startSandbox"]>(async () => {
+    lifecycle.capture(["start", CONTAINER_ID]);
+    return { kind: "accepted" };
+  });
+  const stopOpenShellSandbox = vi.fn<OpenShellSandboxStateLifecycle["stopSandbox"]>(async () => {
+    lifecycle.capture(["stop", CONTAINER_ID]);
+    return { kind: "accepted" };
+  });
+  const openShellLifecycle: OpenShellSandboxStateLifecycle = {
+    startSandbox: startOpenShellSandbox,
+    stopSandbox: stopOpenShellSandbox,
+  };
+  return {
+    entry,
+    lifecycle,
+    openShellLifecycle,
+    providers,
+    sandboxName,
+    startOpenShellSandbox,
+    stopOpenShellSandbox,
+  };
+}
+
+function readyObserver(sandboxName: string): OpenShellSandboxObserver {
+  return {
+    listSandboxes: vi.fn(async () => ({
+      ok: true as const,
+      value: {
+        sandboxes: [{ name: sandboxName, phase: "Ready", readiness: "ready" as const }],
+      },
+    })),
+  };
 }
 
 describe("managed Podman runtime provider", () => {
@@ -271,16 +311,16 @@ describe("managed Podman runtime provider", () => {
     async (agent) => {
       const runtime = providerHarness(agent);
       const verifyGateway = vi.fn(async () => undefined);
-      const restoreStartupState = vi.fn(async () => SUCCESSFUL_RECOVERY);
       const stopSandboxChannels = vi.fn();
       const updateSandbox = vi.fn(() => true);
 
       await expect(
         startSandbox(runtime.sandboxName, {
           getSandbox: () => runtime.entry,
+          openShellLifecycle: runtime.openShellLifecycle,
+          observer: readyObserver(runtime.sandboxName),
           updateSandbox,
           runtimeProviders: runtime.providers,
-          restoreStartupState,
           verifyGateway,
           log: vi.fn(),
         }),
@@ -289,6 +329,7 @@ describe("managed Podman runtime provider", () => {
         withCurrentPortableHostFence(() =>
           stopSandbox(runtime.sandboxName, {
             getSandbox: () => runtime.entry,
+            openShellLifecycle: runtime.openShellLifecycle,
             updateSandbox,
             runtimeProviders: runtime.providers,
             stopSandboxChannels,
@@ -298,7 +339,6 @@ describe("managed Podman runtime provider", () => {
         ),
       ).resolves.toEqual({ exitCode: 0 });
 
-      expect(restoreStartupState).toHaveBeenCalledExactlyOnceWith(runtime.sandboxName);
       expect(verifyGateway).toHaveBeenCalledExactlyOnceWith(runtime.sandboxName);
       expect(stopSandboxChannels).toHaveBeenCalledWith(
         runtime.sandboxName,
@@ -318,18 +358,17 @@ describe("managed Podman runtime provider", () => {
     await expect(
       startSandbox(runtime.sandboxName, {
         getSandbox: () => runtime.entry,
+        openShellLifecycle: runtime.openShellLifecycle,
+        observer: readyObserver(runtime.sandboxName),
         runtimeProviders: runtime.providers,
-        restoreStartupState: vi.fn(async () => SUCCESSFUL_RECOVERY),
         verifyGateway,
         log: vi.fn(),
       }),
     ).rejects.toBe(gatewayFailure);
     expect(verifyGateway).toHaveBeenCalledExactlyOnceWith(runtime.sandboxName);
-    expect(
-      (runtime.lifecycle.capture as ReturnType<typeof vi.fn>).mock.calls.some(
-        ([args]) => (args as readonly string[])[0] === "start",
-      ),
-    ).toBe(true);
+    expect(runtime.startOpenShellSandbox).toHaveBeenCalledWith(
+      expect.objectContaining({ sandboxName: runtime.sandboxName }),
+    );
   });
 
   it("executes privileged control through the lifecycle-bound Podman engine", () => {
@@ -341,12 +380,7 @@ describe("managed Podman runtime provider", () => {
       { readonly supported: true }
     >;
 
-    supportedLifecycle.start({
-      environment: {},
-      log: vi.fn(),
-      sandbox: runtime.entry,
-      sandboxName: runtime.sandboxName,
-    });
+    runtime.lifecycle.capture(["start", CONTAINER_ID]);
     const target = supportedLifecycle.privilegedSandboxControl.resolveTarget({
       registeredSandboxNames: [runtime.sandboxName],
       sandbox: runtime.entry,
@@ -362,7 +396,10 @@ describe("managed Podman runtime provider", () => {
       timeoutMs: 9000,
     });
 
-    expect(target).toEqual({ providerId: "podman", resourceHandle: CONTAINER_ID });
+    expect(target).toEqual({
+      providerId: "podman",
+      resourceHandle: CONTAINER_ID,
+    });
     expect(result).toMatchObject({ status: 0, signal: null });
     expect(result.stdout.toString("utf8")).toBe("uid=0\n");
     expect(runtime.lifecycle.capture).toHaveBeenLastCalledWith(
@@ -401,7 +438,11 @@ describe("managed Podman runtime provider", () => {
 
   it("classifies a successful Podman discovery with no container as pending (#11107)", () => {
     const runtime = providerHarness("hermes");
-    vi.mocked(runtime.lifecycle.capture).mockReturnValue({ status: 0, stdout: "", stderr: "" });
+    vi.mocked(runtime.lifecycle.capture).mockReturnValue({
+      status: 0,
+      stdout: "",
+      stderr: "",
+    });
     const lifecycle = runtime.providers.podman?.lifecycle;
     expect(lifecycle).toMatchObject({ supported: true });
     const supportedLifecycle = lifecycle as Extract<
@@ -461,7 +502,13 @@ describe("managed Podman runtime provider", () => {
       }),
     ).toEqual({ cleared: false, failure: "cleanup-helper-image-unavailable" });
     expect(cleanupCapture).toHaveBeenCalledExactlyOnceWith(
-      ["image", "inspect", "--format", "{{.Id}}", expect.stringContaining("node:22-trixie-slim")],
+      [
+        "image",
+        "inspect",
+        "--format",
+        "{{.Id}}",
+        expect.stringContaining("node:24.18.1-trixie-slim"),
+      ],
       30_000,
     );
   });
@@ -489,7 +536,11 @@ describe("managed Podman runtime provider", () => {
           case "rm":
             return { status: 0, stdout: "", stderr: "" };
           default:
-            return { status: 125, stdout: "", stderr: `unexpected command: ${args.join(" ")}` };
+            return {
+              status: 125,
+              stdout: "",
+              stderr: `unexpected command: ${args.join(" ")}`,
+            };
         }
       });
 
@@ -506,7 +557,7 @@ describe("managed Podman runtime provider", () => {
         "inspect",
         "--format",
         "{{.Id}}",
-        expect.stringContaining("node:22-trixie-slim"),
+        expect.stringContaining("node:24.18.1-trixie-slim"),
       ]);
     },
   );
@@ -581,7 +632,9 @@ describe("managed Podman runtime provider", () => {
       reason: "Podman host-local inference remains disabled without injected candidate authority.",
     });
     expect(() =>
-      requireRuntimeProviderHostLocalInferenceOperation(bundle, "llama-cpp", { env: {} }),
+      requireRuntimeProviderHostLocalInferenceOperation(bundle, "llama-cpp", {
+        env: {},
+      }),
     ).toThrow(
       "Runtime provider 'podman' does not provide the host-local-inference capability required for llama-cpp: Podman host-local inference remains disabled without injected candidate authority.",
     );
@@ -591,7 +644,9 @@ describe("managed Podman runtime provider", () => {
   });
 
   it("exposes only the injected Ollama, NIM, and vLLM candidate operation", () => {
-    const inference = createPodmanHostLocalInferenceTestHarness({ authorityId: AUTHORITY_ID });
+    const inference = createPodmanHostLocalInferenceTestHarness({
+      authorityId: AUTHORITY_ID,
+    });
     const bundle = createPodmanRuntimeProviderBundle({
       engines: {
         hostDoctor: hostDoctorEngine(),

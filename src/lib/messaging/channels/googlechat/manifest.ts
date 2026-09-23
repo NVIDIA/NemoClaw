@@ -37,7 +37,7 @@ export const googlechatManifest = {
       // The googlechat.tokenPaste hook parses the paste as JSON; a truncated or
       // malformed paste is re-prompted here instead of failing later at minting.
       formatHint:
-        "Paste the entire service-account JSON key on one line (minified) — the whole downloaded JSON file.",
+        "Paste the entire service-account JSON key on one line (minified), or set GOOGLECHAT_SERVICE_ACCOUNT to the downloaded JSON, including line breaks.",
       // Re-prompt on a bad paste — an SA JSON is long and easy to truncate.
       maxTokenAttempts: 3,
       prompt: {
@@ -49,6 +49,7 @@ export const googlechatManifest = {
           "┃    → your bot's SA → Keys → Add key → Create new key → JSON",
           "┃",
           "┃  A .json file downloads. Paste its contents below as ONE line (minified).",
+          "┃  Alternatively, GOOGLECHAT_SERVICE_ACCOUNT accepts the formatted JSON file contents.",
           "",
         ].join("\n"),
       },
@@ -166,8 +167,8 @@ export const googlechatManifest = {
   // runtime preload makes the plugin send the injected bearer instead of signing
   // in-process. No credentials/secretFiles here — the pasted serviceAccount is
   // consumed only as gateway-side refresh material, never delivered into the sandbox.
-  // (The `serviceAccountFile` in `render` below is a start-gate marker only, not a
-  // delivered file — see the comment there.)
+  // (The empty `serviceAccount` object in `render` below is a start-gate marker
+  // only, not a delivered credential — see the comment there.)
   // On `channels remove` this gateway-side material is torn down by
   // applyChannelRemoveToGatewayAndRegistry via bridgeProviderNamesForChannel (which
   // deletes the bridge provider from the gateway), not by clearChannelTokens — that
@@ -195,16 +196,15 @@ export const googlechatManifest = {
         path: "channels.googlechat",
         value: {
           enabled: true,
-          // Start-gate SENTINEL — a deliberately synthetic, non-existent path, NOT a
-          // real credential location. OpenClaw's channel-start gate only requires some
-          // serviceAccount* to be set (isConfigured: credentialSource !== "none") to
-          // start the webhook; it accepts any non-empty string here and does not read
-          // the file at start. The token is gateway-minted and proxy-injected, and the
-          // googlechat-outbound-auth preload short-circuits the token producer before
-          // this path could be read, so no service-account key is ever delivered into
-          // the sandbox. (Clean fix is upstream: a non-SA "configured"/accessToken
-          // credential source in @openclaw/googlechat — tracked follow-up.)
-          serviceAccountFile: "/nonexistent/googlechat-gateway-minted-no-service-account-file",
+          // Start-gate SENTINEL — an empty object, NOT a real credential. OpenClaw
+          // 2026.9.1 reads serviceAccountFile during startup and rejects the former
+          // non-existent-path sentinel as configured-but-unavailable. An inline empty
+          // object remains available to the channel gate, while the outbound-auth
+          // preload replaces the plugin's token producer before it can consume these
+          // fields. The real service-account key stays gateway-side and no private key
+          // is delivered into the sandbox. (Clean fix is upstream: a non-SA
+          // "configured"/accessToken credential source in @openclaw/googlechat.)
+          serviceAccount: {},
           audienceType: "{{googlechatConfig.audienceType}}",
           audience: "{{googlechatConfig.audience}}",
           appPrincipal: "{{googlechatConfig.appPrincipal}}",
@@ -212,10 +212,10 @@ export const googlechatManifest = {
           healthMonitor: {
             enabled: false,
           },
-          dm: {
-            policy: "{{allowedIds.googlechat.dmPolicy}}",
-            allowFrom: "{{allowedIds.googlechat.values}}",
-          },
+          // OpenClaw 2026.9.1 moved access policy to top-level channel fields;
+          // channels.googlechat.dm now accepts only the DM enabled toggle.
+          dmPolicy: "{{allowedIds.googlechat.dmPolicy}}",
+          allowFrom: "{{allowedIds.googlechat.values}}",
         },
       },
     },
@@ -348,11 +348,11 @@ export const googlechatManifest = {
       spec: "npm:@openclaw/googlechat@{{openclaw.version}}",
       pin: true,
       integrityByVersion: {
-        "2026.7.1":
-          "sha512-Dv0xOmcxAThEr6hoK+ioofHNu18hfbIceQrEHX3AHZPpOUiTJvToVpA5eX87NQINewwfSJf0gVhE6kSbSk2Aew==",
+        "2026.9.1":
+          "sha512-Q5VTAJpfcrI7BSEw5Ugq3wf7JEg5QhTBwpi+BByGbfZsTTVjwZc7OIvNbKsVTh16I5/EWqHEnD+0WNeHqsteqw==",
       },
       tarballUrlByVersion: {
-        "2026.7.1": "https://registry.npmjs.org/@openclaw/googlechat/-/googlechat-2026.7.1.tgz",
+        "2026.9.1": "https://registry.npmjs.org/@openclaw/googlechat/-/googlechat-2026.9.1.tgz",
       },
       required: true,
     },

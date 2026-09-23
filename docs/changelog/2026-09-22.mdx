@@ -1,0 +1,46 @@
+{/*
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ */}
+
+## v0.0.128
+
+NemoClaw v0.0.128 adds canonical v1alpha1 configuration export for supported single-agent sandboxes and completes more OpenShell lifecycle ownership.
+It also updates the managed OpenClaw and Hermes runtimes and improves inference readiness, MCP changes, onboarding recovery, and Deep Agents compatibility.
+
+- `nemoclaw config export` now emits the supported `nemoclaw.nvidia.com/v1alpha1` shape for hosted single-agent OpenClaw, Hermes, and Deep Agents sandboxes.
+  OpenClaw and Hermes exports use the singular `sandbox.agent` field and omit the target-managed image, while imported corporate CA state no longer blocks migration output.
+  Exports with unsupported secondary-agent rosters still fail before publication instead of dropping agents.
+  Related changes: [PR #11986](https://github.com/NVIDIA/NemoClaw/pull/11986), [PR #12057](https://github.com/NVIDIA/NemoClaw/pull/12057), [PR #12013](https://github.com/NVIDIA/NemoClaw/pull/12013), [PR #12164](https://github.com/NVIDIA/NemoClaw/pull/12164), and [PR #12168](https://github.com/NVIDIA/NemoClaw/pull/12168).
+  For more information, refer to the [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands).
+- Standard Docker and native Podman sandbox lifecycle now stays behind OpenShell, including ordinary sandbox creation through the typed lifecycle adapter.
+  Forward startup errors now retain bounded diagnostics, post-create recovery can reconcile an exact retained identity before publication, and upgrades restore a missing named gateway registration.
+  Rebuild failures now distinguish an unverified replacement version from a version mismatch and print the preserved backup and recovery commands.
+  Related changes: [PR #11909](https://github.com/NVIDIA/NemoClaw/pull/11909), [PR #12121](https://github.com/NVIDIA/NemoClaw/pull/12121), [PR #12090](https://github.com/NVIDIA/NemoClaw/pull/12090), [PR #12083](https://github.com/NVIDIA/NemoClaw/pull/12083), [PR #11956](https://github.com/NVIDIA/NemoClaw/pull/11956), and [PR #12061](https://github.com/NVIDIA/NemoClaw/pull/12061).
+  For more information, refer to [Understand Gateway Lifecycle Control](/user-guide/openclaw/manage-sandboxes/configure-sandboxes/understand-gateway-lifecycle-control), [Recover and Rebuild Sandboxes](/user-guide/openclaw/manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes), and [Troubleshooting](/user-guide/openclaw/reference/troubleshooting).
+- Managed images now include OpenClaw 2026.9.1 and Hermes 0.21.3.
+  Fresh Hermes installs preserve the forwards created during onboarding, and credential changes accept the expected OpenShell relay disconnect only after the native gateway recovers and its messaging forward returns.
+  OpenClaw device approval now exits after writing its local-fallback result instead of waiting on leftover gateway handles.
+  Related changes: [PR #11105](https://github.com/NVIDIA/NemoClaw/pull/11105), [PR #11817](https://github.com/NVIDIA/NemoClaw/pull/11817), [PR #12102](https://github.com/NVIDIA/NemoClaw/pull/12102), [PR #12101](https://github.com/NVIDIA/NemoClaw/pull/12101), and [PR #12178](https://github.com/NVIDIA/NemoClaw/pull/12178).
+  For more information, refer to the [OpenClaw Quickstart](/user-guide/openclaw/get-started/quickstart), [Quickstart with Hermes](/user-guide/hermes/get-started/quickstart), and [Troubleshooting for Hermes](/user-guide/hermes/reference/troubleshooting).
+- `nemoclaw status` now reports each sandbox's configured inference provider and model separately from the shared gateway's live route.
+  JSON output adds a redacted `configuredInference` object while preserving the existing schema-version-1 meaning of the row-level `provider` and `model` fields.
+  Related change: [PR #12233](https://github.com/NVIDIA/NemoClaw/pull/12233).
+  For more information, refer to the [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands).
+- NVIDIA Endpoints validation now uses the documented `reasoning_effort: "none"` control for Nemotron 3 Super.
+  Managed llama.cpp honors its configured readiness budget, Model Router startup waits for each semantic health response within its existing startup budget, and qualifying Windows WSL N1x hosts can rank installed Ollama models when the chassis reports an OEM model string.
+  Related changes: [PR #12007](https://github.com/NVIDIA/NemoClaw/pull/12007), [PR #11955](https://github.com/NVIDIA/NemoClaw/pull/11955), [PR #12096](https://github.com/NVIDIA/NemoClaw/pull/12096), and [PR #11617](https://github.com/NVIDIA/NemoClaw/pull/11617).
+  For more information, refer to [Choose an Inference Provider](/user-guide/openclaw/inference/learn-and-choose/choose-inference-provider), [Set Up llama.cpp](/user-guide/openclaw/inference/local-inference/set-up-llama-cpp), and [Prepare Windows for NemoClaw](/user-guide/openclaw/get-started/additional-setup/windows-preparation).
+- MCP registration now rejects aliases that resolve to one endpoint but request different credential providers before it mutates policy or provider state.
+  Credential-bound probes run through the adapter executable boundary, and Hermes MCP add now verifies a committed healthy reload before it accepts an expected exec-relay disconnect.
+  Related changes: [PR #11917](https://github.com/NVIDIA/NemoClaw/pull/11917), [PR #12175](https://github.com/NVIDIA/NemoClaw/pull/12175), and [PR #12091](https://github.com/NVIDIA/NemoClaw/pull/12091).
+  For more information, refer to [Add an MCP Server](/user-guide/openclaw/manage-sandboxes/mcp-servers/add-an-mcp-server), [Manage MCP Servers](/user-guide/openclaw/manage-sandboxes/mcp-servers/manage-mcp-servers), and [Troubleshoot MCP Servers](/user-guide/openclaw/reference/troubleshoot-mcp-servers).
+- Installer and onboarding checks now support protected Docker 27 receipt transfer and an explicit force-fresh macOS reset that retains model caches.
+  Port overrides with leading zeroes fail before onboarding, and Teams channel changes verify the selected webhook port before mutation or rebuild deletion.
+  Invalid `NEMOCLAW_CORPORATE_CA_BUNDLE` input now reports an actionable path-free validation reason instead of a managed image catalog failure, and lock contention diagnostics identify the live process that owns the onboarding state lock.
+  Related changes: [PR #12015](https://github.com/NVIDIA/NemoClaw/pull/12015), [PR #11875](https://github.com/NVIDIA/NemoClaw/pull/11875), [PR #10489](https://github.com/NVIDIA/NemoClaw/pull/10489), [PR #12074](https://github.com/NVIDIA/NemoClaw/pull/12074), and [PR #12234](https://github.com/NVIDIA/NemoClaw/pull/12234).
+  For more information, refer to [System Readiness](/user-guide/openclaw/reference/system-readiness), [Enable Channels During Onboarding](/user-guide/openclaw/manage-sandboxes/messaging-channels/enable-channels-during-onboarding), and [Troubleshooting](/user-guide/openclaw/reference/troubleshooting).
+- Deep Agents Code can now complete its first interactive model turn while the OpenShell sandbox continues to deny `memfd_create`.
+  Headless inference and sandbox lifecycle behavior remain unchanged.
+  Related change: [PR #11972](https://github.com/NVIDIA/NemoClaw/pull/11972).
+  For more information, refer to the [Deep Agents Quickstart](/user-guide/deepagents/get-started/quickstart).

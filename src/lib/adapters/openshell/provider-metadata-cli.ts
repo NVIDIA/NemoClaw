@@ -8,6 +8,9 @@ const MAX_PROVIDER_NAME_LENGTH = 128;
 const MAX_PROVIDER_TYPE_LENGTH = 64;
 const MAX_PROVIDER_KEYS = 32;
 const MAX_PROVIDER_KEY_LENGTH = 128;
+const MAX_PROVIDER_INVENTORY_ENTRIES = 1_000;
+const MAX_PROVIDER_INVENTORY_OUTPUT_BYTES = 4 * 1024 * 1024;
+const MAX_ECMASCRIPT_TIMESTAMP_MS = 8_640_000_000_000_000;
 const SAFE_PROVIDER_IDENTIFIER = /^[A-Za-z0-9._:-]+$/;
 const SAFE_PROVIDER_KEY = /^[A-Z_][A-Z0-9_]*$/;
 const ANSI_OSC_PATTERN = /\x1B\][\s\S]*?(?:\x07|\x1B\\|$)/gu;
@@ -124,4 +127,98 @@ export function parseCliOpenShellProviderMetadata(
     configKeys,
     revision: { id, resourceVersion },
   };
+}
+
+export type CliOpenShellProviderCredentialState = Readonly<{
+  credentialKeys: readonly string[];
+  credentialExpiresAtMs: Readonly<Record<string, number>>;
+}>;
+
+function parseProviderKeyArray(value: unknown): readonly string[] | null {
+  if (!Array.isArray(value) || value.length > MAX_PROVIDER_KEYS) return null;
+  const keys: string[] = [];
+  for (const key of value) {
+    if (
+      typeof key !== "string" ||
+      key.length === 0 ||
+      key.length > MAX_PROVIDER_KEY_LENGTH ||
+      !SAFE_PROVIDER_KEY.test(key) ||
+      keys.includes(key)
+    ) {
+      return null;
+    }
+    keys.push(key);
+  }
+  return Object.freeze(keys);
+}
+
+/** Parse one provider's non-secret credential state from one provider inventory record. */
+export function parseCliOpenShellProviderCredentialState(
+  output: string,
+  providerName: string,
+): CliOpenShellProviderCredentialState | null | undefined {
+  if (
+    !isValidCliOpenShellProviderIdentifier(providerName) ||
+    Buffer.byteLength(output, "utf8") > MAX_PROVIDER_INVENTORY_OUTPUT_BYTES
+  ) {
+    return null;
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(output);
+  } catch {
+    return null;
+  }
+  if (!Array.isArray(parsed) || parsed.length > MAX_PROVIDER_INVENTORY_ENTRIES) return null;
+
+  const matchingProviders: Record<string, unknown>[] = [];
+  for (const candidate of parsed) {
+    if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) return null;
+    const record = candidate as Record<string, unknown>;
+    if (typeof record.name !== "string" || !isValidCliOpenShellProviderIdentifier(record.name)) {
+      return null;
+    }
+    if (record.name === providerName) matchingProviders.push(record);
+  }
+  // A full page without the target permits the adapter to request the next page.
+  if (matchingProviders.length === 0 && parsed.length === MAX_PROVIDER_INVENTORY_ENTRIES) {
+    return undefined;
+  }
+  if (matchingProviders.length !== 1) return null;
+
+  const credentialKeys = parseProviderKeyArray(matchingProviders[0].credential_keys);
+  if (!credentialKeys) return null;
+
+  const rawExpirations = matchingProviders[0].credential_expires_at_ms;
+  if (rawExpirations === undefined) {
+    return Object.freeze({ credentialKeys, credentialExpiresAtMs: Object.freeze({}) });
+  }
+  if (!rawExpirations || typeof rawExpirations !== "object" || Array.isArray(rawExpirations)) {
+    return null;
+  }
+
+  const entries = Object.entries(rawExpirations);
+  if (entries.length > MAX_PROVIDER_KEYS) return null;
+  const expirations: Record<string, number> = {};
+  for (const [credentialKey, expiresAtMs] of entries) {
+    if (
+      credentialKey.length > MAX_PROVIDER_KEY_LENGTH ||
+      !SAFE_PROVIDER_KEY.test(credentialKey) ||
+      typeof expiresAtMs !== "number" ||
+      !Number.isSafeInteger(expiresAtMs) ||
+      expiresAtMs < 0 ||
+      expiresAtMs > MAX_ECMASCRIPT_TIMESTAMP_MS
+    ) {
+      return null;
+    }
+    expirations[credentialKey] = expiresAtMs;
+  }
+  if (Object.keys(expirations).some((credentialKey) => !credentialKeys.includes(credentialKey))) {
+    return null;
+  }
+  return Object.freeze({
+    credentialKeys,
+    credentialExpiresAtMs: Object.freeze(expirations),
+  });
 }

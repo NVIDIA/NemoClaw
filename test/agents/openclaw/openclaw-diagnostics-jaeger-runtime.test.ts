@@ -31,11 +31,9 @@ const diagnosticsRoot = process.argv[1];
 assert.ok(path.isAbsolute(diagnosticsRoot), "diagnostics root must be absolute");
 
 const diagnosticsRequire = createRequire(path.join(diagnosticsRoot, "package.json"));
-const sdkEntry = diagnosticsRequire.resolve("@opentelemetry/sdk-node");
-const sdkRequire = createRequire(sdkEntry);
-const jaegerEntry = sdkRequire.resolve("@opentelemetry/propagator-jaeger");
+const jaegerEntry = diagnosticsRequire.resolve("@opentelemetry/propagator-jaeger");
 const jaegerRequire = createRequire(jaegerEntry);
-const { JaegerPropagator } = sdkRequire("@opentelemetry/propagator-jaeger");
+const { JaegerPropagator } = jaegerRequire("@opentelemetry/propagator-jaeger");
 const { ROOT_CONTEXT, propagation, trace } = jaegerRequire("@opentelemetry/api");
 
 let packageRoot = path.dirname(jaegerEntry);

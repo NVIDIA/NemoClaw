@@ -499,6 +499,7 @@ describe("ManifestCompiler", () => {
   it.each([
     ["MSTEAMS_APP_ID", "teams-app\nEVIL=1"],
     ["MSTEAMS_TENANT_ID", "teams-tenant\nEVIL=1"],
+    ["MSTEAMS_APP_PASSWORD", "teams-password\r\nEVIL=1"],
     ["TEAMS_ALLOWED_USERS", "user-one\nEVIL=1"],
   ] as const)("rejects unsafe Microsoft Teams Hermes env value %s", async (envKey, value) => {
     await expect(
@@ -1014,27 +1015,39 @@ describe("ManifestCompiler", () => {
     );
   });
 
-  it("accepts a Google Chat service-account JSON with embedded newlines (#10383)", async () => {
-    const serviceAccountJson =
-      '{\n  "client_email": "bot@test-project.iam.gserviceaccount.com",\n' +
-      '  "private_key": "-----BEGIN PRIVATE KEY-----\\nabc\\n-----END PRIVATE KEY-----\\n"\n}';
-    await withEnv({ GOOGLECHAT_SERVICE_ACCOUNT: serviceAccountJson }, async () => {
-      const plan = await compiler().compile({
-        sandboxName: "demo",
-        agent: "openclaw",
-        workflow: "onboard",
-        isInteractive: false,
-        configuredChannels: ["googlechat"],
-        credentialAvailability: { "googlechat.serviceAccount": true },
+  it.each([
+    ["openclaw", "onboard", "\n"],
+    ["openclaw", "add-channel", "\r\n"],
+    ["hermes", "onboard", "\r\n"],
+    ["hermes", "add-channel", "\n"],
+  ] as const)(
+    "accepts formatted Google Chat JSON for %s %s (#10383)",
+    async (agent, workflow, eol) => {
+      const secret = "synthetic-googlechat-private-key";
+      const serviceAccountJson = JSON.stringify(
+        { client_email: "bot@example.test", private_key: `${secret}\nkey-material` },
+        null,
+        2,
+      ).replaceAll("\n", eol);
+      await withEnv({ GOOGLECHAT_SERVICE_ACCOUNT: serviceAccountJson }, async () => {
+        const plan = await compiler().compile({
+          sandboxName: "demo",
+          agent,
+          workflow,
+          isInteractive: false,
+          configuredChannels: ["googlechat"],
+        });
+        expect(plan.channels[0]?.inputs).toContainEqual(
+          expect.objectContaining({
+            inputId: "serviceAccount",
+            kind: "secret",
+            credentialAvailable: true,
+          }),
+        );
+        expect(JSON.stringify(plan)).not.toContain(secret);
       });
-
-      expect(
-        plan.channels
-          .find((channel) => channel.channelId === "googlechat")
-          ?.inputs.find((input) => input.inputId === "serviceAccount"),
-      ).toMatchObject({ kind: "secret", credentialAvailable: true });
-    });
-  });
+    },
+  );
 
   it("reads config default values when env keys are unset", async () => {
     const customManifest = {

@@ -30,6 +30,7 @@ const SHA_PATTERN = /^[0-9a-f]{40}$/u;
 const SAFE_PATH_PATTERN = /^[A-Za-z0-9._/-]+$/u;
 const REVIEWED_PATH_GLOBS = new Map<string, RegExp>([
   [".github/actions/ci-reviewed-npm-audit/**", /^[.]github\/actions\/ci-reviewed-npm-audit\/.+$/u],
+  [".github/actions/setup-reviewed-npm/**", /^[.]github\/actions\/setup-reviewed-npm\/.+$/u],
   [
     ".github/actions/publish-managed-image-digest/**",
     /^[.]github\/actions\/publish-managed-image-digest\/.+$/u,
@@ -52,6 +53,10 @@ const REVIEWED_PATH_GLOBS = new Map<string, RegExp>([
     /^test\/e2e\/live\/managed-image-activation-e2e[^/]*[.]ts$/u,
   ],
   ["test/e2e/live/mcp-bridge*.ts", /^test\/e2e\/live\/mcp-bridge[^/]*[.]ts$/u],
+  [
+    "test/e2e/support/mcp-bridge-portable-lock-barrier.ts",
+    /^test\/e2e\/support\/mcp-bridge-portable-lock-barrier[.]ts$/u,
+  ],
   [
     "src/lib/actions/sandbox/mcp-bridge-*.ts",
     /^src\/lib\/actions\/sandbox\/mcp-bridge-[^/]*[.]ts$/u,

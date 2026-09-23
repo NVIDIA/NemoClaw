@@ -529,6 +529,18 @@ describe("managed inference serving catalog compiler", () => {
     expect(first.catalogDigest).toMatch(/^sha256:[0-9a-f]{64}$/);
   });
 
+  it("rejects a tool-capable llama.cpp recipe whose request guard cannot hold an agent turn", () => {
+    const undersized = replaceSource(
+      llamaCppRecipeSource(),
+      "      maxRequestBodyBytes: 1048576",
+      "      maxRequestBodyBytes: 32768",
+    );
+
+    expect(() => compile([undersized, llamaCppPresetSource()])).toThrow(
+      "must allow at least 1048576 request body bytes when tool calls are enabled",
+    );
+  });
+
   it.each([
     ["a missing server source revision", `      revision: ${"e".repeat(40)}\n`, ""],
     [

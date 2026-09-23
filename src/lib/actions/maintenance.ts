@@ -21,7 +21,6 @@ import {
 import { SANDBOX_IMAGE_REPOS } from "../domain/sandbox/image-tag";
 import { resolveGatewayName, resolveSandboxGatewayName } from "../onboard/gateway-binding";
 import { captureSandboxListWithGatewayPreflightOrExit } from "../openshell-sandbox-list";
-import { captureRecordedSandboxBasePolicy } from "../policy";
 import { withSandboxMutationLock } from "../state/mcp-lifecycle-lock";
 import { enforceRemovedImmutabilityMigrationBoundary } from "../state/migrations/removed-immutability";
 import * as registry from "../state/registry";
@@ -40,6 +39,7 @@ import {
   type StartedForBackup,
   startStoppedSandboxContainerForBackup,
 } from "./sandbox/stopped-sandbox-backup";
+import { retainStrictPreUpgradeRecoveryState } from "./sandbox/snapshot/strict-pre-upgrade-recovery";
 
 const useColor = !process.env.NO_COLOR && !!process.stdout.isTTY;
 const trueColor =
@@ -87,47 +87,24 @@ interface BackupAllSandboxAttempt {
   mutationLockError?: unknown;
 }
 
-async function retainStrictPreUpgradePolicy(
-  sandboxName: string,
-  result: sandboxState.BackupResult,
-  enabled: boolean,
-): Promise<sandboxState.BackupResult> {
-  if (!enabled) return result;
-  if (!result.success) {
-    const backupPath = result.manifest?.backupPath;
-    if (!backupPath) return result;
-    if (sandboxState.removeSandboxStateBackup(sandboxName, backupPath)) {
-      const { manifest: _removedManifest, ...withoutPartialBackup } = result;
-      return withoutPartialBackup;
-    }
-    const cleanupError = `Failed strict pre-upgrade backup at '${backupPath}' could not be removed`;
-    return {
-      ...result,
-      error: result.error ? `${result.error}. ${cleanupError}` : cleanupError,
-    };
-  }
-  if (!result.manifest) {
-    throw new Error(
-      `Strict pre-upgrade backup for '${sandboxName}' completed without a published manifest`,
-    );
-  }
-  const policyDocument = await captureRecordedSandboxBasePolicy(
-    sandboxName,
-    "capture the live policy for pre-upgrade recovery",
-  );
-  result.manifest = sandboxState.writeRebuildPolicyHandoff(result.manifest, policyDocument);
-  return result;
-}
-
-function returnStartedSandboxToStopped(
+async function returnStartedSandboxToStopped(
   sandboxName: string,
   startedForBackup: StartedForBackup,
-): Error | null {
+): Promise<Error | null> {
   const failureDetail =
     "could not return its container to the stopped state; the container was left running";
   const failureMessage = `Backup cleanup failed for '${sandboxName}': ${failureDetail}.`;
   try {
-    if (returnSandboxContainerToStopped(startedForBackup)) {
+    if (await returnSandboxContainerToStopped(startedForBackup)) {
+      if (!registry.recordSandboxStopIntent(sandboxName, true, registry.updateSandbox)) {
+        const error = new Error(
+          `Backup cleanup failed for '${sandboxName}': the container returned to the stopped state, but NemoClaw could not retain that lifecycle intent.`,
+        );
+        console.error(
+          `  ${RD}✗${R} ${sandboxName}: backup cleanup failed (could not retain its stopped-state intent)`,
+        );
+        return error;
+      }
       console.log(`  ${D}Returned '${sandboxName}' to its stopped state.${R}`);
       return null;
     }
@@ -154,7 +131,7 @@ async function backupSandboxWithinMutationLock(
       enteredTransactionLock = true;
       enforceRemovedImmutabilityMigrationBoundary(sandboxName, { allowStateRecord: true });
       const startedForBackup = shouldStartStoppedContainer
-        ? startStoppedSandboxContainerForBackup(sandboxName)
+        ? await startStoppedSandboxContainerForBackup(sandboxName)
         : null;
       if (shouldStartStoppedContainer && !startedForBackup) {
         return {
@@ -186,7 +163,7 @@ async function backupSandboxWithinMutationLock(
         }
       } finally {
         if (startedForBackup) {
-          stoppedContainerCleanupError = returnStartedSandboxToStopped(
+          stoppedContainerCleanupError = await returnStartedSandboxToStopped(
             sandboxName,
             startedForBackup,
           );
@@ -337,7 +314,12 @@ export async function backupAllUnderPortableHostFence(
                 getSandbox: registry.getSandbox,
               },
             ));
-        return retainStrictPreUpgradePolicy(sb.name, backupResult, retainPreUpgradePolicy);
+        return retainPreUpgradePolicy
+          ? retainStrictPreUpgradeRecoveryState(sb, backupResult, {
+              gatewayName: resolveSandboxGatewayName(sb),
+              workspace: "default",
+            })
+          : backupResult;
       },
     );
     if (attempt.stoppedContainerUnavailable) {

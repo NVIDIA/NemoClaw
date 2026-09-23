@@ -235,6 +235,8 @@ describe("onboard helpers", () => {
       fs.writeFileSync(
         path.join(fakeBin, "openshell"),
         `#!/usr/bin/env bash
+if [ "\${1:-}" = gateway ] && [ "\${2:-}" = list ]; then printf '[]\n'; exit 0; fi
+printf 'No gateway configured\n'
 exit 1
 `,
         { mode: 0o755 },
@@ -607,6 +609,9 @@ startGateway(null).catch((error) => {
       expect(fs.existsSync(path.join(buildCtx, "scripts", "patch-openclaw-tool-catalog.mts"))).toBe(
         true,
       );
+      expect(
+        fs.existsSync(path.join(buildCtx, "scripts", "lib", "patch-openclaw-npm12-pack-json.mts")),
+      ).toBe(true);
       expect(fs.existsSync(path.join(buildCtx, "scripts", "setup.sh"))).toBe(false);
       expect(fs.existsSync(path.join(buildCtx, "nemoclaw", "node_modules"))).toBe(false);
     } finally {
@@ -744,6 +749,8 @@ childProcess.spawn = (...args) => {
   child.stderr = new EventEmitter();
   child.unref = () => {};
   child.pid = 4242;
+  child.exitCode = null;
+  child.signalCode = null;
   commands.push({ command: _n([args[0], ...(Array.isArray(args[1]) ? args[1] : [])]), env: args[2]?.env || null });
   process.nextTick(() => child.emit("close", 0));
   return child;
@@ -798,62 +805,18 @@ const { createSandbox } = require(${onboardPath});
       result.stdout,
       /Existing provider\/model selection is unreadable; reusing sandbox\./,
     );
-  });
+  }, 30_000);
 
-  it("accepts gateway inference when system inference is separately not configured", async () => {
-    const output = [
-      "Gateway inference:",
-      "",
-      "  Route: inference.local",
-      "  Provider: openai-api",
-      "  Model: gpt-5.4",
-      "  Version: 1",
-      "",
-      "System inference:",
-      "",
-      "  Not configured",
-    ].join("\n");
-    const route = createInferenceRouteHelpers(() => output);
-
-    await withProcessEnv({ OPENAI_API_KEY: "sk-TEST-NOT-A-REAL-VALUE" }, async () => {
-      const harness = createDirectSetupInferenceHarness({
-        runOpenshell: (args) =>
-          args.slice(0, 2).join(" ") === "provider get"
-            ? {
-                status: 0,
-                stdout:
-                  "Name: openai-api\nType: openai\nCredential keys: OPENAI_API_KEY\nConfig keys: OPENAI_BASE_URL\n",
-                stderr: "",
-              }
-            : undefined,
-        overrides: { verifyInferenceRoute: route.verifyInferenceRoute },
-      });
-
-      await harness.setupInference(
-        "test-box",
-        "gpt-5.4",
-        "openai-api",
-        "https://api.openai.com/v1",
-        "OPENAI_API_KEY",
-      );
-
-      assert.equal(harness.commands[0].command, "provider get -g nemoclaw openai-api");
-      assert.equal(harness.commands.length, 3);
+  it("accepts a complete configured route from the typed observer", async () => {
+    const route = createInferenceRouteHelpers({
+      observeInferenceRoute: () => ({
+        ok: true,
+        value: {
+          state: "configured",
+          route: { provider: "openai-api", model: "gpt-5.4" },
+        },
+      }),
     });
-  });
-  it("accepts gateway inference output that omits the Route line", async () => {
-    const output = [
-      "Gateway inference:",
-      "",
-      "  Provider: openai-api",
-      "  Model: gpt-5.4",
-      "  Version: 1",
-      "",
-      "System inference:",
-      "",
-      "  Not configured",
-    ].join("\n");
-    const route = createInferenceRouteHelpers(() => output);
 
     await withProcessEnv({ OPENAI_API_KEY: "sk-TEST-NOT-A-REAL-VALUE" }, async () => {
       const harness = createDirectSetupInferenceHarness({
@@ -1019,7 +982,9 @@ const { createSandbox } = require(${onboardPath});
 
     const script = String.raw`
 const runner = require(${runnerPath});
-require(${scriptMocksPath}).mockStandaloneGatewayTeardownAuthority();
+const fixtureMocks = require(${scriptMocksPath});
+fixtureMocks.mockStandaloneGatewayTeardownAuthority();
+fixtureMocks.installForwardServiceReachabilityFixture();
 const onboardSession = require(${onboardSessionPath});
 onboardSession.loadSession = () => ({
   checkpoint: {

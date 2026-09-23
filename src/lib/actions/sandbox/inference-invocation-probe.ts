@@ -26,9 +26,9 @@ import {
   nvcfFunctionNotFoundMessage,
 } from "../../inference/nvcf-model-access";
 import { ROOT, shellQuote } from "../../runner";
-import { buildSubprocessEnv } from "../../subprocess-env";
 import { DCODE_MANAGED_EXEC_LAUNCHER } from "./connect-inference-route-probe";
 import {
+  buildSandboxSubprocessEnv,
   executeSandboxExecCommand,
   type SandboxCommandResult,
   type SandboxExecCommandOptions,
@@ -164,8 +164,8 @@ export function buildDcodeSandboxInferenceInvocationRequest(
       HOME: "/usr/local/lib/nemoclaw",
     },
     environment: input.runtimeSelection
-      ? buildOpenShellRuntimeSelectionEnv(buildSubprocessEnv(), input.runtimeSelection)
-      : buildSubprocessEnv(),
+      ? buildOpenShellRuntimeSelectionEnv(buildSandboxSubprocessEnv(), input.runtimeSelection)
+      : buildSandboxSubprocessEnv(),
     tty: false,
     timeoutMilliseconds,
   };

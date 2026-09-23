@@ -4,6 +4,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  createSandboxRecoveryContext,
   reportSandboxCreateFailure,
   reportSandboxReadinessFailure,
   type SandboxCreateFailureReportDeps,
@@ -78,6 +79,36 @@ describe("reportSandboxCreateFailure", () => {
     });
     expect(deps.exitProcess).toHaveBeenCalledWith(42);
     expect(deps.warn).not.toHaveBeenCalled();
+  });
+
+  it("passes safe semantic recovery context when ordinary create has no raw arguments", () => {
+    const deps = createFailureDeps();
+    const createContext = createSandboxRecoveryContext({
+      sandboxName: "alpha",
+      target: { kind: "named", gatewayName: "nemoclaw" },
+      source: { reference: "managed@example.invalid" },
+      policyPath: "/tmp/policy.yaml",
+      providers: ["nvidia"],
+      gpu: {},
+      resources: { cpu: "2", memory: "4Gi" },
+      startupCommand: ["env", "SECRET=startup-secret", "nemoclaw-start"],
+      environment: { SECRET: "runtime-secret" },
+    });
+    expect(() =>
+      reportSandboxCreateFailure(
+        {
+          sandboxName: "alpha",
+          createStatus: 9,
+          createOutput: "hard failure",
+          restoreBackupPath: null,
+          createContext,
+        },
+        deps,
+      ),
+    ).toThrow(ExitSignal);
+
+    expect(deps.printRecoveryHints).toHaveBeenCalledWith("hard failure", { createContext });
+    expect(JSON.stringify(createContext)).not.toContain("secret");
   });
 
   it("redacts create output before classification and echoing", () => {

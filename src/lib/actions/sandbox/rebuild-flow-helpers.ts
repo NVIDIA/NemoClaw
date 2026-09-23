@@ -48,6 +48,7 @@ import * as userManagedFilesProbe from "../../state/user-managed-files-probe";
 import {
   getReconciledSandboxGatewayState,
   printSandboxGatewayStateHint,
+  printGatewayLifecycleHint,
   printWrongGatewayActiveGuidance,
   usesLegacyRuntimeLifecycleCompatibility,
 } from "./gateway-state";
@@ -61,6 +62,7 @@ import {
 export { removeStaleRebuildDockerOrphan };
 export { replaceOpenShellRuntimeSelectionEnv, snapshotOpenShellEnv };
 export { resolveSandboxGatewayName };
+export { delegateRebuildToOwningRegistry } from "./rebuild/owning-registry";
 
 export type RebuildSandboxEntry = SandboxEntry & { agents?: unknown[] };
 
@@ -217,14 +219,18 @@ export async function resolveRebuildLiveState(
   if (reconciled.state === "present") {
     const lifecycle = await getNamedGatewayLifecycleState(recordedGateway);
     if (lifecycle.state !== "healthy_named") {
-      printWrongGatewayActiveGuidance(
-        sandboxName,
-        lifecycle.activeGateway,
-        console.error,
-        "rebuild --yes",
-      );
+      if (lifecycle.state === "connected_other") {
+        printWrongGatewayActiveGuidance(
+          sandboxName,
+          lifecycle.activeGateway,
+          console.error,
+          "rebuild --yes",
+        );
+      } else {
+        printGatewayLifecycleHint(lifecycle, sandboxName, console.error);
+      }
       bail(
-        `Could not confirm '${sandboxName}' against gateway '${recordedGateway}' (gateway '${lifecycle.activeGateway ?? "unknown"}' is active).`,
+        `Could not confirm '${sandboxName}' against gateway '${recordedGateway}' (${lifecycle.state}).`,
       );
       return null;
     }
@@ -508,7 +514,7 @@ export async function backupSandboxStateForRebuild(
   // it to stopped. Any other failure (permission denied, absent state, audit
   // rejection) is not a transport problem and must not attempt this recovery.
   if (!backup.success && backup.unreachable) {
-    const started = startStoppedSandboxContainerForBackup(sandboxName);
+    const started = await startStoppedSandboxContainerForBackup(sandboxName);
     if (started) {
       console.log("  Sandbox container is stopped; starting it to back up state before rebuild...");
       log(`Started stopped container '${started.containerName}' to retry backup`);
@@ -519,7 +525,7 @@ export async function backupSandboxStateForRebuild(
           `Retry backup result: success=${backup.success}, backed=${backup.backedUpDirs.join(",")}; files=${backup.backedUpFiles.join(",")}, failed=${backup.failedDirs.join(",")}; failedFiles=${backup.failedFiles.join(",")}`,
         );
       } finally {
-        returnedToStopped = returnSandboxContainerToStopped(started);
+        returnedToStopped = await returnSandboxContainerToStopped(started);
         if (!returnedToStopped) {
           log(
             `Could not return '${sandboxName}' container to its stopped state after backup retry`,

@@ -114,9 +114,9 @@ describe("Docker daemon outage classification (#4428)", () => {
     }
   });
 
-  it("status keeps a terminal phase failure visible even when Docker is down", () => {
-    // A settled Failed phase is a real sandbox failure; the Docker-outage
-    // reclassification must not mask it (#4428 review).
+  it("status keeps a terminal phase visible without destructive guidance when Docker is down", () => {
+    // A settled Failed phase remains visible, but a Docker outage prevents an
+    // authoritative container observation. Recovery must stay non-destructive.
     const { home, env } = setupDockerOutageEnv("nemoclaw-cli-4428-status-failed-down-", {
       dockerInfoOk: false,
       phase: "Failed",
@@ -124,8 +124,11 @@ describe("Docker daemon outage classification (#4428)", () => {
     try {
       const r = runWithEnv("v053-baseline status", env);
       expect(r.out).toContain("is stuck in 'Failed' phase");
-      expect(r.out).toContain("rebuild --yes");
-      expect(r.out).not.toContain(DOCKER_DOWN_HEADER);
+      expect(r.out).toContain(DOCKER_DOWN_HEADER);
+      expect(r.out).toContain("Docker daemon is not reachable");
+      expect(r.out).toContain(DOCKER_DOWN_HINT);
+      expect(r.out).not.toMatch(/rebuild --yes/);
+      expect(r.out).not.toMatch(/destroy --yes/);
     } finally {
       fs.rmSync(home, { recursive: true, force: true });
     }

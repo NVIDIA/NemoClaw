@@ -2,14 +2,19 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import {
+  createBuiltInMessagingHookRegistry,
   getActiveMessagingHostForward,
   MessagingHostStateApplier,
+  type MessagingHookRegistry,
   type SandboxMessagingPlan,
 } from "../messaging";
+import type { TeamsHostForwardPortConflictHookOptions } from "../messaging/channels/teams/hooks";
 import { hydrateDerivedSandboxMessagingPlanFields } from "../messaging/hydration";
 import type { SandboxMessagingHostForwardPlan } from "../messaging/manifest";
 import { parseSandboxMessagingPlan } from "../messaging/plan-validation";
 import * as registry from "../state/registry";
+import type { OpenShellRuntimeSelection } from "../adapters/openshell/runtime-selection";
+import { checkPortAvailable, type PortProbeResult } from "./preflight";
 
 type GatewayBinding =
   | {
@@ -45,6 +50,54 @@ export interface MessagingHostForwardRollbackOptions {
   readonly cliName: () => string;
   readonly error?: (message?: string) => void;
   readonly exit?: (code: number) => never;
+}
+
+export interface MessagingHostForwardPortConflictOptionsDeps {
+  readonly checkPortAvailable?: (port: number) => Promise<PortProbeResult>;
+  readonly describeForwardListener?: typeof import("../actions/sandbox/forward-recovery").describeSandboxPortForwardListener;
+  readonly runtimeSelection?: OpenShellRuntimeSelection;
+}
+
+export function createMessagingHostForwardPortConflictHookOptions(
+  deps: MessagingHostForwardPortConflictOptionsDeps = {},
+): TeamsHostForwardPortConflictHookOptions {
+  return {
+    checkPortAvailable: deps.checkPortAvailable ?? checkPortAvailable,
+    isCurrentSandboxForward: async (sandboxName, gatewayName, port, listenerPid) => {
+      if (
+        !gatewayName ||
+        (deps.runtimeSelection && deps.runtimeSelection.gatewayName !== gatewayName)
+      ) {
+        return false;
+      }
+      try {
+        const describeForwardListener =
+          deps.describeForwardListener ??
+          (await import("../actions/sandbox/forward-recovery")).describeSandboxPortForwardListener;
+        const state = await describeForwardListener(
+          sandboxName,
+          port,
+          "127.0.0.1",
+          deps.runtimeSelection ?? { gatewayName, workspace: "default" },
+          undefined,
+          listenerPid,
+        );
+        return state === "owned";
+      } catch {
+        return false;
+      }
+    },
+  };
+}
+
+export function createMessagingHostForwardPreEnableHookRegistry(
+  deps: MessagingHostForwardPortConflictOptionsDeps = {},
+): MessagingHookRegistry {
+  return createBuiltInMessagingHookRegistry({
+    teams: {
+      hostForwardPortConflict: createMessagingHostForwardPortConflictHookOptions(deps),
+    },
+  });
 }
 
 export function resolveMessagingHostForward(

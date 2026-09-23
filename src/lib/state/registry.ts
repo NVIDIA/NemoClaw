@@ -92,6 +92,10 @@ export {
   withLock,
 } from "./registry/lock";
 export { load, REGISTRY_FILE, save } from "./registry/persistence";
+export {
+  getSandboxAcrossGatewayRoots,
+  recordSandboxStopIntentAcrossGatewayRoots,
+} from "./registry/cross-port";
 export type {
   SandboxEntry,
   SandboxGpuProofResult,
@@ -501,12 +505,6 @@ export function registerSandbox(
           : null,
       agent: entry.agent || null,
       agentVersion: entry.agentVersion || null,
-      openclawImagePluginInstalls: Array.isArray(entry.openclawImagePluginInstalls)
-        ? entry.openclawImagePluginInstalls.map((install) => ({
-            ...install,
-            ...(install.loadPaths !== undefined ? { loadPaths: [...install.loadPaths] } : {}),
-          }))
-        : undefined,
       nemoclawVersion: entry.nemoclawVersion || null,
       fromDockerfile: entry.fromDockerfile || null,
       hermesAuthMethod:
@@ -515,6 +513,11 @@ export function registerSandbox(
           : null,
       imageTag: entry.imageTag || null,
       workload: cloneSandboxWorkloadReceipt(entry.workload),
+      managedStartupProtocol:
+        entry.managedStartupProtocol === "identity-bound" ||
+        entry.managedStartupProtocol === "legacy-unbound"
+          ? entry.managedStartupProtocol
+          : undefined,
       ...(hostLocalInferenceReceipt !== undefined ? { hostLocalInferenceReceipt } : {}),
       ...(hostLocalInferenceProvenance ? { hostLocalInferenceProvenance } : {}),
       lifecycleGeneration: entry.lifecycleGeneration,
@@ -542,7 +545,11 @@ export function registerSandbox(
         ? data
         : reversibleRemoval.claimInitialDefaultInRegistry(data, entry.name),
     );
-    return structuredClone(registered);
+    const persisted = load().sandboxes[entry.name];
+    if (!persisted) {
+      throw new Error(`Cannot read sandbox '${entry.name}' after registration`);
+    }
+    return structuredClone(persisted);
   });
 }
 
@@ -864,6 +871,28 @@ export function finalizePendingSandboxRegistration(name: string): boolean {
     }
     data.sandboxes[name] = { ...current, pendingRouteReservation: undefined };
     save(reversibleRemoval.claimInitialDefaultInRegistry(data, name));
+    return true;
+  });
+}
+
+/** Publish a pending registration only while its complete staged row remains current. */
+export function finalizePendingSandboxRegistrationIfCurrent(expected: SandboxEntry): boolean {
+  const expectedSnapshot = JSON.parse(JSON.stringify(expected)) as SandboxEntry;
+  if (
+    expectedSnapshot.pendingRouteReservation !== true ||
+    expectedSnapshot.pendingCreateIdentity !== undefined
+  ) {
+    return false;
+  }
+  return withLock(() => {
+    const data = load();
+    const current = data.sandboxes[expectedSnapshot.name];
+    if (!current || !isDeepStrictEqual(current, expectedSnapshot)) return false;
+    data.sandboxes[expectedSnapshot.name] = {
+      ...current,
+      pendingRouteReservation: undefined,
+    };
+    save(reversibleRemoval.claimInitialDefaultInRegistry(data, expectedSnapshot.name));
     return true;
   });
 }
