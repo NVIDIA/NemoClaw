@@ -15,7 +15,15 @@ import {
   type V1Alpha1Export,
 } from "../../../../src/lib/config/v1alpha1-export.ts";
 import { unsafeEndpointUrlViolation } from "../../../../src/lib/core/endpoint-url-safety.ts";
+import { V1ALPHA1_RUNTIME_DEFAULTS_REVISION } from "../../../../src/lib/domain/config/v1alpha1-runtime-defaults.ts";
+import { decodeManagedStartupProfile } from "../../../../src/lib/onboard/managed-startup/profile.ts";
 import type { SandboxEntry } from "../../../../src/lib/state/registry/types.ts";
+import {
+  expectedPinnedV1HermesNativeSettings,
+  type PinnedV1ConsumerEvidence,
+  type PinnedV1OpenClawNativeSettings,
+  validateConfigExportWithPinnedV1,
+} from "../../../support/v1-config-consumer.ts";
 import {
   CONFIG_EXPORT_COMMAND_TIMEOUT_MS,
   CONFIG_EXPORT_POLICY_TIMEOUT_MS,
@@ -45,6 +53,7 @@ const { Check } = require("typebox/value") as typeof TypeBoxValueModule;
 
 export const CONFIG_EXPORT_EVIDENCE_CONTRACT = "nemoclaw.config-export-evidence/v1" as const;
 const EVIDENCE_FILE = "config-export-evidence.v1.json";
+const EXPORT_FILE = "config-export.yaml";
 const CONFIG_EXPORT_CAPTURE_LIMIT_BYTES = 64 * 1024;
 const CONFIG_EXPORT_FILE_LIMIT_BYTES = 1024 * 1024;
 const MAX_DIAGNOSTIC_LENGTH = 2_048;
@@ -160,7 +169,6 @@ const DeepAgentsExportSandboxSchema = Type.Object(
 const AgentExportSandboxSchema = Type.Object(
   {
     ...ExportSandboxFields,
-    image: Type.Null(),
     harness: Type.Object(
       {
         kind: Type.Union([Type.Literal("hermes"), Type.Literal("openclaw")]),
@@ -365,6 +373,11 @@ export interface ConfigExportEvidenceEnvelope {
   observed?: ConfigExportSemantics;
   verifications: ConfigExportVerification[];
   command?: ConfigExportCommandOutcome;
+  consumer?: PinnedV1ConsumerEvidence & {
+    expected: PinnedV1ConsumerEvidence;
+    actual: PinnedV1ConsumerEvidence;
+    passed: boolean;
+  };
   export?: {
     bytes: string;
     byteLength: number;
@@ -396,6 +409,11 @@ export type ConfigExportRegistryEntry = Pick<
   | "model"
   | "credentialEnv"
   | "dcodeAutoApprovalMode"
+  | "hermesApiPort"
+  | "hermesDashboardEnabled"
+  | "hermesDashboardPort"
+  | "hermesDashboardInternalPort"
+  | "hermesDashboardTui"
   | "workload"
   | "observabilityEnabled"
   | "toolDisclosure"
@@ -434,6 +452,7 @@ export interface ConfigExportValidationDependencies {
   producer(): ConfigExportProducer;
   readOpenFile(file: number, limitBytes: number): string;
   removeDirectory(directory: string): void;
+  validateWithPinnedV1(raw: string): PinnedV1ConsumerEvidence;
 }
 
 const DEFAULT_DEPENDENCIES: ConfigExportValidationDependencies = {
@@ -477,6 +496,7 @@ const DEFAULT_DEPENDENCIES: ConfigExportValidationDependencies = {
     return buffer.subarray(0, offset).toString("utf8");
   },
   removeDirectory: (directory) => fs.rmSync(directory, { force: true, recursive: true }),
+  validateWithPinnedV1: validateConfigExportWithPinnedV1,
 };
 
 function requiredRecord(value: unknown, field: string): Record<string, unknown> {
@@ -535,6 +555,94 @@ function exportedProviderName(provider: string | null | undefined): string | nul
     .replace(/[^a-z0-9-]+/gu, "-")
     .replace(/^[^a-z0-9]+|[^a-z0-9]+$/gu, "");
   return `hosted-${normalized || "provider"}`.slice(0, 40).replace(/[^a-z0-9]+$/gu, "");
+}
+
+function expectedOpenclawNativeSettings(
+  entry: ConfigExportRegistryEntry,
+): PinnedV1OpenClawNativeSettings | undefined {
+  if (entry.agent !== "openclaw" || entry.workload?.kind !== "managed-image") return undefined;
+  const profile = decodeManagedStartupProfile(entry.workload.encodedProfile);
+  const { agentConfig, dashboard, tuning } = profile;
+  if (
+    profile.agent !== "openclaw" ||
+    agentConfig.agent !== "openclaw" ||
+    dashboard.agent !== "openclaw" ||
+    tuning.contextWindow === null ||
+    tuning.maxTokens === null ||
+    tuning.reasoning === null ||
+    tuning.reasoningEffort === null
+  ) {
+    throw new Error("the live OpenClaw source profile is incomplete");
+  }
+  return {
+    model: {
+      contextWindow: tuning.contextWindow,
+      maxTokens: tuning.maxTokens,
+      reasoning: tuning.reasoning,
+    },
+    reasoningEffort: tuning.reasoningEffort,
+    execution: {
+      timeoutSeconds: agentConfig.agentTimeoutSeconds,
+      heartbeatEvery: agentConfig.heartbeatEvery,
+    },
+    dashboard: {
+      enabled: true,
+      port: dashboard.port,
+      bind: dashboard.bindAddress === "0.0.0.0" ? "lan" : "loopback",
+    },
+    toolDisclosure: profile.tools.disclosure,
+  };
+}
+
+function expectedPinnedV1Evidence(entry: ConfigExportRegistryEntry): PinnedV1ConsumerEvidence {
+  const openclawNativeSettings = expectedOpenclawNativeSettings(entry);
+  const hermesNativeSettings =
+    entry.agent === "hermes" ? expectedPinnedV1HermesNativeSettings(entry) : undefined;
+  return {
+    revision: V1ALPHA1_RUNTIME_DEFAULTS_REVISION,
+    compiledSandboxes: 1,
+    ...(openclawNativeSettings
+      ? {
+          contextWindows: [openclawNativeSettings.model.contextWindow],
+          openclawNativeSettings: { [entry.name]: openclawNativeSettings },
+        }
+      : {}),
+    ...(hermesNativeSettings
+      ? { hermesNativeSettings: { [entry.name]: hermesNativeSettings } }
+      : {}),
+    openclawNativeSettingsVerified: entry.agent === "openclaw" ? 1 : 0,
+    hermesNativeSettingsVerified: entry.agent === "hermes" ? 1 : 0,
+  };
+}
+
+function comparablePinnedV1Evidence(
+  evidence: PinnedV1ConsumerEvidence,
+  expected: PinnedV1ConsumerEvidence,
+  sandboxName: string,
+): PinnedV1ConsumerEvidence {
+  const actualHermesNativeSettings = evidence.hermesNativeSettings?.[sandboxName];
+  const actualNativeSettings = evidence.openclawNativeSettings?.[sandboxName];
+  return {
+    revision: evidence.revision,
+    compiledSandboxes: evidence.compiledSandboxes,
+    ...(expected.contextWindows ? { contextWindows: evidence.contextWindows } : {}),
+    ...(expected.openclawNativeSettings
+      ? {
+          openclawNativeSettings: actualNativeSettings
+            ? { [sandboxName]: actualNativeSettings }
+            : {},
+        }
+      : {}),
+    ...(expected.hermesNativeSettings
+      ? {
+          hermesNativeSettings: actualHermesNativeSettings
+            ? { [sandboxName]: actualHermesNativeSettings }
+            : {},
+        }
+      : {}),
+    openclawNativeSettingsVerified: evidence.openclawNativeSettingsVerified,
+    hermesNativeSettingsVerified: evidence.hermesNativeSettingsVerified,
+  };
 }
 
 function targetPolicyForV1Alpha1(value: unknown, agent: string | null | undefined): unknown {
@@ -885,6 +993,32 @@ function containsInternalTransportText(raw: string): boolean {
   return containsSensitiveText(raw, INTERNAL_TRANSPORT_MARKERS);
 }
 
+export interface ConfigExportArtifactSafety {
+  readonly internalTransportsAbsent: boolean;
+  readonly knownSecretsAbsent: boolean;
+}
+
+/** Inspect raw and decoded YAML before it crosses the retained-artifact boundary. */
+export function inspectConfigExportArtifactSafety(
+  raw: string,
+  secretValues: readonly string[],
+  decoded: unknown = YAML.parse(raw),
+): ConfigExportArtifactSafety {
+  const encodedSecrets = encodedSensitiveValues(secretValues);
+  return {
+    knownSecretsAbsent:
+      !containsKnownSecretText(raw, secretValues) &&
+      !decodedScalarsMatch(decoded, (value) =>
+        [...secretValues, ...encodedSecrets].some(
+          (secret) => secret.length > 0 && value.includes(secret),
+        ),
+      ),
+    internalTransportsAbsent:
+      !containsInternalTransportText(raw) &&
+      !decodedScalarsMatch(decoded, (value) => INTERNAL_TRANSPORT_PATTERN.test(value)),
+  };
+}
+
 export class ConfigExportValidationPhaseFixture {
   constructor(
     private readonly host: HostCliClient,
@@ -953,6 +1087,8 @@ export class ConfigExportValidationPhaseFixture {
       expectation === "required" ? "observation" : "transport";
     let observedRefusalCategory: string | undefined;
     let command: ConfigExportCommandOutcome | undefined;
+    let consumer: ConfigExportEvidenceEnvelope["consumer"];
+    let expectedConsumerEvidence: PinnedV1ConsumerEvidence | undefined;
     let registryBeforeExport: ConfigExportRegistry["sandboxes"] | undefined;
 
     try {
@@ -965,9 +1101,11 @@ export class ConfigExportValidationPhaseFixture {
           this.dependencies,
         );
         const registry = this.dependencies.loadRegistry();
-        if (!registry.sandboxes[instance.sandboxName]) {
+        const sourceEntry = registry.sandboxes[instance.sandboxName];
+        if (!sourceEntry) {
           throw new Error("the live sandbox disappeared before config export");
         }
+        expectedConsumerEvidence = expectedPinnedV1Evidence(sourceEntry);
         registryBeforeExport = structuredClone(registry.sandboxes);
       }
       failureStage = "transport";
@@ -1046,24 +1184,20 @@ export class ConfigExportValidationPhaseFixture {
         }
         failureStage = "security";
         const secretValues = this.secrets.redactionValues();
-        const encodedSecrets = encodedSensitiveValues(secretValues);
-        const rawSecretsAbsent = !containsKnownSecretText(raw, secretValues);
         failureStage = "verification";
         const decoded = YAML.parse(raw) as unknown;
         failureStage = "security";
-        knownSecretsAbsent =
-          rawSecretsAbsent &&
-          !decodedScalarsMatch(decoded, (value) =>
-            [...secretValues, ...encodedSecrets].some(
-              (secret) => secret.length > 0 && value.includes(secret),
-            ),
-          );
-        internalTransportsAbsent =
-          !containsInternalTransportText(raw) &&
-          !decodedScalarsMatch(decoded, (value) => INTERNAL_TRANSPORT_PATTERN.test(value));
+        ({ knownSecretsAbsent, internalTransportsAbsent } = inspectConfigExportArtifactSafety(
+          raw,
+          secretValues,
+          decoded,
+        ));
         if (!knownSecretsAbsent) throw new Error("config export exposed a known fixture secret");
         if (!internalTransportsAbsent) {
           throw new Error("config export exposed an internal credential transport");
+        }
+        if (this.artifacts.redact(raw) !== raw) {
+          throw new Error("config export contains secret-shaped material");
         }
         failureStage = "verification";
         const document = this.dependencies.parseConfig(raw);
@@ -1083,6 +1217,35 @@ export class ConfigExportValidationPhaseFixture {
           throw new Error(
             `config export omitted or changed expected semantics: ${failed.map((entry) => entry.id).join(", ")}`,
           );
+        }
+        if (!expectedConsumerEvidence) throw new Error("pinned v1 expectations were not captured");
+        consumer = {
+          revision: V1ALPHA1_RUNTIME_DEFAULTS_REVISION,
+          expected: expectedConsumerEvidence,
+          actual: { revision: V1ALPHA1_RUNTIME_DEFAULTS_REVISION },
+          passed: false,
+        };
+        const consumerEvidence = this.dependencies.validateWithPinnedV1(raw);
+        const actualConsumerEvidence = comparablePinnedV1Evidence(
+          consumerEvidence,
+          expectedConsumerEvidence,
+          instance.sandboxName,
+        );
+        const consumerPassed = isDeepStrictEqual(actualConsumerEvidence, expectedConsumerEvidence);
+        verifications.push({
+          id: "consumerNativeSettings",
+          passed: consumerPassed,
+          expected: expectedConsumerEvidence,
+          actual: actualConsumerEvidence,
+        });
+        consumer = {
+          ...consumerEvidence,
+          expected: expectedConsumerEvidence,
+          actual: actualConsumerEvidence,
+          passed: consumerPassed,
+        };
+        if (!consumerPassed) {
+          throw new Error("pinned v1 consumer evidence differs from the live source profile");
         }
         classification = "success";
       }
@@ -1107,6 +1270,7 @@ export class ConfigExportValidationPhaseFixture {
     }
 
     const passed = classification === "success" || classification === "expected-refusal";
+    const publishedRaw = passed && cleanupSucceeded && raw ? raw : undefined;
     const evidence: ConfigExportEvidenceEnvelope = {
       contract: CONFIG_EXPORT_EVIDENCE_CONTRACT,
       scenarioId: target.id,
@@ -1122,12 +1286,13 @@ export class ConfigExportValidationPhaseFixture {
       ...(observed ? { observed } : {}),
       verifications,
       ...(command ? { command } : {}),
-      ...(passed && cleanupSucceeded && raw
+      ...(consumer ? { consumer } : {}),
+      ...(publishedRaw
         ? {
             export: {
-              bytes: raw,
-              byteLength: Buffer.byteLength(raw, "utf8"),
-              sha256: sha256(raw),
+              bytes: publishedRaw,
+              byteLength: Buffer.byteLength(publishedRaw, "utf8"),
+              sha256: sha256(publishedRaw),
             },
           }
         : {}),
@@ -1142,6 +1307,9 @@ export class ConfigExportValidationPhaseFixture {
       ...(diagnostic ? { diagnostic } : {}),
     };
     await this.artifacts.writeJson(EVIDENCE_FILE, evidence);
+    if (evidence.classification === "success" && evidence.export) {
+      await this.artifacts.writeText(EXPORT_FILE, evidence.export.bytes);
+    }
     if (!evidence.passed) {
       throw new Error(
         `automatic config export validation failed for '${target.id}': ${diagnostic ?? "unknown failure"}`,
