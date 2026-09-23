@@ -4,10 +4,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { MockInstance } from "vitest";
 
-import {
-  createValidationRecoveryPromptHelpers,
-  isSecureCredentialPromptAvailable,
-} from "./validation-recovery-prompt";
+import { isSecureCredentialPromptAvailable } from "../credentials/store";
+import { createValidationRecoveryPromptHelpers } from "./validation-recovery-prompt";
 
 const CREDENTIAL_RECOVERY = { kind: "credential", retry: "credential" } as const;
 

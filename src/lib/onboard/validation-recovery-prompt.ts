@@ -1,7 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { getCredentialPromptIntent, saveCredential } from "../credentials/store";
+import {
+  getCredentialPromptIntent,
+  isSecureCredentialPromptAvailable,
+  saveCredential,
+} from "../credentials/store";
 import type { ProbeRecovery } from "../validation-recovery";
 
 export interface ValidationRecoveryPromptDeps {
@@ -32,13 +36,6 @@ export interface ValidationRecoveryPromptHelpers {
     helpUrl?: string | null,
     revalidateSandboxIdentity?: (operation: string) => void,
   ): Promise<"credential" | "selection" | "retry" | "model">;
-}
-
-export function isSecureCredentialPromptAvailable(
-  stdinIsTty: boolean = Boolean(process.stdin.isTTY),
-  stderrIsTty: boolean = Boolean(process.stderr.isTTY),
-): boolean {
-  return stdinIsTty && stderrIsTty;
 }
 
 export function createValidationRecoveryPromptHelpers(
