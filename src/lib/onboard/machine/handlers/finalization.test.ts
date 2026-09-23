@@ -840,17 +840,23 @@ describe("secret-boundary refusal during finalization", () => {
     {
       reason: "portable-hermes-registry-authority-unavailable" as const,
       expected: "lifecycle receipt and registered gateway authority could not be matched",
-      action: "Restore the matching registry entry",
+      action: "nemoclaw my-assistant doctor",
+      additional: "do not edit the registry",
+      forbidden: "Restore the matching registry entry",
     },
     {
       reason: "portable-hermes-native-gateway-unavailable" as const,
       expected: "receipt-owned native gateway is not qualified and healthy",
       action: "nemoclaw my-assistant recover",
+      additional: "nemoclaw onboard --resume",
+      forbidden: "untrusted runtime diagnostic",
     },
     {
       reason: "portable-hermes-lifecycle-lock-unavailable" as const,
       expected: "lifecycle lock is unavailable",
       action: "Wait for the active sandbox operation to finish",
+      additional: "nemoclaw onboard --resume",
+      forbidden: "untrusted runtime diagnostic",
     },
   ])("renders redacted actionable Portable Hermes $reason guidance (#11892)", async (row) => {
     const { deps, calls } = createDeps({
@@ -872,6 +878,8 @@ describe("secret-boundary refusal during finalization", () => {
     });
     expect(calls.error).toHaveBeenCalledWith(expect.stringContaining(row.expected));
     expect(calls.error).toHaveBeenCalledWith(expect.stringContaining(row.action));
+    expect(calls.error).toHaveBeenCalledWith(expect.stringContaining(row.additional));
+    expect(calls.error).not.toHaveBeenCalledWith(expect.stringContaining(row.forbidden));
     expect(calls.error).toHaveBeenCalledWith(expect.stringContaining("nemoclaw onboard --resume"));
     expect(calls.error).not.toHaveBeenCalledWith(
       expect.stringContaining("untrusted runtime diagnostic"),

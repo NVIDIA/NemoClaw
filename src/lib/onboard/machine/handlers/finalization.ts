@@ -206,7 +206,7 @@ function recoveryIncompleteMessage(
   if (typeof readiness === "object") {
     switch (readiness.reason) {
       case "portable-hermes-registry-authority-unavailable":
-        return `Portable Hermes onboarding for '${sandboxName}' is incomplete because its lifecycle receipt and registered gateway authority could not be matched. Restore the matching registry entry, then resume onboarding with ${CLI_NAME} onboard --resume.`;
+        return `Portable Hermes onboarding for '${sandboxName}' is incomplete because its lifecycle receipt and registered gateway authority could not be matched. Run ${CLI_NAME} ${sandboxName} doctor and follow its identity-qualified recovery guidance; do not edit the registry or lifecycle receipt files. Then resume onboarding with ${CLI_NAME} onboard --resume.`;
       case "portable-hermes-native-gateway-unavailable":
         return `Portable Hermes onboarding for '${sandboxName}' is incomplete because its receipt-owned native gateway is not qualified and healthy. Run ${CLI_NAME} ${sandboxName} recover, then resume onboarding with ${CLI_NAME} onboard --resume.`;
       case "portable-hermes-lifecycle-lock-unavailable":

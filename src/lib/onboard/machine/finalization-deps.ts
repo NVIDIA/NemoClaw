@@ -36,9 +36,9 @@ type GatewayRestartDeps = Pick<
 type SandboxLifecycleLock = typeof import("../../state/mcp-lifecycle-lock").withMcpLifecycleLock;
 type GatewayRouteLock =
   typeof import("../../inference/gateway-route-mutation-lock").withGatewayRouteMutationLock;
-type HermesPortableLifecycleDeps = Pick<
-  typeof import("../experimental/hermes-portable-lifecycle"),
-  "assertHermesPortableSandboxLifecycleAuthority"
+type PortableAgentLifecycleDeps = Pick<
+  typeof import("../experimental/portable-agent-lifecycle"),
+  "assertHermesPortableAgentLifecycleAuthority"
 >;
 type PortableLifecycleLockDeps = Pick<
   typeof import("../experimental/portable-lifecycle-lock"),
@@ -132,8 +132,8 @@ export const finalizationHandlerRuntime = {
     require("../../state/mcp-lifecycle-lock") as typeof import("../../state/mcp-lifecycle-lock"),
   loadGatewayRouteLock: () =>
     require("../../inference/gateway-route-mutation-lock") as typeof import("../../inference/gateway-route-mutation-lock"),
-  loadHermesPortableLifecycle: () =>
-    require("../experimental/hermes-portable-lifecycle") as HermesPortableLifecycleDeps,
+  loadPortableAgentLifecycle: () =>
+    require("../experimental/portable-agent-lifecycle") as PortableAgentLifecycleDeps,
   loadPortableLifecycleLock: () =>
     require("../experimental/portable-lifecycle-lock") as PortableLifecycleLockDeps,
 };
@@ -455,8 +455,8 @@ export const finalizationHandlerDeps = {
           let registryReadFailed = false;
           try {
             await finalizationHandlerRuntime
-              .loadHermesPortableLifecycle()
-              .assertHermesPortableSandboxLifecycleAuthority(
+              .loadPortableAgentLifecycle()
+              .assertHermesPortableAgentLifecycleAuthority(
                 name,
                 {
                   agent: entry.agent,

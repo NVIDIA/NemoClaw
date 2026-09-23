@@ -771,7 +771,7 @@ describe("Hermes portable finalization readiness", () => {
   });
 
   function installPortableReadinessHarness(
-    assertReady: typeof import("../experimental/hermes-portable-lifecycle").assertHermesPortableSandboxLifecycleAuthority,
+    assertReady: typeof import("../experimental/portable-agent-lifecycle").assertHermesPortableAgentLifecycleAuthority,
   ) {
     const entry = {
       name: "alpha",
@@ -785,9 +785,9 @@ describe("Hermes portable finalization readiness", () => {
     vi.spyOn(finalizationHandlerRuntime, "loadRegistryPersistence").mockReturnValue({
       load,
     } as never);
-    const assertHermesPortableSandboxLifecycleAuthority = vi.fn(assertReady);
-    vi.spyOn(finalizationHandlerRuntime, "loadHermesPortableLifecycle").mockReturnValue({
-      assertHermesPortableSandboxLifecycleAuthority,
+    const assertHermesPortableAgentLifecycleAuthority = vi.fn(assertReady);
+    vi.spyOn(finalizationHandlerRuntime, "loadPortableAgentLifecycle").mockReturnValue({
+      assertHermesPortableAgentLifecycleAuthority,
     });
     const portableLifecycleLockOptions = vi.fn(() => ({
       stateDir: "/portable/state",
@@ -800,7 +800,7 @@ describe("Hermes portable finalization readiness", () => {
       withMcpLifecycleLock,
     } as never);
     return {
-      assertHermesPortableSandboxLifecycleAuthority,
+      assertHermesPortableAgentLifecycleAuthority,
       entry,
       load,
       portableLifecycleLockOptions,
@@ -820,7 +820,7 @@ describe("Hermes portable finalization readiness", () => {
       stateDir: "/portable/state",
     });
     expect(harness.portableLifecycleLockOptions).toHaveBeenCalledWith(environment);
-    expect(harness.assertHermesPortableSandboxLifecycleAuthority).toHaveBeenCalledWith(
+    expect(harness.assertHermesPortableAgentLifecycleAuthority).toHaveBeenCalledWith(
       "alpha",
       {
         agent: "hermes",
@@ -831,7 +831,7 @@ describe("Hermes portable finalization readiness", () => {
       },
       { env: environment, readRegistry: expect.any(Function) },
     );
-    const readinessDeps = harness.assertHermesPortableSandboxLifecycleAuthority.mock.calls[0]?.[2];
+    const readinessDeps = harness.assertHermesPortableAgentLifecycleAuthority.mock.calls[0]?.[2];
     expect(readinessDeps?.readRegistry?.("alpha")).toEqual(harness.entry);
   });
 
@@ -872,7 +872,7 @@ describe("Hermes portable finalization readiness", () => {
       .mockImplementation(() => {
         throw new Error("untrusted registry diagnostic");
       });
-    harness.assertHermesPortableSandboxLifecycleAuthority.mockImplementation(
+    harness.assertHermesPortableAgentLifecycleAuthority.mockImplementation(
       async (_name, _context, deps) => {
         expect(deps?.readRegistry).toBeTypeOf("function");
         deps?.readRegistry?.("alpha");
