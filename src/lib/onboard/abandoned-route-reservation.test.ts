@@ -53,7 +53,17 @@ async function onboardingSessionUnderLock(
   heldLockModules.push(onboardSession);
   onboardSession.acquireOnboardLock(command);
   const session = onboardSession.createSession({ sessionId });
-  session.metadata.gatewayName = gatewayName;
+  const { bindGatewayAuthorityToCheckpoint } = await import("./gateway-authority-checkpoint");
+  bindGatewayAuthorityToCheckpoint(session, {
+    gatewayName,
+    gatewayPort: gatewayName === GATEWAY ? 18789 : 18790,
+    mode: "nemoclaw-managed",
+    source: "standalone",
+    endpoint: null,
+    stateDir: null,
+    supervisor: null,
+    requiredCapabilities: [],
+  });
   onboardSession.saveSession(session);
 }
 
@@ -146,7 +156,7 @@ describe("abandoned inference route reservation (#11051)", () => {
     registry.registerSandbox({ name: SANDBOX, ...ROUTE, agent: "openclaw" });
     await seedAbandonedReservation("session-from-another-gateway");
     const reserved = registry.getSandbox(SANDBOX);
-    await onboardingSessionUnderLock("current-session", "onboard --fresh", "different-gateway");
+    await onboardingSessionUnderLock("current-session", "onboard --fresh", "nemoclaw-18790");
 
     expect(releaseAbandonedRouteReservation(SANDBOX)).toBe(false);
     expect(registry.getSandbox(SANDBOX)).toEqual(reserved);

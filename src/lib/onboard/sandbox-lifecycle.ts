@@ -56,11 +56,13 @@ export function releaseAbandonedRouteReservation(sandboxName: string): boolean {
   if (!session || !onboardSession.isOnboardLockHeldByCurrentProcess()) return false;
   if (registry.isPendingReservationForSession(entry, session.sessionId)) return false;
   if (!registry.isRouteOnlySandboxReservation(entry)) {
+    const authority = session.checkpoint?.gatewayAuthority;
     if (
       typeof entry.createdAt !== "string" ||
       !Number.isFinite(Date.parse(entry.createdAt)) ||
       !entry.gatewayName ||
-      entry.gatewayName !== session.metadata.gatewayName
+      authority?.kind !== "selected" ||
+      entry.gatewayName !== authority.value.gatewayName
     ) {
       return false;
     }
