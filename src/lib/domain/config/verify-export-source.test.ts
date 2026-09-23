@@ -252,26 +252,6 @@ describe("config export source verification (#10938)", () => {
     },
   );
 
-  it("preserves canonical output when all six settings use their defaults", async () => {
-    const baseline = await exportSnapshots([snapshot()]);
-    const explicit = await exportSnapshots([
-      tunedSnapshot({
-        NEMOCLAW_CONTEXT_WINDOW: "131072",
-        NEMOCLAW_MAX_TOKENS: "4096",
-        NEMOCLAW_REASONING: "false",
-        NEMOCLAW_REASONING_EFFORT: "default",
-        NEMOCLAW_AGENT_TIMEOUT: "600",
-      }),
-    ]);
-    expect(explicit.outcome.ok).toBe(true);
-    expect(explicit.writeStdout.mock.calls).toEqual(baseline.writeStdout.mock.calls);
-    const config = asExportedConfig(YAML.parse(explicit.writeStdout.mock.calls[0]![0]));
-    expect(primaryOpenClawAgent(config).inference.routes[0]!.overrides).toEqual({
-      model: "gpt-5",
-    });
-    expect(config.spec.sandboxes[0]!.harness).not.toHaveProperty("execution");
-  });
-
   it("retains an explicit zero heartbeat duration", async () => {
     const result = await exportSnapshots([tunedSnapshot({ NEMOCLAW_AGENT_HEARTBEAT_EVERY: "0m" })]);
     expect(result.outcome.ok).toBe(true);
@@ -318,8 +298,8 @@ describe("config export source verification (#10938)", () => {
     ).inference.routes[0]!;
     expect(route.overrides).toEqual(
       reasoning === "true"
-        ? { model: "gpt-5", reasoning: true, reasoningEffort: "high" }
-        : { model: "gpt-5" },
+        ? { model: "gpt-5", contextWindow: 131072, reasoning: true, reasoningEffort: "high" }
+        : { model: "gpt-5", contextWindow: 131072 },
     );
   });
 
@@ -1235,11 +1215,14 @@ function dashboardSnapshot(
 }
 
 describe("dashboard settings export", () => {
-  it("keeps canonical Hermes export free of dashboard interfaces (#10904)", async () => {
+  it("disables the target-default Hermes dashboard for a canonical source (#12132)", async () => {
     const exported = await exportSnapshots([hermesSnapshot()]);
     expect(exported.outcome).toEqual({ ok: true, completion: { kind: "stdout" } });
     const document = asExportedConfig(YAML.parse(exported.writeStdout.mock.calls[0]![0]));
-    expect(document.spec.sandboxes[0]!.harness).toEqual({ kind: "hermes" });
+    expect(document.spec.sandboxes[0]!.harness).toEqual({
+      kind: "hermes",
+      interfaces: { dashboard: { enabled: false } },
+    });
     expect(document.spec.sandboxes[0]!.agent).toEqual({
       name: "primary",
       inference: {
@@ -1312,12 +1295,15 @@ describe("dashboard settings export", () => {
     });
   });
 
-  it("keeps explicit and legacy canonical dashboard exports identical (#10904)", async () => {
+  it("keeps explicit and legacy canonical dashboard exports identical (#10904, #12132)", async () => {
     const legacy = await exportSnapshots([snapshot()]);
     const explicit = await exportSnapshots([dashboardSnapshot(18789, "127.0.0.1")]);
     expect(explicit.outcome).toEqual({ ok: true, completion: { kind: "stdout" } });
     expect(explicit.writeStdout.mock.calls).toEqual(legacy.writeStdout.mock.calls);
-    expect(explicit.writeStdout.mock.calls[0]![0]).not.toContain("interfaces:");
+    const document = asExportedConfig(YAML.parse(explicit.writeStdout.mock.calls[0]![0]));
+    expect(document.spec.sandboxes[0]!.harness.interfaces).toEqual({
+      dashboard: { port: 18789 },
+    });
   });
 
   it("preserves inference and execution tuning alongside dashboard settings (#10904)", async () => {

@@ -50,8 +50,8 @@ Host-side OpenClaw config writes run under the per-sandbox transition lock and b
 The native runtime owns restart admission and gateway replacement.
 NemoClaw does not signal or respawn the gateway.
 
-If the native command rejects the active configuration or the replacement does not become healthy, NemoClaw reports the failed command or health check instead of success.
-After the native restart, NemoClaw verifies gateway health and repairs host-side forwards.
+If the native command rejects the active configuration or the replacement does not become ready, NemoClaw reports the failed command or readiness check instead of success.
+After the native restart, NemoClaw requires OpenClaw `/readyz` to return HTTP `200` with JSON `{"ready":true}` before it repairs host-side forwards.
 
 </AgentOnly>
 <AgentOnly variant="hermes">

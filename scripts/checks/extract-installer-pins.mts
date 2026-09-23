@@ -511,6 +511,8 @@ const TRUSTED_OPENSHELL_RELEASES: readonly OpenShellReleaseTrust[] = [
       "98c46cfee5bc38cd378a991a7c60573836a6c774008caf5c5dd7bc6a1910e1ce",
       // Exact #12192 bootstrap diagnostics template; release pins stay unchanged.
       "336065ba8f55f686e3dedec9109b2dfeff16e9256e7a1be135bd32b1db0c4bee",
+      // Exact #12192 Advisor repair; release pins stay unchanged.
+      "d5694e92c90523573163236b8e637cc8daaf0427bda9348dfb0cfe6d0a6e140e",
     ],
     formula: {
       asset: "openshell.rb",

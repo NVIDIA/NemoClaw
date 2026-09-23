@@ -35,10 +35,11 @@ No separate host-side MCP registry or intended/applied marker participates in re
 ## Verify Recovery Health
 
 `gateway restart` invokes the native OpenClaw or Hermes lifecycle command through the selected OpenShell sandbox.
-NemoClaw then polls the agent health endpoint for the timeout declared in the agent manifest.
+For OpenClaw, NemoClaw polls `/readyz` for HTTP `200` and JSON `{"ready":true}` before it repairs host-side forwards or reports success.
+For Hermes, NemoClaw polls the agent health endpoint for the timeout declared in the agent manifest.
 It waits through the shared settle window and requires the gateway to remain healthy before it reports success.
 
-`recover` checks the same native health endpoint.
+`recover` checks the native health endpoint.
 If a built-in gateway is stopped, `recover` reports that state instead of relaunching the process.
 Use `gateway restart` to request a native restart, or restart the sandbox through OpenShell when the native command cannot run.
 

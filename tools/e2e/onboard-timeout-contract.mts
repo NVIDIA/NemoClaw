@@ -10,6 +10,9 @@ const ONBOARD_JOB_HEADROOM_MS = 20 * MINUTE_MS;
 export const LIVE_TARGET_BASE_TEST_TIMEOUT_MS = 30 * MINUTE_MS;
 export const CONFIG_EXPORT_COMMAND_TIMEOUT_MS = 2 * MINUTE_MS;
 export const CONFIG_EXPORT_POLICY_TIMEOUT_MS = MINUTE_MS;
+// Contains the pinned consumer's 30-second archive, 30-second extraction,
+// eight-minute Cargo, and 30-second native-settings deadlines.
+export const CONFIG_EXPORT_PINNED_V1_CONSUMER_TIMEOUT_MS = 10 * MINUTE_MS;
 
 // The Deep Agents Code credential-rotation lifecycle performs three bounded
 // route polls around provider mutation, a bounded rejected rebuild, container
@@ -44,7 +47,10 @@ export type LiveTargetTimeoutContract = Readonly<{
 }>;
 
 const CONFIG_EXPORT_BUDGET_MS: Readonly<Record<ConfigExportExpectation, number>> = {
-  required: CONFIG_EXPORT_COMMAND_TIMEOUT_MS + CONFIG_EXPORT_POLICY_TIMEOUT_MS,
+  required:
+    CONFIG_EXPORT_COMMAND_TIMEOUT_MS +
+    CONFIG_EXPORT_POLICY_TIMEOUT_MS +
+    CONFIG_EXPORT_PINNED_V1_CONSUMER_TIMEOUT_MS,
   "expected-refusal": CONFIG_EXPORT_COMMAND_TIMEOUT_MS,
   "no-usable-sandbox": 0,
 };
