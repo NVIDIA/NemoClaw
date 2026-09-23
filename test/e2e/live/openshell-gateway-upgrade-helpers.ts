@@ -81,6 +81,43 @@ export async function captureGatewayUpgradeProbeEvidence(
   return results.every((result) => result.status === "fulfilled" && result.value.exitCode === 0);
 }
 
+/** Accept recovery only when the command, listener, and restored sandbox checks all succeed. */
+export function gatewayUpgradeRecoverySucceeded(
+  recovery: Pick<ShellProbeResult, "exitCode">,
+  forward: { readonly valid: boolean },
+  stateChecks: readonly Pick<ShellProbeResult, "exitCode">[],
+): boolean {
+  return (
+    recovery.exitCode === 0 && forward.valid && stateChecks.every((result) => result.exitCode === 0)
+  );
+}
+
+/** Accept credential non-exposure only when both inspections complete with no match. */
+export function gatewayCredentialNonExposureScript(
+  credential: string,
+  managedPaths: readonly string[] = [
+    "/sandbox/.openclaw/openclaw.json",
+    "/sandbox/.openclaw/agents",
+  ],
+): string {
+  const quotedCredential = shellQuote(credential);
+  const quotedManagedPaths = managedPaths.map(shellQuote).join(" ");
+  return `env | grep -qF -- ${quotedCredential}
+environment_status=$?
+case "$environment_status" in
+  1) ;;
+  0) printf '%s\\n' 'ERROR: gateway credential is exposed in the sandbox environment' >&2; exit 1 ;;
+  *) printf 'ERROR: sandbox environment credential inspection failed (grep exit %s)\\n' "$environment_status" >&2; exit "$environment_status" ;;
+esac
+grep -rqF -- ${quotedCredential} ${quotedManagedPaths}
+managed_files_status=$?
+case "$managed_files_status" in
+  1) ;;
+  0) printf '%s\\n' 'ERROR: gateway credential is exposed in managed OpenClaw files' >&2; exit 1 ;;
+  *) printf 'ERROR: managed OpenClaw credential inspection failed (grep exit %s)\\n' "$managed_files_status" >&2; exit "$managed_files_status" ;;
+esac`;
+}
+
 export function oldGatewayUpgradeInstallerArgs(installer: string): string[] {
   return [installer, ...NON_INTERACTIVE_INSTALLER_ARGS, "--fresh"];
 }

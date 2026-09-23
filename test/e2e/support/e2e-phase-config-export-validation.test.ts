@@ -147,6 +147,7 @@ function document(
       sandboxes: [
         {
           name: "sandbox",
+          image: null,
           runtime: { provider: "docker" },
           network: { policy: { explicit: POLICY } },
           harness: {
@@ -519,7 +520,6 @@ if (process.argv.includes("--output")) {
       dependencies: independentDependencies,
       host: successfulHost(raw),
     });
-
     const evidence = await test.phase.from(target("required"), instance());
     const persistedEvidence = JSON.parse(
       fs.readFileSync(path.join(artifactRoot, "config-export-evidence.v1.json"), "utf8"),
