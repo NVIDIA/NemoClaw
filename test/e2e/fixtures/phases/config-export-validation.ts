@@ -375,8 +375,6 @@ export interface ConfigExportEvidenceEnvelope {
   consumer?: PinnedV1ConsumerEvidence & {
     expected: PinnedV1ConsumerEvidence;
     actual: PinnedV1ConsumerEvidence;
-    expectedOpenclawNativeSettings?: PinnedV1OpenClawNativeSettings;
-    actualOpenclawNativeSettings?: PinnedV1OpenClawNativeSettings;
     passed: boolean;
   };
   export?: {
@@ -1203,15 +1201,10 @@ export class ConfigExportValidationPhaseFixture {
           );
         }
         if (!expectedConsumerEvidence) throw new Error("pinned v1 expectations were not captured");
-        const expectedConsumerSettings =
-          expectedConsumerEvidence.openclawNativeSettings?.[instance.sandboxName];
         consumer = {
           revision: V1ALPHA1_RUNTIME_DEFAULTS_REVISION,
           expected: expectedConsumerEvidence,
           actual: { revision: V1ALPHA1_RUNTIME_DEFAULTS_REVISION },
-          ...(expectedConsumerSettings
-            ? { expectedOpenclawNativeSettings: expectedConsumerSettings }
-            : {}),
           passed: false,
         };
         const consumerEvidence = this.dependencies.validateWithPinnedV1(raw);
@@ -1220,8 +1213,6 @@ export class ConfigExportValidationPhaseFixture {
           expectedConsumerEvidence,
           instance.sandboxName,
         );
-        const actualConsumerSettings =
-          actualConsumerEvidence.openclawNativeSettings?.[instance.sandboxName];
         const consumerPassed = isDeepStrictEqual(actualConsumerEvidence, expectedConsumerEvidence);
         verifications.push({
           id: "consumerNativeSettings",
@@ -1233,12 +1224,6 @@ export class ConfigExportValidationPhaseFixture {
           ...consumerEvidence,
           expected: expectedConsumerEvidence,
           actual: actualConsumerEvidence,
-          ...(expectedConsumerSettings
-            ? {
-                expectedOpenclawNativeSettings: expectedConsumerSettings,
-                actualOpenclawNativeSettings: actualConsumerSettings,
-              }
-            : {}),
           passed: consumerPassed,
         };
         if (!consumerPassed) {

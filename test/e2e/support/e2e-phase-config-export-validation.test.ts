@@ -10,6 +10,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { managedStartupE2eProfile } from "../../../scripts/checks/generate-managed-startup-profile-fixture.mts";
 import { encodeManagedStartupProfile } from "../../../src/lib/onboard/managed-startup/profile.ts";
+import {
+  EXPECTED_NATIVE_SETTINGS,
+  PINNED_CONSUMER_EVIDENCE,
+} from "./config-export-consumer-evidence-fixture.ts";
 import { ArtifactSink } from "../fixtures/artifacts.ts";
 import { CleanupRegistry } from "../fixtures/cleanup.ts";
 import { HostCliClient } from "../fixtures/clients/host.ts";
@@ -31,21 +35,6 @@ import type { NemoClawInstanceManifest, TargetDefinition } from "../registry/typ
 const IMAGE_REF = `nvcr.io/nvidia/nemoclaw@sha256:${"a".repeat(64)}`;
 const SOURCE_REVISION = "b".repeat(40);
 const ENCODED_PROFILE = encodeManagedStartupProfile(managedStartupE2eProfile("openclaw"));
-const EXPECTED_NATIVE_SETTINGS = {
-  model: { contextWindow: 131_072, maxTokens: 8192, reasoning: false },
-  reasoningEffort: "default",
-  execution: { timeoutSeconds: 600, heartbeatEvery: "2m" },
-  dashboard: { enabled: true, port: 18_789, bind: "loopback" },
-  toolDisclosure: "progressive",
-} as const;
-const PINNED_CONSUMER_EVIDENCE = {
-  revision: "88c6600c06b0937907290362eef86912052c4ad0" as const,
-  compiledSandboxes: 1,
-  contextWindows: [131_072],
-  openclawNativeSettings: { sandbox: EXPECTED_NATIVE_SETTINGS },
-  openclawNativeSettingsVerified: 1,
-  hermesNativeSettingsVerified: 0,
-};
 const SECRET = "fixture-secret-value";
 const ENCODED_SECRET = Buffer.from(SECRET, "utf8").toString("base64");
 const DIAGNOSTIC_SECRET_REPRESENTATIONS = [
@@ -597,12 +586,14 @@ if (process.argv.includes("--output")) {
     const mismatched = dependencies();
     mismatched.validateWithPinnedV1 = () => ({
       ...PINNED_CONSUMER_EVIDENCE,
+      compiledSandboxes: 2,
       openclawNativeSettings: {
         sandbox: {
           ...EXPECTED_NATIVE_SETTINGS,
           model: { ...EXPECTED_NATIVE_SETTINGS.model, contextWindow: 32_768 },
         },
       },
+      openclawNativeSettingsVerified: 0,
     });
     const rejected = fixture({ dependencies: mismatched });
     await captureFailure(rejected.phase.from(target("required"), instance()));
@@ -610,6 +601,9 @@ if (process.argv.includes("--output")) {
       failureStage: "verification",
       consumer: { passed: false },
     });
+    expect(rejected.writes.at(-1)?.verifications).toContainEqual(
+      expect.objectContaining({ id: "consumerNativeSettings", passed: false }),
+    );
     expect(rejected.writes.at(-1)).not.toHaveProperty("export");
   });
   it("observes effective policy through the fixture-owned OpenShell boundary (#11485)", async () => {
