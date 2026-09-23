@@ -76,6 +76,12 @@ distinct quality value. Do not move assertions into helpers, aggregate objects, 
 After a valid reduction, run `npm run e2e:assertions:update` and include the lower baseline in the
 same change. The ratchet rejects growth and stale baselines.
 
+Maintainer-approved exceptions live in `ci/e2e-assertion-growth-exceptions.json` on trusted `main`.
+Each exception binds one PR to SHA-256 digests of the exact base and candidate budget files.
+Candidate changes cannot authorize their own exception. Local hooks recognize the approved budget
+transition; GitHub also checks the PR number. A different base or candidate budget invalidates the
+exception. Remove the exception after its PR merges.
+
 New test files must use TypeScript. Each plugin test must execute at least one Vitest `expect`
 assertion. The repository test configuration owns automatic mock and environment cleanup; restore
 direct global or environment mutations in the test that owns them.
