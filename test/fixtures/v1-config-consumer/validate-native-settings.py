@@ -28,7 +28,8 @@ def install_adapter_stubs():
 
 def validate_openclaw(settings_by_sandbox):
     context_windows = []
-    for entry in settings_by_sandbox.values():
+    native_settings = {}
+    for name, entry in settings_by_sandbox.items():
         if entry["runtime"] != "fabric-openclaw":
             continue
         native = importlib.import_module("openclaw_adapter").native_configuration(
@@ -37,8 +38,32 @@ def validate_openclaw(settings_by_sandbox):
         provider = next(iter(native["models"]["providers"].values()))
         model = provider["models"][0]
         context_windows.append(model["contextWindow"])
+        defaults = native["agents"]["defaults"]
+        heartbeat = defaults.get("heartbeat")
+        gateway = native["gateway"]
+        native_settings[name] = {
+            "model": {
+                "contextWindow": model["contextWindow"],
+                "maxTokens": model["maxTokens"],
+                "reasoning": model["reasoning"],
+            },
+            "reasoningEffort": defaults.get("thinkingDefault", "default"),
+            "execution": {
+                "timeoutSeconds": defaults["timeoutSeconds"],
+                "heartbeatEvery": heartbeat["every"] if heartbeat else None,
+            },
+            "dashboard": {
+                "enabled": gateway["controlUi"]["enabled"],
+                "port": gateway["port"],
+                "bind": gateway["bind"],
+            },
+            "toolDisclosure": (
+                "direct" if native["tools"]["toolSearch"] is False else "progressive"
+            ),
+        }
     return {
         "contextWindows": context_windows,
+        "openclawNativeSettings": native_settings,
         "openclawNativeSettingsVerified": len(context_windows),
     }
 

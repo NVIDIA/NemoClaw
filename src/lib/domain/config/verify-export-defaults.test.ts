@@ -42,18 +42,20 @@ function enabledHermesSnapshot(port: number, internalPort: number, tui: boolean,
   });
 }
 
+function explicitOpenClawDefaultsSnapshot() {
+  return tunedSnapshot({
+    NEMOCLAW_CONTEXT_WINDOW: "131072",
+    NEMOCLAW_MAX_TOKENS: "4096",
+    NEMOCLAW_REASONING: "false",
+    NEMOCLAW_REASONING_EFFORT: "default",
+    NEMOCLAW_AGENT_TIMEOUT: "600",
+  });
+}
+
 describe("effective v1alpha1 export defaults (#12132)", () => {
   it("preserves source values whether their startup inputs were explicit or omitted", async () => {
     const baseline = await exportSnapshots([snapshot()]);
-    const explicit = await exportSnapshots([
-      tunedSnapshot({
-        NEMOCLAW_CONTEXT_WINDOW: "131072",
-        NEMOCLAW_MAX_TOKENS: "4096",
-        NEMOCLAW_REASONING: "false",
-        NEMOCLAW_REASONING_EFFORT: "default",
-        NEMOCLAW_AGENT_TIMEOUT: "600",
-      }),
-    ]);
+    const explicit = await exportSnapshots([explicitOpenClawDefaultsSnapshot()]);
     expect(explicit.outcome.ok).toBe(true);
     expect(explicit.writeStdout.mock.calls).toEqual(baseline.writeStdout.mock.calls);
     const config = asExportedConfig(YAML.parse(explicit.writeStdout.mock.calls[0]![0]));
@@ -74,7 +76,8 @@ describe("effective v1alpha1 export defaults (#12132)", () => {
     testTimeoutOptions(12 * 60_000),
     async () => {
       const sources = [
-        { name: "openclaw", source: snapshot() },
+        { name: "openclaw-defaults", source: snapshot() },
+        { name: "openclaw-explicit", source: explicitOpenClawDefaultsSnapshot() },
         { name: "hermes-disabled", source: hermesSnapshot() },
         {
           name: "hermes-defaults",
@@ -101,7 +104,22 @@ describe("effective v1alpha1 export defaults (#12132)", () => {
       };
       expect(validateAgentExportsWithPinnedV1(YAML.stringify(combined))).toEqual({
         revision: "88c6600c06b0937907290362eef86912052c4ad0",
-        contextWindow: 131072,
+        openclawNativeSettings: {
+          "openclaw-defaults": {
+            model: { contextWindow: 131072, maxTokens: 4096, reasoning: false },
+            reasoningEffort: "default",
+            execution: { timeoutSeconds: 600, heartbeatEvery: null },
+            dashboard: { enabled: true, port: 18789, bind: "loopback" },
+            toolDisclosure: "progressive",
+          },
+          "openclaw-explicit": {
+            model: { contextWindow: 131072, maxTokens: 4096, reasoning: false },
+            reasoningEffort: "default",
+            execution: { timeoutSeconds: 600, heartbeatEvery: null },
+            dashboard: { enabled: true, port: 18789, bind: "loopback" },
+            toolDisclosure: "progressive",
+          },
+        },
         hermesInterfacesVerified: true,
       });
     },
