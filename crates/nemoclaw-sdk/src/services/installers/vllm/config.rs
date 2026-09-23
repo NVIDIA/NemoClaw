@@ -5,6 +5,7 @@
 
 use super::{ServiceContainer, ServiceHardware, constraints};
 use crate::config::ImagePullPolicy;
+use crate::services::placement::{ServicePlacement, ServicePublication};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -172,26 +173,6 @@ pub struct Memory {
 
 fn is_zero(value: &i64) -> bool {
     *value == 0
-}
-
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-/// Execution host and Docker network for a remote model service.
-pub struct ServicePlacement {
-    /// SSH Docker endpoint used for an explicitly placed service.
-    pub engine: String,
-    /// Canonical private IPv4 /24 on the selected Docker engine.
-    pub network_cidr: String,
-}
-
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-/// HTTP model publication must match the bind address, service port, and /v1 path.
-pub struct ServicePublication {
-    /// Private HTTP inference URL reachable by OpenShell.
-    pub endpoint: String,
-    /// Private host IPv4 address outside the service Docker subnet. Loopback is rejected.
-    pub bind_address: String,
 }
 
 impl Service {

@@ -18,10 +18,11 @@ struct Settings<'a> {
     compilation: Option<String>,
 }
 impl<'a> Settings<'a> {
-    fn resolve(service: &'a Service) -> Self {
-        if let Some(recipe) = &service.recipe {
-            let s = &recipe.serving;
-            Self {
+    fn resolve(service: &'a Service, mode: super::VllmLaunchMode<'a>) -> Self {
+        match mode {
+            super::VllmLaunchMode::Recipe { recipe } => {
+                let s = &recipe.serving;
+                Self {
                 name: &s.model_name,
                 gpu_bytes: recipe.resources.gpu_memory_bytes,
                 tool_parser: &s.tool_parser,
@@ -36,8 +37,8 @@ impl<'a> Settings<'a> {
                     None => "{\"mode\":0}".into(),
                 }),
             }
-        } else {
-            Self {
+            }
+            super::VllmLaunchMode::Native { .. } => Self {
                 name: service.served_model(),
                 gpu_bytes: super::validation::gpu_bytes(service),
                 tool_parser: &service.serving.tool_parser,
@@ -52,7 +53,7 @@ impl<'a> Settings<'a> {
                 lazy_loading: false,
                 chunked_prefill: false,
                 compilation: None,
-            }
+            },
         }
     }
 }
@@ -62,7 +63,7 @@ pub(crate) fn arguments(
     total: u64,
 ) -> Result<Vec<String>, Error> {
     service.validate()?;
-    let model = Settings::resolve(service);
+    let model = Settings::resolve(service, service.launch_mode()?);
     if total == 0
         || model.gpu_bytes > total
         || service

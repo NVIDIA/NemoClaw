@@ -121,3 +121,47 @@ fn unused_harness_is_validated_without_granting_access() {
     value["spec"]["harnesses"]["unused"]["kind"] = json!("invalid");
     assert!(Document::parse(value.to_string().as_bytes()).is_err());
 }
+
+#[test]
+fn default_image_follows_the_selected_harness_and_tolerates_incomplete_selection() {
+    use nemoclaw_sdk::config::{DEFAULT_AGENT_IMAGE, DEFAULT_HERMES_IMAGE, HarnessKind};
+
+    let mut inline = input();
+    inline["spec"]["sandboxes"][0]["harness"] = json!({"kind":"hermes"});
+    let mut missing = shared(inline.clone(), false);
+    missing["spec"]["sandboxes"][0]["harnessRef"] = json!("missing");
+    let mut both = shared(inline.clone(), false);
+    both["spec"]["sandboxes"][0]["harness"] = json!({"kind":"hermes"});
+    let mut absent = input();
+    absent["spec"]["sandboxes"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("harness");
+    for (value, valid) in [
+        (inline.clone(), true),
+        (shared(inline.clone(), false), true),
+        (shared(inline, true), true),
+        (missing, false),
+        (both, false),
+        (absent, false),
+    ] {
+        let mut document: Document = serde_json::from_value(value).unwrap();
+        document.spec.sandboxes[0].image.ref_.clear();
+        document.defaults();
+        let sandbox = &document.spec.sandboxes[0];
+        assert_eq!(
+            sandbox.image.ref_,
+            if valid {
+                DEFAULT_HERMES_IMAGE
+            } else {
+                DEFAULT_AGENT_IMAGE
+            }
+        );
+        let selected = document.sandbox_harness(sandbox);
+        if valid {
+            assert_eq!(selected.unwrap().kind, HarnessKind::Hermes);
+        } else {
+            assert!(selected.is_err());
+        }
+    }
+}

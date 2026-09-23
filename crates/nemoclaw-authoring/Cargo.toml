@@ -12,7 +12,6 @@ publish = false
 [dependencies]
 nemoclaw-sdk = { path = "../nemoclaw-sdk" }
 getrandom.workspace = true
-serde_json.workspace = true
 serde-saphyr.workspace = true
 
 [lints]

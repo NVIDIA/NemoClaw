@@ -1,215 +1,139 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+//! Progress has three boundaries: the reporter owns event delivery, the model
+//! interprets SDK observations, and the inline display owns terminal mechanics.
+
+use crate::{args::ProgressMode, formatting::duration};
 use nemoclaw_sdk::Progress;
-use std::time::Duration;
+use std::{
+    io::{self, IsTerminal, Write},
+    sync::{Arc, mpsc},
+    thread,
+    time::{Duration, Instant},
+};
 
-fn duration(elapsed: Duration) -> String {
-    if elapsed < Duration::from_secs(1) {
-        format!("{}ms", elapsed.as_millis())
-    } else {
-        format!(
-            "{}s",
-            format!("{:.3}", elapsed.as_secs_f64())
-                .trim_end_matches('0')
-                .trim_end_matches('.')
-        )
+mod inline;
+mod logo;
+mod model;
+use inline::Inline;
+use model::Model;
+
+const HEARTBEAT: Duration = Duration::from_secs(30);
+
+/// One owner for stderr while an operation runs. Construction does not touch the terminal:
+/// credential prompts may still run before the first SDK progress event.
+pub(crate) struct Reporter {
+    sender: Option<mpsc::Sender<Option<Progress>>>,
+    worker: Option<thread::JoinHandle<()>>,
+}
+
+impl Reporter {
+    pub(crate) fn new(mode: ProgressMode, verbose: bool, header: String) -> Self {
+        if matches!(mode, ProgressMode::Off) {
+            return Self {
+                sender: None,
+                worker: None,
+            };
+        }
+        let (sender, receiver) = mpsc::channel();
+        let inline = matches!(mode, ProgressMode::Auto)
+            && io::stderr().is_terminal()
+            && std::env::var("TERM").is_ok_and(|term| term != "dumb");
+        let worker = thread::spawn(move || run(receiver, inline, verbose, header));
+        Self {
+            sender: Some(sender),
+            worker: Some(worker),
+        }
+    }
+
+    pub(crate) fn callback(&self) -> Arc<dyn Fn(Progress) + Send + Sync> {
+        let sender = self.sender.clone();
+        Arc::new(move |event| {
+            if let Some(sender) = &sender {
+                let _ = sender.send(Some(event));
+            }
+        })
+    }
+
+    pub(crate) fn finish(&mut self) {
+        if let Some(sender) = self.sender.take() {
+            let _ = sender.send(None);
+        }
+        if let Some(worker) = self.worker.take() {
+            let _ = worker.join();
+        }
+    }
+}
+impl Drop for Reporter {
+    fn drop(&mut self) {
+        self.finish();
     }
 }
 
-fn byte_count(bytes: u64) -> String {
-    for (unit, divisor) in [("GiB", 1_u64 << 30), ("MiB", 1 << 20), ("KiB", 1 << 10)] {
-        if bytes >= divisor {
-            return format!("{:.1} {unit}", bytes as f64 / divisor as f64);
-        }
+fn run(receiver: mpsc::Receiver<Option<Progress>>, inline: bool, verbose: bool, header: String) {
+    let Ok(Some(first)) = receiver.recv() else {
+        return;
+    };
+    let mut output = io::stderr();
+    let mut display = inline.then(|| Inline::new(&header).ok()).flatten();
+    if display.is_none() {
+        let _ = writeln!(output, "{header}");
     }
-    format!("{bytes} B")
-}
-
-pub(crate) fn render(event: Progress, verbose: bool) -> Option<String> {
-    match event {
-        Progress::Download(event) => {
-            use nemoclaw_sdk::DownloadPhase;
-            let phase = match event.phase {
-                DownloadPhase::Starting => "starting download of",
-                DownloadPhase::Downloading => "downloading",
-                DownloadPhase::Extracting => "extracting",
-                DownloadPhase::Verifying => "verifying",
-                DownloadPhase::Complete if event.layer.is_none() => "downloaded",
-                DownloadPhase::Complete => "finished layer of",
-            };
-            let mut text = format!("{}: {phase} {}", event.resource, event.artifact);
-            if let Some(layer) = event.layer {
-                text.push_str(&format!(" [{layer}]"));
-            }
-            if let Some(bytes) = event.bytes {
-                if let Some(total) = bytes
-                    .total
-                    .filter(|total| *total > 0 && bytes.completed <= *total)
-                {
-                    let percent = u128::from(bytes.completed) * 100 / u128::from(total);
-                    text.push_str(&format!(
-                        " {percent}% ({} / {})",
-                        byte_count(bytes.completed),
-                        byte_count(total)
-                    ));
-                } else {
-                    text.push_str(&format!(" {}", byte_count(bytes.completed)));
-                }
-            }
-            Some(text)
+    let mut model = Model::default();
+    let started = Instant::now();
+    let mut heartbeat = started;
+    let mut next = Some(first);
+    loop {
+        let now = Instant::now();
+        let milestone = next
+            .take()
+            .and_then(|event| model.observe(event, verbose, now));
+        let lines = model.lines(now);
+        if let Some(inline) = display.as_mut()
+            && inline.prepare(&lines, now).is_err()
+        {
+            display = None;
         }
-        Progress::Resource {
-            resource,
-            action,
-            status,
-            elapsed,
-        } => Some(if status == "started" {
-            format!("{resource}: {action} {status}")
-        } else {
-            format!("{resource}: {action} {status} ({})", duration(elapsed))
-        }),
-        Progress::Waiting { operation, elapsed } => {
-            let label = match operation {
-                "tofu.init" => "Initializing infrastructure",
-                "tofu.plan" => "Planning infrastructure changes",
-                "tofu.apply" => "Applying infrastructure changes",
-                "runtime.ready" => "Waiting for gateway and inference readiness",
-                "sandbox.ready" => "Waiting for sandbox readiness",
-                "fabric.health" => "Checking hosted Fabric health",
-                _ if verbose => operation,
-                _ => return None,
-            };
-            Some(if elapsed.as_millis() == 0 {
-                label.into()
-            } else {
-                format!("{label} ({})", duration(elapsed))
-            })
+        if let Some(milestone) = milestone
+            && (display.is_none() || milestone.durable)
+        {
+            let inserted = display
+                .as_mut()
+                .is_some_and(|inline| inline.insert(&milestone).is_ok());
+            if !inserted {
+                display = None;
+                let _ = writeln!(output, "{}", milestone.text);
+            }
         }
-        Progress::Completed {
-            operation,
-            elapsed,
-            outcome,
-        } if verbose => Some(format!("{operation} {outcome} {}", duration(elapsed))),
-        Progress::Validating => Some("Checking deployment configuration".into()),
-        Progress::Exporting => Some("Reading deployed configuration".into()),
-        Progress::Destroying => Some("Destroying owned workloads".into()),
-        _ => None,
+        if let Some(inline) = display.as_mut() {
+            if inline
+                .draw(&lines, now, now.duration_since(started))
+                .is_err()
+            {
+                display = None;
+            }
+        } else if now.duration_since(heartbeat) >= HEARTBEAT {
+            let _ = writeln!(
+                output,
+                "Still working · elapsed {}",
+                duration(now.duration_since(started))
+            );
+            for line in &lines {
+                let _ = writeln!(output, "  {line}");
+            }
+            heartbeat = now;
+        }
+        let timeout = display
+            .as_ref()
+            .map_or(Duration::from_millis(250), Inline::timeout);
+        match receiver.recv_timeout(timeout) {
+            Ok(Some(event)) => next = Some(event),
+            Ok(None) | Err(mpsc::RecvTimeoutError::Disconnected) => break,
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+        }
     }
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use std::time::Duration;
-
-    #[test]
-    fn downloads_show_layer_percentages_and_handle_unknown_totals() {
-        use nemoclaw_sdk::{ByteProgress, DownloadPhase, DownloadProgress};
-        let mut download = DownloadProgress {
-            resource: "model_snapshot.chat".into(),
-            artifact: "llama3:latest".into(),
-            layer: Some("sha256:abc".into()),
-            phase: DownloadPhase::Downloading,
-            bytes: Some(ByteProgress {
-                completed: 50,
-                total: Some(100),
-            }),
-        };
-        let output = render(Progress::Download(download.clone()), false).unwrap();
-        for value in [&download.resource, &download.artifact] {
-            assert!(output.contains(value));
-        }
-        for value in ["abc", "50%", "50 B", "100 B"] {
-            assert!(output.contains(value));
-        }
-        for total in [None, Some(0)] {
-            download.bytes.as_mut().unwrap().total = total;
-            let unknown = render(Progress::Download(download.clone()), false).unwrap();
-            assert!(unknown.contains("50 B"));
-            assert!(!unknown.contains('%'));
-        }
-        let downloading = render(Progress::Download(download.clone()), false).unwrap();
-        download.phase = DownloadPhase::Complete;
-        let completed = render(Progress::Download(download.clone()), false).unwrap();
-        assert_ne!(
-            completed, downloading,
-            "completion must be distinguishable from progress"
-        );
-        assert!(completed.contains(&download.resource) && completed.contains(&download.artifact));
-        download.phase = DownloadPhase::Downloading;
-        download.layer = None;
-        assert!(
-            !render(Progress::Download(download), false)
-                .unwrap()
-                .contains("abc")
-        );
-    }
-
-    #[test]
-    fn quick_operations_preserve_measured_duration_and_outcome() {
-        let resource = render(
-            Progress::Resource {
-                resource: "sandbox",
-                action: "create",
-                status: "complete",
-                elapsed: Duration::from_millis(125),
-            },
-            false,
-        )
-        .unwrap();
-        for value in ["sandbox", "create", "complete", "125ms"] {
-            assert!(resource.contains(value));
-        }
-        let completed = |outcome| Progress::Completed {
-            operation: "sandbox.ready",
-            elapsed: Duration::from_millis(250),
-            outcome,
-        };
-        let success = render(completed(nemoclaw_sdk::StepOutcome::Succeeded), true).unwrap();
-        assert!(success.contains("sandbox.ready") && success.contains("250ms"));
-        assert_ne!(
-            success,
-            render(completed(nemoclaw_sdk::StepOutcome::Failed), true).unwrap()
-        );
-    }
-
-    #[test]
-    fn resource_waits_are_visible_but_operation_timings_require_verbose_output() {
-        let waiting = render(
-            Progress::Resource {
-                resource: "sandbox",
-                action: "create",
-                status: "waiting",
-                elapsed: Duration::from_secs(20),
-            },
-            false,
-        )
-        .unwrap();
-        for value in ["sandbox", "waiting", "20s"] {
-            assert!(waiting.contains(value));
-        }
-        for elapsed in [Duration::ZERO, Duration::from_secs(30)] {
-            let message = render(
-                Progress::Waiting {
-                    operation: "runtime.ready",
-                    elapsed,
-                },
-                false,
-            )
-            .unwrap();
-            assert!(!message.is_empty());
-            if !elapsed.is_zero() {
-                assert!(message.contains("30s"));
-            }
-        }
-        let done = Progress::Completed {
-            operation: "tofu.apply",
-            elapsed: Duration::from_secs(1),
-            outcome: nemoclaw_sdk::StepOutcome::Succeeded,
-        };
-        assert!(render(done.clone(), false).is_none());
-        let verbose = render(done, true).unwrap();
-        assert!(verbose.contains("tofu.apply") && verbose.contains("1s"));
-    }
-}
+mod tests;

@@ -10,6 +10,14 @@ pub(crate) enum OutputFormat {
     Json,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, ValueEnum)]
+pub(crate) enum ProgressMode {
+    #[default]
+    Auto,
+    Plain,
+    Off,
+}
+
 #[derive(Parser)]
 #[command(
     name = "nemoclaw",
@@ -26,51 +34,14 @@ pub(crate) struct Cli {
     /// Report operation timings on standard error.
     #[arg(long, short, global = true)]
     pub(crate) verbose: bool,
+    /// Progress on stderr: automatic inline display, plain lines, or off.
+    #[arg(long, global = true, value_enum, default_value = "auto")]
+    pub(crate) progress: ProgressMode,
     #[command(subcommand)]
     pub(crate) command: Command,
 }
 #[derive(Subcommand)]
 pub(crate) enum Command {
-    /// Author desired state, preview it, and optionally apply it.
-    #[command(
-        after_help = "Examples:\n  nemoclaw onboard\n  nemoclaw onboard --generate-only --non-interactive --output deployment.yaml"
-    )]
-    Onboard {
-        /// Generate configuration and stop before plan or apply.
-        #[arg(long)]
-        generate_only: bool,
-        /// Write the generated YAML to this path.
-        #[arg(short, long, value_name = "FILE", default_value = "deployment.yaml")]
-        output: PathBuf,
-        /// Use flags/defaults, require environment credentials, and apply without prompting.
-        #[arg(long, conflicts_with = "edit")]
-        non_interactive: bool,
-        /// Review and semantically edit an existing generated YAML document.
-        #[arg(
-            long,
-            value_name = "FILE",
-            conflicts_with_all = ["name", "sandbox", "agent", "provider", "model", "credential_env"]
-        )]
-        edit: Option<PathBuf>,
-        /// Deployment name.
-        #[arg(long)]
-        name: Option<String>,
-        /// Sandbox name.
-        #[arg(long)]
-        sandbox: Option<String>,
-        /// Agent name.
-        #[arg(long)]
-        agent: Option<String>,
-        /// Inference provider name.
-        #[arg(long)]
-        provider: Option<String>,
-        /// Hosted NVIDIA model identifier.
-        #[arg(long)]
-        model: Option<String>,
-        /// Environment variable that will provide the inference credential.
-        #[arg(long)]
-        credential_env: Option<String>,
-    },
     /// Preview configuration changes without changing runtime resources.
     #[command(after_help = "Examples:\n  nemoclaw plan spark.yaml\n  nemoclaw plan --destroy")]
     Plan {
@@ -92,6 +63,9 @@ pub(crate) enum Command {
         after_help = "Examples:\n  nemoclaw apply spark.yaml\n  cat spark.yaml | nemoclaw apply -"
     )]
     Apply {
+        /// Output format (use json for scripts).
+        #[arg(short, long, value_enum, default_value = "text", value_name = "FORMAT")]
+        output: OutputFormat,
         /// Desired-state YAML path, or - to read standard input.
         #[arg(value_name = "FILE")]
         file: PathBuf,
@@ -107,31 +81,70 @@ pub(crate) enum Command {
         output: Option<PathBuf>,
     },
     /// Remove owned workloads while retaining persistent data.
-    Destroy,
+    Destroy {
+        /// Output format (use json for scripts).
+        #[arg(short, long, value_enum, default_value = "text", value_name = "FORMAT")]
+        output: OutputFormat,
+    },
 }
 
 impl Command {
     pub(crate) fn output_format(&self) -> OutputFormat {
         match self {
-            Self::Plan { output, .. } => *output,
-            _ => OutputFormat::Json,
-        }
-    }
-
-    pub(crate) fn requires_terminal_input(&self) -> bool {
-        matches!(
-            self,
-            Self::Onboard {
-                non_interactive: false,
-                ..
+            Self::Plan { output, .. } | Self::Apply { output, .. } | Self::Destroy { output } => {
+                *output
             }
-        )
+            Self::Export { .. } => OutputFormat::Text,
+        }
     }
 }
 #[cfg(test)]
 mod tests {
     use super::*;
     use clap::{CommandFactory, error::ErrorKind};
+
+    #[test]
+    fn lifecycle_commands_default_to_text_and_accept_json() {
+        for args in [
+            vec!["nemoclaw", "apply", "spark.yaml"],
+            vec!["nemoclaw", "destroy"],
+        ] {
+            assert_eq!(
+                Cli::try_parse_from(args.clone())
+                    .unwrap()
+                    .command
+                    .output_format(),
+                OutputFormat::Text
+            );
+            let mut json = args;
+            json.extend(["-o", "json"]);
+            assert_eq!(
+                Cli::try_parse_from(json).unwrap().command.output_format(),
+                OutputFormat::Json
+            );
+        }
+    }
+
+    #[test]
+    fn progress_modes_are_global_and_output_does_not_change_export_yaml() {
+        for (mode, expected) in [
+            ("auto", ProgressMode::Auto),
+            ("plain", ProgressMode::Plain),
+            ("off", ProgressMode::Off),
+        ] {
+            for args in [
+                vec!["nemoclaw", "--progress", mode, "destroy"],
+                vec!["nemoclaw", "destroy", "--progress", mode],
+            ] {
+                assert_eq!(Cli::try_parse_from(args).unwrap().progress, expected);
+            }
+        }
+        let cli = Cli::try_parse_from(["nemoclaw", "export", "-o", "deployment.yaml"]).unwrap();
+        assert_eq!(cli.command.output_format(), OutputFormat::Text);
+        assert!(
+            matches!(cli.command, Command::Export { output: Some(path) } if path.as_path() == std::path::Path::new("deployment.yaml"))
+        );
+    }
 
     #[test]
     fn command_definitions_are_consistent() {
@@ -193,47 +206,6 @@ mod tests {
                 .kind(),
             ErrorKind::InvalidValue
         );
-    }
-    #[test]
-    fn onboard_supports_composed_and_generation_only_modes() {
-        let cli = Cli::try_parse_from(["nemoclaw", "onboard"]).unwrap();
-        assert!(cli.command.requires_terminal_input());
-        let Command::Onboard {
-            generate_only,
-            output,
-            non_interactive,
-            ..
-        } = cli.command
-        else {
-            panic!("expected onboard command");
-        };
-        assert!(!generate_only);
-        assert_eq!(output, PathBuf::from("deployment.yaml"));
-        assert!(!non_interactive);
-        let scripted = Cli::try_parse_from([
-            "nemoclaw",
-            "onboard",
-            "--generate-only",
-            "--output",
-            "deployment.yaml",
-            "--non-interactive",
-        ])
-        .unwrap();
-        assert!(!scripted.command.requires_terminal_input());
-        assert!(
-            Cli::try_parse_from([
-                "nemoclaw",
-                "onboard",
-                "--generate-only",
-                "--output",
-                "deployment.yaml",
-                "--edit",
-                "deployment.yaml",
-            ])
-            .is_ok()
-        );
-        assert!(Cli::try_parse_from(["nemoclaw", "onboard", "--output", "x.yaml"]).is_ok());
-        assert!(Cli::try_parse_from(["nemoclaw", "onboard", "--generate-only"]).is_ok());
     }
     #[test]
     fn every_command_exposes_help_without_operational_inputs() {

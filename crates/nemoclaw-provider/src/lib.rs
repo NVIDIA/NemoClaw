@@ -15,20 +15,16 @@ pub struct Definition {
     pub kind: &'static str,
     pub fields: Vec<&'static str>,
     pub mutable: Vec<&'static str>,
-    pub computed_digest: bool,
     pub observed_running: bool,
 }
 
 impl Definition {
     pub fn new(kind: &'static str, fields: &[&'static str], mutable: &[&'static str]) -> Self {
-        let behavior = nemoclaw_sdk::services::resource_behavior(kind);
         Self {
             kind,
             fields: fields.to_vec(),
             mutable: mutable.to_vec(),
-            computed_digest: behavior.computed_digest,
-            observed_running: behavior.observed_running
-                || matches!(kind, "managed_gateway" | "pi_configuration"),
+            observed_running: matches!(kind, "managed_gateway" | "pi_configuration"),
         }
     }
 }
@@ -63,20 +59,6 @@ pub fn plan_update(
             }
             None => {}
         }
-    }
-    if definition.computed_digest {
-        proposed.insert(
-            "digest".into(),
-            if definition
-                .fields
-                .iter()
-                .all(|field| prior.get(*field) == proposed.get(*field))
-            {
-                prior.get("digest").cloned().unwrap_or(Value::Unknown)
-            } else {
-                Value::Unknown
-            },
-        );
     }
     let authentication_changed = definition.kind == "provider"
         && authentication_mode(prior) != authentication_mode(&proposed);

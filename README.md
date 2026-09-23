@@ -9,6 +9,11 @@ Use the CLI or Rust SDK to plan, apply, export, and destroy deployments.
 This branch documents v1 development using source-built bundles.
 See [tested configurations and limits](docs/validation/README.md) before choosing a deployment.
 
+[![Watch NemoClaw plan, apply, and destroy a deployment with verbose output](docs/assets/terminal-lifecycle-verbose.png)](docs/assets/terminal-lifecycle-verbose.mp4)
+
+[Watch the 43-second demo](docs/assets/terminal-lifecycle-verbose.mp4): a real OpenShell gateway and OpenClaw sandbox lifecycle with `--verbose`.
+Images are cached; no inference requests are sent, and only the plan-review pause is shortened.
+
 ## Start Here
 
 - [Understand NemoClaw](docs/overview.md).

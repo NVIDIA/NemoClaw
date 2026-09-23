@@ -17,6 +17,19 @@ fn dependencies(resource: &Value) -> BTreeSet<&str> {
 }
 
 #[test]
+fn runtime_compilation_does_not_require_openshell_resource_generations() {
+    let document =
+        Document::parse(include_bytes!("fixtures/config/spark.yaml").as_slice()).unwrap();
+    let generations = ["managed_gateway", "inference_service"]
+        .map(|kind| (kind.into(), "b".repeat(32)))
+        .into();
+    let graph = compile_runtime(&document, &generations, "0.1.0").unwrap();
+    assert!(graph["resource"]["docker_container"].is_object());
+    assert!(graph["resource"].get("nemoclaw_sandbox").is_none());
+    assert!(graph["data"].get("nemoclaw_sandbox_readiness").is_none());
+}
+
+#[test]
 fn multiple_services_share_image_acquisition_without_custom_capacity_gates() {
     let document =
         Document::parse(include_bytes!("../../../examples/spark/two-models.yaml").as_slice())

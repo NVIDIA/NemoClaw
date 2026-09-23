@@ -27,14 +27,14 @@ impl Deployment {
         runtime: bool,
         cancel: &CancellationToken,
     ) -> Result<BTreeMap<String, Value>, Error> {
-        let graph = if runtime {
-            compile::compile_runtime(
+        let (graph, targets) = if runtime {
+            compile::compiled_runtime(
                 &record.document,
                 &record.generations,
                 &bundle.manifest.version,
             )?
         } else {
-            compile::compile(
+            compile::deployment_graph(
                 &record.document,
                 &record.generations,
                 &bundle.manifest.version,
@@ -50,27 +50,16 @@ impl Deployment {
             stage.directory.join("terraform.tfstate"),
         )
         .map_err(|_| Error::State("export requires readable deployment state"))?;
-        self.prepare(
+        self.initialize(
             bundle,
             &stage,
             &json!({"terraform":graph["terraform"], "provider":graph["provider"]}),
-        )?;
-        let schema_environment = crate::state::schema_environment(&stage.directory);
-        crate::process::run(
-            &stage.directory,
-            &bundle.tofu(),
-            &["init", "-upgrade", "-input=false", "-no-color"],
-            &schema_environment,
             cancel,
         )
         .await?;
+        let schema_environment = crate::state::schema_environment(&stage.directory);
         let bindings = stage.bindings(&bundle.tofu(), cancel).await?;
         settled(&bindings)?;
-        let targets = if runtime {
-            compile::runtime_targets(&record.document, &record.generations)?
-        } else {
-            compile::targets(&record.document, &record.generations)?
-        };
         let targets: Vec<_> = targets
             .iter()
             .filter(|target| !target.address.starts_with("data."))
@@ -161,17 +150,17 @@ impl Deployment {
         let record = store.load()?.ok_or(Error::Conflict(
             "no saved deployment configuration; apply a configuration before exporting",
         ))?;
-        if record.pending {
+        if record.pending() {
             return Err(Error::Conflict(
                 "cannot export while apply is unfinished; run apply again with the same configuration and state directory",
             ));
         }
-        if record.destroying {
+        if record.destroying() {
             return Err(Error::Conflict(
                 "cannot export while destroy is unfinished; run destroy again with the same state directory",
             ));
         }
-        if record.destroyed {
+        if record.destroyed() {
             return Err(Error::Conflict(
                 "cannot export a destroyed deployment; apply its configuration again using the same state directory before exporting",
             ));
@@ -297,7 +286,10 @@ fn export_provider(document: &mut Document, expected: &Row, observed: &Row) -> R
         .find(|provider| provider.key == expected["name"])
         .ok_or(Error::Conflict("observed provider is not selected"))?;
     let provider = provider.definition;
-    let managed = provider.service_ref.is_some();
+    let managed = matches!(
+        provider.target()?,
+        crate::config::InferenceTarget::Service { .. }
+    );
     if managed
         && (observed["endpoint"] != document.provider_connection(provider)?.endpoint
             || !observed["credential_env"].is_empty())
@@ -419,9 +411,15 @@ mod tests {
             let intent = state.path().join("intent.json");
             if let Some((pending, destroying, destroyed)) = flags {
                 let mut record = Record::new(document.clone()).unwrap();
-                record.pending = pending;
-                record.destroying = destroying;
-                record.destroyed = destroyed;
+                if pending {
+                    record.begin_runtime_apply(&document);
+                }
+                if destroying {
+                    record.begin_destroy();
+                }
+                if destroyed {
+                    record.finish_destroy();
+                }
                 Store::open(state.path()).unwrap().save(&record).unwrap();
             }
             let before = fs::read(&intent).ok();

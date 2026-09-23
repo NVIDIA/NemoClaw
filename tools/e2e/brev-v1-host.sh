@@ -8,6 +8,8 @@ set -euo pipefail
 [[ "${INSTANCE_NAME}" =~ ^nclaw-v1-[0-9]+-[0-9]+$ ]] || exit 1
 
 prepare() {
+  revision="$(git rev-parse HEAD)"
+  [[ "${revision}" =~ ^[0-9a-f]{40}$ ]] || exit 1
   echo "::group::Provision Brev workspace ${INSTANCE_NAME}"
   brev search cpu --arch x86_64 --min-vcpu 8 --min-ram 32 --min-disk 100 --sort price \
     | brev create "${INSTANCE_NAME}" \
@@ -43,7 +45,15 @@ prepare() {
   ssh -T "${INSTANCE_NAME}" "install -d -m 700 '${remote_root}/source' '${remote_root}/bundle'"
   git archive --format=tar HEAD | gzip -1 > "${RUNNER_TEMP}/candidate-source.tar.gz"
   rsync -a "${RUNNER_TEMP}/candidate-source.tar.gz" "${INSTANCE_NAME}:${remote_root}/"
-  ssh -T "${INSTANCE_NAME}" "tar -xzf '${remote_root}/candidate-source.tar.gz' -C '${remote_root}/source' && sg docker -c \"NEMOCLAW_BREV_ROOT='${remote_root}' bash '${remote_root}/source/tools/e2e/brev-v1-guest.sh' prepare\""
+  ssh -T "${INSTANCE_NAME}" "printf '%s\n' '${revision}' > '${remote_root}/source-revision' && tar -xzf '${remote_root}/candidate-source.tar.gz' -C '${remote_root}/source' && sg docker -c \"NEMOCLAW_BREV_ROOT='${remote_root}' bash '${remote_root}/source/tools/e2e/brev-v1-guest.sh' prepare\""
+}
+
+load_image() {
+  brev refresh
+  remote_home="$(ssh -T "${INSTANCE_NAME}" 'printf %s "$HOME"')"
+  remote_root="${remote_home}/${INSTANCE_NAME}"
+  rsync -a candidate-image/ "${INSTANCE_NAME}:${remote_root}/image-candidate/"
+  ssh -T "${INSTANCE_NAME}" "sg docker -c \"NEMOCLAW_BREV_ROOT='${remote_root}' bash '${remote_root}/source/tools/e2e/brev-v1-guest.sh' load-image\""
 }
 
 qualify() {
@@ -67,7 +77,7 @@ cleanup() {
   echo "::group::Delete Brev workspace ${INSTANCE_NAME}"
   brev delete "${INSTANCE_NAME}" || true
   absent=0
-  for _ in $(seq 1 40); do
+  for attempt in $(seq 1 60); do
     rows="$(brev ls --json 2>/dev/null | jq -c 'if type == "array" then . elif type == "object" and (.workspaces | type) == "array" then .workspaces elif type == "object" and has("workspaces") and .workspaces == null then [] else error("unexpected Brev inventory") end | if all(.[]; type == "object" and ((.name // .workspaceName // .instanceName) | type == "string" and length > 0)) then . else error("incomplete Brev inventory row") end' 2>/dev/null || true)"
     if test -n "${rows}" && ! jq -e --arg name "${INSTANCE_NAME}" 'any(.[]; ((.name // .workspaceName // .instanceName // "") | tostring) == $name)' <<<"${rows}" >/dev/null; then
       absent=$((absent + 1))
@@ -83,7 +93,8 @@ cleanup() {
       # present so cleanup can recover from that transition.
       brev delete "${INSTANCE_NAME}" >/dev/null 2>&1 || true
     fi
-    brev refresh >/dev/null 2>&1 || true
+    # Inventory reads query the API directly; refreshing SSH adds unrelated work.
+    echo "Deletion check ${attempt}/60: ${absent}/2 confirmed absences"
     sleep 15
   done
   if test "${absent}" -lt 2; then
@@ -95,7 +106,8 @@ cleanup() {
 
 case "${1:-}" in
   prepare) prepare ;;
+  load-image) load_image ;;
   qualify) qualify ;;
   cleanup) cleanup ;;
-  *) echo "usage: $0 prepare|qualify|cleanup" >&2; exit 2 ;;
+  *) echo "usage: $0 prepare|load-image|qualify|cleanup" >&2; exit 2 ;;
 esac

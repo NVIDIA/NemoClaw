@@ -13,6 +13,7 @@ mod inference;
 mod interfaces;
 mod providers;
 pub(crate) mod references;
+mod source;
 pub use crate::services::ServiceDefinition;
 pub use agent_inference::*;
 pub use execution::*;
@@ -26,7 +27,7 @@ mod kinds;
 pub mod schema;
 pub use kinds::{ComputeDriver, HarnessKind, InferenceProviderKind};
 mod types;
-pub use inference::InferenceConnection;
+pub use inference::{InferenceConnection, InferenceTarget};
 pub(crate) mod validation;
 use sha2::{Digest, Sha256};
 use std::{fmt, io::Read};
@@ -196,11 +197,7 @@ impl Document {
         }
         let harnesses = &self.spec.harnesses;
         for sandbox in &mut self.spec.sandboxes {
-            let harness = match (&sandbox.harness, &sandbox.harness_ref) {
-                (Some(harness), None) => Some(harness),
-                (None, Some(name)) => harnesses.get(name).or_else(|| sandbox.harnesses.get(name)),
-                _ => None,
-            };
+            let harness = sandbox.resolve_harness(harnesses).ok();
             let default_image =
                 if harness.is_some_and(|harness| harness.kind == HarnessKind::Hermes) {
                     DEFAULT_HERMES_IMAGE

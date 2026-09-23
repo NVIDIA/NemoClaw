@@ -7,9 +7,10 @@ license.workspace = true
 publish = false
 
 [dependencies]
-nemoclaw-authoring = { path = "../nemoclaw-authoring" }
 nemoclaw-sdk = { path = "../nemoclaw-sdk" }
 clap.workspace = true
+ratatui.workspace = true
+terminal_size.workspace = true
 serde_json.workspace = true
 serde-saphyr.workspace = true
 tokio = { workspace = true, features = ["signal", "io-std", "io-util", "net"] }
@@ -18,7 +19,6 @@ tempfile.workspace = true
 
 [target.'cfg(unix)'.dependencies]
 nix.workspace = true
-rustix.workspace = true
 
 [[bin]]
 name = "nemoclaw"
@@ -26,3 +26,9 @@ path = "src/main.rs"
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+vt100 = "0.16.2"
+
+[target.'cfg(unix)'.dev-dependencies]
+rustix = { workspace = true, features = ["termios"] }

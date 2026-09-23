@@ -17,11 +17,11 @@ cargo clippy --workspace --all-targets -- -D warnings
 
 | Workflow | Checks |
 |---|---|
-| CI / Native | `Native / linux_arm64`, `Native / linux_amd64`, `Native / darwin_arm64`, `Native / windows_amd64` |
-| CI / Images | `Images / linux_arm64`, `Images / linux_amd64` |
-| CI / Dependencies | `Dependencies / Policy` |
-| CD / Documentation | `Documentation / Validate`, then PR preview, staging, or release publication |
-| Live / Brev | Build and VM/image preparation in parallel, then lifecycle qualification and verified VM deletion |
+| CI / Native | `Test / linux_arm64`, `Test / linux_amd64`, `Test / darwin_arm64`, `Test / windows_amd64` |
+| CI / Images | `Build / linux_arm64`, `Build / linux_amd64` |
+| CI / Dependencies | `Policy` |
+| CD / Documentation | `Validate`, then PR preview, staging, or release publication |
+| Live / Brev | Bundle build, image build, and VM preparation in parallel, then lifecycle qualification and verified VM deletion |
 
 The first eight checks are required by the `v1` ruleset, including documentation validation.
 Keep the ruleset's check names aligned when renaming jobs; workflow display names do not identify required checks.
@@ -30,23 +30,24 @@ Running branch pushes finish; newer pushes replace older pending runs.
 Live runs use separate concurrency groups.
 The Brev workflow remains opt-in; see [live prerequisites and cleanup](testing/live.md#bare-brev).
 
-## Test Runner Pilot
+## Test Runner
 
-The Linux ARM64 native CI job uses cargo-nextest 0.9.144 for ordinary tests and the explicitly configured bundle fixtures.
-Other platforms retain the Cargo test runner while the pilot is measured.
+All native CI platforms use cargo-nextest 0.9.144 for ordinary tests and the explicitly configured bundle fixtures.
 The pinned prebuilt runner is installed with checksum verification; installation cannot fall back to compiling it.
 
 To run ordinary tests locally from the repository root, install the pinned runner once and use:
 
 ```sh
 cargo install cargo-nextest --version 0.9.144 --locked
-cargo nextest run --locked --workspace --profile ci
+cargo nextest run --locked --workspace --all-targets --profile ci
 cargo test --locked --workspace --doc
 ```
 
 The local install command compiles the tool; CI downloads its prebuilt executable.
 The `ci` profile runs at most eight tests concurrently, reports slow tests every 30 seconds, terminates a test after five minutes, and does not retry failures.
-The `lifecycle` profile limits the whole fixture run to two concurrent tests with the same timeout.
+The `lifecycle` profile selects the isolated bundle fixtures and native-state test, with four concurrent tests and the same timeout.
+CI retains the same workspace and target selection across both runs so Cargo can reuse the compiled tests.
+Lifecycle timing artifacts contain per-test durations for comparing scheduling changes.
 Both profiles finish the remaining tests after a failure.
 Use the [fixture prerequisites](testing/fixtures.md#opentofu-and-bundle-lifecycle) before selecting ignored tests; the profiles do not configure a bundle or authorize live resources.
 Nextest does not run doctests, so the separate Cargo command remains required.
@@ -119,7 +120,10 @@ Run `cargo test -p nemoclaw-cli` for argument, dispatch, I/O, and process tests.
 The CLI's `args.rs` tests parse arguments and inspect help in-process.
 Its `dispatch.rs` tests inject input while calling the SDK, and `io.rs` tests use readers, writers, and temporary files to cover bounded input, cancellation, and output failures.
 
-Process tests cover exit codes, piping, secret-safe diagnostics, and preservation of an existing export file when observation fails.
+Process tests cover text and JSON failures, independent stdout/stderr redirection, progress modes, secret-safe diagnostics, and preservation of an existing export file when observation fails.
+The interruption test keeps credential input open to verify that Ctrl-C exits with 130 without waiting for another line.
+Renderer tests use Ratatui's test backend to check concurrent resource identity, narrow layouts, overflow, measured downloads, and bounded redraws without hiding failure milestones.
+These tests use fixtures and temporary files; they do not start deployment workloads or establish live inference.
 
 ## CI Caches
 

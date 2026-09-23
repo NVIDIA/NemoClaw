@@ -47,6 +47,8 @@ NEMOCLAW_TEST_PROVIDER=/absolute/path/to/terraform-provider-nemoclaw \
 
 These tests also check gateway version and driver preconditions, failed observations without resource changes, and data-source reads deferred until bootstrap inputs become known.
 Standalone HCL cases exercise provider/profile replacement and removal without sandbox teardown mode, recreation after confirmed absence, credential-reference updates, and recovery after a lost creation response.
+They also commit absence with refresh-only before a later creation plan, and verify that substituted creation readback preserves the original binding with an error.
+A lost creation response followed by removing its declaration demonstrates why pending creation intent must be retained: OpenTofu cannot remove an object whose binding it never received.
 The fixture enforces the pinned API's refusal to delete a referenced profile or an attached provider; sandbox and workspace protection remain covered separately.
 
 The SDK/CLI lifecycle tests require a verified native bundle (manifest plus CLI, OpenTofu, and both production providers).
@@ -57,11 +59,12 @@ NEMOCLAW_TEST_BUNDLE=/absolute/path/to/bundle \
   cargo test -p nemoclaw-e2e --test deployment --test export_observations --test fabric_deployment --test multiple_providers -- --ignored
 ```
 
-CI runs the fixture lifecycle tests with `--test-threads=2`.
+CI uses the [nextest lifecycle profile](../testing.md#test-runner) with four concurrent tests.
 Each Fabric harness is an independent ignored test with its own temporary state and gRPC fixture.
-To test one harness, append its test name, for example `-- --ignored harness_codex`; to run all harnesses with CI's concurrency bound, use `-- --ignored --test-threads=2`.
+To test one harness, append its test name, for example `-- --ignored harness_codex`; to run all harnesses with the same concurrency bound under Cargo, use `-- --ignored --test-threads=4`.
 
 These tests cover shared SDK/CLI state, interrupted creation, unchanged apply, readiness failure without replacement, failed observation without state loss, export/reapply, interrupted destroy, and retained workspace recovery.
+The `cli_terminal_outputs_preserve_lifecycle_and_json_contract` case checks text plans, JSON apply, unchanged text apply, JSON plan completeness, text destroy, and repeated JSON destroy against the same fixture state.
 The registration lifecycle case recreates a missing selected registration while preserving its sandbox and profile, and the interrupted-create case permits unrelated intent edits while retaining pending resource configuration.
 The `independent_sandboxes_reconcile_concurrently_and_retain_shared_dependencies` fixture checks overlapping sandbox creates, unchanged reapply, and teardown with a retained shared workspace.
 The `gateway_change_between_plan_and_apply_preserves_resources_and_allows_teardown` fixture changes the gateway driver after planning to verify OpenTofu's fresh apply-time check, recovery, and teardown after capability drift.
@@ -120,7 +123,7 @@ Authenticated OpenShell, stalled exec streams, and launch compatibility run in t
 The separately scheduled Fabric lifecycle cases and installed-adapter image tests exercise the supported harnesses.
 The `tls` test generates certificates and verifies both trust directions and bearer references through a real TLS connection.
 
-The native CI matrix builds and executes bundles on Linux ARM64/x64, macOS ARM64/x64, and Windows x64.
+The native CI matrix builds and executes bundles on Linux ARM64/x64, macOS ARM64, and Windows x64.
 CI's protocol and lifecycle fixtures do not establish local Docker, Podman, GPU, or real model availability on those platforms.
 Report build results separately from runtime test results.
 

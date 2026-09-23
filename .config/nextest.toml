@@ -11,4 +11,17 @@ slow-timeout = { period = "30s", terminate-after = 10 }
 
 [profile.lifecycle]
 inherits = "ci"
-test-threads = 2
+test-threads = 4
+# These fixtures own temporary state and loopback endpoints. Live tests stay opt-in.
+default-filter = '''
+test(native_state_json_preserves_module_and_instance_identity_without_refresh)
+| (package(nemoclaw-e2e) & (
+    binary(=provider_protocol) | binary(=service_capacity) | binary(=service_readiness)
+    | binary(=sandbox_readiness) | binary(=opentofu_openshell) | binary(=deployment)
+    | binary(=export_observations) | binary(=fabric_deployment)
+    | binary(=multiple_providers) | binary(=remote_service)
+))
+'''
+
+[profile.lifecycle.junit]
+path = "lifecycle.xml"

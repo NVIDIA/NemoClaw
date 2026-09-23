@@ -49,9 +49,6 @@ impl ResourceAdapter {
                     | "inference_json"
             )
     }
-    fn computed_digest(&self) -> bool {
-        self.definition.computed_digest
-    }
     fn observed_running(&self) -> bool {
         self.definition.observed_running
     }
@@ -136,7 +133,6 @@ impl ResourceAdapter {
                 Value::Value(v) => Ok((k.clone(), v.clone())),
                 Value::Unknown | Value::Null
                     if (k == "running" && self.observed_running())
-                        || (k == "digest" && self.computed_digest())
                         || (k == "data_path" && self.observed_data_path()) =>
                 {
                     Ok((k.clone(), String::new()))
@@ -156,7 +152,6 @@ impl ResourceAdapter {
             .iter()
             .copied()
             .chain(["id"])
-            .chain(self.computed_digest().then_some("digest"))
             .chain(self.observed_data_path().then_some("data_path"))
         {
             if observed
@@ -242,7 +237,6 @@ impl Resource for ResourceAdapter {
             .iter()
             .copied()
             .chain(["id"])
-            .chain(self.computed_digest().then_some("digest"))
             .chain(self.observed_data_path().then_some("data_path"))
             .map(|name| {
                 (
@@ -250,7 +244,6 @@ impl Resource for ResourceAdapter {
                     Attribute {
                         attr_type: AttributeType::String,
                         constraint: if name == "id"
-                            || (name == "digest" && self.computed_digest())
                             || (name == "running" && self.observed_running())
                             || (name == "data_path" && self.observed_data_path())
                         {
@@ -320,9 +313,6 @@ impl Resource for ResourceAdapter {
             return None;
         }
         proposed.insert("id".into(), Value::Unknown);
-        if self.computed_digest() {
-            proposed.insert("digest".into(), Value::Unknown);
-        }
         if self.observed_data_path() {
             proposed.insert("data_path".into(), Value::Unknown);
         }

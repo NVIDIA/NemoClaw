@@ -6,14 +6,12 @@ use crate::{
     credentials,
     deployment::create as deployment,
     io::document,
-    onboarding,
 };
-use nemoclaw_sdk::{CancellationToken, OperationResult, config::Document};
-use std::path::Path;
+use nemoclaw_sdk::{CancellationToken, OperationResult, Progress, config::Document};
+use std::{path::Path, sync::Arc};
 use tokio::io::{AsyncBufReadExt, AsyncRead};
 
 pub(crate) enum CommandResult {
-    OnboardExit,
     Export(Box<Document>),
     Operation(OperationResult),
 }
@@ -22,51 +20,15 @@ pub(crate) async fn run<R: AsyncRead + Unpin>(
     cli: Cli,
     mut stdin: R,
     cancel: &CancellationToken,
+    progress: Arc<dyn Fn(Progress) + Send + Sync>,
 ) -> Result<CommandResult, Box<dyn std::error::Error>> {
     let Cli {
         state_dir,
         bundle_dir,
-        verbose,
         command,
+        ..
     } = cli;
-    let command = match command {
-        Command::Onboard {
-            generate_only,
-            output,
-            non_interactive,
-            edit,
-            name,
-            sandbox,
-            agent,
-            provider,
-            model,
-            credential_env,
-        } => {
-            let result = onboarding::run(
-                onboarding::Options {
-                    state_dir,
-                    bundle_dir,
-                    verbose,
-                    generate_only,
-                    output,
-                    non_interactive,
-                    edit,
-                    name,
-                    sandbox,
-                    agent,
-                    provider,
-                    model,
-                    credential_env,
-                },
-                stdin,
-                cancel,
-            )
-            .await?;
-            return Ok(result.map_or(CommandResult::OnboardExit, CommandResult::Operation));
-        }
-        command => command,
-    };
-    let mut deployment = deployment(&state_dir, bundle_dir.as_deref(), verbose)?;
+    let mut deployment = deployment(&state_dir, bundle_dir.as_deref(), progress)?;
     let result = match command {
         Command::Plan { destroy: true, .. } => deployment.plan_destroy(cancel).await?,
         Command::Plan {
@@ -90,6 +52,7 @@ pub(crate) async fn run<R: AsyncRead + Unpin>(
         Command::Apply {
             file,
             non_interactive,
+            ..
         } => {
             let document = document(&file, &mut stdin, cancel).await?;
             let mut lines = tokio::io::BufReader::new(stdin).lines();
@@ -114,8 +77,7 @@ pub(crate) async fn run<R: AsyncRead + Unpin>(
                 deployment.export(cancel).await?,
             )));
         }
-        Command::Destroy => deployment.destroy(cancel).await?,
-        Command::Onboard { .. } => unreachable!("onboarding returns before lifecycle setup"),
+        Command::Destroy { .. } => deployment.destroy(cancel).await?,
     };
     Ok(CommandResult::Operation(result))
 }
@@ -154,9 +116,14 @@ mod tests {
             cli.state_dir = directory.path().join("state");
             // The real SDK rejects the missing bundle; no runtime is invoked.
             assert!(
-                run(cli, ForbiddenInput, &CancellationToken::new())
-                    .await
-                    .is_err()
+                run(
+                    cli,
+                    ForbiddenInput,
+                    &CancellationToken::new(),
+                    Arc::new(|_| {})
+                )
+                .await
+                .is_err()
             );
         }
     }
@@ -173,6 +140,7 @@ mod tests {
                 cli,
                 &b"apiKey: secret-sentinel"[..],
                 &CancellationToken::new(),
+                Arc::new(|_| {}),
             )
             .await
             .err()

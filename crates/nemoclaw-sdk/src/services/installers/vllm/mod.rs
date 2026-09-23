@@ -9,12 +9,13 @@ mod hardware_profile;
 pub(in crate::services) mod runtime;
 mod service_hardware;
 use crate::Error;
-pub use config::{
-    Memory, Model, Service, ServiceAuthentication, ServicePlacement, ServicePublication, Serving,
-};
+pub use crate::services::placement::{ServicePlacement, ServicePublication};
+pub use config::{Memory, Model, Service, ServiceAuthentication, Serving};
 pub use hardware_profile::HardwareProfile;
 pub(crate) use hardware_profile::MemoryArchitecture;
-pub use service_hardware::{DedicatedHardware, ServiceContainer, ServiceHardware, ServiceIpc};
+pub use service_hardware::{
+    DedicatedHardware, ServiceContainer, ServiceHardware, ServiceIpc, VllmLaunchMode,
+};
 pub(crate) mod arguments;
 pub(crate) mod artifacts;
 pub use artifacts::RuntimeStatus;
@@ -61,7 +62,6 @@ use crate::{
     services::contract::{InstallPlan, Installer, RemovePlan},
 };
 use std::collections::BTreeMap;
-use url::Url;
 
 pub(crate) const SERVICE_KIND: &str = "inference_service";
 pub(crate) const STORAGE_KIND: &str = "inference_storage";
@@ -82,52 +82,11 @@ pub(crate) fn configured_service(spec: &Spec) -> Result<Service, Error> {
     Ok(service)
 }
 
-fn private(ip: std::net::IpAddr) -> bool {
-    match ip {
-        std::net::IpAddr::V4(ip) => ip.is_private(),
-        std::net::IpAddr::V6(ip) => ip.is_unique_local(),
-    }
-}
-
 impl Service {
     pub fn validate(&self) -> Result<(), ConfigError> {
-        use crate::config::validation::require;
         crate::config::schema::validate_service("vllm", self)?;
-        if let (Some(placement), Some(publication)) = (&self.placement, &self.publication) {
-            require(
-                placement.engine.starts_with("ssh://"),
-                "explicit service placement requires SSH Docker",
-            )?;
-            require(
-                crate::docker::Engine::validate_endpoint(&placement.engine).is_ok(),
-                "invalid service engine",
-            )?;
-            let network: ipnet::Ipv4Net = placement
-                .network_cidr
-                .parse()
-                .map_err(|_| ConfigError::new("invalid service network"))?;
-            require(
-                network.prefix_len() == 24
-                    && network.addr() == network.network()
-                    && private(network.addr().into()),
-                "service network requires a private IPv4 /24",
-            )?;
-            crate::config::validate_endpoint(&publication.endpoint, false)?;
-            let endpoint = Url::parse(&publication.endpoint).unwrap();
-            let address: std::net::Ipv4Addr = publication
-                .bind_address
-                .parse()
-                .map_err(|_| ConfigError::new("invalid service bind address"))?;
-            require(
-                private(address.into())
-                    && !address.is_loopback()
-                    && !network.contains(&address)
-                    && endpoint.scheme() == "http"
-                    && endpoint.host_str() == Some(publication.bind_address.as_str())
-                    && endpoint.port() == Some(self.serving.port as u16)
-                    && endpoint.path() == "/v1",
-                "service publication must match its private bind address, serving port and /v1 path",
-            )?;
+        if let Some(placement) = self.published_placement()? {
+            placement.validate(self.serving.port)?;
         }
         validation::validate(self)
     }
@@ -164,17 +123,18 @@ fn targets(
             "bearer-v1".into(),
         );
     }
-    let (engine, network_cidr) = match &service.placement {
-        Some(placement) => (&placement.engine, &placement.network_cidr),
+    let placement = service.published_placement()?;
+    let (engine, network_cidr, bind_address) = match placement {
+        Some(explicit) => (
+            &explicit.placement.engine,
+            &explicit.placement.network_cidr,
+            explicit.publication.bind_address.clone(),
+        ),
         None => {
             let gateway = document.spec.gateway.managed()?;
-            (&gateway.engine, &gateway.network_cidr)
+            (&gateway.engine, &gateway.network_cidr, gateway.bridge()?)
         }
     };
-    let bind_address = service.publication.as_ref().map_or_else(
-        || document.spec.gateway.managed()?.bridge(),
-        |publication| Ok(publication.bind_address.clone()),
-    )?;
     let architecture = service.architecture()?.to_owned();
     let process = Process {
         engine: engine.clone(),
@@ -328,5 +288,20 @@ impl Service {
             }
             .json()?,
         ))
+    }
+}
+
+impl Service {
+    /// Explicit placement and publication, or inheritance from the managed gateway.
+    pub fn published_placement(
+        &self,
+    ) -> Result<
+        Option<crate::services::placement::PublishedPlacement<'_>>,
+        crate::config::ConfigError,
+    > {
+        crate::services::placement::PublishedPlacement::from_parts(
+            self.placement.as_ref(),
+            self.publication.as_ref(),
+        )
     }
 }

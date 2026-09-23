@@ -61,6 +61,11 @@ if sys.argv[1] == "ls":
             all(c[1] == "nclaw-v1-123-1" for c in calls if c[0] == "delete")
         )
 
+    def test_cleanup_does_not_refresh_ssh_configuration(self):
+        result, calls = self.cleanup([[{"name": "nclaw-v1-123-1"}], [], []])
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(all(call[0] in ("delete", "ls") for call in calls), calls)
+
     def test_invalid_inventory_never_confirms_deletion(self):
         for invalid in (
             {},
