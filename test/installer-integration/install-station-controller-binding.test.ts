@@ -397,7 +397,20 @@ printf 'REUSE=%s MIGRATE=%s\n' "$_STATION_EXPRESS_DEFERRED_MANAGED_PAIR" "$_STAT
     },
   );
 
-  it("passes legacy migration to the coordinator without managed-pair reuse", () => {
+  it.each([
+    {
+      name: "continues with an unchanged legacy single-Station head",
+      headStatus: 0,
+      status: 0,
+      message: /using the existing single-Station Ultra recipe/u,
+    },
+    {
+      name: "refuses fallback when the legacy single-Station head changes",
+      headStatus: 1,
+      status: 1,
+      message: /single-Station workload changed/u,
+    },
+  ])("$name (#12283)", ({ headStatus, status, message }) => {
     const argsFile = path.join(os.tmpdir(), `nemoclaw-legacy-args-${process.pid}-${Date.now()}`);
     const { home, result, output } = runInstallerBody(
       `
@@ -415,18 +428,19 @@ _STATION_EXPRESS_MODEL_WAS_EXPLICIT=0
 _STATION_INSTALL_MODE='express'
 _STATION_EXPRESS_DEFERRED_MANAGED_PAIR=0
 _STATION_EXPRESS_MIGRATING_LEGACY_HEAD=1
+station_migratable_legacy_single_head_running() { return "$LEGACY_HEAD_STATUS"; }
 NEMOCLAW_VLLM_MODEL='nemotron-3-ultra-550b-a55b'
 unset NEMOCLAW_DGX_STATION_PEER
 ensure_station_express_pair
 `,
-      { ARGS_FILE: argsFile },
+      { ARGS_FILE: argsFile, LEGACY_HEAD_STATUS: String(headStatus) },
     );
     try {
-      expect(result.status, output).not.toBe(0);
+      expect(result.status, output).toBe(status);
       const args = fs.readFileSync(argsFile, "utf8");
       expect(args).toContain("--migrate-legacy-single-head");
       expect(args).not.toContain("--reuse-existing-managed-pair");
-      expect(output).toMatch(/legacy single-Station head.*refusing migration/u);
+      expect(output).toMatch(message);
     } finally {
       fs.rmSync(argsFile, { force: true });
       fs.rmSync(home, { recursive: true, force: true });
