@@ -106,6 +106,35 @@ describe("effective v1alpha1 export defaults (#12132)", () => {
         revision: "88c6600c06b0937907290362eef86912052c4ad0",
         compiledSandboxes: 5,
         contextWindows: [131072, 131072],
+        hermesNativeSettings: {
+          "hermes-disabled": {
+            apiPort: 8642,
+            dashboard: {
+              enabled: false,
+              port: 18789,
+              internalPort: 19119,
+              tui: { enabled: true },
+            },
+          },
+          "hermes-defaults": {
+            apiPort: 8642,
+            dashboard: {
+              enabled: true,
+              port: 18789,
+              internalPort: 19119,
+              tui: { enabled: true },
+            },
+          },
+          "hermes-explicit": {
+            apiPort: 8643,
+            dashboard: {
+              enabled: true,
+              port: 19000,
+              internalPort: 19120,
+              tui: { enabled: false },
+            },
+          },
+        },
         openclawNativeSettings: {
           "openclaw-defaults": {
             model: { contextWindow: 131072, maxTokens: 4096, reasoning: false },

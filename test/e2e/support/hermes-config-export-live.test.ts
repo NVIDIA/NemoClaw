@@ -4,6 +4,11 @@
 import fs from "node:fs";
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { HERMES_INTERFACE_DEFAULTS } from "../../../src/lib/config/model.ts";
+import {
+  expectedPinnedV1HermesNativeSettings,
+  type PinnedV1ConsumerEvidence,
+} from "../../support/v1-config-consumer.ts";
 
 const mocks = vi.hoisted(() => ({
   command: vi.fn(),
@@ -14,6 +19,7 @@ const mocks = vi.hoisted(() => ({
   execShell: vi.fn(),
   writeJson: vi.fn(),
   writeText: vi.fn(),
+  validateWithPinnedV1: vi.fn(),
 }));
 
 vi.mock("../../../src/lib/state/registry/persistence.ts", () => ({
@@ -99,11 +105,17 @@ beforeEach(() => {
 });
 
 function passingEvidence(): Extract<HermesConfigExportLiveEvidence, { outcome: "published" }> {
+  const consumerEvidence = pinnedConsumerEvidence(false, {});
   return {
     outcome: "published",
     agent: "hermes",
     aliasesEquivalent: true,
     checked: true,
+    consumer: {
+      expected: consumerEvidence,
+      actual: { nemoclaw: consumerEvidence, nemohermes: consumerEvidence },
+      passed: true,
+    },
     credentialReferenceMatches: true,
     credentialValuesOmitted: true,
     identityDriftPreventedPublication: true,
@@ -118,12 +130,55 @@ function passingEvidence(): Extract<HermesConfigExportLiveEvidence, { outcome: "
   };
 }
 
+function pinnedConsumerEvidence(
+  dashboardEnabled: boolean,
+  environment: NodeJS.ProcessEnv,
+): PinnedV1ConsumerEvidence {
+  return {
+    revision: "88c6600c06b0937907290362eef86912052c4ad0",
+    compiledSandboxes: 1,
+    hermesNativeSettings: {
+      hermes: expectedPinnedV1HermesNativeSettings({
+        hermesApiPort: Number(
+          environment.NEMOCLAW_HERMES_API_PORT ?? HERMES_INTERFACE_DEFAULTS.apiPort,
+        ),
+        hermesDashboardEnabled: dashboardEnabled,
+        hermesDashboardPort: Number(
+          environment.NEMOCLAW_DASHBOARD_PORT ?? HERMES_INTERFACE_DEFAULTS.dashboardPort,
+        ),
+        hermesDashboardInternalPort: Number(
+          environment.NEMOCLAW_HERMES_DASHBOARD_INTERNAL_PORT ??
+            HERMES_INTERFACE_DEFAULTS.dashboardInternalPort,
+        ),
+        hermesDashboardTui: environment.NEMOCLAW_HERMES_DASHBOARD_TUI === "TRUE",
+      }),
+    },
+    openclawNativeSettingsVerified: 0,
+    hermesNativeSettingsVerified: 1,
+  };
+}
+
 async function runEnabledFixture(
   redactionValues: readonly string[] = [],
   dashboardEnabled = false,
   environment: NodeJS.ProcessEnv = {},
+  consumerEvidence?: PinnedV1ConsumerEvidence,
 ) {
   let dispose: (() => void) | undefined;
+  const env = {
+    ...(dashboardEnabled
+      ? {
+          NEMOCLAW_DASHBOARD_PORT: "19000",
+          NEMOCLAW_HERMES_DASHBOARD_INTERNAL_PORT: "19120",
+          NEMOCLAW_HERMES_DASHBOARD_TUI: "TRUE",
+          NEMOCLAW_HERMES_API_PORT: "8643",
+        }
+      : {}),
+    ...environment,
+  };
+  mocks.validateWithPinnedV1.mockReturnValue(
+    consumerEvidence ?? pinnedConsumerEvidence(dashboardEnabled, env),
+  );
   try {
     return await verifyHermesConfigExportLive({
       artifacts: { writeJson: mocks.writeJson, writeText: mocks.writeText },
@@ -135,20 +190,11 @@ async function runEnabledFixture(
       enabled: true,
       dashboardEnabled,
       sandbox: { exec: mocks.exec, execShell: mocks.execShell },
-      env: {
-        ...(dashboardEnabled
-          ? {
-              NEMOCLAW_DASHBOARD_PORT: "19000",
-              NEMOCLAW_HERMES_DASHBOARD_INTERNAL_PORT: "19120",
-              NEMOCLAW_HERMES_DASHBOARD_TUI: "TRUE",
-              NEMOCLAW_HERMES_API_PORT: "8643",
-            }
-          : {}),
-        ...environment,
-      },
+      env,
       host: { command: mocks.command },
       redactionValues,
       sandboxName: "hermes",
+      validateWithPinnedV1: mocks.validateWithPinnedV1,
     } as unknown as Parameters<typeof verifyHermesConfigExportLive>[0]);
   } finally {
     dispose?.();
@@ -374,6 +420,31 @@ describe("Hermes config export live evidence", () => {
         identityDriftReported: false,
       }),
     );
+  });
+
+  it("withholds YAML when pinned Hermes settings differ from source intent", async () => {
+    const raw = exportedHermesYaml();
+    const writeExport = async (_command: string, args: string[]) => {
+      fs.writeFileSync(args.at(args.indexOf("--output") + 1)!, raw);
+      return { exitCode: 0, stderr: "", stdout: "" };
+    };
+    mocks.command
+      .mockImplementationOnce(writeExport)
+      .mockImplementationOnce(writeExport)
+      .mockResolvedValue({ exitCode: 1, stderr: "sandbox identity drifted", stdout: "" });
+    const mismatched = pinnedConsumerEvidence(false, {});
+    mismatched.hermesNativeSettings!.hermes!.apiPort = 8643;
+
+    await expect(runEnabledFixture([], false, {}, mismatched)).resolves.toEqual({
+      checked: true,
+      passed: false,
+    });
+    expect(mocks.validateWithPinnedV1).toHaveBeenCalledTimes(2);
+    expect(mocks.writeJson).toHaveBeenCalledWith(
+      "hermes-config-export-live-evidence.json",
+      expect.objectContaining({ consumer: expect.objectContaining({ passed: false }) }),
+    );
+    expect(mocks.writeText).not.toHaveBeenCalled();
   });
 });
 

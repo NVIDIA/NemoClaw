@@ -230,6 +230,24 @@ function findStep(job: WorkflowJob, name: string): WorkflowStep {
   return job.steps?.find((step) => step.name === name) ?? {};
 }
 
+function hasPinnedV1ToolchainBeforeDockerAuthentication(job: WorkflowJob): boolean {
+  const steps = job.steps ?? [];
+  const checkoutIndex = steps.indexOf(
+    steps.find((step) => step.uses?.startsWith("actions/checkout@")) ?? {},
+  );
+  const compatibilityToolchain = findStep(job, "Set up pinned v1 compatibility toolchain");
+  const compatibilityToolchainIndex = steps.indexOf(compatibilityToolchain);
+  const dockerAuthenticationIndex = steps.indexOf(findStep(job, "Authenticate to Docker Hub"));
+  return (
+    compatibilityToolchain.uses ===
+      "actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659" &&
+    compatibilityToolchain.with?.toolchain === "1.98.1" &&
+    checkoutIndex >= 0 &&
+    checkoutIndex < compatibilityToolchainIndex &&
+    compatibilityToolchainIndex < dockerAuthenticationIndex
+  );
+}
+
 function executableSource(job: WorkflowJob): string {
   return (job.steps ?? [])
     .flatMap((step) => [step.run, step.with?.script])
@@ -898,6 +916,13 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
     );
   }
   const sdkSteps = live.steps ?? [];
+  if (!hasPinnedV1ToolchainBeforeDockerAuthentication(live)) {
+    errors.push("live E2E must set up the pinned v1 toolchain before Docker authentication");
+  }
+  const hermesE2e = workflow.jobs["hermes-e2e"] ?? {};
+  if (!hasPinnedV1ToolchainBeforeDockerAuthentication(hermesE2e)) {
+    errors.push("Hermes E2E must set up the pinned v1 toolchain before Docker authentication");
+  }
   const sdkDownload = findStep(live, "Download reviewed OpenShell SDK archive");
   const sdkInstall = findStep(live, REVIEWED_OPEN_SHELL_SDK_INSTALL_STEP);
   const prepareIndex = sdkSteps.indexOf(findStep(live, "Prepare E2E workspace"));

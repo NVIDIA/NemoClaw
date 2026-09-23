@@ -35,6 +35,20 @@ function workflowScript(jobName: string, stepName: string): string {
 describe("E2E operations workflow", testTimeoutOptions(15_000), () => {
   it("accepts the checked-in workflow", () => {
     expect(validateE2eOperationsWorkflowBoundary()).toEqual([]);
+    const workflow = readE2eOperationsWorkflow();
+    const steps = workflow.jobs.live.steps!;
+    const toolchain = steps.splice(
+      steps.findIndex((step) => step.name === "Set up pinned v1 compatibility toolchain"),
+      1,
+    )[0]!;
+    steps.splice(
+      steps.findIndex((step) => step.name === "Authenticate to Docker Hub") + 1,
+      0,
+      toolchain,
+    );
+    expect(validateE2eOperationsWorkflow(workflow)).toContain(
+      "live E2E must set up the pinned v1 toolchain before Docker authentication",
+    );
   });
   it.each([true, undefined])("rejects recorder cone mode %s (#11489)", (coneMode) => {
     const workflow = readE2eOperationsWorkflow();

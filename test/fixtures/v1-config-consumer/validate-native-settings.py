@@ -72,27 +72,17 @@ def validate_hermes(settings_by_sandbox):
     fabric = importlib.import_module("fabric")
     fabric.model_credential = lambda _inference: "fixture-credential"
     adapter = importlib.import_module("hermes_adapter")
-    verified = 0
-    for entry in settings_by_sandbox.values():
+    native_settings = {}
+    for name, entry in settings_by_sandbox.items():
         if entry["runtime"] != "fabric-hermes":
             continue
-        settings = entry["settings"] or {}
-        interfaces = settings.get("interfaces", {})
-        dashboard = interfaces.get("dashboard", {"enabled": True})
-        expected = {
-            "apiPort": interfaces.get("api", {}).get("port", 8642),
-            "dashboard": {
-                "enabled": dashboard["enabled"],
-                "port": dashboard.get("port", 18789),
-                "internalPort": dashboard.get("internalPort", 19119),
-                "tui": dashboard.get("tui", {"enabled": True}),
-            },
-        }
-        actual = adapter.native_configuration(settings)["nemoclaw_interfaces"]
-        if actual != expected:
-            raise AssertionError(f"native Hermes interfaces changed: {actual!r}")
-        verified += 1
-    return {"hermesNativeSettingsVerified": verified}
+        native_settings[name] = adapter.native_configuration(entry["settings"] or {})[
+            "nemoclaw_interfaces"
+        ]
+    return {
+        "hermesNativeSettings": native_settings,
+        "hermesNativeSettingsVerified": len(native_settings),
+    }
 
 
 def main():

@@ -2751,6 +2751,13 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      - name: Set up pinned v1 compatibility toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1.17.0
+        with:
+          toolchain: 1.98.1
+          cache: false
+          rustflags: ""
+
       # Keep only the credential-bearing step anchored. Cleanup mappings stay
       # explicit because strict YAML decoders reject 100 or more aliases here.
       - &dockerhub-auth
@@ -2793,13 +2800,6 @@ jobs:
         uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@afffe9cdedd168bfd7116c53846ddffe32eadd4c
         with:
           build-cli: "false"
-
-      - name: Set up pinned v1 compatibility toolchain
-        uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1.17.0
-        with:
-          toolchain: 1.98.1
-          cache: false
-          rustflags: ""
 
       - name: Download reviewed OpenShell SDK archive
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
@@ -5160,6 +5160,13 @@ jobs:
           ref: ${{ inputs.checkout_sha || github.sha }}
           fetch-depth: 0
           persist-credentials: false
+
+      - name: Set up pinned v1 compatibility toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1.17.0
+        with:
+          toolchain: 1.98.1
+          cache: false
+          rustflags: ""
 
       - *dockerhub-auth
 

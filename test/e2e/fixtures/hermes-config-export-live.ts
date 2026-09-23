@@ -10,7 +10,10 @@ import { isDeepStrictEqual } from "node:util";
 import YAML from "yaml";
 
 import { HERMES_INTERFACE_DEFAULTS } from "../../../src/lib/config/model.ts";
-import { V1ALPHA1_RUNTIME_DEFAULTS } from "../../../src/lib/domain/config/v1alpha1-runtime-defaults.ts";
+import {
+  V1ALPHA1_RUNTIME_DEFAULTS,
+  V1ALPHA1_RUNTIME_DEFAULTS_REVISION,
+} from "../../../src/lib/domain/config/v1alpha1-runtime-defaults.ts";
 import { fingerprintOpenShellSandboxId } from "../../../src/lib/adapters/openshell/sandbox-identity.ts";
 import {
   namedOpenShellGateway,
@@ -22,6 +25,11 @@ import type { HostCliClient } from "./clients/host.ts";
 import { trustedSandboxShellScript, type SandboxClient } from "./clients/sandbox.ts";
 import type { CleanupRegistry } from "./cleanup.ts";
 import { CLI_ENTRYPOINT, REPO_ROOT } from "./paths.ts";
+import {
+  expectedPinnedV1HermesNativeSettings,
+  type PinnedV1ConsumerEvidence,
+  validateConfigExportWithPinnedV1,
+} from "../../support/v1-config-consumer.ts";
 import {
   inspectConfigExportArtifactSafety,
   parseConfigExport,
@@ -37,6 +45,7 @@ interface HermesConfigExportLiveInput {
   readonly host: HostCliClient;
   readonly redactionValues: readonly string[];
   readonly sandboxName: string;
+  readonly validateWithPinnedV1?: (raw: string) => PinnedV1ConsumerEvidence;
 }
 
 export interface HermesConfigExportLiveResult {
@@ -49,6 +58,7 @@ interface HermesConfigExportPublishedEvidence {
   readonly agent: string | undefined;
   readonly aliasesEquivalent: boolean;
   readonly checked: true;
+  readonly consumer: HermesPinnedV1ConsumerEvidence;
   readonly credentialReferenceMatches: boolean;
   readonly credentialValuesOmitted: boolean;
   readonly identityDriftPreventedPublication: boolean;
@@ -60,6 +70,12 @@ interface HermesConfigExportPublishedEvidence {
   readonly launchersSucceeded: boolean;
   readonly policyMatches: boolean;
   readonly sandboxNameMatches: boolean;
+}
+
+interface HermesPinnedV1ConsumerEvidence {
+  readonly expected: PinnedV1ConsumerEvidence;
+  readonly actual: Partial<Record<"nemoclaw" | "nemohermes", PinnedV1ConsumerEvidence>>;
+  readonly passed: boolean;
 }
 
 interface HermesConfigExportExpectedRefusalEvidence {
@@ -103,6 +119,7 @@ export function passesHermesConfigExportLiveEvidence(
   return (
     evidence.agent === "hermes" &&
     evidence.aliasesEquivalent &&
+    evidence.consumer.passed &&
     evidence.credentialReferenceMatches &&
     evidence.credentialValuesOmitted &&
     evidence.identityDriftPreventedPublication &&
@@ -115,6 +132,70 @@ export function passesHermesConfigExportLiveEvidence(
     evidence.policyMatches &&
     evidence.sandboxNameMatches
   );
+}
+
+function expectedHermesConsumerEvidence(
+  input: HermesConfigExportLiveInput,
+): PinnedV1ConsumerEvidence {
+  const nativeSettings = expectedPinnedV1HermesNativeSettings({
+    hermesApiPort: Number(input.env.NEMOCLAW_HERMES_API_PORT ?? HERMES_INTERFACE_DEFAULTS.apiPort),
+    hermesDashboardEnabled: input.dashboardEnabled === true,
+    hermesDashboardPort: Number(
+      input.env.NEMOCLAW_DASHBOARD_PORT ?? HERMES_INTERFACE_DEFAULTS.dashboardPort,
+    ),
+    hermesDashboardInternalPort: Number(
+      input.env.NEMOCLAW_HERMES_DASHBOARD_INTERNAL_PORT ??
+        HERMES_INTERFACE_DEFAULTS.dashboardInternalPort,
+    ),
+    hermesDashboardTui: hermesTuiEnabled(input.env),
+  });
+  return {
+    revision: V1ALPHA1_RUNTIME_DEFAULTS_REVISION,
+    compiledSandboxes: 1,
+    hermesNativeSettings: { [input.sandboxName]: nativeSettings },
+    openclawNativeSettingsVerified: 0,
+    hermesNativeSettingsVerified: 1,
+  };
+}
+
+function comparableHermesConsumerEvidence(
+  evidence: PinnedV1ConsumerEvidence,
+  sandboxName: string,
+): PinnedV1ConsumerEvidence {
+  const nativeSettings = evidence.hermesNativeSettings?.[sandboxName];
+  return {
+    revision: evidence.revision,
+    compiledSandboxes: evidence.compiledSandboxes,
+    hermesNativeSettings: nativeSettings ? { [sandboxName]: nativeSettings } : {},
+    openclawNativeSettingsVerified: evidence.openclawNativeSettingsVerified,
+    hermesNativeSettingsVerified: evidence.hermesNativeSettingsVerified,
+  };
+}
+
+function validateHermesConsumers(
+  input: HermesConfigExportLiveInput,
+  nemoclawRaw: string,
+  nemohermesRaw: string,
+): HermesPinnedV1ConsumerEvidence {
+  const expected = expectedHermesConsumerEvidence(input);
+  const actual: HermesPinnedV1ConsumerEvidence["actual"] = {};
+  const validate = input.validateWithPinnedV1 ?? validateConfigExportWithPinnedV1;
+  try {
+    actual.nemoclaw = comparableHermesConsumerEvidence(validate(nemoclawRaw), input.sandboxName);
+    actual.nemohermes = comparableHermesConsumerEvidence(
+      validate(nemohermesRaw),
+      input.sandboxName,
+    );
+  } catch {
+    return { expected, actual, passed: false };
+  }
+  return {
+    expected,
+    actual,
+    passed:
+      isDeepStrictEqual(actual.nemoclaw, expected) &&
+      isDeepStrictEqual(actual.nemohermes, expected),
+  };
 }
 
 function hermesTuiEnabled(env: NodeJS.ProcessEnv): boolean {
@@ -288,6 +369,11 @@ export async function verifyHermesConfigExportLive(
       agent: undefined,
       aliasesEquivalent: false,
       checked: true,
+      consumer: {
+        expected: expectedHermesConsumerEvidence(input),
+        actual: {},
+        passed: false,
+      },
       credentialReferenceMatches: false,
       credentialValuesOmitted: !containsCredential,
       identityDriftPreventedPublication: false,
@@ -315,6 +401,7 @@ export async function verifyHermesConfigExportLive(
   const sandbox = nemoclawDocument.spec.sandboxes[0]!;
   const hostedProvider = nemoclawDocument.spec.inferenceProviders[0];
   const expectedPolicy = policy.ok ? YAML.parse(policy.value.document) : null;
+  const consumer = validateHermesConsumers(input, nemoclawRaw, nemohermesRaw);
 
   const nemoclawMismatchPath = path.join(exportDirectory, "nemoclaw-mismatch.yaml");
   const nemohermesMismatchPath = path.join(exportDirectory, "nemohermes-mismatch.yaml");
@@ -363,6 +450,7 @@ export async function verifyHermesConfigExportLive(
     aliasesEquivalent: isDeepStrictEqual(nemohermesDocument.spec, nemoclawDocument.spec),
     agent: sandbox.harness.kind,
     checked: true,
+    consumer,
     credentialValuesOmitted: !containsCredential && exportsSafe,
     credentialReferenceMatches: hostedProvider?.credential?.env === entry.credentialEnv,
     identityDriftPreventedPublication:

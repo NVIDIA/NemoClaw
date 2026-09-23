@@ -19,6 +19,7 @@ import { V1ALPHA1_RUNTIME_DEFAULTS_REVISION } from "../../../../src/lib/domain/c
 import { decodeManagedStartupProfile } from "../../../../src/lib/onboard/managed-startup/profile.ts";
 import type { SandboxEntry } from "../../../../src/lib/state/registry/types.ts";
 import {
+  expectedPinnedV1HermesNativeSettings,
   type PinnedV1ConsumerEvidence,
   type PinnedV1OpenClawNativeSettings,
   validateConfigExportWithPinnedV1,
@@ -409,6 +410,10 @@ export type ConfigExportRegistryEntry = Pick<
   | "credentialEnv"
   | "dcodeAutoApprovalMode"
   | "hermesApiPort"
+  | "hermesDashboardEnabled"
+  | "hermesDashboardPort"
+  | "hermesDashboardInternalPort"
+  | "hermesDashboardTui"
   | "workload"
   | "observabilityEnabled"
   | "toolDisclosure"
@@ -590,15 +595,20 @@ function expectedOpenclawNativeSettings(
 }
 
 function expectedPinnedV1Evidence(entry: ConfigExportRegistryEntry): PinnedV1ConsumerEvidence {
-  const nativeSettings = expectedOpenclawNativeSettings(entry);
+  const openclawNativeSettings = expectedOpenclawNativeSettings(entry);
+  const hermesNativeSettings =
+    entry.agent === "hermes" ? expectedPinnedV1HermesNativeSettings(entry) : undefined;
   return {
     revision: V1ALPHA1_RUNTIME_DEFAULTS_REVISION,
     compiledSandboxes: 1,
-    ...(nativeSettings
+    ...(openclawNativeSettings
       ? {
-          contextWindows: [nativeSettings.model.contextWindow],
-          openclawNativeSettings: { [entry.name]: nativeSettings },
+          contextWindows: [openclawNativeSettings.model.contextWindow],
+          openclawNativeSettings: { [entry.name]: openclawNativeSettings },
         }
+      : {}),
+    ...(hermesNativeSettings
+      ? { hermesNativeSettings: { [entry.name]: hermesNativeSettings } }
       : {}),
     openclawNativeSettingsVerified: entry.agent === "openclaw" ? 1 : 0,
     hermesNativeSettingsVerified: entry.agent === "hermes" ? 1 : 0,
@@ -610,6 +620,7 @@ function comparablePinnedV1Evidence(
   expected: PinnedV1ConsumerEvidence,
   sandboxName: string,
 ): PinnedV1ConsumerEvidence {
+  const actualHermesNativeSettings = evidence.hermesNativeSettings?.[sandboxName];
   const actualNativeSettings = evidence.openclawNativeSettings?.[sandboxName];
   return {
     revision: evidence.revision,
@@ -619,6 +630,13 @@ function comparablePinnedV1Evidence(
       ? {
           openclawNativeSettings: actualNativeSettings
             ? { [sandboxName]: actualNativeSettings }
+            : {},
+        }
+      : {}),
+    ...(expected.hermesNativeSettings
+      ? {
+          hermesNativeSettings: actualHermesNativeSettings
+            ? { [sandboxName]: actualHermesNativeSettings }
             : {},
         }
       : {}),

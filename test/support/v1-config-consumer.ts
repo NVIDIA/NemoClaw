@@ -6,6 +6,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+import { HERMES_INTERFACE_DEFAULTS } from "../../src/lib/config/model";
 import { V1ALPHA1_RUNTIME_DEFAULTS_REVISION } from "../../src/lib/domain/config/v1alpha1-runtime-defaults";
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "../..");
@@ -40,10 +41,50 @@ export interface PinnedV1OpenClawNativeSettings {
   toolDisclosure: string;
 }
 
+export interface PinnedV1HermesNativeSettings {
+  apiPort: number;
+  dashboard: {
+    enabled: boolean;
+    port: number;
+    internalPort: number;
+    tui: { enabled: boolean };
+  };
+}
+
+export interface PinnedV1HermesSourceSettings {
+  hermesApiPort?: number | null;
+  hermesDashboardEnabled?: boolean;
+  hermesDashboardPort?: number | null;
+  hermesDashboardInternalPort?: number | null;
+  hermesDashboardTui?: boolean;
+}
+
+/** Resolve pinned native values from retained Hermes source intent, not from compiled output. */
+export function expectedPinnedV1HermesNativeSettings(
+  source: PinnedV1HermesSourceSettings,
+): PinnedV1HermesNativeSettings {
+  const enabled = source.hermesDashboardEnabled === true;
+  return {
+    apiPort: source.hermesApiPort ?? HERMES_INTERFACE_DEFAULTS.apiPort,
+    dashboard: {
+      enabled,
+      port: enabled
+        ? (source.hermesDashboardPort ?? HERMES_INTERFACE_DEFAULTS.dashboardPort)
+        : HERMES_INTERFACE_DEFAULTS.dashboardPort,
+      internalPort: enabled
+        ? (source.hermesDashboardInternalPort ?? HERMES_INTERFACE_DEFAULTS.dashboardInternalPort)
+        : HERMES_INTERFACE_DEFAULTS.dashboardInternalPort,
+      // The pinned adapter retains its inactive default when the dashboard is disabled.
+      tui: { enabled: enabled ? source.hermesDashboardTui === true : true },
+    },
+  };
+}
+
 export interface PinnedV1ConsumerEvidence {
   revision: typeof V1ALPHA1_RUNTIME_DEFAULTS_REVISION;
   compiledSandboxes?: number;
   contextWindows?: number[];
+  hermesNativeSettings?: Record<string, PinnedV1HermesNativeSettings>;
   openclawNativeSettings?: Record<string, PinnedV1OpenClawNativeSettings>;
   openclawNativeSettingsVerified?: number;
   hermesNativeSettingsVerified?: number;
