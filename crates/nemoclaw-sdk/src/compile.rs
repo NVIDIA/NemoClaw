@@ -344,11 +344,10 @@ pub(crate) fn is_gateway_observation(address: &str) -> bool {
 
 // Both graphs report the provider's observation through OpenTofu conditions.
 pub(super) fn gateway_error_message(reference: &str) -> String {
-    let message = "Gateway version or compute driver does not satisfy the configuration. Required version: %s; observed version: %s. Required drivers: %s; observed entries: %d; names: %s. Retain state, correct gateway compatibility, and reapply the same configuration.";
+    let message = "Gateway is incompatible with this configuration: %s. Retain state, correct the gateway or the configuration, and reapply.";
     format!(
-        "${{format({}, {}, {reference}.gateway_version, jsonencode({reference}.required_compute_drivers), {reference}.compute_driver_count, jsonencode({reference}.compute_drivers))}}",
+        "${{format({}, {reference}.incompatibility)}}",
         serde_json::to_string(message).expect("literal diagnostic"),
-        serde_json::to_string(crate::artifact_pins::OPENSHELL_VERSION).expect("pinned version"),
     )
 }
 

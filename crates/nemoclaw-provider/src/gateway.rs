@@ -25,6 +25,7 @@ pub(crate) struct GatewayState {
     compute_drivers: Value<BTreeSet<String>>,
     compute_driver_count: Value<u64>,
     compatible: Value<bool>,
+    incompatibility: Value<String>,
 }
 
 fn requirements(diags: &mut Diagnostics, config: &GatewayState) -> Option<()> {
@@ -127,6 +128,11 @@ impl DataSource for GatewayDataSource {
                         AttributeType::Bool,
                         AttributeConstraint::Computed,
                     ),
+                    (
+                        "incompatibility",
+                        AttributeType::String,
+                        AttributeConstraint::Computed,
+                    ),
                 ]
                 .into_iter()
                 .map(|(name, attr_type, constraint)| {
@@ -193,8 +199,10 @@ impl DataSource for GatewayDataSource {
         };
         match observed {
             Ok(observed) => {
-                config.compatible =
-                    Value::Value(drivers.iter().all(|driver| observed.supports(driver)));
+                let incompatibility = observed.incompatibility(drivers.iter().copied());
+                config.compatible = Value::Value(incompatibility.is_none());
+                // OpenTofu formats condition messages even when the condition holds.
+                config.incompatibility = Value::Value(incompatibility.unwrap_or_default());
                 config.compute_driver_count = Value::Value(observed.compute_drivers.len() as u64);
                 config.gateway_version = Value::Value(observed.gateway_version);
                 config.compute_drivers =
@@ -236,6 +244,7 @@ mod tests {
                 compute_drivers: Value::Null,
                 compute_driver_count: Value::Null,
                 compatible: Value::Null,
+                incompatibility: Value::Null,
             };
             let mut diagnostics = Diagnostics::default();
             assert_eq!(
@@ -269,6 +278,7 @@ mod wait_tests {
                 compute_drivers: Value::Null,
                 compute_driver_count: Value::Null,
                 compatible: Value::Null,
+                incompatibility: Value::Null,
             };
             let mut diagnostics = Diagnostics::default();
             assert_eq!(

@@ -80,9 +80,9 @@ OpenShell deletion is name-addressed without a conditional ID/version check; an 
 ## Gateway Capabilities
 
 The deployment graph reads `data.nemoclaw_gateway_capabilities.current` during planning through the provider's configured OpenShell connection.
-The data source reports the observed gateway version, driver names and aliases, driver-entry count, and compatibility with the required compute drivers.
+The data source reports the observed gateway version, driver names and aliases, driver-entry count, compatibility with the required compute drivers, and an `incompatibility` description that is empty when compatible.
 Compatibility requires the pinned OpenShell version and exactly one initialized driver matching every required name.
-OpenTofu lifecycle conditions report required and observed values when they differ.
+OpenTofu lifecycle conditions name each failed requirement with its required and observed values.
 Missing metadata, authentication failures, and transport failures stop ordinary planning without changing runtime resources.
 Each API read is bounded to 30 seconds.
 

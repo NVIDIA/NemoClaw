@@ -112,29 +112,20 @@ async fn production_provider_applies_refreshes_and_destroys_the_reference_graph(
         );
         if matches!(failure, "version" | "driver" | "multiple") {
             let normalized = diagnostic.split_whitespace().collect::<Vec<_>>().join(" ");
-            let observed = if failure == "version" {
-                "incompatible-version"
-            } else {
-                version
+            let reason = match failure {
+                "version" => format!(
+                    "gateway runs OpenShell incompatible-version, but this build requires {version}"
+                ),
+                "driver" => {
+                    "gateway compute driver is podman, but runtime.provider is docker".into()
+                }
+                _ => "gateway reports 2 compute drivers, but exactly one is required".into(),
             };
-            let driver = if failure == "driver" {
-                "podman"
-            } else {
-                "docker"
-            };
-            let count = if failure == "multiple" { 2 } else { 1 };
-            for expected in [
-                format!("Required version: {version}"),
-                format!("observed version: {observed}"),
-                "Required drivers: [\"docker\"]".into(),
-                format!("observed entries: {count}"),
-                format!("names: [\"{driver}\"]"),
-            ] {
-                assert!(
-                    normalized.contains(&expected),
-                    "missing {expected}: {diagnostic}"
-                );
-            }
+            let expected = format!("Gateway is incompatible with this configuration: {reason}.");
+            assert!(
+                normalized.contains(&expected),
+                "missing {expected}: {diagnostic}"
+            );
         }
         assert!(!diagnostic.contains("secret-sentinel"));
         let mut state = fixture.state.lock().unwrap();
@@ -200,9 +191,11 @@ async fn production_provider_applies_refreshes_and_destroys_the_reference_graph(
                 "saved plan reused stale gateway metadata: create={create}, {failure}"
             );
             let diagnostic = String::from_utf8_lossy(&output.stderr);
+            let normalized = diagnostic.split_whitespace().collect::<Vec<_>>().join(" ");
             assert!(
-                diagnostic.contains(if failure == "driver" {
-                    "Gateway version or compute driver"
+                normalized.contains(if failure == "driver" {
+                    "Gateway is incompatible with this configuration: gateway compute driver is \
+                     podman, but runtime.provider is docker."
                 } else {
                     "Gateway capability observation failed"
                 }),
