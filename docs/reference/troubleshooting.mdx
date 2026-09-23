@@ -2311,6 +2311,17 @@ The existing config guard selects these permissions for `/sandbox/.openclaw` and
 - **Verified same-user nonroot launch:** `0700/0600` keeps config private to the sandbox user shared by the agent and gateway.
 - **Separate gateway identity or unverified layout:** `2770/0660` retains shared access through the `sandbox` group.
 
+### Official messaging plugin verification stops the build
+
+OpenClaw messaging image builds verify the installed provenance of official Discord, Slack, WhatsApp, Microsoft Teams and Google Chat plugins.
+If the inspection fails, times out or cannot prove a trusted official installation, the build stops before the rebuilt-runtime channel checks.
+A missing verified package in the offline build cache also stops installation.
+These are build failures; the post-rebuild startup warnings apply only after the image builds successfully.
+
+Report the failure diagnostic, plugin name and NemoClaw version to a maintainer.
+NemoClaw manages the package pins and build cache; do not edit them or bypass plugin verification to continue.
+After a maintainer resolves the reported build failure, rerun the original onboarding or rebuild command.
+
 ### Discord bot logs in, but the channel still does not work
 
 Separate the problem into two parts:
