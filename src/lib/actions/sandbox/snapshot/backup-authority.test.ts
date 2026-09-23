@@ -830,7 +830,11 @@ describe("managed snapshot backup authority", () => {
   });
 
   it("does not start host-local confirmation after the shared deadline", () => {
-    vi.spyOn(Date, "now").mockReturnValueOnce(9_000).mockReturnValue(10_000);
+    vi.spyOn(Date, "now")
+      .mockReturnValueOnce(9_000)
+      .mockReturnValueOnce(9_000)
+      .mockReturnValueOnce(9_000)
+      .mockReturnValue(10_000);
     const entry = hostLocalSandbox("openclaw");
     const prepared = {
       providerId: "mxc",
@@ -858,6 +862,42 @@ describe("managed snapshot backup authority", () => {
       error: expect.stringContaining("provider snapshot authority deadline expired"),
     });
     expect(confirmHostLocalInference).not.toHaveBeenCalled();
+  });
+
+  it("rejects host-local confirmation that finishes after the shared deadline", () => {
+    vi.spyOn(Date, "now")
+      .mockReturnValueOnce(9_000)
+      .mockReturnValueOnce(9_000)
+      .mockReturnValueOnce(9_000)
+      .mockReturnValueOnce(9_000)
+      .mockReturnValue(10_000);
+    const entry = hostLocalSandbox("openclaw");
+    const prepared = {
+      providerId: "mxc",
+      sandboxName: entry.name,
+      serializedReceipt: entry.hostLocalInferenceReceipt,
+    };
+    const confirmHostLocalInference = vi.fn();
+    const backup = vi.fn((_name: string, options: BackupOptions = {}) => successfulBackup(options));
+
+    const result = backupSandboxStateWithManagedAuthority(
+      entry.name,
+      { deadlineMs: 10_000 },
+      {
+        getSandbox: () => entry,
+        requireProvider: () => provider(),
+        captureRuntime: vi.fn() as never,
+        prepareHostLocalInference: vi.fn(() => prepared) as never,
+        confirmHostLocalInference: confirmHostLocalInference as never,
+        backup,
+      },
+    );
+
+    expect(confirmHostLocalInference).toHaveBeenCalledOnce();
+    expect(result).toMatchObject({
+      success: false,
+      error: expect.stringContaining("provider snapshot authority deadline expired"),
+    });
   });
 
   it.each([

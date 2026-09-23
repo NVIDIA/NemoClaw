@@ -669,6 +669,7 @@ function captureHostLocalInferenceAuthority(
     deadlineMs === undefined
       ? dependencies.prepareHostLocalInference(provider, entry)
       : dependencies.prepareHostLocalInference(provider, entry, { deadlineMs });
+  requireAuthorityBudget(deadlineMs);
   if (!prepared) {
     if (entry.hostLocalInferenceProvenance) {
       throw new Error("explicit host-local inference lifecycle authority cannot be reconstructed");
@@ -703,6 +704,7 @@ function captureHostLocalInferenceAuthority(
       } else {
         dependencies.confirmHostLocalInference(currentProvider, current, prepared, { deadlineMs });
       }
+      requireAuthorityBudget(deadlineMs);
     },
   };
 }

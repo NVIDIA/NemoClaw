@@ -184,8 +184,16 @@ describe("strict pre-upgrade recovery retention", () => {
     );
   });
 
-  it("abandons a policy capture that never settles within its budget (#11936)", async () => {
-    mocks.captureRecordedSandboxBasePolicy.mockReturnValue(new Promise(() => undefined));
+  it("waits for a timed-out policy capture to terminate before cleanup (#11936)", async () => {
+    let observationSettled = false;
+    mocks.captureRecordedSandboxBasePolicy.mockImplementation(
+      async (_name, _operation, _runtime, deadlineMs: number | undefined) => {
+        expect(deadlineMs).toBeTypeOf("number");
+        await new Promise((resolve) => setTimeout(resolve, 30));
+        observationSettled = true;
+        throw new Error("policy child terminated at its deadline");
+      },
+    );
     const result = {
       success: true,
       backedUpDirs: ["workspace"],
@@ -208,6 +216,7 @@ describe("strict pre-upgrade recovery retention", () => {
         "Strict pre-upgrade recovery retention did not complete the policy capture before the backup deadline",
     });
     expect(mocks.captureRecordedSandboxBasePolicy).toHaveBeenCalledOnce();
+    expect(observationSettled).toBe(true);
     expect(mocks.observeMcpStateForRebuild).not.toHaveBeenCalled();
     expect(mocks.writeRebuildPolicyHandoff).not.toHaveBeenCalled();
     expect(mocks.removeSandboxStateBackup).toHaveBeenCalledWith(
@@ -216,8 +225,16 @@ describe("strict pre-upgrade recovery retention", () => {
     );
   });
 
-  it("abandons an MCP observation that never settles within its budget (#11936)", async () => {
-    mocks.observeMcpStateForRebuild.mockReturnValue(new Promise(() => undefined));
+  it("waits for a timed-out MCP observation to terminate before cleanup (#11936)", async () => {
+    let observationSettled = false;
+    mocks.observeMcpStateForRebuild.mockImplementation(
+      async (_sandbox, _runtime, _inspect, deadline: { deadlineMs: number } | undefined) => {
+        expect(deadline?.deadlineMs).toBeTypeOf("number");
+        await new Promise((resolve) => setTimeout(resolve, 30));
+        observationSettled = true;
+        throw new Error("MCP child terminated at its deadline");
+      },
+    );
     const result = {
       success: true,
       backedUpDirs: ["workspace"],
@@ -240,6 +257,7 @@ describe("strict pre-upgrade recovery retention", () => {
         "Strict pre-upgrade recovery retention did not complete the MCP observation before the backup deadline",
     });
     expect(mocks.observeMcpStateForRebuild).toHaveBeenCalledOnce();
+    expect(observationSettled).toBe(true);
     expect(mocks.writeRebuildPolicyHandoff).not.toHaveBeenCalled();
     expect(mocks.writeRebuildMcpHandoff).not.toHaveBeenCalled();
     expect(mocks.removeSandboxStateBackup).toHaveBeenCalledWith(
@@ -248,7 +266,7 @@ describe("strict pre-upgrade recovery retention", () => {
     );
   });
 
-  it("does not start the MCP observation when the policy capture reaches the deadline (#11936)", async () => {
+  it("rejects a policy capture that reaches the deadline before MCP observation (#11936)", async () => {
     let now = 9_000;
     mocks.captureRecordedSandboxBasePolicy.mockImplementation(async () => {
       now = 10_000;
@@ -274,7 +292,7 @@ describe("strict pre-upgrade recovery retention", () => {
     ).resolves.toMatchObject({
       success: false,
       error:
-        "Strict pre-upgrade recovery retention did not complete the MCP observation before the backup deadline",
+        "Strict pre-upgrade recovery retention did not complete the policy capture before the backup deadline",
     });
     expect(mocks.captureRecordedSandboxBasePolicy).toHaveBeenCalledOnce();
     expect(mocks.observeMcpStateForRebuild).not.toHaveBeenCalled();
@@ -300,7 +318,10 @@ describe("strict pre-upgrade recovery retention", () => {
         () => 1_000,
       ),
     ).resolves.toMatchObject({ success: true });
-    expect(mocks.observeMcpStateForRebuild).toHaveBeenCalledWith(sandbox, runtimeSelection, true);
+    expect(mocks.observeMcpStateForRebuild).toHaveBeenCalledWith(sandbox, runtimeSelection, true, {
+      deadlineMs: 10_000,
+      now: expect.any(Function),
+    });
     expect(mocks.removeSandboxStateBackup).not.toHaveBeenCalled();
   });
 

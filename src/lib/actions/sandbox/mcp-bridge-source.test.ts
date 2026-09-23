@@ -91,6 +91,26 @@ network_policies:
     });
   });
 
+  it("bounds source inspection by the remaining recovery observation deadline", async () => {
+    mocks.executeSandboxCommand.mockResolvedValue({ status: 0, stdout: "[]", stderr: "" });
+    const now = vi.fn().mockReturnValue(9_000);
+
+    await expect(
+      inspectAgentMcpSources(sandbox, runtimeSelection, { deadlineMs: 10_000, now }),
+    ).resolves.toEqual({ native: {}, legacy: {} });
+    expect(mocks.executeSandboxCommand).toHaveBeenCalledWith(
+      "alpha",
+      expect.any(String),
+      expect.objectContaining({ runtimeSelection, timeout: 1_000 }),
+    );
+
+    now.mockReturnValue(10_000);
+    await expect(
+      inspectAgentMcpSources(sandbox, runtimeSelection, { deadlineMs: 10_000, now }),
+    ).rejects.toThrow("MCP observation deadline expired");
+    expect(mocks.executeSandboxCommand).toHaveBeenCalledOnce();
+  });
+
   it.each([
     ...(
       [

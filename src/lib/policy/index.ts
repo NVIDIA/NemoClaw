@@ -676,6 +676,8 @@ async function inspectLivePolicyBoundary(
   operation: string,
   requestedGatewayName?: string,
   runtimeSelection?: OpenShellRuntimeSelection,
+  deadlineMs?: number,
+  now: () => number = Date.now,
 ): Promise<PolicyMutationContext> {
   let sandbox: ReturnType<typeof registry.getSandbox>;
   try {
@@ -713,18 +715,29 @@ async function inspectLivePolicyBoundary(
     );
   }
   const target = namedOpenShellGateway(gatewayName);
+  const remainingTimeoutMs = (): number | undefined => {
+    if (deadlineMs === undefined) return undefined;
+    const remainingMs = Math.floor(deadlineMs - now());
+    if (remainingMs <= 0) {
+      throw new PolicyObservationError(
+        `Refusing to ${operation}: the policy observation deadline expired.`,
+      );
+    }
+    return remainingMs;
+  };
   const inspection = requirePolicyObservation(
     await cliOpenShellSandboxPolicyReader.inspectSandboxPolicy({
       target,
       sandboxName,
       ...(runtimeSelection ? { runtimeSelection } : {}),
+      ...(deadlineMs === undefined ? {} : { timeoutMs: remainingTimeoutMs() }),
     }),
   );
   const basePolicyDocument = await readLivePolicyDocument(
     sandboxName,
     gatewayName,
     "base",
-    undefined,
+    remainingTimeoutMs(),
     runtimeSelection,
   );
   return {
@@ -758,6 +771,8 @@ export async function captureRecordedSandboxBasePolicy(
   sandboxName: string,
   operation: string,
   runtimeSelection?: OpenShellRuntimeSelection,
+  deadlineMs?: number,
+  now: () => number = Date.now,
 ): Promise<string> {
   return (
     await inspectLivePolicyBoundary(
@@ -765,6 +780,8 @@ export async function captureRecordedSandboxBasePolicy(
       operation,
       runtimeSelection?.gatewayName,
       runtimeSelection,
+      deadlineMs,
+      now,
     )
   ).basePolicyDocument;
 }

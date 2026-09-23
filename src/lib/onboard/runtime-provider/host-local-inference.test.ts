@@ -442,4 +442,73 @@ describe("host-local inference operation deadline", () => {
       now.mockRestore();
     }
   });
+
+  it("bounds captureHost and rejects it before delegation after expiry", () => {
+    const captureHost = vi.fn((_args: readonly string[], _timeoutMs?: number) => ({
+      status: 0,
+      stdout: "",
+      stderr: "",
+    }));
+    const engine = {
+      operation: "host-local-inference",
+      engineId: "mxc",
+      displayName: "MXC",
+      authorityId: "mxc:deadline-host-test",
+      capture: vi.fn(() => ({ status: 0, stdout: "", stderr: "" })),
+      captureHost,
+    } satisfies ContainerEngine;
+    const now = vi.spyOn(Date, "now").mockReturnValue(9_000);
+    try {
+      const bounded = deadlineBoundHostLocalInferenceEngine(engine, 10_000);
+      bounded.captureHost(["inspect-host"], 5_000);
+      expect(captureHost).toHaveBeenCalledWith(["inspect-host"], 1_000);
+
+      now.mockReturnValue(10_000);
+      expect(() => bounded.captureHost(["late-host"])).toThrow(
+        "host-local inference authority deadline expired",
+      );
+      expect(captureHost).toHaveBeenCalledOnce();
+    } finally {
+      now.mockRestore();
+    }
+  });
+
+  it("bounds captureWithEnvironment and rejects it before delegation after expiry", () => {
+    const captureWithEnvironment = vi.fn(
+      (
+        _args: readonly string[],
+        _environment: Readonly<Record<string, string>>,
+        _timeoutMs?: number,
+        _input?: Buffer,
+      ) => ({ status: 0, stdout: "", stderr: "" }),
+    );
+    const engine = {
+      operation: "host-local-inference",
+      engineId: "mxc",
+      displayName: "MXC",
+      authorityId: "mxc:deadline-environment-test",
+      capture: vi.fn(() => ({ status: 0, stdout: "", stderr: "" })),
+      captureHost: vi.fn(() => ({ status: 0, stdout: "", stderr: "" })),
+      captureWithEnvironment,
+    } satisfies ContainerEngine;
+    const now = vi.spyOn(Date, "now").mockReturnValue(9_000);
+    try {
+      const bounded = deadlineBoundHostLocalInferenceEngine(engine, 10_000);
+      bounded.captureWithEnvironment?.(["inspect-env"], { TOKEN: "placeholder" }, 5_000);
+      expect(captureWithEnvironment).toHaveBeenCalledWith(
+        ["inspect-env"],
+        { TOKEN: "placeholder" },
+        1_000,
+        undefined,
+      );
+
+      now.mockReturnValue(10_000);
+      expect(() => bounded.captureWithEnvironment?.(["late-env"], {})).toThrow(
+        "host-local inference authority deadline expired",
+      );
+      expect(captureWithEnvironment).toHaveBeenCalledOnce();
+    } finally {
+      now.mockRestore();
+    }
+  });
 });

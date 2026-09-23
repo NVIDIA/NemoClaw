@@ -21,6 +21,7 @@ import {
   assertNoLegacyMcpSources,
   inspectAgentMcpSources,
   joinMcpEntriesToOpenShell,
+  type McpSourceObservationDeadline,
 } from "./mcp-bridge-source";
 import type { McpSourceEntry } from "./mcp-bridge-contracts";
 
@@ -30,6 +31,7 @@ export async function observeMcpStateForRebuild(
   sandbox: RebuildSandboxEntry,
   runtimeSelection: McpProviderInspectionRuntimeSelection | undefined,
   inspectCurrentSource: boolean,
+  deadline?: McpSourceObservationDeadline,
 ): Promise<{
   entries: McpSourceEntry[];
   runtimeSelection?: McpProviderInspectionRuntimeSelection;
@@ -39,12 +41,18 @@ export async function observeMcpStateForRebuild(
     gatewayName: resolveSandboxGatewayName(sandbox),
     workspace: OPENSHELL_DEFAULT_WORKSPACE,
   };
-  const sources = await inspectAgentMcpSources(sandbox, sourceRuntime);
+  const sources = await inspectAgentMcpSources(sandbox, sourceRuntime, deadline);
   assertNoLegacyMcpSources(sandbox.name, sources.legacy, "rebuilding");
   if (Object.keys(sources.native).length === 0) return { entries: [] };
   const selectedRuntime = runtimeSelection ?? getMcpProviderInspectionRuntimeSelection(sandbox);
   const entries = Object.values(
-    await joinMcpEntriesToOpenShell(sandbox, sources.native, selectedRuntime),
+    await joinMcpEntriesToOpenShell(
+      sandbox,
+      sources.native,
+      selectedRuntime,
+      "inspect current MCP source state",
+      deadline,
+    ),
   );
   return {
     entries,
