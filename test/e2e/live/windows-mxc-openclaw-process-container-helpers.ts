@@ -1747,23 +1747,32 @@ export function classifyWindowsMxcForwardHealthObservation(
     return "terminal";
   }
   if (result.exitCode === 0 && parseOpenClawHealthResult(result.stdout)) return "ready";
-  if (
-    result.exitCode !== 0 &&
+  const error =
     typeof value === "object" &&
     value !== null &&
     "ok" in value &&
     value.ok === false &&
     "error" in value &&
     typeof value.error === "object" &&
-    value.error !== null &&
-    "type" in value.error &&
-    value.error.type === "gateway_transport_error" &&
-    "kind" in value.error &&
-    value.error.kind === "closed" &&
-    "code" in value.error &&
-    value.error.code === 1006 &&
-    "reason" in value.error &&
-    value.error.reason === "no close reason"
+    value.error !== null
+      ? value.error
+      : undefined;
+  if (
+    result.exitCode !== 0 &&
+    error !== undefined &&
+    "type" in error &&
+    error.type === "gateway_transport_error" &&
+    "kind" in error &&
+    error.kind === "closed" &&
+    (("code" in error &&
+      error.code === 1006 &&
+      "reason" in error &&
+      error.reason === "no close reason") ||
+      ("reason" in error &&
+        error.reason === "socket hang up" &&
+        "message" in error &&
+        typeof error.message === "string" &&
+        error.message.includes("(ECONNRESET)")))
   ) {
     return "relay-not-ready";
   }

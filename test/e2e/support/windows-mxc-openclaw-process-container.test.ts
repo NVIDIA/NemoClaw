@@ -1159,7 +1159,7 @@ setInterval(() => {}, 1000);
     ).toBe(false);
   });
 
-  it("observes forwarded health again only after the exact relay readiness signal (#8178)", async () => {
+  it("observes forwarded health again after OpenClaw reports a relay startup reset (#8178)", async () => {
     const results = [
       {
         exitCode: 1,
@@ -1169,8 +1169,9 @@ setInterval(() => {}, 1000);
           error: {
             type: "gateway_transport_error",
             kind: "closed",
-            code: 1006,
-            reason: "no close reason",
+            message:
+              "Gateway not reachable at ws://127.0.0.1:18789 (ECONNRESET), reason socket hang up",
+            reason: "socket hang up",
           },
         }),
       },
