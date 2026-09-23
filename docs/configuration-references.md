@@ -8,7 +8,10 @@ Both forms use the same configuration type, defaults, and validation.
 A shared inference, provider, harness, or integration definition becomes active only when a consumer selects it.
 Managed services have a separate rule: every entry in `spec.services` is installed and checked, even without a consumer.
 
-Write desired-state YAML using the [field reference](reference/configuration.md), then use `nemoclaw plan` and `nemoclaw apply`.
+The authoring library and its [example TUI](../examples/onboarding-tui/README.md) can generate a validated starter document without resolving credentials, planning, or applying.
+The example exposes a curated scenario, not the complete schema.
+Fields outside that scenario remain available through hand-authored YAML according to the [field reference](reference/configuration.md).
+Generated and hand-authored files use the same lifecycle CLI `plan` and `apply` implementations.
 
 ## The Authoring Rule
 

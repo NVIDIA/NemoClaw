@@ -21,6 +21,10 @@ Apply can download models and check readiness; it does not request model or agen
 Destroy does not prompt for confirmation and deletes sandbox files and conversation history.
 Read [deployment lifecycle](../usage.md) and preview deletion before destroying a deployment.
 
+The core CLI does not prescribe an onboarding flow.
+The source tree contains a separate [example onboarding TUI](../../examples/onboarding-tui/README.md) that generates ordinary V1 YAML through the authoring library.
+It is not included in the verified native bundle and cannot plan or apply resources.
+
 Plan and apply derive credential requirements from the parsed document.
 They use a matching nonempty environment variable first and prompt only for unresolved references.
 Terminal prompts hide entered values.

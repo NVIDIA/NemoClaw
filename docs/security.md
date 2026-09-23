@@ -57,7 +57,10 @@ A complete credential-rotation runbook for every credential type: **TBD**.
 Use each existing guide's current lifecycle constraints; do not infer a rotation command.
 
 Keep credential values out of YAML, shell arguments, shared URLs, and published diagnostics.
-For `plan` and `apply`, `--non-interactive` requires environment-provided credentials and fails instead of prompting for missing values.
+The example authoring TUI saves credential references and never resolves their values.
+Authoring and lifecycle operations are separate commands; accepting an authored document does not authorize apply.
+Inspect a secret-free plan before invoking apply.
+For `plan` or `apply`, `--non-interactive` requires environment-provided credentials and fails instead of prompting when a reference is unresolved.
 Use environment references for provider secrets and protected files for gateway TLS keys.
 Configuration export preserves references; it cannot recover a lost credential value.
 Retiring a deployment requires separate decisions about upstream revocation, retained gateway/model/proxy storage, and caller-owned files.

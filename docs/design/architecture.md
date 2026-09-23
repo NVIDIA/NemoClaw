@@ -11,6 +11,7 @@ The [accepted scope](scope.md) defines the invariants; this page explains the re
 | Component | Responsibility |
 |---|---|
 | CLI | Arguments, prompts, credential acquisition, and output |
+| Authoring library | Guided presets, validated draft edits, and review data |
 | SDK | Configuration validation, graph compilation, deployment locking, plan policy, and recovery across stages |
 | OpenTofu | Dependency ordering, concurrent resource reconciliation, and resource state |
 | Docker provider | Docker containers, images, model-cache volumes, and service networks |
@@ -41,6 +42,14 @@ See [CLI output](../reference/cli.md#output-and-failure) for the user contract.
 
 Desired-state YAML passes through the SDK's [configuration validation](../configuration-schema.md).
 Configuration retains credential references, not values.
+
+The [authoring library](../../crates/nemoclaw-authoring/src/lib.rs) owns an SDK `Document` while a frontend edits or reviews it.
+It has no terminal or deployment operations.
+Its guided API derives current values and compatible choices from a curated scenario table.
+It refuses a guided edit when the document has V1 configuration that the guided flow cannot show, which prevents data loss.
+The [example onboarding TUI](../../examples/onboarding-tui/README.md) renders these fields and sends typed changes back to the library.
+It is a separate generation-only binary, not a prescribed onboarding flow or a lifecycle CLI command.
+
 The native [bundle](../build.md#build-a-native-bundle) ships the matching CLI, schema, OpenTofu, and providers; source-derived provider versions prevent stale installations from being reused.
 
 ## Why Managed Apply Has Two Stages
