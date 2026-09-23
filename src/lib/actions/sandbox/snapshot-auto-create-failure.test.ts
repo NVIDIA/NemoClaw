@@ -65,7 +65,7 @@ const registerSandboxMock = vi.fn(
     _routeReservation?: unknown,
     options: { pending?: boolean; reservationSessionId?: string } = {},
   ) => {
-    harness.entries.set(String(entry.name), {
+    const registered = {
       ...entry,
       ...(options.pending === true
         ? {
@@ -75,7 +75,9 @@ const registerSandboxMock = vi.fn(
               : {}),
           }
         : {}),
-    });
+    };
+    harness.entries.set(String(entry.name), registered);
+    return registered;
   },
 );
 const finalizePendingSandboxRegistrationMock = vi.fn((name: string) => {
@@ -112,10 +114,25 @@ const finalizeSandboxRouteReservationMock = vi.fn((name: string, sessionId: stri
       )
     : false;
 });
+const finalizePendingSandboxRegistrationIfCurrentMock = vi.fn(
+  (expected: Record<string, unknown>) => {
+    const name = String(expected.name);
+    return (
+      harness.entries.get(name) === expected &&
+      Boolean(
+        harness.entries.set(name, {
+          ...expected,
+          pendingRouteReservation: undefined,
+        }),
+      )
+    );
+  },
+);
 const removeSandboxRouteReservationIfCurrentMock = vi.fn((expected: Record<string, unknown>) => {
   const name = String(expected.name);
   return harness.entries.get(name) === expected ? harness.entries.delete(name) : false;
 });
+const removeSandboxMock = vi.fn((name: string) => harness.entries.delete(name));
 const restoreSandboxStateMock = vi.fn();
 const captureSnapshotRestoreAuthorityMock = vi.fn();
 const streamSandboxCreateMock = vi.fn<StreamSandboxCreateCommand>(async () => ({
@@ -308,6 +325,7 @@ vi.mock("../../state/registry", () => ({
     defaultSandbox: "alpha",
   })),
   finalizePendingSandboxRegistration: finalizePendingSandboxRegistrationMock,
+  finalizePendingSandboxRegistrationIfCurrent: finalizePendingSandboxRegistrationIfCurrentMock,
   finalizeSandboxRouteReservation: finalizeSandboxRouteReservationMock,
   registerSandbox: registerSandboxMock,
   reserveSandboxInferenceRoute: reserveSandboxInferenceRouteMock,
@@ -316,7 +334,7 @@ vi.mock("../../state/registry", () => ({
     (entry: Record<string, unknown>) =>
       entry.pendingRouteReservation === true && entry.createdAt === undefined,
   ),
-  removeSandbox: vi.fn((name: string) => harness.entries.delete(name)),
+  removeSandbox: removeSandboxMock,
   updateSandbox: vi.fn(),
 }));
 vi.mock("../../state/sandbox", () => ({
@@ -743,6 +761,47 @@ describe("snapshot restore auto-create failures", () => {
     expect(restoreSandboxStateMock).not.toHaveBeenCalled();
   });
 
+  it("preserves a changed destination row when route publication fails", async () => {
+    const source = hostLocalRouteSourceEntry();
+    let replacement: Record<string, unknown> | null = null;
+    harness.entries.set("alpha", source);
+    streamSandboxCreateMock.mockResolvedValue({
+      status: 0,
+      output: "created",
+      sawProgress: true,
+      forcedReady: false,
+    });
+    finalizePendingSandboxRegistrationIfCurrentMock.mockImplementationOnce((expected) => {
+      replacement = {
+        ...expected,
+        lifecycleGeneration: "replacement-generation",
+      };
+      harness.entries.set("beta", replacement);
+      return false;
+    });
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    const { runSandboxSnapshot } = await import("./snapshot");
+
+    await expect(
+      runSandboxSnapshot("alpha", { kind: "restore", to: "beta" }),
+    ).rejects.toMatchObject({
+      lines: expect.arrayContaining([
+        "Snapshot state was not restored. The current registry row was preserved.",
+      ]),
+    });
+
+    expect(finalizePendingSandboxRegistrationIfCurrentMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: "beta",
+        reservationSessionId: expect.stringMatching(/^[0-9a-f]{62}$/u),
+      }),
+    );
+    expect(getSandboxMock("beta")).toEqual(replacement);
+    expect(removeSandboxMock).not.toHaveBeenCalled();
+    expect(restoreSandboxStateMock).not.toHaveBeenCalled();
+  });
+
   it("retains a matching clone before absence permits a retry (#12118)", async () => {
     const receipt = serializedLlamaCppHostLocalInferenceReceipt();
     const source = {
@@ -851,9 +910,11 @@ describe("snapshot restore auto-create failures", () => {
         reservationSessionId: expect.not.stringMatching(new RegExp(`^${retainedNonce}$`, "u")),
       }),
     );
-    expect(finalizeSandboxRouteReservationMock).toHaveBeenCalledWith(
-      "beta",
-      expect.stringMatching(/^[0-9a-f]{62}$/u),
+    expect(finalizePendingSandboxRegistrationIfCurrentMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: "beta",
+        reservationSessionId: expect.stringMatching(/^[0-9a-f]{62}$/u),
+      }),
     );
     expect(restoreSandboxStateMock).toHaveBeenCalledOnce();
   });
@@ -1073,13 +1134,15 @@ describe("snapshot restore auto-create failures", () => {
       undefined,
       { pending: true },
     );
-    expect(finalizePendingSandboxRegistrationMock).toHaveBeenCalledWith("beta");
+    expect(finalizePendingSandboxRegistrationIfCurrentMock).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "beta" }),
+    );
     expect(registerSandboxMock.mock.invocationCallOrder[0]).toBeLessThan(
-      finalizePendingSandboxRegistrationMock.mock.invocationCallOrder[0]!,
+      finalizePendingSandboxRegistrationIfCurrentMock.mock.invocationCallOrder[0]!,
     );
-    expect(finalizePendingSandboxRegistrationMock.mock.invocationCallOrder[0]).toBeLessThan(
-      harness.preserveForRebuild.mock.invocationCallOrder[1]!,
-    );
+    expect(
+      finalizePendingSandboxRegistrationIfCurrentMock.mock.invocationCallOrder[0],
+    ).toBeLessThan(harness.preserveForRebuild.mock.invocationCallOrder[1]!);
     expect(harness.prepareDestroy).toHaveBeenCalledTimes(2);
     expect(harness.destroy).not.toHaveBeenCalled();
     const nimRuntime = await import("../../inference/nim");

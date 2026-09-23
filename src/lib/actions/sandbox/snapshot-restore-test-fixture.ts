@@ -218,6 +218,7 @@ export const removeSandboxMock = vi.fn();
 export const updateSandboxMock = vi.fn();
 export const finalizeSandboxRouteReservationMock = vi.fn();
 export const finalizePendingSandboxRegistrationMock = vi.fn();
+export const finalizePendingSandboxRegistrationIfCurrentMock = vi.fn();
 export const restoreSandboxStateMock = vi.fn();
 export const restoreDeepAgentsNativeMcpConfigMock = vi.fn();
 export const getMcpProviderInspectionRuntimeSelectionMock = vi.fn(() => ({
@@ -388,6 +389,7 @@ vi.mock("../../state/registry", () => ({
   updateSandbox: updateSandboxMock,
   finalizeSandboxRouteReservation: finalizeSandboxRouteReservationMock,
   finalizePendingSandboxRegistration: finalizePendingSandboxRegistrationMock,
+  finalizePendingSandboxRegistrationIfCurrent: finalizePendingSandboxRegistrationIfCurrentMock,
 }));
 
 vi.mock("../../state/sandbox", () => ({
@@ -496,6 +498,7 @@ export function resetSnapshotRestoreMocks(): void {
   updateSandboxMock.mockReset().mockReturnValue(true);
   finalizeSandboxRouteReservationMock.mockReset().mockReturnValue(true);
   finalizePendingSandboxRegistrationMock.mockReset().mockReturnValue(true);
+  finalizePendingSandboxRegistrationIfCurrentMock.mockReset().mockReturnValue(true);
   restoreSandboxStateMock.mockReturnValue({
     success: true,
     restoredDirs: [],

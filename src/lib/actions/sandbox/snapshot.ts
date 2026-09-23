@@ -401,7 +401,7 @@ async function autoCreateSandboxFromSource(
   dstDashboardPort: number | null,
   dashboardEnvArgs: readonly string[],
   dstHermesApiPort: number | null,
-): Promise<string | null> {
+): Promise<SandboxEntry> {
   const openshellBin = getOpenshellBinary();
   const createAttemptNonce = randomBytes(NEMOCLAW_CREATE_ATTEMPT_NONCE_HEX_LENGTH / 2).toString(
     "hex",
@@ -657,8 +657,9 @@ async function autoCreateSandboxFromSource(
     failUnregisteredSnapshotClone(dstName, sourceGatewayName, createAttemptNonce);
   }
   const cloneSourceEntry = srcEntry as SandboxEntry;
+  let pendingCloneRegistration: SandboxEntry;
   try {
-    registry.registerSandbox(
+    pendingCloneRegistration = registry.registerSandbox(
       {
         ...cloneSourceEntry,
         name: dstName,
@@ -701,9 +702,8 @@ async function autoCreateSandboxFromSource(
 
   // The pending registry row now owns any retained route reservation.
   // Keep it unpublished until the caller completes sensitive-file cleanup.
-  const reservationSessionId = cloneRouteReservationSessionId;
   cloneRouteReservationSessionId = null;
-  return reservationSessionId;
+  return pendingCloneRegistration;
 }
 
 // Delete an existing destination sandbox so `snapshot restore --to <dst> --force`
@@ -1046,9 +1046,11 @@ async function reconcilePendingSnapshotClone(
       `Pending clone '${targetSandbox}' has the expected identity but is not Ready yet. Retry after it becomes Ready.`,
     );
   }
-  const finalized = isSnapshotCloneCreateAttemptNonce(pending.reservationSessionId)
-    ? registry.finalizeSandboxRouteReservation(targetSandbox, pending.reservationSessionId)
-    : registry.finalizePendingSandboxRegistration(targetSandbox);
+  const sessionCanFinalize =
+    pending.reservationSessionId === undefined ||
+    isSnapshotCloneCreateAttemptNonce(pending.reservationSessionId);
+  const finalized =
+    sessionCanFinalize && registry.finalizePendingSandboxRegistrationIfCurrent(pending);
   if (!finalized) {
     throw new SnapshotCommandError(
       `Pending clone '${targetSandbox}' changed while its registration was being finalized. Retry the restore.`,
@@ -1584,7 +1586,7 @@ async function runSnapshotRestoreUnlocked(
       const dashboardEnvArgs = resolveCloneDashboardEnvArgs(lockedSourceEntry, dstDashboardPort);
       let clonePolicy = await prepareSnapshotClonePolicy(lockedSourceEntry, targetSandbox);
       let cloneCreatedPending = false;
-      let cloneReservationSessionId: string | null = null;
+      let pendingCloneRegistration: SandboxEntry | null = null;
       try {
         const refreshedClonePolicy = await prepareSnapshotClonePolicy(
           lockedSourceEntry,
@@ -1608,7 +1610,7 @@ async function runSnapshotRestoreUnlocked(
             "  Failed to re-select source sandbox gateway after deleting destination.",
           );
         }
-        cloneReservationSessionId = await autoCreateSandboxFromSource(
+        pendingCloneRegistration = await autoCreateSandboxFromSource(
           sandboxName,
           targetSandbox,
           lockedSourceEntry,
@@ -1637,12 +1639,15 @@ async function runSnapshotRestoreUnlocked(
           ]);
         }
       }
-      const finalized = cloneReservationSessionId
-        ? registry.finalizeSandboxRouteReservation(targetSandbox, cloneReservationSessionId)
-        : registry.finalizePendingSandboxRegistration(targetSandbox);
+      const finalized =
+        pendingCloneRegistration !== null &&
+        registry.finalizePendingSandboxRegistrationIfCurrent(pendingCloneRegistration);
       if (!finalized) {
-        registry.removeSandbox(targetSandbox);
-        failUnregisteredSnapshotClone(targetSandbox, lockedGatewayName);
+        throw new SnapshotCommandError([
+          `Pending clone '${targetSandbox}' changed while NemoClaw finalized its registration.`,
+          "Snapshot state was not restored. The current registry row was preserved.",
+          `Inspect '${targetSandbox}' before retrying. Retry without --force only when it remains the matching pending clone.`,
+        ]);
       }
       console.log(`  ${G}\u2713${R} Sandbox '${targetSandbox}' created`);
     };

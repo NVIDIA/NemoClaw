@@ -867,6 +867,28 @@ export function finalizePendingSandboxRegistration(name: string): boolean {
   });
 }
 
+/** Publish a pending registration only while its complete staged row remains current. */
+export function finalizePendingSandboxRegistrationIfCurrent(expected: SandboxEntry): boolean {
+  const expectedSnapshot = JSON.parse(JSON.stringify(expected)) as SandboxEntry;
+  if (
+    expectedSnapshot.pendingRouteReservation !== true ||
+    expectedSnapshot.pendingCreateIdentity !== undefined
+  ) {
+    return false;
+  }
+  return withLock(() => {
+    const data = load();
+    const current = data.sandboxes[expectedSnapshot.name];
+    if (!current || !isDeepStrictEqual(current, expectedSnapshot)) return false;
+    data.sandboxes[expectedSnapshot.name] = {
+      ...current,
+      pendingRouteReservation: undefined,
+    };
+    save(reversibleRemoval.claimInitialDefaultInRegistry(data, expectedSnapshot.name));
+    return true;
+  });
+}
+
 /** Atomically capture and remove one registry row for a reversible lifecycle operation. */
 export function removeSandboxWithReceipt(name: string): SandboxRemovalReceipt | null {
   return withLock(() => {
