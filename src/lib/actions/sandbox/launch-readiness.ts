@@ -1396,9 +1396,24 @@ export async function publishLaunchReadiness(
   }
   const withSandboxLock = deps.withSandboxLock ?? withSandboxMutationLock;
   const withGatewayLock = deps.withGatewayLock ?? withGatewayRouteMutationLock;
+  let failedOperation: "publication-authority" | "publication-observation" | undefined;
+  const assertPublicationCurrent = () => {
+    try {
+      deps.assertPublicationCurrent?.();
+    } catch (error) {
+      failedOperation = "publication-authority";
+      throw error;
+    }
+  };
   try {
     return await withSandboxLock(sandboxName, async () => {
-      const entry = (deps.getSandbox ?? registry.getSandbox)(sandboxName);
+      let entry: SandboxEntry | null;
+      try {
+        entry = (deps.getSandbox ?? registry.getSandbox)(sandboxName);
+      } catch (error) {
+        failedOperation = "publication-observation";
+        throw error;
+      }
       if (entry?.gatewayPort !== gatewayPort || entry.gatewayName !== gatewayName) {
         return { kind: "validation-failed", category: "identity" } as const;
       }
@@ -1407,14 +1422,14 @@ export async function publishLaunchReadiness(
         let captured: Awaited<ReturnType<typeof captureLaunchIdentity>> | undefined;
         let captureFailure: unknown;
         try {
-          deps.assertPublicationCurrent?.();
+          assertPublicationCurrent();
           try {
             captured = await captureLaunchIdentity(sandboxName, gatewayName, gatewayPort, deps);
           } catch (error) {
             captureFailure = error;
           }
           try {
-            deps.assertPublicationCurrent?.();
+            assertPublicationCurrent();
           } catch (error) {
             captureFailure = error;
           }
@@ -1427,7 +1442,11 @@ export async function publishLaunchReadiness(
             } as const;
           }
           const validation = publicationValidationCategory(error);
-          if (!validation) recordLaunchReadinessObservationFailure(deps, "publication-observation");
+          if (!validation)
+            recordLaunchReadinessObservationFailure(
+              deps,
+              failedOperation ?? "publication-observation",
+            );
           return validation
             ? ({ kind: "validation-failed", ...validation } as const)
             : ({ kind: "evidence-failed" } as const);
@@ -1437,7 +1456,7 @@ export async function publishLaunchReadiness(
         const publicationStartedAt = performance.now();
         let publicationFailed = false;
         try {
-          deps.assertPublicationCurrent?.();
+          assertPublicationCurrent();
           (deps.publishLease ?? publishLaunchReadinessLease)(
             sandboxName,
             gatewayName,
@@ -1445,10 +1464,10 @@ export async function publishLaunchReadiness(
             epochId,
             captured!.identity,
             deps.storeOptions,
-            deps.assertPublicationCurrent,
+            assertPublicationCurrent,
           );
         } catch {
-          recordLaunchReadinessObservationFailure(deps, "publication-store");
+          recordLaunchReadinessObservationFailure(deps, failedOperation ?? "publication-store");
           publicationFailed = true;
         } finally {
           recordPerformanceStage("publication-store", publicationStartedAt);
@@ -1458,7 +1477,7 @@ export async function publishLaunchReadiness(
       });
     });
   } catch {
-    recordLaunchReadinessObservationFailure(deps, "publication-lock");
+    recordLaunchReadinessObservationFailure(deps, failedOperation ?? "publication-lock");
     return { kind: "evidence-failed" };
   }
 }

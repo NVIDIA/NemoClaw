@@ -830,15 +830,16 @@ describe("managed gateway port readiness (#7411)", () => {
   }, 30_000);
 
   it.runIf(process.platform === "linux").for([
-    ["marker", "podman", "selected", "none", "present", "present"],
-    ["service", "podman", "selected", "none", "present", "present"],
-    ["service", "docker", "selected", "owner-mismatch", "unknown", "absent"],
-    ["service", "podman", "other", "owner-mismatch", "unknown", "absent"],
+    ["marker", "podman", "selected", "selected", "none", "present", "present"],
+    ["service", "podman", "selected", "selected", "none", "present", "present"],
+    ["service", "docker", "selected", "selected", "owner-mismatch", "unknown", "absent"],
+    ["service", "podman", "other", "selected", "owner-mismatch", "unknown", "absent"],
+    ["service", "podman", "selected", "other", "owner-mismatch", "unknown", "absent"],
   ] as const)(
-    "projects a real %s-owned %s listener with %s socket through Podman readiness (#10984)",
+    "projects a real %s-owned %s listener with %s socket and %s name through Podman readiness (#10984)",
     { timeout: 30_000 },
     async (
-      [ownership, driver, socketDirectory, conflict, versionState, portState],
+      [ownership, driver, socketDirectory, selectedName, conflict, versionState, portState],
       { onTestFinished },
     ) => {
       const actualChildProcess =
@@ -851,7 +852,8 @@ describe("managed gateway port readiness (#7411)", () => {
       });
       const gatewayPort = (reservation.address() as AddressInfo).port;
       await new Promise<void>((resolve) => reservation.close(() => resolve()));
-      const gatewayName = `nemoclaw-${String(gatewayPort)}`;
+      const gatewayName =
+        selectedName === "selected" ? `nemoclaw-${String(gatewayPort)}` : "another-gateway";
       const endpoint = getGatewayHttpsEndpoint(gatewayPort);
       const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-podman-readiness-real-"));
       const stateDir = path.join(root, "gateway-state");

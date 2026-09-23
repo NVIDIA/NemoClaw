@@ -203,9 +203,7 @@ describe("launch readiness observation timing", () => {
 
       expect(publishLease).toHaveBeenCalledTimes(expectedPublicationAttempts);
       expect(committed).toBe(false);
-      expect(recordObservationFailure).toHaveBeenCalledWith(
-        failureCall <= 2 ? "publication-observation" : "publication-store",
-      );
+      expect(recordObservationFailure).toHaveBeenNthCalledWith(1, "publication-authority");
     },
   );
 

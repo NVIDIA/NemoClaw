@@ -36,6 +36,7 @@ export function isPodmanGatewayRuntimeEnabled(env: NodeJS.ProcessEnv = process.e
 /** Host lifecycle context, separate from generic OpenShell client target selection. */
 export const GATEWAY_HOST_RUNTIME_ENV_KEYS = [
   NEMOCLAW_GATEWAY_RUNTIME_ENV,
+  "NEMOCLAW_EXPERIMENTAL_PROFILE",
   "OPENSHELL_PODMAN_SOCKET",
   "CONTAINERS_CONF",
   "CONTAINERS_STORAGE_CONF",

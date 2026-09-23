@@ -710,7 +710,8 @@ export function createProductionGatewayReadinessDependencies(
     const serviceEnv = providerRuntime ? readDockerDriverGatewayProcessEnvironment(pid) : null;
     const providerMatches =
       !providerRuntime ||
-      (serviceEnv?.OPENSHELL_DRIVERS === providerRuntime.openShellDriver &&
+      (gatewayName === resolveDockerDriverGatewayName(gatewayPort) &&
+        serviceEnv?.OPENSHELL_DRIVERS === providerRuntime.openShellDriver &&
         serviceEnv.OPENSHELL_PODMAN_SOCKET === (providerRuntime.socketPath ?? undefined) &&
         serviceEnv.OPENSHELL_BIND_ADDRESS === providerRuntime.bindAddress &&
         serviceEnv.OPENSHELL_SERVER_PORT === String(gatewayPort) &&
