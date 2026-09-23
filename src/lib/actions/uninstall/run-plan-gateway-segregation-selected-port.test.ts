@@ -436,6 +436,7 @@ describe("uninstall selected gateway-port segregation (#3053)", () => {
     childRun: false,
     destroyUserData: false,
     dockerInventory: null as RunResult | null,
+    expectedDockerCalls: [] as string[][],
     expectedExit: 0,
     gatewayStateCreated: false,
     liveGatewayNames: ["nemoclaw"],
@@ -453,36 +454,44 @@ describe("uninstall selected gateway-port segregation (#3053)", () => {
     fs.writeFileSync(path.join(stateRoot, "backups", "retained.txt"), "retained user data");
   };
 
+  const inventoryArgs = [
+    "ps",
+    "-a",
+    "--no-trunc",
+    "--filter",
+    "label=openshell.ai/sandbox-name=a4-test",
+    "--format",
+    "{{.ID}}",
+  ];
+  const retainedUninstallBase = {
+    ...interruptedPreGatewayBase,
+    destroyUserData: true,
+    prepareState: preservedUninstallState,
+    expectedDockerCalls: [["docker", ...inventoryArgs]],
+  };
+
   it.each([
     {
-      ...interruptedPreGatewayBase,
-      destroyUserData: true,
+      ...retainedUninstallBase,
       dockerInventory: ok(),
-      prepareState: preservedUninstallState,
       scenario: "purges retained user data after runtime cleanup",
     },
     {
-      ...interruptedPreGatewayBase,
-      destroyUserData: true,
+      ...retainedUninstallBase,
       dockerInventory: ok(),
       liveGatewayNames: [],
-      prepareState: preservedUninstallState,
       scenario: "purges retained uninstall data when no other gateway remains",
     },
     {
-      ...interruptedPreGatewayBase,
-      destroyUserData: true,
+      ...retainedUninstallBase,
       dockerInventory: ok("existing-container\n"),
-      prepareState: preservedUninstallState,
       expectedExit: 1,
       stateKept: true,
       scenario: "preserves retained uninstall data while a sandbox container remains",
     },
     {
-      ...interruptedPreGatewayBase,
-      destroyUserData: true,
+      ...retainedUninstallBase,
       dockerInventory: { status: 1, stdout: "", stderr: "inventory unavailable" },
-      prepareState: preservedUninstallState,
       expectedExit: 1,
       stateKept: true,
       scenario: "preserves retained uninstall data when container inventory fails",
@@ -637,6 +646,7 @@ describe("uninstall selected gateway-port segregation (#3053)", () => {
       childRun,
       destroyUserData,
       dockerInventory,
+      expectedDockerCalls,
       expectedExit,
       gatewayStateCreated,
       liveGatewayNames,
@@ -726,7 +736,12 @@ describe("uninstall selected gateway-port segregation (#3053)", () => {
                 ? ok(JSON.stringify(observedGatewayNames.map((name) => ({ name }))))
                 : (commandResults[command] ?? commandResults[commandKey] ?? ok());
             },
-            runDocker: () => dockerInventory ?? ok(),
+            runDocker: (args) => {
+              calls.push(["docker", ...args]);
+              return args.join("\0") === inventoryArgs.join("\0")
+                ? (dockerInventory ?? ok())
+                : ok();
+            },
             withSandboxMutationLock,
           },
         );
@@ -741,6 +756,7 @@ describe("uninstall selected gateway-port segregation (#3053)", () => {
           ),
         ).toEqual([]);
         assertErrors(errors.join("\n"));
+        expect(calls).toEqual(expect.arrayContaining(expectedDockerCalls));
       } finally {
         fs.rmSync(tmpHome, { force: true, recursive: true });
       }

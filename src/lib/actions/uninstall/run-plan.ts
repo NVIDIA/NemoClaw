@@ -65,6 +65,7 @@ import {
 import { type GatewayOwner, isExternallySupervised } from "../../onboard/gateway-ownership";
 import {
   gatewayLifecycleStateContainsOnlyOwnedLocks,
+  retainedDockerSandboxIsAbsent,
   type GatewayCleanupRuntime,
   type GatewayTeardownAuthorityResolver,
   isInterruptedPreGatewaySession,
@@ -3273,24 +3274,13 @@ function preservedUninstallDataHasNoContainers(
         !runtime.commandExists("docker")
       )
         return false;
-      const result = runtime.runDocker(
-        [
-          "ps",
-          "-a",
-          "--filter",
-          "label=openshell.ai/managed-by=openshell",
-          "--filter",
-          `label=openshell.ai/sandbox-name=${name}`,
-          "--format",
-          "{{.Names}}",
-        ],
-        { env: runtime.env, timeout: 5_000 },
-      );
-      return (
-        result.status === 0 &&
-        !result.error &&
-        !result.signal &&
-        splitNonEmptyLines(result.stdout).length === 0
+      return retainedDockerSandboxIsAbsent(
+        runtime.env.HOME || os.homedir(),
+        GATEWAY_PORT,
+        name,
+        entry,
+        (args) => runtime.runDocker(args, { env: runtime.env, timeout: 5_000 }),
+        (args) => runtime.run("openshell", args, { env: runtime.env, timeout: 10_000 }),
       );
     });
   } catch {
