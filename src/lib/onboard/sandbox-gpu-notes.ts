@@ -72,6 +72,51 @@ export function gpuSandboxMemoryPressureHints(snapshot: HostMemorySnapshot | nul
   ];
 }
 
+/**
+ * Platforms whose GPU allocates from host memory, so a serving inference
+ * runtime and a GPU sandbox draw on one pool.
+ */
+const UNIFIED_MEMORY_GPU_PLATFORMS = new Set(["spark", "jetson", "n1x"]);
+
+/**
+ * Fraction of the pool that has to remain before a GPU sandbox is created
+ * without comment.
+ *
+ * Advisory only: the run that failed on a DGX Spark had 30 GiB of 122 GiB
+ * (24%) left while its managed vLLM server served, and an idle host of the
+ * same shape reports above 90%. Half the pool sits between those without
+ * pretending to be a capacity model — `nvidia-smi` reports `[N/A]` for total
+ * and free memory here, so no exact headroom exists to compute (#12255).
+ */
+const UNIFIED_MEMORY_WARNING_FRACTION = 0.5;
+
+/**
+ * Warn before a GPU sandbox is built on a host whose memory pool is already
+ * largely spoken for.
+ *
+ * Never blocks: a wrong floor would refuse sandboxes that would have started,
+ * and the pool can be freed between this check and the allocation. Returns no
+ * lines when the sandbox wants no GPU, when the platform keeps GPU memory
+ * separate from host memory, when the pool cannot be read, or when most of it
+ * is still free.
+ */
+export function unifiedMemoryGpuSandboxWarningLines(
+  config: { sandboxGpuEnabled?: boolean; hostGpuPlatform?: string | null },
+  readSnapshot: () => HostMemorySnapshot | null = readHostMemorySnapshot,
+): string[] {
+  if (config.sandboxGpuEnabled !== true) return [];
+  if (!config.hostGpuPlatform || !UNIFIED_MEMORY_GPU_PLATFORMS.has(config.hostGpuPlatform)) {
+    return [];
+  }
+  const snapshot = readSnapshot();
+  if (!snapshot) return [];
+  if (snapshot.availableMiB >= snapshot.totalMiB * UNIFIED_MEMORY_WARNING_FRACTION) return [];
+  return [
+    `  Warning: ${String(snapshot.availableMiB)} MiB of ${String(snapshot.totalMiB)} MiB host memory is available, and this platform's GPU allocates from that same pool.`,
+    "  A GPU sandbox can fail to start when a serving inference runtime holds most of it. Continuing; recreate with `--no-sandbox-gpu` if the sandbox does not come up.",
+  ];
+}
+
 export function formatSandboxGpuPassthroughNote(options: {
   hostGpuPlatform?: string | null;
   resumeHasResolvedGpuIntent?: boolean;

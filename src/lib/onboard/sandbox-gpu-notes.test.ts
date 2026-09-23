@@ -7,6 +7,7 @@ import {
   gpuSandboxMemoryPressureHints,
   hostMemoryDiagnosticLines,
   readHostMemorySnapshot,
+  unifiedMemoryGpuSandboxWarningLines,
 } from "./sandbox-gpu-notes";
 
 const MEMINFO = [
@@ -59,5 +60,60 @@ describe("host memory diagnostics (#12255)", () => {
     const hints = gpuSandboxMemoryPressureHints(null);
     expect(hints[0]).toBe("Host memory could not be read for this failure.");
     expect(hints).toHaveLength(4);
+  });
+});
+
+describe("unified-memory GPU sandbox warning (#12255)", () => {
+  const SPARK = { sandboxGpuEnabled: true, hostGpuPlatform: "spark" };
+  const CONSTRAINED = () => ({ totalMiB: 124608, availableMiB: 30038 });
+  const IDLE = () => ({ totalMiB: 124608, availableMiB: 118000 });
+
+  it("warns when most of the pool is already spoken for", () => {
+    const lines = unifiedMemoryGpuSandboxWarningLines(SPARK, CONSTRAINED);
+
+    expect(lines.join("\n")).toContain("30038 MiB of 124608 MiB host memory is available");
+    expect(lines.join("\n")).toContain("--no-sandbox-gpu");
+    // Advisory only: the caller keeps creating the sandbox.
+    expect(lines.join("\n")).toContain("Continuing");
+  });
+
+  it("stays quiet when the pool is mostly free", () => {
+    expect(unifiedMemoryGpuSandboxWarningLines(SPARK, IDLE)).toEqual([]);
+  });
+
+  it("stays quiet without sandbox GPU passthrough", () => {
+    expect(
+      unifiedMemoryGpuSandboxWarningLines(
+        { sandboxGpuEnabled: false, hostGpuPlatform: "spark" },
+        CONSTRAINED,
+      ),
+    ).toEqual([]);
+  });
+
+  it("stays quiet where GPU memory is separate from host memory", () => {
+    expect(
+      unifiedMemoryGpuSandboxWarningLines(
+        { sandboxGpuEnabled: true, hostGpuPlatform: "linux" },
+        CONSTRAINED,
+      ),
+    ).toEqual([]);
+    expect(
+      unifiedMemoryGpuSandboxWarningLines(
+        { sandboxGpuEnabled: true, hostGpuPlatform: null },
+        CONSTRAINED,
+      ),
+    ).toEqual([]);
+  });
+
+  it("stays quiet when the pool cannot be read", () => {
+    expect(unifiedMemoryGpuSandboxWarningLines(SPARK, () => null)).toEqual([]);
+  });
+
+  it("covers every unified-memory platform", () => {
+    for (const hostGpuPlatform of ["spark", "jetson", "n1x"]) {
+      expect(
+        unifiedMemoryGpuSandboxWarningLines({ sandboxGpuEnabled: true, hostGpuPlatform }, CONSTRAINED),
+      ).not.toEqual([]);
+    }
   });
 });
