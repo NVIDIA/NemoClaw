@@ -99,7 +99,7 @@ describe("E2E workflow plan", () => {
       }),
     ]);
     expect(plan.hermesSelected).toBe(true);
-    expect(plan.coverageMatrix).toHaveLength(76);
+    expect(plan.coverageMatrix).toHaveLength(77);
     expect(selectedWorkflowJobs(plan)).toEqual([
       "catalogue-brave-nvidia-inference",
       "catalogue-github-read",
@@ -242,15 +242,42 @@ describe("E2E workflow plan", () => {
     expect(selectedWorkflowJobs(plan)).toEqual(["catalogue-nvidia-inference"]);
   });
 
-  it("routes Pi lifecycle qualification through the AMD64 NVIDIA API key profile (#7926)", () => {
-    const targetId = "pi-agent-qualification-amd64";
-    const plan = buildE2eWorkflowPlan({ targets: targetId });
+  it.each([
+    {
+      architecture: "AMD64",
+      targetId: "pi-agent-qualification-amd64",
+      runner: "ubuntu-24.04",
+      shard: "linux-amd64",
+      platform: "linux/amd64",
+      receipt: "ci/pi-agent-qualification-v1-linux-amd64.json",
+    },
+    {
+      architecture: "ARM64",
+      targetId: "pi-agent-qualification-arm64",
+      runner: "ubuntu-24.04-arm",
+      shard: "linux-arm64",
+      platform: "linux/arm64",
+      receipt: "ci/pi-agent-qualification-v1-linux-arm64.json",
+    },
+  ])(
+    "routes Pi $architecture lifecycle qualification through its NVIDIA API key profile",
+    ({ targetId, runner, shard, platform, receipt }) => {
+      const plan = buildE2eWorkflowPlan({ targets: targetId });
 
-    expect(catalogueTarget(targetId).profile).toBe("nvidia-api");
-    expect(plan.catalogueMatrices["nvidia-api"].map((row) => row.id)).toEqual([targetId]);
-    expect(plan.catalogueMatrices["nvidia-inference"]).toEqual([]);
-    expect(selectedWorkflowJobs(plan)).toEqual(["catalogue-nvidia-api"]);
-  });
+      expect(catalogueTarget(targetId)).toMatchObject({
+        profile: "nvidia-api",
+        runner,
+        shard,
+        environment: {
+          NEMOCLAW_CANDIDATE_QUALIFICATION_RECEIPT: receipt,
+          NEMOCLAW_PI_QUALIFICATION_PLATFORM: platform,
+        },
+      });
+      expect(plan.catalogueMatrices["nvidia-api"].map((row) => row.id)).toEqual([targetId]);
+      expect(plan.catalogueMatrices["nvidia-inference"]).toEqual([]);
+      expect(selectedWorkflowJobs(plan)).toEqual(["catalogue-nvidia-api"]);
+    },
+  );
 
   it.each([
     "src/commands/config/export.ts",

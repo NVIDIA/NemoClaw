@@ -192,12 +192,12 @@ describe("Pi qualification event oracle", () => {
     expect(targetIds).not.toContain("pi-agent-qualification-arm64");
   });
 
-  it("selects AMD64 lifecycle qualification when its environment helper changes", () => {
+  it("selects both architecture qualifications when the shared environment helper changes", () => {
     const targetIds = catalogueTargetsForChangedFiles([
       "test/e2e/support/pi-agent-qualification-env.ts",
     ]).map((target) => target.id);
 
-    expect(targetIds).toContain("pi-agent-qualification-amd64");
+    expect(targetIds).toEqual(["pi-agent-qualification-amd64", "pi-agent-qualification-arm64"]);
   });
 
   it("accepts one successful read and an exact final response", () => {
