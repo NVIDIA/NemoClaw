@@ -630,9 +630,9 @@ Windows OpenShell package and a staged OpenClaw artifact through the OpenShell
 `process_container` driver. It does not register MXC, call `wxc-exec.exe`
 directly, or establish Windows support.
 The provider-generated driver configuration records the qualification-only
-OpenShell combined runtime/tooling package `bbe31651` with MXC 0.8.0.
-This candidate combines GitLab !98/!105/!108 and the upstream tooling sweep.
-It uses gateway schema 2. The previous dev.927 package is not accepted by this target.
+OpenShell package `b2840421` with MXC 0.8.0. This candidate combines Windows
+tip `9e397e8a` with PR #3575 after PRs #3495 and #3548 merged into that tip. It
+uses gateway schema 2. Earlier qualification packages are not accepted by this target.
 The selected configuration enables
 `privateNetworkClientServer`, the host egress proxy, and an operator-supplied
 supervisor relay. It does not enable `pc_allow_local_network`. The network

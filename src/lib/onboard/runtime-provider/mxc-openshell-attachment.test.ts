@@ -136,7 +136,7 @@ describe("inactive OpenShell MXC installation attachment", () => {
   describe.each([
     {
       name: "combined upstream",
-      profileId: "openshell-windows-tip-acd2a572-mxc-v0-8-0-qualification",
+      profileId: "openshell-windows-tip-b2840421-mxc-v0-8-0-qualification",
       previousProfileId: "openshell-v0-0-59-dev-925-mr108-mxc-v0-8-0-qualification",
       previousDistribution: {
         version: "0.0.59-dev.925+g28fc07191",
@@ -146,13 +146,13 @@ describe("inactive OpenShell MXC installation attachment", () => {
       observation: {
         ...mxcOpenShellAttachmentFixture().observation,
         distribution: {
-          version: "0.0.117-dev.154+gacd2a5721",
-          revision: "acd2a57219811b21bafa0a15938041c1b6f8bcc5",
-          sha256: "a7b1d020a75e3db6be41ca08de7f166fa4daadd96f1afccf60c68b69ec127cb5",
+          version: "0.0.117-dev.250+gb2840421b",
+          revision: "b2840421ba2b4115f91a4be657a0eefedd83e8e6",
+          sha256: "d52e07fb90b6a47caab4ca258da0476f237ecabc3f101c67a4c3abb05d48812c",
         },
         components: {
-          cliSha256: "33645cd76ca6a74a18ed2a99f71732d1f9a92dd880a9a528b815132cdcb03299",
-          gatewaySha256: "4959d9d464a5f984f44d15d4907e236fadb83bcc4763af788f2c61291132196e",
+          cliSha256: "24523648cee1314a17fa71716e468b277f852e4aad0f8fdb3363ca2c7c36ee83",
+          gatewaySha256: "2d435903112fcbaf533a0d2ae7a4eb30e924cf5e740984fa084b0a61fe391d98",
           wxcExecSha256: "dde1c592270e9a659b01dccad70362da7b99fec114885fa4d625507aa775a503",
         },
         gateway: {
