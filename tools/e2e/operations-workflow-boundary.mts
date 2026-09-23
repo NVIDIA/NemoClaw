@@ -8,6 +8,11 @@ import { isDeepStrictEqual } from "node:util";
 
 import ts from "typescript";
 import YAML from "yaml";
+import {
+  PRE_CANDIDATE_WORKFLOW_ENV,
+  PRE_CANDIDATE_STEP_ENV,
+  PRE_CANDIDATE_STEP_CONDITIONS,
+} from "./pre-candidate-workflow-contract.mts";
 import { RISK_RULES } from "../advisors/risk-plan.mts";
 import { validateStandardProfileWorkflowBoundary } from "./standard-profile-workflow-boundary.mts";
 import { catalogueTarget, E2E_TARGET_CATALOGUE } from "./target-catalogue.mts";
@@ -312,11 +317,7 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
       errors.push(`workflow_dispatch ${name} must be an optional string with an empty default`);
     }
   }
-  const expectedEnvironment = {
-    NEMOCLAW_E2E_CORRELATION_ID: "${{ inputs.correlation_id }}",
-    NEMOCLAW_E2E_EXPECTED_SHA: "${{ inputs.checkout_sha }}",
-    NEMOCLAW_E2E_SHARD: "default",
-  };
+  const expectedEnvironment = PRE_CANDIDATE_WORKFLOW_ENV;
   for (const [name, value] of Object.entries(expectedEnvironment)) {
     if (workflow.env?.[name] !== value) errors.push(`E2E workflow must bind ${name}`);
   }
@@ -392,26 +393,14 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
   const authentication = authenticationIndex >= 0 ? steps[authenticationIndex] : {};
   if (
     authentication.id !== "candidate_authorization" ||
-    authentication.if !==
-      "${{ inputs.pr_number != '' || inputs.checkout_sha != '' || inputs.checkout_repository != '' || inputs.base_sha != '' || inputs.workflow_sha != '' }}"
+    authentication.if !== PRE_CANDIDATE_STEP_CONDITIONS["Authenticate manual PR dispatch"]
   ) {
     errors.push("Manual PR authentication must run when any candidate identity input is present");
   }
-  const authEnvironment = {
-    ALLOW_JETSON_DISPATCH: "${{ inputs.allow_jetson_dispatch && 'true' || 'false' }}",
-    BASE_SHA: "${{ inputs.base_sha }}",
-    CHECKOUT_REPOSITORY: "${{ inputs.checkout_repository }}",
-    CHECKOUT_SHA: "${{ inputs.checkout_sha }}",
-    EXPECTED_WORKFLOW_SHA: "${{ inputs.workflow_sha }}",
-    GITHUB_TOKEN: "${{ github.token }}",
-    INCLUDE_LAUNCHABLE: "${{ inputs.include_staging_brev_launchable && 'true' || 'false' }}",
-    JOBS: "${{ inputs.jobs }}",
-    PR_NUMBER: "${{ inputs.pr_number }}",
-    TARGETS: "${{ inputs.targets }}",
-    WORKFLOW_EVENT: "${{ github.event_name }}",
-    WORKFLOW_REF: "${{ github.ref }}",
-    WORKFLOW_SHA: "${{ github.workflow_sha }}",
-  };
+  if (authentication["continue-on-error"] !== undefined) {
+    errors.push("Manual PR authentication must not tolerate authorization failure");
+  }
+  const authEnvironment = PRE_CANDIDATE_STEP_ENV["Authenticate manual PR dispatch"];
   for (const [name, value] of Object.entries(authEnvironment)) {
     if (authentication.env?.[name] !== value)
       errors.push(`Manual PR authentication must bind ${name}`);
