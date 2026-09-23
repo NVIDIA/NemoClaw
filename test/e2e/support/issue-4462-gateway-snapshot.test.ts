@@ -79,6 +79,69 @@ describe("fresh-agent gateway snapshot artifacts", () => {
     }
   });
 
+  it("reports redacted unsettled state when a pending request remains at the deadline", () => {
+    const fixtureRoot = mkdtempSync(path.join(tmpdir(), "nemoclaw-issue-4462-unsettled-"));
+    const stateRoot = path.join(fixtureRoot, "state");
+    const requestId = "4edc8df0-20d0-4308-b0e8-850843ae0cf4";
+    mkdirSync(path.join(stateRoot, "identity"), { recursive: true });
+    mkdirSync(path.join(stateRoot, "devices"), { recursive: true });
+    writeJson(path.join(stateRoot, "identity", "device.json"), {
+      deviceId: DEVICE_ID,
+      publicKey: PUBLIC_KEY,
+    });
+    writeJson(path.join(stateRoot, "devices", "pending.json"), {
+      pending: {
+        clientId: "cli",
+        clientMode: "cli",
+        deviceId: DEVICE_ID,
+        publicKey: PUBLIC_KEY,
+        requestId,
+      },
+    });
+    writeJson(path.join(stateRoot, "devices", "paired.json"), {
+      paired: {
+        approvedScopes: ["operator.pairing", "operator.write"],
+        clientId: "cli",
+        clientMode: "cli",
+        deviceId: DEVICE_ID,
+        publicKey: PUBLIC_KEY,
+        scopes: ["operator.pairing", "operator.write"],
+        tokens: {
+          operator: {
+            role: "operator",
+            scopes: ["operator.pairing", "operator.read", "operator.write"],
+            token: TOKEN,
+          },
+        },
+      },
+    });
+    try {
+      const result = spawnSync("python3", [SNAPSHOT_SCRIPT, "0.1", stateRoot], {
+        encoding: "utf8",
+        timeout: 10_000,
+      });
+      expect(result.status).not.toBe(0);
+      expect(result.stderr).toContain("CLI pairing state is unsettled at observation deadline");
+      expect(JSON.parse(result.stdout)).toEqual({
+        activeOperatorTokenCount: 1,
+        activeOperatorTokenScopes: ["operator.pairing", "operator.read", "operator.write"],
+        approvedScopes: ["operator.pairing", "operator.write"],
+        deviceScopes: ["operator.pairing", "operator.write"],
+        matchingPairedCount: 1,
+        pairedCliCount: 1,
+        pendingCount: 1,
+        sameDevicePendingCount: 1,
+      });
+      const output = `${result.stdout}\n${result.stderr}`;
+      expect(output).not.toContain(DEVICE_ID);
+      expect(output).not.toContain(PUBLIC_KEY);
+      expect(output).not.toContain(TOKEN);
+      expect(output).not.toContain(requestId);
+    } finally {
+      rmSync(fixtureRoot, { force: true, recursive: true });
+    }
+  });
+
   it("reads the canonical OpenClaw SQLite layout through the reviewed state adapter (#9844)", () => {
     const fixtureRoot = mkdtempSync(path.join(tmpdir(), "nemoclaw-issue-4462-sqlite-"));
     const stateRoot = path.join(fixtureRoot, "state-root");

@@ -193,9 +193,12 @@ while True:
             and snapshot["pairedCliCount"] == 1
             and snapshot["pendingCount"] == 0
         )
-        if settled or time.monotonic() >= observation_deadline:
+        if settled:
             print(json.dumps(snapshot, sort_keys=True))
             raise SystemExit(0)
+        if time.monotonic() >= observation_deadline:
+            print(json.dumps(snapshot, sort_keys=True))
+            raise SystemExit("CLI pairing state is unsettled at observation deadline")
     if time.monotonic() >= observation_deadline:
         break
     time.sleep(0.1)

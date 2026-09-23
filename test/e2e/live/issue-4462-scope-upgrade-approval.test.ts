@@ -14,6 +14,7 @@ import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
 import {
   adminApprovalConnectScript,
   ISSUE_4462_SCOPE_UPGRADE_PHASES,
+  pendingAdminRequestId,
   preApprovalAdminProbeEvidence,
 } from "./issue-4462-admin-approval-helper.ts";
 
@@ -252,14 +253,23 @@ test(
     );
     const cronTriggerEvidence = preApprovalAdminProbeEvidence(cronTrigger);
     await artifacts.writeJson("phase-3-trigger-admin-cron.json", cronTriggerEvidence);
+    const cronTriggerRequestId = pendingAdminRequestId(cronTrigger);
     expect(
-      cronTriggerEvidence.outcome,
-      "The operator.admin probe did not stop at the explicit approval boundary",
-    ).toBe("approval-required");
+      cronTriggerRequestId,
+      "The operator.admin probe did not report one unambiguous pending request ID",
+    ).not.toBeNull();
 
     const adminConnect = await host.command(
       "bash",
-      ["-lc", adminApprovalConnectScript(host.commandPath, SANDBOX_NAME, cronName)],
+      [
+        "-lc",
+        adminApprovalConnectScript(
+          host.commandPath,
+          SANDBOX_NAME,
+          cronName,
+          cronTriggerRequestId as string,
+        ),
+      ],
       {
         artifactName: "phase-4-connect-admin-approval",
         captureLimitBytes: 64 * 1024,

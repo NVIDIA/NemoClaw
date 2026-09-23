@@ -6,6 +6,7 @@ import { shellQuote } from "../../../src/lib/core/shell-quote.ts";
 import { ADMIN_REQUEST_SELECTOR_PY } from "../fixtures/admin-request-selector.ts";
 export { ADMIN_REQUEST_SELECTOR_PY } from "../fixtures/admin-request-selector.ts";
 export {
+  pendingAdminRequestId,
   preApprovalAdminProbeEvidence,
   type PreApprovalAdminProbeOutcome,
 } from "../fixtures/issue-4462-admin-approval-evidence.ts";
