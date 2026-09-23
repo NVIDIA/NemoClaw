@@ -810,6 +810,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     restoreCli: true,
     exposeCliBin: true,
     owningPaths: [
+      "scripts/lib/patch-openclaw-container-restart.mts",
       "test/e2e/live/launch-agent-turn.ts",
       "test/e2e/live/pr-base-comparison.ts",
       "src/lib/tunnel/gateway-stop-script.ts",
@@ -970,6 +971,9 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     exposeCliBin: true,
     owningPaths: [
       "nemoclaw-blueprint/router/pool-config.yaml",
+      "src/lib/actions/sandbox/destroy-preflight.ts",
+      "src/lib/onboard/model-router-process.ts",
+      "src/lib/onboard/model-router.ts",
       "test/e2e/live/model-router-provider-routed-inference-helpers.ts",
     ],
     environment: { OPENSHELL_GATEWAY: "nemoclaw" },
