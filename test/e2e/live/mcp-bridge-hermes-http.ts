@@ -6,6 +6,7 @@ import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { type SandboxClient, trustedSandboxShellScript } from "../fixtures/clients/sandbox.ts";
 import { redactString } from "../fixtures/redaction.ts";
+import { RuntimeProviderPrerequisite } from "../fixtures/runtime-provider.ts";
 
 /** Capture supervisor evidence even when sandbox exec is unavailable; never replace the failure. */
 export async function captureHermesMcpLifecycleFailure(
@@ -32,6 +33,39 @@ export async function captureHermesMcpLifecycleFailure(
       },
     )
     .catch(() => undefined);
+  // OpenShell's event stream does not include the Hermes entrypoint's stderr.
+  // Read the stopped container through the existing runtime owner instead of
+  // depending on an exec service that died with the supervisor.
+  try {
+    const runtime = new RuntimeProviderPrerequisite(host);
+    const diagnosticOptions = {
+      redactionValues: options.redactionValues,
+      captureLimitBytes: 32_768,
+      timeoutMs: 30_000,
+    };
+    const prefix = `hermes-mcp-${options.operation}-failure`;
+    const containerId = await runtime.resolveSandboxResourceHandle(options.sandboxName, {
+      ...diagnosticOptions,
+      artifactName: `${prefix}-container-identity`,
+    });
+    await Promise.allSettled([
+      runtime.command(
+        [
+          "inspect",
+          "--format",
+          "{{.State.Status}}\t{{.State.OOMKilled}}\t{{.State.ExitCode}}\t{{.State.FinishedAt}}",
+          containerId,
+        ],
+        { ...diagnosticOptions, artifactName: `${prefix}-container-state` },
+      ),
+      runtime.command(["logs", "--tail", "200", "--since", "3m", containerId], {
+        ...diagnosticOptions,
+        artifactName: `${prefix}-container-logs`,
+      }),
+    ]);
+  } catch {
+    // Failure-only evidence must preserve the original lifecycle assertion.
+  }
 }
 
 export const HERMES_MCP_HTTP_STATUS_MARKER = "NEMOCLAW_HERMES_MCP_HTTP_STATUS=";
