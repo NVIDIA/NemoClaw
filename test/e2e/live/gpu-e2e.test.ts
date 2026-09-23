@@ -4,10 +4,19 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { EXPORTED_VLLM_PROFILE_ID } from "../../../src/lib/config/model.ts";
+import type {
+  V1Alpha1OllamaProxyService,
+  V1Alpha1VllmService,
+} from "../../../src/lib/config/v1alpha1-export.ts";
+import { cleanupLocalModelRuntimes } from "../../../src/lib/inference/local-model-profile/cleanup.ts";
+import { HOST_LOCAL_VLLM_CONTAINER_NAME } from "../../../src/lib/inference/serving/vllm-host-local-lifecycle.ts";
+import { loadManagedVllmApiKey } from "../../../src/lib/inference/vllm-api-key.ts";
 import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText } from "../fixtures/clients/index.ts";
 import { trustedSandboxShellScript } from "../fixtures/clients/sandbox.ts";
+import { parseConfigExport } from "../fixtures/phases/config-export-validation.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import {
   assertAgentExecutionSucceeded,
@@ -35,6 +44,22 @@ import { assertHermesFollowUpReplies } from "./hermes-cli-adapter-live.ts";
 
 const TIMEOUT_MS = testTimeout(75 * 60_000);
 const HERMES_RESPONSE_TIMEOUT_MS = testTimeout(90 * 60_000);
+const VLLM_EXPORT_TIMEOUT_MS = testTimeout(90 * 60_000);
+
+function vllmExportEnv(): NodeJS.ProcessEnv {
+  return env({
+    NEMOCLAW_AGENT: "openclaw",
+    NEMOCLAW_MODEL: "",
+    NEMOCLAW_PROVIDER: "",
+    NEMOCLAW_SANDBOX_GPU: "0",
+    NEMOCLAW_SANDBOX_GPU_DEVICE: "",
+    NEMOCLAW_SERVING_PRESET: "",
+    NEMOCLAW_VLLM_EXTRA_ARGS_JSON: "",
+    NEMOCLAW_VLLM_MODEL: "",
+    NEMOCLAW_VLLM_PORT: "18000",
+    NEMOCLAW_WEB_SEARCH_PROVIDER: "none",
+  });
+}
 
 function hermesResponseEnv(): NodeJS.ProcessEnv {
   return env({
@@ -402,7 +427,7 @@ test(
 );
 
 test(
-  "OpenClaw defers attached Ollama export until v1 compatibility is implemented (#11435, #11977)",
+  "OpenClaw exports attached Ollama through a named proxy service (#11435, #11977, #12012)",
   {
     timeout: TIMEOUT_MS,
     meta: {
@@ -410,7 +435,7 @@ test(
         "prepare the Ollama export host",
         "onboard OpenClaw without sandbox GPU",
         "attach the export daemon",
-        "refuse the deferred attached Ollama configuration",
+        "export the attached Ollama configuration",
       ],
     },
   },
@@ -522,28 +547,147 @@ exec ollama pull qwen2.5:0.5b`,
     const model = (
       JSON.parse(tags.stdout) as { models: Array<{ name: string; digest: string }> }
     ).models.find(({ name }) => name === "qwen2.5:0.5b");
-    expect(tags.exitCode, resultText(tags)).toBe(0);
-    expect(model).toBeDefined();
-    expect(model?.digest).toMatch(/^(?:sha256:)?[a-f0-9]{64}$/u);
-    expect(daemonOwner).toBeDefined();
-
-    progress.phase("refuse the deferred attached Ollama configuration");
+    progress.phase("export the attached Ollama configuration");
     const firstPath = path.join(directory, "first.yaml");
     const exported = await host.command(
       "node",
       [CLI, "config", "export", SANDBOX_NAME, "--output", firstPath, "--json"],
       { artifactName: "export-ollama-first", cwd: REPO_ROOT, env: exportEnv, timeoutMs: 60000 },
     );
-    expect(exported.exitCode, resultText(exported)).not.toBe(0);
-    expect(resultText(exported)).toContain("managed vLLM and Ollama compatibility are deferred");
-    expect(resultText(exported)).not.toContain("spec.inferenceProviders");
-    expect(resultText(exported)).toContain("unsupported");
-    expect(resultText(exported)).toContain("Config export failed");
-    expect(fs.existsSync(firstPath), "Deferred compatibility must prevent publication").toBe(false);
-    await artifacts.writeJson("ollama-config-export-evidence.json", {
+    expect(exported.exitCode, resultText(exported)).toBe(0);
+    const firstYaml = fs.readFileSync(firstPath, "utf8");
+    const first = parseConfigExport(firstYaml);
+    const service = first.spec.services?.["ollama-auth"] as V1Alpha1OllamaProxyService | undefined;
+    expect(service?.image).toBeNull();
+    expect(service?.upstream.model.digest).toBe(model!.digest.replace(/^sha256:/u, ""));
+    const proxyToken = readTokenFileChecked(ollamaProxyTokenFile()).token;
+    artifacts.addRedactionValues([proxyToken]);
+    expect(
+      firstYaml.includes(proxyToken) ||
+        /credential|NEMOCLAW_|openshell:resolve:env/u.test(firstYaml),
+    ).toBe(false);
+    await artifacts.writeText("ollama-config-export.yaml", firstYaml);
+  },
+);
+
+test(
+  "OpenClaw exports the fixed managed vLLM profile through a named service (#12012)",
+  {
+    timeout: VLLM_EXPORT_TIMEOUT_MS,
+    meta: {
+      e2ePhases: [
+        "qualify the managed vLLM export host",
+        "onboard the fixed managed vLLM profile",
+        "export the managed vLLM configuration",
+      ],
+    },
+  },
+  async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox }) => {
+    const exportEnv = vllmExportEnv();
+    let managedVllmOnboarded = false;
+    await artifacts.target.declare({
+      id: "gpu-e2e",
+      boundary:
+        "native Linux Docker + fixed catalog-owned managed vLLM + managed OpenClaw + SDK configuration export",
+      credentialBoundary:
+        "The managed vLLM bearer key remains in owner-only host state and is registered with the artifact redactor before evidence publication.",
+      profileId: EXPORTED_VLLM_PROFILE_ID,
       sandboxName: SANDBOX_NAME,
-      compatibility: "deferred",
-      publicationPrevented: true,
     });
+
+    progress.phase("qualify the managed vLLM export host");
+    await runtimeProvider.requireAvailable({
+      artifactName: "vllm-export-runtime-info",
+      scenarioLabel: "managed vLLM export",
+    });
+    const preflight = await host.command(
+      "docker",
+      ["inspect", "--format", "{{.Id}}", HOST_LOCAL_VLLM_CONTAINER_NAME],
+      {
+        artifactName: "vllm-export-preflight-container",
+        env: exportEnv,
+        timeoutMs: 30_000,
+      },
+    );
+    expect(
+      `${String(preflight.exitCode)}\n${resultText(preflight)}`,
+      `Refusing to replace a pre-existing ${HOST_LOCAL_VLLM_CONTAINER_NAME} container.`,
+    ).toMatch(/^1\n[\s\S]*no such (?:object|container)/iu);
+    await cleanupGpu(host, sandbox);
+
+    cleanup.trackDisposable("remove the exact managed vLLM runtime", () => {
+      const result = cleanupLocalModelRuntimes({ env: exportEnv, sandboxName: SANDBOX_NAME });
+      expect(
+        result.ok &&
+          (!managedVllmOnboarded ||
+            result.removed.some((resource) => resource.startsWith("container:"))),
+        JSON.stringify(result),
+      ).toBe(true);
+    });
+    cleanup.trackGateway(host, "nemoclaw", {
+      artifactName: "vllm-export-cleanup-gateway",
+      env: exportEnv,
+      timeoutMs: 60_000,
+    });
+    cleanup.trackDisposable("delete the managed vLLM export OpenShell sandbox", () =>
+      sandbox.cleanupSandbox(SANDBOX_NAME, {
+        artifactName: "vllm-export-cleanup-openshell",
+        env: exportEnv,
+        timeoutMs: 60_000,
+      }),
+    );
+    cleanup.trackSandbox(host, SANDBOX_NAME, {
+      artifactName: "vllm-export-cleanup-sandbox",
+      env: exportEnv,
+      timeoutMs: 15 * 60_000,
+    });
+
+    progress.phase("onboard the fixed managed vLLM profile");
+    const onboard = await host.command(
+      "node",
+      [
+        CLI,
+        "onboard",
+        "--profile",
+        EXPORTED_VLLM_PROFILE_ID,
+        "--fresh",
+        "--non-interactive",
+        "--yes-i-accept-third-party-software",
+      ],
+      {
+        artifactName: "vllm-export-onboard",
+        cwd: REPO_ROOT,
+        env: exportEnv,
+        timeoutMs: execTimeout(75 * 60_000),
+      },
+    );
+    expect(onboard.exitCode, resultText(onboard)).toBe(0);
+    managedVllmOnboarded = true;
+    const apiKey = loadManagedVllmApiKey();
+    artifacts.addRedactionValues([apiKey ?? ""]);
+
+    progress.phase("export the managed vLLM configuration");
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-vllm-export-"));
+    cleanup.trackDisposable("remove private managed vLLM export documents", () =>
+      fs.rmSync(directory, { recursive: true, force: true }),
+    );
+    const outputPath = path.join(directory, "export.yaml");
+    const exported = await host.command(
+      "node",
+      [CLI, "config", "export", SANDBOX_NAME, "--output", outputPath, "--json"],
+      {
+        artifactName: "vllm-export",
+        cwd: REPO_ROOT,
+        env: exportEnv,
+        timeoutMs: 60_000,
+      },
+    );
+    expect(exported.exitCode, resultText(exported)).toBe(0);
+    const yaml = fs.readFileSync(outputPath, "utf8");
+    const document = parseConfigExport(yaml);
+    const service = document.spec.services?.vllm as V1Alpha1VllmService | undefined;
+    expect(service?.image).toBeNull();
+    expect(apiKey && yaml.includes(apiKey)).toBe(false);
+    await artifacts.writeText("vllm-config-export.yaml", yaml);
   },
 );
