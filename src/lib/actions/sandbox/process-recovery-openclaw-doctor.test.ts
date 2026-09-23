@@ -688,55 +688,58 @@ describe("OpenClaw post-upgrade recovery doctor", () => {
     expect(execute.mock.calls[1]?.[2]).toBe(1_000);
   });
 
-  it("returns redacted OpenShell startup logs when the released gateway never serves", async () => {
-    const execute = vi
-      .fn()
-      .mockResolvedValueOnce({ status: 0, stdout: "", stderr: "" })
-      .mockResolvedValueOnce({ status: 0, stdout: "", stderr: "" })
-      .mockResolvedValueOnce({ status: 0, stdout: "", stderr: "" })
-      .mockResolvedValue({ status: 42, stdout: "", stderr: "" });
-    let now = 0;
-    const collectFailureLogs = vi.fn(async () => [
-      "[setup] OpenClaw post-upgrade offline restore released gateway launch",
-      "[gateway] startup failed after restored-state validation",
-    ]);
-    const collectRuntimeFailureLogs = vi.fn(async () => [
-      "gateway startup failed: restored plugin state is invalid",
-    ]);
+  it.each(["release", "restart"] as const)(
+    "returns redacted startup logs when recovery fails during %s",
+    async (stage) => {
+      const execute = vi
+        .fn()
+        .mockResolvedValueOnce({ status: 0, stdout: "", stderr: "" })
+        .mockResolvedValueOnce({ status: stage === "release" ? 40 : 0, stdout: "", stderr: "" })
+        .mockResolvedValueOnce({ status: stage === "release" ? 40 : 0, stdout: "", stderr: "" })
+        .mockResolvedValue({ status: 42, stdout: "", stderr: "" });
+      let now = 0;
+      const collectFailureLogs = vi.fn(async () => [
+        "[setup] OpenClaw post-upgrade offline restore released gateway launch",
+        "[gateway] startup failed after restored-state validation",
+      ]);
+      const collectRuntimeFailureLogs = vi.fn(async () => [
+        "gateway startup failed: restored plugin state is invalid",
+      ]);
 
-    await expect(
-      finishOpenClawPostRestoreDoctor(
-        {
-          sandboxName: "alpha",
-          runtimeSelection: { gatewayName: "recorded-gateway", workspace: "default" },
-        },
-        {
-          captureOpenshell: vi.fn() as never,
-          collectFailureLogs,
-          collectRuntimeFailureLogs,
-          executeSandboxExecCommand: execute,
-          now: () => now,
-          sleep: vi.fn(async () => {
-            now = 180_000;
-          }),
-        },
-      ),
-    ).resolves.toEqual({
-      ok: false,
-      stage: "restart",
-      detail: expect.stringMatching(
-        /gateway startup failed: restored plugin state is invalid[\s\S]*\[gateway\] startup failed after restored-state validation/u,
-      ),
-    });
-    expect(collectRuntimeFailureLogs).toHaveBeenCalledExactlyOnceWith("alpha", {
-      gatewayName: "recorded-gateway",
-      workspace: "default",
-    });
-    expect(collectFailureLogs).toHaveBeenCalledExactlyOnceWith("alpha", {
-      kind: "named",
-      gatewayName: "recorded-gateway",
-    });
-  });
+      await expect(
+        finishOpenClawPostRestoreDoctor(
+          {
+            sandboxName: "alpha",
+            runtimeSelection: { gatewayName: "recorded-gateway", workspace: "default" },
+          },
+          {
+            captureOpenshell: vi.fn() as never,
+            collectFailureLogs,
+            collectRuntimeFailureLogs,
+            executeSandboxExecCommand: execute,
+            now: () => now,
+            sleep: vi.fn(async () => {
+              now = 180_000;
+            }),
+          },
+        ),
+      ).resolves.toEqual({
+        ok: false,
+        stage,
+        detail: expect.stringMatching(
+          /gateway startup failed: restored plugin state is invalid[\s\S]*\[gateway\] startup failed after restored-state validation/u,
+        ),
+      });
+      expect(collectRuntimeFailureLogs).toHaveBeenCalledExactlyOnceWith("alpha", {
+        gatewayName: "recorded-gateway",
+        workspace: "default",
+      });
+      expect(collectFailureLogs).toHaveBeenCalledExactlyOnceWith("alpha", {
+        kind: "named",
+        gatewayName: "recorded-gateway",
+      });
+    },
+  );
 
   it("keeps the gateway gated when the verified release cannot be published", async () => {
     const execute = vi.fn(async () => ({ status: 35, stdout: "", stderr: "" }));

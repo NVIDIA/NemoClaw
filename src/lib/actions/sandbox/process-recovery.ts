@@ -396,7 +396,9 @@ async function collectOpenClawRuntimeFailureLogs(
         'direct_status="$?"',
         'printf \'[nemoclaw-health-probe] url=%s ambient_status=%s ambient_http=%s direct_status=%s direct_http=%s\\n\' "$probe_url" "$ambient_status" "$ambient_code" "$direct_status" "$direct_code"',
         "if command -v ss >/dev/null 2>&1; then ss -ltn 2>/dev/null; elif command -v netstat >/dev/null 2>&1; then netstat -ltn 2>/dev/null; fi",
-        "tail -n 120 /tmp/gateway.log 2>/dev/null || true",
+        "tail -c 8192 /tmp/gateway.log /tmp/nemoclaw-start.log 2>/dev/null || true",
+        'startup_status=0; startup_count="$(pgrep -fc \'[n]emoclaw-start\' 2>/dev/null)" || startup_status=$?; printf "[nemoclaw-maintenance] startup_status=%s startup_count=%s\\n" "$startup_status" "$startup_count"',
+        'for state_path in /sandbox/.openclaw /sandbox/.openclaw/.nemoclaw-post-upgrade-doctor /tmp/nemoclaw-post-upgrade-doctor-ready; do printf "[nemoclaw-maintenance] %s " "$state_path"; stat -c "type=%F uid=%u gid=%g mode=%a links=%h" "$state_path" 2>/dev/null || printf "absent\\n"; done',
       ].join("; "),
       15_000,
       runtimeSelection,
@@ -406,6 +408,36 @@ async function collectOpenClawRuntimeFailureLogs(
   } catch {
     return [];
   }
+}
+
+async function collectOpenClawRecoveryFailureDetail(
+  sandboxName: string,
+  runtimeSelection: OpenShellRuntimeSelection | undefined,
+  deps: OpenClawPostRestoreDoctorDeps,
+): Promise<string> {
+  const runtimeFailureLogs = await (
+    deps.collectRuntimeFailureLogs ??
+    ((name, selection) => collectOpenClawRuntimeFailureLogs(name, selection, deps))
+  )(sandboxName, runtimeSelection);
+  const failureLogs = await (deps.collectFailureLogs ?? collectRedactedOpenShellSandboxLogs)(
+    sandboxName,
+    runtimeSelection
+      ? namedOpenShellGateway(runtimeSelection.gatewayName)
+      : selectedOpenShellGateway(),
+  );
+  const logDetail = [
+    ...(runtimeFailureLogs.length > 0
+      ? [
+          `Recent redacted OpenClaw runtime diagnostics:\n${runtimeFailureLogs.map((line) => `  ${line}`).join("\n")}`,
+        ]
+      : []),
+    ...(failureLogs.length > 0
+      ? [
+          `Recent redacted OpenShell sandbox logs:\n${failureLogs.map((line) => `  ${line}`).join("\n")}`,
+        ]
+      : []),
+  ];
+  return logDetail.length > 0 ? `\n${logDetail.join("\n")}` : "";
 }
 
 function captureOpenClawDoctorLifecycle(
@@ -1055,10 +1087,11 @@ export async function releaseOpenClawPostRestoreDoctorForDelete(
     },
   );
   if (consumed) return { ok: true };
+  const logDetail = await collectOpenClawRecoveryFailureDetail(sandboxName, runtimeSelection, deps);
   return {
     ok: false,
     stage: "release",
-    detail: "the released maintenance request was not consumed before source deletion",
+    detail: `the released maintenance request was not consumed before source deletion${logDetail}`,
   };
 }
 
@@ -1123,32 +1156,11 @@ export async function finishOpenClawPostRestoreDoctor(
     },
   );
   if (completed) return { ok: true };
-  const runtimeFailureLogs = await (
-    deps.collectRuntimeFailureLogs ??
-    ((name, selection) => collectOpenClawRuntimeFailureLogs(name, selection, deps))
-  )(sandboxName, runtimeSelection);
-  const failureLogs = await (deps.collectFailureLogs ?? collectRedactedOpenShellSandboxLogs)(
-    sandboxName,
-    runtimeSelection
-      ? namedOpenShellGateway(runtimeSelection.gatewayName)
-      : selectedOpenShellGateway(),
-  );
-  const logDetail = [
-    ...(runtimeFailureLogs.length > 0
-      ? [
-          `Recent redacted OpenClaw runtime diagnostics:\n${runtimeFailureLogs.map((line) => `  ${line}`).join("\n")}`,
-        ]
-      : []),
-    ...(failureLogs.length > 0
-      ? [
-          `Recent redacted OpenShell sandbox logs:\n${failureLogs.map((line) => `  ${line}`).join("\n")}`,
-        ]
-      : []),
-  ];
+  const logDetail = await collectOpenClawRecoveryFailureDetail(sandboxName, runtimeSelection, deps);
   return {
     ok: false,
     stage: "restart",
-    detail: `the released sandbox did not return a healthy gateway${logDetail.length > 0 ? `\n${logDetail.join("\n")}` : ""}`,
+    detail: `the released sandbox did not return a healthy gateway${logDetail}`,
   };
 }
 
