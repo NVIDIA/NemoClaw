@@ -430,3 +430,32 @@ describe("shared E2E workflow boundary", () => {
     expect(errors).toContain("workflow missing shared E2E job");
   });
 });
+
+describe("approved pre-candidate shell body integrity", () => {
+  const owners = [
+    "Authenticate manual PR dispatch",
+    "Record trusted E2E dispatch receipt",
+    "Authorize Launchable E2E maintainer dispatch",
+    "Generate E2E target matrix",
+  ];
+  const mutations = [
+    { label: "prepend", apply: (run: string) => "printf UNAPPROVED_BOUNDARY_MUTATION\n" + run },
+    { label: "append", apply: (run: string) => run + "\nprintf UNAPPROVED_BOUNDARY_MUTATION\n" },
+    {
+      label: "weaken fail-closed shell",
+      apply: (run: string) => run.replace("set -euo pipefail", "set -uo pipefail"),
+    },
+  ];
+  it.each(owners.flatMap((name) => mutations.map((mutation) => ({ name, ...mutation }))))(
+    "rejects $label in $name even when required fragments remain",
+    ({ name, apply }) => {
+      const errors = validateMutatedWorkflow((workflow) => {
+        const step = workflow.jobs["generate-matrix"]!.steps!.find((step) => step.name === name)!;
+        step.run = apply(step.run!);
+      });
+      expect(errors).toContain(
+        `trusted pre-candidate step ${name} must preserve its exact reviewed command body`,
+      );
+    },
+  );
+});

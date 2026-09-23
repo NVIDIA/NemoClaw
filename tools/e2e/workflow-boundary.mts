@@ -2650,6 +2650,18 @@ function validateTrustedE2eDispatchReceipt(
   }
 }
 
+// Reviewed canonical shell bodies from the trusted generate-matrix prefix.
+// Substring checks cannot exclude extra commands before immutable toolchain staging.
+const PRE_CANDIDATE_RUN_SHA256: Readonly<Record<string, string>> = {
+  "Authenticate manual PR dispatch":
+    "25c1a828bd0034722e9f01a1da7c76b26f069120929a7d820fd0873ed1d98d5f",
+  "Record trusted E2E dispatch receipt":
+    "ee0b2e6c6aa4552b228bd1cc3ba4e1f9cd72701c30b81f7d5fbf9bc011fb51c7",
+  "Authorize Launchable E2E maintainer dispatch":
+    "bbf442a006b47016eda56133eb400a48c6931c55364c1220b84327b5ffd6f171",
+  "Generate E2E target matrix": "e2678fa3599f04cbe2b09d8be035e3b551359aab8ea8064e4f457da5a35dde3e",
+};
+
 function validatePreCandidateActions(
   errors: string[],
   steps: WorkflowRecord[],
@@ -2671,7 +2683,8 @@ function validatePreCandidateActions(
       E2E_ACTION_PROVENANCE.stageNativePodmanToolchains.reference,
     ],
   ]);
-  // These shell steps retain their content checks in the dispatch, routing, and planner validators.
+  // Routing and dependency installation already have exact-body checks in their owners.
+  // Pin the remaining approved bodies here in addition to their semantic checks.
   const approvedRunSteps = new Set([
     "Build trusted larger-runner routing",
     "Authenticate manual PR dispatch",
@@ -2691,6 +2704,16 @@ function validatePreCandidateActions(
     if (seen.has(name) || !referenceMatches) {
       errors.push(
         "native Podman staging must run with only approved actions before candidate checkout",
+      );
+    }
+    const expectedRunSha256 = PRE_CANDIDATE_RUN_SHA256[name];
+    if (
+      expectedRunSha256 !== undefined &&
+      createHash("sha256").update(stringValue(step.run).trimEnd()).digest("hex") !==
+        expectedRunSha256
+    ) {
+      errors.push(
+        `trusted pre-candidate step ${name} must preserve its exact reviewed command body`,
       );
     }
     seen.add(name);
