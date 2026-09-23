@@ -1092,14 +1092,18 @@ describe("readiness-gated runtime preflight", () => {
 
   const ACCEPTED_N1X_GPU_NAME = "NVIDIA RTX Spark N1X (6144-core Blackwell RTX GPU)";
   const UNLISTED_N1X_GPU_NAME = "NVIDIA RTX Spark N1X Laptop GPU";
-  async function runRealProviderPreflight(gpuName: string, n1xWslProduct: boolean | undefined) {
+  async function runRealProviderPreflight(
+    gpuName: string,
+    n1xWslProduct: boolean | undefined,
+    provedGpuName = gpuName,
+  ) {
     // The proof phase lets `detectGpu()` detect WSL itself; N1x classification requires WSL.
     vi.stubEnv("WSL_DISTRO_NAME", "Ubuntu");
     const captureHostCommand = vi
       .fn()
       .mockReturnValueOnce({
         status: 0,
-        stdout: `Test PASSED\nNEMOCLAW_GPU_DEVICE=GPU-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeee0, 0, ${gpuName}, 63936, 60000\n`,
+        stdout: `Test PASSED\nNEMOCLAW_GPU_DEVICE=GPU-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeee0, 0, ${provedGpuName}, 63936, 60000\n`,
         stderr: "",
       })
       .mockReturnValueOnce({ status: 0, stdout: "", stderr: "" });
@@ -1132,7 +1136,7 @@ describe("readiness-gated runtime preflight", () => {
         },
       ),
     );
-    return { gpu: result.gpu, captureHostCommand };
+    return { gpu: result.gpu, readinessReport: result.readinessReport, captureHostCommand };
   }
 
   it.each([
@@ -1180,6 +1184,20 @@ describe("readiness-gated runtime preflight", () => {
       computeConstrained: true,
     });
     expect(selectDefaultOllamaModel(["qwen3.5:9b", "qwen3.6:35b"], gpu)).toBe("qwen3.5:9b");
+  });
+
+  it("marks WSL GPU passthrough absent when provider rows do not match the host (#12073)", async () => {
+    const { gpu, readinessReport } = await runRealProviderPreflight(
+      ACCEPTED_N1X_GPU_NAME,
+      false,
+      "NVIDIA GB300",
+    );
+
+    expect(gpu).toBeNull();
+    expect(readinessReport.capabilities).toContainEqual({
+      id: "host.platform.wsl_gpu_passthrough",
+      state: "absent",
+    });
   });
 
   it("preserves a failed bounded WSL GPU proof as an absent readiness capability (#7411)", async () => {

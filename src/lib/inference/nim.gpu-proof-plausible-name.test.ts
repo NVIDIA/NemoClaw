@@ -512,6 +512,7 @@ describe("detectGpu trust-gate rejection reasons (#9000)", () => {
 
   it("rejects multiple GPU rows when container evidence does not match (#12073)", () => {
     const { reasons, onTrustGateRejection } = collectReasons();
+    const proofStatuses: boolean[] = [];
     const prover = passingProver(undefined, "docker", [
       { name: PLAUSIBLE_NAME, totalMemoryMB: 8128, availableMemoryMB: 7000 },
     ]);
@@ -524,12 +525,14 @@ describe("detectGpu trust-gate rejection reasons (#9000)", () => {
           ),
           isWsl: true,
           onTrustGateRejection,
+          onContainerGpuProof: (proof) => proofStatuses.push(proof.passed),
         }),
       ).toBeNull();
     });
     expect(reasons).toEqual([
       "/proc/driver/nvidia is absent and the bounded CUDA proof did not verify every reported GPU row",
     ]);
+    expect(proofStatuses).toEqual([false]);
   });
 
   it("derives aggregate capacity only from matching verified device rows (#12073)", () => {

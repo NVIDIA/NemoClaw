@@ -601,15 +601,19 @@ export function detectGpu(deps: DetectGpuDeps = {}): GpuDetection | null {
           if (!proof) {
             return { proof: null, rejection: "the bounded CUDA proof was not attempted" };
           }
-          deps.onContainerGpuProof?.({ providerId: proof.providerId, passed: proof.passed });
-          if (!proof.passed) return { proof: null, rejection: "the bounded CUDA proof failed" };
+          if (!proof.passed) {
+            deps.onContainerGpuProof?.({ providerId: proof.providerId, passed: false });
+            return { proof: null, rejection: "the bounded CUDA proof failed" };
+          }
           const verified = proof.verifiedDevices;
           if (!verified || verified.length !== parsed.length || !gpuRowsMatch(parsed, verified)) {
+            deps.onContainerGpuProof?.({ providerId: proof.providerId, passed: false });
             return {
               proof: null,
               rejection: "the bounded CUDA proof did not verify every reported GPU row",
             };
           }
+          deps.onContainerGpuProof?.({ providerId: proof.providerId, passed: true });
           return { proof, rejection: null };
         };
         let trusted: ParsedGpu[];
