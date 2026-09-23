@@ -6,7 +6,9 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it, onTestFinished, vi } from "vitest";
+
+import { shellQuote } from "../../runner";
 
 import {
   abortOpenClawPostRestoreDoctor,
@@ -691,27 +693,53 @@ describe("OpenClaw post-upgrade recovery doctor", () => {
   it.each(["release", "restart"] as const)(
     "returns redacted startup logs when recovery fails during %s",
     async (stage) => {
-      const credential = `nvapi-${"a".repeat(64)}`;
-      const diagnostics = {
-        status: 0,
-        stdout: `gateway startup failed: restored plugin state is invalid\nAuthorization: Bearer ${credential}`,
-        stderr: "",
+      const credential = `nvapi-${"q".repeat(100)}`;
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-recovery-logs-"));
+      onTestFinished(() => fs.rmSync(root, { recursive: true, force: true }));
+      const gatewayLog = path.join(root, "gateway.log");
+      const startupLog = path.join(root, "startup.log");
+      fs.writeFileSync(
+        gatewayLog,
+        `safe start\nAuthorization: Bearer ${credential}\n${"z".repeat(8030)}\ngateway startup failed: restored plugin state is invalid\n`,
+      );
+      fs.writeFileSync(startupLog, `Authorization: Bearer ${credential}\n`);
+      const runDiagnostics = (command: string) => {
+        const result = spawnSync(
+          "sh",
+          [
+            "-c",
+            "curl() { return 7; }; ss() { :; }; pgrep() { return 1; }; stat() { return 1; }; " +
+              command
+                .replaceAll("/tmp/gateway.log", shellQuote(gatewayLog))
+                .replaceAll("/tmp/nemoclaw-start.log", shellQuote(startupLog)),
+          ],
+          { encoding: "utf8" },
+        );
+        return { status: result.status ?? 1, stdout: result.stdout, stderr: result.stderr };
       };
-      const executeSsh = vi.fn(async () => diagnostics);
+      const runBuffered = vi.fn(async ({ command }: { command: readonly string[] }) => {
+        const result = runDiagnostics(command[2]!);
+        return {
+          outcome:
+            stage === "release"
+              ? {
+                  kind: "failed" as const,
+                  error: {
+                    kind: "unavailable" as const,
+                    message: `native diagnostic fixture failed: ${credential}`,
+                  },
+                }
+              : { kind: "completed" as const, exitCode: result.status },
+          stdout: result.stdout,
+          stderr: result.stderr,
+        };
+      });
       const execute = vi
         .fn()
         .mockResolvedValueOnce({ status: 0, stdout: "", stderr: "" })
-        .mockImplementation(async (_name: string, command: string) =>
-          command.includes("probe_url=")
-            ? stage === "release"
-              ? null
-              : diagnostics
-            : {
-                status: stage === "release" || command.includes("curl") ? 42 : 0,
-                stdout: "",
-                stderr: "",
-              },
-        );
+        .mockResolvedValueOnce({ status: stage === "release" ? 40 : 0, stdout: "", stderr: "" })
+        .mockResolvedValueOnce({ status: stage === "release" ? 40 : 0, stdout: "", stderr: "" })
+        .mockResolvedValue({ status: 42, stdout: "", stderr: "" });
       let now = 0;
       const collectFailureLogs = vi.fn(async () => [
         "[setup] OpenClaw post-upgrade offline restore released gateway launch",
@@ -725,7 +753,7 @@ describe("OpenClaw post-upgrade recovery doctor", () => {
         {
           captureOpenshell: vi.fn() as never,
           collectFailureLogs,
-          executeSandboxCommand: executeSsh,
+          commandExecutor: { runBuffered },
           executeSandboxExecCommand: execute,
           now: () => now,
           sleep: vi.fn(async () => {
@@ -741,29 +769,19 @@ describe("OpenClaw post-upgrade recovery doctor", () => {
         ),
       });
       expect(JSON.stringify(result)).not.toContain(credential);
-      expect(executeSsh.mock.calls).toEqual(
+      expect(JSON.stringify(result)).not.toContain("q".repeat(50));
+      expect(JSON.stringify(result)).toContain(
         stage === "release"
-          ? [
-              [
-                "alpha",
-                expect.stringContaining("/tmp/nemoclaw-start.log"),
-                {
-                  timeout: 15_000,
-                  runtimeSelection: { gatewayName: "recorded-gateway", workspace: "default" },
-                },
-              ],
-            ]
-          : [],
+          ? "unavailable: native diagnostic fixture failed:"
+          : "[nemoclaw-runtime-diagnostics] exit=0",
       );
-      expect(execute).toHaveBeenLastCalledWith(
-        "alpha",
-        expect.stringContaining("/tmp/nemoclaw-start.log"),
-        15_000,
-        {
-          localDockerFallbackPolicy: "never",
-          runtimeSelection: { gatewayName: "recorded-gateway", workspace: "default" },
-        },
-      );
+      expect(runBuffered).toHaveBeenCalledExactlyOnceWith({
+        sandboxName: "alpha",
+        target: { kind: "named", gatewayName: "recorded-gateway" },
+        command: ["sh", "-c", expect.stringContaining("/tmp/nemoclaw-start.log")],
+        environment: expect.objectContaining({ OPENSHELL_WORKSPACE: "default" }),
+        timeoutMilliseconds: 15_000,
+      });
       expect(collectFailureLogs).toHaveBeenCalledExactlyOnceWith("alpha", {
         kind: "named",
         gatewayName: "recorded-gateway",
