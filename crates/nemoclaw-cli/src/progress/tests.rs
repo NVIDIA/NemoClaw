@@ -3,7 +3,6 @@
 use super::inline::{clear_panel, draw, draw_due, insert_header, insert_line, panel_height};
 use super::*;
 use crate::style::{Palette, Tone};
-use nemoclaw_sdk::StepOutcome;
 use ratatui::{Terminal, TerminalOptions, Viewport, backend::Backend};
 
 use ratatui::backend::TestBackend;
@@ -263,6 +262,7 @@ fn panel_grows_for_active_work_and_cleanup_places_results_next_to_milestones() {
 #[cfg(unix)]
 #[test]
 fn partial_failure_and_interruption_preserve_completed_milestones() {
+    use nemoclaw_sdk::StepOutcome;
     use std::{
         fs::File,
         io::Read,
