@@ -277,10 +277,9 @@ describe("pre-backup audit record framing", () => {
     try {
       fs.mkdirSync(path.join(restricted, "secret"), { recursive: true });
       fs.chmodSync(restricted, 0);
-      if (process.getuid?.() === 0) {
-        fs.chmodSync(fixture, 0o755);
-        fs.chmodSync(workspace, 0o755);
-      }
+      // Branchless on purpose: changed test files may not add if statements.
+      process.getuid?.() === 0 &&
+        (fs.chmodSync(fixture, 0o755), fs.chmodSync(workspace, 0o755));
       const findCommand = sandboxState.buildPreBackupAuditFindCommand(workspace);
       // Root can read mode-000 directories. Drop to nobody so find still
       // emits the unreadable record the audit command is meant to produce.
