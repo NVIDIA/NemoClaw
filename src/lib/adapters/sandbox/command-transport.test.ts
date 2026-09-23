@@ -101,4 +101,15 @@ describe("native sandbox command transport", () => {
       expect.objectContaining({ timeoutMilliseconds: expected }),
     );
   });
+  it("keeps a caller-owned deadline while ordinary commands retain the ambient override", async () => {
+    vi.stubEnv("NEMOCLAW_SANDBOX_EXEC_TIMEOUT_MS", "60000");
+    const deps = fixture();
+    await executeSandboxExecCommandTransport(deps, "alpha", "id", 300, {
+      honorCallerTimeout: true,
+    });
+    await executeSandboxExecCommandTransport(deps, "alpha", "id", 300, {});
+    expect(
+      deps.commandExecutor.runBuffered.mock.calls.map(([request]) => request.timeoutMilliseconds),
+    ).toEqual([300, 60000]);
+  });
 });

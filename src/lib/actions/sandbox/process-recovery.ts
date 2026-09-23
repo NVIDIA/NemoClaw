@@ -125,6 +125,7 @@ export type RestartSandboxGatewayOptions = BaseRestartSandboxGatewayOptions & {
 export type { SandboxCommandResult, SandboxExecCommandOptions };
 
 export type SandboxExecCommandExecutionOptions = SandboxExecCommandOptions & {
+  commandExecutor?: OpenShellSandboxBufferedCommandExecutor;
   runtimeSelection?: OpenShellRuntimeSelection;
 };
 
@@ -136,14 +137,16 @@ type ProcessRecoveryProbeTiming = {
 
 type Awaitable<T> = T | Promise<T>;
 
-function commandTransportDependencies(): CommandTransportDependencies {
+function commandTransportDependencies(
+  commandExecutor = createCliOpenShellSandboxCommandExecutor({ hostCwd: ROOT }),
+): CommandTransportDependencies {
   return {
     buildSandboxExecMarkedCommand,
     buildSubprocessEnv,
     extractSandboxExecCommandStdout,
     commandExecutor: {
       runBuffered: (request) =>
-        createCliOpenShellSandboxCommandExecutor({ hostCwd: ROOT }).runBuffered({
+        commandExecutor.runBuffered({
           ...request,
           command: wrapOrdinarySandboxCommand(request.command),
         }),
@@ -215,12 +218,12 @@ export async function executeSandboxExecCommand(
   timeout = DEFAULT_SANDBOX_EXEC_TIMEOUT_MS,
   options: SandboxExecCommandExecutionOptions = {},
 ): Promise<SandboxCommandResult | null> {
-  const { runtimeSelection, ...transportOptions } = options;
+  const { runtimeSelection, commandExecutor, ...transportOptions } = options;
   const runtimeEnv = runtimeSelection
     ? buildOpenShellRuntimeSelectionEnv(buildSubprocessEnv(), runtimeSelection)
     : options.runtimeEnv;
   return executeSandboxExecCommandTransport(
-    commandTransportDependencies(),
+    commandTransportDependencies(commandExecutor),
     sandboxName,
     command,
     timeout,
@@ -1254,32 +1257,6 @@ export function executeGatewaySupervisorAction(
   return executeGatewaySupervisorActionPinned(sandboxName, action, timeout);
 }
 
-async function executeSandboxExecCommandForStatus(
-  sandboxName: string,
-  command: string,
-  gatewayName?: string,
-  commandExecutor: OpenShellSandboxBufferedCommandExecutor = createCliOpenShellSandboxCommandExecutor(
-    { hostCwd: ROOT },
-  ),
-  timeoutMilliseconds = DEFAULT_SANDBOX_EXEC_TIMEOUT_MS,
-): Promise<SandboxCommandResult | null> {
-  const markedCommand = buildSandboxExecMarkedCommand(command);
-  const result = await commandExecutor.runBuffered({
-    sandboxName,
-    target: gatewayName ? namedOpenShellGateway(gatewayName) : selectedOpenShellGateway(),
-    command: ["sh", "-c", markedCommand],
-    timeoutMilliseconds,
-  });
-  if (result.outcome.kind !== "completed") return null;
-  const commandStdout = extractSandboxExecCommandStdout(result.stdout);
-  if (commandStdout === null) return null;
-  return {
-    status: result.outcome.exitCode,
-    stdout: commandStdout,
-    stderr: result.stderr.trim(),
-  };
-}
-
 function parseSandboxGatewayProbe(result: SandboxCommandResult | null): true | null {
   if (!result || result.status !== 0) return null;
   return result.stdout === "RUNNING" ? true : null;
@@ -1693,16 +1670,20 @@ export async function isSandboxGatewayHttpReachableForStatus(
   const command = options.startup
     ? sandboxGatewayRecoveryProbeCommand(probeUrl, true)
     : sandboxGatewayHealthProbeCommand(probeUrl);
-  const result = await executeSandboxExecCommandForStatus(
-    sandboxName,
-    command,
-    gatewayName,
-    options.commandExecutor,
-    options.startup?.timeoutMs,
-  );
-  return options.startup
-    ? parseSandboxGatewayRecoveryProbe(result)
-    : parseSandboxGatewayProbe(result);
+  try {
+    const result = await executeSandboxExecCommand(
+      sandboxName,
+      command,
+      options.startup?.timeoutMs,
+      { gatewayName, commandExecutor: options.commandExecutor, honorCallerTimeout: true },
+    );
+    return options.startup
+      ? parseSandboxGatewayRecoveryProbe(result)
+      : parseSandboxGatewayProbe(result);
+  } catch (error) {
+    if (!(error instanceof SandboxCommandTransportError)) throw error;
+    return null;
+  }
 }
 
 /**

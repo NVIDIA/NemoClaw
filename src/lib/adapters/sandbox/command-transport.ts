@@ -14,6 +14,8 @@ export type SandboxCommandResult = {
 };
 
 export type SandboxExecCommandOptions = {
+  /** Internal bounded probes must retain their caller deadline despite ambient overrides. */
+  honorCallerTimeout?: boolean;
   gatewayName?: string;
   runtimeEnv?: NodeJS.ProcessEnv;
 };
@@ -51,7 +53,9 @@ export async function executeSandboxExecCommandTransport(
     command: ["sh", "-c", deps.buildSandboxExecMarkedCommand(command)],
     environment: options.runtimeEnv ?? deps.buildSubprocessEnv(),
     timeoutMilliseconds:
-      Number.isFinite(timeoutOverride) && timeoutOverride > 0 ? timeoutOverride : timeout,
+      !options.honorCallerTimeout && Number.isFinite(timeoutOverride) && timeoutOverride > 0
+        ? timeoutOverride
+        : timeout,
   });
   if (completed.outcome.kind === "failed") {
     throw new SandboxCommandTransportError(completed.outcome.error.kind);
