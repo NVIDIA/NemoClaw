@@ -5,6 +5,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { writePreGatewaySession } from "../../../../test/support/uninstall-pre-gateway-session";
 import {
   withProvenManagedGatewayProcess,
   withSuccessfulPreUninstallBackup,
@@ -20,14 +21,12 @@ import {
   ensureManagedGatewayStateRoot,
   resolveGatewayStateDirName,
 } from "../../onboard/gateway-binding";
-import { bindGatewayAuthorityToCheckpoint } from "../../onboard/gateway-authority-checkpoint";
 import {
   acquireManagedGatewayStateLifecycleLock,
   managedGatewayStateLifecycleLockPath,
   releaseManagedGatewayStateLifecycleLock,
   tryAcquireManagedGatewayStateLifecycleLock,
 } from "../../onboard/gateway/state-lifecycle-lock";
-import { createSession } from "../../state/onboard-session";
 import {
   type RunResult,
   runUninstallPlan as runUninstallPlanBase,
@@ -65,96 +64,6 @@ function writeScopedGatewayState(
   writeManagedGatewayRuntimeProof(stateDir, port);
 }
 
-function writeCheckpointedPreGatewaySession(
-  stateRoot: string,
-  port: number,
-  session: ReturnType<typeof createSession>,
-  prepare: (session: ReturnType<typeof createSession>) => unknown = (value) => value,
-): void {
-  const gatewayName = `nemoclaw-${String(port)}`;
-  bindGatewayAuthorityToCheckpoint(session, {
-    endpoint: null,
-    gatewayName,
-    gatewayPort: port,
-    mode: "nemoclaw-managed",
-    requiredCapabilities: [],
-    source: "standalone",
-    stateDir: null,
-    supervisor: null,
-  });
-  fs.writeFileSync(
-    path.join(stateRoot, "onboard-session.json"),
-    `${JSON.stringify(prepare(session))}\n`,
-    { mode: 0o600 },
-  );
-}
-
-function interruptedPreGatewaySession(): ReturnType<typeof createSession> {
-  const now = new Date().toISOString();
-  const session = createSession({ agent: "openclaw", mode: "non-interactive" });
-  session.status = "failed";
-  session.lastStepStarted = "preflight";
-  session.failure = {
-    interrupted: true,
-    message: "Onboarding was interrupted during preflight.",
-    recordedAt: now,
-    step: "preflight",
-  };
-  session.steps.preflight = {
-    completedAt: null,
-    error: session.failure.message,
-    startedAt: now,
-    status: "failed",
-  };
-  session.machine = { revision: 1, state: "failed", stateEnteredAt: now, version: 1 };
-  return session;
-}
-
-function completedPreGatewaySession(): ReturnType<typeof createSession> {
-  const now = new Date().toISOString();
-  const session = createSession({ agent: "openclaw", mode: "non-interactive" });
-  session.resumable = false;
-  session.status = "complete";
-  session.machine = { revision: 1, state: "complete", stateEnteredAt: now, version: 1 };
-  return session;
-}
-
-const PRE_GATEWAY_SESSION_WRITERS = {
-  complete: (stateRoot, port) =>
-    writeCheckpointedPreGatewaySession(stateRoot, port, completedPreGatewaySession()),
-  future: (stateRoot, port) => {
-    const session = interruptedPreGatewaySession();
-    session.version = 999;
-    writeCheckpointedPreGatewaySession(stateRoot, port, session);
-  },
-  interrupted: (stateRoot, port) =>
-    writeCheckpointedPreGatewaySession(stateRoot, port, interruptedPreGatewaySession()),
-  malformed: (stateRoot) =>
-    fs.writeFileSync(path.join(stateRoot, "onboard-session.json"), "{}\n", { mode: 0o600 }),
-  sparse: (stateRoot, port) =>
-    writeCheckpointedPreGatewaySession(
-      stateRoot,
-      port,
-      interruptedPreGatewaySession(),
-      (session) => {
-        Reflect.deleteProperty(session, "resumable");
-        Reflect.deleteProperty(session.steps, "gateway");
-        Reflect.deleteProperty(session.steps, "sandbox");
-        return session;
-      },
-    ),
-} satisfies Record<string, (stateRoot: string, port: number) => void>;
-
-type PreGatewaySessionKind = keyof typeof PRE_GATEWAY_SESSION_WRITERS;
-
-function writePreGatewaySession(
-  stateRoot: string,
-  port: number,
-  kind: PreGatewaySessionKind,
-): void {
-  PRE_GATEWAY_SESSION_WRITERS[kind](stateRoot, port);
-}
-
 function writeOnboardLock(stateRoot: string): void {
   fs.writeFileSync(path.join(stateRoot, "onboard.lock"), "active\n", { mode: 0o600 });
 }
@@ -177,6 +86,8 @@ function writeSelectedSandboxRegistry(stateRoot: string, port: number): void {
           gatewayName: `nemoclaw-${String(port)}`,
           gatewayPort: port,
           name: "a4-test",
+          openshellDriver: "docker",
+          createdAt: "2026-09-23T00:00:00.000Z",
         },
       },
     })}\n`,
@@ -524,6 +435,7 @@ describe("uninstall selected gateway-port segregation (#3053)", () => {
     assertErrors: noErrorAssertions,
     childRun: false,
     destroyUserData: false,
+    dockerInventory: null as RunResult | null,
     expectedExit: 0,
     gatewayStateCreated: false,
     liveGatewayNames: ["nemoclaw"],
@@ -535,7 +447,46 @@ describe("uninstall selected gateway-port segregation (#3053)", () => {
     stateKept: false,
   };
 
+  const preservedUninstallState = (stateRoot: string, port: number) => {
+    writeSelectedSandboxRegistry(stateRoot, port);
+    fs.mkdirSync(path.join(stateRoot, "backups"));
+    fs.writeFileSync(path.join(stateRoot, "backups", "retained.txt"), "retained user data");
+  };
+
   it.each([
+    {
+      ...interruptedPreGatewayBase,
+      destroyUserData: true,
+      dockerInventory: ok(),
+      prepareState: preservedUninstallState,
+      scenario: "purges retained user data after runtime cleanup",
+    },
+    {
+      ...interruptedPreGatewayBase,
+      destroyUserData: true,
+      dockerInventory: ok(),
+      liveGatewayNames: [],
+      prepareState: preservedUninstallState,
+      scenario: "purges retained uninstall data when no other gateway remains",
+    },
+    {
+      ...interruptedPreGatewayBase,
+      destroyUserData: true,
+      dockerInventory: ok("existing-container\n"),
+      prepareState: preservedUninstallState,
+      expectedExit: 1,
+      stateKept: true,
+      scenario: "preserves retained uninstall data while a sandbox container remains",
+    },
+    {
+      ...interruptedPreGatewayBase,
+      destroyUserData: true,
+      dockerInventory: { status: 1, stdout: "", stderr: "inventory unavailable" },
+      prepareState: preservedUninstallState,
+      expectedExit: 1,
+      stateKept: true,
+      scenario: "preserves retained uninstall data when container inventory fails",
+    },
     {
       ...interruptedPreGatewayBase,
       assertErrors: (errors: string) =>
@@ -630,7 +581,7 @@ describe("uninstall selected gateway-port segregation (#3053)", () => {
       ...interruptedPreGatewayBase,
       assertErrors: (errors: string) =>
         expect(errors).toContain(
-          "The interrupted pre-gateway state changed during uninstall; preserving it for retry.",
+          "The local gateway state changed during uninstall; preserving it for retry.",
         ),
       expectedExit: 1,
       gatewayStateCreated: true,
@@ -685,6 +636,7 @@ describe("uninstall selected gateway-port segregation (#3053)", () => {
       assertErrors,
       childRun,
       destroyUserData,
+      dockerInventory,
       expectedExit,
       gatewayStateCreated,
       liveGatewayNames,
@@ -701,7 +653,12 @@ describe("uninstall selected gateway-port segregation (#3053)", () => {
       try {
         vi.stubEnv("NEMOCLAW_GATEWAY_PORT", String(port));
         vi.resetModules();
-        const runPortUninstall = (await import("./run-plan")).runUninstallPlan;
+        const uninstall = await import("./run-plan");
+        const runPortUninstall =
+          dockerInventory === null
+            ? uninstall.runUninstallPlan
+            : uninstall.runUninstallPlanProduction;
+        const { withSandboxMutationLock } = await import("../../state/mcp-lifecycle-lock");
         const selectedStateRoot = path.join(tmpHome, ".nemoclaw", "gateways", String(port));
         const selectedGatewayState = path.join(
           tmpHome,
@@ -731,7 +688,10 @@ describe("uninstall selected gateway-port segregation (#3053)", () => {
             keepOpenShell: false,
           },
           {
-            commandExists: (command) => command === "openshell" || command === "pgrep",
+            commandExists: (command) =>
+              command === "openshell" ||
+              command === "pgrep" ||
+              (command === "docker" && dockerInventory !== null),
             env: {
               HOME: tmpHome,
               NEMOCLAW_GATEWAY_PORT: String(port),
@@ -766,7 +726,8 @@ describe("uninstall selected gateway-port segregation (#3053)", () => {
                 ? ok(JSON.stringify(observedGatewayNames.map((name) => ({ name }))))
                 : (commandResults[command] ?? commandResults[commandKey] ?? ok());
             },
-            runDocker: () => ok(),
+            runDocker: () => dockerInventory ?? ok(),
+            withSandboxMutationLock,
           },
         );
 

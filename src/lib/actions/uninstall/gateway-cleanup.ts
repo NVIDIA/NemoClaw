@@ -2,6 +2,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { SpawnSyncOptions } from "node:child_process";
+import fs from "node:fs";
+import path from "node:path";
+
+import { isMcpLifecycleLockHeld } from "../../state/mcp-lifecycle-lock-acquisition";
+import {
+  getMcpLifecycleLockPath,
+  MCP_LIFECYCLE_LOCK_DIRNAME,
+} from "../../state/mcp-lifecycle-lock-storage";
 import type { OpenShellGatewayReuseObserver } from "../../adapters/openshell/gateway-reuse";
 import type { OpenShellGatewayLifecycle } from "../../adapters/openshell/gateway-lifecycle";
 import {
@@ -105,4 +113,38 @@ export async function collectLiveOpenShellGatewayNames(
     target: { kind: "named", gatewayName },
   });
   return result.ok ? new Set(result.names) : null;
+}
+
+/** Admit only empty lifecycle state or locks held by this uninstall transaction. */
+export function gatewayLifecycleStateContainsOnlyOwnedLocks(
+  sharedRoot: string,
+  ownedSandboxNames: readonly string[] = [],
+): boolean {
+  const stateDir = path.join(sharedRoot, "state");
+  try {
+    const state = fs.lstatSync(stateDir);
+    if (state.isSymbolicLink() || !state.isDirectory()) return false;
+    const entries = fs.readdirSync(stateDir);
+    if (entries.length === 0) return true;
+    if (entries.length !== 1 || entries[0] !== MCP_LIFECYCLE_LOCK_DIRNAME) return false;
+    const locksDir = path.join(stateDir, MCP_LIFECYCLE_LOCK_DIRNAME);
+    const locks = fs.lstatSync(locksDir);
+    return (
+      !locks.isSymbolicLink() &&
+      locks.isDirectory() &&
+      fs
+        .readdirSync(locksDir, { withFileTypes: true })
+        .every(
+          (entry) =>
+            entry.isFile() &&
+            ownedSandboxNames.some(
+              (name) =>
+                path.basename(getMcpLifecycleLockPath(name, stateDir)) === entry.name &&
+                isMcpLifecycleLockHeld(name, stateDir),
+            ),
+        )
+    );
+  } catch {
+    return false;
+  }
 }
