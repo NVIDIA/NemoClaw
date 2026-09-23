@@ -176,8 +176,9 @@ If the selector identifies a sandbox, resolve that retained sandbox through its 
 
 If NemoClaw confirms the destination identity but cannot register or publish it, the restore exits nonzero before state restore.
 If the failure reports that the pending clone changed during registration, NemoClaw preserves the current registry row.
-Preserve the error and the pending row for maintainer review.
-Do not retry the restore, use `--force`, or delete the destination by name because no supported command can prove that the changed row still belongs to this restore.
+If the pending row and live destination still match this restore, retry the same command without `--force` so NemoClaw can reconcile them.
+If you cannot prove that match, preserve the error and pending row for maintainer review.
+Do not use `--force` or delete the destination by name when ownership is uncertain.
 If the failure confirms an unregistered destination, run the owner-scoped deletion command that it prints:
 
 ```bash
