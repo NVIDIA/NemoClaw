@@ -26,10 +26,12 @@ function fixtureDiff(
   base: Readonly<Record<string, string>>,
   head: Readonly<Record<string, string>>,
   pullRequestNumber: number | null = null,
+  exceptionPolicySource: "base" | "head" = pullRequestNumber === null ? "head" : "base",
 ): GrowthGuardrailDiff {
   return {
     files,
     pullRequestNumber,
+    exceptionPolicySource,
     /**
      * Return each requested base-revision fixture file.
      *
@@ -102,6 +104,15 @@ function e2eAssertionBudget(
 
 /** Register synthetic cases for the growth guardrail parsers and diagnostics. */
 function defineCodebaseGrowthGuardrailTestSupport(): void {
+  it.each([
+    ["pull_request", "head"],
+    ["pull_request_target", "base"],
+    ["workflow_dispatch", "base"],
+    [undefined, "base"],
+  ] as const)("selects %s exception policy from %s", (eventName, expected) => {
+    expect(diffTestOnly.pullRequestExceptionPolicySource(eventName)).toBe(expected);
+  });
+
   it("caches repeated blob reads across guardrail checks", () => {
     const read = vi.fn((file: string) => `${file} content`);
     const cache = new Map<string, string | null>();
@@ -379,6 +390,35 @@ function defineCodebaseGrowthGuardrailTestSupport(): void {
     );
     const violations = await e2eAssertionBudgetGrowthViolations(diff);
     expect(violations.length === 0).toBe(scenario.approved);
+  });
+
+  it("allows the approved branch policy in candidate CI while enforcing the PR identity", async () => {
+    const base = e2eAssertionBudget(1);
+    const head = e2eAssertionBudget(2);
+    const policy = JSON.stringify({
+      schemaVersion: 1,
+      exceptions: [
+        {
+          pullRequest: 10341,
+          baseBudgetSha256: createHash("sha256").update(base).digest("hex"),
+          headBudgetSha256: createHash("sha256").update(head).digest("hex"),
+        },
+      ],
+    });
+    const diff = fixtureDiff(
+      [{ filename: "ci/e2e-assertion-budget.json", status: "modified" }],
+      { "ci/e2e-assertion-budget.json": base },
+      {
+        "ci/e2e-assertion-budget.json": head,
+        "ci/e2e-assertion-growth-exceptions.json": policy,
+      },
+      10341,
+      diffTestOnly.pullRequestExceptionPolicySource("pull_request"),
+    );
+    expect(await e2eAssertionBudgetGrowthViolations(diff)).toEqual([]);
+    expect(
+      await e2eAssertionBudgetGrowthViolations({ ...diff, pullRequestNumber: 10342 }),
+    ).not.toEqual([]);
   });
 
   it.each([

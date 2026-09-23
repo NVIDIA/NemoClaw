@@ -544,7 +544,7 @@ export async function e2eAssertionBudgetGrowthViolations(
   const [baseBlob, headBlob] = await Promise.all([
     diff.readBase([E2E_ASSERTION_BUDGET_FILE, E2E_GROWTH_EXCEPTIONS_FILE]),
     diff.readHead(
-      diff.pullRequestNumber === null
+      diff.exceptionPolicySource === "head"
         ? [E2E_ASSERTION_BUDGET_FILE, E2E_GROWTH_EXCEPTIONS_FILE]
         : [E2E_ASSERTION_BUDGET_FILE],
     ),
@@ -560,8 +560,8 @@ export async function e2eAssertionBudgetGrowthViolations(
   const head = parseE2eAssertionBudget(headSource);
   if (
     hasApprovedE2eBudgetTransition(
-      // Local checks are advisory; the independent PR check reads only trusted base policy.
-      diff.pullRequestNumber === null
+      // Local and candidate CI checks are advisory; independent enforcement reads base policy.
+      diff.exceptionPolicySource === "head"
         ? headBlob.get(E2E_GROWTH_EXCEPTIONS_FILE)
         : baseBlob.get(E2E_GROWTH_EXCEPTIONS_FILE),
       diff.pullRequestNumber,

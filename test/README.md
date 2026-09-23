@@ -78,7 +78,7 @@ same change. The ratchet rejects growth and stale baselines.
 
 Maintainer-approved exceptions are recorded in `ci/e2e-assertion-growth-exceptions.json`.
 Each entry binds a PR number to SHA-256 digests of the exact base and candidate budget files.
-Local checks use the checkout policy. The independent GitHub growth check uses only trusted-base
+Local hooks and candidate CI use the branch policy. The independent GitHub growth check uses only trusted-base
 policy and the event's PR number; a candidate cannot authorize its own independent check.
 A new exception must either land on `main` first or have its expected independent-check failure
 explicitly waived by a maintainer. Remove the entry after its PR merges.
