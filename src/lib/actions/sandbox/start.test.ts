@@ -364,7 +364,18 @@ describe("startSandbox native lifecycle", () => {
       expect.objectContaining({
         sandboxName: "my-sandbox",
         target: { kind: "named", gatewayName: "nemoclaw-19080" },
-        command: ["sh", "-c", expect.stringContaining("/health")],
+        command: [
+          "/bin/bash",
+          "--noprofile",
+          "--norc",
+          "-p",
+          "-c",
+          'builtin unset OPENCLAW_GATEWAY_TOKEN; builtin exec -- "$@"',
+          "nemoclaw-runtime-env",
+          "sh",
+          "-c",
+          expect.stringContaining("/health"),
+        ],
       }),
     );
     expect(requests[0]?.command.join(" ")).not.toContain("/usr/local/bin/nemoclaw-gateway-control");
