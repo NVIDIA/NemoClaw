@@ -157,7 +157,7 @@ mod tests {
         )
         .unwrap();
         let child = Command::new(std::env::current_exe().unwrap())
-            .args(["--exact", "progress::backend::tests::stderr_dimensions_are_independent_of_stdout_and_the_controlling_terminal", "--nocapture"])
+            .args(["--exact", "progress::inline::backend::tests::stderr_dimensions_are_independent_of_stdout_and_the_controlling_terminal", "--nocapture"])
             .env(CHILD, "1")
             .stdin(Stdio::null()).stdout(Stdio::piped())
             .stderr(Stdio::from(File::from(pty.slave)))
