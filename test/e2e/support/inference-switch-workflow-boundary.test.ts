@@ -18,6 +18,7 @@ describe("inference-switch catalogue boundary", () => {
       expect(openclaw).toMatchObject({
         profile: "standard",
         testFile: "test/e2e/live/openclaw-inference-switch.test.ts",
+        gatewayRuntimes: ["docker"],
         environment: {
           NEMOCLAW_AGENT: "openclaw",
           NEMOCLAW_SWITCH_MOCK_ANTHROPIC: "1",

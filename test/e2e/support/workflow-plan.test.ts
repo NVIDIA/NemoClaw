@@ -141,11 +141,12 @@ describe("E2E workflow plan", () => {
       "ubuntu-repo-cloud-openclaw",
     ]);
     expect(plan.testMatrix).toEqual([]);
-    expect(catalogueIds).toHaveLength(45);
+    expect(catalogueIds).toHaveLength(44);
     expect(catalogueIds).not.toEqual(
       expect.arrayContaining([
         "bootstrap-install-smoke",
         "gpu-e2e",
+        "openclaw-inference-switch",
         "rebuild-hermes",
         "rebuild-openclaw",
       ]),

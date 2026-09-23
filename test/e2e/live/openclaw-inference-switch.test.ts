@@ -1000,16 +1000,12 @@ test(
     );
 
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-switch-home-"));
-    const gatewayRuntime = process.env.NEMOCLAW_GATEWAY_RUNTIME ?? "docker";
-    const customImageDockerfile =
-      gatewayRuntime === "docker"
-        ? stageNonRootCustomOpenClawImageDockerfile(
-            home,
-            readLiveE2eManagedImageCatalogContracts(liveE2eManagedImageCatalog(process.env)!).get(
-              "openclaw",
-            )!.reference,
-          )
-        : undefined;
+    const customImageDockerfile = stageNonRootCustomOpenClawImageDockerfile(
+      home,
+      readLiveE2eManagedImageCatalogContracts(liveE2eManagedImageCatalog(process.env)!).get(
+        "openclaw",
+      )!.reference,
+    );
     let mockProvider: MockAnthropicProvider | undefined;
     cleanup.trackDisposable(
       `remove OpenClaw inference switch test home for ${SANDBOX_NAME}`,
@@ -1053,12 +1049,8 @@ test(
         cwd: REPO_ROOT,
         env: commandEnv(home, {
           ...baseline.env,
-          ...(customImageDockerfile
-            ? {
-                NEMOCLAW_FROM_DOCKERFILE: customImageDockerfile,
-                NEMOCLAW_SANDBOX_PREBUILD: "1",
-              }
-            : {}),
+          NEMOCLAW_FROM_DOCKERFILE: customImageDockerfile,
+          NEMOCLAW_SANDBOX_PREBUILD: "1",
           NEMOCLAW_RECREATE_SANDBOX: "1",
         }),
         redactionValues,
@@ -1076,7 +1068,7 @@ test(
       skip("NVIDIA endpoint validation was unavailable/rate-limited during onboarding");
     }
     expect(install.exitCode, installText).toBe(0);
-    if (customImageDockerfile) {
+    {
       const startupConfigResult = await sandbox.exec(
         SANDBOX_NAME,
         ["cat", "/sandbox/.openclaw/openclaw.json"],
@@ -1252,8 +1244,6 @@ test(
     await artifacts.target.complete({
       id: "openclaw-inference-switch",
       status: "passed",
-      gatewayRuntime,
-      customImageReconciliation: customImageDockerfile ? "passed" : "not-applicable",
       assertions: {
         runtimeProviderAvailable: true,
         installCompleted: install.exitCode === 0,

@@ -1103,7 +1103,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
       OPENSHELL_GATEWAY: "nemoclaw",
     },
   }),
-  managedRuntimeTarget("openclaw-inference-switch", {
+  dockerOnlyTarget("openclaw-inference-switch", {
     displayName: "Inference: OpenClaw switches providers and remains responsive",
     agentRuntime: "openclaw",
     environmentOrInferenceEndpoint: "Ubuntu; compatible inference fixtures",
