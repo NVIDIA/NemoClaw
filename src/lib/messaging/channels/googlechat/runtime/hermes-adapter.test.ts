@@ -268,16 +268,20 @@ describe("Hermes Google Chat keyless REST pull", () => {
   // Fail closed: with no injected credential there is no bearer to forward, and
   // a silent request would surface as an opaque egress denial instead.
   it("refuses to build a bearer when the injected credential is absent", () => {
-    const result = spawnSync("python3", [path.join(workspace, "driver.py"), ADAPTER, "acknowledged"], {
-      encoding: "utf8",
-      env: {
-        ...process.env,
-        GOOGLE_CHAT_ACCESS_TOKEN: "",
-        PYTHONPATH: workspace,
-        PYTHONDONTWRITEBYTECODE: "1",
+    const result = spawnSync(
+      "python3",
+      [path.join(workspace, "driver.py"), ADAPTER, "acknowledged"],
+      {
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          GOOGLE_CHAT_ACCESS_TOKEN: "",
+          PYTHONPATH: workspace,
+          PYTHONDONTWRITEBYTECODE: "1",
+        },
+        timeout: 30_000,
       },
-      timeout: 30_000,
-    });
+    );
     expect(result.status).not.toBe(0);
     expect(`${result.stdout}${result.stderr}`).toContain("GOOGLE_CHAT_ACCESS_TOKEN is not set");
   });

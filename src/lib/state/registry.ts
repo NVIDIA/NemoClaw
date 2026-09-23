@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { isDeepStrictEqual } from "node:util";
+import { isDeferredN1xManagedVllmAcceptanceRoute } from "../domain/sandbox/n1x-managed-vllm-rebuild";
 import type { InferenceSelection } from "../inference/selection";
 import {
   inferenceSelectionRegistryFields,
@@ -40,7 +41,6 @@ export {
   type SandboxInferenceRouteReservationDisposition,
 } from "./registry/route-reservation";
 import { cloneSandboxWorkloadReceipt } from "./registry/workload";
-import { normalizeSandboxMcpState } from "./registry-mcp";
 import {
   normalizePendingSandboxCreateIdentity,
   normalizeSandboxPolicyAttribution,
@@ -59,15 +59,12 @@ export {
   cloneSandboxHostLocalInferenceReceipt,
   requireSandboxHostLocalInferenceProvenance,
 };
+export { hasLegacyDgxStationQualificationAuthority } from "./registry/rebuild-authority";
 export {
   addExtraProvider,
   listExtraProviders,
   removeExtraProvider,
 } from "./registry/extra-providers";
-export {
-  listManagedMcpCredentialReservations,
-  type ManagedMcpCredentialReservation,
-} from "./registry/mcp-credential-reservations";
 
 import { isDcodeAutoApprovalMode } from "../onboard/dcode-auto-approval";
 import { cloneSandboxHostMounts, hasUnsafeHostMountTerminalText } from "./registry/host-mount";
@@ -95,6 +92,10 @@ export {
   withLock,
 } from "./registry/lock";
 export { load, REGISTRY_FILE, save } from "./registry/persistence";
+export {
+  getSandboxAcrossGatewayRoots,
+  recordSandboxStopIntentAcrossGatewayRoots,
+} from "./registry/cross-port";
 export type {
   SandboxEntry,
   SandboxGpuProofResult,
@@ -104,11 +105,11 @@ export type {
   SandboxRegistry,
   SandboxWorkloadReceipt,
 } from "./registry/types";
-export type { McpBridgeEntry, SandboxMcpState } from "./registry-mcp";
 export {
   getConfiguredMessagingChannelsFromEntry,
   getDisabledMessagingChannelsFromEntry,
   getHydratedMessagingPlanFromEntry,
+  getMessagingChannelConfigFromEntry,
   getMessagingPlanFromEntry,
   type SandboxMessagingState,
 } from "./registry-messaging";
@@ -401,6 +402,13 @@ export function registerSandbox(
     if (entry.servingProfileProvenance !== undefined && !servingProfileProvenance) {
       throw new Error("Cannot register a sandbox with invalid serving profile provenance");
     }
+    if (
+      entry.deferredN1xManagedVllmAccepted !== undefined &&
+      (entry.deferredN1xManagedVllmAccepted !== true ||
+        !isDeferredN1xManagedVllmAcceptanceRoute(entry))
+    ) {
+      throw new Error("Cannot register a sandbox with invalid N1x preview acceptance");
+    }
     const normalizedPolicyEntry = normalizeSandboxPolicyAttribution(entry);
     assertPendingCreateIdentityMatchesRegistration(
       recordedEntry,
@@ -466,6 +474,7 @@ export function registerSandbox(
       name: entry.name,
       createdAt: entry.createdAt || new Date().toISOString(),
       servingProfileProvenance: servingProfileProvenance ?? undefined,
+      deferredN1xManagedVllmAccepted: entry.deferredN1xManagedVllmAccepted,
       ...inferenceSelectionRegistryFields(entry),
       gpuEnabled: entry.gpuEnabled || false,
       hostGpuDetected: entry.hostGpuDetected === true,
@@ -496,12 +505,6 @@ export function registerSandbox(
           : null,
       agent: entry.agent || null,
       agentVersion: entry.agentVersion || null,
-      openclawImagePluginInstalls: Array.isArray(entry.openclawImagePluginInstalls)
-        ? entry.openclawImagePluginInstalls.map((install) => ({
-            ...install,
-            ...(install.loadPaths !== undefined ? { loadPaths: [...install.loadPaths] } : {}),
-          }))
-        : undefined,
       nemoclawVersion: entry.nemoclawVersion || null,
       fromDockerfile: entry.fromDockerfile || null,
       hermesAuthMethod:
@@ -510,12 +513,16 @@ export function registerSandbox(
           : null,
       imageTag: entry.imageTag || null,
       workload: cloneSandboxWorkloadReceipt(entry.workload),
+      managedStartupProtocol:
+        entry.managedStartupProtocol === "identity-bound" ||
+        entry.managedStartupProtocol === "legacy-unbound"
+          ? entry.managedStartupProtocol
+          : undefined,
       ...(hostLocalInferenceReceipt !== undefined ? { hostLocalInferenceReceipt } : {}),
       ...(hostLocalInferenceProvenance ? { hostLocalInferenceProvenance } : {}),
       lifecycleGeneration: entry.lifecycleGeneration,
       lifecycleLiveIdentityFingerprint: entry.lifecycleLiveIdentityFingerprint,
       messaging: cloneSandboxMessagingState(entry.messaging),
-      mcp: normalizeSandboxMcpState(entry.mcp),
       hermesToolGateways:
         Array.isArray(entry.hermesToolGateways) && entry.hermesToolGateways.length > 0
           ? [...entry.hermesToolGateways]
@@ -662,6 +669,7 @@ export function reserveSandboxInferenceRoute(
     const next = normalizeSandboxPolicyAttribution({
       ...existingForReservation,
       pendingRouteReservation: true,
+      deferredN1xManagedVllmAccepted: undefined,
       reservationSessionId:
         route.reservationSessionId ??
         (existing?.pendingRouteReservation === true ? existing.reservationSessionId : undefined),
@@ -697,6 +705,15 @@ const HOST_LOCAL_INFERENCE_LIFECYCLE_AUTHORITY_FIELDS = new Set<keyof SandboxEnt
   "model",
   "openshellDriver",
   "preferredInferenceApi",
+  "provider",
+]);
+const DEFERRED_N1X_ROUTE_AUTHORITY_FIELDS = new Set<keyof SandboxEntry>([
+  "endpointSource",
+  "endpointUrl",
+  "hostLocalInferenceReceipt",
+  "model",
+  "nimContainer",
+  "openshellDriver",
   "provider",
 ]);
 
@@ -737,10 +754,34 @@ export function updateSandbox(name: string, updates: Partial<SandboxEntry>): boo
       return false;
     }
     if (changesHostLocalInferenceLifecycleAuthority(current, updates)) return false;
-    data.sandboxes[name] = normalizeSandboxPolicyAttribution({ ...current, ...updates });
+    const next = normalizeSandboxPolicyAttribution({ ...current, ...updates });
+    if (
+      current.deferredN1xManagedVllmAccepted === true &&
+      Object.entries(updates).some(
+        ([field, value]) =>
+          DEFERRED_N1X_ROUTE_AUTHORITY_FIELDS.has(field as keyof SandboxEntry) &&
+          !isDeepStrictEqual(value, current[field as keyof SandboxEntry]),
+      )
+    ) {
+      next.deferredN1xManagedVllmAccepted = undefined;
+    }
+    data.sandboxes[name] = next;
     save(data);
     return true;
   });
+}
+
+/** Persist intentional-stop state while containing registry write failures. */
+export function recordSandboxStopIntent(
+  name: string,
+  stopped: boolean,
+  update: typeof updateSandbox,
+): boolean {
+  try {
+    return update(name, { stopped });
+  } catch {
+    return false;
+  }
 }
 
 /** Publish a missing gateway port only while the complete qualified row remains current. */

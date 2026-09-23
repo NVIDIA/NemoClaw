@@ -36,10 +36,10 @@ describe("gatewayHasRegisteredSandbox", () => {
 });
 
 describe("teardownOrphanManagedGatewayOnAbort (#8952)", () => {
-  it("skips teardown when a sandbox still owns the gateway", () => {
+  it("skips teardown when a sandbox still owns the gateway", async () => {
     const release = vi.fn();
     const remove = vi.fn();
-    const cleanupComplete = teardownOrphanManagedGatewayOnAbort({
+    const cleanupComplete = await teardownOrphanManagedGatewayOnAbort({
       gatewayPort: 8814,
       gatewayName: "nemoclaw-8814",
       listSandboxes: () => ({
@@ -54,11 +54,11 @@ describe("teardownOrphanManagedGatewayOnAbort (#8952)", () => {
     expect(remove).not.toHaveBeenCalled();
   });
 
-  it("skips teardown for an externally supervised gateway", () => {
+  it("skips teardown for an externally supervised gateway", async () => {
     const release = vi.fn();
     const remove = vi.fn();
     const log = vi.fn();
-    const cleanupComplete = teardownOrphanManagedGatewayOnAbort({
+    const cleanupComplete = await teardownOrphanManagedGatewayOnAbort({
       gatewayPort: 8814,
       gatewayName: "nemoclaw-8814",
       listSandboxes: () => ({ sandboxes: [], defaultSandbox: null }),
@@ -84,11 +84,11 @@ describe("teardownOrphanManagedGatewayOnAbort (#8952)", () => {
     );
   });
 
-  it("skips teardown when authority cannot be revalidated", () => {
+  it("skips teardown when authority cannot be revalidated", async () => {
     const release = vi.fn();
     const remove = vi.fn();
     const warn = vi.fn();
-    const cleanupComplete = teardownOrphanManagedGatewayOnAbort({
+    const cleanupComplete = await teardownOrphanManagedGatewayOnAbort({
       gatewayPort: 8814,
       gatewayName: "nemoclaw-8814",
       listSandboxes: () => ({ sandboxes: [], defaultSandbox: null }),
@@ -107,11 +107,11 @@ describe("teardownOrphanManagedGatewayOnAbort (#8952)", () => {
     );
   });
 
-  it("fails cleanup without teardown when sandbox ownership is unknown", () => {
+  it("fails cleanup without teardown when sandbox ownership is unknown", async () => {
     const release = vi.fn();
     const remove = vi.fn();
     const warn = vi.fn();
-    const cleanupComplete = teardownOrphanManagedGatewayOnAbort({
+    const cleanupComplete = await teardownOrphanManagedGatewayOnAbort({
       gatewayPort: 8814,
       gatewayName: "nemoclaw-8814",
       listSandboxes: () => ({
@@ -131,7 +131,7 @@ describe("teardownOrphanManagedGatewayOnAbort (#8952)", () => {
     );
   });
 
-  it("stops the host listener and removes registration when no sandbox owns the gateway", () => {
+  it("stops the host listener and removes registration when no sandbox owns the gateway", async () => {
     const release = vi.fn(() => ({
       port: 8814,
       released: true,
@@ -142,7 +142,7 @@ describe("teardownOrphanManagedGatewayOnAbort (#8952)", () => {
     }));
     const remove = vi.fn(() => true);
     const log = vi.fn();
-    const cleanupComplete = teardownOrphanManagedGatewayOnAbort({
+    const cleanupComplete = await teardownOrphanManagedGatewayOnAbort({
       gatewayPort: 8814,
       gatewayName: "nemoclaw-8814",
       listSandboxes: () => ({ sandboxes: [], defaultSandbox: null }),
@@ -168,11 +168,11 @@ describe("teardownOrphanManagedGatewayOnAbort (#8952)", () => {
     expect(output).toContain("Released gateway port 8814");
   });
 
-  it("warns and returns false when the sandbox registry cannot be read", () => {
+  it("warns and returns false when the sandbox registry cannot be read", async () => {
     const release = vi.fn();
     const remove = vi.fn();
     const warn = vi.fn();
-    const cleanupComplete = teardownOrphanManagedGatewayOnAbort({
+    const cleanupComplete = await teardownOrphanManagedGatewayOnAbort({
       gatewayPort: 8814,
       gatewayName: "nemoclaw-8814",
       listSandboxes: () => {
@@ -190,7 +190,7 @@ describe("teardownOrphanManagedGatewayOnAbort (#8952)", () => {
     );
   });
 
-  it("keeps registration when listener release is not confirmed", () => {
+  it("keeps registration when listener release is not confirmed", async () => {
     const release = vi.fn(() => ({
       port: 8814,
       released: false,
@@ -201,7 +201,7 @@ describe("teardownOrphanManagedGatewayOnAbort (#8952)", () => {
     }));
     const remove = vi.fn();
     const warn = vi.fn();
-    const cleanupComplete = teardownOrphanManagedGatewayOnAbort({
+    const cleanupComplete = await teardownOrphanManagedGatewayOnAbort({
       gatewayPort: 8814,
       gatewayName: "nemoclaw-8814",
       listSandboxes: () => ({ sandboxes: [], defaultSandbox: null }),
@@ -227,13 +227,13 @@ describe("teardownOrphanManagedGatewayOnAbort (#8952)", () => {
     );
   });
 
-  it("keeps registration when listener release throws", () => {
+  it("keeps registration when listener release throws", async () => {
     const release = vi.fn(() => {
       throw new Error("stop boom");
     });
     const remove = vi.fn();
     const warn = vi.fn();
-    const cleanupComplete = teardownOrphanManagedGatewayOnAbort({
+    const cleanupComplete = await teardownOrphanManagedGatewayOnAbort({
       gatewayPort: 8814,
       gatewayName: "nemoclaw-8814",
       listSandboxes: () => ({ sandboxes: [], defaultSandbox: null }),
@@ -256,9 +256,9 @@ describe("teardownOrphanManagedGatewayOnAbort (#8952)", () => {
     expect(warn.mock.calls.map((call) => String(call[0])).join("\n")).toContain("stop boom");
   });
 
-  it("fails cleanup when gateway registration removal is not confirmed", () => {
+  it("fails cleanup when gateway registration removal is not confirmed", async () => {
     const warn = vi.fn();
-    const cleanupComplete = teardownOrphanManagedGatewayOnAbort({
+    const cleanupComplete = await teardownOrphanManagedGatewayOnAbort({
       gatewayPort: 8814,
       gatewayName: "nemoclaw-8814",
       listSandboxes: () => ({ sandboxes: [], defaultSandbox: null }),
@@ -290,9 +290,9 @@ describe("teardownOrphanManagedGatewayOnAbort (#8952)", () => {
     );
   });
 
-  it("fails cleanup when gateway registration removal throws", () => {
+  it("fails cleanup when gateway registration removal throws", async () => {
     const warn = vi.fn();
-    const cleanupComplete = teardownOrphanManagedGatewayOnAbort({
+    const cleanupComplete = await teardownOrphanManagedGatewayOnAbort({
       gatewayPort: 8814,
       gatewayName: "nemoclaw-8814",
       listSandboxes: () => ({ sandboxes: [], defaultSandbox: null }),

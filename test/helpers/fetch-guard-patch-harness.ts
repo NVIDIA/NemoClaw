@@ -14,7 +14,7 @@ const OPENCLAW_VERSION_EXTRACTOR = path.join(
   "extract-semver.sh",
 );
 
-export const CURRENT_REVIEWED_OPENCLAW_PATCH_CLASSIFIER_VERSION = "2026.7.1";
+export const CURRENT_REVIEWED_OPENCLAW_PATCH_CLASSIFIER_VERSION = "2026.9.1";
 
 export function dockerRunCommandBetween(startMarker: string, endMarker: string): string {
   const dockerfile = fs.readFileSync(DOCKERFILE, "utf-8");
@@ -31,11 +31,11 @@ export function dockerRunCommandBetween(startMarker: string, endMarker: string):
     .slice(runIndex, end)
     .trim()
     .replace(/^RUN\s+/, "")
-    .replace(/^(?:--[a-z-]+=[^\s]+\s+)+/u, "")
     .split("\n")
     .filter((line) => !line.trimStart().startsWith("#"))
     .join("\n")
     .replace(/\\\n/g, " ")
+    .replace(/^(?:--[a-z-]+=[^\s]+\s+)+/u, "")
     .replace(/\\\s*$/, "")
     .replaceAll(
       "/usr/local/lib/nemoclaw/extract-semver",

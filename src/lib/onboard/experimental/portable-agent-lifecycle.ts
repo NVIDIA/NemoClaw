@@ -5,7 +5,7 @@ import { createHash } from "node:crypto";
 import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
 
-import { isMcpLifecycleLockHeld } from "../../state/mcp-lifecycle-lock-acquisition";
+import { isMcpLifecycleLockHeld } from "../../state/mcp-lifecycle-lock/inspection";
 import type { SandboxEntry } from "../../state/registry/types";
 import {
   assertHermesPortableSandboxLifecycleAuthority,
@@ -18,6 +18,7 @@ import {
   type HermesPortableLifecycleDeps,
 } from "./hermes-portable-lifecycle";
 import {
+  hasHermesPortableReceiptCandidate,
   inspectPortableAgentReceiptAuthority,
   inspectPortableAgentReceiptAuthorityForClassification,
   inspectPortableAgentReceiptAuthorityForRequalification,
@@ -34,13 +35,26 @@ import {
   type PortableDemoLifecycleRecoveryResult,
   type PortableDemoLifecycleStopResult,
 } from "./portable-demo-lifecycle";
+import { resolveHermesPortableLifecycleLockOptions } from "./portable-lifecycle-lock";
 import { defaultPortableDemoStateDir } from "./portable-runtime-receipt-readiness";
+
+export { defaultPortableDemoStateDir };
+
+/** Resolve the shared lifecycle-lock root for a retained Hermes portable sandbox. */
+export function hermesPortableLifecycleLockOptions(
+  sandboxName: string,
+  env: NodeJS.ProcessEnv = process.env,
+  hasReceiptCandidate: typeof hasHermesPortableReceiptCandidate = hasHermesPortableReceiptCandidate,
+): { readonly stateDir: string } | undefined {
+  return resolveHermesPortableLifecycleLockOptions(sandboxName, env, (name, environment) =>
+    hasReceiptCandidate(name, defaultPortableDemoStateDir(environment)),
+  );
+}
 
 export type PortableAgentLifecycleDeps = PortableDemoLifecycleDeps & HermesPortableLifecycleDeps;
 export type PortableAgentLifecycleStopResult = PortableDemoLifecycleStopResult & {
   readonly portableAgent?: "hermes";
 };
-
 export const HERMES_PORTABLE_UNSUPPORTED_COMMAND_MESSAGE =
   "This command is not supported for an experimental Hermes portable sandbox.";
 export const HERMES_PORTABLE_UNSUPPORTED_DOCTOR_FIX_MESSAGE =
@@ -71,14 +85,7 @@ const RAW_SANDBOX_NAME_COMMANDS = new Set([
 
 const MULTI_SANDBOX_LIFECYCLE_COMMANDS = new Set(["sandbox:snapshot:restore"]);
 
-const SANDBOX_COMMANDS_WITH_INTERNAL_LIFECYCLE_FENCE = new Set([
-  "sandbox:shields:down",
-  "sandbox:shields:status",
-  "sandbox:shields:up",
-]);
-
 const HERMES_PORTABLE_UNSUPPORTED_HOST_EFFECTS = new Set([
-  "debug",
   "inference:get",
   "list",
   "stop",
@@ -88,13 +95,12 @@ const HERMES_PORTABLE_UNSUPPORTED_HOST_EFFECTS = new Set([
   "use",
 ]);
 
-const HERMES_PORTABLE_HOST_FENCED_READS = new Set(["status"]);
+const HERMES_PORTABLE_HOST_FENCED_READS = new Set(["status", "debug"]);
 
 export type HermesPortableCommandPolicy = {
   readonly helpRequested: boolean;
   readonly hostFence: "read" | "deny" | null;
   readonly multiSandboxLifecycle: boolean;
-  readonly ownsLifecycleFence: boolean;
   readonly rawSandboxName: boolean;
 };
 
@@ -113,7 +119,6 @@ export function classifyHermesPortableCommand(
         ? "deny"
         : null,
     multiSandboxLifecycle: MULTI_SANDBOX_LIFECYCLE_COMMANDS.has(commandId),
-    ownsLifecycleFence: SANDBOX_COMMANDS_WITH_INTERNAL_LIFECYCLE_FENCE.has(commandId),
     rawSandboxName: RAW_SANDBOX_NAME_COMMANDS.has(commandId),
   };
 }
@@ -206,19 +211,32 @@ export function inspectPortableAgentReceiptDisposition(
   );
 }
 
-/** Classify copied Hermes authority while the probe owns its lifecycle fence. */
+/**
+ * Classify copied Hermes authority while the probe owns its lifecycle fence.
+ *
+ * A sandbox with no Hermes portable receipt directory has nothing for the
+ * requalifying reader to admit: the reader returns null on that directory's
+ * ENOENT before it consults any of its extra admission flags, so its answer is
+ * already the classifying reader's answer. Demanding its lifecycle-lock
+ * evidence therefore buys no information, and it cannot be satisfied off the
+ * default gateway: the evidence is keyed on the host-global portable receipt
+ * root while every acquisition keys on the per-gateway state root, so the held
+ * lock is invisible and a plain OpenClaw sandbox fails its probe (#10783).
+ */
 function inspectPortableAgentReceiptDispositionForRequalification(
   sandboxName: string,
   env: NodeJS.ProcessEnv = process.env,
   stateDir = defaultPortableDemoStateDir(env),
 ): PortableAgentReceiptDisposition {
   return receiptDisposition(
-    inspectPortableAgentReceiptAuthorityForRequalification(sandboxName, stateDir),
+    hasHermesPortableReceiptCandidate(sandboxName, stateDir)
+      ? inspectPortableAgentReceiptAuthorityForRequalification(sandboxName, stateDir)
+      : inspectPortableAgentReceiptAuthorityForClassification(sandboxName, stateDir),
   );
 }
 
 /** Requalify only Hermes authority while the probe owns both Portable fences. */
-export function requalifyPortableAgentSandboxAuthority(
+export async function requalifyPortableAgentSandboxAuthority(
   sandboxName: string,
   deps: PortableAgentLifecycleDeps & PortableAgentLifecycleAuthorityDeps,
 ) {
@@ -237,7 +255,7 @@ export function requalifyPortableAgentSandboxAuthority(
   if (authority.phase !== "active" || !authority.entry) {
     throw new Error("Hermes portable lifecycle authority is missing or incomplete.");
   }
-  return requalifyHermesPortableSandboxAuthority(
+  return await requalifyHermesPortableSandboxAuthority(
     sandboxName,
     {
       agent: "hermes",
@@ -283,6 +301,50 @@ export function qualifyPortableAgentLifecycleAuthority(
     throw new Error("Hermes portable pending receipt conflicts with an existing registry entry.");
   }
   return { ...disposition, entry };
+}
+
+/** Admit only an exact retained Hermes receipt for legacy profile compatibility. */
+export function qualifyLegacyHermesPortableLifecycleProfile(
+  sandboxName: string,
+  deps: PortableAgentLifecycleAuthorityDeps,
+): boolean {
+  const authority = qualifyPortableAgentLifecycleAuthority(sandboxName, deps);
+  return authority.kind === "hermes" && authority.phase === "active" && authority.entry !== null;
+}
+
+export type RegisteredPortableAgentLifecycleClassification =
+  | { readonly kind: "standard" }
+  | { readonly kind: "portable"; readonly agent: "hermes" | "openclaw" };
+
+/** Give start and stop one owner for classifying persisted Portable authority. */
+export function classifyRegisteredPortableAgentLifecycle(
+  sandboxName: string,
+  providerId: string,
+  sandbox: SandboxEntry,
+  deps: PortableAgentLifecycleAuthorityDeps & {
+    readonly qualifyLegacyHermes?: typeof qualifyLegacyHermesPortableLifecycleProfile;
+  },
+): RegisteredPortableAgentLifecycleClassification {
+  if (providerId !== "docker") return { kind: "standard" };
+  if (sandbox.portableLifecycleProfile === "hermes" && sandbox.agent === "hermes") {
+    return { kind: "portable", agent: "hermes" };
+  }
+  if (sandbox.portableLifecycleProfile === "openclaw" && sandbox.agent === "openclaw") {
+    return { kind: "portable", agent: "openclaw" };
+  }
+  if (
+    sandbox.portableLifecycleProfile !== undefined ||
+    sandbox.agent !== "hermes" ||
+    typeof sandbox.lifecycleGeneration !== "string"
+  ) {
+    return { kind: "standard" };
+  }
+  return (deps.qualifyLegacyHermes ?? qualifyLegacyHermesPortableLifecycleProfile)(
+    sandboxName,
+    deps,
+  )
+    ? { kind: "portable", agent: "hermes" }
+    : { kind: "standard" };
 }
 
 /** Require active Hermes receipt and exact registry authority. */
@@ -411,8 +473,19 @@ function qualifyOperatingCommandAuthority(
     authority.snapshot,
     operatingAuthority.assertCurrent,
   );
+  const assertTransactionCurrent = retainRequalifiedOperatingAuthority(
+    sandboxName,
+    stateDir,
+    authority.snapshot,
+    operatingAuthority.assertTransactionCurrent,
+  );
   assertCurrent();
-  return { ...commandAuthority, assertCurrent };
+  return {
+    ...commandAuthority,
+    receipt: operatingAuthority.receipt,
+    assertTransactionCurrent,
+    assertCurrent,
+  };
 }
 
 export function buildHermesPortableCommandAuthority(
@@ -555,11 +628,11 @@ function requireMatchingAgent(
 }
 
 /** Route one portable start/recovery without permitting a Docker fallback. */
-export function recoverPortableAgentSandboxLifecycle(
+export async function recoverPortableAgentSandboxLifecycle(
   sandboxName: string,
   context: PortableDemoLifecycleContext,
   deps: PortableAgentLifecycleDeps = {},
-): PortableDemoLifecycleRecoveryResult {
+): Promise<PortableDemoLifecycleRecoveryResult> {
   const disposition = inspectPortableAgentReceiptDisposition(
     sandboxName,
     deps.env ?? process.env,
@@ -575,15 +648,15 @@ export function recoverPortableAgentSandboxLifecycle(
       `Hermes portable lifecycle receipt phase '${disposition.phase}' is incomplete; resume onboarding before running lifecycle commands`,
     );
   }
-  return recoverHermesPortableSandboxLifecycle(sandboxName, context, deps);
+  return await recoverHermesPortableSandboxLifecycle(sandboxName, context, deps);
 }
 
 /** Requalify Hermes authority without permitting lifecycle recovery or fallback. */
-export function assertHermesPortableAgentLifecycleAuthority(
+export async function assertHermesPortableAgentLifecycleAuthority(
   sandboxName: string,
   context: PortableDemoLifecycleContext,
   deps: PortableAgentLifecycleDeps = {},
-): void {
+): Promise<void> {
   const disposition = inspectPortableAgentReceiptDisposition(
     sandboxName,
     deps.env ?? process.env,
@@ -593,16 +666,16 @@ export function assertHermesPortableAgentLifecycleAuthority(
     throw new Error("Hermes portable lifecycle authority is missing or incomplete");
   }
   requireMatchingAgent(disposition, context);
-  assertHermesPortableSandboxLifecycleAuthority(sandboxName, context, deps);
+  await assertHermesPortableSandboxLifecycleAuthority(sandboxName, context, deps);
 }
 
 /** Route one portable stop without permitting a Docker fallback. */
-export function stopPortableAgentSandboxLifecycle(
+export async function stopPortableAgentSandboxLifecycle(
   sandboxName: string,
   context: PortableDemoLifecycleContext,
   beforeStop: () => void,
   deps: PortableAgentLifecycleDeps = {},
-): PortableAgentLifecycleStopResult {
+): Promise<PortableAgentLifecycleStopResult> {
   const disposition = inspectPortableAgentReceiptDisposition(
     sandboxName,
     deps.env ?? process.env,
@@ -622,7 +695,7 @@ export function stopPortableAgentSandboxLifecycle(
   // channel hook can select Docker transport, so it is never part of Hermes
   // portable stop authority.
   return {
-    ...stopHermesPortableSandboxLifecycle(sandboxName, context, () => undefined, deps),
+    ...(await stopHermesPortableSandboxLifecycle(sandboxName, context, () => undefined, deps)),
     portableAgent: "hermes",
   };
 }

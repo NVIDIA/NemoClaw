@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { checkOpenAiInferenceProviderProfile } from "../adapters/openshell/provider-profile";
+import { assertMcpCredentialBoundaryRuntimeVersion } from "../actions/sandbox/mcp-bridge-validation";
 import type { Session } from "../state/onboard-session";
 
 export interface RotateTokenOpts {
@@ -22,7 +22,7 @@ export function loadRotateTokenSession(): RotateTokenSession | null {
 }
 
 export type RotateTokenDeps = {
-  readonly appendAuditEntry: typeof import("../shields/audit").appendAuditEntry;
+  readonly appendAuditEntry: typeof import("../state/audit/operational").appendAuditEntry;
   readonly captureOpenshellCommand: typeof import("../adapters/openshell/client").captureOpenshellCommand;
   readonly fail: RotateTokenFailure;
   readonly loadSession: () => RotateTokenSession | null;
@@ -77,16 +77,27 @@ export async function rotateSandboxToken(
 
   const binary = getOpenshellBinary();
   const providerType = session.providerType || "generic";
-  if (providerType === "openai") {
-    const profile = checkOpenAiInferenceProviderProfile({
-      runOpenshell: (args, options) =>
-        deps.captureOpenshellCommand(binary, args, {
+
+  try {
+    assertMcpCredentialBoundaryRuntimeVersion({
+      resolveOpenshell: () => binary,
+      runVersionCommand: (versionBinary) => {
+        const result = deps.captureOpenshellCommand(versionBinary, ["--version"], {
           ignoreError: true,
           includeStreams: true,
-          timeout: options?.timeout,
-        }),
+          maxBuffer: 16 * 1_024,
+          timeout: 5_000,
+        });
+        return {
+          ...(result.error ? { error: result.error } : {}),
+          status: result.status,
+          stderr: result.stderr ?? "",
+          stdout: result.stdout ?? "",
+        };
+      },
     });
-    if (!profile.ok) deps.fail(profile.messages);
+  } catch (error) {
+    deps.fail(error instanceof Error ? error.message : "OpenShell version check failed.");
   }
 
   deps.saveCredential(credentialEnv, newToken);

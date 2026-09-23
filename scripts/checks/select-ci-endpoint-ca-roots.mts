@@ -223,10 +223,7 @@ export function writeCiEndpointCaRootsOutput(outputPath: string, bundle: string)
   let fd: number;
   try {
     // Open without following symlinks or blocking on special files, then validate before writing.
-    fd = fs.openSync(
-      outputPath,
-      fs.constants.O_WRONLY | noFollow | (fs.constants.O_NONBLOCK ?? 0),
-    );
+    fd = fs.openSync(outputPath, fs.constants.O_WRONLY | noFollow | (fs.constants.O_NONBLOCK ?? 0));
   } catch (error) {
     throw new Error("output must be an existing regular file that is not a symlink", {
       cause: error,

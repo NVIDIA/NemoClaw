@@ -7,7 +7,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
-// pull_request_target content is fetched manually so no PR-controlled action,
+// PR content is fetched manually so no PR-controlled action,
 // hook, submodule, LFS filter, or package setup can run. Every input that is
 // interpolated into a git ref is validated against a strict allow-list before
 // any git command runs, and commands execute via execFileSync (no shell), so a
@@ -23,6 +23,15 @@ export class PrepareTargetPrError extends Error {
   constructor(message: string) {
     super(message);
     this.name = "PrepareTargetPrError";
+  }
+}
+
+export class SupersededPrError extends PrepareTargetPrError {
+  constructor(expected: string, actual: string) {
+    super(
+      `Review superseded: fetched pull ref ${actual} does not match the triggering PR head SHA ${expected}`,
+    );
+    this.name = "SupersededPrError";
   }
 }
 
@@ -162,7 +171,7 @@ export function prepareTargetPr(
   );
   const actualHead = git("rev-parse", "HEAD");
   if (input.expectedHeadSha && actualHead !== input.expectedHeadSha) {
-    fail("Fetched pull ref does not match the triggering PR head SHA");
+    throw new SupersededPrError(input.expectedHeadSha, actualHead);
   }
 
   appendEnv("ADVISOR_WORKDIR", targetDir);
@@ -183,6 +192,9 @@ function main(): void {
       { targetDir: process.env.TARGET_DIR || undefined },
     );
   } catch (error) {
+    if (error instanceof SupersededPrError && process.env.GITHUB_OUTPUT) {
+      fs.appendFileSync(process.env.GITHUB_OUTPUT, "classification=superseded\n");
+    }
     const message = error instanceof Error ? error.message : String(error);
     console.error(`::error::${message}`);
     process.exit(1);

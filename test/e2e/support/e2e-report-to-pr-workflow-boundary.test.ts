@@ -22,7 +22,6 @@ import {
   resolveReportPr,
 } from "../../../tools/e2e/report-e2e-results.mts";
 import { validateE2eWorkflowBoundary } from "../../../tools/e2e/workflow-boundary.mts";
-import { buildE2eWorkflowPlan } from "../../../tools/e2e/workflow-plan.mts";
 import { testTimeout } from "../../helpers/timeouts";
 import { requireFixture } from "./require-fixture";
 
@@ -43,109 +42,20 @@ function generateMatrixScript(): string {
   return String(step!.run);
 }
 
-function trustedControllerMatrixScript(): string {
-  const workflow = readWorkflow() as {
-    jobs: Record<string, { steps: Array<{ id?: string; run?: string }> }>;
-  };
-  const step = workflow.jobs["generate-matrix"].steps.find(
-    (candidate) => candidate.id === "controller_matrix",
-  );
-  expect(step?.run).toEqual(expect.any(String));
-  return String(step!.run);
-}
-
-function executeTrustedControllerMatrix(targets: string) {
-  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-controller-matrix-"));
-  const outputPath = path.join(directory, "github-output");
-  try {
-    const result = spawnSync("bash", ["-c", trustedControllerMatrixScript()], {
-      cwd: process.cwd(),
-      encoding: "utf8",
-      env: {
-        ...process.env,
-        GITHUB_OUTPUT: outputPath,
-        JOBS: "",
-        TARGETS: targets,
-      },
-      timeout: 30_000,
-    });
-    return {
-      result,
-      workflowOutput: fs.existsSync(outputPath) ? fs.readFileSync(outputPath, "utf8") : "",
-    };
-  } finally {
-    fs.rmSync(directory, { force: true, recursive: true });
-  }
-}
-
-function executeGenerateMatrixWithPlannerOutput(
-  plan: unknown,
-  options: {
-    checkoutSha?: string;
-    controllerMatrix?: string;
-    controllerTestMatrix?: string;
-    jobs?: string;
-    targets?: string;
-  } = {},
-) {
-  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-planner-schema-"));
-  const binDirectory = path.join(directory, "bin");
-  const fakeNpx = path.join(binDirectory, "npx");
-  const outputPath = path.join(directory, "github-output");
-  fs.mkdirSync(binDirectory);
-  fs.writeFileSync(
-    fakeNpx,
-    [
-      "#!/usr/bin/env bash",
-      "expected=(--no-install tsx tools/e2e/workflow-plan.mts --ci-output)",
-      'actual=("$@")',
-      '[[ "${#actual[@]}" -eq "${#expected[@]}" ]] || exit 97',
-      'for index in "${!expected[@]}"; do [[ "${actual[$index]}" == "${expected[$index]}" ]] || exit 97; done',
-      'printf "matrix=%s\\n" "$(jq -c .matrix <<< "${FAKE_E2E_PLAN}")" >> "${GITHUB_OUTPUT}"',
-      'printf "test_matrix=%s\\n" "$(jq -c .testMatrix <<< "${FAKE_E2E_PLAN}")" >> "${GITHUB_OUTPUT}"',
-      'printf "hermes_selected=%s\\n" "$(jq -r .hermesSelected <<< "${FAKE_E2E_PLAN}")" >> "${GITHUB_OUTPUT}"',
-      'printf "explicit_only_jobs=%s\\n" "$(jq -r ".explicitOnlyJobs | join(\\\",\\\")" <<< "${FAKE_E2E_PLAN}")" >> "${GITHUB_OUTPUT}"',
-      "",
-    ].join("\n"),
-    { mode: 0o755 },
-  );
-  try {
-    return {
-      result: spawnSync("bash", ["-c", generateMatrixScript()], {
-        cwd: process.cwd(),
-        encoding: "utf8",
-        env: {
-          ...process.env,
-          CHECKOUT_SHA: options.checkoutSha ?? "",
-          CONTROLLER_MATRIX: options.controllerMatrix ?? "",
-          CONTROLLER_TEST_MATRIX: options.controllerTestMatrix ?? "[]",
-          FAKE_E2E_PLAN: JSON.stringify(plan),
-          GITHUB_OUTPUT: outputPath,
-          GITHUB_STEP_SUMMARY: path.join(directory, "summary.md"),
-          INFERENCE_MODE: "mock",
-          JOBS: options.jobs ?? "cloud-onboard",
-          NEMOCLAW_E2E_CREDENTIALS_ALLOWED: "false",
-          NVIDIA_OWNED: "false",
-          PATH: `${binDirectory}:${process.env.PATH ?? ""}`,
-          TARGETS: options.targets ?? "",
-        },
-        timeout: 30_000,
-      }),
-      workflowOutput: fs.existsSync(outputPath) ? fs.readFileSync(outputPath, "utf8") : "",
-    };
-  } finally {
-    fs.rmSync(directory, { force: true, recursive: true });
-  }
-}
-
 const DEFAULT_TEST_MATRIX: CredentialFreeTestMatrixRow[] = [
   {
     id: "alpha",
+    execution_id: "alpha-docker",
+    runtime_provider: "docker",
+    coverage_variant: "docker",
     file: "test/e2e/live/alpha.test.ts",
     project: "e2e-live",
   },
   {
     id: "beta",
+    execution_id: "beta-docker",
+    runtime_provider: "docker",
+    coverage_variant: "docker",
     file: "test/e2e/live/beta.test.ts",
     project: "e2e-live",
   },
@@ -183,6 +93,7 @@ async function executeReport(options: {
   apiJobs?: ReportApiJob[];
   testMatrix?: CredentialFreeTestMatrixRow[];
   jobs?: string;
+  targets?: string;
   needs?: ReportNeeds;
   paginateError?: Error;
 }): Promise<{
@@ -194,6 +105,7 @@ async function executeReport(options: {
     apiJobs = [],
     testMatrix = DEFAULT_TEST_MATRIX,
     jobs = testMatrix.map(({ id }) => id).join(","),
+    targets = "",
     needs = {
       "generate-matrix": { result: "success" },
       "shared-e2e": { result: "failure" },
@@ -213,7 +125,7 @@ async function executeReport(options: {
     EXPLICIT_ONLY_JOBS: "",
     TEST_MATRIX: JSON.stringify(testMatrix),
     JOB_PR_NUMBER: "42",
-    JOB_TARGETS: "",
+    JOB_TARGETS: targets,
     JOBS: jobs,
   };
 
@@ -442,32 +354,32 @@ it.each([
     label: "target",
     requestedLine: "**Requested targets:** `hermes-e2e`",
   },
-])("reports the canonical Hermes result for a retired dashboard $label selector", ({
-  env,
-  requestedLine,
-}) => {
-  const report = renderE2eReport({
-    needs: {
-      "generate-matrix": { result: "success" },
-      "hermes-e2e": { result: "success" },
-    },
-    env: {
-      EXPLICIT_ONLY_JOBS: "",
-      TEST_MATRIX: "[]",
-      JOB_PR_NUMBER: "42",
-      ...env,
-    },
-    apiJobs: [{ conclusion: "success", name: "hermes-e2e", status: "completed" }],
-    apiJobsLoaded: true,
-    context: REPORT_CONTEXT,
-  });
+])(
+  "reports the canonical Hermes result for a retired dashboard $label selector",
+  ({ env, requestedLine }) => {
+    const report = renderE2eReport({
+      needs: {
+        "generate-matrix": { result: "success" },
+        "hermes-e2e": { result: "success" },
+      },
+      env: {
+        EXPLICIT_ONLY_JOBS: "",
+        TEST_MATRIX: "[]",
+        JOB_PR_NUMBER: "42",
+        ...env,
+      },
+      apiJobs: [{ conclusion: "success", name: "hermes-e2e", status: "completed" }],
+      apiJobsLoaded: true,
+      context: REPORT_CONTEXT,
+    });
 
-  expect(report.fatal).toBeUndefined();
-  expect(report.body).toContain(requestedLine);
-  expect(report.body).toContain("| hermes-e2e | ✅ success | — |");
-  expect(report.body).not.toContain("| hermes-dashboard |");
-  expect(report.body).not.toContain("not reported");
-});
+    expect(report.fatal).toBeUndefined();
+    expect(report.body).toContain(requestedLine);
+    expect(report.body).toContain("| hermes-e2e | ✅ success | — |");
+    expect(report.body).not.toContain("| hermes-dashboard |");
+    expect(report.body).not.toContain("not reported");
+  },
+);
 
 it("fails closed on an invalid test matrix without rendering a comment", () => {
   const report = renderE2eReport({
@@ -608,26 +520,54 @@ it("reports cancelled tests alongside passing tests as a partial pass", () => {
   expect(report.body).toContain("⚠️ Some tests cancelled — partial pass");
 });
 
-it("reports empty selectors without claiming an E2E was omitted", () => {
-  const report = renderE2eReport({
+it("warns when empty selectors produce no E2E results", async () => {
+  const { body, setFailed, warning } = await executeReport({
+    testMatrix: [],
+    jobs: "",
+    targets: "mcp-bridge-dev",
     needs: {
       "generate-matrix": { result: "success" },
     },
-    env: {
-      EXPLICIT_ONLY_JOBS: "mcp-bridge-dev",
-      TEST_MATRIX: "[]",
-      JOB_PR_NUMBER: "42",
-      JOB_TARGETS: "",
-      JOBS: "",
-    },
+  });
+
+  expect(setFailed).not.toHaveBeenCalled();
+  expect(warning).toHaveBeenCalledWith(
+    "No E2E target reported a result. The check remains successful but provides no affirmative E2E qualification evidence.",
+  );
+  expect(body).not.toContain("jobs skipped");
+  expect(body).not.toContain("All tests selected by empty selectors passed");
+  expect(body).toContain("⚠️ No E2E results reported");
+  expect(body).toContain("**Requested targets:** `mcp-bridge-dev`");
+});
+
+it("preserves a matrix-planning failure in a selective report", () => {
+  const report = renderE2eReport({
+    needs: { "generate-matrix": { result: "failure" } },
+    env: { TEST_MATRIX: "[]", JOB_TARGETS: "mcp-bridge-dev" },
     apiJobs: [],
     apiJobsLoaded: true,
     context: REPORT_CONTEXT,
   });
 
-  expect(report.body).not.toContain("jobs skipped");
-  expect(report.body).toContain("✅ All tests selected by empty selectors passed");
-  expect(report.body).toContain("**Requested targets:** _(no target selector)_");
+  expect(report.body).toContain(`| [generate-matrix](${RUN_URL}) | ❌ failure | — |`);
+  expect(report.body).toContain("❌ Some tests failed");
+  expect(report.body).not.toContain("No E2E results reported");
+});
+
+it("distinguishes unavailable job data from no reported results", async () => {
+  const { body, warning } = await executeReport({
+    testMatrix: [],
+    jobs: "",
+    targets: "mcp-bridge-dev",
+    needs: { "generate-matrix": { result: "success" } },
+    paginateError: new Error("API unavailable"),
+  });
+
+  expect(warning).toHaveBeenCalledWith(
+    "Could not load per-test results; reporting them as unknown: API unavailable",
+  );
+  expect(body).toContain("⚠️ E2E results unavailable");
+  expect(body).not.toContain("No E2E results reported");
 });
 
 it("reports matrix children by test ID without fabricating a missing child result", async () => {
@@ -862,7 +802,14 @@ it(
       expect(generated.status, generated.stderr || generated.stdout).toBe(0);
       const outputs = parseSimpleOutput(fs.readFileSync(outputPath, "utf8"));
       const testMatrix = JSON.parse(outputs.test_matrix) as CredentialFreeTestMatrixRow[];
-      expect(testMatrix).toEqual([selected]);
+      expect(testMatrix).toEqual([
+        {
+          ...selected,
+          execution_id: `${selected.id}-docker`,
+          runtime_provider: "docker",
+          coverage_variant: "docker",
+        },
+      ]);
 
       const { body, setFailed } = await executeReport({
         apiJobs: [
@@ -889,82 +836,6 @@ it(
   },
   testTimeout(40_000),
 );
-
-it("builds controller target matrices only from trusted runner mappings (#7031)", () => {
-  const target = "ubuntu-repo-cloud-langchain-deepagents-code";
-
-  const empty = executeTrustedControllerMatrix("");
-  expect(empty.result.status, empty.result.stderr || empty.result.stdout).toBe(0);
-  expect(parseSimpleOutput(empty.workflowOutput).matrix).toBe(
-    JSON.stringify([
-      { id: "ubuntu-policy-custom-missing-presets-negative", runner: "ubuntu-latest" },
-      { id: "ubuntu-repo-cloud-langchain-deepagents-code", runner: "ubuntu-latest" },
-      { id: "ubuntu-repo-cloud-openclaw", runner: "ubuntu-latest" },
-      { id: "ubuntu-repo-docker-post-reboot-recovery", runner: "ubuntu-latest" },
-    ]),
-  );
-
-  const approved = executeTrustedControllerMatrix(target);
-  expect(approved.result.status, approved.result.stderr || approved.result.stdout).toBe(0);
-  expect(parseSimpleOutput(approved.workflowOutput).matrix).toBe(
-    JSON.stringify([{ id: target, runner: "ubuntu-latest", label: target }]),
-  );
-
-  const rejected = executeTrustedControllerMatrix("untrusted-target");
-  expect(rejected.result.status).toBe(1);
-  expect(rejected.result.stderr).toContain(
-    "::error::PR E2E target is not approved by the trusted controller",
-  );
-  expect(rejected.workflowOutput).toBe("");
-}, 30_000);
-
-it("binds controller matrix IDs and runners to the trusted target selector (#7031)", () => {
-  const target = "ubuntu-repo-cloud-langchain-deepagents-code";
-  const validPlan = buildE2eWorkflowPlan({ jobs: "cloud-onboard", targets: target });
-  const trustedControllerMatrix = JSON.stringify([
-    { id: target, runner: "ubuntu-latest", label: target },
-  ]);
-  const options = {
-    checkoutSha: "a".repeat(40),
-    controllerMatrix: trustedControllerMatrix,
-    jobs: "cloud-onboard",
-    targets: target,
-  };
-
-  const matching = executeGenerateMatrixWithPlannerOutput(validPlan, options);
-  expect(matching.result.status, matching.result.stderr || matching.result.stdout).toBe(0);
-
-  const injectedWithoutSelection = executeGenerateMatrixWithPlannerOutput(validPlan, {
-    ...options,
-    controllerMatrix: "[]",
-    targets: "",
-  });
-  expect(injectedWithoutSelection.result.status).toBe(1);
-  expect(injectedWithoutSelection.result.stderr).toContain(
-    "::error::E2E planner matrix does not match controller-selected targets",
-  );
-
-  const mismatchedPlan = {
-    ...validPlan,
-    matrix: validPlan.matrix.map((row) => ({ ...row, id: "ubuntu-repo-cloud-openclaw" })),
-  };
-  const mismatched = executeGenerateMatrixWithPlannerOutput(mismatchedPlan, options);
-  expect(mismatched.result.status).toBe(1);
-  expect(mismatched.result.stderr).toContain(
-    "::error::E2E planner matrix does not match controller-selected targets",
-  );
-
-  const runnerInjectedPlan = {
-    ...validPlan,
-    matrix: validPlan.matrix.map((row) => ({ ...row, runner: "self-hosted" })),
-  };
-  const runnerInjected = executeGenerateMatrixWithPlannerOutput(runnerInjectedPlan, options);
-  expect(runnerInjected.result.status).toBe(1);
-  expect(runnerInjected.result.stderr).toContain(
-    "::error::E2E planner matrix does not match controller-selected targets",
-  );
-  expect(runnerInjected.workflowOutput).toBe("");
-}, 30_000);
 
 it("requires the report-to-pr job to check out the trusted workflow revision", () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-workflow-"));

@@ -62,6 +62,13 @@ const PUBLIC_DISPLAY_LAYOUT: Record<string, readonly PublicDisplayLayout[]> = {
       flags: "[--quick] [--output FILE|-o FILE] [--sandbox NAME]",
     },
   ],
+  doctor: [
+    {
+      group: "Troubleshooting",
+      order: 36,
+      flags: "[--json|--text]",
+    },
+  ],
   gc: [
     {
       group: "Cleanup",
@@ -447,28 +454,6 @@ const PUBLIC_DISPLAY_LAYOUT: Record<string, readonly PublicDisplayLayout[]> = {
       flags: "[local-mount-point]",
     },
   ],
-  "sandbox:shields:down": [
-    {
-      group: "Sandbox Management",
-      order: 25,
-      flags: "[--timeout 5m] [--reason <text>] [--policy permissive]",
-      hidden: true,
-    },
-  ],
-  "sandbox:shields:status": [
-    {
-      group: "Sandbox Management",
-      order: 27,
-      hidden: true,
-    },
-  ],
-  "sandbox:shields:up": [
-    {
-      group: "Sandbox Management",
-      order: 26,
-      hidden: true,
-    },
-  ],
   "sandbox:skill:install": [
     {
       group: "Skills",
@@ -481,6 +466,12 @@ const PUBLIC_DISPLAY_LAYOUT: Record<string, readonly PublicDisplayLayout[]> = {
       group: "Skills",
       order: 16.1,
       flags: "<skill>",
+    },
+  ],
+  "sandbox:skill:list": [
+    {
+      group: "Skills",
+      order: 16.2,
     },
   ],
   "sandbox:snapshot:create": [

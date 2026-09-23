@@ -3,6 +3,7 @@
 
 import os from "node:os";
 import path from "node:path";
+import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText } from "../fixtures/clients/command.ts";
 import { type HostCliClient } from "../fixtures/clients/host.ts";
@@ -17,8 +18,8 @@ import {
 } from "./issue-4462-admin-approval-helper.ts";
 
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-issue-4462";
-const LIVE_TIMEOUT_MS = 70 * 60_000;
-const INSTALL_TIMEOUT_MS = 30 * 60_000;
+const LIVE_TIMEOUT_MS = testTimeout(70 * 60_000);
+const INSTALL_TIMEOUT_MS = execTimeout(30 * 60_000);
 const AUTO_PAIR_DEADLINE_SECS = String(INSTALL_TIMEOUT_MS / 1_000);
 const GATEWAY_OBSERVATION_TIMEOUT_MS = 30_000;
 const GATEWAY_OBSERVATION_TIMEOUT_SECS = String(GATEWAY_OBSERVATION_TIMEOUT_MS / 1_000);
@@ -59,15 +60,10 @@ interface FreshAgentGatewaySnapshot {
   activeOperatorTokenScopes: string[];
   approvedScopes: string[];
   deviceScopes: string[];
-  gatewayCompletedRuns: number;
   matchingPairedCount: number;
   pairedCliCount: number;
   pendingCount: number;
   sameDevicePendingCount: number;
-}
-
-interface GatewayCompletedRunCount {
-  gatewayCompletedRuns: number;
 }
 
 async function cleanup(host: HostCliClient, sandbox: SandboxClient): Promise<void> {
@@ -103,7 +99,15 @@ test(
     timeout: LIVE_TIMEOUT_MS,
     meta: { e2ePhases: ISSUE_4462_SCOPE_UPGRADE_PHASES },
   },
-  async ({ artifacts, cleanup: cleanupRegistry, host, progress, sandbox, secrets, skip }) => {
+  async ({
+    artifacts,
+    cleanup: cleanupRegistry,
+    host,
+    progress,
+    runtimeProvider,
+    sandbox,
+    secrets,
+  }) => {
     const apiKey = secrets.required("NVIDIA_INFERENCE_API_KEY");
     await artifacts.target.declare({
       id: "issue-4462-scope-upgrade-approval",
@@ -111,7 +115,6 @@ test(
       contracts: [
         "install.sh creates a real OpenClaw sandbox",
         "fresh onboarding settles one CLI identity with operator.write and without a pending request or operator.admin",
-        "the first host-side nemoclaw sandbox exec openclaw agent turn completes on the gateway path",
         "the issue 5324 nemoclaw <name> exec transport reaches the local OpenClaw CLI pairing path",
         "the prepared connect shell keeps the injected gateway URL private while retaining port and token",
         "operator.admin remains pending until explicit device approval",
@@ -119,15 +122,10 @@ test(
       ],
     });
 
-    const docker = await host.command("docker", ["info"], {
-      artifactName: "phase-0-docker-info",
-      env: env(),
-      timeoutMs: 30_000,
+    await runtimeProvider.requireAvailable({
+      artifactName: "phase-0-runtime-info",
+      scenarioLabel: "scope-upgrade approval",
     });
-    if (docker.exitCode !== 0) {
-      if (process.env.GITHUB_ACTIONS === "true") throw new Error(resultText(docker));
-      skip(`Docker is required: ${resultText(docker)}`);
-    }
 
     cleanupRegistry.trackGateway(host, "nemoclaw", {
       artifactName: "cleanup-openshell-gateway-destroy",
@@ -181,20 +179,10 @@ test(
     );
     expect(upload.exitCode, "Gateway observer upload failed; inspect the phase artifact").toBe(0);
 
-    const captureGatewayObservation = async <T>(
-      phase: string,
-      minimumGatewayRuns: number,
-      outputMode: "snapshot" | "gateway-runs",
-    ): Promise<T> => {
+    const captureGatewayObservation = async <T>(phase: string): Promise<T> => {
       const result = await sandbox.exec(
         SANDBOX_NAME,
-        [
-          "python3",
-          GATEWAY_OBSERVER_REMOTE_PATH,
-          String(minimumGatewayRuns),
-          outputMode,
-          GATEWAY_OBSERVATION_TIMEOUT_SECS,
-        ],
+        ["python3", GATEWAY_OBSERVER_REMOTE_PATH, GATEWAY_OBSERVATION_TIMEOUT_SECS],
         {
           artifactName: phase,
           captureLimitBytes: 64 * 1024,
@@ -211,14 +199,9 @@ test(
       await artifacts.writeJson(`${phase}.json`, observation);
       return observation;
     };
-    progress.phase(
-      "prove onboarding settled operator.write and the first agent turn used the gateway",
-    );
-    const freshSnapshot = await captureGatewayObservation<FreshAgentGatewaySnapshot>(
-      "phase-2-fresh-state",
-      0,
-      "snapshot",
-    );
+    progress.phase("prove onboarding settled operator.write");
+    const freshSnapshot =
+      await captureGatewayObservation<FreshAgentGatewaySnapshot>("phase-2-fresh-state");
     expect(freshSnapshot).toMatchObject({
       activeOperatorTokenCount: 1,
       approvedScopes: ["operator.pairing", "operator.write"],
@@ -233,55 +216,6 @@ test(
       "operator.read",
       "operator.write",
     ]);
-
-    const freshAgent = await host.command(
-      process.execPath,
-      [
-        CLI_ENTRYPOINT,
-        "sandbox",
-        "exec",
-        SANDBOX_NAME,
-        "--timeout",
-        "60",
-        "--",
-        "openclaw",
-        "agent",
-        "--agent",
-        "main",
-        "-m",
-        "hi",
-        "--session-id",
-        `fresh-${Math.floor(Date.now() / 1000)}`,
-      ],
-      {
-        artifactName: "phase-2-fresh-agent",
-        captureLimitBytes: 64 * 1024,
-        env: env(),
-        redactionValues: [apiKey],
-        timeoutMs: 90_000,
-      },
-    );
-    const freshAgentOutput = resultText(freshAgent);
-    const usedFallback =
-      /EMBEDDED FALLBACK|gateway connect failed|scope upgrade pending approval|scope-upgrade-pending|approval=list-failed|device pairing required|pairing required|fallbackFrom[": ]+gateway|transport[": ]+embedded/i.test(
-        freshAgentOutput,
-      );
-    expect(freshAgent.exitCode, "The first agent turn failed; inspect the phase artifact").toBe(0);
-    expect(
-      usedFallback,
-      "The first agent turn left the gateway path; inspect the phase artifact",
-    ).toBe(false);
-    expect(
-      freshAgent.stdout.trim().length > 0,
-      "The first gateway-backed agent turn returned no response",
-    ).toBe(true);
-
-    const gatewayRunCount = await captureGatewayObservation<GatewayCompletedRunCount>(
-      "phase-2-gateway-run-count",
-      freshSnapshot.gatewayCompletedRuns + 1,
-      "gateway-runs",
-    );
-    expect(gatewayRunCount.gatewayCompletedRuns).toBe(freshSnapshot.gatewayCompletedRuns + 1);
 
     progress.phase("trigger and approve an operator.admin request through connect");
     const cronName = `issue-5324-admin-${Date.now()}-${process.pid}`;

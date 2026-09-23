@@ -7,7 +7,7 @@ import fs from "node:fs";
 import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 
 const require = createRequire(import.meta.url);
 
@@ -279,7 +279,7 @@ describe("legacy credentials.json migration (two-phase: stage then remove)", () 
     expect(fs.existsSync(legacyFile)).toBe(true);
   });
 
-  it("does not stage or retain the retired deploy credential (#10572)", async () => {
+  it("does not stage the retired deploy field and preserves its unread value (#10572)", async () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-creds-"));
     const credsDir = path.join(home, ".nemoclaw");
     const legacyFile = path.join(credsDir, "credentials.json");
@@ -293,8 +293,8 @@ describe("legacy credentials.json migration (two-phase: stage then remove)", () 
     expect(credentials.stageLegacyCredentialsToEnv()).toEqual([]);
     expect(process.env.ALLOWED_CHAT_IDS).toBeUndefined();
     expect(fs.existsSync(legacyFile)).toBe(true);
-    expect(credentials.removeLegacyCredentialsFileIfEmpty()).toBe(true);
-    expect(fs.existsSync(legacyFile)).toBe(false);
+    expect(credentials.removeLegacyCredentialsFileIfEmpty()).toBe(false);
+    expect(fs.existsSync(legacyFile)).toBe(true);
   });
 
   it("ignores keys outside the credential allowlist (PATH, NODE_OPTIONS, etc.)", async () => {
@@ -452,6 +452,171 @@ describe("legacy credentials.json migration (two-phase: stage then remove)", () 
     expect(fs.existsSync(realFile)).toBe(true);
   });
 
+  it.each([
+    {
+      label: "unknown entries survive verified migration",
+      payload: { NVIDIA_API_KEY: "migrated", CUSTOM_TOKEN: "preserved", extra: { enabled: true } },
+      migrated: { NVIDIA_API_KEY: "migrated" },
+      expected: { CUSTOM_TOKEN: "preserved", extra: { enabled: true } },
+    },
+    {
+      label: "a credential changed during onboarding survives",
+      payload: { NVIDIA_API_KEY: "replacement" },
+      migrated: { NVIDIA_API_KEY: "migrated" },
+      expected: { NVIDIA_API_KEY: "replacement" },
+    },
+    {
+      label: "unrelated keys with the same value survive",
+      payload: { NVIDIA_API_KEY: "shared", OPENAI_API_KEY: "shared", CUSTOM_TOKEN: "shared" },
+      migrated: { NVIDIA_API_KEY: "shared" },
+      expected: { OPENAI_API_KEY: "shared", CUSTOM_TOKEN: "shared" },
+    },
+    {
+      label: "an entirely migrated file is removed",
+      payload: { NVIDIA_API_KEY: "migrated" },
+      migrated: { NVIDIA_API_KEY: "migrated" },
+      expected: null,
+    },
+    {
+      label: "a file with no verified migration remains unchanged",
+      payload: { NVIDIA_API_KEY: "not-migrated" },
+      migrated: {},
+      expected: { NVIDIA_API_KEY: "not-migrated" },
+    },
+  ])("selective legacy cleanup: $label (#10373)", async ({ payload, migrated, expected }) => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-legacy-cleanup-"));
+    onTestFinished(() => fs.rmSync(home, { recursive: true, force: true }));
+    const credentials = await importCredentialsModule(home);
+    const file = credentials.getCredsFile();
+    fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
+    fs.writeFileSync(file, JSON.stringify(payload), { mode: 0o600 });
+    credentials.removeLegacyCredentialsFile(new Map(Object.entries(migrated)));
+    const retained = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, "utf8")) : null;
+    expect(retained).toEqual(expected);
+    expect(fs.existsSync(file) ? fs.statSync(file).mode & 0o777 : null).toBe(
+      expected ? 0o600 : null,
+    );
+    expect(fs.readdirSync(path.dirname(file))).toEqual(expected ? ["credentials.json"] : []);
+  });
+
+  it.each([
+    { operation: "renameSync", code: "EIO" },
+    { operation: "fsyncSync", code: "EIO" },
+    { operation: "renameSync", code: "ENOENT" },
+  ] as const)(
+    "keeps the original mixed file when $operation fails with $code before replacement (#10373)",
+    async ({ operation, code }) => {
+      const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-legacy-cleanup-failure-"));
+      onTestFinished(() => fs.rmSync(home, { recursive: true, force: true }));
+      const credentials = await importCredentialsModule(home);
+      const file = credentials.getCredsFile();
+      fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
+      const migratedSecret = "legacy-migrated-credential-canary";
+      const retainedSecret = "legacy-retained-credential-canary";
+      const original = JSON.stringify({
+        NVIDIA_API_KEY: migratedSecret,
+        CUSTOM_TOKEN: retainedSecret,
+      });
+      fs.writeFileSync(file, original, { mode: 0o600 });
+      const failure = vi.spyOn(fs, operation).mockImplementationOnce(() => {
+        throw Object.assign(new Error("injected replacement failure"), { code });
+      });
+      const warning = vi.spyOn(console, "error").mockImplementation(() => undefined);
+      credentials.removeLegacyCredentialsFile(new Map([["NVIDIA_API_KEY", migratedSecret]]));
+      expect(failure).toHaveBeenCalled();
+      expect(fs.readFileSync(file, "utf8")).toBe(original);
+      expect(fs.readdirSync(path.dirname(file))).toEqual(["credentials.json"]);
+      expect(warning).toHaveBeenCalled();
+      expect(JSON.stringify(warning.mock.calls)).not.toContain(migratedSecret);
+      expect(JSON.stringify(warning.mock.calls)).not.toContain(retainedSecret);
+    },
+  );
+
+  it.each([
+    { label: "malformed JSON", raw: "credential-canary-not-json" },
+    { label: "an array", raw: "[]" },
+    { label: "null", raw: "null" },
+    { label: "an oversized file", raw: " ".repeat(64 * 1024 + 1) },
+  ])("preserves $label instead of applying an unverified cleanup", async ({ raw }) => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-legacy-refusal-"));
+    onTestFinished(() => fs.rmSync(home, { recursive: true, force: true }));
+    const credentials = await importCredentialsModule(home);
+    const file = credentials.getCredsFile();
+    fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
+    fs.writeFileSync(file, raw, { mode: 0o600 });
+    const warning = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    credentials.removeLegacyCredentialsFile(new Map([["NVIDIA_API_KEY", "migrated"]]));
+    expect(fs.readFileSync(file, "utf8")).toBe(raw);
+    expect(warning).toHaveBeenCalled();
+    expect(JSON.stringify(warning.mock.calls)).not.toContain("credential-canary-not-json");
+  });
+
+  it.each([
+    { mutation: "edit", phase: "mixed-file staging", hasRetainedEntry: true },
+    { mutation: "replace", phase: "mixed-file staging", hasRetainedEntry: true },
+    { mutation: "edit", phase: "verified-file wiping", hasRetainedEntry: false },
+    { mutation: "replace", phase: "verified-file wiping", hasRetainedEntry: false },
+  ] as const)(
+    "preserves a concurrent $mutation during $phase",
+    async ({ mutation, hasRetainedEntry }) => {
+      const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-legacy-concurrent-"));
+      onTestFinished(() => fs.rmSync(home, { recursive: true, force: true }));
+      const credentials = await importCredentialsModule(home);
+      const file = credentials.getCredsFile();
+      fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
+      fs.writeFileSync(
+        file,
+        JSON.stringify({
+          NVIDIA_API_KEY: "migrated",
+          ...(hasRetainedEntry ? { CUSTOM_TOKEN: "old" } : {}),
+        }),
+        { mode: 0o600 },
+      );
+      const replacement = JSON.stringify({ NVIDIA_API_KEY: "new-value", CUSTOM_TOKEN: "new" });
+      const changeFile = {
+        edit: () => fs.writeFileSync(file, replacement),
+        replace: () => {
+          fs.writeFileSync(file + ".new", replacement, { mode: 0o600 });
+          fs.renameSync(file + ".new", file);
+        },
+      }[mutation];
+      const sync = fs.fsyncSync;
+      vi.spyOn(fs, "fsyncSync").mockImplementationOnce((fd) => {
+        sync(fd);
+        changeFile();
+      });
+      const warning = vi.spyOn(console, "error").mockImplementation(() => undefined);
+      credentials.removeLegacyCredentialsFile(new Map([["NVIDIA_API_KEY", "migrated"]]));
+      expect(fs.readFileSync(file, "utf8")).toBe(replacement);
+      expect(fs.readdirSync(path.dirname(file))).toEqual(["credentials.json"]);
+      expect(warning).toHaveBeenCalled();
+    },
+  );
+
+  it("reports a directory sync failure after replacement without discarding retained entries", async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-legacy-durability-"));
+    onTestFinished(() => fs.rmSync(home, { recursive: true, force: true }));
+    const credentials = await importCredentialsModule(home);
+    const file = credentials.getCredsFile();
+    fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
+    fs.writeFileSync(
+      file,
+      JSON.stringify({ NVIDIA_API_KEY: "migrated", CUSTOM_TOKEN: "preserved" }),
+      { mode: 0o600 },
+    );
+    const sync = fs.fsyncSync;
+    vi.spyOn(fs, "fsyncSync")
+      .mockImplementationOnce(sync)
+      .mockImplementationOnce(() => {
+        throw Object.assign(new Error("injected directory sync failure"), { code: "EIO" });
+      });
+    const warning = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    credentials.removeLegacyCredentialsFile(new Map([["NVIDIA_API_KEY", "migrated"]]));
+    expect(JSON.parse(fs.readFileSync(file, "utf8"))).toEqual({ CUSTOM_TOKEN: "preserved" });
+    expect(fs.readdirSync(path.dirname(file))).toEqual(["credentials.json"]);
+    expect(warning).toHaveBeenCalled();
+  });
+
   it("survives a crash between stage and remove (interrupted-onboard regression)", async () => {
     // Simulates: process A stages legacy values into env then dies before
     // completeSession + removeLegacyCredentialsFile run. Process B starts
@@ -488,7 +653,9 @@ describe("legacy credentials.json migration (two-phase: stage then remove)", () 
       const stagedB = credentials.stageLegacyCredentialsToEnv();
       expect(stagedB).toEqual(["NVIDIA_INFERENCE_API_KEY"]);
       expect(process.env.NVIDIA_INFERENCE_API_KEY).toBe("nvapi-survives-crash");
-      credentials.removeLegacyCredentialsFile();
+      credentials.removeLegacyCredentialsFile(
+        new Map([["NVIDIA_INFERENCE_API_KEY", "nvapi-survives-crash"]]),
+      );
       expect(fs.existsSync(legacyFile)).toBe(false);
     }
   });
@@ -521,7 +688,9 @@ describe("legacy credentials.json migration (two-phase: stage then remove)", () 
 
     try {
       const credentials = await importCredentialsModule(home);
-      credentials.removeLegacyCredentialsFile();
+      credentials.removeLegacyCredentialsFile(
+        new Map([["NVIDIA_INFERENCE_API_KEY", "nvapi-TEST-NOT-A-REAL-PAYLOAD"]]),
+      );
     } finally {
       spy.mockRestore();
     }
@@ -535,28 +704,31 @@ describe("legacy credentials.json migration (two-phase: stage then remove)", () 
     expect(fs.existsSync(legacyFile)).toBe(false);
   });
 
-  it("removeLegacyCredentialsFile refuses to follow symlinks (deletes the link, not the target)", async () => {
-    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-creds-"));
-    const credsDir = path.join(home, ".nemoclaw");
-    const legacyFile = path.join(credsDir, "credentials.json");
-    fs.mkdirSync(credsDir, { recursive: true });
+  it.each(["symlinkSync", "linkSync"] as const)(
+    "removeLegacyCredentialsFile preserves an unread %s reference and its target",
+    async (linkMethod) => {
+      const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-creds-"));
+      const credsDir = path.join(home, ".nemoclaw");
+      const legacyFile = path.join(credsDir, "credentials.json");
+      fs.mkdirSync(credsDir, { recursive: true });
 
-    // The "victim" file is unrelated content the attacker wants overwritten.
-    const victimFile = path.join(home, "victim.txt");
-    const victimPayload = "important data the attacker should not touch";
-    fs.writeFileSync(victimFile, victimPayload);
+      // The "victim" file is unrelated content the attacker wants overwritten.
+      const victimFile = path.join(home, "victim.txt");
+      const victimPayload = "important data the attacker should not touch";
+      fs.writeFileSync(victimFile, victimPayload);
 
-    // Plant the symlink at the credentials path.
-    fs.symlinkSync(victimFile, legacyFile);
+      // Plant the symlink at the credentials path.
+      fs[linkMethod](victimFile, legacyFile);
 
-    const credentials = await importCredentialsModule(home);
-    credentials.removeLegacyCredentialsFile();
+      const credentials = await importCredentialsModule(home);
+      credentials.removeLegacyCredentialsFile(new Map([["NVIDIA_INFERENCE_API_KEY", "not-read"]]));
 
-    // The symlink itself is gone, but the victim file is intact.
-    expect(fs.existsSync(legacyFile)).toBe(false);
-    expect(fs.existsSync(victimFile)).toBe(true);
-    expect(fs.readFileSync(victimFile, "utf-8")).toBe(victimPayload);
-  });
+      expect(fs.existsSync(legacyFile)).toBe(true);
+      expect(fs.lstatSync(legacyFile).isSymbolicLink()).toBe(linkMethod === "symlinkSync");
+      expect(fs.existsSync(victimFile)).toBe(true);
+      expect(fs.readFileSync(victimFile, "utf-8")).toBe(victimPayload);
+    },
+  );
 });
 
 describe("removeLegacyCredentialsFileIfEmpty post-upgrade cleanup (#3105)", () => {

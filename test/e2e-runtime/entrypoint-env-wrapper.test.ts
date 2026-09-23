@@ -9,7 +9,14 @@ import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { sliceBlock } from "../helpers/corporate-ca-support";
 
-const HELPER = path.join(import.meta.dirname, "..", "..", "scripts", "lib", "entrypoint-env-wrapper.sh");
+const HELPER = path.join(
+  import.meta.dirname,
+  "..",
+  "..",
+  "scripts",
+  "lib",
+  "entrypoint-env-wrapper.sh",
+);
 const OPENCLAW_START = path.join(import.meta.dirname, "..", "..", "scripts", "nemoclaw-start.sh");
 
 function runNormalizer(argv: readonly string[]) {
@@ -31,6 +38,7 @@ function runNormalizer(argv: readonly string[]) {
     "printf 'NO_PROXY=%s\\n' \"${NO_PROXY-__UNSET__}\"",
     "printf 'FAST_REENTRY_INTERVAL=%s\\n' \"${NEMOCLAW_AUTO_PAIR_FAST_REENTRY_INTERVAL_SECS-__UNSET__}\"",
     "printf 'FAST_REENTRY_POLLS=%s\\n' \"${NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS-__UNSET__}\"",
+    "printf 'HERMES_API_PORT=%s\\n' \"${NEMOCLAW_HERMES_API_PORT-__UNSET__}\"",
     `printf 'ARG=%s\\n' "$@"`,
   ].join("\n");
   return spawnSync("/bin/bash", ["-c", harness, "entrypoint-env-wrapper-test", HELPER, ...argv], {
@@ -52,6 +60,7 @@ describe("OCI entrypoint env-wrapper normalization", () => {
       "NO_PROXY=localhost,127.0.0.1",
       "NEMOCLAW_AUTO_PAIR_FAST_REENTRY_INTERVAL_SECS=0.25",
       "NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS=3",
+      "NEMOCLAW_HERMES_API_PORT=8645",
       "nemoclaw-start",
       "/bin/sh",
       "-c",
@@ -66,6 +75,7 @@ describe("OCI entrypoint env-wrapper normalization", () => {
     expect(result.stdout).toContain("NO_PROXY=localhost,127.0.0.1");
     expect(result.stdout).toContain("FAST_REENTRY_INTERVAL=0.25");
     expect(result.stdout).toContain("FAST_REENTRY_POLLS=3");
+    expect(result.stdout).toContain("HERMES_API_PORT=8645");
     expect(result.stdout).toContain("ARG=/bin/sh\nARG=-c\nARG=printf managed command\n");
   });
 
@@ -156,7 +166,7 @@ describe("OCI entrypoint env-wrapper normalization", () => {
     const openClawPortBlock = sliceBlock(
       OPENCLAW_START,
       'NEMOCLAW_CMD=("$@")',
-      "# ── Config integrity check",
+      "# ── Mutable config permission normalize",
     );
     const snippet = [
       normalizer,
@@ -172,6 +182,7 @@ describe("OCI entrypoint env-wrapper normalization", () => {
       const baseEnv = { ...process.env };
       delete baseEnv.NEMOCLAW_DASHBOARD_PORT;
       delete baseEnv.CHAT_UI_URL;
+      delete baseEnv.OPENCLAW_GATEWAY_URL;
       const script = [
         "#!/usr/bin/env bash",
         "set -euo pipefail",
@@ -180,19 +191,23 @@ describe("OCI entrypoint env-wrapper normalization", () => {
         'printf "CHAT_UI_URL=%s\\n" "$CHAT_UI_URL"',
         'printf "PUBLIC_PORT=%s\\n" "$PUBLIC_PORT"',
         'printf "OPENCLAW_GATEWAY_PORT=%s\\n" "$OPENCLAW_GATEWAY_PORT"',
-        'printf "OPENCLAW_GATEWAY_URL=%s\\n" "$OPENCLAW_GATEWAY_URL"',
+        'printf "OPENCLAW_GATEWAY_URL=%s\\n" "${OPENCLAW_GATEWAY_URL-unset}"',
         'printf "SANDBOX_HOME=%s\\n" "$_SANDBOX_HOME"',
         'printf "OPENCLAW_HOME=%s\\n" "$OPENCLAW_HOME"',
         'printf "OPENCLAW_STATE_DIR=%s\\n" "$OPENCLAW_STATE_DIR"',
         'printf "OPENCLAW_CONFIG_PATH=%s\\n" "$OPENCLAW_CONFIG_PATH"',
         'printf "OPENCLAW_OAUTH_DIR=%s\\n" "$OPENCLAW_OAUTH_DIR"',
-        'printf "CMD=%s\\n" "${NEMOCLAW_CMD[*]}"',
+        'printf "CMD=%s\\n" "${NEMOCLAW_CMD[*]-}"',
       ].join("\n");
       fs.writeFileSync(scriptPath, script, { mode: 0o700 });
       return spawnSync("bash", [scriptPath], {
         encoding: "utf-8",
         timeout: 5000,
-        env: { ...baseEnv, PATH: `${fakeBin}:${process.env.PATH || ""}`, ...extraEnv },
+        env: {
+          ...baseEnv,
+          PATH: `${fakeBin}:${process.env.PATH || ""}`,
+          ...extraEnv,
+        },
       });
     }
 
@@ -208,11 +223,11 @@ describe("OCI entrypoint env-wrapper normalization", () => {
       const injected = runScenario(
         "set -- env CHAT_UI_URL=https://chat.example.test NEMOCLAW_DASHBOARD_PORT=19000 nemoclaw-start openclaw agent --agent main",
       );
-      expect(injected.status).toBe(0);
+      expect(injected.status, injected.stderr).toBe(0);
       expect(injected.stdout).toContain("CHAT_UI_URL=http://127.0.0.1:19000");
       expect(injected.stdout).toContain("PUBLIC_PORT=19000");
       expect(injected.stdout).toContain("OPENCLAW_GATEWAY_PORT=19000");
-      expect(injected.stdout).toContain("OPENCLAW_GATEWAY_URL=ws://127.0.0.1:19000");
+      expect(injected.stdout).toContain("OPENCLAW_GATEWAY_URL=unset");
       expect(injected.stdout).toContain("SANDBOX_HOME=/sandbox");
       expect(injected.stdout).toContain("OPENCLAW_HOME=/sandbox");
       expect(injected.stdout).toContain("OPENCLAW_STATE_DIR=/sandbox/.openclaw");
@@ -227,10 +242,31 @@ describe("OCI entrypoint env-wrapper normalization", () => {
       expect(bakedCustomPort.stdout).toContain("CHAT_UI_URL=http://127.0.0.1:18790");
       expect(bakedCustomPort.stdout).toContain("PUBLIC_PORT=18790");
       expect(bakedCustomPort.stdout).toContain("OPENCLAW_GATEWAY_PORT=18790");
-      expect(bakedCustomPort.stdout).toContain("OPENCLAW_GATEWAY_URL=ws://127.0.0.1:18790");
+      expect(bakedCustomPort.stdout).toContain("OPENCLAW_GATEWAY_URL=unset");
       expect(bakedCustomPort.stdout).toContain("OPENCLAW_STATE_DIR=/sandbox/.openclaw");
       expect(bakedCustomPort.stdout).toContain("OPENCLAW_OAUTH_DIR=/sandbox/.openclaw/credentials");
       expect(bakedCustomPort.stdout).toContain("CMD=openclaw agent");
+
+      const inheritedRuntimePort = runScenario("set -- nemoclaw-start openclaw agent", {
+        OPENCLAW_GATEWAY_PORT: "18791",
+      });
+      expect(inheritedRuntimePort.status, inheritedRuntimePort.stderr).toBe(0);
+      expect(inheritedRuntimePort.stdout).toContain("CHAT_UI_URL=http://127.0.0.1:18791");
+      expect(inheritedRuntimePort.stdout).toContain("PUBLIC_PORT=18791");
+      expect(inheritedRuntimePort.stdout).toContain("OPENCLAW_GATEWAY_PORT=18791");
+      expect(inheritedRuntimePort.stdout).toContain("OPENCLAW_GATEWAY_URL=unset");
+
+      const gatewayStartupIgnoresInheritedClientPort = runScenario("set -- nemoclaw-start", {
+        OPENCLAW_GATEWAY_PORT: "18791",
+      });
+      expect(
+        gatewayStartupIgnoresInheritedClientPort.status,
+        gatewayStartupIgnoresInheritedClientPort.stderr,
+      ).toBe(0);
+      expect(gatewayStartupIgnoresInheritedClientPort.stdout).toContain("PUBLIC_PORT=18789");
+      expect(gatewayStartupIgnoresInheritedClientPort.stdout).toContain(
+        "OPENCLAW_GATEWAY_PORT=18789",
+      );
 
       const baked = runScenario("set -- nemoclaw-start openclaw agent", {
         CHAT_UI_URL: "https://baked.example.test/ui",
@@ -239,7 +275,7 @@ describe("OCI entrypoint env-wrapper normalization", () => {
       expect(baked.stdout).toContain("CHAT_UI_URL=https://baked.example.test/ui");
       expect(baked.stdout).toContain("PUBLIC_PORT=18789");
       expect(baked.stdout).toContain("OPENCLAW_GATEWAY_PORT=18789");
-      expect(baked.stdout).toContain("OPENCLAW_GATEWAY_URL=ws://127.0.0.1:18789");
+      expect(baked.stdout).toContain("OPENCLAW_GATEWAY_URL=unset");
       expect(baked.stdout).toContain("SANDBOX_HOME=/sandbox");
       expect(baked.stdout).toContain("OPENCLAW_STATE_DIR=/sandbox/.openclaw");
       expect(baked.stdout).toContain("CMD=openclaw agent");
@@ -255,6 +291,12 @@ describe("OCI entrypoint env-wrapper normalization", () => {
       expect(invalidHighPort.status).toBe(1);
       expect(invalidHighPort.stderr).toContain("Invalid NEMOCLAW_DASHBOARD_PORT='70000'");
       expect(invalidHighPort.stderr).toContain("must be an integer between 1024 and 65535");
+
+      const invalidLeadingZeroPort = runScenario("set -- nemoclaw-start openclaw agent", {
+        NEMOCLAW_DASHBOARD_PORT: "018789",
+      });
+      expect(invalidLeadingZeroPort.status).toBe(1);
+      expect(invalidLeadingZeroPort.stderr).toContain("Invalid NEMOCLAW_DASHBOARD_PORT='018789'");
     } finally {
       vi.unstubAllEnvs();
       fs.rmSync(tmpDir, { recursive: true, force: true });

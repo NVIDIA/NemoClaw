@@ -20,18 +20,7 @@ const BASE_POLICY_PATH = new URL(
   "../../nemoclaw-blueprint/policies/openclaw-sandbox.yaml",
   import.meta.url,
 );
-const PERMISSIVE_POLICY_PATH = new URL(
-  "../../nemoclaw-blueprint/policies/openclaw-sandbox-permissive.yaml",
-  import.meta.url,
-);
 const HERMES_POLICY_PATH = new URL("../../agents/hermes/policy-additions.yaml", import.meta.url);
-
-type Blueprint = {
-  digest?: string;
-  components?: {
-    sandbox?: { image?: string | null };
-  };
-};
 
 type Rule = { allow?: { method?: string; path?: string } };
 type Endpoint = {
@@ -51,10 +40,6 @@ type PolicyEntry = {
 type SandboxPolicy = {
   network_policies?: Record<string, PolicyEntry>;
 };
-
-function loadYaml<T>(path: URL): T {
-  return YAML.parse(readFileSync(path, "utf-8"));
-}
 
 function parseEffectivePolicy(policy: string): SandboxPolicy {
   return YAML.parse(policy) as SandboxPolicy;
@@ -85,8 +70,6 @@ function binaries(policy: SandboxPolicy, policyName: string): string[] {
 function allEndpoints(policy: SandboxPolicy): Endpoint[] {
   return Object.values(policy.network_policies ?? {}).flatMap((entry) => entry.endpoints ?? []);
 }
-
-
 
 describe("effective sandbox policy behavior", () => {
   it("keeps default OpenClaw egress least-privilege after create-policy preparation", () => {
@@ -144,6 +127,25 @@ describe("effective sandbox policy behavior", () => {
           .map((candidate) => candidate.host),
       ).toEqual(["clawhub.ai"]);
 
+      const openclawApi = endpoint(policy, "openclaw_api", "openclaw.ai");
+      expect(openclawApi).toMatchObject({
+        port: 443,
+        protocol: "rest",
+        enforcement: "enforce",
+      });
+      expect(methods(openclawApi)).toEqual(["GET", "POST"]);
+
+      const openclawCatalog = endpoint(policy, "openclaw_api", "catalog.openclaw.ai");
+      expect(openclawCatalog).toMatchObject({
+        port: 443,
+        protocol: "rest",
+        enforcement: "enforce",
+      });
+      expect(openclawCatalog.rules).toEqual([{ allow: { method: "GET", path: "/**" } }]);
+      expect(binaries(policy, "openclaw_api")).toEqual(
+        ["/usr/local/bin/node", "/usr/local/bin/openclaw"].sort(),
+      );
+
       expect(binaries(policy, "npm_registry")).toEqual(["/usr/local/bin/openclaw"]);
       expect(JSON.stringify(networkPolicies)).not.toContain("/usr/local/bin/claude");
 
@@ -159,39 +161,6 @@ describe("effective sandbox policy behavior", () => {
       ]) {
         expect(defaultHosts, optInHost).not.toContain(optInHost);
       }
-    } finally {
-      prepared.cleanup?.();
-    }
-  });
-
-  it("keeps permissive OpenClaw compatibility routes after create-policy preparation", () => {
-    const prepared = prepareInitialSandboxCreatePolicy(PERMISSIVE_POLICY_PATH.pathname, [], {
-      agentName: "openclaw",
-    });
-    try {
-      const consumed = policies.mergePresetNamesIntoPolicy(
-        readFileSync(prepared.policyPath, "utf-8"),
-        [],
-        { agent: "openclaw" },
-      );
-      const policy = parseEffectivePolicy(consumed.policy);
-      const managedInference = endpoint(policy, "managed_inference", "inference.local");
-
-      expect(managedInference).toMatchObject({
-        port: 443,
-        protocol: "rest",
-        enforcement: "enforce",
-        access: "full",
-      });
-      expect(binaries(policy, "managed_inference")).toEqual(["/**"]);
-
-      const clawhub = endpoint(policy, "clawhub", "clawhub.ai");
-      expect(clawhub).toMatchObject({
-        protocol: "rest",
-        enforcement: "enforce",
-        access: "full",
-        allow_encoded_slash: true,
-      });
     } finally {
       prepared.cleanup?.();
     }

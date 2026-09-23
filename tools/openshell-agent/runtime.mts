@@ -17,6 +17,7 @@ const HOST_CREDENTIALS = [
 export interface OpenShellCommandOptions {
   capture?: boolean;
   env: NodeJS.ProcessEnv;
+  killSignal?: NodeJS.Signals;
   timeout?: number;
 }
 
@@ -58,26 +59,9 @@ export type OpenShellUpload = {
   destination: string;
 };
 
-const INFERENCE_CONFIGURATION_ATTEMPTS = 6;
 const PROVIDER_CONFIGURATION_TIMEOUT_MS = 60_000;
-const INFERENCE_CONFIGURATION_TIMEOUT_MS = 930_000;
 const PROCESS_TERMINATION_GRACE_MS = 250;
 const PROCESS_KILL_TIMEOUT_MS = 5_000;
-
-function inferenceConfigurationRetryDelay(
-  env: NodeJS.ProcessEnv,
-  input: OpenShellInferenceOptions,
-  attempt: number,
-): number {
-  const identity = [
-    input.modelId,
-    env.PR_REVIEW_ADVISOR_INTEREST ?? "primary",
-    env.SANDBOX_NAME ?? input.gatewayId,
-  ].join(":");
-  let hash = 0;
-  for (const character of identity) hash = (hash * 31 + character.charCodeAt(0)) >>> 0;
-  return 2000 * 2 ** attempt + (hash % 8000);
-}
 
 export type CreateOpenShellSandboxOptions = {
   command: readonly string[];
@@ -233,6 +217,7 @@ export const defaultOpenShellTools: OpenShellTools = {
     const output = execFileSync(command, [...args], {
       encoding: "utf8",
       env: options.env,
+      killSignal: options.killSignal,
       stdio: options.capture ? ["ignore", "pipe", "inherit"] : "inherit",
       timeout: options.timeout,
     });
@@ -324,7 +309,9 @@ function startOpenShellInference(
   );
   const stopGateway =
     tools.start("openshell-gateway", ["--config", configurationPath], {
-      env: commandEnv,
+      env: input.ownGateway
+        ? { ...commandEnv, OPENSHELL_DB_URL: "sqlite::memory:?cache=shared" }
+        : commandEnv,
       logPath: path.join(gatewayDirectory, "gateway.log"),
     }) ?? (async () => undefined);
 
@@ -362,22 +349,9 @@ function startOpenShellInference(
         input.providerName,
         "--model",
         input.modelId,
-        "--timeout",
-        "900",
+        "--no-verify",
       ] as const;
-      for (let attempt = 0; attempt < INFERENCE_CONFIGURATION_ATTEMPTS; attempt += 1) {
-        try {
-          tools.run("openshell", inferenceArgs, {
-            env: commandEnv,
-            timeout: INFERENCE_CONFIGURATION_TIMEOUT_MS,
-          });
-          return;
-        } catch (error) {
-          if (attempt === INFERENCE_CONFIGURATION_ATTEMPTS - 1) throw error;
-          await tools.wait(inferenceConfigurationRetryDelay(env, input, attempt));
-        }
-      }
-      throw new OpenShellAgentError("OpenShell inference configuration did not complete");
+      tools.run("openshell", inferenceArgs, { env: commandEnv });
     } catch (error) {
       if (input.ownGateway) {
         try {
@@ -427,6 +401,7 @@ export function createOpenShellSandbox(
   const driverConfigArgs = input.driverConfig
     ? ["--driver-config-json", JSON.stringify(input.driverConfig)]
     : [];
+  const commandArgs = input.command.length > 0 ? ["--", ...input.command] : [];
   tools.run(
     "openshell",
     [
@@ -441,8 +416,7 @@ export function createOpenShellSandbox(
       input.policyPath,
       ...uploadOptions,
       "--no-tty",
-      "--",
-      ...input.command,
+      ...commandArgs,
     ],
     { env: credentialFreeEnvironment(env) },
   );
@@ -492,11 +466,13 @@ export function execOpenShellSandboxAsync(
 
 export function downloadOpenShellPath(
   env: NodeJS.ProcessEnv,
-  input: { destination: string; name: string; source: string },
+  input: { destination: string; name: string; source: string; timeoutMs?: number },
   tools: OpenShellTools = defaultOpenShellTools,
 ): void {
   tools.run("openshell", ["sandbox", "download", input.name, input.source, input.destination], {
     env: credentialFreeEnvironment(env),
+    killSignal: "SIGKILL",
+    timeout: input.timeoutMs,
   });
 }
 

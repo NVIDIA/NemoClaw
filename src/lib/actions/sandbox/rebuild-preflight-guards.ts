@@ -5,6 +5,7 @@ import {
   detectOpenShellStateRpcPreflightIssue,
   printOpenShellStateRpcIssue,
 } from "../../adapters/openshell/gateway-drift";
+import type { OpenShellRuntimeSelection } from "../../adapters/openshell/runtime-selection";
 import { CLI_NAME } from "../../cli/branding";
 import {
   checkGatewayRouteCompatibility,
@@ -265,13 +266,21 @@ export function revalidateManagedWorkloadRebuildBeforeDelete(
   };
 }
 
-export function checkRebuildGatewaySchemaPreflight(
+export async function checkRebuildGatewaySchemaPreflight(
   sandboxName: string,
   sb: RebuildSandboxEntry,
   bail: RebuildBail,
-): boolean {
-  const issue = detectOpenShellStateRpcPreflightIssue({
-    gatewayName: resolveSandboxGatewayName(sb),
+  runtimeSelection?: OpenShellRuntimeSelection,
+): Promise<boolean> {
+  const gatewayName = resolveSandboxGatewayName(sb);
+  if (runtimeSelection && runtimeSelection.gatewayName !== gatewayName) {
+    return bail(
+      `Rebuild gateway schema target '${gatewayName}' does not match the frozen OpenShell target '${runtimeSelection.gatewayName}'.`,
+    );
+  }
+  const issue = await detectOpenShellStateRpcPreflightIssue({
+    gatewayName,
+    ...(runtimeSelection ? { runtimeSelection } : {}),
   });
   if (issue) {
     printOpenShellStateRpcIssue(issue, {
@@ -290,10 +299,10 @@ export function checkRebuildGatewaySchemaPreflight(
 }
 
 export async function runRebuildGatewayIntentPreflight<T>(options: {
-  checkGatewaySchema: () => boolean;
+  checkGatewaySchema: () => boolean | Promise<boolean>;
   confirmIntent: () => Promise<T | null>;
 }): Promise<T | null> {
-  if (!options.checkGatewaySchema()) return null;
+  if (!(await options.checkGatewaySchema())) return null;
   return options.confirmIntent();
 }
 
@@ -316,9 +325,11 @@ export function getRebuildSandboxEntryOrBail(
 
 /** Block rebuild before any live-state probe or cleanup can bypass retained recovery. */
 export function blockRebuildOnRetainedSandboxRecovery(
-  sandboxName: string,
+  sandbox: RebuildSandboxEntry,
   bail: RebuildBail,
 ): boolean {
+  const sandboxName = sandbox.name;
+  onboardSession.reconstructRetainedSandboxRecoveryFromPendingCreate(sandbox);
   const retainedRecovery = onboardSession
     .listRetainedSandboxRecoveryRecords()
     .find((record) => record.sandboxName === sandboxName);
@@ -328,7 +339,7 @@ export function blockRebuildOnRetainedSandboxRecovery(
     `  Rebuild cannot use retained sandbox '${sandboxName}' while recovery record '${retainedRecovery.recordId}' is unresolved. No sandbox or Docker resources were removed.`,
   );
   console.error(
-    `  Run '${CLI_NAME} ${sandboxName} destroy --yes'. If OpenShell still reports the sandbox present, follow destroy's create-attempt label guidance for identity-bound administrator removal.`,
+    `  Run '${CLI_NAME} ${sandboxName} destroy --yes'. If the owning gateway reports the sandbox present or cannot determine presence, destroy removes nothing and preserves the recovery record.`,
   );
   bail(`Retained sandbox recovery blocks rebuild for '${sandboxName}'.`, 1);
   return true;

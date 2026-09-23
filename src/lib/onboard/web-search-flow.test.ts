@@ -31,7 +31,13 @@ function helpers(overrides: Record<string, unknown> = {}) {
     note: () => {},
     isNonInteractive: () => true,
     cliName: () => "nemoclaw",
-    runCaptureOpenshell: () => null,
+    commandExecutor: {
+      runBuffered: async () => ({
+        outcome: { kind: "failed", error: { kind: "invocation", message: "unavailable" } },
+        stdout: "",
+        stderr: "",
+      }),
+    },
     ...overrides,
   });
 }
@@ -49,7 +55,13 @@ describe("Brave key prompt empty-input escape (#6025)", () => {
       note: () => {},
       isNonInteractive: () => false,
       cliName: () => "nemoclaw",
-      runCaptureOpenshell: () => null,
+      commandExecutor: {
+        runBuffered: async () => ({
+          outcome: { kind: "failed", error: { kind: "invocation", message: "unavailable" } },
+          stdout: "",
+          stderr: "",
+        }),
+      },
     });
 
     const result = await flow.promptBraveSearchApiKey();
@@ -106,36 +118,39 @@ describe("web search provider validation", () => {
   it.each([
     ["brave", "brv-secret", "X-Subscription-Token: brv-secret"],
     ["tavily", "tvly-secret", "Authorization: Bearer tvly-secret"],
-  ] as const)("keeps the %s key out of curl argv in a temporary 0600 config", (provider, apiKey, header) => {
-    let configPath = "";
-    vi.mocked(runCurlProbe).mockImplementationOnce((args, options) => {
-      configPath = String(options?.trustedConfigFiles?.[0] ?? "");
-      expect(configPath).not.toBe("");
-      expect(args.join(" ")).not.toContain(apiKey);
-      expect(args).toContain(configPath);
-      const configFd = fs.openSync(
-        configPath,
-        fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0),
-      );
-      try {
-        expect(fs.fstatSync(configFd).mode & 0o777).toBe(0o600);
-        expect(fs.readFileSync(configFd, "utf8")).toContain(header);
-      } finally {
-        fs.closeSync(configFd);
-      }
-      return {
-        ok: true,
-        httpStatus: 200,
-        curlStatus: 0,
-        body: "{}",
-        stderr: "",
-        message: "ok",
-      };
-    });
+  ] as const)(
+    "keeps the %s key out of curl argv in a temporary 0600 config",
+    (provider, apiKey, header) => {
+      let configPath = "";
+      vi.mocked(runCurlProbe).mockImplementationOnce((args, options) => {
+        configPath = String(options?.trustedConfigFiles?.[0] ?? "");
+        expect(configPath).not.toBe("");
+        expect(args.join(" ")).not.toContain(apiKey);
+        expect(args).toContain(configPath);
+        const configFd = fs.openSync(
+          configPath,
+          fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0),
+        );
+        try {
+          expect(fs.fstatSync(configFd).mode & 0o777).toBe(0o600);
+          expect(fs.readFileSync(configFd, "utf8")).toContain(header);
+        } finally {
+          fs.closeSync(configFd);
+        }
+        return {
+          ok: true,
+          httpStatus: 200,
+          curlStatus: 0,
+          body: "{}",
+          stderr: "",
+          message: "ok",
+        };
+      });
 
-    expect(helpers().validateWebSearchApiKey(provider, apiKey).ok).toBe(true);
-    expect(fs.existsSync(configPath)).toBe(false);
-  });
+      expect(helpers().validateWebSearchApiKey(provider, apiKey).ok).toBe(true);
+      expect(fs.existsSync(configPath)).toBe(false);
+    },
+  );
 
   it("uses a POST JSON probe for Tavily", () => {
     helpers().validateTavilySearchApiKey("tvly-secret");

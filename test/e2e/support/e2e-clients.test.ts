@@ -7,9 +7,11 @@ import path from "node:path";
 
 import { describe, expect, expectTypeOf, it, vi } from "vitest";
 import {
+  assertExitCode,
   assertExitZero,
   type CommandRunner,
   GatewayClient,
+  HISTORICAL_SANDBOX_MAIN_PROCESS,
   HostCliClient,
   ProviderClient,
   SandboxClient,
@@ -20,13 +22,17 @@ import {
   trustedSandboxShellScript,
   validateSandboxName,
 } from "../fixtures/clients/index.ts";
+import { ArtifactSink } from "../fixtures/artifacts.ts";
+import { assertCleanupPassed, CleanupRegistry } from "../fixtures/cleanup.ts";
+import { ShellProbe, trustedShellCommand } from "../fixtures/shell-probe.ts";
+import { startTestProgress } from "../fixtures/progress.ts";
 import type {
   ShellProbeResult,
   ShellProbeRunOptions,
   TrustedShellCommand,
 } from "../fixtures/shell-probe.ts";
 import { LAUNCH_TURN_SCRIPT, runOpenClawLaunchSession } from "../live/launch-agent-turn.ts";
-import { sandboxShWithArgs } from "../live/phase6-messaging-helpers.ts";
+import { precleanSandbox, sandboxShWithArgs } from "../live/phase6-messaging-helpers.ts";
 
 interface RunnerCall {
   command: string;
@@ -35,7 +41,7 @@ interface RunnerCall {
 }
 
 type FakeRunnerResponse = Partial<
-  Pick<ShellProbeResult, "exitCode" | "signal" | "stderr" | "stdout">
+  Pick<ShellProbeResult, "exitCode" | "signal" | "stderr" | "stdout" | "timedOut">
 >;
 
 class FakeRunner implements CommandRunner {
@@ -64,7 +70,7 @@ class FakeRunner implements CommandRunner {
       command: [command.command, ...command.args],
       exitCode: response?.exitCode === undefined ? this.exitCode : response.exitCode,
       signal: response?.signal === undefined ? this.signal : response.signal,
-      timedOut: false,
+      timedOut: response?.timedOut ?? false,
       stdout: response?.stdout ?? this.stdout,
       stderr: response?.stderr ?? this.stderr,
       artifacts: {
@@ -77,6 +83,10 @@ class FakeRunner implements CommandRunner {
 }
 
 describe("E2E fixture clients", () => {
+  it("keeps historical rebuild sandboxes alive until the rebuild owns their lifecycle", () => {
+    expect(HISTORICAL_SANDBOX_MAIN_PROCESS).toEqual(["sleep", "infinity"]);
+  });
+
   it.each([
     "a2345678901234567890",
     "e2e--sandbox",
@@ -91,6 +101,44 @@ describe("E2E fixture clients", () => {
       /sandbox name is invalid for fixture client/,
     );
   });
+
+  it.each([
+    { stdin: undefined, expectedTimeout: false, expectedOutput: "EOF" },
+    { stdin: "open-pipe" as const, expectedTimeout: true, expectedOutput: "" },
+    { stdin: { text: "" }, expectedTimeout: false, expectedOutput: "EOF" },
+    { stdin: { text: "PRIVATE_INPUT" }, expectedTimeout: false, expectedOutput: "[REDACTED]EOF" },
+  ])(
+    "keeps the configured host command's input open only when requested ($stdin)",
+    async ({ stdin, expectedTimeout, expectedOutput }) => {
+      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-e2e-host-stdin-"));
+      const progress = startTestProgress("host stdin", ["run configured command", "verify input"], {
+        logLine: () => undefined,
+      });
+      try {
+        const probe = new ShellProbe({
+          artifacts: new ArtifactSink(tmp),
+          progress,
+          redact: (text) => text,
+          signal: new AbortController().signal,
+        });
+        const host = new HostCliClient(probe, { cliPath: process.execPath });
+        progress.phase("run configured command");
+        const result = await host.nemoclaw(
+          [
+            "-e",
+            "process.stdin.on('data', data => process.stdout.write(data)); process.stdin.on('end', () => console.log('EOF'));",
+          ],
+          { stdin, timeoutMs: 2_000, persistArtifacts: false, redactionValues: ["PRIVATE_INPUT"] },
+        );
+        progress.phase("verify input");
+        expect(result.timedOut).toBe(expectedTimeout);
+        expect(result.stdout.trim()).toBe(expectedOutput);
+      } finally {
+        progress.stop();
+        fs.rmSync(tmp, { recursive: true, force: true });
+      }
+    },
+  );
 
   it("host client runs the configured NemoClaw CLI", async () => {
     const runner = new FakeRunner();
@@ -111,6 +159,17 @@ describe("E2E fixture clients", () => {
         },
       },
     ]);
+  });
+
+  it("does not require a stock-image receipt for onboarding help", async () => {
+    const runner = new FakeRunner();
+    const host = new HostCliClient(runner);
+
+    await expect(
+      host.command("node", ["/workspace/bin/nemoclaw.js", "onboard", "--help"], {
+        env: { E2E_MANAGED_IMAGE_REVISION: "a".repeat(40) },
+      }),
+    ).resolves.toMatchObject({ exitCode: 0 });
   });
 
   it.each([
@@ -188,6 +247,71 @@ describe("E2E fixture clients", () => {
     expect(host.openshellCommandPath).toBe("openshell");
   });
 
+  it.each([
+    { actualExecutable: "/opt/openshell", expected: true },
+    { actualExecutable: "/usr/bin/python3", expected: false },
+  ])(
+    "host client verifies an exact ForwardTcp listener executable [expected=$expected]",
+    async ({ actualExecutable, expected }) => {
+      const runner = new FakeRunner();
+      runner.enqueue({ stdout: "4321\n" });
+      runner.enqueue({ stdout: "/usr/local/bin/openshell\n" });
+      runner.enqueue({ stdout: `${actualExecutable}\n` });
+      runner.enqueue({ stdout: "/opt/openshell\n" });
+      runner.enqueue({
+        stdout:
+          "/usr/local/bin/openshell --gateway nemoclaw --gateway-endpoint https://127.0.0.1:8080 --workspace default forward service alpha --target-port 18789 --target-host 127.0.0.1 --local 127.0.0.1:18789\n",
+      });
+      runner.enqueue({ stdout: "4321\n" });
+      const host = new HostCliClient(runner);
+
+      await expect(host.inspectOpenShellForwardListener("18789", "alpha")).resolves.toMatchObject({
+        valid: expected,
+        ...(expected ? { pid: 4321 } : {}),
+      });
+    },
+  );
+
+  it("rejects a wrapper as the owner of a canonical OpenShell listener", async () => {
+    const runner = new FakeRunner();
+    runner.enqueue({ stdout: "4321\n" });
+    runner.enqueue({ stdout: "/tmp/openshell-wrapper\n" });
+    runner.enqueue({ stdout: "/opt/openshell\n" });
+    runner.enqueue({ stdout: "/tmp/openshell-wrapper\n" });
+    runner.enqueue({
+      stdout:
+        "/tmp/openshell-wrapper --gateway nemoclaw --gateway-endpoint https://127.0.0.1:8080 --workspace default forward service alpha --target-port 18789 --target-host 127.0.0.1 --local 127.0.0.1:18789\n",
+    });
+    runner.enqueue({ stdout: "4321\n" });
+
+    await expect(
+      new HostCliClient(runner).inspectOpenShellForwardListener("18789", "alpha"),
+    ).resolves.toMatchObject({ valid: false });
+  });
+
+  it("matches a forward listener against the caller's gateway and workspace", async () => {
+    const runner = new FakeRunner();
+    runner.enqueue({ stdout: "4321\n" });
+    runner.enqueue({ stdout: "/usr/local/bin/openshell\n" });
+    runner.enqueue({ stdout: "/opt/openshell\n" });
+    runner.enqueue({ stdout: "/opt/openshell\n" });
+    runner.enqueue({
+      stdout:
+        "/usr/local/bin/openshell --gateway nemoclaw-19080 --gateway-endpoint https://127.0.0.1:19080 --workspace review forward service alpha --target-port 18789 --target-host 127.0.0.1 --local 127.0.0.1:18789\n",
+    });
+    runner.enqueue({ stdout: "4321\n" });
+
+    await expect(
+      new HostCliClient(runner).inspectOpenShellForwardListener("18789", "alpha", {
+        env: {
+          NEMOCLAW_GATEWAY_PORT: "19080",
+          OPENSHELL_GATEWAY: "nemoclaw-19080",
+          OPENSHELL_WORKSPACE: "review",
+        },
+      }),
+    ).resolves.toMatchObject({ valid: true, pid: 4321 });
+  });
+
   it("composes installation, OpenShell resolution, and launch in authority order", async () => {
     const runner = new FakeRunner();
     runner.enqueue({ stdout: "installation complete\n" });
@@ -252,24 +376,86 @@ describe("E2E fixture clients", () => {
     },
   );
 
-  it("host client surfaces unexpected sandbox cleanup failures", async () => {
+  it.each([0, 23])(
+    "preserves destroy exit %i and its artifacts after successful final cleanup",
+    async (destroyExitCode) => {
+      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cleanup-evidence-"));
+      const progress = startTestProgress("cleanup", ["destroy sandbox", "inspect evidence"], {
+        logLine: () => undefined,
+      });
+      try {
+        const artifacts = new ArtifactSink(tmp);
+        const probe = new ShellProbe({
+          artifacts,
+          progress,
+          redact: (text) => text,
+          signal: new AbortController().signal,
+        });
+        let attempt = 0;
+        const host = new HostCliClient({
+          run: (_command, options) =>
+            probe.run(
+              trustedShellCommand({
+                command: process.execPath,
+                args: [
+                  "-e",
+                  "const code = Number(process.argv[1]); code && process.stderr.write('destroy permission denied'); process.exitCode = code;",
+                  String(attempt++ === 1 ? destroyExitCode : 0),
+                ],
+                reason: "exercise cleanup command results",
+              }),
+              options,
+            ),
+        });
+        const cleanup = new CleanupRegistry();
+        cleanup.trackSandbox(host, "assistant", { artifactName: "cleanup-nemoclaw-destroy" });
+        progress.phase("destroy sandbox");
+        await host.cleanupSandbox("assistant", { artifactName: "pre-cleanup-nemoclaw-destroy" });
+        const outcome = await (async () => {
+          try {
+            await host.cleanupSandbox("assistant", {
+              artifactName: "verify-cleanup-nemoclaw-destroy",
+            });
+          } finally {
+            assertCleanupPassed(await cleanup.runAll());
+          }
+        })().catch((error: Error) => error.message);
+        expect(outcome).toBe(
+          destroyExitCode === 0
+            ? undefined
+            : "cleanup destroy sandbox assistant failed: destroy permission denied",
+        );
+        progress.phase("inspect evidence");
+        const readResult = (prefix: string) =>
+          JSON.parse(
+            fs.readFileSync(
+              artifacts.pathFor(`shell/${prefix}-nemoclaw-destroy.result.json`),
+              "utf8",
+            ),
+          );
+        expect(readResult("pre-cleanup")).toMatchObject({ exitCode: 0 });
+        expect(readResult("verify-cleanup")).toMatchObject({
+          exitCode: destroyExitCode,
+          stderr: destroyExitCode === 0 ? "" : "destroy permission denied",
+        });
+        expect(readResult("cleanup")).toMatchObject({ exitCode: 0 });
+      } finally {
+        progress.stop();
+        fs.rmSync(tmp, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it("host client removes a current OpenShell gateway with the caller environment", async () => {
     const runner = new FakeRunner();
-    runner.exitCode = 1;
-    runner.stderr = "permission denied";
     const host = new HostCliClient(runner, { cliPath: "nemoclaw" });
 
-    await expect(host.cleanupSandbox("assistant")).rejects.toThrow(
-      "cleanup destroy sandbox assistant failed: permission denied",
-    );
-  });
-
-  it("host client removes a current OpenShell gateway registration", async () => {
-    const runner = new FakeRunner();
-    const host = new HostCliClient(runner, { cliPath: "nemoclaw" });
-
-    await host.cleanupGatewayRegistration("nemoclaw");
+    await host.cleanupGatewayRegistration("nemoclaw", {
+      env: { HOME: "/tmp/cloud-onboard-home" },
+    });
 
     expect(runner.calls.map((call) => call.args)).toEqual([["gateway", "remove", "nemoclaw"]]);
+    expect(runner.calls[0]?.options?.env).toEqual({ HOME: "/tmp/cloud-onboard-home" });
   });
 
   it("host client falls back to the legacy gateway destroy verb", async () => {
@@ -322,6 +508,60 @@ describe("E2E fixture clients", () => {
       expect(runner.calls.map((call) => call.args)).toEqual([["forward", "stop", "18789"]]);
     },
   );
+
+  it("scopes forward cleanup to its sandbox and gateway", async () => {
+    const runner = new FakeRunner();
+    runner.enqueue({ exitCode: 0 });
+    const host = new HostCliClient(runner, { cliPath: "nemoclaw" });
+
+    await host.cleanupForward(18789, {
+      gatewayName: "nemoclaw",
+      sandboxName: "e2e-double-a",
+    });
+
+    expect(runner.calls.map((call) => call.args)).toEqual([
+      ["forward", "stop", "18789", "e2e-double-a", "--gateway", "nemoclaw"],
+    ]);
+  });
+
+  it("rejects incomplete forward cleanup ownership", async () => {
+    const runner = new FakeRunner();
+    const host = new HostCliClient(runner, { cliPath: "nemoclaw" });
+
+    await expect(host.cleanupForward(18789, { sandboxName: "e2e-double-a" })).rejects.toThrow(
+      "Scoped forward cleanup requires a gateway name and sandbox name.",
+    );
+    expect(runner.calls).toEqual([]);
+  });
+
+  it("accepts an absent scoped forward", async () => {
+    const runner = new FakeRunner();
+    runner.enqueue({ exitCode: 1, stderr: "forward 18789 not found" });
+    const host = new HostCliClient(runner, { cliPath: "nemoclaw" });
+
+    await expect(
+      host.cleanupForward(18789, {
+        gatewayName: "nemoclaw",
+        sandboxName: "e2e-double-a",
+      }),
+    ).resolves.toBeUndefined();
+  });
+
+  it("surfaces a foreign scoped forward without retrying an unscoped stop", async () => {
+    const runner = new FakeRunner();
+    runner.enqueue({ exitCode: 1, stderr: "forward belongs to another sandbox" });
+    const host = new HostCliClient(runner, { cliPath: "nemoclaw" });
+
+    await expect(
+      host.cleanupForward(18789, {
+        gatewayName: "nemoclaw",
+        sandboxName: "e2e-double-a",
+      }),
+    ).rejects.toThrow("cleanup forward 18789 failed: forward belongs to another sandbox");
+    expect(runner.calls.map((call) => call.args)).toEqual([
+      ["forward", "stop", "18789", "e2e-double-a", "--gateway", "nemoclaw"],
+    ]);
+  });
 
   it.each(["permission denied", "daemon not running", "some unrelated error: not running"])(
     "host client surfaces unexpected forward cleanup failure: %s",
@@ -484,7 +724,7 @@ describe("E2E fixture clients", () => {
     const containerGateway = new GatewayClient(containerHost, new SandboxClient(containerRunner));
     const runtime = containerGateway.resolveHostRuntime();
     containerRunner.exitCode = 0;
-    containerRunner.stdout = "abc123\n";
+    containerRunner.stdout = "abc123\topenshell-cluster-nemoclaw\n";
     await expect(runtime).resolves.toEqual({ kind: "container", id: "abc123" });
 
     const statusRunner = new FakeRunner();
@@ -496,19 +736,167 @@ describe("E2E fixture clients", () => {
     ).expectOpenshellStatusConnected();
   });
 
-  it("sandbox client builds OpenShell sandbox commands", async () => {
+  it("gateway client proves registration, listener, and host runtime are removed", async () => {
     const runner = new FakeRunner();
-    const sandbox = new SandboxClient(runner, { openshellPath: "openshell" });
+    runner.enqueue({ exitCode: 1, stderr: "No active gateway" });
+    runner.enqueue({ exitCode: 1 });
+    runner.enqueue({ exitCode: 1 });
+    runner.enqueue({ exitCode: 0 });
+    const gateway = new GatewayClient(
+      new HostCliClient(runner, { cliPath: "nemoclaw" }),
+      new SandboxClient(runner),
+    );
 
-    await sandbox.exec("assistant", ["echo", "ok"]);
-
-    expect(runner.calls[0]).toEqual({
-      command: "openshell",
-      args: ["sandbox", "exec", "-n", "assistant", "--", "echo", "ok"],
-      options: {
-        artifactName: "sandbox-exec-assistant",
-      },
+    await gateway.expectRemoved("nemoclaw", {
+      artifactName: "final-gateway",
+      gatewayPort: 18_080,
     });
+
+    expect(runner.calls.map(({ command, args }) => [command, args])).toEqual([
+      ["openshell", ["status"]],
+      ["lsof", ["-ti", ":18080", "-sTCP:LISTEN"]],
+      ["sh", expect.any(Array)],
+      ["docker", ["container", "ps", "--format", "{{.ID}}\t{{.Names}}"]],
+      ["true", []],
+    ]);
+    expect(runner.calls[0].options).toMatchObject({
+      artifactName: "final-gateway-status",
+      env: { OPENSHELL_GATEWAY: "nemoclaw" },
+    });
+    expect(runner.calls[1].options).toMatchObject({
+      artifactName: "final-gateway-listener",
+    });
+  });
+
+  it("gateway client rejects an inconclusive listener absence probe", async () => {
+    const runner = new FakeRunner();
+    runner.enqueue({ exitCode: 1, stderr: "Status: Disconnected\nGateway: nemoclaw" });
+    runner.enqueue({ exitCode: 1, stderr: "lsof: command unavailable" });
+    const gateway = new GatewayClient(
+      new HostCliClient(runner, { cliPath: "nemoclaw" }),
+      new SandboxClient(runner),
+    );
+
+    await expect(gateway.expectRemoved("nemoclaw", { gatewayPort: 8_080 })).rejects.toThrow(
+      "gateway listener still exists or could not be disproved on port 8080",
+    );
+  });
+
+  it("gateway client rejects a gateway that still accepts status connections", async () => {
+    const runner = new FakeRunner();
+    runner.enqueue({ exitCode: 0, stdout: "Status: Connected\nGateway: nemoclaw" });
+    const gateway = new GatewayClient(
+      new HostCliClient(runner, { cliPath: "nemoclaw" }),
+      new SandboxClient(runner),
+    );
+
+    await expect(gateway.expectRemoved("nemoclaw", { gatewayPort: 8_080 })).rejects.toThrow(
+      "openshell status did not prove gateway 'nemoclaw' disconnected",
+    );
+  });
+
+  it("initial cleanup verifies the requested gateway before deleting a sandbox", async () => {
+    const runner = new FakeRunner();
+    runner.enqueue({ stdout: JSON.stringify({ gateway: "nemoclaw", status: "healthy" }) });
+    const sandbox = new SandboxClient(runner);
+    const options = { env: { OPENSHELL_GATEWAY: "nemoclaw" }, timeoutMs: 60000 };
+    await sandbox.cleanupSandboxBeforeOnboard("assistant", options);
+    expect(runner.calls.map(({ args }) => args)).toEqual([
+      ["gateway", "info", "-g", "nemoclaw", "-o", "json"],
+      ["sandbox", "delete", "assistant"],
+    ]);
+    expect(runner.calls[0].options).toMatchObject(options);
+  });
+
+  it("initial cleanup accepts only the requested absent gateway", async () => {
+    const runner = new FakeRunner();
+    runner.enqueue({
+      exitCode: 1,
+      stderr:
+        "Error:   × Unknown gateway 'nemoclaw'.\n  │ Register it first: openshell gateway add <endpoint> --name nemoclaw\n  │ Or list available gateways: openshell gateway select",
+    });
+    const sandbox = new SandboxClient(runner);
+    await expect(sandbox.cleanupSandboxBeforeOnboard("assistant")).resolves.toBeUndefined();
+    expect(runner.calls).toHaveLength(1);
+  });
+
+  it("initial cleanup accepts the pinned gateway-info no-configuration result", async () => {
+    const runner = new FakeRunner();
+    runner.enqueue({
+      exitCode: 1,
+      stderr:
+        "Error:   × No gateway configured.\n  │ Register a gateway with: openshell gateway add <endpoint>",
+    });
+    const sandbox = new SandboxClient(runner);
+    await expect(sandbox.cleanupSandboxBeforeOnboard("assistant")).resolves.toBeUndefined();
+    expect(runner.calls.map(({ args }) => args)).toEqual([
+      ["gateway", "info", "-g", "nemoclaw", "-o", "json"],
+    ]);
+  });
+
+  it.each([
+    { exitCode: 1, stderr: "permission denied" },
+    { exitCode: 1, stderr: "connection refused" },
+    { exitCode: 1, stderr: "No active gateway." },
+    { exitCode: 1, stderr: "No gateway configured.\npermission denied" },
+    { exitCode: 1, stderr: "No gateway configured.", timedOut: true },
+    { exitCode: 1, stderr: "No gateway configured.", stdout: "unexpected output" },
+    { exitCode: 1, stderr: "Unknown gateway 'other'." },
+    { exitCode: 1, stderr: "Unknown gateway 'nemoclaw'.\npermission denied" },
+    { exitCode: 1, stderr: "Unknown gateway 'nemoclaw'.", stdout: "unexpected output" },
+    { exitCode: 1, stderr: "Unknown gateway 'nemoclaw'.", timedOut: true },
+    { exitCode: null, stderr: "Unknown gateway 'nemoclaw'.", signal: "SIGTERM" as const },
+    { exitCode: 0, stdout: '{"gateway":"other"}' },
+    { exitCode: 0, stdout: '[{"gateway":"nemoclaw"}]' },
+    { exitCode: 0, stdout: '{"gateway":"nemoclaw","error":"connection refused"}' },
+    { exitCode: 0, stdout: '{"gateway":"nemoclaw"}', stderr: "permission denied" },
+    { exitCode: 0, stdout: '{"gateway":"nemoclaw"}', timedOut: true },
+    { exitCode: 0, stdout: '{"gateway":"nemoclaw"}', signal: "SIGTERM" as const },
+    { exitCode: 0, stdout: "null" },
+    { exitCode: 0, stdout: "{}" },
+    { exitCode: 0, stdout: "Gateway: nemoclaw" },
+    { exitCode: 0, stdout: "" },
+  ])("initial cleanup rejects an unverified gateway observation: %j", async (response) => {
+    const runner = new FakeRunner();
+    runner.enqueue(response);
+    const sandbox = new SandboxClient(runner);
+    await expect(sandbox.hasGatewayForInitialCleanup("nemoclaw")).rejects.toThrow();
+    expect(runner.calls).toHaveLength(1);
+  });
+
+  it.each([
+    "No gateway configured.",
+    "No gateway configured.\n  ",
+    "No gateway configured.\n│ Register a gateway with: openshell gateway add <endpoint>\n│ Register a gateway with: openshell gateway add <endpoint>",
+    "Unknown gateway 'nemoclaw'.",
+    "Unknown gateway 'nemoclaw'.\n│ Register it first: openshell gateway add <endpoint> --name nemoclaw",
+    "Unknown gateway 'nemoclaw'.\n│ Or list available gateways: openshell gateway select",
+    "Unknown gateway 'nemoclaw'.\n│ Or list available gateways: openshell gateway select\n│ Register it first: openshell gateway add <endpoint> --name nemoclaw",
+    "Unknown gateway 'nemoclaw'.\n│ Register it first: openshell gateway add <endpoint> --name nemoclaw\n│ Register it first: openshell gateway add <endpoint> --name nemoclaw",
+  ])("initial cleanup rejects incomplete or repeated registration guidance: %s", async (stderr) => {
+    const runner = new FakeRunner();
+    runner.enqueue({ exitCode: 1, stderr });
+    const sandbox = new SandboxClient(runner);
+    await expect(sandbox.cleanupSandboxBeforeOnboard("assistant")).rejects.toThrow();
+    expect(runner.calls).toHaveLength(1);
+  });
+
+  it("initial cleanup retains deletion failures for a verified gateway", async () => {
+    const runner = new FakeRunner();
+    runner.enqueue({ stdout: '{"gateway":"nemoclaw"}' });
+    runner.enqueue({ exitCode: 1, stderr: "permission denied" });
+    const sandbox = new SandboxClient(runner);
+    await expect(sandbox.cleanupSandboxBeforeOnboard("assistant")).rejects.toThrow(
+      "permission denied",
+    );
+    expect(runner.calls).toHaveLength(2);
+  });
+
+  it("terminal cleanup rejects an absent gateway", async () => {
+    const runner = new FakeRunner();
+    runner.enqueue({ exitCode: 1, stderr: "Unknown gateway 'nemoclaw'." });
+    const sandbox = new SandboxClient(runner);
+    await expect(sandbox.cleanupSandbox("assistant")).rejects.toThrow("Unknown gateway");
   });
 
   it("sandbox client removes an OpenShell sandbox with caller cleanup options", async () => {
@@ -544,14 +932,16 @@ describe("E2E fixture clients", () => {
     await expect(sandbox.cleanupSandbox("assistant")).resolves.toBeUndefined();
   });
 
-  it("sandbox client surfaces unexpected cleanup failures", async () => {
+  it.each([
+    "permission denied",
+    "Error:   × Unknown gateway 'nemoclaw'.",
+    "Error:   × No active gateway.",
+  ])("sandbox client surfaces cleanup failures that do not prove absence: %s", async (stderr) => {
     const runner = new FakeRunner();
-    runner.enqueue({ exitCode: 1, stderr: "permission denied" });
+    runner.enqueue({ exitCode: 1, stderr });
     const sandbox = new SandboxClient(runner);
 
-    await expect(sandbox.cleanupSandbox("assistant")).rejects.toThrow(
-      "cleanup OpenShell sandbox assistant failed: permission denied",
-    );
+    await expect(sandbox.cleanupSandbox("assistant")).rejects.toThrow(stderr);
   });
 
   it("sandbox client validates list output using the OpenShell gateway env", async () => {
@@ -569,6 +959,29 @@ describe("E2E fixture clients", () => {
         env: expect.objectContaining({ OPENSHELL_GATEWAY: "nemoclaw" }),
       },
     });
+  });
+
+  it("sandbox client proves exact-name absence from OpenShell list output", async () => {
+    const runner = new FakeRunner();
+    runner.stdout = "NAME\nassistant-copy\n";
+    const sandbox = new SandboxClient(runner, { openshellPath: "openshell" });
+
+    await expect(sandbox.expectAbsent("assistant")).resolves.toMatchObject({ exitCode: 0 });
+
+    runner.stdout = "NAME\nassistant\n";
+    await expect(sandbox.expectAbsent("assistant")).rejects.toThrow(
+      "openshell sandbox list still included 'assistant'",
+    );
+  });
+
+  it("sandbox client rejects an inconclusive OpenShell absence probe", async () => {
+    const runner = new FakeRunner();
+    runner.enqueue({ exitCode: 1, stderr: "gateway unavailable" });
+    const sandbox = new SandboxClient(runner, { openshellPath: "openshell" });
+
+    await expect(sandbox.expectAbsent("assistant")).rejects.toThrow(
+      "openshell sandbox list failed: gateway unavailable",
+    );
   });
 
   it("sandbox client preserves caller-provided probe options", async () => {
@@ -954,7 +1367,26 @@ describe("E2E fixture clients", () => {
     expect(outputContainsSandbox(result, "assist")).toBe(false);
   });
 
-  it("assertExitZero reports non-zero and signaled commands", () => {
+  it("precleans shared live fixtures through OpenShell only", async () => {
+    const command = vi.fn(async () => ({ exitCode: 0, stderr: "", stdout: "" }));
+    const host = {
+      command,
+      openshellCommandPath: "openshell",
+    } as unknown as HostCliClient;
+
+    await precleanSandbox(host, "e2e-cleanup", {}, [], "shared-preclean");
+
+    expect(command).toHaveBeenCalledOnce();
+    expect(command).toHaveBeenCalledWith(
+      "openshell",
+      ["sandbox", "delete", "e2e-cleanup"],
+      expect.objectContaining({
+        artifactName: "shared-preclean-openshell-sandbox-delete",
+      }),
+    );
+  });
+
+  it("exit assertions report unexpected and signaled command results", () => {
     const result: ShellProbeResult = {
       command: ["cmd"],
       exitCode: 7,
@@ -969,6 +1401,8 @@ describe("E2E fixture clients", () => {
     expect(() => assertExitZero({ ...result, exitCode: null, signal: "SIGTERM" }, "cmd")).toThrow(
       "cmd failed: signal=SIGTERM",
     );
+    expect(() => assertExitCode(result, 7, "cmd")).not.toThrow();
+    expect(() => assertExitCode(result, 1, "cmd")).toThrow("cmd expected exit=1, got exit=7");
   });
 
   it("assertExitZero accepts lightweight command results and retains both output streams", () => {

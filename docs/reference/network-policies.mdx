@@ -64,7 +64,7 @@ The following endpoint groups are allowed by default:
 | --- | --- | --- | --- |
 | `nvidia` | `integrate.api.nvidia.com:443` | `/usr/local/bin/openclaw` | POST to inference and embedding paths, GET to model listings |
 | `clawhub` | `clawhub.ai:443` | `/usr/local/bin/openclaw`, `/usr/local/bin/node` | GET, POST, including scoped package paths |
-| `openclaw_api` | `openclaw.ai:443` | `/usr/local/bin/openclaw`, `/usr/local/bin/node` | GET, POST |
+| `openclaw_api` | `openclaw.ai:443`, `catalog.openclaw.ai:443` | `/usr/local/bin/openclaw`, `/usr/local/bin/node` | GET and POST to `openclaw.ai`; GET only to `catalog.openclaw.ai` |
 | `openclaw_docs` | `docs.openclaw.ai:443` | `/usr/local/bin/openclaw` | GET only |
 | `npm_registry` | `registry.npmjs.org:443` | `/usr/local/bin/openclaw` only (openclaw plugins install) | GET only; while the broader `npm` preset is active, its reviewed L4 transport metadata temporarily applies to this overlapping route |
 
@@ -144,7 +144,6 @@ The preset excludes unspecified, loopback, and link-local address ranges, includ
 
 </Warning>
 
-Every fresh onboarding run through the experimental Portable profile selects the Personal tier. When `NEMOCLAW_POLICY_PRESETS` is unset, blank, or contains only whitespace, Portable uses `suggested` mode with no optional preset override. If `NEMOCLAW_POLICY_PRESETS` contains a non-blank list, Portable treats that list as authoritative for additional presets while still applying mandatory `personal-open-internet` during that onboarding transaction. Resume and reuse derive effective access from the current OpenShell policy rather than a recorded tier.
 
 After selecting a tier, a combined preset and access-mode screen lets you include or exclude optional presets and toggle each between read (GET only) and read-write (GET + POST/PUT/PATCH) access. On Personal, NemoClaw restores `personal-open-internet` if it is deselected in the screen. Tier-default presets are pre-selected; additional presets can be added from the built-in preset list available to the sandbox's active agent. NemoClaw filters tier defaults and built-in preset choices by the active agent's supported integrations. The `personal-open-internet` preset uses L4 passthrough, so its read-write label does not add HTTP method or path inspection.
 
@@ -275,13 +274,16 @@ Apply policy updates to a running sandbox without restarting:
 openshell policy update <sandbox-name> --add-endpoint api.example.com:443:read-only:rest:enforce
 ```
 
-To replace the live policy with a complete base policy file, export the current base policy and use `openshell policy set`. Requires OpenShell 0.0.72+ for the round-trippable `policy get --base` and `policy set --wait` syntax.
+To replace the live policy with a complete base policy file, export the current base policy and use `openshell policy set`.
+This workflow requires OpenShell 0.0.72+ for `policy get --base` and `policy set --wait`.
 
 ```bash
 $$nemoclaw <sandbox-name> policy get > current-policy.yaml
 ```
 
-NemoClaw strips the OpenShell metadata header and exits non-zero if it cannot validate the base policy. Do not add `--raw` when you plan to edit and reapply the file.
+NemoClaw parses the policy, strips the OpenShell metadata header, and replaces literal credentials with `[STRIPPED_BY_MIGRATION]`. Replace every marker with a supported OpenShell credential binding or resolver placeholder before you apply the file.
+NemoClaw exits nonzero if it cannot validate the base policy.
+Do not add `--raw` when you plan to edit and reapply the file.
 
 Edit or review `current-policy.yaml`, then apply it:
 

@@ -21,11 +21,14 @@ Use host-side channel commands to change a configured messaging channel.
 
 ## Rotate Credentials
 
-Running `channels add` for a channel that is already configured overwrites stored tokens and registers the updated bridge provider. Rebuild the sandbox after the update so the image reflects the current channel set.
+A successful `channels add` for a channel that is already configured updates the stored tokens and bridge provider.
+Provider replacement requires complete credentials and is refused when the provider is attached to another sandbox.
+If re-add fails after changing the provider, follow the [channel-add recovery guidance](add-channels-after-onboarding#apply-policy-and-rebuild) for residual gateway-provider state.
+Rebuild the sandbox after a successful update so the image reflects the current channel set.
 
 For WeChat, the cached-token shortcut applies. Remove WeChat first when you intend to acquire a fresh account through a new QR scan.
 
-For Google Chat, re-add the channel and paste the replacement service-account JSON. NemoClaw updates the gateway-side refresh material. The sandbox keeps only the OpenShell credential placeholder. OpenShell keeps refreshed access tokens at the gateway and substitutes them at approved egress boundaries.
+For Google Chat, re-add the channel and paste the replacement service-account JSON. On success, NemoClaw updates the gateway-side refresh material. The sandbox keeps only the OpenShell credential placeholder. OpenShell keeps refreshed access tokens at the gateway and substitutes them at approved egress boundaries.
 
 <AgentOnly variant="hermes">
   Re-adding Google Chat prompts again for the project ID, complete Pub/Sub subscription name, and
@@ -46,7 +49,11 @@ $$nemoclaw my-assistant channels remove teams
 
 `channels remove wechat` clears the bot token, deletes the `<sandbox>-wechat-bridge` provider, and removes `wechat` from the enabled-channel set. The next rebuild omits WeChat configuration and per-account state files.
 
-`channels remove googlechat` detaches and deletes the `<sandbox>-googlechat-bridge` provider before the rebuild removes Google Chat configuration and the matching policy preset.
+`channels remove googlechat` disables the channel, removes its agent configuration and matching policy preset, and then detaches and deletes the `<sandbox>-googlechat-bridge` provider.
+If deletion fails after detachment, NemoClaw attempts to restore the provider attachment.
+If restoration also fails, the command names the provider and sandbox and warns that delivery may remain interrupted.
+The credentials remain, but the channel stays disabled with provider cleanup pending and its policy already removed.
+Resolve the gateway error, then rerun `$$nemoclaw <name> channels remove googlechat`.
 
 <AgentOnly variant="openclaw">
 It also stops the dedicated cloudflared process and webhook proxy for that sandbox.
@@ -69,9 +76,21 @@ The cleanup targets `/sandbox/.openclaw/<channel>/`.
 The cleanup targets `/sandbox/.hermes/platforms/<channel>/`.
 </AgentOnly>
 
-It tries `openshell sandbox exec` and falls back to SSH if the first transport does not produce the success sentinel. If neither transport can reach a running sandbox, the command exits nonzero and asks you to start the sandbox and rerun it.
+NemoClaw runs the cleanup through `openshell sandbox exec` first.
+If OpenShell is unavailable or its outcome is inconclusive, NemoClaw retries the same cleanup through the sandbox's registered local runtime provider unless OpenShell reports cancellation.
+NemoClaw permits this retry only because removing the declared paths is idempotent and the success sentinel verifies completion.
+A runtime validation or identity refusal stops removal instead of falling through to SSH.
+If the sentinel remains absent after any permitted local retry, NemoClaw tries SSH.
 
-NemoClaw leaves the registry and current OpenShell policy unchanged on that failure path so a later retry can complete cleanly.
+<AgentOnly variant="openclaw">
+For OpenClaw WeChat only, if the sentinel remains absent after those attempts, NemoClaw asks the registered runtime provider to run its distinct stopped-state cleanup.
+The provider confirms that the runtime resource belongs to the registered sandbox, is stopped, and has one writable state resource that contains the declared paths.
+The helper removes only the WeChat state paths declared by the channel manifest.
+Only when WeChat appears in neither the messaging plan nor the current OpenShell policy does NemoClaw treat state cleanup as complete without inspecting the state resource if the registry entry is missing, the provider does not support stopped-state cleanup, or no eligible stopped runtime resource exists.
+</AgentOnly>
+
+If the messaging plan or current OpenShell policy still records the channel and NemoClaw cannot confirm cleanup, the command exits nonzero with recovery guidance.
+It leaves the bridge provider, credentials, registry, and current OpenShell policy unchanged so you can fix the reported condition and retry removal.
 
 `channels remove whatsapp` clears the client-side Baileys session but cannot deregister the linked device with WhatsApp's servers after the local connection is gone. The phone continues to list the sandbox as a Linked Device until you remove it manually or WhatsApp's 14-day inactivity timeout expires.
 
@@ -133,8 +152,9 @@ and network policy until you rebuild it.
 ## Avoid Cross-Sandbox Conflicts
 
 <Warning title="Conflict Detection Scope">
-  NemoClaw checks only the sandboxes recorded in the selected OpenShell gateway's sandbox registry.
-  It cannot detect or prevent Slack credential reuse across independent OpenShell gateways.
+NemoClaw checks credential and cross-sandbox conflicts only against the selected OpenShell gateway's sandbox registry.
+It cannot detect or prevent Slack credential reuse across independent OpenShell gateways.
+For Microsoft Teams, NemoClaw also checks TCP listeners on the selected local webhook port.
 </Warning>
 
 Use distinct credentials and resources for each active messaging sandbox. Follow these channel-specific rules:
@@ -142,13 +162,33 @@ Use distinct credentials and resources for each active messaging sandbox. Follow
 - Use a distinct iLink `accountId` for each WeChat sandbox.
 - Run only one active Slack sandbox on each OpenShell gateway.
 - Use distinct bot and Socket Mode app tokens across OpenShell gateways.
-- Use a different local webhook port for each Microsoft Teams sandbox.
+- Use a local webhook port that no unrelated process or active Microsoft Teams sandbox uses.
 
 When you onboard, rebuild, or add a channel, the command aborts on a conflict or an incomplete required check within the selected OpenShell gateway's sandbox registry. Legacy entries without credential hashes count as incomplete. An unreadable messaging registry also causes onboarding and rebuild to abort. Onboarding and rebuild have no conflict override.
 
 For `channels add` only, `--force` overrides conflict and incomplete-check aborts. Use it only when you accept the duplicate-consumer or shared-resource risk. Rerun `channels add <channel>` with the intended token to refresh stored non-secret identity metadata.
 
-Before a rebuild, NemoClaw checks the messaging plan before backup or deletion. A conflict leaves the original sandbox intact. Resolve any conflict, then rerun the operation. `$$nemoclaw status` reports cross-sandbox overlaps within the selected OpenShell gateway's sandbox registry.
+For Microsoft Teams, an unrelated host listener causes `channels add` to abort before it changes the channel unless you use `--force`.
+A direct OpenShell forward can keep the selected port only when NemoClaw verifies its listener belongs to the current sandbox and gateway.
+A stale forward record alone is not accepted.
+A port probe that cannot verify availability also aborts.
+Free an unrelated listener, or set `MSTEAMS_PORT` or `TEAMS_PORT` to a free port.
+
+Before a rebuild, NemoClaw checks the messaging plan before backup and checks it again after MCP preparation, before deletion.
+A registry or Microsoft Teams host-port conflict stops rebuild before sandbox deletion.
+NemoClaw attempts to restore MCP changes made during preparation.
+Resolve the conflict and any reported MCP recovery failure, then rerun the operation.
+`$$nemoclaw status` reports cross-sandbox overlaps within the selected OpenShell gateway's sandbox registry.
+
+After recreation, NemoClaw verifies the replacement's required webhook forward.
+If verification fails, rebuild exits nonzero without deleting the replacement sandbox.
+NemoClaw retains existing backup and recovery files.
+Correct the reported forwarding error, then run `$$nemoclaw <sandbox> rebuild --yes` to retry recovery.
+
+If an older registry entry lacks lifecycle identity, channel provider operations restore missing fields only from a matching completed onboarding receipt.
+The receipt must identify the same live sandbox on the recorded gateway.
+Missing proof or conflicting identity stops the operation; `--force` does not override this check.
+When no matching receipt exists, run `$$nemoclaw <sandbox> rebuild --yes` to record its lifecycle identity, then rerun the channel command.
 
 ## Stop All Delivery
 

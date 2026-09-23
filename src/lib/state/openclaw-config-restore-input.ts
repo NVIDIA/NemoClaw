@@ -4,14 +4,7 @@
 import { spawnSync } from "child_process";
 
 import { shellQuote } from "../runner.js";
-import {
-  mergeOpenClawRestoredConfig,
-  type OpenClawConfigMergeOptions,
-} from "./openclaw-config-merge.js";
-import {
-  hasCompleteOpenClawImagePluginProvenance,
-  type OpenClawImagePluginInstall,
-} from "./openclaw-plugin-restore.js";
+import { mergeOpenClawRestoredConfig } from "./openclaw-config-merge.js";
 
 export type OpenClawConfigRestoreInputResult =
   | { ok: true; input: Buffer }
@@ -20,9 +13,8 @@ export type OpenClawConfigRestoreInputResult =
 export interface OpenClawConfigRestoreFromSandboxOptions {
   backupContents: Buffer;
   dir: string;
-  freshImagePluginInstalls?: readonly OpenClawImagePluginInstall[];
+  env?: NodeJS.ProcessEnv;
   log?: (message: string) => void;
-  previousImagePluginInstalls?: readonly OpenClawImagePluginInstall[];
   specPath: string;
   sshArgs: readonly string[];
 }
@@ -47,9 +39,11 @@ function readCurrentOpenClawConfig(
   dir: string,
   specPath: string,
   log: (message: string) => void,
+  env?: NodeJS.ProcessEnv,
 ): Buffer | null {
   const command = buildOpenClawConfigReadCommand(dir, specPath);
   const result = spawnSync("ssh", [...sshArgs, command], {
+    ...(env ? { env } : {}),
     stdio: ["ignore", "pipe", "pipe"],
     timeout: 120000,
     maxBuffer: 256 * 1024 * 1024,
@@ -68,7 +62,6 @@ function readCurrentOpenClawConfig(
 export function buildOpenClawConfigRestoreInput(
   backupContents: Buffer,
   currentContents: Buffer | null,
-  options: OpenClawConfigMergeOptions = {},
 ): OpenClawConfigRestoreInputResult {
   if (!currentContents) {
     return { ok: false, error: "openclaw.json selective merge requires current rebuilt config" };
@@ -77,7 +70,7 @@ export function buildOpenClawConfigRestoreInput(
   try {
     const backedUpConfig = JSON.parse(backupContents.toString("utf-8")) as unknown;
     const currentConfig = JSON.parse(currentContents.toString("utf-8")) as unknown;
-    const merged = mergeOpenClawRestoredConfig(backedUpConfig, currentConfig, options);
+    const merged = mergeOpenClawRestoredConfig(backedUpConfig, currentConfig);
     return { ok: true, input: Buffer.from(`${JSON.stringify(merged, null, 2)}\n`) };
   } catch (err) {
     const detail = err instanceof Error ? err.message : String(err);
@@ -91,33 +84,13 @@ export function buildOpenClawConfigRestoreInput(
 export function buildOpenClawConfigRestoreInputFromSandbox({
   backupContents,
   dir,
-  freshImagePluginInstalls,
+  env,
   log = () => {},
-  previousImagePluginInstalls,
   specPath,
   sshArgs,
 }: OpenClawConfigRestoreFromSandboxOptions): OpenClawConfigRestoreInputResult {
-  if ((previousImagePluginInstalls === undefined) !== (freshImagePluginInstalls === undefined)) {
-    return {
-      ok: false,
-      error: "Complete previous and fresh OpenClaw image plugin provenance is required",
-    };
-  }
-  if (
-    freshImagePluginInstalls !== undefined &&
-    !hasCompleteOpenClawImagePluginProvenance(freshImagePluginInstalls, dir)
-  ) {
-    return { ok: false, error: "Fresh OpenClaw image plugin provenance is incomplete" };
-  }
-  if (
-    previousImagePluginInstalls !== undefined &&
-    !hasCompleteOpenClawImagePluginProvenance(previousImagePluginInstalls, dir)
-  ) {
-    return { ok: false, error: "Previous OpenClaw image plugin provenance is incomplete" };
-  }
   return buildOpenClawConfigRestoreInput(
     backupContents,
-    readCurrentOpenClawConfig(sshArgs, dir, specPath, log),
-    { freshImagePluginInstalls, previousImagePluginInstalls },
+    readCurrentOpenClawConfig(sshArgs, dir, specPath, log, env),
   );
 }

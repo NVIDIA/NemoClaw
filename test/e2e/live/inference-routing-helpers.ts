@@ -12,7 +12,8 @@ import type { SandboxClient } from "../fixtures/clients/sandbox.ts";
 import { validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import { expect } from "../fixtures/e2e-test.ts";
 import { captureIssue4462FailureDiagnostics } from "../fixtures/issue-4462-diagnostics.ts";
-import { CLI_DIST_ENTRYPOINT, CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
+import { CLI_DIST_ENTRYPOINT, CLI_ENTRYPOINT } from "../fixtures/paths.ts";
+import type { RuntimeProviderPrerequisite } from "../fixtures/runtime-provider.ts";
 import {
   type RawRunOptions,
   type RawRunResult,
@@ -90,21 +91,6 @@ function clearOnboardState(): void {
   fs.rmSync(ONBOARD_SESSION_FILE, { force: true });
 }
 
-function writeFakeOpenShellForBlueprintFailClosed(binDir: string): string {
-  const commandLogPath = path.join(binDir, "openshell-commands.jsonl");
-  const scriptPath = path.join(binDir, "openshell");
-  fs.writeFileSync(
-    scriptPath,
-    `#!/usr/bin/env node
-const fs = require("node:fs");
-fs.appendFileSync(${JSON.stringify(commandLogPath)}, JSON.stringify({ args: process.argv.slice(2) }) + "\\n");
-process.exit(0);
-`,
-    { mode: 0o755 },
-  );
-  return commandLogPath;
-}
-
 async function runNemoclawCli(
   args: readonly string[],
   options: RawRunOptions,
@@ -130,22 +116,19 @@ async function runOpenShell(
   });
 }
 
-async function requireLivePrerequisites(host: HostCliClient, skip: SkipFn): Promise<void> {
+async function requireLivePrerequisites(
+  host: HostCliClient,
+  runtimeProvider: RuntimeProviderPrerequisite,
+): Promise<void> {
   expect(
     fs.existsSync(DIST_ENTRYPOINT),
     "run `npm run build:cli` before live inference-routing targets",
   ).toBe(true);
 
-  const docker = await host.command("docker", ["info"], {
+  await runtimeProvider.requireAvailable({
     artifactName: "prereq-docker-info-inference-routing",
-    env: buildAvailabilityProbeEnv(),
-    timeoutMs: 30_000,
+    scenarioLabel: "inference routing",
   });
-  if (docker.exitCode !== 0) {
-    const message = `Docker is required for live inference-routing coverage: ${resultText(docker)}`;
-    if (process.env.GITHUB_ACTIONS === "true") throw new Error(message);
-    skipLive(skip, message);
-  }
 
   try {
     const openshell = await host.command("openshell", ["--version"], {
@@ -515,5 +498,4 @@ export {
   runRawCommand,
   skipLive,
   TRANSPORT_CLASSIFICATION_PATTERN,
-  writeFakeOpenShellForBlueprintFailClosed,
 };

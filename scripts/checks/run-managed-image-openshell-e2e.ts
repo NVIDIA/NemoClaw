@@ -9,6 +9,8 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { resolveAgent } from "../../src/lib/agent/onboard.ts";
 import { parseOpenShellSandboxId } from "../../src/lib/adapters/openshell/sandbox-identity.ts";
+import { createCliOpenShellSandboxCommandExecutor } from "../../src/lib/adapters/openshell/sandbox-command-cli.ts";
+import { createCliOpenShellSandboxObserverFromRunner } from "../../src/lib/adapters/openshell/sandbox-observer-cli.ts";
 import { isValidName, NAME_ALLOWED_FORMAT } from "../../src/lib/name-validation.ts";
 import {
   type StopHostGatewayResult,
@@ -19,31 +21,18 @@ import {
   prepareInitialSandboxCreatePolicy,
 } from "../../src/lib/onboard/initial-policy.ts";
 import {
-  MANAGED_BOOTSTRAP_SCHEMA_VERSION,
-  type ManagedBootstrapAdapter,
-  type ManagedBootstrapAuthorityStore,
-  ManagedBootstrapOwnerCleanupRequiredError,
-} from "../../src/lib/onboard/managed-bootstrap/adapter.ts";
-import { createDockerManagedBootstrapAdapter } from "../../src/lib/onboard/managed-bootstrap/docker.ts";
-import { createDockerManagedBootstrapSurface } from "../../src/lib/onboard/managed-bootstrap/docker-runtime.ts";
-import {
   managedImageRuntimeIdentity,
   SHIPPED_MANAGED_IMAGE_AGENTS,
   type ShippedManagedImageAgent,
 } from "../../src/lib/onboard/managed-image/contract.ts";
 import { encodeManagedStartupProfile } from "../../src/lib/onboard/managed-startup/profile.ts";
 import { createManagedStartupRootApplyRequest } from "../../src/lib/onboard/managed-startup/root-apply.ts";
-import type {
-  RuntimeProviderBundle,
-  RuntimeProviderManagedImageBootstrapSurface,
-} from "../../src/lib/onboard/runtime-provider/contract.ts";
+import type { RuntimeProviderBundle } from "../../src/lib/onboard/runtime-provider/contract.ts";
 import { createDockerRuntimeProviderBundle } from "../../src/lib/onboard/runtime-provider/docker.ts";
 import { parseLiveSandboxNames } from "../../src/lib/runtime-recovery.ts";
+import { prepareSandboxCreateLaunch } from "../../src/lib/onboard/sandbox-create-launch.ts";
 import {
-  OPENSHELL_SANDBOX_SUPERVISOR_ARGV,
-  prepareSandboxCreateLaunch,
-} from "../../src/lib/onboard/sandbox-create-launch.ts";
-import {
+  type CreatedSandboxIdentity,
   resolveDockerStartupCommandPatch,
   runSandboxGpuCreateFlow,
   type SandboxGpuCreateFlowInput,
@@ -51,10 +40,12 @@ import {
 import { createDirectSandboxGpuVerifier } from "../../src/lib/onboard/sandbox-gpu-preflight.ts";
 import {
   MANAGED_STARTUP_E2E_CORPORATE_CA_PEM,
+  MANAGED_STARTUP_E2E_OPENCLAW_HEARTBEAT_EVERY,
   managedStartupE2eProfile,
 } from "./generate-managed-startup-profile-fixture.mts";
 import {
   isManagedImageLocalInferenceKind,
+  managedImageFailureDetail,
   type ManagedImageLocalInferenceKind,
   resolveManagedImageLocalInferenceRoute,
   withManagedImageLocalInferenceProfile,
@@ -62,10 +53,11 @@ import {
 
 // This executable owns one protected qualification transaction from sandbox
 // creation through exact cleanup. Keep its stateful orchestration and cleanup
-// together so no cross-module return path can bypass rollback; stateless route
-// and profile policy remains in managed-image-protected-runtime-contract.ts.
+// together so no cross-module return path can bypass rollback. Stateless policy
+// and diagnostics remain in managed-image-protected-runtime-contract.ts.
 
 const MANAGED_AGENTS = new Set<ShippedManagedImageAgent>(SHIPPED_MANAGED_IMAGE_AGENTS);
+const REPOSITORY_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const MODEL = "nvidia/nemotron-3-ultra-550b-a55b";
 const GATEWAY_NAME = "nemoclaw";
 const GATEWAY_PORT = 8080;
@@ -76,30 +68,20 @@ const MANAGED_AGENT_BASE_POLICIES: Record<ShippedManagedImageAgent, readonly str
   "langchain-deepagents-code": ["agents", "langchain-deepagents-code", "policy-additions.yaml"],
 };
 
-export const MANAGED_IMAGE_OPENSHELL_SUPERVISOR_ARGV = OPENSHELL_SANDBOX_SUPERVISOR_ARGV;
-
-type ProtectedManagedImageBootstrapInput = Omit<
-  NonNullable<SandboxGpuCreateFlowInput["managedBootstrap"]>,
-  "expectedSupervisorArgv"
->;
-
-export function createProtectedManagedImageBootstrapInput(
-  input: ProtectedManagedImageBootstrapInput,
-): NonNullable<SandboxGpuCreateFlowInput["managedBootstrap"]> {
-  return Object.freeze({
-    ...input,
-    expectedSupervisorArgv: MANAGED_IMAGE_OPENSHELL_SUPERVISOR_ARGV,
-  });
+export function protectedManagedStateRootDriverConfig(
+  provider: Pick<RuntimeProviderBundle, "workload">,
+  mounts: readonly ProtectedManagedStateVolumeMount[],
+): string | null {
+  if (mounts.length === 0) return null;
+  const driverId = provider.workload.managedStateMountDriverId;
+  if (!driverId) {
+    throw new Error("Protected managed state roots require provider-owned mount projection.");
+  }
+  return JSON.stringify({ [driverId]: { mounts } });
 }
 
 function compactText(value = ""): string {
   return String(value).replace(/\s+/gu, " ").trim();
-}
-
-function redactProtectedGpuProof(value: string): string {
-  return String(value)
-    .replace(/\bBearer\s+[A-Za-z0-9._~+/=-]+/giu, "Bearer <REDACTED>")
-    .replace(/\b([A-Z0-9_]*(?:KEY|TOKEN|SECRET|PASSWORD))=([^\s]*)/giu, "$1=<REDACTED>");
 }
 
 export type ManagedImageOpenShellE2eInputs = {
@@ -144,6 +126,37 @@ export type ManagedImageOpenShellE2eResult<
 
 type Inputs = ManagedImageOpenShellE2eInputs;
 
+type ProtectedManagedStateRoot = {
+  readonly mountTarget: string;
+  readonly resourceIdentity: string;
+  readonly ownershipLabels: Readonly<Record<string, string>>;
+  readonly uid: number;
+  readonly gid: number;
+  readonly mode: number;
+  readonly readWrite: boolean;
+};
+
+type ProtectedManagedStateVolumeMount = {
+  readonly type: "volume";
+  readonly source: string;
+  readonly target: string;
+  readonly read_only: boolean;
+};
+
+type ProtectedManagedStateVolumeCleanupResult =
+  | { readonly status: "not-applicable" | "absent" | "removed" }
+  | {
+      readonly status: "not-owned" | "failed";
+      readonly detail: string;
+      readonly volumeName: string;
+    };
+
+type ProtectedManagedStateVolumeScope = {
+  readonly mounts: readonly ProtectedManagedStateVolumeMount[];
+  cleanupIncompleteCreate(): readonly ProtectedManagedStateVolumeCleanupResult[];
+  commit(): void;
+};
+
 const MANAGED_IMAGE_E2E_ENVIRONMENT_KEYS = [
   "NEMOCLAW_NON_INTERACTIVE",
   "NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR",
@@ -157,6 +170,25 @@ const MANAGED_IMAGE_E2E_ENVIRONMENT_KEYS = [
 ] as const;
 
 type OnboardModule = {
+  managedWorkloadOnboard: {
+    managedStartupStateRoots(input: {
+      readonly agent: ShippedManagedImageAgent;
+      readonly sandboxName: string;
+      readonly agentIdentity: { readonly uid: number; readonly gid: number };
+    }): readonly ProtectedManagedStateRoot[];
+    managedStartupWorkspaceRoot(input: {
+      readonly agent: ShippedManagedImageAgent;
+      readonly agentIdentity: { readonly uid: number; readonly gid: number };
+    }): { readonly uid: number; readonly gid: number; readonly mode: 0o755 | 0o1775 };
+    prepareManagedStateVolumes(
+      input: { readonly roots: readonly ProtectedManagedStateRoot[] },
+      deps: { readonly runtimeProvider: RuntimeProviderBundle },
+    ): ProtectedManagedStateVolumeScope | null;
+    removeManagedStateVolumes(
+      input: { readonly roots: readonly ProtectedManagedStateRoot[] },
+      deps: { readonly runtimeProvider: RuntimeProviderBundle },
+    ): readonly ProtectedManagedStateVolumeCleanupResult[];
+  };
   openshellArgv(args: string[]): string[];
   runOpenshell(args: string[], opts?: Record<string, unknown>): ReturnType<typeof commandResult>;
   runCaptureOpenshell(args: string[], opts?: Record<string, unknown>): string;
@@ -191,7 +223,47 @@ export function resolveManagedImageOnboardModule(onboardImport: unknown): Onboar
       `managed-image onboard module is missing required operation(s): ${missing.join(", ")}`,
     );
   }
+  const managedWorkload = candidateRecord?.managedWorkloadOnboard as
+    | Record<string, unknown>
+    | undefined;
+  if (
+    typeof managedWorkload?.managedStartupStateRoots !== "function" ||
+    typeof managedWorkload.managedStartupWorkspaceRoot !== "function" ||
+    typeof managedWorkload?.prepareManagedStateVolumes !== "function" ||
+    typeof managedWorkload.removeManagedStateVolumes !== "function"
+  ) {
+    throw new Error(
+      "managed-image onboard module is missing required managed state-volume operations",
+    );
+  }
   return candidate as OnboardModule;
+}
+
+function cleanupProtectedManagedStateVolumes(input: {
+  readonly onboard: OnboardModule | null;
+  readonly runtimeProvider: RuntimeProviderBundle | null;
+  readonly roots: readonly ProtectedManagedStateRoot[];
+  readonly scope: ProtectedManagedStateVolumeScope | null;
+  readonly committed: boolean;
+}): string[] {
+  try {
+    let results: readonly ProtectedManagedStateVolumeCleanupResult[] = [];
+    if (input.committed && input.onboard && input.runtimeProvider) {
+      results = input.onboard.managedWorkloadOnboard.removeManagedStateVolumes(
+        { roots: input.roots },
+        { runtimeProvider: input.runtimeProvider },
+      );
+    } else if (!input.committed) {
+      results = input.scope?.cleanupIncompleteCreate() ?? [];
+    }
+    return results.flatMap((result) =>
+      result.status === "not-owned" || result.status === "failed"
+        ? [`managed state volume ${result.volumeName} cleanup ${result.status}: ${result.detail}`]
+        : [],
+    );
+  } catch (error) {
+    return [error instanceof Error ? error.message : String(error)];
+  }
 }
 
 function requiredValue(argv: readonly string[], flag: string): string {
@@ -264,12 +336,7 @@ export function parseManagedImageOpenShellE2eInputs(argv: readonly string[]): In
 }
 
 export function managedImageOpenShellBasePolicyPath(agent: ShippedManagedImageAgent): string {
-  return path.resolve(
-    path.dirname(fileURLToPath(import.meta.url)),
-    "..",
-    "..",
-    ...MANAGED_AGENT_BASE_POLICIES[agent],
-  );
+  return path.resolve(REPOSITORY_ROOT, ...MANAGED_AGENT_BASE_POLICIES[agent]);
 }
 
 export interface ManagedImageCommandResult {
@@ -330,43 +397,6 @@ export function removeManagedImageGatewayStateIfSafe(
   return true;
 }
 
-function createProtectedAuthorityStore(stateDir: string): ManagedBootstrapAuthorityStore {
-  const authorityDir = path.join(stateDir, "managed-bootstrap-authority");
-  fs.mkdirSync(authorityDir, { mode: 0o700, recursive: true });
-  return {
-    async recordPreparedAuthority(authority) {
-      const finalPath = path.join(authorityDir, `${authority.bootstrapIdentity}.json`);
-      const temporaryPath = `${finalPath}.tmp-${process.pid}`;
-      const serialized = `${JSON.stringify(authority)}\n`;
-      const file = fs.openSync(temporaryPath, "wx", 0o600);
-      try {
-        fs.writeFileSync(file, serialized, "utf8");
-        fs.fsyncSync(file);
-      } finally {
-        fs.closeSync(file);
-      }
-      fs.renameSync(temporaryPath, finalPath);
-      const directory = fs.openSync(authorityDir, "r");
-      try {
-        fs.fsyncSync(directory);
-      } finally {
-        fs.closeSync(directory);
-      }
-      if (fs.readFileSync(finalPath, "utf8") !== serialized) {
-        throw new Error("protected managed-bootstrap authority was not durably re-readable");
-      }
-      return {
-        schemaVersion: MANAGED_BOOTSTRAP_SCHEMA_VERSION,
-        sandbox: authority.sandbox,
-        bootstrapIdentity: authority.bootstrapIdentity,
-        authorityFingerprint: authority.authorityFingerprint,
-        recordId: `protected-${authority.bootstrapIdentity}`,
-        recordedAt: new Date().toISOString(),
-      };
-    },
-  };
-}
-
 async function assertGatewayPortAvailable(): Promise<void> {
   await new Promise<void>((resolve, reject) => {
     const server = net.createServer();
@@ -396,6 +426,124 @@ function managedConfigPath(agent: ShippedManagedImageAgent): string {
     case "langchain-deepagents-code":
       return "/sandbox/.deepagents/config.toml";
   }
+}
+
+export function managedOpenClawHeartbeatLogProbe(): string {
+  return `
+const fs = require("node:fs");
+const path = require("node:path");
+let operation = "discover";
+try {
+  let interval;
+  const roots = ["/tmp/openclaw", "/tmp/openclaw-" + process.getuid()];
+  for (const root of roots) {
+    if (!fs.existsSync(root)) continue;
+    if (!fs.lstatSync(root).isDirectory()) throw new Error();
+    operation = "list";
+    // OpenClaw falls back to its uid directory when the preferred directory is inaccessible.
+    let names;
+    try { names = fs.readdirSync(root); }
+    catch (error) { if (error?.code === "EACCES") continue; throw error; }
+    for (const name of names.filter(name => /^openclaw(?:-\\d{4}-\\d{2}-\\d{2})?\\.log$/.test(name)).sort()) {
+      operation = "open";
+      const fd = fs.openSync(path.join(root, name), fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+      try {
+        const stat = fs.fstatSync(fd);
+        if (!stat.isFile() || stat.size > 8 * 1024 * 1024) throw new Error();
+        operation = "parse";
+        for (const line of fs.readFileSync(fd, "utf8").split("\\n").filter(Boolean)) {
+          const record = JSON.parse(line);
+          if (record["2"] !== "heartbeat: started") continue;
+          const subsystem = JSON.parse(record["0"]);
+          if (subsystem.subsystem !== "gateway/heartbeat") continue;
+          const value = record["1"]?.intervalMs;
+          if (!Number.isSafeInteger(value) || value <= 0) throw new Error();
+          if (interval !== undefined && interval !== value) throw new Error();
+          interval = value;
+        }
+      } finally { fs.closeSync(fd); }
+    }
+  }
+  if (interval === undefined) throw new Error();
+  process.stdout.write("heartbeat-interval-ms=" + interval);
+} catch (error) {
+  const code = ["EACCES", "EPERM", "ENOENT", "ELOOP", "SyntaxError"].find(value => value === error?.code || value === error?.name) ?? "invalid";
+  process.stderr.write("heartbeat-evidence-unavailable:" + operation + ":" + code);
+  process.exitCode = 1;
+}
+`;
+}
+
+export function assertOpenClawHeartbeatStart(
+  containerId: string,
+  env: NodeJS.ProcessEnv,
+  runCommand: ManagedImageCommandRunner = commandResult,
+): void {
+  if (!/^[a-f0-9]{64}$/u.test(containerId)) {
+    throw new Error("OpenClaw heartbeat check requires one exact container ID");
+  }
+  const result = runCommand(
+    [
+      "docker",
+      "exec",
+      "--user",
+      "sandbox",
+      containerId,
+      "node",
+      "-e",
+      managedOpenClawHeartbeatLogProbe(),
+    ],
+    env,
+    15_000,
+  );
+  if (result.status !== 0 || result.error) {
+    const detail =
+      /^heartbeat-evidence-unavailable:(discover|list|open|parse):(EACCES|EPERM|ENOENT|ELOOP|SyntaxError|invalid)$/u.exec(
+        String(result.stderr ?? ""),
+      );
+    throw new Error(
+      `managed OpenClaw structured heartbeat evidence unavailable${detail ? ` (${detail[1]}: ${detail[2]})` : ""}`,
+    );
+  }
+  const heartbeatStart = String(result.stdout ?? "").trim();
+  const configuredInterval = /^(\d+)([smh])$/u.exec(MANAGED_STARTUP_E2E_OPENCLAW_HEARTBEAT_EVERY);
+  const intervalUnitMs = { s: 1_000, m: 60_000, h: 3_600_000 }[
+    configuredInterval?.[2] as "s" | "m" | "h"
+  ];
+  const expectedIntervalMs = configuredInterval
+    ? Number(configuredInterval[1]) * intervalUnitMs
+    : Number.NaN;
+  const observedIntervalMs = /^heartbeat-interval-ms=(\d+)$/u.exec(heartbeatStart)?.[1];
+  if (
+    !Number.isSafeInteger(expectedIntervalMs) ||
+    observedIntervalMs !== String(expectedIntervalMs)
+  ) {
+    throw new Error(
+      `managed OpenClaw did not start with the requested ${expectedIntervalMs} ms heartbeat`,
+    );
+  }
+}
+
+export function managedOpenClawHeartbeatProbe(
+  configPath: string = managedConfigPath("openclaw"),
+  nodeExecutable = "/usr/local/bin/node",
+  sha256sumExecutable = "sha256sum",
+): string {
+  const shellQuote = (value: string): string => `'${value.replace(/'/gu, `'\\''`)}'`;
+  const configProbe = [
+    shellQuote(nodeExecutable),
+    "-e",
+    shellQuote(
+      "const fs=require('node:fs');const c=JSON.parse(fs.readFileSync(process.argv[1],'utf8'));const h=c?.agents?.defaults?.heartbeat;if(h?.every!==process.argv[2]||h?.isolatedSession!==true)process.exit(1);",
+    ),
+    shellQuote(configPath),
+    shellQuote(MANAGED_STARTUP_E2E_OPENCLAW_HEARTBEAT_EVERY),
+  ].join(" ");
+  return [
+    configProbe,
+    `cd ${shellQuote(path.dirname(configPath))}`,
+    `${shellQuote(sha256sumExecutable)} --check .config-hash >/dev/null`,
+  ].join(" && ");
 }
 
 export function managedImageOpenShellProbe(
@@ -440,21 +588,29 @@ export function managedImageOpenShellProbe(
       `${agent} managed model configuration`,
       `grep -F ${JSON.stringify(model)} ${JSON.stringify(managedConfigPath(agent))} >/dev/null`,
     ),
+    ...(agent === "openclaw"
+      ? [
+          probeStep(
+            "OpenClaw managed isolated heartbeat and configuration hash",
+            managedOpenClawHeartbeatProbe(),
+          ),
+        ]
+      : []),
     probeStep(
       "managed runtime environment must not be a symbolic link",
-      "test ! -L /run/nemoclaw/managed-startup-runtime.env",
+      "test ! -L /tmp/nemoclaw-managed-startup-runtime.env",
     ),
     probeStep(
       "managed runtime environment owner, group, and mode must equal 0:0:444",
-      'test "$(stat -c "%u:%g:%a" /run/nemoclaw/managed-startup-runtime.env)" = "0:0:444"',
+      'test "$(stat -c "%u:%g:%a" /tmp/nemoclaw-managed-startup-runtime.env)" = "0:0:444"',
     ),
     probeStep(
       "managed startup completion must not be a symbolic link",
-      "test ! -L /run/nemoclaw/managed-startup-complete.json",
+      "test ! -L /tmp/nemoclaw-managed-startup-complete.json",
     ),
     probeStep(
       "managed startup completion owner, group, and mode must equal 0:0:444",
-      'test "$(stat -c "%u:%g:%a" /run/nemoclaw/managed-startup-complete.json)" = "0:0:444"',
+      'test "$(stat -c "%u:%g:%a" /tmp/nemoclaw-managed-startup-complete.json)" = "0:0:444"',
     ),
     probeStep(
       "corporate CA file must exist and be nonempty",
@@ -478,11 +634,11 @@ export function managedImageOpenShellProbe(
     ),
     probeStep(
       "managed startup CA bundle must exist and be nonempty",
-      "test -s /run/nemoclaw/managed-startup-ca-bundle.pem",
+      "test -s /tmp/nemoclaw-managed-startup-ca-bundle.pem",
     ),
     probeStep(
       "managed startup CA bundle owner, group, and mode must equal 0:0:444",
-      'test "$(stat -c "%u:%g:%a" /run/nemoclaw/managed-startup-ca-bundle.pem)" = "0:0:444"',
+      'test "$(stat -c "%u:%g:%a" /tmp/nemoclaw-managed-startup-ca-bundle.pem)" = "0:0:444"',
     ),
     probeStep(readinessLabel, healthProbe),
   ].join("\n");
@@ -678,54 +834,6 @@ function assertProtectedLocalInference(
   }
 }
 
-export function failureInjectingAdapter(
-  onboard: OnboardModule,
-  stateRoot: string,
-): ManagedBootstrapAdapter {
-  const adapter = createDockerManagedBootstrapAdapter({
-    runCaptureOpenshell: onboard.runCaptureOpenshell,
-    runOpenshell: onboard.runOpenshell,
-    sleep: onboard.sleepSeconds,
-    stateRoot,
-  });
-  return {
-    ...adapter,
-    async awaitBootstrap(input) {
-      await adapter.awaitBootstrap(input);
-      throw new Error("protected-e2e-injected-bootstrap-completion-failure");
-    },
-  };
-}
-
-function parseImmutableManifestReference(image: string): {
-  repository: string;
-  manifestDigest: `sha256:${string}`;
-} {
-  const match = IMMUTABLE_MANIFEST_REFERENCE_RE.exec(image);
-  if (!match?.[1] || !match[2]) {
-    throw new Error("--image must be an immutable repository@sha256 manifest reference");
-  }
-  return {
-    repository: match[1],
-    manifestDigest: match[2] as `sha256:${string}`,
-  };
-}
-
-function resolveLocalImageContentId(
-  image: string,
-  env: NodeJS.ProcessEnv,
-  runCommand: ManagedImageCommandRunner = commandResult,
-): string {
-  const inspect = runCommand(["docker", "image", "inspect", "--format", "{{.Id}}", image], env);
-  const contentId = String(inspect.stdout ?? "").trim();
-  if (inspect.status !== 0 || !/^sha256:[a-f0-9]{64}$/u.test(contentId)) {
-    throw new Error(
-      `--image does not resolve to one immutable local image content ID: ${commandDetail(inspect)}`,
-    );
-  }
-  return contentId;
-}
-
 export function managedImageHarnessContainerListArgs(
   sandbox: string,
   includeStopped: boolean,
@@ -802,46 +910,6 @@ export function assertExactSandboxImage(
   return resolved.exactIds[0] ?? "";
 }
 
-export function assertFailedBootstrapOwnerCleanupRetention(
-  input: Inputs,
-  networkName: string,
-  expectedRuntimeId: string,
-  env: NodeJS.ProcessEnv,
-  runCommand: ManagedImageCommandRunner = commandResult,
-): void {
-  const resolved = exactHarnessContainerIds(input, networkName, env, true, runCommand);
-  if (
-    resolved.candidateCount !== 1 ||
-    resolved.exactIds.length !== 1 ||
-    resolved.exactIds[0] !== expectedRuntimeId
-  ) {
-    throw new Error(
-      `managed-bootstrap rollback did not retain its one exact owner-cleanup runtime: found ${resolved.candidateCount} labeled and ${resolved.exactIds.length} exact containers`,
-    );
-  }
-  const inspect = runCommand(["docker", "inspect", expectedRuntimeId], env);
-  if (inspect.status !== 0) {
-    throw new Error(
-      `managed-bootstrap rollback could not inspect its retained owner-cleanup runtime: ${commandDetail(inspect)}`,
-    );
-  }
-  try {
-    const records = JSON.parse(String(inspect.stdout ?? "")) as Array<{
-      State?: { Paused?: boolean; Restarting?: boolean; Running?: boolean };
-    }>;
-    const state = records.length === 1 ? records[0]?.State : undefined;
-    if (state?.Running !== false || state.Paused !== false || state.Restarting !== false) {
-      throw new Error("retained runtime is not explicitly quiescent");
-    }
-  } catch (error) {
-    throw new Error(
-      `managed-bootstrap rollback did not prove a quiescent owner-cleanup runtime: ${
-        error instanceof Error ? error.message : String(error)
-      }`,
-    );
-  }
-}
-
 export function assertFailedSandboxOwnerCleanupRetention(
   onboard: OnboardModule,
   input: Inputs,
@@ -870,6 +938,70 @@ export function assertFailedSandboxOwnerCleanupRetention(
   }
 }
 
+export function createBootstrapCompletionFailureInjection(input: {
+  readonly env: NodeJS.ProcessEnv;
+  readonly managedImage: Inputs;
+  readonly onboard: OnboardModule;
+  readonly onQualified: () => void;
+  readonly write?: (message: string) => void;
+}): {
+  readonly expectedError: Error;
+  readonly flowInput: Pick<
+    SandboxGpuCreateFlowInput,
+    | "persistRetainedSandboxRecovery"
+    | "revalidateVerifiedSandboxBeforeEffect"
+    | "verifyCreatedSandboxBeforeEffects"
+  >;
+} {
+  const expectedError = new Error("injected managed bootstrap completion failure");
+  return {
+    expectedError,
+    flowInput: {
+      persistRetainedSandboxRecovery: () => true,
+      revalidateVerifiedSandboxBeforeEffect: () => undefined,
+      verifyCreatedSandboxBeforeEffects: (identity: CreatedSandboxIdentity) => {
+        assertFailedSandboxOwnerCleanupRetention(
+          input.onboard,
+          input.managedImage,
+          identity.sandboxId,
+          input.env,
+        );
+        input.onQualified();
+        (input.write ?? ((message) => process.stdout.write(message)))(
+          `Managed-bootstrap completion failure retained one exact quiescent ${input.managedImage.agent} sandbox for owner cleanup.\n`,
+        );
+        throw expectedError;
+      },
+    },
+  };
+}
+
+function parseImmutableManifestReference(image: string): {
+  repository: string;
+  manifestDigest: `sha256:${string}`;
+} {
+  const match = IMMUTABLE_MANIFEST_REFERENCE_RE.exec(image);
+  if (!match?.[1] || !match[2]) {
+    throw new Error("--image must be an immutable repository@sha256 manifest reference");
+  }
+  return { repository: match[1], manifestDigest: match[2] as `sha256:${string}` };
+}
+
+function resolveLocalImageContentId(
+  image: string,
+  env: NodeJS.ProcessEnv,
+  runCommand: ManagedImageCommandRunner = commandResult,
+): string {
+  const inspect = runCommand(["docker", "image", "inspect", "--format", "{{.Id}}", image], env);
+  const contentId = String(inspect.stdout ?? "").trim();
+  if (inspect.status !== 0 || !/^sha256:[a-f0-9]{64}$/u.test(contentId)) {
+    throw new Error(
+      `--image does not resolve to one immutable local image content ID: ${commandDetail(inspect)}`,
+    );
+  }
+  return contentId;
+}
+
 async function run<T extends ManagedImageOpenShellE2eLocalInferenceEvidence = never>(
   input: Inputs,
   afterLocalInference?: (context: ManagedImageOpenShellE2eProbeContext) => Promise<T> | T,
@@ -893,14 +1025,23 @@ async function run<T extends ManagedImageOpenShellE2eLocalInferenceEvidence = ne
   let onboard: OnboardModule | null = null;
   let ownedContainerId: string | null = null;
   let initialSandboxPolicy: InitialSandboxPolicy | null = null;
+  let runtimeProvider: RuntimeProviderBundle | null = null;
+  let managedStateRoots: readonly ProtectedManagedStateRoot[] = [];
+  let managedStateVolumeScope: ProtectedManagedStateVolumeScope | null = null;
+  let managedStateVolumesCommitted = false;
   let failureInjectionQualified = false;
   let probeEvidence: T | undefined;
   let primaryError: unknown;
   let hasPrimaryError = false;
   const cleanupErrors: string[] = [];
+  const exit = process.exit;
   try {
+    // Imported CLI failure paths must unwind this fixture's diagnostics and cleanup.
+    process.exit = (code) => {
+      throw new Error(`Managed-image onboarding called process.exit(${String(code)})`);
+    };
     await assertGatewayPortAvailable();
-    const image = parseImmutableManifestReference(input.image);
+    parseImmutableManifestReference(input.image);
     resolveLocalImageContentId(input.image, process.env);
 
     onboard = resolveManagedImageOnboardModule(await import("../../src/lib/onboard.ts"));
@@ -935,6 +1076,22 @@ async function run<T extends ManagedImageOpenShellE2eLocalInferenceEvidence = ne
         additionalPresets: input.localProvider ? ["local-inference"] : [],
       },
     );
+    const selectedRuntimeProvider = createDockerRuntimeProviderBundle();
+    runtimeProvider = selectedRuntimeProvider;
+    const agentIdentity = managedImageRuntimeIdentity(input.agent);
+    managedStateRoots = onboard.managedWorkloadOnboard.managedStartupStateRoots({
+      agent: input.agent,
+      sandboxName: input.sandbox,
+      agentIdentity,
+    });
+    managedStateVolumeScope = onboard.managedWorkloadOnboard.prepareManagedStateVolumes(
+      { roots: managedStateRoots },
+      { runtimeProvider: selectedRuntimeProvider },
+    );
+    const managedStateDriverConfig = protectedManagedStateRootDriverConfig(
+      selectedRuntimeProvider,
+      managedStateVolumeScope?.mounts ?? [],
+    );
     const createArgs = [
       "--from",
       input.image,
@@ -942,6 +1099,7 @@ async function run<T extends ManagedImageOpenShellE2eLocalInferenceEvidence = ne
       input.sandbox,
       "--policy",
       initialSandboxPolicy.policyPath,
+      ...(managedStateDriverConfig ? ["--driver-config-json", managedStateDriverConfig] : []),
       ...(input.gpu ? ["--gpu"] : []),
     ];
     const launch = prepareSandboxCreateLaunch({
@@ -959,7 +1117,6 @@ async function run<T extends ManagedImageOpenShellE2eLocalInferenceEvidence = ne
       managedStartupRootApplyRequest: rootApplyRequest,
     });
     const prebuild = {
-      createArgs: [...createArgs],
       imageRef: null,
       imageId: null,
     };
@@ -976,12 +1133,8 @@ async function run<T extends ManagedImageOpenShellE2eLocalInferenceEvidence = ne
       { name: input.agent } as Parameters<typeof resolveDockerStartupCommandPatch>[0],
       true,
     );
-    if (
-      !launch.managedStartupRootApplyRequest ||
-      !launch.managedBootstrapIdentity ||
-      !launch.intendedSandboxStartupCommand
-    ) {
-      throw new Error("managed-image launch did not retain its identity-bound bootstrap contract");
+    if (!launch.intendedSandboxStartupCommand) {
+      throw new Error("managed-image launch did not retain its native startup command");
     }
 
     const gpuEnabled = input.gpu === true;
@@ -997,7 +1150,7 @@ async function run<T extends ManagedImageOpenShellE2eLocalInferenceEvidence = ne
       ? createDirectSandboxGpuVerifier({
           runOpenshell: onboard.runOpenshell,
           compactText,
-          redact: redactProtectedGpuProof,
+          redact: managedImageFailureDetail,
         })
       : () => ({
           status: "unverified" as const,
@@ -1006,12 +1159,19 @@ async function run<T extends ManagedImageOpenShellE2eLocalInferenceEvidence = ne
           detail: null,
           at: new Date().toISOString(),
         });
-    const runtimeProvider = {
-      ...createDockerRuntimeProviderBundle(),
-      bootstrap: createDockerManagedBootstrapSurface("docker"),
-    } as RuntimeProviderBundle & {
-      readonly bootstrap: RuntimeProviderManagedImageBootstrapSurface;
-    };
+    const commandExecutor = createCliOpenShellSandboxCommandExecutor({
+      hostCwd: REPOSITORY_ROOT,
+    });
+    const failureInjection = input.failureInjection
+      ? createBootstrapCompletionFailureInjection({
+          env: launch.sandboxEnv,
+          managedImage: input,
+          onboard,
+          onQualified: () => {
+            failureInjectionQualified = true;
+          },
+        })
+      : null;
     let flow: Awaited<ReturnType<typeof runSandboxGpuCreateFlow>> | null = null;
     try {
       flow = await runSandboxGpuCreateFlow(
@@ -1028,89 +1188,58 @@ async function run<T extends ManagedImageOpenShellE2eLocalInferenceEvidence = ne
           gatewayName: GATEWAY_NAME,
           gatewayPort: GATEWAY_PORT,
           sandboxReadyTimeoutSecs: 240,
-          createArgv: launch.createArgv,
+          createRequest: {
+            sandboxName: input.sandbox,
+            target: { kind: "named", gatewayName: GATEWAY_NAME },
+            source: { reference: input.image },
+            policyPath: initialSandboxPolicy.policyPath,
+            ...(managedStateDriverConfig ? { driverConfigJson: managedStateDriverConfig } : {}),
+            ...(input.gpu ? { gpu: {} } : {}),
+            startupCommand: launch.sandboxStartupCommand,
+            environment: launch.sandboxEnv,
+          },
           sandboxEnv: launch.sandboxEnv,
           sandboxStartupCommand: launch.sandboxStartupCommand,
           prebuild,
           restoreBackupPath: null,
           terminalAgent: input.agent === "langchain-deepagents-code",
-          managedBootstrap: createProtectedManagedImageBootstrapInput({
-            bootstrapIdentity: launch.managedBootstrapIdentity,
-            stateRoot: stateDir,
-            runtimeProvider,
-            authorityStore: createProtectedAuthorityStore(stateDir),
-            request: launch.managedStartupRootApplyRequest,
-            image,
-            agentIdentity: managedImageRuntimeIdentity(input.agent),
-            intendedWorkloadArgv: launch.intendedSandboxStartupCommand,
-          }),
+          managedImage: true,
           ...startupPlan,
+          ...(failureInjection?.flowInput ?? {}),
         },
         {
+          commandExecutor,
           runOpenshell: onboard.runOpenshell,
           runCaptureOpenshell: onboard.runCaptureOpenshell,
+          sandboxObserver: createCliOpenShellSandboxObserverFromRunner(onboard.runOpenshell),
           sleep: onboard.sleepSeconds,
           openshellArgv: onboard.openshellArgv,
           verifyDirectSandboxGpu,
-          ...(input.failureInjection
-            ? {
-                createManagedBootstrapAdapter: (stateRoot: string) =>
-                  failureInjectingAdapter(onboard!, stateRoot),
-              }
-            : {}),
         },
       );
     } catch (error) {
-      if (
-        input.failureInjection === "bootstrap-completion" &&
-        error instanceof Error &&
-        error.message.includes("protected-e2e-injected-bootstrap-completion-failure")
-      ) {
-        const rollbackError = (error as Error & { managedBootstrapRollbackError?: unknown })
-          .managedBootstrapRollbackError;
-        if (
-          !(rollbackError instanceof ManagedBootstrapOwnerCleanupRequiredError) ||
-          rollbackError.sandboxName !== input.sandbox
-        ) {
-          throw error;
-        }
-        assertFailedBootstrapOwnerCleanupRetention(
-          input,
-          networkName,
-          rollbackError.runtimeId,
-          launch.sandboxEnv,
-        );
-        assertFailedSandboxOwnerCleanupRetention(
-          onboard,
-          input,
-          rollbackError.sandboxId,
-          launch.sandboxEnv,
-        );
-        failureInjectionQualified = true;
-        process.stdout.write(
-          `Injected managed-bootstrap completion failure retained one exact quiescent ${input.agent} sandbox for owner cleanup.\n`,
-        );
-      } else {
-        throw error;
-      }
+      if (error !== failureInjection?.expectedError || !failureInjectionQualified) throw error;
     }
 
     if (!failureInjectionQualified) {
       if (!flow) {
-        throw new Error("production managed-bootstrap flow returned no result");
+        throw new Error("production managed-image flow returned no result");
       }
       if (flow.origin !== "created") {
-        throw new Error("production managed-bootstrap flow unexpectedly resumed an existing sandbox");
+        throw new Error("production managed-image flow unexpectedly resumed an existing sandbox");
       }
       const expectedRoute = gpuEnabled ? "native" : "none";
       if (flow.route !== expectedRoute || flow.createResult.status !== 0) {
         throw new Error(
-          `production managed-bootstrap flow did not complete the exact PR image create: route=${flow.route} status=${flow.createResult.status}`,
+          `production managed-image flow did not complete the exact PR image create: route=${flow.route} status=${flow.createResult.status}`,
         );
       }
 
       await waitForCommittedSandboxProbe(onboard, input, launch.sandboxEnv, !gpuEnabled);
       ownedContainerId = assertExactSandboxImage(input, networkName, launch.sandboxEnv);
+      if (input.agent === "openclaw") {
+        assertOpenClawHeartbeatStart(ownedContainerId, launch.sandboxEnv);
+      }
       if (input.localProvider && !afterLocalInference) {
         assertProtectedLocalInference(onboard, input, launch.sandboxEnv);
       }
@@ -1118,6 +1247,8 @@ async function run<T extends ManagedImageOpenShellE2eLocalInferenceEvidence = ne
         await flow.runtimePatch.commitAfterReady();
         await waitForCommittedSandboxProbe(onboard, input, launch.sandboxEnv);
       }
+      managedStateVolumeScope?.commit();
+      managedStateVolumesCommitted = managedStateVolumeScope !== null;
       if (afterLocalInference) {
         if (!input.localProvider) {
           throw new Error("managed-image post-route probe requires protected local inference");
@@ -1150,7 +1281,18 @@ async function run<T extends ManagedImageOpenShellE2eLocalInferenceEvidence = ne
   } catch (error) {
     primaryError = error;
     hasPrimaryError = true;
+    const diagnostics = [
+      ...(onboard ? [onboard.openshellArgv(["sandbox", "get", input.sandbox])] : []),
+      ["tail", "-n", "80", path.join(stateDir, "openshell-gateway.log")],
+    ];
+    for (const argv of diagnostics) {
+      const result = commandResult(argv, process.env, 5_000);
+      console.error(
+        `Managed-image failure evidence: ${managedImageFailureDetail(`${result.stdout ?? ""}\n${result.stderr ?? ""}`)}`,
+      );
+    }
   } finally {
+    process.exit = exit;
     if (onboard) {
       commandResult(
         onboard.openshellArgv(["sandbox", "delete", input.sandbox]),
@@ -1228,6 +1370,15 @@ async function run<T extends ManagedImageOpenShellE2eLocalInferenceEvidence = ne
     } catch (error) {
       cleanupErrors.push(error instanceof Error ? error.message : String(error));
     }
+    cleanupErrors.push(
+      ...cleanupProtectedManagedStateVolumes({
+        onboard,
+        runtimeProvider,
+        roots: managedStateRoots,
+        scope: managedStateVolumeScope,
+        committed: managedStateVolumesCommitted,
+      }),
+    );
     const removeNetwork = commandResult(
       ["docker", "network", "rm", networkName],
       process.env,
@@ -1319,8 +1470,8 @@ async function run<T extends ManagedImageOpenShellE2eLocalInferenceEvidence = ne
 }
 
 if (process.argv[1] && pathToFileURL(path.resolve(process.argv[1])).href === import.meta.url) {
-  run(parseManagedImageOpenShellE2eInputs(process.argv.slice(2))).catch((error) => {
-    console.error(error instanceof Error ? error.message : String(error));
+  run(parseManagedImageOpenShellE2eInputs(process.argv.slice(2))).catch((error: unknown) => {
+    console.error(`Managed-image OpenShell E2E failed: ${managedImageFailureDetail(error)}`);
     process.exitCode = 1;
   });
 }

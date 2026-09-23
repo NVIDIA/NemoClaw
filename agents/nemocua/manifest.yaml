@@ -20,7 +20,6 @@ config:
   dir: /app/config
   config_file: config.toml
   format: toml
-state_lock_plan_in_image: false
 state_dirs: []
 device_pairing: false
 inference:

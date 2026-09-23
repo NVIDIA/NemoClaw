@@ -1,25 +1,24 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
-# Routes the pinned Hermes v2026.7.20 WhatsApp bridge through the OpenShell
-# proxy and keeps dashboard pairing state in the gateway's session directory.
-# Remove the web_server.py hunk when the minimum supported Hermes release stores
-# Dashboard pairing state in the gateway session directory natively.
-# Remove the scripts/whatsapp-bridge hunks when that release routes the WhatsApp
-# bridge through HTTPS_PROXY natively.
-diff --git a/hermes_cli/web_server.py b/hermes_cli/web_server.py
-index d0c78a6b3..5f6d801b5 100644
---- a/hermes_cli/web_server.py
-+++ b/hermes_cli/web_server.py
-@@ -8110,5 +8110,3 @@ def _normalize_whatsapp_allowed_users(value: Any) -> str:
+# Routes the pinned Hermes v2026.9.14 WhatsApp bridge through the OpenShell
+# proxy and keeps dashboard pairing state in the gateway session directory.
+diff --git a/hermes_cli/web_server_messaging.py b/hermes_cli/web_server_messaging.py
+index 3aba26be48..f4828d9d3d 100644
+--- a/hermes_cli/web_server_messaging.py
++++ b/hermes_cli/web_server_messaging.py
+@@ -354,8 +354,7 @@ _whatsapp_onboarding_sessions: dict[str, _WhatsAppOnboardingSession] = {}
+
+
  def _whatsapp_session_path() -> Path:
 -    from hermes_constants import get_hermes_dir
--
 -    return get_hermes_dir("platforms/whatsapp/session", "whatsapp/session")
 +    return Path("/sandbox/.hermes/platforms/whatsapp/session")
 
+
+ _WHATSAPP_PAYLOAD_FIELDS = (
 diff --git a/scripts/whatsapp-bridge/bridge.js b/scripts/whatsapp-bridge/bridge.js
-index 4b5733d16..22f1ec3e1 100644
+index 408203b500..b2e8fc88e2 100644
 --- a/scripts/whatsapp-bridge/bridge.js
 +++ b/scripts/whatsapp-bridge/bridge.js
 @@ -30,6 +30,7 @@ import { randomBytes, createHash } from 'crypto';
@@ -30,7 +29,7 @@ index 4b5733d16..22f1ec3e1 100644
  import { matchesAllowedUser, parseAllowedUsers } from './allowlist.js';
  import { createOutboundIdTracker } from './outbound_ids.js';
  import { classifyOwnerMessageGate } from './owner_message_gate.js';
-@@ -378,6 +379,9 @@ function rememberSentId(id) {
+@@ -371,6 +372,9 @@ function rememberSentId(id) {
 
  let sock = null;
  let connectionState = 'disconnected';
@@ -40,9 +39,9 @@ index 4b5733d16..22f1ec3e1 100644
 
  function emitPairEvent(event) {
    if (!PAIR_JSON) return;
-@@ -393,6 +397,8 @@ async function startSocket() {
+@@ -389,6 +393,8 @@ async function startSocket() {
    sock = makeWASocket({
-     version,
+     ...(version ? { version } : {}),
      auth: state,
 +    agent: PROXY_AGENT,
 +    fetchAgent: PROXY_AGENT,
@@ -148,7 +147,7 @@ index 000000000..4b489e7e0
 +  assert.equal(options.fetchAgent, undefined);
 +});
 diff --git a/scripts/whatsapp-bridge/package-lock.json b/scripts/whatsapp-bridge/package-lock.json
-index b3043d288..06550adcc 100644
+index 74fe2df378..7a023bfa9c 100644
 --- a/scripts/whatsapp-bridge/package-lock.json
 +++ b/scripts/whatsapp-bridge/package-lock.json
 @@ -10,6 +10,7 @@
@@ -219,7 +218,7 @@ index b3043d288..06550adcc 100644
        "version": "0.4.24",
        "resolved": "https://registry.npmjs.org/iconv-lite/-/iconv-lite-0.4.24.tgz",
 diff --git a/scripts/whatsapp-bridge/package.json b/scripts/whatsapp-bridge/package.json
-index 3b664108b..1a45debb7 100644
+index c6c3a52518..0f12199e6e 100644
 --- a/scripts/whatsapp-bridge/package.json
 +++ b/scripts/whatsapp-bridge/package.json
 @@ -10,6 +10,7 @@

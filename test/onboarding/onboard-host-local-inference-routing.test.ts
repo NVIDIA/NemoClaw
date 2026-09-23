@@ -471,7 +471,6 @@ describe("onboard host-local inference routing", () => {
       const route = fixture(application, "ollama");
       const legacyRun = vi.fn();
       const legacyValidate = vi.fn();
-      const legacyWarmup = vi.fn();
       const legacyOllamaProof = vi.fn();
       const verify = vi.fn(() => {
         route.events.push("gateway-route-verify");
@@ -495,10 +494,11 @@ describe("onboard host-local inference routing", () => {
           applyLocalInferenceRoute: undefined,
           run: legacyRun,
           validateLocalProvider: legacyValidate,
-          getOllamaWarmupCommand: legacyWarmup,
           localInference: {
             validateOllamaModelWithToolsOverride: legacyOllamaProof,
             validateSandboxFacingOllamaModel: () => ({ ok: true }),
+            runOllamaWarmup: () => {},
+            persistResolvedOllamaHost: () => () => {},
           },
           verifyInferenceRoute: verify,
           verifyOnboardInferenceSmoke: smoke,
@@ -549,7 +549,6 @@ describe("onboard host-local inference routing", () => {
         acceleration: "nvidia-gpu",
       });
       expect(harness.commands.map(({ command }) => command)).toEqual([
-        "provider profile -g nemoclaw export openai --output json",
         "provider get -g nemoclaw ollama-local",
         "provider create -g nemoclaw --name ollama-local --type openai --credential NEMOCLAW_OLLAMA_PROXY_TOKEN --config OPENAI_BASE_URL=http://host.openshell.internal:11434/v1",
         `inference set -g nemoclaw --no-verify --provider ollama-local --model ${MODEL} --timeout 180`,
@@ -579,7 +578,6 @@ describe("onboard host-local inference routing", () => {
       );
       expect(legacyRun).not.toHaveBeenCalled();
       expect(legacyValidate).not.toHaveBeenCalled();
-      expect(legacyWarmup).not.toHaveBeenCalled();
       expect(legacyOllamaProof).not.toHaveBeenCalled();
       expect(route.gatewayRollback).not.toHaveBeenCalled();
     },
@@ -587,7 +585,7 @@ describe("onboard host-local inference routing", () => {
 
   it("uses a transaction-owned provider create instead of the generic gateway upsert", async () => {
     const exactProviderCreate = vi.fn(() => ({ ok: true }));
-    const genericUpsertProvider = vi.fn(() => ({ ok: true }));
+    const genericUpsertProvider = vi.fn(async () => ({ ok: true }));
     const route = fixture("hermes", "ollama", {
       gatewayUpsertProvider: exactProviderCreate,
     });

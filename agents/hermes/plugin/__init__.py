@@ -3,20 +3,13 @@
 """
 NemoClaw plugin for Hermes Agent.
 
-Provides sandbox status tools, skill hot-reload, managed-tool broker patches,
-and quiet runtime grounding when Hermes runs inside an OpenShell sandbox
+Provides sandbox status tools, managed-tool broker patches, and quiet runtime
+grounding when Hermes runs inside an OpenShell sandbox
 managed by NemoClaw.
 
 Layout: channel-specific runtime overrides live in sibling modules loaded by
 register() only when that channel is configured, so a sandbox without the
 channel carries none of its behavior. Today that is googlechat_adapter.py.
-
-Skill hot-reload: Hermes caches its skill slash-command registry in a
-module-global dict on first scan. New skills dropped on disk are invisible
-until the cache is cleared. This plugin provides a nemoclaw_reload_skills
-tool that clears the cache and re-scans, letting the agent pick up new
-skills without a gateway restart. The on_session_start hook also refreshes
-skills automatically at session boundaries.
 
 Runtime grounding: earlier versions injected a visible startup banner, but
 Hermes TUI renders plugin-injected messages through the interrupt queue. This
@@ -158,7 +151,6 @@ def _get_env_value(key, default=None):
         env_paths.append(os.path.join(hermes_home, ".env"))
     env_paths.extend(
         [
-            "/sandbox/.hermes-data/.env",
             "/sandbox/.hermes/.env",
             os.path.expanduser("~/.hermes/.env"),
         ],
@@ -187,9 +179,7 @@ def _load_hermes_dotenv():
     try:
         from hermes_cli.env_loader import load_hermes_dotenv
 
-        hermes_home = os.getenv("HERMES_HOME")
-        if not hermes_home and os.path.isdir("/sandbox/.hermes-data"):
-            hermes_home = "/sandbox/.hermes-data"
+        hermes_home = os.getenv("HERMES_HOME") or "/sandbox/.hermes"
         load_hermes_dotenv(hermes_home=hermes_home)
     except Exception:
         # Runtime env still works when Hermes' optional dotenv loader is absent.
@@ -1253,7 +1243,7 @@ def _build_nemoclaw_agent_context(platform=None):
     hermes_home = (
         os.getenv("HERMES_HOME")
         or _get_env_value("HERMES_HOME", "")
-        or "/sandbox/.hermes-data"
+        or "/sandbox/.hermes"
     )
     services = _active_managed_gateway_services()
     service_text = ", ".join(services) if services else "none detected"
@@ -1282,7 +1272,7 @@ def _build_nemoclaw_agent_context(platform=None):
     child_tool_line = (
         "- Some tools, especially managed code/terminal tools, execute in child "
         + "tool sandboxes such as Modal. Seeing /__modal, MODAL_SANDBOX_ID, a "
-        + "missing hermes binary, or missing ~/.hermes-data inside a tool shell "
+        + "missing hermes binary, or missing ~/.hermes inside a tool shell "
         + "means that shell is a child tool sandbox, not proof that Hermes is "
         + "running on the host."
     )
@@ -1292,8 +1282,7 @@ def _build_nemoclaw_agent_context(platform=None):
         + "nemoclaw_info for NemoClaw environment questions."
     )
     tools_line = (
-        "- NemoClaw tools available: nemoclaw_status, nemoclaw_info, "
-        + "nemoclaw_reload_skills, transcribe_audio."
+        "- NemoClaw tools available: nemoclaw_status, nemoclaw_info, transcribe_audio."
     )
 
     lines = [
@@ -1382,49 +1371,6 @@ def _handle_transcribe_audio(tool_input=None, context=None, **_kwargs):
     return json.dumps(result, indent=2, ensure_ascii=False)
 
 
-def _reload_skills():
-    """Clear the Hermes skill slash-command cache and re-scan skill directories.
-
-    Hermes's ``agent.skill_commands`` module caches discovered skills in a
-    module-global dict (``_skill_commands``).  ``get_skill_commands()`` only
-    scans on first call, so skills installed after gateway startup are
-    invisible.  We clear the dict and call ``scan_skill_commands()`` to force
-    a fresh scan.
-
-    Returns the dict of discovered skills, or None on failure.
-    """
-    try:
-        import agent.skill_commands as sc
-
-        sc._skill_commands.clear()
-        return sc.scan_skill_commands()
-    except ImportError:
-        return None
-    except Exception:
-        return None
-
-
-def _handle_reload_skills(tool_input=None, context=None, **_kwargs):
-    """Handle the nemoclaw_reload_skills tool call."""
-    commands = _reload_skills()
-    if commands is None:
-        return (
-            "Failed to reload skills. The agent.skill_commands module may "
-            "not be available in this Hermes version."
-        )
-
-    if not commands:
-        return "Skill reload complete. No skills found in skill directories."
-
-    names = sorted(commands.keys())
-    lines = [f"Skill reload complete. {len(names)} skill(s) discovered:", ""]
-    for name in names:
-        info = commands[name]
-        desc = info.get("description", "no description")
-        lines.append(f"  {name}: {desc}")
-    return "\n".join(lines)
-
-
 # Google Chat: the channel owns the override. Source lives in
 # src/lib/messaging/channels/googlechat/runtime/hermes-adapter.py; the Hermes
 # image copies it in beside this file. Loaded only when the channel is
@@ -1461,7 +1407,10 @@ def _install_googlechat_adapter(ctx):
 def register(ctx):
     """Register NemoClaw tools and hooks with Hermes."""
     _install_nous_tool_broker_patch()
-    _install_messaging_response_patch()
+    # Hermes 0.20.6 discovers plugins on a background thread while run_agent
+    # imports model_tools and waits for discovery to finish. Importing
+    # run_agent from this registration path deadlocks those two threads. The
+    # pre_llm_call hook below installs the patch before response processing.
     _install_googlechat_adapter(ctx)
 
     # Register status tool
@@ -1526,34 +1475,12 @@ def register(ctx):
         description="Transcribe audio through the configured Hermes STT backend",
     )
 
-    # Register skill reload tool
-    ctx.register_tool(
-        name="nemoclaw_reload_skills",
-        toolset="nemoclaw",
-        schema={
-            "name": "nemoclaw_reload_skills",
-            "description": (
-                "Reload and re-discover skills from the skill directories. "
-                "Call this after new skills have been installed to make them "
-                "available as slash commands without restarting the gateway."
-            ),
-            "parameters": {"type": "object", "properties": {}},
-        },
-        handler=_handle_reload_skills,
-        description="Reload skills from disk without gateway restart",
-    )
-
     # Ground the model quietly through Hermes' context hook. This replaces the
     # old visible startup banner without reintroducing TUI interrupt noise.
     ctx.register_hook("pre_llm_call", _pre_llm_call)
 
-    # Refresh skills silently on session start. Earlier versions injected a
-    # system banner here, but that can interrupt the user's first prompt in the
-    # Hermes TUI because plugin-injected messages travel through Hermes's
-    # interrupt queue. Keep startup native and expose status through tools.
     def _on_session_start(**kwargs):
         _install_nous_tool_broker_patch()
         _install_messaging_response_patch()
-        _reload_skills()
 
     ctx.register_hook("on_session_start", _on_session_start)

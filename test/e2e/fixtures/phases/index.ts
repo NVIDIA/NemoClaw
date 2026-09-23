@@ -2,10 +2,16 @@
 // SPDX-License-Identifier: Apache-2.0
 
 export {
-  type DockerRuntimeExpectation,
-  type DockerRuntimeReady,
+  CONFIG_EXPORT_EVIDENCE_CONTRACT,
+  type ConfigExportEvidenceEnvelope,
+  ConfigExportValidationPhaseFixture,
+  type ConfigExportVerification,
+} from "./config-export-validation.ts";
+export {
   EnvironmentPhaseFixture,
   type EnvironmentReady,
+  type RuntimeExpectation,
+  type RuntimeReady,
 } from "./environment.ts";
 export {
   type DcodeInvalidCredentialRebuildOptions,
@@ -15,8 +21,6 @@ export {
   type LifecycleProfile,
   type LifecycleResult,
   type LifecycleSimulationOptions,
-  type PostRebootMode,
-  type PostRebootOptions,
 } from "./lifecycle.ts";
 export {
   type NemoClawInstance,

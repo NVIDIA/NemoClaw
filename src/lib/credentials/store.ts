@@ -67,7 +67,7 @@ function noFollowFlag(): number | undefined {
   return typeof fs.constants.O_NOFOLLOW === "number" ? fs.constants.O_NOFOLLOW : undefined;
 }
 
-function openReadOnlyNoFollow(filePath: string): number {
+function openNoFollow(filePath: string, access = fs.constants.O_RDONLY): number {
   const flag = noFollowFlag();
   if (flag === undefined) {
     const stat = fs.lstatSync(filePath);
@@ -77,7 +77,7 @@ function openReadOnlyNoFollow(filePath: string): number {
       throw error;
     }
   }
-  return fs.openSync(filePath, fs.constants.O_RDONLY | (flag ?? 0));
+  return fs.openSync(filePath, access | (flag ?? 0) | (fs.constants.O_NONBLOCK ?? 0));
 }
 
 /**
@@ -138,7 +138,7 @@ export function getCredsDir(): string {
 /**
  * Path of the pre-migration plaintext credentials file. Retained only so
  * stageLegacyCredentialsToEnv() / removeLegacyCredentialsFile() can find it.
- * New code must NOT write to this path; the gateway is the system of record.
+ * Only verified-migration cleanup may rewrite retained entries here; the gateway owns new credentials.
  */
 export function getCredsFile(): string {
   const dir = getCredsDir();
@@ -260,6 +260,19 @@ export function listCredentialKeys(): string[] {
   return Object.keys(loadCredentials()).sort();
 }
 
+/** Wipe the opened inode, including after its directory entry was replaced. */
+function zeroFillCredentialFile(fd: number, size: number): void {
+  if (size === 0) return;
+  const zeros = Buffer.alloc(Math.min(size, 64 * 1024));
+  let written = 0;
+  while (written < size) {
+    const count = fs.writeSync(fd, zeros, 0, Math.min(zeros.length, size - written), written);
+    if (count === 0) throw new Error("Could not overwrite retired credential bytes");
+    written += count;
+  }
+  fs.fsyncSync(fd);
+}
+
 /**
  * Best-effort secure unlink: zero the file's bytes, fsync, then unlink.
  * Refuses to follow symlinks (lstat + O_NOFOLLOW) so a planted symlink
@@ -282,17 +295,7 @@ function secureUnlink(filePath: string): void {
     try {
       const stat = fs.fstatSync(fd);
       if (!stat.isFile()) return;
-      if (stat.size > 0) {
-        const chunkSize = Math.min(stat.size, 64 * 1024);
-        const zeros = Buffer.alloc(chunkSize);
-        let written = 0;
-        while (written < stat.size) {
-          const len = Math.min(chunkSize, stat.size - written);
-          fs.writeSync(fd, zeros, 0, len, written);
-          written += len;
-        }
-        fs.fsyncSync(fd);
-      }
+      zeroFillCredentialFile(fd, stat.size);
     } finally {
       fs.closeSync(fd);
     }
@@ -349,7 +352,7 @@ export function stageLegacyCredentialsToEnv(): string[] {
   // symlink planted at the credentials path.
   let fd: number;
   try {
-    fd = openReadOnlyNoFollow(legacyFile);
+    fd = openNoFollow(legacyFile);
   } catch {
     return [];
   }
@@ -410,30 +413,126 @@ export function stageLegacyCredentialsToEnv(): string[] {
   return staged.sort();
 }
 
-/**
- * Securely remove the legacy plaintext credentials.json. Call this only
- * after the gateway has accepted the migrated values, so an interrupted or
- * failed onboard cannot leave the user with no copy of their credentials.
- *
- * `secureUnlink` is itself missing-file-tolerant and uses `lstatSync`, so
- * we deliberately do NOT pre-check with `existsSync` — that would follow a
- * planted symlink and skip cleanup of a dangling link. Walk the ancestor
- * directories between HOME and ~/.nemoclaw first so a planted directory
- * symlink can't redirect the zero-fill into an unrelated tree.
- */
-export function removeLegacyCredentialsFile(): void {
+/** Refuse stale snapshots and renamed, linked, or concurrently edited files before mutation. */
+function assertLegacyCredentialSnapshot(
+  file: string,
+  fd: number,
+  original: fs.Stats,
+  bytes: Buffer,
+): void {
+  rejectSymlinksOnPath(path.dirname(file));
+  const current = fs.lstatSync(file);
+  const opened = fs.fstatSync(fd);
+  const currentBytes = Buffer.alloc(bytes.length);
+  if (
+    !current.isFile() ||
+    current.nlink !== 1 ||
+    opened.nlink !== 1 ||
+    current.dev !== original.dev ||
+    current.ino !== original.ino ||
+    opened.size !== bytes.length ||
+    opened.mtimeMs !== original.mtimeMs ||
+    opened.ctimeMs !== original.ctimeMs ||
+    fs.readSync(fd, currentBytes, 0, currentBytes.length, 0) !== bytes.length ||
+    !bytes.equals(currentBytes)
+  ) {
+    throw new Error(
+      "Legacy credential file changed during cleanup; inspect it and retry onboarding",
+    );
+  }
+}
+
+/** Stage only retained entries; do not create a rollback copy of removed credential entries. */
+function replaceLegacyCredentialEntries(
+  file: string,
+  retained: Record<string, unknown>,
+  validateOriginal: () => void,
+): void {
+  const directory = path.dirname(file);
+  const staging = fs.mkdtempSync(path.join(directory, ".credentials-retirement-"));
+  const temporary = path.join(staging, "credentials.json");
+  try {
+    fs.chmodSync(staging, 0o700);
+    fs.writeFileSync(temporary, JSON.stringify(retained, null, 2) + "\n", {
+      flag: "wx",
+      mode: 0o600,
+    });
+    fs.chmodSync(temporary, 0o600);
+    const stagedFd = openNoFollow(temporary);
+    try {
+      fs.fsyncSync(stagedFd);
+    } finally {
+      fs.closeSync(stagedFd);
+    }
+    validateOriginal();
+    fs.renameSync(temporary, file);
+    const directoryFd = fs.openSync(directory, fs.constants.O_RDONLY);
+    try {
+      fs.fsyncSync(directoryFd);
+    } finally {
+      fs.closeSync(directoryFd);
+    }
+  } finally {
+    fs.rmSync(staging, { recursive: true, force: true });
+  }
+}
+
+/** Retire only values verified by the caller's completed migration; preserve every other entry. */
+export function removeLegacyCredentialsFile(migratedValues: ReadonlyMap<string, string>): void {
+  if (migratedValues.size === 0) return;
   const legacyFile = getCredsFile();
+  let fd: number | undefined;
   try {
     rejectSymlinksOnPath(path.dirname(legacyFile));
-  } catch (error) {
-    console.error(
-      `  Refusing to remove legacy credentials: ${
-        error instanceof Error ? error.message : String(error)
-      }`,
+    fd = openNoFollow(legacyFile, fs.constants.O_RDWR);
+    const original = fs.fstatSync(fd);
+    if (!original.isFile() || original.nlink !== 1 || original.size > LEGACY_CREDS_FILE_MAX_BYTES) {
+      throw new Error(
+        "Refusing a non-regular, multiply linked, or oversized legacy credential file",
+      );
+    }
+    const bytes = Buffer.alloc(original.size);
+    if (fs.readSync(fd, bytes, 0, bytes.length, 0) !== bytes.length) {
+      throw new Error("Could not read the complete legacy credential file");
+    }
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(bytes.toString("utf8"));
+    } catch {
+      throw new Error("Legacy credential file is not valid JSON");
+    }
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+      throw new Error("Legacy credential file is not a JSON object");
+    }
+    const entries = Object.entries(parsed);
+    const retained = entries.filter(
+      ([key, value]) =>
+        !KNOWN_CREDENTIAL_ENV_KEYS.includes(key) ||
+        typeof value !== "string" ||
+        migratedValues.get(key) !== normalizeCredentialValue(value),
     );
-    return;
+    if (retained.length === entries.length) return;
+    const openedFd = fd;
+    const validateOriginal = () =>
+      assertLegacyCredentialSnapshot(legacyFile, openedFd, original, bytes);
+    validateOriginal();
+    if (retained.length === 0) {
+      zeroFillCredentialFile(fd, original.size);
+      assertLegacyCredentialSnapshot(legacyFile, fd, fs.fstatSync(fd), Buffer.alloc(original.size));
+      fs.unlinkSync(legacyFile);
+    } else {
+      replaceLegacyCredentialEntries(legacyFile, Object.fromEntries(retained), validateOriginal);
+      zeroFillCredentialFile(fd, original.size);
+    }
+  } catch (error) {
+    if (fd !== undefined || !isErrnoException(error) || error.code !== "ENOENT") {
+      console.error(
+        `  Legacy credential cleanup incomplete: ${error instanceof Error ? error.message : "filesystem failure"}`,
+      );
+    }
+  } finally {
+    if (fd !== undefined) fs.closeSync(fd);
   }
-  secureUnlink(legacyFile);
 }
 
 /**
@@ -459,7 +558,7 @@ export function removeLegacyCredentialsFileIfEmpty(): boolean {
 
   let fd: number;
   try {
-    fd = openReadOnlyNoFollow(legacyFile);
+    fd = openNoFollow(legacyFile);
   } catch {
     return false;
   }

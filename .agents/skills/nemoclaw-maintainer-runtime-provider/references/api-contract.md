@@ -9,7 +9,7 @@ source of truth.
 
 ## Registration Unit
 
-`RuntimeProviderBundle` is the sole registration unit. It contains one identity and these 14
+`RuntimeProviderBundle` is the sole registration unit. It contains one identity and these 13
 surfaces:
 
 | Surface | Candidate registration contract |
@@ -22,7 +22,6 @@ surfaces:
 | `hostLocalInference` | Optional for a candidate. Lists services and creates a provider-owned operation. |
 | `lifecycle` | Optional for a candidate. Implements start, started-state verification, stop hooks, and channel-stop transport. |
 | `mutationAuthority` | Optional for a candidate. Lists the state-changing operations that the provider authorizes. |
-| `stateMutation` | Optional for a candidate. Implements the versioned fenced state-mutation transaction. |
 | `bootstrap` | Optional for a candidate. Binds provider-owned create, readiness, and create-recovery operations for its workload type. |
 | `snapshot` | Optional for a candidate. Implements versioned preflight, capture, restore validation, and restore. |
 | `recovery` | Optional for a candidate. Reconciles one persisted sandbox with its runtime. |
@@ -95,23 +94,10 @@ evidence must use the handle for provider-owned, idempotent recovery. Creation e
 not match the plan cannot authorize plan-only recovery or removal and must report that the resource
 may remain. Separated measurement and creation do not satisfy this contract.
 
-### Mutation authority and state mutation
+### Mutation authority
 
 Mutation authority lists only operations that the provider implements. The current operation set
 is defined by `RuntimeProviderMutationOperation`.
-
-State mutation contract version 2 is a bounded transaction:
-
-1. `acquire()` validates a frozen, digested plan and returns a fence.
-2. `assertFenced()` revalidates the active fence before publication.
-3. `publish()` records publication under the fence.
-4. `rollback()` restores the declared rollback posture after failure.
-5. `activate()` returns fresh service evidence for the lifecycle generation.
-6. `release()` retires the fence after activation and ledger verification.
-7. `recover()` returns a durable active fence after controller restart, or `null`.
-
-The serialized plan is bounded JSON for a fixed provider helper. Do not accept arbitrary commands,
-scripts, or callbacks through the state-mutation surface.
 
 ### Snapshot, recovery, and cleanup
 
@@ -140,7 +126,6 @@ A supported `containerEngine` surface declares one identity for each implemented
 - `gateway-inspection`
 - `host-local-inference`
 - `sandbox-lifecycle`
-- `state-mutation`
 - `workload-cleanup`
 
 Each identity contains an operation, engine ID, and display name. Provider-specific command

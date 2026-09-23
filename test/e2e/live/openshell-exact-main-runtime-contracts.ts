@@ -1,14 +1,13 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import fs from "node:fs/promises";
-import os from "node:os";
 import path from "node:path";
 
 import YAML from "yaml";
 
 import { shellQuote } from "../../../src/lib/core/shell-quote";
-import { parseOpenShellPolicy } from "../../../src/lib/policy/merge";
+import { setPolicyDocument } from "../../../src/lib/policy";
+import { parseOpenShellPolicy } from "../../../src/lib/adapters/openshell/policy-boundary";
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import type { CleanupRegistry } from "../fixtures/cleanup.ts";
@@ -20,6 +19,7 @@ import {
   trustedSandboxShellScript,
 } from "../fixtures/clients/sandbox.ts";
 import { expect } from "../fixtures/e2e-test.ts";
+import { MCP_BRIDGE_TEST_CREDENTIALS } from "../fixtures/mcp-bridge-credentials.ts";
 
 const EXACT_MAIN_POLICY_KEY = "exact_main_live_exe_identity";
 const LIVE_EXE_PATH = "/tmp/nemoclaw-exact-main-live-exe/live-bash";
@@ -724,6 +724,22 @@ async function assertDirectBypassDenied(options: {
         timeoutMs: 30_000,
       },
     );
+    if (probe.exitCode !== 0) {
+      await Promise.allSettled([
+        Promise.resolve().then(() =>
+          options.sandbox.openshell(
+            ["logs", options.sandboxName, "-n", "500", "--since", "2m", "--source", "all"],
+            {
+              artifactName: "exact-main-post-restart-failure-logs",
+              captureLimitBytes: 32_768,
+              env: sandboxAccessEnv(),
+              redactionValues: Object.values(MCP_BRIDGE_TEST_CREDENTIALS),
+              timeoutMs: 30_000,
+            },
+          ),
+        ),
+      ]);
+    }
     expectExitZero(probe, "deny direct IPv4 TCP and UDP bypass to controlled listeners");
     const parsed: unknown = JSON.parse(probe.stdout);
     if (!isRecord(parsed)) throw new Error("direct bypass probe must return a JSON object");
@@ -750,35 +766,17 @@ export async function assertExactMainPolicyNftAndIdentityContracts(options: {
   });
   expectExitZero(base, "capture exact-main base policy");
   const basePolicyYaml = parseOpenShellPolicy(base.stdout).yamlBody;
-  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "nemoclaw-exact-main-policy-"));
-  await fs.chmod(tempDir, 0o700);
-  const basePolicyPath = path.join(tempDir, "base.yaml");
-  const identityPolicyPath = path.join(tempDir, "identity.yaml");
-  await fs.writeFile(basePolicyPath, basePolicyYaml, { encoding: "utf8", mode: 0o600 });
-  await fs.writeFile(identityPolicyPath, buildIdentityPolicy(basePolicyYaml, options.mcpUrl), {
-    encoding: "utf8",
-    mode: 0o600,
-  });
-  let removeTemp = true;
-  const cleanupTemp = async () => {
-    if (!removeTemp) return;
-    await fs.rm(tempDir, { force: true, recursive: true });
-    removeTemp = false;
-  };
-  options.cleanup.add("remove exact-main policy proof temp files", cleanupTemp);
 
   let restoreRequired = false;
   const restorePolicy = async () => {
     if (!restoreRequired) return;
-    const restored = await options.sandbox.openshell(
-      ["policy", "set", "--policy", basePolicyPath, "--wait", options.sandboxName],
-      {
-        artifactName: "exact-main-policy-restore",
-        env: sandboxAccessEnv(),
-        timeoutMs: POLICY_TIMEOUT_MS,
-      },
-    );
-    expectExitZero(restored, "restore exact-main base policy");
+    expect(
+      await setPolicyDocument(options.sandboxName, basePolicyYaml, {
+        nonFatal: true,
+        operation: "restore the exact-main policy proof",
+      }),
+      "exact-main-policy-restore",
+    ).toBe(true);
     const verify = await options.sandbox.openshell(
       ["policy", "get", "--base", options.sandboxName],
       {
@@ -801,15 +799,17 @@ export async function assertExactMainPolicyNftAndIdentityContracts(options: {
       "exact-main-policy-effective-before-mutation",
     );
     restoreRequired = true;
-    const apply = await options.sandbox.openshell(
-      ["policy", "set", "--policy", identityPolicyPath, "--wait", options.sandboxName],
-      {
-        artifactName: "exact-main-policy-hot-update",
-        env: sandboxAccessEnv(),
-        timeoutMs: POLICY_TIMEOUT_MS,
-      },
-    );
-    expectExitZero(apply, "apply exact-main live-exe identity policy");
+    expect(
+      await setPolicyDocument(
+        options.sandboxName,
+        buildIdentityPolicy(basePolicyYaml, options.mcpUrl),
+        {
+          nonFatal: true,
+          operation: "apply the exact-main live-exe identity policy",
+        },
+      ),
+      "exact-main-policy-hot-update",
+    ).toBe(true);
     const effective = await readPolicyStatus(
       options.sandbox,
       options.sandboxName,
@@ -844,12 +844,16 @@ export async function assertExactMainPolicyNftAndIdentityContracts(options: {
       containerId,
       "exact-main-nft-rules-before-restart",
     );
-    const restart = await options.host.command("docker", ["restart", containerId], {
-      artifactName: "exact-main-sandbox-container-restart",
-      env: buildAvailabilityProbeEnv(),
-      timeoutMs: POLICY_TIMEOUT_MS,
-    });
-    expectExitZero(restart, "restart exact-main OpenShell sandbox container");
+    // OpenShell 0.0.116 treats an unexpected main-process exit as terminal Error.
+    // Its lifecycle commands retain the container and wait for Stopped/Ready.
+    for (const operation of ["stop", "start"]) {
+      const result = await options.sandbox.openshell(["sandbox", operation, options.sandboxName], {
+        artifactName: `exact-main-sandbox-container-${operation}`,
+        env: sandboxAccessEnv(),
+        timeoutMs: POLICY_TIMEOUT_MS,
+      });
+      expectExitZero(result, `${operation} exact-main OpenShell sandbox container`);
+    }
     const restartedContainerId = await findSandboxContainer(
       options.host,
       options.sandboxName,
@@ -904,11 +908,7 @@ export async function assertExactMainPolicyNftAndIdentityContracts(options: {
       policyHotUpdate: { effective, revision },
     });
   } finally {
-    try {
-      await restorePolicy();
-    } finally {
-      await cleanupTemp();
-    }
+    await restorePolicy();
   }
 }
 

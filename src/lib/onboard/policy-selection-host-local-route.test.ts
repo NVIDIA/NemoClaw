@@ -32,8 +32,12 @@ function createHarness() {
     step: vi.fn(),
     note: vi.fn(),
     isNonInteractive: vi.fn(() => true),
-    waitForSandboxReady: vi.fn(() => true),
-    waitForSandboxControlPlaneReady: vi.fn(() => true),
+    waitForSandboxReady: vi.fn(async () => ({
+      ready: true as const,
+      reason: "ready" as const,
+      error: null,
+    })),
+    waitForSandboxControlPlaneReady: vi.fn(async () => true),
     syncPresetSelection,
     selectPolicyTier: vi.fn(async () => "balanced"),
     selectTierPresetsAndAccess: vi.fn(
@@ -107,9 +111,7 @@ describe("host-local route-only policy selection", () => {
     const policyChecks = new Map([
       ["apply policy presets to sandbox 'alpha'", refusePresetMutation],
     ]);
-    const revalidateSandboxIdentity = vi.fn((operation: string) =>
-      policyChecks.get(operation)?.(),
-    );
+    const revalidateSandboxIdentity = vi.fn((operation: string) => policyChecks.get(operation)?.());
 
     await expect(
       setupPoliciesWithSelection(deps, "alpha", {

@@ -30,12 +30,14 @@ const EXECUTABLE_CONTENT_REVALIDATION_COMMAND_INTERVAL = 64;
 export interface PodmanContainerEngineOptions {
   readonly operation:
     | "host-doctor"
+    | "gateway-inspection"
     | "host-local-inference"
     | "sandbox-lifecycle"
-    | "state-mutation";
+    | "workload-cleanup";
   readonly socketAuthority: PodmanSocketAuthority;
   readonly executable?: string;
   readonly executableAuthority?: PodmanExecutableAuthority;
+  readonly executableProof?: PodmanExecutableOperationProof;
   readonly executableSearchEnv?: NodeJS.ProcessEnv;
   readonly capture?: ContainerEngineCommandCapture;
   readonly commandEnvironment?: Readonly<Record<string, string>>;
@@ -47,6 +49,63 @@ export interface PodmanContainerEngineOptions {
   ) => void;
 }
 
+export interface PodmanExecutablePathTiming {
+  readonly measure: <T>(stage: "podmanPathResolution", operation: () => T) => T;
+}
+
+const podmanExecutableOperationProofs = new WeakSet<object>();
+
+export interface PodmanExecutableOperationProof {
+  readonly authority: PodmanExecutableAuthority;
+  readonly executablePath: string;
+  readonly assertMetadataAuthority: () => void;
+  readonly assertContentAuthority: () => void;
+  readonly guardCommand: (phase: "before" | "after") => void;
+}
+
+export function createPodmanExecutableOperationProof(
+  authority: PodmanExecutableAuthority,
+  deps?: PodmanExecutableAuthorityDeps,
+): PodmanExecutableOperationProof {
+  let commandCount = 0;
+  let failure: unknown;
+  const assertWithLatch = (validate: () => void): void => {
+    if (failure === undefined) {
+      try {
+        validate();
+      } catch (error) {
+        failure = error ?? new Error("Podman executable authority check failed without evidence.");
+      }
+    }
+    if (failure !== undefined) throw failure;
+  };
+  const assertMetadataAuthority = () =>
+    assertWithLatch(() => assertPodmanExecutableMetadataAuthority(authority, deps));
+  const assertContentAuthority = () =>
+    assertWithLatch(() => assertPodmanExecutableAuthority(authority, deps));
+  const proof = Object.freeze({
+    authority,
+    executablePath: authority.executablePath,
+    assertMetadataAuthority,
+    assertContentAuthority,
+    guardCommand: (phase: "before" | "after") => {
+      try {
+        const shouldRehash =
+          phase === "before" &&
+          commandCount + 1 === EXECUTABLE_CONTENT_REVALIDATION_COMMAND_INTERVAL;
+        if (shouldRehash) assertContentAuthority();
+        else assertMetadataAuthority();
+      } finally {
+        if (phase === "after") {
+          commandCount = (commandCount + 1) % EXECUTABLE_CONTENT_REVALIDATION_COMMAND_INTERVAL;
+        }
+      }
+    },
+  });
+  podmanExecutableOperationProofs.add(proof);
+  return proof;
+}
+
 export interface PodmanContainerEngine extends ContainerEngine {
   readonly endpointAuthorityId: string;
 }
@@ -56,23 +115,29 @@ export interface PodmanBoundContainerEngine extends PodmanContainerEngine {
   readonly assertAuthority: () => void;
 }
 
-export function resolvePodmanExecutablePath(env: NodeJS.ProcessEnv = process.env): string {
-  const searchPath = env.PATH;
-  if (!searchPath) {
-    throw new Error("Podman executable authority could not resolve podman from PATH.");
-  }
-  for (const directory of searchPath.split(path.delimiter)) {
-    if (!path.isAbsolute(directory) || path.normalize(directory) !== directory) continue;
-    const candidate = path.join(directory, "podman");
-    try {
-      fs.accessSync(candidate, fs.constants.X_OK);
-      const resolved = fs.realpathSync(candidate);
-      if (path.isAbsolute(resolved) && path.normalize(resolved) === resolved) return resolved;
-    } catch {
-      // Continue to the next absolute PATH entry.
+export function resolvePodmanExecutablePath(
+  env: NodeJS.ProcessEnv = process.env,
+  timing?: PodmanExecutablePathTiming,
+): string {
+  const resolve = () => {
+    const searchPath = env.PATH;
+    if (!searchPath) {
+      throw new Error("Podman executable authority could not resolve podman from PATH.");
     }
-  }
-  throw new Error("Podman executable authority could not resolve podman from PATH.");
+    for (const directory of searchPath.split(path.delimiter)) {
+      if (!path.isAbsolute(directory) || path.normalize(directory) !== directory) continue;
+      const candidate = path.join(directory, "podman");
+      try {
+        fs.accessSync(candidate, fs.constants.X_OK);
+        const resolved = fs.realpathSync(candidate);
+        if (path.isAbsolute(resolved) && path.normalize(resolved) === resolved) return resolved;
+      } catch {
+        // Continue to the next absolute PATH entry.
+      }
+    }
+    throw new Error("Podman executable authority could not resolve podman from PATH.");
+  };
+  return timing?.measure("podmanPathResolution", resolve) ?? resolve();
 }
 
 export function localPodmanEnvironment(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
@@ -132,35 +197,64 @@ export function createPodmanContainerEngine(
   options: PodmanContainerEngineOptions,
 ): PodmanBoundContainerEngine {
   const assertAuthority = options.assertAuthority ?? assertPodmanSocketAuthority;
-  const protectsRuntimeMutation =
-    options.operation === "host-local-inference" || options.operation === "state-mutation";
+  const requiresExecutableAuthority =
+    options.operation === "host-local-inference" ||
+    options.operation === "workload-cleanup" ||
+    options.executableAuthority !== undefined ||
+    options.executableProof !== undefined;
+  if (options.executableProof && !podmanExecutableOperationProofs.has(options.executableProof)) {
+    throw new Error("Podman executable proof was not created by this adapter.");
+  }
+  if (
+    options.executableProof &&
+    options.executableAuthority &&
+    options.executableProof.authority !== options.executableAuthority
+  ) {
+    throw new Error("Podman executable proof disagrees with its recorded authority.");
+  }
+  const executableAuthority =
+    options.executableProof?.authority ??
+    options.executableAuthority ??
+    (requiresExecutableAuthority
+      ? capturePodmanExecutableAuthority(
+          options.executable ?? resolvePodmanExecutablePath(options.executableSearchEnv),
+          options.executableAuthorityDeps,
+        )
+      : undefined);
+  const executableProof =
+    options.executableProof ??
+    (executableAuthority
+      ? createPodmanExecutableOperationProof(executableAuthority, options.executableAuthorityDeps)
+      : undefined);
   const executable =
     options.executable ??
-    options.executableAuthority?.executablePath ??
-    (protectsRuntimeMutation ? resolvePodmanExecutablePath(options.executableSearchEnv) : "podman");
-  if (options.executableAuthority && executable !== options.executableAuthority.executablePath) {
+    executableProof?.executablePath ??
+    (requiresExecutableAuthority
+      ? resolvePodmanExecutablePath(options.executableSearchEnv)
+      : "podman");
+  if (executableProof && executable !== executableProof.executablePath) {
     throw new Error("Podman executable path disagrees with its recorded authority.");
   }
-  if (options.executableAuthority) {
-    assertPodmanExecutableAuthority(options.executableAuthority, options.executableAuthorityDeps);
+  // Preserve the prior constructor behavior: a supplied authority is fully
+  // revalidated, while an authority captured by this constructor was already
+  // hashed during capture. Sharing a proof changes ownership, not sequencing.
+  if (options.executableProof || options.executableAuthority) {
+    executableProof?.assertContentAuthority();
   }
-  const executableAuthority = protectsRuntimeMutation
-    ? (options.executableAuthority ??
-      capturePodmanExecutableAuthority(executable, options.executableAuthorityDeps))
-    : undefined;
-  let executableCommandCount = 0;
-  let hasExecutableAuthorityFailure = false;
-  let executableAuthorityFailure: unknown;
   const endpointAuthorityId = podmanAuthorityId(options.socketAuthority);
   const assertBoundAuthority = (rehashExecutable: boolean): void => {
     assertAuthority(options.socketAuthority, options.authorityDeps);
-    if (!executableAuthority) return;
+    if (!executableProof) return;
     if (rehashExecutable) {
-      assertPodmanExecutableAuthority(executableAuthority, options.executableAuthorityDeps);
+      executableProof.assertContentAuthority();
     } else {
-      assertPodmanExecutableMetadataAuthority(executableAuthority, options.executableAuthorityDeps);
+      executableProof.assertMetadataAuthority();
     }
   };
+  let allowedEnvironmentNames: string[] = [];
+  if (options.operation === "host-local-inference") {
+    allowedEnvironmentNames = ["NGC_API_KEY", "NIM_NGC_API_KEY", "OLLAMA_CONTEXT_LENGTH"];
+  }
   const engine = createContainerEngineCommand({
     operation: options.operation,
     engineId: "podman",
@@ -169,10 +263,7 @@ export function createPodmanContainerEngine(
     endpointAuthorityId,
     executable,
     endpointArgs: ["--url", `unix://${options.socketAuthority.socketPath}`],
-    allowedEnvironmentNames:
-      options.operation === "host-local-inference"
-        ? ["NGC_API_KEY", "NIM_NGC_API_KEY", "OLLAMA_CONTEXT_LENGTH"]
-        : [],
+    allowedEnvironmentNames,
     commandEnvironment: options.commandEnvironment,
     capture: options.capture,
     guard: (phase) => {
@@ -182,33 +273,12 @@ export function createPodmanContainerEngine(
       } catch (error) {
         failure = error;
       }
-      if (executableAuthority) {
-        if (!hasExecutableAuthorityFailure) {
-          try {
-            const shouldRehash =
-              phase === "before" &&
-              executableCommandCount + 1 === EXECUTABLE_CONTENT_REVALIDATION_COMMAND_INTERVAL;
-            if (shouldRehash) {
-              assertPodmanExecutableAuthority(executableAuthority, options.executableAuthorityDeps);
-            } else {
-              assertPodmanExecutableMetadataAuthority(
-                executableAuthority,
-                options.executableAuthorityDeps,
-              );
-            }
-          } catch (error) {
-            hasExecutableAuthorityFailure = true;
-            executableAuthorityFailure =
-              error ?? new Error("Podman executable authority check failed without evidence.");
-          }
+      if (executableProof) {
+        try {
+          executableProof.guardCommand(phase);
+        } catch (error) {
+          if (failure === undefined) failure = error;
         }
-        if (failure === undefined && hasExecutableAuthorityFailure) {
-          failure = executableAuthorityFailure;
-        }
-      }
-      if (phase === "after") {
-        executableCommandCount =
-          (executableCommandCount + 1) % EXECUTABLE_CONTENT_REVALIDATION_COMMAND_INTERVAL;
       }
       if (failure !== undefined) throw failure;
     },
@@ -218,7 +288,7 @@ export function createPodmanContainerEngine(
     endpointAuthorityId,
     assertAuthority: () => assertBoundAuthority(true),
   };
-  if (!protectsRuntimeMutation) return Object.freeze(boundEngine);
+  if (!requiresExecutableAuthority) return Object.freeze(boundEngine);
   return Object.freeze({
     ...boundEngine,
     captureHost: () => {
@@ -230,11 +300,14 @@ export function createPodmanContainerEngine(
 export type {
   PodmanExecutableAuthority,
   PodmanExecutableAuthorityDeps,
+  PodmanExecutableAuthorityTiming,
+  PodmanExecutableAuthorityTimingStage,
   PodmanExecutableDirectoryAuthority,
   PodmanExecutableStat,
 } from "./executable-authority";
 export {
   assertPodmanExecutableAuthority,
+  assertPodmanExecutableMetadataAuthority,
   capturePodmanExecutableAuthority,
 } from "./executable-authority";
 export type { PodmanSocketAuthority, PodmanSocketAuthorityDeps } from "./socket-authority";

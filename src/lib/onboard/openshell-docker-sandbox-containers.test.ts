@@ -4,6 +4,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   queryOpenShellDockerSandboxRuntimeSnapshot,
+  resolveOpenShellSandboxOwnershipLabel,
   removeExactOpenShellDockerSandboxContainers,
 } from "./openshell-docker-sandbox-containers";
 
@@ -12,6 +13,19 @@ const BOOKKEEPING_IMAGE_REF = "openshell/sandbox-from:alpha";
 const EMPTY_RUNTIME_FIELDS = [IMAGE_ID, BOOKKEEPING_IMAGE_REF, "", null, [], "runc"];
 const ACTIVATED_CONTAINER_ID = "b".repeat(64);
 const ROLLBACK_CONTAINER_ID = "c".repeat(64);
+
+describe("resolveOpenShellSandboxOwnershipLabel", () => {
+  it("keeps Docker compatibility ownership independent of native provider selection", () => {
+    expect(resolveOpenShellSandboxOwnershipLabel({})).toEqual({
+      label: "openshell.ai/managed-by",
+      value: "openshell",
+    });
+    expect(resolveOpenShellSandboxOwnershipLabel({ NEMOCLAW_GATEWAY_RUNTIME: "podman" })).toEqual({
+      label: "openshell.ai/managed-by",
+      value: "openshell",
+    });
+  });
+});
 
 function observeContainerIds(ids: readonly string[], malformedRows = 0) {
   return {
@@ -36,12 +50,10 @@ describe("removeExactOpenShellDockerSandboxContainers", () => {
     const forceRemove = vi.fn(() => ({ status: 0 }));
 
     expect(() =>
-      removeExactOpenShellDockerSandboxContainers(
-        "alpha",
-        [expectedContainerId],
-        vi.fn(),
-        { inspectContainers, forceRemove },
-      ),
+      removeExactOpenShellDockerSandboxContainers("alpha", [expectedContainerId], vi.fn(), {
+        inspectContainers,
+        forceRemove,
+      }),
     ).toThrow("could not confirm exact Docker container removal");
 
     expect(forceRemove).toHaveBeenCalledWith(expectedContainerId);
@@ -56,12 +68,10 @@ describe("removeExactOpenShellDockerSandboxContainers", () => {
       return { status: 0 };
     });
 
-    removeExactOpenShellDockerSandboxContainers(
-      "alpha",
-      expectedContainerIds,
-      vi.fn(),
-      { inspectContainers, forceRemove },
-    );
+    removeExactOpenShellDockerSandboxContainers("alpha", expectedContainerIds, vi.fn(), {
+      inspectContainers,
+      forceRemove,
+    });
 
     expect(forceRemove.mock.calls.map(([containerId]) => containerId)).toEqual(
       expectedContainerIds,
@@ -79,12 +89,10 @@ describe("removeExactOpenShellDockerSandboxContainers", () => {
       return { status: 0 };
     });
 
-    removeExactOpenShellDockerSandboxContainers(
-      "alpha",
-      [alreadyRemovedId, remainingId],
-      vi.fn(),
-      { inspectContainers, forceRemove },
-    );
+    removeExactOpenShellDockerSandboxContainers("alpha", [alreadyRemovedId, remainingId], vi.fn(), {
+      inspectContainers,
+      forceRemove,
+    });
 
     expect(forceRemove).toHaveBeenCalledExactlyOnceWith(remainingId);
     expect(currentContainerIds).toEqual([]);
@@ -96,15 +104,10 @@ describe("removeExactOpenShellDockerSandboxContainers", () => {
     const forceRemove = vi.fn(() => ({ status: 0 }));
 
     expect(() =>
-      removeExactOpenShellDockerSandboxContainers(
-        "alpha",
-        [expectedContainerId],
-        vi.fn(),
-        {
-          inspectContainers: vi.fn(() => observeContainerIds([replacementContainerId])),
-          forceRemove,
-        },
-      ),
+      removeExactOpenShellDockerSandboxContainers("alpha", [expectedContainerId], vi.fn(), {
+        inspectContainers: vi.fn(() => observeContainerIds([replacementContainerId])),
+        forceRemove,
+      }),
     ).toThrow("refusing replacement cleanup");
 
     expect(forceRemove).not.toHaveBeenCalled();
@@ -115,15 +118,10 @@ describe("removeExactOpenShellDockerSandboxContainers", () => {
     const forceRemove = vi.fn(() => ({ status: 0 }));
 
     expect(() =>
-      removeExactOpenShellDockerSandboxContainers(
-        "alpha",
-        [expectedContainerId],
-        vi.fn(),
-        {
-          inspectContainers: vi.fn(() => observeContainerIds([], 1)),
-          forceRemove,
-        },
-      ),
+      removeExactOpenShellDockerSandboxContainers("alpha", [expectedContainerId], vi.fn(), {
+        inspectContainers: vi.fn(() => observeContainerIds([], 1)),
+        forceRemove,
+      }),
     ).toThrow("malformed container identity row");
 
     expect(forceRemove).not.toHaveBeenCalled();
@@ -285,21 +283,20 @@ describe("queryOpenShellDockerSandboxRuntimeSnapshot", () => {
     );
   });
 
-  it.each([
-    "all,0",
-    "0,0",
-    "GPU-0 with-space",
-  ])("rejects ambiguous NVIDIA_VISIBLE_DEVICES value %s", (value) => {
-    const { result } = querySnapshot(
-      [IMAGE_ID, BOOKKEEPING_IMAGE_REF, "", null, [], "nvidia"],
-      value,
-    );
+  it.each(["all,0", "0,0", "GPU-0 with-space"])(
+    "rejects ambiguous NVIDIA_VISIBLE_DEVICES value %s",
+    (value) => {
+      const { result } = querySnapshot(
+        [IMAGE_ID, BOOKKEEPING_IMAGE_REF, "", null, [], "nvidia"],
+        value,
+      );
 
-    expect(result).toEqual({
-      ok: false,
-      error: "docker inspect returned invalid NVIDIA_VISIBLE_DEVICES",
-    });
-  });
+      expect(result).toEqual({
+        ok: false,
+        error: "docker inspect returned invalid NVIDIA_VISIBLE_DEVICES",
+      });
+    },
+  );
 
   it.each([
     ["unknown runtime", null, [], "nvidia-container-runtime"],
@@ -329,21 +326,24 @@ describe("queryOpenShellDockerSandboxRuntimeSnapshot", () => {
       ],
       "runc",
     ],
-  ])("keeps well-formed open-world GPU configuration %s unknown", (_label, requests, devices, runtime) => {
-    const { result } = querySnapshot([
-      IMAGE_ID,
-      BOOKKEEPING_IMAGE_REF,
-      "",
-      requests,
-      devices,
-      runtime,
-    ]);
+  ])(
+    "keeps well-formed open-world GPU configuration %s unknown",
+    (_label, requests, devices, runtime) => {
+      const { result } = querySnapshot([
+        IMAGE_ID,
+        BOOKKEEPING_IMAGE_REF,
+        "",
+        requests,
+        devices,
+        runtime,
+      ]);
 
-    expect(result).toMatchObject({
-      ok: true,
-      nativeGpuAttachmentState: "unknown",
-    });
-  });
+      expect(result).toMatchObject({
+        ok: true,
+        nativeGpuAttachmentState: "unknown",
+      });
+    },
+  );
 
   it.each([
     ["zero", ""],

@@ -8,45 +8,69 @@ import {
   createConnectHarness,
   requireDist,
 } from "../../../../test/support/connect-flow-test-harness";
+import type {
+  OpenShellSandboxBufferedCommandCompletion,
+  OpenShellSandboxBufferedCommandRequest,
+} from "../../adapters/openshell/sandbox-command";
 
-function captureInferenceRouteThenDrift(
-  harness: ReturnType<typeof createConnectHarness>,
-): (args: unknown) => { status: number; output: string; stderr?: string } {
-  return (args: unknown) => {
-    const argv = Array.isArray(args) ? args : [];
-    switch (argv.slice(0, 2).join("\0")) {
-      case "inference\0get":
-        harness.registryEntries[0]!.model = "changed-model";
-        return {
-          status: 0,
-          output: "Gateway inference:\n  Provider: ollama-local\n  Model: qwen3-vl:4b\n",
-        };
-      case "sandbox\0exec":
-        return { status: 0, output: "OK 200", stderr: "" };
-      default:
-        return { status: 0, output: "alpha Ready" };
-    }
+function completedBufferedCommand(
+  stdout: string,
+  exitCode = 0,
+): OpenShellSandboxBufferedCommandCompletion {
+  return {
+    outcome: { kind: "completed", exitCode },
+    stdout,
+    stderr: "",
   };
 }
 
-function captureInferenceRouteThenDriftLiveIdentity(
+function runInferenceRouteThenDrift(
   harness: ReturnType<typeof createConnectHarness>,
-): (args: unknown) => { status: number; output: string; stderr?: string } {
-  return (args: unknown) => {
-    const argv = Array.isArray(args) ? args : [];
-    switch (argv.slice(0, 2).join("\0")) {
-      case "inference\0get":
-        harness.registryEntries[0]!.lifecycleLiveIdentityFingerprint = "0".repeat(64);
-        return {
-          status: 0,
-          output: "Gateway inference:\n  Provider: ollama-local\n  Model: qwen3-vl:4b\n",
-        };
-      case "sandbox\0exec":
-        return { status: 0, output: "OK 200", stderr: "" };
-      default:
-        return { status: 0, output: "alpha Ready" };
-    }
+): (
+  request: OpenShellSandboxBufferedCommandRequest,
+) => Promise<OpenShellSandboxBufferedCommandCompletion> {
+  return async (request) => {
+    expect(request.command.join(" ")).toContain("inference.local/v1/models");
+    harness.registryEntries[0]!.model = "changed-model";
+    return completedBufferedCommand("OK 200");
   };
+}
+
+function runInferenceRouteThenDriftLiveIdentity(
+  harness: ReturnType<typeof createConnectHarness>,
+): (
+  request: OpenShellSandboxBufferedCommandRequest,
+) => Promise<OpenShellSandboxBufferedCommandCompletion> {
+  return async (request) => {
+    expect(request.command.join(" ")).toContain("inference.local/v1/models");
+    harness.registryEntries[0]!.lifecycleLiveIdentityFingerprint = "0".repeat(64);
+    return completedBufferedCommand("OK 200");
+  };
+}
+
+function awaitHermesRouteVerification(harness: ReturnType<typeof createConnectHarness>): void {
+  harness.recoverHermesPortableOllamaInferenceSpy.mockImplementation((async (input: {
+    verifyRoute: () => Promise<unknown>;
+    prepareProbeDependency?: () => Promise<{ release: () => void }>;
+  }) => {
+    await input.verifyRoute();
+    (await input.prepareProbeDependency?.())?.release();
+    return "reused";
+  }) as never);
+}
+
+function configureAlignedInferenceGet(harness: ReturnType<typeof createConnectHarness>): void {
+  const capture = harness.captureOpenshellSpy.getMockImplementation()!;
+  harness.captureOpenshellSpy.mockImplementation(((args: unknown, options: unknown) => {
+    const argv = Array.isArray(args) ? args.map(String) : [];
+    return argv[0] === "inference" && argv[1] === "get"
+      ? {
+          status: 0,
+          output:
+            "Gateway inference:\n  Provider: nvidia-prod\n  Model: nvidia/nemotron-3-super-120b-a12b\n",
+        }
+      : capture(args, options);
+  }) as never);
 }
 
 describe("connectSandbox flow", () => {
@@ -89,8 +113,6 @@ describe("connectSandbox flow", () => {
   });
 
   it("runs readiness checks, recovery probes, auto-pair approval, and opens the OpenShell shell", async () => {
-    const setIntervalSpy = vi.spyOn(globalThis, "setInterval");
-    const clearIntervalSpy = vi.spyOn(globalThis, "clearInterval");
     const harness = createConnectHarness();
 
     await expect(harness.connectSandbox("alpha")).rejects.toThrow("process.exit(0)");
@@ -102,18 +124,12 @@ describe("connectSandbox flow", () => {
     expect(harness.checkAndRecoverSpy).toHaveBeenCalledWith("alpha");
     expect(harness.ensureOllamaAuthProxySpy).toHaveBeenCalledTimes(1);
     expect(harness.runAutoPairSpy).toHaveBeenCalledWith("alpha", "nemoclaw");
-    expect(harness.runSandboxExecChildSpy).toHaveBeenCalledWith(
-      "openshell",
-      ["sandbox", "connect", "alpha"],
-      expect.objectContaining({
-        hostCwd: expect.any(String),
-        stdin: true,
-      }),
-    );
-    expect(setIntervalSpy).toHaveBeenCalledWith(expect.any(Function), 1_000);
-    const watcherTimer = setIntervalSpy.mock.results[setIntervalSpy.mock.results.length - 1]?.value;
-    expect(clearIntervalSpy).toHaveBeenCalledWith(watcherTimer);
-    expect(harness.runSandboxExecChildSpy.mock.invocationCallOrder[0]!).toBeLessThan(
+    expect(harness.startSandboxSessionSpy).toHaveBeenCalledWith({
+      kind: "connect",
+      sandboxName: "alpha",
+      target: { kind: "selected" },
+    });
+    expect(harness.startSandboxSessionSpy.mock.invocationCallOrder[0]!).toBeLessThan(
       exitSpy.mock.invocationCallOrder[0]!,
     );
     const output = harness.logSpy.mock.calls.map((call) => String(call[0])).join("\n");
@@ -159,168 +175,34 @@ describe("connectSandbox flow", () => {
     expect(output).toContain("Portable onboarding for 'alpha' is incomplete");
     expect(output).toContain("Resume or rerun onboarding");
     expect(harness.runAutoPairSpy).not.toHaveBeenCalled();
-    expect(
-      harness.spawnSyncSpy.mock.calls.some(
-        ([, args]) => Array.isArray(args) && args[0] === "sandbox" && args[1] === "connect",
-      ),
-    ).toBe(false);
+    expect(harness.startSandboxSessionSpy).not.toHaveBeenCalled();
   });
 
-  it("restores the terminal and prints reconnect guidance when SSH disconnects", async () => {
-    const setRawModeSpy = vi.fn();
-    Object.defineProperty(process.stdin, "isTTY", { configurable: true, value: true });
-    Object.defineProperty(process.stdin, "setRawMode", {
-      configurable: true,
-      value: setRawModeSpy,
-    });
-    const harness = createConnectHarness({
-      agentName: "langchain-deepagents-code",
-      sessionAgent: {
-        name: "langchain-deepagents-code",
-        runtime: { kind: "terminal", interactive_command: "dcode", headless_command: "dcode -n" },
-      },
-      spawnStatus: 255,
-    });
-
-    await expect(harness.connectSandbox("alpha")).rejects.toThrow("process.exit(255)");
-
-    expect(setRawModeSpy).toHaveBeenCalledWith(false);
-    expect(harness.spawnSyncSpy).toHaveBeenCalledWith(
-      "stty",
-      ["sane"],
-      expect.objectContaining({ stdio: ["inherit", "ignore", "ignore"] }),
-    );
-    const errorOutput = harness.errorSpy.mock.calls.map((call) => String(call[0] ?? "")).join("\n");
-    expect(errorOutput).toContain(
-      "Gateway connection lost. Reconnect with: nemoclaw alpha connect",
-    );
-    expect(exitSpy).toHaveBeenCalledWith(255);
-  });
-
-  it.each([
-    ["SIGHUP", 129],
-    ["SIGPIPE", 141],
-  ] as const)(
-    "restores the terminal and preserves the exit code when SSH ends with %s",
-    async (signal, exitCode) => {
-      const setRawModeSpy = vi.fn();
-      Object.defineProperty(process.stdin, "isTTY", { configurable: true, value: true });
-      Object.defineProperty(process.stdin, "setRawMode", {
-        configurable: true,
-        value: setRawModeSpy,
-      });
+  it.each([255, 129, 141])(
+    "prints reconnect guidance and preserves transport exit %s",
+    async (exitCode) => {
       const harness = createConnectHarness({
         agentName: "langchain-deepagents-code",
         sessionAgent: {
           name: "langchain-deepagents-code",
           runtime: { kind: "terminal", interactive_command: "dcode", headless_command: "dcode -n" },
         },
-        spawnSignal: signal,
-        spawnStatus: null,
+        sessionOutcome: {
+          kind: "failed",
+          reason: "transport",
+          message: "Gateway connection lost",
+          exitCode,
+        },
       });
-
       await expect(harness.connectSandbox("alpha")).rejects.toThrow(`process.exit(${exitCode})`);
-
-      expect(setRawModeSpy).toHaveBeenCalledWith(false);
-      expect(harness.spawnSyncSpy).toHaveBeenCalledWith(
-        "stty",
-        ["sane"],
-        expect.objectContaining({ stdio: ["inherit", "ignore", "ignore"] }),
-      );
-      const errorOutput = harness.errorSpy.mock.calls
-        .map((call) => String(call[0] ?? ""))
-        .join("\n");
-      expect(errorOutput).toContain(
+      expect(harness.errorSpy.mock.calls.flat().join("\n")).toContain(
         "Gateway connection lost. Reconnect with: nemoclaw alpha connect",
       );
       expect(exitSpy).toHaveBeenCalledWith(exitCode);
     },
   );
 
-  it("prints reconnect guidance without terminal cleanup when stdin is not a TTY", async () => {
-    const setRawModeSpy = vi.fn();
-    Object.defineProperty(process.stdin, "isTTY", { configurable: true, value: false });
-    Object.defineProperty(process.stdin, "setRawMode", {
-      configurable: true,
-      value: setRawModeSpy,
-    });
-    const harness = createConnectHarness({
-      agentName: "langchain-deepagents-code",
-      sessionAgent: {
-        name: "langchain-deepagents-code",
-        runtime: { kind: "terminal", interactive_command: "dcode", headless_command: "dcode -n" },
-      },
-      spawnStatus: 255,
-    });
-
-    await expect(harness.connectSandbox("alpha")).rejects.toThrow("process.exit(255)");
-
-    expect(setRawModeSpy).not.toHaveBeenCalled();
-    expect(harness.spawnSyncSpy).not.toHaveBeenCalledWith("stty", ["sane"], expect.any(Object));
-    const errorOutput = harness.errorSpy.mock.calls.map((call) => String(call[0] ?? "")).join("\n");
-    expect(errorOutput).toContain(
-      "Gateway connection lost. Reconnect with: nemoclaw alpha connect",
-    );
-    expect(exitSpy).toHaveBeenCalledWith(255);
-  });
-
-  it("still runs stty cleanup when disabling raw mode throws", async () => {
-    const setRawModeSpy = vi.fn(() => {
-      throw new Error("raw mode failed");
-    });
-    Object.defineProperty(process.stdin, "isTTY", { configurable: true, value: true });
-    Object.defineProperty(process.stdin, "setRawMode", {
-      configurable: true,
-      value: setRawModeSpy,
-    });
-    const harness = createConnectHarness({
-      agentName: "langchain-deepagents-code",
-      sessionAgent: {
-        name: "langchain-deepagents-code",
-        runtime: { kind: "terminal", interactive_command: "dcode", headless_command: "dcode -n" },
-      },
-      spawnStatus: 255,
-    });
-
-    await expect(harness.connectSandbox("alpha")).rejects.toThrow("process.exit(255)");
-
-    expect(setRawModeSpy).toHaveBeenCalledWith(false);
-    expect(harness.spawnSyncSpy).toHaveBeenCalledWith(
-      "stty",
-      ["sane"],
-      expect.objectContaining({ stdio: ["inherit", "ignore", "ignore"] }),
-    );
-    expect(exitSpy).toHaveBeenCalledWith(255);
-  });
-
-  it("preserves the disconnect exit code when stty cleanup throws", async () => {
-    const setRawModeSpy = vi.fn();
-    Object.defineProperty(process.stdin, "isTTY", { configurable: true, value: true });
-    Object.defineProperty(process.stdin, "setRawMode", {
-      configurable: true,
-      value: setRawModeSpy,
-    });
-    const harness = createConnectHarness({
-      agentName: "langchain-deepagents-code",
-      sessionAgent: {
-        name: "langchain-deepagents-code",
-        runtime: { kind: "terminal", interactive_command: "dcode", headless_command: "dcode -n" },
-      },
-      spawnStatus: 255,
-      sttyThrows: true,
-    });
-
-    await expect(harness.connectSandbox("alpha")).rejects.toThrow("process.exit(255)");
-
-    expect(setRawModeSpy).toHaveBeenCalledWith(false);
-    const errorOutput = harness.errorSpy.mock.calls.map((call) => String(call[0] ?? "")).join("\n");
-    expect(errorOutput).toContain(
-      "Gateway connection lost. Reconnect with: nemoclaw alpha connect",
-    );
-    expect(exitSpy).toHaveBeenCalledWith(255);
-  });
-
-  it("prints the terminal launch command in the connect hint for terminal agents", async () => {
+  it("prints a credential-safe connect hint for terminal agents", async () => {
     const harness = createConnectHarness({
       agentName: "langchain-deepagents-code",
       sessionAgent: {
@@ -332,8 +214,9 @@ describe("connectSandbox flow", () => {
     await expect(harness.connectSandbox("alpha")).rejects.toThrow("process.exit(0)");
 
     const output = harness.logSpy.mock.calls.map((call) => String(call[0])).join("\n");
-    expect(output).toContain("Inside the sandbox, run `dcode`");
-    expect(output).not.toContain("Inside the sandbox, run `langchain-deepagents-code`");
+    expect(output).toContain("Inside the sandbox, run the configured command to start chatting.");
+    expect(output).not.toContain("dcode");
+    expect(output).not.toContain("langchain-deepagents-code");
     expect(exitSpy).toHaveBeenCalledWith(0);
   });
 
@@ -372,26 +255,37 @@ describe("connectSandbox flow", () => {
 
     await expect(harness.connectSandbox("alpha")).rejects.toThrow("process.exit(0)");
 
-    expect(harness.captureOpenshellSpy).toHaveBeenCalledWith(
-      [
-        "sandbox",
-        "exec",
-        "--name",
-        "alpha",
-        "--no-tty",
-        "--env",
-        "HOME=/usr/local/lib/nemoclaw",
-        "--env",
-        "BASH_ENV=",
-        "--env",
-        "ENV=",
-        "--",
+    expect(harness.sandboxRunBufferedSpy).toHaveBeenCalledWith({
+      command: [
         "/usr/local/lib/nemoclaw/dcode-managed-exec",
         "/bin/sh",
         "-c",
         expect.stringContaining("/usr/bin/curl"),
       ],
-      expect.objectContaining({ ignoreError: true }),
+      sandboxEnvironment: {
+        BASH_ENV: "",
+        ENV: "",
+        HOME: "/usr/local/lib/nemoclaw",
+      },
+      sandboxName: "alpha",
+      target: { kind: "selected" },
+      timeoutMilliseconds: expect.any(Number),
+      tty: false,
+    });
+    expect(harness.sandboxRunBufferedSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        command: [
+          "/usr/local/lib/nemoclaw/dcode-managed-exec",
+          "/bin/sh",
+          "-c",
+          expect.stringContaining("/v1/chat/completions"),
+        ],
+        target: { kind: "named", gatewayName: "nemoclaw" },
+        timeoutMilliseconds: 95_000,
+      }),
+    );
+    expect(harness.sandboxRunBufferedSpy.mock.invocationCallOrder.at(-1)!).toBeLessThan(
+      harness.startSandboxSessionSpy.mock.invocationCallOrder[0]!,
     );
   });
 
@@ -473,20 +367,12 @@ describe("connectSandbox flow", () => {
         model: "nvidia/nemotron-3-super-120b-a12b",
       },
     });
-    harness.captureOpenshellSpy
-      .mockReturnValueOnce({ status: 0, output: "alpha Ready" })
-      .mockReturnValueOnce({
-        status: 0,
-        output:
-          "Gateway inference:\n  Provider: nvidia-prod\n  Model: nvidia/nemotron-3-super-120b-a12b\n",
-      })
-      .mockImplementationOnce(() => {
-        throw new Error("sandbox exec transport failed");
-      });
+    configureAlignedInferenceGet(harness);
+    harness.sandboxRunBufferedSpy.mockRejectedValueOnce(new Error("sandbox exec transport failed"));
 
     await expect(harness.connectSandbox("alpha")).rejects.toThrow("process.exit(1)");
 
-    expect(JSON.stringify(harness.captureOpenshellSpy.mock.calls[2]?.[0])).toContain(
+    expect(JSON.stringify(harness.sandboxRunBufferedSpy.mock.calls[0]?.[0])).toContain(
       "inference.local/v1/models",
     );
     expect(harness.applyVmDnsMonkeypatchSpy).not.toHaveBeenCalled();
@@ -497,35 +383,29 @@ describe("connectSandbox flow", () => {
       ["sandbox", "connect", "alpha"],
       expect.any(Object),
     );
-    const errorOutput = harness.errorSpy.mock.calls.flat().join("\n");
-    expect(errorOutput).toContain("did not return a trusted result");
-    expect(errorOutput).toContain("Last probe: sandbox exec transport failed");
-    expect(errorOutput).not.toContain("after DNS and route repair");
     expect(exitSpy).toHaveBeenCalledWith(1);
   });
 
   it("fails closed without repair when the route probe transport times out (#6192)", async () => {
-    const timeoutError = Object.assign(new Error("sandbox exec timed out"), {
-      code: "ETIMEDOUT",
-    });
     const harness = createConnectHarness({
       registryEntry: {
         provider: "nvidia-prod",
         model: "nvidia/nemotron-3-super-120b-a12b",
       },
     });
-    harness.captureOpenshellSpy
-      .mockReturnValueOnce({ status: 0, output: "alpha Ready" })
-      .mockReturnValueOnce({
-        status: 0,
-        output:
-          "Gateway inference:\n  Provider: nvidia-prod\n  Model: nvidia/nemotron-3-super-120b-a12b\n",
-      })
-      .mockReturnValueOnce({ status: null, output: "", error: timeoutError });
+    configureAlignedInferenceGet(harness);
+    harness.sandboxRunBufferedSpy.mockResolvedValueOnce({
+      outcome: {
+        kind: "failed",
+        error: { kind: "timeout", message: "sandbox exec timed out" },
+      },
+      stdout: "",
+      stderr: "",
+    });
 
     await expect(harness.connectSandbox("alpha")).rejects.toThrow("process.exit(1)");
 
-    expect(JSON.stringify(harness.captureOpenshellSpy.mock.calls[2]?.[0])).toContain(
+    expect(JSON.stringify(harness.sandboxRunBufferedSpy.mock.calls[0]?.[0])).toContain(
       "inference.local/v1/models",
     );
     expect(harness.applyVmDnsMonkeypatchSpy).not.toHaveBeenCalled();
@@ -550,17 +430,10 @@ describe("connectSandbox flow", () => {
         model: "nvidia/nemotron-3-super-120b-a12b",
       },
     });
-    harness.captureOpenshellSpy
-      .mockReturnValueOnce({ status: 0, output: "alpha Ready" })
-      .mockReturnValueOnce({
-        status: 0,
-        output:
-          "Gateway inference:\n  Provider: nvidia-prod\n  Model: nvidia/nemotron-3-super-120b-a12b\n",
-      })
-      .mockReturnValueOnce({
-        status: 0,
-        output: "UNAVAILABLE OpenShell CA bundle missing or unreadable",
-      });
+    configureAlignedInferenceGet(harness);
+    harness.sandboxRunBufferedSpy.mockResolvedValueOnce(
+      completedBufferedCommand("UNAVAILABLE OpenShell CA bundle missing or unreadable", 1),
+    );
 
     await expect(harness.connectSandbox("alpha")).rejects.toThrow("process.exit(1)");
 
@@ -617,13 +490,14 @@ describe("connectSandbox flow", () => {
       expect.any(Object),
     );
     const output = harness.logSpy.mock.calls.flat().join("\n");
-    expect(output).toContain("Probe complete: recovered OpenClaw gateway in 'alpha'.");
+    expect(output).toContain("Probe complete: OpenClaw gateway is running in 'alpha'.");
     expect(output).toMatch(/Probe timing: .*lifecycleAction=skipped .*result=ready/);
   });
 
-  it("probe-only accepts healthy launch evidence without duplicate recovery or publication (#8942)", async () => {
+  it("probe-only accepts healthy Portable OpenClaw evidence without recovery or publication (#8942)", async () => {
     const sb = { name: "alpha", agent: "openclaw", provider: null, model: null, policies: [] };
     const harness = createConnectHarness({
+      portableReceiptDisposition: { kind: "openclaw" },
       readinessDecision: {
         kind: "accepted",
         category: "accepted",
@@ -635,34 +509,53 @@ describe("connectSandbox flow", () => {
     await expect(harness.connectSandbox("alpha", { probeOnly: true })).resolves.toBeUndefined();
 
     expect(harness.requalifyPortableAgentAuthoritySpy).not.toHaveBeenCalled();
+    expect(harness.recoverPortableDemoLifecycleSpy).not.toHaveBeenCalled();
     expect(harness.checkAndRecoverSpy).not.toHaveBeenCalled();
     expect(harness.ensureLiveSandboxSpy).not.toHaveBeenCalled();
     expect(harness.publishLaunchReadinessSpy).not.toHaveBeenCalled();
-    const output = harness.logSpy.mock.calls.flat().join("\n");
-    expect(output).toContain("Probe complete: launch readiness is healthy for 'alpha'.");
-    expect(output).toMatch(
+    const output = harness.logSpy.mock.calls.flat().map(String);
+    expect(output.join("\n")).toContain("Probe complete: launch readiness is healthy for 'alpha'.");
+    expect(output.join("\n")).toMatch(
       /Probe timing: .*lifecycleAction=reused forwardAction=skipped result=ready/,
     );
+    expect(output.filter((line) => line.startsWith("  Portable lifecycle timing:"))).toHaveLength(
+      1,
+    );
+    expect(
+      output.filter((line) => line.startsWith("  Portable OpenClaw gateway startup timing:")),
+    ).toHaveLength(1);
   });
 
   it("probe-only skips every mutation when a newer accepted lease replaces its epoch (#8942)", async () => {
     const sb = { name: "alpha", agent: "openclaw", provider: null, model: null, policies: [] };
     const harness = createConnectHarness();
     harness.inspectLaunchReadinessSpy
-      .mockResolvedValueOnce({
-        kind: "fallback",
-        category: "config",
-        fence: { epochId: "a".repeat(64) },
-        gatewayName: "nemoclaw",
-        gatewayPort: 8080,
-        fenceFailed: false,
-        recoveryBlocked: false,
+      .mockImplementationOnce(async (...args: unknown[]) => {
+        const deps = args[1] as {
+          recordObservationTiming: (stage: string, elapsedMs: number) => void;
+        };
+        deps.recordObservationTiming("sandbox-identity", 3);
+        return {
+          kind: "fallback",
+          category: "config",
+          fence: { epochId: "a".repeat(64) },
+          gatewayName: "nemoclaw",
+          gatewayPort: 8080,
+          fenceFailed: false,
+          recoveryBlocked: false,
+        };
       })
-      .mockResolvedValueOnce({
-        kind: "accepted",
-        category: "accepted",
-        agent: { name: "openclaw" },
-        sb,
+      .mockImplementationOnce(async (...args: unknown[]) => {
+        const deps = args[1] as {
+          recordObservationTiming: (stage: string, elapsedMs: number) => void;
+        };
+        deps.recordObservationTiming("sandbox-identity", 5);
+        return {
+          kind: "accepted",
+          category: "accepted",
+          agent: { name: "openclaw" },
+          sb,
+        };
       });
     harness.launchReadinessMutationGateSpy.mockResolvedValueOnce({ kind: "changed" });
 
@@ -672,9 +565,10 @@ describe("connectSandbox flow", () => {
     expect(harness.checkAndRecoverSpy).not.toHaveBeenCalled();
     expect(harness.ensureLiveSandboxSpy).not.toHaveBeenCalled();
     expect(harness.publishLaunchReadinessSpy).not.toHaveBeenCalled();
-    expect(harness.logSpy.mock.calls.flat().join("\n")).toContain(
-      "Probe complete: launch readiness is healthy for 'alpha'.",
-    );
+    const output = harness.logSpy.mock.calls.flat().join("\n");
+    expect(output).toContain("Probe complete: launch readiness is healthy for 'alpha'.");
+    expect(output).toContain("readiness.sandbox-identity=8ms");
+    expect(output).toContain("readiness.sandbox-identity.attempts=2");
   });
 
   it("probe-only refuses runtime recovery when prior evidence cannot be fenced (#8942)", async () => {
@@ -860,6 +754,46 @@ describe("connectSandbox flow", () => {
     );
   });
 
+  it("records OpenClaw readiness observations through final publication (#10612)", async () => {
+    const harness = createConnectHarness();
+    harness.inspectLaunchReadinessSpy.mockImplementationOnce(async (...args: unknown[]) => {
+      const deps = args[1] as {
+        recordObservationTiming: (stage: string, elapsedMs: number) => void;
+      };
+      deps.recordObservationTiming("sandbox-identity", 7);
+      return {
+        kind: "fallback",
+        category: "missing",
+        fence: { epochId: "a".repeat(64) },
+        gatewayName: "nemoclaw",
+        gatewayPort: 8080,
+        fenceFailed: false,
+        recoveryBlocked: false,
+      };
+    });
+    harness.publishLaunchReadinessSpy.mockImplementationOnce(async (...args: unknown[]) => {
+      const deps = args[1] as {
+        recordObservationTiming: (stage: string, elapsedMs: number) => void;
+        recordObservationFailure: (stage: string) => void;
+      };
+      deps.recordObservationTiming("gateway-health", 8_229);
+      deps.recordObservationFailure("gateway-health");
+      return { kind: "validation-failed", category: "health" };
+    });
+
+    await expect(harness.connectSandbox("alpha", { probeOnly: true })).rejects.toThrow(
+      "process.exit(1)",
+    );
+
+    const output = harness.logSpy.mock.calls.flat().join("\n");
+    expect(output).toContain("readiness.sandbox-identity=7ms");
+    expect(output).toContain("readiness.sandbox-identity.attempts=1");
+    expect(output).toContain("readiness.gateway-health=8229ms");
+    expect(output).toContain("readiness.gateway-health.attempts=1");
+    expect(output).toContain("readiness.firstFailedObservation=gateway-health");
+    expect(output).toMatch(/result=failed failedStage=publication/);
+  });
+
   it("probe-only mode exits before reporting success when inference.local returns no trusted result (#8502)", async () => {
     const harness = createConnectHarness({
       registryEntry: {
@@ -881,17 +815,12 @@ describe("connectSandbox flow", () => {
     expect(exitSpy).toHaveBeenCalledWith(1);
   });
 
-  it("probe-only mode reports an ordinary running gateway for an already-running completion (#7919)", async () => {
+  it("probe-only mode reports a healthy native gateway as running", async () => {
     const harness = createConnectHarness({
       processCheck: {
         checked: true,
         wasRunning: false,
         recovered: true,
-        managedControlCompletion: {
-          disposition: "already-running",
-          oldPid: 123,
-          newPid: 456,
-        },
       },
     });
 
@@ -899,7 +828,7 @@ describe("connectSandbox flow", () => {
 
     const output = harness.logSpy.mock.calls.flat().join("\n");
     expect(output).toContain("Probe complete: OpenClaw gateway is running in 'alpha'.");
-    expect(output).not.toContain("Probe complete: recovered OpenClaw gateway");
+    expect(output).not.toContain("recovered OpenClaw gateway");
   });
 
   it("probe-only mode exits when process inspection cannot run", async () => {
@@ -919,30 +848,6 @@ describe("connectSandbox flow", () => {
     );
     expect(exitSpy).toHaveBeenCalledWith(1);
   });
-  it("probe-only mode reports the supported repair when relaunch is quarantined (#7801)", async () => {
-    const harness = createConnectHarness({
-      processCheck: { checked: true, wasRunning: false, recovered: false },
-    });
-    // Managed recovery runs quiet on this path, so the classified layer only
-    // reaches the operator through the callback the probe passes in.
-    harness.checkAndRecoverSpy.mockImplementation((_sandboxName: unknown, options: unknown) => {
-      (
-        options as { onRecoveryFailureLayer?: (layer: string) => void } | undefined
-      )?.onRecoveryFailureLayer?.("relaunch quarantined");
-      return { checked: true, wasRunning: false, recovered: false };
-    });
-
-    await expect(harness.connectSandbox("alpha", { probeOnly: true })).rejects.toThrow(
-      "process.exit(1)",
-    );
-
-    const errorOutput = harness.errorSpy.mock.calls.map((call) => String(call[0] ?? "")).join("\n");
-    expect(errorOutput).toContain("quarantined gateway relaunch");
-    expect(errorOutput).toContain("nemoclaw alpha rebuild --yes");
-    expect(errorOutput).not.toContain("Check /tmp/gateway.log inside the sandbox for details.");
-    expect(exitSpy).toHaveBeenCalledWith(1);
-  });
-
   it("probe-only mode exits when primary dashboard/API forward recovery fails", async () => {
     const harness = createConnectHarness({
       processCheck: {
@@ -968,7 +873,7 @@ describe("connectSandbox flow", () => {
     expect(errorOutput).toContain(
       "Probe failed: OpenClaw gateway is running in 'alpha', but the dashboard/API host forward could not be restored.",
     );
-    expect(errorOutput).toContain("openshell forward start --background 18789 alpha");
+    expect(errorOutput).toContain("nemoclaw alpha recover");
     const logOutput = harness.logSpy.mock.calls.map((call) => String(call[0] ?? "")).join("\n");
     expect(logOutput).not.toContain("Probe complete");
     expect(exitSpy).toHaveBeenCalledWith(1);
@@ -994,6 +899,37 @@ describe("connectSandbox flow", () => {
     expect(harness.checkAndRecoverSpy).toHaveBeenCalled();
   });
 
+  it("observes OpenShell-managed Hermes through native health during probe-only connect", async () => {
+    const harness = createConnectHarness({
+      agentName: "hermes",
+      sessionAgent: { name: "hermes" },
+      registryEntry: {
+        openshellDriver: "docker",
+        gatewayName: "nemoclaw",
+      },
+      useRealProcessRecovery: true,
+    });
+
+    await expect(harness.connectSandbox("alpha", { probeOnly: true })).resolves.toBeUndefined();
+
+    const healthRequests = harness.sandboxRunBufferedSpy.mock.calls
+      .map(([request]) => request as OpenShellSandboxBufferedCommandRequest)
+      .filter((request) => request.command.join(" ").includes("/health"));
+    expect(healthRequests).toHaveLength(1);
+    expect(healthRequests[0]).toEqual(
+      expect.objectContaining({
+        sandboxName: "alpha",
+        target: { kind: "selected" },
+      }),
+    );
+    expect(healthRequests[0]?.command.join(" ")).not.toContain(
+      "/usr/local/bin/nemoclaw-gateway-control",
+    );
+    expect(harness.spawnSyncSpy.mock.calls.flat().map(String).join(" ")).not.toContain(
+      "/usr/local/bin/nemoclaw-gateway-control",
+    );
+  });
+
   it("keeps active Hermes probe on receipt-owned recovery with every Docker path poisoned (#9203)", async () => {
     const harness = createConnectHarness({
       agentName: "hermes",
@@ -1004,8 +940,9 @@ describe("connectSandbox flow", () => {
         lifecycleGeneration: "generation-1",
       },
       portableReceiptDisposition: { kind: "hermes", phase: "active" },
-      portableRecoveryResult: { kind: "already-running" },
+      portableRecoveryResult: { kind: "recovered" },
     });
+    awaitHermesRouteVerification(harness);
 
     await expect(harness.connectSandbox("alpha", { probeOnly: true })).resolves.toBeUndefined();
 
@@ -1029,7 +966,8 @@ describe("connectSandbox flow", () => {
       ),
     ).toBe(false);
     expect(harness.recoverHermesPortableOllamaInferenceSpy).toHaveBeenCalledOnce();
-    expect(harness.recoverPortableDemoLifecycleSpy).toHaveBeenCalled();
+    expect(harness.recoverPortableDemoLifecycleSpy).toHaveBeenCalledOnce();
+    expect(harness.publishLaunchReadinessSpy).toHaveBeenCalledOnce();
   });
 
   it.each([
@@ -1089,6 +1027,7 @@ describe("connectSandbox flow", () => {
           ? { inferenceProbeResponses: [...routeOptions.inferenceProbeResponses] }
           : {}),
       });
+      awaitHermesRouteVerification(harness);
 
       await expect(harness.connectSandbox("alpha", { probeOnly: true })).rejects.toThrow(
         "process.exit(1)",
@@ -1113,7 +1052,8 @@ describe("connectSandbox flow", () => {
       portableReceiptDisposition: { kind: "hermes", phase: "active" },
       portableRecoveryResult: { kind: "already-running" },
     });
-    harness.captureResolvedOpenshellSpy.mockImplementation(captureInferenceRouteThenDrift(harness));
+    awaitHermesRouteVerification(harness);
+    harness.sandboxRunBufferedSpy.mockImplementation(runInferenceRouteThenDrift(harness));
 
     await expect(harness.connectSandbox("alpha", { probeOnly: true })).rejects.toThrow(
       "process.exit(1)",
@@ -1129,8 +1069,9 @@ describe("connectSandbox flow", () => {
       portableReceiptDisposition: { kind: "hermes", phase: "active" },
       portableRecoveryResult: { kind: "already-running" },
     });
-    harness.captureResolvedOpenshellSpy.mockImplementation(
-      captureInferenceRouteThenDriftLiveIdentity(harness),
+    awaitHermesRouteVerification(harness);
+    harness.sandboxRunBufferedSpy.mockImplementation(
+      runInferenceRouteThenDriftLiveIdentity(harness),
     );
 
     await expect(harness.connectSandbox("alpha", { probeOnly: true })).rejects.toThrow(
@@ -1139,9 +1080,11 @@ describe("connectSandbox flow", () => {
     expect(harness.errorSpy.mock.calls.flat().join("\n")).toContain("changed during verification");
     expect(harness.runOpenshellSpy).not.toHaveBeenCalled();
     expect(harness.getSandboxDockerRuntimeSpy).not.toHaveBeenCalled();
+    expect(harness.recoverPortableDemoLifecycleSpy).toHaveBeenCalledOnce();
+    expect(harness.publishLaunchReadinessSpy).not.toHaveBeenCalled();
   });
 
-  it("keeps active Hermes interactive setup inside receipt-owned recovery (#9203)", async () => {
+  it("keeps sibling-root Hermes interactive setup inside receipt-owned recovery (#9203)", async () => {
     vi.stubEnv("NVIDIA_INFERENCE_API_KEY", "do-not-forward");
     vi.stubEnv("GITHUB_TOKEN", "do-not-forward");
     vi.stubEnv("AWS_SECRET_ACCESS_KEY", "do-not-forward");
@@ -1160,12 +1103,46 @@ describe("connectSandbox flow", () => {
       sessionAgent: { name: "hermes" },
       registryEntry: {
         openshellDriver: "docker",
-        gatewayName: "nemoclaw",
+        gatewayName: "nemoclaw-8245",
+        gatewayPort: 8245,
         lifecycleGeneration: "generation-1",
         hermesToolGateways: ["tool-gateway"],
       },
       portableReceiptDisposition: { kind: "hermes", phase: "active" },
       portableRecoveryResult: { kind: "already-running" },
+    });
+    const selectedRegistry = requireDist("../../src/lib/state/registry.js");
+    selectedRegistry.getSandbox.mockReturnValue(null);
+    const captureResolved = harness.captureResolvedOpenshellSpy.getMockImplementation()!;
+    const forwardRecovery = requireDist("../../src/lib/actions/sandbox/forward-recovery.js");
+    let forwardsRestored = false;
+    harness.captureResolvedOpenshellSpy.mockImplementation(((args: unknown, options: unknown) => {
+      const argv = Array.isArray(args) ? args.map(String) : [];
+      return argv[0] === "forward" && argv[1] === "list"
+        ? {
+            status: 0,
+            output: forwardsRestored
+              ? "SANDBOX BIND PORT PID STATUS\nalpha 127.0.0.1 18789 12345 running"
+              : "SANDBOX BIND PORT PID STATUS\n",
+          }
+        : captureResolved(args, options);
+    }) as never);
+    harness.forwardAdapterObserveSpy.mockImplementation(async ({ forwards }) =>
+      forwards.map((forward: object) => ({
+        state: forwardsRestored ? ("owned" as const) : ("absent" as const),
+        forward,
+      })),
+    );
+    harness.forwardAdapterStartSpy.mockImplementation(async ({ forward }) => {
+      forwardsRestored = true;
+      return {
+        state: "started" as const,
+        forward,
+        cleanup: async () => {
+          forwardsRestored = false;
+          return { state: "released" as const };
+        },
+      };
     });
 
     await expect(harness.connectSandbox("alpha")).rejects.toThrow("process.exit(0)");
@@ -1178,16 +1155,22 @@ describe("connectSandbox flow", () => {
     expect(harness.readSandboxConfigSpy).not.toHaveBeenCalled();
     expect(harness.writeSandboxConfigSpy).not.toHaveBeenCalled();
     expect(harness.recoverHermesPortableOllamaInferenceSpy).not.toHaveBeenCalled();
+    expect(harness.forwardAdapterStartSpy).toHaveBeenCalledOnce();
+    await expect(
+      forwardRecovery.areSandboxLaunchForwardsHealthy("alpha", "nemoclaw-8245"),
+    ).resolves.toBe(true);
+    expect(harness.forwardAdapterStartSpy.mock.invocationCallOrder[0]!).toBeLessThan(
+      harness.startSandboxSessionSpy.mock.invocationCallOrder[0]!,
+    );
     expect(sandboxVersion.checkAgentVersion).not.toHaveBeenCalled();
     expect(brokerSpy).not.toHaveBeenCalled();
-    const connectCall = harness.runSandboxExecChildSpy.mock.calls.find(
-      ([command, args]) =>
-        command === "/usr/bin/openshell" &&
-        Array.isArray(args) &&
-        args.join("\0") === ["sandbox", "connect", "-g", "nemoclaw", "alpha"].join("\0"),
-    );
-    expect(connectCall?.[2]).toMatchObject({
-      hostEnv: expect.not.objectContaining({
+    expect(harness.startSandboxSessionSpy).toHaveBeenCalledWith({
+      kind: "connect",
+      sandboxName: "alpha",
+      target: { kind: "named", gatewayName: "nemoclaw-8245" },
+    });
+    expect(harness.createSessionExecutorSpy.mock.calls[0]?.[0]).toMatchObject({
+      environment: expect.not.objectContaining({
         NVIDIA_INFERENCE_API_KEY: expect.anything(),
         GITHUB_TOKEN: expect.anything(),
         AWS_SECRET_ACCESS_KEY: expect.anything(),
@@ -1223,9 +1206,7 @@ describe("connectSandbox flow", () => {
       "lifecycle authority disappeared before interactive connect",
     );
     expect(
-      harness.runSandboxExecChildSpy.mock.calls.some(
-        ([, args]) => Array.isArray(args) && args[0] === "sandbox" && args[1] === "connect",
-      ),
+      harness.startSandboxSessionSpy.mock.calls.some(([request]) => request.kind === "connect"),
     ).toBe(false);
   });
 
@@ -1404,7 +1385,7 @@ describe("connectSandbox flow", () => {
     expect(exitSpy).toHaveBeenCalledWith(1);
   });
 
-  it("keeps a direct recovery failure detail separate from an earlier callback layer", () => {
+  it("keeps a direct recovery failure detail separate from an earlier callback layer", async () => {
     const harness = createConnectHarness();
     harness.checkAndRecoverSpy.mockImplementation(
       (
@@ -1425,7 +1406,7 @@ describe("connectSandbox flow", () => {
       },
     );
 
-    expect(harness.restoreSandboxStartupState("alpha")).toMatchObject({
+    await expect(harness.restoreSandboxStartupState("alpha")).resolves.toMatchObject({
       recoveryFailureDetail:
         "the managed supervisor health check for the recreated sandbox did not pass",
       recoveryFailureLayer: null,

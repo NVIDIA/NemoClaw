@@ -30,19 +30,21 @@ export interface PreflightGatewayCleanupDeps {
   isDockerDriverGatewayEnabled: boolean;
   externallySupervised?: boolean;
   cliDisplayName: string;
-  dashboardPort: number;
+  dashboardPort?: number;
   log: (line: string) => void;
   warn: (line: string) => void;
-  runOpenshell: (args: string[], options: { ignoreError: true }) => unknown;
-  destroyGateway: () => boolean;
+  stopAllDashboardForwards?: () => void;
+  destroyGateway: () => boolean | Promise<boolean>;
   destroyGatewayForReuse: (
-    destroy: () => boolean,
+    destroy: () => boolean | Promise<boolean>,
     successMessage: string,
     failureMessage: string,
-  ) => GatewayReuseState;
+  ) => GatewayReuseState | Promise<GatewayReuseState>;
 }
 
-export function applyPreflightGatewayCleanup(deps: PreflightGatewayCleanupDeps): GatewayReuseState {
+export async function applyPreflightGatewayCleanup(
+  deps: PreflightGatewayCleanupDeps,
+): Promise<GatewayReuseState> {
   const action = preflightGatewayCleanupDecision({
     gatewayReuseState: deps.gatewayReuseState,
     isDockerDriverGatewayEnabled: deps.isDockerDriverGatewayEnabled,
@@ -54,7 +56,10 @@ export function applyPreflightGatewayCleanup(deps: PreflightGatewayCleanupDeps):
   }
   if (action === "destroy-legacy") {
     deps.log(`  Cleaning up previous ${deps.cliDisplayName} session...`);
-    deps.runOpenshell(["forward", "stop", String(deps.dashboardPort)], { ignoreError: true });
+    if (!deps.stopAllDashboardForwards) {
+      throw new Error("ForwardTcp cleanup authority is unavailable");
+    }
+    deps.stopAllDashboardForwards();
     return deps.destroyGatewayForReuse(
       deps.destroyGateway,
       "  ✓ Previous session cleaned up",

@@ -4,10 +4,12 @@
 import {
   HermesPortableOllamaRecoveryError,
   HermesPortableOllamaRecoveryPhaseError,
+  inspectHermesPortableOllamaReadinessRuntime,
   recoverHermesPortableOllamaInference,
   type HermesPortableOllamaPreparedProbeDependency,
   type HermesPortableOllamaRecoveryFailure,
   type HermesPortableOllamaRecoveryPhase,
+  type HermesPortableOllamaRecoveryInput,
 } from "../../../onboard/experimental/hermes-portable-ollama-inference";
 import type { SandboxEntry } from "../../../state/registry";
 import {
@@ -16,11 +18,15 @@ import {
 } from "../gateway-state";
 
 export interface HermesPortableInferenceConnectRecoveryInput {
+  readonly intent: HermesPortableOllamaRecoveryInput["intent"];
   readonly sandboxName: string;
   readonly authority: HermesPortableActiveLifecycleAuthority;
   readonly readRegistry: (sandboxName: string) => SandboxEntry | null;
-  readonly verifyRoute: () => SandboxEntry;
-  readonly prepareProbeDependency?: () => HermesPortableOllamaPreparedProbeDependency;
+  readonly verifyRoute: () => Promise<SandboxEntry>;
+  readonly prepareProbeDependency?: () =>
+    | HermesPortableOllamaPreparedProbeDependency
+    | Promise<HermesPortableOllamaPreparedProbeDependency>;
+  readonly assertCallerTransactionCurrent?: () => void;
   readonly assertCallerCurrent?: () => void;
   readonly runGatewayOpenshell?: typeof captureHermesPortableInferenceRecoveryGateway;
 }
@@ -39,12 +45,19 @@ export function classifyHermesPortableInferenceConnectRecoveryFailure(
   return "recovery-failed";
 }
 
-/** Resume exact published Ollama authority for one probe-only connect operation. */
-export function recoverHermesPortableInferenceForConnectProbe(
+/** Classify one exact published Ollama runtime without opening recovery authority. */
+export function inspectHermesPortableInferenceReadinessRuntimeForConnectProbe(
+  input: Parameters<typeof inspectHermesPortableOllamaReadinessRuntime>[0],
+) {
+  return inspectHermesPortableOllamaReadinessRuntime(input);
+}
+
+/** Resume exact published Ollama authority for an explicitly requested connect preparation. */
+export async function recoverHermesPortableInferenceForConnect(
   input: HermesPortableInferenceConnectRecoveryInput,
 ) {
-  return recoverHermesPortableOllamaInference({
-    intent: "connect-probe-only",
+  return await recoverHermesPortableOllamaInference({
+    intent: input.intent,
     sandboxName: input.sandboxName,
     entry: input.authority.entry,
     runGatewayOpenshell: (args, options) =>
@@ -56,6 +69,7 @@ export function recoverHermesPortableInferenceForConnectProbe(
     readRegistry: input.readRegistry,
     verifyRoute: input.verifyRoute,
     prepareProbeDependency: input.prepareProbeDependency,
+    assertCallerTransactionCurrent: input.assertCallerTransactionCurrent,
     assertCallerCurrent: input.assertCallerCurrent,
   });
 }

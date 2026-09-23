@@ -14,8 +14,8 @@ function ok(stdout = ""): RunResult {
   return { status: 0, stdout, stderr: "" };
 }
 
-function runUninstallPlan(options: UninstallRunOptions, deps: UninstallRunDeps) {
-  return runUninstallPlanBase(options, {
+async function runUninstallPlan(options: UninstallRunOptions, deps: UninstallRunDeps) {
+  return await runUninstallPlanBase(options, {
     resolveGatewayTeardownAuthority: ({ gatewayName, gatewayPort }) => ({
       gatewayName,
       gatewayPort,
@@ -70,7 +70,7 @@ function collectDockerCalls(): { calls: string[][]; runDocker: UninstallRunDeps[
   return { calls, runDocker };
 }
 
-function runWithDockerInventory(): string[][] {
+async function runWithDockerInventory(): Promise<string[][]> {
   const { calls, runDocker } = collectDockerCalls();
   const run = vi.fn((command: string, args: string[]) => {
     const stubbed: Record<string, RunResult> = {
@@ -85,7 +85,7 @@ function runWithDockerInventory(): string[][] {
     );
   });
 
-  const result = runUninstallPlan(
+  const result = await runUninstallPlan(
     { assumeYes: true, deleteModels: false, keepOpenShell: true },
     {
       commandExists: () => true,
@@ -109,16 +109,16 @@ function runWithDockerInventory(): string[][] {
 }
 
 describe("uninstall Docker resource scope", () => {
-  it("keeps containers belonging to the separate OpenClaw project (#8496)", () => {
-    const calls = runWithDockerInventory();
+  it("keeps containers belonging to the separate OpenClaw project (#8496)", async () => {
+    const calls = await runWithDockerInventory();
 
     expect(calls).not.toContainEqual(["rm", "-f", "c-openclaw"]);
     expect(calls).not.toContainEqual(["rm", "-f", "c-registry"]);
     expect(calls).not.toContainEqual(["rm", "-f", "c-unrelated"]);
   });
 
-  it("keeps images belonging to the separate OpenClaw project (#8496)", () => {
-    const calls = runWithDockerInventory();
+  it("keeps images belonging to the separate OpenClaw project (#8496)", async () => {
+    const calls = await runWithDockerInventory();
 
     expect(calls).not.toContainEqual(["rmi", "-f", "i-openclaw"]);
     expect(calls).not.toContainEqual(["rmi", "-f", "i-tag"]);
@@ -126,29 +126,197 @@ describe("uninstall Docker resource scope", () => {
     expect(calls).not.toContainEqual(["rmi", "-f", "i-unrelated"]);
   });
 
-  it("still removes the gateway and sandbox containers it owns by name", () => {
-    const calls = runWithDockerInventory();
+  it("still removes the gateway and sandbox containers it owns by name", async () => {
+    const calls = await runWithDockerInventory();
 
     expect(calls).toContainEqual(["rm", "-f", "c-cluster"]);
     expect(calls).toContainEqual(["rm", "-f", "c-sandbox"]);
   });
 
-  it("still reclaims a randomly named probe container by its NemoClaw image", () => {
-    const calls = runWithDockerInventory();
+  it("still reclaims a randomly named probe container by its NemoClaw image", async () => {
+    const calls = await runWithDockerInventory();
 
     expect(calls).toContainEqual(["rm", "-f", "c-probe"]);
   });
 
-  it("still removes NemoClaw images published under a registry path", () => {
-    const calls = runWithDockerInventory();
+  it("still removes NemoClaw images published under a registry path", async () => {
+    const calls = await runWithDockerInventory();
 
     expect(calls).toContainEqual(["rmi", "-f", "i-nemoclaw"]);
     expect(calls).toContainEqual(["rmi", "-f", "i-managed"]);
   });
 
-  it("still removes gateway-built OpenShell sandbox images", () => {
-    const calls = runWithDockerInventory();
+  it("still removes gateway-built OpenShell sandbox images", async () => {
+    const calls = await runWithDockerInventory();
 
     expect(calls).toContainEqual(["rmi", "-f", "i-openshell"]);
+  });
+
+  it.each([
+    {
+      kind: "labelled",
+      volume: `nemoclaw-managed-startup-receipt-volume-${"a".repeat(32)}`,
+    },
+    {
+      kind: "unlabelled",
+      volume: `nemoclaw-managed-startup-receipt-volume-${"b".repeat(32)}`,
+    },
+  ])("preserves an $kind receipt-volume match during force-fresh cleanup", async ({ volume }) => {
+    const calls: string[][] = [];
+    const routes: Record<string, () => RunResult> = {
+      info: () => ok(),
+      "ps -a --format {{.ID}} {{.Image}} {{.Names}}": () => ok(),
+      "volume ls --format {{.Name}}": () => ok(volume),
+      "volume inspect openshell-cluster-nemoclaw": () => ({
+        status: 1,
+        stdout: "",
+        stderr: "Error response from daemon: get openshell-cluster-nemoclaw: no such volume",
+      }),
+    };
+    const runDocker = vi.fn((args: string[]) => {
+      calls.push(args);
+      const command = args.join(" ");
+      return (routes[command] ?? (() => ok()))();
+    });
+
+    const result = await runUninstallPlan(
+      {
+        assumeYes: true,
+        deleteModels: false,
+        destroyUserData: true,
+        forceFreshReset: true,
+        keepOpenShell: true,
+      },
+      {
+        commandExists: () => true,
+        env: { HOME: "/tmp/nemoclaw-force-fresh-receipts" } as NodeJS.ProcessEnv,
+        existsSync: () => false,
+        hasPortableRuntimeCleanup: () => false,
+        isTty: false,
+        kill: () => true,
+        log: () => undefined,
+        rmSync: vi.fn(),
+        run: (command, args) =>
+          command === "openshell" && args.join(" ") === "gateway list -o json"
+            ? ok(JSON.stringify([{ name: "nemoclaw" }]))
+            : ok(),
+        runDocker,
+      },
+    );
+
+    expect(result.exitCode).toBe(1);
+    expect(calls).toContainEqual(["volume", "ls", "--format", "{{.Name}}"]);
+    expect(calls).not.toContainEqual(["volume", "rm", "-f", volume]);
+  });
+
+  it.each([
+    {
+      failureCommand: ["volume", "rm", "-f", "openshell-cluster-nemoclaw"],
+      plannedVolumeInspection: ok(),
+      scenario: "planned-volume removal fails",
+    },
+    {
+      failureCommand: ["volume", "inspect", "openshell-cluster-nemoclaw"],
+      plannedVolumeInspection: { status: 1, stdout: "", stderr: "permission denied" },
+      scenario: "planned-volume inspection is inconclusive",
+    },
+  ] as const)(
+    "fails force-fresh cleanup when $scenario",
+    async ({ failureCommand, plannedVolumeInspection }) => {
+      const routes: Record<string, RunResult> = {
+        info: ok(),
+        "ps -a --format {{.ID}} {{.Image}} {{.Names}}": ok(),
+        "volume inspect openshell-cluster-nemoclaw": plannedVolumeInspection,
+        "volume rm -f openshell-cluster-nemoclaw": {
+          status: 1,
+          stdout: "",
+          stderr: "busy",
+        },
+      };
+      const runDocker = vi.fn((args: string[]): RunResult => {
+        return routes[args.join(" ")] ?? ok();
+      });
+
+      const result = await runUninstallPlan(
+        {
+          assumeYes: true,
+          deleteModels: false,
+          destroyUserData: true,
+          forceFreshReset: true,
+          keepOpenShell: true,
+        },
+        {
+          commandExists: () => true,
+          env: { HOME: "/tmp/nemoclaw-force-fresh-docker-failure" } as NodeJS.ProcessEnv,
+          existsSync: () => false,
+          hasPortableRuntimeCleanup: () => false,
+          isTty: false,
+          kill: () => true,
+          log: () => undefined,
+          rmSync: vi.fn(),
+          run: (command, args) =>
+            command === "openshell" && args.join(" ") === "gateway list -o json"
+              ? ok(JSON.stringify([{ name: "nemoclaw" }]))
+              : ok(),
+          runDocker,
+        },
+      );
+
+      expect(result.exitCode).toBe(1);
+      expect(runDocker).toHaveBeenCalledWith(failureCommand, expect.any(Object));
+      expect(runDocker).toHaveBeenCalledWith(
+        ["volume", "inspect", "openshell-cluster-nemoclaw"],
+        expect.objectContaining({ stdio: ["ignore", "pipe", "pipe"] }),
+      );
+    },
+  );
+
+  it("preserves a convention-matching container and images during force-fresh cleanup", async () => {
+    const calls: string[][] = [];
+    const routes: Record<string, RunResult> = {
+      info: ok(),
+      "ps -a --format {{.ID}} {{.Image}} {{.Names}}": ok(
+        "foreign-id registry.example.com/unrelated:latest openshell-foreign",
+      ),
+      "volume inspect openshell-cluster-nemoclaw": {
+        status: 1,
+        stdout: "",
+        stderr: "Error response from daemon: get openshell-cluster-nemoclaw: no such volume",
+      },
+    };
+    const runDocker = vi.fn((args: string[]): RunResult => {
+      calls.push(args);
+      return routes[args.join(" ")] ?? ok();
+    });
+
+    const result = await runUninstallPlan(
+      {
+        assumeYes: true,
+        deleteModels: false,
+        destroyUserData: true,
+        forceFreshReset: true,
+        keepOpenShell: true,
+      },
+      {
+        commandExists: () => true,
+        env: { HOME: "/tmp/nemoclaw-force-fresh-foreign-container" } as NodeJS.ProcessEnv,
+        existsSync: () => false,
+        hasPortableRuntimeCleanup: () => false,
+        isTty: false,
+        kill: () => true,
+        log: () => undefined,
+        rmSync: vi.fn(),
+        run: (command, args) =>
+          command === "openshell" && args.join(" ") === "gateway list -o json"
+            ? ok(JSON.stringify([{ name: "nemoclaw" }]))
+            : ok(),
+        runDocker,
+      },
+    );
+
+    expect(result.exitCode).toBe(1);
+    expect(calls).toContainEqual(["ps", "-a", "--format", "{{.ID}} {{.Image}} {{.Names}}"]);
+    expect(calls).not.toContainEqual(["rm", "-f", "foreign-id"]);
+    expect(calls.some((args) => args[0] === "rmi")).toBe(false);
   });
 });

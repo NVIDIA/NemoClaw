@@ -7,22 +7,188 @@ import path from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
 
+import { buildMcpBridgePolicyKey } from "../../../src/lib/actions/sandbox/mcp-bridge-policy-render";
 import { ArtifactSink } from "../fixtures/artifacts.ts";
 import { HostCliClient } from "../fixtures/clients/host.ts";
+import type { SandboxClient } from "../fixtures/clients/sandbox.ts";
 import { MCP_BRIDGE_TEST_CREDENTIALS } from "../fixtures/mcp-bridge-credentials.ts";
 import { startTestProgress } from "../fixtures/progress.ts";
 import { ShellProbe } from "../fixtures/shell-probe.ts";
 import {
-  isHermesRestartTransportFailure,
+  captureRejectedOpenClawCredentialAliasState,
+  addBridgeAndReadStatus,
+  confirmHermesMcpRegistrationAfterRestartSettlement,
+  isHermesMcpAddPostProbeNotReady,
+  isHermesMcpStatusAwaitingRestartSettlement,
   isRetryableOpenClawBaselineScopeOnboardFailure,
   MCP_BRIDGE_TEST_REDACTION_VALUES,
+  readConcurrentMcpStatusAndConfirmHermesRegistration,
+  runDeniedMcpToolCall,
   restartBridgeWithoutHostSecret,
-  retryAfterHermesRestartTransportFailure,
+  retryAfterConcurrentAddTransientFailure,
   retryHermesGatewayDraining,
   retryOpenClawBaselineScopeOnboardFailure,
 } from "../live/mcp-bridge-reliability.ts";
 
 const HTTP_STATUS_MARKER = "NEMOCLAW_HERMES_MCP_HTTP_STATUS=";
+
+describe("real MCP add/status helper", () => {
+  it.each([
+    ["fake", "FAKE_MCP_SECRET", MCP_BRIDGE_TEST_CREDENTIALS.host],
+    ["distinct", "DISTINCT_MCP_SECRET", MCP_BRIDGE_TEST_CREDENTIALS.rotatedHost],
+  ])(
+    "keeps %s endpoint and credential identity in both real CLI calls",
+    async (server, envName, secret) => {
+      const url = `https://${server}.example.test/mcp`;
+      const providerName = `alpha-mcp-${server}`;
+      const nemoclaw = vi.fn().mockResolvedValue({
+        exitCode: 0,
+        timedOut: false,
+        stderr: "",
+        stdout: JSON.stringify({
+          support: { supported: true, adapter: "openclaw-config" },
+          server,
+          url,
+          env: { names: [envName], ready: true },
+          provider: { name: providerName, present: true, state: "configured", attached: true },
+          policy: { name: `mcp-bridge-${server}`, present: true, state: "configured" },
+          adapter: { registered: true },
+          warnings: [],
+        }),
+      });
+      expect(
+        await addBridgeAndReadStatus(
+          { nemoclaw } as unknown as HostCliClient,
+          {} as SandboxClient,
+          {
+            sandboxName: "alpha",
+            mcpUrl: url,
+            expectedAdapter: "openclaw-config",
+            artifactPrefix: server,
+            serverName: server,
+            credentialEnvName: envName,
+            credential: secret,
+            applyHostPolicyEdit: false,
+          },
+        ),
+      ).toBe(providerName);
+      expect(nemoclaw.mock.calls[0]?.[0]).toEqual([
+        "alpha",
+        "mcp",
+        "add",
+        server,
+        "--url",
+        url,
+        "--env",
+        envName,
+        "--deny-tool",
+        "fake_s*",
+      ]);
+      expect(nemoclaw.mock.calls[1]?.[0]).toEqual(["alpha", "mcp", "status", server, "--json"]);
+      expect(nemoclaw.mock.calls[0]?.[1].env[envName] === secret).toBe(true);
+      expect(nemoclaw.mock.calls[1]?.[1].env[envName] === secret).toBe(true);
+      expect(nemoclaw.mock.calls[0]?.[1].redactionValues.includes(secret)).toBe(true);
+      expect(nemoclaw.mock.calls[1]?.[1].redactionValues.includes(secret)).toBe(true);
+    },
+  );
+});
+
+describe("rejected OpenClaw credential alias state", () => {
+  it.each([false, true])(
+    "observes all mutation surfaces on the selected gateway (residual policy: %s)",
+    async (residualPolicy) => {
+      vi.stubEnv("OPENSHELL_GATEWAY", "non-default-mcp-gateway");
+      try {
+        const ok = { exitCode: 0, timedOut: false, stdout: "", stderr: "" };
+        const nemoclaw = vi.fn().mockResolvedValue({ ...ok, stdout: '{"bridges":[]}' });
+        const command = vi.fn().mockResolvedValue(ok);
+        const openshell = vi.fn().mockImplementation(async (_args, options) => {
+          expect(options.env.OPENSHELL_GATEWAY).toBe("non-default-mcp-gateway");
+          return {
+            ...ok,
+            stdout: residualPolicy ? buildMcpBridgePolicyKey("credential-alias") : "",
+          };
+        });
+        const execShell = vi.fn().mockResolvedValue({ ...ok, stdout: "absent\n" });
+        const result = await captureRejectedOpenClawCredentialAliasState(
+          {
+            nemoclaw,
+            command,
+            openshellCommandPath: "/fixture/openshell",
+          } as unknown as HostCliClient,
+          { openshell, execShell } as unknown as SandboxClient,
+          { sandboxName: "alpha", mcpUrl: "https://example.test/mcp" },
+        );
+
+        expect(result).toEqual({
+          adapterAbsent: true,
+          policyAbsent: !residualPolicy,
+          providerAbsent: true,
+          sourceAbsent: true,
+        });
+        expect(openshell).toHaveBeenCalledWith(
+          ["policy", "get", "--full", "alpha"],
+          expect.objectContaining({
+            env: expect.objectContaining({ OPENSHELL_GATEWAY: "non-default-mcp-gateway" }),
+          }),
+        );
+        expect(nemoclaw.mock.calls[0]?.[1].env.OPENSHELL_GATEWAY).toBe("non-default-mcp-gateway");
+        expect(command.mock.calls[0]?.[2].env.OPENSHELL_GATEWAY).toBe("non-default-mcp-gateway");
+        expect(execShell.mock.calls[0]?.[2].env.OPENSHELL_GATEWAY).toBe("non-default-mcp-gateway");
+      } finally {
+        vi.unstubAllEnvs();
+      }
+    },
+  );
+});
+
+describe("OpenClaw denied-tool target", () => {
+  it.each([undefined, "", "relative/path"])(
+    "rejects an invalid URL %j before host or sandbox work",
+    async (mcpUrl) => {
+      const command = vi.fn();
+      const execShell = vi.fn();
+      await expect(
+        runDeniedMcpToolCall({ command } as unknown as HostCliClient, {
+          agent: "openclaw",
+          artifactName: "invalid-target",
+          mcpUrl,
+          sandbox: { execShell } as unknown as SandboxClient,
+          sandboxName: "alpha",
+          serverName: "fake",
+          requests: [],
+        }),
+      ).rejects.toThrow(TypeError);
+      expect(command).not.toHaveBeenCalled();
+      expect(execShell).not.toHaveBeenCalled();
+    },
+  );
+
+  it("passes a parsed URL to the existing denied-tool probe", async () => {
+    const ok = { exitCode: 0, timedOut: false, stdout: "", stderr: "" };
+    const command = vi
+      .fn()
+      .mockResolvedValueOnce(ok)
+      .mockResolvedValueOnce(ok)
+      .mockResolvedValue({
+        ...ok,
+        stdout:
+          "JSONRPC_L7_REQUEST decision=deny rule_methods=tools/call tools=fake_status reason=blocked by deny rule",
+      });
+    const execShell = vi.fn().mockResolvedValue(ok);
+    const result = await runDeniedMcpToolCall({ command } as unknown as HostCliClient, {
+      agent: "openclaw",
+      artifactName: "valid-target",
+      mcpUrl: "https://example.test:443/mcp",
+      sandbox: { execShell } as unknown as SandboxClient,
+      sandboxName: "alpha",
+      serverName: "fake",
+      requests: [],
+    });
+    expect(execShell.mock.calls[0]?.[1]).toContain("'https://example.test/mcp' tools/call deny");
+    expect(result.policyDenied).toBe(true);
+  });
+});
 
 function gatewayResult(status: number, code: string) {
   return {
@@ -33,22 +199,119 @@ function gatewayResult(status: number, code: string) {
   };
 }
 
-const HERMES_BROKEN_PIPE = `  Effective egress that would be opened:
-    policy 'mcp-bridge-concurrent':
-      - fixture.trycloudflare.com:443 (protocol: rest, enforcement: enforce)
-  Applied preset: mcp-bridge-concurrent
-  Narrowing sandbox egress — removing: fixture.trycloudflare.com
-  Removed preset: mcp-bridge-concurrent
-\u001b[1m\u001b[32m✓\u001b[39m\u001b[0m Policy version 3 submitted (hash: abcdef0123)
-\u001b[1m\u001b[32m✓\u001b[39m\u001b[0m Policy version 3 loaded (active version: 3)
-  Preset not found: mcp-bridge-concurrent
-\u001b[1m\u001b[32m✓\u001b[39m\u001b[0m Policy version 4 submitted (hash: 0123abcdef)
-\u001b[1m\u001b[32m✓\u001b[39m\u001b[0m Policy version 4 loaded (active version: 4)
-  Error:   \u00d7 code: 'Unknown error', message: "h2 protocol error: error reading a body
-  \u2502 from connection", source: hyper::Error(Body, Error { kind: Io(Custom
-  \u2502 { kind: BrokenPipe, error: "stream closed because of a broken pipe" }) })
-  \u251c\u2500\u25b6 error reading a body from connection
-  \u2570\u2500\u25b6 stream closed because of a broken pipe`;
+const HERMES_RESTART_SETTLING_PAYLOAD = {
+  server: "concurrent",
+  agent: "hermes",
+  url: "https://fixture.trycloudflare.com/mcp",
+  warnings: [],
+  support: { supported: true, mode: "bridge", adapter: "hermes-config" },
+  env: { names: ["FAKE_MCP_SECRET"], missing: [], ready: true },
+  provider: {
+    name: "e2e-mcp-hermes-mcp-concurrent-0123456789abcdef",
+    present: true,
+    state: "configured",
+    attached: true,
+    credentialReady: true,
+    credentialResolution: {
+      ok: null,
+      detail: "probe skipped: the current OpenShell credential revision could not be observed",
+    },
+  },
+  policy: {
+    name: "mcp-bridge-concurrent",
+    present: true,
+    state: "configured",
+  },
+  adapter: {
+    registered: null,
+    detail:
+      "Adapter inspection was skipped because the current OpenShell credential revision could not be observed.",
+  },
+};
+
+const HERMES_RESTART_SETTLING_STATUS = {
+  exitCode: 0,
+  signal: null,
+  timedOut: false,
+  stdout: JSON.stringify(HERMES_RESTART_SETTLING_PAYLOAD),
+  stderr: "",
+};
+
+const HERMES_RESTART_SETTLEMENT_FIELD_MISMATCHES: Array<
+  [string, (payload: typeof HERMES_RESTART_SETTLING_PAYLOAD) => void]
+> = [
+  ["agent differs", (payload) => Object.assign(payload, { agent: "openclaw" })],
+  ["warnings are present", (payload) => Object.assign(payload, { warnings: ["warning"] })],
+  ["warnings are not an array", (payload) => Object.assign(payload, { warnings: "warning" })],
+  ["support is unavailable", (payload) => Object.assign(payload.support, { supported: false })],
+  ["support mode differs", (payload) => Object.assign(payload.support, { mode: "direct" })],
+  [
+    "support adapter differs",
+    (payload) => Object.assign(payload.support, { adapter: "openclaw-config" }),
+  ],
+  ["environment names are empty", (payload) => Object.assign(payload.env, { names: [] })],
+  ["environment name is not text", (payload) => Object.assign(payload.env, { names: [42] })],
+  [
+    "environment reports a missing credential",
+    (payload) => Object.assign(payload.env, { missing: ["FAKE_MCP_SECRET"] }),
+  ],
+  ["environment is not ready", (payload) => Object.assign(payload.env, { ready: false })],
+  ["provider name is empty", (payload) => Object.assign(payload.provider, { name: "" })],
+  [
+    "provider source is incomplete",
+    (payload) => Object.assign(payload.provider, { present: false }),
+  ],
+  [
+    "provider source is not configured",
+    (payload) => Object.assign(payload.provider, { state: "conflict" }),
+  ],
+  ["provider is detached", (payload) => Object.assign(payload.provider, { attached: false })],
+  [
+    "provider credential is not ready",
+    (payload) => Object.assign(payload.provider, { credentialReady: false }),
+  ],
+  [
+    "credential resolution result differs",
+    (payload) => Object.assign(payload.provider.credentialResolution, { ok: false }),
+  ],
+  [
+    "credential resolution detail differs",
+    (payload) =>
+      Object.assign(payload.provider.credentialResolution, {
+        detail: "credential revision mismatch",
+      }),
+  ],
+  ["policy name is empty", (payload) => Object.assign(payload.policy, { name: "" })],
+  ["policy source is incomplete", (payload) => Object.assign(payload.policy, { present: false })],
+  [
+    "policy source is not configured",
+    (payload) => Object.assign(payload.policy, { state: "conflict" }),
+  ],
+  [
+    "adapter registration is resolved",
+    (payload) => Object.assign(payload.adapter, { registered: false }),
+  ],
+  [
+    "adapter detail differs",
+    (payload) => Object.assign(payload.adapter, { detail: "adapter inspection failed" }),
+  ],
+];
+
+const HERMES_ADD_POST_PROBE_NOT_READY = {
+  ...HERMES_RESTART_SETTLING_STATUS,
+  stdout: `MCP server 'concurrent' added to sandbox 'e2e-mcp-hermes'.
+Credential FAKE_MCP_SECRET probe was inconclusive: Error:   × code: 'The system is not in a state required for the operation's
+│ execution', message: "sandbox is not ready"
+`,
+};
+
+const HERMES_REGISTERED_ADAPTER = {
+  exitCode: 0,
+  signal: null,
+  timedOut: false,
+  stdout: "registered\n",
+  stderr: "",
+};
 
 async function readRestartFailureArtifacts(root: string): Promise<string> {
   const artifactBase = path.join(root, "shell/secret-shaped-restart-mcp-restart-provider-reuse");
@@ -62,6 +325,314 @@ async function readRestartFailureArtifacts(root: string): Promise<string> {
 }
 
 describe("MCP bridge transient classification", () => {
+  it("recognizes only a successful Hermes add with the post-reload not-ready result (#9485)", () => {
+    expect(isHermesMcpAddPostProbeNotReady("hermes-config", HERMES_ADD_POST_PROBE_NOT_READY)).toBe(
+      true,
+    );
+    expect(
+      isHermesMcpAddPostProbeNotReady("openclaw-config", HERMES_ADD_POST_PROBE_NOT_READY),
+    ).toBe(false);
+    expect(
+      isHermesMcpAddPostProbeNotReady("hermes-config", {
+        ...HERMES_ADD_POST_PROBE_NOT_READY,
+        exitCode: 1,
+      }),
+    ).toBe(false);
+    expect(
+      isHermesMcpAddPostProbeNotReady("hermes-config", {
+        ...HERMES_ADD_POST_PROBE_NOT_READY,
+        stdout: HERMES_ADD_POST_PROBE_NOT_READY.stdout.replace(
+          "sandbox is not ready",
+          "provider is unavailable",
+        ),
+      }),
+    ).toBe(false);
+  });
+
+  it.each([
+    ["receives a signal", { signal: "SIGTERM" as const }],
+    ["times out", { timedOut: true }],
+  ])("rejects a Hermes add post-probe result when the command %s (#9485)", (_label, override) => {
+    expect(
+      isHermesMcpAddPostProbeNotReady("hermes-config", {
+        ...HERMES_ADD_POST_PROBE_NOT_READY,
+        ...override,
+      }),
+    ).toBe(false);
+  });
+
+  it("recognizes only the complete Hermes restart-settlement status (#9485)", () => {
+    expect(
+      isHermesMcpStatusAwaitingRestartSettlement(
+        "hermes-config",
+        "concurrent",
+        HERMES_RESTART_SETTLING_STATUS,
+      ),
+    ).toBe(true);
+    expect(
+      isHermesMcpStatusAwaitingRestartSettlement(
+        "openclaw-config",
+        "concurrent",
+        HERMES_RESTART_SETTLING_STATUS,
+      ),
+    ).toBe(false);
+    expect(
+      isHermesMcpStatusAwaitingRestartSettlement("hermes-config", "other", {
+        ...HERMES_RESTART_SETTLING_STATUS,
+      }),
+    ).toBe(false);
+  });
+
+  it.each(HERMES_RESTART_SETTLEMENT_FIELD_MISMATCHES)(
+    "rejects Hermes restart settlement when %s (#9485)",
+    (_label, mutatePayload) => {
+      const payload = structuredClone(HERMES_RESTART_SETTLING_PAYLOAD);
+      mutatePayload(payload);
+      expect(
+        isHermesMcpStatusAwaitingRestartSettlement("hermes-config", "concurrent", {
+          ...HERMES_RESTART_SETTLING_STATUS,
+          stdout: JSON.stringify(payload),
+        }),
+      ).toBe(false);
+    },
+  );
+
+  it.each([
+    ["the command exits nonzero", { exitCode: 1 }],
+    ["the command receives a signal", { signal: "SIGTERM" as const }],
+    ["the command times out", { timedOut: true }],
+    ["stderr is nonempty", { stderr: "sandbox diagnostic" }],
+  ])("rejects Hermes restart settlement when %s (#9485)", (_label, resultOverride) => {
+    expect(
+      isHermesMcpStatusAwaitingRestartSettlement("hermes-config", "concurrent", {
+        ...HERMES_RESTART_SETTLING_STATUS,
+        ...resultOverride,
+      }),
+    ).toBe(false);
+  });
+
+  it("retries one read-only Hermes registration observation and records both attempts (#9485)", async () => {
+    const observeCurrentRegistration = vi.fn(async () => ({
+      source: "direct-adapter" as const,
+      result: HERMES_REGISTERED_ADAPTER,
+    }));
+    const sleep = vi.fn(async () => undefined);
+    const recordedEvidence: unknown[] = [];
+
+    const outcome = await confirmHermesMcpRegistrationAfterRestartSettlement({
+      adapter: "hermes-config",
+      server: "concurrent",
+      committedAddResult: HERMES_ADD_POST_PROBE_NOT_READY,
+      initialStatusResult: HERMES_RESTART_SETTLING_STATUS,
+      observeCurrentRegistration,
+      sleep,
+      onEvidence: (evidence) => {
+        recordedEvidence.push(evidence);
+      },
+    });
+
+    expect(outcome.registered).toBe(true);
+    expect(outcome.evidence).toMatchObject({
+      operation: "mcp-bridge.hermes-registration-observation",
+      owner: "mcp-bridge",
+      idempotence: "read-only",
+      maxAttempts: 2,
+      outcome: "passed-after-retry",
+      attempts: [
+        {
+          attempt: 1,
+          outcome: "failed",
+          failureClass: "transient-external",
+          retryScheduled: true,
+        },
+        { attempt: 2, outcome: "passed", retryScheduled: false },
+      ],
+    });
+    expect(observeCurrentRegistration).toHaveBeenCalledOnce();
+    expect(sleep).toHaveBeenCalledOnce();
+    expect(sleep).toHaveBeenCalledWith(5_000);
+    expect(recordedEvidence).toEqual([outcome.evidence]);
+  });
+
+  it("returns unregistered without another retry when the bounded Hermes adapter observation mismatches (#9485)", async () => {
+    const observeCurrentRegistration = vi.fn(async () => ({
+      source: "direct-adapter" as const,
+      result: { ...HERMES_REGISTERED_ADAPTER, stdout: "mismatch\n" },
+    }));
+    const sleep = vi.fn(async () => undefined);
+
+    const outcome = await confirmHermesMcpRegistrationAfterRestartSettlement({
+      adapter: "hermes-config",
+      server: "concurrent",
+      committedAddResult: HERMES_ADD_POST_PROBE_NOT_READY,
+      initialStatusResult: HERMES_RESTART_SETTLING_STATUS,
+      observeCurrentRegistration,
+      sleep,
+    });
+
+    expect(outcome.registered).toBe(false);
+    expect(outcome.evidence).toMatchObject({
+      outcome: "failed-no-retry",
+      attempts: [
+        { attempt: 1, retryScheduled: true },
+        {
+          attempt: 2,
+          outcome: "failed",
+          failureClass: "deterministic",
+          retryScheduled: false,
+        },
+      ],
+    });
+    expect(observeCurrentRegistration).toHaveBeenCalledOnce();
+    expect(sleep).toHaveBeenCalledOnce();
+  });
+
+  it("does not retry an observed Hermes adapter mismatch (#9485)", async () => {
+    const mismatch = {
+      ...HERMES_RESTART_SETTLING_STATUS,
+      stdout: HERMES_RESTART_SETTLING_STATUS.stdout.replace(
+        '"registered":null',
+        '"registered":false',
+      ),
+    };
+    const observeCurrentRegistration = vi.fn(async () => ({
+      source: "direct-adapter" as const,
+      result: HERMES_REGISTERED_ADAPTER,
+    }));
+    const sleep = vi.fn(async () => undefined);
+
+    const outcome = await confirmHermesMcpRegistrationAfterRestartSettlement({
+      adapter: "hermes-config",
+      server: "concurrent",
+      committedAddResult: HERMES_ADD_POST_PROBE_NOT_READY,
+      initialStatusResult: mismatch,
+      observeCurrentRegistration,
+      sleep,
+    });
+
+    expect(outcome.registered).toBe(false);
+    expect(outcome.evidence.outcome).toBe("failed-no-retry");
+    expect(observeCurrentRegistration).not.toHaveBeenCalled();
+    expect(sleep).not.toHaveBeenCalled();
+  });
+
+  it("does not retry restart-settlement status without the matching committed add result (#9485)", async () => {
+    const observeCurrentRegistration = vi.fn(async () => ({
+      source: "direct-adapter" as const,
+      result: HERMES_REGISTERED_ADAPTER,
+    }));
+    const sleep = vi.fn(async () => undefined);
+
+    const outcome = await confirmHermesMcpRegistrationAfterRestartSettlement({
+      adapter: "hermes-config",
+      server: "concurrent",
+      committedAddResult: {
+        ...HERMES_ADD_POST_PROBE_NOT_READY,
+        stdout: HERMES_ADD_POST_PROBE_NOT_READY.stdout.replace(
+          "sandbox is not ready",
+          "provider is unavailable",
+        ),
+      },
+      initialStatusResult: HERMES_RESTART_SETTLING_STATUS,
+      observeCurrentRegistration,
+      sleep,
+    });
+
+    expect(outcome.registered).toBe(false);
+    expect(outcome.evidence.outcome).toBe("failed-no-retry");
+    expect(observeCurrentRegistration).not.toHaveBeenCalled();
+    expect(sleep).not.toHaveBeenCalled();
+  });
+
+  it("does not repeat full status when Hermes registration needs a read-only confirmation (#9485)", async () => {
+    const status = vi.fn(async () => HERMES_RESTART_SETTLING_STATUS);
+    const execShell = vi
+      .fn()
+      .mockResolvedValueOnce({ ...HERMES_REGISTERED_ADAPTER, stdout: `s${"a".repeat(64)}\n` })
+      .mockResolvedValueOnce(HERMES_REGISTERED_ADAPTER);
+    const writeJson = vi.fn(async () => undefined);
+    const sleep = vi.fn(async () => undefined);
+
+    const outcome = await readConcurrentMcpStatusAndConfirmHermesRegistration({
+      clients: {
+        artifacts: { writeJson } as unknown as Pick<ArtifactSink, "writeJson">,
+        host: { nemoclaw: status } as unknown as Pick<HostCliClient, "nemoclaw">,
+        sandbox: { execShell } as unknown as Pick<SandboxClient, "execShell">,
+      },
+      committedAddResult: HERMES_ADD_POST_PROBE_NOT_READY,
+      credentialEnvName: "FAKE_MCP_SECRET",
+      env: { FAKE_MCP_SECRET: "fixture-secret" },
+      redactionValues: ["fixture-secret"],
+      scenario: {
+        artifactPrefix: "hermes",
+        expectedAdapter: "hermes-config",
+        mcpUrl: "https://fixture.trycloudflare.com/mcp",
+        sandboxName: "e2e-mcp-hermes",
+      },
+      server: "concurrent",
+      sleep,
+    });
+
+    expect(outcome.result).toBe(HERMES_RESTART_SETTLING_STATUS);
+    expect(outcome.registered).toBe(true);
+    expect(status).toHaveBeenCalledOnce();
+    expect(execShell).toHaveBeenCalledTimes(2);
+    expect(sleep).toHaveBeenCalledWith(5_000);
+    expect(writeJson).toHaveBeenCalledOnce();
+    expect(writeJson).toHaveBeenCalledWith(
+      "retry/hermes-mcp-concurrent-registration-restart-settlement.json",
+      expect.objectContaining({
+        idempotence: "read-only",
+        outcome: "passed-after-retry",
+      }),
+    );
+  });
+
+  it("rejects an invalid credential observation that mimics adapter registration (#9485)", async () => {
+    const status = vi.fn(async () => HERMES_RESTART_SETTLING_STATUS);
+    const execShell = vi.fn(async () => HERMES_REGISTERED_ADAPTER);
+    const writeJson = vi.fn(async () => undefined);
+    const sleep = vi.fn(async () => undefined);
+
+    const outcome = await readConcurrentMcpStatusAndConfirmHermesRegistration({
+      clients: {
+        artifacts: { writeJson } as unknown as Pick<ArtifactSink, "writeJson">,
+        host: { nemoclaw: status } as unknown as Pick<HostCliClient, "nemoclaw">,
+        sandbox: { execShell } as unknown as Pick<SandboxClient, "execShell">,
+      },
+      committedAddResult: HERMES_ADD_POST_PROBE_NOT_READY,
+      credentialEnvName: "FAKE_MCP_SECRET",
+      env: { FAKE_MCP_SECRET: "fixture-secret" },
+      redactionValues: ["fixture-secret"],
+      scenario: {
+        artifactPrefix: "hermes",
+        expectedAdapter: "hermes-config",
+        mcpUrl: "https://fixture.trycloudflare.com/mcp",
+        sandboxName: "e2e-mcp-hermes",
+      },
+      server: "concurrent",
+      sleep,
+    });
+
+    expect(outcome.registered).toBe(false);
+    expect(status).toHaveBeenCalledOnce();
+    expect(execShell).toHaveBeenCalledOnce();
+    expect(writeJson).toHaveBeenCalledWith(
+      "retry/hermes-mcp-concurrent-registration-restart-settlement.json",
+      expect.objectContaining({
+        outcome: "failed-no-retry",
+        attempts: [
+          expect.objectContaining({ attempt: 1, retryScheduled: true }),
+          expect.objectContaining({
+            attempt: 2,
+            failureClass: "deterministic",
+            retryScheduled: false,
+          }),
+        ],
+      }),
+    );
+  });
+
   it("retries only the exact OpenClaw baseline-scope settlement failure", () => {
     const sandboxName = "e2e-pr-exact-mcp-1";
     const message = `OpenClaw onboarding for '${sandboxName}' is incomplete because its canonical CLI device did not receive the required baseline scopes. Resume or rerun onboarding.`;
@@ -180,41 +751,12 @@ describe("MCP bridge transient classification", () => {
     }
   });
 
-  it("accepts only the Hermes managed-restart broken-pipe signature (#6692)", () => {
-    expect(isHermesRestartTransportFailure("hermes-config", HERMES_BROKEN_PIPE)).toBe(true);
-    expect(isHermesRestartTransportFailure("mcporter", HERMES_BROKEN_PIPE)).toBe(false);
-    expect(isHermesRestartTransportFailure("deepagents-config", HERMES_BROKEN_PIPE)).toBe(false);
-    expect(isHermesRestartTransportFailure("hermes-config", "h2 protocol error")).toBe(false);
-    expect(isHermesRestartTransportFailure("hermes-config", "stream closed: broken pipe")).toBe(
-      false,
-    );
-    expect(
-      isHermesRestartTransportFailure(
-        "hermes-config",
-        HERMES_BROKEN_PIPE.replace("error reading a body from connection", "unrelated failure"),
-      ),
-    ).toBe(false);
-    expect(
-      isHermesRestartTransportFailure(
-        "hermes-config",
-        `unexpected diagnostic before retry evidence\n${HERMES_BROKEN_PIPE}`,
-      ),
-    ).toBe(false);
-    expect(
-      isHermesRestartTransportFailure(
-        "hermes-config",
-        `${HERMES_BROKEN_PIPE}\nadditional failure after transport closed`,
-      ),
-    ).toBe(false);
-  });
-
   it("keeps the original duplicate rejection without retrying", async () => {
     const originalResult = { exitCode: 1 };
     const retry = vi.fn(async () => ({ exitCode: 2 }));
 
     await expect(
-      retryAfterHermesRestartTransportFailure({
-        adapter: "hermes-config",
+      retryAfterConcurrentAddTransientFailure({
         committedBridgeVerified: true,
         diagnostic: "server already exists",
         originalResult,
@@ -224,15 +766,15 @@ describe("MCP bridge transient classification", () => {
     expect(retry).not.toHaveBeenCalled();
   });
 
-  it("retries the exact Hermes restart transport failure once", async () => {
+  it("retries the portable host lock loser after the committed bridge is verified", async () => {
     const retryResult = { exitCode: 1 };
     const retry = vi.fn(async () => retryResult);
 
     await expect(
-      retryAfterHermesRestartTransportFailure({
-        adapter: "hermes-config",
+      retryAfterConcurrentAddTransientFailure({
         committedBridgeVerified: true,
-        diagnostic: HERMES_BROKEN_PIPE,
+        diagnostic:
+          "Error: Failed to acquire lock on /home/runner/.nemoclaw-portable-host.lock after 120 retries",
         originalResult: { exitCode: 1 },
         retry,
       }),
@@ -244,14 +786,21 @@ describe("MCP bridge transient classification", () => {
     const retry = vi.fn(async () => ({ exitCode: 1 }));
 
     await expect(
-      retryAfterHermesRestartTransportFailure({
-        adapter: "hermes-config",
+      retryAfterConcurrentAddTransientFailure({
         committedBridgeVerified: true,
         diagnostic: "unexpected transport error",
         originalResult: { exitCode: 1 },
         retry,
       }),
-    ).rejects.toThrow("not a known Hermes restart transport failure");
+    ).rejects.toThrow("not a known transient failure");
+    await expect(
+      retryAfterConcurrentAddTransientFailure({
+        committedBridgeVerified: true,
+        diagnostic: "Error: Failed to acquire lock on /tmp/other.lock after 120 retries",
+        originalResult: { exitCode: 1 },
+        retry,
+      }),
+    ).rejects.toThrow("not a known transient failure");
     expect(retry).not.toHaveBeenCalled();
   });
 
@@ -259,10 +808,10 @@ describe("MCP bridge transient classification", () => {
     const retry = vi.fn(async () => ({ exitCode: 1 }));
 
     await expect(
-      retryAfterHermesRestartTransportFailure({
-        adapter: "hermes-config",
+      retryAfterConcurrentAddTransientFailure({
         committedBridgeVerified: false,
-        diagnostic: HERMES_BROKEN_PIPE,
+        diagnostic:
+          "Error: Failed to acquire lock on /home/runner/.nemoclaw-portable-host.lock after 120 retries",
         originalResult: { exitCode: 1 },
         retry,
       }),

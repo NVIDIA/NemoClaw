@@ -38,7 +38,7 @@ fi
 if command -v openshell >/dev/null 2>&1; then
   openshell sandbox delete "$SANDBOX_NAME" 2>/dev/null || true
   openshell forward stop 18789 2>/dev/null || true
-  openshell gateway destroy -g nemoclaw 2>/dev/null || true
+  openshell gateway remove nemoclaw 2>/dev/null || openshell gateway destroy -g nemoclaw 2>/dev/null || true
 fi
 
 if [ "$VERIFY" != "1" ]; then

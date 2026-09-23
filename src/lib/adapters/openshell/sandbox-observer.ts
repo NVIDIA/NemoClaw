@@ -26,7 +26,10 @@ export type OpenShellSandboxErrorKind =
   | "timeout"
   | "transport";
 
-export type OpenShellSandboxTransportReason = "identity_mismatch" | "unreachable";
+export type OpenShellSandboxTransportReason =
+  | "endpoint_override"
+  | "identity_mismatch"
+  | "unreachable";
 
 export type OpenShellSandboxError =
   | Readonly<{
@@ -57,6 +60,10 @@ export type LookupOpenShellSandboxRequest = ListOpenShellSandboxesRequest &
   Readonly<{
     sandboxName: string;
   }>;
+
+export type OpenShellSandboxReadinessProbe = (
+  request: LookupOpenShellSandboxRequest,
+) => Promise<OpenShellSandboxResult<OpenShellSandboxReadiness>>;
 
 /** Transport-neutral sandbox observation capabilities used by NemoClaw. */
 export interface OpenShellSandboxObserver {

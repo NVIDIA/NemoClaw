@@ -2,7 +2,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { CLI_NAME } from "../../../cli/branding";
+import type { ExternalComponentActivationIncomplete } from "../../../state/onboard-session";
 import { type DashboardRuntimeAgent, shouldManageDashboardForAgent } from "../../dashboard-runtime";
+import type { PreparedExternalComponent } from "../../external-component";
+import type {
+  ExternalComponentActivationProof,
+  ExternalComponentActivationResult,
+} from "../../external-component/activation";
 import type { WebSearchVerifyProvider } from "../../web-search-verify";
 import type { PortableOpenClawPairingSettlementResult } from "../../../actions/sandbox/launch-readiness";
 import type { OrdinaryOpenClawPairingSettlementResult } from "../finalization-deps";
@@ -28,22 +34,38 @@ export interface FinalizationStateOptions<Agent, VerifyChain, VerificationResult
   webSearchEnabled: boolean;
   webSearchProvider: WebSearchVerifyProvider | null;
   portableProfileSelected?: boolean;
-  recreateJournalHandoff?: boolean;
+  externalComponent?: PreparedExternalComponent | null;
+  providerless?: boolean;
+  deferRuntimeVerification?: boolean;
   deps: {
-    ensureAgentDashboardForward(sandboxName: string, agent: Agent): Promise<number> | number;
-    persistDashboardPort(sandboxName: string, dashboardPort: number): void;
     /**
      * Mark this sandbox as the default. Called here (not at sandbox creation) so
      * a cancel at the policy-preset step never leaves an unconfigured sandbox
      * registered as default (#4614).
      */
     setDefaultSandbox(sandboxName: string): void;
+    createExternalComponentActivationProof?(
+      sandboxName: string,
+    ): ExternalComponentActivationProof | Promise<ExternalComponentActivationProof>;
+    createExternalComponentActivationId?(): string;
+    activateExternalComponent?(
+      component: PreparedExternalComponent,
+      proof: ExternalComponentActivationProof,
+      activationId: string,
+    ): Promise<ExternalComponentActivationResult>;
+    setExternalComponentActivationEvidence?(
+      evidence: ExternalComponentActivationIncomplete | null,
+    ): void;
     toSessionUpdates(
       updates: Record<string, unknown>,
     ): NonNullable<OnboardStateCompleteResult["updates"]>;
     removeLegacyCredentialsFile(): void;
     cleanupStaleHostFiles(): void;
-    checkAndRecoverSandboxProcesses(sandboxName: string, options: { quiet: boolean }): void;
+    /** False when process recovery refuses the required secret-boundary check. */
+    checkAndRecoverSandboxProcesses(
+      sandboxName: string,
+      options: { quiet: boolean },
+    ): Promise<boolean>;
     settleOrdinaryOpenClawPairing(
       sandboxName: string,
     ): Promise<OrdinaryOpenClawPairingSettlementResult>;
@@ -83,7 +105,7 @@ export interface FinalizationStateOptions<Agent, VerifyChain, VerificationResult
       sandboxName: string,
       agent: Agent,
       provider: WebSearchVerifyProvider,
-    ): boolean;
+    ): Promise<boolean>;
     printDashboard(
       sandboxName: string,
       model: string,
@@ -91,14 +113,14 @@ export interface FinalizationStateOptions<Agent, VerifyChain, VerificationResult
       nimContainer: string | null,
       agent: Agent,
       ready: boolean,
-    ): void;
+    ): Promise<void>;
     error(message?: string): void;
     log(message?: string): void;
   };
 }
 
 export interface FinalizationStateResult {
-  stateResult: OnboardStateTransitionResult;
+  stateResult: OnboardStateTransitionResult | OnboardStatePauseResult;
   unmigratedLegacyKeys: string[];
 }
 
@@ -174,13 +196,18 @@ function logTerminalReadyBlock(
   }
 }
 
+function recoveryIncompleteMessage(sandboxName: string): string {
+  return `Onboarding for '${sandboxName}' is incomplete because a required process or secret-boundary check did not pass. Inspect with ${CLI_NAME} ${sandboxName} doctor, resolve the reported problem, then resume onboarding with ${CLI_NAME} onboard --resume.`;
+}
+
 export async function handleFinalizationState<Agent, VerifyChain, VerificationResult>({
   sandboxName,
   agent,
-  portableProfileSelected,
-  recreateJournalHandoff,
   stagedLegacyKeys,
   migratedLegacyKeys,
+  externalComponent = null,
+  providerless = false,
+  deferRuntimeVerification = false,
   deps,
 }: FinalizationStateOptions<
   Agent,
@@ -188,16 +215,55 @@ export async function handleFinalizationState<Agent, VerifyChain, VerificationRe
   VerificationResult
 >): Promise<FinalizationStateResult> {
   const manageDashboard = shouldManageDashboardForAgent(agent as DashboardRuntimeAgent);
-  const portableAgent = portableAgentDisposition(
-    sandboxName,
-    agent,
-    portableProfileSelected,
-    deps.readRegistryAgent,
-  );
-  const ordinaryOpenClawPairingRequired =
-    portableAgent === "ordinary" &&
-    selectedAgentName(agent) === "openclaw" &&
-    recreateJournalHandoff !== true;
+  if (providerless && !externalComponent) {
+    throw new Error("Providerless finalization requires a registered external component.");
+  }
+  if (externalComponent) {
+    if (
+      !deps.createExternalComponentActivationProof ||
+      !deps.createExternalComponentActivationId ||
+      !deps.activateExternalComponent ||
+      !deps.setExternalComponentActivationEvidence
+    ) {
+      throw new Error("External component activation is unavailable.");
+    }
+    const proof = await deps.createExternalComponentActivationProof(sandboxName);
+    const activationId = deps.createExternalComponentActivationId();
+    const evidence = (resultClass: "failed" | "ambiguous") => ({
+      schemaVersion: 1 as const,
+      activationId,
+      componentId: externalComponent.declaration.componentId,
+      lifecycleGeneration: proof.lifecycleGeneration,
+      sandboxIdentityFingerprint: proof.sandboxIdentityFingerprint,
+      resultClass,
+    });
+    deps.setExternalComponentActivationEvidence(evidence("ambiguous"));
+    const activation = await deps.activateExternalComponent(externalComponent, proof, activationId);
+    if (activation.kind !== "activated") {
+      const resultClass = activation.kind === "rejected" ? "failed" : "ambiguous";
+      const incompleteEvidence = evidence(resultClass);
+      deps.setExternalComponentActivationEvidence(incompleteEvidence);
+      deps.error(
+        `  External component activation is incomplete. Reason class: ${resultClass}. The sandbox was preserved.`,
+      );
+      return {
+        stateResult: pauseOnboardMachine(
+          deps.toSessionUpdates({
+            externalComponentActivation: incompleteEvidence,
+          }),
+          { state: "finalizing", reason: "external_component_activation_incomplete" },
+        ),
+        unmigratedLegacyKeys: stagedLegacyKeys.filter((key) => !migratedLegacyKeys.has(key)),
+      };
+    }
+    deps.setExternalComponentActivationEvidence(null);
+  }
+  if (providerless) {
+    return {
+      stateResult: advanceTo("post_verify", { metadata: { state: "finalizing" } }),
+      unmigratedLegacyKeys: stagedLegacyKeys.filter((key) => !migratedLegacyKeys.has(key)),
+    };
+  }
   // Reaching finalization means the policy-preset step was confirmed, so it is
   // now safe to register this sandbox as the default (#4614).
   deps.setDefaultSandbox(sandboxName);
@@ -218,19 +284,27 @@ export async function handleFinalizationState<Agent, VerifyChain, VerificationRe
 
   // Sweep stale host files left by older credential migration paths (#3105).
   deps.cleanupStaleHostFiles();
-  if (manageDashboard) {
-    // Policy application can restart the sandbox; recover OpenClaw before verification (#3573).
-    deps.checkAndRecoverSandboxProcesses(sandboxName, { quiet: true });
+  if (deferRuntimeVerification) {
+    return {
+      stateResult: advanceTo("post_verify", { metadata: { state: "finalizing" } }),
+      unmigratedLegacyKeys,
+    };
   }
-
-  if (manageDashboard && !ordinaryOpenClawPairingRequired) {
-    // Recheck the gateway and forward before verification, restarting only when needed.
-    deps.checkAndRecoverSandboxProcesses(sandboxName, { quiet: true });
-    // Reconcile after the final recovery because any restart above can
-    // invalidate the forward created earlier in onboarding.
-    const dashboardPort = await deps.ensureAgentDashboardForward(sandboxName, agent);
-    if (dashboardPort > 0) {
-      deps.persistDashboardPort(sandboxName, dashboardPort);
+  if (manageDashboard) {
+    // Policy application can restart the sandbox; recover before verification (#3573).
+    if (!(await deps.checkAndRecoverSandboxProcesses(sandboxName, { quiet: true }))) {
+      deps.error(`  ${recoveryIncompleteMessage(sandboxName)}`);
+      deps.reportDeploymentReadiness(false);
+      return {
+        stateResult: pauseOnboardMachine(
+          {},
+          {
+            state: "finalizing",
+            reason: "recovery_check_incomplete",
+          },
+        ),
+        unmigratedLegacyKeys,
+      };
     }
   }
 
@@ -251,13 +325,20 @@ export async function handlePostVerifyState<Agent, VerifyChain, VerificationResu
   webSearchEnabled,
   webSearchProvider,
   portableProfileSelected,
-  recreateJournalHandoff,
+  deferRuntimeVerification = false,
   deps,
 }: FinalizationStateOptions<
   Agent,
   VerifyChain,
   VerificationResult
 >): Promise<PostVerifyStateResult> {
+  if (deferRuntimeVerification) {
+    return {
+      stateResult: completeOnboardMachine({}, { state: "post_verify" }),
+      verificationDiagnostics: [],
+      deploymentHealthy: true,
+    };
+  }
   const manageDashboard = shouldManageDashboardForAgent(agent as DashboardRuntimeAgent);
   const portableAgent = portableAgentDisposition(
     sandboxName,
@@ -266,9 +347,7 @@ export async function handlePostVerifyState<Agent, VerifyChain, VerificationResu
     deps.readRegistryAgent,
   );
   const ordinaryOpenClawPairingRequired =
-    portableAgent === "ordinary" &&
-    selectedAgentName(agent) === "openclaw" &&
-    recreateJournalHandoff !== true;
+    portableAgent === "ordinary" && selectedAgentName(agent) === "openclaw";
   let verificationDiagnostics: string[] = [];
   let deploymentHealthy = true;
   if (portableAgent !== "ordinary") {
@@ -324,17 +403,28 @@ export async function handlePostVerifyState<Agent, VerifyChain, VerificationResu
         deploymentHealthy: false,
       };
     }
-    // The bounded warm-up can outlive a forward that was healthy after policy recovery.
-    // Recheck the gateway and forward before deployment verification.
-    if (manageDashboard) {
-      deps.checkAndRecoverSandboxProcesses(sandboxName, { quiet: true });
-      const dashboardPort = await deps.ensureAgentDashboardForward(sandboxName, agent);
-      if (dashboardPort > 0) {
-        deps.persistDashboardPort(sandboxName, dashboardPort);
-      }
-    }
   }
   if (manageDashboard) {
+    // Recheck after pairing and on resume, including Hermes secret-boundary enforcement.
+    if (!(await deps.checkAndRecoverSandboxProcesses(sandboxName, { quiet: true }))) {
+      const message = recoveryIncompleteMessage(sandboxName);
+      deps.error(`  ${message}`);
+      deps.reportDeploymentReadiness(false);
+      return {
+        stateResult: pauseOnboardMachine(
+          deps.toSessionUpdates({
+            sandboxName,
+            provider,
+            model,
+            hermesAuthMethod,
+            hermesToolGateways,
+          }),
+          { state: "post_verify", reason: "recovery_check_incomplete" },
+        ),
+        verificationDiagnostics: [message],
+        deploymentHealthy: false,
+      };
+    }
     // Probe web-search credential isolation and egress now that the final
     // policy, provider, process, and forwarding state are live. Egress
     // diagnostics remain best-effort, but a confirmed raw credential must
@@ -342,7 +432,7 @@ export async function handlePostVerifyState<Agent, VerifyChain, VerificationResu
     const webSearchCredentialBoundarySafe =
       !webSearchEnabled ||
       (webSearchProvider !== null &&
-        deps.verifyWebSearchInsideSandbox(sandboxName, agent, webSearchProvider));
+        (await deps.verifyWebSearchInsideSandbox(sandboxName, agent, webSearchProvider)));
     // Confirm the delivered sandbox is reachable before printing the live dashboard (#2342).
     const verifyChain = deps.buildVerifyChain(deps.getChatUiUrl(), sandboxName);
     const verificationResult = await deps.verifyDeployment(sandboxName, verifyChain);
@@ -350,7 +440,7 @@ export async function handlePostVerifyState<Agent, VerifyChain, VerificationResu
       webSearchCredentialBoundarySafe && deps.isDeploymentHealthy(verificationResult);
     verificationDiagnostics = deps.formatVerificationDiagnostics(verificationResult);
     for (const line of verificationDiagnostics) deps.log(line);
-    deps.printDashboard(sandboxName, model, provider, nimContainer, agent, deploymentHealthy);
+    await deps.printDashboard(sandboxName, model, provider, nimContainer, agent, deploymentHealthy);
     deps.reportDeploymentReadiness(deploymentHealthy);
   } else {
     logTerminalReadyBlock(sandboxName, agent, deps.log);

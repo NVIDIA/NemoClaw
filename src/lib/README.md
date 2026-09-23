@@ -42,7 +42,6 @@ src/lib/policy/**       policy preset loading, tier selection, and application s
 src/lib/runtime/**      sandbox/runtime recovery helpers
 src/lib/sandbox/**      sandbox config, build, stream, channel, version, and command support
 src/lib/security/**     redaction, secret patterns, and credential filtering
-src/lib/shields/**      shields orchestration, timers, and audit helpers
 src/lib/tunnel/**       local service/tunnel command support
 ```
 
@@ -51,7 +50,7 @@ Prefer small mechanical PRs that move one cluster at a time. High-import legacy 
 ## Suggested migration sequence
 
 1. Document the target map and conventions before moving more code.
-2. Move low-risk feature clusters such as `agent`, `dashboard`, `diagnostics`, and `shields`.
+2. Move low-risk feature clusters such as `agent`, `dashboard`, and `diagnostics`.
 3. Move security/credentials/core helpers.
 4. Move inference/model/local-runtime helpers.
 5. Move onboarding support files before considering the large `onboard.ts` flow.

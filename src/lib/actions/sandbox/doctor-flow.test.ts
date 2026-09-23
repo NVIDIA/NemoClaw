@@ -51,6 +51,7 @@ function createDoctorHarness(
   getSandboxSpy: MockInstance;
   getNamedGatewayLifecycleStateSpy: MockInstance;
   healthProbeSpy: MockInstance;
+  ollamaInventoryProbeSpy: MockInstance;
   inspectMutableConfigPermsSpy: MockInstance;
   loadAgentSpy: MockInstance;
   probeSandboxInferenceGatewayHealthSpy: MockInstance;
@@ -77,7 +78,7 @@ function createDoctorHarness(
   const gatewayBinding = requireDist("../../onboard/gateway-binding.js");
   const sandboxVerificationExec = requireDist("../../onboard/sandbox-verification-exec.js");
   const sandboxVersion = requireDist("../../sandbox/version.js");
-  const shields = requireDist("../../shields/index.js");
+  const mutableConfigPerms = requireDist("../../sandbox/mutable-config-perms.js");
   const registry = requireDist("../../state/registry.js");
   const statusCommandDeps = requireDist("../../status-command-deps.js");
   const tunnelServices = requireDist("../../tunnel/services.js");
@@ -152,17 +153,28 @@ function createDoctorHarness(
   const recoverNamedGatewayRuntimeSpy = vi
     .spyOn(gatewayRuntime, "recoverNamedGatewayRuntime")
     .mockResolvedValue({
-      before: { state: "healthy_named", status: "Status: Connected", gatewayInfo: "" },
-      after: { state: "healthy_named", status: "Status: Connected", gatewayInfo: "" },
+      before: {
+        state: "healthy_named",
+        diagnostic: "Status: Connected",
+        recoveryBlocked: false,
+        unavailable: false,
+      },
+      after: {
+        state: "healthy_named",
+        diagnostic: "Status: Connected",
+        recoveryBlocked: false,
+        unavailable: false,
+      },
       recovered: false,
     });
   const getNamedGatewayLifecycleStateSpy = vi
     .spyOn(gatewayRuntime, "getNamedGatewayLifecycleState")
-    .mockReturnValue({
+    .mockResolvedValue({
       state: "healthy_named",
-      status: "Status: Connected",
-      gatewayInfo: "Gateway: nemoclaw-19080",
       activeGateway: "nemoclaw-19080",
+      diagnostic: "Status: Connected",
+      recoveryBlocked: false,
+      unavailable: false,
     });
   const captureOpenShellSpy = vi
     .spyOn(runtime, "captureOpenshell")
@@ -192,6 +204,10 @@ function createDoctorHarness(
     endpoint: "http://127.0.0.1:11434/v1/chat/completions",
     detail: "healthy",
   });
+  const ollamaInventoryProbeSpy = vi.spyOn(health, "probeOllamaHostInventory").mockReturnValue({
+    endpoint: "http://127.0.0.1:11434/api/tags",
+    inventory: ["m"],
+  });
   const probeSandboxInferenceGatewayHealthSpy = vi
     .spyOn(inferenceRouteHealth, "probeSandboxInferenceGatewayHealth")
     .mockResolvedValue({
@@ -206,30 +222,20 @@ function createDoctorHarness(
   });
   vi.spyOn(agentRuntime, "getSessionAgent").mockReturnValue({ name: "openclaw" });
   vi.spyOn(agentRuntime, "getAgentDisplayName").mockReturnValue("OpenClaw");
-  vi.spyOn(sandboxVersion, "checkAgentVersion").mockReturnValue({
+  vi.spyOn(sandboxVersion, "checkAgentVersion").mockResolvedValue({
     sandboxVersion: "0.1.0",
     expectedVersion: "0.2.0",
     isStale: true,
   });
-  vi.spyOn(shields, "getShieldsPosture").mockReturnValue({
-    mode: "temporarily_unlocked",
-    detail: "temporarily unlocked for maintenance",
-  });
   const inspectMutableConfigPermsSpy = vi
-    .spyOn(shields, "inspectMutableConfigPerms")
+    .spyOn(mutableConfigPerms, "inspectMutableConfigPerms")
     .mockReturnValue({
       applies: true,
       ok: true,
-      dirMode: "2770",
-      dirOwner: "sandbox:sandbox",
-      fileMode: "660",
-      fileOwner: "sandbox:sandbox",
-      configDir: "/sandbox/.openclaw",
-      configFile: "openclaw.json",
       issues: [],
     });
   const repairMutableConfigPermsSpy = vi
-    .spyOn(shields, "repairMutableConfigPerms")
+    .spyOn(mutableConfigPerms, "repairMutableConfigPerms")
     .mockReturnValue({
       applied: true,
       verified: true,
@@ -274,6 +280,7 @@ function createDoctorHarness(
     getSandboxSpy,
     getNamedGatewayLifecycleStateSpy,
     healthProbeSpy,
+    ollamaInventoryProbeSpy,
     inspectMutableConfigPermsSpy,
     loadAgentSpy,
     probeSandboxInferenceGatewayHealthSpy,
@@ -458,6 +465,13 @@ describe("runSandboxDoctor flow", () => {
       expect(report?.checks).toEqual(
         expect.arrayContaining([
           expect.objectContaining({ group: "Host", label: "Docker daemon", status: "ok" }),
+          // #10223: the documented check line for a resolved gateway binding.
+          expect.objectContaining({
+            group: "Gateway",
+            label: "Registered gateway binding",
+            status: "ok",
+            detail: "resolved to 'nemoclaw-19080'",
+          }),
           expect.objectContaining({ group: "Gateway", label: "OpenShell status", status: "ok" }),
           expect.objectContaining({ group: "Sandbox", label: "Live sandbox", status: "ok" }),
           expect.objectContaining({
@@ -485,9 +499,30 @@ describe("runSandboxDoctor flow", () => {
         ]),
       );
       expect(exitSpy).not.toHaveBeenCalled();
+      expect(harness.ollamaInventoryProbeSpy).toHaveBeenCalledOnce();
       expect(harness.logSpy).not.toHaveBeenCalled();
     },
   );
+
+  it("does not report a registered gateway binding for an unregistered sandbox name (#10230)", async () => {
+    const harness = createDoctorHarness("ollama-local", { registryEntry: "missing" });
+
+    const report = await harness.runSandboxDoctor("alpha", ["--json"], { quietJson: true });
+
+    // resolveDoctorGatewayName falls back to the ambient default gateway for
+    // an unregistered sandbox name, so the Gateway section still runs — but
+    // it must not claim a registered binding that does not exist.
+    expect(
+      report?.checks.some(
+        (check) => check.group === "Gateway" && check.label === "Registered gateway binding",
+      ),
+    ).toBe(false);
+    expect(report?.checks).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ group: "Gateway", label: "OpenShell status", status: "ok" }),
+      ]),
+    );
+  });
 
   it("fails the JSON host check for an unknown durable runtime provider", async () => {
     const harness = createDoctorHarness();
@@ -626,11 +661,12 @@ describe("runSandboxDoctor flow", () => {
   it("does not run live or tool-scope probes when the named gateway is disconnected", async () => {
     const harness = createDoctorHarness();
     harness.configuredMessagingChannelsSpy.mockReturnValue(["telegram"]);
-    harness.getNamedGatewayLifecycleStateSpy.mockReturnValue({
+    harness.getNamedGatewayLifecycleStateSpy.mockResolvedValue({
       state: "missing_named",
-      status: "Status: Disconnected",
-      gatewayInfo: "",
       activeGateway: null,
+      diagnostic: "Status: Disconnected",
+      recoveryBlocked: false,
+      unavailable: false,
     });
 
     const report = await harness.runSandboxDoctor("alpha", ["--json"], { quietJson: true });
@@ -772,13 +808,15 @@ describe("runSandboxDoctor flow", () => {
     harness.recoverNamedGatewayRuntimeSpy.mockResolvedValue({
       before: {
         state: "missing_named",
-        status: "Status: Disconnected",
-        gatewayInfo: "",
+        diagnostic: "Status: Disconnected",
+        recoveryBlocked: false,
+        unavailable: false,
       },
       after: {
         state: "healthy_named",
-        status: "Status: Connected",
-        gatewayInfo: "Gateway: nemoclaw-19080",
+        diagnostic: "Status: Connected",
+        recoveryBlocked: false,
+        unavailable: false,
       },
       recovered: true,
     });
@@ -822,13 +860,7 @@ describe("runSandboxDoctor flow", () => {
     harness.inspectMutableConfigPermsSpy.mockReturnValue({
       applies: true,
       ok: false,
-      dirMode: "700",
-      dirOwner: "sandbox:sandbox",
-      fileMode: "600",
-      fileOwner: "sandbox:sandbox",
-      configDir: "/sandbox/.openclaw",
-      configFile: "openclaw.json",
-      issues: ["directory mode is 700"],
+      issues: ["directory mode differs from runtime contract"],
     });
     const inferenceRouteHealth = requireDist("./inference-route-health.js");
     vi.mocked(inferenceRouteHealth.probeSandboxInferenceGatewayHealth).mockResolvedValue({

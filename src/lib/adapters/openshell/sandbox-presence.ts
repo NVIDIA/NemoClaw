@@ -36,6 +36,6 @@ export function observeOpenShellSandboxIdentity(
   const matches = rows.filter((row) => row.name === sandboxName);
   if (matches.length === 0) return { kind: "absent" };
   if (matches.length !== 1) return { kind: "unknown" };
-  const match = matches[0]!;
+  const match = matches[0];
   return { kind: "present", id: match.id, phase: match.phase };
 }

@@ -289,17 +289,14 @@ function probeLsofLoopbackBind(port: number): BackendProbeResult | null {
 
 function assertBackendBoundToLoopback(port: number): void {
   if (process.env.NEMOCLAW_OLLAMA_PROXY_SKIP_BIND_PROBE === "1") {
-    // PRA-5 audit trail: the operator override that disables the
-    // loopback probe MUST leave a durable record in the proxy's stderr so
-    // an incident investigator scanning proxy logs can see that
-    // enforcement was skipped, when, and via which knob. This is not a
-    // fail-closed decision (the operator explicitly asked for the
-    // override), but it must not be silent.
+    // The proxy warns when the operator override disables the loopback probe.
+    // Direct runs expose this stderr warning, and the managed launcher prints
+    // the same warning on the host. Issue #9846 owns a durable audit record.
     console.warn(
       `Ollama auth proxy: SECURITY PROBE SKIPPED. ` +
         `NEMOCLAW_OLLAMA_PROXY_SKIP_BIND_PROBE=1 disabled the loopback ` +
-        `bind check for port ${port}. Any Ollama daemon on this host ` +
-        `reachable on a non-loopback interface will bypass the proxy's ` +
+        `bind check for port ${port}. A selected backend reachable on a ` +
+        `non-loopback interface will bypass the proxy's ` +
         `token check. Unset the env to restore enforcement.`,
     );
     return;
@@ -342,7 +339,7 @@ function assertBackendBoundToLoopback(port: number): void {
 
 function buildProxyServer(token: string, backendUrl: URL): http.Server {
   const expectedBuf = Buffer.from(`Bearer ${token}`);
-  return http.createServer((clientReq, clientRes) => {
+  const server = http.createServer((clientReq, clientRes) => {
     // Every request must present a valid Bearer token. The proxy binds 0.0.0.0
     // so the OpenShell sandbox container can reach it via the docker bridge —
     // which also means anything else with network reach to the host could,
@@ -363,6 +360,33 @@ function buildProxyServer(token: string, backendUrl: URL): http.Server {
     if (!tokenMatch) {
       clientRes.writeHead(401, { "Content-Type": "text/plain" });
       clientRes.end("Unauthorized");
+      return;
+    }
+
+    if (clientReq.url === "/_nemoclaw/proxy-config") {
+      if (clientReq.method !== "GET") {
+        clientRes.writeHead(405, { Allow: "GET" });
+        clientRes.end();
+        return;
+      }
+      const listener = server.address();
+      if (Buffer.byteLength(backendUrl.origin) > 512) {
+        clientRes.writeHead(503);
+        clientRes.end();
+        return;
+      }
+      clientRes.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+      clientRes.end(
+        JSON.stringify({
+          schemaVersion: 1,
+          pid: process.pid,
+          listener:
+            typeof listener === "object" && listener !== null
+              ? { address: listener.address, port: listener.port }
+              : null,
+          backendOrigin: backendUrl.origin,
+        }),
+      );
       return;
     }
 
@@ -407,6 +431,7 @@ function buildProxyServer(token: string, backendUrl: URL): http.Server {
 
     clientReq.pipe(proxyReq);
   });
+  return server;
 }
 
 function shouldProbeBackendHostname(hostname: string): boolean {

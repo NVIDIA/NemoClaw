@@ -1,9 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "../adapters/openshell/timeouts";
+import * as gatewayEnv from "./docker-driver-gateway-env";
 import {
   classifyDockerDriverNetworkInspection,
   createDockerDriverGatewayReuseApplication,
@@ -77,80 +78,60 @@ describe("Docker-driver network inspection", () => {
 });
 
 describe("gateway reuse snapshot", () => {
-  it("bounds OpenShell gateway inspection probes (#6752)", () => {
-    const runCaptureOpenshell = vi.fn(() => "");
+  afterEach(() => vi.unstubAllEnvs());
+  it("does not select when typed observation denies recovery", async () => {
+    const lifecycle = { selectGateway: vi.fn() };
+    const observer = {
+      observeGatewayReuse: vi.fn().mockResolvedValue({
+        gatewayReuseState: "missing",
+        healthy: false,
+        namedMetadata: false,
+        shouldSelect: false,
+        endpoints: [],
+        endpointBinding: "unknown",
+        error: { kind: "authentication", message: "Gateway access denied." },
+      }),
+    };
     const helpers = createGatewayReuseHelpers({
       gatewayName: "nemoclaw",
-      runCaptureOpenshell,
-      runOpenshell: vi.fn(() => ({ status: 0 })),
+      lifecycle,
+      observer,
       cliDisplayName: () => "NemoClaw",
     });
-
-    helpers.getGatewayReuseSnapshot();
-
-    expect(runCaptureOpenshell).toHaveBeenCalledWith(["status", "-g", "nemoclaw"], {
-      ignoreError: true,
-      includeStderr: true,
-      timeout: OPENSHELL_PROBE_TIMEOUT_MS,
-    });
-    expect(runCaptureOpenshell).toHaveBeenCalledWith(["gateway", "info", "-g", "nemoclaw"], {
-      ignoreError: true,
-      timeout: OPENSHELL_PROBE_TIMEOUT_MS,
-    });
-    expect(runCaptureOpenshell).toHaveBeenCalledWith(["gateway", "info"], {
-      ignoreError: true,
-      timeout: OPENSHELL_PROBE_TIMEOUT_MS,
-    });
+    await expect(helpers.getGatewayReuseSnapshot()).rejects.toThrow("Gateway access denied.");
+    expect(lifecycle.selectGateway).not.toHaveBeenCalled();
   });
-
-  it("classifies status stderr connection refusals as stale when gateway info is unavailable (#7087)", () => {
-    const statusOutput = [
-      "Error:   × client error (Connect)",
-      "  ├─▶ tcp connect error",
-      "  ╰─▶ Connection refused (os error 61)",
-    ].join("\n");
-    const runCaptureOpenshell = vi.fn((args: string[], opts?: Record<string, unknown>) =>
-      args[0] === "status" && opts?.includeStderr === true ? statusOutput : "",
-    );
+  it("selects only the observed named registration and reobserves before reuse", async () => {
+    const before = {
+      gatewayReuseState: "foreign-active",
+      healthy: false,
+      namedMetadata: true,
+      shouldSelect: true,
+      endpoints: [],
+      endpointBinding: "unknown",
+    } as const;
+    const after = {
+      ...before,
+      gatewayReuseState: "healthy",
+      healthy: true,
+      shouldSelect: false,
+    } as const;
+    const observer = { observeGatewayReuse: vi.fn().mockResolvedValue(after) };
+    const lifecycle = {
+      selectGateway: vi.fn().mockResolvedValue({ ok: true, state: "completed" }),
+    };
     const helpers = createGatewayReuseHelpers({
-      gatewayName: "nemoclaw",
-      runCaptureOpenshell,
-      runOpenshell: vi.fn(() => ({ status: 0 })),
+      gatewayName: "nemoclaw-8091",
+      lifecycle,
+      observer,
       cliDisplayName: () => "NemoClaw",
     });
-
-    expect(helpers.getGatewayReuseSnapshot().gatewayReuseState).toBe("stale");
-  });
-
-  it("preserves named active gateway metadata when mixed stdout and stderr report an auth error", () => {
-    const statusStdout = [
-      "Server Status",
-      "",
-      "  Gateway: nemoclaw",
-      "  Server: https://127.0.0.1:8080/",
-    ].join("\n");
-    const statusStderr = "Error: authentication failed";
-    const gatewayInfo = [
-      "Gateway Info",
-      "",
-      "Gateway: nemoclaw",
-      "Gateway endpoint: https://127.0.0.1:8080/",
-    ].join("\n");
-    const outputByCommand = new Map([
-      ["status -g", [statusStdout, statusStderr].join("\n")],
-      ["gateway info", gatewayInfo],
-    ]);
-    const runCaptureOpenshell = vi.fn(
-      (args: string[]) => outputByCommand.get(args.slice(0, 2).join(" ")) ?? "",
-    );
-    const helpers = createGatewayReuseHelpers({
-      gatewayName: "nemoclaw",
-      runCaptureOpenshell,
-      runOpenshell: vi.fn(() => ({ status: 0 })),
-      cliDisplayName: () => "NemoClaw",
+    expect(await helpers.selectNamedGatewayForReuseIfNeeded(before)).toEqual(after);
+    expect(lifecycle.selectGateway).toHaveBeenCalledExactlyOnceWith({
+      target: { kind: "named", gatewayName: "nemoclaw-8091" },
+      runtimeSelection: undefined,
     });
-
-    expect(helpers.getGatewayReuseSnapshot().gatewayReuseState).toBe("missing");
+    expect(observer.observeGatewayReuse).toHaveBeenCalledOnce();
   });
 });
 
@@ -196,6 +177,22 @@ function createDockerDriverReuseApplication(
 }
 
 describe("Docker-driver gateway reuse application", () => {
+  it("preserves provider-owned readiness without inspecting Docker", async () => {
+    vi.spyOn(gatewayEnv, "configuredRuntimeProviderOwnsHostReadiness").mockReturnValue(true);
+    const resolveOpenShellGatewayBinary = vi.fn(() => "/opt/openshell-gateway");
+    const inspectDockerDriverNetwork = vi.fn(() => ({ kind: "inconclusive" as const }));
+    const application = createDockerDriverReuseApplication({
+      resolveOpenShellGatewayBinary,
+      inspectDockerDriverNetwork,
+    });
+
+    await expect(application.refreshDockerDriverGatewayReuseState("healthy")).resolves.toBe(
+      "healthy",
+    );
+    expect(resolveOpenShellGatewayBinary).not.toHaveBeenCalled();
+    expect(inspectDockerDriverNetwork).not.toHaveBeenCalled();
+  });
+
   it("keeps reuse state unchanged when Docker-driver inspection does not apply (#7695)", async () => {
     const isDockerDriverGatewayEnabled = vi.fn(() => false);
     const checkGatewayPortAvailable = vi.fn(async () => ({ ok: true }));

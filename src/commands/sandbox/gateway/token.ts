@@ -17,7 +17,7 @@ import {
 
 type GatewayTokenRuntimeBridge = {
   /** Agent-appropriate token fetcher, resolved per sandbox. */
-  fetchToken: (sandboxName: string) => string | null;
+  fetchToken: (sandboxName: string) => Promise<string | null>;
   getSandboxAgent: (sandboxName: string) => string | null;
   /** Whether the resolved agent exposes a retrievable auth token. */
   agentExposesToken: (agentName: string | null) => boolean;
@@ -25,7 +25,7 @@ type GatewayTokenRuntimeBridge = {
 
 let runtimeBridgeFactory = (): GatewayTokenRuntimeBridge => {
   const onboard = require("../../../lib/onboard") as {
-    fetchGatewayAuthTokenFromSandbox: (sandboxName: string) => string | null;
+    fetchGatewayAuthTokenFromSandbox: (sandboxName: string) => Promise<string | null>;
   };
   const agentWebAuth =
     require("../../../lib/onboard/agent-web-auth-token") as typeof import("../../../lib/onboard/agent-web-auth-token");
@@ -73,7 +73,7 @@ let runtimeBridgeFactory = (): GatewayTokenRuntimeBridge => {
       if (!agentName || agentName === "openclaw") return true;
       return resolveBearerAgent(agentName) !== null;
     },
-    fetchToken: (sandboxName: string): string | null => {
+    fetchToken: async (sandboxName: string): Promise<string | null> => {
       const agentName = getSandboxAgent(sandboxName);
       const bearerAgent = resolveBearerAgent(agentName);
       if (bearerAgent) {
@@ -83,7 +83,7 @@ let runtimeBridgeFactory = (): GatewayTokenRuntimeBridge => {
           bearerAgent,
         );
       }
-      return onboard.fetchGatewayAuthTokenFromSandbox(sandboxName);
+      return await onboard.fetchGatewayAuthTokenFromSandbox(sandboxName);
     },
   };
 };
@@ -134,10 +134,10 @@ export default class GatewayTokenCliCommand extends NemoClawCommand {
     });
 
     try {
-      await withSandboxCommandLifecycleLock(args.sandboxName, () => {
+      await withSandboxCommandLifecycleLock(args.sandboxName, async () => {
         assertHermesPortableCommandUnavailable(args.sandboxName, "sandbox:gateway:token");
         const runtime = getRuntimeBridge();
-        runGatewayTokenCommand(
+        await runGatewayTokenCommand(
           args.sandboxName,
           { quiet: flags.quiet === true },
           {

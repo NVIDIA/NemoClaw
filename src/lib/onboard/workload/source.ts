@@ -13,6 +13,13 @@ import {
   type ManagedImagePlatform,
   parseManagedImageContractV1,
 } from "../managed-image/contract";
+import type { AgentDefinition } from "../../agent/definition-types";
+import {
+  parsePortableAgentRuntimeContractV1,
+  portableAgentRuntimeSupportError,
+  type PortableAgentRuntimeContractV1,
+  type PortableAgentRuntimeProviderSupport,
+} from "./portable-agent-runtime";
 
 export type ManagedImageSelectionPolicy = "prefer-managed" | "require-managed";
 
@@ -36,6 +43,8 @@ export interface SandboxWorkloadRuntimeCapabilities {
     readonly startupProfileContractVersions: readonly number[];
     readonly capabilityContractVersions: readonly number[];
   } | null;
+  /** Missing or null until the provider has completed portable runtime qualification. */
+  readonly portableAgentRuntime?: PortableAgentRuntimeProviderSupport | null;
 }
 
 export type LegacyDockerfileReason =
@@ -56,12 +65,24 @@ export interface ManagedImageWorkloadSource {
   readonly contract: ManagedImageContractV1;
 }
 
-export type SandboxWorkloadSource = LegacyDockerfileWorkloadSource | ManagedImageWorkloadSource;
+export interface PortableAgentRuntimeWorkloadSource {
+  readonly kind: "portable-image";
+  readonly reference: PortableAgentRuntimeContractV1["image"]["reference"];
+  readonly contract: PortableAgentRuntimeContractV1;
+}
+
+export type SandboxWorkloadSource =
+  | LegacyDockerfileWorkloadSource
+  | ManagedImageWorkloadSource
+  | PortableAgentRuntimeWorkloadSource;
 
 export interface ResolveSandboxWorkloadSourceOptions {
   readonly agentName: string;
   readonly legacyDockerfilePath: string;
   readonly customDockerfilePath?: string | null;
+  /** Inert contract input; no production caller supplies it before supported activation. */
+  readonly portableAgentRuntimeContract?: unknown;
+  readonly agentDefinition?: AgentDefinition;
   readonly runtime: SandboxWorkloadRuntimeCapabilities;
   readonly catalog: ManagedImageContractCatalog;
   readonly policy?: ManagedImageSelectionPolicy;
@@ -163,6 +184,50 @@ export function managedImageRuntimePlatform(
 export function resolveSandboxWorkloadSource(
   options: ResolveSandboxWorkloadSourceOptions,
 ): SandboxWorkloadSource {
+  if (options.portableAgentRuntimeContract !== undefined) {
+    if (options.customDockerfilePath !== undefined && options.customDockerfilePath !== null) {
+      throw new SandboxWorkloadSourceError(
+        "A portable image contract and a custom Dockerfile cannot both own workload selection.",
+      );
+    }
+    if (!options.agentDefinition) {
+      throw new SandboxWorkloadSourceError(
+        "Portable image workload selection requires the repository-owned agent definition.",
+      );
+    }
+    let contract: PortableAgentRuntimeContractV1;
+    try {
+      contract = parsePortableAgentRuntimeContractV1(
+        options.portableAgentRuntimeContract,
+        options.agentDefinition,
+      );
+    } catch (error) {
+      throw new SandboxWorkloadSourceError(
+        `Portable image contract for '${options.agentName}' failed closed validation.`,
+        { cause: error },
+      );
+    }
+    if (contract.agent !== options.agentName) {
+      throw new SandboxWorkloadSourceError(
+        "The portable image contract does not match the selected agent.",
+      );
+    }
+    const supportError = portableAgentRuntimeSupportError(
+      options.runtime.portableAgentRuntime ?? null,
+      contract,
+    );
+    if (supportError !== null) {
+      throw new SandboxWorkloadSourceError(
+        `Driver '${options.runtime.driverName}' cannot use the portable image contract because ${supportError}.`,
+      );
+    }
+    return {
+      kind: "portable-image",
+      reference: contract.image.reference,
+      contract,
+    };
+  }
+
   if (
     isCandidateManagedImageAgent(options.agentName) &&
     options.customDockerfilePath !== undefined &&

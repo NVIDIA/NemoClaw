@@ -187,12 +187,13 @@ describe("prepareSandboxDockerfilePatch", () => {
     expect(enforceDockerGpuPatchPreserveNetwork).toHaveBeenCalledWith(
       "nvidia-prod",
       sandboxGpuConfig,
-      {
+      expect.objectContaining({
         dockerDriverGateway: true,
         gatewayPort: undefined,
         log,
+        reverifyBridgeReachability: expect.any(Function),
         selectedRoute: "none",
-      },
+      }),
     );
     expect(patchStagedDockerfile).toHaveBeenCalledWith(
       "/tmp/Dockerfile",

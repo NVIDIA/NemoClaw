@@ -18,6 +18,7 @@ import {
 
 beforeEach(() => {
   vi.stubEnv("NEMOCLAW_TEST_MANAGED_IMAGE_CATALOG", "1");
+  vi.stubEnv("NEMOCLAW_TEST_FORWARD_SERVICE_FIXTURE", "1");
   vi.stubEnv("NEMOCLAW_SANDBOX_PREBUILD", "1");
 });
 
@@ -50,6 +51,8 @@ describe("onboard helpers", () => {
       const script = String.raw`
 const runner = require(${runnerPath});
 const fixtureMocks = require(${onboardScriptMocksPath});
+fixtureMocks.mockStandaloneGatewayTeardownAuthority();
+fixtureMocks.mockManagedStateVolumeOnboardLifecycle();
 const createdSandbox = fixtureMocks.createCreatedSandboxFixture({
   sandboxName: "my-assistant",
 });
@@ -68,7 +71,7 @@ const defaultCalls = [];
 runner.run = (command, opts = {}) => {
   const normalized = _n(command);
   commands.push({ command: normalized, env: opts.env || null });
-  const profileResult = fixtureMocks.mockManagedEndpointlessProviderProfileRun(command);
+  const profileResult = fixtureMocks.mockManagedProviderPreparationRun(command, "nemoclaw");
   if (profileResult !== null) return profileResult;
   const sandboxResult = createdSandbox.run(command);
   return sandboxResult ?? { status: 0 };
@@ -81,7 +84,7 @@ runner.runCapture = (command) => {
     const mockedCapture = fixtureMocks.mockOnboardRunCapture(command);
     if (mockedCapture !== null) return mockedCapture;
   }
-  if (normalized.includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
+  if (normalized.includes("forward list")) return "SANDBOX BIND PORT PID STATUS";
   return "";
 };
 const createFixture = fixtureMocks.installVerifiedSandboxCreateFixture(registry, {
@@ -171,7 +174,10 @@ const { createSandbox } = require(${onboardPath});
         entry.command.includes("sandbox create"),
       );
       assert.ok(createCommand, "expected sandbox create command");
-      assert.match(createCommand.command, /nemoclaw-managed-startup-hold/);
+      assert.doesNotMatch(createCommand.command, /NEMOCLAW_STARTUP_PROFILE_B64=/);
+      assert.match(createCommand.command, /\/usr\/local\/bin\/nemoclaw-managed-startup-hold/);
+      assert.match(createCommand.command, /--profile-fingerprint [0-9a-f]{64}/);
+      assert.match(createCommand.command, /--bootstrap-identity [0-9a-f]{64}/);
       assert.match(
         createCommand.command,
         /--from ghcr\.io\/nvidia\/nemoclaw\/openclaw-sandbox@sha256:[0-9a-f]{64}/,
@@ -182,12 +188,10 @@ const { createSandbox } = require(${onboardPath});
       assert.doesNotMatch(createCommand.command, /DISCORD_BOT_TOKEN=/);
       assert.doesNotMatch(createCommand.command, /SLACK_BOT_TOKEN=/);
       assert.ok(
-        payload.commands.some(
-          (entry: CommandEntry) =>
-            entry.command.includes("forward start --background 18789 my-assistant") ||
-            entry.command.includes("forward start --background 0.0.0.0:18789 my-assistant"),
+        !payload.commands.some((entry: CommandEntry) =>
+          entry.command.includes("forward service my-assistant"),
         ),
-        "expected dashboard forward (loopback or WSL 0.0.0.0)",
+        "sandbox creation must defer forwarding until agent setup or final recovery",
       );
     },
   );
@@ -225,6 +229,8 @@ const os = require("node:os");
 const path = require("node:path");
 const runner = require(${runnerPath});
 const fixtureMocks = require(${onboardScriptMocksPath});
+fixtureMocks.mockStandaloneGatewayTeardownAuthority();
+fixtureMocks.mockManagedStateVolumeOnboardLifecycle();
 const createdSandbox = fixtureMocks.createCreatedSandboxFixture({
   sandboxName: "hermes-sandbox",
 });
@@ -294,7 +300,7 @@ agentOnboard.createAgentSandbox = () => {
 runner.run = (command, opts = {}) => {
   const normalized = _n(command);
   commands.push({ command: normalized, env: opts.env || null });
-  const profileResult = fixtureMocks.mockManagedEndpointlessProviderProfileRun(command);
+  const profileResult = fixtureMocks.mockManagedProviderPreparationRun(command, "nemoclaw");
   if (profileResult !== null) return profileResult;
   const sandboxResult = createdSandbox.run(command);
   return sandboxResult ?? { status: 0 };
@@ -311,7 +317,7 @@ runner.runCapture = (command) => {
     const mockedCapture = fixtureMocks.mockOnboardRunCapture(command);
     if (mockedCapture !== null) return mockedCapture;
   }
-  if (normalized.includes("forward list")) return "hermes-sandbox 127.0.0.1 18789 12345 running\nhermes-sandbox 127.0.0.1 8642 12346 running";
+  if (normalized.includes("forward list")) return "SANDBOX BIND PORT PID STATUS";
   return "";
 };
 const createFixture = fixtureMocks.installVerifiedSandboxCreateFixture(registry, {
@@ -452,6 +458,8 @@ const os = require("node:os");
 const path = require("node:path");
 const runner = require(${runnerPath});
 const fixtureMocks = require(${onboardScriptMocksPath});
+fixtureMocks.mockStandaloneGatewayTeardownAuthority();
+fixtureMocks.mockManagedStateVolumeOnboardLifecycle();
 const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
 const registry = require(${registryPath});
 const preflight = require(${preflightPath});
@@ -513,7 +521,7 @@ buildContext.stageOptimizedSandboxBuildContext = () => {
 runner.run = (command, opts = {}) => {
   const normalized = _n(command);
   commands.push({ command: normalized, env: opts.env || null });
-  const profileResult = fixtureMocks.mockManagedEndpointlessProviderProfileRun(command);
+  const profileResult = fixtureMocks.mockManagedProviderPreparationRun(command, "nemoclaw");
   if (profileResult !== null) return profileResult;
   const sandboxResult = createdSandbox.run(command);
   return sandboxResult ?? { status: 0 };
@@ -530,7 +538,7 @@ runner.runCapture = (command) => {
     const mockedCapture = fixtureMocks.mockOnboardRunCapture(command);
     if (mockedCapture !== null) return mockedCapture;
   }
-  if (normalized.includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
+  if (normalized.includes("forward list")) return "SANDBOX BIND PORT PID STATUS";
   return "";
 };
 const createFixture = fixtureMocks.installVerifiedSandboxCreateFixture(registry, {
@@ -596,7 +604,7 @@ const { createSandbox } = require(${onboardPath});
     );
   });
 
-  it("binds the dashboard forward to 0.0.0.0 when CHAT_UI_URL points to a remote host", async () => {
+  it("defers a remote dashboard forward until post-create recovery", async () => {
     const repoRoot = path.join(import.meta.dirname, "../..");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-remote-forward-"));
     const fakeBin = path.join(tmpDir, "bin");
@@ -617,6 +625,8 @@ const { createSandbox } = require(${onboardPath});
     const script = String.raw`
 const runner = require(${runnerPath});
 const fixtureMocks = require(${onboardScriptMocksPath});
+fixtureMocks.mockStandaloneGatewayTeardownAuthority();
+fixtureMocks.mockManagedStateVolumeOnboardLifecycle();
 const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
 const registry = require(${registryPath});
 const preflight = require(${preflightPath});
@@ -632,7 +642,7 @@ createdSandbox.installRuntimeObservation();
 runner.run = (command, opts = {}) => {
   const normalized = _n(command);
   commands.push({ command: normalized, env: opts.env || null });
-  const profileResult = fixtureMocks.mockManagedEndpointlessProviderProfileRun(command);
+  const profileResult = fixtureMocks.mockManagedProviderPreparationRun(command, "nemoclaw");
   if (profileResult !== null) return profileResult;
   const sandboxResult = createdSandbox.run(command);
   return sandboxResult ?? { status: 0 };
@@ -645,7 +655,7 @@ runner.runCapture = (command) => {
     const mockedCapture = fixtureMocks.mockOnboardRunCapture(command);
     if (mockedCapture !== null) return mockedCapture;
   }
-  if (normalized.includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
+  if (normalized.includes("forward list")) return "SANDBOX BIND PORT PID STATUS";
   return "";
 };
 const createFixture = fixtureMocks.installVerifiedSandboxCreateFixture(registry, {
@@ -702,10 +712,10 @@ const { createSandbox } = require(${onboardPath});
     assert.equal(result.status, 0, result.stderr);
     const commands = parseStdoutJson<CommandEntry[]>(result.stdout);
     assert.ok(
-      commands.some((entry: CommandEntry) =>
-        entry.command.includes("forward start --background 0.0.0.0:18789 my-assistant"),
+      !commands.some((entry: CommandEntry) =>
+        entry.command.includes("forward service my-assistant"),
       ),
-      "expected remote dashboard forward target",
+      "sandbox creation must not launch the remote forward before agent setup",
     );
   });
 
@@ -730,6 +740,8 @@ const { createSandbox } = require(${onboardPath});
     const script = String.raw`
 const runner = require(${runnerPath});
 const fixtureMocks = require(${onboardScriptMocksPath});
+fixtureMocks.mockStandaloneGatewayTeardownAuthority();
+fixtureMocks.mockManagedStateVolumeOnboardLifecycle();
 const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
 const registry = require(${registryPath});
 const preflight = require(${preflightPath});
@@ -745,7 +757,7 @@ createdSandbox.installRuntimeObservation();
 runner.run = (command, opts = {}) => {
   const normalized = _n(command);
   commands.push({ command: normalized, env: opts.env || null });
-  const profileResult = fixtureMocks.mockManagedEndpointlessProviderProfileRun(command);
+  const profileResult = fixtureMocks.mockManagedProviderPreparationRun(command, "nemoclaw");
   if (profileResult !== null) return profileResult;
   const sandboxResult = createdSandbox.run(command);
   return sandboxResult ?? { status: 0 };
@@ -763,7 +775,7 @@ runner.runCapture = (command) => {
     const mockedCapture = fixtureMocks.mockOnboardRunCapture(command);
     if (mockedCapture !== null) return mockedCapture;
   }
-  if (normalized.includes("forward list")) return "my-assistant 127.0.0.1 19000 12345 running";
+  if (normalized.includes("forward list")) return "SANDBOX BIND PORT PID STATUS";
   return "";
 };
 const createFixture = fixtureMocks.installVerifiedSandboxCreateFixture(registry, {
@@ -874,22 +886,11 @@ const { createSandbox } = require(${onboardPath});
     assert.ok(noProxyEntries.includes("localhost"));
     assert.ok(noProxyEntries.includes("127.0.0.1"));
     assert.ok(noProxyEntries.includes("host.docker.internal"));
-    // Forward must use same-port mapping (openshell does not support asymmetric)
     assert.ok(
-      payload.commands.some(
-        (entry: CommandEntry) =>
-          entry.command.includes("forward start --background 19000 my-assistant") ||
-          entry.command.includes("forward start --background 0.0.0.0:19000 my-assistant"),
+      !payload.commands.some((entry: CommandEntry) =>
+        entry.command.includes("forward service my-assistant"),
       ),
-      "expected dashboard forward for port 19000",
-    );
-    assert.ok(
-      !payload.commands.some((entry: CommandEntry) => entry.command.includes("19000:18789")),
-      "forward must not use asymmetric 19000:18789 mapping",
-    );
-    assert.ok(
-      !payload.commands.some((entry: CommandEntry) => entry.command.includes("19000:19000")),
-      "forward must not use port:port form (openshell does not support it)",
+      "sandbox creation must defer the custom-port forward until agent setup or final recovery",
     );
   });
 });

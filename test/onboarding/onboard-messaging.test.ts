@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import { createRequire } from "node:module";
 import os from "node:os";
@@ -18,7 +17,7 @@ import {
   parseMessagingFixturePayload,
   writeCustomMessagingDockerfile,
 } from "../helpers/messaging-plan-fixtures";
-import { runBoundedOnboardScript } from "../helpers/onboard-child-process-harness";
+import { runBoundedOnboardScriptAsync } from "../helpers/onboard-child-process-harness";
 import { writeOkOpenshell } from "../helpers/onboard-openshell-fixture";
 
 type CommandEntry = {
@@ -40,15 +39,16 @@ const onboardScriptMocksPath = JSON.stringify(
 );
 beforeEach(() => {
   vi.stubEnv("NEMOCLAW_TEST_MANAGED_IMAGE_CATALOG", "1");
+  vi.stubEnv("NEMOCLAW_TEST_FORWARD_SERVICE_FIXTURE", "1");
   vi.stubEnv("NEMOCLAW_SANDBOX_PREBUILD", "1");
 });
-describe("onboard messaging", () => {
+describe.concurrent("onboard messaging", () => {
   it(
     "creates providers for messaging tokens and attaches them to the sandbox",
     {
       timeout: 60_000,
     },
-    async () => {
+    async (context) => {
       const tmpDir = fs.mkdtempSync(
         path.join(os.tmpdir(), "nemoclaw-onboard-messaging-providers-"),
       );
@@ -86,7 +86,7 @@ runner.runCapture = (command) => {
   const sandboxCapture = createdSandbox.capture(command);
   if (sandboxCapture !== null) return sandboxCapture;
   if (_n(command).includes("provider get")) return "Provider: discord-bridge";
-  if (_n(command).includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running\nmy-assistant 127.0.0.1 8642 12346 running";
+  if (_n(command).includes("forward list")) return "SANDBOX BIND PORT PID STATUS";
   {
     const mockedCapture = require(${onboardScriptMocksPath}).mockOnboardRunCapture(command, {
       defaultCurlOutput: "ok",
@@ -94,7 +94,7 @@ runner.runCapture = (command) => {
     if (mockedCapture !== null) return mockedCapture;
   }
   return "";
-}; require(${onboardScriptMocksPath}).mockDockerSandboxLifecycleReleaseFromRunner();
+}; require(${onboardScriptMocksPath}).mockIsolatedDockerSandboxLifecycleFromRunner();
 registry.registerSandbox = () => true;
 registry.updateSandbox = () => true;
 registry.setDefault = () => true;
@@ -155,8 +155,8 @@ const { createSandbox, setupMessagingChannels } = require(${onboardPath});
 });
 `;
       fs.writeFileSync(scriptPath, script);
-      const result = runBoundedOnboardScript(scriptPath, {
-        cwd: repoRoot,
+      const result = await runBoundedOnboardScriptAsync(scriptPath, {
+        context,
         env: {
           ...process.env,
           HOME: tmpDir,
@@ -297,7 +297,7 @@ const { createSandbox, setupMessagingChannels } = require(${onboardPath});
     {
       timeout: 60_000,
     },
-    async () => {
+    async (context) => {
       const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-hermes-slack-"));
       try {
         const fakeBin = path.join(tmpDir, "bin");
@@ -359,7 +359,7 @@ runner.run = fixtureMocks.createStatefulMessagingProviderRunner({ commands, crea
 runner.runCapture = (command) => {
   const sandboxCapture = createdSandbox.capture(command);
   if (sandboxCapture !== null) return sandboxCapture;
-  if (_n(command).includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running\nmy-assistant 127.0.0.1 8642 12346 running";
+  if (_n(command).includes("forward list")) return "SANDBOX BIND PORT PID STATUS";
   {
     const mockedCapture = require(${onboardScriptMocksPath}).mockOnboardRunCapture(command, {
       defaultCurlOutput: "ok",
@@ -367,7 +367,7 @@ runner.runCapture = (command) => {
     if (mockedCapture !== null) return mockedCapture;
   }
   return "";
-}; require(${onboardScriptMocksPath}).mockDockerSandboxLifecycleReleaseFromRunner();
+}; require(${onboardScriptMocksPath}).mockIsolatedDockerSandboxLifecycleFromRunner();
 registry.registerSandbox = (entry) => {
   registeredSandbox = entry;
   return true;
@@ -440,9 +440,8 @@ const { createSandbox } = require(${onboardPath});
 `;
         fs.writeFileSync(scriptPath, script);
 
-        const result = spawnSync(process.execPath, [scriptPath], {
-          cwd: repoRoot,
-          encoding: "utf-8",
+        const result = await runBoundedOnboardScriptAsync(scriptPath, {
+          context,
           env: {
             ...process.env,
             HOME: tmpDir,
@@ -450,10 +449,8 @@ const { createSandbox } = require(${onboardPath});
             NEMOCLAW_NON_INTERACTIVE: "1",
           },
         });
-
         assert.equal(result.status, 0, result.stderr);
         const payload = parseStdoutJson(result.stdout);
-
         assert.ok(payload.createCommand.command.includes("sandbox create"));
         assert.match(payload.createCommand.command, /--provider my-assistant-slack-bridge/);
         assert.match(payload.createCommand.command, /--provider my-assistant-slack-app/);
@@ -463,6 +460,8 @@ const { createSandbox } = require(${onboardPath});
         assert.deepEqual(payload.slackBinaryPaths, [
           "/usr/local/bin/hermes",
           "/usr/bin/python3*",
+          "/usr/bin/python3.13",
+          "/opt/hermes/.venv/bin/python3",
           "/opt/hermes/.venv/bin/python",
         ]);
         assert.ok(
@@ -487,7 +486,7 @@ const { createSandbox } = require(${onboardPath});
   it(
     "publishes attached OpenShell provider state before a messaging recreate starts (#9770)",
     { timeout: 60_000 },
-    async () => {
+    async (context) => {
       const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-messaging-recreate-"));
       const fakeBin = path.join(tmpDir, "bin");
       const scriptPath = path.join(tmpDir, "messaging-reuse-provider.js");
@@ -536,9 +535,9 @@ runner.runCapture = (command) => {
   if (sandboxCapture !== null) return sandboxCapture;
   const mockedCapture = require(${onboardScriptMocksPath}).mockOnboardRunCapture(command);
   if (mockedCapture !== null) return mockedCapture;
-  if (_n(command).includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running\nmy-assistant 127.0.0.1 8642 12346 running";
+  if (_n(command).includes("forward list")) return "SANDBOX BIND PORT PID STATUS";
   return "";
-}; require(${onboardScriptMocksPath}).mockDockerSandboxLifecycleReleaseFromRunner();
+}; require(${onboardScriptMocksPath}).mockIsolatedDockerSandboxLifecycleFromRunner();
 registry.registerSandbox = (entry) => { registered = entry; return true; }; registry.updateSandbox = () => true; registry.setDefault = () => true; registry.removeSandbox = () => true;
 const createFixture = fixtureMocks.installVerifiedSandboxCreateFixture(registry, {
   sandboxName: "my-assistant",
@@ -567,9 +566,8 @@ const { createSandbox } = require(${onboardPath});
 `;
       fs.writeFileSync(scriptPath, script);
       const runScenario = (failedProvider?: string) =>
-        spawnSync(process.execPath, [scriptPath], {
-          cwd: repoRoot,
-          encoding: "utf-8",
+        runBoundedOnboardScriptAsync(scriptPath, {
+          context,
           env: {
             ...process.env,
             HOME: tmpDir,
@@ -585,7 +583,7 @@ const { createSandbox } = require(${onboardPath});
             ),
           },
         });
-      const result = runScenario();
+      const result = await runScenario();
       assert.equal(result.status, 0, result.stderr);
       const payload = parseStdoutJson(result.stdout);
       const commands = payload.commands as CommandEntry[];
@@ -600,7 +598,7 @@ const { createSandbox } = require(${onboardPath});
       const refreshedProviders = providerRefreshes
         .map(({ entry }: { entry: CommandEntry }) => providerName(entry.command))
         .sort();
-      const denied = runScenario("my-assistant-telegram-bridge");
+      const denied = await runScenario("my-assistant-telegram-bridge");
       assert.equal(denied.status, 1);
       const deniedPayload = parseStdoutJson(denied.stdout);
       const deniedCommands = (deniedPayload.commands as CommandEntry[]).map(
@@ -648,7 +646,7 @@ const { createSandbox } = require(${onboardPath});
       assert.deepEqual(deniedPayload.temporaryCreateSources, []);
       assert.match(
         deniedPayload.error,
-        /did not confirm messaging provider 'my-assistant-telegram-bridge' before sandbox creation/,
+        /Could not inspect messaging provider 'my-assistant-telegram-bridge': OpenShell could not inspect the provider/,
       );
       const combinedOutput = result.stdout + result.stderr + denied.stdout + denied.stderr;
       assert.equal(
@@ -663,7 +661,7 @@ const { createSandbox } = require(${onboardPath});
     {
       timeout: 60_000,
     },
-    async () => {
+    async (context) => {
       const tmpDir = fs.mkdtempSync(
         path.join(os.tmpdir(), "nemoclaw-onboard-disabled-channels-preserve-"),
       );
@@ -696,7 +694,6 @@ const credentials = require(${credentialsPath});
 const childProcess = require("node:child_process");
 const { EventEmitter } = require("node:events");
 const fs = require("node:fs");
-
 const commands = []; let dockerfileContent;
 const registerCalls = [];
 const createdSandbox = fixtureMocks.createCreatedSandboxFixture({
@@ -710,7 +707,7 @@ runner.run = (command, opts = {}) => {
   const normalized = _n(command);
   commands.push({ command: normalized, env: opts.env || null });
   if (normalized.includes("provider get -g nemoclaw my-assistant-telegram-bridge")) return { status: 0, stdout: "Name: my-assistant-telegram-bridge\nType: nemoclaw-mcp-v1\nCredential keys: TELEGRAM_BOT_TOKEN\nConfig keys: <none>\n" };
-  if (normalized.includes("provider get")) return { status: 1 };
+  const providerGetResult = fixtureMocks.mockNvidiaOrMissingProviderGetRun(command, "nemoclaw"); if (providerGetResult !== null) return providerGetResult;
   return createdSandbox.run(command) ?? { status: 0 };
 };
 runner.runCapture = (command) => {
@@ -720,9 +717,9 @@ runner.runCapture = (command) => {
     const mockedCapture = require(${onboardScriptMocksPath}).mockOnboardRunCapture(command);
     if (mockedCapture !== null) return mockedCapture;
   }
-  if (_n(command).includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running\nmy-assistant 127.0.0.1 8642 12346 running";
+  if (_n(command).includes("forward list")) return "SANDBOX BIND PORT PID STATUS";
   return "";
-}; require(${onboardScriptMocksPath}).mockDockerSandboxLifecycleReleaseFromRunner();
+}; require(${onboardScriptMocksPath}).mockIsolatedDockerSandboxLifecycleFromRunner();
 registry.registerSandbox = (entry) => {
   registerCalls.push(entry);
   return true;
@@ -765,7 +762,6 @@ childProcess.spawn = (...args) => {
   return child;
 };
 
-require(${onboardScriptMocksPath}).mockFreshOpenClawPluginDiscovery();
 const { createSandbox } = require(${onboardPath});
 
 (async () => {
@@ -780,8 +776,8 @@ const { createSandbox } = require(${onboardPath});
 });
 `;
       fs.writeFileSync(scriptPath, script);
-      const result = runBoundedOnboardScript(scriptPath, {
-        cwd: repoRoot,
+      const result = await runBoundedOnboardScriptAsync(scriptPath, {
+        context,
         env: {
           ...process.env,
           HOME: tmpDir,
@@ -831,7 +827,7 @@ const { createSandbox } = require(${onboardPath});
     {
       timeout: 60_000,
     },
-    async () => {
+    async (context) => {
       const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-tokenless-whatsapp-"));
       try {
         const customDockerfileArg = JSON.stringify(writeCustomMessagingDockerfile(tmpDir));
@@ -870,7 +866,7 @@ const createdSandbox = fixtureMocks.createCreatedSandboxFixture(); createdSandbo
 runner.run = (command, opts = {}) => {
   const normalized = _n(command);
   commands.push({ command: normalized, env: opts.env || null });
-  if (normalized.includes("provider get")) return { status: 1 };
+  const providerGetResult = fixtureMocks.mockNvidiaOrMissingProviderGetRun(command, "nemoclaw"); if (providerGetResult !== null) return providerGetResult;
   return createdSandbox.run(command) ?? { status: 0 };
 };
 runner.runCapture = (command) => {
@@ -880,9 +876,9 @@ runner.runCapture = (command) => {
     const mockedCapture = require(${onboardScriptMocksPath}).mockOnboardRunCapture(command);
     if (mockedCapture !== null) return mockedCapture;
   }
-  if (_n(command).includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running\nmy-assistant 127.0.0.1 8642 12346 running";
+  if (_n(command).includes("forward list")) return "SANDBOX BIND PORT PID STATUS";
   return "";
-}; require(${onboardScriptMocksPath}).mockDockerSandboxLifecycleReleaseFromRunner();
+}; require(${onboardScriptMocksPath}).mockIsolatedDockerSandboxLifecycleFromRunner();
 registry.registerSandbox = (entry) => {
   registerCalls.push(entry);
   return true;
@@ -924,7 +920,6 @@ childProcess.spawn = (...args) => {
   return child;
 };
 
-require(${onboardScriptMocksPath}).mockFreshOpenClawPluginDiscovery();
 const { createSandbox } = require(${onboardPath});
 
 (async () => {
@@ -944,9 +939,8 @@ const { createSandbox } = require(${onboardPath});
 `;
         fs.writeFileSync(scriptPath, script);
 
-        const result = spawnSync(process.execPath, [scriptPath], {
-          cwd: repoRoot,
-          encoding: "utf-8",
+        const result = await runBoundedOnboardScriptAsync(scriptPath, {
+          context,
           env: {
             ...process.env,
             HOME: tmpDir,
@@ -959,8 +953,9 @@ const { createSandbox } = require(${onboardPath});
         assert.equal(result.status, 0, result.stderr);
         const payload = parseStdoutJson(result.stdout);
 
-        const providerMutationCommands = payload.commands.filter((entry: CommandEntry) =>
-          /\bprovider (create|update)\b/.test(entry.command),
+        const providerMutationCommands = payload.commands.filter(
+          (entry: CommandEntry) =>
+            /\bprovider (create|update)\b/.test(entry.command) && entry.command.includes("-bridge"),
         );
         assert.equal(
           providerMutationCommands.length,
@@ -996,7 +991,7 @@ const { createSandbox } = require(${onboardPath});
     {
       timeout: 60_000,
     },
-    async () => {
+    async (context) => {
       const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-disabled-whatsapp-"));
       try {
         const customDockerfileArg = JSON.stringify(writeCustomMessagingDockerfile(tmpDir));
@@ -1040,7 +1035,7 @@ const createdSandbox = fixtureMocks.createCreatedSandboxFixture(); createdSandbo
 runner.run = (command, opts = {}) => {
   const normalized = _n(command);
   commands.push({ command: normalized, env: opts.env || null });
-  if (normalized.includes("provider get")) return { status: 1 };
+  const providerGetResult = fixtureMocks.mockNvidiaOrMissingProviderGetRun(command, "nemoclaw"); if (providerGetResult !== null) return providerGetResult;
   return createdSandbox.run(command) ?? { status: 0 };
 };
 runner.runCapture = (command) => {
@@ -1050,9 +1045,9 @@ runner.runCapture = (command) => {
     const mockedCapture = require(${onboardScriptMocksPath}).mockOnboardRunCapture(command);
     if (mockedCapture !== null) return mockedCapture;
   }
-  if (_n(command).includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running\nmy-assistant 127.0.0.1 8642 12346 running";
+  if (_n(command).includes("forward list")) return "SANDBOX BIND PORT PID STATUS";
   return "";
-}; require(${onboardScriptMocksPath}).mockDockerSandboxLifecycleReleaseFromRunner();
+}; require(${onboardScriptMocksPath}).mockIsolatedDockerSandboxLifecycleFromRunner();
 registry.registerSandbox = (entry) => {
   registerCalls.push(entry);
   return true;
@@ -1095,7 +1090,6 @@ childProcess.spawn = (...args) => {
   return child;
 };
 
-require(${onboardScriptMocksPath}).mockFreshOpenClawPluginDiscovery();
 const { createSandbox } = require(${onboardPath});
 
 (async () => {
@@ -1115,9 +1109,8 @@ const { createSandbox } = require(${onboardPath});
 `;
         fs.writeFileSync(scriptPath, script);
 
-        const result = spawnSync(process.execPath, [scriptPath], {
-          cwd: repoRoot,
-          encoding: "utf-8",
+        const result = await runBoundedOnboardScriptAsync(scriptPath, {
+          context,
           env: {
             ...process.env,
             HOME: tmpDir,
@@ -1158,26 +1151,31 @@ const { createSandbox } = require(${onboardPath});
     },
   );
 
-  it("aborts onboard when a messaging provider upsert fails", { timeout: 60_000 }, async () => {
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-provider-fail-"));
-    const fakeBin = path.join(tmpDir, "bin");
-    const scriptPath = path.join(tmpDir, "provider-upsert-fail.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
-    const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
-    const registryPath = JSON.stringify(path.join(repoRoot, "src", "lib", "state", "registry.ts"));
-    const preflightPath = JSON.stringify(
-      path.join(repoRoot, "src", "lib", "onboard", "preflight.ts"),
-    );
-    const credentialsPath = JSON.stringify(
-      path.join(repoRoot, "src", "lib", "credentials", "store.ts"),
-    );
+  it(
+    "aborts onboard when a messaging provider upsert fails",
+    { timeout: 60_000 },
+    async (context) => {
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-provider-fail-"));
+      const fakeBin = path.join(tmpDir, "bin");
+      const scriptPath = path.join(tmpDir, "provider-upsert-fail.js");
+      const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
+      const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
+      const registryPath = JSON.stringify(
+        path.join(repoRoot, "src", "lib", "state", "registry.ts"),
+      );
+      const preflightPath = JSON.stringify(
+        path.join(repoRoot, "src", "lib", "onboard", "preflight.ts"),
+      );
+      const credentialsPath = JSON.stringify(
+        path.join(repoRoot, "src", "lib", "credentials", "store.ts"),
+      );
 
-    fs.mkdirSync(fakeBin, { recursive: true });
-    fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
-      mode: 0o755,
-    });
+      fs.mkdirSync(fakeBin, { recursive: true });
+      fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
+        mode: 0o755,
+      });
 
-    const script = String.raw`
+      const script = String.raw`
 const runner = require(${runnerPath});
 const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
 const registry = require(${registryPath});
@@ -1197,7 +1195,7 @@ runner.runCapture = (command) => {
   if (_n(command).includes("sandbox get")) return "";
   if (_n(command).includes("sandbox list")) return "";
   return "";
-}; require(${onboardScriptMocksPath}).mockDockerSandboxLifecycleReleaseFromRunner();
+}; require(${onboardScriptMocksPath}).mockIsolatedDockerSandboxLifecycleFromRunner();
 registry.registerSandbox = () => true;
 registry.updateSandbox = () => true;
 registry.setDefault = () => true;
@@ -1211,39 +1209,38 @@ const { createSandbox } = require(${onboardPath});
   process.env.OPENSHELL_GATEWAY = "nemoclaw";
   process.env.DISCORD_BOT_TOKEN = "test-discord-token-value";
   await createSandbox(null, "gpt-5.4", "nvidia-prod");
-  // Should not reach here
   console.log("ERROR_DID_NOT_EXIT");
 })().catch((error) => {
   console.error(error);
   process.exit(1);
 });
 `;
-    fs.writeFileSync(scriptPath, script);
+      fs.writeFileSync(scriptPath, script);
 
-    const result = spawnSync(process.execPath, [scriptPath], {
-      cwd: repoRoot,
-      encoding: "utf-8",
-      env: {
-        ...process.env,
-        HOME: tmpDir,
-        PATH: `${fakeBin}:${process.env.PATH || ""}`,
-        NEMOCLAW_NON_INTERACTIVE: "1",
-      },
-    });
+      const result = await runBoundedOnboardScriptAsync(scriptPath, {
+        context,
+        env: {
+          ...process.env,
+          HOME: tmpDir,
+          PATH: `${fakeBin}:${process.env.PATH || ""}`,
+          NEMOCLAW_NON_INTERACTIVE: "1",
+        },
+      });
 
-    assert.notEqual(result.status, 0, "expected non-zero exit when provider upsert fails");
-    assert.ok(
-      !result.stdout.includes("ERROR_DID_NOT_EXIT"),
-      "onboard should have aborted before reaching sandbox create",
-    );
-  });
+      assert.notEqual(result.status, 0, "expected non-zero exit when provider upsert fails");
+      assert.ok(
+        !result.stdout.includes("ERROR_DID_NOT_EXIT"),
+        "onboard should have aborted before reaching sandbox create",
+      );
+    },
+  );
 
-  it(
+  it.sequential(
     "reuses sandbox without refreshing unselected ambient messaging providers (#10277)",
     {
       timeout: 60_000,
     },
-    async () => {
+    async (context) => {
       const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-reuse-providers-"));
       const fakeBin = path.join(tmpDir, "bin");
       const scriptPath = path.join(tmpDir, "reuse-with-providers.js");
@@ -1279,7 +1276,7 @@ runner.runCapture = (command) => {
   if (sandboxCapture !== null) return sandboxCapture;
   // All messaging providers already exist in gateway
   if (_n(command).includes("provider get")) return "Provider: exists";
-  if (_n(command).includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running\nmy-assistant 127.0.0.1 8642 12346 running";
+  if (_n(command).includes("forward list")) return "SANDBOX BIND PORT PID STATUS";
   return "";
 };
 registry.getSandbox = () => fixtureMocks.sandboxLifecycleFixture(
@@ -1302,9 +1299,8 @@ const { createSandbox } = require(${onboardPath});
 `;
       fs.writeFileSync(scriptPath, script);
 
-      const result = spawnSync(process.execPath, [scriptPath], {
-        cwd: repoRoot,
-        encoding: "utf-8",
+      const result = await runBoundedOnboardScriptAsync(scriptPath, {
+        context,
         env: {
           ...process.env,
           HOME: tmpDir,
@@ -1343,7 +1339,7 @@ const { createSandbox } = require(${onboardPath});
     {
       timeout: 60_000,
     },
-    async () => {
+    async (context) => {
       const tmpDir = fs.mkdtempSync(
         path.join(os.tmpdir(), "nemoclaw-onboard-enabled-channels-filter-"),
       );
@@ -1387,9 +1383,9 @@ runner.runCapture = (command) => {
     const mockedCapture = require(${onboardScriptMocksPath}).mockOnboardRunCapture(command);
     if (mockedCapture !== null) return mockedCapture;
   }
-  if (_n(command).includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running\nmy-assistant 127.0.0.1 8642 12346 running";
+  if (_n(command).includes("forward list")) return "SANDBOX BIND PORT PID STATUS";
   return "";
-}; require(${onboardScriptMocksPath}).mockDockerSandboxLifecycleReleaseFromRunner();
+}; require(${onboardScriptMocksPath}).mockIsolatedDockerSandboxLifecycleFromRunner();
 registry.registerSandbox = () => true;
 registry.updateSandbox = () => true;
 registry.setDefault = () => true;
@@ -1434,9 +1430,8 @@ const { createSandbox } = require(${onboardPath});
 `;
       fs.writeFileSync(scriptPath, script);
 
-      const result = spawnSync(process.execPath, [scriptPath], {
-        cwd: repoRoot,
-        encoding: "utf-8",
+      const result = await runBoundedOnboardScriptAsync(scriptPath, {
+        context,
         env: {
           ...process.env,
           HOME: tmpDir,
@@ -1484,7 +1479,7 @@ const { createSandbox } = require(${onboardPath});
     {
       timeout: 60_000,
     },
-    async () => {
+    async (context) => {
       const tmpDir = fs.mkdtempSync(
         path.join(os.tmpdir(), "nemoclaw-onboard-enabled-channels-empty-"),
       );
@@ -1519,7 +1514,7 @@ const commands = [];
 const createdSandbox = fixtureMocks.createCreatedSandboxFixture(); createdSandbox.installRuntimeObservation();
 runner.run = (command, opts = {}) => {
   commands.push({ command: _n(command), env: opts.env || null });
-  return createdSandbox.run(command) ?? { status: 0 };
+  return fixtureMocks.mockNvidiaOrMissingProviderGetRun(command, "nemoclaw") ?? createdSandbox.run(command) ?? { status: 0 };
 };
 runner.runCapture = (command) => {
   const createdIdentity = createdSandbox.capture(command);
@@ -1528,9 +1523,9 @@ runner.runCapture = (command) => {
     const mockedCapture = require(${onboardScriptMocksPath}).mockOnboardRunCapture(command);
     if (mockedCapture !== null) return mockedCapture;
   }
-  if (_n(command).includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running\nmy-assistant 127.0.0.1 8642 12346 running";
+  if (_n(command).includes("forward list")) return "SANDBOX BIND PORT PID STATUS";
   return "";
-}; require(${onboardScriptMocksPath}).mockDockerSandboxLifecycleReleaseFromRunner();
+}; require(${onboardScriptMocksPath}).mockIsolatedDockerSandboxLifecycleFromRunner();
 registry.registerSandbox = () => true;
 registry.updateSandbox = () => true;
 registry.setDefault = () => true;
@@ -1594,9 +1589,8 @@ const { createSandbox } = require(${onboardPath});
 `;
       fs.writeFileSync(scriptPath, script);
 
-      const result = spawnSync(process.execPath, [scriptPath], {
-        cwd: repoRoot,
-        encoding: "utf-8",
+      const result = await runBoundedOnboardScriptAsync(scriptPath, {
+        context,
         env: {
           ...process.env,
           HOME: tmpDir,
@@ -1630,11 +1624,11 @@ const { createSandbox } = require(${onboardPath});
   );
 
   it(
-    "non-interactive setupMessagingChannels returns channels with tokens",
+    "non-interactive setupMessagingChannels excludes the Discord placeholder before channel setup (#10668)",
     {
       timeout: 60_000,
     },
-    async () => {
+    async (context) => {
       const tmpDir = fs.mkdtempSync(
         path.join(os.tmpdir(), "nemoclaw-onboard-messaging-noninteractive-"),
       );
@@ -1651,11 +1645,12 @@ const { createSandbox } = require(${onboardPath});
       const script = String.raw`
 const runner = require(${runnerPath});
 const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
-runner.run = () => ({ status: 0 });
+const commands = [];
+runner.run = (command) => {
+  commands.push(_n(command));
+  return { status: 0 };
+};
 runner.runCapture = () => "";
-
-// Stub the manifest-driven Telegram reachability hook so this test does not
-// make a real network call.
 global.fetch = async () => ({
   ok: true,
   status: 200,
@@ -1666,13 +1661,13 @@ global.fetch = async () => ({
 const { setupMessagingChannels } = require(${onboardPath});
 
 (async () => {
-  // Only set telegram and slack tokens — discord should be absent
   process.env.TELEGRAM_BOT_TOKEN = "123456:ABC-test-telegram-token";
+  process.env.DISCORD_BOT_TOKEN = "<your-discord-bot-token>";
   process.env.SLACK_BOT_TOKEN = "xoxb-test-slack-token";
   process.env.SLACK_APP_TOKEN = "xapp-test-slack-app-token";
   process.env.NEMOCLAW_SKIP_SLACK_AUTH_VALIDATION = "1";
   const result = await setupMessagingChannels();
-  console.log(JSON.stringify(result));
+  console.log(JSON.stringify({ channels: result, commands }));
 })().catch((error) => {
   console.error(error);
   process.exit(1);
@@ -1680,9 +1675,8 @@ const { setupMessagingChannels } = require(${onboardPath});
 `;
       fs.writeFileSync(scriptPath, script);
 
-      const result = spawnSync(process.execPath, [scriptPath], {
-        cwd: repoRoot,
-        encoding: "utf-8",
+      const result = await runBoundedOnboardScriptAsync(scriptPath, {
+        context,
         env: {
           ...process.env,
           HOME: tmpDir,
@@ -1692,13 +1686,12 @@ const { setupMessagingChannels } = require(${onboardPath});
       });
 
       assert.equal(result.status, 0, result.stderr);
-      const channels = parseStdoutJson<string[]>(result.stdout);
-
-      // Should return only the channels that have tokens set
-      assert.ok(Array.isArray(channels), "expected an array return value");
-      assert.ok(channels.includes("telegram"), "expected telegram in returned channels");
-      assert.ok(channels.includes("slack"), "expected slack in returned channels");
-      assert.ok(!channels.includes("discord"), "discord should not be in returned channels");
+      const payload = parseStdoutJson<{ channels: string[]; commands: string[] }>(result.stdout);
+      assert.deepEqual(payload.channels, ["telegram", "slack"]);
+      assert.ok(
+        !payload.commands.some((command) => command.toLowerCase().includes("discord")),
+        "No captured command should mention Discord",
+      );
     },
   );
 
@@ -1707,7 +1700,7 @@ const { setupMessagingChannels } = require(${onboardPath});
     {
       timeout: 60_000,
     },
-    async () => {
+    async (context) => {
       const tmpDir = fs.mkdtempSync(
         path.join(os.tmpdir(), "nemoclaw-onboard-messaging-slack-live-reject-"),
       );
@@ -1769,9 +1762,8 @@ const { setupMessagingChannels } = require(${onboardPath});
 `;
       fs.writeFileSync(scriptPath, script);
 
-      const result = spawnSync(process.execPath, [scriptPath], {
-        cwd: repoRoot,
-        encoding: "utf-8",
+      const result = await runBoundedOnboardScriptAsync(scriptPath, {
+        context,
         env: {
           ...process.env,
           HOME: tmpDir,
@@ -1795,7 +1787,7 @@ const { setupMessagingChannels } = require(${onboardPath});
     {
       timeout: 60_000,
     },
-    async () => {
+    async (context) => {
       const tmpDir = fs.mkdtempSync(
         path.join(os.tmpdir(), "nemoclaw-onboard-messaging-no-tokens-"),
       );
@@ -1832,9 +1824,8 @@ const { setupMessagingChannels } = require(${onboardPath});
 `;
       fs.writeFileSync(scriptPath, script);
 
-      const result = spawnSync(process.execPath, [scriptPath], {
-        cwd: repoRoot,
-        encoding: "utf-8",
+      const result = await runBoundedOnboardScriptAsync(scriptPath, {
+        context,
         env: {
           ...process.env,
           HOME: tmpDir,
@@ -1860,7 +1851,7 @@ const { setupMessagingChannels } = require(${onboardPath});
     {
       timeout: 60_000,
     },
-    async () => {
+    async (context) => {
       const tmpDir = fs.mkdtempSync(
         path.join(os.tmpdir(), "nemoclaw-onboard-slack-format-reject-"),
       );
@@ -1922,9 +1913,8 @@ const { setupMessagingChannels, MESSAGING_CHANNELS } = require(${onboardPath});
       // Dry run with just Enter — no toggles, empty result — used to read back
       // Slack's 1-based index from the same subscript so the real run can
       // press the right digit.
-      const introspect = spawnSync(process.execPath, [scriptPath], {
-        cwd: repoRoot,
-        encoding: "utf-8",
+      const introspect = await runBoundedOnboardScriptAsync(scriptPath, {
+        context,
         env: {
           ...process.env,
           HOME: tmpDir,
@@ -1940,9 +1930,8 @@ const { setupMessagingChannels, MESSAGING_CHANNELS } = require(${onboardPath});
       // Real run: press Slack's digit, Enter. Slack gets toggled on, prompt
       // fires, mocked prompt returns "abcd", tokenFormat regex rejects it,
       // channel is dropped, saveCredential never runs for SLACK_BOT_TOKEN.
-      const result = spawnSync(process.execPath, [scriptPath], {
-        cwd: repoRoot,
-        encoding: "utf-8",
+      const result = await runBoundedOnboardScriptAsync(scriptPath, {
+        context,
         env: {
           ...process.env,
           HOME: tmpDir,

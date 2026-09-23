@@ -25,7 +25,7 @@ type EnsureForward = (
   port: number,
   label: string,
   revalidateSandboxIdentity?: RevalidateSandboxIdentity,
-) => boolean;
+) => boolean | Promise<boolean>;
 
 export function resolveHermesDashboardOnboardState({
   agentName,
@@ -140,7 +140,7 @@ export function appendHermesDashboardEnvArgs(
   }
 }
 
-export function ensureHermesDashboardForwardIfEnabled({
+export async function ensureHermesDashboardForwardIfEnabled({
   state,
   sandboxName,
   ensureForward,
@@ -152,10 +152,15 @@ export function ensureHermesDashboardForwardIfEnabled({
   ensureForward: EnsureForward;
   note: (message: string) => void;
   revalidateSandboxIdentity?: RevalidateSandboxIdentity;
-}): boolean {
+}): Promise<boolean> {
   if (!state.enabled || !state.config) return true;
   if (
-    !ensureForward(sandboxName, state.config.port, "Hermes dashboard", revalidateSandboxIdentity)
+    !(await ensureForward(
+      sandboxName,
+      state.config.port,
+      "Hermes dashboard",
+      revalidateSandboxIdentity,
+    ))
   ) {
     return false;
   }
@@ -166,7 +171,7 @@ export function ensureHermesDashboardForwardIfEnabled({
 
 export function formatHermesDashboardForwardFailure(state: HermesDashboardOnboardState): string {
   const port = state.config?.port ?? "unknown";
-  return `Failed to start Hermes dashboard forward on port ${port}. NemoClaw stopped the onboarding forwards but left the sandbox running because OpenShell deletion targets a mutable name. Verify the sandbox identity before manual cleanup, then free the port and re-run onboarding, set NEMOCLAW_DASHBOARD_PORT, or pass --control-ui-port <N> to choose another port.`;
+  return `Failed to start Hermes dashboard forward on port ${port}. NemoClaw left the sandbox and any established OpenShell service forwards running. Free the port and re-run onboarding, set NEMOCLAW_DASHBOARD_PORT, or pass --control-ui-port <N> to choose another port.`;
 }
 
 export function createHermesDashboardForwardEnsurer({
@@ -188,13 +193,13 @@ export function createHermesDashboardForwardEnsurer({
   sandboxName: string,
   rollback?: boolean,
   revalidateSandboxIdentity?: RevalidateSandboxIdentity,
-) => void {
-  return (
+) => Promise<void> {
+  return async (
     sandboxName: string,
     rollback = false,
     revalidateSandboxIdentity?: RevalidateSandboxIdentity,
-  ): void => {
-    const ok = ensureHermesDashboardForwardIfEnabled({
+  ): Promise<void> => {
+    const ok = await ensureHermesDashboardForwardIfEnabled({
       state,
       sandboxName,
       ensureForward,
@@ -218,8 +223,8 @@ export function createHermesDashboardOnboardForwarding({
   env,
   ensureForward,
   note,
-  runOpenshell,
-  getApiForwardPort,
+  runOpenshell: _runOpenshell,
+  getApiForwardPort: _getApiForwardPort,
   fail,
 }: {
   agentName: string | null | undefined;
@@ -236,6 +241,8 @@ export function createHermesDashboardOnboardForwarding({
       console.error(`  ${message}`);
       process.exit(1);
     });
+  void _runOpenshell;
+  void _getApiForwardPort;
   const resolveStateForPort = (effectivePort: number) =>
     resolveHermesDashboardOnboardState({ agentName, effectivePort, env, fail: failWithMessage });
 
@@ -250,20 +257,7 @@ export function createHermesDashboardOnboardForwarding({
       ensureForward,
       note,
       rollbackSandbox: (targetSandbox, revalidateRollback) => {
-        revalidateRollback?.(
-          `stop Hermes API forward for sandbox '${targetSandbox}' during rollback`,
-        );
-        runOpenshell(["forward", "stop", getApiForwardPort(), targetSandbox], {
-          ignoreError: true,
-        });
-        if (state.config) {
-          revalidateRollback?.(
-            `stop Hermes dashboard forward for sandbox '${targetSandbox}' during rollback`,
-          );
-          runOpenshell(["forward", "stop", String(state.config.port), targetSandbox], {
-            ignoreError: true,
-          });
-        }
+        revalidateRollback?.(`preserve OpenShell forwards for sandbox '${targetSandbox}'`);
       },
       fail: failWithMessage,
     })(sandboxName, rollback, revalidateSandboxIdentity);

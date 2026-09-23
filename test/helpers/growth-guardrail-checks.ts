@@ -1,19 +1,32 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { createHash } from "node:crypto";
 import ts from "typescript";
 
+import { parseE2eAssertionBudget } from "../../scripts/checks/e2e-assertion-census.mts";
 import type { GrowthGuardrailDiff, PullRequestFile } from "./growth-guardrail-diff";
 
 const BUDGET_FILE = "ci/test-file-size-budget.json";
+const DOCKERFILE_GROWTH_EXCEPTIONS_FILE = "ci/dockerfile-growth-exceptions.json";
+const E2E_ASSERTION_BUDGET_FILE = "ci/e2e-assertion-budget.json";
+const E2E_GROWTH_EXCEPTIONS_FILE = "ci/e2e-assertion-growth-exceptions.json";
 const FALLBACK_BUDGET = '{"defaultMaxLines":1500,"legacyMaxLines":{}}';
 const JAVASCRIPT_FILE_RE = /\.(?:cjs|js|mjs)$/;
 const TEST_FILE_RE = /^(?:test|src|nemoclaw\/src)\/.*\.(?:test|spec)\.(?:[cm]?[jt]s)$/;
+const LIVE_E2E_TEST_RE = /^test\/e2e\/live\/.*\.(?:test|spec)\.(?:[cm]?[jt]s|[jt]sx)$/;
 const ONBOARD_ENTRY = "src/lib/onboard.ts";
+const STOCK_DOCKERFILE = "Dockerfile";
 
 type TestFileSizeBudget = {
   readonly defaultMaxLines: number;
   readonly legacyMaxLines: Readonly<Record<string, number>>;
+};
+
+type DockerfileGrowthException = {
+  readonly pullRequest: number;
+  readonly maxLines: number;
+  readonly maxBytes: number;
 };
 
 type TestChange = {
@@ -30,6 +43,14 @@ function countLines(text: string | null): number {
   if (text === null || text.length === 0) return 0;
   const newlineCount = text.match(/\r\n|\r|\n/g)?.length ?? 0;
   return newlineCount + (/(?:\r\n|\r|\n)$/.test(text) ? 0 : 1);
+}
+
+/** Keep the line and byte ratchets independent so same-line growth cannot bypass the budget. */
+function dockerfileBudget(source: string | null): { bytes: number; lines: number } {
+  return {
+    bytes: source === null ? 0 : Buffer.byteLength(source, "utf8"),
+    lines: countLines(source),
+  };
 }
 
 function positiveInteger(value: unknown, label: string): number {
@@ -63,6 +84,51 @@ function parseBudget(source: string, label: string): TestFileSizeBudget {
   };
 }
 
+/** Parse trusted-base exceptions; malformed policy fails the guardrail closed. */
+function parseDockerfileGrowthExceptions(source: string): readonly DockerfileGrowthException[] {
+  const parsed = JSON.parse(source) as {
+    readonly schemaVersion?: unknown;
+    readonly exceptions?: unknown;
+  };
+  if (parsed.schemaVersion !== 1) {
+    throw new Error(`${DOCKERFILE_GROWTH_EXCEPTIONS_FILE}: schemaVersion must be 1`);
+  }
+  if (!Array.isArray(parsed.exceptions)) {
+    throw new Error(`${DOCKERFILE_GROWTH_EXCEPTIONS_FILE}: exceptions must be an array`);
+  }
+
+  const seenPullRequests = new Set<number>();
+  return parsed.exceptions.map((value, index) => {
+    if (typeof value !== "object" || value === null || Array.isArray(value)) {
+      throw new Error(
+        `${DOCKERFILE_GROWTH_EXCEPTIONS_FILE}: exceptions[${index}] must be an object`,
+      );
+    }
+    const exception = value as Record<string, unknown>;
+    const pullRequest = positiveInteger(
+      exception.pullRequest,
+      `${DOCKERFILE_GROWTH_EXCEPTIONS_FILE}: exceptions[${index}].pullRequest`,
+    );
+    if (seenPullRequests.has(pullRequest)) {
+      throw new Error(
+        `${DOCKERFILE_GROWTH_EXCEPTIONS_FILE}: duplicate exception for PR #${pullRequest}`,
+      );
+    }
+    seenPullRequests.add(pullRequest);
+    return {
+      pullRequest,
+      maxLines: positiveInteger(
+        exception.maxLines,
+        `${DOCKERFILE_GROWTH_EXCEPTIONS_FILE}: exceptions[${index}].maxLines`,
+      ),
+      maxBytes: positiveInteger(
+        exception.maxBytes,
+        `${DOCKERFILE_GROWTH_EXCEPTIONS_FILE}: exceptions[${index}].maxBytes`,
+      ),
+    };
+  });
+}
+
 function testChanges(files: readonly PullRequestFile[]): TestChange[] {
   return files
     .filter(
@@ -83,15 +149,22 @@ function scriptKind(file: string): ts.ScriptKind {
   return /\.[cm]?js$/i.test(file) ? ts.ScriptKind.JS : ts.ScriptKind.TS;
 }
 
+const parsedTestSources = new Map<string, Map<ts.ScriptKind, ts.SourceFile>>();
+
+function parseTestSource(file: string, source: string): ts.SourceFile {
+  const kind = scriptKind(file);
+  const cached = parsedTestSources.get(source)?.get(kind);
+  if (cached) return cached;
+  const sourceFile = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true, kind);
+  const byKind = parsedTestSources.get(source) ?? new Map();
+  byKind.set(kind, sourceFile);
+  parsedTestSources.set(source, byKind);
+  return sourceFile;
+}
+
 function countIfStatements(file: string, source: string | null): number {
   if (source === null) return 0;
-  const sourceFile = ts.createSourceFile(
-    file,
-    source,
-    ts.ScriptTarget.Latest,
-    true,
-    scriptKind(file),
-  );
+  const sourceFile = parseTestSource(file, source);
   let count = 0;
   function visit(node: ts.Node): void {
     if (ts.isIfStatement(node)) count += 1;
@@ -175,13 +248,7 @@ function thinCallbackForwardingLoop(node: ts.FunctionLikeDeclaration): LoopState
 
 function countTestLoops(file: string, source: string | null): number {
   if (source === null) return 0;
-  const sourceFile = ts.createSourceFile(
-    file,
-    source,
-    ts.ScriptTarget.Latest,
-    true,
-    scriptKind(file),
-  );
+  const sourceFile = parseTestSource(file, source);
   type LexicalScope = ts.SourceFile | ts.Block;
   const localFunctions = new Map<LexicalScope, Map<string, ts.FunctionLikeDeclaration>>();
   function enclosingScope(node: ts.Node): LexicalScope | null {
@@ -297,6 +364,48 @@ export async function onboardGrowthViolations(diff: GrowthGuardrailDiff): Promis
   return headLines > baseLines ? [`${ONBOARD_ENTRY} grew by ${headLines - baseLines} line(s)`] : [];
 }
 
+/** Report root Dockerfile growth while its host-side stock onboarding fallback is deprecated. */
+export async function dockerfileBudgetGrowthViolations(
+  diff: GrowthGuardrailDiff,
+): Promise<string[]> {
+  const changed = diff.files.some(
+    ({ filename, previous_filename }) =>
+      filename === STOCK_DOCKERFILE || previous_filename === STOCK_DOCKERFILE,
+  );
+  if (!changed) return [];
+  const [base, head] = await Promise.all([
+    diff.readBase([STOCK_DOCKERFILE, DOCKERFILE_GROWTH_EXCEPTIONS_FILE]),
+    diff.readHead([STOCK_DOCKERFILE]),
+  ]);
+  const baseBudget = dockerfileBudget(base.get(STOCK_DOCKERFILE) ?? null);
+  const headBudget = dockerfileBudget(head.get(STOCK_DOCKERFILE) ?? null);
+  const exceptionsSource = base.get(DOCKERFILE_GROWTH_EXCEPTIONS_FILE);
+  const exception =
+    diff.pullRequestNumber === null || exceptionsSource === null || exceptionsSource === undefined
+      ? undefined
+      : parseDockerfileGrowthExceptions(exceptionsSource).find(
+          ({ pullRequest }) => pullRequest === diff.pullRequestNumber,
+        );
+  const maxLines = Math.max(baseBudget.lines, exception?.maxLines ?? baseBudget.lines);
+  const maxBytes = Math.max(baseBudget.bytes, exception?.maxBytes ?? baseBudget.bytes);
+  const violations: string[] = [];
+  if (headBudget.lines > maxLines) {
+    violations.push(
+      exception
+        ? `${STOCK_DOCKERFILE} line budget exceeded the PR #${exception.pullRequest} maximum of ${maxLines} with ${headBudget.lines}`
+        : `${STOCK_DOCKERFILE} line budget increased from ${baseBudget.lines} to ${headBudget.lines}`,
+    );
+  }
+  if (headBudget.bytes > maxBytes) {
+    violations.push(
+      exception
+        ? `${STOCK_DOCKERFILE} byte budget exceeded the PR #${exception.pullRequest} maximum of ${maxBytes} with ${headBudget.bytes}`
+        : `${STOCK_DOCKERFILE} byte budget increased from ${baseBudget.bytes} to ${headBudget.bytes}`,
+    );
+  }
+  return violations;
+}
+
 export async function testSizeViolations(diff: GrowthGuardrailDiff): Promise<string[]> {
   const budgetChanged = diff.files.some(
     ({ filename, previous_filename }) =>
@@ -381,6 +490,143 @@ export async function testSizeViolations(diff: GrowthGuardrailDiff): Promise<str
   return violations;
 }
 
+/** Match only the exact reviewed budget transition from the selected policy. */
+function hasApprovedE2eBudgetTransition(
+  policySource: string | null | undefined,
+  pullRequestNumber: number | null,
+  baseSource: string,
+  headSource: string,
+): boolean {
+  if (policySource === null || policySource === undefined) return false;
+  const policy = JSON.parse(policySource) as {
+    schemaVersion?: unknown;
+    exceptions?: unknown;
+  };
+  if (policy.schemaVersion !== 1 || !Array.isArray(policy.exceptions)) {
+    throw new Error(`${E2E_GROWTH_EXCEPTIONS_FILE}: invalid exception policy`);
+  }
+  const transitions = policy.exceptions.map((value: unknown) => {
+    if (typeof value !== "object" || value === null || Array.isArray(value)) {
+      throw new Error(`${E2E_GROWTH_EXCEPTIONS_FILE}: exception must be an object`);
+    }
+    const entry = value as Record<string, unknown>;
+    const pullRequest = positiveInteger(entry.pullRequest, "E2E exception pullRequest");
+    const { baseBudgetSha256, headBudgetSha256 } = entry;
+    if (
+      typeof baseBudgetSha256 !== "string" ||
+      !/^[a-f0-9]{64}$/.test(baseBudgetSha256) ||
+      typeof headBudgetSha256 !== "string" ||
+      !/^[a-f0-9]{64}$/.test(headBudgetSha256)
+    ) {
+      throw new Error(`${E2E_GROWTH_EXCEPTIONS_FILE}: budget digests must be SHA-256 values`);
+    }
+    return { pullRequest, baseBudgetSha256, headBudgetSha256 };
+  });
+  const baseDigest = createHash("sha256").update(baseSource).digest("hex");
+  const headDigest = createHash("sha256").update(headSource).digest("hex");
+  // Local hooks have no PR identity. CI additionally requires the actual event PR.
+  return transitions.some(
+    (entry) =>
+      (pullRequestNumber === null || entry.pullRequest === pullRequestNumber) &&
+      entry.baseBudgetSha256 === baseDigest &&
+      entry.headBudgetSha256 === headDigest,
+  );
+}
+
+export async function e2eAssertionBudgetGrowthViolations(
+  diff: GrowthGuardrailDiff,
+): Promise<string[]> {
+  const changed = diff.files.some(
+    ({ filename, previous_filename }) =>
+      filename === E2E_ASSERTION_BUDGET_FILE || previous_filename === E2E_ASSERTION_BUDGET_FILE,
+  );
+  if (!changed) return [];
+  const [baseBlob, headBlob] = await Promise.all([
+    diff.readBase([E2E_ASSERTION_BUDGET_FILE, E2E_GROWTH_EXCEPTIONS_FILE]),
+    diff.readHead(
+      diff.exceptionPolicySource === "head"
+        ? [E2E_ASSERTION_BUDGET_FILE, E2E_GROWTH_EXCEPTIONS_FILE]
+        : [E2E_ASSERTION_BUDGET_FILE],
+    ),
+  ]);
+  const baseSource = baseBlob.get(E2E_ASSERTION_BUDGET_FILE);
+  const headSource = headBlob.get(E2E_ASSERTION_BUDGET_FILE);
+  if (headSource === null || headSource === undefined) {
+    return [`${E2E_ASSERTION_BUDGET_FILE} must remain present`];
+  }
+  if (baseSource === null || baseSource === undefined) return [];
+
+  const base = parseE2eAssertionBudget(baseSource);
+  const head = parseE2eAssertionBudget(headSource);
+  if (
+    hasApprovedE2eBudgetTransition(
+      // Local and candidate CI checks are advisory; independent enforcement reads base policy.
+      diff.exceptionPolicySource === "head"
+        ? headBlob.get(E2E_GROWTH_EXCEPTIONS_FILE)
+        : baseBlob.get(E2E_GROWTH_EXCEPTIONS_FILE),
+      diff.pullRequestNumber,
+      baseSource,
+      headSource,
+    )
+  )
+    return [];
+  const violations: string[] = [];
+  if (JSON.stringify(head.reference) !== JSON.stringify(base.reference)) {
+    violations.push("live E2E assertion reference metadata changed");
+  }
+  for (const count of ["testFileCount", "liveFileCount"] as const) {
+    if (head.limits[count] > base.limits[count]) {
+      violations.push(`${count} increased from ${base.limits[count]} to ${head.limits[count]}`);
+    }
+  }
+  for (const view of ["direct", "unique"] as const) {
+    for (const metric of [
+      "expectCalls",
+      "assertionPoints",
+      "generatedProbeBlocks",
+      "generatedProbeConditions",
+    ] as const) {
+      const before = base.limits[view][metric];
+      const after = head.limits[view][metric];
+      if (after > before) violations.push(`${view}.${metric} increased from ${before} to ${after}`);
+    }
+  }
+  const renames = new Map(
+    diff.files.flatMap(({ filename, previous_filename, status }) =>
+      status === "renamed" && previous_filename ? [[filename, previous_filename]] : [],
+    ),
+  );
+  const renamedFrom = new Map([...renames].map(([filename, previous]) => [previous, filename]));
+  const removed = new Set(
+    diff.files.flatMap(({ filename, status }) => (status === "removed" ? [filename] : [])),
+  );
+  for (const [file, after] of Object.entries(head.limits.files)) {
+    const before = base.limits.files[renames.get(file) ?? file];
+    if (!before) {
+      violations.push(`${file} added a live E2E assertion budget`);
+      continue;
+    }
+    after.forEach((value, index) => {
+      if (value > before[index]!) {
+        violations.push(
+          `${file} ${head.limits.fileMetricOrder[index]} increased from ${before[index]} to ${value}`,
+        );
+      }
+    });
+  }
+  for (const file of Object.keys(base.limits.files)) {
+    const renamedTo = renamedFrom.get(file);
+    const carriedFile = renamedTo ?? file;
+    if (head.limits.files[carriedFile]) continue;
+    const genuinelyRemoved =
+      removed.has(file) || (renamedTo !== undefined && !LIVE_E2E_TEST_RE.test(renamedTo));
+    if (!genuinelyRemoved) {
+      violations.push(`${carriedFile} omitted its live E2E assertion budget`);
+    }
+  }
+  return violations;
+}
+
 async function syntaxGrowthViolations(
   diff: GrowthGuardrailDiff,
   count: (file: string, source: string | null) => number,
@@ -409,6 +655,15 @@ export function loopGrowthViolations(diff: GrowthGuardrailDiff): Promise<string[
   return syntaxGrowthViolations(diff, countTestLoops, "test loop");
 }
 
+/** Explain the intentional review boundary rather than treating active managed-image use as an exemption. */
+function dockerfileBudgetDiagnostic(details: readonly string[]): string {
+  return formatList(
+    "The root Dockerfile budget grew.",
+    details,
+    "Host-side stock Dockerfile onboarding is deprecated. Keep the root Dockerfile at or below its existing line and byte budgets. Move new onboarding behavior to the managed-image startup profile, bootstrap, or runtime-provider path, or record a maintainer decision before increasing this budget.",
+  );
+}
+
 export const diagnostics = {
   javascript: (details: readonly string[]) =>
     formatList(
@@ -422,11 +677,18 @@ export const diagnostics = {
       details,
       "Move new behavior into a focused module under src/lib/onboard/.",
     ),
+  dockerfileBudget: dockerfileBudgetDiagnostic,
   size: (details: readonly string[]) =>
     formatList(
       "The test file size budget was exceeded or weakened.",
       details,
       "Split oversized tests, and lower legacy budgets when files shrink.",
+    ),
+  e2eAssertions: (details: readonly string[]) =>
+    formatList(
+      "The live E2E assertion budget increased.",
+      details,
+      "Keep the baseline at or below the trusted base. Reduce assertions before updating the budget.",
     ),
   conditionals: (details: readonly string[]) =>
     formatList(

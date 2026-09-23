@@ -7,7 +7,7 @@
 // accepted while echoed or embedded tokens are rejected, without gating on
 // NEMOCLAW_RUN_LIVE_E2E=1.
 
-import type { RetryFailureClass } from "../fixtures/retry-policy.ts";
+import type { RetryFailureClass } from "../../../tools/e2e/retry-evidence.mts";
 
 export interface OpenClawPostSwitchInferenceAttempt {
   exitCode: number | null;
@@ -59,6 +59,58 @@ export function agentReplyContainsToken(reply: string, expected: string): boolea
   const normalizedReply = reply.replace(/\s+/gu, "").toUpperCase();
   const normalizedExpected = expected.replace(/\s+/gu, "").toUpperCase();
   return normalizedExpected.length > 0 && normalizedReply === normalizedExpected;
+}
+
+/** Record zero only when Anthropic tools are absent or an empty array. */
+export function anthropicToolCount(tools: unknown): number | null {
+  if (tools === undefined) return 0;
+  return Array.isArray(tools) ? tools.length : null;
+}
+
+export interface OpenClawGatewayModelRunResult {
+  model: string;
+  provider: string;
+  text: string;
+  transport: "gateway";
+}
+
+/** Parse the stable JSON envelope emitted by `openclaw infer model run --gateway`. */
+export function parseOpenClawGatewayModelRun(raw: string): OpenClawGatewayModelRunResult | null {
+  let document: unknown;
+  try {
+    document = JSON.parse(raw.trim());
+  } catch {
+    return null;
+  }
+  if (!document || typeof document !== "object" || Array.isArray(document)) return null;
+  const record = document as Record<string, unknown>;
+  if (
+    record.ok !== true ||
+    record.capability !== "model.run" ||
+    record.transport !== "gateway" ||
+    typeof record.provider !== "string" ||
+    typeof record.model !== "string" ||
+    !Array.isArray(record.outputs)
+  ) {
+    return null;
+  }
+  const text = record.outputs
+    .map((output) =>
+      output &&
+      typeof output === "object" &&
+      typeof (output as { text?: unknown }).text === "string"
+        ? (output as { text: string }).text
+        : "",
+    )
+    .join("")
+    .trim();
+  if (!text) return null;
+  return {
+    model: record.model,
+    provider: record.provider,
+    text,
+    transport: "gateway",
+  };
 }
 
 // Baseline (mock-Anthropic) inference config the live target builds when

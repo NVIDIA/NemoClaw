@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   hostLocalInferenceReceipt,
   serializedLlamaCppHostLocalInferenceReceipt,
@@ -28,6 +28,13 @@ const captureOpenshellMock = vi.fn((args: string[]) => ({
     args[0] === "policy"
       ? "version: 1\nnetwork_policies: {}\n"
       : "alpha Ready\nbeta Ready\nId: beta-runtime-id\n",
+}));
+const readSandboxPolicyMock = vi.fn(() => ({
+  ok: true as const,
+  value: {
+    document: "version: 1\nnetwork_policies: {}\n",
+    appliedRevision: null,
+  },
 }));
 const getSandboxMock = vi.fn((name?: string) => harness.entries.get(name ?? "") ?? null);
 const registerSandboxMock = vi.fn(
@@ -143,18 +150,34 @@ vi.mock("../../adapters/docker", () => ({
   dockerRunDetached: vi.fn(),
 }));
 vi.mock("../../adapters/openshell/runtime", () => ({
+  buildOpenShellSubprocessEnv: vi.fn(() => ({})),
   captureOpenshell: captureOpenshellMock,
+  captureResolvedOpenshell: captureOpenshellMock,
   getOpenshellBinary: vi.fn(() => "openshell"),
-  runOpenshell: vi.fn(() => ({ status: 0, output: "" })),
+  runOpenshell: vi.fn((args: string[]) =>
+    args.join(" ") === "sandbox get -g nemoclaw beta"
+      ? {
+          status: 1,
+          stdout: "",
+          stderr:
+            "Error: code: 'Some requested entity was not found', message: \"sandbox not found\"",
+        }
+      : { status: 0, stdout: "", stderr: "" },
+  ),
+}));
+vi.mock("../../adapters/openshell/sandbox-policy-cli", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../adapters/openshell/sandbox-policy-cli")>()),
+  cliOpenShellSandboxPolicyReader: {
+    inspectSandboxPolicy: vi.fn(),
+    readSandboxPolicy: readSandboxPolicyMock,
+    readSandboxPolicyRevision: vi.fn(),
+  },
 }));
 vi.mock("../../credentials/store", () => ({
   deleteCredential: vi.fn(),
   getCredential: vi.fn(() => null),
   prompt: vi.fn(),
   saveCredential: vi.fn(),
-}));
-vi.mock("../../domain/sandbox/destroy", () => ({
-  getSandboxDeleteOutcome: vi.fn(() => ({ alreadyGone: false, gatewayUnreachable: false })),
 }));
 vi.mock("../../inference/gateway-route-compatibility", () => ({
   checkGatewayRouteCompatibility: vi.fn(() => ({ ok: true })),
@@ -169,6 +192,7 @@ vi.mock("../../inference/nim", () => ({
 }));
 vi.mock("../../messaging/channels", () => ({
   BUILT_IN_CHANNEL_MANIFESTS: [],
+  createBuiltInChannelManifestRegistry: vi.fn(() => ({ list: () => [] })),
   getMessagingConfigEnvAliases: vi.fn(() => ({})),
   getMessagingCredentialEnvKeysByChannel: vi.fn(() => ({})),
   getMessagingProviderSuffixesByChannel: vi.fn(() => ({})),
@@ -196,21 +220,8 @@ vi.mock("../../runtime-recovery", () => ({
   parseLiveSandboxNames: vi.fn(() => new Set(["alpha"])),
 }));
 vi.mock("../../sandbox/create-stream", () => ({ streamSandboxCreate: streamSandboxCreateMock }));
-vi.mock("../../shields", () => ({
-  get isShieldsDown() {
-    return true;
-  },
-  recoverCompletedAutoRestoreBeforeCommand: vi.fn(),
+vi.mock("../../sandbox/mutable-config-perms", () => ({
   repairMutableConfigPerms: vi.fn(() => ({ applied: true, verified: true, errors: [] })),
-  shieldsUp: vi.fn(),
-}));
-vi.mock("../../shields/timer-bound-lock", () => ({
-  withTimerBoundShieldsMutationLock: vi.fn((_sandbox, _command, fn) => fn()),
-}));
-vi.mock("../../shields/timer-control", () => ({
-  isProcessAlive: vi.fn(() => true),
-  readProcessStartIdentity: vi.fn(() => "snapshot-test-process-start"),
-  readTimerMarker: vi.fn(() => null),
 }));
 vi.mock("../../state/gateway", () => ({
   isGatewayHealthy: vi.fn(() => true),
@@ -246,7 +257,6 @@ vi.mock("../../state/sandbox", () => ({
   restoreSandboxState: restoreSandboxStateMock,
 }));
 vi.mock("./destroy", () => ({
-  cleanupShieldsDestroyArtifacts: vi.fn(),
   removeSandboxRegistryEntryOutcome: removeSandboxRegistryEntryOutcomeMock,
   requireSandboxDestructiveCleanupAuthority: vi.fn(() => ({ provider: runtimeProvider })),
 }));
@@ -265,6 +275,11 @@ vi.mock("./snapshot/dependencies", async (importOriginal) => ({
 }));
 
 describe("snapshot restore auto-create failures", () => {
+  beforeAll(async () => {
+    // Load the mocked action graph before measuring the individual cleanup operations.
+    await import("./snapshot");
+  }, 30_000);
+
   beforeEach(() => {
     vi.clearAllMocks();
     harness.entries.clear();
