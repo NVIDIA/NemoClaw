@@ -1457,6 +1457,7 @@ $$nemoclaw my-assistant gateway restart [--quiet|-q]
 ```
 
 On success, the command reports that the gateway was restarted, health passed, and forwards were checked or recovered.
+For OpenClaw, NemoClaw waits for `/readyz` to return HTTP `200` with JSON `{"ready":true}` before it repairs host-side forwards.
 It also checks the dashboard forward, messaging forward, and manifest-declared agent forwards.
 `--quiet` suppresses progress lines but still prints refusal diagnostics.
 NemoClaw invokes the agent's native lifecycle command through the selected OpenShell sandbox.
@@ -1477,7 +1478,8 @@ If the Hermes restart closes the OpenShell exec relay before it returns status, 
 
 <AgentOnly variant="openclaw,hermes">
 
-NemoClaw then verifies the agent health endpoint and repairs only the host-side OpenShell forwards.
+For OpenClaw, NemoClaw verifies the readiness endpoint before it repairs only the host-side OpenShell forwards.
+For Hermes, NemoClaw verifies the agent health endpoint before it repairs only the host-side OpenShell forwards.
 
 </AgentOnly>
 

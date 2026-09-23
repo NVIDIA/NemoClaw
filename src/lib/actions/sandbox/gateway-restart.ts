@@ -87,6 +87,7 @@ export type GatewayRestartDeps = {
   getSessionAgent: typeof agentRuntime.getSessionAgent;
   getSandbox: SandboxAgentLookup;
   resolveSandboxDashboardPort: (sandboxName: string) => number;
+  buildOpenClawReadinessProbeCommand: (sandboxName: string) => string;
   executeSandboxExecCommand: SandboxExec;
   waitForSandboxControlPlaneReady: (sandboxName: string) => Promise<boolean>;
   waitForRecoveredSandboxGateway: (
@@ -96,6 +97,7 @@ export type GatewayRestartDeps = {
       timeoutSeconds?: number;
       initialManagedHealthPassed?: boolean;
       managedProbeImpl?: (sandboxName: string) => boolean | null;
+      probeImpl?: (sandboxName: string) => Promise<boolean | null>;
     },
   ) => Promise<boolean>;
   ensureSandboxPortForward: (sandboxName: string) => boolean | Promise<boolean>;
@@ -363,6 +365,26 @@ function failedAuxiliaryRecoveryDetail(results: RestartAuxiliaryRecoveryResult[]
   return `gateway health passed but ${failed.join(", ")} could not be re-established`;
 }
 
+function openClawRestartReady(result: GatewayRestartCommandResult | null): boolean | null {
+  if (result === null) return null;
+  const output = result.stdout.trimEnd();
+  const separator = output.lastIndexOf("\n");
+  if (result.status !== 0 || separator < 0 || output.slice(separator + 1).trim() !== "200") {
+    return false;
+  }
+  try {
+    const document: unknown = JSON.parse(output.slice(0, separator));
+    return (
+      document !== null &&
+      typeof document === "object" &&
+      "ready" in document &&
+      document.ready === true
+    );
+  } catch {
+    return false;
+  }
+}
+
 export async function restartSandboxGatewayWithDeps(
   sandboxName: string,
   {
@@ -469,9 +491,23 @@ export async function restartSandboxGatewayWithDeps(
       quiet,
       initialManagedHealthPassed: false,
       managedProbeImpl: () => null,
+      ...(agentName === "openclaw"
+        ? {
+            probeImpl: async (name: string) => {
+              // Liveness stays green while OpenClaw refuses work during restart.
+              // Readiness checks the same admission fence as user requests.
+              const result = await deps.executeSandboxExecCommand(
+                name,
+                deps.buildOpenClawReadinessProbeCommand(name),
+                10_000,
+              );
+              return openClawRestartReady(result);
+            },
+          }
+        : {}),
     }))
   ) {
-    const detail = "gateway process restarted but health did not pass before timeout";
+    const detail = `gateway process restarted but ${agentName === "openclaw" ? "readiness" : "health"} did not pass before timeout`;
     printGatewayRestartFailure(sandboxName, "health timeout", detail);
     await deps.printGatewayWedgeDiagnostics(sandboxName, deps.executeSandboxExecCommand);
     return { ok: false, failureLayer: "health timeout", detail };

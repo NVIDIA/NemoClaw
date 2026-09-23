@@ -92,7 +92,7 @@ $$nemoclaw <sandbox-name> gateway restart
 ```
 
 The restart command invokes OpenClaw's native lifecycle command through the selected OpenShell sandbox.
-NemoClaw then verifies gateway health and checks or recovers host-side dashboard, messaging, and agent forwards.
+NemoClaw requires `/readyz` to return HTTP `200` with JSON `{"ready":true}` before it checks or recovers host-side dashboard, messaging, and agent forwards.
 Refer to [`$$nemoclaw <name> recover`](../../reference/commands#$$nemoclaw-name-recover) and [`$$nemoclaw <name> gateway restart`](../../reference/commands#$$nemoclaw-name-gateway-restart) for details.
 
 </AgentOnly>
