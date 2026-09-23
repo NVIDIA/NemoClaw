@@ -691,49 +691,79 @@ describe("OpenClaw post-upgrade recovery doctor", () => {
   it.each(["release", "restart"] as const)(
     "returns redacted startup logs when recovery fails during %s",
     async (stage) => {
+      const credential = `nvapi-${"a".repeat(64)}`;
+      const diagnostics = {
+        status: 0,
+        stdout: `gateway startup failed: restored plugin state is invalid\nAuthorization: Bearer ${credential}`,
+        stderr: "",
+      };
+      const executeSsh = vi.fn(async () => diagnostics);
       const execute = vi
         .fn()
         .mockResolvedValueOnce({ status: 0, stdout: "", stderr: "" })
-        .mockResolvedValueOnce({ status: stage === "release" ? 40 : 0, stdout: "", stderr: "" })
-        .mockResolvedValueOnce({ status: stage === "release" ? 40 : 0, stdout: "", stderr: "" })
-        .mockResolvedValue({ status: 42, stdout: "", stderr: "" });
+        .mockImplementation(async (_name: string, command: string) =>
+          command.includes("probe_url=")
+            ? stage === "release"
+              ? null
+              : diagnostics
+            : {
+                status: stage === "release" || command.includes("curl") ? 42 : 0,
+                stdout: "",
+                stderr: "",
+              },
+        );
       let now = 0;
       const collectFailureLogs = vi.fn(async () => [
         "[setup] OpenClaw post-upgrade offline restore released gateway launch",
         "[gateway] startup failed after restored-state validation",
       ]);
-      const collectRuntimeFailureLogs = vi.fn(async () => [
-        "gateway startup failed: restored plugin state is invalid",
-      ]);
-
-      await expect(
-        finishOpenClawPostRestoreDoctor(
-          {
-            sandboxName: "alpha",
-            runtimeSelection: { gatewayName: "recorded-gateway", workspace: "default" },
-          },
-          {
-            captureOpenshell: vi.fn() as never,
-            collectFailureLogs,
-            collectRuntimeFailureLogs,
-            executeSandboxExecCommand: execute,
-            now: () => now,
-            sleep: vi.fn(async () => {
-              now = 180_000;
-            }),
-          },
-        ),
-      ).resolves.toEqual({
+      const result = await finishOpenClawPostRestoreDoctor(
+        {
+          sandboxName: "alpha",
+          runtimeSelection: { gatewayName: "recorded-gateway", workspace: "default" },
+        },
+        {
+          captureOpenshell: vi.fn() as never,
+          collectFailureLogs,
+          executeSandboxCommand: executeSsh,
+          executeSandboxExecCommand: execute,
+          now: () => now,
+          sleep: vi.fn(async () => {
+            now = 180_000;
+          }),
+        },
+      );
+      expect(result).toEqual({
         ok: false,
         stage,
         detail: expect.stringMatching(
           /gateway startup failed: restored plugin state is invalid[\s\S]*\[gateway\] startup failed after restored-state validation/u,
         ),
       });
-      expect(collectRuntimeFailureLogs).toHaveBeenCalledExactlyOnceWith("alpha", {
-        gatewayName: "recorded-gateway",
-        workspace: "default",
-      });
+      expect(JSON.stringify(result)).not.toContain(credential);
+      expect(executeSsh.mock.calls).toEqual(
+        stage === "release"
+          ? [
+              [
+                "alpha",
+                expect.stringContaining("/tmp/nemoclaw-start.log"),
+                {
+                  timeout: 15_000,
+                  runtimeSelection: { gatewayName: "recorded-gateway", workspace: "default" },
+                },
+              ],
+            ]
+          : [],
+      );
+      expect(execute).toHaveBeenLastCalledWith(
+        "alpha",
+        expect.stringContaining("/tmp/nemoclaw-start.log"),
+        15_000,
+        {
+          localDockerFallbackPolicy: "never",
+          runtimeSelection: { gatewayName: "recorded-gateway", workspace: "default" },
+        },
+      );
       expect(collectFailureLogs).toHaveBeenCalledExactlyOnceWith("alpha", {
         kind: "named",
         gatewayName: "recorded-gateway",

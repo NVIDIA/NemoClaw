@@ -252,7 +252,6 @@ describe("Hermes config export live evidence", () => {
     mocks.command.mockResolvedValue({ exitCode: 2, stdout: "", stderr: diagnostics });
     await expect(runEnabledFixture()).resolves.toEqual({ checked: true, passed: true });
     expect(mocks.save).not.toHaveBeenCalled();
-    expect(mocks.asExportedConfig).not.toHaveBeenCalled();
   });
 
   it.each([

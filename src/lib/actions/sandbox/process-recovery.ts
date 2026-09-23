@@ -333,6 +333,7 @@ interface OpenClawPostRestoreDoctorDeps {
     runtimeSelection?: OpenShellRuntimeSelection,
   ) => Promise<string[]>;
   executePrivilegedSandboxCommand?: typeof executePrivilegedSandboxCommand;
+  executeSandboxCommand?: typeof executeSandboxCommand;
   executeSandboxExecCommand: typeof executeSandboxExecCommand;
   lookupSandbox?: CliOpenShellSandboxLookup;
   now: () => number;
@@ -401,24 +402,31 @@ async function collectOpenClawRuntimeFailureLogs(
 ): Promise<string[]> {
   try {
     const probeUrl = shellQuote(resolveSandboxHealthProbeUrl(sandboxName));
-    const result = await executeOpenClawDoctorGateCommand(
+    const command = [
+      `probe_url=${probeUrl}`,
+      'ambient_code="$(curl -so /dev/null -w \'%{http_code}\' --max-time 3 "$probe_url" 2>/dev/null)"',
+      'ambient_status="$?"',
+      "direct_code=\"$(curl --noproxy '*' -so /dev/null -w '%{http_code}' --max-time 3 \"$probe_url\" 2>/dev/null)\"",
+      'direct_status="$?"',
+      'printf \'[nemoclaw-health-probe] url=%s ambient_status=%s ambient_http=%s direct_status=%s direct_http=%s\\n\' "$probe_url" "$ambient_status" "$ambient_code" "$direct_status" "$direct_code"',
+      "if command -v ss >/dev/null 2>&1; then ss -ltn 2>/dev/null; elif command -v netstat >/dev/null 2>&1; then netstat -ltn 2>/dev/null; fi",
+      'for log_path in /tmp/gateway.log /tmp/nemoclaw-start.log; do printf "==> %s <==\\n" "$log_path"; tail -c 8192 "$log_path" 2>/dev/null | tail -n 24; done',
+      'startup_status=0; startup_count="$(pgrep -fc \'/[n]emoclaw-start(\\.sh)?([[:space:]]|$)\' 2>/dev/null)" || startup_status=$?; printf "[nemoclaw-maintenance] startup_status=%s startup_count=%s\\n" "$startup_status" "$startup_count"',
+      'for state_path in /sandbox/.openclaw /sandbox/.openclaw/.nemoclaw-post-upgrade-doctor /tmp/nemoclaw-post-upgrade-doctor-ready; do printf "[nemoclaw-maintenance] %s " "$state_path"; stat -c "type=%F uid=%u gid=%g mode=%a links=%h" "$state_path" 2>/dev/null || printf "absent\\n"; done',
+    ].join("; ");
+    let result = await executeOpenClawDoctorGateCommand(
       deps,
       sandboxName,
-      [
-        `probe_url=${probeUrl}`,
-        'ambient_code="$(curl -so /dev/null -w \'%{http_code}\' --max-time 3 "$probe_url" 2>/dev/null)"',
-        'ambient_status="$?"',
-        "direct_code=\"$(curl --noproxy '*' -so /dev/null -w '%{http_code}' --max-time 3 \"$probe_url\" 2>/dev/null)\"",
-        'direct_status="$?"',
-        'printf \'[nemoclaw-health-probe] url=%s ambient_status=%s ambient_http=%s direct_status=%s direct_http=%s\\n\' "$probe_url" "$ambient_status" "$ambient_code" "$direct_status" "$direct_code"',
-        "if command -v ss >/dev/null 2>&1; then ss -ltn 2>/dev/null; elif command -v netstat >/dev/null 2>&1; then netstat -ltn 2>/dev/null; fi",
-        "tail -c 8192 /tmp/gateway.log /tmp/nemoclaw-start.log 2>/dev/null || true",
-        'startup_status=0; startup_count="$(pgrep -fc \'/[n]emoclaw-start(\\.sh)?([[:space:]]|$)\' 2>/dev/null)" || startup_status=$?; printf "[nemoclaw-maintenance] startup_status=%s startup_count=%s\\n" "$startup_status" "$startup_count"',
-        'for state_path in /sandbox/.openclaw /sandbox/.openclaw/.nemoclaw-post-upgrade-doctor /tmp/nemoclaw-post-upgrade-doctor-ready; do printf "[nemoclaw-maintenance] %s " "$state_path"; stat -c "type=%F uid=%u gid=%g mode=%a links=%h" "$state_path" 2>/dev/null || printf "absent\\n"; done',
-      ].join("; "),
+      command,
       15_000,
       runtimeSelection,
     );
+    if (!result?.stdout.trim() && deps.executeSandboxCommand) {
+      result = await deps.executeSandboxCommand(sandboxName, command, {
+        timeout: 15_000,
+        ...(runtimeSelection ? { runtimeSelection } : {}),
+      });
+    }
     if (!result?.stdout.trim()) return [];
     return result.stdout.split("\n").map(sanitizeWedgeLogLine).filter(Boolean).slice(-60);
   } catch {
@@ -1182,6 +1190,7 @@ export async function finishOpenClawPostRestoreDoctor(
 
 const OPENCLAW_UNREGISTERED_POST_RESTORE_DOCTOR_DEPS: OpenClawPostRestoreDoctorDeps = {
   captureOpenshell,
+  executeSandboxCommand,
   executeSandboxExecCommand,
   now: Date.now,
   sleep: sleepSeconds,
