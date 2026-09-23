@@ -1,6 +1,13 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import {
+  liveE2eManagedImageCatalog,
+  readLiveE2eManagedImageCatalogContracts,
+} from "../../../src/lib/onboard/workload/preparation.ts";
+import { DEFAULT_CLOUD_MODEL } from "../../../src/lib/inference/config.ts";
+import { getSandbox } from "../../../src/lib/state/registry.ts";
+
 import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
 import { shellQuote } from "../../../src/lib/core/shell-quote.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
@@ -43,8 +50,8 @@ function nativePluginInstallScript(): string {
   ].join("\n");
 }
 
-test(
-  "rebuild-openclaw restores durable state and native readiness",
+test.for(["managed-image", "external-image"] as const)(
+  "rebuild-openclaw restores durable state and native readiness from %s",
   {
     timeout: testTimeout(45 * 60_000),
     meta: {
@@ -57,8 +64,11 @@ test(
       ],
     },
   },
-  async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox, secrets }) => {
-    const hosted = requireHostedInferenceConfig(secrets);
+  async (
+    imageSource,
+    { artifacts, cleanup, host, progress, runtimeProvider, sandbox, secrets },
+  ) => {
+    const hosted = requireHostedInferenceConfig(secrets, { model: DEFAULT_CLOUD_MODEL });
     const env = {
       ...buildAvailabilityProbeEnv(),
       ...hosted.env,
@@ -70,6 +80,13 @@ test(
       NEMOCLAW_SANDBOX_NAME: SANDBOX_NAME,
       OPENSHELL_GATEWAY: process.env.OPENSHELL_GATEWAY ?? "nemoclaw",
     };
+    const publishedImage = readLiveE2eManagedImageCatalogContracts(
+      liveE2eManagedImageCatalog(process.env)!,
+    ).get("openclaw")!.reference;
+    Object.assign(
+      env,
+      imageSource === "external-image" ? { NEMOCLAW_FROM_IMAGE: publishedImage } : {},
+    );
     const redactions = [hosted.apiKey];
 
     await artifacts.target.declare({
@@ -114,6 +131,11 @@ test(
     });
     assertExitZero(install, "OpenClaw rebuild install");
 
+    await artifacts.writeJson("published-image-registration.json", {
+      requestedImage: publishedImage,
+      imageSource,
+      sandbox: getSandbox(SANDBOX_NAME),
+    });
     progress.phase("write durable OpenClaw state");
     const marker = `rebuild-openclaw-${Date.now()}`;
     const write = await sandbox.execShell(
@@ -140,7 +162,7 @@ test(
       timeoutMs: 20 * 60_000,
     });
     assertExitZero(rebuild, "rebuild OpenClaw sandbox");
-    expect(resultText(rebuild)).toContain(`Sandbox '${SANDBOX_NAME}' rebuild completed`);
+    expect(getSandbox(SANDBOX_NAME)?.imageTag).toBe(publishedImage);
 
     progress.phase("verify restored state and native readiness");
     await waitForNativeOpenClaw(sandbox, redactions);

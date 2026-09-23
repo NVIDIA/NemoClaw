@@ -325,6 +325,7 @@ export interface RuntimeProviderWorkloadProfile {
   readonly hostArchitectures: readonly string[];
   readonly managedImageSelectionPolicy: ManagedImageSelectionPolicy;
   readonly legacyDockerfileBuilds: boolean;
+  readonly externalImages?: boolean;
 }
 
 export type RuntimeProviderDoctorCheck = {

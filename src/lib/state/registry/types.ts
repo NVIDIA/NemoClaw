@@ -167,6 +167,7 @@ export interface SandboxEntry extends Partial<InferenceSelection> {
 }
 
 export type SandboxWorkloadReceipt =
+  | import("../../onboard/workload/external-image").ExternalImageReceipt
   | {
       readonly schemaVersion: 1;
       readonly kind: "managed-image";

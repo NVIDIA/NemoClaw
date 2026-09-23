@@ -287,7 +287,14 @@ export async function upgradeSandboxes(
 
   const sandboxes = registry
     .listSandboxes()
-    .sandboxes.filter((sandbox) => registry.isPublishedSandboxRegistration(sandbox));
+    .sandboxes.filter((sandbox) => registry.isPublishedSandboxRegistration(sandbox))
+    .filter((sandbox) => {
+      if (sandbox.workload?.kind !== "external-image") return true;
+      console.log(
+        `  ${sandbox.name}: external image is pinned and publisher-managed; no automatic upgrade.`,
+      );
+      return false;
+    });
   if (sandboxes.length === 0) {
     console.log("  No sandboxes found in the registry.");
     return;

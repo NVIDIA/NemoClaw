@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { cloneExternalImageReceipt } from "../../onboard/workload/external-image";
 import { Buffer } from "node:buffer";
 import { createHash } from "node:crypto";
 
@@ -73,6 +74,7 @@ export function cloneSandboxWorkloadReceipt(
   value: SandboxWorkloadReceipt | undefined,
 ): SandboxWorkloadReceipt | undefined {
   if (!value || value.schemaVersion !== 1) return undefined;
+  if (value.kind === "external-image") return cloneExternalImageReceipt(value);
   if (value.kind === "native-artifact") {
     try {
       return parseNativeArtifactWorkloadReceiptV1(value);

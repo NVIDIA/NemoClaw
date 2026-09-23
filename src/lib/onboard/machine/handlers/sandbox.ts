@@ -109,6 +109,8 @@ import {
   sameRegistryMessagingAuthority,
 } from "./sandbox-messaging";
 import {
+  assertExternalImageReuse,
+  externalImageCreateFields,
   decideSandboxResume,
   hasCompatibleEndpointReasoningDrift,
   hasHermesCompatibleAnthropicInferenceRouteDrift,
@@ -759,6 +761,11 @@ class SandboxStateFlow<
     const registryEntry = state.sandboxName
       ? this.deps.getSandboxRegistryEntry(state.sandboxName)
       : null;
+    assertExternalImageReuse(
+      state.session?.metadata?.fromImage ?? null,
+      registryEntry,
+      this.options.recreateSandbox(false),
+    );
     const messagingAuthority = state.sandboxName
       ? this.resolveSandboxMessagingAuthority(state.sandboxName, state.session)
       : { source: "none" as const, plan: null };
@@ -917,6 +924,7 @@ class SandboxStateFlow<
         compatibleEndpointReasoningForCreateIntent(this.options.compatibleEndpointReasoning),
       ),
       this.options.fromDockerfile ?? "",
+      ...Object.values(externalImageCreateFields(this.options.session?.metadata?.fromImage)),
       JSON.stringify(this.options.sandboxGpuConfig ?? null),
       [...this.options.hermesToolGateways].sort().join(","),
     ].join("|");
@@ -1862,6 +1870,7 @@ class SandboxStateFlow<
       recreate: requiresSandboxRecreation(decision, this.options.recreateSandbox(false)),
       ...apfCreateIntentFields(this.options.apfInterceptorRequested === true),
       toolDisclosure: toolDisclosureOrDefault(state.session?.toolDisclosure),
+      ...externalImageCreateFields(state.session?.metadata?.fromImage),
       observabilityEnabled: state.session?.observabilityEnabled === true,
       ...(reuseRegisteredCredentials ? { reuseRegisteredCredentials: true as const } : {}),
       ...(this.options.endpointUrl ? { endpointUrl: this.options.endpointUrl } : {}),

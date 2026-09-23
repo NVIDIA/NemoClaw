@@ -50,6 +50,7 @@ import type { SelectionDrift } from "./selection-drift";
 import type { VerifiedSandboxCreateBoundary } from "./types";
 import { applyOnboardVmDnsMonkeypatch } from "./vm-dns-monkeypatch";
 import { OnboardRestoreSnapshotDriftError } from "./session-bootstrap";
+import { verifyExternalOpenClawModel } from "./workload/external-image";
 
 export type CreatedSandboxFinalizationOptions = {
   sandboxName: string;
@@ -66,6 +67,7 @@ export type CreatedSandboxFinalizationOptions = {
 };
 
 export type CreatedSandboxFinalizationDeps = {
+  verifyExternalImage?(): Promise<void>;
   revalidateSandboxIdentity?(operation: string): void;
   restoreRecreatedSandboxState(
     sandboxName: string,
@@ -708,7 +710,7 @@ export function createOnboardCreatedSandboxCompletion(
         restoreBackupPath,
         preUpgradeBackup: pendingStateRestoreBackupPath !== null,
         targetAgentType: agent?.name ?? "openclaw",
-        customImage: Boolean(fromDockerfile),
+        customImage: Boolean(fromDockerfile) || workload.source.kind === "external-image",
         validateManagedDcode: agentFlags.isManagedDcodeAgent,
         provider,
         model,
@@ -729,7 +731,7 @@ export function createOnboardCreatedSandboxCompletion(
           : {}),
         runtimeFields,
         agent,
-        agentVersionKnown: !fromDockerfile,
+        agentVersionKnown: !fromDockerfile && workload.source.kind !== "external-image",
         portableLifecycle,
         toolDisclosure: sandboxRegistrationOptions.toolDisclosure,
         observabilityEnabled: createIntent?.observabilityEnabled === true,
@@ -788,6 +790,19 @@ export function createOnboardCreatedSandboxCompletion(
         commandExecutor,
         () => gateway.gatewayName,
       ),
+      ...(workload.source.kind === "external-image" &&
+      workload.source.receipt.agent === "openclaw" &&
+      model.trim() !== ""
+        ? {
+            verifyExternalImage: () =>
+              verifyExternalOpenClawModel({
+                sandboxName,
+                gatewayName: gateway.gatewayName,
+                model,
+                commandExecutor,
+              }),
+          }
+        : {}),
       note,
       error: console.error,
       exitProcess: (code) => process.exit(code),
@@ -960,6 +975,7 @@ export async function finalizeCreatedSandbox(
   }
 
   deps.revalidateSandboxIdentity?.(`registering sandbox '${options.sandboxName}'`);
+  await deps.verifyExternalImage?.();
   if (preparedRegistration) {
     preparedRegistration = await deps.revalidatePreparedRegistration!(preparedRegistration);
   }

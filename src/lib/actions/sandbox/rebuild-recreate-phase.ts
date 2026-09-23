@@ -182,6 +182,7 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
         metadata: {
           gatewayName: recreateOptions.targetGatewayName,
           fromDockerfile: storedFromDockerfile,
+          ...(recreateOptions.fromImage ? { fromImage: recreateOptions.fromImage } : {}),
           ...(recreateOptions.hostMounts && recreateOptions.hostMounts.length > 0
             ? { hostMounts: cloneSandboxHostMounts(recreateOptions.hostMounts) }
             : {}),
@@ -204,6 +205,7 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
     s.hermesToolGateways = rebuildsHermesSandbox ? rebuildHermesToolGateways : [];
     s.gpuPassthrough = rebuildGpuOverrides.sessionGpuPassthrough;
     s.metadata.fromDockerfile = storedFromDockerfile;
+    s.metadata.fromImage = recreateOptions.fromImage ?? null;
     s.provider = resumeConfig.provider;
     s.model = resumeConfig.model;
     s.nimContainer = resumeConfig.nimContainer;

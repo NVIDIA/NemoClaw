@@ -220,6 +220,24 @@ describe("resolveOnboardEntryOptions", () => {
     expect(deps.validateName).toHaveBeenCalledWith("Demo-Box", "sandbox name");
   });
 
+  it("requires an explicit sandbox name for non-interactive prebuilt images", () => {
+    const deps = createDeps();
+    expect(() =>
+      resolveOnboardEntryOptions(
+        {
+          opts: { fromImage: `ghcr.io/example/harness@sha256:${"a".repeat(64)}` },
+          env: {},
+          stdinIsTty: false,
+          stdoutIsTty: false,
+        },
+        deps,
+      ),
+    ).toThrow(ExitError);
+    expect(deps.error).toHaveBeenCalledWith(
+      expect.stringContaining("--from-image <repository>@<digest> requires --name"),
+    );
+  });
+
   it("requires a sandbox name for --from when prompts are unavailable", () => {
     const deps = createDeps();
 

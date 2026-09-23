@@ -747,6 +747,16 @@ describe("managed workload onboard orchestration", () => {
 
   it.each([
     {
+      behavior: "launches an external digest without staging or building an image",
+      agentName: "openclaw",
+      fromDockerfile: null,
+      preparedBuildContext: null,
+      expectedFromDockerfile: null,
+      expectedStageCalls: 0,
+      expectedRawCreate: false,
+      externalImage: true,
+    },
+    {
       behavior: "stages a fresh LangChain Deep Agents Code build before resolving patch metadata",
       agentName: "langchain-deepagents-code",
       fromDockerfile: dcodeDockerfile,
@@ -822,11 +832,17 @@ describe("managed workload onboard orchestration", () => {
         ensurePreparedProfile: vi.fn(),
       },
       workload: {
-        source: {
-          kind: "legacy-dockerfile",
-          dockerfilePath: fromDockerfile,
-          reason: "runtime-unsupported",
-        },
+        source: testCase.externalImage
+          ? {
+              kind: "external-image",
+              reference: `ghcr.io/example/harness@sha256:${"a".repeat(64)}`,
+              receipt: { imageId: `sha256:${"b".repeat(64)}` },
+            }
+          : {
+              kind: "legacy-dockerfile",
+              dockerfilePath: fromDockerfile,
+              reason: "runtime-unsupported",
+            },
         release: "v0.0.0",
         fallbackDiagnostic: null,
       },
@@ -881,8 +897,15 @@ describe("managed workload onboard orchestration", () => {
       },
     } as unknown as Parameters<typeof prepareOnboardSandboxWorkloadLaunch>[0]);
 
-    expect(resolvePatchInput).toHaveBeenCalledOnce();
-    expect(resolveSandboxBuildPatch).toHaveBeenCalledOnce();
+    expect(resolvePatchInput).toHaveBeenCalledTimes(testCase.externalImage ? 0 : 1);
+    expect(resolveSandboxBuildPatch).toHaveBeenCalledTimes(testCase.externalImage ? 0 : 1);
+    expect(materializeSandboxCreatePlan).toHaveBeenCalledWith(
+      expect.objectContaining({
+        fromRef: testCase.externalImage
+          ? `ghcr.io/example/harness@sha256:${"a".repeat(64)}`
+          : `${stagedContext.buildCtx}/Dockerfile`,
+      }),
+    );
     expect(materializeSandboxCreatePlan).toHaveBeenCalledWith(
       expect.objectContaining({ portableLifecycle: testCase.portableLifecycle === true }),
     );

@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { prepareExternalImage } from "../../onboard/workload/external-image";
 import { randomUUID } from "node:crypto";
 import type { OpenShellRuntimeSelection } from "../../adapters/openshell/runtime-selection";
 import { CLI_NAME } from "../../cli/branding";
@@ -230,6 +231,22 @@ export async function prepareRebuildTargetPreflights(args: {
     const runtime = resolveSandboxWorkloadRuntimeCapabilities({
       driverName: runtimeProvider.identity.id,
     });
+    if (sandboxEntry.workload?.kind === "external-image") {
+      const receipt = prepareExternalImage({
+        reference: sandboxEntry.workload.reference,
+        agent: rebuildAgent ?? "openclaw",
+        provider: runtimeProvider,
+        requestedToolDisclosure: durableConfig.toolDisclosure,
+      });
+      if (
+        receipt.imageId !== sandboxEntry.workload.imageId ||
+        receipt.platform !== sandboxEntry.workload.platform
+      )
+        throw new Error(
+          "External image identity changed; rebuild refused before deleting the sandbox.",
+        );
+      recreateOptions.fromImage = receipt.reference;
+    }
     managedWorkloadRebuildCatalog = await prepareManagedWorkloadRebuildHandoff(sandboxEntry, {
       runtime,
       provider: runtimeProvider,
@@ -343,7 +360,8 @@ export async function prepareRebuildTargetPreflights(args: {
   }
 
   const rebuildsDcodeSandbox = isDcodeRebuildAgent(rebuildAgent);
-  const rebuildsManagedWorkload = recreateOptions.managedWorkloadRebuild !== undefined;
+  const rebuildsManagedWorkload =
+    recreateOptions.managedWorkloadRebuild !== undefined || Boolean(recreateOptions.fromImage);
   const baseImagePreflight =
     rebuildsDcodeSandbox || rebuildsManagedWorkload
       ? { ok: true, imageRef: null, overrideEnvVar: null }

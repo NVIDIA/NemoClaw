@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { requireExternalImageReference } from "./workload/external-image";
+
 import { isNonInteractiveEnv } from "../core/non-interactive";
 import { getNameValidationGuidance } from "../name-validation";
 export { enforceRemovedImmutabilityMigrationBoundary } from "../state/migrations/removed-immutability";
@@ -24,6 +26,7 @@ export interface OnboardEntryOptionsInput {
     resume?: boolean;
     fresh?: boolean;
     fromDockerfile?: string | null;
+    fromImage?: string | null;
     sandboxName?: string | null;
   };
   env: NodeJS.ProcessEnv | Record<string, string | undefined>;
@@ -378,6 +381,10 @@ export function resolveOnboardEntryOptions(
   const requestedFromDockerfile =
     input.opts.fromDockerfile ||
     (deps.isNonInteractive() ? input.env.NEMOCLAW_FROM_DOCKERFILE || null : null);
+  const requestedFromImage = input.opts.fromImage ?? input.env.NEMOCLAW_FROM_IMAGE ?? null;
+  if (requestedFromImage !== null) requireExternalImageReference(requestedFromImage);
+  if (requestedFromImage && requestedFromDockerfile)
+    throw new Error("--from and --from-image cannot both be set.");
   const cannotPrompt = deps.isNonInteractive() || !input.stdinIsTty || !input.stdoutIsTty;
   let requestedSandboxName: string | null =
     typeof input.opts.sandboxName === "string" && input.opts.sandboxName.length > 0
@@ -482,9 +489,14 @@ export function resolveOnboardEntryOptions(
       deps.exitProcess(1);
     }
   }
-  if (cannotPrompt && !resume && requestedFromDockerfile && !requestedSandboxName) {
+  if (
+    cannotPrompt &&
+    !resume &&
+    (requestedFromDockerfile || requestedFromImage) &&
+    !requestedSandboxName
+  ) {
     deps.error(
-      "  --from <Dockerfile> requires --name <sandbox> (or NEMOCLAW_SANDBOX_NAME) when running without a TTY or with --non-interactive.",
+      `  ${requestedFromImage ? "--from-image <repository>@<digest>" : "--from <Dockerfile>"} requires --name <sandbox> (or NEMOCLAW_SANDBOX_NAME) when running without a TTY or with --non-interactive.`,
     );
     deps.error("  A sandbox name cannot be prompted for in this context.");
     deps.exitProcess(1);

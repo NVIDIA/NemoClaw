@@ -71,7 +71,14 @@ export interface PortableAgentRuntimeWorkloadSource {
   readonly contract: PortableAgentRuntimeContractV1;
 }
 
+export interface ExternalImageWorkloadSource {
+  readonly kind: "external-image";
+  readonly reference: string;
+  readonly receipt: import("./external-image").ExternalImageReceipt;
+}
+
 export type SandboxWorkloadSource =
+  | ExternalImageWorkloadSource
   | LegacyDockerfileWorkloadSource
   | ManagedImageWorkloadSource
   | PortableAgentRuntimeWorkloadSource;

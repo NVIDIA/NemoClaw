@@ -1,6 +1,13 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import type { OpenShellComputePlan } from "../compute/plan";
+import {
+  CURRENT_RUNTIME_PROVIDER_BUNDLES,
+  resolveRuntimeProviderBundle,
+} from "../runtime-provider/access";
+import { prepareExternalImage } from "./external-image";
+
 import fs from "node:fs";
 import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
@@ -568,4 +575,25 @@ export async function prepareSandboxWorkloadSource(
     release,
     fallbackDiagnostic: null,
   };
+}
+
+export function prepareOnboardExternalImage(input: {
+  reference?: string | null;
+  agentName: string;
+  computePlan: OpenShellComputePlan;
+  requestedToolDisclosure: import("../../tool-disclosure").ToolDisclosure | null;
+}) {
+  if (!input.reference) return null;
+  const provider = resolveRuntimeProviderBundle(
+    input.computePlan.driverName,
+    CURRENT_RUNTIME_PROVIDER_BUNDLES,
+  );
+  if (!provider)
+    throw new Error("External image onboarding requires a supported runtime provider.");
+  return prepareExternalImage({
+    reference: input.reference,
+    agent: input.agentName,
+    provider,
+    requestedToolDisclosure: input.requestedToolDisclosure,
+  });
 }

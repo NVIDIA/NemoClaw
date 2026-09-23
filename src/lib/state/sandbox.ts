@@ -3283,11 +3283,12 @@ export function hasPositiveManagedImageEvidence(
  * row may proceed only with per-row operator authorization.
  */
 export function isManagedImageRecoveryAllowed(
-  sandbox: Pick<registry.SandboxEntry, "nemoclawVersion" | "fromDockerfile">,
+  sandbox: Pick<registry.SandboxEntry, "nemoclawVersion" | "fromDockerfile" | "workload">,
   allowLegacyManagedImageRecovery: boolean,
 ): boolean {
   const hasNoCustomImageEvidence =
-    sandbox.fromDockerfile === undefined || sandbox.fromDockerfile === null;
+    sandbox.workload?.kind !== "external-image" &&
+    (sandbox.fromDockerfile === undefined || sandbox.fromDockerfile === null);
   return (
     hasNoCustomImageEvidence &&
     (hasPositiveManagedImageEvidence(sandbox) || allowLegacyManagedImageRecovery)

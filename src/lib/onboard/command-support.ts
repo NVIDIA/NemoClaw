@@ -47,7 +47,7 @@ function agentFlagDescription(): string {
 }
 
 export const onboardUsage = [
-  `onboard [--profile <name>] [--non-interactive] [--resume | --fresh] [--recreate-sandbox] [--apf-interceptor] [--gpu | --no-gpu] [--from <Dockerfile>] [--name <sandbox>] [--host-mount <host:/sandbox/path>] [--sandbox-gpu | --no-sandbox-gpu] [--sandbox-gpu-device <device>] [--vllm-gpu-device <index-or-uuid>] [--agent <name>] [--agents <agents.yaml>] [--tool-disclosure <progressive|direct>] [--observability | --no-observability] [--control-ui-port <N>] [--events=jsonl] [--yes | -y] [--no-ollama-autostart] [${NOTICE_ACCEPT_FLAG}]`,
+  `onboard [--profile <name>] [--non-interactive] [--resume | --fresh] [--recreate-sandbox] [--apf-interceptor] [--gpu | --no-gpu] [--from <Dockerfile> | --from-image <repository>@<digest>] [--name <sandbox>] [--host-mount <host:/sandbox/path>] [--sandbox-gpu | --no-sandbox-gpu] [--sandbox-gpu-device <device>] [--vllm-gpu-device <index-or-uuid>] [--agent <name>] [--agents <agents.yaml>] [--tool-disclosure <progressive|direct>] [--observability | --no-observability] [--control-ui-port <N>] [--events=jsonl] [--yes | -y] [--no-ollama-autostart] [${NOTICE_ACCEPT_FLAG}]`,
 ];
 
 export const onboardExamples = [
@@ -74,6 +74,7 @@ export type OnboardFlags = {
   gpu?: boolean;
   "no-gpu"?: boolean;
   from?: string;
+  "from-image"?: string;
   name?: string;
   "host-mount"?: string[];
   "sandbox-gpu"?: boolean;
@@ -120,7 +121,14 @@ export function buildOnboardFlags(options: { includeEvents?: boolean } = {}): Re
       description: "Disable GPU passthrough even when an NVIDIA GPU is detected",
       exclusive: ["gpu", "sandbox-gpu"],
     }),
-    from: Flags.string({ description: "Path to a Dockerfile to use as the sandbox image source" }),
+    from: Flags.string({
+      description: "Path to a Dockerfile to use as the sandbox image source",
+      exclusive: ["from-image"],
+    }),
+    "from-image": Flags.string({
+      description: "Published OpenClaw or Hermes image pinned by digest",
+      exclusive: ["from"],
+    }),
     name: Flags.string({ description: "Sandbox name" }),
     "host-mount": Flags.string({
       description:

@@ -280,6 +280,7 @@ function acceptsReceipt(
 ): boolean {
   if (!receipt) return true;
   if (receipt.kind === "legacy-dockerfile") return profile.legacyDockerfileBuilds;
+  if (receipt.kind === "external-image") return profile.externalImages === true;
   if (receipt.kind === "native-artifact") return false;
   if (receipt.platform === undefined) return false;
   return (
@@ -387,9 +388,10 @@ export function createDockerRuntimeProviderBundle(
     workload: {
       providerId,
       supported: true,
-      profile: COMPLETE_MANAGED_IMAGE_V1_PROFILE,
+      profile: { ...COMPLETE_MANAGED_IMAGE_V1_PROFILE, externalImages: true },
       managedStateMountDriverId: "docker",
-      acceptsReceipt: (receipt) => acceptsReceipt(COMPLETE_MANAGED_IMAGE_V1_PROFILE, receipt),
+      acceptsReceipt: (receipt) =>
+        acceptsReceipt({ ...COMPLETE_MANAGED_IMAGE_V1_PROFILE, externalImages: true }, receipt),
     },
     hostLocalInference: {
       providerId,

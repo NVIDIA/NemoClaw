@@ -74,6 +74,16 @@ const RECREATE_SELECTIONS: [string, OnboardFlags, Record<string, string>][] = [
 ];
 
 describe("onboard command options", () => {
+  it("selects a digest-pinned external image from the flag or environment", () => {
+    const image = `ghcr.io/example/harness@sha256:${"a".repeat(64)}`;
+    expect(resolve({ "from-image": image }).fromImage).toBe(image);
+    expect(resolve({}, { env: { NEMOCLAW_FROM_IMAGE: image } }).fromImage).toBe(image);
+    expect(() => resolve({ "from-image": "ubuntu:latest" })).toThrow("requires a repository");
+    expect(() =>
+      resolve({ "from-image": image }, { env: { NEMOCLAW_FROM_DOCKERFILE: "/tmp/Dockerfile" } }),
+    ).toThrow("exit:1");
+  });
+
   it("records only explicit APF interceptor selection (#9833)", () => {
     expect(resolve({ "apf-interceptor": true }).apfInterceptorRequested).toBe(true);
     expect(resolve({}).apfInterceptorRequested).toBeNull();

@@ -95,6 +95,7 @@ type ManagedProfileInput = Omit<
 type ResolveBuildPatchInput = Parameters<typeof resolveSandboxBuildPatch>[0];
 type SandboxInferenceConfig = import("../../inference/config").SandboxInferenceConfig;
 export { normalizeRuntimeProviderIdentity };
+export { prepareOnboardExternalImage } from "../workload/preparation";
 
 export type ManagedStateVolumeOnboardLifecycle = {
   readonly roots: readonly import("../managed-startup/state-roots").ManagedStartupStateRoot[];
@@ -154,6 +155,7 @@ export interface CreateManagedWorkloadOnboardRuntimeInput {
   readonly agentName: string;
   readonly legacyDockerfilePath: string;
   readonly customDockerfilePath: string | null;
+  readonly externalImage?: import("../workload/external-image").ExternalImageReceipt | null;
   readonly rootDir: string;
   readonly model: string | null;
   readonly provider: string | null;
@@ -229,6 +231,8 @@ export async function prepareHermesPortableSandboxWorkloadForLifecycle(
   expectedDockerfilePath: string,
 ): Promise<PreparedSandboxWorkloadSource> {
   const workload = await runtime.ensurePreparedWorkload();
+  if (workload.source.kind === "external-image")
+    throw new Error("Portable onboarding cannot use an external image.");
   if (workload.source.kind === "managed-image") {
     throw new Error(
       "Hermes portable onboarding cannot use managed-image bootstrap because that path requires Docker lifecycle operations.",
@@ -285,6 +289,17 @@ export function createManagedWorkloadOnboardRuntime(
   let preparedProfile: BuiltManagedStartupOnboardProfile | null = null;
 
   const ensurePreparedWorkload = async (): Promise<PreparedSandboxWorkloadSource> => {
+    if (input.externalImage) {
+      return {
+        source: {
+          kind: "external-image",
+          reference: input.externalImage.reference,
+          receipt: input.externalImage,
+        },
+        release: null,
+        fallbackDiagnostic: null,
+      };
+    }
     const liveCatalogRevision = input.stockManagedRuntime
       ? liveE2eManagedImageRevision(input.startupProfile.environment)
       : null;
@@ -487,7 +502,8 @@ export async function prepareOnboardSandboxWorkloadLaunch(
         )
       : null;
   const fromRef =
-    input.workload.source.kind === "managed-image"
+    input.workload.source.kind === "managed-image" ||
+    input.workload.source.kind === "external-image"
       ? input.workload.source.reference
       : `${requireLegacyBuildContext(legacyBuildContext).buildCtx}/Dockerfile`;
   const messagingTokenDefs = await input.plan.rebindMessagingTokenDefs();
@@ -567,6 +583,17 @@ export async function prepareOnboardSandboxWorkloadLaunch(
       launch: {
         ...managedLaunch,
         prebuild: { imageRef: null, imageId: null },
+      },
+    };
+  } else if (input.workload.source.kind === "external-image") {
+    prepared = {
+      createRequest: createPlan.createRequest,
+      launch: {
+        ...prepareSandboxRuntimeLaunch({
+          ...launchInput,
+          policyAttached: Boolean(createPlan.createRequest.policyPath),
+        }),
+        prebuild: { imageRef: null, imageId: input.workload.source.receipt.imageId },
       },
     };
   } else {
@@ -686,6 +713,12 @@ export function resolveOnboardSandboxWorkloadReceipt(input: {
   readonly extractBuiltImageRef: typeof import("../../build-context").extractBuiltImageRef;
   readonly resolveSandboxImageTagFromCreateOutput: typeof import("../../domain/sandbox/image-tag").resolveSandboxImageTagFromCreateOutput;
 }): { readonly resolvedImageTag: string; readonly workloadReceipt: SandboxWorkloadReceipt } {
+  if (input.workload.source.kind === "external-image") {
+    return {
+      resolvedImageTag: input.workload.source.reference,
+      workloadReceipt: input.workload.source.receipt,
+    };
+  }
   const output = `${input.firstCreateOutput}\n${input.createOutput}`;
   const resolvedImageTag =
     (input.workload.source.kind === "managed-image" ? input.workload.source.reference : null) ??

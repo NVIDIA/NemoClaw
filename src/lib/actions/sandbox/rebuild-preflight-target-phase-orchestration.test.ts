@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   ensureRebuildTargetGatewaySelected: vi.fn(async () => true),
   preflightAuthoritativeOnboardRuntime: vi.fn(async (..._args: unknown[]) => false),
   prepareManagedWorkloadRebuildHandoff: vi.fn(),
+  prepareExternalImage: vi.fn(),
   prepareSandboxWorkloadSourceFromRebuildHandoff: vi.fn(),
   prepareRebuildTargetConfig: vi.fn(),
   prepareRebuildRecreateOptions: vi.fn(),
@@ -19,6 +20,10 @@ const mocks = vi.hoisted(() => ({
 vi.mock("./rebuild-flow-helpers", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./rebuild-flow-helpers")>()),
   ensureRebuildTargetGatewaySelected: mocks.ensureRebuildTargetGatewaySelected,
+}));
+
+vi.mock("../../onboard/workload/external-image", () => ({
+  prepareExternalImage: mocks.prepareExternalImage,
 }));
 
 vi.mock("../../onboard/workload/rebuild", async (importOriginal) => ({
@@ -93,6 +98,7 @@ describe("prepareRebuildTargetPreflights", () => {
     entryOverrides: {
       endpointUrl?: string | null;
       hostLocalInferenceReceipt?: string | null;
+      workload?: import("../../onboard/workload/external-image").ExternalImageReceipt;
     } = {},
   ) {
     const resumeConfig = {
@@ -154,6 +160,36 @@ describe("prepareRebuildTargetPreflights", () => {
       | RebuildRecreateOnboardOpts
       | undefined;
   }
+
+  it.each([false, true])(
+    "binds an external rebuild to its recorded image identity [drift=%s]",
+    async (drift) => {
+      const receipt = {
+        schemaVersion: 1,
+        kind: "external-image",
+        reference: `ghcr.io/example/harness@sha256:${"a".repeat(64)}`,
+        imageId: `sha256:${"b".repeat(64)}`,
+        platform: "linux/amd64",
+        agent: "openclaw",
+        toolDisclosure: "progressive",
+        shared: true,
+      } as const;
+      mocks.prepareExternalImage.mockReturnValue({
+        ...receipt,
+        imageId: drift ? `sha256:${"c".repeat(64)}` : receipt.imageId,
+      });
+      const options = await prepareN1xTarget("onboard", null, "build", "model", null, false, {
+        workload: receipt,
+      });
+      expect(options?.fromImage).toBe(drift ? undefined : receipt.reference);
+      expect(mocks.bail.mock.calls).toEqual(
+        drift
+          ? [["External image identity changed; rebuild refused before deleting the sandbox."]]
+          : [],
+      );
+      expect(mocks.preflightAuthoritativeOnboardRuntime).toHaveBeenCalledTimes(drift ? 0 : 1);
+    },
+  );
 
   it("runs the default Teams port hook before gateway recovery or runtime preparation", async () => {
     const actual = await vi.importActual<typeof import("./rebuild-messaging-conflict-preflight")>(

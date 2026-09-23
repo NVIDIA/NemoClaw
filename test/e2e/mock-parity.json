@@ -792,7 +792,10 @@
         "test/agents/hermes/hermes-image-build-probes.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts",
-        "test/e2e/support/native-lifecycle-migration-contract.test.ts"
+        "test/e2e/support/native-lifecycle-migration-contract.test.ts",
+        "src/lib/onboard/workload/external-image.test.ts",
+        "src/lib/onboard/managed-workload/onboard-orchestration.test.ts",
+        "src/lib/onboard/session-bootstrap.test.ts"
       ]
     },
     {
@@ -803,7 +806,10 @@
         "src/lib/state/native-agent-state-restore.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts",
-        "test/e2e/support/native-lifecycle-migration-contract.test.ts"
+        "test/e2e/support/native-lifecycle-migration-contract.test.ts",
+        "src/lib/onboard/workload/external-image.test.ts",
+        "src/lib/onboard/managed-workload/onboard-orchestration.test.ts",
+        "src/lib/onboard/session-bootstrap.test.ts"
       ]
     },
     {

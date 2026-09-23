@@ -137,6 +137,18 @@ function corporateCaFromReceipt(
 export function readManagedWorkloadAuthority(
   entry: Pick<SandboxEntry, "agent" | "fromDockerfile" | "imageTag" | "workload">,
 ): ManagedWorkloadAuthority | null {
+  if (entry.workload?.kind === "external-image") {
+    const external = cloneSandboxWorkloadReceipt(entry.workload);
+    if (
+      external?.kind !== "external-image" ||
+      external.reference !== entry.imageTag ||
+      external.agent !== (entry.agent ?? "openclaw") ||
+      entry.fromDockerfile
+    ) {
+      throw new ManagedWorkloadAuthorityError("the external image has an invalid source receipt");
+    }
+    return null;
+  }
   const managedLooking =
     isManagedImageReference(entry.imageTag) || entry.workload?.kind === "managed-image";
   if (!managedLooking) return null;

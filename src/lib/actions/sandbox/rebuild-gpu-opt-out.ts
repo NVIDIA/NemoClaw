@@ -116,6 +116,7 @@ export type RebuildRecreateOnboardOpts = {
   recreateModel: string | null;
   recreatePreferredInferenceApi: string | null;
   fromDockerfile: string | null;
+  fromImage?: string | null;
   sandboxGpu: "enable" | "disable" | null;
   sandboxGpuDevice: string | null;
   controlUiPort: number | null;

@@ -1805,6 +1805,20 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
     const hermesDashboardState = hermesDashboardForwarding.resolveStateForPort(effectivePort);
     const { messagingTokenDefs, hasMessagingTokens } = messagingCapabilities;
 
+    if (
+      createIntent?.fromImage &&
+      (fromDockerfile || preparedBuildContext || agentCreateInput.portableLifecycle)
+    ) {
+      throw new Error(
+        "External images cannot be combined with a Dockerfile build or Portable profile.",
+      );
+    }
+    const externalImage = managedWorkloadOnboard.prepareOnboardExternalImage({
+      reference: createIntent?.fromImage,
+      agentName: requestedAgentName,
+      computePlan,
+      requestedToolDisclosure: toolDisclosureFlow.resolveToolDisclosureRequest(null, process.env),
+    });
     const {
       existingEntry,
       liveExists,
@@ -1820,7 +1834,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
             : fromDockerfile,
           isRecreateSandbox(createIntent?.recreate),
           inspectSandboxForCreate,
-          createIntent?.toolDisclosure ?? null,
+          externalImage?.toolDisclosure ?? createIntent?.toolDisclosure ?? null,
         );
     const observabilityDrift = observabilityPolicy.hasRegisteredDcodeObservabilityDrift(
       liveExists,
@@ -1855,6 +1869,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         tempManagedRuntimeCatalog,
         agentName: requestedAgentName,
         legacyDockerfilePath,
+        externalImage,
         customDockerfilePath:
           fromDockerfile ?? (preparedBuildContext ? preparedBuildContext.stagedDockerfile : null),
         rootDir: ROOT,
@@ -2042,7 +2057,8 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
     let pendingStateRestore: BackupResult | null = null;
     let notReadyRecreateInProgress = false;
     const customOpenClawImage =
-      Boolean(fromDockerfile) && getRequestedSandboxAgentName(agent) === "openclaw";
+      Boolean(fromDockerfile || externalImage) &&
+      getRequestedSandboxAgentName(agent) === "openclaw";
     const recreateProtection = createSandboxRecreateProtection({
       sandboxName,
       sandboxEntry: existingEntry,
@@ -2062,6 +2078,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         intent: {
           agent: getRequestedSandboxAgentName(agent) || null,
           fromDockerfile: fromDockerfile ?? null,
+          ...(externalImage ? { fromImage: externalImage.reference } : {}),
           provider: provider ?? null,
           model: model ?? null,
           preferredInferenceApi: preferredInferenceApi ?? null,

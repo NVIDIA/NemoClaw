@@ -317,6 +317,7 @@ function projectOptionalBoolean(value: unknown): boolean {
 
 function projectWorkload(workload: SandboxWorkloadReceipt | undefined): unknown {
   if (!workload) return null;
+  if (workload.kind === "external-image") return { ...workload };
   if (workload.kind === "legacy-dockerfile") {
     return {
       schemaVersion: workload.schemaVersion,

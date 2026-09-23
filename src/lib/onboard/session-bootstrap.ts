@@ -332,6 +332,7 @@ export interface OnboardSessionBootstrapInput {
   fresh: boolean;
   recreateSandboxRequested?: boolean;
   requestedFromDockerfile: string | null;
+  requestedFromImage?: string | null;
   requestedSandboxName: string | null;
   cannotPrompt: boolean;
   nonInteractive: boolean;
@@ -589,6 +590,14 @@ async function prepareResumeSession(
   }
   guardResumeCheckpoint(deps);
 
+  const sessionFromImage = session.metadata?.fromImage ?? null;
+  if (input.requestedFromImage && input.requestedFromImage !== sessionFromImage) {
+    throw new Error(
+      "The requested external image differs from the interrupted session. Use --fresh --recreate-sandbox to change the image.",
+    );
+  }
+  if (sessionFromImage && input.requestedFromDockerfile)
+    throw new Error("Cannot resume an external image session with --from.");
   const sessionFrom = session.metadata?.fromDockerfile || null;
   const fromDockerfile = input.requestedFromDockerfile
     ? deps.resolvePath(input.requestedFromDockerfile)
@@ -655,6 +664,7 @@ function prepareFreshSession(
     metadata: {
       gatewayName: "nemoclaw",
       fromDockerfile: fromDockerfile || null,
+      ...(input.requestedFromImage ? { fromImage: input.requestedFromImage } : {}),
       ...(input.requestedHostMounts && input.requestedHostMounts.length > 0
         ? { hostMounts: input.requestedHostMounts.map((mount) => ({ ...mount })) }
         : {}),

@@ -13,6 +13,8 @@ import {
 import { assertToolDisclosureDockerfileContract } from "./dockerfile-tool-disclosure-contract";
 import type { SandboxLifecycleHelpers } from "./sandbox-lifecycle";
 
+export { resolveToolDisclosureRequest };
+
 export function applyOnboardToolDisclosureRequest(value: unknown): ToolDisclosure | null {
   let requested: ToolDisclosure | null;
   try {

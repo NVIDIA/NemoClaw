@@ -1,6 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import {
+  liveE2eManagedImageCatalog,
+  readLiveE2eManagedImageCatalogContracts,
+} from "../../../src/lib/onboard/workload/preparation.ts";
+import { getSandbox } from "../../../src/lib/state/registry.ts";
+
 import { testTimeout } from "../../helpers/timeouts.ts";
 import { assertExitZero, resultText } from "../fixtures/clients/command.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
@@ -16,8 +22,8 @@ import {
 
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-rebuild-hermes";
 
-test(
-  "rebuild-hermes restores durable state and native readiness",
+test.for(["managed-image", "external-image"] as const)(
+  "rebuild-hermes restores durable state and native readiness from %s",
   {
     timeout: testTimeout(45 * 60_000),
     meta: {
@@ -30,17 +36,10 @@ test(
       ],
     },
   },
-  async ({
-    artifacts,
-    cleanup,
-    host,
-    lifecycle,
-    progress,
-    runtimeProvider,
-    sandbox,
-    secrets,
-    skip,
-  }) => {
+  async (
+    imageSource,
+    { artifacts, cleanup, host, lifecycle, progress, runtimeProvider, sandbox, secrets, skip },
+  ) => {
     const hosted = requireHostedInferenceConfig(secrets);
     const env = phase6Env({
       agent: "hermes",
@@ -48,6 +47,13 @@ test(
       sandboxName: SANDBOX_NAME,
       extra: { NEMOCLAW_DASHBOARD_PORT: "18796" },
     });
+    const publishedImage = readLiveE2eManagedImageCatalogContracts(
+      liveE2eManagedImageCatalog(process.env)!,
+    ).get("hermes")!.reference;
+    Object.assign(
+      env,
+      imageSource === "external-image" ? { NEMOCLAW_FROM_IMAGE: publishedImage } : {},
+    );
     const redactions = redactionValues(hosted.apiKey);
 
     await artifacts.target.declare({
@@ -92,6 +98,11 @@ test(
       "rebuild-hermes-ready-before-rebuild",
     );
 
+    await artifacts.writeJson("published-image-registration.json", {
+      requestedImage: publishedImage,
+      imageSource,
+      sandbox: getSandbox(SANDBOX_NAME),
+    });
     progress.phase("write durable Hermes state");
     const marker = `rebuild-hermes-${Date.now()}`;
     const write = await sandboxSh(

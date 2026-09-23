@@ -4,6 +4,8 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  assertExternalImageReuse,
+  externalImageCreateFields,
   decideSandboxResume,
   hasCompatibleEndpointReasoningDrift,
   hasHermesCompatibleAnthropicInferenceRouteDrift,
@@ -446,5 +448,20 @@ describe("hasMessagingChannelConfigDrift", () => {
         configsEqual,
       ),
     ).toBe(false);
+  });
+});
+
+describe("external image resume identity", () => {
+  const reference = `ghcr.io/example/harness@sha256:${"a".repeat(64)}`;
+  const entry = { workload: { kind: "external-image", reference } } as never;
+  it("preserves unchanged source identity and requires explicit recreation for a new digest", () => {
+    expect(() => assertExternalImageReuse(reference, entry, false)).not.toThrow();
+    expect(() => assertExternalImageReuse("different", entry, false)).toThrow(
+      "image source changed",
+    );
+    expect(() => assertExternalImageReuse("different", entry, true)).not.toThrow();
+    expect(() => assertExternalImageReuse(null, entry, false)).toThrow("image source changed");
+    expect(externalImageCreateFields(reference)).toEqual({ fromImage: reference });
+    expect(externalImageCreateFields(null)).toEqual({});
   });
 });

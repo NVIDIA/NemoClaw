@@ -62,6 +62,7 @@ export interface SandboxCreateIntent {
   /** Explicit fresh-create mode that lets APF supply the sandbox-scoped policy. */
   readonly apfInterceptorRequested?: true;
   readonly toolDisclosure: import("../tool-disclosure").ToolDisclosure;
+  readonly fromImage?: string | null;
   readonly observabilityEnabled: boolean;
   /** Present only when the operator explicitly selected observability on or off. */
   readonly observabilityRequestedExplicitly?: true;
@@ -184,6 +185,7 @@ export type OnboardOptions = {
   /** Operator-selected APF compatibility mode for fresh sandbox creation. */
   apfInterceptorRequested?: boolean | null;
   fromDockerfile?: string | null;
+  fromImage?: string | null;
   sandboxName?: string | null;
   /** Explicit host directories exposed read-only to the sandbox. */
   hostMounts?: readonly import("../state/registry/types").SandboxHostMount[];

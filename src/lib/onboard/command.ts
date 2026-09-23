@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { requireExternalImageReference } from "./workload/external-image";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -69,6 +70,7 @@ export interface OnboardCommandOptions {
   recreateSandbox: boolean;
   apfInterceptorRequested: boolean | null;
   fromDockerfile: string | null;
+  fromImage?: string | null;
   sandboxName: string | null;
   hostMounts?: import("../state/registry/types").SandboxHostMount[];
   sandboxGpu: "enable" | "disable" | null;
@@ -478,6 +480,18 @@ export function resolveOnboardOptions(
   validateObservabilityAgent(flags.observability, agent, deps);
   const toolDisclosure = resolveOnboardToolDisclosure(flags, experimentalProfile, resume, deps);
   const hostMounts = resolveHostMounts(flags["host-mount"], experimentalProfile, deps);
+  const fromImage = flags["from-image"] ?? deps.env.NEMOCLAW_FROM_IMAGE ?? null;
+  if (fromImage !== null) {
+    requireExternalImageReference(fromImage);
+    if (flags.from || deps.env.NEMOCLAW_FROM_DOCKERFILE)
+      fail(deps, "--from and --from-image cannot both be set.");
+    if (
+      experimentalProfile ||
+      flags["temp-managed-runtime"] ||
+      flags["temp-managed-runtime-catalog"]
+    )
+      fail(deps, "--from-image cannot be combined with a portable or managed-image profile.");
+  }
   return {
     tempManagedRuntime: flags["temp-managed-runtime"] === true,
     tempManagedRuntimeCatalog: resolveFileOption(
@@ -492,6 +506,7 @@ export function resolveOnboardOptions(
     recreateSandbox: flags["recreate-sandbox"] === true,
     apfInterceptorRequested: flags["apf-interceptor"] === true ? true : null,
     fromDockerfile: resolveFileOption("--from", flags.from, deps, true),
+    ...(fromImage === null ? {} : { fromImage }),
     sandboxName: flags.name ?? null,
     ...(hostMounts.length > 0 ? { hostMounts } : {}),
     sandboxGpu: resolveSandboxGpu(flags),
