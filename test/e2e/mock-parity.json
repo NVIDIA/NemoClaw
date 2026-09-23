@@ -3,6 +3,14 @@
   "version": 1,
   "entries": [
     {
+      "live": "test/e2e/live/deferred-onboarding.test.ts",
+      "fast": [
+        "src/lib/actions/installer/deferred-onboarding.test.ts",
+        "test/install/install-onboard-yes.test.ts",
+        "test/e2e/support/workflow-plan.test.ts"
+      ]
+    },
+    {
       "live": "test/e2e/live/portable-cpu-delegation-proof.test.ts",
       "fast": [
         "src/lib/onboard/experimental/portable-cpu-delegation-preflight.test.ts",
