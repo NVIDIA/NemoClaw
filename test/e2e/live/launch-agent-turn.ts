@@ -1166,6 +1166,11 @@ const providerNonRetryableError =
 
 function isStructuredProviderUnavailable(message) {
   const errorMessage = typeof message.errorMessage === "string" ? message.errorMessage.trim() : "";
+  const errorCode = typeof message.errorCode === "string" ? message.errorCode.trim() : "";
+  // The pinned OpenAI SDK prefixes its error message with the HTTP status.
+  const providerMessage = errorMessage.replace(/^([0-9]{3}):?\s+/, (prefix, status) =>
+    status === errorCode ? "" : prefix,
+  );
   const validEmptyContent = JSON.stringify(message.content) === "[]";
   const identity = [
     message.role,
@@ -1176,9 +1181,8 @@ function isStructuredProviderUnavailable(message) {
   ].join("\n");
   return (
     identity === "assistant\ntrue\nerror\nopenai-completions\ninference" &&
-    typeof message.errorCode === "string" &&
-    providerUnavailableCodes.has(message.errorCode.trim()) &&
-    providerUnavailableError.test(errorMessage) &&
+    providerUnavailableCodes.has(errorCode) &&
+    providerUnavailableError.test(providerMessage) &&
     !providerNonRetryableError.test(errorMessage)
   );
 }

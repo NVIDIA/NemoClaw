@@ -61,6 +61,7 @@ type FixtureMode =
   | "provider-terminal-spoof"
   | "provider-wrong-api"
   | "provider-wrong-route"
+  | "provider-wrong-status"
   | "recording-timeout"
   | "restored-canonical-timeout"
   | "supervisor-timeout"
@@ -335,6 +336,11 @@ const exitWithStatus = process.exit.bind(process);
   }
   if (terminalCopy === "reordered") process.stdout.write("idle | gateway connected\n");
 
+  const wrongProviderMessages = new Map([
+    ["provider-wrong-api", { api: "openai-responses" }],
+    ["provider-wrong-route", { provider: "attacker-controlled" }],
+    ["provider-wrong-status", { errorCode: "503", errorMessage: "401 litellm.ServiceUnavailableError: upstream unavailable" }],
+  ]);
   if (mode === "delayed-recording" || mode === "provider-exit-after-recording") {
     const publicationDeadline = Date.now() + 2_000;
     while (!fs.existsSync(process.env.NEMOCLAW_FIXTURE_PENDING_QUALIFICATION_MARKER)) {
@@ -358,12 +364,9 @@ const exitWithStatus = process.exit.bind(process);
   } else if (mode === "provider-terminal-spoof") {
     append("user", firstInput);
     appendProviderError({ errorCode: "400" });
-  } else if (mode === "provider-wrong-api") {
+  } else if (wrongProviderMessages.has(mode)) {
     append("user", firstInput);
-    appendProviderError({ api: "openai-responses" });
-  } else if (mode === "provider-wrong-route") {
-    append("user", firstInput);
-    appendProviderError({ provider: "attacker-controlled" });
+    appendProviderError(wrongProviderMessages.get(mode));
   } else {
     append("user", firstInput);
     append("assistant", "first response");
@@ -1087,16 +1090,16 @@ it.runIf(process.platform === "linux").concurrent(
 );
 
 it.runIf(process.platform === "linux").each([
-  ["500", "ServiceUnavailableError", "valid"],
-  ["502", "ServiceUnavailableError", "valid"],
-  ["503", "ServiceUnavailableError", "valid"],
-  ["504", "ServiceUnavailableError", "valid"],
-  ["529", "ServiceUnavailableError", "valid"],
-  ["500", "InternalServerError", "valid"],
-  ["503", "ServiceUnavailableError", "provider-empty-message"],
+  ["500", "ServiceUnavailableError", "valid", "500: "],
+  ["502", "ServiceUnavailableError", "valid", "502 "],
+  ["503", "ServiceUnavailableError", "valid", "503 "],
+  ["504", "ServiceUnavailableError", "valid", "504 "],
+  ["529", "ServiceUnavailableError", "valid", "529 "],
+  ["500", "InternalServerError", "valid", ""],
+  ["503", "ServiceUnavailableError", "provider-empty-message", "503 "],
 ] as const)(
   "executes the real $1 HTTP $0 launch producer through $2 (#10978)",
-  async (providerCode, providerError, secondMode) => {
+  async (providerCode, providerError, secondMode, statusPrefix) => {
     const expectedError = secondMode === "valid" ? null : "launch session failed";
     const secondTerminal = secondMode === "valid" ? "absent" : "provider";
     const calls: Array<{
@@ -1124,7 +1127,7 @@ it.runIf(process.platform === "linux").each([
             env: {
               ...options?.env,
               NEMOCLAW_FIXTURE_PROVIDER_ERROR_CODE: providerCode,
-              NEMOCLAW_FIXTURE_PROVIDER_ERROR_MESSAGE: `litellm.${providerError}: ${providerError}: upstream unavailable`,
+              NEMOCLAW_FIXTURE_PROVIDER_ERROR_MESSAGE: `${statusPrefix}litellm.${providerError}: ${providerError}: upstream unavailable`,
             },
           },
         );
@@ -1250,8 +1253,9 @@ it.runIf(process.platform === "linux").concurrent(
 it.runIf(process.platform === "linux").concurrent.for([
   { mismatch: "API", mode: "provider-wrong-api" },
   { mismatch: "route", mode: "provider-wrong-route" },
+  { mismatch: "status", mode: "provider-wrong-status" },
 ] as const)(
-  "does not retry a structured provider error with the wrong $mismatch identity (#10978)",
+  "does not retry a structured provider error with mismatched $mismatch evidence (#10978)",
   { timeout: testTimeout(30_000) },
   async ({ mode }, { expect }) => {
     const produced = (await runLaunchSessionFixture(mode, "provider")).result;
