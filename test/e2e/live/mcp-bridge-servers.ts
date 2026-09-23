@@ -55,6 +55,7 @@ export interface FakeMcpHttpsServer extends StartedHttpServer {
   setSecret(secret: string): void;
   observations: FakeMcpRequest[];
   requests: FakeMcpRequest[];
+  tlsFailures: string[];
   activeLegacySessionCount(): number;
 }
 
@@ -463,8 +464,8 @@ export async function startPublicMcpHttpsTunnel(options: {
           !probeCompleted || probeSpawnError || probeChild.exitCode !== 0
             ? {
                 ready: false,
-                // curl stderr can contain proxy details. Keep transport failures opaque.
-                diagnostic: `public HEAD ${readinessPath} failed (curl transport error)`,
+                // Retain process status only; curl stderr can contain proxy details.
+                diagnostic: `public HEAD ${readinessPath} failed (curl exit=${String(probeChild.exitCode)}, deadline=${!probeCompleted}, spawnError=${probeSpawnError})`,
               }
             : probeOutputExceededLimit ||
                 !/^\d{3}$/u.test(probeOutput) ||
@@ -1071,6 +1072,7 @@ export async function startFakeMcpHttpsServer(options: {
     })();
   const requests: FakeMcpRequest[] = [];
   const observations: FakeMcpRequest[] = [];
+  const tlsFailures: string[] = [];
   const server = https.createServer(tls, async (req, res) => {
     const requestUrl = new URL(req.url ?? "/", "https://fake-mcp.local");
     const requestPath = requestUrl.pathname;
@@ -1442,11 +1444,23 @@ export async function startFakeMcpHttpsServer(options: {
     });
   });
 
+  server.on("tlsClientError", (error: NodeJS.ErrnoException) => {
+    if (tlsFailures.length >= 8) return;
+    const knownCodes = new Set([
+      "ERR_SSL_TLSV1_ALERT_UNKNOWN_CA",
+      "ERR_SSL_SSLV3_ALERT_BAD_CERTIFICATE",
+      "ERR_SSL_SSLV3_ALERT_CERTIFICATE_EXPIRED",
+      "ERR_SSL_TLSV1_ALERT_PROTOCOL_VERSION",
+      "ECONNRESET",
+    ]);
+    tlsFailures.push(error.code && knownCodes.has(error.code) ? error.code : "OTHER");
+  });
   await listenOnRandomPort(server);
   return {
     port: requireTcpPort(server, "fake MCP endpoint"),
     observations,
     requests,
+    tlsFailures,
     activeLegacySessionCount: () => legacySessions.size,
     setSecret: (secret: string) => {
       expectedSecret = secret;

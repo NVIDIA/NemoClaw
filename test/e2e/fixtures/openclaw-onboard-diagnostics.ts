@@ -46,7 +46,7 @@ for (const file of ["/sandbox/.openclaw", "/sandbox/.openclaw/openclaw.json"]) {
 /** Capture evidence before fixture cleanup without replacing the install result. */
 export async function captureOpenClawOnboardFailure(
   install: Pick<ShellProbeResult, "exitCode">,
-  sandbox: Pick<SandboxClient, "status" | "openshell" | "exec">,
+  sandbox: Pick<SandboxClient, "openshell" | "exec">,
   options: {
     sandboxName: string;
     artifactPrefix: string;
@@ -69,7 +69,7 @@ export async function captureOpenClawOnboardFailure(
   };
   await Promise.allSettled([
     Promise.resolve().then(() =>
-      sandbox.status(options.sandboxName, {
+      sandbox.openshell(["sandbox", "get", options.sandboxName], {
         ...probeOptions,
         artifactName: `${options.artifactPrefix}-failure-status`,
       }),

@@ -25,7 +25,6 @@ const options = {
 
 function clients() {
   return {
-    status: vi.fn().mockResolvedValue({}),
     openshell: vi.fn().mockResolvedValue({}),
     exec: vi.fn().mockResolvedValue({}),
   };
@@ -35,7 +34,6 @@ describe("OpenClaw onboarding failure diagnostics", () => {
   it("does not probe a successful installation", async () => {
     const sandbox = clients();
     await captureOpenClawOnboardFailure({ exitCode: 0 }, sandbox, options);
-    expect(sandbox.status).not.toHaveBeenCalled();
     expect(sandbox.openshell).not.toHaveBeenCalled();
     expect(sandbox.exec).not.toHaveBeenCalled();
   });
@@ -43,8 +41,8 @@ describe("OpenClaw onboarding failure diagnostics", () => {
   it("bounds all commands and preserves the runtime environment and redaction values", async () => {
     const sandbox = clients();
     await captureOpenClawOnboardFailure({ exitCode: 1 }, sandbox, options);
-    expect(sandbox.status).toHaveBeenCalledWith(
-      options.sandboxName,
+    expect(sandbox.openshell).toHaveBeenCalledWith(
+      ["sandbox", "get", options.sandboxName],
       expect.objectContaining({
         env: options.env,
         redactionValues: options.redactionValues,
@@ -79,14 +77,14 @@ describe("OpenClaw onboarding failure diagnostics", () => {
 
   it("continues other captures when a probe throws or rejects", async () => {
     const sandbox = clients();
-    sandbox.status.mockImplementation(() => {
+    sandbox.openshell.mockImplementationOnce(() => {
       throw new Error("transport unavailable");
     });
     sandbox.exec.mockRejectedValue(new Error("sandbox unavailable"));
     await expect(
       captureOpenClawOnboardFailure({ exitCode: null }, sandbox, options),
     ).resolves.toBeUndefined();
-    expect(sandbox.openshell).toHaveBeenCalledOnce();
+    expect(sandbox.openshell).toHaveBeenCalledTimes(2);
     expect(sandbox.exec).toHaveBeenCalledTimes(2);
   });
 

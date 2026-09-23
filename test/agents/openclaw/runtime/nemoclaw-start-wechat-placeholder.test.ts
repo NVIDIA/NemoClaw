@@ -261,6 +261,33 @@ describe("OpenClaw WeChat provider placeholder refresh (#10079)", () => {
     expect(run.account.token).toBe(scoped);
   });
 
+  it.each([true, false])(
+    "parses configuration without re-entering the ambient Node preload when WeChat enabled=%s (#11764)",
+    (enabled) => {
+      const scoped = "openshell:resolve:env:v42_WECHAT_BOT_TOKEN";
+      const env: Record<string, string> = { WECHAT_BOT_TOKEN: scoped };
+      const run = runWechatRefresh(CANONICAL, env, enabled, ({ tmpDir, configPath }) => {
+        const preload = path.join(tmpDir, "wechat-preload.cjs");
+        const helper = path.join(tmpDir, "refresh-openclaw-wechat-placeholder.py");
+        fs.writeFileSync(
+          preload,
+          [
+            // Bound the real Node -> Python -> Node cycle instead of exhausting processes.
+            'if (process.env.WECHAT_TEST_REENTERED) throw new Error("recursive WeChat preload");',
+            'process.env.WECHAT_TEST_REENTERED = "1";',
+            `const result = require("node:child_process").spawnSync("python3", ["-I", ${JSON.stringify(helper)}, ${JSON.stringify(configPath)}], { env: process.env, timeout: 2000 });`,
+            'if (result.error || result.status !== 0) throw new Error("WeChat helper failed");',
+          ].join("\n"),
+        );
+        env.NODE_OPTIONS = `--require=${preload}`;
+      });
+
+      expect(run.result.status, String(run.result.stderr)).toBe(0);
+      expect(run.account.token).toBe(enabled ? scoped : CANONICAL);
+      expect(run.result.stderr).not.toContain(scoped);
+    },
+  );
+
   it("refreshes a stale placeholder generation after provider rotation", () => {
     const scoped = "openshell:resolve:env:v51_WECHAT_BOT_TOKEN";
     const run = runWechatRefresh("openshell:resolve:env:v42_WECHAT_BOT_TOKEN", {

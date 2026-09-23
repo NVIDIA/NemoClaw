@@ -33,6 +33,8 @@ def parse_openclaw_config(source):
             + 'process.stdout.write(JSON.stringify(JSON5.parse(require("node:fs").readFileSync(0,"utf8"))));',
         ],
         input=source,
+        # This parser can run from a Node preload. Do not load that preload again.
+        env={key: value for key, value in os.environ.items() if key != "NODE_OPTIONS"},
         text=True,
         stdout=subprocess.PIPE,
         stderr=subprocess.DEVNULL,
