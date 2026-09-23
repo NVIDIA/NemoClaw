@@ -263,6 +263,8 @@ export function createStatusFlowHarness(options: StatusFlowHarnessOptions = {}):
       containerName: "openshell-alpha",
       health: "unhealthy",
       paused: false,
+      running: true,
+      containerAbsenceConfirmed: false,
     });
   const isSandboxGatewayRunningForStatusSpy = vi
     .spyOn(statusProcessRecovery, "isSandboxGatewayRunningForStatus")

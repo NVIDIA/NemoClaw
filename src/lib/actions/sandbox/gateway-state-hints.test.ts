@@ -93,6 +93,7 @@ describe("printGatewayLifecycleHint multi-instance hints", () => {
       paused: false,
       running: true,
       containerName: "openshell-instance-a-abc",
+      containerAbsenceConfirmed: false,
     });
     vi.spyOn(gatewaySelect, "selectSandboxOwningGateway").mockReturnValue({
       outcome: "selected",
@@ -283,6 +284,7 @@ describe("printGatewayLifecycleHint multi-instance hints", () => {
       paused: false,
       running: false,
       containerName: "openshell-instance-a-abc",
+      containerAbsenceConfirmed: false,
     });
     const lines: string[] = [];
     vi.spyOn(console, "error").mockImplementation((line = "") => {
@@ -353,6 +355,7 @@ describe("printGatewayLifecycleHint multi-instance hints", () => {
       paused: false,
       running: true,
       containerName: "openshell-instance-a-cross-root",
+      containerAbsenceConfirmed: false,
     });
     const lines: string[] = [];
     vi.spyOn(console, "error").mockImplementation((line = "") => {
@@ -388,8 +391,9 @@ describe("printGatewayLifecycleHint multi-instance hints", () => {
     getSandboxDockerRuntimeSpy.mockReturnValue({
       health: "none",
       paused: false,
-      running: true,
+      running: false,
       containerName: null,
+      containerAbsenceConfirmed: true,
     });
     const lines: string[] = [];
     vi.spyOn(console, "error").mockImplementation((line = "") => {
@@ -426,6 +430,7 @@ describe("printGatewayLifecycleHint multi-instance hints", () => {
       paused: false,
       running: false,
       containerName: null,
+      containerAbsenceConfirmed: false,
     });
     dockerInfoSpy.mockReturnValue("");
     const lines: string[] = [];
@@ -448,7 +453,7 @@ describe("printGatewayLifecycleHint multi-instance hints", () => {
     expect(exitSpy).toHaveBeenCalledWith(1);
   });
 
-  it("steers a Docker Error sandbox with missing legacy metadata and no container to clean replacement", async () => {
+  it("keeps recovery guidance when Docker driver metadata is missing", async () => {
     mockSandboxPhase("Error");
     getSandboxSpy.mockReturnValue({
       name: "instance-a",
@@ -459,8 +464,9 @@ describe("printGatewayLifecycleHint multi-instance hints", () => {
     getSandboxDockerRuntimeSpy.mockReturnValue({
       health: "none",
       paused: false,
-      running: true,
+      running: false,
       containerName: null,
+      containerAbsenceConfirmed: false,
     });
     const lines: string[] = [];
     vi.spyOn(console, "error").mockImplementation((line = "") => {
@@ -475,11 +481,43 @@ describe("printGatewayLifecycleHint multi-instance hints", () => {
     );
 
     const output = lines.join("\n");
-    expect(output).toContain("cannot back up its live workspace for rebuild");
-    expect(output).toContain("nemoclaw instance-a destroy --yes");
-    expect(output).toContain("nemoclaw onboard");
-    expect(output).not.toContain("nemoclaw instance-a rebuild --yes");
-    expect(output).not.toContain("nemoclaw instance-a start");
+    expect(output).toContain("nemoclaw instance-a start");
+    expect(output).not.toContain("nemoclaw instance-a destroy --yes");
+    expect(output).not.toContain("nemoclaw onboard");
+    expect(exitSpy).toHaveBeenCalledWith(1);
+  });
+
+  it("keeps recovery guidance when Docker container observation is inconclusive", async () => {
+    mockSandboxPhase("Error");
+    getSandboxSpy.mockReturnValue({
+      name: "instance-a",
+      gatewayName: "nemoclaw",
+      gatewayPort: 8080,
+      openshellDriver: "docker",
+    });
+    getSandboxDockerRuntimeSpy.mockReturnValue({
+      health: "none",
+      paused: false,
+      running: false,
+      containerName: null,
+      containerAbsenceConfirmed: false,
+    });
+    const lines: string[] = [];
+    vi.spyOn(console, "error").mockImplementation((line = "") => {
+      lines.push(String(line));
+    });
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+      throw new Error(`process.exit(${code ?? 0})`);
+    }) as never);
+
+    await expect(gatewayState.ensureLiveSandboxOrExit("instance-a")).rejects.toThrow(
+      "process.exit(1)",
+    );
+
+    const output = lines.join("\n");
+    expect(output).toContain("nemoclaw instance-a start");
+    expect(output).not.toContain("nemoclaw instance-a destroy --yes");
+    expect(output).not.toContain("nemoclaw onboard");
     expect(exitSpy).toHaveBeenCalledWith(1);
   });
 
@@ -496,6 +534,7 @@ describe("printGatewayLifecycleHint multi-instance hints", () => {
       paused: false,
       running: false,
       containerName: null,
+      containerAbsenceConfirmed: false,
     });
     const lines: string[] = [];
     vi.spyOn(console, "error").mockImplementation((line = "") => {
@@ -528,6 +567,7 @@ describe("printGatewayLifecycleHint multi-instance hints", () => {
       paused: false,
       running: true,
       containerName: null,
+      containerAbsenceConfirmed: false,
     });
     const lines: string[] = [];
     vi.spyOn(console, "error").mockImplementation((line = "") => {
@@ -555,6 +595,7 @@ describe("printGatewayLifecycleHint multi-instance hints", () => {
       paused: true,
       running: true,
       containerName: "openshell-instance-a-abc",
+      containerAbsenceConfirmed: false,
     });
     const lines: string[] = [];
     vi.spyOn(console, "error").mockImplementation((line = "") => {
@@ -586,6 +627,7 @@ describe("printGatewayLifecycleHint multi-instance hints", () => {
       paused: true,
       running: true,
       containerName: "openshell-instance-a-abc",
+      containerAbsenceConfirmed: false,
     });
     const lines: string[] = [];
     vi.spyOn(console, "error").mockImplementation((line = "") => {

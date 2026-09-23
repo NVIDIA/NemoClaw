@@ -138,6 +138,7 @@ describe("showSandboxStatus flow", () => {
       openshellDriver: "docker",
       expected: "nemoclaw alpha destroy --yes",
       unexpected: "nemoclaw alpha start",
+      containerAbsenceConfirmed: true,
       registryEntry: "present" as const,
       publishedAcrossGatewayRoots: false,
     },
@@ -146,6 +147,7 @@ describe("showSandboxStatus flow", () => {
       openshellDriver: "mxc",
       expected: "nemoclaw alpha start",
       unexpected: "nemoclaw alpha destroy --yes",
+      containerAbsenceConfirmed: false,
       registryEntry: "present" as const,
       publishedAcrossGatewayRoots: false,
     },
@@ -154,6 +156,7 @@ describe("showSandboxStatus flow", () => {
       openshellDriver: "mxc",
       expected: "nemoclaw alpha start",
       unexpected: "nemoclaw alpha destroy --yes",
+      containerAbsenceConfirmed: false,
       registryEntry: "missing" as const,
       publishedAcrossGatewayRoots: true,
     },
@@ -163,6 +166,7 @@ describe("showSandboxStatus flow", () => {
       openshellDriver,
       expected,
       unexpected,
+      containerAbsenceConfirmed,
       registryEntry = "present",
       publishedAcrossGatewayRoots = false,
     }) => {
@@ -183,6 +187,7 @@ describe("showSandboxStatus flow", () => {
         health: "none",
         paused: false,
         running: false,
+        containerAbsenceConfirmed,
       });
 
       await expect(harness.showSandboxStatus("alpha")).resolves.toBeUndefined();
@@ -217,6 +222,7 @@ describe("showSandboxStatus flow", () => {
       health: "healthy",
       paused: false,
       running: true,
+      containerAbsenceConfirmed: false,
     });
 
     await expect(harness.showSandboxStatus("alpha")).resolves.toBeUndefined();
@@ -251,6 +257,7 @@ describe("showSandboxStatus flow", () => {
       health: "none",
       paused: false,
       running: false,
+      containerAbsenceConfirmed: false,
     });
 
     await expect(harness.showSandboxStatus("alpha")).rejects.toThrow("process.exit(1)");

@@ -31,6 +31,8 @@ export interface SandboxDockerRuntime {
   paused: boolean;
   running: boolean;
   containerName: string | null;
+  /** True only after a successful owned-container observation returned no rows. */
+  containerAbsenceConfirmed: boolean;
 }
 
 interface ResolveDeps {
@@ -46,6 +48,16 @@ export function listPublishedSandboxNamesForDockerRuntime(): string[] {
   return listPublishedSandboxNamesAcrossGatewayRoots();
 }
 
+function missingDockerRuntime(containerAbsenceConfirmed = false): SandboxDockerRuntime {
+  return {
+    health: "none",
+    paused: false,
+    running: false,
+    containerName: null,
+    containerAbsenceConfirmed,
+  };
+}
+
 const defaultDeps: ResolveDeps = {
   getSandbox: (name) => {
     const entry = findSandboxAcrossGatewayRoots(name)?.entry ?? null;
@@ -53,7 +65,8 @@ const defaultDeps: ResolveDeps = {
   },
   listSandboxNames: listPublishedSandboxNamesForDockerRuntime,
   dockerPsNames: () => dockerCapture(["ps", "--format", "{{.Names}}"], { ignoreError: true }),
-  findLabeledSandboxContainers: (sandboxName) => findLabeledSandboxContainers(sandboxName),
+  findLabeledSandboxContainers: (sandboxName) =>
+    findLabeledSandboxContainers(sandboxName, { ignoreError: false }),
   dockerInspectHealth: (containerName) =>
     dockerContainerInspectFormat(
       "{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}",
@@ -137,16 +150,16 @@ export function getSandboxDockerRuntime(
   const deps: ResolveDeps = { ...defaultDeps, ...depsOverride };
   try {
     if (deps.getSandbox(sandboxName)?.openshellDriver !== "docker") {
-      return { health: "none", paused: false, running: false, containerName: null };
+      return missingDockerRuntime();
     }
   } catch {
-    return { health: "none", paused: false, running: false, containerName: null };
+    return missingDockerRuntime();
   }
   let labeledContainers: ReturnType<typeof findLabeledSandboxContainers>;
   try {
     labeledContainers = deps.findLabeledSandboxContainers(sandboxName);
   } catch {
-    return { health: "none", paused: false, running: false, containerName: null };
+    return missingDockerRuntime();
   }
   const runningNames = labeledContainers
     .filter((container) => container.running)
@@ -163,7 +176,7 @@ export function getSandboxDockerRuntime(
       dockerPsNames: () => allNames,
     });
   if (!containerName) {
-    return { health: "none", paused: false, running: false, containerName: null };
+    return missingDockerRuntime(labeledContainers.length === 0);
   }
   const running = labeledContainers.some(
     (container) => container.name === containerName && container.running,
@@ -180,5 +193,5 @@ export function getSandboxDockerRuntime(
   } catch {
     paused = false;
   }
-  return { health, paused, running, containerName };
+  return { health, paused, running, containerName, containerAbsenceConfirmed: false };
 }

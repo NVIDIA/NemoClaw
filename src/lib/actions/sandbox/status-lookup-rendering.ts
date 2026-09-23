@@ -341,8 +341,9 @@ function printNonReadySandboxPhaseGuidance({
     phase,
     openshellDriver,
     dockerContainerName: dockerRuntime?.containerName,
+    dockerContainerAbsenceConfirmed: dockerRuntime?.containerAbsenceConfirmed === true,
   });
-  if (recoveryAction === "replace_missing_docker_container" && dockerRuntimeDown) {
+  if (!dockerRuntime?.containerName && dockerRuntimeDown) {
     printDockerRuntimeDownGuidance(sandboxName, { writer: console.log });
     deferSandboxLifecycleExit(1);
   }

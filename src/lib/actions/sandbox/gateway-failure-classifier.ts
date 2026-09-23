@@ -69,14 +69,16 @@ export function classifySandboxPhaseRecoveryAction({
   phase,
   openshellDriver,
   dockerContainerName,
+  dockerContainerAbsenceConfirmed,
 }: {
   phase: string;
   openshellDriver: string | null | undefined;
   dockerContainerName: string | null | undefined;
+  dockerContainerAbsenceConfirmed: boolean;
 }): SandboxPhaseRecoveryAction {
   if (phase !== "Error") return "rebuild";
   const driver = openshellDriver?.trim().toLowerCase();
-  if ((!driver || driver === "docker") && !dockerContainerName) {
+  if (driver === "docker" && !dockerContainerName && dockerContainerAbsenceConfirmed) {
     return "replace_missing_docker_container";
   }
   return "start";

@@ -239,6 +239,7 @@ describe("getSandboxDockerRuntime (#4495)", () => {
         paused: false,
         running: true,
         containerName: "openshell-my-assistant-live",
+        containerAbsenceConfirmed: false,
       });
     } finally {
       vi.unstubAllEnvs();
@@ -257,6 +258,7 @@ describe("getSandboxDockerRuntime (#4495)", () => {
       paused: false,
       running: false,
       containerName: null,
+      containerAbsenceConfirmed: true,
     });
   });
 
@@ -271,6 +273,7 @@ describe("getSandboxDockerRuntime (#4495)", () => {
       paused: true,
       running: true,
       containerName: "openshell-my-assistant-live",
+      containerAbsenceConfirmed: false,
     });
   });
 
@@ -285,6 +288,7 @@ describe("getSandboxDockerRuntime (#4495)", () => {
       paused: false,
       running: false,
       containerName: "openshell-my-assistant-12ab",
+      containerAbsenceConfirmed: false,
     });
   });
 
@@ -295,6 +299,7 @@ describe("getSandboxDockerRuntime (#4495)", () => {
       paused: true,
       running: true,
       containerName: "openshell-my-assistant-12ab",
+      containerAbsenceConfirmed: false,
     });
   });
 
@@ -340,17 +345,71 @@ describe("getSandboxDockerRuntime (#4495)", () => {
       paused: false,
       running: false,
       containerName: null,
+      containerAbsenceConfirmed: false,
     });
     expect(findLabeledSandboxContainers).not.toHaveBeenCalled();
   });
 
   it("returns health 'none', paused false when no container is found", () => {
-    const deps = fixture({ psNames: "openshell-cluster-nemoclaw\n" });
+    const deps = fixture({
+      psNames: "openshell-cluster-nemoclaw\n",
+      labeledContainers: [],
+    });
     expect(getSandboxDockerRuntime("my-assistant", deps)).toEqual({
       health: "none",
       paused: false,
       running: false,
       containerName: null,
+      containerAbsenceConfirmed: true,
+    });
+  });
+
+  it("does not confirm absence when Docker driver metadata is missing", () => {
+    const findLabeledSandboxContainers = vi.fn(() => []);
+    const deps = {
+      ...fixture({ driver: null }),
+      findLabeledSandboxContainers,
+    };
+
+    expect(getSandboxDockerRuntime("my-assistant", deps)).toEqual({
+      health: "none",
+      paused: false,
+      running: false,
+      containerName: null,
+      containerAbsenceConfirmed: false,
+    });
+    expect(findLabeledSandboxContainers).not.toHaveBeenCalled();
+  });
+
+  it("does not confirm absence when container observation fails", () => {
+    const deps = {
+      ...fixture(),
+      findLabeledSandboxContainers: () => {
+        throw new Error("Docker observation failed");
+      },
+    };
+
+    expect(getSandboxDockerRuntime("my-assistant", deps)).toEqual({
+      health: "none",
+      paused: false,
+      running: false,
+      containerName: null,
+      containerAbsenceConfirmed: false,
+    });
+  });
+
+  it("does not confirm absence when container ownership is ambiguous", () => {
+    const deps = fixture({
+      psNames: "openshell-my-assistant-a\nopenshell-my-assistant-b",
+      psAllNames: "openshell-my-assistant-a\nopenshell-my-assistant-b",
+    });
+
+    expect(getSandboxDockerRuntime("my-assistant", deps)).toEqual({
+      health: "none",
+      paused: false,
+      running: false,
+      containerName: null,
+      containerAbsenceConfirmed: false,
     });
   });
 

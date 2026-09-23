@@ -1113,9 +1113,10 @@ export async function ensureLiveSandboxOrExit(
         phase,
         openshellDriver,
         dockerContainerName: dockerRuntime.containerName,
+        dockerContainerAbsenceConfirmed: dockerRuntime.containerAbsenceConfirmed,
       });
       if (
-        recoveryAction === "replace_missing_docker_container" &&
+        !dockerRuntime.containerName &&
         isDockerRuntimeDown(sandboxName, {
           getSandbox: () => ({ openshellDriver }),
         })
