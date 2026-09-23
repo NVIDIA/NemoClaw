@@ -221,18 +221,32 @@ export async function approveOpenClawAdminScope(
   sandboxName: string,
   env: NodeJS.ProcessEnv,
 ): Promise<void> {
+  const cronName = `managed-activation-admin-${Date.now()}`;
   const trigger = await sandbox.exec(
     sandboxName,
-    agentTurnCommand("openclaw", `managed-openclaw-admin-trigger-${Date.now()}`),
+    [
+      "openclaw",
+      "cron",
+      "add",
+      "--name",
+      cronName,
+      "--every",
+      "2h",
+      "--agent",
+      "main",
+      "--session",
+      "isolated",
+      "--message",
+      "hello",
+    ],
     {
-      artifactName: "openclaw-agent-turn-before-admin-approval",
+      artifactName: "openclaw-cron-add-before-admin-approval",
       env,
       redactionValues: [API_KEY],
       timeoutMs: AGENT_TIMEOUT_MS,
     },
   );
   const requestId = pendingAdminRequestId(trigger);
-  const cronName = `managed-activation-admin-${Date.now()}`;
   const approval = requestId
     ? await host.command(
         "bash",

@@ -224,6 +224,25 @@ describe("managed image activation failure diagnostics", () => {
 
       expect(hostCommand).toHaveBeenCalledOnce();
       expect(sandboxExec).toHaveBeenCalledOnce();
+      expect(sandboxExec).toHaveBeenCalledWith(
+        "fixture-sandbox",
+        [
+          "openclaw",
+          "cron",
+          "add",
+          "--name",
+          `managed-activation-admin-${now}`,
+          "--every",
+          "2h",
+          "--agent",
+          "main",
+          "--session",
+          "isolated",
+          "--message",
+          "hello",
+        ],
+        expect.objectContaining({ artifactName: "openclaw-cron-add-before-admin-approval" }),
+      );
       const [command, args] = hostCommand.mock.calls[0]!;
       expect(command).toBe("bash");
       expect(args.slice(0, 1)).toEqual(["-lc"]);
