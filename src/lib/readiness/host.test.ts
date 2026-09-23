@@ -154,6 +154,30 @@ describe("host readiness projection (#7408)", () => {
     expect(findingIds(result)).not.toContain("host.os.release_inconclusive");
   });
 
+  it("reports the qualified WSL distribution and release (#11026)", () => {
+    const result = report(
+      { isWsl: true },
+      {
+        platformIdentity: {
+          ...emptyPlatformIdentity(),
+          osId: "ubuntu",
+          osVersionId: "24.04",
+          osPrettyName: "Ubuntu 24.04.4 LTS",
+        },
+      },
+    );
+
+    expect(result.observations).toEqual(
+      expect.arrayContaining([
+        { id: "host.os.distribution", state: "present", value: "ubuntu" },
+        { id: "host.os.version", state: "present", value: "24.04" },
+        { id: "host.os.pretty_name", state: "present", value: "Ubuntu 24.04.4 LTS" },
+      ]),
+    );
+    expect(findingIds(result)).not.toContain("host.os.release_unqualified");
+    expect(findingIds(result)).not.toContain("host.os.release_inconclusive");
+  });
+
   it.each([
     ["debian", "12"],
     ["ubuntu", "22.04"],
