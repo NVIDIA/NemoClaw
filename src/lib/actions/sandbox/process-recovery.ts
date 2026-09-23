@@ -86,7 +86,8 @@ import {
 import {
   collectRedactedOpenShellSandboxLogs,
   printGatewayWedgeDiagnostics,
-  sanitizeWedgeLogLine,
+  buildOpenClawRestoreLogCommand,
+  formatOpenClawRestoreLogs,
 } from "./gateway-wedge-diagnostics";
 import {
   buildSandboxExecMarkedCommand,
@@ -396,15 +397,14 @@ async function collectOpenClawRuntimeFailureLogs(
         'direct_status="$?"',
         'printf \'[nemoclaw-health-probe] url=%s ambient_status=%s ambient_http=%s direct_status=%s direct_http=%s\\n\' "$probe_url" "$ambient_status" "$ambient_code" "$direct_status" "$direct_code"',
         "if command -v ss >/dev/null 2>&1; then ss -ltn 2>/dev/null; elif command -v netstat >/dev/null 2>&1; then netstat -ltn 2>/dev/null; fi",
-        "tail -n 120 /tmp/gateway.log 2>/dev/null || true",
+        buildOpenClawRestoreLogCommand(),
       ].join("; "),
       15_000,
       runtimeSelection,
     );
-    if (!result?.stdout.trim()) return [];
-    return result.stdout.split("\n").map(sanitizeWedgeLogLine).filter(Boolean).slice(-60);
+    return formatOpenClawRestoreLogs(result);
   } catch {
-    return [];
+    return ["[restore-log] command unavailable"];
   }
 }
 
