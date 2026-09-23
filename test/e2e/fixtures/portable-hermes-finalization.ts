@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { ChildProcess } from "node:child_process";
+import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
@@ -50,7 +51,7 @@ import type { ArtifactSink } from "./artifacts.ts";
 import { CLI_ENTRYPOINT, REPO_ROOT } from "./paths.ts";
 import { OPENSHELL_V0116_QUALIFICATION } from "./openshell-v0116-qualification.ts";
 import type { TestProgress } from "./progress.ts";
-import type { ShellProbe } from "./shell-probe.ts";
+import { type ShellProbe, trustedShellCommand } from "./shell-probe.ts";
 import {
   cleanupPodmanLifecycle,
   executableOnPath,
@@ -71,6 +72,8 @@ export const PORTABLE_HERMES_FINALIZATION_PHASES = [
   "start the receipt-owned OpenShell gateway",
   "activate the managed Hermes gateway from the candidate image",
   "publish receipt and registry authority",
+  "reject mismatched receipt and registry authority",
+  "confirm doctor rejects mismatched authority",
   "complete onboarding finalization through native readiness",
   "confirm doctor reports the same healthy readiness",
   "record Portable Hermes readiness evidence",
@@ -118,6 +121,8 @@ interface PortableHermesFinalizationInput {
     readonly startGateway: () => void;
     readonly activateHermes: () => void;
     readonly publishAuthority: () => void;
+    readonly rejectMismatchedAuthority: () => void;
+    readonly confirmDoctorRejectsMismatchedAuthority: () => void;
     readonly finalizeOnboarding: () => void;
     readonly confirmDoctor: () => void;
     readonly recordEvidence: () => void;
@@ -344,7 +349,6 @@ export async function runPortableHermesFinalization(
     };
     writeRegistry(home, entry);
 
-    phases.finalizeOnboarding();
     const agent = loadAgent("hermes");
     type VerifyChain = { boundary: string };
     type VerificationResult = { healthy: boolean };
@@ -388,6 +392,49 @@ export async function runPortableHermesFinalization(
       portableProfileSelected: true,
       deps,
     };
+
+    phases.rejectMismatchedAuthority();
+    writeRegistry(home, {
+      ...entry,
+      lifecycleGeneration: `${LIFECYCLE_GENERATION}-mismatch`,
+    });
+    const negativeErrors: string[] = [];
+    const negativeReadiness: boolean[] = [];
+    const incomplete = await handleFinalizationState({
+      ...options,
+      deps: {
+        ...deps,
+        error: (message) => negativeErrors.push(message ?? ""),
+        reportDeploymentReadiness: (healthy) => negativeReadiness.push(healthy),
+      },
+    });
+    assert.equal(incomplete.stateResult.type, "pause");
+    assert.deepEqual(incomplete.stateResult.metadata, {
+      state: "finalizing",
+      reason: "recovery_check_incomplete",
+    });
+    assert.deepEqual(negativeReadiness, [false]);
+    assert.match(negativeErrors.join("\n"), /receipt and registered gateway authority/u);
+
+    phases.confirmDoctorRejectsMismatchedAuthority();
+    const failedDoctor = await shellProbe.run(
+      trustedShellCommand({
+        command: process.execPath,
+        args: [CLI_ENTRYPOINT, SANDBOX_NAME, "doctor", "--json"],
+        reason: "prove doctor rejects mismatched Portable Hermes authority",
+      }),
+      {
+        artifactName: "phase-6-portable-hermes-doctor-rejects-authority",
+        env: lifecycleEnv,
+        timeoutMs: 240_000,
+      },
+    );
+    assert.equal(failedDoctor.timedOut, false);
+    assert.equal(failedDoctor.signal, null);
+    assert.notEqual(failedDoctor.exitCode, 0);
+
+    writeRegistry(home, entry);
+    phases.finalizeOnboarding();
     await handleFinalizationState(options);
     await handlePostVerifyState(options);
 
@@ -397,7 +444,7 @@ export async function runPortableHermesFinalization(
       process.execPath,
       [CLI_ENTRYPOINT, SANDBOX_NAME, "doctor", "--json"],
       {
-        artifactName: "phase-6-portable-hermes-doctor",
+        artifactName: "phase-8-portable-hermes-doctor",
         env: lifecycleEnv,
         timeoutMs: 240_000,
       },
@@ -412,6 +459,8 @@ export async function runPortableHermesFinalization(
         nvidiaGpuPresent: true,
         rootlessPodman: true,
         receiptQualifiedGateway: true,
+        mismatchedAuthorityRejected: true,
+        doctorRejectedMismatchedAuthority: true,
         finalizationAdvanced: true,
         onboardingCompleted: true,
         doctorHealthy: true,

@@ -94,7 +94,9 @@
         "src/lib/onboard/runtime-provider/podman.test.ts",
         "src/lib/onboard/runtime-provider/podman-preflight.test.ts",
         "src/lib/onboard/runtime-provider/podman.test.ts",
-        "test/e2e/support/podman-cpu-proof-workflow.test.ts"
+        "test/e2e/support/podman-cpu-lifecycle-helpers.test.ts",
+        "test/e2e/support/podman-cpu-proof-workflow.test.ts",
+        "test/e2e/support/workflow-plan.test.ts"
       ]
     },
     {

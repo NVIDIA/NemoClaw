@@ -526,7 +526,7 @@ exit 1
 );
 
 test.runIf(process.env.E2E_TARGET_ID === "portable-hermes-finalization")(
-  "portable-hermes-finalization: receipt-qualified readiness completes onboarding and doctor",
+  "portable-hermes-finalization: rejects mismatched authority then completes onboarding and doctor",
   {
     meta: { e2ePhases: PORTABLE_HERMES_FINALIZATION_PHASES },
     timeout: 70 * 60_000,
@@ -540,6 +540,10 @@ test.runIf(process.env.E2E_TARGET_ID === "portable-hermes-finalization")(
         activateHermes: () =>
           progress.phase("activate the managed Hermes gateway from the candidate image"),
         publishAuthority: () => progress.phase("publish receipt and registry authority"),
+        rejectMismatchedAuthority: () =>
+          progress.phase("reject mismatched receipt and registry authority"),
+        confirmDoctorRejectsMismatchedAuthority: () =>
+          progress.phase("confirm doctor rejects mismatched authority"),
         finalizeOnboarding: () =>
           progress.phase("complete onboarding finalization through native readiness"),
         confirmDoctor: () => progress.phase("confirm doctor reports the same healthy readiness"),
