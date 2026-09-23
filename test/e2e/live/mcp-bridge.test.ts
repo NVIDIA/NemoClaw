@@ -27,11 +27,11 @@ import {
   resolveMcpBridgeShard,
   runFullMcpBridgeE2eCoverage,
 } from "./mcp-bridge-agent-selection.ts";
+import { prepareOwnedSandboxForOnboard } from "../fixtures/owned-sandbox-cleanup.ts";
 import {
   cleanupMcpBridge,
   MCP_MUTATION_TIMEOUT_MS,
   type McpAdapter,
-  prepareOwnedSandboxForOnboard,
   removeMcpBridgeWithOneConcurrencyRetry,
 } from "./mcp-bridge-cleanup.ts";
 import {
