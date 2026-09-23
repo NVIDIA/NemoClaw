@@ -15,6 +15,7 @@ export const DEFAULT_PARITY_MANIFEST = "test/e2e/mock-parity.json";
 
 export type MockParityEntry = {
   live: string;
+  /** Live helpers and explicitly owned shared test/e2e/fixtures sources. */
   liveSources?: string[];
   fast?: string[];
   liveOnlyReason?: string;
@@ -27,6 +28,7 @@ export type MockParityManifest = {
 
 const LIVE_TEST = /^test\/e2e\/live\/.+\.test\.ts$/u;
 const LIVE_HELPER = /^test\/e2e\/live\/(?!.*\.test\.ts$).+\.(?:py|ts)$/u;
+const SHARED_FIXTURE = /^test\/e2e\/fixtures\/(?!.*\.test\.ts$).+\.ts$/u;
 const FAST_TESTS = [
   /^src\/.+\.test\.ts$/u,
   /^nemoclaw\/src\/.+\.test\.ts$/u,
@@ -159,9 +161,12 @@ export function validateMockParity(options: {
 
     if (!fileExists(entry.live)) errors.push(`${entry.live}: live test does not exist`);
     for (const sourceFile of new Set(entry.liveSources ?? [])) {
-      if (!isSafeRepoPath(sourceFile) || !LIVE_HELPER.test(sourceFile)) {
+      if (
+        !isSafeRepoPath(sourceFile) ||
+        !(LIVE_HELPER.test(sourceFile) || SHARED_FIXTURE.test(sourceFile))
+      ) {
         errors.push(
-          `${entry.live}: ${sourceFile} is not a test/e2e/live/**/*.py or *.ts helper file`,
+          `${entry.live}: ${sourceFile} is not a test/e2e/live/**/*.py or *.ts helper or test/e2e/fixtures/**/*.ts fixture`,
         );
         continue;
       }
@@ -207,7 +212,11 @@ export function validateMockParity(options: {
     requireChangedFastTest(entry, liveFile);
   }
 
-  for (const helperFile of [...changedFileSet].filter((file) => LIVE_HELPER.test(file))) {
+  // Existing live helpers require ownership; shared fixtures opt in explicitly
+  // through liveSources so unrelated fixture contracts are not broadened.
+  for (const helperFile of [...changedFileSet].filter(
+    (file) => LIVE_HELPER.test(file) || sourceOwners.has(file),
+  )) {
     const owners = sourceOwners.get(helperFile) ?? [];
     if (owners.length === 0) {
       errors.push(
@@ -245,7 +254,13 @@ export function filterMockParityRelevantChangedFiles(
   sourceAtHead: (file: string) => string | null,
 ): string[] {
   return files.filter((file) => {
-    if (!LIVE_TEST.test(file) && !LIVE_HELPER.test(file) && !isFastPrTest(file)) return true;
+    if (
+      !LIVE_TEST.test(file) &&
+      !LIVE_HELPER.test(file) &&
+      !SHARED_FIXTURE.test(file) &&
+      !isFastPrTest(file)
+    )
+      return true;
     // Python indentation is executable syntax, so the TypeScript token filter
     // cannot safely classify any Python helper change as metadata-only.
     if (LIVE_HELPER.test(file) && file.endsWith(".py")) return true;

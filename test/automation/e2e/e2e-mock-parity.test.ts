@@ -147,6 +147,54 @@ describe("changed live E2E mock parity", () => {
     ).toEqual([`${live}: change at least one mapped fast PR test with the live E2E`]);
   });
 
+  it.each([
+    [[], 2],
+    [[fast], 0],
+  ])(
+    "enforces both declared shared-fixture owners with changed tests %j",
+    (changedTests, errors) => {
+      const shared = "test/e2e/fixtures/owned-sandbox-cleanup.ts";
+      expect(
+        validateMockParity({
+          manifest: manifest([
+            { live, liveSources: [shared], fast: [fast] },
+            { live: "test/e2e/live/second.test.ts", liveSources: [shared], fast: [fast] },
+          ]),
+          changedFiles: [shared, ...changedTests],
+          fileExists: () => true,
+        }),
+      ).toHaveLength(errors);
+    },
+  );
+
+  it("does not impose new ownership requirements on undeclared shared fixtures", () => {
+    expect(
+      validateMockParity({
+        manifest: manifest([{ live, fast: [fast] }]),
+        changedFiles: ["test/e2e/fixtures/unrelated.ts"],
+        fileExists: exists,
+      }),
+    ).toEqual([]);
+  });
+
+  it("ignores comment-only shared fixture changes without hiding behavioral changes", () => {
+    const shared = "test/e2e/fixtures/owned-sandbox-cleanup.ts";
+    expect(
+      filterMockParityRelevantChangedFiles(
+        [shared],
+        () => "export const value = 1;",
+        () => "// comment\nexport const value = 1;",
+      ),
+    ).toEqual([]);
+    expect(
+      filterMockParityRelevantChangedFiles(
+        [shared],
+        () => "export const value = 1;",
+        () => "export const value = 2;",
+      ),
+    ).toEqual([shared]);
+  });
+
   it("requires mapped fast coverage when a declared live E2E helper changes", () => {
     expect(
       validateMockParity({

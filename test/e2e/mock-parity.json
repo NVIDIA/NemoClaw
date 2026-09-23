@@ -278,7 +278,10 @@
     },
     {
       "live": "test/e2e/live/openshell-credential-generation-window.test.ts",
-      "liveSources": ["test/e2e/live/openshell-credential-generation-window.ts"],
+      "liveSources": [
+        "test/e2e/live/openshell-credential-generation-window.ts",
+        "test/e2e/fixtures/owned-sandbox-cleanup.ts"
+      ],
       "fast": [
         "test/e2e/support/owned-sandbox-cleanup.test.ts",
         "test/credentials/openshell-credential-generation-window.test.ts",
@@ -323,7 +326,13 @@
     },
     {
       "live": "test/e2e/live/onboard-repair.test.ts",
+      "liveSources": [
+        "test/e2e/fixtures/onboard-precleanup.ts",
+        "test/e2e/fixtures/owned-sandbox-cleanup.ts"
+      ],
       "fast": [
+        "test/e2e/support/onboard-precleanup.test.ts",
+        "test/e2e/support/owned-sandbox-cleanup.test.ts",
         "src/lib/onboard/extra-provider-reconciliation-diagnostics.test.ts",
         "src/lib/onboard/extra-provider-reconciliation-probes.test.ts",
         "src/lib/onboard/extra-provider-reconciliation.test.ts",
@@ -339,7 +348,13 @@
     },
     {
       "live": "test/e2e/live/onboard-resume.test.ts",
+      "liveSources": [
+        "test/e2e/fixtures/onboard-precleanup.ts",
+        "test/e2e/fixtures/owned-sandbox-cleanup.ts"
+      ],
       "fast": [
+        "test/e2e/support/onboard-precleanup.test.ts",
+        "test/e2e/support/owned-sandbox-cleanup.test.ts",
         "src/lib/onboard/extra-provider-reconciliation-diagnostics.test.ts",
         "src/lib/onboard/extra-provider-reconciliation-probes.test.ts",
         "src/lib/onboard/extra-provider-reconciliation.test.ts",
@@ -599,6 +614,7 @@
     {
       "live": "test/e2e/live/mcp-bridge.test.ts",
       "liveSources": [
+        "test/e2e/fixtures/owned-sandbox-cleanup.ts",
         "test/e2e/live/dns-rebinding-hosts-fixture.ts",
         "test/e2e/live/mcp-bridge-cleanup.ts",
         "test/e2e/live/mcp-bridge-deepagents-config.ts",

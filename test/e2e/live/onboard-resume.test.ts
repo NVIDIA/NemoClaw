@@ -15,6 +15,7 @@ import { parseSandboxPhase } from "../../../src/lib/state/gateway.ts";
 import { OPENSHELL_GATEWAY_START_LINE } from "../../helpers/openshell-gateway-start-output.ts";
 import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
+import { prepareOnboardSandboxes } from "../fixtures/onboard-precleanup.ts";
 import { assertCleanupSucceededOrAbsent } from "../fixtures/cleanup-resources.ts";
 import { resultText } from "../fixtures/clients/command.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
@@ -274,33 +275,6 @@ test(
     // ──────────────────────────────────────────────────────────────────
     progress.phase("clear prior resumable onboarding state");
     const probeEnv = buildAvailabilityProbeEnv();
-    await host.command("node", [CLI_ENTRYPOINT, SANDBOX_NAME, "destroy", "--yes"], {
-      artifactName: "pre-cleanup-nemoclaw-destroy",
-      env: probeEnv,
-      timeoutMs: 60_000,
-    });
-    await sandbox.openshell(["sandbox", "delete", SANDBOX_NAME], {
-      artifactName: "pre-cleanup-openshell-sandbox-delete",
-      env: probeEnv,
-      timeoutMs: 60_000,
-    });
-    await sandbox.openshell(["forward", "stop", "18789"], {
-      artifactName: "pre-cleanup-openshell-forward-stop",
-      env: probeEnv,
-      timeoutMs: 30_000,
-    });
-    await sandbox.openshell(["provider", "delete", "-g", "nemoclaw", LIVE_EXTRA_PROVIDER], {
-      artifactName: "pre-cleanup-live-extra-provider-delete",
-      env: { ...probeEnv, [EXTRA_PROVIDER_TOKEN_ENV]: EXTRA_PROVIDER_TOKEN },
-      timeoutMs: 60_000,
-    });
-    await sandbox.openshell(["gateway", "destroy", "-g", "nemoclaw"], {
-      artifactName: "pre-cleanup-openshell-gateway-destroy",
-      env: probeEnv,
-      timeoutMs: 60_000,
-    });
-    fs.rmSync(SESSION_FILE, { force: true });
-
     // Register resources in reverse dependency order. CleanupRegistry runs them
     // LIFO, so the sandbox is destroyed before its forward, provider, gateway,
     // and local resume state are removed.
@@ -354,20 +328,17 @@ test(
       redactionValues: cleanupRedactions,
       timeoutMs: 30_000,
     });
-    cleanup.trackDisposable(`delete OpenShell sandbox ${SANDBOX_NAME}`, () =>
-      sandbox.cleanupSandbox(SANDBOX_NAME, {
-        artifactName: "cleanup-openshell-sandbox-delete",
-        env: cleanupEnv,
-        redactionValues: cleanupRedactions,
-        timeoutMs: 60_000,
-      }),
-    );
-    cleanup.trackSandbox(host, SANDBOX_NAME, {
-      artifactName: "cleanup-nemoclaw-destroy",
-      env: cleanupEnv,
+    await prepareOnboardSandboxes(host, sandbox, cleanup, [SANDBOX_NAME], LIVE_EXTRA_PROVIDER, {
+      env: {
+        ...cleanupEnv,
+        OPENSHELL_GATEWAY: "nemoclaw",
+        [EXTRA_PROVIDER_TOKEN_ENV]: EXTRA_PROVIDER_TOKEN,
+      },
       redactionValues: cleanupRedactions,
-      timeoutMs: 120_000,
+      timeoutMs: 60_000,
+      artifactName: "precleanup-gateway-inspection",
     });
+    fs.rmSync(SESSION_FILE, { force: true });
 
     // ──────────────────────────────────────────────────────────────────
     // Phase 2: first onboard (forced failure at the policies step)

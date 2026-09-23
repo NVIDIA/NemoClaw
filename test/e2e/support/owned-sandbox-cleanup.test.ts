@@ -8,9 +8,13 @@ import { SandboxClient } from "../fixtures/clients/sandbox.ts";
 import type { ShellProbeResult, ShellProbeRunOptions } from "../fixtures/shell-probe.ts";
 import { prepareOwnedSandboxForOnboard } from "../fixtures/owned-sandbox-cleanup.ts";
 
-const state = vi.hoisted(() => ({ registered: false }));
+const state = vi.hoisted(() => ({
+  registered: false,
+  gatewayPort: undefined as number | undefined,
+}));
 vi.mock("../../../src/lib/state/registry.ts", () => ({
-  getSandbox: () => (state.registered ? { name: "e2e-mcp-bridge" } : null),
+  getSandbox: () =>
+    state.registered ? { name: "e2e-mcp-bridge", gatewayPort: state.gatewayPort } : null,
 }));
 
 function fixture() {
@@ -44,6 +48,7 @@ function fixture() {
     stdout: JSON.stringify({ gateway: process.env.OPENSHELL_GATEWAY?.trim() || "nemoclaw" }),
   };
   const gateway = {
+    name: process.env.OPENSHELL_GATEWAY?.trim() || "nemoclaw",
     response: {
       exitCode: 1,
       stderr: "No gateway configured.\n│ Register a gateway with: openshell gateway add <endpoint>",
@@ -53,9 +58,7 @@ function fixture() {
     .spyOn(sandbox, "openshell")
     .mockImplementation(async (args = [], options) => {
       calls.push(args.slice(0, 2).join(" "));
-      expect(options?.env?.OPENSHELL_GATEWAY).toBe(
-        process.env.OPENSHELL_GATEWAY?.trim() || "nemoclaw",
-      );
+      expect(options?.env?.OPENSHELL_GATEWAY).toBe(gateway.name);
       const results: Record<string, ShellProbeResult> = {
         gateway: response(gateway.response),
         sandbox: response(),
@@ -71,6 +74,7 @@ function fixture() {
 describe("owned-sandbox cleanup", () => {
   beforeEach(() => {
     state.registered = false;
+    state.gatewayPort = undefined;
   });
 
   it("does not start a gateway or run CLI recovery when fresh resources are absent", async () => {
@@ -158,6 +162,51 @@ describe("owned-sandbox cleanup", () => {
       "sandbox delete",
       "cli:cleanup-destroy-sandbox",
     ]);
+  });
+
+  it("uses the retained nondefault gateway for inspection, recovery, deletion and reconciliation", async () => {
+    const f = fixture();
+    state.registered = true;
+    state.gatewayPort = 9443;
+    f.gateway.name = "nemoclaw-9443";
+    f.host.command.mockImplementation(async (_command, argv, options) => {
+      expect(argv.at(-1)).toBe("nemoclaw-9443");
+      expect(options.env?.OPENSHELL_GATEWAY).toBe("nemoclaw-9443");
+      f.gateway.response = { stdout: JSON.stringify({ gateway: "nemoclaw-9443" }) };
+      return { exitCode: 0 } as ShellProbeResult;
+    });
+    await f.prepare();
+    expect(f.host.cleanupSandbox).toHaveBeenCalledWith(
+      "e2e-mcp-bridge",
+      expect.objectContaining({
+        env: expect.objectContaining({ OPENSHELL_GATEWAY: "nemoclaw-9443" }),
+      }),
+    );
+    expect(f.openshell.mock.calls.map(([args]) => args)).toEqual([
+      ["gateway", "info", "-g", "nemoclaw-9443", "-o", "json"],
+      ["gateway", "info", "-g", "nemoclaw-9443", "-o", "json"],
+      ["sandbox", "delete", "e2e-mcp-bridge"],
+    ]);
+    state.gatewayPort = 9554;
+    f.gateway.name = "nemoclaw-9554";
+    f.gateway.response = { stdout: JSON.stringify({ gateway: "nemoclaw-9554" }) };
+    expect((await f.cleanup.runAll()).failures).toEqual([]);
+    expect(f.host.cleanupSandbox).toHaveBeenLastCalledWith(
+      "e2e-mcp-bridge",
+      expect.objectContaining({
+        env: expect.objectContaining({ OPENSHELL_GATEWAY: "nemoclaw-9554" }),
+      }),
+    );
+  });
+
+  it("rejects invalid retained gateway identity before any gateway operation", async () => {
+    const f = fixture();
+    state.registered = true;
+    state.gatewayPort = -1;
+    await expect(f.prepare()).rejects.toThrow("Invalid persisted sandbox gateway binding");
+    expect(f.openshell).not.toHaveBeenCalled();
+    expect(f.host.command).not.toHaveBeenCalled();
+    expect(f.host.cleanupSandbox).not.toHaveBeenCalled();
   });
 
   it("deletes administrator state before registered CLI reconciliation in both phases", async () => {

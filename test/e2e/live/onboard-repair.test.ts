@@ -26,6 +26,7 @@ import {
   expectSandboxProviderAttachment,
   upsertGenericGatewayProvider,
 } from "../fixtures/gateway-providers.ts";
+import { prepareOnboardSandboxes } from "../fixtures/onboard-precleanup.ts";
 import { CLI_ENTRYPOINT } from "../fixtures/paths.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 
@@ -78,19 +79,26 @@ function onboardEnv(sandboxName: string, fakeBaseUrl: string, extra: NodeJS.Proc
   });
 }
 
+async function cleanupRepairSandbox(
+  host: HostCliClient,
+  sandbox: SandboxClient,
+  name: string,
+): Promise<void> {
+  await nemoclaw(host, [name, "destroy", "--yes"], `cleanup-destroy-${name}`).catch(
+    () => undefined,
+  );
+  await sandbox
+    .openshell(["sandbox", "delete", name], {
+      artifactName: `cleanup-openshell-delete-${name}`,
+      env: env(),
+      timeoutMs: 60_000,
+    })
+    .catch(() => undefined);
+}
+
 async function cleanup(host: HostCliClient, sandbox: SandboxClient): Promise<void> {
-  for (const name of [SANDBOX_NAME, OTHER_SANDBOX_NAME]) {
-    await nemoclaw(host, [name, "destroy", "--yes"], `cleanup-destroy-${name}`).catch(
-      () => undefined,
-    );
-    await sandbox
-      .openshell(["sandbox", "delete", name], {
-        artifactName: `cleanup-openshell-delete-${name}`,
-        env: env(),
-        timeoutMs: 60_000,
-      })
-      .catch(() => undefined);
-  }
+  await cleanupRepairSandbox(host, sandbox, SANDBOX_NAME);
+  await cleanupRepairSandbox(host, sandbox, OTHER_SANDBOX_NAME);
   await sandbox
     .openshell(["forward", "stop", "18789"], {
       artifactName: "cleanup-forward-stop-18789",
@@ -251,37 +259,25 @@ test(
       18789,
       forwardCleanupOptions,
     );
-    const repairSandboxNames = [SANDBOX_NAME, OTHER_SANDBOX_NAME];
-    [...repairSandboxNames].reverse().forEach((name) => {
-      cleanupRegistry.trackDisposable(`delete OpenShell sandbox ${name}`, () =>
-        cleanupWhenInstalled(`cleanup-probe-openshell-sandbox-${name}`, () =>
-          sandbox.cleanupSandbox(name, {
-            artifactName: `cleanup-openshell-delete-${name}`,
-            env: env(),
-            redactionValues: [EXTRA_PROVIDER_TOKEN],
-            timeoutMs: 60_000,
-          }),
-        ),
-      );
-      const sandboxCleanupOptions = {
-        artifactName: `cleanup-destroy-${name}`,
-        env: env(),
-        redactionValues: [EXTRA_PROVIDER_TOKEN],
-        timeoutMs: 20 * 60_000,
-      };
-      cleanupRegistry.trackSandbox(
-        {
-          cleanupSandbox: (sandboxName: string) =>
-            cleanupWhenInstalled(`cleanup-probe-openshell-nemoclaw-${sandboxName}`, () =>
-              host.cleanupSandbox(sandboxName, sandboxCleanupOptions),
-            ),
-        },
-        name,
-        sandboxCleanupOptions,
-      );
-    });
     progress.phase("clear prior onboard-repair state");
-    await cleanup(host, sandbox);
+    await prepareOnboardSandboxes(
+      host,
+      sandbox,
+      cleanupRegistry,
+      [SANDBOX_NAME, OTHER_SANDBOX_NAME],
+      LIVE_EXTRA_PROVIDER,
+      {
+        env: env({ [EXTRA_PROVIDER_TOKEN_ENV]: EXTRA_PROVIDER_TOKEN }),
+        redactionValues: [EXTRA_PROVIDER_TOKEN],
+        timeoutMs: 60_000,
+        artifactName: "precleanup-gateway-inspection",
+      },
+    );
+    updateExtraProviders((providers) => {
+      providers.delete(STALE_EXTRA_PROVIDER);
+      providers.delete(LIVE_EXTRA_PROVIDER);
+    });
+    fs.rmSync(SESSION_FILE, { force: true });
 
     progress.phase("interrupt onboarding after sandbox creation");
     const first = await nemoclaw(

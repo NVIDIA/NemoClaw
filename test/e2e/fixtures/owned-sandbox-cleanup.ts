@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { resolveSandboxGatewayName } from "../../../src/lib/onboard/gateway-binding.ts";
 import { getSandbox } from "../../../src/lib/state/registry.ts";
 import { buildAvailabilityProbeEnv } from "./availability-env.ts";
 import type { CleanupRegistry } from "./cleanup.ts";
@@ -9,12 +10,15 @@ import type { HostCliClient } from "./clients/host.ts";
 import type { SandboxClient } from "./clients/sandbox.ts";
 import { initializeGatewayForCleanup } from "./gateway-runtime-start.ts";
 
-function buildOwnedSandboxCleanupEnv(): NodeJS.ProcessEnv {
+function buildOwnedSandboxCleanupEnv(sandboxName: string): NodeJS.ProcessEnv {
+  const registered = getSandbox(sandboxName);
   return {
     ...buildAvailabilityProbeEnv(),
     // Bind trusted administrator cleanup to the gateway NemoClaw initialized.
     // ShellProbe otherwise forwards only PATH, which hides gateway metadata.
-    OPENSHELL_GATEWAY: process.env.OPENSHELL_GATEWAY?.trim() || "nemoclaw",
+    OPENSHELL_GATEWAY: registered
+      ? resolveSandboxGatewayName(registered)
+      : process.env.OPENSHELL_GATEWAY?.trim() || "nemoclaw",
   };
 }
 
@@ -25,12 +29,11 @@ export async function prepareOwnedSandboxForOnboard(
   cleanup: CleanupRegistry,
   sandboxName: string,
 ): Promise<void> {
-  const openshellCleanupEnv = buildOwnedSandboxCleanupEnv();
   const cleanupRegisteredSandbox = (artifactName: string) =>
     cleanupAcquiredResource(getSandbox(sandboxName) !== null, () =>
       host.cleanupSandbox(sandboxName, {
         artifactName,
-        env: openshellCleanupEnv,
+        env: buildOwnedSandboxCleanupEnv(sandboxName),
         timeoutMs: 15 * 60_000,
       }),
     );
@@ -38,6 +41,7 @@ export async function prepareOwnedSandboxForOnboard(
     cleanupRegisteredSandbox("cleanup-destroy-sandbox"),
   );
   const cleanupOwnedSandbox = async (artifactName: string) => {
+    const openshellCleanupEnv = buildOwnedSandboxCleanupEnv(sandboxName);
     const options = { artifactName, env: openshellCleanupEnv, timeoutMs: 15 * 60_000 };
     const gatewayName = openshellCleanupEnv.OPENSHELL_GATEWAY!;
     const gatewayPresent = await sandbox.hasGatewayForInitialCleanup(gatewayName, options);
